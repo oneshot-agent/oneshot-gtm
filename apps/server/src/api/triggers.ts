@@ -13,7 +13,11 @@ import {
   type Readiness,
   type TriggerSpec,
 } from "@oneshot-gtm/find";
-import { describeEdgeWarning, lintEdge } from "@oneshot-gtm/plays";
+import {
+  describeEdgeWarning,
+  isAllowedDesignPartnerLoiBuyerType,
+  lintEdge,
+} from "@oneshot-gtm/plays";
 import type { RunTriggerResult, TriggerView } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 import {
@@ -215,6 +219,32 @@ export async function setTriggerConfigRoute(
         ? cfg["yourClaim"]
         : null;
   const warnings = edge ? lintEdge(edge).map(describeEdgeWarning) : [];
+  // Warn-tier `play`/`buyerType` validation (issue #705): never a refusal —
+  // the save above already happened — but a founder routing rows to
+  // design-partner-loi with a missing/invalid buyerType should learn that
+  // immediately rather than discover it only when the trigger silently
+  // reports "not ready" later.
+  if (cfg["play"] === "design-partner-loi") {
+    const buyerType = cfg["buyerType"];
+    if (typeof buyerType !== "string" || !isAllowedDesignPartnerLoiBuyerType(buyerType)) {
+      warnings.push(
+        "buyerType must be 'enterprise', 'government', or 'hardware' to route to design-partner-loi — this trigger will not run until it's set",
+      );
+    }
+    // The routed edge field is a separate readiness gate from buyerType (see
+    // `checkPlayRouteReadiness` in @oneshot-gtm/find) — hiring-signal reads
+    // `yourClaim`, every other routable finder reads `yourEdge`. Without this
+    // warning a blank edge saved fine here but silently failed registry
+    // readiness later, with no warning at save time (finding
+    // PRRT_kwDOSKzrBs6mB73_, issue #705 round 1).
+    const routeEdgeKey = name === "hiring-signal" ? "yourClaim" : "yourEdge";
+    const routeEdge = cfg[routeEdgeKey];
+    if (typeof routeEdge !== "string" || routeEdge.trim().length === 0) {
+      warnings.push(
+        `${routeEdgeKey} is required to route to design-partner-loi — this trigger will not run until it's set`,
+      );
+    }
+  }
   return jsonResponse({ ok: true, name, warnings }, 200, req);
 }
 

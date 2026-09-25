@@ -58,7 +58,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
   };
 });
 
-const { runDesignPartnerLoi, assertNotOwnerOperatorBuyer } =
+const { runDesignPartnerLoi, assertNotOwnerOperatorBuyer, isAllowedDesignPartnerLoiBuyerType } =
   await import("../src/design-partner-loi.ts");
 
 const base = {
@@ -100,6 +100,23 @@ describe("assertNotOwnerOperatorBuyer — the routing guard", () => {
     expect(() => assertNotOwnerOperatorBuyer("sole-proprietor")).toThrow();
     expect(() => assertNotOwnerOperatorBuyer("main street business")).toThrow();
     expect(() => assertNotOwnerOperatorBuyer("owner-operater")).toThrow(); // typo of a known-bad string
+  });
+});
+
+describe("isAllowedDesignPartnerLoiBuyerType — predicate mirror of the assert guard", () => {
+  // A trigger's readiness gate (or the config route's warn-tier check) needs
+  // to validate a `buyerType` WITHOUT throwing, before the trigger is ever
+  // allowed to route to this play at all (issue #705). This predicate and
+  // `assertNotOwnerOperatorBuyer` must never disagree.
+  it("agrees with assertNotOwnerOperatorBuyer for every case, including whitespace/case variants", () => {
+    for (const ok of ["enterprise", "government", "hardware", " Enterprise ", "HARDWARE"]) {
+      expect(isAllowedDesignPartnerLoiBuyerType(ok)).toBe(true);
+      expect(() => assertNotOwnerOperatorBuyer(ok)).not.toThrow();
+    }
+    for (const bad of ["owner-operator", "main-street", "restaurant", ""]) {
+      expect(isAllowedDesignPartnerLoiBuyerType(bad)).toBe(false);
+      expect(() => assertNotOwnerOperatorBuyer(bad)).toThrow();
+    }
   });
 });
 

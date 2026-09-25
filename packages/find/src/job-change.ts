@@ -7,6 +7,7 @@ import type { JobChangeTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
+import { buildDesignPartnerLoiPayload, dedupePlayNames, resolvePlayRoute } from "./_play-route.ts";
 import type { FinderResult, JobChangeExtract, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "job-change";
@@ -27,6 +28,15 @@ export interface JobChangeFinderOpts extends RunOpts {
   companies?: string[];
   /** Days back to bias the search query. Default 14. */
   sinceDays?: number;
+  /**
+   * Route this finder's rows to `design-partner-loi` (the enterprise
+   * register) instead of `job-change`'s own founder-to-founder play.
+   * `"design-partner-loi"` opts in; absent = today's behaviour, unchanged.
+   * Requires `buyerType`. See issue #705.
+   */
+  play?: string;
+  /** Required when `play` is `"design-partner-loi"`. See `DesignPartnerLoiTarget.buyerType`. */
+  buyerType?: string;
 }
 
 const DEFAULT_PERSONAS = [
@@ -49,6 +59,8 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
   const ledger = getLedger();
   const system = loadPrompt("job-change-extract");
   const personas = opts.personas && opts.personas.length > 0 ? opts.personas : DEFAULT_PERSONAS;
+  const route = resolvePlayRoute(opts);
+  const dedupeScope = dedupePlayNames(PLAY_NAME);
 
   const result: FinderResult = {
     source: SOURCE,
@@ -102,7 +114,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
       break;
     }
-    if (ledger.isQueueDuplicate(PLAY_NAME, hit.url)) {
+    if (dedupeScope.some((p) => ledger.isQueueDuplicate(p, hit.url))) {
       result.droppedDuplicate++;
       continue;
     }
@@ -207,7 +219,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       fullName: extract.fullName,
       companyDomain: domain,
       isDuplicate: (email) =>
-        isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
+        isDuplicate({ playName: dedupeScope, dedupeKey: hit.url, prospectEmail: email }),
       icp,
       person: {
         name: extract.fullName,
@@ -272,8 +284,20 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       yourEdge: opts.yourEdge ?? "",
     };
     const id = enqueueScoredTarget(ledger, {
-      playName: PLAY_NAME,
-      payload: target,
+      playName: route ? route.playName : PLAY_NAME,
+      payload: route
+        ? buildDesignPartnerLoiPayload({
+            name: target.name,
+            email: target.email,
+            company: target.newCompany,
+            buyerType: route.buyerType,
+            yourEdge: target.yourEdge,
+            title: contact.title,
+            linkedinUrl,
+            phone,
+            icp: icpFields(contact),
+          })
+        : target,
       dedupeKey: hit.url,
       source: SOURCE,
       fitReason: filter.reason,

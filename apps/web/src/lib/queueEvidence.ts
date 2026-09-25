@@ -148,10 +148,29 @@ export function queueEvidence(playName: string, payload: unknown): string | null
       return subject ? `${labelled} (${subject})` : labelled;
     }
 
-    // gov-solicitation's two routes share the same evidence shape: the
-    // notice title, plus the agency when known.
-    case "sources-sought":
+    // gov-solicitation's sources-sought route is always its own shape (never
+    // routed elsewhere): the notice title, plus the agency when known.
+    case "sources-sought": {
+      const title = str(p, "title");
+      if (!title) return null;
+      const agency = str(p, "agency");
+      return agency ? `${title} — ${agency}` : title;
+    }
+
+    // Two payload shapes land on design-partner-loi: gov-solicitation's own
+    // routing (title/agency — a notice title) and the five finders
+    // `_play-route.ts` (issue #705) can route rows to instead of their own
+    // play (name/email/company/buyerType/yourEdge — no notice at all).
+    // `buyerType` is present on exactly the routed shape, so it
+    // discriminates: rendering a routed row's own job `title` captioned with
+    // `agency` put a person's job title on the queue as if it were a
+    // solicitation title (finding F-t_1ec69ea6-4).
     case "design-partner-loi": {
+      const buyerType = str(p, "buyerType");
+      if (buyerType !== null) {
+        const company = str(p, "company");
+        return company ? `${buyerType} buyer at ${company}` : `${buyerType} buyer`;
+      }
       const title = str(p, "title");
       if (!title) return null;
       const agency = str(p, "agency");

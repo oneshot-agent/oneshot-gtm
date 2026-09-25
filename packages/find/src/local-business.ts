@@ -5,12 +5,13 @@ import {
   type LocalResult,
   type PersonResult,
 } from "@oneshot-gtm/core";
-import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { icpFields, resolveVerifyEnrichQualify } from "./_contact.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection, qualifyPostEnrich } from "./_qualify.ts";
 import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { safeCompanySearch, safeLocalSearch, safePeopleSearch } from "./_sdk-safe.ts";
+import { buildDesignPartnerLoiPayload, dedupePlayNames, resolvePlayRoute } from "./_play-route.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "free-pilot";
@@ -50,6 +51,14 @@ export interface LocalBusinessFinderOpts extends RunOpts {
   yourEdge: string;
   /** Discovery engine. Default `b2b`. See `LocalBusinessEngine`. */
   engine?: LocalBusinessEngine;
+  /**
+   * Route this finder's rows to `design-partner-loi` (the enterprise
+   * register) instead of `free-pilot`. `"design-partner-loi"` opts in;
+   * absent = today's behaviour, unchanged. Requires `buyerType`. See #705.
+   */
+  play?: string;
+  /** Required when `play` is `"design-partner-loi"`. See `DesignPartnerLoiTarget.buyerType`. */
+  buyerType?: string;
 }
 
 function nonEmptyStrings(vals: string[] | undefined): string[] {
@@ -111,6 +120,8 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
   const keywords = nonEmptyStrings(opts.keywords);
   const employeeRange = opts.employeeRange?.trim() || undefined;
   const yourEdge = (opts.yourEdge ?? "").trim();
+  const route = resolvePlayRoute(opts);
+  const dedupeScope = dedupePlayNames(PLAY_NAME);
 
   const result: FinderResult = {
     source: SOURCE,
@@ -241,7 +252,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       (person.company_domain && domainIndustry.get(person.company_domain.trim().toLowerCase())) ||
       fallbackBusinessType;
 
-    if (ledger.isQueueDuplicate(PLAY_NAME, dedupeKey)) {
+    if (dedupeScope.some((p) => ledger.isQueueDuplicate(p, dedupeKey))) {
       result.droppedDuplicate++;
       continue;
     }
@@ -290,6 +301,10 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     let phone: string | null;
     let linkedinUrl: string | null;
     let finalTitle: string | null;
+    // ICP verdict fields for the routed (design-partner-loi) payload only —
+    // never spread onto `target` below, which must keep matching its
+    // pre-#705 shape (finding PRRT_kwDOSKzrBs6mB74J, issue #705 round 1).
+    let routedIcp: Record<string, unknown> = {};
 
     if (bestWorkEmail) {
       // Lane 1 — the search already carries a usable email: skip
@@ -321,7 +336,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
         result.droppedEnrichment++;
         continue;
       }
-      if (isDuplicate({ playName: PLAY_NAME, dedupeKey, prospectEmail: bestWorkEmail })) {
+      if (isDuplicate({ playName: dedupeScope, dedupeKey, prospectEmail: bestWorkEmail })) {
         result.droppedDuplicate++;
         continue;
       }
@@ -329,6 +344,13 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       phone = readPhone(person);
       linkedinUrl = person.linkedin_url ?? null;
       finalTitle = gate.roleText ?? title;
+      // `gate` is a `QualifyOutcome`, not a `QualifiedContact` — build the
+      // same `icpVerdict`/`icpVerdictReason` shape `icpFields` produces for
+      // the other lane, by hand.
+      routedIcp = {
+        icpVerdict: gate.verdict,
+        ...(gate.reason ? { icpVerdictReason: gate.reason } : {}),
+      };
     } else {
       // Lane 2 — no email on the search result: the normal
       // resolve → verify → enrich → qualify spine every other finder uses.
@@ -337,7 +359,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
         fullName,
         companyDomain: person.company_domain ?? null,
         isDuplicate: (candEmail) =>
-          isDuplicate({ playName: PLAY_NAME, dedupeKey, prospectEmail: candEmail }),
+          isDuplicate({ playName: dedupeScope, dedupeKey, prospectEmail: candEmail }),
         icp,
         person: { name: fullName, company, roleText: title, evidence: "peopleSearch match" },
         linkedinUrlHint: person.linkedin_url ?? null,
@@ -364,6 +386,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       phone = contact.phone;
       linkedinUrl = contact.linkedinUrl;
       finalTitle = contact.title ?? title;
+      routedIcp = icpFields(contact);
     }
 
     // Payload mirrors the (issue #462) free-pilot play's `FreePilotTarget`
@@ -382,8 +405,20 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     };
 
     const id = enqueueScoredTarget(ledger, {
-      playName: PLAY_NAME,
-      payload: target,
+      playName: route ? route.playName : PLAY_NAME,
+      payload: route
+        ? buildDesignPartnerLoiPayload({
+            name: fullName,
+            email,
+            company,
+            buyerType: route.buyerType,
+            yourEdge,
+            title: finalTitle,
+            linkedinUrl,
+            phone,
+            icp: routedIcp,
+          })
+        : target,
       dedupeKey,
       source: SOURCE,
       fitReason: filter.reason,
@@ -423,6 +458,8 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
   const industries = nonEmptyStrings(opts.industries);
   const locations = nonEmptyStrings(opts.locations);
   const yourEdge = (opts.yourEdge ?? "").trim();
+  const route = resolvePlayRoute(opts);
+  const dedupeScope = dedupePlayNames(PLAY_NAME);
 
   const result: FinderResult = {
     source: SOURCE,
@@ -503,7 +540,7 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
     const businessType = biz.category?.trim() || fallbackBusinessType;
     const city = locations[0] ?? null;
 
-    if (ledger.isQueueDuplicate(PLAY_NAME, dedupeKey)) {
+    if (dedupeScope.some((p) => ledger.isQueueDuplicate(p, dedupeKey))) {
       result.droppedDuplicate++;
       continue;
     }
@@ -550,7 +587,7 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
       allowMissingFullName: true,
       companyDomain: domain,
       isDuplicate: (candEmail) =>
-        isDuplicate({ playName: PLAY_NAME, dedupeKey, prospectEmail: candEmail }),
+        isDuplicate({ playName: dedupeScope, dedupeKey, prospectEmail: candEmail }),
       icp,
       person: {
         name: null,
@@ -591,8 +628,20 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
       ...(contact.title ? { title: contact.title } : {}),
     };
     const id = enqueueScoredTarget(ledger, {
-      playName: PLAY_NAME,
-      payload: target,
+      playName: route ? route.playName : PLAY_NAME,
+      payload: route
+        ? buildDesignPartnerLoiPayload({
+            name: target.name,
+            email: target.email,
+            company: name,
+            buyerType: route.buyerType,
+            yourEdge,
+            title: contact.title,
+            linkedinUrl: contact.linkedinUrl,
+            phone,
+            icp: icpFields(contact),
+          })
+        : target,
       dedupeKey,
       source: SOURCE,
       fitReason: filter.reason,
