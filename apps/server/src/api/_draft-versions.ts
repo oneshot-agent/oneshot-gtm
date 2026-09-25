@@ -51,6 +51,7 @@ export interface PlayUsage {
   angles: AngleUsageRow[];
   drafts: DraftUsageByStep | undefined;
   voice: { voiced: DraftUsage; plain: DraftUsage } | undefined;
+  format: Record<string, DraftUsage> | undefined;
 }
 
 /** Read both aggregates once; hand out per-play slices. */
@@ -58,14 +59,21 @@ export function playUsageLoader(ledger: ReturnType<typeof getLedger>): (play: st
   let angles: Record<string, AngleUsageRow[]> = {};
   let drafts: Record<string, DraftUsageByStep> = {};
   let voice: Record<string, { voiced: DraftUsage; plain: DraftUsage }> = {};
+  let format: Record<string, Record<string, DraftUsage>> = {};
   try {
     angles = ledger.angleUsageByPlay();
     drafts = ledger.draftUsageByPlay();
     voice = ledger.draftUsageByVoice();
+    format = ledger.draftUsageByFormat();
   } catch {
     // Test doubles and pre-v33 ledgers: the editor simply shows no tally.
   }
-  return (play) => ({ angles: angles[play] ?? [], drafts: drafts[play], voice: voice[play] });
+  return (play) => ({
+    angles: angles[play] ?? [],
+    drafts: drafts[play],
+    voice: voice[play],
+    format: format[play],
+  });
 }
 
 const ZERO: Omit<AngleUsageView, "text"> = {
@@ -159,4 +167,11 @@ export function voiceUsageView(
 ): VoiceUsageView | null {
   if (!voice) return null;
   return { voiced: usageView(voice.voiced), plain: usageView(voice.plain) };
+}
+
+export function formatUsageView(
+  format: Record<string, DraftUsage> | undefined,
+): Record<string, DraftUsageView> | null {
+  if (!format) return null;
+  return Object.fromEntries(Object.entries(format).map(([arm, u]) => [arm, usageView(u)]));
 }

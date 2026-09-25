@@ -80,3 +80,41 @@ it.each(["csv:import", "manual", ""])(
     expect(getTrigger).not.toHaveBeenCalled();
   },
 );
+
+it("carries the trigger's first-touch format settings onto the target at generation time", () => {
+  getTrigger.mockReturnValue({
+    config_json: JSON.stringify({
+      yourEdge: "e",
+      firstTouchFormat: "split",
+      firstTouchSplit: 0.25,
+    }),
+  });
+  expect(resolveQueueTarget({ source: "find:luma-events", payload_json })).toMatchObject({
+    firstTouchFormat: "split",
+    firstTouchSplit: 0.25,
+  });
+  getTrigger.mockReturnValue({ config_json: JSON.stringify({ firstTouchFormat: "tiny" }) });
+  expect(resolveQueueTarget({ source: "find:luma-events", payload_json })).not.toHaveProperty(
+    "firstTouchFormat",
+  );
+  getTrigger.mockReturnValue({ config_json: JSON.stringify({ yourEdge: "e" }) });
+  expect(resolveQueueTarget({ source: "find:luma-events", payload_json })).not.toHaveProperty(
+    "firstTouchFormat",
+  );
+});
+
+it("drops format settings copied onto the payload once the trigger no longer sets them", () => {
+  const stale = JSON.stringify({
+    email: "a@example.com",
+    firstTouchFormat: "brief",
+    firstTouchSplit: 1,
+  });
+  getTrigger.mockReturnValue({ config_json: JSON.stringify({ yourEdge: "e" }) });
+  const out = resolveQueueTarget({ source: "find:luma-events", payload_json: stale });
+  expect(out).not.toHaveProperty("firstTouchFormat");
+  expect(out).not.toHaveProperty("firstTouchSplit");
+  getTrigger.mockReturnValue({ config_json: JSON.stringify({ firstTouchFormat: "split" }) });
+  const split = resolveQueueTarget({ source: "find:luma-events", payload_json: stale });
+  expect(split).toHaveProperty("firstTouchFormat", "split");
+  expect(split).not.toHaveProperty("firstTouchSplit");
+});

@@ -165,6 +165,46 @@ describe("runRepoInterest", () => {
     expect(calls.llmInputBlocks[0]).not.toContain("WHY THIS REPO IS NOTABLE");
   });
 
+  it("adds the brief FORMAT block and reader seniority only in the brief arm", async () => {
+    const out = await runRepoInterest({
+      dryRun: true,
+      targets: [
+        {
+          ...base,
+          repo: "owner/name",
+          yourEdge: "x",
+          title: "VP Engineering",
+          firstTouchFormat: "brief",
+        } as Parameters<typeof runRepoInterest>[0]["targets"][number],
+      ],
+    });
+    expect(calls.llmInputBlocks[0]).toContain("READER SENIORITY: exec");
+    expect((out.drafted[0] as { formatKey?: string } | undefined)?.formatKey).toBe("brief");
+  });
+
+  it("leaves the input block untouched and the draft untracked when no format is set", async () => {
+    await runRepoInterest({
+      dryRun: true,
+      targets: [{ ...base, repo: "owner/name", yourEdge: "x" }],
+    });
+    const untouched = calls.llmInputBlocks[0];
+    calls.llmInputBlocks = [];
+    const out = await runRepoInterest({
+      dryRun: true,
+      targets: [
+        {
+          ...base,
+          repo: "owner/name",
+          yourEdge: "x",
+          firstTouchFormat: "standard",
+        } as Parameters<typeof runRepoInterest>[0]["targets"][number],
+      ],
+    });
+    expect(calls.llmInputBlocks[0]).toBe(untouched);
+    expect(untouched).not.toContain("READER SENIORITY");
+    expect((out.drafted[0] as { formatKey?: string } | undefined)?.formatKey).toBe("standard");
+  });
+
   it("is 2-touch: enrolls a cadence on a real send", async () => {
     const out = await runRepoInterest({
       dryRun: false,

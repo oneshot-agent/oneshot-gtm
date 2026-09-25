@@ -56,8 +56,11 @@ export function edgeFieldOf(target: object): EdgeField | null {
   return null;
 }
 
-/** Stable 32-bit string hash — same construction as `admissionSlot`. */
-function hash32(s: string): number {
+/**
+ * Stable 32-bit string hash — same construction as `admissionSlot`. Callers
+ * that bucket prospects with it salt the input so buckets stay independent.
+ */
+export function hash32(s: string): number {
   let h = 0;
   for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return h;

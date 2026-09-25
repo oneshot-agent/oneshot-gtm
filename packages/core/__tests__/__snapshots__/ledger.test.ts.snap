@@ -48,6 +48,12 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_draft_versions_format",
+      "sql": "CREATE INDEX idx_draft_versions_format ON draft_versions(play_name, format_key)",
+      "tbl_name": "draft_versions",
+      "type": "index",
+    },
+    {
       "name": "idx_draft_versions_play",
       "sql": "CREATE INDEX idx_draft_versions_play
         ON draft_versions(play_name, angle_key)",
@@ -419,7 +425,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         discard_reason TEXT,           -- 'regenerate' | 'rotate' | 'redraft' | 'abandoned'
         created_at     TEXT NOT NULL DEFAULT (datetime('now')),
         closed_at      TEXT
-      , voice_key TEXT)",
+      , voice_key TEXT, format_key TEXT)",
       "tbl_name": "draft_versions",
       "type": "table",
     },

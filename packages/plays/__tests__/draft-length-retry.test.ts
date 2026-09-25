@@ -119,3 +119,39 @@ describe("draftEmailFromPrompt length retry", () => {
     expect(d.body.split(" ")).toHaveLength(158);
   });
 });
+
+describe("draftEmailFromPrompt sentence retry (brief first touch)", () => {
+  const fourSentences = "One point here. A second point. A third one. And a fourth.";
+  const threeSentences = "One point here. A second point. Worth a reply?";
+
+  it("redrafts once when a sentence cap is set and exceeded, and keeps the shorter", async () => {
+    responses.push(json(fourSentences), json(threeSentences));
+    const out = await draftEmailFromPrompt({
+      promptName: "p",
+      inputBlock: "x",
+      maxBodyWords: 70,
+      maxBodySentences: 3,
+    });
+    expect(out.body).toBe(threeSentences);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.at(-1)!.content).toContain("at most 3 sentences");
+  });
+
+  it("runs the sentence redraft even without a word cap", async () => {
+    responses.push(json(fourSentences), json(threeSentences));
+    const out = await draftEmailFromPrompt({
+      promptName: "p",
+      inputBlock: "x",
+      maxBodySentences: 3,
+    });
+    expect(out.body).toBe(threeSentences);
+    expect(calls[1]!.at(-1)!.content).toContain("at most 3 sentences.");
+    expect(calls[1]!.at(-1)!.content).not.toContain("Infinity");
+  });
+
+  it("does not redraft on sentences when no sentence cap is set", async () => {
+    responses.push(json(fourSentences));
+    await draftEmailFromPrompt({ promptName: "p", inputBlock: "x", maxBodyWords: 70 });
+    expect(calls).toHaveLength(1);
+  });
+});

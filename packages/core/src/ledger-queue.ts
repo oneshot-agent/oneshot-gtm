@@ -907,6 +907,9 @@ export class QueueStore {
       dryRun: boolean;
       enrichmentFailed?: boolean;
       angle?: unknown;
+      /** Voice card hash and first-touch format arm the draft was written with, when set. */
+      voiceKey?: string | null;
+      formatKey?: string | null;
     };
     /** Why the draft being replaced was discarded; default `redraft` (a machine re-draft, no judgment). */
     discardReason?: DraftDiscardReason;
@@ -953,6 +956,7 @@ export class QueueStore {
       sent: boolean;
       angle?: unknown;
       voiceKey?: string | null;
+      formatKey?: string | null;
     },
     discardReason: DraftDiscardReason | undefined,
     sentBy: "human" | "machine",
@@ -969,6 +973,7 @@ export class QueueStore {
       flags: draft.flags,
       angle: draftVersionAngle(draft.angle),
       voiceKey: typeof draft.voiceKey === "string" && draft.voiceKey ? draft.voiceKey : null,
+      formatKey: typeof draft.formatKey === "string" && draft.formatKey ? draft.formatKey : null,
     };
     if (!draft.sent) {
       this.drafts.open({ ...base, ...(discardReason ? { discardReason } : {}) });

@@ -47,6 +47,19 @@ export interface LedgerMigration {
  */
 export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
   { version: 1, name: "baseline", up: (db) => migrateLedgerSchema(db) },
+  {
+    // Which first-touch format arm (`standard` / `brief`) a draft was written
+    // in, NULL when its trigger never set one — so outcomes split by format
+    // the way `voice_key` splits them by voice card.
+    version: 2,
+    name: "draft-versions-format-key",
+    up: (db) => {
+      addColumnIfMissing(db, "draft_versions", "format_key", "TEXT");
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_draft_versions_format ON draft_versions(play_name, format_key)",
+      );
+    },
+  },
 ];
 
 export const LEDGER_SCHEMA_VERSION = LEDGER_MIGRATIONS[LEDGER_MIGRATIONS.length - 1]!.version;

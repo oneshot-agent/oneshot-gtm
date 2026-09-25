@@ -197,7 +197,34 @@ export function slopFlags(text: string): string[] {
   return SLOP_PHRASES.filter(([re]) => re.test(text)).map(([, label]) => label);
 }
 
-export function bodyWordsForLint(body: string, sigLines?: string[]): number {
+/** A line that is only a greeting ("Hey Sam,"), which a format's budget may exclude. */
+const GREETING_LINE = /^(?:hey|hi|hello|dear)\b[^.!?]{0,40},$/i;
+
+export function bodyWordsForLint(
+  body: string,
+  sigLines?: string[],
+  /** Leave a standalone greeting line out of the count (the brief format's budget excludes it). */
+  opts: { excludeGreeting?: boolean } = {},
+): number {
+  const text = bodyWithoutSignature(body, sigLines);
+  const counted = opts.excludeGreeting
+    ? text
+        .split("\n")
+        .filter((l) => !GREETING_LINE.test(l.trim()))
+        .join("\n")
+    : text;
+  return counted.split(/\s+/).filter(Boolean).length;
+}
+
+/** Titles: a name always follows, so their period never ends a sentence. */
+const TITLE_ABBREVIATIONS = /\b(?:Dr|Mr|Mrs|Ms|Mx|Prof|Sr|Jr|St)\./g;
+/**
+ * Other abbreviations: mid-sentence unless a capitalised word follows, in
+ * which case the period is also the sentence's end ("…St. Louis etc. Want a call?").
+ */
+const OTHER_ABBREVIATIONS = /\b(?:vs|etc|e\.g|i\.e|approx|Inc|Ltd|Co)\.(?!\s+\p{Lu})/giu;
+
+function bodyWithoutSignature(body: string, sigLines?: string[]): string {
   const lines = sigLines ?? configuredSigLines();
   let trimmed = body.trimEnd();
   // Peel each sig line off the tail only if it matches the current last line —
@@ -208,7 +235,33 @@ export function bodyWordsForLint(body: string, sigLines?: string[]): number {
     if (last !== line) break;
     trimmed = trimmed.slice(0, i < 0 ? 0 : i).trimEnd();
   }
-  return trimmed.split(/\s+/).filter(Boolean).length;
+  return trimmed;
+}
+
+/**
+ * Sentences in the body the reader reads: the signature peeled like
+ * `bodyWordsForLint`, a lone greeting line ("Hey Sam,") and a lone sign-off
+ * word ("Thanks,") ignored, URLs and decimals not treated as sentence ends. A
+ * line that ends without punctuation still counts as one.
+ */
+export function bodySentencesForLint(body: string, sigLines?: string[]): number {
+  const lines = bodyWithoutSignature(body, sigLines)
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .filter((l) => !GREETING_LINE.test(l))
+    .filter((l) => !/^[\p{L} ]{1,20},$/u.test(l) || /\s\S+\s/.test(l));
+  let count = 0;
+  for (const line of lines) {
+    const text = line
+      .replace(/https?:\/\/\S+/g, "URL")
+      .replace(/(\d)\.(\d)/g, "$1$2")
+      .replace(TITLE_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
+      .replace(OTHER_ABBREVIATIONS, (m) => m.replace(/\./g, ""));
+    const parts = text.split(/[.!?]+(?=\s|$)/).filter((p) => /\p{L}/u.test(p));
+    count += Math.max(parts.length, 1);
+  }
+  return count;
 }
 
 /**
@@ -332,13 +385,27 @@ function subjectShouty(subject: string): boolean {
   });
 }
 
-export function lintEmail(subject: string, body: string, maxBodyWords = 110): string[] {
+export function lintEmail(
+  subject: string,
+  body: string,
+  maxBodyWords = 110,
+  /** Set by formats with a sentence budget (the brief first touch); absent = no sentence check. */
+  maxBodySentences?: number,
+): string[] {
   const flags: string[] = [];
   if (subject.length === 0) flags.push("empty-subject");
   if (subject.length > 60) flags.push("subject-too-long");
   if (subjectShouty(subject)) flags.push("subject-shouty");
   if (body.length === 0) flags.push("empty-body");
-  if (bodyWordsForLint(body) > maxBodyWords) flags.push("body-too-long");
+  // A sentence-budgeted format (brief) excludes a standalone greeting from
+  // both budgets; every other draft counts words exactly as before.
+  const briefBudget = maxBodySentences !== undefined;
+  if (bodyWordsForLint(body, undefined, { excludeGreeting: briefBudget }) > maxBodyWords) {
+    flags.push("body-too-long");
+  }
+  if (maxBodySentences !== undefined && bodySentencesForLint(body) > maxBodySentences) {
+    flags.push("too-many-sentences");
+  }
   if (body.includes("—")) flags.push("em-dash");
   if (/[“”‘’]/.test(body)) flags.push("curly-quotes");
   if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(body)) flags.push("emoji");
@@ -794,6 +861,8 @@ export async function draftEmailFromPrompt(opts: {
    * send. Absent → the draft is returned as written.
    */
   maxBodyWords?: number;
+  /** A sentence budget (the brief first touch); over it earns the same single redraft. */
+  maxBodySentences?: number;
 }): Promise<DraftedEmail> {
   const system = loadPrompt(opts.promptName) + signatureDirective();
   const messages: DraftMessages = [
@@ -801,8 +870,14 @@ export async function draftEmailFromPrompt(opts: {
     { role: "user", content: opts.inputBlock },
   ];
   const draft = await draftOnce(messages, opts);
-  if (opts.maxBodyWords === undefined) return draft;
-  return tightenIfTooLong(messages, draft, opts.maxBodyWords, opts);
+  if (opts.maxBodyWords === undefined && opts.maxBodySentences === undefined) return draft;
+  return tightenIfTooLong(
+    messages,
+    draft,
+    opts.maxBodyWords ?? Number.POSITIVE_INFINITY,
+    opts,
+    opts.maxBodySentences,
+  );
 }
 
 /**
@@ -851,18 +926,25 @@ async function tightenIfTooLong(
   draft: DraftedEmail,
   maxBodyWords: number,
   opts: DraftCallOpts,
+  maxBodySentences?: number,
 ): Promise<DraftedEmail> {
-  const words = bodyWordsForLint(draft.body);
-  if (words <= maxBodyWords) return draft;
+  const briefBudget = maxBodySentences !== undefined;
+  const words = bodyWordsForLint(draft.body, undefined, { excludeGreeting: briefBudget });
+  const sentences = bodySentencesForLint(draft.body);
+  const tooManySentences = briefBudget && sentences > maxBodySentences;
+  if (words <= maxBodyWords && !tooManySentences) return draft;
   const target = Math.max(30, Math.floor(maxBodyWords * LENGTH_RETRY_RATIO));
   messages.push(
     { role: "assistant", content: JSON.stringify({ subject: draft.subject, body: draft.body }) },
     {
       role: "user",
-      content:
-        `That body is ${words} words; this email is held at ${maxBodyWords}. Rewrite it in at most ${target} words. ` +
-        "Keep the subject, the facts, the one argument and the closing question. Cut whole sentences rather than compressing them into longer ones. " +
-        'Return only the JSON object with "subject" and "body".',
+      content: tooManySentences
+        ? `That body is ${sentences} sentences; this email is held at ${maxBodySentences}. Rewrite it in at most ${maxBodySentences} sentences${Number.isFinite(maxBodyWords) ? ` and ${maxBodyWords} words` : ""}. ` +
+          "Keep the subject, the facts and the one ask. Cut whole sentences rather than joining them. " +
+          'Return only the JSON object with "subject" and "body".'
+        : `That body is ${words} words; this email is held at ${maxBodyWords}. Rewrite it in at most ${target} words. ` +
+          "Keep the subject, the facts, the one argument and the closing question. Cut whole sentences rather than compressing them into longer ones. " +
+          'Return only the JSON object with "subject" and "body".',
     },
   );
   let retry: DraftedEmail;
@@ -881,16 +963,22 @@ async function tightenIfTooLong(
     );
     return draft;
   }
-  const retryWords = bodyWordsForLint(retry.body);
+  const retryWords = bodyWordsForLint(retry.body, undefined, { excludeGreeting: briefBudget });
+  const retrySentences = bodySentencesForLint(retry.body);
+  // Shorter wins: by sentences when that was the breach, else by words.
+  const keepRetry = tooManySentences ? retrySentences < sentences : retryWords < words;
   logEvent("email.draft.too_long_retry", {
     promptName: opts.promptName,
     words,
     cap: maxBodyWords,
     target,
     retry_words: retryWords,
-    kept: retryWords < words ? "retry" : "original",
+    ...(tooManySentences
+      ? { sentences, sentence_cap: maxBodySentences, retry_sentences: retrySentences }
+      : {}),
+    kept: keepRetry ? "retry" : "original",
   });
-  return retryWords < words ? retry : draft;
+  return keepRetry ? retry : draft;
 }
 
 function parseSubjectBody(raw: string): DraftedEmail | null {

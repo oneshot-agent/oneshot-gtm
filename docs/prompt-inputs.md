@@ -154,6 +154,41 @@ also lists its earlier drafts (`GET /api/queue/:id/drafts`,
 `GET /api/cadences/:id/drafts?play=`), newest first, with what became of
 each.
 
+Replies are counted on the same lines: a send whose `sequence_events` row
+was later marked `replied` credits the angle, voice and step it was built on.
+A rate is shown only once a line has 30 sends; below that the panel says how
+many sends the sample has so far, because a rate on a handful of sends is
+noise that reads like a result.
+
+## First-touch format
+
+A trigger can opt into `firstTouchFormat` to test how its first emails are
+shaped. `standard` is the play's own prompt; `brief` appends a binding
+FORMAT block (`packages/prompts/_format-brief.md`):
+
+- at most 3 sentences and under 70 words;
+- no opening observation about the reader;
+- one non-obvious line, what they would get from answering, and one ask;
+- a register chosen from `READER SENIORITY`, a coarse
+  `exec` / `lead` / `individual` / `unknown` read of the row's title
+  (`readerSeniority` in `packages/plays/src/_first-touch.ts`).
+
+`split` puts each prospect in one arm by a stable, salted hash of their email,
+with `firstTouchSplit` the share on `brief` (default 0.5). A regenerate or a
+later send lands in the same arm, and the assignment is independent of the
+admission slot.
+
+The limits are enforced on the output, not left to the model: a brief draft
+over either budget earns the same single tighter redraft as an over-long one,
+and lint holds it as `too-many-sentences` or `body-too-long` if it is still
+over. Follow-ups are unchanged.
+
+Each intro version records its arm (`draft_versions.format_key`, NULL when
+the trigger never set a format, so earlier drafts are untouched). The trigger
+editor shows a "first-touch format" line per arm with the same sent,
+regenerated and replied counts and the same 30-send rule. Nothing switches
+arms automatically: the founder reads the comparison and changes the setting.
+
 ## Keeping this page true
 
 Re-derive rather than trusting it:

@@ -104,6 +104,9 @@ export function toView(row: QueueRow): QueueRowView {
           ...(typeof parsed.voiceKey === "string" && parsed.voiceKey
             ? { voiceKey: parsed.voiceKey }
             : {}),
+          ...(typeof parsed.formatKey === "string" && parsed.formatKey
+            ? { formatKey: parsed.formatKey }
+            : {}),
           ...(parsed.enrichmentFailed === true ? { enrichmentFailed: true } : {}),
         };
       }
@@ -1009,6 +1012,8 @@ async function regenerateDraftInner(
     ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
     // The voice card the draft was written with, so its version splits by voice.
     ...(draft.voiceKey ? { voiceKey: draft.voiceKey } : {}),
+    // The first-touch format arm, so outcomes split by format.
+    ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
   };
   const saved = ledger.setQueueDraftIfCurrent({
     id,

@@ -806,6 +806,8 @@ export interface LastDraft {
   enrichmentFailed?: boolean;
   /** Hash of the founder's voice card the draft was written with; absent when none was set. */
   voiceKey?: string | null;
+  /** First-touch format arm the draft was written in (`standard` / `brief`); absent when the trigger set none. */
+  formatKey?: string | null;
 }
 
 /**
@@ -1313,6 +1315,11 @@ export interface TriggerView {
   draftUsage: { intro: DraftUsageView; followUp: DraftUsageView } | null;
   /** The same outcomes split by voice card on/off. Null when nothing was ever drafted. */
   voiceUsage: VoiceUsageView | null;
+  /**
+   * Intro outcomes by first-touch format arm (`standard` / `brief`), present
+   * only once a draft was written under a `firstTouchFormat` setting.
+   */
+  formatUsage?: Record<string, DraftUsageView> | null;
 }
 
 export interface PackView {
