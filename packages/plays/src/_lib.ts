@@ -197,9 +197,27 @@ export function slopFlags(text: string): string[] {
   return SLOP_PHRASES.filter(([re]) => re.test(text)).map(([, label]) => label);
 }
 
-export function bodyWordsForLint(body: string, sigLines?: string[]): number {
-  return bodyWithoutSignature(body, sigLines).split(/\s+/).filter(Boolean).length;
+/** A line that is only a greeting ("Hey Sam,"), which a format's budget may exclude. */
+const GREETING_LINE = /^(?:hey|hi|hello|dear)\b[^.!?]{0,40},$/i;
+
+export function bodyWordsForLint(
+  body: string,
+  sigLines?: string[],
+  /** Leave a standalone greeting line out of the count (the brief format's budget excludes it). */
+  opts: { excludeGreeting?: boolean } = {},
+): number {
+  const text = bodyWithoutSignature(body, sigLines);
+  const counted = opts.excludeGreeting
+    ? text
+        .split("\n")
+        .filter((l) => !GREETING_LINE.test(l.trim()))
+        .join("\n")
+    : text;
+  return counted.split(/\s+/).filter(Boolean).length;
 }
+
+/** Abbreviations whose period never ends a sentence. */
+const ABBREVIATIONS = /\b(?:Dr|Mr|Mrs|Ms|Mx|Prof|Sr|Jr|St|vs|etc|e\.g|i\.e|approx|Inc|Ltd|Co)\./gi;
 
 function bodyWithoutSignature(body: string, sigLines?: string[]): string {
   const lines = sigLines ?? configuredSigLines();
@@ -226,11 +244,14 @@ export function bodySentencesForLint(body: string, sigLines?: string[]): number 
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean)
-    .filter((l) => !/^(?:hey|hi|hello|dear)\b[^.!?]{0,40},$/i.test(l))
+    .filter((l) => !GREETING_LINE.test(l))
     .filter((l) => !/^[\p{L} ]{1,20},$/u.test(l) || /\s\S+\s/.test(l));
   let count = 0;
   for (const line of lines) {
-    const text = line.replace(/https?:\/\/\S+/g, "URL").replace(/(\d)\.(\d)/g, "$1$2");
+    const text = line
+      .replace(/https?:\/\/\S+/g, "URL")
+      .replace(/(\d)\.(\d)/g, "$1$2")
+      .replace(ABBREVIATIONS, (m) => m.replace(/\./g, ""));
     const parts = text.split(/[.!?]+(?=\s|$)/).filter((p) => /\p{L}/u.test(p));
     count += Math.max(parts.length, 1);
   }
@@ -370,7 +391,12 @@ export function lintEmail(
   if (subject.length > 60) flags.push("subject-too-long");
   if (subjectShouty(subject)) flags.push("subject-shouty");
   if (body.length === 0) flags.push("empty-body");
-  if (bodyWordsForLint(body) > maxBodyWords) flags.push("body-too-long");
+  // A sentence-budgeted format (brief) excludes a standalone greeting from
+  // both budgets; every other draft counts words exactly as before.
+  const briefBudget = maxBodySentences !== undefined;
+  if (bodyWordsForLint(body, undefined, { excludeGreeting: briefBudget }) > maxBodyWords) {
+    flags.push("body-too-long");
+  }
   if (maxBodySentences !== undefined && bodySentencesForLint(body) > maxBodySentences) {
     flags.push("too-many-sentences");
   }
@@ -838,8 +864,14 @@ export async function draftEmailFromPrompt(opts: {
     { role: "user", content: opts.inputBlock },
   ];
   const draft = await draftOnce(messages, opts);
-  if (opts.maxBodyWords === undefined) return draft;
-  return tightenIfTooLong(messages, draft, opts.maxBodyWords, opts, opts.maxBodySentences);
+  if (opts.maxBodyWords === undefined && opts.maxBodySentences === undefined) return draft;
+  return tightenIfTooLong(
+    messages,
+    draft,
+    opts.maxBodyWords ?? Number.POSITIVE_INFINITY,
+    opts,
+    opts.maxBodySentences,
+  );
 }
 
 /**
@@ -890,9 +922,10 @@ async function tightenIfTooLong(
   opts: DraftCallOpts,
   maxBodySentences?: number,
 ): Promise<DraftedEmail> {
-  const words = bodyWordsForLint(draft.body);
+  const briefBudget = maxBodySentences !== undefined;
+  const words = bodyWordsForLint(draft.body, undefined, { excludeGreeting: briefBudget });
   const sentences = bodySentencesForLint(draft.body);
-  const tooManySentences = maxBodySentences !== undefined && sentences > maxBodySentences;
+  const tooManySentences = briefBudget && sentences > maxBodySentences;
   if (words <= maxBodyWords && !tooManySentences) return draft;
   const target = Math.max(30, Math.floor(maxBodyWords * LENGTH_RETRY_RATIO));
   messages.push(
@@ -900,7 +933,7 @@ async function tightenIfTooLong(
     {
       role: "user",
       content: tooManySentences
-        ? `That body is ${sentences} sentences; this email is held at ${maxBodySentences}. Rewrite it in at most ${maxBodySentences} sentences and ${maxBodyWords} words. ` +
+        ? `That body is ${sentences} sentences; this email is held at ${maxBodySentences}. Rewrite it in at most ${maxBodySentences} sentences${Number.isFinite(maxBodyWords) ? ` and ${maxBodyWords} words` : ""}. ` +
           "Keep the subject, the facts and the one ask. Cut whole sentences rather than joining them. " +
           'Return only the JSON object with "subject" and "body".'
         : `That body is ${words} words; this email is held at ${maxBodyWords}. Rewrite it in at most ${target} words. ` +
@@ -924,7 +957,7 @@ async function tightenIfTooLong(
     );
     return draft;
   }
-  const retryWords = bodyWordsForLint(retry.body);
+  const retryWords = bodyWordsForLint(retry.body, undefined, { excludeGreeting: briefBudget });
   const retrySentences = bodySentencesForLint(retry.body);
   // Shorter wins: by sentences when that was the breach, else by words.
   const keepRetry = tooManySentences ? retrySentences < sentences : retryWords < words;

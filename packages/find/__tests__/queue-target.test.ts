@@ -102,3 +102,19 @@ it("carries the trigger's first-touch format settings onto the target at generat
     "firstTouchFormat",
   );
 });
+
+it("drops format settings copied onto the payload once the trigger no longer sets them", () => {
+  const stale = JSON.stringify({
+    email: "a@example.com",
+    firstTouchFormat: "brief",
+    firstTouchSplit: 1,
+  });
+  getTrigger.mockReturnValue({ config_json: JSON.stringify({ yourEdge: "e" }) });
+  const out = resolveQueueTarget({ source: "find:luma-events", payload_json: stale });
+  expect(out).not.toHaveProperty("firstTouchFormat");
+  expect(out).not.toHaveProperty("firstTouchSplit");
+  getTrigger.mockReturnValue({ config_json: JSON.stringify({ firstTouchFormat: "split" }) });
+  const split = resolveQueueTarget({ source: "find:luma-events", payload_json: stale });
+  expect(split).toHaveProperty("firstTouchFormat", "split");
+  expect(split).not.toHaveProperty("firstTouchSplit");
+});

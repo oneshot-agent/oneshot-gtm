@@ -28,18 +28,21 @@ export function resolveQueueTarget(row: Pick<QueueRow, "payload_json" | "source"
     resolved[key] = value ?? "";
   }
   // First-touch format experiment settings, read at generation time like the
-  // edge so turning a split on applies to rows already queued. Invalid values
-  // are ignored (the play then drafts in its standard format, untracked).
-  if (Object.hasOwn(config, "firstTouchFormat")) {
-    const format = config["firstTouchFormat"];
-    if (format === "standard" || format === "brief" || format === "split") {
-      resolved["firstTouchFormat"] = format;
-    } else {
-      delete resolved["firstTouchFormat"];
-    }
+  // edge so turning a split on applies to rows already queued. The trigger's
+  // current config is the only source: a value copied onto the payload is
+  // dropped when the config no longer sets it (or sets it invalidly), so the
+  // play falls back to its standard format, untracked.
+  const format = config["firstTouchFormat"];
+  if (format === "standard" || format === "brief" || format === "split") {
+    resolved["firstTouchFormat"] = format;
+  } else {
+    delete resolved["firstTouchFormat"];
   }
-  if (typeof config["firstTouchSplit"] === "number" && Number.isFinite(config["firstTouchSplit"])) {
-    resolved["firstTouchSplit"] = config["firstTouchSplit"];
+  const split = config["firstTouchSplit"];
+  if (typeof split === "number" && Number.isFinite(split)) {
+    resolved["firstTouchSplit"] = split;
+  } else {
+    delete resolved["firstTouchSplit"];
   }
   return resolved;
 }
