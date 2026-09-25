@@ -32,6 +32,8 @@ The person gate is re-judged on the researched role when its verdict was missing
 
 Backfill, in this order per workspace: `find research-queue --status live` (pending and approved rows), `find research-prospects --scope all --refresh` (every prospect with a profile URL: sent, in cadence, completed, replied), then `find synthesize-angles --refresh --scope active` so follow-ups and reply drafts pick up the new dossier. None of the three has a cost cap by default (`--max-cost-usd` bounds a rehearsal); each run considers up to 100,000 rows per status and researched rows are skipped, so re-running continues where the last run stopped. `--dry-run` shows counts and an estimate; `--no-rejudge` and `--no-company` narrow what is bought.
 
+**GitHub-only people.** For someone whose whole public footprint is GitHub, the github-stars gate judges on what GitHub publishes, since person research usually comes back `unavailable`: bio, company, site, location, account age, their own recent repos, and a profile-README excerpt on a bare profile (one extra API call per candidate, up to three on bare profiles). The block is stored on the row as `githubEvidence`. `find rejudge-github` re-runs that decision on live github-stars rows with no paid research: pending rejects move to rejected, approved rows only with `--reject-approved`, and a GitHub or classifier failure skips a row rather than rejecting it. `--dry-run` writes nothing.
+
 ## Review order
 
 The pending review list on `/queue` can be ordered `newest` or `ranked` (finder-interleaved priority score with exploration slots). It's a toggle on the page, defaulted by `queueReviewOrder` in config. `find calibrate` measures the score against logged outcomes (shadow only; scores drive nothing but this ordering until they clear the acceptance bar).
@@ -47,6 +49,10 @@ Approved rows ship via the **Drain** button or `find drain <play>`. Both respect
 - `LUMA_SESSION_COOKIE` — optional; only buys authed Luma guest lists.
 
 All of these are env-only: `init` never asks, but `/setup` and `config keys` store them in the workspace's `.env`.
+
+## Institutional buyers
+
+Set `play: "design-partner-loi"` and `buyerType` (`enterprise`, `government` or `hardware`) on a finder's trigger to send its rows to the design-partner play instead of the finder's own founder-to-founder play. That play writes for an institutional evaluator and steps the ask from a scoped conversation to a pilot to a non-binding LOI. It works on hiring-signal, job-change, post-funding, podcast-guest and local-business. The trigger is ready only with an edge and a valid buyer type, and dedupe covers both plays, so switching the setting never lets the same person through twice.
 
 ## Expired queue rows
 

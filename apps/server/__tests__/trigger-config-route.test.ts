@@ -119,3 +119,88 @@ describe("setTriggerConfigRoute — edge warnings (issue #585)", () => {
     expect(((await none.json()) as { warnings: string[] }).warnings).toEqual([]);
   });
 });
+
+describe("setTriggerConfigRoute — design-partner-loi routing warnings (issue #705)", () => {
+  it("warns when play routes to design-partner-loi but buyerType is missing", async () => {
+    const res = await setTriggerConfigRoute(
+      req({ config: { play: "design-partner-loi", yourEdge: "we cut integration time" } }),
+      { name: "post-funding-auto" },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { warnings: string[] };
+    expect(body.warnings.some((w) => w.includes("buyerType must be"))).toBe(true);
+  });
+
+  it("warns when play routes to design-partner-loi but buyerType is invalid", async () => {
+    const res = await setTriggerConfigRoute(
+      req({
+        config: {
+          play: "design-partner-loi",
+          yourEdge: "we cut integration time",
+          buyerType: "owner-operator",
+        },
+      }),
+      { name: "post-funding-auto" },
+    );
+    const body = (await res.json()) as { warnings: string[] };
+    expect(body.warnings.some((w) => w.includes("buyerType must be"))).toBe(true);
+  });
+
+  it("warns when play routes to design-partner-loi but yourEdge is missing — finding PRRT_kwDOSKzrBs6mB73_", async () => {
+    const res = await setTriggerConfigRoute(
+      req({ config: { play: "design-partner-loi", buyerType: "enterprise" } }),
+      { name: "post-funding-auto" },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; warnings: string[] };
+    expect(body.ok).toBe(true); // still saves — never a refusal
+    expect(
+      body.warnings.some((w) => w.includes("yourEdge is required to route to design-partner-loi")),
+    ).toBe(true);
+  });
+
+  it("warns on the finder-specific edge key (yourClaim for hiring-signal), not yourEdge", async () => {
+    const res = await setTriggerConfigRoute(
+      req({ config: { play: "design-partner-loi", buyerType: "enterprise" } }),
+      { name: "hiring-signal" },
+    );
+    const body = (await res.json()) as { warnings: string[] };
+    expect(
+      body.warnings.some((w) => w.includes("yourClaim is required to route to design-partner-loi")),
+    ).toBe(true);
+    expect(body.warnings.some((w) => w.includes("yourEdge is required"))).toBe(false);
+  });
+
+  it("blank/whitespace-only edge value still warns, not just missing", async () => {
+    const res = await setTriggerConfigRoute(
+      req({ config: { play: "design-partner-loi", buyerType: "enterprise", yourEdge: "   " } }),
+      { name: "post-funding-auto" },
+    );
+    const body = (await res.json()) as { warnings: string[] };
+    expect(
+      body.warnings.some((w) => w.includes("yourEdge is required to route to design-partner-loi")),
+    ).toBe(true);
+  });
+
+  it("says nothing about the edge field when play is not design-partner-loi", async () => {
+    const res = await setTriggerConfigRoute(req({ config: { play: "other" } }), {
+      name: "post-funding-auto",
+    });
+    const body = (await res.json()) as { warnings: string[] };
+    expect(body.warnings).toEqual([]);
+  });
+
+  it("no design-partner-loi routing warning once both buyerType and yourEdge are set", async () => {
+    const res = await setTriggerConfigRoute(
+      req({
+        config: { play: "design-partner-loi", buyerType: "enterprise", yourEdge: "our edge" },
+      }),
+      { name: "post-funding-auto" },
+    );
+    const body = (await res.json()) as { warnings: string[] };
+    expect(body.warnings.some((w) => w.includes("buyerType must be"))).toBe(false);
+    expect(
+      body.warnings.some((w) => w.includes("is required to route to design-partner-loi")),
+    ).toBe(false);
+  });
+});

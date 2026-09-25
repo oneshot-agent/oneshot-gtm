@@ -7,16 +7,22 @@ import { getLedger } from "@oneshot-gtm/core";
  * (cross-play dedup — don't queue + enrich someone a different play already
  * surfaced and is about to email).
  *
+ * `playName` accepts an array so a finder that can route its rows to a
+ * different play (`play`/`buyerType` config keys, issue #705) can check
+ * dedupe against every play it might have enqueued this candidate under —
+ * toggling `play` between runs must not let the same person back through.
+ *
  * The email-based checks are gated on `prospectEmail`, so callers that pass
  * `undefined` (breakup-revive, by design) still bypass them to re-engage.
  */
 export function isDuplicate(opts: {
-  playName: string;
+  playName: string | string[];
   dedupeKey: string;
   prospectEmail?: string | null;
 }): boolean {
   const ledger = getLedger();
-  if (ledger.isQueueDuplicate(opts.playName, opts.dedupeKey)) return true;
+  const playNames = Array.isArray(opts.playName) ? opts.playName : [opts.playName];
+  if (playNames.some((p) => ledger.isQueueDuplicate(p, opts.dedupeKey))) return true;
   if (opts.prospectEmail) {
     const existing = ledger.findProspectByEmail(opts.prospectEmail);
     if (existing) return true;

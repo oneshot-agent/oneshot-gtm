@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   extractReadmeEmail,
   fetchProfileReadmeEmail,
+  fetchProfileReadmeText,
   _resetReadmeCache,
 } from "../src/_github-readme.ts";
 
@@ -98,4 +99,19 @@ it("rejects oversized content even without a content-length", async () => {
 it("treats request timeout as retryable", async () => {
   fetchMock.mockRejectedValue(new DOMException("timed out", "TimeoutError"));
   expect((await fetchProfileReadmeEmail(identity)).status).toBe("unavailable");
+});
+it("serves README text and email from one fetch", async () => {
+  ready("# Pat\nI build agents.\nEmail me: pat@acme.dev");
+  expect(await fetchProfileReadmeText(identity)).toContain("I build agents.");
+  expect(await fetchProfileReadmeEmail(identity)).toMatchObject({ status: "found" });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+it("keeps only the README's opening 8 KB as text", async () => {
+  ready("a".repeat(20_000));
+  expect(await fetchProfileReadmeText(identity)).toHaveLength(8 * 1024);
+});
+it("returns null text for a missing README or a non-User account", async () => {
+  fetchMock.mockResolvedValue(new Response(null, { status: 404 }));
+  expect(await fetchProfileReadmeText(identity)).toBeNull();
+  expect(await fetchProfileReadmeText({ login: "org", accountType: "Organization" })).toBeNull();
 });

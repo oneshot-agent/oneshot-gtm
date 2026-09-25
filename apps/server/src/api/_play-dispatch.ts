@@ -13,6 +13,8 @@ export interface DraftedView {
   angle?: DraftAngle;
   /** Hash of the founder's voice card in the prompt (see `PlayDraft.voiceKey`). */
   voiceKey?: string | null;
+  /** First-touch format arm (see `PlayDraft.formatKey`). */
+  formatKey?: string | null;
 }
 
 export function toDraftedView(d: {
@@ -25,6 +27,7 @@ export function toDraftedView(d: {
   originalTargetIndex?: number;
   angle?: DraftAngle;
   voiceKey?: string | null;
+  formatKey?: string | null;
 }): DraftedView {
   return {
     subject: d.subject,
@@ -36,6 +39,7 @@ export function toDraftedView(d: {
     ...(d.originalTargetIndex !== undefined ? { originalTargetIndex: d.originalTargetIndex } : {}),
     ...(d.angle ? { angle: d.angle } : {}),
     ...(d.voiceKey ? { voiceKey: d.voiceKey } : {}),
+    ...(d.formatKey ? { formatKey: d.formatKey } : {}),
   };
 }
 

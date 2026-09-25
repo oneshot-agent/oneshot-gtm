@@ -29,6 +29,7 @@ import {
 import { safeDeepResearchPerson } from "./_sdk-safe.ts";
 import { researchUrl } from "./_profile-url.ts";
 import { isCircuitOpen } from "./_breaker.ts";
+import { renderGitHubProfileLine } from "./_github-evidence.ts";
 
 /**
  * Evidence gathering + LLM synthesis for the per-prospect angle (issue #355).
@@ -293,13 +294,7 @@ function renderGitHubEvidence(gh: AngleGitHubEvidence): string {
   const profileUrl = `https://github.com/${gh.login}`;
   const lines: string[] = [`GITHUB (@${gh.login}, ${profileUrl}):`];
   if (gh.profile) {
-    const p = gh.profile;
-    lines.push(
-      `Profile: ${p.name ?? gh.login}${p.company ? ` @ ${p.company}` : ""}` +
-        `${p.blogDomain ? ` (${p.blogDomain})` : ""}` +
-        `${p.createdAt ? ` — account created ${p.createdAt}` : ""}` +
-        ` — ${p.publicRepos} public repos, ${p.followers} followers`,
-    );
+    lines.push(renderGitHubProfileLine(gh.login, gh.profile));
   }
   if (gh.topRepos && gh.topRepos.length > 0) {
     lines.push("Recent repos:");

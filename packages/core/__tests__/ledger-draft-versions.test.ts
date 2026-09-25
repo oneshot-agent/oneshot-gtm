@@ -543,10 +543,169 @@ describe("aggregates", () => {
     expect(ledger.angleUsageByPlay()["other-play"]).toBeUndefined();
 
     expect(ledger.draftUsageByPlay()[play]).toEqual({
-      intro: { open: 1, regenerated: 1, rotated: 1, sent: 2, autoSent: 1 },
-      followUp: { open: 0, regenerated: 1, rotated: 0, sent: 1, autoSent: 0 },
+      intro: { open: 1, regenerated: 1, rotated: 1, sent: 2, autoSent: 1, replied: 0 },
+      followUp: { open: 0, regenerated: 1, rotated: 0, sent: 1, autoSent: 0, replied: 0 },
     });
     expect(ledger.draftUsageByPlay()["other-play"]).toBeUndefined();
+  });
+
+  it("credits one reply once, to the latest send in the slot", () => {
+    const play = "double-send";
+    const q1 = enqueue("dd@x.dev", play);
+    ledger.setQueueDraft({
+      id: q1,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_A }),
+      sentBy: "human",
+    });
+    // The same person reached again through a second row: a second sent
+    // version in the same prospect/play/step slot, on another angle.
+    const q2 = ledger.enqueueTarget({
+      playName: play,
+      payload: { email: "dd@x.dev", name: "P", yourEdge: `${ANGLE_A.text} // ${ANGLE_B.text}` },
+      dedupeKey: "k2:dd@x.dev",
+      source: "test",
+    })!;
+    ledger.setQueueDraft({
+      id: q2,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_B }),
+      sentBy: "human",
+    });
+    const p = ledger.upsertProspect({ name: "DD", email: "dd@x.dev", company: null, source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId: p,
+      playName: play,
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    ledger.markLatestStepReplied({ prospectId: p, playName: play });
+    const byText = Object.fromEntries(
+      ledger.angleUsageByPlay()[play]!.map((r) => [r.angleText, r]),
+    );
+    expect(byText[ANGLE_A.text]?.replied).toBe(0);
+    expect(byText[ANGLE_B.text]?.replied).toBe(1);
+    expect(ledger.draftUsageByPlay()[play]?.intro.replied).toBe(1);
+  });
+
+  it("counts a person reached by both a reviewed and an unattended send once", () => {
+    const play = "reached-union";
+    const q1 = enqueue("ru@x.dev", play);
+    ledger.setQueueDraft({
+      id: q1,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_A }),
+      sentBy: "human",
+    });
+    const q2 = ledger.enqueueTarget({
+      playName: play,
+      payload: { email: "ru@x.dev", name: "P", yourEdge: ANGLE_A.text },
+      dedupeKey: "k2:ru@x.dev",
+      source: "test",
+    })!;
+    ledger.setQueueDraft({
+      id: q2,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_A }),
+      sentBy: "machine",
+    });
+    const row = ledger.angleUsageByPlay()[play]!.find((r) => r.angleText === ANGLE_A.text)!;
+    expect(row).toMatchObject({ sent: 1, autoSent: 1, reached: 1 });
+  });
+
+  it("credits a reply to the angle and step of the send that got it", () => {
+    const play = "reply-attribution";
+    // u10 gets an intro on A and replies to it; u11 gets an intro on B and never replies.
+    const q10 = enqueue("u10@x.dev", play);
+    ledger.setQueueDraft({
+      id: q10,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_A }),
+      sentBy: "human",
+    });
+    const q11 = enqueue("u11@x.dev", play);
+    ledger.setQueueDraft({
+      id: q11,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_B }),
+      sentBy: "machine",
+    });
+    // The intro draft predates the prospect row: attribution goes through the email.
+    const p10 = ledger.upsertProspect({
+      name: "U10",
+      email: "u10@x.dev",
+      company: null,
+      source: "t",
+    });
+    const p11 = ledger.upsertProspect({
+      name: "U11",
+      email: "u11@x.dev",
+      company: null,
+      source: "t",
+    });
+    for (const prospectId of [p10, p11]) {
+      ledger.recordSequenceEvent({
+        prospectId,
+        playName: play,
+        stepIndex: 0,
+        channel: "email",
+        status: "sent",
+      });
+    }
+    ledger.markLatestStepReplied({ prospectId: p10, playName: play });
+
+    const byText = Object.fromEntries(
+      ledger.angleUsageByPlay()[play]!.map((r) => [r.angleText, r]),
+    );
+    expect(byText[ANGLE_A.text]).toMatchObject({ sent: 1, replied: 1 });
+    expect(byText[ANGLE_B.text]).toMatchObject({ autoSent: 1, replied: 0 });
+    expect(ledger.draftUsageByPlay()[play]?.intro).toMatchObject({
+      sent: 1,
+      autoSent: 1,
+      replied: 1,
+    });
+    expect(ledger.draftUsageByPlay()[play]?.followUp.replied).toBe(0);
+    expect(ledger.draftUsageByVoice()[play]?.plain.replied).toBe(1);
+  });
+});
+
+describe("first-touch format", () => {
+  it("records the arm on intro versions and counts outcomes and replies per arm", () => {
+    const play = "format-split";
+    const q1 = enqueue("f1@x.dev", play);
+    ledger.setQueueDraft({
+      id: q1,
+      draft: { ...draft({ sent: true, dryRun: false, angle: ANGLE_A }), formatKey: "brief" },
+      sentBy: "human",
+    });
+    const q2 = enqueue("f2@x.dev", play);
+    ledger.setQueueDraft({
+      id: q2,
+      draft: { ...draft({ angle: ANGLE_A }), formatKey: "standard" },
+    });
+    ledger.setQueueDraft({
+      id: q2,
+      draft: { ...draft({ body: "again", angle: ANGLE_A }), formatKey: "standard" },
+      discardReason: "regenerate",
+    });
+    // An untracked row (trigger never set a format) stays out of the split.
+    const q3 = enqueue("f3@x.dev", play);
+    ledger.setQueueDraft({
+      id: q3,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_A }),
+      sentBy: "human",
+    });
+
+    const p1 = ledger.upsertProspect({ name: "F1", email: "f1@x.dev", company: null, source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId: p1,
+      playName: play,
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    ledger.markLatestStepReplied({ prospectId: p1, playName: play });
+
+    const usage = ledger.draftUsageByFormat()[play]!;
+    expect(Object.keys(usage).toSorted()).toEqual(["brief", "standard"]);
+    expect(usage["brief"]).toMatchObject({ sent: 1, replied: 1 });
+    expect(usage["standard"]).toMatchObject({ open: 1, regenerated: 1, sent: 0, replied: 0 });
+    expect(ledger.draftUsageByFormat()["luma-events"]).toBeUndefined();
   });
 });
 

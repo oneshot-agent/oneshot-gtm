@@ -8,6 +8,7 @@ import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import { batchCompaniesByQueryLength, rotateBatches } from "./_query-batch.ts";
+import { buildDesignPartnerLoiPayload, dedupePlayNames, resolvePlayRoute } from "./_play-route.ts";
 import type { FinderResult, HiringSignalExtract, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "hiring-signal";
@@ -62,6 +63,15 @@ export interface HiringSignalFinderOpts extends RunOpts {
    * YC's board only. Default: the four ATS hosts (`DEFAULT_JOB_SITES`).
    */
   sites?: string[];
+  /**
+   * Route this finder's rows to `design-partner-loi` (the enterprise
+   * register) instead of `hiring-signal`'s own founder-to-founder play.
+   * `"design-partner-loi"` opts in; absent = today's behaviour, unchanged.
+   * Requires `buyerType`. See issue #705.
+   */
+  play?: string;
+  /** Required when `play` is `"design-partner-loi"`. See `DesignPartnerLoiTarget.buyerType`. */
+  buyerType?: string;
 }
 
 const DEFAULT_ROLES = ["Staff Engineer", "ML Engineer", "Solutions Engineer"];
@@ -84,6 +94,8 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
   // the founder may not have. The trigger's readiness gate blocks the scheduled
   // path; this guards the CLI/direct path so an empty claim never ships.
   const yourClaim = (opts.yourClaim ?? "").trim();
+  const route = resolvePlayRoute(opts);
+  const dedupeScope = dedupePlayNames(PLAY_NAME);
 
   const result: FinderResult = {
     source: SOURCE,
@@ -168,7 +180,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
       break;
     }
-    if (ledger.isQueueDuplicate(PLAY_NAME, hit.url)) {
+    if (dedupeScope.some((p) => ledger.isQueueDuplicate(p, hit.url))) {
       result.droppedDuplicate++;
       continue;
     }
@@ -287,7 +299,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       allowMissingFullName: managerName === null,
       companyDomain: domain,
       isDuplicate: (email) =>
-        isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
+        isDuplicate({ playName: dedupeScope, dedupeKey: hit.url, prospectEmail: email }),
       icp,
       person: {
         name: extract.hiringManagerName,
@@ -352,8 +364,20 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       ...icpFields(contact),
     };
     const id = enqueueScoredTarget(ledger, {
-      playName: PLAY_NAME,
-      payload: target,
+      playName: route ? route.playName : PLAY_NAME,
+      payload: route
+        ? buildDesignPartnerLoiPayload({
+            name: target.name,
+            email: target.email,
+            company: target.company,
+            buyerType: route.buyerType,
+            yourEdge: yourClaim,
+            title: contact.title,
+            linkedinUrl,
+            phone,
+            icp: icpFields(contact),
+          })
+        : target,
       dedupeKey: hit.url,
       source: SOURCE,
       fitReason: filter.reason,

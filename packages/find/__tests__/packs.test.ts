@@ -76,6 +76,16 @@ describe.each(REAL_PACK_IDS)("pack: %s", (id) => {
   });
 
   it("fails checkReadiness with a named reason before yourEdge/yourClaim is supplied", () => {
+    // #705: post-funding-auto and podcast-guest gained a readiness function
+    // whose only restriction is the OPTIONAL design-partner-loi play-routing
+    // keys (`play`/`buyerType`) — a no-op (always ready) unless a trigger's
+    // config sets `play`, which no pack patch does. Before #705 neither
+    // trigger had a readiness function at all (also always ready), so this
+    // is the same observable behaviour; only the two triggers now carry a
+    // defined-but-conditional gate. Exempt them from the blanket
+    // "readiness function implies unready pre-founder-voice" assumption
+    // below, which only holds for triggers whose OWN play requires it.
+    const playRoutingOnlyGate = new Set(["post-funding-auto", "podcast-guest"]);
     for (const [triggerName, patch] of Object.entries(pack.triggers)) {
       const spec = TRIGGERS.find((t) => t.name === triggerName)!;
       const merged = { ...spec.defaultConfig, ...patch };
@@ -84,7 +94,7 @@ describe.each(REAL_PACK_IDS)("pack: %s", (id) => {
       // until the founder supplies yourEdge/yourClaim — assert that's
       // actually true for every trigger this pack touches whose spec has a
       // readiness gate at all.
-      if (spec.readiness) {
+      if (spec.readiness && !playRoutingOnlyGate.has(triggerName)) {
         expect(readiness.ready, `${id}.${triggerName} should be unready pre-yourEdge`).toBe(false);
         if (!readiness.ready) {
           expect(readiness.reason.length).toBeGreaterThan(0);

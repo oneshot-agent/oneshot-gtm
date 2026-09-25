@@ -22,6 +22,18 @@ const PLAY_NAME = "design-partner-loi";
 const ALLOWED_BUYER_TYPES = new Set(["enterprise", "government", "hardware"]);
 
 /**
+ * Predicate form of the allowlist, for callers that need to validate a
+ * `buyerType` BEFORE committing to route to this play (e.g. a trigger's
+ * readiness gate or the config route, which must warn rather than let a bad
+ * value reach the runtime throw below). Single source of truth: this and
+ * `assertNotOwnerOperatorBuyer` share `ALLOWED_BUYER_TYPES` so the two can
+ * never drift apart.
+ */
+export function isAllowedDesignPartnerLoiBuyerType(buyerType: string): boolean {
+  return ALLOWED_BUYER_TYPES.has(buyerType.trim().toLowerCase());
+}
+
+/**
  * Throws unless `buyerType` is one of the supported buyer types
  * (enterprise/government/hardware) — the "design partner" / "non-binding
  * LOI" register is real language for those buyers and exactly the wrong
@@ -33,7 +45,7 @@ const ALLOWED_BUYER_TYPES = new Set(["enterprise", "government", "hardware"]);
  * assert the guard directly, not just observe its effect on a drafted row.
  */
 export function assertNotOwnerOperatorBuyer(buyerType: string): void {
-  if (!ALLOWED_BUYER_TYPES.has(buyerType.trim().toLowerCase())) {
+  if (!isAllowedDesignPartnerLoiBuyerType(buyerType)) {
     throw new Error(
       `design-partner-loi: refusing to draft for buyerType "${buyerType}" — this play is for ` +
         `enterprise/government/hardware counterparties only, never an owner-operator. Route this ` +

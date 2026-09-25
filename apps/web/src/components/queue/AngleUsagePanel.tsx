@@ -1,11 +1,15 @@
 import type { AngleUsageView, DraftUsageView, TriggerView } from "@oneshot-gtm/shared-types";
 import { isNeverSent } from "../../lib/angleRetire.ts";
 import { cn } from "../../lib/cn.ts";
+import { replyLabel } from "../../lib/replyRate.ts";
 import { Button } from "../primitives/Button.tsx";
+import { Explain } from "../primitives/Explain.tsx";
 
 /**
  * What the founder did with each configured angle, shown inside the trigger
- * config editor under `yourEdge`. Counts are distinct prospects. `retire`
+ * config editor under `yourEdge`, and how often its sends were answered — the
+ * side-by-side a founder reads to compare angles (a lesson against an
+ * opportunity, say). Counts are distinct prospects. `retire`
  * only rewrites the editor text (lib/angleRetire.ts); the editor's own save
  * is the write.
  */
@@ -14,6 +18,7 @@ function usageLine(label: string, u: DraftUsageView): string {
   const parts = [`${u.sent} sent`, `${u.regenerated} regenerated`];
   if (u.rotated > 0) parts.push(`${u.rotated} rotated`);
   if (u.autoSent > 0) parts.push(`${u.autoSent} auto-sent`);
+  if (u.sent + u.autoSent > 0) parts.push(replyLabel(u.replied, u.sent + u.autoSent));
   return `${label} ${parts.join(" / ")}`;
 }
 
@@ -24,6 +29,9 @@ function angleCounts(a: AngleUsageView): string {
     `redrafted ${a.redrafted}`,
     `sent ${a.sent}`,
     ...(a.autoSent > 0 ? [`auto ${a.autoSent}`] : []),
+    // Per person reached (reviewed or unattended, counted once), so the
+    // sample threshold says "people".
+    ...(a.reached > 0 ? [replyLabel(a.replied, a.reached, "people")] : []),
   ].join(" · ");
 }
 
@@ -31,6 +39,7 @@ export function AngleUsagePanel({
   angleUsage,
   draftUsage,
   voiceUsage,
+  formatUsage,
   onRetire,
   disabled,
 }: {
@@ -38,6 +47,8 @@ export function AngleUsagePanel({
   draftUsage: TriggerView["draftUsage"];
   /** The same outcomes split by the founder's voice card; absent on older callers. */
   voiceUsage?: TriggerView["voiceUsage"];
+  /** Intro outcomes by first-touch format arm; absent until a format setting drafted something. */
+  formatUsage?: TriggerView["formatUsage"];
   /** Remove an angle from the editor text. Absent = read-only. */
   onRetire?: (angleText: string) => void;
   disabled?: boolean;
@@ -52,10 +63,19 @@ export function AngleUsagePanel({
         {draftUsage
           ? `drafts · ${usageLine("intro", draftUsage.intro)} · ${usageLine("follow-up", draftUsage.followUp)}`
           : "drafts · nothing drafted on this play yet"}
+        <Explain concept="angleUsage" />
       </div>
       {voiceUsage && voiceUsage.voiced.sent + voiceUsage.voiced.regenerated > 0 && (
         <div className="font-mono text-[11px] text-ink-faint">
           {`voice · ${usageLine("on", voiceUsage.voiced)} · ${usageLine("off", voiceUsage.plain)}`}
+        </div>
+      )}
+      {formatUsage && Object.keys(formatUsage).length > 0 && (
+        <div className="font-mono text-[11px] text-ink-faint">
+          {`first-touch format · ${Object.entries(formatUsage)
+            .map(([arm, u]) => usageLine(arm, u))
+            .join(" · ")}`}
+          <Explain concept="firstTouchFormat" />
         </div>
       )}
       {!hasAny && (

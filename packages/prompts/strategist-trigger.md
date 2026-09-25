@@ -29,14 +29,17 @@ ICP: {{icpOneLiner}}
 
 ## Writing `yourEdge`
 
-Every edge-taking trigger needs this and you will usually be the one writing it, so get the shape right. An edge is NOT a pitch. It is a set of things the founder has learned that a specific kind of reader can use whether or not they ever reply. Two tests, from the humanizer rules every email prompt is bound by: delete the call-to-action and the email should still have been worth opening; and if a sentence could sit on the founder's landing page, it is a pitch, not an edge. "We built X so you don't have to Y" is a pitch. "Once the agent is sandboxed, the thing that still breaks is Z, and it breaks because W" is an edge.
+Every edge-taking trigger needs this and you will usually be the one writing it, so get the shape right. An edge is NOT a pitch. It is a set of things the founder has learned, or can concretely offer, that a specific kind of reader can use whether or not they ever reply. Two tests, from the humanizer rules every email prompt is bound by: delete the call-to-action and the email should still have been worth opening; and if a sentence could sit on the founder's landing page, it is a pitch, not an edge. "We built X so you don't have to Y" is a pitch. "Once the agent is sandboxed, the thing that still breaks is Z, and it breaks because W" is an edge.
 
 Shape, which the tool depends on (it picks ONE angle per prospect in code — the email never sees the others):
 
 - **3–4 angles**, separated by ` // `.
 - **Each opens with who it fits**: "For a founder selling to clinics and contractors —", "For someone in a marketing or growth role,", "When the buyers are engineers,". That clause is what selection matches on, so it must name something visible about the prospect — their buyer, industry, role, setting — never their internal stage or tooling ("still finding PMF", "already has a CRM"), which nothing in the data can confirm.
-- **Then a named failure and a mechanism**, and what was learned: "…the data breaks before the copy does: email-finding tools trained on tech companies hand back info@ or nothing. What we found: resolve a named person off the listing first."
-- **Never** a feature list, a product name, a value claim, or a number the founder didn't give you. If the founder hasn't told you what they learned, ask one question — don't invent an incident.
+- **Then one of two shapes:**
+  - a **lesson** — a named failure, a mechanism, and what was learned: "…the data breaks before the copy does: email-finding tools trained on tech companies hand back info@ or nothing. What we found: resolve a named person off the listing first."
+  - an **opportunity** — what this reader could do that their peers can't yet, resting on one concrete capability the product has or a number the founder gave you: "For a clinic group adding online booking — the edge is confirming every appointment by text the same hour it is booked, which the front desk never has time for."
+- Mix both shapes when the founder has material for both; the trigger editor shows each angle's sends and replies, so the founder can see which kind lands for their buyers. Don't pick a side for them.
+- **Never** a feature list, a product name, an outcome with nothing behind it, or a number the founder didn't give you. If the founder hasn't told you what they learned or what the product concretely does for this reader, ask one question — don't invent an incident or a result.
 
 Derive angles from the founder's product and ICP and from what they tell you; propose them in the marker and say in one sentence why each fits a slice of their ICP.
 

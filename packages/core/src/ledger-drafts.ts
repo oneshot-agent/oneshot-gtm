@@ -48,6 +48,8 @@ export interface DraftVersionRow {
   discard_reason: DraftDiscardReason | null;
   /** Hash of the founder voice card in the prompt; NULL when none was set. */
   voice_key: string | null;
+  /** First-touch format arm (`standard` / `brief`) when the trigger set one; NULL otherwise. */
+  format_key: string | null;
   created_at: string;
   closed_at: string | null;
 }
@@ -71,6 +73,10 @@ export interface AngleUsageRow {
   sent: number;
   /** Distinct prospects it went to unattended (drain on an approved row). */
   autoSent: number;
+  /** Distinct prospects who replied to the send built on it (reviewed or unattended). */
+  replied: number;
+  /** Distinct prospects it was sent to at all, reviewed or unattended — the reply-rate denominator. */
+  reached: number;
 }
 
 export interface DraftUsage {
@@ -79,6 +85,8 @@ export interface DraftUsage {
   rotated: number;
   sent: number;
   autoSent: number;
+  /** Sent or auto-sent versions whose send got a reply. */
+  replied: number;
 }
 
 export interface DraftUsageByStep {
@@ -116,6 +124,7 @@ export function storedDraftEnvelope(raw: unknown): {
   angle: DraftVersionAngle | null;
   draftedAt: string | null;
   voiceKey: string | null;
+  formatKey: string | null;
 } | null {
   let value: unknown = raw;
   if (typeof raw === "string") {
@@ -150,6 +159,7 @@ export function storedDraftEnvelope(raw: unknown): {
     angle: draftVersionAngle(v["angle"] ?? payloadAngle),
     draftedAt: typeof v["draftedAt"] === "string" ? v["draftedAt"] : null,
     voiceKey: typeof voice === "string" && voice ? voice : null,
+    formatKey: typeof v["formatKey"] === "string" && v["formatKey"] ? v["formatKey"] : null,
   };
 }
 
@@ -159,7 +169,34 @@ const EMPTY_USAGE = (): DraftUsage => ({
   rotated: 0,
   sent: 0,
   autoSent: 0,
+  replied: 0,
 });
+
+/**
+ * SQL predicate, for a `draft_versions dv` row: the send this version became
+ * (sent or auto_sent) was replied to. A reply flips the matching sent
+ * `sequence_events` row to `replied` (`markLatestStepReplied`), keyed by
+ * prospect, play and step. Intro versions may predate their prospect row, so
+ * the prospect is found by `prospect_id` or, failing that, the prospect key
+ * (the lower-cased email every version is keyed by). Should a slot ever
+ * hold two sent versions, only the latest is credited, so one reply is never
+ * counted twice.
+ */
+const DV_REPLIED = `dv.outcome IN ('sent', 'auto_sent')
+  AND dv.id = (
+    SELECT MAX(d2.id) FROM draft_versions d2
+     WHERE d2.play_name = dv.play_name
+       AND d2.prospect_key = dv.prospect_key
+       AND d2.step_index = dv.step_index
+       AND d2.outcome IN ('sent', 'auto_sent'))
+  AND EXISTS (
+    SELECT 1 FROM sequence_events se
+     WHERE se.status = 'replied'
+       AND se.play_name = dv.play_name
+       AND se.step_index = dv.step_index
+       AND se.prospect_id = COALESCE(
+             dv.prospect_id,
+             (SELECT p.id FROM prospects p WHERE lower(p.email) = dv.prospect_key LIMIT 1)))`;
 
 function slotWhere(slot: DraftSlot): { sql: string; args: Array<number | string> } {
   if ("queueId" in slot) return { sql: "queue_id = ?", args: [slot.queueId] };
@@ -187,6 +224,7 @@ export class DraftVersionStore {
     flags: string[];
     angle?: DraftVersionAngle | null;
     voiceKey?: string | null;
+    formatKey?: string | null;
     discardReason?: DraftDiscardReason;
     /** When the draft was really written — a seeded pre-existing draft keeps its own time. */
     createdAt?: string;
@@ -232,6 +270,7 @@ export class DraftVersionStore {
       flags: env.flags,
       angle: env.angle,
       voiceKey: env.voiceKey,
+      formatKey: env.formatKey,
       ...(env.draftedAt ? { createdAt: env.draftedAt } : {}),
     });
   }
@@ -325,6 +364,7 @@ export class DraftVersionStore {
     flags: string[];
     angle?: DraftVersionAngle | null;
     voiceKey?: string | null;
+    formatKey?: string | null;
     outcome: "sent" | "auto_sent";
   }): void {
     if (!input.body.trim()) return;
@@ -341,6 +381,7 @@ export class DraftVersionStore {
     flags: string[];
     angle?: DraftVersionAngle | null;
     voiceKey?: string | null;
+    formatKey?: string | null;
     outcome: DraftVersionOutcome;
     createdAt?: string;
   }): void {
@@ -351,8 +392,8 @@ export class DraftVersionStore {
         `INSERT INTO draft_versions(
            play_name, prospect_key, step_index, queue_id, prospect_id,
            subject, body, flags_json, angle_key, angle_text, angle_origin,
-           outcome, discard_reason, voice_key, created_at, closed_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?)`,
+           outcome, discard_reason, voice_key, format_key, created_at, closed_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?)`,
       )
       .run(
         input.playName,
@@ -368,6 +409,7 @@ export class DraftVersionStore {
         angle ? angle.origin : null,
         input.outcome,
         input.voiceKey ?? null,
+        input.formatKey ?? null,
         input.createdAt ?? now,
         input.outcome === "open" ? null : now,
       );
@@ -397,8 +439,10 @@ export class DraftVersionStore {
                 COUNT(DISTINCT CASE WHEN outcome = 'discarded' AND discard_reason = 'rotate' THEN prospect_key END) AS rotated_away,
                 COUNT(DISTINCT CASE WHEN outcome = 'discarded' AND discard_reason = 'regenerate' THEN prospect_key END) AS redrafted,
                 COUNT(DISTINCT CASE WHEN outcome = 'sent' THEN prospect_key END) AS sent,
-                COUNT(DISTINCT CASE WHEN outcome = 'auto_sent' THEN prospect_key END) AS auto_sent
-           FROM draft_versions
+                COUNT(DISTINCT CASE WHEN outcome = 'auto_sent' THEN prospect_key END) AS auto_sent,
+                COUNT(DISTINCT CASE WHEN ${DV_REPLIED} THEN prospect_key END) AS replied,
+                COUNT(DISTINCT CASE WHEN outcome IN ('sent', 'auto_sent') THEN prospect_key END) AS reached
+           FROM draft_versions dv
           WHERE angle_key IS NOT NULL
           GROUP BY play_name, angle_key
           ORDER BY play_name, sent DESC, offered DESC`,
@@ -413,6 +457,8 @@ export class DraftVersionStore {
       redrafted: number;
       sent: number;
       auto_sent: number;
+      replied: number;
+      reached: number;
     }>;
     const out: Record<string, AngleUsageRow[]> = {};
     for (const r of rows) {
@@ -425,6 +471,8 @@ export class DraftVersionStore {
         redrafted: r.redrafted,
         sent: r.sent,
         autoSent: r.auto_sent,
+        replied: r.replied,
+        reached: r.reached,
       });
     }
     return out;
@@ -444,8 +492,9 @@ export class DraftVersionStore {
                 SUM(outcome = 'discarded' AND discard_reason = 'regenerate') AS regenerated,
                 SUM(outcome = 'discarded' AND discard_reason = 'rotate') AS rotated,
                 SUM(outcome = 'sent') AS sent,
-                SUM(outcome = 'auto_sent') AS auto_sent
-           FROM draft_versions
+                SUM(outcome = 'auto_sent') AS auto_sent,
+                SUM(${DV_REPLIED}) AS replied
+           FROM draft_versions dv
           GROUP BY play_name, scope`,
       )
       .all() as Array<{
@@ -456,6 +505,7 @@ export class DraftVersionStore {
       rotated: number;
       sent: number;
       auto_sent: number;
+      replied: number;
     }>;
     const out: Record<string, { voiced: DraftUsage; plain: DraftUsage }> = {};
     for (const r of rows) {
@@ -466,6 +516,50 @@ export class DraftVersionStore {
       target.rotated = r.rotated;
       target.sent = r.sent;
       target.autoSent = r.auto_sent;
+      target.replied = r.replied ?? 0;
+    }
+    return out;
+  }
+
+  /**
+   * Per play: intro version counts by first-touch format arm, replies
+   * included — the side-by-side a founder reads to judge the formats. Only
+   * versions whose trigger set a format count; plays with none are absent.
+   */
+  draftUsageByFormat(): Record<string, Record<string, DraftUsage>> {
+    const rows = this.db
+      .query(
+        `SELECT play_name, format_key,
+                SUM(outcome = 'open') AS open,
+                SUM(outcome = 'discarded' AND discard_reason = 'regenerate') AS regenerated,
+                SUM(outcome = 'discarded' AND discard_reason = 'rotate') AS rotated,
+                SUM(outcome = 'sent') AS sent,
+                SUM(outcome = 'auto_sent') AS auto_sent,
+                SUM(${DV_REPLIED}) AS replied
+           FROM draft_versions dv
+          WHERE format_key IS NOT NULL AND step_index = 0
+          GROUP BY play_name, format_key`,
+      )
+      .all() as Array<{
+      play_name: string;
+      format_key: string;
+      open: number;
+      regenerated: number;
+      rotated: number;
+      sent: number;
+      auto_sent: number;
+      replied: number;
+    }>;
+    const out: Record<string, Record<string, DraftUsage>> = {};
+    for (const r of rows) {
+      (out[r.play_name] ??= {})[r.format_key] = {
+        open: r.open,
+        regenerated: r.regenerated,
+        rotated: r.rotated,
+        sent: r.sent,
+        autoSent: r.auto_sent,
+        replied: r.replied ?? 0,
+      };
     }
     return out;
   }
@@ -480,8 +574,9 @@ export class DraftVersionStore {
                 SUM(outcome = 'discarded' AND discard_reason = 'regenerate') AS regenerated,
                 SUM(outcome = 'discarded' AND discard_reason = 'rotate') AS rotated,
                 SUM(outcome = 'sent') AS sent,
-                SUM(outcome = 'auto_sent') AS auto_sent
-           FROM draft_versions
+                SUM(outcome = 'auto_sent') AS auto_sent,
+                SUM(${DV_REPLIED}) AS replied
+           FROM draft_versions dv
           GROUP BY play_name, scope`,
       )
       .all() as Array<{
@@ -492,6 +587,7 @@ export class DraftVersionStore {
       rotated: number;
       sent: number;
       auto_sent: number;
+      replied: number;
     }>;
     const out: Record<string, DraftUsageByStep> = {};
     for (const r of rows) {
@@ -502,6 +598,7 @@ export class DraftVersionStore {
       target.rotated = r.rotated;
       target.sent = r.sent;
       target.autoSent = r.auto_sent;
+      target.replied = r.replied ?? 0;
     }
     return out;
   }

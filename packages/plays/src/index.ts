@@ -4,6 +4,7 @@ export * from "./_run-play.ts";
 export * from "./_metadata.ts";
 export * from "./_angles.ts";
 export * from "./_edge-lint.ts";
+export * from "./_first-touch.ts";
 export * from "./_fit-reason.ts";
 export * from "./_reject-reason.ts";
 export * from "./reply.ts";

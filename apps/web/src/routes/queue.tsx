@@ -2276,11 +2276,9 @@ function TriggerRowFragment(props: TriggerRowProps) {
                 <div className="ln-note text-[12px] text-ink-cream-2">
                   <code className="ln-mono text-[11.5px] text-[color:var(--ink-signal-2)]">
                     yourEdge
-                  </code>{" "}
-                  is what you learned, not a pitch: 3–4 angles separated by{" "}
-                  <code className="ln-mono text-[11.5px]">//</code>, each opening with who it fits
-                  (&quot;For a founder selling to clinics —&quot;), then a named failure and what
-                  you found. The tool picks one per prospect.
+                  </code>
+                  : 3–4 angles separated by <code className="ln-mono text-[11.5px]">//</code>
+                  <Explain concept="edgeShape" />
                 </div>
               )}
               {/yourEdge|yourClaim/.test(props.editing.text) && (
@@ -2288,6 +2286,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                   angleUsage={t.angleUsage ?? null}
                   draftUsage={t.draftUsage ?? null}
                   voiceUsage={t.voiceUsage ?? null}
+                  formatUsage={t.formatUsage ?? null}
                   disabled={props.setConfigPending || READ_ONLY}
                   onRetire={(angleText) => {
                     const next = removeAngleFromConfigText(props.editing?.text ?? "", angleText);

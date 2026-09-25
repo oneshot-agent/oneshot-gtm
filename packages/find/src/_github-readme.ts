@@ -13,9 +13,20 @@ export interface EmailSource {
 type ReadmeResult =
   | { status: "found"; email: string; url: string }
   | { status: "missing" | "ambiguous" | "unavailable" };
-const cache = new Map<string, { expires: number; result: ReadmeResult }>();
-const pending = new Map<string, Promise<ReadmeResult>>();
+/**
+ * One profile-README fetch serves both readers: the email extractor (whole
+ * document) and the ICP evidence block (a short prefix). Only the prefix is
+ * kept, so a long-lived cache over thousands of stargazers stays small.
+ */
+interface ProfileRead {
+  result: ReadmeResult;
+  /** First `TEXT_KEEP` chars of the README markdown; `null` when there is none. */
+  text: string | null;
+}
+const cache = new Map<string, { expires: number; read: ProfileRead }>();
+const pending = new Map<string, Promise<ProfileRead>>();
 const LIMIT = 64 * 1024;
+const TEXT_KEEP = 8 * 1024;
 export function _resetReadmeCache(): void {
   cache.clear();
   pending.clear();
@@ -104,52 +115,74 @@ async function limitedText(response: Response): Promise<string> {
   return new TextDecoder().decode(bytes);
 }
 
-async function readProfile(login: string): Promise<ReadmeResult> {
+async function readProfile(login: string): Promise<ProfileRead> {
   const base = `https://api.github.com/repos/${login}/${login}`;
   const signal = AbortSignal.timeout(10_000);
   const headers = githubHeaders();
   try {
     const repo = await fetch(base, { headers, signal, redirect: "error" });
-    if (repo.status === 404) return { status: "missing" };
-    if (!repo.ok) return { status: "unavailable" };
+    if (repo.status === 404) return { result: { status: "missing" }, text: null };
+    if (!repo.ok) return { result: { status: "unavailable" }, text: null };
     const metadata = JSON.parse(await limitedText(repo));
-    if (metadata.private !== false) return { status: "missing" };
+    if (metadata.private !== false) return { result: { status: "missing" }, text: null };
     const readme = await fetch(`${base}/readme`, {
       headers: { ...headers, Accept: "application/vnd.github.raw+json" },
       signal,
       redirect: "error",
     });
-    if (readme.status === 404) return { status: "missing" };
-    if (!readme.ok) return { status: "unavailable" };
-    const result = extractReadmeEmail(await limitedText(readme));
-    return result.status === "found"
-      ? { ...result, url: `https://github.com/${login}/${login}#readme` }
-      : result;
+    if (readme.status === 404) return { result: { status: "missing" }, text: null };
+    if (!readme.ok) return { result: { status: "unavailable" }, text: null };
+    const markdown = await limitedText(readme);
+    const result = extractReadmeEmail(markdown);
+    return {
+      result:
+        result.status === "found"
+          ? { ...result, url: `https://github.com/${login}/${login}#readme` }
+          : result,
+      text: markdown.slice(0, TEXT_KEEP),
+    };
   } catch {
-    return { status: "unavailable" };
+    return { result: { status: "unavailable" }, text: null };
   }
 }
 
-export async function fetchProfileReadmeEmail(identity: GitHubIdentity): Promise<ReadmeResult> {
+/** Shared, cached, de-duplicated profile read. `null` = not a readable User account. */
+async function readProfileCached(identity: GitHubIdentity): Promise<ProfileRead | null> {
   if (identity.accountType !== "User" || !/^[a-zA-Z0-9-]{1,39}$/.test(identity.login)) {
-    return { status: "missing" };
+    return null;
   }
   const login = identity.login.toLowerCase();
   const saved = cache.get(login);
-  if (saved && saved.expires > Date.now()) {
-    logEvent("github.readme.contact", { login, status: saved.result.status, cached: true });
-    return saved.result;
-  }
+  if (saved && saved.expires > Date.now()) return saved.read;
   const inFlight = pending.get(login);
   if (inFlight) return inFlight;
   const request = readProfile(login)
-    .then((result) => {
-      if (result.status !== "unavailable")
-        cache.set(login, { result, expires: Date.now() + 86_400_000 });
-      logEvent("github.readme.contact", { login, status: result.status, cached: false });
-      return result;
+    .then((read) => {
+      if (read.result.status !== "unavailable")
+        cache.set(login, { read, expires: Date.now() + 86_400_000 });
+      return read;
     })
     .finally(() => pending.delete(login));
   pending.set(login, request);
   return request;
+}
+
+export async function fetchProfileReadmeEmail(identity: GitHubIdentity): Promise<ReadmeResult> {
+  const login = identity.login.toLowerCase();
+  const cached = cache.get(login);
+  const hit = cached !== undefined && cached.expires > Date.now();
+  const read = await readProfileCached(identity);
+  if (!read) return { status: "missing" };
+  logEvent("github.readme.contact", { login, status: read.result.status, cached: hit });
+  return read.result;
+}
+
+/**
+ * The profile README's opening markdown (≤ 8 KB), for evidence — `null` when
+ * the account has no public profile README or GitHub couldn't be reached.
+ * Shares the fetch and cache with `fetchProfileReadmeEmail`.
+ */
+export async function fetchProfileReadmeText(identity: GitHubIdentity): Promise<string | null> {
+  const read = await readProfileCached(identity);
+  return read?.text ?? null;
 }

@@ -760,6 +760,10 @@ export interface AngleUsageView {
   redrafted: number;
   sent: number;
   autoSent: number;
+  /** Distinct prospects who replied to a send built on this angle. */
+  replied: number;
+  /** Distinct prospects this angle was sent to (reviewed or unattended) — the rate's denominator. */
+  reached: number;
 }
 
 /** Draft-version counts by outcome for one play and one scope (intro or follow-up). */
@@ -769,6 +773,8 @@ export interface DraftUsageView {
   rotated: number;
   sent: number;
   autoSent: number;
+  /** Sent or auto-sent versions whose send got a reply. */
+  replied: number;
 }
 
 /** The same counts split by whether a founder voice card was in the prompt (ledger-drafts.ts `draftUsageByVoice`). */
@@ -800,6 +806,8 @@ export interface LastDraft {
   enrichmentFailed?: boolean;
   /** Hash of the founder's voice card the draft was written with; absent when none was set. */
   voiceKey?: string | null;
+  /** First-touch format arm the draft was written in (`standard` / `brief`); absent when the trigger set none. */
+  formatKey?: string | null;
 }
 
 /**
@@ -1307,6 +1315,11 @@ export interface TriggerView {
   draftUsage: { intro: DraftUsageView; followUp: DraftUsageView } | null;
   /** The same outcomes split by voice card on/off. Null when nothing was ever drafted. */
   voiceUsage: VoiceUsageView | null;
+  /**
+   * Intro outcomes by first-touch format arm (`standard` / `brief`), present
+   * only once a draft was written under a `firstTouchFormat` setting.
+   */
+  formatUsage?: Record<string, DraftUsageView> | null;
 }
 
 export interface PackView {

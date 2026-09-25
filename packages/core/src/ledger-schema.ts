@@ -47,6 +47,30 @@ export interface LedgerMigration {
  */
 export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
   { version: 1, name: "baseline", up: (db) => migrateLedgerSchema(db) },
+  {
+    // Which first-touch format arm (`standard` / `brief`) a draft was written
+    // in, NULL when its trigger never set one — so outcomes split by format
+    // the way `voice_key` splits them by voice card.
+    version: 2,
+    name: "draft-versions-format-key",
+    up: (db) => {
+      addColumnIfMissing(db, "draft_versions", "format_key", "TEXT");
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_draft_versions_format ON draft_versions(play_name, format_key)",
+      );
+    },
+  },
+  {
+    // Monotonic per-trigger rotation counter for hiring-signal/job-change's
+    // company batches: unlike last_polled_at (a wall-clock value whose modulo
+    // can repeat across runs), it steps by exactly 1 per completed run, so
+    // the starting batch visits every index before repeating.
+    version: 3,
+    name: "triggers-company-batch-seq",
+    up: (db) => {
+      addColumnIfMissing(db, "triggers", "company_batch_seq", "INTEGER NOT NULL DEFAULT 0");
+    },
+  },
 ];
 
 export const LEDGER_SCHEMA_VERSION = LEDGER_MIGRATIONS[LEDGER_MIGRATIONS.length - 1]!.version;
@@ -238,8 +262,7 @@ export function migrateLedgerSchema(db: Database): void {
         last_run_summary TEXT,
         enabled INTEGER NOT NULL DEFAULT 1,
         config_json TEXT,
-        running_started_at TEXT,
-        company_batch_seq INTEGER NOT NULL DEFAULT 0
+        running_started_at TEXT
       );
 
       CREATE TABLE IF NOT EXISTS enrichment_cache (
@@ -310,13 +333,6 @@ export function migrateLedgerSchema(db: Database): void {
   // v5: trigger run-state, so a restart doesn't strand fire-and-forget runs.
   // See sweepStaleRunningTriggers + fireTriggerNow.
   addColumnIfMissing(db, "triggers", "running_started_at", "TEXT");
-  // Monotonic per-trigger rotation counter (issue #708 correction): unlike
-  // last_polled_at (a wall-clock epoch ms whose value mod batchCount can
-  // repeat across successive runs when batchCount divides the elapsed ms,
-  // or trivially when batchCount is 1), this increments by exactly 1 every
-  // run, so `cursor mod batchCount` visits every batch index in order
-  // before repeating, no matter how close together two runs happen to fire.
-  addColumnIfMissing(db, "triggers", "company_batch_seq", "INTEGER NOT NULL DEFAULT 0");
   // v6: persisted per-row drafts (the /run SSE stream is ephemeral).
   addColumnIfMissing(db, "target_queue", "last_draft_json", "TEXT");
   addColumnIfMissing(db, "target_queue", "last_drafted_at", "TEXT");

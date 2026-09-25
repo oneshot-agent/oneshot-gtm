@@ -85,68 +85,75 @@ concession, `yourEdge` for the argument, `productBrief` for facts and links,
 
 ## Multiple angles
 
-`yourEdge` may hold several angles separated by `//`. **One** of them reaches
-the prompt (`packages/plays/src/_angles.ts`, issue #584): a small isolated
-classifier call picks the angle whose opening condition is true of this
-prospect — judged from the target's own fields (company, product, title, bio,
-event, repo, stack) and the research `prepare` assembled — and the verdict is
-cached per (prospect, edge) so a regenerate makes the same choice and pays
-nothing. A one-angle edge makes no call and reaches the prompt unchanged.
+An edge is usually 3–4 angles separated by `//`; the tool gives each prospect
+the one that fits them, and the trigger editor shows how each one did. A
+one-angle edge still works (every prospect gets it) but draws a lint warning.
 
-Left to the writing prompt, the choice collapsed: measured on a live ledger,
-25 of 30 accelerator-batch drafts and 26 of 36 luma-events drafts landed on a
-single angle, and three of luma's six were never used once. A model cannot
-hold a distribution across independent calls — the same reason the 1-in-3
-admission is drawn in code (`admissionBlock`).
+**Choosing.** A small isolated classifier call (`packages/plays/src/_angles.ts`)
+picks the angle whose opening condition is true of the prospect, judged from
+the target's own fields and the research `prepare` assembled. The choice is
+cached per (prospect, edge), so a regenerate makes the same pick and pays
+nothing; a one-angle edge makes no call. It is done in code because a writing
+prompt cannot hold a distribution: left to it, 25 of 30 drafts on one live
+play landed on a single angle. Follow-ups get a different angle from the
+intro's (`followUpEdgeAngle`), so the second touch carries new material.
 
-Follow-ups get a **different** angle from the intro's (`followUpEdgeAngle`),
-so the second touch carries new material instead of being a bump. A play with
-a one-angle edge behaves exactly as before.
+**Writing.** Each angle opens with who it fits, in terms visible in the
+payload ("For a founder selling to clinics —", "For someone in a marketing
+role —"), never the prospect's internal stage or tooling, which nothing can
+confirm. Then one of two shapes: a _lesson_ (a named failure, a mechanism,
+what was learned) or an _opportunity_ (what this reader could do that their
+peers can't yet, resting on one concrete capability or number). Anything
+that must appear in every email does not belong in an angle.
 
-What makes an angle selectable: it opens with the condition it fits — "For a
-founder selling to clinics and contractors —", "For someone in a marketing
-role —" — and that condition is something visible in the payload. An angle
-routed on the prospect's internal stage or tooling ("still testing the pitch",
-"already has the stack wired") cannot be matched from a product one-liner and
-fires by accident or never. Then a named failure, a mechanism, and what was
-learned. If something must appear in every email, an angle is the wrong home
-for it.
-
-The same definition lives in `packages/prompts/strategist-trigger.md` (the
-strategist writes most edges) and in every edge-taking trigger's `configBrief`,
-and saving a trigger config runs `lintEdge` (`packages/plays/src/_edge-lint.ts`)
-over the edge — warnings only, never a refusal — so a new install gets the
-shape without the founder having to know the convention.
+**Checking.** Saving a trigger config runs `lintEdge`
+(`packages/plays/src/_edge-lint.ts`), which warns but never refuses: a missing
+routing clause, landing-page phrasing, banned copy, or an outcome promised
+with no number or product term behind it. The same definition lives in
+`packages/prompts/strategist-trigger.md` and in every edge-taking trigger's
+`configBrief`.
 
 ### What the review loop records
 
-Every draft put in front of the founder is kept as a row in `draft_versions`
-(`packages/core/src/ledger-drafts.ts`), intro and follow-up alike, with the
-angle it was built on keyed by normalized text — never by index, which goes
-stale the moment the edge is edited. The row's current draft is the `open`
-version. **Regenerate** closes it as discarded with reason `regenerate` (the
-text was rejected, the angle kept); **Rotate angle** closes it with reason
-`rotate` (the angle was rejected); a reviewed send closes it as `sent`; a
-drain send of an approved row the founder never read is `auto_sent`; a
-cadence that stops, replies or bounces with a preview open leaves it
-`abandoned`. A draft that was already on a row before versioning existed is
-recorded the first time it is regenerated, rotated away from or sent, dated
-to when it was drafted, so the first regenerate after an upgrade still shows
-what it replaced. Nothing here is a prompt instruction — the counts are
-shown, not fed back to the model.
+Every draft put in front of the founder is a row in `draft_versions`
+(`packages/core/src/ledger-drafts.ts`), keyed to its angle by normalized text,
+never by index. **Regenerate** closes it as `regenerate` (text rejected, angle
+kept), **Rotate angle** as `rotate` (angle rejected), a reviewed send as
+`sent`, an unattended drain send as `auto_sent`, and a cadence that stops
+with a preview open as `abandoned`. A send later marked `replied` in
+`sequence_events` credits the version it was built on (the latest send in its
+slot, never twice). The counts are shown, never fed back to the model.
 
-The trigger config editor on /queue shows, under `yourEdge`, one line per
-configured angle — offered, rotated away, redrafted, sent, auto-sent, counted
-in distinct prospects — plus a bucket for generated alternatives and the
-play's draft totals (intro and follow-up apart). An angle with no reviewed
-send after two rotations or three offers is marked "never sent", and the
-collapsed trigger row says how many such angles the edge holds. **Retire**
-removes an angle from the edge text in the editor; the editor's own save is
-the only write, and it runs `lintEdge` as usual. Retired angles keep their
-history in the ledger but leave the view. Each queue row and cadence step
-also lists its earlier drafts (`GET /api/queue/:id/drafts`,
-`GET /api/cadences/:id/drafts?play=`), newest first, with what became of
-each.
+Under `yourEdge`, the trigger editor on /queue shows:
+
+- **drafts**: intro and follow-up totals (sent, regenerated, rotated, auto-sent, replied);
+- **voice**: the same, with the voice card on and off (see [voice](./voice.md));
+- **first-touch format**: the same per arm, when the trigger sets one;
+- **one line per angle**: offered, rotated, redrafted, sent, replied, in distinct people, with "never sent" after two rotations or three offers and a **Retire** button that removes the angle from the editor text.
+
+A reply rate appears only once a line has 30 sends, or 30 people for an
+angle line; below that the panel shows how far the sample has to go. Angles go
+to whoever they fit, so an angle comparison is a hint; the first-touch split
+is the controlled comparison. Earlier drafts per row are at
+`GET /api/queue/:id/drafts` and `GET /api/cadences/:id/drafts?play=`.
+
+## First-touch format
+
+`firstTouchFormat` is an opt-in, measured test of the first email's shape;
+nothing changes for a trigger that doesn't set it.
+
+- `standard`: the play's own prompt.
+- `brief`: adds a binding FORMAT block (`packages/prompts/_format-brief.md`): at
+  most 3 sentences and under 70 words, no opening observation about the reader,
+  one ask, and a register from `READER SENIORITY` (a coarse read of the title:
+  `exec` / `lead` / `individual` / `unknown`).
+- `split`: each prospect is fixed to one arm by a salted hash of their email;
+  `firstTouchSplit` is the share on `brief` (default 0.5).
+
+The limits are enforced on the output: a brief draft over either budget gets
+one tighter redraft, and lint holds it (`too-many-sentences`, `body-too-long`)
+if it is still over. Follow-ups are unchanged. Each intro version records its
+arm (`draft_versions.format_key`), and nothing switches arms automatically.
 
 ## Keeping this page true
 
