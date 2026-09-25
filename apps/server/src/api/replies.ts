@@ -1,6 +1,5 @@
 import { removeLinkedInAccount, forceReconnectLinkedInAccount } from "../linkedin-remove.ts";
 import { randomUUID } from "node:crypto";
-import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import {
   currentWorkspaceName,
@@ -13,6 +12,7 @@ import {
   linkedInMatches,
   loadConfig,
   logEvent,
+  openLedgerDatabase,
   replyWorkspaces,
   trackSend,
 } from "@oneshot-gtm/core";
@@ -588,7 +588,7 @@ export async function replyAssignRoute(req: Request) {
       throw new Error("Choose a workspace and prospect");
     const w = replyWorkspaces().find((w) => w.name === b.workspace);
     if (!w) throw new Error("Workspace not found");
-    const db = new Database(join(w.home, "ledger.sqlite"), { readonly: true });
+    const db = openLedgerDatabase(join(w.home, "ledger.sqlite"), { readonly: true });
     try {
       if (!db.query("SELECT 1 FROM prospects WHERE id=?").get(b.prospectId as number))
         throw new Error("Prospect not found");
@@ -609,7 +609,7 @@ export async function replyProspectsRoute(req: Request) {
   const prospects: Array<{ workspace: string; id: number; name: string; email: string | null }> =
     [];
   for (const w of replyWorkspaces()) {
-    const db = new Database(join(w.home, "ledger.sqlite"), { readonly: true });
+    const db = openLedgerDatabase(join(w.home, "ledger.sqlite"), { readonly: true });
     try {
       prospects.push(
         ...db
