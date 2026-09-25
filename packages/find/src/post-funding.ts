@@ -278,6 +278,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
             title: contact.title,
             linkedinUrl,
             phone,
+            icp: icpFields(contact),
           })
         : target,
       dedupeKey: url,

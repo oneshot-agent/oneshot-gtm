@@ -339,6 +339,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
             title: contact.title,
             linkedinUrl,
             phone,
+            icp: icpFields(contact),
           })
         : target,
       dedupeKey: hit.url,

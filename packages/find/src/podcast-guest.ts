@@ -286,6 +286,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
             title: contact.title,
             linkedinUrl,
             phone,
+            icp: icpFields(contact),
           })
         : target,
       dedupeKey: hit.url,

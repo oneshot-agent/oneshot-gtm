@@ -295,6 +295,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
             title: contact.title,
             linkedinUrl,
             phone,
+            icp: icpFields(contact),
           })
         : target,
       dedupeKey: hit.url,

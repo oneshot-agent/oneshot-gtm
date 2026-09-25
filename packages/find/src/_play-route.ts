@@ -90,6 +90,15 @@ export function buildDesignPartnerLoiPayload(input: {
   title?: string | null;
   linkedinUrl?: string | null;
   phone?: string | null;
+  /**
+   * The computed person-level ICP verdict (`icpVerdict`/`icpVerdictReason`),
+   * spread onto the payload same as `icpFields(contact)` does for a finder's
+   * own play. Omitted (default) = no verdict fields, matching every payload
+   * shape before this option existed. See finding PRRT_kwDOSKzrBs6mB74J
+   * (issue #705 round 1): a routed row otherwise silently lost the verdict
+   * `sendDraftedEmail` gates and persists on `prospects.icp_verdict`.
+   */
+  icp?: Record<string, unknown>;
 }): Record<string, unknown> {
   return {
     name: input.name,
@@ -100,6 +109,7 @@ export function buildDesignPartnerLoiPayload(input: {
     ...(input.title ? { title: input.title } : {}),
     ...(input.linkedinUrl ? { linkedinUrl: input.linkedinUrl } : {}),
     ...(input.phone ? { phone: input.phone } : {}),
+    ...(input.icp ?? {}),
   };
 }
 

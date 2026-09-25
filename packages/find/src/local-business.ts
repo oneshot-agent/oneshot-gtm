@@ -5,7 +5,7 @@ import {
   type LocalResult,
   type PersonResult,
 } from "@oneshot-gtm/core";
-import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { icpFields, resolveVerifyEnrichQualify } from "./_contact.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection, qualifyPostEnrich } from "./_qualify.ts";
 import { isDuplicate } from "./_dedupe.ts";
@@ -301,6 +301,10 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     let phone: string | null;
     let linkedinUrl: string | null;
     let finalTitle: string | null;
+    // ICP verdict fields for the routed (design-partner-loi) payload only —
+    // never spread onto `target` below, which must keep matching its
+    // pre-#705 shape (finding PRRT_kwDOSKzrBs6mB74J, issue #705 round 1).
+    let routedIcp: Record<string, unknown> = {};
 
     if (bestWorkEmail) {
       // Lane 1 — the search already carries a usable email: skip
@@ -340,6 +344,13 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       phone = readPhone(person);
       linkedinUrl = person.linkedin_url ?? null;
       finalTitle = gate.roleText ?? title;
+      // `gate` is a `QualifyOutcome`, not a `QualifiedContact` — build the
+      // same `icpVerdict`/`icpVerdictReason` shape `icpFields` produces for
+      // the other lane, by hand.
+      routedIcp = {
+        icpVerdict: gate.verdict,
+        ...(gate.reason ? { icpVerdictReason: gate.reason } : {}),
+      };
     } else {
       // Lane 2 — no email on the search result: the normal
       // resolve → verify → enrich → qualify spine every other finder uses.
@@ -375,6 +386,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       phone = contact.phone;
       linkedinUrl = contact.linkedinUrl;
       finalTitle = contact.title ?? title;
+      routedIcp = icpFields(contact);
     }
 
     // Payload mirrors the (issue #462) free-pilot play's `FreePilotTarget`
@@ -404,6 +416,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
             title: finalTitle,
             linkedinUrl,
             phone,
+            icp: routedIcp,
           })
         : target,
       dedupeKey,
@@ -626,6 +639,7 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
             title: contact.title,
             linkedinUrl: contact.linkedinUrl,
             phone,
+            icp: icpFields(contact),
           })
         : target,
       dedupeKey,

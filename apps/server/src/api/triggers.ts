@@ -231,6 +231,19 @@ export async function setTriggerConfigRoute(
         "buyerType must be 'enterprise', 'government', or 'hardware' to route to design-partner-loi — this trigger will not run until it's set",
       );
     }
+    // The routed edge field is a separate readiness gate from buyerType (see
+    // `checkPlayRouteReadiness` in @oneshot-gtm/find) — hiring-signal reads
+    // `yourClaim`, every other routable finder reads `yourEdge`. Without this
+    // warning a blank edge saved fine here but silently failed registry
+    // readiness later, with no warning at save time (finding
+    // PRRT_kwDOSKzrBs6mB73_, issue #705 round 1).
+    const routeEdgeKey = name === "hiring-signal" ? "yourClaim" : "yourEdge";
+    const routeEdge = cfg[routeEdgeKey];
+    if (typeof routeEdge !== "string" || routeEdge.trim().length === 0) {
+      warnings.push(
+        `${routeEdgeKey} is required to route to design-partner-loi — this trigger will not run until it's set`,
+      );
+    }
   }
   return jsonResponse({ ok: true, name, warnings }, 200, req);
 }

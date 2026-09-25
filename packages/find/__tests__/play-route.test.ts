@@ -131,4 +131,29 @@ describe("buildDesignPartnerLoiPayload", () => {
     expect(payload["linkedinUrl"]).toBe("https://linkedin.com/in/jamie");
     expect(payload).not.toHaveProperty("phone");
   });
+
+  it("spreads the icp verdict fields onto the payload when provided (finding PRRT_kwDOSKzrBs6mB74J)", () => {
+    const payload = buildDesignPartnerLoiPayload({
+      name: "Jamie Buyer",
+      email: "jamie@enterprise-corp.com",
+      company: "Enterprise Corp",
+      buyerType: "enterprise",
+      yourEdge: "edge",
+      icp: { icpVerdict: "pass", icpVerdictReason: "matches ICP: enterprise buyer" },
+    });
+    expect(payload["icpVerdict"]).toBe("pass");
+    expect(payload["icpVerdictReason"]).toBe("matches ICP: enterprise buyer");
+  });
+
+  it("omits icp verdict fields when icp is absent — matches every payload shape before this option existed", () => {
+    const payload = buildDesignPartnerLoiPayload({
+      name: "Jamie Buyer",
+      email: "jamie@enterprise-corp.com",
+      company: "Enterprise Corp",
+      buyerType: "enterprise",
+      yourEdge: "edge",
+    });
+    expect(payload).not.toHaveProperty("icpVerdict");
+    expect(payload).not.toHaveProperty("icpVerdictReason");
+  });
 });
