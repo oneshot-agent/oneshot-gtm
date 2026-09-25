@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
 import { isGroupOrWorldAccessible, openStateDatabase } from "../src/sqlite-open.ts";
-import { Ledger } from "../src/ledger.ts";
+import { Ledger, openLedgerDatabase } from "../src/ledger.ts";
 import { SharedDb } from "../src/shared-db.ts";
 import { SharedPeople } from "../src/shared-people.ts";
 import { ReplyReviewStore } from "../src/reply-review-store.ts";
@@ -140,6 +140,34 @@ describe("Ledger foreign keys", () => {
       ).not.toThrow();
     } finally {
       ledger.close();
+    }
+  });
+});
+
+describe.runIf(posix)("side handles", () => {
+  it("a write handle heals an existing ledger's permissions; a read-only one doesn't write", () => {
+    const path = join(dir, "ledger.sqlite");
+    new Ledger(path).close();
+    chmodSync(path, 0o644);
+    openLedgerDatabase(path, { readonly: true }).close();
+    expect(mode(path)).toBe(0o644);
+    const db = openLedgerDatabase(path);
+    expect(db.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
+    db.close();
+    expect(mode(path)).toBe(0o600);
+  });
+});
+
+describe("SharedPeople foreign keys", () => {
+  it("rejects an alias for a person that doesn't exist", () => {
+    const people = new SharedPeople(join(dir, "people.sqlite"));
+    const db = (people as unknown as { db: Database }).db;
+    try {
+      expect(() =>
+        db.query("INSERT INTO person_aliases(alias, person_id) VALUES ('a@x.com', 'nobody')").run(),
+      ).toThrow(/FOREIGN KEY/);
+    } finally {
+      people.close();
     }
   });
 });

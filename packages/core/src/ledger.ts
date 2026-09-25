@@ -161,10 +161,13 @@ export const LEDGER_BUSY_TIMEOUT_MS = 5000;
  * `Ledger` does. It runs no migrations.
  */
 export function openLedgerDatabase(path: string, opts: { readonly?: boolean } = {}): Database {
-  const db = new Database(path, opts.readonly ? { readonly: true } : undefined);
+  if (!opts.readonly) {
+    // A write handle opens like Ledger does: owner-only file (healing an old
+    // 0644 one and its -wal/-shm), and the same foreign keys.
+    return openStateDatabase(path, { busyTimeoutMs: LEDGER_BUSY_TIMEOUT_MS, foreignKeys: true });
+  }
+  const db = new Database(path, { readonly: true });
   db.exec(`PRAGMA busy_timeout = ${LEDGER_BUSY_TIMEOUT_MS}`);
-  // Writes through a side handle are held to the same foreign keys as Ledger's.
-  if (!opts.readonly) db.exec("PRAGMA foreign_keys = ON");
   return db;
 }
 

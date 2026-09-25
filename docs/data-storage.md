@@ -15,7 +15,7 @@ Each workspace's ledger is its own history; [workspaces](./workspaces.md) covers
 
 ## Permissions
 
-These files hold prospect emails, reply bodies and research, so they are owner-only. Opening one creates it with mode `0600` (its `-wal` and `-shm` files inherit that mode) and resets an existing file and its `-wal`/`-shm` to `0600`, so an install created before this rule tightens itself on the next start. A directory created for them is `0700`; an existing directory is left as you set it. `doctor` warns about a database file other users can still read, which happens only when the file belongs to another user.
+These files hold prospect emails, reply bodies and research, so oneshot-gtm keeps them owner-only where the operating system supports it. On macOS and Linux, opening one creates it with mode `0600` (its `-wal` and `-shm` files inherit that mode) and resets an existing file and its `-wal`/`-shm` to `0600`, so an install created before this rule tightens itself the next time each database is opened. A directory created for them is `0700`; an existing directory is left as you set it. If a mode can't be changed (a file owned by another user, for example), the database still opens. `doctor` warns about any database file, `-wal` or `-shm` in any workspace or the shared directory whose mode lets group or other users read it. On Windows, access follows the file's ACLs rather than these mode bits: the files inherit your user profile's permissions, and `doctor` doesn't check them.
 
 ## Copying and backups
 

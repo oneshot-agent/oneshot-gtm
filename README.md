@@ -225,7 +225,7 @@ Workspaces share one thing: `~/.oneshot-gtm-shared/shared.sqlite`, holding share
    └──────────────────────────────────────────────┘
 ```
 
-**State** — one `~/.oneshot-gtm/ledger.sqlite` is the source of truth for all three surfaces: receipts, prospects, sequence events, cadence state, deal outcomes, interviews, target queue, triggers, bounces, and sender assignments. A receipt row keeps the call's receipt envelope and identifiers, not the tool's output; the signed receipt itself lives on the OneShot platform. `ONESHOT_GTM_HOME` relocates the whole directory. Database files are owner-only (`0600`); [data storage](./docs/data-storage.md) lists every file, what it holds and how to back it up.
+**State** — one `~/.oneshot-gtm/ledger.sqlite` is the source of truth for all three surfaces: receipts, prospects, sequence events, cadence state, deal outcomes, interviews, target queue, triggers, bounces, and sender assignments. A receipt row keeps the call's receipt envelope and identifiers, not the tool's output; the signed receipt itself lives on the OneShot platform. `ONESHOT_GTM_HOME` relocates the whole directory. Database files are created owner-only (`0600`) on macOS and Linux; [data storage](./docs/data-storage.md) lists every file, what it holds and how to back it up.
 
 **Secrets** — `~/.oneshot-gtm/.env`, chmod 600, auto-loaded on first import.
 

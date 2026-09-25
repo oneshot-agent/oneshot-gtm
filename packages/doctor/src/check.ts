@@ -11,6 +11,7 @@ import {
   GMAIL_AUTH_HINT,
   isGroupOrWorldAccessible,
   sharedDbPath,
+  sharedDir,
   gmailAccountFor,
   hasCalendarScope,
   identityCapacities,
@@ -35,6 +36,20 @@ import {
 import { finderApprovalHealth, storedTriggerConfig, TRIGGERS } from "@oneshot-gtm/find";
 
 type CheckSeverity = "ok" | "warn" | "fail";
+
+/** Every local SQLite file: each workspace's ledger (active one first) and the shared stores. */
+function stateDatabasePaths(): string[] {
+  const ledgers = [
+    join(configDir(), "ledger.sqlite"),
+    ...listWorkspaces().map(([, entry]) => join(entry.home, "ledger.sqlite")),
+  ];
+  const shared = [
+    sharedDbPath(),
+    join(sharedDir(), "reply-review.sqlite"),
+    join(sharedDir(), "linkedin-inbox.sqlite"),
+  ];
+  return [...new Set([...ledgers, ...shared])];
+}
 
 /** Trimmable receipt payload size above which doctor suggests compact-receipts. */
 const RECEIPT_PAYLOAD_WARN_BYTES = 20 * 1048576;
@@ -844,25 +859,31 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
     });
   }
 
-  // Opening a state DB chmods it to 0600 (sqlite-open.ts); a file that is
-  // still readable by others is one that heal couldn't change. Windows
-  // reports synthetic mode bits, so the check means nothing there.
-  const dbPaths =
-    process.platform === "win32" ? [] : [join(configDir(), "ledger.sqlite"), sharedDbPath()];
-  for (const path of dbPaths) {
-    let mode: number;
-    try {
-      mode = statSync(path).mode;
-    } catch {
-      continue;
+  // Opening a state DB chmods it and its -wal/-shm to 0600 (sqlite-open.ts).
+  // Any database file still readable by others, in any workspace or the
+  // shared directory, is one that heal couldn't change (or a workspace that
+  // hasn't been opened since). Windows reports synthetic mode bits, so the
+  // check means nothing there.
+  if (process.platform !== "win32") {
+    const exposed: string[] = [];
+    for (const path of stateDatabasePaths()) {
+      for (const file of [path, `${path}-wal`, `${path}-shm`]) {
+        let mode: number;
+        try {
+          mode = statSync(file).mode;
+        } catch {
+          continue;
+        }
+        if (isGroupOrWorldAccessible(mode)) exposed.push(file);
+      }
     }
-    if (isGroupOrWorldAccessible(mode)) {
+    if (exposed.length > 0) {
       results.push({
         name: "database permissions",
         group: "install",
         severity: "warn",
-        message: `${path} is readable by other users (mode ${(mode & 0o777).toString(8)})`,
-        hint: `chmod 600 ${path}`,
+        message: `${exposed.length} database file(s) readable by other users: ${exposed.join(", ")}`,
+        hint: `chmod 600 ${exposed.join(" ")}`,
       });
     }
   }

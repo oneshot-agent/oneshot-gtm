@@ -42,7 +42,8 @@ export function personAliases(input: Partial<Omit<SharedPerson, "id">>): string[
 export class SharedPeople {
   private db: Database;
   constructor(path: string) {
-    this.db = openStateDatabase(path, { busyTimeoutMs: 10000 });
+    // person_aliases.person_id references shared_people(id).
+    this.db = openStateDatabase(path, { busyTimeoutMs: 10000, foreignKeys: true });
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS shared_people (
         id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, company TEXT,
