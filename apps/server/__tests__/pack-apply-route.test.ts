@@ -26,6 +26,7 @@ vi.mock("@oneshot-gtm/core", async () => {
           enabled: input.enabled === false ? 0 : 1,
           config_json: input.configJson,
           running_started_at: null,
+          company_batch_seq: 0,
         });
       },
       setTriggerConfig: (name: string, json: string) => {
@@ -55,6 +56,7 @@ vi.mock("@oneshot-gtm/core", async () => {
               enabled: 1,
               config_json: configJson,
               running_started_at: null,
+              company_batch_seq: 0,
             });
           }
         }
@@ -126,6 +128,7 @@ describe("applyPackRoute", () => {
       enabled: 1,
       config_json: JSON.stringify({ maxCostUsd: 42, sinceDays: 3 }),
       running_started_at: null,
+      company_batch_seq: 0,
     });
     const res = await applyPackRoute(req(), { id: "devtools-early-adopters" });
     expect(res.status).toBe(200);

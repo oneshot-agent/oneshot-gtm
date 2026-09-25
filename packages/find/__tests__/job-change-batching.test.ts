@@ -163,4 +163,38 @@ describe("runJobChangeFinder — company batching (#708)", () => {
     expect(searchCalls).toHaveLength(1);
     expect(searchCalls[0]!.query).toBe('"joined as VP Engineering" last 14 days');
   });
+
+  it("stops issuing further batch searches once maxCostUsd is reached MID search phase, not just after it (#708 correction)", async () => {
+    // 40 companies split into several batches; each batch search costs more
+    // than maxCostUsd on its own, and every search returns zero hits, so the
+    // only thing that can stop further paid searches is the pre-search cap
+    // check — the post-loop per-hit check is never reached.
+    const companies = Array.from({ length: 40 }, (_, i) => `Cap${i}`);
+    webSearchImpl = () => ({ results: [], cost: 3 });
+
+    const out = await runJobChangeFinder({
+      ...baseConfig,
+      companies,
+      maxCostUsd: 5,
+    });
+
+    expect(searchCalls.length).toBe(2);
+    expect(out.costUsd).toBe(6);
+    expect(out.halted).toBe("max-cost cap (5)");
+  });
+
+  it("halts on maxCostUsd even when every search returns zero hits (the post-loop per-hit check is never reached)", async () => {
+    const companies = Array.from({ length: 40 }, (_, i) => `Zero${i}`);
+    webSearchImpl = () => ({ results: [], cost: 10 });
+
+    const out = await runJobChangeFinder({
+      ...baseConfig,
+      companies,
+      maxCostUsd: 1,
+    });
+
+    expect(searchCalls.length).toBe(1);
+    expect(out.candidates).toBe(0);
+    expect(out.halted).toBe("max-cost cap (1)");
+  });
 });

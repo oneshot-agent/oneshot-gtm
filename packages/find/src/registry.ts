@@ -105,16 +105,22 @@ export type Readiness = { ready: true } | { ready: false; reason: string };
 /**
  * Rotation cursor for `hiring-signal` / `job-change`'s company-batch split
  * (issue #708): `runFinderWithProductResearch`'s two callers stamp
- * `_triggerLastPolledAtMs` onto the resolved config with the trigger's
- * PRE-run `last_polled_at` (epoch ms, 0 for a trigger's first-ever run)
- * before invoking `spec.run` — so a config that spans several company
- * batches starts at a different batch each run without any new persisted
- * cursor state. Never itself persisted: `storedTriggerConfig`/`defaultConfig`
- * never carry this key, and nothing serializes the mutated config back to
- * `config_json`.
+ * `_triggerBatchSeq` onto the resolved config with the trigger's PRE-run
+ * `company_batch_seq` (0 for a trigger's first-ever run) before invoking
+ * `spec.run` — so a config that spans several company batches starts at a
+ * different batch each run without any new persisted cursor state beyond
+ * the counter itself. `company_batch_seq` is a monotonic per-trigger
+ * counter that `updateTriggerLastPoll` increments by exactly 1 on every
+ * completed run, so `cursor mod batchCount` visits every batch index in
+ * turn before repeating — unlike the previous `last_polled_at` epoch-ms
+ * cursor, whose value modulo the batch count could repeat across
+ * successive runs (e.g. whenever the batch count divides the elapsed
+ * milliseconds). Never itself persisted: `storedTriggerConfig`/
+ * `defaultConfig` never carry this key, and nothing serializes the mutated
+ * config back to `config_json`.
  */
 export function companyBatchCursorFor(config: Record<string, unknown>): number {
-  const cursor = config["_triggerLastPolledAtMs"];
+  const cursor = config["_triggerBatchSeq"];
   return typeof cursor === "number" && Number.isFinite(cursor) ? cursor : 0;
 }
 
@@ -1269,17 +1275,17 @@ export async function runTriggerNow(
     logEvent("trigger.run.skipped", { name, source: "ad_hoc", reason: readiness.reason });
     return { name, fired: false, error: message, nextDueInMs: intervalMs };
   }
-  // Company-batch rotation cursor (issue #708) — the PRE-run last_polled_at,
-  // read before this run touches it. `stored` is the row fetched above,
-  // before any upsert/claim; null (first-ever run) reads as cursor 0, same
-  // as `companyBatchCursorFor`'s own fallback. `storedTriggerConfig` may
-  // return `spec.defaultConfig` itself (same object reference) when there is
-  // no stored row yet, so a plain-property assignment would leak this key
-  // into the shared module-level default for every future call — spread
-  // into a fresh object instead.
+  // Company-batch rotation cursor (issue #708) — the PRE-run
+  // company_batch_seq, read before this run touches it. `stored` is the row
+  // fetched above, before any upsert/claim; a null row (first-ever run)
+  // reads as cursor 0, same as `companyBatchCursorFor`'s own fallback.
+  // `storedTriggerConfig` may return `spec.defaultConfig` itself (same
+  // object reference) when there is no stored row yet, so a plain-property
+  // assignment would leak this key into the shared module-level default for
+  // every future call — spread into a fresh object instead.
   const runConfig: Record<string, unknown> = {
     ...config,
-    _triggerLastPolledAtMs: stored?.last_polled_at ? new Date(stored.last_polled_at).getTime() : 0,
+    _triggerBatchSeq: stored?.company_batch_seq ?? 0,
   };
   // fireTriggerNow claims before detaching its promise. Direct callers must
   // claim here so this exported boundary cannot overlap same-trigger runs.
@@ -1383,19 +1389,16 @@ export async function runDueTriggers(
       continue;
     }
 
-    // Company-batch rotation cursor (issue #708) — the PRE-run last_polled_at,
-    // read before this run touches it. Same fallback as runTriggerNow: a
-    // never-polled trigger (`stored` null, or its `last_polled_at` unset)
-    // reads as cursor 0. `storedTriggerConfig` may return `spec.defaultConfig`
-    // itself (same object reference) when there is no stored row yet, so a
-    // plain-property assignment would leak this key into the shared
-    // module-level default for every future call — spread into a fresh
-    // object instead.
+    // Company-batch rotation cursor (issue #708) — the PRE-run
+    // company_batch_seq, read before this run touches it. Same fallback as
+    // runTriggerNow: a never-polled trigger (`stored` null) reads as cursor
+    // 0. `storedTriggerConfig` may return `spec.defaultConfig` itself (same
+    // object reference) when there is no stored row yet, so a plain-property
+    // assignment would leak this key into the shared module-level default
+    // for every future call — spread into a fresh object instead.
     const runConfig: Record<string, unknown> = {
       ...config,
-      _triggerLastPolledAtMs: stored?.last_polled_at
-        ? new Date(stored.last_polled_at).getTime()
-        : 0,
+      _triggerBatchSeq: stored?.company_batch_seq ?? 0,
     };
 
     // Readiness gate: skip without touching last_polled_at so a config fix is

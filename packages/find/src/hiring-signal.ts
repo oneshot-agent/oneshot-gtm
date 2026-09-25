@@ -107,6 +107,10 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
 
   for (const role of roles) {
     if (hits.length >= limit * 2) break;
+    if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+      result.halted = `max-cost cap (${opts.maxCostUsd})`;
+      break;
+    }
     const companies = opts.companies ?? [];
     const buildQuery = (batch: readonly string[]): string => {
       const companyClause = batch.length > 0 ? ` (${batch.map((c) => `"${c}"`).join(" OR ")})` : "";
@@ -118,6 +122,19 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
     );
     for (const batch of batches) {
       if (hits.length >= limit * 2) break;
+      // Hard cap, checked BEFORE each paid batch search (issue #708
+      // correction): checking only after the search-gathering loop finished
+      // let a long `companies` list run every remaining batch search once
+      // the cap was already reached, and a run that ended with zero hits
+      // never reached the per-hit check below at all, so the cap never
+      // fired. Checking here, ahead of every webSearch call, stops
+      // additional spend the moment the accumulated cost reaches the cap —
+      // including on the very next batch/role, and even when no hit is
+      // ever produced.
+      if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+        result.halted = `max-cost cap (${opts.maxCostUsd})`;
+        break;
+      }
       const query = buildQuery(batch);
       try {
         const search = await webSearch(

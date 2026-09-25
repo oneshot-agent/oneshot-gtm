@@ -173,4 +173,46 @@ describe("runHiringSignalFinder — company batching (#708)", () => {
       '"Engineer" last 14 days (site:boards.greenhouse.io OR site:jobs.lever.co OR site:apply.workable.com OR site:jobs.ashbyhq.com)',
     );
   });
+
+  it("stops issuing further batch searches once maxCostUsd is reached MID search phase, not just after it (#708 correction)", async () => {
+    // 40 companies split into several batches; each batch search costs more
+    // than maxCostUsd on its own, and every search returns zero hits, so the
+    // only thing that can stop further paid searches is the pre-search cap
+    // check — the post-loop per-hit check is never reached.
+    const companies = Array.from({ length: 40 }, (_, i) => `Cap${i}`);
+    webSearchImpl = () => ({ results: [], cost: 3 });
+
+    const out = await runHiringSignalFinder({
+      ...baseConfig,
+      companies,
+      maxCostUsd: 5,
+    });
+
+    // The pre-batch-search cap check fires as soon as costUsd (3) is below
+    // 5 after the first search but >= 5 would need a second search to push
+    // it over — with cost 3 per search, the SECOND search's pre-check still
+    // passes (3 < 5) and fires, pushing cost to 6; the THIRD search's
+    // pre-check (6 >= 5) must then refuse to fire.
+    expect(searchCalls.length).toBe(2);
+    expect(out.costUsd).toBe(6);
+    expect(out.halted).toBe("max-cost cap (5)");
+  });
+
+  it("halts on maxCostUsd even when every search returns zero hits (the post-loop per-hit check is never reached)", async () => {
+    const companies = Array.from({ length: 40 }, (_, i) => `Zero${i}`);
+    webSearchImpl = () => ({ results: [], cost: 10 });
+
+    const out = await runHiringSignalFinder({
+      ...baseConfig,
+      companies,
+      maxCostUsd: 1,
+    });
+
+    // First search always fires (cost starts at 0 < 1); its cost (10)
+    // immediately exceeds the cap, so the second batch's pre-search check
+    // must refuse before issuing another paid search.
+    expect(searchCalls.length).toBe(1);
+    expect(out.candidates).toBe(0);
+    expect(out.halted).toBe("max-cost cap (1)");
+  });
 });

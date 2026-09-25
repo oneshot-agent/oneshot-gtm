@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Verifies the registry stamps `_triggerLastPolledAtMs` (companyBatchCursorFor's
-// input) from the trigger's PRE-run `last_polled_at` before invoking
+// Verifies the registry stamps `_triggerBatchSeq` (companyBatchCursorFor's
+// input) from the trigger's PRE-run `company_batch_seq` before invoking
 // `spec.run`, for both the `runTriggerNow` (ad-hoc/"Run now") and
 // `runDueTriggers` (scheduled watch loop) paths — issue #708's rotation
-// cursor. Mirrors registry-claim.test.ts's mocking pattern (fake ledger
-// store + `spec.run` spy) rather than exercising a real finder.
+// cursor. `company_batch_seq` is a monotonic per-trigger counter (not the
+// `last_polled_at` wall-clock timestamp) so that `cursor mod batchCount`
+// advances by exactly one index every completed run and cannot repeat the
+// same starting batch on two successive runs, unlike an epoch-ms cursor
+// whose value modulo the batch count can coincide. Mirrors
+// registry-claim.test.ts's mocking pattern (fake ledger store + `spec.run`
+// spy) rather than exercising a real finder.
 
 interface FakeRow {
   name: string;
@@ -13,6 +18,7 @@ interface FakeRow {
   config_json: string;
   last_polled_at: string | null;
   running_started_at: string | null;
+  company_batch_seq: number;
 }
 
 const fakeStore: Record<string, FakeRow> = {};
@@ -35,6 +41,7 @@ vi.mock("@oneshot-gtm/core", async () => {
           config_json: input.configJson,
           last_polled_at: null,
           running_started_at: null,
+          company_batch_seq: 0,
         };
       },
       markTriggerRunning: (name: string): boolean => {
@@ -47,6 +54,7 @@ vi.mock("@oneshot-gtm/core", async () => {
         if (row) {
           row.running_started_at = null;
           row.last_polled_at = new Date().toISOString();
+          row.company_batch_seq += 1;
         }
       },
       clearTriggerClaim: (input: { name: string }) => {
@@ -83,17 +91,17 @@ afterEach(() => {
 });
 
 describe("companyBatchCursor wiring (#708)", () => {
-  it("runTriggerNow passes the PRE-run last_polled_at (epoch ms) as companyBatchCursor", async () => {
+  it("runTriggerNow passes the PRE-run company_batch_seq as companyBatchCursor", async () => {
     const spec = TRIGGERS.find((s) => s.name === "hiring-signal");
     if (!spec) throw new Error("hiring-signal spec missing — registry shape changed");
 
-    const priorPollIso = "2026-01-01T00:00:00.000Z";
     fakeStore["hiring-signal"] = {
       name: "hiring-signal",
       enabled: 1,
       config_json: JSON.stringify(HIRING_SIGNAL_CONFIG),
-      last_polled_at: priorPollIso,
+      last_polled_at: "2026-01-01T00:00:00.000Z",
       running_started_at: null,
+      company_batch_seq: 7,
     };
 
     const runSpy = vi.spyOn(spec, "run").mockResolvedValue({
@@ -110,13 +118,13 @@ describe("companyBatchCursor wiring (#708)", () => {
       await runTriggerNow("hiring-signal");
       expect(runSpy).toHaveBeenCalledTimes(1);
       const passedConfig = runSpy.mock.calls[0]![0] as Record<string, unknown>;
-      expect(passedConfig["_triggerLastPolledAtMs"]).toBe(new Date(priorPollIso).getTime());
+      expect(passedConfig["_triggerBatchSeq"]).toBe(7);
     } finally {
       runSpy.mockRestore();
     }
   });
 
-  it("runTriggerNow defaults the cursor to 0 for a never-polled trigger", async () => {
+  it("runTriggerNow defaults the cursor to 0 for a never-run trigger", async () => {
     const spec = TRIGGERS.find((s) => s.name === "job-change");
     if (!spec) throw new Error("job-change spec missing — registry shape changed");
 
@@ -129,6 +137,7 @@ describe("companyBatchCursor wiring (#708)", () => {
       }),
       last_polled_at: null,
       running_started_at: null,
+      company_batch_seq: 0,
     };
 
     const runSpy = vi.spyOn(spec, "run").mockResolvedValue({
@@ -144,7 +153,7 @@ describe("companyBatchCursor wiring (#708)", () => {
     try {
       await runTriggerNow("job-change");
       const passedConfig = runSpy.mock.calls[0]![0] as Record<string, unknown>;
-      expect(passedConfig["_triggerLastPolledAtMs"]).toBe(0);
+      expect(passedConfig["_triggerBatchSeq"]).toBe(0);
     } finally {
       runSpy.mockRestore();
     }
@@ -153,7 +162,7 @@ describe("companyBatchCursor wiring (#708)", () => {
   it("does not leak the cursor key onto spec.defaultConfig (no stored row yet)", async () => {
     const spec = TRIGGERS.find((s) => s.name === "hiring-signal");
     if (!spec) throw new Error("hiring-signal spec missing — registry shape changed");
-    expect(spec.defaultConfig["_triggerLastPolledAtMs"]).toBeUndefined();
+    expect(spec.defaultConfig["_triggerBatchSeq"]).toBeUndefined();
 
     // No fakeStore row — runTriggerNow bootstraps one from spec.defaultConfig,
     // exercising the `storedTriggerConfig` "return the default object itself"
@@ -184,20 +193,21 @@ describe("companyBatchCursor wiring (#708)", () => {
         config_json: JSON.stringify({ ...spec.defaultConfig, yourClaim: "a claim" }),
         last_polled_at: null,
         running_started_at: null,
+        company_batch_seq: 0,
       };
       await runTriggerNow("hiring-signal");
-      expect(spec.defaultConfig["_triggerLastPolledAtMs"]).toBeUndefined();
+      expect(spec.defaultConfig["_triggerBatchSeq"]).toBeUndefined();
     } finally {
       runSpy.mockRestore();
     }
   });
 
-  it("runDueTriggers passes the PRE-run last_polled_at (epoch ms) as companyBatchCursor", async () => {
+  it("runDueTriggers passes the PRE-run company_batch_seq as companyBatchCursor", async () => {
     const spec = TRIGGERS.find((s) => s.name === "job-change");
     if (!spec) throw new Error("job-change spec missing — registry shape changed");
 
     // Interval is 24h; set last_polled_at far enough in the past that the
-    // trigger is due, and capture its epoch ms for the assertion.
+    // trigger is due.
     const priorPollIso = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
     fakeStore["job-change"] = {
       name: "job-change",
@@ -208,6 +218,7 @@ describe("companyBatchCursor wiring (#708)", () => {
       }),
       last_polled_at: priorPollIso,
       running_started_at: null,
+      company_batch_seq: 3,
     };
     // Disable every other trigger so only job-change runs.
     for (const other of TRIGGERS) {
@@ -218,6 +229,7 @@ describe("companyBatchCursor wiring (#708)", () => {
         config_json: JSON.stringify(other.defaultConfig),
         last_polled_at: null,
         running_started_at: null,
+        company_batch_seq: 0,
       };
     }
 
@@ -235,7 +247,46 @@ describe("companyBatchCursor wiring (#708)", () => {
       await runDueTriggers();
       expect(runSpy).toHaveBeenCalledTimes(1);
       const passedConfig = runSpy.mock.calls[0]![0] as Record<string, unknown>;
-      expect(passedConfig["_triggerLastPolledAtMs"]).toBe(new Date(priorPollIso).getTime());
+      expect(passedConfig["_triggerBatchSeq"]).toBe(3);
+    } finally {
+      runSpy.mockRestore();
+    }
+  });
+
+  it("advances by exactly 1 across two successive completed runs, never repeating the start batch", async () => {
+    const spec = TRIGGERS.find((s) => s.name === "hiring-signal");
+    if (!spec) throw new Error("hiring-signal spec missing — registry shape changed");
+
+    fakeStore["hiring-signal"] = {
+      name: "hiring-signal",
+      enabled: 1,
+      config_json: JSON.stringify(HIRING_SIGNAL_CONFIG),
+      last_polled_at: "2026-01-01T00:00:00.000Z",
+      running_started_at: null,
+      company_batch_seq: 0,
+    };
+
+    const cursors: number[] = [];
+    const runSpy = vi.spyOn(spec, "run").mockImplementation(async (cfg) => {
+      cursors.push((cfg as Record<string, unknown>)["_triggerBatchSeq"] as number);
+      return {
+        source: "find:hiring-signal",
+        candidates: 0,
+        droppedIcp: 0,
+        droppedDuplicate: 0,
+        droppedEnrichment: 0,
+        enqueued: 0,
+        costUsd: 0,
+      };
+    });
+
+    try {
+      // Two runs back-to-back — with the old epoch-ms cursor these could
+      // land in the same millisecond (or otherwise share a residue mod
+      // batchCount); the counter guarantees they never do.
+      await runTriggerNow("hiring-signal");
+      await runTriggerNow("hiring-signal");
+      expect(cursors).toEqual([0, 1]);
     } finally {
       runSpy.mockRestore();
     }
