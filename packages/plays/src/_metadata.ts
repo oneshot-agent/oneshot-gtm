@@ -71,6 +71,7 @@ export const competitorSwitchMetadata = (t: object): Record<string, unknown> => 
 // queue payload. The play stamps the config value onto the metadata itself.
 export const acceleratorBatchMetadata = (t: object): Record<string, unknown> => ({
   prospectCohort: str(t, "cohort"),
+  demoDayMonth: str(t, "demoDayMonth"),
 });
 
 export const xRepostIntroMetadata = (t: object): Record<string, unknown> => ({

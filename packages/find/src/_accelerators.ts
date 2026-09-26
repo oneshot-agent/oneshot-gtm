@@ -259,3 +259,4 @@ export async function resolveAcceleratorCohorts(
   }
   return { cohorts, unknown };
 }
+export { cohortDemoDay } from "@oneshot-gtm/core";

@@ -1,4 +1,4 @@
-import { getLedger, logEvent, webRead } from "@oneshot-gtm/core";
+import { cohortDemoDayMonth, getLedger, logEvent, webRead } from "@oneshot-gtm/core";
 import { resolveVerifyEnrichQualify, icpFields } from "./_contact.ts";
 import { safeCompanySearch } from "./_sdk-safe.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
@@ -538,12 +538,16 @@ export async function runAcceleratorBatchFinder(
       });
     }
 
+    // The cohort's demo-day month, when its schedule is public. Only the month
+    // rides on the row; whether it has passed is judged at draft time.
+    const demoDayMonth = cohortDemoDayMonth(record.cohort);
     const target: AcceleratorBatchTarget = {
       name: fullName,
       email,
       company: record.name,
       cohort: record.cohort,
       cohortLabel: record.cohortLabel,
+      ...(demoDayMonth ? { demoDayMonth } : {}),
       ...(record.ycUrl
         ? { launchUrl: record.ycUrl }
         : record.website

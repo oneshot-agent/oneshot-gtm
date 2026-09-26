@@ -34,7 +34,7 @@ Every edge-taking trigger needs this and you will usually be the one writing it,
 Shape, which the tool depends on (it picks ONE angle per prospect in code — the email never sees the others):
 
 - **3–4 angles**, separated by ` // `.
-- **Each opens with who it fits**: "For a founder selling to clinics and contractors —", "For someone in a marketing or growth role,", "When the buyers are engineers,". That clause is what selection matches on, so it must name something visible about the prospect — their buyer, industry, role, setting — never their internal stage or tooling ("still finding PMF", "already has a CRM"), which nothing in the data can confirm.
+- **Each opens with who it fits**: "For a founder selling to clinics and contractors —", "For someone in a marketing or growth role,", "When the buyers are engineers,". That clause is what selection matches on, so it must name something visible about the prospect — their buyer, industry, role, setting, or a dated fact the row carries (a cohort's demo day, upcoming or passed) — never their internal stage or tooling ("still finding PMF", "already has a CRM"), which nothing in the data can confirm.
 - **Then one of two shapes:**
   - a **lesson** — a named failure, a mechanism, and what was learned: "…the data breaks before the copy does: email-finding tools trained on tech companies hand back info@ or nothing. What we found: resolve a named person off the listing first."
   - an **opportunity** — what this reader could do that their peers can't yet, resting on one concrete capability the product has or a number the founder gave you: "For a clinic group adding online booking — the edge is confirming every appointment by text the same hour it is booked, which the front desk never has time for."

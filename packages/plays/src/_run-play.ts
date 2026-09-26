@@ -1,5 +1,5 @@
 import type { DraftAngle } from "@oneshot-gtm/shared-types";
-import { extractBusinessAddress } from "@oneshot-gtm/core";
+import { demoDayLine, demoDayOf, extractBusinessAddress } from "@oneshot-gtm/core";
 import {
   deepResearch,
   getLedger,
@@ -33,6 +33,7 @@ import {
 import { enrollInCadence, getSequence } from "./_cadence.ts";
 import {
   type AngleSelection,
+  angleCacheContext,
   describeTargetForAngle,
   edgeFieldOf,
   selectAngle,
@@ -302,6 +303,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
               prospectKey: def.toEmail(target),
               description: describeTargetForAngle(rawTarget, prep.dossier),
               playName: def.playName,
+              cacheContext: angleCacheContext(rawTarget),
             });
             draftTarget = withSelectedAngle(target, edgeField, angleSelection.angle);
           } else if (angles.length === 1) {
@@ -369,6 +371,12 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // block is byte-identical to before.
         const researchedLines = researchedRoleLines(target);
         if (researchedLines) inputBlock = `${inputBlock}\n\n${researchedLines}`;
+        // DEMO DAY: when the row's cohort has a public demo-day schedule,
+        // judged now, so the prompt knows whether it is ahead of them or
+        // behind. Unknown → no line, byte-identical to before.
+        const demoDay = demoDayOf(rawTarget);
+        const demoDayText = demoDayLine(demoDay);
+        if (demoDayText) inputBlock = `${inputBlock}\n\n${demoDayText}`;
         if (opts.draftAngle)
           inputBlock += `\n\nSELECTED ANGLE: ${opts.draftAngle}\nBuild this draft around this argument. Preserve the play’s channel, tone, and factual constraints. Do not blend in other arguments.`;
         // Guard #2 — the LLM draft, the paid call `prepare` was feeding.
@@ -380,10 +388,11 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           // one tighter redraft instead of becoming a lint-held send.
           maxBodyWords: bodyWordCap,
           ...(bodySentenceCap !== undefined ? { maxBodySentences: bodySentenceCap } : {}),
+          demoDay,
         });
 
         const flags = [
-          ...lintEmail(draft.subject, draft.body, bodyWordCap, bodySentenceCap),
+          ...lintEmail(draft.subject, draft.body, bodyWordCap, bodySentenceCap, { demoDay }),
           ...(def.hardBans ? hardBanFlags(draft.body) : []),
           ...(def.extraFlags?.(target) ?? []),
           ...lintGrounding(target, prep),
