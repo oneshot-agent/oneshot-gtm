@@ -18,7 +18,7 @@
     },
     "apps/cli": {
       "name": "oneshot-gtm",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "bin": {
         "oneshot-gtm": "./src/main.ts",
       },
@@ -39,13 +39,12 @@
     },
     "apps/server": {
       "name": "oneshot-gtm-server",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "bin": {
         "oneshot-gtm-server": "./dist/bin.mjs",
       },
       "dependencies": {
         "@oneshot-agent/sdk": "0.35.0",
-        "@oneshot-gtm/plays": "workspace:*",
         "open": "^11.0.0",
         "pdf-lib": "^1.17.1",
       },
@@ -61,7 +60,7 @@
     },
     "apps/web": {
       "name": "@oneshot-gtm/web",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "dependencies": {
         "@assistant-ui/react": "^0.12.25",
         "@base-ui/react": "^1.2.0",
@@ -94,7 +93,7 @@
     },
     "packages/core": {
       "name": "@oneshot-gtm/core",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "dependencies": {
         "@oneshot-agent/sdk": "0.35.0",
         "imapflow": "^2.0.2",
@@ -109,7 +108,7 @@
     },
     "packages/doctor": {
       "name": "@oneshot-gtm/doctor",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
         "@oneshot-gtm/find": "workspace:*",
@@ -117,7 +116,7 @@
     },
     "packages/find": {
       "name": "@oneshot-gtm/find",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
         "@oneshot-gtm/intel": "workspace:*",
@@ -127,14 +126,14 @@
     },
     "packages/intel": {
       "name": "@oneshot-gtm/intel",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
       },
     },
     "packages/plays": {
       "name": "@oneshot-gtm/plays",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
         "@oneshot-gtm/intel": "workspace:*",
@@ -142,11 +141,11 @@
     },
     "packages/prompts": {
       "name": "@oneshot-gtm/prompts",
-      "version": "0.8.0",
+      "version": "0.9.0",
     },
     "packages/shared-types": {
       "name": "@oneshot-gtm/shared-types",
-      "version": "0.8.0",
+      "version": "0.9.0",
     },
   },
   "overrides": {
