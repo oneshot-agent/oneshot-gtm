@@ -166,9 +166,11 @@ export async function fetchAcceleratorSearch(
     target.year ??
     (/\b(20\d{2})\b/.exec(label) ? Number(/\b(20\d{2})\b/.exec(label)![1]) : undefined);
 
-  // A dated listing is authoritative when it loads: its companies for the
-  // year, or none, with no paid search. Only a source that fails to load or
-  // has changed shape falls through to search.
+  // A dated listing whose date IS the cohort (`authoritative`, the default)
+  // decides alone when it loads: its companies for the year, or none, with no
+  // paid search. A listing dated by something else (a founding year) only
+  // adds to search. A source that fails to load or has changed shape falls
+  // through to search.
   let structuredNote: string | null = null;
   if (target.structured && year !== undefined) {
     const name = target.acceleratorName ?? label;
@@ -178,32 +180,37 @@ export async function fetchAcceleratorSearch(
         year,
         MAX_COMPANIES_PER_COHORT,
       );
-      if (items.length === 0) {
+      const listing = items.map((c): CompanyRecord => {
+        const domain = sanitizeCompanyDomain(c.website);
         return {
-          records: [],
-          costUsd: 0,
-          diagnostic: `${name}'s listing (${listed} companies) has none dated ${year}`,
+          name: c.name,
+          website: domain ? `https://${domain}` : null,
+          oneLiner: c.oneLiner,
+          longDescription: null,
+          industry: null,
+          tags: [],
+          ycUrl: null,
+          founderName: c.founderName,
+          founderLinkedinUrl: c.founderLinkedinUrl,
+          founderPhone: null,
+          source: "listing",
         };
+      });
+      if (target.structured.authoritative !== false) {
+        return listing.length > 0
+          ? { records: listing, costUsd: 0, diagnostic: null }
+          : {
+              records: [],
+              costUsd: 0,
+              diagnostic: `${name}'s listing (${listed} companies) has none dated ${year}`,
+            };
       }
+      const searched = await searchCohort(label, limit, target, year, (d) => d);
+      const records = mergeRecords(listing, searched.records);
       return {
-        records: items.map((c) => {
-          const domain = sanitizeCompanyDomain(c.website);
-          return {
-            name: c.name,
-            website: domain ? `https://${domain}` : null,
-            oneLiner: c.oneLiner,
-            longDescription: null,
-            industry: null,
-            tags: [],
-            ycUrl: null,
-            founderName: c.founderName,
-            founderLinkedinUrl: c.founderLinkedinUrl,
-            founderPhone: null,
-            source: "listing" as const,
-          };
-        }),
-        costUsd: 0,
-        diagnostic: null,
+        records,
+        costUsd: searched.costUsd,
+        diagnostic: records.length > 0 ? null : searched.diagnostic,
       };
     } catch (err) {
       const message = ((err as Error).message ?? "").slice(0, 120);
@@ -217,8 +224,35 @@ export async function fetchAcceleratorSearch(
   } else if (target.structured === null && target.acceleratorName) {
     structuredNote = `no dated source for ${target.acceleratorName}`;
   }
-  const withNote = (d: string): string => (structuredNote ? `${structuredNote}; ${d}` : d);
+  const note = structuredNote;
+  return searchCohort(label, limit, target, year, (d) => (note ? `${note}; ${d}` : d));
+}
 
+/** Listing records first; a search record is added only when neither its domain nor its name is already there. */
+export function mergeRecords(listing: CompanyRecord[], searched: CompanyRecord[]): CompanyRecord[] {
+  const key = (r: CompanyRecord) => sanitizeCompanyDomain(r.website);
+  const domains = new Set(listing.map(key).filter((d) => d !== null));
+  const names = new Set(listing.map((r) => r.name.toLowerCase()));
+  const out = [...listing];
+  for (const r of searched) {
+    const d = key(r);
+    if ((d && domains.has(d)) || names.has(r.name.toLowerCase())) continue;
+    if (d) domains.add(d);
+    names.add(r.name.toLowerCase());
+    out.push(r);
+  }
+  return out.slice(0, MAX_COMPANIES_PER_COHORT);
+}
+
+/** The #718 search path: listing pages and search hits, read and extracted by the LLM. */
+async function searchCohort(
+  label: string,
+  limit: number,
+  target: CohortTarget,
+  year: number | undefined,
+  withNote: (d: string) => string,
+): Promise<{ records: CompanyRecord[]; costUsd: number; diagnostic: string | null }> {
+  const queries = buildCohortQueries(label);
   if (target.acceleratorName && year !== undefined) {
     queries.unshift(`"${target.acceleratorName}" ${year} batch companies`);
   }

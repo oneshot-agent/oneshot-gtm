@@ -39,8 +39,11 @@ export const ACCELERATORS: readonly Accelerator[] = [
     programName: "South Park Commons Founder Fellowship",
     cadence: "yearly",
     listingUrls: ["https://www.southparkcommons.com/companies"],
-    // Founding year: a company founded in the target year was backed in it.
+    // Founding year, not a Founder Fellowship date: its companies are added to
+    // search, never a substitute for it. The cohort label stays the neutral
+    // "South Park Commons <year>".
     structured: {
+      authoritative: false,
       kind: "json-script",
       url: "https://www.southparkcommons.com/companies",
       scriptId: "company-data",
@@ -139,6 +142,23 @@ export const ACCELERATORS: readonly Accelerator[] = [
 export function getAccelerator(id: string): Accelerator | null {
   const key = id.trim().toLowerCase();
   return ACCELERATORS.find((a) => a.id === key) ?? null;
+}
+
+/**
+ * The accelerator (and year, when the id names one) behind an explicit cohort
+ * id such as `spc-2026-1` or `a16z-speedrun-2026`: the longest known id that
+ * prefixes it. YC is left out; its ids route to yc-oss already.
+ */
+export function acceleratorOfCohortId(
+  cohort: string,
+): { accelerator: string; year?: number } | null {
+  const id = cohort.trim().toLowerCase();
+  const acc = ACCELERATORS.filter((a) => a.id !== "yc" && id.startsWith(`${a.id}-`)).toSorted(
+    (a, b) => b.id.length - a.id.length,
+  )[0];
+  if (!acc) return null;
+  const year = /(?:^|-)(20\d{2})(?:-|$)/.exec(id.slice(acc.id.length));
+  return { accelerator: acc.id, ...(year ? { year: Number(year[1]) } : {}) };
 }
 
 /** A resolved cohort plus what the search adapter needs to target it. */

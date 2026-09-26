@@ -20,7 +20,8 @@ vi.mock("@oneshot-gtm/core", async () => {
 const { _resetStructuredCache, fetchStructuredCohort, parseWebflowPage, scriptBody, valuesAt } =
   await import("../src/_accelerator-structured.ts");
 const { getAccelerator } = await import("../src/_accelerators.ts");
-const { fetchAcceleratorSearch } = await import("../src/_accelerator-search-adapter.ts");
+const { fetchAcceleratorSearch, mergeRecords } =
+  await import("../src/_accelerator-search-adapter.ts");
 
 const FIX = join(import.meta.dirname, "fixtures", "accelerators");
 const fixture = (f: string) => readFileSync(join(FIX, f), "utf8");
@@ -36,6 +37,22 @@ function servePages(pages: Record<string, string>) {
       : new Response(body, { status: 200 });
   };
   return { impl, fetched };
+}
+
+function rec(name: string, website: string | null, source: "listing" | "websearch") {
+  return {
+    name,
+    website,
+    oneLiner: null,
+    longDescription: null,
+    industry: null,
+    tags: [],
+    ycUrl: null,
+    founderName: null,
+    founderLinkedinUrl: null,
+    founderPhone: null,
+    source,
+  };
 }
 
 function source(id: string) {
@@ -139,6 +156,18 @@ describe("structured sources, from saved page samples", () => {
     expect(p.items).toHaveLength(2);
   });
 
+  it("treats a listing with names but no dates as a shape failure, and does not cache it", async () => {
+    const undated = fixture("spc-companies.html").replace(/"founded":\s*"\d{4}",/g, "");
+    const pages = { "https://www.southparkcommons.com/companies": undated };
+    await expect(
+      fetchStructuredCohort(source("spc"), 2026, 300, servePages(pages).impl),
+    ).rejects.toThrow(/no dated companies/);
+    // The next read sees the fixed page, not a cached empty result.
+    pages["https://www.southparkcommons.com/companies"] = fixture("spc-companies.html");
+    const r = await fetchStructuredCohort(source("spc"), 2026, 300, servePages(pages).impl);
+    expect(r.items).toHaveLength(2);
+  });
+
   it("throws when the source has changed shape, so the caller can search instead", async () => {
     const { impl } = servePages({
       "https://www.southparkcommons.com/companies": "<html>redesigned</html>",
@@ -195,6 +224,33 @@ describe("fetchAcceleratorSearch with a structured source", () => {
     });
     expect(searches.length).toBeGreaterThan(0);
     expect(r.diagnostic).toMatch(/^South Park Commons's dated listing failed \(HTTP 404/);
+  });
+
+  it("a non-authoritative listing (SPC's founding year) keeps its companies and still searches", async () => {
+    stubFetch({ "https://www.southparkcommons.com/companies": fixture("spc-companies.html") });
+    const acc = getAccelerator("spc")!;
+    expect(acc.structured).toMatchObject({ authoritative: false });
+    const r = await fetchAcceleratorSearch("spc-2026", "South Park Commons 2026", 40, {
+      acceleratorName: acc.name,
+      year: 2026,
+      structured: acc.structured!,
+    });
+    expect(searches.length).toBeGreaterThan(0);
+    expect(r.records).toHaveLength(2);
+    expect(r.records.every((x) => x.source === "listing")).toBe(true);
+    expect(r.diagnostic).toBeNull();
+  });
+
+  it("mergeRecords adds search records not already listed, by domain or name", () => {
+    const merged = mergeRecords(
+      [rec("Preseen", null, "listing"), rec("Mesa", "https://mesa.dev", "listing")],
+      [
+        rec("PRESEEN", "https://preseen.ai", "websearch"),
+        rec("Mesa Inc", "https://www.mesa.dev/", "websearch"),
+        rec("Fresh", "https://fresh.io", "websearch"),
+      ],
+    );
+    expect(merged.map((m) => m.name)).toEqual(["Preseen", "Mesa", "Fresh"]);
   });
 
   it("an accelerator with no dated source says so when search finds nothing", async () => {

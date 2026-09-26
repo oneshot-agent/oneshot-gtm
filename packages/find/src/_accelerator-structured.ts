@@ -34,38 +34,49 @@ export interface StructuredFields {
   id?: string;
 }
 
-export type StructuredSource =
-  | {
-      /** JSON embedded in the page as `<script id="...">` (Next.js `__NEXT_DATA__`, Astro props). */
-      kind: "json-script";
-      url: string;
-      scriptId: string;
-      /** Path to the item array inside the JSON. */
-      items: string;
-      fields: StructuredFields;
-    }
-  | {
-      /** A public JSON endpoint the listing page itself calls. */
-      kind: "json-api";
-      url: string;
-      items: string;
-      /** Path to the next page's URL, for a paginated endpoint. */
-      next?: string;
-      fields: StructuredFields;
-      /** Per-company endpoint (`{id}`) for fields the list omits; read only for kept companies. */
-      detail?: { url: string; fields: Omit<StructuredFields, "name" | "year"> };
-    }
-  | {
-      /**
-       * A Webflow CMS list with Finsweet filter attributes
-       * (`fs-cmsfilter-field="name"`), paginated by `?<list>_page=N`.
-       * `fields` names the attribute values; the website is the card's
-       * first external link.
-       */
-      kind: "webflow-cms";
-      url: string;
-      fields: { name: string; year: string; oneLiner?: string };
-    };
+interface StructuredBase {
+  /**
+   * Whether the listing's date IS the cohort (default true), so a loaded
+   * listing decides the cohort alone. `false` when it dates something else
+   * (a founding year): its companies are kept and search still runs.
+   */
+  authoritative?: boolean;
+}
+
+export type StructuredSource = StructuredBase &
+  (
+    | {
+        /** JSON embedded in the page as `<script id="...">` (Next.js `__NEXT_DATA__`, Astro props). */
+        kind: "json-script";
+        url: string;
+        scriptId: string;
+        /** Path to the item array inside the JSON. */
+        items: string;
+        fields: StructuredFields;
+      }
+    | {
+        /** A public JSON endpoint the listing page itself calls. */
+        kind: "json-api";
+        url: string;
+        items: string;
+        /** Path to the next page's URL, for a paginated endpoint. */
+        next?: string;
+        fields: StructuredFields;
+        /** Per-company endpoint (`{id}`) for fields the list omits; read only for kept companies. */
+        detail?: { url: string; fields: Omit<StructuredFields, "name" | "year"> };
+      }
+    | {
+        /**
+         * A Webflow CMS list with Finsweet filter attributes
+         * (`fs-cmsfilter-field="name"`), paginated by `?<list>_page=N`.
+         * `fields` names the attribute values; the website is the card's
+         * first external link.
+         */
+        kind: "webflow-cms";
+        url: string;
+        fields: { name: string; year: string; oneLiner?: string };
+      }
+  );
 
 /** A listed company, normalised across source kinds. */
 export interface StructuredItem {
@@ -331,6 +342,10 @@ export async function fetchStructuredCohort(
   else {
     all = await loadItems(source, fetchImpl);
     if (all.length === 0) throw new Error(`no companies parsed from ${source.url}`);
+    // Names but no dates: the year field moved. Not cached, so the next run retries.
+    if (all.every((i) => i.year === null)) {
+      throw new Error(`no dated companies parsed from ${source.url}`);
+    }
     cache.set(key, { at: Date.now(), items: all });
   }
   const seen = new Set<string>();
