@@ -423,14 +423,22 @@ export function sanitizeCompanyDomain(raw: string | null | undefined): string | 
   if (!raw || typeof raw !== "string") return null;
   let v = raw.trim().toLowerCase();
   if (v.length === 0) return null;
-  // Strip scheme.
-  v = v.replace(/^https?:\/\//, "");
-  // Strip leading www.
-  v = v.replace(/^www\./, "");
+  // Strip scheme and leading www. — prefix checks, no regex, so input
+  // from a scraped page can't make this slow.
+  if (v.startsWith("https://")) v = v.slice(8);
+  else if (v.startsWith("http://")) v = v.slice(7);
+  if (v.startsWith("www.")) v = v.slice(4);
   // Drop path / query / fragment / port.
-  v = v.replace(/[/?#:].*$/, "");
+  let end = v.length;
+  for (const ch of ["/", "?", "#", ":"]) {
+    const i = v.indexOf(ch);
+    if (i !== -1 && i < end) end = i;
+  }
+  v = v.slice(0, end);
   // Trim trailing dots.
-  v = v.replace(/\.+$/, "");
+  let stop = v.length;
+  while (stop > 0 && v[stop - 1] === ".") stop--;
+  v = v.slice(0, stop);
   // Sanity: must contain a dot and at least one non-digit char to be a real domain.
   if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(v)) return null;
   return v;

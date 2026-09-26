@@ -194,6 +194,16 @@ describe("parseAcceleratorLaunchExtract", () => {
 });
 
 describe("sanitizeCompanyDomain", () => {
+  it("strips ports, fragments and trailing dots, and stays fast on long input", () => {
+    expect(sanitizeCompanyDomain("https://www.foo.com:8080/x?y#z")).toBe("foo.com");
+    expect(sanitizeCompanyDomain("foo.com#about")).toBe("foo.com");
+    expect(sanitizeCompanyDomain("foo.com...")).toBe("foo.com");
+    const t0 = Date.now();
+    expect(sanitizeCompanyDomain("#".repeat(100_000))).toBeNull();
+    expect(sanitizeCompanyDomain(`a${".".repeat(100_000)}b`)).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(500);
+  });
+
   it("returns a clean bare host for already-clean input", () => {
     expect(sanitizeCompanyDomain("foo.com")).toBe("foo.com");
     expect(sanitizeCompanyDomain("acme.dev")).toBe("acme.dev");
