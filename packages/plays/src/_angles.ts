@@ -23,6 +23,8 @@
 import { createHash } from "node:crypto";
 import {
   angleTextKey,
+  demoDayOf,
+  describeDemoDay,
   getLedger,
   loadConfig,
   logEvent,
@@ -119,11 +121,24 @@ export interface SelectAngleInput {
   /** The intro's index, when choosing for a follow-up. */
   excludeIndex?: number | null;
   playName?: string;
+  /**
+   * A time-dependent fact the pick depends on (see `angleCacheContext`), so a
+   * pick made before a demo day passed is not replayed after it. Absent → the
+   * cache key is unchanged.
+   */
+  cacheContext?: string;
 }
 
 function cacheKeyFor(input: SelectAngleInput, excludeIndex: number | null): string {
   const who = input.prospectKey.trim().toLowerCase();
-  return `${CACHE_PREFIX}${who}:${edgeKey(input.edge)}:${excludeIndex ?? "-"}`;
+  const context = input.cacheContext ? `:${input.cacheContext}` : "";
+  return `${CACHE_PREFIX}${who}:${edgeKey(input.edge)}:${excludeIndex ?? "-"}${context}`;
+}
+
+/** The part of the classifier's input that changes with the calendar, as a cache-key suffix. */
+export function angleCacheContext(target: object, now: Date = new Date()): string | undefined {
+  const demoDay = demoDayOf(target, now);
+  return demoDay ? `demo-day-${demoDay.status.replace(" ", "-")}` : undefined;
 }
 
 /** Ledger reads/writes are best-effort: test doubles and older ledgers may lack them. */
@@ -241,6 +256,8 @@ const NOT_EVIDENCE = new Set<string>([
   "businessAddress",
   "founderEmail",
   "emailOverride",
+  // Stamped month; the computed demoDay line says whether it has passed.
+  "demoDayMonth",
 ]);
 
 /**
@@ -259,6 +276,11 @@ export function describeTargetForAngle(target: object, dossier?: string | null):
     if (!val || val.length > 240) continue;
     lines.push(`${k}: ${val}`);
   }
+  // Computed at the moment of the pick, never read from a stored string: a
+  // routing clause like "demo day on the calendar" can only key on it if it
+  // is current.
+  const demoDay = demoDayOf(target);
+  if (demoDay) lines.push(`demoDay: ${describeDemoDay(demoDay)}`);
   const head = dossier?.replace(/\s+/g, " ").trim();
   if (head) lines.push(`research: ${head.slice(0, 600)}`);
   return lines.join("\n");
@@ -379,6 +401,7 @@ export async function followUpEdgeSelection(
     prospectKey: email,
     description: describeTargetForAngle(target),
     playName,
+    cacheContext: angleCacheContext(target),
   });
   const index = angles.findIndex((a) => angleTextKey(a) === angleTextKey(pick.angle));
   return { ...pick, index: index < 0 ? 0 : index, count: angles.length };

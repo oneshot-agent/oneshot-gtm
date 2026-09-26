@@ -11,6 +11,8 @@ export interface AcceleratorBatchTarget {
   cohort: string;
   /** Human program name ("YC Summer 2026") — the row's signal label; the slug stays for scoring. */
   cohortLabel?: string;
+  /** `2026-03`: the cohort's demo-day month, stamped when its schedule is known. Status is computed at draft time. */
+  demoDayMonth?: string;
   launchUrl?: string;
   productOneLiner?: string;
   linkedinUrl?: string;

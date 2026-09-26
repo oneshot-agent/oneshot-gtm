@@ -202,6 +202,50 @@ describe("describeTargetForAngle", () => {
     expect(d).not.toContain("linkedin");
     expect(d).not.toContain(A1);
   });
+
+  it("carries the demo day judged now, not the stamped month", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-25T12:00:00Z"));
+    try {
+      const d = describeTargetForAngle({
+        company: "Piris Labs",
+        cohort: "yc-w26",
+        demoDayMonth: "2026-03",
+      });
+      expect(d).toContain("demoDay: March 2026 (passed, ~6 months ago)");
+      expect(d).not.toContain("demoDayMonth");
+      expect(describeTargetForAngle({ company: "X", cohort: "antler-2026" })).not.toContain(
+        "demoDay",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("angle choice and demo day", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("the classifier sees the demo-day line, and a pick is not replayed once it passes", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const target = {
+      name: "Ali",
+      email: "ali@piris.dev",
+      company: "Piris Labs",
+      cohort: "yc-w26",
+      yourEdge: EDGE,
+    };
+    vi.setSystemTime(new Date("2026-02-10T12:00:00Z"));
+    await runAcceleratorBatch({ dryRun: true, targets: [target] });
+    expect(calls.classifier[0]).toContain("demoDay: March 2026 (upcoming, in ~1 month)");
+    vi.setSystemTime(new Date("2026-09-25T12:00:00Z"));
+    await runAcceleratorBatch({ dryRun: true, targets: [target] });
+    // A new classifier call, not the cached upcoming-era pick.
+    expect(calls.classifier).toHaveLength(2);
+    expect(calls.classifier[1]).toContain("demoDay: March 2026 (passed, ~6 months ago)");
+  });
 });
 
 describe("followUpEdgeBlock", () => {

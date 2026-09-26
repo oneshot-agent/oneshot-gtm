@@ -6,7 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // which is how installs ended up claiming a batch the founder was never in —
 // so a stale stamp on an old queue row must not be able to bring it back.
 
-const calls = { llmInputBlocks: [] as string[] };
+const calls = {
+  llmInputBlocks: [] as string[],
+  /** The last message of each call: the redraft turn, when there is one. */
+  lastTurns: [] as string[],
+  /** Draft responses served in order; empty → a clean default draft. */
+  replies: [] as string[],
+};
 /** Mutable so a test can turn the peer angle on; reset in beforeEach. */
 let founderCohort: string | null = null;
 
@@ -50,7 +56,12 @@ vi.mock("@oneshot-gtm/intel", async () => {
     loadPrompt: () => "system",
     complete: async (input: { messages: Array<{ role: string; content: string }> }) => {
       calls.llmInputBlocks.push(input.messages.find((m) => m.role === "user")?.content ?? "");
-      return { content: JSON.stringify({ subject: "s", body: "b" }), provider: "t", model: "t" };
+      calls.lastTurns.push(input.messages.at(-1)?.content ?? "");
+      return {
+        content: calls.replies.shift() ?? JSON.stringify({ subject: "s", body: "b" }),
+        provider: "t",
+        model: "t",
+      };
     },
   };
 });
@@ -67,11 +78,67 @@ const base = {
 
 beforeEach(() => {
   calls.llmInputBlocks = [];
+  calls.lastTurns = [];
+  calls.replies = [];
   founderCohort = null;
 });
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.useRealTimers();
+});
+
+describe("runAcceleratorBatch — demo day is a fact judged at draft time", () => {
+  const at = (iso: string) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(iso));
+  };
+
+  it("carries a passed demo day for a past cohort", async () => {
+    at("2026-09-25T12:00:00Z");
+    await runAcceleratorBatch({ dryRun: true, targets: [{ ...base, cohort: "yc-w26" }] });
+    expect(calls.llmInputBlocks[0]).toContain("DEMO DAY: March 2026 (passed, ~6 months ago)");
+  });
+
+  it("carries an upcoming demo day, from the stamped month", async () => {
+    at("2026-09-25T12:00:00Z");
+    await runAcceleratorBatch({
+      dryRun: true,
+      targets: [{ ...base, cohort: "yc-f26", demoDayMonth: "2026-12" }],
+    });
+    expect(calls.llmInputBlocks[0]).toContain("DEMO DAY: December 2026 (upcoming, in ~3 months)");
+  });
+
+  it("carries no line for a cohort with no known schedule", async () => {
+    await runAcceleratorBatch({ dryRun: true, targets: [{ ...base, cohort: "antler-2026" }] });
+    expect(calls.llmInputBlocks[0]).not.toContain("DEMO DAY");
+  });
+
+  it("redrafts a first touch that mentions a passed demo day, and flags one that keeps it", async () => {
+    at("2026-09-25T12:00:00Z");
+    calls.replies.push(
+      JSON.stringify({ subject: "s", body: "Numbers ready for demo day?" }),
+      JSON.stringify({ subject: "s", body: "Are you logging replies yet?" }),
+    );
+    const fixed = await runAcceleratorBatch({
+      dryRun: true,
+      targets: [{ ...base, cohort: "yc-w26" }],
+    });
+    expect(calls.lastTurns[1]).toContain("Their demo day was March 2026");
+    expect(fixed.drafted[0]!.body).toBe("Are you logging replies yet?");
+    expect(fixed.drafted[0]!.flags).not.toContain("stale-demo-day");
+
+    calls.replies.push(
+      JSON.stringify({ subject: "s", body: "Numbers ready for demo day?" }),
+      JSON.stringify({ subject: "s", body: "How did demo day go?" }),
+    );
+    const held = await runAcceleratorBatch({
+      dryRun: true,
+      targets: [{ ...base, cohort: "yc-w26" }],
+    });
+    expect(held.drafted[0]!.body).toBe("Numbers ready for demo day?");
+    expect(held.drafted[0]!.flags).toContain("stale-demo-day");
+  });
 });
 
 describe("runAcceleratorBatch — the sender's cohort comes from config only", () => {

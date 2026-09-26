@@ -86,9 +86,14 @@ describe("shared fns are what the play defs reference", () => {
   });
   // Never the SENDER's cohort, even when an old payload still carries one:
   // that is founder truth the play reads from config at draft time.
-  it("accelerator-batch reads only the prospect's cohort off the payload", () => {
+  it("accelerator-batch reads only the prospect's cohort and its demo-day month off the payload", () => {
     expect(acceleratorBatchMetadata({ senderCohort: "yc-w26", cohort: "spc-1" })).toEqual({
       prospectCohort: "spc-1",
+      demoDayMonth: null,
+    });
+    expect(acceleratorBatchMetadata({ cohort: "yc-w26", demoDayMonth: "2026-03" })).toEqual({
+      prospectCohort: "yc-w26",
+      demoDayMonth: "2026-03",
     });
   });
   it("sources-sought", () => {

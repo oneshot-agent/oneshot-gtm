@@ -5,6 +5,7 @@ Each angle is a self-contained observation the sender can offer a specific kind 
 Rules:
 
 - Judge fit from the PROSPECT block only. Never infer the prospect's internal stage, tooling, or budget from nothing — if an angle's condition cannot be verified from the block, it does not fit.
+- A dated line in the block (e.g. `demoDay: March 2026 (passed, ~6 months ago)`) is judged as of today. An angle whose condition is an event still ahead of the reader does not fit once that line says it passed, and does not fit when no such line is present.
 - When exactly one angle's condition is true, choose it.
 - When several fit, choose the one whose condition is most specific to this prospect (a named industry beats "a founder"; a named role beats "someone").
 - When none clearly fits, choose the most general angle — never a specific one that would be false for this reader.

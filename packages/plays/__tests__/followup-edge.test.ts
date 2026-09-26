@@ -13,6 +13,7 @@ let sentRow: { payload: Record<string, unknown>; source: string } | null = null;
 let triggerConfig: Record<string, unknown> | null = null;
 let introAngleText: string | null = null;
 const cache = new Map<string, string>();
+const classifierInputs: string[] = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -40,7 +41,10 @@ vi.mock("@oneshot-gtm/intel", async () => {
   return {
     ...actual,
     loadPrompt: () => "choose",
-    complete: async () => ({ content: '{"index":1}' }),
+    complete: async (input: { messages: Array<{ role: string; content: string }> }) => {
+      classifierInputs.push(input.messages.find((m) => m.role === "user")?.content ?? "");
+      return { content: '{"index":1}' };
+    },
   };
 });
 
@@ -89,6 +93,22 @@ describe("followUpEdgeSelection", () => {
     triggerConfig = { yourEdge: `${A} // ${B}` };
     const sel = await followUpEdgeSelection(prospect, "luma-events", { rotateFrom: B });
     expect(sel?.angle).toBe(A);
+  });
+
+  it("judges the intro row's demo day at follow-up time, for the classifier", async () => {
+    classifierInputs.length = 0;
+    sentRow = {
+      payload: { email: "p@x.dev", cohort: "yc-w26", yourEdge: `${A} // ${B} // ${C}` },
+      source: "find:accelerator-batch",
+    };
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-25T12:00:00Z"));
+    try {
+      await followUpEdgeSelection(prospect, "accelerator-batch");
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(classifierInputs[0]).toContain("demoDay: March 2026 (passed, ~6 months ago)");
   });
 
   it("returns null for a one-angle current edge", async () => {

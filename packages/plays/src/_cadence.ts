@@ -30,6 +30,10 @@ import {
   notifySlackBounceRecorded,
   notifySlackReplyReceived,
   sqliteToIso,
+  type DemoDay,
+  demoDayLine,
+  demoDayOf,
+  mentionsStaleDemoDay,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject, triageEmails } from "@oneshot-gtm/intel";
 import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
@@ -1639,7 +1643,10 @@ export async function previewCadenceStep(input: {
   const flags =
     built.kind === "email"
       ? [
-          ...lintEmail(subject, body, step.maxBodyWords ?? 100, undefined, { followUp: true }),
+          ...lintEmail(subject, body, step.maxBodyWords ?? 100, undefined, {
+            followUp: true,
+            demoDay: prospectDemoDay(prospect, input.playName),
+          }),
           ...lintOpenerFrequency(body, [
             ...(input.extraRecentBodies ?? []),
             ...ledger.recentSentEmailBodies({ playName: input.playName, stepIndex: nextIndex }),
@@ -2032,6 +2039,38 @@ export function getStep0MetadataField(
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+/**
+ * The prospect's demo day for this play, judged now. Read from the intro's
+ * step-0 metadata (`demoDayMonth`, else `prospectCohort`), then from the sent
+ * queue row, so a follow-up weeks after the intro sees whether it has passed.
+ * Null when the cohort has no known schedule.
+ */
+export function prospectDemoDay(
+  prospect: { id: number; email: string | null },
+  playName: string,
+  now: Date = new Date(),
+): DemoDay | null {
+  const fromMeta = demoDayOf(
+    {
+      demoDayMonth: getStep0MetadataField(prospect.id, playName, "demoDayMonth") ?? undefined,
+      cohort: getStep0MetadataField(prospect.id, playName, "prospectCohort") ?? undefined,
+    },
+    now,
+  );
+  if (fromMeta) return fromMeta;
+  const email = prospect.email?.trim();
+  if (!email) return null;
+  try {
+    const ledger = getLedger() as ReturnType<typeof getLedger> & {
+      latestSentQueueRow?: (p: string, e: string) => { payload: Record<string, unknown> } | null;
+    };
+    if (typeof ledger.latestSentQueueRow !== "function") return null;
+    return demoDayOf(ledger.latestSentQueueRow(playName, email)?.payload, now);
+  } catch {
+    return null;
+  }
+}
+
 export function buildFollowUpEmail(opts: {
   playName: string;
   promptName: string;
@@ -2067,6 +2106,10 @@ export function buildFollowUpEmail(opts: {
     // VOICE: the founder's register, when a card is set. The breakup step
     // gets the no-aphorism budget; every other follow-up the default one.
     const voice = voiceBlock(opts.promptName === "breakup-email" ? "breakup" : "followup");
+    // Judged now, not at the intro: a demo day that was ahead of them then
+    // may be behind them by the time this step sends.
+    const demoDay = prospectDemoDay(ctx.prospect, opts.playName);
+    const demoDayText = demoDayLine(demoDay);
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,
@@ -2074,6 +2117,7 @@ export function buildFollowUpEmail(opts: {
       `EMAIL: ${ctx.prospect.email ?? ""}`,
       `COMPANY: ${ctx.prospect.company ?? "(unknown)"}`,
       ...opts.contextLines,
+      ...(demoDayText ? [demoDayText] : []),
       ...(priorBlock ? ["", priorBlock] : []),
       ...(angleBlock ? ["", angleBlock] : []),
       ...(edgeBlock ? ["", edgeBlock] : []),
@@ -2094,25 +2138,42 @@ export function buildFollowUpEmail(opts: {
       subject: parsed.subject.trim(),
       body: parsed.body.trim(),
     });
-    // An either/or closing question gets one redraft in the same
-    // conversation; kept only if it fixes the ending. Otherwise the original
-    // stays and lint holds it (`either-or-question`) for review.
-    if (closingEitherOrQuestion(cleaned.body)) {
+    // An either/or closing question, or a demo day treated as ahead of them
+    // after it passed, gets one redraft in the same conversation; kept only
+    // if it fixes every problem found. Otherwise the original stays and lint
+    // holds it (`either-or-question`, `stale-demo-day`) for review.
+    const problems = (body: string) => ({
+      eitherOr: closingEitherOrQuestion(body),
+      staleDemoDay: mentionsStaleDemoDay(body, demoDay),
+    });
+    const found = problems(cleaned.body);
+    if (found.eitherOr || found.staleDemoDay) {
       try {
+        const asks = [
+          ...(found.eitherOr
+            ? [
+                "That ends by offering the reader two options. Rewrite the last sentence: end with one specific question they can answer yes or no, or with no question at all. Never offer two options.",
+              ]
+            : []),
+          ...(found.staleDemoDay && demoDay
+            ? [
+                `Their demo day was ${demoDay.month}; it has already passed. Remove every mention of demo day and rewrite that sentence around something that is still true for them now.`,
+              ]
+            : []),
+        ];
         messages.push(
           { role: "assistant", content: JSON.stringify(cleaned) },
           {
             role: "user",
-            content:
-              "That ends by offering the reader two options. Rewrite the last sentence: end with one specific question they can answer yes or no, or with no question at all. Never offer two options. Keep everything else. " +
-              'Return only the JSON object with "subject" and "body".',
+            content: `${asks.join(" ")} Keep everything else. Return only the JSON object with "subject" and "body".`,
           },
         );
         const retry = await complete({ messages, temperature: 0.4, maxTokens: 500 });
         const again = tryParseJsonObject<{ subject?: string; body?: string }>(retry.content, {});
         if (again.subject && again.body) {
           const fixed = humanizeDraft({ subject: again.subject.trim(), body: again.body.trim() });
-          if (!closingEitherOrQuestion(fixed.body)) cleaned = fixed;
+          const left = problems(fixed.body);
+          if (!left.eitherOr && !left.staleDemoDay) cleaned = fixed;
         }
       } catch {
         // Keep the original; lint holds it.

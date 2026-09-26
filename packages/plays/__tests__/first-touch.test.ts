@@ -142,6 +142,20 @@ describe("closingEitherOrQuestion", () => {
     ).toBe(false);
   });
 
+  it("flags a demo-day mention only once it has passed", async () => {
+    const { lintEmail } = await import("../src/_lib.ts");
+    const passed = { month: "March 2026", isoMonth: "2026-03", status: "passed", monthsAway: 6 };
+    const ahead = { ...passed, status: "upcoming" } as const;
+    const body = "Numbers ready for demo day?";
+    expect(lintEmail("s", body, 100, undefined, { demoDay: passed as never })).toContain(
+      "stale-demo-day",
+    );
+    expect(lintEmail("s", body, 100, undefined, { demoDay: ahead })).not.toContain(
+      "stale-demo-day",
+    );
+    expect(lintEmail("s", body, 100)).not.toContain("stale-demo-day");
+  });
+
   it("sees through a partial signature and an abbreviation", async () => {
     const { closingEitherOrQuestion } = await import("../src/_lib.ts");
     expect(closingEitherOrQuestion("Keys or billing?\nJ", ["oneshot.example", "J"])).toBe(true);

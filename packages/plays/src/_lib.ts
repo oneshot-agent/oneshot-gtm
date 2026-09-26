@@ -1,5 +1,6 @@
 import {
   cadenceGoalId,
+  type DemoDay,
   ENRICH_CACHE_TTL_MS,
   ENRICH_DEADLINE_MS,
   ENRICH_FAILURE_TTL_MS,
@@ -8,6 +9,7 @@ import {
   isTransientToolError,
   loadConfig,
   logEvent,
+  mentionsStaleDemoDay,
   receiptUrlForId,
   sendEmail,
   throwIfCancelled,
@@ -430,8 +432,12 @@ export function lintEmail(
   maxBodyWords = 110,
   /** Set by formats with a sentence budget (the brief first touch); absent = no sentence check. */
   maxBodySentences?: number,
-  /** Follow-ups and breakups: flag an either/or closing question. */
-  opts: { followUp?: boolean } = {},
+  /**
+   * `followUp`: flag an either/or closing question (follow-ups and breakups).
+   * `demoDay`: the prospect's demo day, when known; a body that mentions demo
+   * day after it has passed is flagged `stale-demo-day`.
+   */
+  opts: { followUp?: boolean; demoDay?: DemoDay | null } = {},
 ): string[] {
   const flags: string[] = [];
   if (subject.length === 0) flags.push("empty-subject");
@@ -448,6 +454,7 @@ export function lintEmail(
     flags.push("too-many-sentences");
   }
   if (opts.followUp && closingEitherOrQuestion(body)) flags.push("either-or-question");
+  if (mentionsStaleDemoDay(body, opts.demoDay ?? null)) flags.push("stale-demo-day");
   if (body.includes("—")) flags.push("em-dash");
   if (/[“”‘’]/.test(body)) flags.push("curly-quotes");
   if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(body)) flags.push("emoji");
@@ -905,20 +912,51 @@ export async function draftEmailFromPrompt(opts: {
   maxBodyWords?: number;
   /** A sentence budget (the brief first touch); over it earns the same single redraft. */
   maxBodySentences?: number;
+  /**
+   * The prospect's demo day, when known. A draft that mentions demo day after
+   * it has passed earns one redraft, kept only if the mention is gone.
+   */
+  demoDay?: DemoDay | null;
 }): Promise<DraftedEmail> {
   const system = loadPrompt(opts.promptName) + signatureDirective();
   const messages: DraftMessages = [
     { role: "system", content: system },
     { role: "user", content: opts.inputBlock },
   ];
-  const draft = await draftOnce(messages, opts);
-  if (opts.maxBodyWords === undefined && opts.maxBodySentences === undefined) return draft;
-  return tightenIfTooLong(
-    messages,
-    draft,
-    opts.maxBodyWords ?? Number.POSITIVE_INFINITY,
-    opts,
-    opts.maxBodySentences,
+  let draft = await draftOnce(messages, opts);
+  if (opts.maxBodyWords !== undefined || opts.maxBodySentences !== undefined) {
+    draft = await tightenIfTooLong(
+      messages,
+      draft,
+      opts.maxBodyWords ?? Number.POSITIVE_INFINITY,
+      opts,
+      opts.maxBodySentences,
+    );
+  }
+  if (!mentionsStaleDemoDay(draft.body, opts.demoDay ?? null)) return draft;
+  messages.push(
+    { role: "assistant", content: JSON.stringify({ subject: draft.subject, body: draft.body }) },
+    { role: "user", content: staleDemoDayInstruction(opts.demoDay!) },
+  );
+  try {
+    const retry = await draftOnce(messages, opts);
+    const kept = !mentionsStaleDemoDay(retry.body, opts.demoDay ?? null);
+    logEvent("email.draft.stale_demo_day_retry", {
+      promptName: opts.promptName,
+      kept: kept ? "retry" : "original",
+    });
+    return kept ? retry : draft;
+  } catch {
+    // Keep the original; lint holds it (`stale-demo-day`).
+    return draft;
+  }
+}
+
+/** The redraft turn for a draft that treats a passed demo day as ahead of the reader. */
+export function staleDemoDayInstruction(d: DemoDay): string {
+  return (
+    `Their demo day was ${d.month}; it has already passed. Remove every mention of demo day and rewrite that sentence around something that is still true for them now. ` +
+    'Keep the subject, the facts and everything else. Return only the JSON object with "subject" and "body".'
   );
 }
 

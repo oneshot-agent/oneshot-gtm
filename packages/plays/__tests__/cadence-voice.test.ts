@@ -233,3 +233,80 @@ describe("buildFollowUpEmail — either/or closing question", () => {
     expect(llmCalls).toHaveLength(1);
   });
 });
+
+/** The intro's step-0 sequence row, with extra metadata. */
+function intro(meta: Record<string, unknown>) {
+  return [{ step_index: 0, metadata_json: JSON.stringify({ subject: "s", body: "b", ...meta }) }];
+}
+
+describe("buildFollowUpEmail — demo day judged at draft time", () => {
+  const builder = () =>
+    buildFollowUpEmail({
+      playName: "accelerator-batch",
+      promptName: "breakup-email",
+      contextLines: ["PLAY: accelerator-batch. Breakup."],
+    });
+  const at = (iso: string) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(iso));
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("recomputes from the intro's cohort: upcoming before, passed after", async () => {
+    storedRows = intro({ prospectCohort: "yc-w26" });
+    at("2026-02-10T12:00:00Z");
+    await builder()(ctx());
+    expect(llmCalls[0]!.user).toContain("DEMO DAY: March 2026 (upcoming, in ~1 month)");
+    llmCalls.length = 0;
+    at("2026-09-25T12:00:00Z");
+    await builder()(ctx());
+    expect(llmCalls[0]!.user).toContain("DEMO DAY: March 2026 (passed, ~6 months ago)");
+  });
+
+  it("prefers the stamped demo-day month over the cohort id", async () => {
+    storedRows = intro({ prospectCohort: "yc-w26", demoDayMonth: "2026-04" });
+    at("2026-09-25T12:00:00Z");
+    await builder()(ctx());
+    expect(llmCalls[0]!.user).toContain("DEMO DAY: April 2026 (passed, ~5 months ago)");
+  });
+
+  it("carries no line when the cohort has no known schedule", async () => {
+    storedRows = intro({ prospectCohort: "antler-2026" });
+    await builder()(ctx());
+    expect(llmCalls[0]!.user).not.toContain("DEMO DAY");
+  });
+
+  it("redrafts a passed demo-day mention once, keeping the fix", async () => {
+    storedRows = intro({ prospectCohort: "yc-w26" });
+    at("2026-09-25T12:00:00Z");
+    llmQueue.push(
+      JSON.stringify({ subject: "s", body: "Are the numbers ready for demo day?" }),
+      JSON.stringify({ subject: "s", body: "Are you logging customer replies anywhere yet?" }),
+    );
+    const out = await builder()(ctx());
+    expect(llmCalls).toHaveLength(2);
+    expect(out).toMatchObject({ body: "Are you logging customer replies anywhere yet?" });
+  });
+
+  it("keeps the original when the redraft still mentions it", async () => {
+    storedRows = intro({ prospectCohort: "yc-w26" });
+    at("2026-09-25T12:00:00Z");
+    llmQueue.push(
+      JSON.stringify({ subject: "s", body: "Are the numbers ready for demo day?" }),
+      JSON.stringify({ subject: "s", body: "Did demo day go well?" }),
+    );
+    const out = await builder()(ctx());
+    expect(out).toMatchObject({ body: "Are the numbers ready for demo day?" });
+  });
+
+  it("leaves an upcoming demo day alone", async () => {
+    storedRows = intro({ prospectCohort: "yc-f26" });
+    at("2026-09-25T12:00:00Z");
+    llmQueue.push(JSON.stringify({ subject: "s", body: "Is the count ready for demo day?" }));
+    await builder()(ctx());
+    expect(llmCalls).toHaveLength(1);
+  });
+});
