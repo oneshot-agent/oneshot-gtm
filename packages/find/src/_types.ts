@@ -93,7 +93,8 @@ export interface CompanyRecord {
   founderLinkedinUrl: string | null;
   /** Phone number of the founder when surfaced by the source — rare; null otherwise. */
   founderPhone: string | null;
-  source: "yc-oss" | "websearch";
+  /** `listing`: a dated structured listing (_accelerator-structured.ts). */
+  source: "yc-oss" | "websearch" | "listing";
 }
 
 export interface AcceleratorLaunchExtract {

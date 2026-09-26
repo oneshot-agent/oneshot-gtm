@@ -1,5 +1,6 @@
 import { logEvent, webRead, webSearch } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import { fetchStructuredCohort, type StructuredSource } from "./_accelerator-structured.ts";
 import type { AcceleratorLaunchExtract, CompanyRecord } from "./_types.ts";
 
 /**
@@ -27,6 +28,8 @@ export interface CohortTarget {
   programName?: string;
   year?: number;
   listingUrls?: string[];
+  /** A dated listing, read before search; `null` = the accelerator has none. */
+  structured?: StructuredSource | null;
 }
 
 const PLAY_NAME = "accelerator-batch";
@@ -162,6 +165,60 @@ export async function fetchAcceleratorSearch(
   const year =
     target.year ??
     (/\b(20\d{2})\b/.exec(label) ? Number(/\b(20\d{2})\b/.exec(label)![1]) : undefined);
+
+  // A dated listing is authoritative when it loads: its companies for the
+  // year, or none, with no paid search. Only a source that fails to load or
+  // has changed shape falls through to search.
+  let structuredNote: string | null = null;
+  if (target.structured && year !== undefined) {
+    const name = target.acceleratorName ?? label;
+    try {
+      const { items, listed } = await fetchStructuredCohort(
+        target.structured,
+        year,
+        MAX_COMPANIES_PER_COHORT,
+      );
+      if (items.length === 0) {
+        return {
+          records: [],
+          costUsd: 0,
+          diagnostic: `${name}'s listing (${listed} companies) has none dated ${year}`,
+        };
+      }
+      return {
+        records: items.map((c) => {
+          const domain = sanitizeCompanyDomain(c.website);
+          return {
+            name: c.name,
+            website: domain ? `https://${domain}` : null,
+            oneLiner: c.oneLiner,
+            longDescription: null,
+            industry: null,
+            tags: [],
+            ycUrl: null,
+            founderName: c.founderName,
+            founderLinkedinUrl: c.founderLinkedinUrl,
+            founderPhone: null,
+            source: "listing" as const,
+          };
+        }),
+        costUsd: 0,
+        diagnostic: null,
+      };
+    } catch (err) {
+      const message = ((err as Error).message ?? "").slice(0, 120);
+      structuredNote = `${name}'s dated listing failed (${message}); searched instead`;
+      logEvent(
+        "error.swallowed",
+        { kind: "accelerator-structured.load", message_120: message },
+        "warn",
+      );
+    }
+  } else if (target.structured === null && target.acceleratorName) {
+    structuredNote = `no dated source for ${target.acceleratorName}`;
+  }
+  const withNote = (d: string): string => (structuredNote ? `${structuredNote}; ${d}` : d);
+
   if (target.acceleratorName && year !== undefined) {
     queries.unshift(`"${target.acceleratorName}" ${year} batch companies`);
   }
@@ -210,7 +267,9 @@ export async function fetchAcceleratorSearch(
     return {
       records: [],
       costUsd,
-      diagnostic: `no usable hits for '${label}' — try a more specific cohortLabel (e.g. include the city/year)`,
+      diagnostic: withNote(
+        `no usable hits for '${label}' — try a more specific cohortLabel (e.g. include the city/year)`,
+      ),
     };
   }
 
@@ -309,7 +368,9 @@ export async function fetchAcceleratorSearch(
     return {
       records: [],
       costUsd,
-      diagnostic: `${pagesRead} page${pagesRead === 1 ? "" : "s"} read${readFailed > 0 ? ` (${readFailed} failed)` : ""}, no ${label} companies found`,
+      diagnostic: withNote(
+        `${pagesRead} page${pagesRead === 1 ? "" : "s"} read${readFailed > 0 ? ` (${readFailed} failed)` : ""}, no ${label} companies found`,
+      ),
     };
   }
   return { records, costUsd, diagnostic: null };

@@ -1,0 +1,47 @@
+{
+  "id": "1ca1cc4a-7c6a-41c9-9354-5766c66b3990",
+  "slug": "abliteration",
+  "name": "Abliteration.ai",
+  "cover_image": "https://storage.googleapis.com/speedrun-prod-media/companies/1ca1cc4a-7c6a-41c9-9354-5766c66b3990/cover-images/cropped.png",
+  "company_list_image": null,
+  "logo": "https://storage.googleapis.com/speedrun-prod-media/companies/1ca1cc4a-7c6a-41c9-9354-5766c66b3990/logos/cropped.jpg",
+  "demo_day_video_url": "",
+  "cohort": "SR007",
+  "preamble": "Unrestricted AI provider for high-risk industries.",
+  "description": "OpenAI- and Anthropic-compatible unrestricted AI for red teams, trust & safety, synthetic data, ML research, and defense/government workflows. Governed by your policy. Crossed $7 million in annual run rate.",
+  "industries": ["Gov Tech / Defense", "Dev Tools & DevOps", "AI Models / Research"],
+  "founded_year": 2026,
+  "team_size": 2,
+  "country": "United States of America",
+  "region": "America/Canada",
+  "state": "California",
+  "city": "Palo Alto",
+  "website_url": "https://abliteration.ai",
+  "github_url": "https://github.com/abliterationai",
+  "x_url": "https://x.com/abliteration_ai",
+  "linkedin_url": "https://www.linkedin.com/company/abliteration-ai",
+  "founder_set": [
+    {
+      "id": "6dfe582f-2b8a-4290-bd06-890fd291cec3",
+      "first_name": "Jide",
+      "last_name": "Ogun",
+      "slug": "jide-ogun",
+      "title": "Co-Founder & CTO",
+      "introduction": "",
+      "linkedin_url": "https://linkedin.com/in/olajideogun",
+      "profile_pic": "https://storage.googleapis.com/speedrun-prod-media/founders/6dfe582f-2b8a-4290-bd06-890fd291cec3/images/olajide-ogun-abliterationai.jpg"
+    },
+    {
+      "id": "8d7897e6-2279-4ccd-9b25-fed7dbb48c63",
+      "first_name": "Devon",
+      "last_name": "Thomas",
+      "slug": "devon-thomas",
+      "title": "Cofounder & CEO",
+      "introduction": "Let's grow.",
+      "linkedin_url": "https://linkedin.com/in/devonthomas",
+      "profile_pic": "https://storage.googleapis.com/speedrun-prod-media/founders/8d7897e6-2279-4ccd-9b25-fed7dbb48c63/images/devon-thomas-abliterationai.jpg"
+    }
+  ],
+  "likes_enabled": true,
+  "show_last": false
+}

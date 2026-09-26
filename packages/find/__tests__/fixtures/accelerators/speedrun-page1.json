@@ -1,0 +1,67 @@
+{
+  "count": 4,
+  "next": "https://speedrun-api.a16z.com/api/companies/companies/?limit=2&offset=2&ordering=name",
+  "previous": null,
+  "results": [
+    {
+      "id": "1ca1cc4a-7c6a-41c9-9354-5766c66b3990",
+      "slug": "abliteration",
+      "name": "Abliteration.ai",
+      "logo": "https://storage.googleapis.com/speedrun-prod-media/companies/1ca1cc4a-7c6a-41c9-9354-5766c66b3990/logos/cropped.jpg",
+      "cover_image": "https://storage.googleapis.com/speedrun-prod-media/companies/1ca1cc4a-7c6a-41c9-9354-5766c66b3990/cover-images/cropped.png",
+      "company_list_image": null,
+      "cohort": "SR007",
+      "likes_enabled": true,
+      "preamble": "Unrestricted AI provider for high-risk industries.",
+      "industries": ["AI Models / Research", "Gov Tech / Defense", "Dev Tools & DevOps"],
+      "founder_set": [
+        {
+          "id": "6dfe582f-2b8a-4290-bd06-890fd291cec3",
+          "profile_pic": "https://storage.googleapis.com/speedrun-prod-media/founders/6dfe582f-2b8a-4290-bd06-890fd291cec3/images/olajide-ogun-abliterationai.jpg"
+        },
+        {
+          "id": "8d7897e6-2279-4ccd-9b25-fed7dbb48c63",
+          "profile_pic": "https://storage.googleapis.com/speedrun-prod-media/founders/8d7897e6-2279-4ccd-9b25-fed7dbb48c63/images/devon-thomas-abliterationai.jpg"
+        }
+      ],
+      "team_size": 2,
+      "city": "Palo Alto",
+      "state": "California",
+      "country": "United States of America",
+      "region": "America/Canada",
+      "show_last": false
+    },
+    {
+      "id": "8fef6605-a093-40bf-8534-b077a7367bd0",
+      "slug": "agent-astra",
+      "name": "Agent Astra",
+      "logo": "https://storage.googleapis.com/speedrun-prod-media/companies/8fef6605-a093-40bf-8534-b077a7367bd0/logos/Screenshot_2025-09-12_at_1.10.09p.m..png",
+      "cover_image": "https://storage.googleapis.com/speedrun-prod-media/companies/8fef6605-a093-40bf-8534-b077a7367bd0/cover-images/Screenshot_2025-09-12_at_1.08.11p.m..png",
+      "company_list_image": "https://storage.googleapis.com/speedrun-prod-media/companies/8fef6605-a093-40bf-8534-b077a7367bd0/list-images/Screenshot_2025-09-12_at_1.08.11p.m..png",
+      "cohort": "SR005",
+      "likes_enabled": false,
+      "preamble": "We are building the next AI-native logistics group.",
+      "industries": ["Supply Chain / Logistics", "AI Agents"],
+      "founder_set": [
+        {
+          "id": "e8d0993d-84e9-4ca5-96ce-c34931136e41",
+          "profile_pic": "https://storage.googleapis.com/speedrun-prod-media/founders/e8d0993d-84e9-4ca5-96ce-c34931136e41/images/Screenshot_2025-09-06_at_11.36.09a.m..png"
+        },
+        {
+          "id": "9ad7ae1f-1427-471a-9fa7-376c15e94aa9",
+          "profile_pic": "https://storage.googleapis.com/speedrun-prod-media/founders/9ad7ae1f-1427-471a-9fa7-376c15e94aa9/images/photo_2024-06-17_19.04.31.jpeg"
+        },
+        {
+          "id": "276363b0-88a5-4006-8715-3fb20b522c3e",
+          "profile_pic": "https://storage.googleapis.com/speedrun-prod-media/founders/276363b0-88a5-4006-8715-3fb20b522c3e/images/IMG_0278_5YLprrf.jpg"
+        }
+      ],
+      "team_size": 7,
+      "city": "New York",
+      "state": "New York",
+      "country": "United States of America",
+      "region": "America/Canada",
+      "show_last": false
+    }
+  ]
+}

@@ -281,6 +281,7 @@ export async function runAcceleratorBatchFinder(
                 acceleratorName: acc.name,
                 listingUrls: acc.listingUrls,
                 ...(acc.programName ? { programName: acc.programName } : {}),
+                ...(acc.structured !== undefined ? { structured: acc.structured } : {}),
               }
             : {}),
           ...(e.year !== undefined ? { year: e.year } : {}),
@@ -453,7 +454,7 @@ export async function runAcceleratorBatchFinder(
     // Listing pages rarely link every company's site. Look the domain up by
     // name only for a company that passed the ICP gate (and so will actually
     // be worked), not for every name a page lists. $0.01, never throws.
-    if (!record.website && record.source === "websearch") {
+    if (!record.website && record.source !== "yc-oss") {
       const found = await safeCompanySearch(
         { name: record.name, limit: 1 },
         { playName: PLAY_NAME },

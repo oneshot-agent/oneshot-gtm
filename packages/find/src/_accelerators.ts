@@ -1,3 +1,4 @@
+import type { StructuredSource } from "./_accelerator-structured.ts";
 import type { CohortEntry } from "./accelerator-batch.ts";
 
 /**
@@ -22,6 +23,12 @@ export interface Accelerator {
   listingUrls: string[];
   /** The name its cohorts are announced under, when it differs from `name` ("Neo Accelerator"). */
   programName?: string;
+  /**
+   * A listing that dates each company, read before any search (no LLM, no
+   * paid read). `null`: checked, and nothing it publishes ties companies to a
+   * year, so a run with no search hits says so instead of returning 0 silently.
+   */
+  structured?: StructuredSource | null;
 }
 
 export const ACCELERATORS: readonly Accelerator[] = [
@@ -32,6 +39,14 @@ export const ACCELERATORS: readonly Accelerator[] = [
     programName: "South Park Commons Founder Fellowship",
     cadence: "yearly",
     listingUrls: ["https://www.southparkcommons.com/companies"],
+    // Founding year: a company founded in the target year was backed in it.
+    structured: {
+      kind: "json-script",
+      url: "https://www.southparkcommons.com/companies",
+      scriptId: "company-data",
+      items: "",
+      fields: { name: "name", year: "founded", oneLiner: "bio" },
+    },
   },
   {
     id: "neo",
@@ -39,12 +54,20 @@ export const ACCELERATORS: readonly Accelerator[] = [
     programName: "Neo Accelerator",
     cadence: "yearly",
     listingUrls: ["https://neo.com/companies"],
+    // A Bubble app: the list renders client-side, with no public data API.
+    structured: null,
   },
   {
     id: "antler",
     name: "Antler",
     cadence: "yearly",
     listingUrls: ["https://www.antler.co/portfolio"],
+    // Investment year on every card; the list runs to ~35 pages, read in full.
+    structured: {
+      kind: "webflow-cms",
+      url: "https://www.antler.co/portfolio",
+      fields: { name: "name", year: "year", oneLiner: "description" },
+    },
   },
   {
     id: "techstars",
@@ -57,14 +80,59 @@ export const ACCELERATORS: readonly Accelerator[] = [
     name: "500 Global",
     cadence: "yearly",
     listingUrls: ["https://500.co/companies"],
+    // The portfolio table's own feed; the earliest investment date is the year.
+    structured: {
+      kind: "json-api",
+      url: "https://500.co/api/startups",
+      items: "res",
+      fields: {
+        name: "organization.businessName",
+        year: "investments[].initialInvestDate",
+        website: "organization.companyUrl",
+        oneLiner: "oneLiner",
+        founderFirst: "organization.positions[].person.firstName",
+        founderLast: "organization.positions[].person.lastName",
+      },
+    },
   },
-  { id: "ai-grant", name: "AI Grant", cadence: "yearly", listingUrls: ["https://aigrant.com"] },
-  { id: "hf0", name: "HF0", cadence: "yearly", listingUrls: [] },
+  {
+    id: "ai-grant",
+    name: "AI Grant",
+    cadence: "yearly",
+    listingUrls: ["https://aigrant.com"],
+    // Lists companies by batch number only, with no dates.
+    structured: null,
+  },
+  // Publishes batch facts (S25, W25), not a company list.
+  { id: "hf0", name: "HF0", cadence: "yearly", listingUrls: [], structured: null },
   {
     id: "a16z-speedrun",
     name: "a16z speedrun",
     cadence: "yearly",
     listingUrls: ["https://speedrun.a16z.com/companies"],
+    // The companies page's API. Cohorts are numbered: SR001 in 2023, then two
+    // a year (SR006 Jan-Apr 2026, SR007 Jul-Oct 2026).
+    structured: {
+      kind: "json-api",
+      url: "https://speedrun-api.a16z.com/api/companies/companies/?limit=96&offset=0&ordering=name",
+      items: "results",
+      next: "next",
+      fields: {
+        name: "name",
+        year: { path: "cohort", pattern: "^SR0*(\\d+)$", firstYear: 2023, perYear: 2 },
+        oneLiner: "preamble",
+        id: "id",
+      },
+      detail: {
+        url: "https://speedrun-api.a16z.com/api/companies/companies/{id}/",
+        fields: {
+          website: "website_url",
+          founderFirst: "founder_set[].first_name",
+          founderLast: "founder_set[].last_name",
+          founderLinkedin: "founder_set[].linkedin_url",
+        },
+      },
+    },
   },
 ];
 
