@@ -1,5 +1,6 @@
 import { logEvent, webRead, webSearch } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import { fetchStructuredCohort, type StructuredSource } from "./_accelerator-structured.ts";
 import type { AcceleratorLaunchExtract, CompanyRecord } from "./_types.ts";
 
 /**
@@ -27,6 +28,8 @@ export interface CohortTarget {
   programName?: string;
   year?: number;
   listingUrls?: string[];
+  /** A dated listing, read before search; `null` = the accelerator has none. */
+  structured?: StructuredSource | null;
 }
 
 const PLAY_NAME = "accelerator-batch";
@@ -162,6 +165,94 @@ export async function fetchAcceleratorSearch(
   const year =
     target.year ??
     (/\b(20\d{2})\b/.exec(label) ? Number(/\b(20\d{2})\b/.exec(label)![1]) : undefined);
+
+  // A dated listing whose date IS the cohort (`authoritative`, the default)
+  // decides alone when it loads: its companies for the year, or none, with no
+  // paid search. A listing dated by something else (a founding year) only
+  // adds to search. A source that fails to load or has changed shape falls
+  // through to search.
+  let structuredNote: string | null = null;
+  if (target.structured && year !== undefined) {
+    const name = target.acceleratorName ?? label;
+    try {
+      const { items, listed } = await fetchStructuredCohort(
+        target.structured,
+        year,
+        MAX_COMPANIES_PER_COHORT,
+      );
+      const listing = items.map((c): CompanyRecord => {
+        const domain = sanitizeCompanyDomain(c.website);
+        return {
+          name: c.name,
+          website: domain ? `https://${domain}` : null,
+          oneLiner: c.oneLiner,
+          longDescription: null,
+          industry: null,
+          tags: [],
+          ycUrl: null,
+          founderName: c.founderName,
+          founderLinkedinUrl: c.founderLinkedinUrl,
+          founderPhone: null,
+          source: "listing",
+        };
+      });
+      if (target.structured.authoritative !== false) {
+        return listing.length > 0
+          ? { records: listing, costUsd: 0, diagnostic: null }
+          : {
+              records: [],
+              costUsd: 0,
+              diagnostic: `${name}'s listing (${listed} companies) has none dated ${year}`,
+            };
+      }
+      const searched = await searchCohort(label, limit, target, year, (d) => d);
+      const records = mergeRecords(listing, searched.records);
+      return {
+        records,
+        costUsd: searched.costUsd,
+        diagnostic: records.length > 0 ? null : searched.diagnostic,
+      };
+    } catch (err) {
+      const message = ((err as Error).message ?? "").slice(0, 120);
+      structuredNote = `${name}'s dated listing failed (${message}); searched instead`;
+      logEvent(
+        "error.swallowed",
+        { kind: "accelerator-structured.load", message_120: message },
+        "warn",
+      );
+    }
+  } else if (target.structured === null && target.acceleratorName) {
+    structuredNote = `no dated source for ${target.acceleratorName}`;
+  }
+  const note = structuredNote;
+  return searchCohort(label, limit, target, year, (d) => (note ? `${note}; ${d}` : d));
+}
+
+/** Listing records first; a search record is added only when neither its domain nor its name is already there. */
+export function mergeRecords(listing: CompanyRecord[], searched: CompanyRecord[]): CompanyRecord[] {
+  const key = (r: CompanyRecord) => sanitizeCompanyDomain(r.website);
+  const domains = new Set(listing.map(key).filter((d) => d !== null));
+  const names = new Set(listing.map((r) => r.name.toLowerCase()));
+  const out = [...listing];
+  for (const r of searched) {
+    const d = key(r);
+    if ((d && domains.has(d)) || names.has(r.name.toLowerCase())) continue;
+    if (d) domains.add(d);
+    names.add(r.name.toLowerCase());
+    out.push(r);
+  }
+  return out.slice(0, MAX_COMPANIES_PER_COHORT);
+}
+
+/** The #718 search path: listing pages and search hits, read and extracted by the LLM. */
+async function searchCohort(
+  label: string,
+  limit: number,
+  target: CohortTarget,
+  year: number | undefined,
+  withNote: (d: string) => string,
+): Promise<{ records: CompanyRecord[]; costUsd: number; diagnostic: string | null }> {
+  const queries = buildCohortQueries(label);
   if (target.acceleratorName && year !== undefined) {
     queries.unshift(`"${target.acceleratorName}" ${year} batch companies`);
   }
@@ -210,7 +301,9 @@ export async function fetchAcceleratorSearch(
     return {
       records: [],
       costUsd,
-      diagnostic: `no usable hits for '${label}' — try a more specific cohortLabel (e.g. include the city/year)`,
+      diagnostic: withNote(
+        `no usable hits for '${label}' — try a more specific cohortLabel (e.g. include the city/year)`,
+      ),
     };
   }
 
@@ -309,7 +402,9 @@ export async function fetchAcceleratorSearch(
     return {
       records: [],
       costUsd,
-      diagnostic: `${pagesRead} page${pagesRead === 1 ? "" : "s"} read${readFailed > 0 ? ` (${readFailed} failed)` : ""}, no ${label} companies found`,
+      diagnostic: withNote(
+        `${pagesRead} page${pagesRead === 1 ? "" : "s"} read${readFailed > 0 ? ` (${readFailed} failed)` : ""}, no ${label} companies found`,
+      ),
     };
   }
   return { records, costUsd, diagnostic: null };
@@ -328,14 +423,22 @@ export function sanitizeCompanyDomain(raw: string | null | undefined): string | 
   if (!raw || typeof raw !== "string") return null;
   let v = raw.trim().toLowerCase();
   if (v.length === 0) return null;
-  // Strip scheme.
-  v = v.replace(/^https?:\/\//, "");
-  // Strip leading www.
-  v = v.replace(/^www\./, "");
+  // Strip scheme and leading www. — prefix checks, no regex, so input
+  // from a scraped page can't make this slow.
+  if (v.startsWith("https://")) v = v.slice(8);
+  else if (v.startsWith("http://")) v = v.slice(7);
+  if (v.startsWith("www.")) v = v.slice(4);
   // Drop path / query / fragment / port.
-  v = v.replace(/[/?#:].*$/, "");
+  let end = v.length;
+  for (const ch of ["/", "?", "#", ":"]) {
+    const i = v.indexOf(ch);
+    if (i !== -1 && i < end) end = i;
+  }
+  v = v.slice(0, end);
   // Trim trailing dots.
-  v = v.replace(/\.+$/, "");
+  let stop = v.length;
+  while (stop > 0 && v[stop - 1] === ".") stop--;
+  v = v.slice(0, stop);
   // Sanity: must contain a dot and at least one non-digit char to be a real domain.
   if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(v)) return null;
   return v;

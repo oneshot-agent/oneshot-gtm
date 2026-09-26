@@ -1,0 +1,171 @@
+{
+  "res": [
+    {
+      "id": 9108,
+      "oneLiner": null,
+      "organization": {
+        "id": 8178,
+        "name": "Adsmom Inc.",
+        "alternativeName": null,
+        "businessName": "Adsmom Inc.,",
+        "companyUrl": "www.adsmom.com",
+        "companyLinkedIn": null,
+        "imageUrl": null,
+        "positions": [],
+        "countryOfOperation": {
+          "name": "UNITED STATES"
+        },
+        "regionOfOperation": null
+      },
+      "businessModel": null,
+      "stage": {
+        "name": "Pre-Seed",
+        "onlyAdmin": false
+      },
+      "industries": [],
+      "tenant": [
+        {
+          "slug": "global"
+        }
+      ],
+      "batches": [],
+      "investments": [
+        {
+          "initialInvestDate": "2025-12-04T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "id": 5607,
+      "oneLiner": "Developer of a digital membership platform designed to offer benefits to freelancers and self-employed individuals. The company's platform offers benefits such as health, training, and transportation, enabling freelancers and self-employed individuals to get access to affordable company benefits and other perks which are enjoyed by traditional employees.",
+      "organization": {
+        "id": 4711,
+        "name": "AllCare Technologies Philippines, Inc.",
+        "alternativeName": "AllCare",
+        "businessName": "Allcare",
+        "companyUrl": "www.allcare.ph",
+        "companyLinkedIn": "https://www.linkedin.com/company/allcare-i-o/",
+        "imageUrl": "https://founder-hub-public.s3.us-west-1.amazonaws.com/324e4785-5a85-4411-929d-31baab76aa42.png",
+        "positions": [
+          {
+            "person": {
+              "firstName": "Cindy",
+              "lastName": "Burdette"
+            }
+          }
+        ],
+        "countryOfOperation": {
+          "name": "Philippines"
+        },
+        "regionOfOperation": {
+          "name": "South Asia"
+        }
+      },
+      "businessModel": {
+        "name": "B2C"
+      },
+      "stage": {
+        "name": "Seed",
+        "onlyAdmin": false
+      },
+      "industries": [
+        {
+          "name": "HR Tech"
+        }
+      ],
+      "tenant": [
+        {
+          "slug": "sea"
+        },
+        {
+          "slug": "global"
+        }
+      ],
+      "batches": [],
+      "investments": [
+        {
+          "initialInvestDate": "2021-11-02T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "id": 9867,
+      "oneLiner": null,
+      "organization": {
+        "id": 8277,
+        "name": "Amity Robotics PTE.LTD",
+        "alternativeName": null,
+        "businessName": "Amity Robotics PTE.LTD",
+        "companyUrl": "www.amityrobotics.com",
+        "companyLinkedIn": null,
+        "imageUrl": "https://founder-hub-public.s3.amazonaws.com/ecec3049-2fbd-4384-9be9-4eb6a501163a.png",
+        "positions": [],
+        "countryOfOperation": {
+          "name": "SINGAPORE"
+        },
+        "regionOfOperation": null
+      },
+      "businessModel": {
+        "name": "B2B"
+      },
+      "stage": {
+        "name": "Seed",
+        "onlyAdmin": false
+      },
+      "industries": [],
+      "tenant": [
+        {
+          "slug": "global"
+        }
+      ],
+      "batches": [],
+      "investments": [
+        {
+          "initialInvestDate": "2026-05-28T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "id": 9749,
+      "oneLiner": null,
+      "organization": {
+        "id": 8260,
+        "name": "Branddu Inc",
+        "alternativeName": "Branddu",
+        "businessName": "Branddu",
+        "companyUrl": "branddu.com",
+        "companyLinkedIn": null,
+        "imageUrl": "https://founder-hub-public.s3.amazonaws.com/975b9154-91a1-4740-9818-9b37cbd115b0.png",
+        "positions": [],
+        "countryOfOperation": {
+          "name": "UNITED STATES"
+        },
+        "regionOfOperation": null
+      },
+      "businessModel": {
+        "name": "B2B"
+      },
+      "stage": {
+        "name": "Seed",
+        "onlyAdmin": false
+      },
+      "industries": [],
+      "tenant": [
+        {
+          "slug": "global"
+        }
+      ],
+      "batches": [
+        {
+          "brandName": "Lucha - NONE"
+        }
+      ],
+      "investments": [
+        {
+          "initialInvestDate": "2026-06-16T00:00:00.000Z"
+        }
+      ]
+    }
+  ],
+  "status": 200
+}

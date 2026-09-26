@@ -1,0 +1,63 @@
+{
+  "count": 4,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": "cb9c5980-0121-4026-961c-2e27436bd195",
+      "slug": "acceler8",
+      "name": "Acceler8",
+      "logo": "https://storage.googleapis.com/speedrun-prod-media/companies/cb9c5980-0121-4026-961c-2e27436bd195/logos/square_-_new_acceler8_logo_purple.png",
+      "cover_image": "https://storage.googleapis.com/speedrun-prod-media/companies/cb9c5980-0121-4026-961c-2e27436bd195/cover-images/Screenshot_2026-04-15_at_1.03.22_AM.png",
+      "company_list_image": null,
+      "cohort": "SR006",
+      "likes_enabled": false,
+      "preamble": "AI for Workforce Intelligence & Planning (2x founder who raised $80M, F500 customers)",
+      "industries": ["HR Tech / Talent", "AI Agents"],
+      "founder_set": [
+        {
+          "id": "3976edca-d7cf-4392-8a64-138aaaf163e1",
+          "profile_pic": "https://storage.googleapis.com/speedrun-prod-media/founders/3976edca-d7cf-4392-8a64-138aaaf163e1/images/profile_2026.jpeg"
+        },
+        {
+          "id": "2970f02f-0ffa-49f0-9310-c0e4ef645052",
+          "profile_pic": "https://storage.googleapis.com/speedrun-prod-media/founders/2970f02f-0ffa-49f0-9310-c0e4ef645052/images/Trish.jpg"
+        }
+      ],
+      "team_size": 15,
+      "city": "San Francisco",
+      "state": "California",
+      "country": "United States of America",
+      "region": "America/Canada",
+      "show_last": false
+    },
+    {
+      "id": "91edd679-b699-4a39-8695-a7a8decb9398",
+      "slug": "2weeks",
+      "name": "2weeks",
+      "logo": "https://storage.googleapis.com/speedrun-prod-media/companies/91edd679-b699-4a39-8695-a7a8decb9398/logos/2weeks_sq.png",
+      "cover_image": "https://storage.googleapis.com/speedrun-prod-media/companies/91edd679-b699-4a39-8695-a7a8decb9398/cover-images/gradient.png",
+      "company_list_image": null,
+      "cohort": "SR003",
+      "likes_enabled": false,
+      "preamble": "Making breakout hits on the open web for you and your friends.",
+      "industries": ["Gaming"],
+      "founder_set": [
+        {
+          "id": "190f56ed-f93b-402e-ae8b-217a26ec74ef",
+          "profile_pic": "https://storage.googleapis.com/speedrun-prod-media/founders/190f56ed-f93b-402e-ae8b-217a26ec74ef/images/brandon_sq.jpg"
+        },
+        {
+          "id": "205d2811-b96b-4ca6-a905-63eaa565f616",
+          "profile_pic": "https://storage.googleapis.com/speedrun-prod-media/founders/205d2811-b96b-4ca6-a905-63eaa565f616/images/RichardFoge_Web_05_tiny.png"
+        }
+      ],
+      "team_size": 4,
+      "city": "New York",
+      "state": "New York",
+      "country": "United States of America",
+      "region": "America/Canada",
+      "show_last": false
+    }
+  ]
+}

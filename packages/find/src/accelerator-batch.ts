@@ -17,6 +17,7 @@ import { parallelMap } from "./_parallel.ts";
 import { deriveCohortLabel, fetchYcOssBatch, ycBatchExists } from "./_yc-oss-adapter.ts";
 import {
   getAccelerator,
+  acceleratorOfCohortId,
   resolveAcceleratorCohorts,
   type AcceleratorSelection,
   type ResolvedCohort,
@@ -227,7 +228,11 @@ export async function runAcceleratorBatchFinder(
     hasExplicit || selected.cohorts.length === 0 ? normalizeCohorts(opts) : [];
   const cohorts: Array<CohortEntry & Partial<ResolvedCohort>> = [];
   for (const c of [...selected.cohorts, ...explicit]) {
-    if (!cohorts.some((x) => x.cohort === c.cohort)) cohorts.push(c);
+    if (cohorts.some((x) => x.cohort === c.cohort)) continue;
+    // An explicit id of a known accelerator ("spc-2026-1") gets its listing
+    // and structured source, the same as one resolved from `accelerators`.
+    const known = "accelerator" in c ? null : acceleratorOfCohortId(c.cohort);
+    cohorts.push(known ? { ...c, ...known } : c);
   }
   // Source string reflects whether this is a sweep or a single-cohort run.
   // Keeps the per-target `source` column on the queue readable.
@@ -281,6 +286,7 @@ export async function runAcceleratorBatchFinder(
                 acceleratorName: acc.name,
                 listingUrls: acc.listingUrls,
                 ...(acc.programName ? { programName: acc.programName } : {}),
+                ...(acc.structured !== undefined ? { structured: acc.structured } : {}),
               }
             : {}),
           ...(e.year !== undefined ? { year: e.year } : {}),
@@ -453,7 +459,7 @@ export async function runAcceleratorBatchFinder(
     // Listing pages rarely link every company's site. Look the domain up by
     // name only for a company that passed the ICP gate (and so will actually
     // be worked), not for every name a page lists. $0.01, never throws.
-    if (!record.website && record.source === "websearch") {
+    if (!record.website && record.source !== "yc-oss") {
       const found = await safeCompanySearch(
         { name: record.name, limit: 1 },
         { playName: PLAY_NAME },
