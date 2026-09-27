@@ -5,8 +5,10 @@ import {
   tryReserveDailySpend,
   type ProspectRecord,
   type QueueRow,
+  channelOf,
+  firstTouchSender,
 } from "@oneshot-gtm/core";
-import { type DraftedRow, isSupportedPlay, MANUAL_PLAYS, PLAYS } from "@oneshot-gtm/plays";
+import { type DraftedRow, isSupportedPlay, PLAYS } from "@oneshot-gtm/plays";
 import { resolveQueueTarget } from "./queue-target.ts";
 
 export interface DrainOpts {
@@ -42,8 +44,8 @@ export interface DrainOutcome {
 export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
   const ledger = getLedger();
   const limit = opts.limit ?? 50;
-  const isManual = Boolean(MANUAL_PLAYS[opts.playName]);
-  // Manual plays (x-amplify-dm) never flip to sent on drain — their rows stay
+  // Rows on a hand-sent channel (X DMs today; see channels.ts) never flip to
+  // sent on drain — their rows stay
   // approved until the founder hand-sends and hits Mark sent. Once such a row
   // has a clean draft, later drains must leave it alone: re-dispatching would
   // pay the LLM again and stomp a draft the founder may have already copied.
@@ -56,7 +58,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
     if (need <= 0) break;
     const batch = ledger.dequeueApproved({ playName: opts.playName, limit: need });
     for (const row of batch) {
-      if (isManual && hasCleanDraft(row)) continue;
+      if (firstTouchSender(channelOf(row.channel)) === "manual" && hasCleanDraft(row)) continue;
       rows.push(row);
     }
     if (batch.length < need) break;

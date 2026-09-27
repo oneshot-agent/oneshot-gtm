@@ -155,6 +155,8 @@ describe("queue.tsx fixed-props render fixture", () => {
     const row: QueueRowView = {
       id: 431,
       playName: "repo-interest",
+      channel: "email",
+      sender: "api",
       payload: { name: "Ada Lovelace", email: "ada@example.com", company: "Analytical" },
       dedupeKey: "fixture-431",
       source: "github:oneshot-agent/oneshot-gtm",

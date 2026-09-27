@@ -1107,7 +1107,8 @@ export function QueueRow({
           theLetter={
             <DraftSection
               id={row.id}
-              playName={row.playName}
+              channel={row.channel}
+              sender={row.sender}
               payload={row.payload}
               status={row.status}
               draft={row.lastDraft}
@@ -1135,7 +1136,8 @@ export function QueueRow({
  */
 function DraftSection({
   id,
-  playName,
+  channel,
+  sender,
   payload,
   status,
   draft,
@@ -1145,7 +1147,8 @@ function DraftSection({
   prospectId,
 }: {
   id: number;
-  playName: string;
+  channel: QueueRowView["channel"];
+  sender: QueueRowView["sender"];
   payload: unknown;
   status: QueueStatusView;
   draft: QueueRowView["lastDraft"];
@@ -1245,16 +1248,16 @@ function DraftSection({
     </div>
   ) : null;
 
-  // Manual-send play (x-amplify-dm): there is no transport — the founder
-  // copies the DM/reply text, sends it by hand from the X app, then records it
-  // here. "Mark sent" writes the channel:"x" step-0 event server-side.
-  const isManualPlay = playName === "x-amplify-dm";
+  // Hand-sent channel (X DMs today): there is no transport — the founder
+  // copies the text, sends it by hand, then records it here. "Mark sent"
+  // writes the step-0 event on the row's channel server-side.
+  const isManualPlay = sender === "manual";
   const markSent = useMutation({
     mutationFn: () => api.markSent(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
       void qc.invalidateQueries({ queryKey: ["home"] });
-      toast.success("recorded · hand-send logged on channel x");
+      toast.success(`recorded · hand-send logged on channel ${channel}`);
     },
     onError: (err) => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
@@ -1403,7 +1406,7 @@ function DraftSection({
     : draft?.flags.includes("ungrounded")
       ? "Held — research found nothing on this person, so the draft leans on the company name. Read it once more; send as-is if it still holds up."
       : "Held for review (event has passed) — send the reviewed draft as-is";
-  const showSend = !isManualPlay && status === "approved" && !(draft?.sent ?? false);
+  const showSend = sender === "api" && status === "approved" && !(draft?.sent ?? false);
   const sendButton = showSend ? (
     <Button
       variant="receipt"

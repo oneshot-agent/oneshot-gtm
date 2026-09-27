@@ -3,6 +3,7 @@ import { DraftVersionStore, draftVersionAngle, type DraftDiscardReason } from ".
 import { extractBusinessAddress } from "./mail-address.ts";
 import { humanDecisionWhereSql } from "./labels.ts";
 import { toSqliteUtc } from "./time.ts";
+import type { OutreachChannel } from "./channels.ts";
 import type {
   IcpDecisionExample,
   ProspectPriority,
@@ -218,14 +219,16 @@ export class QueueStore {
      * producers that can't score (manual rows, legacy callers, auto-drops).
      */
     priority?: ProspectPriority | null;
+    /** Outreach channel of the first touch; defaults to email (channels.ts). */
+    channel?: OutreachChannel;
   }): number | null {
     try {
       const status = input.initialStatus ?? "pending";
       const reviewedAt = status === "pending" ? null : new Date().toISOString();
       const result = this.db
         .prepare(
-          `INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, status, reviewed_at, notes, priority_json, decision, decided_at, decided_by)
-           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, status, reviewed_at, notes, priority_json, decision, decided_at, decided_by, channel)
+           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.playName,
@@ -251,6 +254,7 @@ export class QueueStore {
           status === "rejected" ? "auto_reject" : null,
           status === "rejected" ? reviewedAt : null,
           status === "rejected" ? "machine" : null,
+          input.channel ?? "email",
         );
       return Number(result.lastInsertRowid);
     } catch (err) {

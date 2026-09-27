@@ -71,6 +71,23 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       addColumnIfMissing(db, "triggers", "company_batch_seq", "INTEGER NOT NULL DEFAULT 0");
     },
   },
+  {
+    // Outreach channel per queue row and per draft version (channels.ts).
+    // Email is the default. X DMs were the only non-email first touch, and
+    // the x-amplify-dm play is where they lived.
+    version: 4,
+    name: "outreach-channel",
+    up: (db) => {
+      for (const table of ["target_queue", "draft_versions"]) {
+        const cols = db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (!cols.some((c) => c.name === "channel")) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN channel TEXT NOT NULL DEFAULT 'email'`);
+        }
+      }
+      db.exec("UPDATE target_queue SET channel = 'x' WHERE play_name = 'x-amplify-dm'");
+      db.exec("UPDATE draft_versions SET channel = 'x' WHERE play_name = 'x-amplify-dm'");
+    },
+  },
 ];
 
 export const LEDGER_SCHEMA_VERSION = LEDGER_MIGRATIONS[LEDGER_MIGRATIONS.length - 1]!.version;

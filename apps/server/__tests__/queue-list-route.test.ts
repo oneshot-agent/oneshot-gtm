@@ -301,3 +301,20 @@ describe("listQueueRoute — timestamps", () => {
     }
   });
 });
+
+describe("listQueueRoute — channel", () => {
+  it("tells the page each row's channel and who sends it", async () => {
+    nextRows = [
+      { ...queueRow(null), id: 1, channel: "email" },
+      { ...queueRow(null), id: 2, play_name: "x-amplify-dm", channel: "x" },
+      { ...queueRow(null), id: 3 },
+    ];
+    try {
+      const rows = (await body("http://x/api/queue"))["rows"] as Array<Record<string, unknown>>;
+      const byId = Object.fromEntries(rows.map((r) => [r["id"], [r["channel"], r["sender"]]]));
+      expect(byId).toEqual({ 1: ["email", "api"], 2: ["x", "manual"], 3: ["email", "api"] });
+    } finally {
+      nextRows = [];
+    }
+  });
+});

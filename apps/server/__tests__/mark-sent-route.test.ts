@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 interface FakeRow {
   id: number;
   play_name: string;
+  channel: string;
   payload_json: string;
   status: string;
   last_draft_json: string | null;
@@ -57,6 +58,7 @@ beforeEach(() => {
   row = {
     id: 1,
     play_name: "x-amplify-dm",
+    channel: "x",
     payload_json: JSON.stringify({
       name: "Some One",
       handle: "someone",
@@ -89,8 +91,9 @@ describe("markSentRoute", () => {
     });
   });
 
-  it("refuses a play that has a real transport", async () => {
+  it("refuses a row whose channel has a real transport", async () => {
     row.play_name = "x-amplify";
+    row.channel = "email";
     const res = await markSentRoute(req, { id: "1" });
     expect(res.status).toBe(400);
     expect(events).toHaveLength(0);

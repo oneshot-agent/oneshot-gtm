@@ -541,6 +541,8 @@ export interface IcpDecisionExample {
 export interface QueueRow {
   id: number;
   play_name: string;
+  /** Outreach channel of this row's first touch (channels.ts); 'email' unless set. */
+  channel: string;
   payload_json: string;
   dedupe_key: string;
   source: string;

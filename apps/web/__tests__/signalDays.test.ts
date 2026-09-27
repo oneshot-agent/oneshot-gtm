@@ -6,6 +6,8 @@ function row(foundAt: string): QueueRowView {
   return {
     id: 1,
     playName: "show-hn",
+    channel: "email",
+    sender: "api",
     payload: null,
     dedupeKey: "k",
     source: "find:show-hn",

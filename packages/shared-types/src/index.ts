@@ -569,6 +569,13 @@ export interface ProspectPriorityView {
 export interface QueueRowView {
   id: number;
   playName: string;
+  /** Outreach channel of the first touch: email, linkedin or x. */
+  channel: "email" | "linkedin" | "x";
+  /**
+   * Who sends it: `api` (Send / drain), `manual` (copy, send by hand, Mark
+   * sent) or `unavailable` (nothing can send on this channel yet).
+   */
+  sender: "api" | "manual" | "unavailable";
   payload: unknown;
   dedupeKey: string;
   source: string;

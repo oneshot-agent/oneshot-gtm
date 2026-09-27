@@ -6,6 +6,7 @@ import { Database } from "bun:sqlite";
 import { basename, dirname, join, resolve } from "node:path";
 import { demoMode } from "./demo.ts";
 import { openStateDatabase } from "./sqlite-open.ts";
+import type { OutreachChannel } from "./channels.ts";
 import { toSqliteUtc } from "./time.ts";
 import { workspacesDir } from "./workspaces.ts";
 import { configDir } from "./config.ts";
@@ -2174,6 +2175,8 @@ export class Ledger {
      * producers that can't score (manual rows, legacy callers, auto-drops).
      */
     priority?: ProspectPriority | null;
+    /** Outreach channel of the first touch; defaults to email (channels.ts). */
+    channel?: OutreachChannel;
   }): number | null {
     return this.queue.enqueueTarget(input);
   }

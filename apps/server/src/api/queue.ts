@@ -5,6 +5,8 @@ import {
   extractBusinessAddress,
   isPersonResearchDossier,
   personRecordFromResearch,
+  channelOf,
+  firstTouchSender,
 } from "@oneshot-gtm/core";
 import {
   currentWorkspaceName,
@@ -118,6 +120,8 @@ export function toView(row: QueueRow): QueueRowView {
   return {
     id: row.id,
     playName: row.play_name,
+    channel: channelOf(row.channel),
+    sender: firstTouchSender(channelOf(row.channel)),
     payload,
     dedupeKey: row.dedupe_key,
     source: row.source,
@@ -1060,10 +1064,12 @@ export async function markSentRoute(
   const ledger = getLedger();
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
-  const manual = MANUAL_PLAYS[row.play_name];
-  if (!manual) {
+  // Hand-sent channels only (X DMs today — channels.ts); every other channel
+  // goes through its real sender.
+  const channel = channelOf(row.channel);
+  if (firstTouchSender(channel) !== "manual") {
     return jsonResponse(
-      { error: `${row.play_name} is not a manual-send play — use send-draft` },
+      { error: `${row.play_name} rows are sent on ${channel}, not by hand — use send-draft` },
       400,
       req,
     );
@@ -1099,20 +1105,22 @@ export async function markSentRoute(
     // tolerated — prospect fields below just come up null
   }
   const pstr = (k: string): string | null => (typeof payload[k] === "string" ? payload[k] : null);
-  const twitterUrl = pstr("twitterUrl");
+  // The profile the touch went to. `prospects.linkedin_url` holds whichever
+  // social profile a prospect was reached on (it has always carried X URLs).
+  const profileUrl = channel === "linkedin" ? pstr("linkedinUrl") : pstr("twitterUrl");
 
   const prospectId = ledger.upsertProspect({
     name: pstr("name"),
     email: null,
-    linkedin_url: twitterUrl,
+    linkedin_url: profileUrl,
     source: row.play_name,
-    source_profile_url: twitterUrl,
+    source_profile_url: profileUrl,
   });
   ledger.recordSequenceEvent({
     prospectId,
     playName: row.play_name,
     stepIndex: 0,
-    channel: manual.channel,
+    channel,
     status: "sent",
     metadata: { body, ...playMetadata(row.play_name, payload) },
   });

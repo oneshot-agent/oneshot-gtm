@@ -13,6 +13,8 @@ import {
 function row(overrides: Partial<ProspectBrowseRow> & { id: number }): ProspectBrowseRow {
   return {
     playName: "show-hn",
+    channel: "email",
+    sender: "api",
     payload: null,
     dedupeKey: `k${overrides.id}`,
     source: "find:show-hn",

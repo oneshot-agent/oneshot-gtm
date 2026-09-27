@@ -415,6 +415,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
       if (icp) sdkCost += FIT_REASON_COST_ESTIMATE_USD;
       const id = enqueueScoredTarget(ledger, {
         playName: sdkEmail ? "x-amplify" : "x-amplify-dm",
+        channel: sdkEmail ? "email" : "x",
         payload: target,
         dedupeKey,
         source,

@@ -5,6 +5,7 @@ function row(id: number, payload: Record<string, unknown> = {}): QueueRow {
   return {
     id,
     play_name: "stack-consolidation",
+    channel: "email",
     payload_json: JSON.stringify({
       name: "Sam",
       email: `s${id}@x.dev`,
@@ -45,6 +46,10 @@ const runXAmplifyDmMock = vi.fn();
 
 vi.mock("@oneshot-gtm/core", async () => ({
   getLedger: () => ledgerStub,
+  channelOf: (await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core"))
+    .channelOf,
+  firstTouchSender: (await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core"))
+    .firstTouchSender,
   // The real trigger-config overlay (queue-target delegates to core); it reads
   // triggers through the lookup queue-target passes, i.e. this ledger stub.
   resolveTriggerOverlay: (
@@ -323,7 +328,7 @@ describe("drainQueue per-target dispatch + persistence", () => {
     // drain lease re-claims them every cycle. Once drafted, they must not be
     // dispatched again: that would pay the LLM twice and overwrite a draft the
     // founder may have already copied.
-    const drafted = { ...row(10), play_name: "x-amplify-dm" };
+    const drafted = { ...row(10), play_name: "x-amplify-dm", channel: "x" };
     drafted.last_draft_json = JSON.stringify({ subject: "X DM → @a", body: "dm text", flags: [] });
     ledgerStub.dequeueApproved.mockReturnValue([drafted]);
     const out = await drainQueue({ playName: "x-amplify-dm", dryRun: false });
@@ -336,14 +341,14 @@ describe("drainQueue per-target dispatch + persistence", () => {
     runXAmplifyDmMock.mockResolvedValue({
       drafted: [{ subject: "X DM → @a", body: "dm text", flags: [], sent: false, receiptIds: [] }],
     });
-    const errored = { ...row(20), play_name: "x-amplify-dm" };
+    const errored = { ...row(20), play_name: "x-amplify-dm", channel: "x" };
     errored.last_draft_json = JSON.stringify({
       subject: "(error)",
       body: "",
       flags: ["error: provider down"],
     });
     ledgerStub.dequeueApproved.mockReturnValue([
-      { ...row(10), play_name: "x-amplify-dm" },
+      { ...row(10), play_name: "x-amplify-dm", channel: "x" },
       errored,
     ]);
     const out = await drainQueue({ playName: "x-amplify-dm", dryRun: false });
