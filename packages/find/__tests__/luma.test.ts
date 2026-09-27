@@ -75,6 +75,16 @@ let eventDetailsBySlug: Record<string, EventDetailsFixture> = {};
 const fetchedCitySlugs: string[] = [];
 const fetchedDetailSlugs: string[] = [];
 const personGateCalls: Array<Record<string, unknown>> = [];
+let findEmailThrows: Error | null = null;
+const { pendingRows, retryHandlers } = vi.hoisted(() => ({
+  pendingRows: [] as Array<{ raw: unknown }>,
+  retryHandlers: new Map<string, (raw: unknown) => Promise<string>>(),
+}));
+vi.mock("../src/_pending.ts", () => ({
+  persistPending: (row: { raw: unknown }) => pendingRows.push(row),
+  registerPendingRetry: (play: string, handler: (raw: unknown) => Promise<string>) =>
+    retryHandlers.set(play, handler),
+}));
 vi.mock("../src/_luma-discover.ts", () => ({
   cityToSlug: (city: string) =>
     ({ "san francisco": "sf", "new york": "nyc", london: "london" })[city.trim().toLowerCase()] ??
@@ -164,6 +174,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     },
     findEmail: async () => {
       sdkCalls.findEmail++;
+      if (findEmailThrows) throw findEmailThrows;
       return { result: { ...findEmailReturn, cost: 0.05 }, receiptId: 1 };
     },
     verifyEmail: async () => {
@@ -219,6 +230,8 @@ beforeEach(() => {
   delete process.env["LUMA_SESSION_COOKIE"];
   enqueued.length = 0;
   personGateCalls.length = 0;
+  pendingRows.length = 0;
+  findEmailThrows = null;
   icpMatch = true;
   personVerdict = "pass";
   webSearchResults = [];
@@ -1089,5 +1102,38 @@ describe("luma-events personGate", () => {
     for (const person of personGateCalls) expect(person).not.toHaveProperty("affinity");
     expect(enqueued.length).toBeGreaterThan(0);
     for (const row of enqueued) expect(row.payload).not.toHaveProperty("icpAffinity");
+  });
+});
+
+describe("luma-events outage retry", () => {
+  it("keeps the trigger's affinity gate across a persisted retry", async () => {
+    discoveredEvents = [
+      { slug: "sf-evt-1", name: "SF AI Builders", startAtIso: futureIso(3), city: "San Francisco" },
+    ];
+    eventDetails = {
+      eventTitle: "SF AI Builders",
+      eventDateIso: futureIso(3),
+      eventCity: "San Francisco",
+      attendees: ["Gabe Guest", "Hana Guest"].map((name) => ({
+        name,
+        profileUrl: null,
+        websiteUrl: "https://guest.dev",
+        linkedinUrl: null,
+        twitterUrl: null,
+        bio: null,
+        role: "Guest",
+      })),
+    };
+    findEmailThrows = new Error("Tool request failed");
+    await runLumaFinder({ ...baseConfig, personGate: "affinity" });
+    expect(pendingRows.length).toBeGreaterThan(0);
+    expect(pendingRows[0]!.raw).toMatchObject({ personGate: "affinity" });
+
+    findEmailThrows = null;
+    personGateCalls.length = 0;
+    const retry = retryHandlers.get("luma-events")!;
+    await retry(JSON.parse(JSON.stringify(pendingRows[0]!.raw)));
+    expect(personGateCalls.length).toBeGreaterThan(0);
+    for (const person of personGateCalls) expect(person["affinity"]).toBe(true);
   });
 });

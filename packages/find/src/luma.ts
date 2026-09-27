@@ -742,7 +742,12 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     else if (outcome === "platform-error") {
       // Backend outage: the event ages out of "upcoming", so a re-scan can't
       // recover this attendee — persist for retry once the platform recovers.
-      persistPending({ playName: PLAY_NAME, dedupeKey, source: SOURCE, raw: { work, yourEdge } });
+      persistPending({
+        playName: PLAY_NAME,
+        dedupeKey,
+        source: SOURCE,
+        raw: { work, yourEdge, personGate: opts.personGate },
+      });
       result.droppedEnrichment++;
     } else result.droppedEnrichment++;
   });
@@ -993,9 +998,15 @@ async function resolveAndEnqueueLumaAttendee(
 // Outage retry: re-run the resolve→enqueue spine for a persisted attendee.
 // The gate context is rebuilt from config rather than persisted with the row:
 // a retry fired days later should be judged against the CURRENT ICP, and an
-// attendee that queued before a gate recalibration must not dodge it.
+// attendee that queued before a gate recalibration must not dodge it. The
+// trigger's gate mode is the exception: it is persisted, since an affinity
+// trigger's attendee must not be re-judged on role alone.
 registerPendingRetry(PLAY_NAME, async (raw) => {
-  const { work, yourEdge } = raw as { work: AttendeeWithEvent; yourEdge: string };
+  const { work, yourEdge, personGate } = raw as {
+    work: AttendeeWithEvent;
+    yourEdge: string;
+    personGate?: LumaFinderOpts["personGate"];
+  };
   const ledger = getLedger();
   const dedupeKey = `${work.event.url}#${work.attendee.name.toLowerCase()}`;
   const outcome = await resolveAndEnqueueLumaAttendee(
@@ -1007,6 +1018,7 @@ registerPendingRetry(PLAY_NAME, async (raw) => {
     {
       icp: resolveIcp(),
       fillGaps: true,
+      ...(personGate === "affinity" ? { affinity: true } : {}),
       onRoleReject: (reason) => {
         try {
           ledger.enqueueTarget({
