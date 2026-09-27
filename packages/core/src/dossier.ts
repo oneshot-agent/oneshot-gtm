@@ -264,6 +264,12 @@ export interface PersonResearchDossier {
   location?: string;
   /** `best_work_email` — informational; the stored address is never swapped. */
   workEmail?: string;
+  /**
+   * The provider's `linkedin_url` for this person, canonical `https://www.linkedin.com/in/<slug>`.
+   * Kept even when the seed was a GitHub, X or email address: it is how a row
+   * that came in without one gains a LinkedIn profile (filled only where empty).
+   */
+  linkedinUrl?: string;
   company?: PersonResearchCompany;
   /** Set when the Experience section came from a live read of the profile page (wins over the provider's history). */
   liveProfile?: { url: string; readAt: string };
@@ -390,6 +396,7 @@ export function personRecordFromResearch(r: PersonResearchDossier): Record<strin
     ...(companyFacts ? { companyFacts } : {}),
     ...(formerRoles ? { formerRoles } : {}),
     ...(r.workEmail ? { workEmail: r.workEmail } : {}),
+    ...(r.linkedinUrl ? { linkedinUrl: r.linkedinUrl } : {}),
     ...(r.liveProfile ? { liveProfileReadAt: r.liveProfile.readAt } : {}),
   };
 }

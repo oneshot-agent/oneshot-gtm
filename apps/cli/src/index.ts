@@ -562,6 +562,11 @@ find
   .option("--no-rejudge", "keep the stored ICP verdict; skip the person-gate re-judge")
   .option("--no-company", "skip the company lookup for the current employer")
   .option("--no-live", "skip the live LinkedIn profile read (provider history only)")
+  .option(
+    "--cache-only",
+    "re-derive from cached research only: rows with nothing cached are left alone, nothing is billed",
+    false,
+  )
   .option("--dry-run", "list candidates and estimated cost; research nothing", false)
   .description(
     "Backfill person research onto existing prospects: current role, company facts, ICP re-judge (~$0.055 each)",
@@ -578,6 +583,7 @@ find
         rejudge: boolean;
         company: boolean;
         live: boolean;
+        cacheOnly?: boolean;
         dryRun: boolean;
       }) => {
         await commandResearchProspects({
@@ -586,6 +592,7 @@ find
           noRejudge: opts.rejudge === false,
           noCompany: opts.company === false,
           noLive: opts.live === false,
+          cacheOnly: opts.cacheOnly === true,
           ...(opts.limit ? { limit: opts.limit } : {}),
           ...(opts.scope ? { scope: opts.scope } : {}),
           ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
@@ -616,6 +623,11 @@ find
   .option("--no-rejudge", "keep the row's ICP verdict; skip the person-gate re-judge")
   .option("--no-company", "skip the company lookup for the current employer")
   .option("--no-live", "skip the live LinkedIn profile read (provider history only)")
+  .option(
+    "--cache-only",
+    "re-derive from cached research only: rows with nothing cached are left alone, nothing is billed",
+    false,
+  )
   .option("--dry-run", "list candidates and estimated cost; research nothing", false)
   .description(
     "Backfill person research onto live queue rows: current role from the LinkedIn history, company facts, ICP re-judge (~$0.055 each)",
@@ -633,6 +645,7 @@ find
         rejudge: boolean;
         company: boolean;
         live: boolean;
+        cacheOnly?: boolean;
         dryRun: boolean;
       }) => {
         await commandResearchQueue({
@@ -641,6 +654,7 @@ find
           noRejudge: opts.rejudge === false,
           noCompany: opts.company === false,
           noLive: opts.live === false,
+          cacheOnly: opts.cacheOnly === true,
           ...(opts.play ? { play: opts.play } : {}),
           ...(opts.status ? { status: opts.status } : {}),
           ...(Number.isFinite(opts.id) ? { id: opts.id as number } : {}),

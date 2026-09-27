@@ -323,6 +323,12 @@ describe("person research record", () => {
       expect.objectContaining({ name: "Julia's Consultancy", is_current: false }),
     ]);
     expect(hasDossierSignal(record)).toBe(true);
+    expect(record["linkedinUrl"]).toBeUndefined();
+    expect(
+      personRecordFromResearch({ ...julia, linkedinUrl: "https://www.linkedin.com/in/jz" })[
+        "linkedinUrl"
+      ],
+    ).toBe("https://www.linkedin.com/in/jz");
     expect(companyRecordFromResearch(julia)).toEqual({
       name: "WildMuse.App",
       industry: "Software",

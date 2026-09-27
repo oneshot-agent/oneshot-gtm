@@ -63,6 +63,8 @@ export interface ResearchProspectsOpts {
   noCompany?: boolean;
   /** Skip the live LinkedIn profile read (provider history only). */
   noLive?: boolean;
+  /** Re-derive from the shared research cache only; prospects with nothing cached are left alone, nothing is billed. */
+  cacheOnly?: boolean;
 }
 
 /**
@@ -157,8 +159,10 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
       (cap !== undefined && eligible.length > candidates.length
         ? `  ${c.dim("held back by --limit:")} ${eligible.length - candidates.length}`
         : "") +
-      `\n${c.dim("Est. cost:")} ~$${(candidates.length * RESEARCH_COST_USD).toFixed(2)}` +
-      `  ${c.dim("(~2-5 min each, cached 90d)")}\n\n`,
+      (opts.cacheOnly
+        ? `\n${c.dim("Cache only:")} prospects with no cached research are left alone; nothing is billed.\n\n`
+        : `\n${c.dim("Est. cost:")} ~$${(candidates.length * RESEARCH_COST_USD).toFixed(2)}` +
+          `  ${c.dim("(~2-5 min each, cached 90d)")}\n\n`),
   );
 
   if (candidates.length === 0) {
@@ -184,6 +188,7 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
   let empty = 0;
   let failed = 0;
   let cached = 0;
+  let notCached = 0;
   let titleUpdated = 0;
   let pass = 0;
   let reject = 0;
@@ -226,7 +231,12 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
       remainingUsd,
       enrichCompany: !opts.noCompany,
       liveProfile: !opts.noLive,
+      ...(opts.cacheOnly ? { cacheOnly: true } : {}),
     });
+    if (researched.notCached) {
+      notCached++;
+      return;
+    }
     costUsd += researched.costUsd;
     if (researched.dossier.status === "unavailable") {
       if (/failed/.test(researched.dossier.warning ?? "")) failed++;
@@ -283,7 +293,9 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
   }
   ok(
     `researched ${written}  ${c.dim("no signal:")} ${empty}  ${c.dim("failed:")} ${failed}  ` +
-      `${c.dim("free (cached):")} ${cached}  ${c.dim("title updated:")} ${titleUpdated}  ` +
+      `${c.dim("free (cached):")} ${cached}  ` +
+      (opts.cacheOnly ? `${c.dim("not cached, left alone:")} ${notCached}  ` : "") +
+      `${c.dim("title updated:")} ${titleUpdated}  ` +
       `${c.dim("re-judged pass:")} ${pass}  ${c.dim("re-judged reject:")} ${reject}  ` +
       `${c.dim("spent:")} $${costUsd.toFixed(2)}`,
   );

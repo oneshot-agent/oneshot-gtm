@@ -49,6 +49,13 @@ export interface ResearchQueueOpts {
   noCompany?: boolean;
   /** Skip the live LinkedIn profile read (provider history only). */
   noLive?: boolean;
+  /**
+   * Re-derive from the shared research cache only: rows with nothing cached
+   * are left alone, and no paid call runs (no provider, live, company or
+   * product lookup outside its cache). The free way to pick up a new field
+   * from results already bought.
+   */
+  cacheOnly?: boolean;
 }
 
 /**
@@ -201,8 +208,10 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
       (cap !== undefined && selection.candidates.length > candidates.length
         ? `  ${c.dim("held back by --limit:")} ${selection.candidates.length - candidates.length}`
         : "") +
-      `\n${c.dim("Est. cost:")} ~$${(candidates.length * ROW_COST_ESTIMATE_USD).toFixed(2)}` +
-      `  ${c.dim("(~2-5 min each, cached 90d across workspaces)")}\n\n`,
+      (opts.cacheOnly
+        ? `\n${c.dim("Cache only:")} rows with no cached research are left alone; nothing is billed.\n\n`
+        : `\n${c.dim("Est. cost:")} ~$${(candidates.length * ROW_COST_ESTIMATE_USD).toFixed(2)}` +
+          `  ${c.dim("(~2-5 min each, cached 90d across workspaces)")}\n\n`),
   );
 
   if (candidates.length === 0) {
@@ -229,6 +238,7 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
   const tally = {
     researched: 0,
     cached: 0,
+    notCached: 0,
     unavailable: 0,
     skipped: 0,
     titleUpdated: 0,
@@ -262,12 +272,18 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
       remainingUsd,
       enrichCompany: !opts.noCompany,
       liveProfile: !opts.noLive,
+      ...(opts.cacheOnly ? { cacheOnly: true } : {}),
     });
+    if (researched.notCached) {
+      tally.notCached++;
+      return;
+    }
     spend.costUsd += researched.costUsd;
     if (researched.cached) tally.cached++;
     const applied = await applyPersonResearch(ledger, row, researched.dossier, {
       rejudge: !opts.noRejudge,
-      remainingUsd: Math.max(0, remainingUsd - researched.costUsd),
+      // Cache only: a moved domain may re-read product research from its cache, never buy it.
+      remainingUsd: opts.cacheOnly ? 0 : Math.max(0, remainingUsd - researched.costUsd),
       result: spend,
     });
     if (applied.outcome === "unavailable") {
@@ -308,6 +324,7 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
   }
   ok(
     `researched ${tally.researched}  ${c.dim("free (cached):")} ${tally.cached}  ` +
+      (opts.cacheOnly ? `${c.dim("not cached, left alone:")} ${tally.notCached}  ` : "") +
       `${c.dim("unavailable:")} ${tally.unavailable}  ${c.dim("not live:")} ${tally.skipped}  ` +
       `${c.dim("title updated:")} ${tally.titleUpdated}  ` +
       `${c.dim("re-judged pass:")} ${tally.pass}  ${c.dim("re-judged reject:")} ${tally.reject}` +

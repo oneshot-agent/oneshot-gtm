@@ -24,6 +24,8 @@ let providerNameByUrl: string | null = null;
 let providerNameByEmail: string | null = null;
 let liveName = "Julia Zabrodska-Akinci";
 let pendingRows: unknown[] = [];
+/** The provider's top-level `linkedin_url` (null = the field is absent). */
+let providerLinkedIn: string | null = null;
 
 const juliaResearch = {
   status: "completed",
@@ -96,6 +98,10 @@ vi.mock("@oneshot-gtm/core", async () => {
         prospectWrites.push({ kind: "role", id, patch }),
       setProspectIcpVerdict: (id: number, v: string, reason: string | null) =>
         prospectWrites.push({ kind: "verdict", id, verdict: v, reason }),
+      updateProspectIdentity: (id: number, patch: unknown) => {
+        prospectWrites.push({ kind: "identity", id, patch });
+        return true;
+      },
     }),
     deepResearchPerson: async (input: { socialMediaUrl?: string; email?: string }) => {
       calls.research++;
@@ -104,7 +110,11 @@ vi.mock("@oneshot-gtm/core", async () => {
         result: {
           ...juliaResearch,
           status: researchStatus,
-          result: { ...juliaResearch.result, ...(name ? { full_name: name } : {}) },
+          result: {
+            ...juliaResearch.result,
+            ...(name ? { full_name: name } : {}),
+            ...(providerLinkedIn ? { linkedin_url: providerLinkedIn } : {}),
+          },
         },
         receiptId: 7,
       };
@@ -234,6 +244,7 @@ beforeEach(() => {
   providerNameByEmail = null;
   liveName = "Julia Zabrodska-Akinci";
   pendingRows = [];
+  providerLinkedIn = null;
 });
 
 describe("deriveCurrentRole", () => {
@@ -822,6 +833,7 @@ describe("applyPersonResearch (queue rows)", () => {
         liveProfile: null,
         currentRole: null,
         company: null,
+        linkedinUrl: null,
       },
     });
     expect(notes[0]?.notes).toContain("person research unavailable");
@@ -940,6 +952,7 @@ describe("researchMergePatch", () => {
       liveProfile: null,
       currentRole: null,
       company: null,
+      linkedinUrl: null,
     });
     const live = researchMergePatch({
       status: "complete",
@@ -948,5 +961,196 @@ describe("researchMergePatch", () => {
     } as never);
     expect(live["warning"]).toBe("x");
     expect(live["liveProfile"]).toMatchObject({ url: "https://www.linkedin.com/in/x" });
+  });
+});
+
+describe("the provider's linkedin_url", () => {
+  const githubSeed = {
+    url: "https://github.com/jzabrodska",
+    email: null,
+    name: "Julia Zabrodska",
+    company: null,
+    title: null,
+    domain: null,
+  };
+
+  it("is canonicalised to a /in/ profile and dropped when it is not one", async () => {
+    const { providerLinkedInUrl } = await import("../src/_person-research.ts");
+    const result = (linkedin_url: string) => ({ status: "completed", result: { linkedin_url } });
+    expect(providerLinkedInUrl(result("http://linkedin.com/in/Julia-Z/?trk=x"), githubSeed)).toBe(
+      "https://www.linkedin.com/in/julia-z",
+    );
+    expect(providerLinkedInUrl(result("www.linkedin.com/in/julia-z"), githubSeed)).toBe(
+      "https://www.linkedin.com/in/julia-z",
+    );
+    expect(
+      providerLinkedInUrl(
+        { status: "completed", result: { enrichment: { linkedin_url: "linkedin.com/in/jz" } } },
+        githubSeed,
+      ),
+    ).toBe("https://www.linkedin.com/in/jz");
+    expect(
+      providerLinkedInUrl(result("https://www.linkedin.com/company/acme"), githubSeed),
+    ).toBeNull();
+    expect(providerLinkedInUrl(result(""), githubSeed)).toBeNull();
+    expect(
+      providerLinkedInUrl(
+        { status: "failed", result: { linkedin_url: "linkedin.com/in/jz" } },
+        githubSeed,
+      ),
+    ).toBeNull();
+  });
+
+  it("is dropped when the record names someone else, or the seed names a business", async () => {
+    const { providerLinkedInUrl } = await import("../src/_person-research.ts");
+    const other = {
+      status: "completed",
+      result: { full_name: "Marcus Brandt", linkedin_url: "https://linkedin.com/in/mbrandt" },
+    };
+    expect(providerLinkedInUrl(other, githubSeed)).toBeNull();
+    const business = { ...githubSeed, name: "Acme Plumbing", company: "Acme Plumbing" };
+    expect(
+      providerLinkedInUrl(
+        { status: "completed", result: { linkedin_url: "https://linkedin.com/in/owner" } },
+        business,
+      ),
+    ).toBeNull();
+  });
+
+  it("a GitHub-seeded research lands it on the dossier", async () => {
+    providerLinkedIn = "https://www.linkedin.com/in/julia-zabrodska-akinci-cv/";
+    const { dossier } = await researchPerson({
+      seed: githubSeed,
+      playName: "github-stars",
+      subject: { queueId: 1 },
+      remainingUsd: 1,
+    });
+    expect(dossier.linkedinUrl).toBe("https://www.linkedin.com/in/julia-zabrodska-akinci-cv");
+  });
+
+  it("fills an empty payload linkedinUrl and never replaces one the finder set", async () => {
+    const dossier = {
+      version: 1 as const,
+      status: "partial" as const,
+      researchedAt: "2026-09-27T00:00:00.000Z",
+      seed: {},
+      organizations: [],
+      linkedinUrl: "https://www.linkedin.com/in/jz",
+      costUsd: 0,
+      cached: true,
+    };
+    expect(personPayloadPatch({ name: "Julia Zabrodska" }, dossier).linkedinUrl).toBe(
+      "https://www.linkedin.com/in/jz",
+    );
+    expect(
+      personPayloadPatch({ linkedinUrl: "https://www.linkedin.com/in/finder-pick" }, dossier)
+        .linkedinUrl,
+    ).toBeUndefined();
+    expect(
+      personPayloadPatch({}, { ...dossier, status: "unavailable" }).linkedinUrl,
+    ).toBeUndefined();
+  });
+
+  it("fills a prospect's linkedin_url through the write-once identity update", async () => {
+    providerLinkedIn = "https://linkedin.com/in/julia-zabrodska-akinci-cv";
+    const prospect = {
+      id: 612,
+      name: "Julia Zabrodska",
+      company: "L'eto Group",
+      email: "julia.zabrodska@letocaffe.com",
+      source: "github-stars",
+      source_profile_url: "https://github.com/jzabrodska",
+      linkedin_url: null,
+      dossier_json: null,
+      title: null,
+      icp_verdict: null,
+    };
+    const { dossier } = await researchPerson({
+      seed: personSeedForProspect(prospect),
+      playName: "research-prospects",
+      subject: { prospectId: 612 },
+      remainingUsd: 1,
+    });
+    const ledger = (await import("@oneshot-gtm/core")).getLedger();
+    await applyPersonResearchToProspect(ledger, prospect, dossier, { rejudge: false, icp });
+    expect(prospectWrites.find((w) => w["kind"] === "identity")).toEqual({
+      kind: "identity",
+      id: 612,
+      patch: { linkedin_url: "https://www.linkedin.com/in/julia-zabrodska-akinci-cv" },
+    });
+  });
+
+  it("dossierFromProviderResult carries it for a finder that already paid", async () => {
+    const { dossierFromProviderResult } = await import("../src/_person-research.ts");
+    const dossier = dossierFromProviderResult(
+      { url: "https://x.com/jz", email: null, name: "Julia Zabrodska", company: null },
+      {
+        ...juliaResearch,
+        result: { ...juliaResearch.result, linkedin_url: "linkedin.com/in/jz" },
+      },
+      { costUsd: 0.05, billed: true },
+    );
+    expect(dossier?.linkedinUrl).toBe("https://www.linkedin.com/in/jz");
+    expect(dossier?.currentRole?.company).toBe("WildMuse.App");
+  });
+});
+
+describe("researchPerson cacheOnly", () => {
+  const seed = {
+    url: "https://www.linkedin.com/in/julia-zabrodska-akinci-cv",
+    email: "julia.zabrodska@letocaffe.com",
+    name: "Julia Zabrodska",
+    company: "L'eto Group",
+    title: null,
+    domain: "letocaffe.com",
+  };
+
+  it("with nothing cached, buys nothing and says so", async () => {
+    const out = await researchPerson({
+      seed,
+      playName: "research-queue",
+      subject: { queueId: 1 },
+      remainingUsd: 0,
+      cacheOnly: true,
+    });
+    expect(out.notCached).toBe(true);
+    expect(out.costUsd).toBe(0);
+    expect(calls.research).toBe(0);
+  });
+
+  it("re-derives from the cache with no provider, live or company call, whatever the budget", async () => {
+    liveSession = true;
+    enrichmentCache = {
+      result_json: JSON.stringify({
+        ...juliaResearch,
+        result: { ...juliaResearch.result, linkedin_url: "linkedin.com/in/jz" },
+      }),
+      fetched_at: new Date().toISOString(),
+      status: "ok",
+    };
+    const out = await researchPerson({
+      seed,
+      playName: "research-queue",
+      subject: { queueId: 1 },
+      remainingUsd: 0,
+      cacheOnly: true,
+    });
+    expect(out.notCached).toBeUndefined();
+    expect(out.costUsd).toBe(0);
+    expect(out.dossier.currentRole?.company).toBe("WildMuse.App");
+    expect(out.dossier.linkedinUrl).toBe("https://www.linkedin.com/in/jz");
+    expect(calls).toMatchObject({ research: 0, company: 0, browser: 0 });
+  });
+
+  it("a negative cache entry is not research", async () => {
+    enrichmentCache = { result_json: "{}", fetched_at: new Date().toISOString(), status: "failed" };
+    const out = await researchPerson({
+      seed,
+      playName: "research-queue",
+      subject: { queueId: 1 },
+      remainingUsd: 0,
+      cacheOnly: true,
+    });
+    expect(out.notCached).toBe(true);
   });
 });

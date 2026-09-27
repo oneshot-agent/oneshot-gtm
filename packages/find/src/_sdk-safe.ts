@@ -287,6 +287,23 @@ export function personCacheKey(input: DeepResearchPersonInput): string | null {
   return email ? `person:${email}` : null;
 }
 
+/**
+ * True when `safeDeepResearchPerson` would answer this input from the cache
+ * for free: a fresh, successful entry under its key. A negative entry does
+ * not count — it returns the failed sentinel, which is not research.
+ */
+export function hasCachedResearch(input: DeepResearchPersonInput): boolean {
+  const key = personCacheKey(input);
+  if (!key) return false;
+  try {
+    const cached = getLedger().getCachedEnrichment(key);
+    if (!cached || cached.status === "failed") return false;
+    return Date.now() - new Date(cached.fetched_at).getTime() < RESEARCH_CACHE_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
 /** Graceful sentinel — same `receiptId: 0` / `cost: 0` shape as the cache-miss
  *  sentinels in _enrich.ts, so callers spend nothing and drop just this row. */
 const FAILED_RESEARCH = {
