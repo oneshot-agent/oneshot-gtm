@@ -2555,8 +2555,7 @@ async function awaitLinkedInAcceptance(
   // withdrawn by hand and the person invited again.
   const invite = ledger
     .listLinkedInInviteEvents(opts.prospectId, opts.playName)
-    .filter((e) => e.status === "sent")
-    .at(-1);
+    .findLast((e) => e.status === "sent");
   const invitedAt = invite ? Date.parse(sqliteToIso(invite.created_at)) : Date.now();
   const days = (Date.now() - invitedAt) / (24 * 3600 * 1000);
   if (days < LINKEDIN_INVITE_TIMEOUT_DAYS) {
