@@ -237,6 +237,19 @@ describe("sendDraftedEmail person-level ICP gate", () => {
     expect(opts.flags).toEqual(["off-icp"]);
   });
 
+  it("a human override (fresh pass) wins over a stored reject", async () => {
+    // Approving an auto-rejected queue row rewrites its verdict to `pass`
+    // (ledger-queue setQueueStatus); the fresh verdict must beat whatever an
+    // earlier gate stored on the prospect, or the approval is silently skipped.
+    findProspectByEmailMock.mockReturnValue({ id: 7 });
+    getProspectByIdMock.mockReturnValue({ id: 7, icp_verdict: "reject", icp_verdict_reason: "AE" });
+    const out = await sendDraftedEmail(
+      baseOpts({ icp: { verdict: "pass" as const, reason: "human override: AE" } }),
+    );
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+    expect(out.sent).toBe(true);
+  });
+
   it("FAILS OPEN on unclear and on null — the documented contract", async () => {
     // ledger-prospects.ts's setProspectIcpVerdict doc is explicit that the
     // cadence gate tests === "reject", so `unclear` fails open exactly as

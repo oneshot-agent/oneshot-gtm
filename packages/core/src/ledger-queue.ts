@@ -573,17 +573,41 @@ export class QueueStore {
       // against a few lines below (~3449), just closed here by folding the
       // check into one statement instead of wrapping a transaction.
       const decision = input.status === "approved" ? "approve" : null;
+      // A person approving a row the finder's person gate rejected is
+      // overriding that gate. Both send-side gates (first touch in
+      // sendDraftedEmail, follow-ups in the cadence runner) refuse a `reject`
+      // verdict, so without this an approved row would be skipped as
+      // off-ICP at send time. The machine verdict is kept under
+      // `icpOverride` for audit; the reason says who overrode what. Machine
+      // approvals never override.
+      const overrideSql =
+        decidedBy === "human"
+          ? `, payload_json = CASE
+               WHEN json_valid(payload_json) AND json_extract(payload_json, '$.icpVerdict') = 'reject'
+               THEN json_set(payload_json,
+                 '$.icpOverride', json_object(
+                   'by', 'human', 'at', $now,
+                   'verdict', 'reject',
+                   'reason', json_extract(payload_json, '$.icpVerdictReason')),
+                 '$.icpVerdict', 'pass',
+                 '$.icpVerdictReason', 'human override: ' ||
+                   COALESCE(json_extract(payload_json, '$.icpVerdictReason'), 'person gate rejected'))
+               ELSE payload_json END`
+          : "";
       const result =
         input.status === "approved"
           ? this.db
               .prepare(
-                `UPDATE target_queue SET status = ?, reviewed_at = ?, decision = ?, decided_at = ?, decided_by = ?, send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ? AND status != 'sent' AND sent_at IS NULL`,
+                `UPDATE target_queue SET status = $status, reviewed_at = $now, decision = $decision, decided_at = $now, decided_by = $decidedBy, send_started_at = NULL${input.notes ? ", notes = $notes" : ""}${overrideSql} WHERE id = $id AND status != 'sent' AND sent_at IS NULL`,
               )
-              .run(
-                ...(input.notes
-                  ? [input.status, now, decision, now, decidedBy, input.notes, input.id]
-                  : [input.status, now, decision, now, decidedBy, input.id]),
-              )
+              .run({
+                $status: input.status,
+                $now: now,
+                $decision: decision,
+                $decidedBy: decidedBy,
+                $id: input.id,
+                ...(input.notes ? { $notes: input.notes } : {}),
+              })
           : this.db
               .prepare(
                 `UPDATE target_queue SET status = ?, reviewed_at = NULL, send_started_at = NULL ${input.notes !== undefined ? ", notes = ?" : ""} WHERE id = ? AND status != 'sent' AND sent_at IS NULL`,
