@@ -787,3 +787,29 @@ describe("voice_key on versions", () => {
     expect(split.plain).toMatchObject({ sent: 1, regenerated: 0 });
   });
 });
+
+describe("channel", () => {
+  it("each version records the queue row's channel", () => {
+    const id = ledger.enqueueTarget({
+      playName: "x-amplify-dm",
+      payload: { name: "P", handle: "p" },
+      dedupeKey: "k:x",
+      source: "test",
+      channel: "x",
+    })!;
+    ledger.setQueueDraft({ id, draft: draft(), sentBy: "human" });
+    ledger.setQueueDraft({ id, draft: draft({ body: "body two" }), sentBy: "human" });
+    const email = enqueue("ch@x.dev");
+    ledger.setQueueDraft({ id: email, draft: draft(), sentBy: "human" });
+    const db = rawDb();
+    const rows = db
+      .query("SELECT queue_id, channel FROM draft_versions ORDER BY id")
+      .all() as Array<{ queue_id: number; channel: string }>;
+    db.close();
+    expect(rows).toEqual([
+      { queue_id: id, channel: "x" },
+      { queue_id: id, channel: "x" },
+      { queue_id: email, channel: "email" },
+    ]);
+  });
+});

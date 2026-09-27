@@ -337,6 +337,14 @@ describe("drainQueue per-target dispatch + persistence", () => {
     expect(out.sent).toBe(0);
   });
 
+  it("rows on a channel with no sender stay approved and never reach the email play", async () => {
+    ledgerStub.dequeueApproved.mockReturnValue([{ ...row(10), channel: "linkedin" }]);
+    const out = await drainQueue({ playName: "stack-consolidation", dryRun: false });
+    expect(runStackConsolidationMock).not.toHaveBeenCalled();
+    expect(ledgerStub.setQueueStatus).not.toHaveBeenCalled();
+    expect(out).toMatchObject({ drained: 0, sent: 0 });
+  });
+
   it("manual-play rows without a draft (or with an errored one) still get drafted, never sent", async () => {
     runXAmplifyDmMock.mockResolvedValue({
       drafted: [{ subject: "X DM → @a", body: "dm text", flags: [], sent: false, receiptIds: [] }],

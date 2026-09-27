@@ -225,6 +225,8 @@ export class DraftVersionStore {
     angle?: DraftVersionAngle | null;
     voiceKey?: string | null;
     formatKey?: string | null;
+    /** Outreach channel the draft is for (channels.ts); email when unset. */
+    channel?: string;
     discardReason?: DraftDiscardReason;
     /** When the draft was really written — a seeded pre-existing draft keeps its own time. */
     createdAt?: string;
@@ -248,6 +250,7 @@ export class DraftVersionStore {
     playName: string;
     prospectKey: string;
     stepIndex: number;
+    channel?: string;
     stored: unknown;
   }): void {
     // Only a slot this store has never seen: once any version exists, the
@@ -271,6 +274,7 @@ export class DraftVersionStore {
       angle: env.angle,
       voiceKey: env.voiceKey,
       formatKey: env.formatKey,
+      ...(input.channel ? { channel: input.channel } : {}),
       ...(env.draftedAt ? { createdAt: env.draftedAt } : {}),
     });
   }
@@ -365,6 +369,7 @@ export class DraftVersionStore {
     angle?: DraftVersionAngle | null;
     voiceKey?: string | null;
     formatKey?: string | null;
+    channel?: string;
     outcome: "sent" | "auto_sent";
   }): void {
     if (!input.body.trim()) return;
@@ -382,6 +387,7 @@ export class DraftVersionStore {
     angle?: DraftVersionAngle | null;
     voiceKey?: string | null;
     formatKey?: string | null;
+    channel?: string;
     outcome: DraftVersionOutcome;
     createdAt?: string;
   }): void {
@@ -392,8 +398,8 @@ export class DraftVersionStore {
         `INSERT INTO draft_versions(
            play_name, prospect_key, step_index, queue_id, prospect_id,
            subject, body, flags_json, angle_key, angle_text, angle_origin,
-           outcome, discard_reason, voice_key, format_key, created_at, closed_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?)`,
+           outcome, discard_reason, voice_key, format_key, channel, created_at, closed_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?)`,
       )
       .run(
         input.playName,
@@ -410,6 +416,7 @@ export class DraftVersionStore {
         input.outcome,
         input.voiceKey ?? null,
         input.formatKey ?? null,
+        input.channel ?? "email",
         input.createdAt ?? now,
         input.outcome === "open" ? null : now,
       );

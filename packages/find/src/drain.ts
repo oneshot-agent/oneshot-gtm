@@ -58,7 +58,11 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
     if (need <= 0) break;
     const batch = ledger.dequeueApproved({ playName: opts.playName, limit: need });
     for (const row of batch) {
-      if (firstTouchSender(channelOf(row.channel)) === "manual" && hasCleanDraft(row)) continue;
+      const sender = firstTouchSender(channelOf(row.channel));
+      // No sender for this channel yet: leave the row approved rather than
+      // letting an email play dispatch it.
+      if (sender === "unavailable") continue;
+      if (sender === "manual" && hasCleanDraft(row)) continue;
       rows.push(row);
     }
     if (batch.length < need) break;

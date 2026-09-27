@@ -1009,15 +1009,24 @@ export class QueueStore {
   }
 
   /** Slot + identity for a queue row's draft versions; null when the row is gone. */
-  private queueVersionKey(
-    id: number,
-  ): { slot: { queueId: number }; playName: string; prospectKey: string; stepIndex: 0 } | null {
+  private queueVersionKey(id: number): {
+    slot: { queueId: number };
+    playName: string;
+    prospectKey: string;
+    stepIndex: 0;
+    channel: string;
+  } | null {
     const row = this.db
       .query(
-        `SELECT play_name, dedupe_key, json_extract(payload_json, '$.email') AS email
+        `SELECT play_name, dedupe_key, channel, json_extract(payload_json, '$.email') AS email
            FROM target_queue WHERE id = ?`,
       )
-      .get(id) as { play_name: string; dedupe_key: string; email: string | null } | null;
+      .get(id) as {
+      play_name: string;
+      dedupe_key: string;
+      channel: string;
+      email: string | null;
+    } | null;
     if (!row) return null;
     const email = typeof row.email === "string" ? row.email.trim().toLowerCase() : "";
     return {
@@ -1025,6 +1034,7 @@ export class QueueStore {
       playName: row.play_name,
       prospectKey: email || row.dedupe_key,
       stepIndex: 0,
+      channel: row.channel,
     };
   }
 
