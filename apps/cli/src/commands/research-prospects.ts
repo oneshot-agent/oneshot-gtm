@@ -261,7 +261,12 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
         ...(prospect?.icp_verdict !== undefined ? { icp_verdict: prospect.icp_verdict } : {}),
       },
       researched.dossier,
-      { rejudge: !opts.noRejudge, dossierSlice: DOSSIER_SLICE, playName: "research-prospects" },
+      // Cache only bills nothing, and the re-judge is a paid classifier call.
+      {
+        rejudge: !opts.noRejudge && !opts.cacheOnly,
+        dossierSlice: DOSSIER_SLICE,
+        playName: "research-prospects",
+      },
     );
     if (applied.outcome !== "written") {
       empty++;

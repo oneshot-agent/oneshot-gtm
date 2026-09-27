@@ -326,6 +326,7 @@ const FAILED_RESEARCH = {
 export async function safeDeepResearchPerson(
   input: DeepResearchPersonInput,
   ctx: CallContext,
+  opts: { cacheOnly?: boolean } = {},
 ): Promise<Awaited<ReturnType<typeof deepResearchPerson>>> {
   const ledger = getLedger();
   const key = personCacheKey(input);
@@ -351,6 +352,10 @@ export async function safeDeepResearchPerson(
       }
     }
   }
+
+  // Cache only: a miss, an expired entry or a corrupt one is a miss, never a
+  // paid call. The failed sentinel is what callers already treat as "no research".
+  if (opts.cacheOnly) return { result: FAILED_RESEARCH, receiptId: 0 };
 
   try {
     const live = deepResearchPerson(input, ctx);

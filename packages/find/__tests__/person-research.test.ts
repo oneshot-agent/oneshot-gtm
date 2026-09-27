@@ -976,7 +976,10 @@ describe("the provider's linkedin_url", () => {
 
   it("is canonicalised to a /in/ profile and dropped when it is not one", async () => {
     const { providerLinkedInUrl } = await import("../src/_person-research.ts");
-    const result = (linkedin_url: string) => ({ status: "completed", result: { linkedin_url } });
+    const result = (linkedin_url: string) => ({
+      status: "completed",
+      result: { full_name: "Julia Zabrodska-Akinci", linkedin_url },
+    });
     expect(providerLinkedInUrl(result("http://linkedin.com/in/Julia-Z/?trk=x"), githubSeed)).toBe(
       "https://www.linkedin.com/in/julia-z",
     );
@@ -985,7 +988,12 @@ describe("the provider's linkedin_url", () => {
     );
     expect(
       providerLinkedInUrl(
-        { status: "completed", result: { enrichment: { linkedin_url: "linkedin.com/in/jz" } } },
+        {
+          status: "completed",
+          result: {
+            enrichment: { full_name: "Julia Zabrodska", linkedin_url: "linkedin.com/in/jz" },
+          },
+        },
         githubSeed,
       ),
     ).toBe("https://www.linkedin.com/in/jz");
@@ -998,6 +1006,25 @@ describe("the provider's linkedin_url", () => {
         { status: "failed", result: { linkedin_url: "linkedin.com/in/jz" } },
         githubSeed,
       ),
+    ).toBeNull();
+  });
+
+  it("needs the first and last name to match: a shared surname or no record name is not enough", async () => {
+    const { providerLinkedInUrl, namesIdentify } = await import("../src/_person-research.ts");
+    expect(namesIdentify("Julia Smith", "Marcus Smith")).toBe(false);
+    expect(namesIdentify("Julia Smith", "Julia Smith-Jones")).toBe(true);
+    expect(namesIdentify("Matúš Kováč", "Matus Kovac")).toBe(true);
+    expect(namesIdentify("Julia", "Julia Smith")).toBe(false);
+    expect(namesIdentify(null, "Julia Smith")).toBe(false);
+    const url = "https://linkedin.com/in/x";
+    expect(
+      providerLinkedInUrl(
+        { status: "completed", result: { full_name: "Marcus Zabrodska", linkedin_url: url } },
+        githubSeed,
+      ),
+    ).toBeNull();
+    expect(
+      providerLinkedInUrl({ status: "completed", result: { linkedin_url: url } }, githubSeed),
     ).toBeNull();
   });
 
@@ -1019,6 +1046,7 @@ describe("the provider's linkedin_url", () => {
 
   it("a GitHub-seeded research lands it on the dossier", async () => {
     providerLinkedIn = "https://www.linkedin.com/in/julia-zabrodska-akinci-cv/";
+    providerNameByUrl = "Julia Zabrodska-Akinci";
     const { dossier } = await researchPerson({
       seed: githubSeed,
       playName: "github-stars",
@@ -1053,6 +1081,7 @@ describe("the provider's linkedin_url", () => {
 
   it("fills a prospect's linkedin_url through the write-once identity update", async () => {
     providerLinkedIn = "https://linkedin.com/in/julia-zabrodska-akinci-cv";
+    providerNameByUrl = "Julia Zabrodska-Akinci";
     const prospect = {
       id: 612,
       name: "Julia Zabrodska",
@@ -1086,7 +1115,11 @@ describe("the provider's linkedin_url", () => {
       { url: "https://x.com/jz", email: null, name: "Julia Zabrodska", company: null },
       {
         ...juliaResearch,
-        result: { ...juliaResearch.result, linkedin_url: "linkedin.com/in/jz" },
+        result: {
+          ...juliaResearch.result,
+          full_name: "Julia Zabrodska",
+          linkedin_url: "linkedin.com/in/jz",
+        },
       },
       { costUsd: 0.05, billed: true },
     );
@@ -1123,7 +1156,11 @@ describe("researchPerson cacheOnly", () => {
     enrichmentCache = {
       result_json: JSON.stringify({
         ...juliaResearch,
-        result: { ...juliaResearch.result, linkedin_url: "linkedin.com/in/jz" },
+        result: {
+          ...juliaResearch.result,
+          full_name: "Julia Zabrodska",
+          linkedin_url: "linkedin.com/in/jz",
+        },
       }),
       fetched_at: new Date().toISOString(),
       status: "ok",
@@ -1140,6 +1177,23 @@ describe("researchPerson cacheOnly", () => {
     expect(out.dossier.currentRole?.company).toBe("WildMuse.App");
     expect(out.dossier.linkedinUrl).toBe("https://www.linkedin.com/in/jz");
     expect(calls).toMatchObject({ research: 0, company: 0, browser: 0 });
+  });
+
+  it("an expired or corrupt entry is a miss, never a paid call", async () => {
+    enrichmentCache = {
+      result_json: "{not json",
+      fetched_at: new Date().toISOString(),
+      status: "ok",
+    };
+    const corrupt = await researchPerson({
+      seed,
+      playName: "research-queue",
+      subject: { queueId: 1 },
+      remainingUsd: 10,
+      cacheOnly: true,
+    });
+    expect(corrupt.notCached).toBe(true);
+    expect(calls.research).toBe(0);
   });
 
   it("a negative cache entry is not research", async () => {

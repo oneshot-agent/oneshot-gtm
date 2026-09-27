@@ -281,7 +281,8 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
     spend.costUsd += researched.costUsd;
     if (researched.cached) tally.cached++;
     const applied = await applyPersonResearch(ledger, row, researched.dossier, {
-      rejudge: !opts.noRejudge,
+      // Cache only bills nothing, and the re-judge is a paid classifier call.
+      rejudge: !opts.noRejudge && !opts.cacheOnly,
       // Cache only: a moved domain may re-read product research from its cache, never buy it.
       remainingUsd: opts.cacheOnly ? 0 : Math.max(0, remainingUsd - researched.costUsd),
       result: spend,

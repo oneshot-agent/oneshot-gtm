@@ -210,6 +210,33 @@ export function namesAgree(
 }
 
 /**
+ * Stricter than `namesAgree`, for keeping an identifier rather than reading a
+ * record: the row's first AND last name tokens must each match a token of the
+ * record's name (same accent folding and 4-letter prefix tolerance). A shared
+ * surname alone ("Julia Smith" vs "Marcus Smith") does not attach Marcus's
+ * profile to Julia. No row name, a one-token row name, or no record name: the
+ * URL cannot be tied to the person, so it is not kept.
+ */
+export function namesIdentify(
+  rowName: string | null | undefined,
+  recordName: string | null | undefined,
+): boolean {
+  if (!rowName || !recordName) return false;
+  const a = nameTokens(rowName);
+  const b = nameTokens(recordName);
+  if (a.length < 2 || b.length === 0) return false;
+  const matches = (x: string): boolean =>
+    b.some(
+      (y) =>
+        x === y ||
+        (x.length >= 4 &&
+          y.length >= 4 &&
+          (x.startsWith(y.slice(0, 4)) || y.startsWith(x.slice(0, 4)))),
+    );
+  return matches(a[0]!) && matches(a[a.length - 1]!);
+}
+
+/**
  * A seed whose "name" is the business, not a person (local-business rows put
  * the company in both fields): the provider's person name has nothing to
  * agree with, so the guard stays out of the way.
@@ -255,7 +282,7 @@ export function providerLinkedInUrl(
   const key = canonicalLinkedInProfileKey(raw.startsWith("http") ? raw : `https://${raw}`);
   if (!key?.startsWith(LINKEDIN_KEY_PREFIX)) return null;
   if (seed && seedNamesABusiness(seed)) return null;
-  if (!namesAgree(seed?.name, providerPersonName(result))) return null;
+  if (!namesIdentify(seed?.name, providerPersonName(result))) return null;
   return `https://www.linkedin.com/in/${encodeURIComponent(key.slice(LINKEDIN_KEY_PREFIX.length))}`;
 }
 
@@ -513,7 +540,15 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
     memo: "person research: current role and company before review",
     decisionContext: { source: "person-research", ...input.subject },
   };
-  let res = await safeDeepResearchPerson(providerInput, ctx);
+  let res = await safeDeepResearchPerson(providerInput, ctx, { cacheOnly: input.cacheOnly });
+  if (input.cacheOnly && (!res.result || res.result.status === "failed")) {
+    return {
+      dossier: unavailable(seed, "not in the research cache"),
+      costUsd: 0,
+      cached: true,
+      notCached: true,
+    };
+  }
   let billed = res.receiptId !== 0;
   let costUsd = billed ? (res.result?.cost ?? 0) : 0;
   // The URL was the finder's guess. When the provider's record names someone
@@ -545,10 +580,11 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
         ? hasCachedResearch(retryInput)
         : input.remainingUsd - costUsd >= PERSON_RESEARCH_COST_ESTIMATE_USD);
     if (canRetry) {
-      const retry = await safeDeepResearchPerson(retryInput, {
-        ...ctx,
-        memo: "person research: by email after the profile URL named someone else",
-      });
+      const retry = await safeDeepResearchPerson(
+        retryInput,
+        { ...ctx, memo: "person research: by email after the profile URL named someone else" },
+        { cacheOnly: input.cacheOnly },
+      );
       if (retry.receiptId !== 0) costUsd += retry.result?.cost ?? 0;
       const retryName = providerPersonName(retry.result);
       if (retry.result && retry.result.status !== "failed" && namesAgree(seed.name, retryName)) {
