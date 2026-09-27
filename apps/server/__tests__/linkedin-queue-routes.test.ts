@@ -175,6 +175,21 @@ describe("withdraw-invite", () => {
     expect(linkedInCalls[0]).toMatchObject({ kind: "withdraw", accountId: "acct-old" });
   });
 
+  it("withdraws the newest invite after an earlier one was withdrawn", async () => {
+    seqEvents.push(
+      { channel: "linkedin", step_index: 0, status: "withdrawn", metadata_json: "{}" },
+      {
+        channel: "linkedin",
+        step_index: 0,
+        status: "sent",
+        metadata_json: JSON.stringify({ invitationId: "inv-2" }),
+      },
+    );
+    const res = await withdrawInviteRoute(post(), { id: "1" });
+    expect(res.status).toBe(200);
+    expect(linkedInCalls[0]).toMatchObject({ kind: "withdraw", invitationId: "inv-2" });
+  });
+
   it("records nothing when the invite was no longer pending", async () => {
     linkedInResult = { status: "not_pending" };
     const res = await withdrawInviteRoute(post(), { id: "1" });

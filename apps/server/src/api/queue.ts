@@ -1471,11 +1471,14 @@ export async function withdrawInviteRoute(
   if (row.status !== "sent" || row.prospect_id == null) {
     return jsonResponse({ error: "this row's invite hasn't been sent" }, 400, req);
   }
+  // Oldest first. The newest sent invite is the live one (a person can be
+  // invited again after a withdrawal); it's withdrawn only if a withdrawal follows it.
   const events = ledger.listLinkedInInviteEvents(row.prospect_id, row.play_name);
-  if (events.some((e) => e.status === "withdrawn")) {
+  const sentAt = events.findLastIndex((e) => e.status === "sent");
+  const sent = sentAt >= 0 ? events[sentAt] : undefined;
+  if (events.slice(sentAt + 1).some((e) => e.status === "withdrawn")) {
     return jsonResponse({ error: "invite already withdrawn" }, 409, req);
   }
-  const sent = events.find((e) => e.status === "sent");
   let invitationId: string | null = null;
   let sentBy: { workspace: string; accountId: string } | null = null;
   try {
