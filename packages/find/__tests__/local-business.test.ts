@@ -136,6 +136,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     logEvent: () => {},
     getLedger: () => ({
       isQueueDuplicate: () => false,
+      isLinkedInProfileKnown: () => false,
       enqueueTarget: (row: EnqueuedRow) => {
         enqueued.push(row);
         return enqueued.length;

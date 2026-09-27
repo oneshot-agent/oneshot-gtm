@@ -302,6 +302,24 @@ describe("findLinkedInUrl — persistent cache", () => {
     expect(calls.webSearch).toBe(2);
   });
 
+  it("reports a transient failure as unavailable on every lookup, never as a cached miss", async () => {
+    throwOnSearch = true;
+    searchErrorMessage = "request timed out";
+    let unavailable = 0;
+    const probe = () =>
+      findLinkedInUrl({
+        fullName: "Alice",
+        accumCost: () => {},
+        errKindPrefix: "test",
+        onUnavailable: () => {
+          unavailable++;
+        },
+      });
+    expect(await probe()).toBeNull();
+    expect(await probe()).toBeNull();
+    expect(unavailable).toBe(2);
+  });
+
   it("DOES persist a genuine (non-transient) failure", async () => {
     throwOnSearch = true;
     searchErrorMessage = "malformed query";

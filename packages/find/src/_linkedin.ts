@@ -207,12 +207,16 @@ export async function findLinkedInUrl(args: {
   } catch (err) {
     const transient = isTransientToolError(err);
     recordResolutionOutcome(transient);
-    // Only persist a GENUINE miss — caching a timeout/5xx would suppress this
-    // person's lookup for LINKEDIN_MISS_TTL_MS after the platform recovers.
-    if (!transient) writePersistedLookup(cacheKey, null);
-    // The in-process entry is set either way: no point retrying within one run.
-    cache.set(cacheKey, null);
-    if (transient) args.onUnavailable?.();
+    // Caching a timeout/5xx would suppress this person's lookup for
+    // LINKEDIN_MISS_TTL_MS after the platform recovers.
+    // Only a genuine miss is cached, here and persistently: a cached transient
+    // null would read as "no profile" on the next lookup in this run.
+    if (!transient) {
+      writePersistedLookup(cacheKey, null);
+      cache.set(cacheKey, null);
+    } else {
+      args.onUnavailable?.();
+    }
     logEvent(
       "error.swallowed",
       {

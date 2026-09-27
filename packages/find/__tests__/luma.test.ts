@@ -186,6 +186,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       findContactReceipt: () => null,
       isQueueDuplicate: () => false,
       isPendingResolution: () => false,
+      isLinkedInProfileKnown: () => false,
       upsertPendingResolution: () => {},
       setCachedEnrichment: () => {},
       enqueueTarget: (row: EnqueuedRow) => {

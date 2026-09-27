@@ -2300,6 +2300,15 @@ export class Ledger {
   }
 
   /**
+   * The LinkedIn-channel twin of the email dedupe: a known prospect with this
+   * profile, or a live queue row in any play carrying it.
+   */
+  isLinkedInProfileKnown(linkedinUrl: string): boolean {
+    const prospect = this.prospects.resolveProspectForLinkedInReply({ linkedinUrl }, null);
+    return prospect.status !== "unmatched" || this.queue.isLinkedInPendingInQueue(linkedinUrl);
+  }
+
+  /**
    * Cross-play dedup (send side): has this prospect already received an initial
    * (step-0) touch under ANY play? The authoritative guard against first-touching
    * the same person twice. Mirrors the step-0 existence check in

@@ -32,6 +32,14 @@ vi.mock("../src/_enrich.ts", () => ({
 }));
 vi.mock("../src/_qualify.ts", () => ({ qualifyPostEnrich: gate }));
 vi.mock("../src/_linkedin.ts", () => ({ findLinkedInUrl: linkedinSearch }));
+const { profileKnown } = vi.hoisted(() => ({ profileKnown: { value: false } }));
+vi.mock("@oneshot-gtm/core", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+  return {
+    ...actual,
+    getLedger: () => ({ isLinkedInProfileKnown: () => profileKnown.value }),
+  };
+});
 
 const { resolveVerifyEnrichQualify } = await import("../src/_contact.ts");
 const { withFinderChannels, parseChannels } = await import("../src/_channels-context.ts");
@@ -46,6 +54,7 @@ const base = {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  profileKnown.value = false;
   gate.mockResolvedValue({
     action: "proceed",
     verdict: "pass",
@@ -121,6 +130,13 @@ describe("channel order in the contact step", () => {
     gate.mockResolvedValue({ action: "reject", reason: "intern", costUsd: 0 });
     const out = await resolveVerifyEnrichQualify({ ...base, channels: ["linkedin"] });
     expect(out).toMatchObject({ ok: false, reason: "role", detail: "intern" });
+  });
+
+  it("a profile already known or queued in any play is a duplicate on LinkedIn", async () => {
+    profileKnown.value = true;
+    const out = await resolveVerifyEnrichQualify({ ...base, channels: ["linkedin"] });
+    expect(out).toMatchObject({ ok: false, reason: "duplicate" });
+    expect(gate).not.toHaveBeenCalled();
   });
 
   it("a LinkedIn lookup that could not run is an outage, not a miss", async () => {

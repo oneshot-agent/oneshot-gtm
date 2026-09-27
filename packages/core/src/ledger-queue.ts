@@ -4,6 +4,7 @@ import { extractBusinessAddress } from "./mail-address.ts";
 import { humanDecisionWhereSql } from "./labels.ts";
 import { toSqliteUtc } from "./time.ts";
 import type { OutreachChannel } from "./channels.ts";
+import { canonicalLinkedInProfileKey } from "./ledger-prospects.ts";
 import type {
   IcpDecisionExample,
   ProspectPriority,
@@ -277,6 +278,20 @@ export class QueueStore {
    * under ANY play? Catches the window before either play has sent (no
    * prospect row exists yet). Matches both `email` and `founderEmail`.
    */
+  /** Whether a pending or approved row, in any play, already carries this LinkedIn profile. */
+  isLinkedInPendingInQueue(linkedinUrl: string): boolean {
+    const key = canonicalLinkedInProfileKey(linkedinUrl);
+    if (!key) return false;
+    const rows = this.db
+      .query(
+        `SELECT json_extract(payload_json, '$.linkedinUrl') AS url FROM target_queue
+         WHERE status IN ('pending','approved')
+           AND json_extract(payload_json, '$.linkedinUrl') LIKE '%linkedin.com/in/%'`,
+      )
+      .all() as Array<{ url: string | null }>;
+    return rows.some((r) => r.url !== null && canonicalLinkedInProfileKey(r.url) === key);
+  }
+
   isEmailPendingInQueue(email: string): boolean {
     // Case-insensitive to match findProspectByEmail/upsertProspect, which store
     // and look up the canonical (lowercased) email — otherwise a casing mismatch

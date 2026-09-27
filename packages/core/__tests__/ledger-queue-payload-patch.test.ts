@@ -166,3 +166,24 @@ describe("setQueueChannel", () => {
     expect(ledger.setQueueChannel(leased, "linkedin")).toBe("sent");
   });
 });
+
+describe("isLinkedInProfileKnown", () => {
+  it("matches a live queue row in any play, or a prospect, on the canonical profile", () => {
+    expect(ledger.isLinkedInProfileKnown("https://www.linkedin.com/in/dana-lee")).toBe(false);
+    enqueue({ name: "Dana", linkedinUrl: "https://linkedin.com/in/Dana-Lee/" });
+    expect(ledger.isLinkedInProfileKnown("https://www.linkedin.com/in/dana-lee")).toBe(true);
+
+    ledger.upsertProspect({
+      name: "Sam",
+      email: null,
+      linkedin_url: "https://www.linkedin.com/in/sam-k",
+      source: "t",
+    });
+    expect(ledger.isLinkedInProfileKnown("https://linkedin.com/in/sam-k?trk=x")).toBe(true);
+  });
+
+  it("ignores rejected and sent rows", () => {
+    enqueue({ name: "R", linkedinUrl: "https://www.linkedin.com/in/rej" }, "rejected");
+    expect(ledger.isLinkedInProfileKnown("https://www.linkedin.com/in/rej")).toBe(false);
+  });
+});

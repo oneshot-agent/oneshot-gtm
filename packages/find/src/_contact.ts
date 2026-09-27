@@ -5,6 +5,7 @@ import {
 } from "./_github-readme.ts";
 import {
   canonicalLinkedInProfileKey,
+  getLedger,
   logEvent,
   type OutreachChannel,
   type PersonResult,
@@ -488,6 +489,11 @@ async function qualifyViaLinkedIn(
   if (unavailable) return { ok: false, reason: "platform-error", costUsd };
   if (!linkedinUrl || !canonicalLinkedInProfileKey(linkedinUrl)) {
     return { ok: false, reason: "not-found", costUsd };
+  }
+  // Cross-play dedupe on the profile, as the email path does on the address:
+  // someone already known or queued is not queued again on LinkedIn.
+  if (getLedger().isLinkedInProfileKnown(linkedinUrl)) {
+    return { ok: false, reason: "duplicate", costUsd };
   }
   const gate = await qualifyPostEnrich({
     icp: args.icp,
