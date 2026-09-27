@@ -232,6 +232,18 @@ describe("runLocalBusinessFinder — lane routing on best_work_email", () => {
   });
 });
 
+describe("runLocalBusinessFinder — people search size", () => {
+  it("asks for a page the platform can finish before its 120s job timeout, not the 500 cap", async () => {
+    nextPeopleSearchResults = [];
+    await runLocalBusinessFinder({ dryRun: true, jobTitles: ["Head of AI"], yourEdge: "x" });
+    expect(peopleSearchCalls).toHaveLength(1);
+    const limit = peopleSearchCalls[0]?.["limit"] as number;
+    // ~2.2s per row measured 2026-09-27: 50 rows took 107s, 100 timed out.
+    expect(limit).toBeGreaterThan(0);
+    expect(limit).toBeLessThanOrEqual(40);
+  });
+});
+
 describe("runLocalBusinessFinder — business-shaped targeting", () => {
   it("runs companySearch first and feeds company_domains into peopleSearch when industries is set and jobTitles is empty", async () => {
     nextCompanySearchResults = [

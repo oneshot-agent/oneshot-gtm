@@ -18,10 +18,13 @@ const PLAY_NAME = "free-pilot";
 const SOURCE = "find:local-business";
 
 /**
- * Server cap on `research/people` — flat $0.01 regardless of how many of the
- * up-to-500 rows come back, so always ask for the max.
+ * Rows asked of `research/people` per call. The price is flat ($0.01), but
+ * the platform's time grows with each row and it ends the job at 120s:
+ * measured 2026-09-27 at ~2.2s per row (25 → 57s, 50 → 107s, 100 and 500 →
+ * "timed out after 120s", an empty run). Ask for what finishes, not the
+ * server's 500 cap.
  */
-const PEOPLE_SEARCH_LIMIT = 500;
+const PEOPLE_SEARCH_LIMIT = 40;
 /** Server cap on `research/company`. */
 const COMPANY_SEARCH_LIMIT = 100;
 /** Server cap on `local/search` — flat price per search, so always ask for the max. */
