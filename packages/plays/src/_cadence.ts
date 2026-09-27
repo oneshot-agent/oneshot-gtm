@@ -38,6 +38,7 @@ import {
   currentWorkspaceName,
   linkedInConversationFor,
   linkedInOutreachAccount,
+  isWithdrawnStatus,
   type LinkedInOperation,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject, triageEmails } from "@oneshot-gtm/intel";
@@ -2595,14 +2596,17 @@ async function awaitLinkedInAcceptance(
         playName: opts.playName,
       })) as { status?: string };
       withdrawStatus = res.status ?? null;
-      ledger.recordSequenceEvent({
-        prospectId: opts.prospectId,
-        playName: opts.playName,
-        stepIndex: 0,
-        channel: "linkedin",
-        status: "withdrawn",
-        metadata: { invitationId, withdrawStatus },
-      });
+      // not_pending: accepted or gone some other way — nothing was withdrawn.
+      if (isWithdrawnStatus(withdrawStatus)) {
+        ledger.recordSequenceEvent({
+          prospectId: opts.prospectId,
+          playName: opts.playName,
+          stepIndex: 0,
+          channel: "linkedin",
+          status: "withdrawn",
+          metadata: { invitationId, withdrawStatus },
+        });
+      }
     } catch (err) {
       logEvent(
         "cadence.linkedin_withdraw_failed",

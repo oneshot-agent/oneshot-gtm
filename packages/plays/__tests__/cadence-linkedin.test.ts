@@ -222,6 +222,21 @@ describe("LinkedIn cadence edge cases", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("records no withdrawal when the invite was no longer pending", async () => {
+    inviteSentDaysAgo(25);
+    enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
+    dueNow("luma-events");
+    await runCadenceStepForProspect({
+      prospectId,
+      playName: "luma-events",
+      dryRun: false,
+      linkedIn: async () => ({ status: "not_pending" }),
+    });
+    const events = ledger.listLinkedInInviteEvents(prospectId, "luma-events");
+    expect(events.map((e) => e.status)).toEqual(["sent"]);
+    expect(ledger.getCadence(prospectId, "luma-events")!.status).toBe("stopped");
+  });
+
   it("a failed withdrawal keeps the cadence and retries tomorrow", async () => {
     inviteSentDaysAgo(25);
     enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
