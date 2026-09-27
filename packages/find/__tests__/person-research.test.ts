@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Product Owner at WildMuse.App since Mar 2026, L'ETO ended Oct 2025.
 
 const calls = { research: 0, company: 0, classify: 0, webRead: 0, browser: 0 };
+let lastClassifierInput = "";
 let liveSession = false;
 const patches: Array<{ id: number; patch: Record<string, unknown> }> = [];
 const notes: Array<{ id: number; notes: string }> = [];
@@ -180,8 +181,9 @@ vi.mock("@oneshot-gtm/intel", async () => {
   return {
     ...actual,
     loadPrompt: () => "system",
-    complete: async () => {
+    complete: async (req: { messages: Array<{ role: string; content: string }> }) => {
       calls.classify++;
+      lastClassifierInput = req.messages.find((m) => m.role === "user")?.content ?? "";
       return { content: verdict, provider: "t", model: "t" };
     },
   };
@@ -738,6 +740,23 @@ describe("rejudgePerson", () => {
       fitReasonSource: "person-gate",
     });
     expect(calls.classify).toBe(1);
+  });
+
+  it("re-judges an affinity-mode row in affinity mode", async () => {
+    const payload = { ...juliaPayload, icpAffinity: true };
+    const { dossier } = await researchPerson({
+      seed: personSeedFor(payload),
+      playName: "luma-events",
+      subject: { queueId: 1 },
+      remainingUsd: 1,
+    });
+    await rejudgePerson({
+      playName: "luma-events",
+      payload,
+      patch: personPayloadPatch(payload, dossier),
+      icp,
+    });
+    expect(JSON.parse(lastClassifierInput).person.affinity).toBe(true);
   });
 
   it("skips the classifier when the verdict was already pass and nothing changed", async () => {

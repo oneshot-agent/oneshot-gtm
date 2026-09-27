@@ -959,6 +959,7 @@ export async function rejudgePerson(input: {
       company: patch.company ?? str(payload, "company"),
       roleText,
       evidence: input.evidence ?? str(payload, "fitReason"),
+      ...(payload["icpAffinity"] === true ? { affinity: true } : {}),
     },
   });
   if (decision.verdict === "unclear" || decision.verdict === "transient") {

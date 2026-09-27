@@ -74,6 +74,7 @@ let eventDetails: EventDetailsFixture | null = null;
 let eventDetailsBySlug: Record<string, EventDetailsFixture> = {};
 const fetchedCitySlugs: string[] = [];
 const fetchedDetailSlugs: string[] = [];
+const personGateCalls: Array<Record<string, unknown>> = [];
 vi.mock("../src/_luma-discover.ts", () => ({
   cityToSlug: (city: string) =>
     ({ "san francisco": "sf", "new york": "nyc", london: "london" })[city.trim().toLowerCase()] ??
@@ -98,7 +99,10 @@ vi.mock("../src/_filter.ts", () => ({
   // qualification, so the classifier passes everyone; `_qualify.ts` staging
   // itself stays REAL here and is covered by qualify-staging.test.ts.
   hasRoleText: (p: { roleText?: string | null }) => (p.roleText ?? "").trim().length > 0,
-  qualifyPerson: async () => ({ verdict: personVerdict, reason: "stub" }),
+  qualifyPerson: async (input: { person: Record<string, unknown> }) => {
+    personGateCalls.push(input.person);
+    return { verdict: personVerdict, reason: "stub" };
+  },
 }));
 vi.mock("../src/_enrich.ts", () => ({
   enrichVerifiedContact: async () => {
@@ -214,6 +218,7 @@ beforeEach(() => {
   // event. The auth-mode describe sets the cookie explicitly per test.
   delete process.env["LUMA_SESSION_COOKIE"];
   enqueued.length = 0;
+  personGateCalls.length = 0;
   icpMatch = true;
   personVerdict = "pass";
   webSearchResults = [];
@@ -1028,5 +1033,61 @@ describe("runLumaFinder — person-level ICP gate", () => {
 
     expect(out.droppedRole).toBe(0);
     expect(out.enqueued).toBe(2);
+  });
+});
+
+describe("luma-events personGate", () => {
+  function setupEvent(): void {
+    discoveredEvents = [
+      { slug: "sf-evt-1", name: "SF AI Builders", startAtIso: futureIso(3), city: "San Francisco" },
+    ];
+    eventDetails = {
+      eventTitle: "SF AI Builders",
+      eventDateIso: futureIso(3),
+      eventCity: "San Francisco",
+      attendees: [
+        {
+          name: "Dana Host",
+          profileUrl: null,
+          websiteUrl: null,
+          linkedinUrl: "https://www.linkedin.com/in/dana",
+          twitterUrl: null,
+          bio: "Account Executive",
+          role: "Host",
+        },
+        // The finder skips events with fewer than two public attendees.
+        {
+          name: "Gabe Guest",
+          profileUrl: null,
+          websiteUrl: "https://gabe.dev",
+          linkedinUrl: null,
+          twitterUrl: null,
+          bio: "Marketing ops",
+          role: "Guest",
+        },
+      ],
+    };
+    enrichByLinkedinUrl["https://www.linkedin.com/in/dana"] = {
+      best_work_email: "dana@org.com",
+      company_domain: "org.com",
+    };
+  }
+
+  it("affinity mode marks every gate call and stamps the row for re-judging", async () => {
+    setupEvent();
+    await runLumaFinder({ ...baseConfig, personGate: "affinity" });
+    expect(personGateCalls.length).toBeGreaterThan(0);
+    for (const person of personGateCalls) expect(person["affinity"]).toBe(true);
+    expect(enqueued.length).toBeGreaterThan(0);
+    for (const row of enqueued) expect(row.payload["icpAffinity"]).toBe(true);
+  });
+
+  it("the default role mode sends no affinity and stamps nothing", async () => {
+    setupEvent();
+    await runLumaFinder(baseConfig);
+    expect(personGateCalls.length).toBeGreaterThan(0);
+    for (const person of personGateCalls) expect(person).not.toHaveProperty("affinity");
+    expect(enqueued.length).toBeGreaterThan(0);
+    for (const row of enqueued) expect(row.payload).not.toHaveProperty("icpAffinity");
   });
 });

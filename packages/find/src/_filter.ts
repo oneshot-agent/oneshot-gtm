@@ -188,6 +188,13 @@ export interface PersonCandidate {
   roleText?: string | null;
   /** Why this person surfaced (starred repo, attended event). Context only. */
   evidence?: string | null;
+  /**
+   * The founder marked the trigger that surfaced this person as intent: its
+   * topic is what they offer, so `evidence` is a real signal of fit and the
+   * gate passes practitioners whatever their title (see the "Affinity
+   * triggers" section of icp-filter-person.md). Per-trigger, off by default.
+   */
+  affinity?: boolean;
 }
 
 /** No role text at all is the same escalation path as an ambiguous one. */

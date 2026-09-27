@@ -53,6 +53,12 @@ export interface LumaFinderOpts extends RunOpts {
    * (founder almost never wants to pitch a Q4 attendee in June).
    */
   sinceDays?: number;
+  /**
+   * `"affinity"`: attending an event this trigger found counts as evidence of
+   * fit, so the person gate passes practitioners whatever their title.
+   * Default `"role"` judges the role alone.
+   */
+  personGate?: "role" | "affinity";
 }
 
 interface SearchHit {
@@ -191,6 +197,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     });
   const yourEdge = (opts.yourEdge ?? "").trim();
   const icp = resolveIcp(opts.icpOverride);
+  const affinity = opts.personGate === "affinity";
   const ledger = getLedger();
   const extractSystem = loadPrompt("luma-event-extract");
   // Optional v2 auth mode. When unset, public-only path runs as before.
@@ -672,6 +679,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
         // first value with actual characters in it.
         roleText: firstNonBlank(work.attendee.bio, work.attendee.role),
         evidence: `attended ${work.event.title}`,
+        ...(affinity ? { affinity: true } : {}),
       },
     });
     if (preSpend.action === "reject") {
@@ -707,6 +715,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       {
         icp,
         fillGaps: opts.qualifyFillGaps ?? true,
+        ...(affinity ? { affinity: true } : {}),
         onRoleReject: (reason) => {
           // Auditable rejected row, same pattern as the company-level ICP
           // rejections, so the founder can see and override the call.
@@ -793,6 +802,8 @@ async function resolveAndEnqueueLumaAttendee(
     icp: string | null;
     /** Allow the paid stage-C lookup when the free title is still ambiguous. */
     fillGaps: boolean;
+    /** The trigger runs the person gate in affinity mode (see LumaFinderOpts.personGate). */
+    affinity?: boolean;
     /** Called with the classifier's reason when the person is rejected. */
     onRoleReject?: (reason: string) => void;
   },
@@ -874,6 +885,7 @@ async function resolveAndEnqueueLumaAttendee(
         company: resolvedCompany,
         roleText: firstNonBlank(work.attendee.bio, work.attendee.role),
         evidence: `attended ${work.event.title}`,
+        ...(gate?.affinity ? { affinity: true } : {}),
       },
       // Free title from the LinkedIn-keyed enrichProfile above.
       titleHint: profileTitle,
@@ -931,6 +943,8 @@ async function resolveAndEnqueueLumaAttendee(
         ? { attendeeBio: firstNonBlank(work.attendee.bio, work.attendee.role) as string }
         : {}),
       ...(work.attendee.role ? { role: work.attendee.role } : {}),
+      // Lets a later re-judge (research-queue) apply the same gate mode.
+      ...(gate?.affinity ? { icpAffinity: true } : {}),
       eventTitle: work.event.title,
       eventDate: work.event.dateIso,
       eventTimezone: eventZone,

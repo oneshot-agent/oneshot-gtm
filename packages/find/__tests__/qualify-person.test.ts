@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 let completeShouldThrow = false;
 let responseBody = JSON.stringify({ verdict: "pass", reason: "fits" });
+let lastUserMessage = "";
 
 vi.mock("@oneshot-gtm/intel", () => ({
   loadPrompt: () => "icp-filter-person system prompt",
@@ -19,7 +20,8 @@ vi.mock("@oneshot-gtm/intel", () => ({
       return fb;
     }
   },
-  complete: async () => {
+  complete: async (req: { messages: Array<{ role: string; content: string }> }) => {
+    lastUserMessage = req.messages.find((m) => m.role === "user")?.content ?? "";
     if (completeShouldThrow) {
       throw new Error("Job 035ebe1e-9080-431d-b8be-cba5fd7f0bc6 timed out after 121");
     }
@@ -102,5 +104,20 @@ describe("hasRoleText — escalation predicate", () => {
     // back `unclear`. That is a different path from missing.
     expect(hasRoleText({ roleText: "Manager" })).toBe(true);
     expect(hasRoleText({ roleText: "Host" })).toBe(true);
+  });
+});
+
+describe("qualifyPerson — affinity", () => {
+  it("hands the affinity flag to the classifier so the prompt can relax the role rule", async () => {
+    await qualifyPerson({
+      icp: ICP,
+      person: { roleText: "Account Executive", evidence: "attended GTM in git", affinity: true },
+    });
+    expect(JSON.parse(lastUserMessage).person.affinity).toBe(true);
+  });
+
+  it("leaves it out when the trigger isn't in affinity mode", async () => {
+    await qualifyPerson({ icp: ICP, person: { roleText: "Account Executive" } });
+    expect(JSON.parse(lastUserMessage).person).not.toHaveProperty("affinity");
   });
 });
