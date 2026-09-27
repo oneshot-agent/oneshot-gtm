@@ -160,6 +160,17 @@ describe("withdraw-invite", () => {
     });
   });
 
+  it("withdraws through the account that sent the invite", async () => {
+    seqEvents[0]!.metadata_json = JSON.stringify({
+      invitationId: "inv-1",
+      accountId: "acct-old",
+      accountWorkspace: "sdk",
+    });
+    const res = await withdrawInviteRoute(post(), { id: "1" });
+    expect(res.status).toBe(200);
+    expect(linkedInCalls[0]).toMatchObject({ kind: "withdraw", accountId: "acct-old" });
+  });
+
   it("records nothing when the invite was no longer pending", async () => {
     linkedInResult = { status: "not_pending" };
     const res = await withdrawInviteRoute(post(), { id: "1" });

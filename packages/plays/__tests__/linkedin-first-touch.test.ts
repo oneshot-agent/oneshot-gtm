@@ -55,6 +55,7 @@ function sender(result: unknown) {
     calls,
     sender: {
       accountId: "acct-1",
+      workspace: "gtm",
       call: async (op: unknown) => {
         calls.push(op);
         if (result instanceof Error) throw result;
@@ -112,7 +113,13 @@ describe("sendLinkedInInvite", () => {
       stepIndex: 0,
       channel: "linkedin",
       status: "sent",
-      metadata: { note: "hi", invitationId: "inv-1", inviteStatus: "sent" },
+      metadata: {
+        note: "hi",
+        invitationId: "inv-1",
+        inviteStatus: "sent",
+        accountId: "acct-1",
+        accountWorkspace: "gtm",
+      },
     });
   });
 

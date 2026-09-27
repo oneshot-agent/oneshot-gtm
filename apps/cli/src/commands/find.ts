@@ -80,7 +80,7 @@ export async function commandFindDrain(opts: {
       dryRun: opts.dryRun,
       linkedIn:
         account && account.workspace === currentWorkspaceName()
-          ? { accountId: account.accountId, call: linkedInSdk }
+          ? { accountId: account.accountId, workspace: account.workspace, call: linkedInSdk }
           : null,
     });
   } catch (err: unknown) {

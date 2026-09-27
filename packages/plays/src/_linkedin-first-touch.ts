@@ -20,6 +20,8 @@ import { voiceBlock } from "./_lib.ts";
 /** How the caller reaches OneShot for the account that owns the LinkedIn connection. */
 export interface LinkedInSender {
   accountId: string;
+  /** Workspace that owns the account — recorded so a withdrawal reaches the same one. */
+  workspace?: string;
   call: (operation: LinkedInOperation) => Promise<unknown>;
 }
 
@@ -220,6 +222,9 @@ export async function sendLinkedInInvite(input: {
       note,
       invitationId: result.invitation_id,
       inviteStatus: status,
+      // The account that sent it: a withdrawal must go to the same one.
+      accountId: input.sender.accountId,
+      ...(input.sender.workspace ? { accountWorkspace: input.sender.workspace } : {}),
     },
   });
   logEvent("linkedin.invite_sent", { play: input.row.playName, status });

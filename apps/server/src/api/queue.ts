@@ -891,6 +891,7 @@ export async function drainQueueRoute(req: Request): Promise<Response> {
       linkedIn: account
         ? {
             accountId: account.accountId,
+            workspace: account.workspace,
             call: (operation) => callLinkedIn(account.workspace, operation),
           }
         : null,
@@ -1283,6 +1284,7 @@ export async function sendDraftRoute(
         note: body,
         sender: {
           accountId: account.accountId,
+          workspace: account.workspace,
           call: (operation) => callLinkedIn(account.workspace, operation),
         },
         workspace: currentWorkspaceName(),
@@ -1477,16 +1479,26 @@ export async function withdrawInviteRoute(
   }
   const sent = events.find((e) => e.status === "sent");
   let invitationId: string | null = null;
+  let sentBy: { workspace: string; accountId: string } | null = null;
   try {
-    const meta = JSON.parse(sent?.metadata_json ?? "{}") as { invitationId?: unknown };
+    const meta = JSON.parse(sent?.metadata_json ?? "{}") as {
+      invitationId?: unknown;
+      accountId?: unknown;
+      accountWorkspace?: unknown;
+    };
     invitationId = typeof meta.invitationId === "string" ? meta.invitationId : null;
+    if (typeof meta.accountId === "string" && typeof meta.accountWorkspace === "string") {
+      sentBy = { workspace: meta.accountWorkspace, accountId: meta.accountId };
+    }
   } catch {
     invitationId = null;
   }
   if (!invitationId) {
     return jsonResponse({ error: "no OneShot invitation id recorded for this row" }, 409, req);
   }
-  const account = linkedInOutreachAccount();
+  // The account that sent the invite; invites recorded before that was
+  // stored fall back to the current outreach account.
+  const account = sentBy ?? linkedInOutreachAccount();
   if (!account) {
     return jsonResponse({ error: "connect LinkedIn on /setup to withdraw invites" }, 409, req);
   }
