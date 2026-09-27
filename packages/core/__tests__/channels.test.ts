@@ -33,6 +33,7 @@ describe("channel registry", () => {
       }),
     ).toEqual(["email", "linkedin", "x"]);
     expect(channelAddresses({ linkedinUrl: "https://www.linkedin.com/company/acme" })).toEqual([]);
+    expect(channelAddresses({ twitterUrl: "https://x.com/home" })).toEqual([]);
   });
 
   it("says who sends each first touch today", () => {
@@ -112,6 +113,8 @@ describe("xHandleFrom", () => {
     expect(xHandleFrom("https://x.com/dana_lee")).toBe("dana_lee");
     expect(xHandleFrom("https://twitter.com/dana_lee/status/1")).toBe("dana_lee");
     expect(xHandleFrom("https://x.com/home")).toBeNull();
+    expect(xHandleFrom("https://x.com/login")).toBeNull();
+    expect(xHandleFrom("@notifications")).toBeNull();
     expect(xHandleFrom("https://example.com/dana")).toBeNull();
     expect(xHandleFrom("")).toBeNull();
   });

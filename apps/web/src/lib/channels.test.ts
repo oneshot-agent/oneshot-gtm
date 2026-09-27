@@ -16,6 +16,7 @@ describe("reachableChannels", () => {
     expect(
       reachableChannels({ email: " ", linkedinUrl: "https://www.linkedin.com/company/acme" }),
     ).toEqual([]);
+    expect(reachableChannels({ twitterUrl: "https://x.com/home" })).toEqual([]);
   });
 });
 
@@ -24,5 +25,7 @@ describe("xHandleFrom", () => {
     expect(xHandleFrom("https://x.com/dana_lee")).toBe("dana_lee");
     expect(xHandleFrom("@dana_lee")).toBe("dana_lee");
     expect(xHandleFrom("not a handle!")).toBeNull();
+    expect(xHandleFrom("https://x.com/login")).toBeNull();
+    expect(xHandleFrom("https://x.com/home")).toBeNull();
   });
 });

@@ -28,13 +28,15 @@ export async function draftXDm(
     typeof p[k] === "string" && (p[k] as string).trim() ? (p[k] as string).trim() : null;
   const name = str("name") ?? "them";
   const handle = xHandleOf(p);
+  // No handle, no recipient: nothing to draft a sendable DM for.
+  if (!handle) throw new Error("this row has no X handle");
   const voice = voiceBlock("intro");
   const input = [
     `FOUNDER: ${cfg.founderName ?? ""}`,
     `PRODUCT: ${cfg.productOneLiner ?? ""}`,
     "PERSON:",
     `  NAME: ${name}`,
-    ...(handle ? [`  X: @${handle}`] : []),
+    `  X: @${handle}`,
     ...((str("title") ?? str("currentRole"))
       ? [`  ROLE: ${str("title") ?? str("currentRole")}`]
       : []),
@@ -57,9 +59,8 @@ export async function draftXDm(
   if (!body) throw new Error("empty DM from the model");
   const flags: string[] = [];
   if (body.length > maxChars) flags.push(`dm-too-long: ${body.length}/${maxChars} characters`);
-  if (!handle) flags.push("no-x: this row has no X handle");
   return {
-    subject: `X DM → ${handle ? `@${handle}` : name}`,
+    subject: `X DM → @${handle}`,
     body,
     flags,
     voiceKey: voice?.key ?? null,

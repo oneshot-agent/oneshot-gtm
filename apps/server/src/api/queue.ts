@@ -7,6 +7,7 @@ import {
   personRecordFromResearch,
   channelOf,
   isWithdrawnStatus,
+  xHandleFrom,
   firstTouchSender,
   linkedInOutreachAccount,
   isOutreachChannel,
@@ -1161,6 +1162,9 @@ export async function markSentRoute(
   // The profile the touch went to. `prospects.linkedin_url` holds whichever
   // social profile a prospect was reached on (it has always carried X URLs).
   const profileUrl = channel === "linkedin" ? pstr("linkedinUrl") : pstr("twitterUrl");
+  if (channel === "x" && !(xHandleFrom(pstr("handle")) ?? xHandleFrom(pstr("twitterUrl")))) {
+    return jsonResponse({ error: "this row has no X handle to have sent it to" }, 400, req);
+  }
 
   const prospectId = ledger.upsertProspect({
     name: pstr("name"),

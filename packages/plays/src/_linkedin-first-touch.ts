@@ -86,6 +86,13 @@ export function signalLines(row: LinkedInFirstTouchRow): string[] {
     lines.push(
       `FUNDING: ${round}${str(p, "leadInvestor") ? ` led by ${str(p, "leadInvestor")}` : ""}`,
     );
+  const post = str(p, "postTitle");
+  if (post) lines.push(`LAUNCH_POST: ${post}`);
+  const episode = str(p, "episodeTitle");
+  if (episode)
+    lines.push(`PODCAST: ${episode}${str(p, "podcastName") ? ` on ${str(p, "podcastName")}` : ""}`);
+  const stack = str(p, "vendorStack");
+  if (stack) lines.push(`THEIR_STACK: ${stack}`);
   const job = str(p, "jobTitle");
   if (job) lines.push(`HIRING_FOR: ${job}`);
   const bio = str(p, "attendeeBio");

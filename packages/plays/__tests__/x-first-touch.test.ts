@@ -47,10 +47,17 @@ describe("draftXDm", () => {
     expect(inputs[0]).toContain("MAX_CHARS: 280");
   });
 
-  it("flags an over-long DM and a row with no handle", async () => {
+  it("flags an over-long DM", async () => {
     modelDm = "x".repeat(300);
-    const dm = await draftXDm(row({ twitterUrl: undefined }));
-    expect(dm.flags).toEqual(["dm-too-long: 300/280 characters", "no-x: this row has no X handle"]);
+    const dm = await draftXDm(row());
+    expect(dm.flags).toEqual(["dm-too-long: 300/280 characters"]);
+  });
+
+  it("refuses a row with no usable handle", async () => {
+    await expect(draftXDm(row({ twitterUrl: undefined }))).rejects.toThrow(/no X handle/);
+    await expect(draftXDm(row({ twitterUrl: "https://x.com/login" }))).rejects.toThrow(
+      /no X handle/,
+    );
   });
 
   it("prefers the row's handle over its profile URL", () => {

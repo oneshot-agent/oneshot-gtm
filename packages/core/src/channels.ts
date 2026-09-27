@@ -67,7 +67,9 @@ export function channelAddresses(payload: Record<string, unknown>): OutreachChan
   if (has("linkedinUrl") && /linkedin\.com\/in\//i.test(payload["linkedinUrl"] as string)) {
     out.push("linkedin");
   }
-  if (has("handle") || has("twitterUrl")) out.push("x");
+  const handle = typeof payload["handle"] === "string" ? payload["handle"] : null;
+  const url = typeof payload["twitterUrl"] === "string" ? payload["twitterUrl"] : null;
+  if (xHandleFrom(handle) ?? xHandleFrom(url)) out.push("x");
   return out;
 }
 
@@ -83,6 +85,27 @@ export function xHandleFrom(value: string | null | undefined): string | null {
   );
   const handle = fromUrl ? fromUrl[1]! : v.replace(/^@/, "");
   if (!/^[A-Za-z0-9_]{1,15}$/.test(handle)) return null;
-  const reserved = ["home", "i", "intent", "search", "share", "messages", "explore", "settings"];
-  return reserved.includes(handle.toLowerCase()) ? null : handle;
+  return X_RESERVED_PATHS.includes(handle.toLowerCase()) ? null : handle;
 }
+
+/** x.com paths that look like a handle but name no profile (mirrored in apps/web). */
+export const X_RESERVED_PATHS = [
+  "about",
+  "compose",
+  "explore",
+  "hashtag",
+  "home",
+  "i",
+  "intent",
+  "jobs",
+  "login",
+  "logout",
+  "messages",
+  "notifications",
+  "privacy",
+  "search",
+  "settings",
+  "share",
+  "signup",
+  "tos",
+];
