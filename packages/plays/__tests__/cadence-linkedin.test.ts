@@ -222,6 +222,36 @@ describe("LinkedIn cadence edge cases", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("withdraws through the account that sent the invite", async () => {
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "luma-events",
+      stepIndex: 0,
+      channel: "linkedin",
+      status: "sent",
+      metadata: { invitationId: "inv-9", accountId: "acct-old", accountWorkspace: "sdk" },
+    });
+    const db = new Database(dbPath);
+    db.exec(`UPDATE sequence_events SET created_at = datetime('now', '-25 days')`);
+    db.close();
+    enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
+    dueNow("luma-events");
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    await runCadenceStepForProspect({
+      prospectId,
+      playName: "luma-events",
+      dryRun: false,
+      linkedIn: async (workspace, op) => {
+        calls.push([workspace, op as Record<string, unknown>]);
+        return { status: "withdrawn" };
+      },
+    });
+    expect(calls[0]).toEqual([
+      "sdk",
+      expect.objectContaining({ accountId: "acct-old", invitationId: "inv-9" }),
+    ]);
+  });
+
   it("records no withdrawal when the invite was no longer pending", async () => {
     inviteSentDaysAgo(25);
     enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });

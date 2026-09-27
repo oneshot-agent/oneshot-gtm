@@ -2578,13 +2578,22 @@ async function awaitLinkedInAcceptance(
   if (opts.dryRun)
     return { action: "skipped", payload: null, receiptIds: [], note: `${note} — would withdraw` };
   let invitationId: string | null = null;
+  let sentBy: { workspace: string; accountId: string } | null = null;
   try {
-    const meta = JSON.parse(invite?.metadata_json ?? "{}") as { invitationId?: unknown };
+    const meta = JSON.parse(invite?.metadata_json ?? "{}") as {
+      invitationId?: unknown;
+      accountId?: unknown;
+      accountWorkspace?: unknown;
+    };
     invitationId = typeof meta.invitationId === "string" ? meta.invitationId : null;
+    if (typeof meta.accountId === "string" && typeof meta.accountWorkspace === "string") {
+      sentBy = { workspace: meta.accountWorkspace, accountId: meta.accountId };
+    }
   } catch {
     invitationId = null;
   }
-  const account = linkedInOutreachAccount();
+  // Withdraw through the account that sent the invite; older events fall back.
+  const account = sentBy ?? linkedInOutreachAccount();
   let withdrawStatus: string | null = null;
   if (invitationId && account && opts.linkedIn) {
     try {
