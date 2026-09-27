@@ -34,6 +34,11 @@ import {
   demoDayLine,
   demoDayOf,
   mentionsStaleDemoDay,
+  canonicalLinkedInProfileKey,
+  currentWorkspaceName,
+  linkedInConversationFor,
+  linkedInOutreachAccount,
+  type LinkedInOperation,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject, triageEmails } from "@oneshot-gtm/intel";
 import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
@@ -66,6 +71,8 @@ export type StepPayload =
       voiceKey?: string | null;
     }
   | { kind: "sms"; message: string; toPhone?: string }
+  /** A LinkedIn message into the conversation opened by an accepted invite. */
+  | { kind: "linkedin_message"; text: string }
   | {
       kind: "voice";
       objective: string;
@@ -78,7 +85,7 @@ interface SequenceStep {
   id?: string;
   /** Days after enrollment (step 0 was the original send). step 1 is the first follow-up. */
   dayOffset: number;
-  channel: "email" | "sms" | "voice" | "direct_mail";
+  channel: "email" | "sms" | "voice" | "direct_mail" | "linkedin";
   /** When true, an inbound reply at any time stops the cadence. */
   breakOnReply: boolean;
   /** Builder returns null to skip this step gracefully. */
@@ -212,7 +219,13 @@ export function effectiveSequence(
   playName: string,
   prospectId?: number,
   rebuild = false,
+  /** The cadence's channel when it isn't enrolled yet; read from the cadence otherwise. */
+  channel?: string,
 ): Sequence | undefined {
+  const cadenceChannel =
+    channel ??
+    (prospectId !== undefined ? getLedger().getCadence(prospectId, playName)?.channel : undefined);
+  if (cadenceChannel === "linkedin") return linkedInSequence(playName);
   const base = playSequences.get(playName);
   if (!base) return undefined;
   const cfg = loadConfig();
@@ -379,8 +392,13 @@ export function skipDirectMailStep(input: { prospectId: number; playName: string
   logEvent("cadence.mail.skipped", input);
 }
 
-export function enrollInCadence(input: { prospectId: number; playName: string }): void {
-  const seq = effectiveSequence(input.playName, input.prospectId);
+export function enrollInCadence(input: {
+  prospectId: number;
+  playName: string;
+  /** Channel the cadence runs on; LinkedIn enrolls the LinkedIn sequence. */
+  channel?: "email" | "linkedin";
+}): void {
+  const seq = effectiveSequence(input.playName, input.prospectId, false, input.channel);
   if (!seq || seq.steps.length === 0) return;
   const next = seq.steps[0];
   if (!next) return;
@@ -389,6 +407,7 @@ export function enrollInCadence(input: { prospectId: number; playName: string })
     prospectId: input.prospectId,
     playName: input.playName,
     nextDueAt: dueAt,
+    ...(input.channel ? { channel: input.channel } : {}),
   });
   const cadence = getLedger().getCadence(input.prospectId, input.playName);
   if (cadence && !getLedger().getCadencePlan(input.prospectId, input.playName, cadence.enrolled_at))
@@ -1035,7 +1054,7 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
 }
 
 export async function advanceCadence(
-  opts: { dryRun: boolean } = { dryRun: false },
+  opts: { dryRun: boolean; linkedIn?: LinkedInCaller } = { dryRun: false },
 ): Promise<AdvanceResult> {
   const ledger = getLedger();
   const result: AdvanceResult = {
@@ -1144,6 +1163,7 @@ export async function advanceCadence(
         prospectId: cad.prospect_id,
         playName: cad.play_name,
         dryRun: opts.dryRun,
+        ...(opts.linkedIn ? { linkedIn: opts.linkedIn } : {}),
       });
     } catch (err) {
       // Deferral mid-pass (caps filled while this batch ran): the step simply
@@ -1197,6 +1217,11 @@ export interface RunCadenceStepOptions {
   persistedPayload?: StepPayload;
   /** Only the individual reviewed mail action may dispatch physical mail. */
   directMailId?: string;
+  /**
+   * Calls OneShot as the workspace owning a LinkedIn account (the server's
+   * callLinkedIn). Without it LinkedIn steps are never sent from this process.
+   */
+  linkedIn?: LinkedInCaller;
 }
 
 export interface RunCadenceStepResult {
@@ -1404,6 +1429,28 @@ export async function runCadenceStepForProspect(
     };
   }
 
+  // A step on a channel this person has no address for is skipped AND the
+  // cadence moves on. Leaving it due re-drafted (and re-paid) it every run.
+  const missing = missingAddress(step.channel, cadence);
+  if (missing) {
+    if (!opts.dryRun) {
+      ledger.recordSequenceEvent({
+        prospectId: opts.prospectId,
+        playName: opts.playName,
+        stepIndex: nextIndex,
+        channel: step.channel,
+        status: "skipped",
+        metadata: { reason: missing, label: step.label ?? null },
+      });
+      advanceOrComplete(opts, seq, stepEntryIndex);
+    }
+    return { action: "skipped", payload: null, receiptIds: [], note: `${missing} — step skipped` };
+  }
+  if (step.channel === "linkedin") {
+    const waiting = await awaitLinkedInAcceptance(opts, cadence);
+    if (waiting) return waiting;
+  }
+
   const prospect = loadProspect(opts.prospectId);
   if (!prospect) {
     return { action: "skipped", payload: null, receiptIds: [], note: "prospect not found" };
@@ -1487,6 +1534,8 @@ export async function runCadenceStepForProspect(
         playName: opts.playName,
         prospectId: opts.prospectId,
         prospectEmail: cadence.prospect_email,
+        prospectLinkedinUrl: cadence.prospect_linkedin_url,
+        linkedIn: opts.linkedIn,
         stepIndex: nextIndex,
         step,
         payload: built,
@@ -1610,6 +1659,18 @@ export async function previewCadenceStep(input: {
   }
   const step = seq.steps[stepEntryIndex];
   if (!step) throw new Error("step undefined");
+  const missing = missingAddress(step.channel, cadence);
+  if (missing) throw new Error(`${missing} — this step will be skipped`);
+  if (
+    step.channel === "linkedin" &&
+    !linkedInConversationFor({
+      workspace: currentWorkspaceName(),
+      prospectId: input.prospectId,
+      linkedinUrl: cadence.prospect_linkedin_url,
+    })
+  ) {
+    throw new Error("the LinkedIn invite hasn't been accepted yet — nothing to draft");
+  }
   const prospect = loadProspect(input.prospectId);
   if (!prospect) throw new Error("prospect not found");
   const mailDraft = ledger.findDirectMail(
@@ -1627,15 +1688,22 @@ export async function previewCadenceStep(input: {
       });
   if (!built) throw new Error("builder returned null — nothing to preview");
 
-  const subject = built.kind === "email" ? built.subject : "(non-email step)";
+  const subject =
+    built.kind === "email"
+      ? built.subject
+      : built.kind === "linkedin_message"
+        ? "LinkedIn message"
+        : "(non-email step)";
   const body =
     built.kind === "email"
       ? built.body
-      : built.kind === "sms"
-        ? built.message
-        : built.kind === "voice"
-          ? built.objective
-          : "";
+      : built.kind === "linkedin_message"
+        ? built.text
+        : built.kind === "sms"
+          ? built.message
+          : built.kind === "voice"
+            ? built.objective
+            : "";
   // Opener-frequency cap on top of the phrase lint: the phrase rules cannot
   // see that this play's last 40 sends all opened the same way. Scoped to the
   // same play + step because that is the population a reader would ever
@@ -1686,6 +1754,8 @@ export async function previewCadenceStep(input: {
 export async function sendCadenceStep(input: {
   prospectId: number;
   playName: string;
+  /** How LinkedIn steps reach OneShot (the server's callLinkedIn). */
+  linkedIn?: LinkedInCaller;
 }): Promise<RunCadenceStepResult> {
   const ledger = getLedger();
   const draft = ledger.getCadenceDraft(input);
@@ -1700,6 +1770,7 @@ export async function sendCadenceStep(input: {
     playName: input.playName,
     dryRun: false,
     persistedPayload: draft.payload as StepPayload,
+    ...(input.linkedIn ? { linkedIn: input.linkedIn } : {}),
   });
 }
 
@@ -1800,12 +1871,13 @@ export async function sendCadenceStepBatch(
   /** Fires after each item resolves (ok OR error) — lets the API layer
    *  track per-row in-flight state without splitting the iteration. */
   onItemSettled?: (item: BatchItem, result: BatchSendResult) => void,
+  linkedIn?: LinkedInCaller,
 ): Promise<BatchSendResult[]> {
   const out: BatchSendResult[] = [];
   for (const item of items) {
     let result: BatchSendResult;
     try {
-      const r = await sendCadenceStep(item);
+      const r = await sendCadenceStep({ ...item, ...(linkedIn ? { linkedIn } : {}) });
       result = {
         prospectId: item.prospectId,
         playName: item.playName,
@@ -1839,6 +1911,8 @@ async function dispatchStepImpl(input: {
   playName: string;
   prospectId: number;
   prospectEmail: string | null;
+  prospectLinkedinUrl?: string | null;
+  linkedIn?: LinkedInCaller | undefined;
   stepIndex: number;
   step: SequenceStep;
   payload: StepPayload;
@@ -1883,6 +1957,38 @@ async function dispatchStepImpl(input: {
           meaning: "order accepted; delivery does not prove readership",
         },
       });
+    return { receiptIds };
+  }
+  if (input.payload.kind === "linkedin_message") {
+    const conversation = linkedInConversationFor({
+      workspace: currentWorkspaceName(),
+      prospectId: input.prospectId,
+      linkedinUrl: input.prospectLinkedinUrl ?? null,
+    });
+    if (!conversation) return { receiptIds, skipReason: "no LinkedIn conversation yet" };
+    if (!input.linkedIn) {
+      return { receiptIds, skipReason: "LinkedIn messages are sent from the dashboard" };
+    }
+    await input.linkedIn(conversation.workspace, {
+      kind: "reply",
+      accountId: conversation.accountId,
+      conversationId: conversation.conversationId,
+      text: input.payload.text,
+      // One message per step: a retried send returns the original.
+      idempotencyKey: `gtm:${currentWorkspaceName()}:cadence:${input.prospectId}:${input.playName}:${input.stepIndex}`,
+    });
+    ledger.recordSequenceEvent({
+      prospectId: input.prospectId,
+      playName: input.playName,
+      stepIndex: input.stepIndex,
+      channel: "linkedin",
+      status: "sent",
+      metadata: {
+        subject: "LinkedIn message",
+        body: input.payload.text,
+        label: input.label ?? null,
+      },
+    });
     return { receiptIds };
   }
   if (input.payload.kind === "email") {
@@ -2375,4 +2481,218 @@ export function buildVoiceStep(opts: {
 
 export function receiptUrlsForCadence(receiptIds: number[]): string[] {
   return receiptIds.map(receiptUrlForId);
+}
+
+/** Calls OneShot as a given workspace (the owner of the LinkedIn account). */
+export type LinkedInCaller = (workspace: string, operation: LinkedInOperation) => Promise<unknown>;
+
+/** Days an unaccepted invite is given before it is withdrawn and the cadence stops. */
+export const LINKEDIN_INVITE_TIMEOUT_DAYS = 21;
+/** Most characters a LinkedIn cadence message may run to. */
+export const LINKEDIN_MESSAGE_MAX_CHARS = 400;
+
+/** Why this person can't be reached on the step's channel, or null when they can. */
+function missingAddress(
+  channel: SequenceStep["channel"],
+  cadence: { prospect_email: string | null; prospect_linkedin_url: string | null },
+): string | null {
+  if (channel === "email" && !cadence.prospect_email?.trim()) return "prospect has no email";
+  if (
+    channel === "linkedin" &&
+    !(cadence.prospect_linkedin_url && canonicalLinkedInProfileKey(cadence.prospect_linkedin_url))
+  ) {
+    return "prospect has no LinkedIn profile";
+  }
+  return null;
+}
+
+/** Advance past the current step, completing the cadence after the last one. */
+function advanceOrComplete(
+  opts: RunCadenceStepOptions,
+  seq: Sequence,
+  stepEntryIndex: number,
+): void {
+  const ledger = getLedger();
+  const next = seq.steps[stepEntryIndex + 1];
+  ledger.advanceCadence({
+    prospectId: opts.prospectId,
+    playName: opts.playName,
+    newStep: stepEntryIndex + 1,
+    nextDueAt: next ? new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString() : null,
+  });
+  if (!next) {
+    ledger.setCadenceStatus({
+      prospectId: opts.prospectId,
+      playName: opts.playName,
+      status: "completed",
+    });
+  }
+}
+
+/**
+ * Before a LinkedIn message: has the invite been accepted? A synced
+ * conversation with the prospect says yes (null — go ahead). Otherwise the
+ * step waits a day, and after LINKEDIN_INVITE_TIMEOUT_DAYS the invite is
+ * withdrawn and the cadence stops.
+ */
+async function awaitLinkedInAcceptance(
+  opts: RunCadenceStepOptions,
+  cadence: { prospect_linkedin_url: string | null },
+): Promise<RunCadenceStepResult | null> {
+  const ledger = getLedger();
+  if (
+    linkedInConversationFor({
+      workspace: currentWorkspaceName(),
+      prospectId: opts.prospectId,
+      linkedinUrl: cadence.prospect_linkedin_url,
+    })
+  ) {
+    return null;
+  }
+  const invite = ledger
+    .listLinkedInInviteEvents(opts.prospectId, opts.playName)
+    .find((e) => e.status === "sent");
+  const invitedAt = invite ? Date.parse(sqliteToIso(invite.created_at)) : Date.now();
+  const days = (Date.now() - invitedAt) / (24 * 3600 * 1000);
+  if (days < LINKEDIN_INVITE_TIMEOUT_DAYS) {
+    if (!opts.dryRun) {
+      ledger.postponeCadence({
+        prospectId: opts.prospectId,
+        playName: opts.playName,
+        nextDueAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+      });
+    }
+    return {
+      action: "waiting",
+      payload: null,
+      receiptIds: [],
+      note: "waiting for the LinkedIn invite to be accepted",
+    };
+  }
+  const note = `LinkedIn invite not accepted after ${LINKEDIN_INVITE_TIMEOUT_DAYS} days`;
+  if (opts.dryRun)
+    return { action: "skipped", payload: null, receiptIds: [], note: `${note} — would withdraw` };
+  let invitationId: string | null = null;
+  try {
+    const meta = JSON.parse(invite?.metadata_json ?? "{}") as { invitationId?: unknown };
+    invitationId = typeof meta.invitationId === "string" ? meta.invitationId : null;
+  } catch {
+    invitationId = null;
+  }
+  const account = linkedInOutreachAccount();
+  let withdrawStatus: string | null = null;
+  if (invitationId && account && opts.linkedIn) {
+    try {
+      const res = (await opts.linkedIn(account.workspace, {
+        kind: "withdraw",
+        accountId: account.accountId,
+        invitationId,
+        idempotencyKey: `gtm:${currentWorkspaceName()}:cadence:${opts.prospectId}:${opts.playName}:withdraw`,
+        playName: opts.playName,
+      })) as { status?: string };
+      withdrawStatus = res.status ?? null;
+      ledger.recordSequenceEvent({
+        prospectId: opts.prospectId,
+        playName: opts.playName,
+        stepIndex: 0,
+        channel: "linkedin",
+        status: "withdrawn",
+        metadata: { invitationId, withdrawStatus },
+      });
+    } catch (err) {
+      logEvent(
+        "cadence.linkedin_withdraw_failed",
+        { message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+    }
+  }
+  ledger.stopCadence({
+    prospectId: opts.prospectId,
+    playName: opts.playName,
+    reason: "other",
+    note,
+  });
+  return {
+    action: "completed",
+    payload: null,
+    receiptIds: [],
+    note: withdrawStatus
+      ? `${note} — invite ${withdrawStatus}`
+      : `${note} — withdraw it from /queue`,
+  };
+}
+
+/**
+ * The LinkedIn sequence every LinkedIn-channel cadence runs, whatever its
+ * play: a first message once the invite is accepted, then one last note.
+ * Day offsets count from the previous touch; the first message also waits
+ * for acceptance (awaitLinkedInAcceptance).
+ */
+function linkedInSequence(playName: string): Sequence {
+  return {
+    playName,
+    steps: [
+      {
+        id: "linkedin:1",
+        dayOffset: 2,
+        channel: "linkedin",
+        breakOnReply: true,
+        label: "first LinkedIn message",
+        builder: (ctx) => buildLinkedInMessage(ctx, playName, "first"),
+      },
+      {
+        id: "linkedin:2",
+        dayOffset: 6,
+        channel: "linkedin",
+        breakOnReply: true,
+        label: "LinkedIn breakup",
+        builder: (ctx) => buildLinkedInMessage(ctx, playName, "last"),
+      },
+    ],
+  };
+}
+
+async function buildLinkedInMessage(
+  ctx: CadenceContext,
+  playName: string,
+  which: "first" | "last",
+): Promise<StepPayload | null> {
+  const ledger = getLedger();
+  const prior = ledger
+    .listSequenceEventsForProspectPlay(ctx.prospect.id, playName)
+    .filter((e) => e.channel === "linkedin" && e.status === "sent")
+    .map((e) => {
+      try {
+        const m = JSON.parse(e.metadata_json ?? "{}") as { body?: unknown; note?: unknown };
+        const text = typeof m.body === "string" ? m.body : typeof m.note === "string" ? m.note : "";
+        return text ? `STEP ${e.step_index}: ${text}` : null;
+      } catch {
+        return null;
+      }
+    })
+    .filter((line): line is string => line !== null);
+  const voice = voiceBlock(which === "first" ? "followup" : "breakup");
+  const input = [
+    `FOUNDER: ${ctx.cfg.founderName ?? ""}`,
+    `PRODUCT: ${ctx.cfg.productOneLiner ?? ""}`,
+    `PERSON: ${ctx.prospect.name ?? "them"}${ctx.prospect.title ? `, ${ctx.prospect.title}` : ""}${
+      ctx.prospect.company ? ` at ${ctx.prospect.company}` : ""
+    }`,
+    `MESSAGE: ${which === "first" ? "first message after they accepted the connection request" : "last message — a short, graceful close"}`,
+    "PRIOR TOUCHES:",
+    ...(prior.length > 0 ? prior.map((l) => `  ${l}`) : ["  (none recorded)"]),
+    ...(voice ? [`VOICE:\n${voice.text}`] : []),
+    `MAX_CHARS: ${LINKEDIN_MESSAGE_MAX_CHARS}`,
+  ].join("\n");
+  const res = await complete({
+    messages: [
+      { role: "system", content: loadPrompt("linkedin-message") },
+      { role: "user", content: input },
+    ],
+    temperature: 0.7,
+    maxTokens: 700,
+  });
+  const text = res.content.trim().replace(/^"|"$/g, "");
+  return text ? { kind: "linkedin_message", text } : null;
 }

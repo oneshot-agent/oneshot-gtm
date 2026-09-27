@@ -28,6 +28,8 @@ import type { CadencePlanStep, ChannelEventRecord, SequenceEventRecord } from ".
 export interface CadenceWithProspect {
   prospect_id: number;
   play_name: string;
+  /** Channel the cadence runs on (channels.ts); 'email' unless enrolled from a LinkedIn touch. */
+  channel: string;
   current_step: number;
   status: string;
   enrolled_at: string;
@@ -76,14 +78,15 @@ function normalizeSubject(subject: string | null | undefined): string | null {
 
 export function enrollCadence(
   db: Database,
-  input: { prospectId: number; playName: string; nextDueAt: string },
+  input: { prospectId: number; playName: string; nextDueAt: string; channel?: string },
 ): void {
   db.prepare(
-    `INSERT INTO cadence_state(prospect_id, play_name, current_step, status, next_due_at)
-     VALUES(?, ?, 0, 'active', ?)
+    `INSERT INTO cadence_state(prospect_id, play_name, current_step, status, next_due_at, channel)
+     VALUES(?, ?, 0, 'active', ?, ?)
      ON CONFLICT(prospect_id, play_name) DO UPDATE SET
        status = 'active',
        next_due_at = excluded.next_due_at,
+       channel = excluded.channel,
        last_polled_at = NULL,
        stop_reason = NULL,
        stop_note = NULL,
@@ -91,7 +94,26 @@ export function enrollCadence(
        last_send_error = NULL,
        last_send_error_at = NULL
      WHERE cadence_state.status != 'stopped'`,
-  ).run(input.prospectId, input.playName, input.nextDueAt);
+  ).run(input.prospectId, input.playName, input.nextDueAt, input.channel ?? "email");
+}
+
+/**
+ * Move an active cadence's due time without advancing it — the LinkedIn
+ * step waiting for an invite to be accepted checks again later instead of
+ * being retried on every run.
+ */
+export function postponeCadence(
+  db: Database,
+  input: { prospectId: number; playName: string; nextDueAt: string },
+): boolean {
+  return (
+    db
+      .prepare(
+        `UPDATE cadence_state SET next_due_at = ?
+         WHERE prospect_id = ? AND play_name = ? AND status = 'active'`,
+      )
+      .run(input.nextDueAt, input.prospectId, input.playName).changes > 0
+  );
 }
 
 export function listActiveCadences(
@@ -893,6 +915,25 @@ export function recordSequenceEvent(
  * went out. The conversation view (`listSequenceEventsForProspect`) stays
  * sends-only; so does every counter.
  */
+/**
+ * Every step-0 LinkedIn event for a prospect and play, oldest first, whatever
+ * its status: the invite send and any `withdrawn` event after it. The
+ * general listing below leaves `withdrawn` out.
+ */
+export function listLinkedInInviteEvents(
+  db: Database,
+  prospectId: number,
+  playName: string,
+): SequenceEventRecord[] {
+  return db
+    .query(
+      `SELECT * FROM sequence_events
+       WHERE prospect_id = ? AND play_name = ? AND channel = 'linkedin' AND step_index = 0
+       ORDER BY id ASC`,
+    )
+    .all(prospectId, playName) as SequenceEventRecord[];
+}
+
 export function listSequenceEventsForProspectPlay(
   db: Database,
   prospectId: number,

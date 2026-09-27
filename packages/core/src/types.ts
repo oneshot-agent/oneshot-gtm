@@ -102,7 +102,7 @@ export interface DealOutcomeRecord {
 export interface CadencePlanStep {
   id: string;
   dayOffset: number;
-  channel: "email" | "sms" | "voice" | "direct_mail";
+  channel: "email" | "sms" | "voice" | "direct_mail" | "linkedin";
   label?: string;
 }
 

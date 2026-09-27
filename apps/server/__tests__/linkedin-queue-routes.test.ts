@@ -48,7 +48,11 @@ vi.mock("@oneshot-gtm/core", async () => {
         statusCalls.push(input);
       },
       closeQueueDraftVersion: () => true,
-      listSequenceEventsForProspectPlay: () => seqEvents,
+      enrollCadence: () => {},
+      getCadence: () => ({ enrolled_at: "2026-09-27 00:00:00", channel: "linkedin" }),
+      getCadencePlan: () => null,
+      saveCadencePlan: () => {},
+      listLinkedInInviteEvents: () => seqEvents,
       setQueueChannel: (id: number, channel: string) => {
         channelCalls.push([id, channel]);
         return row.status === "sent" ? "sent" : channelBusy ? "busy" : "changed";

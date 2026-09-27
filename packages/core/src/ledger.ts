@@ -28,6 +28,8 @@ import {
   type CadenceWithProspect,
   clearCadenceDraft as cadClearCadenceDraft,
   enrollCadence as cadEnrollCadence,
+  postponeCadence as cadPostponeCadence,
+  listLinkedInInviteEvents as cadListLinkedInInviteEvents,
   getCadence as cadGetCadence,
   getCadenceDraft as cadGetCadenceDraft,
   getCadencePlan as cadGetCadencePlan,
@@ -500,8 +502,24 @@ export class Ledger {
   // the next slice of the ledger split tracked in ROADMAP.md, following the
   // delivery-health extraction in #617. `Ledger` delegates every cadence
   // method to it, same signatures, same SQL, same transaction boundaries.
-  enrollCadence(input: { prospectId: number; playName: string; nextDueAt: string }): void {
+  enrollCadence(input: {
+    prospectId: number;
+    playName: string;
+    nextDueAt: string;
+    /** Channel the cadence runs on; defaults to email. */
+    channel?: OutreachChannel;
+  }): void {
     cadEnrollCadence(this.db, input);
+  }
+
+  /** Step-0 LinkedIn events (invite, withdrawal) for a prospect and play, any status. */
+  listLinkedInInviteEvents(prospectId: number, playName: string): SequenceEventRecord[] {
+    return cadListLinkedInInviteEvents(this.db, prospectId, playName);
+  }
+
+  /** Push an active cadence's due time out without advancing it — see postponeCadence. */
+  postponeCadence(input: { prospectId: number; playName: string; nextDueAt: string }): boolean {
+    return cadPostponeCadence(this.db, input);
   }
 
   listActiveCadences(opts: { dueByIso?: string } = {}): CadenceWithProspect[] {

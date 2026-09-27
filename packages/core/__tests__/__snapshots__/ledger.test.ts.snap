@@ -322,7 +322,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         status TEXT NOT NULL DEFAULT 'active',
         enrolled_at TEXT NOT NULL DEFAULT (datetime('now')),
         next_due_at TEXT,
-        last_polled_at TEXT, next_step_draft_json TEXT, next_step_drafted_at TEXT, sending_started_at TEXT, stop_reason TEXT, stop_note TEXT, stopped_at TEXT, last_send_error TEXT, last_send_error_at TEXT,
+        last_polled_at TEXT, next_step_draft_json TEXT, next_step_drafted_at TEXT, sending_started_at TEXT, stop_reason TEXT, stop_note TEXT, stopped_at TEXT, last_send_error TEXT, last_send_error_at TEXT, channel TEXT NOT NULL DEFAULT 'email',
         PRIMARY KEY (prospect_id, play_name)
       )",
       "tbl_name": "cadence_state",

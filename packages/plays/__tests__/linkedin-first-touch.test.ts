@@ -4,6 +4,7 @@ let modelNote = "Saw you hosted GTM in git — how are you handling review?";
 const completeInputs: string[] = [];
 const upserts: Array<Record<string, unknown>> = [];
 const events: Array<Record<string, unknown>> = [];
+const enrollments: Array<Record<string, unknown>> = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -19,6 +20,12 @@ vi.mock("@oneshot-gtm/core", async () => {
       recordSequenceEvent: (input: Record<string, unknown>) => {
         events.push(input);
       },
+      enrollCadence: (input: Record<string, unknown>) => {
+        enrollments.push(input);
+      },
+      getCadence: () => ({ enrolled_at: "2026-09-27 00:00:00", channel: "linkedin" }),
+      getCadencePlan: () => null,
+      saveCadencePlan: () => {},
     }),
   };
 });
@@ -70,6 +77,7 @@ beforeEach(() => {
   completeInputs.length = 0;
   upserts.length = 0;
   events.length = 0;
+  enrollments.length = 0;
 });
 
 describe("draftLinkedInNote", () => {
@@ -115,11 +123,18 @@ describe("sendLinkedInInvite", () => {
       status: "sent",
       metadata: {
         note: "hi",
+        body: "hi",
         invitationId: "inv-1",
         inviteStatus: "sent",
         accountId: "acct-1",
         accountWorkspace: "gtm",
       },
+    });
+    // The LinkedIn sequence starts: first message once the invite is accepted.
+    expect(enrollments[0]).toMatchObject({
+      prospectId: 42,
+      playName: "luma-events",
+      channel: "linkedin",
     });
   });
 

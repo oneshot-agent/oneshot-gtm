@@ -88,6 +88,19 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       db.exec("UPDATE draft_versions SET channel = 'x' WHERE play_name = 'x-amplify-dm'");
     },
   },
+  {
+    // The channel a cadence runs on. A LinkedIn first touch enrolls the
+    // prospect in the LinkedIn sequence (message after the invite is
+    // accepted), not in its play's email follow-ups.
+    version: 5,
+    name: "cadence-channel",
+    up: (db) => {
+      const cols = db.query("PRAGMA table_info(cadence_state)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "channel")) {
+        db.exec("ALTER TABLE cadence_state ADD COLUMN channel TEXT NOT NULL DEFAULT 'email'");
+      }
+    },
+  },
 ];
 
 export const LEDGER_SCHEMA_VERSION = LEDGER_MIGRATIONS[LEDGER_MIGRATIONS.length - 1]!.version;

@@ -1471,9 +1471,7 @@ export async function withdrawInviteRoute(
   if (row.status !== "sent" || row.prospect_id == null) {
     return jsonResponse({ error: "this row's invite hasn't been sent" }, 400, req);
   }
-  const events = ledger
-    .listSequenceEventsForProspectPlay(row.prospect_id, row.play_name)
-    .filter((e) => e.channel === "linkedin" && e.step_index === 0);
+  const events = ledger.listLinkedInInviteEvents(row.prospect_id, row.play_name);
   if (events.some((e) => e.status === "withdrawn")) {
     return jsonResponse({ error: "invite already withdrawn" }, 409, req);
   }

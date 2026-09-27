@@ -30,7 +30,10 @@ LinkedIn is an outreach channel, like email. A queue row on the LinkedIn channel
 - OneShot enforces the account's daily invite limit (25 per UTC day by default) across every tool using the account. When it's reached, the drain stops and the remaining rows stay approved for the next day.
 - A sent invite can be withdrawn from its row (**Withdraw invite**). Withdrawing never removes an accepted connection.
 - Any unsent row can move to another channel its person has an address for (the channel menu on the row). Its draft is dropped; Regenerate writes one for the new channel.
-- A LinkedIn first touch does not start an email cadence.
+- A LinkedIn first touch starts the LinkedIn cadence, never an email one. The first message is due two days after the invite, but only once the person has accepted. GTM knows they have when a conversation with them appears in the synced LinkedIn inbox; until then the step checks again daily. You draft and send it from `/cadences` like any follow-up, and it goes into that conversation. A last, short close follows six days later. If the invite isn't accepted within 21 days, it is withdrawn and the cadence stops.
+- A reply on LinkedIn stops the cadence, as it does for email.
+
+In any cadence, a step on a channel the person has no address for (an email step for someone with no email, for example) is skipped, and the cadence moves on to the next step.
 
 ## Reply preferences
 

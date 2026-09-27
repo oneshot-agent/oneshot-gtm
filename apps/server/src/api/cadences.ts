@@ -21,6 +21,7 @@ import type {
   DraftAngleChoice,
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
+import { callLinkedIn } from "../linkedin-client.ts";
 import { toDraftVersionView } from "./_draft-versions.ts";
 import { sendsToday } from "./_capacity.ts";
 import { reportServerExecution } from "../telemetry.ts";
@@ -402,7 +403,7 @@ export async function sendCadenceStepRoute(
   const sendStartedAt = performance.now();
   void (async () => {
     try {
-      await sendCadenceStep(parsed);
+      await sendCadenceStep({ ...parsed, linkedIn: callLinkedIn });
       // advanceCadence already cleared sending_started_at in its UPDATE.
       void reportServerExecution("server.cadence.send", {
         outcome: "ok",
@@ -499,13 +500,17 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
     try {
       // Per-item marker clear — success already clears via advanceCadence,
       // so this catches the failure path only; the clear is idempotent.
-      await sendCadenceStepBatch(claimed, (item) => {
-        try {
-          ledger.clearCadenceSendingMarker(item);
-        } catch {
-          /* sweeper safety net */
-        }
-      });
+      await sendCadenceStepBatch(
+        claimed,
+        (item) => {
+          try {
+            ledger.clearCadenceSendingMarker(item);
+          } catch {
+            /* sweeper safety net */
+          }
+        },
+        callLinkedIn,
+      );
       void reportServerExecution("server.cadence.batch", {
         outcome: "ok",
         durationMs: performance.now() - batchStartedAt,

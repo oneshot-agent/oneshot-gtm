@@ -761,3 +761,43 @@ export function linkedInOutreachAccount(): { workspace: string; accountId: strin
     connected.find((a) => a.account.allowed_actions.includes("invite")) ?? connected[0] ?? null;
   return pick ? { workspace: pick.workspace, accountId: pick.account.id } : null;
 }
+
+/**
+ * The LinkedIn conversation a prospect has with a connected account, if one
+ * has synced: the thread this workspace owns for the prospect, or a 1:1
+ * thread whose only other person is the prospect's profile (by verified URL
+ * or a resolved identity). A LinkedIn cadence reads its existence as "the
+ * invite was accepted", and sends its messages into it.
+ */
+export function linkedInConversationFor(input: {
+  workspace: string;
+  prospectId: number;
+  linkedinUrl: string | null;
+}): { conversationId: string; accountId: string; workspace: string } | null {
+  const store = getLinkedInInboxStore();
+  const key = input.linkedinUrl ? canonicalLinkedInProfileKey(input.linkedinUrl) : null;
+  for (const t of store.threads()) {
+    const account = store.account(t.accountKey);
+    if (!account || account.removedAt || account.account.status !== "connected") continue;
+    let match = t.owner?.workspace === input.workspace && t.owner.prospectId === input.prospectId;
+    if (!match && key) {
+      const peers = t.conversation.attendees.filter((a) => !a.is_self);
+      if (peers.length === 1) {
+        const peer = peers[0]!;
+        const verified = verifiedLinkedInProfileKey(peer.profile_url ?? "", peer.provider_id);
+        const resolved = peer.provider_id ? store.identity(t.accountKey, peer.provider_id) : null;
+        const peerKey =
+          verified ?? (resolved?.profile ? canonicalLinkedInProfileKey(resolved.profile) : null);
+        match = peerKey === key;
+      }
+    }
+    if (match) {
+      return {
+        conversationId: t.conversation.id,
+        accountId: account.account.id,
+        workspace: account.workspace,
+      };
+    }
+  }
+  return null;
+}

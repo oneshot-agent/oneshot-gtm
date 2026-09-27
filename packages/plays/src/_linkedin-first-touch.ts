@@ -8,6 +8,7 @@ import {
   type LinkedInOperation,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
+import { enrollInCadence } from "./_cadence.ts";
 import { voiceBlock } from "./_lib.ts";
 
 /**
@@ -219,6 +220,10 @@ export async function sendLinkedInInvite(input: {
     channel: "linkedin",
     status: "sent",
     metadata: {
+      // subject/body/label: what the cadence timeline and follow-up prompts read.
+      subject: "LinkedIn invite",
+      body: note,
+      label: "connection request",
       note,
       invitationId: result.invitation_id,
       inviteStatus: status,
@@ -227,6 +232,8 @@ export async function sendLinkedInInvite(input: {
       ...(input.sender.workspace ? { accountWorkspace: input.sender.workspace } : {}),
     },
   });
+  // The LinkedIn sequence: a message once the invite is accepted, then a close.
+  enrollInCadence({ prospectId, playName: input.row.playName, channel: "linkedin" });
   logEvent("linkedin.invite_sent", { play: input.row.playName, status });
   return { sent: true, status, invitationId: result.invitation_id, prospectId };
 }
