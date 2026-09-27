@@ -92,7 +92,6 @@ export async function runFinderWithProductResearch(
     result,
     enabled: config["personResearch"] !== false,
     liveProfile: config["linkedinProfileRead"] !== false,
-    newsfeed: config["personNewsfeed"] !== false,
     // mailCost is already in both baselines (lines above); do not add it twice.
     priorSdkCostUsd: result.sdkCostUsd ?? result.costUsd,
     ...(typeof config["maxCostUsd"] === "number"
@@ -1086,7 +1085,7 @@ export const TRIGGERS: TriggerSpec[] = [
 const LINKEDIN_READ_BRIEF =
   "linkedinProfileRead (default true): when a LinkedIn session cookie is connected on /setup, person research also reads the live profile's Experience section in a OneShot browser profile (~$0.02/row, serialized, capped per day) and lets it win over the provider's history; reads show as profile views from your account.";
 const NEWSFEED_BRIEF =
-  "personNewsfeed (default true): after person research, each researched row with a LinkedIn or X profile also gets its recent posts captured (~$0.07/row, one at a time, kept 14 days) for later use; nothing drafts from them yet.";
+  "personNewsfeed (default true): when one of this trigger's rows is approved, and while its prospect is in a running cadence, the person's recent posts are captured from their LinkedIn or X profile (~$0.07/person, one at a time, kept 14 days) for later use; pending and rejected rows never pay for it, and nothing drafts from the posts yet.";
 for (const spec of TRIGGERS)
   spec.configBrief = `${spec.configBrief}\n${PERSON_RESEARCH_BRIEF}\n${LINKEDIN_READ_BRIEF}\n${NEWSFEED_BRIEF}`;
 

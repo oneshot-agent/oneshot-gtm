@@ -15,6 +15,7 @@ import {
   nextSleepMs,
   runDueTriggers,
   runPendingRetries,
+  sweepInFlightNewsfeeds,
   sweepLiveProfiles,
   type TriggerRunOutcome,
 } from "@oneshot-gtm/find";
@@ -72,6 +73,8 @@ const CALENDAR_POLL_INTERVAL_MS = 10 * 60_000;
  */
 const LIVE_PROFILE_SWEEP_INTERVAL_MS = 4 * 60 * 60_000;
 const LIVE_PROFILE_SWEEP_DEADLINE_MS = 60 * 60_000;
+/** The in-flight newsfeed sweep rides the live-profile interval; 25 calls at ~5–12 s fit easily. */
+const NEWSFEED_SWEEP_DEADLINE_MS = 15 * 60_000;
 
 export function startScheduler(): SchedulerHandle {
   // Demo mode idles: firing triggers would hit placeholder credentials and
@@ -251,6 +254,22 @@ export function startScheduler(): SchedulerHandle {
         } catch (err) {
           logEvent(
             "scheduler.live_profile_sweep.failed",
+            { message_120: ((err as Error).message ?? "").slice(0, 120) },
+            "warn",
+          );
+        }
+        // Same cadence, its own guard: recent posts for prospects in a running
+        // cadence whose cached posts are missing or expired. Needs no LinkedIn
+        // session, so it runs even when the read sweep idles.
+        try {
+          await withDeadline(
+            sweepInFlightNewsfeeds({ deadlineAt: Date.now() + NEWSFEED_SWEEP_DEADLINE_MS }),
+            NEWSFEED_SWEEP_DEADLINE_MS + 3 * 60_000,
+            "in-flight newsfeed sweep",
+          );
+        } catch (err) {
+          logEvent(
+            "scheduler.newsfeed_sweep.failed",
             { message_120: ((err as Error).message ?? "").slice(0, 120) },
             "warn",
           );

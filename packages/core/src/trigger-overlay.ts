@@ -1,5 +1,41 @@
 import { getLedger } from "./ledger.ts";
 
+type GetTrigger = (name: string) => { config_json: string | null } | null | undefined;
+
+/**
+ * The trigger a queue row came from, by its `source` (`find:<trigger>[:…]`).
+ * Null when the source names no trigger. `post-funding` rows belong to the
+ * `post-funding-auto` trigger.
+ */
+export function triggerNameForSource(source: string | null | undefined): string | null {
+  const name = /^find:([^:]+)(?::|$)/.exec(source ?? "")?.[1];
+  if (!name) return null;
+  return name === "post-funding" ? "post-funding-auto" : name;
+}
+
+/**
+ * The saved config of the trigger a row came from. Null when the source
+ * names no trigger, the trigger is gone, or its config is empty or
+ * unreadable — callers reading an opt-out flag treat that as the default.
+ */
+export function triggerConfigForSource(
+  source: string | null | undefined,
+  getTrigger: GetTrigger = (name) => getLedger().getTrigger(name),
+): Record<string, unknown> | null {
+  const name = triggerNameForSource(source);
+  if (!name) return null;
+  const trigger = getTrigger(name);
+  if (!trigger || trigger.config_json == null) return null;
+  try {
+    const parsed: unknown = JSON.parse(trigger.config_json);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Overlay a trigger's CURRENT sender-authored settings (edge, first-touch
  * format) onto a queued target, keyed by the row's `source`
@@ -12,12 +48,11 @@ import { getLedger } from "./ledger.ts";
 export function resolveTriggerOverlay(
   target: Record<string, unknown>,
   source: string | null | undefined,
-  getTrigger: (name: string) => { config_json: string | null } | null | undefined = (name) =>
-    getLedger().getTrigger(name),
+  getTrigger: GetTrigger = (name) => getLedger().getTrigger(name),
 ): Record<string, unknown> {
   const name = /^find:([^:]+)(?::|$)/.exec(source ?? "")?.[1];
   if (!name) return target;
-  const trigger = getTrigger(name === "post-funding" ? "post-funding-auto" : name);
+  const trigger = getTrigger(triggerNameForSource(source) ?? name);
   if (!trigger || trigger.config_json == null) return target;
   let config: Record<string, unknown>;
   try {

@@ -187,7 +187,8 @@ vi.mock("@oneshot-gtm/intel", async () => {
   };
 });
 
-// The newsfeed pass runs after the dossiers; its own contract is in newsfeed.test.ts.
+// Posts are captured on approval, never at row creation (newsfeed.test.ts
+// covers that path); the mock records any call so a regression shows.
 const newsfeedCalls: Array<{ id: number; remainingUsd?: number }> = [];
 vi.mock("../src/_newsfeed.ts", () => ({
   NEWSFEED_COST_ESTIMATE_USD: 0.07,
@@ -898,11 +899,11 @@ describe("researchNewQueueRowPeople", () => {
     });
     expect(calls.research).toBe(1);
     expect(patches.map((p) => p.id)).toEqual([1, 1]);
-    // research + company + live read, then the newsfeed capture ($0.07).
-    expect(result.costUsd).toBeCloseTo(0.4 + 0.055 + 0.01 + 0.05 + 0.07, 3);
+    // research + company + live read; posts wait for approval.
+    expect(result.costUsd).toBeCloseTo(0.4 + 0.055 + 0.01 + 0.05, 3);
   });
 
-  it("captures the newsfeed after the dossiers, and not when the trigger turns it off", async () => {
+  it("never captures posts for the rows a finder just created", async () => {
     pendingRows = [row(1, "pending")];
     const result = { source: "find:luma-events", costUsd: 0, enqueued: 1, sdkCostUsd: 0 };
     await researchNewQueueRowPeople({
@@ -911,19 +912,9 @@ describe("researchNewQueueRowPeople", () => {
       enabled: true,
       maxCostUsd: 10,
     });
-    expect(newsfeedCalls.map((c) => c.id)).toEqual([1]);
-    // Research patched the row before the newsfeed pass began.
     expect(patches.length).toBeGreaterThan(0);
-    expect(result.costUsd).toBeCloseTo(0.055 + 0.01 + 0.05 + 0.07, 3);
-
-    newsfeedCalls.length = 0;
-    await researchNewQueueRowPeople({
-      afterId: 0,
-      result: { source: "find:luma-events", costUsd: 0, enqueued: 1 } as never,
-      enabled: true,
-      newsfeed: false,
-    });
     expect(newsfeedCalls).toEqual([]);
+    expect(result.costUsd).toBeCloseTo(0.055 + 0.01 + 0.05, 3);
   });
 
   it("does nothing when disabled or when the cap is already spent", async () => {

@@ -28,6 +28,7 @@ import {
   rankPendingRows,
   resolveQueueTarget,
   safeEnrichCompany,
+  scheduleNewsfeedOnApproval,
   type MovedFrom,
 } from "@oneshot-gtm/find";
 import { ensureWorkspaceRunning, resolveOtherWorkspace } from "./workspace.ts";
@@ -435,6 +436,9 @@ export async function approveQueueRoute(
     }
   }
   ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });
+  // Recent posts are bought on approval, in the background: the response
+  // never waits on them, and a failed capture never fails the approval.
+  scheduleNewsfeedOnApproval([id]);
   return jsonResponse({ ok: true }, 200, req);
 }
 
@@ -846,7 +850,14 @@ export async function approveAllRoute(req: Request): Promise<Response> {
     // empty body is fine
   }
   const ledger = getLedger();
+  // The bulk UPDATE returns a count, not ids: take the pending ids first so
+  // the rows it approves get their posts captured (in the background; the
+  // capture re-checks each row is still approved).
+  const pendingIds = ledger
+    .listQueue({ status: "pending", limit: 100_000, ...(body.play ? { playName: body.play } : {}) })
+    .map((row) => row.id);
   const n = ledger.approveAllPending(body.play ? { playName: body.play } : {});
+  if (n > 0) scheduleNewsfeedOnApproval(pendingIds);
   return jsonResponse({ approved: n }, 200, req);
 }
 

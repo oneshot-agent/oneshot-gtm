@@ -1,6 +1,8 @@
 import {
   canonicalLinkedInProfileKey,
   dailySpendStatus,
+  demoMode,
+  triggerConfigForSource,
   ENRICH_FAILURE_TTL_MS,
   getLedger,
   isPersonResearchDossier,
@@ -511,4 +513,231 @@ export async function captureNewsfeedForProspect(
   } catch {
     return { outcome, attached: false };
   }
+}
+
+// --- when captures run: on approval, and for prospects in flight ---------
+
+/** A trigger's `personNewsfeed: false` switches capture off for its rows; anything else keeps it on. */
+export function newsfeedOffForSource(source: string | null | undefined): boolean {
+  return triggerConfigForSource(source)?.["personNewsfeed"] === false;
+}
+
+/**
+ * True when the cache already answers for this profile: posts younger than
+ * the 14-day TTL, or a genuine failure still inside its negative-cache
+ * window. A missing, expired or unreadable entry is not fresh.
+ */
+export function hasFreshNewsfeed(url: string, now = Date.now()): boolean {
+  let cached: ReturnType<ReturnType<typeof getLedger>["getCachedEnrichment"]> = null;
+  try {
+    cached = getLedger().getCachedEnrichment(newsfeedCacheKey(url));
+  } catch {
+    return false;
+  }
+  if (!cached) return false;
+  const ageMs = now - new Date(cached.fetched_at).getTime();
+  if (!Number.isFinite(ageMs)) return false;
+  return cached.status === "failed" ? ageMs < ENRICH_FAILURE_TTL_MS : ageMs < NEWSFEED_CACHE_TTL_MS;
+}
+
+export interface ApprovalCaptureResult {
+  captured: number;
+  cached: number;
+  skipped: number;
+  failed: number;
+  costUsd: number;
+}
+
+/**
+ * Capture posts for rows the founder just approved. Most new rows are
+ * rejected, so capture waits for approval rather than paying for every row
+ * a finder creates. One at a time through the newsfeed lane; the daily spend
+ * ceiling and the 14-day cache are `safePersonNewsfeed`'s. A row that left
+ * `approved` before its turn (sent, rejected) is skipped, and a row whose
+ * trigger switched `personNewsfeed` off is never captured.
+ */
+export async function captureNewsfeedOnApproval(
+  rowIds: readonly number[],
+): Promise<ApprovalCaptureResult> {
+  const result: ApprovalCaptureResult = {
+    captured: 0,
+    cached: 0,
+    skipped: 0,
+    failed: 0,
+    costUsd: 0,
+  };
+  if (demoMode()) {
+    result.skipped = rowIds.length;
+    return result;
+  }
+  const ledger = getLedger();
+  for (const id of rowIds) {
+    try {
+      const row = ledger.getQueueRow(id);
+      if (!row || row.status !== "approved" || newsfeedOffForSource(row.source)) {
+        result.skipped++;
+        continue;
+      }
+      const attached = await captureNewsfeedForQueueRow(id, row.play_name);
+      const outcome = attached?.outcome;
+      if (!outcome || outcome.status === "skipped") {
+        result.skipped++;
+        // The spend ceiling or an open breaker holds for the rest of the batch.
+        if (outcome?.status === "skipped" && outcome.reason !== "no-profile") break;
+        continue;
+      }
+      result.costUsd += outcome.costUsd;
+      if (outcome.status === "failed") result.failed++;
+      else if (outcome.cached) result.cached++;
+      else result.captured++;
+    } catch (err) {
+      result.failed++;
+      logEvent(
+        "error.swallowed",
+        {
+          kind: "newsfeed.on_approve",
+          queue_id: id,
+          message_120: ((err as Error).message ?? "").slice(0, 120),
+        },
+        "warn",
+      );
+    }
+  }
+  logEvent("newsfeed.on_approve", { rows: rowIds.length, ...result });
+  return result;
+}
+
+/**
+ * Fire-and-forget `captureNewsfeedOnApproval`: an approval returns at once,
+ * and a capture that fails never reaches the approve path.
+ */
+export function scheduleNewsfeedOnApproval(rowIds: readonly number[]): void {
+  if (rowIds.length === 0) return;
+  void captureNewsfeedOnApproval(rowIds).catch((err: unknown) => {
+    logEvent(
+      "error.swallowed",
+      {
+        kind: "newsfeed.on_approve",
+        message_120: ((err as Error | undefined)?.message ?? "").slice(0, 120),
+      },
+      "warn",
+    );
+  });
+}
+
+/** Prospects per in-flight sweep. The newsfeed lane is one at a time, ~5–12 s a call. */
+export const IN_FLIGHT_NEWSFEED_MAX = 25;
+
+export interface InFlightNewsfeedCandidate {
+  prospectId: number;
+  playName: string;
+  url: string;
+}
+
+/**
+ * Pure: which prospects in a running cadence want posts, oldest enrolment
+ * first. One entry per prospect (its earliest active cadence); a prospect
+ * with no LinkedIn/X profile, a fresh cache entry, or a trigger that switched
+ * `personNewsfeed` off is left out.
+ */
+export function selectInFlightNewsfeedCandidates(
+  cadences: ReadonlyArray<{ prospect_id: number; play_name: string; enrolled_at: string }>,
+  deps: {
+    seedFor: (prospectId: number) => string | null;
+    isFresh: (url: string) => boolean;
+    offFor: (prospectId: number, playName: string) => boolean;
+  },
+): InFlightNewsfeedCandidate[] {
+  const ordered = cadences.toSorted(
+    (a, b) => a.enrolled_at.localeCompare(b.enrolled_at) || a.prospect_id - b.prospect_id,
+  );
+  const seen = new Set<number>();
+  const out: InFlightNewsfeedCandidate[] = [];
+  for (const c of ordered) {
+    if (seen.has(c.prospect_id)) continue;
+    seen.add(c.prospect_id);
+    const url = deps.seedFor(c.prospect_id);
+    if (!url || deps.isFresh(url) || deps.offFor(c.prospect_id, c.play_name)) continue;
+    out.push({ prospectId: c.prospect_id, playName: c.play_name, url });
+  }
+  return out;
+}
+
+export interface InFlightNewsfeedSweepResult {
+  ran: boolean;
+  candidates: number;
+  captured: number;
+  failed: number;
+  costUsd: number;
+  stoppedBy?: "max-prospects" | "deadline" | "spend-ceiling" | "circuit-open";
+}
+
+/**
+ * The scheduler's refresh for conversations in flight: prospects with an
+ * active cadence whose posts are missing or older than the cache TTL, oldest
+ * enrolment first, at most `maxProspects` a sweep. Stops at the deadline, the
+ * daily spend ceiling, or an open breaker. The opt-out is read from the
+ * trigger the prospect's sent intro came from.
+ */
+export async function sweepInFlightNewsfeeds(
+  opts: { maxProspects?: number; deadlineAt?: number } = {},
+): Promise<InFlightNewsfeedSweepResult> {
+  const result: InFlightNewsfeedSweepResult = {
+    ran: false,
+    candidates: 0,
+    captured: 0,
+    failed: 0,
+    costUsd: 0,
+  };
+  if (demoMode()) return result;
+  const ledger = getLedger();
+  const cadences = ledger.listActiveCadences();
+  const emailById = new Map(cadences.map((c) => [c.prospect_id, c.prospect_email]));
+  const candidates = selectInFlightNewsfeedCandidates(cadences, {
+    seedFor: (id) => {
+      const p = ledger.getProspectById(id);
+      return p ? newsfeedSeedForProspect(p) : null;
+    },
+    isFresh: (url) => hasFreshNewsfeed(url),
+    offFor: (id, playName) => {
+      const email = emailById.get(id);
+      const source = email ? (ledger.latestSentQueueRow(playName, email)?.source ?? null) : null;
+      return newsfeedOffForSource(source);
+    },
+  });
+  result.ran = true;
+  result.candidates = candidates.length;
+  const maxProspects = opts.maxProspects ?? IN_FLIGHT_NEWSFEED_MAX;
+  const deadlineAt = opts.deadlineAt ?? Number.POSITIVE_INFINITY;
+  for (const [index, c] of candidates.entries()) {
+    if (index >= maxProspects) {
+      result.stoppedBy = "max-prospects";
+      break;
+    }
+    if (Date.now() >= deadlineAt) {
+      result.stoppedBy = "deadline";
+      break;
+    }
+    const attached = await captureNewsfeedForProspect(c.prospectId, c.playName);
+    const outcome = attached?.outcome;
+    if (!outcome) continue;
+    if (outcome.status === "skipped") {
+      if (outcome.reason === "spend-ceiling" || outcome.reason === "circuit-open") {
+        result.stoppedBy = outcome.reason;
+        break;
+      }
+      continue;
+    }
+    result.costUsd += outcome.costUsd;
+    if (outcome.status === "failed") result.failed++;
+    else result.captured++;
+  }
+  logEvent("newsfeed.in_flight_sweep", {
+    candidates: result.candidates,
+    captured: result.captured,
+    failed: result.failed,
+    cost_usd: result.costUsd,
+    stopped_by: result.stoppedBy ?? null,
+  });
+  return result;
 }
