@@ -1067,6 +1067,7 @@ async function regenerateDraftInner(
     id,
     previousDraft: row.last_draft_json ?? null,
     previousPayload: row.payload_json,
+    previousChannel: row.channel,
     draft: out,
     // What the founder said about the draft this replaces: rotate = the
     // angle was wrong, plain regenerate = the text was (angle kept).
@@ -1542,8 +1543,14 @@ export async function setQueueChannelRoute(
   if (!channelAddresses(payload).includes(body.channel)) {
     return jsonResponse({ error: `this person has no ${body.channel} address` }, 400, req);
   }
-  if (!ledger.setQueueChannel(id, body.channel)) {
-    return jsonResponse({ error: "row already sent" }, 409, req);
+  const switched = ledger.setQueueChannel(id, body.channel);
+  if (switched === "sent") return jsonResponse({ error: "row already sent" }, 409, req);
+  if (switched === "busy") {
+    return jsonResponse(
+      { error: "row is being drained or sent — try again in a few minutes" },
+      409,
+      req,
+    );
   }
   return jsonResponse({ ok: true, channel: body.channel }, 200, req);
 }

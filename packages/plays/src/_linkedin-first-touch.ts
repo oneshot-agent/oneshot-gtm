@@ -91,6 +91,9 @@ function signalLines(row: LinkedInFirstTouchRow): string[] {
   return lines;
 }
 
+/** LinkedIn's own limit on a connection-request note (OneShot enforces it too). */
+export const LINKEDIN_NOTE_HARD_LIMIT = 300;
+
 /** Draft the connection-request note for one row. */
 export async function draftLinkedInNote(
   row: LinkedInFirstTouchRow,
@@ -160,13 +163,23 @@ export async function sendLinkedInInvite(input: {
   const profile = linkedInProfileOf(input.row.payload);
   if (!profile)
     return { sent: false, flags: ["no-linkedin: this row has no LinkedIn profile URL"] };
+  // A note OneShot would refuse never leaves; the shorter draft target
+  // stays a review flag, not a block.
+  const note = input.note.trim();
+  if (!note) return { sent: false, flags: ["empty-note: write a note before sending"] };
+  if (note.length > LINKEDIN_NOTE_HARD_LIMIT) {
+    return {
+      sent: false,
+      flags: [`note-too-long: ${note.length}/${LINKEDIN_NOTE_HARD_LIMIT} characters`],
+    };
+  }
   let result: { invitation_id?: string; status?: string };
   try {
     result = (await input.sender.call({
       kind: "invite",
       accountId: input.sender.accountId,
       profile,
-      note: input.note,
+      note,
       // Stable per row: a retried drain returns the original invitation.
       idempotencyKey: `gtm:${input.workspace}:queue:${input.row.id}:invite`,
       playName: input.row.playName,
@@ -204,7 +217,7 @@ export async function sendLinkedInInvite(input: {
     channel: "linkedin",
     status: "sent",
     metadata: {
-      note: input.note,
+      note,
       invitationId: result.invitation_id,
       inviteStatus: status,
     },

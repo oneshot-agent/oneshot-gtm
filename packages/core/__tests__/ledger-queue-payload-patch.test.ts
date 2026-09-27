@@ -119,4 +119,40 @@ describe("atomic queue draft generation", () => {
       }),
     ).toBe(false);
   });
+  it("does not save a draft written for a channel the row has since left", () => {
+    const id = enqueue({
+      name: "A",
+      email: "a@x.dev",
+      linkedinUrl: "https://www.linkedin.com/in/a",
+    });
+    const row = ledger.getQueueRow(id)!;
+    expect(ledger.setQueueChannel(id, "linkedin")).toBe("changed");
+    const input = {
+      id,
+      previousDraft: null,
+      previousPayload: row.payload_json,
+      previousChannel: row.channel,
+      draft,
+    };
+    expect(ledger.setQueueDraftIfCurrent(input)).toBe(false);
+    expect(ledger.setQueueDraftIfCurrent({ ...input, previousChannel: "linkedin" })).toBe(true);
+  });
+});
+
+describe("setQueueChannel", () => {
+  it("refuses while a send or a live drain lease holds the row", () => {
+    const sending = enqueue({ name: "A" }, "approved");
+    expect(
+      ledger.claimQueueSendingMarker({ id: sending, startedAtIso: new Date().toISOString() }),
+    ).toBe(true);
+    expect(ledger.setQueueChannel(sending, "linkedin")).toBe("busy");
+
+    const leased = enqueue({ name: "B" }, "approved");
+    expect(ledger.dequeueApproved({ playName: "show-hn" }).map((r) => r.id)).toContain(leased);
+    expect(ledger.setQueueChannel(leased, "linkedin")).toBe("busy");
+    expect(ledger.getQueueRow(leased)!.channel).toBe("email");
+
+    ledger.setQueueStatus({ id: leased, status: "sent" });
+    expect(ledger.setQueueChannel(leased, "linkedin")).toBe("sent");
+  });
 });

@@ -147,6 +147,20 @@ describe("sendLinkedInInvite", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("never sends an empty note or one over LinkedIn's limit", async () => {
+    const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
+    const empty = await sendLinkedInInvite({ row: row(), note: "  ", sender: s, workspace: "gtm" });
+    expect(empty).toEqual({ sent: false, flags: ["empty-note: write a note before sending"] });
+    const long = await sendLinkedInInvite({
+      row: row(),
+      note: "x".repeat(301),
+      sender: s,
+      workspace: "gtm",
+    });
+    expect(long).toEqual({ sent: false, flags: ["note-too-long: 301/300 characters"] });
+    expect(calls).toHaveLength(0);
+  });
+
   it("throws on a result it doesn't understand", async () => {
     const { sender: s } = sender({ status: "weird" });
     await expect(

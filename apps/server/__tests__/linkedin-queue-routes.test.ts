@@ -19,6 +19,7 @@ let seqEvents: Array<Record<string, unknown>> = [];
 const recorded: Array<Record<string, unknown>> = [];
 const statusCalls: Array<Record<string, unknown>> = [];
 const channelCalls: Array<[number, string]> = [];
+let channelBusy = false;
 const linkedInCalls: Array<Record<string, unknown>> = [];
 let linkedInResult: unknown = { invitation_id: "inv-1", status: "sent" };
 let account: { workspace: string; accountId: string } | null = {
@@ -50,7 +51,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       listSequenceEventsForProspectPlay: () => seqEvents,
       setQueueChannel: (id: number, channel: string) => {
         channelCalls.push([id, channel]);
-        return row.status !== "sent";
+        return row.status === "sent" ? "sent" : channelBusy ? "busy" : "changed";
       },
     }),
   };
@@ -97,6 +98,7 @@ beforeEach(() => {
   recorded.length = 0;
   statusCalls.length = 0;
   channelCalls.length = 0;
+  channelBusy = false;
   linkedInCalls.length = 0;
   linkedInResult = { invitation_id: "inv-1", status: "sent" };
   account = { workspace: "gtm", accountId: "acct-1" };
@@ -183,5 +185,12 @@ describe("channel", () => {
     expect((await setQueueChannelRoute(post({ channel: "x" }), { id: "1" })).status).toBe(400);
     expect((await setQueueChannelRoute(post({ channel: "fax" }), { id: "1" })).status).toBe(400);
     expect(channelCalls).toHaveLength(0);
+  });
+
+  it("refuses while a drain or send holds the row", async () => {
+    channelBusy = true;
+    const res = await setQueueChannelRoute(post({ channel: "email" }), { id: "1" });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toMatch(/being drained or sent/);
   });
 });
