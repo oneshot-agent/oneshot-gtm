@@ -382,6 +382,24 @@ describe("person research record", () => {
     expect(readPersonHalf(JSON.stringify(again))).toEqual(again["person"]);
   });
 
+  it("carries the newsfeed pointer, and a refresh without one keeps the stored pointer", () => {
+    const pointer = {
+      url: "https://www.linkedin.com/in/julia",
+      fetchedAt: "2026-09-27T10:00:00.000Z",
+      count: 20,
+      newestAt: "2026-09-26T08:00:00.000Z",
+    };
+    const first = JSON.parse(
+      mergePersonResearchDossier(null, { ...julia, newsfeed: pointer }),
+    ) as Record<string, Record<string, unknown>>;
+    expect(first["person"]!["newsfeed"]).toEqual(pointer);
+
+    const refreshed = JSON.parse(
+      mergePersonResearchDossier(JSON.stringify(first), julia),
+    ) as Record<string, Record<string, unknown>>;
+    expect(refreshed["person"]!["newsfeed"]).toEqual(pointer);
+  });
+
   it("bounds the record at 4,000 chars without losing the current role", () => {
     const big: PersonResearchDossier = {
       ...julia,

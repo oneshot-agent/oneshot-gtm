@@ -39,6 +39,19 @@ export const RESEARCH_CACHE_TTL_MS = 90 * 24 * 3600 * 1000;
  */
 export const RESEARCH_DEADLINE_MS = 360_000;
 
+/**
+ * How long a person's captured newsfeed (personNewsfeed, ~$0.07) is reused.
+ * Far shorter than the dossier TTL: posts go stale in days, a work history
+ * does not.
+ */
+export const NEWSFEED_CACHE_TTL_MS = 14 * 24 * 3600 * 1000;
+/**
+ * Hard ceiling on one personNewsfeed call. Measured 3-12s typical with a 72s
+ * and an 82s outlier (2026-09-27, 12 calls); a slow feed must never hold up
+ * the dossier it decorates.
+ */
+export const NEWSFEED_DEADLINE_MS = 120_000;
+
 /** How long a FOUND LinkedIn URL is reused. Profile URLs effectively never change. */
 export const LINKEDIN_CACHE_TTL_MS = 30 * 24 * 3600 * 1000;
 /**

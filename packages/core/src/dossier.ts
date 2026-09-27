@@ -250,6 +250,14 @@ export interface PersonResearchCompany {
   description?: string;
 }
 
+/** Pointer to a captured newsfeed: which profile, when, how many posts, and the newest post's date. */
+export interface PersonResearchNewsfeed {
+  url: string;
+  fetchedAt: string;
+  count: number;
+  newestAt?: string;
+}
+
 export interface PersonResearchDossier {
   version: 1;
   /** complete = person + company facts; partial = person only. */
@@ -273,6 +281,12 @@ export interface PersonResearchDossier {
   company?: PersonResearchCompany;
   /** Set when the Experience section came from a live read of the profile page (wins over the provider's history). */
   liveProfile?: { url: string; readAt: string };
+  /**
+   * Where this person's recent posts were captured, never the posts
+   * themselves: they live in the shared cache (`getCachedNewsfeed(url)`), so
+   * the dossier bound and every prompt reading the dossier are unaffected.
+   */
+  newsfeed?: PersonResearchNewsfeed;
   costUsd: number;
   cached: boolean;
   warning?: string;
@@ -398,6 +412,7 @@ export function personRecordFromResearch(r: PersonResearchDossier): Record<strin
     ...(r.workEmail ? { workEmail: r.workEmail } : {}),
     ...(r.linkedinUrl ? { linkedinUrl: r.linkedinUrl } : {}),
     ...(r.liveProfile ? { liveProfileReadAt: r.liveProfile.readAt } : {}),
+    ...(r.newsfeed ? { newsfeed: r.newsfeed } : {}),
   };
 }
 
@@ -461,6 +476,14 @@ export function mergePersonResearchDossier(
           : null;
   } else if (typeof existing === "string" && hasDossierSignal(existing)) {
     keep = existing;
+  }
+  // The newsfeed pointer is written after the research, by its own pass; a
+  // refresh that did not re-capture it keeps the one already stored.
+  if (!record["newsfeed"] && existing && typeof existing === "object" && !Array.isArray(existing)) {
+    const prior = existing as Record<string, unknown>;
+    if (prior["source"] === "deepResearchPerson" && prior["newsfeed"]) {
+      record["newsfeed"] = prior["newsfeed"];
+    }
   }
   return mergePersonDossier(current, keep ? { ...record, enrichment: keep } : record);
 }

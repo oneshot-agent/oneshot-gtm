@@ -20,6 +20,7 @@ import {
   type InboxEmail,
   type InboxListResult,
   type PeopleSearchResult,
+  type PersonNewsfeedResult,
   type ResearchResult,
   type SmsSendResult,
   type VerifyEmailResult,
@@ -736,6 +737,32 @@ export async function deepResearchPerson(input: DeepResearchPersonInput, ctx: Ca
   const receiptId = recordCallReceipt({
     ctx,
     callType: "research.person",
+    signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
+  });
+  return { result, receiptId };
+}
+
+export interface PersonNewsfeedInput {
+  /** A LinkedIn `/in/` profile or an X profile URL. */
+  socialMediaUrl: string;
+}
+
+/**
+ * The person's recent posts (LinkedIn about 20, X 20) with dates and
+ * engagement. ~$0.07 and seconds, but rate-limited per wallet: callers
+ * serialize (see `safePersonNewsfeed`).
+ */
+export async function personNewsfeed(input: PersonNewsfeedInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const result: PersonNewsfeedResult = await agent.personNewsfeed({
+    social_media_url: input.socialMediaUrl,
+    ...buildAuditOpts(ctx, "research.newsfeed"),
+  });
+  const receiptId = recordCallReceipt({
+    ctx,
+    callType: "research.newsfeed",
     signedReceipt: result,
     costUsd: result.cost,
     oneshotRequestId: result.request_id,

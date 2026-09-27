@@ -54,6 +54,7 @@ import { isResearchableUrl } from "./_profile-url.ts";
 import { safeScorePriority } from "./_priority-adapters.ts";
 import { hasCachedResearch, safeDeepResearchPerson, safeEnrichCompany } from "./_sdk-safe.ts";
 import type { FinderResult } from "./_types.ts";
+import { captureNewsfeedForQueueRow, NEWSFEED_COST_ESTIMATE_USD } from "./_newsfeed.ts";
 
 export const PERSON_RESEARCH_COST_ESTIMATE_USD = 0.05;
 export const COMPANY_RESEARCH_COST_ESTIMATE_USD = 0.005;
@@ -1124,6 +1125,8 @@ export async function researchNewQueueRowPeople(input: {
   priorSdkCostUsd?: number;
   /** Live LinkedIn reads for this run (default true; needs a configured session). */
   liveProfile?: boolean;
+  /** Capture each researched row's recent posts after its dossier is written (default true). */
+  newsfeed?: boolean;
 }): Promise<void> {
   if (!input.enabled) return;
   const ledger = getLedger();
@@ -1139,6 +1142,7 @@ export async function researchNewQueueRowPeople(input: {
   const icp = resolveIcp();
   let reserved = 0;
   let timedOut = false;
+  const researchedIds: number[] = [];
   await parallelMap(rows, 3, async (row) => {
     if (timedOut || Date.now() - startedAt > RUN_BUDGET_MS) {
       if (!timedOut) {
@@ -1193,6 +1197,7 @@ export async function researchNewQueueRowPeople(input: {
         remainingUsd: Math.max(0, remainingUsd - researched.costUsd),
         result: input.result,
       });
+      if (applied.outcome === "patched") researchedIds.push(row.id);
       logEvent("person_research.row_done", {
         queue_id: row.id,
         play: row.play_name,
@@ -1207,6 +1212,40 @@ export async function researchNewQueueRowPeople(input: {
       reserved -= reserve;
     }
   });
+  // Newsfeeds last and one at a time (the tool is rate-limited per wallet):
+  // every dossier above is already written, so a slow feed costs nothing but
+  // its own pointer, and rows the wall budget leaves wait for the backfill.
+  if (input.newsfeed === false) return;
+  for (const id of researchedIds) {
+    if (Date.now() - startedAt > RUN_BUDGET_MS) {
+      logEvent("person_research.newsfeed_time_budget_exhausted", {
+        remaining: researchedIds.length,
+      });
+      break;
+    }
+    const spent =
+      (input.priorSdkCostUsd ?? initialResultCostUsd) +
+      (input.result.costUsd - initialResultCostUsd);
+    const remainingUsd = Math.max(0, (input.maxCostUsd ?? Number.POSITIVE_INFINITY) - spent);
+    if (remainingUsd < NEWSFEED_COST_ESTIMATE_USD) break;
+    const row = rows.find((r) => r.id === id);
+    try {
+      const captured = await captureNewsfeedForQueueRow(id, row?.play_name ?? "person-research", {
+        remainingUsd,
+      });
+      if (captured) input.result.costUsd += captured.outcome.costUsd;
+    } catch (err) {
+      // Decoration: a failed capture never fails the finder run it follows.
+      logEvent(
+        "error.swallowed",
+        {
+          kind: "person_research.newsfeed",
+          message_120: ((err as Error).message ?? "").slice(0, 120),
+        },
+        "warn",
+      );
+    }
+  }
 }
 
 function hasLiveProfile(half: unknown): boolean {

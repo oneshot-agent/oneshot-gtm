@@ -187,6 +187,31 @@ vi.mock("@oneshot-gtm/intel", async () => {
   };
 });
 
+// The newsfeed pass runs after the dossiers; its own contract is in newsfeed.test.ts.
+const newsfeedCalls: Array<{ id: number; remainingUsd?: number }> = [];
+vi.mock("../src/_newsfeed.ts", () => ({
+  NEWSFEED_COST_ESTIMATE_USD: 0.07,
+  captureNewsfeedForQueueRow: async (
+    id: number,
+    _play: string,
+    opts: { remainingUsd?: number },
+  ) => {
+    newsfeedCalls.push({
+      id,
+      ...(opts.remainingUsd !== undefined ? { remainingUsd: opts.remainingUsd } : {}),
+    });
+    return {
+      outcome: {
+        status: "captured",
+        costUsd: 0.07,
+        cached: false,
+        feed: { url: "", fetchedAt: "", posts: [] },
+      },
+      attached: true,
+    };
+  },
+}));
+
 const {
   applyPersonResearch,
   applyPersonResearchToProspect,
@@ -234,6 +259,7 @@ beforeEach(() => {
   delete process.env["LINKEDIN_SESSION_COOKIE"];
   _resetLinkedInReadGate();
   patches.length = notes.length = statuses.length = priorities.length = prospectWrites.length = 0;
+  newsfeedCalls.length = 0;
   productCache.clear();
   enrichmentCache = null;
   liveRows = new Set([1, 2]);
@@ -872,7 +898,32 @@ describe("researchNewQueueRowPeople", () => {
     });
     expect(calls.research).toBe(1);
     expect(patches.map((p) => p.id)).toEqual([1, 1]);
-    expect(result.costUsd).toBeCloseTo(0.4 + 0.055 + 0.01 + 0.05, 3);
+    // research + company + live read, then the newsfeed capture ($0.07).
+    expect(result.costUsd).toBeCloseTo(0.4 + 0.055 + 0.01 + 0.05 + 0.07, 3);
+  });
+
+  it("captures the newsfeed after the dossiers, and not when the trigger turns it off", async () => {
+    pendingRows = [row(1, "pending")];
+    const result = { source: "find:luma-events", costUsd: 0, enqueued: 1, sdkCostUsd: 0 };
+    await researchNewQueueRowPeople({
+      afterId: 0,
+      result: result as never,
+      enabled: true,
+      maxCostUsd: 10,
+    });
+    expect(newsfeedCalls.map((c) => c.id)).toEqual([1]);
+    // Research patched the row before the newsfeed pass began.
+    expect(patches.length).toBeGreaterThan(0);
+    expect(result.costUsd).toBeCloseTo(0.055 + 0.01 + 0.05 + 0.07, 3);
+
+    newsfeedCalls.length = 0;
+    await researchNewQueueRowPeople({
+      afterId: 0,
+      result: { source: "find:luma-events", costUsd: 0, enqueued: 1 } as never,
+      enabled: true,
+      newsfeed: false,
+    });
+    expect(newsfeedCalls).toEqual([]);
   });
 
   it("does nothing when disabled or when the cap is already spent", async () => {

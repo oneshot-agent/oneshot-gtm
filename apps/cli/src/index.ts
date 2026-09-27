@@ -567,6 +567,12 @@ find
     "re-derive from cached research only: rows with nothing cached are left alone, nothing is billed",
     false,
   )
+  .option("--no-newsfeed", "skip capturing recent posts after the research")
+  .option(
+    "--newsfeed-only",
+    "capture recent posts (~$0.07 each) for rows with a LinkedIn or X profile; no person research",
+    false,
+  )
   .option("--dry-run", "list candidates and estimated cost; research nothing", false)
   .description(
     "Backfill person research onto existing prospects: current role, company facts, ICP re-judge (~$0.055 each)",
@@ -584,9 +590,13 @@ find
         company: boolean;
         live: boolean;
         cacheOnly?: boolean;
+        newsfeed: boolean;
+        newsfeedOnly?: boolean;
         dryRun: boolean;
       }) => {
         await commandResearchProspects({
+          noNewsfeed: opts.newsfeed === false,
+          newsfeedOnly: opts.newsfeedOnly === true,
           dryRun: opts.dryRun,
           refresh: opts.refresh,
           noRejudge: opts.rejudge === false,
@@ -628,6 +638,12 @@ find
     "re-derive from cached research only: rows with nothing cached are left alone, nothing is billed",
     false,
   )
+  .option("--no-newsfeed", "skip capturing recent posts after the research")
+  .option(
+    "--newsfeed-only",
+    "capture recent posts (~$0.07 each) for rows with a LinkedIn or X profile; no person research",
+    false,
+  )
   .option("--dry-run", "list candidates and estimated cost; research nothing", false)
   .description(
     "Backfill person research onto live queue rows: current role from the LinkedIn history, company facts, ICP re-judge (~$0.055 each)",
@@ -646,9 +662,13 @@ find
         company: boolean;
         live: boolean;
         cacheOnly?: boolean;
+        newsfeed: boolean;
+        newsfeedOnly?: boolean;
         dryRun: boolean;
       }) => {
         await commandResearchQueue({
+          noNewsfeed: opts.newsfeed === false,
+          newsfeedOnly: opts.newsfeedOnly === true,
           dryRun: opts.dryRun,
           refresh: opts.refresh,
           noRejudge: opts.rejudge === false,

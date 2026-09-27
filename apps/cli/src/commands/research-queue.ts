@@ -3,6 +3,7 @@ import {
   applyPersonResearch,
   COMPANY_RESEARCH_COST_ESTIMATE_USD,
   isCircuitOpen,
+  newsfeedSeedForPayload,
   PERSON_RESEARCH_COST_ESTIMATE_USD,
   personResearchOf,
   personSeedFor,
@@ -10,6 +11,14 @@ import {
   type PersonSeed,
 } from "@oneshot-gtm/find";
 import { c, header, note, ok, warn } from "../output.ts";
+import {
+  dedupeItems,
+  hasFreshPointer,
+  newsfeedEstimateLine,
+  type NewsfeedItem,
+  reportNewsfeed,
+  runNewsfeedPass,
+} from "./_newsfeed-pass.ts";
 
 /**
  * Backfill person research onto live queue rows (pending + approved).
@@ -56,6 +65,14 @@ export interface ResearchQueueOpts {
    * from results already bought.
    */
   cacheOnly?: boolean;
+  /** Skip capturing recent posts after the research. */
+  noNewsfeed?: boolean;
+  /**
+   * Capture recent posts only: no person research. Rows with a LinkedIn or X
+   * profile whose capture is missing or older than 14 days (all of them with
+   * `--refresh`).
+   */
+  newsfeedOnly?: boolean;
 }
 
 /**
@@ -188,6 +205,10 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
       }),
     );
   }
+  if (opts.newsfeedOnly) {
+    await newsfeedOnly(rows, opts);
+    return;
+  }
   const selection = selectCandidates(rows, {
     refresh: opts.refresh,
     explicit: opts.id !== undefined,
@@ -223,6 +244,13 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
   }
 
   if (opts.dryRun) {
+    if (!opts.noNewsfeed) {
+      const items = candidates.flatMap(({ row, payload }) => {
+        const url = newsfeedSeedForPayload(payload);
+        return url ? [{ kind: "queue" as const, id: row.id, playName: row.play_name, url }] : [];
+      });
+      process.stdout.write(`${newsfeedEstimateLine(items, opts.cacheOnly === true)}\n\n`);
+    }
     for (const { row, payload, seed } of candidates.slice(0, 40)) {
       process.stdout.write(
         `  ${c.dim("·")} #${String(row.id).padEnd(6)} ${nameOf(payload).slice(0, 24).padEnd(26)} ` +
@@ -249,6 +277,7 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
   const spend = { costUsd: 0 };
   let haltedAt: number | null = null;
   let cappedAt: number | null = null;
+  const researchedRows: CandidateRow[] = [];
 
   await parallelMap(candidates, opts.concurrency ?? 3, async ({ row, seed }, index) => {
     if (isCircuitOpen()) {
@@ -296,6 +325,7 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
       return;
     }
     tally.researched++;
+    if (applied.outcome === "patched") researchedRows.push(row);
     if (applied.patch["title"] !== undefined) tally.titleUpdated++;
     if (applied.verdict === "pass") tally.pass++;
     if (applied.verdict === "reject") tally.reject++;
@@ -335,4 +365,85 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
   note(
     "Rows already drafted keep their draft — Regenerate on /queue to redraft from the researched facts.",
   );
+  if (opts.noNewsfeed || cappedAt !== null) return;
+  // After every dossier is written, one at a time: the tool is rate-limited per wallet.
+  const items = researchedRows.flatMap((row) => {
+    const fresh = ledger.getQueueRow(row.id);
+    const url = fresh ? newsfeedSeedForPayload(parsePayload(fresh)) : null;
+    return url ? [{ kind: "queue" as const, id: row.id, playName: row.play_name, url }] : [];
+  });
+  if (items.length === 0) return;
+  const newsfeed = await runNewsfeedPass(items, {
+    ...(opts.cacheOnly ? { cacheOnly: true } : {}),
+    ...(opts.maxCostUsd != null ? { maxCostUsd: opts.maxCostUsd } : {}),
+    spentUsd: spend.costUsd,
+  });
+  reportNewsfeed(newsfeed, opts.maxCostUsd);
+}
+
+/**
+ * `--newsfeed-only`: live rows with a LinkedIn or X profile, no person
+ * research. A row whose dossier already points at a capture younger than the
+ * cache TTL is skipped unless `--refresh` (the cache answers it for free anyway).
+ */
+async function newsfeedOnly(rows: CandidateRow[], opts: ResearchQueueOpts): Promise<void> {
+  let current = 0;
+  let noProfile = 0;
+  let notLive = 0;
+  const items: NewsfeedItem[] = [];
+  for (const row of rows) {
+    if (row.sent_at != null || row.send_started_at != null) {
+      notLive++;
+      continue;
+    }
+    if (row.status !== "pending" && row.status !== "approved") {
+      notLive++;
+      continue;
+    }
+    const payload = parsePayload(row);
+    const url = newsfeedSeedForPayload(payload);
+    if (!url) {
+      noProfile++;
+      continue;
+    }
+    if (
+      !opts.refresh &&
+      opts.id === undefined &&
+      hasFreshPointer(personResearchOf(payload)?.newsfeed)
+    ) {
+      current++;
+      continue;
+    }
+    items.push({ kind: "queue", id: row.id, playName: row.play_name, url });
+  }
+  const cap = resolveQueueCap(opts.limit);
+  const deduped = dedupeItems(items);
+  const selected = cap === undefined ? deduped : deduped.slice(0, cap);
+  process.stdout.write(
+    `${c.dim("newsfeed only")}  ${c.dim("rows:")} ${rows.length}` +
+      (current > 0 ? `  ${c.dim("capture current:")} ${current}` : "") +
+      (noProfile > 0 ? `  ${c.dim("no LinkedIn/X profile:")} ${noProfile}` : "") +
+      (notLive > 0 ? `  ${c.dim("not live:")} ${notLive}` : "") +
+      `  ${c.dim("to capture:")} ${selected.length}\n` +
+      `${newsfeedEstimateLine(selected, opts.cacheOnly === true)}\n\n`,
+  );
+  if (selected.length === 0) {
+    note("Nothing to capture.");
+    return;
+  }
+  if (opts.dryRun) {
+    for (const item of selected.slice(0, 40)) {
+      process.stdout.write(`  ${c.dim("·")} #${String(item.id).padEnd(6)} ${c.dim(item.url)}\n`);
+    }
+    if (selected.length > 40) note(`… and ${selected.length - 40} more`);
+    process.stdout.write("\n");
+    ok("dry run — nothing captured, nothing written.");
+    return;
+  }
+  const tally = await runNewsfeedPass(selected, {
+    ...(opts.cacheOnly ? { cacheOnly: true } : {}),
+    ...(opts.maxCostUsd != null ? { maxCostUsd: opts.maxCostUsd } : {}),
+  });
+  process.stdout.write("\n");
+  reportNewsfeed(tally, opts.maxCostUsd);
 }

@@ -1,14 +1,22 @@
-import { getLedger, hasDossierSignal, parallelMap } from "@oneshot-gtm/core";
+import { getLedger, hasDossierSignal, parallelMap, readPersonHalf } from "@oneshot-gtm/core";
 import {
   applyPersonResearchToProspect,
   isCircuitOpen,
   isResearchableUrl,
+  newsfeedSeedForProspect,
   personSeedForProspect,
   researchPerson,
   researchUrl,
 } from "@oneshot-gtm/find";
 import { c, header, note, ok, warn } from "../output.ts";
 import { ROW_COST_ESTIMATE_USD } from "./research-queue.ts";
+import {
+  hasFreshPointer,
+  newsfeedEstimateLine,
+  type NewsfeedItem,
+  reportNewsfeed,
+  runNewsfeedPass,
+} from "./_newsfeed-pass.ts";
 
 // Re-exported for existing test/call-site imports; the real implementation
 // now lives in packages/find/src/_profile-url.ts so packages/find/src/angle.ts
@@ -65,6 +73,10 @@ export interface ResearchProspectsOpts {
   noLive?: boolean;
   /** Re-derive from the shared research cache only; prospects with nothing cached are left alone, nothing is billed. */
   cacheOnly?: boolean;
+  /** Skip capturing recent posts after the research. */
+  noNewsfeed?: boolean;
+  /** Capture recent posts only, no person research (see research-queue's `newsfeedOnly`). */
+  newsfeedOnly?: boolean;
 }
 
 /**
@@ -133,9 +145,14 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
         .filter((row) => row.id === opts.id)
     : ledger.listProspectsForResearch({
         scopes,
-        includeResearched: opts.refresh,
+        // A newsfeed-only run is for prospects that already carry research.
+        includeResearched: opts.refresh || opts.newsfeedOnly === true,
         limit: 100_000,
       });
+  if (opts.newsfeedOnly) {
+    await prospectNewsfeedOnly(rows, opts);
+    return;
+  }
   if (opts.id && rows.length === 0) {
     warn(`prospect ${opts.id} not found, or has no email and no profile URL to research.`);
     return;
@@ -171,6 +188,15 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
   }
 
   if (opts.dryRun) {
+    if (!opts.noNewsfeed) {
+      const items = candidates.flatMap((r) => {
+        const url = newsfeedSeedForProspect(r);
+        return url
+          ? [{ kind: "prospect" as const, id: r.id, playName: "research-prospects", url }]
+          : [];
+      });
+      process.stdout.write(`${newsfeedEstimateLine(items, opts.cacheOnly === true)}\n\n`);
+    }
     for (const r of candidates.slice(0, 30)) {
       process.stdout.write(
         `  ${c.dim("·")} ${(r.name ?? "").slice(0, 26).padEnd(28)} ` +
@@ -193,6 +219,7 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
   let pass = 0;
   let reject = 0;
   let haltedAt: number | null = null;
+  const writtenIds: number[] = [];
 
   let cappedAt: number | null = null;
   await parallelMap(candidates, opts.concurrency ?? 3, async (row, index) => {
@@ -273,6 +300,7 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
       return;
     }
     written++;
+    writtenIds.push(row.id);
     if (applied.roleChanged) titleUpdated++;
     if (applied.verdict === "pass") pass++;
     if (applied.verdict === "reject") reject++;
@@ -304,4 +332,79 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
       `${c.dim("re-judged pass:")} ${pass}  ${c.dim("re-judged reject:")} ${reject}  ` +
       `${c.dim("spent:")} $${costUsd.toFixed(2)}`,
   );
+  if (opts.noNewsfeed || cappedAt !== null) return;
+  // After every dossier is written, one at a time: the tool is rate-limited per wallet.
+  const items = writtenIds.flatMap((id) => {
+    const p = ledger.getProspectById(id);
+    const url = p ? newsfeedSeedForProspect(p) : null;
+    return url ? [{ kind: "prospect" as const, id, playName: "research-prospects", url }] : [];
+  });
+  if (items.length === 0) return;
+  const newsfeed = await runNewsfeedPass(items, {
+    ...(opts.cacheOnly ? { cacheOnly: true } : {}),
+    ...(opts.maxCostUsd != null ? { maxCostUsd: opts.maxCostUsd } : {}),
+    spentUsd: costUsd,
+  });
+  reportNewsfeed(newsfeed, opts.maxCostUsd);
+}
+
+/**
+ * `--newsfeed-only` for prospects: those with a LinkedIn or X profile and no
+ * current capture (all of them with `--refresh`), no person research.
+ */
+async function prospectNewsfeedOnly(
+  rows: Array<{
+    id: number;
+    linkedin_url: string | null;
+    source_profile_url: string | null;
+    dossier_json: string | null;
+  }>,
+  opts: ResearchProspectsOpts,
+): Promise<void> {
+  let current = 0;
+  let noProfile = 0;
+  const items: NewsfeedItem[] = [];
+  for (const row of rows) {
+    const url = newsfeedSeedForProspect(row);
+    if (!url) {
+      noProfile++;
+      continue;
+    }
+    const half = readPersonHalf(row.dossier_json);
+    const pointer =
+      half && typeof half === "object" ? (half as Record<string, unknown>)["newsfeed"] : null;
+    if (!opts.refresh && !opts.id && hasFreshPointer(pointer)) {
+      current++;
+      continue;
+    }
+    items.push({ kind: "prospect", id: row.id, playName: "research-prospects", url });
+  }
+  const cap = resolveCap(opts.limit);
+  const selected = cap === undefined ? items : items.slice(0, cap);
+  process.stdout.write(
+    `${c.dim("newsfeed only")}  ${c.dim("prospects:")} ${rows.length}` +
+      (current > 0 ? `  ${c.dim("capture current:")} ${current}` : "") +
+      (noProfile > 0 ? `  ${c.dim("no LinkedIn/X profile:")} ${noProfile}` : "") +
+      `  ${c.dim("to capture:")} ${selected.length}\n` +
+      `${newsfeedEstimateLine(selected, opts.cacheOnly === true)}\n\n`,
+  );
+  if (selected.length === 0) {
+    note("Nothing to capture.");
+    return;
+  }
+  if (opts.dryRun) {
+    for (const item of selected.slice(0, 30)) {
+      process.stdout.write(`  ${c.dim("·")} ${String(item.id).padEnd(7)} ${c.dim(item.url)}\n`);
+    }
+    if (selected.length > 30) note(`… and ${selected.length - 30} more`);
+    process.stdout.write("\n");
+    ok("dry run — nothing captured, nothing written.");
+    return;
+  }
+  const tally = await runNewsfeedPass(selected, {
+    ...(opts.cacheOnly ? { cacheOnly: true } : {}),
+    ...(opts.maxCostUsd != null ? { maxCostUsd: opts.maxCostUsd } : {}),
+  });
+  process.stdout.write("\n");
+  reportNewsfeed(tally, opts.maxCostUsd);
 }
