@@ -361,20 +361,30 @@ export async function followUpEdgeAngle(
   return sel?.angle ?? null;
 }
 
-/** The intro's angle text as recorded on its sent step (issue #584 metadata). */
-function introAngleText(prospectId: number | null | undefined, playName: string): string | null {
-  if (!prospectId) return null;
+/**
+ * The intro's angle as recorded on its sent step (issue #584 metadata): its
+ * text, and how it was picked (`arm` only when the arm split chose it).
+ */
+function introAngle(
+  prospectId: number | null | undefined,
+  playName: string,
+): { text: string | null; method: string | null } {
+  const none = { text: null, method: null };
+  if (!prospectId) return none;
   try {
     const rows = getLedger().listSequenceEventsForProspectPlay(prospectId, playName) as Array<{
       step_index: number;
       metadata_json: string | null;
     }>;
     const step0 = rows.find((r) => r.step_index === 0);
-    if (!step0?.metadata_json) return null;
-    const meta = JSON.parse(step0.metadata_json) as { angleText?: unknown };
-    return typeof meta.angleText === "string" && meta.angleText.trim() ? meta.angleText : null;
+    if (!step0?.metadata_json) return none;
+    const meta = JSON.parse(step0.metadata_json) as { angleText?: unknown; angleMethod?: unknown };
+    return {
+      text: typeof meta.angleText === "string" && meta.angleText.trim() ? meta.angleText : null,
+      method: typeof meta.angleMethod === "string" ? meta.angleMethod : null,
+    };
   } catch {
-    return null;
+    return none;
   }
 }
 
@@ -434,7 +444,8 @@ export async function followUpEdgeSelection(
   // What to exclude, by text. With no recorded intro text (rows from before
   // the angle was stamped on the send), fall back to the intro's cached pick
   // on the edge it was chosen from.
-  let introText = introAngleText(prospect.id, playName);
+  const intro = introAngle(prospect.id, playName);
+  let introText = intro.text;
   if (!introText && frozenEdge) {
     const idx = readCached(
       cacheKeyFor({ edge: frozenEdge, prospectKey: email, description: "" }, null),
@@ -445,9 +456,12 @@ export async function followUpEdgeSelection(
   // Arm split: the whole cadence stays on the prospect's arm, so every step
   // of the comparison measures one angle. The intro's angle when it is still
   // in the edge (an edit that reorders angles must not move anyone), else the
-  // arm on the current edge. Only a founder's rotate leaves it, through the
-  // fit path below.
-  if (angleAssignmentOf(target) === "arm" && !opts.rotateFrom?.trim()) {
+  // arm on the current edge. Only a prospect whose INTRO was arm-assigned is
+  // in the comparison: turning `arm` on mid-cadence must not count a
+  // fit-picked intro's follow-ups as arm drafts. Turning it off ends the
+  // comparison for everyone. A founder's rotate leaves it through the fit
+  // path below.
+  if (angleAssignmentOf(target) === "arm" && intro.method === "arm" && !opts.rotateFrom?.trim()) {
     const introIndex = introText
       ? angles.findIndex((a) => angleTextKey(a) === angleTextKey(introText!))
       : -1;

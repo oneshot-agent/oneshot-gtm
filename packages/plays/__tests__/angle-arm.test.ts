@@ -14,6 +14,8 @@ const EDGE4 = `${A} // ${B} // ${C} // ${D}`;
 let sentRow: { payload: Record<string, unknown>; source: string } | null = null;
 let triggerConfig: Record<string, unknown> | null = null;
 let introAngleText: string | null = null;
+/** How the intro's angle was picked, as step-0 metadata records it (`angleMethod`). */
+let introMethod: string | null = null;
 const cache = new Map<string, string>();
 let classifierCalls = 0;
 
@@ -30,7 +32,15 @@ vi.mock("@oneshot-gtm/core", async () => {
         triggerConfig ? { config_json: JSON.stringify(triggerConfig) } : undefined,
       listSequenceEventsForProspectPlay: () =>
         introAngleText
-          ? [{ step_index: 0, metadata_json: JSON.stringify({ angleText: introAngleText }) }]
+          ? [
+              {
+                step_index: 0,
+                metadata_json: JSON.stringify({
+                  angleText: introAngleText,
+                  ...(introMethod ? { angleMethod: introMethod } : {}),
+                }),
+              },
+            ]
           : [],
       getProductResearchCache: (k: string) => cache.get(k) ?? null,
       setProductResearchCache: (k: string, v: string) => void cache.set(k, v),
@@ -68,6 +78,7 @@ beforeEach(() => {
   sentRow = null;
   triggerConfig = null;
   introAngleText = null;
+  introMethod = null;
 });
 
 describe("angleAssignmentOf", () => {
@@ -178,6 +189,40 @@ describe("selectAngle without arm", () => {
 
 describe("follow-ups under the arm split", () => {
   const prospect = { email: "p@x.dev", id: 7 };
+  // Every case here is a prospect whose intro the arm split assigned, unless
+  // the test says otherwise.
+  beforeEach(() => {
+    introMethod = "arm";
+  });
+
+  it("a fit-picked intro stays out of the comparison when arm is turned on mid-cadence", async () => {
+    sentRow = { payload: { email: "p@x.dev", yourEdge: EDGE4 }, source: "find:luma-events" };
+    triggerConfig = { yourEdge: EDGE4, angleAssignment: "arm" };
+    introAngleText = C;
+    introMethod = "classifier";
+    const sel = await followUpEdgeSelection(prospect, "luma-events");
+    // The ordinary follow-up: a different angle from the intro, never marked arm.
+    expect(sel?.method).not.toBe("arm");
+    expect(sel?.angle).not.toBe(C);
+  });
+
+  it("an intro with no recorded method is treated as fit", async () => {
+    sentRow = { payload: { email: "p@x.dev", yourEdge: EDGE4 }, source: "find:luma-events" };
+    triggerConfig = { yourEdge: EDGE4, angleAssignment: "arm" };
+    introAngleText = C;
+    introMethod = null;
+    const sel = await followUpEdgeSelection(prospect, "luma-events");
+    expect(sel?.method).not.toBe("arm");
+  });
+
+  it("turning arm off ends the comparison for prospects already in it", async () => {
+    sentRow = { payload: { email: "p@x.dev", yourEdge: EDGE4 }, source: "find:luma-events" };
+    triggerConfig = { yourEdge: EDGE4 };
+    introAngleText = C;
+    const sel = await followUpEdgeSelection(prospect, "luma-events");
+    expect(sel?.method).not.toBe("arm");
+    expect(sel?.angle).not.toBe(C);
+  });
 
   it("keeps the intro's angle instead of switching to a new one", async () => {
     sentRow = { payload: { email: "p@x.dev", yourEdge: EDGE4 }, source: "find:luma-events" };
