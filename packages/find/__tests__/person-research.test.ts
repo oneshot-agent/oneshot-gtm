@@ -1196,6 +1196,28 @@ describe("researchPerson cacheOnly", () => {
     expect(calls.research).toBe(0);
   });
 
+  it("a cached record that names someone else is not retried by email with a paid call", async () => {
+    enrichmentCache = {
+      result_json: JSON.stringify({
+        ...juliaResearch,
+        result: { ...juliaResearch.result, full_name: "Marcus Brandt" },
+      }),
+      fetched_at: new Date().toISOString(),
+      status: "ok",
+    };
+    const out = await researchPerson({
+      seed,
+      playName: "research-queue",
+      subject: { queueId: 1 },
+      remainingUsd: 10,
+      cacheOnly: true,
+    });
+    expect(calls.research).toBe(0);
+    expect(out.costUsd).toBe(0);
+    expect(out.dossier.status).toBe("unavailable");
+    expect(out.dossier.warning).toContain("different person");
+  });
+
   it("a negative cache entry is not research", async () => {
     enrichmentCache = { result_json: "{}", fetched_at: new Date().toISOString(), status: "failed" };
     const out = await researchPerson({
