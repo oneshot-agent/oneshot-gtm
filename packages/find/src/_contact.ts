@@ -469,8 +469,12 @@ async function qualifyViaLinkedIn(
 ): Promise<QualifiedContact> {
   let costUsd = 0;
   let linkedinUrl = args.linkedinUrlHint?.trim() || null;
+  let unavailable = false;
   if (!linkedinUrl && args.fullName) {
     linkedinUrl = await findLinkedInUrl({
+      onUnavailable: () => {
+        unavailable = true;
+      },
       fullName: args.fullName,
       disambiguators: args.person.company ? [args.person.company] : [],
       accumCost: (c) => {
@@ -479,6 +483,9 @@ async function qualifyViaLinkedIn(
       errKindPrefix: args.errKindPrefix ?? args.playName,
     });
   }
+  // A lookup that could not run is an outage, not a miss: the walk must not
+  // fall through to another channel or drop the person as unreachable.
+  if (unavailable) return { ok: false, reason: "platform-error", costUsd };
   if (!linkedinUrl || !canonicalLinkedInProfileKey(linkedinUrl)) {
     return { ok: false, reason: "not-found", costUsd };
   }

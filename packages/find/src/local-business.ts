@@ -9,6 +9,7 @@ import { icpFields, resolveVerifyEnrichQualify } from "./_contact.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection, qualifyPostEnrich } from "./_qualify.ts";
 import { isDuplicate } from "./_dedupe.ts";
+import { finderChannels } from "./_channels-context.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { safeCompanySearch, safeLocalSearch, safePeopleSearch } from "./_sdk-safe.ts";
 import { buildDesignPartnerLoiPayload, dedupePlayNames, resolvePlayRoute } from "./_play-route.ts";
@@ -310,7 +311,9 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     // pre-#705 shape (finding PRRT_kwDOSKzrBs6mB74J, issue #705 round 1).
     let routedIcp: Record<string, unknown> = {};
 
-    if (bestWorkEmail) {
+    // Lane 1 only when email leads the run's channel order; otherwise the
+    // shared spine walks the order, reusing the search's email if it gets there.
+    if (bestWorkEmail && finderChannels()[0] === "email") {
       // Lane 1 — the search already carries a usable email: skip
       // findEmail/verifyEmail entirely and go straight to the person gate.
       const gate = await qualifyPostEnrich({
@@ -356,12 +359,13 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
         ...(gate.reason ? { icpVerdictReason: gate.reason } : {}),
       };
     } else {
-      // Lane 2 — no email on the search result: the normal
+      // Lane 2 — no email on the search result (or email isn't first): the normal
       // resolve → verify → enrich → qualify spine every other finder uses.
       const contact = await resolveVerifyEnrichQualify({
         playName: PLAY_NAME,
         fullName,
         companyDomain: person.company_domain ?? null,
+        knownEmail: bestWorkEmail,
         isDuplicate: (candEmail) =>
           isDuplicate({ playName: dedupeScope, dedupeKey, prospectEmail: candEmail }),
         icp,

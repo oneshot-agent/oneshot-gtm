@@ -145,6 +145,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 const { runLocalBusinessFinder } = await import("../src/local-business.ts");
+const { withFinderChannels } = await import("../src/_channels-context.ts");
 
 const basePerson: StubPerson = {
   full_name: "Dana Rivera",
@@ -241,6 +242,19 @@ describe("runLocalBusinessFinder — people search size", () => {
     // ~2.2s per row measured 2026-09-27: 50 rows took 107s, 100 timed out.
     expect(limit).toBeGreaterThan(0);
     expect(limit).toBeLessThanOrEqual(40);
+  });
+});
+
+describe("runLocalBusinessFinder — channel order", () => {
+  it("a LinkedIn-first run queues on LinkedIn even when the search carries an email", async () => {
+    nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.com" }];
+    const out = await withFinderChannels(["linkedin", "email"], () =>
+      runLocalBusinessFinder({ dryRun: false, jobTitles: ["Owner"], yourEdge: "free setup" }),
+    );
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]).toMatchObject({ channel: "linkedin" });
+    expect(enqueued[0]?.payload["linkedinUrl"]).toBe(basePerson.linkedin_url);
+    expect(findEmailCalls).toHaveLength(0);
   });
 });
 

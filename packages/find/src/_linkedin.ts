@@ -138,6 +138,11 @@ export async function findLinkedInUrl(args: {
    * metadata exists, so verification must stay built-in and non-overridable.
    */
   onTitleMismatch?: (result: { url: string; title: string }) => void;
+  /**
+   * Called when the lookup could not run (breaker open, or a transient
+   * provider error) — the null that follows is "unknown", not "no profile".
+   */
+  onUnavailable?: () => void;
 }): Promise<string | null> {
   const fullName = args.fullName.trim();
   if (fullName.length === 0) return null;
@@ -168,6 +173,7 @@ export async function findLinkedInUrl(args: {
   // once and every subsequent candidate short-circuits for free.
   if (isCircuitOpen()) {
     logEvent("linkedin.search.skipped_breaker", { full_name: fullName });
+    args.onUnavailable?.();
     return null;
   }
 
@@ -206,6 +212,7 @@ export async function findLinkedInUrl(args: {
     if (!transient) writePersistedLookup(cacheKey, null);
     // The in-process entry is set either way: no point retrying within one run.
     cache.set(cacheKey, null);
+    if (transient) args.onUnavailable?.();
     logEvent(
       "error.swallowed",
       {

@@ -16,6 +16,7 @@ interface EnqueuedRow {
   source: string;
   initialStatus?: string;
   notes?: string;
+  channel?: string;
 }
 
 const enqueued: EnqueuedRow[] = [];

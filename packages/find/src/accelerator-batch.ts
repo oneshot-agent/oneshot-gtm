@@ -502,6 +502,7 @@ export async function runAcceleratorBatchFinder(
         company: record.name,
         evidence: record.oneLiner ?? `${record.cohortLabel} cohort company`,
       },
+      linkedinUrlHint: resolvedLinkedin,
       fillGaps: opts.qualifyFillGaps ?? true,
     });
     result.costUsd += contact.costUsd;

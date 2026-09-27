@@ -123,6 +123,16 @@ describe("channel order in the contact step", () => {
     expect(out).toMatchObject({ ok: false, reason: "role", detail: "intern" });
   });
 
+  it("a LinkedIn lookup that could not run is an outage, not a miss", async () => {
+    linkedinSearch.mockImplementation(async (a: { onUnavailable?: () => void }) => {
+      a.onUnavailable?.();
+      return null;
+    });
+    const out = await resolveVerifyEnrichQualify({ ...base, channels: ["linkedin", "email"] });
+    expect(out).toMatchObject({ ok: false, reason: "platform-error" });
+    expect(find).not.toHaveBeenCalled();
+  });
+
   it("reports the email miss when no channel works", async () => {
     find.mockResolvedValue({
       result: { status: "completed", found: false, cost: 0 },
