@@ -216,10 +216,26 @@ export function getCachedNewsfeed(url: string): CapturedNewsfeed | null {
 // --- serialization, 429 back-off, breaker ---------------------------------
 
 let chain: Promise<unknown> = Promise.resolve();
-/** One newsfeed call at a time, process-wide, whatever the caller's concurrency. */
-function serialized<T>(fn: () => Promise<T>): Promise<T> {
-  const next = chain.then(fn, fn);
-  chain = next.catch(() => undefined);
+/**
+ * One newsfeed call at a time, process-wide, whatever the caller's
+ * concurrency. The slot is held until the platform call itself settles, not
+ * until the caller stops waiting: a call abandoned at the deadline is still
+ * running (and billing), and the next one must not overlap it.
+ */
+function serialized<T>(fn: (hold: (live: Promise<unknown>) => void) => Promise<T>): Promise<T> {
+  let held: Promise<unknown> = Promise.resolve();
+  const run = (): Promise<T> =>
+    fn((live) => {
+      held = live.then(
+        () => undefined,
+        () => undefined,
+      );
+    });
+  const next = chain.then(run, run);
+  chain = next.then(
+    () => held,
+    () => held,
+  );
   return next;
 }
 
@@ -341,10 +357,11 @@ export async function safePersonNewsfeed(
   }
   if (isNewsfeedCircuitOpen()) return { status: "skipped", reason: "circuit-open", costUsd: 0 };
 
-  return serialized(async () => {
+  return serialized(async (hold) => {
     for (let attempt = 0; ; attempt++) {
       try {
         const live = personNewsfeed({ socialMediaUrl: canonical }, ctx);
+        hold(live);
         // The cache write rides the live promise: a call that outlives the
         // deadline was still paid for and must reach the cache.
         live.then(
@@ -445,11 +462,17 @@ export async function captureNewsfeedForQueueRow(
   if (outcome.status !== "captured" || !isPersonResearchDossier(payload["personResearch"])) {
     return { outcome, attached: false };
   }
-  const attached = ledger.patchLiveQueuePayload({
-    id: rowId,
-    patch: { personResearch: { newsfeed: newsfeedPointer(outcome.feed) } },
-  });
-  return { outcome, attached };
+  // The capture is paid for by now: a failed pointer write must still hand
+  // back its cost, or the caller's cap under-counts.
+  try {
+    const attached = ledger.patchLiveQueuePayload({
+      id: rowId,
+      patch: { personResearch: { newsfeed: newsfeedPointer(outcome.feed) } },
+    });
+    return { outcome, attached };
+  } catch {
+    return { outcome, attached: false };
+  }
 }
 
 /** The prospect twin of `captureNewsfeedForQueueRow`: the pointer lands in the researched person half. */
@@ -479,9 +502,13 @@ export async function captureNewsfeedForProspect(
   if (!isRecord(half) || half["source"] !== "deepResearchPerson") {
     return { outcome, attached: false };
   }
-  ledger.mergeProspectDossierHalf(prospectId, "person", {
-    ...half,
-    newsfeed: newsfeedPointer(outcome.feed),
-  });
-  return { outcome, attached: true };
+  try {
+    ledger.mergeProspectDossierHalf(prospectId, "person", {
+      ...half,
+      newsfeed: newsfeedPointer(outcome.feed),
+    });
+    return { outcome, attached: true };
+  } catch {
+    return { outcome, attached: false };
+  }
 }

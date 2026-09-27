@@ -365,8 +365,10 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
   note(
     "Rows already drafted keep their draft — Regenerate on /queue to redraft from the researched facts.",
   );
-  if (opts.noNewsfeed || cappedAt !== null) return;
+  if (opts.noNewsfeed) return;
   // After every dossier is written, one at a time: the tool is rate-limited per wallet.
+  // A research run that hit its cap still runs this: cached captures attach for
+  // free, and the remaining budget (possibly none) bounds the paid ones.
   const items = researchedRows.flatMap((row) => {
     const fresh = ledger.getQueueRow(row.id);
     const url = fresh ? newsfeedSeedForPayload(parsePayload(fresh)) : null;
@@ -409,7 +411,7 @@ async function newsfeedOnly(rows: CandidateRow[], opts: ResearchQueueOpts): Prom
     if (
       !opts.refresh &&
       opts.id === undefined &&
-      hasFreshPointer(personResearchOf(payload)?.newsfeed)
+      hasFreshPointer(personResearchOf(payload)?.newsfeed, url)
     ) {
       current++;
       continue;

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The backfill's newsfeed pass: bounded by --max-cost-usd, never buying under
 // --cache-only, and skipping rows whose capture is still current.
 
+const cachedUrls = new Set<string>();
 const calls: Array<{ id: number; opts: { cacheOnly?: boolean; remainingUsd?: number } }> = [];
 
 vi.mock("@oneshot-gtm/find", async () => {
@@ -33,6 +34,8 @@ vi.mock("@oneshot-gtm/find", async () => {
     captureNewsfeedForQueueRow: capture,
     captureNewsfeedForProspect: capture,
     isNewsfeedCircuitOpen: () => false,
+    getCachedNewsfeed: (url: string) =>
+      cachedUrls.has(url) ? { url, fetchedAt: "", posts: [] } : null,
   };
 });
 
@@ -47,6 +50,7 @@ const items = [1, 2, 3, 4].map((id) => ({
 
 beforeEach(() => {
   calls.length = 0;
+  cachedUrls.clear();
 });
 
 describe("runNewsfeedPass", () => {
@@ -55,6 +59,8 @@ describe("runNewsfeedPass", () => {
     expect(tally.captured).toBe(2);
     expect(tally.costUsd).toBeCloseTo(0.14, 5);
     expect(tally.cappedAt).toBe(2);
+    // Past the cap it keeps walking, so a cached capture later in the list still attaches.
+    expect(calls.map((c) => c.id)).toEqual([1, 2, 3, 4]);
   });
 
   it("passes cache-only through, so nothing is bought", async () => {
@@ -66,10 +72,21 @@ describe("runNewsfeedPass", () => {
 });
 
 describe("hasFreshPointer", () => {
-  it("is fresh inside 14 days and stale after", () => {
-    const now = Date.parse("2026-09-27T00:00:00Z");
-    expect(hasFreshPointer({ fetchedAt: "2026-09-20T00:00:00Z" }, now)).toBe(true);
-    expect(hasFreshPointer({ fetchedAt: "2026-09-01T00:00:00Z" }, now)).toBe(false);
-    expect(hasFreshPointer(null, now)).toBe(false);
+  const url = "https://www.linkedin.com/in/pat";
+  const now = Date.parse("2026-09-27T00:00:00Z");
+
+  it("is fresh inside 14 days, for this profile, while the posts are cached", () => {
+    cachedUrls.add(url);
+    expect(hasFreshPointer({ url, fetchedAt: "2026-09-20T00:00:00Z" }, url, now)).toBe(true);
+    expect(hasFreshPointer({ url, fetchedAt: "2026-09-01T00:00:00Z" }, url, now)).toBe(false);
+    expect(hasFreshPointer(null, url, now)).toBe(false);
+  });
+
+  it("is not fresh for a different profile or when the cache entry is gone", () => {
+    cachedUrls.add(url);
+    const recent = "2026-09-20T00:00:00Z";
+    expect(hasFreshPointer({ url: "https://x.com/pat", fetchedAt: recent }, url, now)).toBe(false);
+    cachedUrls.clear();
+    expect(hasFreshPointer({ url, fetchedAt: recent }, url, now)).toBe(false);
   });
 });

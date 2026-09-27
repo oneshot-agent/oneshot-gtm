@@ -33,11 +33,19 @@ export interface NewsfeedTally {
   haltedAt: number | null;
 }
 
-/** A pointer younger than the cache TTL: the capture is still current. */
-export function hasFreshPointer(pointer: unknown, now = Date.now()): boolean {
+/**
+ * The row's capture is current: its pointer names the profile this run would
+ * capture, is younger than the cache TTL, and the posts are still cached. A
+ * pointer for a different profile (the row gained a LinkedIn URL since) or one
+ * whose cache entry is gone is not current.
+ */
+export function hasFreshPointer(pointer: unknown, url: string, now = Date.now()): boolean {
   if (!pointer || typeof pointer !== "object") return false;
-  const at = Date.parse((pointer as Partial<PersonResearchNewsfeed>).fetchedAt ?? "");
-  return !Number.isNaN(at) && now - at < NEWSFEED_CACHE_TTL_MS;
+  const value = pointer as Partial<PersonResearchNewsfeed>;
+  if (value.url !== url) return false;
+  const at = Date.parse(value.fetchedAt ?? "");
+  if (Number.isNaN(at) || now - at >= NEWSFEED_CACHE_TTL_MS) return false;
+  return getCachedNewsfeed(url) !== null;
 }
 
 /** One item per row; two rows for the same profile share one capture through the cache. */
@@ -115,9 +123,12 @@ export async function runNewsfeedPass(
       continue;
     }
     const { outcome } = result;
+    // Past the cap, keep walking: a cached capture still attaches for free,
+    // and every uncached one skips without a call.
     if (outcome.status === "skipped" && outcome.reason === "cost-cap") {
-      tally.cappedAt = index;
-      break;
+      tally.cappedAt ??= index;
+      tally.skipped++;
+      continue;
     }
     if (outcome.status === "skipped" && outcome.reason === "circuit-open") {
       tally.haltedAt = index;

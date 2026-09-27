@@ -332,8 +332,10 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
       `${c.dim("re-judged pass:")} ${pass}  ${c.dim("re-judged reject:")} ${reject}  ` +
       `${c.dim("spent:")} $${costUsd.toFixed(2)}`,
   );
-  if (opts.noNewsfeed || cappedAt !== null) return;
+  if (opts.noNewsfeed) return;
   // After every dossier is written, one at a time: the tool is rate-limited per wallet.
+  // A research run that hit its cap still runs this: cached captures attach for
+  // free, and the remaining budget (possibly none) bounds the paid ones.
   const items = writtenIds.flatMap((id) => {
     const p = ledger.getProspectById(id);
     const url = p ? newsfeedSeedForProspect(p) : null;
@@ -373,7 +375,7 @@ async function prospectNewsfeedOnly(
     const half = readPersonHalf(row.dossier_json);
     const pointer =
       half && typeof half === "object" ? (half as Record<string, unknown>)["newsfeed"] : null;
-    if (!opts.refresh && !opts.id && hasFreshPointer(pointer)) {
+    if (!opts.refresh && !opts.id && hasFreshPointer(pointer, url)) {
       current++;
       continue;
     }

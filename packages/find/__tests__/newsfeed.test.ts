@@ -205,6 +205,18 @@ describe("safePersonNewsfeed", () => {
     expect(state.cache.has(`newsfeed:${LI}`)).toBe(true);
   });
 
+  it("holds the slot until a call abandoned at the deadline settles", async () => {
+    state.behaviour = ["hang", "ok"];
+    const [first, second] = await Promise.all([
+      nf.safePersonNewsfeed("https://www.linkedin.com/in/a", CTX),
+      nf.safePersonNewsfeed("https://www.linkedin.com/in/b", CTX),
+    ]);
+    expect(first.status).toBe("failed");
+    expect(second.status).toBe("captured");
+    // The second call never overlapped the one still running past its deadline.
+    expect(state.maxInFlight).toBe(1);
+  });
+
   it("runs one call at a time whatever the caller's concurrency", async () => {
     await Promise.all(
       ["a", "b", "c", "d"].map((h) =>
@@ -256,6 +268,31 @@ describe("pointer on the dossier", () => {
       newestAt: "2026-09-25T09:00:00.000Z",
     });
     expect(JSON.stringify(state.patches)).not.toContain("Shipped v2");
+  });
+
+  it("still reports the paid capture when the pointer write throws", async () => {
+    state.queue.set(9, {
+      id: 9,
+      payload_json: JSON.stringify({
+        linkedinUrl: LI,
+        personResearch: { version: 1, status: "partial", organizations: [] },
+      }),
+    });
+    const throwing = state.patches;
+    state.patches = new Proxy(throwing, {
+      get(target, prop) {
+        if (prop === "push") {
+          return () => {
+            throw new Error("database is locked");
+          };
+        }
+        return Reflect.get(target, prop);
+      },
+    });
+    const out = await nf.captureNewsfeedForQueueRow(9, "test-play");
+    state.patches = throwing;
+    expect(out?.attached).toBe(false);
+    expect(out?.outcome).toMatchObject({ status: "captured", costUsd: 0.07 });
   });
 
   it("keeps posts in the cache only for a row without a dossier", async () => {
