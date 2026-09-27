@@ -12,6 +12,7 @@ import type { Ledger as LedgerType } from "@oneshot-gtm/core";
 let ledger: LedgerType;
 let dbPath: string;
 let conversation: { conversationId: string; accountId: string; workspace: string } | null = null;
+let messageText = "Thanks for connecting — how are you handling review today?";
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -30,9 +31,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
   return {
     ...actual,
     loadPrompt: () => "prompt",
-    complete: async () => ({
-      content: "Thanks for connecting — how are you handling review today?",
-    }),
+    complete: async () => ({ content: messageText }),
   };
 });
 
@@ -80,6 +79,7 @@ beforeEach(() => {
     source: "luma-events",
   });
   conversation = null;
+  messageText = "Thanks for connecting — how are you handling review today?";
 });
 
 afterEach(() => {
@@ -183,6 +183,70 @@ describe("LinkedIn cadence", () => {
     const preview = await previewCadenceStep({ prospectId, playName: "luma-events" });
     expect(preview).toMatchObject({ subject: "LinkedIn message", flags: [] });
     expect(preview.body).toContain("Thanks for connecting");
+  });
+});
+
+describe("LinkedIn cadence edge cases", () => {
+  it("times out on the newest invite and withdraws that one", async () => {
+    inviteSentDaysAgo(30);
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "luma-events",
+      stepIndex: 0,
+      channel: "linkedin",
+      status: "withdrawn",
+      metadata: { invitationId: "inv-1" },
+    });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "luma-events",
+      stepIndex: 0,
+      channel: "linkedin",
+      status: "sent",
+      metadata: { note: "again", invitationId: "inv-2" },
+    });
+    enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
+    dueNow("luma-events");
+    const calls: Array<Record<string, unknown>> = [];
+    const out = await runCadenceStepForProspect({
+      prospectId,
+      playName: "luma-events",
+      dryRun: false,
+      linkedIn: async (_w, op) => {
+        calls.push(op as Record<string, unknown>);
+        return { status: "withdrawn" };
+      },
+    });
+    // The fresh invite is inside its window: wait, withdraw nothing.
+    expect(out.action).toBe("waiting");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("a failed withdrawal keeps the cadence and retries tomorrow", async () => {
+    inviteSentDaysAgo(25);
+    enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
+    dueNow("luma-events");
+    const out = await runCadenceStepForProspect({
+      prospectId,
+      playName: "luma-events",
+      dryRun: false,
+      linkedIn: async () => {
+        throw new Error("Tool request failed");
+      },
+    });
+    expect(out.action).toBe("waiting");
+    const cadence = ledger.getCadence(prospectId, "luma-events")!;
+    expect(cadence.status).toBe("active");
+    expect(Date.parse(cadence.next_due_at!)).toBeGreaterThan(Date.now() + 23 * 3600 * 1000);
+  });
+
+  it("flags a message over the LinkedIn limit so it can't be sent as is", async () => {
+    inviteSentDaysAgo(3);
+    enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
+    conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "gtm" };
+    messageText = "x".repeat(401);
+    const preview = await previewCadenceStep({ prospectId, playName: "luma-events" });
+    expect(preview.flags).toEqual(["too-long: 401/400 characters"]);
   });
 });
 

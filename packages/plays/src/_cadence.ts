@@ -1720,7 +1720,9 @@ export async function previewCadenceStep(input: {
             ...ledger.recentSentEmailBodies({ playName: input.playName, stepIndex: nextIndex }),
           ]),
         ]
-      : [];
+      : built.kind === "linkedin_message" && body.length > LINKEDIN_MESSAGE_MAX_CHARS
+        ? [`too-long: ${body.length}/${LINKEDIN_MESSAGE_MAX_CHARS} characters`]
+        : [];
   ledger.setCadenceDraft({
     prospectId: input.prospectId,
     playName: input.playName,
@@ -2549,9 +2551,12 @@ async function awaitLinkedInAcceptance(
   ) {
     return null;
   }
+  // The newest invite is the one pending: an earlier one may have been
+  // withdrawn by hand and the person invited again.
   const invite = ledger
     .listLinkedInInviteEvents(opts.prospectId, opts.playName)
-    .find((e) => e.status === "sent");
+    .filter((e) => e.status === "sent")
+    .at(-1);
   const invitedAt = invite ? Date.parse(sqliteToIso(invite.created_at)) : Date.now();
   const days = (Date.now() - invitedAt) / (24 * 3600 * 1000);
   if (days < LINKEDIN_INVITE_TIMEOUT_DAYS) {
@@ -2587,7 +2592,7 @@ async function awaitLinkedInAcceptance(
         kind: "withdraw",
         accountId: account.accountId,
         invitationId,
-        idempotencyKey: `gtm:${currentWorkspaceName()}:cadence:${opts.prospectId}:${opts.playName}:withdraw`,
+        idempotencyKey: `gtm:${currentWorkspaceName()}:cadence:${opts.prospectId}:${opts.playName}:withdraw:${invitationId}`,
         playName: opts.playName,
       })) as { status?: string };
       withdrawStatus = res.status ?? null;
@@ -2605,6 +2610,19 @@ async function awaitLinkedInAcceptance(
         { message_120: ((err as Error).message ?? "").slice(0, 120) },
         "warn",
       );
+      // Leave the invite's cadence running and try again tomorrow: stopping
+      // here would strand the invite pending with nothing to retry it.
+      ledger.postponeCadence({
+        prospectId: opts.prospectId,
+        playName: opts.playName,
+        nextDueAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+      });
+      return {
+        action: "waiting",
+        payload: null,
+        receiptIds: [],
+        note: `${note} — withdraw failed, retrying tomorrow`,
+      };
     }
   }
   ledger.stopCadence({
