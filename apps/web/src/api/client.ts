@@ -474,6 +474,12 @@ export const api = {
   // sequence event + prospect and flips the row to sent. No transport.
   markSent: (id: number) =>
     postJson<{ ok: boolean; prospectId: number }>(`/queue/${id}/mark-sent`, {}),
+  // Withdraw the LinkedIn invite a sent row went out with (OneShot's withdraw route).
+  withdrawInvite: (id: number) =>
+    postJson<{ ok: boolean; status: string | null }>(`/queue/${id}/withdraw-invite`, {}),
+  // Move an unsent row to another channel; its draft is dropped for a redraft.
+  setQueueChannel: (id: number, channel: "email" | "linkedin" | "x") =>
+    postJson<{ ok: boolean; channel: string }>(`/queue/${id}/channel`, { channel }),
   // Hand the row to another workspace's queue (started if needed); the row
   // here is rejected with a "moved to" note once the destination holds it.
   moveQueueRow: (id: number, workspace: string) =>

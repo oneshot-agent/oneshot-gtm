@@ -43,9 +43,12 @@ const ledgerStub = {
 
 const runStackConsolidationMock = vi.fn();
 const runXAmplifyDmMock = vi.fn();
+const draftLinkedInNoteMock = vi.fn();
+const sendLinkedInInviteMock = vi.fn();
 
 vi.mock("@oneshot-gtm/core", async () => ({
   getLedger: () => ledgerStub,
+  currentWorkspaceName: () => "gtm",
   channelOf: (await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core"))
     .channelOf,
   firstTouchSender: (await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core"))
@@ -81,6 +84,8 @@ vi.mock("@oneshot-gtm/plays", () => {
   };
   return {
     PLAYS,
+    draftLinkedInNote: (...args: unknown[]) => draftLinkedInNoteMock(...args),
+    sendLinkedInInvite: (...args: unknown[]) => sendLinkedInInviteMock(...args),
     MANUAL_PLAYS: { "x-amplify-dm": { channel: "x" } },
     isSupportedPlay: (name: string) => Object.prototype.hasOwnProperty.call(PLAYS, name),
   };
@@ -386,4 +391,86 @@ it("drains with current source edges without rewriting the queue payload", async
     targets: [{ ...JSON.parse(original), yourEdge: "the product is the playbook" }],
   });
   expect(queued.payload_json).toBe(original);
+});
+
+describe("drainQueue LinkedIn rows", () => {
+  const linkedInRow = (over: Partial<QueueRow> = {}): QueueRow => ({
+    ...row(30, { email: undefined, linkedinUrl: "https://www.linkedin.com/in/dana" }),
+    play_name: "stack-consolidation",
+    channel: "linkedin",
+    ...over,
+  });
+  const sender = { accountId: "acct-1", call: vi.fn() };
+
+  beforeEach(() => {
+    draftLinkedInNoteMock.mockReset();
+    sendLinkedInInviteMock.mockReset();
+    draftLinkedInNoteMock.mockResolvedValue({
+      subject: "LinkedIn invite → Sam",
+      body: "fresh note",
+      flags: [],
+      voiceKey: null,
+    });
+    sendLinkedInInviteMock.mockResolvedValue({
+      sent: true,
+      status: "sent",
+      invitationId: "inv-1",
+      prospectId: 77,
+    });
+  });
+
+  it("sends a reviewed note as it stands and links the prospect the send recorded", async () => {
+    const reviewed = linkedInRow({
+      last_draft_json: JSON.stringify({
+        subject: "LinkedIn invite → Sam",
+        body: "reviewed note",
+        flags: [],
+      }),
+    });
+    ledgerStub.dequeueApproved.mockReturnValue([reviewed]);
+    const out = await drainQueue({
+      playName: "stack-consolidation",
+      dryRun: false,
+      linkedIn: sender,
+    });
+    expect(draftLinkedInNoteMock).not.toHaveBeenCalled();
+    expect(runStackConsolidationMock).not.toHaveBeenCalled();
+    expect(sendLinkedInInviteMock.mock.calls[0]![0]).toMatchObject({
+      note: "reviewed note",
+      workspace: "gtm",
+    });
+    expect(out.sent).toBe(1);
+    expect(ledgerStub.setQueueProspectId).toHaveBeenCalledWith(30, 77);
+  });
+
+  it("drafts a note when the row has none, and never sends without a LinkedIn account", async () => {
+    ledgerStub.dequeueApproved.mockReturnValue([linkedInRow()]);
+    const out = await drainQueue({
+      playName: "stack-consolidation",
+      dryRun: false,
+      linkedIn: null,
+    });
+    expect(draftLinkedInNoteMock).toHaveBeenCalledTimes(1);
+    expect(sendLinkedInInviteMock).not.toHaveBeenCalled();
+    expect(out.sent).toBe(0);
+    const saved = ledgerStub.setQueueDraft.mock.calls.at(-1)![0] as { draft: { flags: string[] } };
+    expect(saved.draft.flags[0]).toMatch(/^linkedin-not-connected/);
+  });
+
+  it("keeps a flagged note as a draft instead of sending it", async () => {
+    draftLinkedInNoteMock.mockResolvedValue({
+      subject: "s",
+      body: "x".repeat(230),
+      flags: ["note-too-long: 230/200 characters"],
+      voiceKey: null,
+    });
+    ledgerStub.dequeueApproved.mockReturnValue([linkedInRow()]);
+    const out = await drainQueue({
+      playName: "stack-consolidation",
+      dryRun: false,
+      linkedIn: sender,
+    });
+    expect(sendLinkedInInviteMock).not.toHaveBeenCalled();
+    expect(out.sent).toBe(0);
+  });
 });

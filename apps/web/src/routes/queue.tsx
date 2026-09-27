@@ -73,6 +73,7 @@ import {
   type RejectReasonSource,
 } from "../lib/rejectReason.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
+import { CHANNEL_LABELS, CHANNEL_MAX_CHARS, reachableChannels } from "../lib/channels.ts";
 import { heldSummary } from "../lib/flagLabels.ts";
 import { caseRows, personResearchBadge, personResearchRows } from "../lib/queueCase.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
@@ -1264,6 +1265,59 @@ function DraftSection({
       toast.error(`couldn't record · ${err.message}`);
     },
   });
+  // LinkedIn invites can be withdrawn once sent; an unsent row can move to any
+  // channel its person has an address on (its draft is then rewritten).
+  const withdrawInvite = useMutation({
+    mutationFn: () => api.withdrawInvite(id),
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      toast.success(
+        `invite ${res.status === "not_pending" ? "already accepted or closed" : "withdrawn"}`,
+      );
+    },
+    onError: (err) => toast.error(`couldn't withdraw · ${err.message}`),
+  });
+  const switchChannel = useMutation({
+    mutationFn: (next: QueueRowView["channel"]) => api.setQueueChannel(id, next),
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      toast.success(`moved to ${res.channel} · regenerate to draft it`);
+    },
+    onError: (err) => toast.error(`couldn't switch channel · ${err.message}`),
+  });
+  const reachable = reachableChannels(payload);
+  const channelButtons = (
+    <>
+      {channel === "linkedin" && status === "sent" && (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={withdrawInvite.isPending}
+          onClick={() => withdrawInvite.mutate()}
+          {...readOnly}
+          title="Withdraw the connection request (never removes an accepted connection)"
+        >
+          {withdrawInvite.isPending ? "Withdrawing…" : "Withdraw invite"}
+        </Button>
+      )}
+      {status !== "sent" && reachable.length > 1 && (
+        <select
+          aria-label="Channel"
+          className="rounded border border-ink-rule bg-transparent px-1 font-mono text-[11px] text-ink-cream-2"
+          value={channel}
+          disabled={switchChannel.isPending}
+          onChange={(e) => switchChannel.mutate(e.target.value as QueueRowView["channel"])}
+          title="Channel for this person's first touch"
+        >
+          {reachable.map((c) => (
+            <option key={c} value={c}>
+              {CHANNEL_LABELS[c]}
+            </option>
+          ))}
+        </select>
+      )}
+    </>
+  );
   // Recording a LinkedIn reply used to live only on /cadences, which is a join
   // on `cadence_state` — so it was unreachable for every one-touch play. All
   // 130 luma-events prospects were in that hole: emailed, never enrolled in a
@@ -1439,6 +1493,7 @@ function DraftSection({
                 before the LinkedIn control rendered — so exactly the rows most
                 likely to have been replied to by hand could not record one. */}
             {linkedinReplyButton}
+            {channelButtons}
             {manualButtons}
             {sendButton}
             {draftButton}
@@ -1473,6 +1528,8 @@ function DraftSection({
       meta={
         <span title={draftedAt ? `Drafted ${timeAgo(draftedAt)}` : undefined}>
           {draft.sent ? "Sent" : "Draft"}
+          {CHANNEL_MAX_CHARS[channel] != null &&
+            ` · ${draft.body.length}/${CHANNEL_MAX_CHARS[channel]} characters`}
         </span>
       }
       subject={draft.subject}
@@ -1530,6 +1587,7 @@ function DraftSection({
         right: (
           <>
             {linkedinReplyButton}
+            {channelButtons}
             {manualButtons}
             {sendButton}
           </>

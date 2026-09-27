@@ -745,3 +745,19 @@ let singleton: LinkedInInboxStore | undefined;
 export function getLinkedInInboxStore() {
   return (singleton ??= new LinkedInInboxStore());
 }
+
+/**
+ * The connected LinkedIn account outreach invites go out from, and the
+ * workspace that owns it (OneShot calls must run as that workspace's wallet).
+ * Prefers an account granted `invite`; falls back to any connected one so the
+ * invite call itself reports the missing permission. Null when none is
+ * connected.
+ */
+export function linkedInOutreachAccount(): { workspace: string; accountId: string } | null {
+  const connected = getLinkedInInboxStore()
+    .accounts()
+    .filter((a) => !a.removedAt && a.account.status === "connected");
+  const pick =
+    connected.find((a) => a.account.allowed_actions.includes("invite")) ?? connected[0] ?? null;
+  return pick ? { workspace: pick.workspace, accountId: pick.account.id } : null;
+}

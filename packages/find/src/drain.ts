@@ -6,16 +6,33 @@ import {
   type ProspectRecord,
   type QueueRow,
   channelOf,
+  currentWorkspaceName,
   firstTouchSender,
 } from "@oneshot-gtm/core";
-import { type DraftedRow, isSupportedPlay, PLAYS } from "@oneshot-gtm/plays";
+import {
+  type DraftedRow,
+  draftLinkedInNote,
+  isSupportedPlay,
+  type LinkedInSender,
+  PLAYS,
+  sendLinkedInInvite,
+} from "@oneshot-gtm/plays";
 import { resolveQueueTarget } from "./queue-target.ts";
 
 export interface DrainOpts {
   playName: string;
   limit?: number;
   dryRun: boolean;
+  /**
+   * How to reach OneShot for LinkedIn rows (channels.ts): the connected
+   * account and a caller that runs as the workspace owning it. Absent or null
+   * → LinkedIn rows are drafted and flagged, never sent.
+   */
+  linkedIn?: LinkedInSender | null;
 }
+
+/** A drafted row, plus the prospect a non-email send already recorded. */
+type DrainDraft = DraftedRow & { prospectId?: number };
 
 export interface DrainOutcome {
   drained: number;
@@ -122,7 +139,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
   try {
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r]!;
-      let draft: DraftedRow;
+      let draft: DrainDraft;
       try {
         draft = await dispatchOneTarget(opts, row);
       } catch (err) {
@@ -166,7 +183,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
         });
         if (draft.sent && !opts.dryRun) {
           ledger.setQueueStatus({ id: row.id, status: "sent" });
-          const prospectId = backfillProspectId(row);
+          const prospectId = draft.prospectId ?? backfillProspectId(row);
           if (prospectId != null) {
             try {
               ledger.setQueueProspectId(row.id, prospectId);
@@ -192,7 +209,8 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
   return outcome;
 }
 
-async function dispatchOneTarget(opts: DrainOpts, row: QueueRow): Promise<DraftedRow> {
+async function dispatchOneTarget(opts: DrainOpts, row: QueueRow): Promise<DrainDraft> {
+  if (channelOf(row.channel) === "linkedin") return dispatchLinkedIn(opts, row);
   const play = PLAYS[opts.playName];
   if (!play) throw new Error(`drain: unsupported play '${opts.playName}'`);
   const target = resolveQueueTarget(row);
@@ -270,3 +288,52 @@ export function backfillProspectId(row: QueueRow | null): number | null {
 }
 
 export type { ProspectRecord };
+
+/**
+ * A LinkedIn row: the connection-request note instead of the play's email.
+ * A clean note already on the row (reviewed on /queue) is sent as it stands;
+ * otherwise one is drafted, and sent only when nothing flagged it.
+ */
+async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDraft> {
+  const target = resolveQueueTarget(row);
+  const linkedInRow = {
+    id: row.id,
+    playName: row.play_name,
+    payload: target && typeof target === "object" ? (target as Record<string, unknown>) : {},
+    notes: row.notes,
+  };
+  const reviewed = hasCleanDraft(row)
+    ? (JSON.parse(row.last_draft_json!) as { subject?: string; body: string })
+    : null;
+  const note = reviewed
+    ? {
+        subject: reviewed.subject ?? "LinkedIn invite",
+        body: reviewed.body,
+        flags: [],
+        voiceKey: null,
+      }
+    : await draftLinkedInNote(linkedInRow);
+  const base: DrainDraft = {
+    subject: note.subject,
+    body: note.body,
+    flags: note.flags,
+    sent: false,
+    receiptIds: [],
+    ...(note.voiceKey ? { voiceKey: note.voiceKey } : {}),
+  };
+  if (opts.dryRun || note.flags.length > 0) return base;
+  if (!opts.linkedIn) {
+    return {
+      ...base,
+      flags: ["linkedin-not-connected: connect LinkedIn with invite permission on /setup"],
+    };
+  }
+  const sent = await sendLinkedInInvite({
+    row: linkedInRow,
+    note: note.body,
+    sender: opts.linkedIn,
+    workspace: currentWorkspaceName(),
+  });
+  if (!sent.sent) return { ...base, flags: sent.flags };
+  return { ...base, sent: true, prospectId: sent.prospectId };
+}

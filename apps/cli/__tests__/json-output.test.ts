@@ -80,6 +80,9 @@ let workspaceRegistryFixture: { default: string; workspaces: Record<string, Work
 let currentWorkspaceFixture = "default";
 
 vi.mock("@oneshot-gtm/core", () => ({
+  // The drain command looks for a LinkedIn account to send invites from.
+  linkedInOutreachAccount: () => null,
+  linkedInSdk: async () => ({}),
   loadConfig: () => configFixture,
   resolveIdentities: () => identitiesFixture,
   identityCapacities: () => capsFixture,

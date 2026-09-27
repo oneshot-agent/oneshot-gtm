@@ -7,6 +7,7 @@ import {
   type TriggerRunOutcome,
 } from "@oneshot-gtm/find";
 import { readFile } from "node:fs/promises";
+import { currentWorkspaceName, linkedInOutreachAccount, linkedInSdk } from "@oneshot-gtm/core";
 import {
   bail,
   bailEmpty,
@@ -69,10 +70,18 @@ export async function commandFindDrain(opts: {
   header(`find drain ${opts.play} ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
   let result;
   try {
+    // The CLI can only call OneShot as its own workspace; a LinkedIn account
+    // connected under another workspace is reached from that workspace's
+    // dashboard instead.
+    const account = linkedInOutreachAccount();
     result = await drainQueue({
       playName: opts.play,
       limit: opts.limit ?? 10,
       dryRun: opts.dryRun,
+      linkedIn:
+        account && account.workspace === currentWorkspaceName()
+          ? { accountId: account.accountId, call: linkedInSdk }
+          : null,
     });
   } catch (err: unknown) {
     if (opts.json) {

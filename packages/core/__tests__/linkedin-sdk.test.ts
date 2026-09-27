@@ -42,7 +42,9 @@ it("submits a bounded history import without the rejected SDK timeout field and 
 
 it("requests additional permissions with a new hosted intent", async () => {
   await linkedInSdk({ kind: "connect", accountId: "account", upgrade: true });
-  expect(connect).toHaveBeenCalledWith({ requestedActions: ["read", "reply", "view_profile"] });
+  expect(connect).toHaveBeenCalledWith({
+    requestedActions: ["read", "reply", "view_profile", "invite"],
+  });
   expect(reconnect).not.toHaveBeenCalled();
 });
 it("resolves profiles silently with a persisted idempotency key and no unsupported timeout", async () => {
@@ -62,11 +64,11 @@ it("resolves profiles silently with a persisted idempotency key and no unsupport
   });
 });
 
-it("requests read, reply, and profile access on the very first login", async () => {
+it("requests read, reply, profile and invite access on the very first login", async () => {
   connect.mockClear();
   await linkedInSdk({ kind: "connect" });
   expect(connect).toHaveBeenCalledExactlyOnceWith({
-    requestedActions: ["read", "reply", "view_profile"],
+    requestedActions: ["read", "reply", "view_profile", "invite"],
   });
 });
 

@@ -1032,6 +1032,26 @@ export class QueueStore {
     })();
   }
 
+  /**
+   * Move an unsent row to another outreach channel. Its draft was written for
+   * the old channel, so it is dropped (the open version closes as a redraft)
+   * and the next draft is written for the new one. False when the row is gone
+   * or already sent.
+   */
+  setQueueChannel(id: number, channel: OutreachChannel): boolean {
+    return this.db.transaction((): boolean => {
+      const changed = this.db
+        .prepare(
+          `UPDATE target_queue SET channel = ?, last_draft_json = NULL, last_drafted_at = NULL
+           WHERE id = ? AND status != 'sent' AND sent_at IS NULL`,
+        )
+        .run(channel, id).changes;
+      if (changed === 0) return false;
+      this.drafts.close({ queueId: id }, "discarded", "redraft");
+      return true;
+    })();
+  }
+
   /** Slot + identity for a queue row's draft versions; null when the row is gone. */
   private queueVersionKey(id: number): {
     slot: { queueId: number };

@@ -3,7 +3,12 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
-import { channelOf, firstTouchSender, isOutreachChannel } from "../src/channels.ts";
+import {
+  channelAddresses,
+  channelOf,
+  firstTouchSender,
+  isOutreachChannel,
+} from "../src/channels.ts";
 import { Ledger } from "../src/ledger.ts";
 
 describe("channel registry", () => {
@@ -18,10 +23,21 @@ describe("channel registry", () => {
     expect(channelOf("fax")).toBe("email");
   });
 
+  it("finds the channels a payload has an address for", () => {
+    expect(
+      channelAddresses({
+        email: "a@x.com",
+        linkedinUrl: "https://www.linkedin.com/in/a",
+        handle: "a",
+      }),
+    ).toEqual(["email", "linkedin", "x"]);
+    expect(channelAddresses({ linkedinUrl: "https://www.linkedin.com/company/acme" })).toEqual([]);
+  });
+
   it("says who sends each first touch today", () => {
     expect(firstTouchSender("email")).toBe("api");
     expect(firstTouchSender("x")).toBe("manual");
-    expect(firstTouchSender("linkedin")).toBe("unavailable");
+    expect(firstTouchSender("linkedin")).toBe("api");
   });
 });
 

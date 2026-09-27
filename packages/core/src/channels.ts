@@ -41,17 +41,32 @@ export function channelOf(value: unknown): OutreachChannel {
 }
 
 /**
- * Who sends a first touch on this channel today. X has no OneShot action API,
- * so X DMs are copied and sent by hand. LinkedIn invites are wired to the
- * OneShot invite route in a later change; until then nothing sends them.
+ * Who sends a first touch on this channel. Email and LinkedIn (a connection
+ * request with a note, OneShot's invite route) go through the API. X has no
+ * OneShot action API, so X DMs are copied and sent by hand.
  */
 export function firstTouchSender(channel: OutreachChannel): ChannelSender {
   switch (channel) {
     case "email":
+    case "linkedin":
       return "api";
     case "x":
       return "manual";
-    case "linkedin":
-      return "unavailable";
   }
+}
+
+/**
+ * The channels a person can be reached on, from what the row's payload
+ * carries: an email, a LinkedIn profile URL, an X handle or profile.
+ */
+export function channelAddresses(payload: Record<string, unknown>): OutreachChannel[] {
+  const has = (key: string) =>
+    typeof payload[key] === "string" && (payload[key] as string).trim() !== "";
+  const out: OutreachChannel[] = [];
+  if (has("email")) out.push("email");
+  if (has("linkedinUrl") && /linkedin\.com\/in\//i.test(payload["linkedinUrl"] as string)) {
+    out.push("linkedin");
+  }
+  if (has("handle") || has("twitterUrl")) out.push("x");
+  return out;
 }

@@ -3012,6 +3012,11 @@ export class Ledger {
     return this.queue.setQueueDraftIfCurrent(input);
   }
 
+  /** Move an unsent row to another outreach channel, dropping its draft — see QueueStore.setQueueChannel. */
+  setQueueChannel(id: number, channel: OutreachChannel): boolean {
+    return this.queue.setQueueChannel(id, channel);
+  }
+
   /** Drop a row's stored draft (and close its open version as a redraft) — see QueueStore.clearQueueDraft. */
   clearQueueDraft(id: number): void {
     this.queue.clearQueueDraft(id);

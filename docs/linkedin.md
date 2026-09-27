@@ -22,6 +22,16 @@ Conversations are matched to prospects and assigned to a workspace. Human replie
 
 The LinkedIn browser connection on `/setup` is for [live profile research](./finders.md), separate from the messaging account, though both start from the same **Connect LinkedIn** button there. You can also record a reply manually from the queue or cadences view, optionally including its text.
 
+## Connection requests as a first touch
+
+LinkedIn is an outreach channel, like email. A queue row on the LinkedIn channel gets a connection-request note (200 characters at most) drafted from the same signal the email would use: the event, repo, round or job that surfaced the person. Review it on `/queue`, then **Send** it (sent exactly as reviewed) or include the row in a drain. Invites go through OneShot's invite route from the connected account; no browser automation.
+
+- The account needs the `invite` permission. New connections request it; an older connection is reconnected from Setup.
+- OneShot enforces the account's daily invite limit (25 per UTC day by default) across every tool using the account. When it's reached, the drain stops and the remaining rows stay approved for the next day.
+- A sent invite can be withdrawn from its row (**Withdraw invite**). Withdrawing never removes an accepted connection.
+- Any unsent row can move to another channel its person has an address for (the channel menu on the row). Its draft is dropped; Regenerate writes one for the new channel.
+- A LinkedIn first touch does not start an email cadence.
+
 ## Reply preferences
 
 Replies learns writing preferences across LinkedIn conversations in the same workspace. New suggestions and Improve use the active preferences alongside your configured founder voice, conversation instructions, prospect angle, and product brief. Current instructions and founder voice take priority; learned preferences never establish product facts or promises. Existing drafts stay intact when learning changes.
