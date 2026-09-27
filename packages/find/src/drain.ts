@@ -32,7 +32,11 @@ export interface DrainOpts {
 }
 
 /** A drafted row, plus the prospect a non-email send already recorded. */
-type DrainDraft = DraftedRow & { prospectId?: number };
+type DrainDraft = DraftedRow & {
+  prospectId?: number;
+  /** The row could not go out as is: back to pending with its flags, for the founder. */
+  needsReview?: boolean;
+};
 
 export interface DrainOutcome {
   drained: number;
@@ -181,6 +185,11 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
           // this draft — recorded as `auto_sent`, apart from reviewed sends.
           sentBy: "machine",
         });
+        if (draft.needsReview && !draft.sent && !opts.dryRun) {
+          // Leaving it approved would re-draft or re-send the same refused
+          // note on every drain; pending keeps the flags in front of the founder.
+          ledger.setQueueStatus({ id: row.id, status: "pending", decidedBy: "machine" });
+        }
         if (draft.sent && !opts.dryRun) {
           ledger.setQueueStatus({ id: row.id, status: "sent" });
           const prospectId = draft.prospectId ?? backfillProspectId(row);
@@ -302,9 +311,12 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
     payload: target && typeof target === "object" ? (target as Record<string, unknown>) : {},
     notes: row.notes,
   };
-  const reviewed = hasCleanDraft(row)
-    ? (JSON.parse(row.last_draft_json!) as { subject?: string; body: string })
+  // Reviewed means clean: a saved note still carrying any flag is redrafted.
+  const saved = hasCleanDraft(row)
+    ? (JSON.parse(row.last_draft_json!) as { subject?: string; body: string; flags?: unknown })
     : null;
+  const reviewed =
+    saved && (!Array.isArray(saved.flags) || saved.flags.length === 0) ? saved : null;
   const note = reviewed
     ? {
         subject: reviewed.subject ?? "LinkedIn invite",
@@ -321,11 +333,13 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
     receiptIds: [],
     ...(note.voiceKey ? { voiceKey: note.voiceKey } : {}),
   };
-  if (opts.dryRun || note.flags.length > 0) return base;
+  if (opts.dryRun) return base;
+  if (note.flags.length > 0) return { ...base, needsReview: true };
   if (!opts.linkedIn) {
     return {
       ...base,
       flags: ["linkedin-not-connected: connect LinkedIn with invite permission on /setup"],
+      needsReview: true,
     };
   }
   const sent = await sendLinkedInInvite({
@@ -334,6 +348,6 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
     sender: opts.linkedIn,
     workspace: currentWorkspaceName(),
   });
-  if (!sent.sent) return { ...base, flags: sent.flags };
+  if (!sent.sent) return { ...base, flags: sent.flags, needsReview: true };
   return { ...base, sent: true, prospectId: sent.prospectId };
 }

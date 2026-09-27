@@ -6,6 +6,7 @@ import {
   isPersonResearchDossier,
   personRecordFromResearch,
   channelOf,
+  isWithdrawnStatus,
   firstTouchSender,
   linkedInOutreachAccount,
   isOutreachChannel,
@@ -1497,6 +1498,15 @@ export async function withdrawInviteRoute(
       idempotencyKey: `gtm:${currentWorkspaceName()}:queue:${id}:withdraw`,
       playName: row.play_name,
     })) as { status?: string };
+    // not_pending: the invite was accepted or is otherwise gone — nothing
+    // was withdrawn, so nothing is recorded.
+    if (!isWithdrawnStatus(result.status)) {
+      return jsonResponse(
+        { error: `the invite is no longer pending (${result.status ?? "unknown"})` },
+        409,
+        req,
+      );
+    }
     ledger.recordSequenceEvent({
       prospectId: row.prospect_id,
       playName: row.play_name,

@@ -1051,6 +1051,12 @@ export class QueueStore {
     const cutoff = new Date(Date.now() - (opts.leaseSeconds ?? 900) * 1000).toISOString();
     return this.db
       .transaction((): "changed" | "sent" | "busy" => {
+        const current = this.db
+          .query(`SELECT channel, status, sent_at FROM target_queue WHERE id = ?`)
+          .get(id) as { channel: string; status: string; sent_at: string | null } | null;
+        if (!current || current.status === "sent" || current.sent_at) return "sent";
+        // Already on this channel: nothing to switch, and its draft stays.
+        if (current.channel === channel) return "changed";
         const changed = this.db
           .prepare(
             `UPDATE target_queue SET channel = ?, last_draft_json = NULL, last_drafted_at = NULL

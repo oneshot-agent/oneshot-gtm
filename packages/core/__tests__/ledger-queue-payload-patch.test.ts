@@ -140,6 +140,16 @@ describe("atomic queue draft generation", () => {
 });
 
 describe("setQueueChannel", () => {
+  it("keeps the draft when asked for the channel the row is already on", () => {
+    const id = enqueue({ name: "A", email: "a@x.dev" });
+    ledger.setQueueDraft({
+      id,
+      draft: { subject: "s", body: "b", flags: [], sent: false, receiptIds: [], dryRun: true },
+    });
+    expect(ledger.setQueueChannel(id, "email")).toBe("changed");
+    expect(ledger.getQueueRow(id)!.last_draft_json).not.toBeNull();
+  });
+
   it("refuses while a send or a live drain lease holds the row", () => {
     const sending = enqueue({ name: "A" }, "approved");
     expect(

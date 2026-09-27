@@ -160,6 +160,13 @@ describe("withdraw-invite", () => {
     });
   });
 
+  it("records nothing when the invite was no longer pending", async () => {
+    linkedInResult = { status: "not_pending" };
+    const res = await withdrawInviteRoute(post(), { id: "1" });
+    expect(res.status).toBe(409);
+    expect(recorded).toHaveLength(0);
+  });
+
   it("refuses a second withdrawal and an unsent row", async () => {
     seqEvents.push({
       channel: "linkedin",

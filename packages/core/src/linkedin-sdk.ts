@@ -41,6 +41,17 @@ export type LinkedInOperation =
       playName: string;
     };
 
+/**
+ * Whether a withdraw result means our invite is no longer outstanding
+ * because of us: withdrawn now, cancelled before it went out, or already
+ * withdrawn. `not_pending` (accepted, or gone for another reason) is not.
+ */
+export function isWithdrawnStatus(status: string | null | undefined): boolean {
+  return (
+    status === "withdrawn" || status === "cancelled_before_send" || status === "already_withdrawn"
+  );
+}
+
 /** All messaging calls go through the SDK. Read operations never trigger a paid history sync. */
 export async function linkedInSdk(operation: LinkedInOperation): Promise<unknown> {
   if (demoMode()) throw new Error("LinkedIn is unavailable in demo mode");

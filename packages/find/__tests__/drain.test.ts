@@ -449,6 +449,38 @@ describe("drainQueue LinkedIn rows", () => {
     expect(saved.draft.flags[0]).toMatch(/^linkedin-not-connected/);
   });
 
+  it("a saved note that still carries a flag is not treated as reviewed", async () => {
+    const flagged = linkedInRow({
+      last_draft_json: JSON.stringify({
+        subject: "s",
+        body: "too long note",
+        flags: ["note-too-long: 230/200 characters"],
+      }),
+    });
+    ledgerStub.dequeueApproved.mockReturnValue([flagged]);
+    await drainQueue({ playName: "stack-consolidation", dryRun: false, linkedIn: sender });
+    expect(draftLinkedInNoteMock).toHaveBeenCalledTimes(1);
+    expect(sendLinkedInInviteMock.mock.calls[0]![0]).toMatchObject({ note: "fresh note" });
+  });
+
+  it("a refused invite goes back to pending with its flag, not round the drain again", async () => {
+    sendLinkedInInviteMock.mockResolvedValue({ sent: false, flags: ["linkedin-email-required"] });
+    ledgerStub.dequeueApproved.mockReturnValue([linkedInRow()]);
+    const out = await drainQueue({
+      playName: "stack-consolidation",
+      dryRun: false,
+      linkedIn: sender,
+    });
+    expect(out.sent).toBe(0);
+    expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({
+      id: 30,
+      status: "pending",
+      decidedBy: "machine",
+    });
+    const saved = ledgerStub.setQueueDraft.mock.calls.at(-1)![0] as { draft: { flags: string[] } };
+    expect(saved.draft.flags).toEqual(["linkedin-email-required"]);
+  });
+
   it("keeps a flagged note as a draft instead of sending it", async () => {
     draftLinkedInNoteMock.mockResolvedValue({
       subject: "s",
