@@ -27,6 +27,9 @@ function row(over: Partial<AngleUsageRow>): AngleUsageRow {
     autoSent: 0,
     replied: 0,
     reached: 0,
+    armOffered: 0,
+    armReached: 0,
+    armReplied: 0,
     ...over,
   };
 }
@@ -143,6 +146,7 @@ describe("toDraftVersionView", () => {
     angle_key: "a",
     angle_text: "A",
     angle_origin: "configured",
+    angle_assignment: null,
     outcome: "discarded",
     discard_reason: "rotate",
     voice_key: null,

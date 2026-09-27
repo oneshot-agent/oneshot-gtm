@@ -18,6 +18,7 @@ import {
   factTermsFrom,
   isAllowedDesignPartnerLoiBuyerType,
   lintEdge,
+  splitEdgeAngles,
   type EdgeLintContext,
 } from "@oneshot-gtm/plays";
 import type { RunTriggerResult, TriggerView } from "@oneshot-gtm/shared-types";
@@ -194,6 +195,17 @@ export async function setTriggerConfigRoute(
   if (!body.config || typeof body.config !== "object") {
     return jsonResponse({ error: "config (object) required" }, 400, req);
   }
+  // A refusal, unlike the warn-tier checks below: `angleAssignment` switches a
+  // measurement on, and a misspelled value would silently keep the fit
+  // classifier, so the founder would read a comparison that never ran.
+  const assignment = (body.config as Record<string, unknown>)["angleAssignment"];
+  if (assignment !== undefined && assignment !== "fit" && assignment !== "arm") {
+    return jsonResponse(
+      { error: "angleAssignment must be 'fit' (default) or 'arm' (even split across angles)" },
+      400,
+      req,
+    );
+  }
   const ledger = getLedger();
   const stored = ledger.getTrigger(name);
   if (!stored) {
@@ -223,6 +235,11 @@ export async function setTriggerConfigRoute(
         ? cfg["yourClaim"]
         : null;
   const warnings = edge ? lintEdge(edge, edgeLintContext()).map(describeEdgeWarning) : [];
+  if (assignment === "arm" && splitEdgeAngles(edge ?? "").length < 2) {
+    warnings.push(
+      "angleAssignment 'arm' splits prospects across the edge's angles — add at least two `//`-separated angles, or nothing is compared",
+    );
+  }
   // Warn-tier `play`/`buyerType` validation (issue #705): never a refusal —
   // the save above already happened — but a founder routing rows to
   // design-partner-loi with a missing/invalid buyerType should learn that

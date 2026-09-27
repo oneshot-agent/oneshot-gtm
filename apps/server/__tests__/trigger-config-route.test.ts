@@ -204,3 +204,45 @@ describe("setTriggerConfigRoute — design-partner-loi routing warnings (issue #
     ).toBe(false);
   });
 });
+
+describe("setTriggerConfigRoute — angleAssignment", () => {
+  it("refuses an unknown angleAssignment value and saves nothing", async () => {
+    const res = await setTriggerConfigRoute(
+      req({ config: { yourEdge: "a // b", angleAssignment: "arms" } }),
+      { name: "luma-events" },
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("angleAssignment");
+    expect(upserts).toHaveLength(0);
+    expect(configWrites).toHaveLength(0);
+  });
+
+  it("refuses a non-string angleAssignment", async () => {
+    const res = await setTriggerConfigRoute(
+      req({ config: { yourEdge: "a // b", angleAssignment: true } }),
+      { name: "luma-events" },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts 'arm' and 'fit'", async () => {
+    for (const value of ["arm", "fit"]) {
+      const res = await setTriggerConfigRoute(
+        req({ config: { yourEdge: "a // b", angleAssignment: value } }),
+        { name: "luma-events" },
+      );
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it("warns when 'arm' is set on an edge with fewer than two angles", async () => {
+    const res = await setTriggerConfigRoute(
+      req({ config: { yourEdge: "just one angle", angleAssignment: "arm" } }),
+      { name: "luma-events" },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { warnings: string[] };
+    expect(body.warnings.some((w) => w.includes("angleAssignment 'arm'"))).toBe(true);
+  });
+});

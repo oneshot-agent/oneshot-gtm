@@ -549,6 +549,38 @@ describe("aggregates", () => {
     expect(ledger.draftUsageByPlay()["other-play"]).toBeUndefined();
   });
 
+  it("records arm-assigned angles and counts them apart from fit picks", () => {
+    const play = "arm-play";
+    // An arm draft, sent; a fit draft on the same angle, sent; an arm draft still open.
+    const q1 = enqueue("arm1@x.dev", play);
+    ledger.setQueueDraft({
+      id: q1,
+      draft: draft({ sent: true, dryRun: false, angle: { ...ANGLE_A, assignment: "arm" } }),
+      sentBy: "human",
+    });
+    const q2 = enqueue("fit1@x.dev", play);
+    ledger.setQueueDraft({
+      id: q2,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_A }),
+      sentBy: "human",
+    });
+    const q3 = enqueue("arm2@x.dev", play);
+    ledger.setQueueDraft({ id: q3, draft: draft({ angle: { ...ANGLE_A, assignment: "arm" } }) });
+
+    const rows = ledger.draftVersionsFor({ queueId: q1 });
+    expect(rows[0]!.angle_assignment).toBe("arm");
+    expect(ledger.draftVersionsFor({ queueId: q2 })[0]!.angle_assignment).toBeNull();
+
+    const a = ledger.angleUsageByPlay()[play]!.find((r) => r.angleText === ANGLE_A.text)!;
+    expect(a).toMatchObject({
+      offered: 3,
+      reached: 2,
+      armOffered: 2,
+      armReached: 1,
+      armReplied: 0,
+    });
+  });
+
   it("credits one reply once, to the latest send in the slot", () => {
     const play = "double-send";
     const q1 = enqueue("dd@x.dev", play);

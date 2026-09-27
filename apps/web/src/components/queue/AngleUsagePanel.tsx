@@ -78,6 +78,19 @@ export function AngleUsagePanel({
           <Explain concept="firstTouchFormat" />
         </div>
       )}
+      {angleUsage.angles.some((a) => (a.armOffered ?? 0) > 0) && (
+        <div className="font-mono text-[11px] text-ink-faint">
+          {`angle arms · ${angleUsage.angles
+            .map((a, i) => {
+              const reached = a.armReached ?? 0;
+              const parts = [`offered ${a.armOffered ?? 0}`];
+              if (reached > 0) parts.push(replyLabel(a.armReplied ?? 0, reached, "people"));
+              return `#${i + 1} ${parts.join(" / ")}`;
+            })
+            .join(" · ")}`}
+          <Explain concept="angleArms" />
+        </div>
+      )}
       {!hasAny && (
         <div className="text-ink-faint">
           No angle has been put in front of you yet — counts appear once drafts are reviewed.

@@ -29,6 +29,8 @@ export type DraftAngleOrigin = "configured" | "generated";
 export interface DraftVersionAngle {
   text: string;
   origin: DraftAngleOrigin;
+  /** `arm` when the trigger's `angleAssignment` split assigned it; absent when chosen for fit. */
+  assignment?: "arm";
 }
 
 export interface DraftVersionRow {
@@ -44,6 +46,8 @@ export interface DraftVersionRow {
   angle_key: string | null;
   angle_text: string | null;
   angle_origin: DraftAngleOrigin | null;
+  /** `arm` when the angle was assigned by the trigger's even split; NULL when chosen for fit. */
+  angle_assignment: "arm" | null;
   outcome: DraftVersionOutcome;
   discard_reason: DraftDiscardReason | null;
   /** Hash of the founder voice card in the prompt; NULL when none was set. */
@@ -77,6 +81,10 @@ export interface AngleUsageRow {
   replied: number;
   /** Distinct prospects it was sent to at all, reviewed or unattended — the reply-rate denominator. */
   reached: number;
+  /** `offered` / `reached` / `replied` restricted to arm-assigned versions (`angle_assignment = 'arm'`). */
+  armOffered: number;
+  armReached: number;
+  armReplied: number;
 }
 
 export interface DraftUsage {
@@ -105,10 +113,10 @@ export function angleTextKey(text: string): string {
 /** Shape-check an `angle` value a draft envelope carries (`LastDraft.angle`, a cadence payload's `angle`). */
 export function draftVersionAngle(value: unknown): DraftVersionAngle | null {
   if (!value || typeof value !== "object") return null;
-  const a = value as { text?: unknown; origin?: unknown };
+  const a = value as { text?: unknown; origin?: unknown; assignment?: unknown };
   if (typeof a.text !== "string" || !a.text.trim()) return null;
   const origin: DraftAngleOrigin = a.origin === "generated" ? "generated" : "configured";
-  return { text: a.text.trim(), origin };
+  return { text: a.text.trim(), origin, ...(a.assignment === "arm" ? { assignment: "arm" } : {}) };
 }
 
 /**
@@ -397,9 +405,9 @@ export class DraftVersionStore {
       .prepare(
         `INSERT INTO draft_versions(
            play_name, prospect_key, step_index, queue_id, prospect_id,
-           subject, body, flags_json, angle_key, angle_text, angle_origin,
+           subject, body, flags_json, angle_key, angle_text, angle_origin, angle_assignment,
            outcome, discard_reason, voice_key, format_key, channel, created_at, closed_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?)`,
       )
       .run(
         input.playName,
@@ -413,6 +421,7 @@ export class DraftVersionStore {
         angle ? angleTextKey(angle.text) : null,
         angle ? angle.text : null,
         angle ? angle.origin : null,
+        angle?.assignment === "arm" ? "arm" : null,
         input.outcome,
         input.voiceKey ?? null,
         input.formatKey ?? null,
@@ -448,7 +457,10 @@ export class DraftVersionStore {
                 COUNT(DISTINCT CASE WHEN outcome = 'sent' THEN prospect_key END) AS sent,
                 COUNT(DISTINCT CASE WHEN outcome = 'auto_sent' THEN prospect_key END) AS auto_sent,
                 COUNT(DISTINCT CASE WHEN ${DV_REPLIED} THEN prospect_key END) AS replied,
-                COUNT(DISTINCT CASE WHEN outcome IN ('sent', 'auto_sent') THEN prospect_key END) AS reached
+                COUNT(DISTINCT CASE WHEN outcome IN ('sent', 'auto_sent') THEN prospect_key END) AS reached,
+                COUNT(DISTINCT CASE WHEN angle_assignment = 'arm' THEN prospect_key END) AS arm_offered,
+                COUNT(DISTINCT CASE WHEN angle_assignment = 'arm' AND outcome IN ('sent', 'auto_sent') THEN prospect_key END) AS arm_reached,
+                COUNT(DISTINCT CASE WHEN angle_assignment = 'arm' AND ${DV_REPLIED} THEN prospect_key END) AS arm_replied
            FROM draft_versions dv
           WHERE angle_key IS NOT NULL
           GROUP BY play_name, angle_key
@@ -466,6 +478,9 @@ export class DraftVersionStore {
       auto_sent: number;
       replied: number;
       reached: number;
+      arm_offered: number;
+      arm_reached: number;
+      arm_replied: number;
     }>;
     const out: Record<string, AngleUsageRow[]> = {};
     for (const r of rows) {
@@ -480,6 +495,9 @@ export class DraftVersionStore {
         autoSent: r.auto_sent,
         replied: r.replied,
         reached: r.reached,
+        armOffered: r.arm_offered ?? 0,
+        armReached: r.arm_reached ?? 0,
+        armReplied: r.arm_replied ?? 0,
       });
     }
     return out;

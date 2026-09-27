@@ -2211,7 +2211,9 @@ export function buildFollowUpEmail(opts: {
     const edgeSelection = await followUpEdgeSelection(ctx.prospect, opts.playName, {
       rotateFrom,
     });
-    const edgeBlock = followUpEdgeBlock(edgeSelection?.angle ?? null);
+    const edgeBlock = followUpEdgeBlock(edgeSelection?.angle ?? null, {
+      sameAsIntro: edgeSelection?.method === "arm",
+    });
     // VOICE: the founder's register, when a card is set. The breakup step
     // gets the no-aphorism budget; every other follow-up the default one.
     const voice = voiceBlock(opts.promptName === "breakup-email" ? "breakup" : "followup");
@@ -2304,6 +2306,7 @@ export function buildFollowUpEmail(opts: {
               origin: "configured" as const,
               index: edgeSelection.index,
               count: edgeSelection.count,
+              ...(edgeSelection.method === "arm" ? { assignment: "arm" as const } : {}),
             },
           }
         : {}),

@@ -95,6 +95,10 @@ function counts(r: AngleUsageRow): Omit<AngleUsageView, "text"> {
     autoSent: r.autoSent,
     replied: r.replied,
     reached: r.reached,
+    // Only when an arm draft exists, so a fit-only trigger's view is unchanged.
+    ...(r.armOffered > 0
+      ? { armOffered: r.armOffered, armReached: r.armReached, armReplied: r.armReplied }
+      : {}),
   };
 }
 
@@ -119,16 +123,7 @@ export function angleUsageForEdge(
   for (const text of configured) {
     const row = byKey.get(angleTextKey(text));
     const c = row ? counts(row) : ZERO;
-    angles.push({
-      text,
-      offered: c.offered,
-      rotatedAway: c.rotatedAway,
-      redrafted: c.redrafted,
-      sent: c.sent,
-      autoSent: c.autoSent,
-      replied: c.replied,
-      reached: c.reached,
-    });
+    angles.push({ text, ...c });
   }
   const generated: AngleUsageView = { text: "generated", ...ZERO };
   for (const r of rows) {

@@ -1,6 +1,7 @@
 import { isPersonResearchDossier, loadConfig, personRecordFromResearch } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import {
+  angleAssignmentOf,
   angleTextKey,
   describeTargetForAngle,
   edgeFieldOf,
@@ -31,7 +32,8 @@ export function parseDraftAngle(value: unknown): DraftAngle | undefined {
             !["configured", "generated"].includes(v.origin),
         ))) ||
     (a.index !== undefined && (!Number.isInteger(a.index) || a.index < 0)) ||
-    (a.count !== undefined && (!Number.isInteger(a.count) || a.count < 1))
+    (a.count !== undefined && (!Number.isInteger(a.count) || a.count < 1)) ||
+    (a.assignment !== undefined && a.assignment !== "arm")
   )
     return;
   return a;
@@ -94,6 +96,7 @@ export async function draftAngleFor(input: {
     .filter((value): value is string => typeof value === "string")
     .join("\n");
   const description = describeTargetForAngle(target, research);
+  const assignment = angleAssignmentOf(target);
   if (!input.rotate) {
     if (!angles.length) return;
     const pick = await selectAngle({
@@ -101,12 +104,14 @@ export async function draftAngleFor(input: {
       prospectKey: String(target.email ?? target.founderEmail ?? ""),
       description,
       playName: input.playName,
+      assignment,
     });
     return {
       text: angles[pick.index]!,
       origin: "configured",
       index: pick.index,
       count: angles.length,
+      ...(pick.method === "arm" ? { assignment: "arm" as const } : {}),
       fingerprint,
       history: [],
     };
@@ -176,11 +181,14 @@ export async function draftAngleFor(input: {
   }
   let previousIndex = previous ? pool.findIndex((a) => a.text === previous.text) : -1;
   if (!previous && angles.length) {
+    // Rotating away from where the prospect would have started: under the
+    // arm split that is their arm, so the rotation moves off it.
     const pick = await selectAngle({
       edge,
       prospectKey: String(target.email ?? target.founderEmail ?? ""),
       description,
       playName: input.playName,
+      assignment,
     });
     previousIndex = pick.index;
   }

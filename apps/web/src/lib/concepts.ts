@@ -122,6 +122,11 @@ export const CONCEPTS = {
     body: "An opt-in test of the first email: standard against brief (at most 3 sentences, no opener about the reader). Each person stays in one arm; nothing switches automatically.",
     href: docs + "plays",
   },
+  angleArms: {
+    title: "Angle arms",
+    body: "With angleAssignment set to arm, each person gets one angle by an even split instead of by fit, and keeps it through the follow-ups, so the angles can be compared like for like. These counts include only those arm drafts.",
+    href: docs + "plays",
+  },
   edgeShape: {
     title: "Writing an edge",
     body: "3–4 angles, each opening with who it fits, then either a lesson (what failed and what you learned) or an opportunity backed by one concrete fact.",

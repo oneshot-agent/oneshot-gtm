@@ -101,6 +101,19 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       }
     },
   },
+  {
+    // Whether a draft's angle was assigned by the trigger's even split
+    // (`angleAssignment: "arm"`) rather than chosen for fit, so an angle
+    // comparison can read only the controlled arm drafts. NULL = fit.
+    version: 6,
+    name: "draft-versions-angle-assignment",
+    up: (db) => {
+      addColumnIfMissing(db, "draft_versions", "angle_assignment", "TEXT");
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_draft_versions_assignment ON draft_versions(play_name, angle_assignment)",
+      );
+    },
+  },
 ];
 
 export const LEDGER_SCHEMA_VERSION = LEDGER_MIGRATIONS[LEDGER_MIGRATIONS.length - 1]!.version;

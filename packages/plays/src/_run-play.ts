@@ -33,6 +33,7 @@ import {
 import { enrollInCadence, getSequence } from "./_cadence.ts";
 import {
   type AngleSelection,
+  angleAssignmentOf,
   angleCacheContext,
   describeTargetForAngle,
   edgeFieldOf,
@@ -304,6 +305,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
               description: describeTargetForAngle(rawTarget, prep.dossier),
               playName: def.playName,
               cacheContext: angleCacheContext(rawTarget),
+              assignment: angleAssignmentOf(rawTarget),
             });
             draftTarget = withSelectedAngle(target, edgeField, angleSelection.angle);
           } else if (angles.length === 1) {
@@ -487,6 +489,9 @@ export async function runEmailPlay<T, X = Record<string, never>>(
                   origin: "configured" as const,
                   index: angleSelection.index,
                   count: angleSelection.count,
+                  // Arm-assigned drafts are the controlled comparison; the
+                  // draft-version record keeps them apart from fit picks.
+                  ...(angleSelection.method === "arm" ? { assignment: "arm" as const } : {}),
                   // The same fingerprint the rotate module stamps, so a
                   // later regenerate/rotate treats this as a current pick.
                   fingerprint: positioningFingerprint(rawTarget[edgeField] as string),

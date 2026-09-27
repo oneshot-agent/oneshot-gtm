@@ -84,6 +84,14 @@ export function resolveTriggerOverlay(
   } else {
     delete resolved["firstTouchFormat"];
   }
+  // Angle assignment, read live for the same reason: `arm` assigns each
+  // prospect's angle by an even per-prospect split; anything else (absent,
+  // `fit`) keeps the fit classifier.
+  if (config["angleAssignment"] === "arm") {
+    resolved["angleAssignment"] = "arm";
+  } else {
+    delete resolved["angleAssignment"];
+  }
   const split = config["firstTouchSplit"];
   if (typeof split === "number" && Number.isFinite(split)) {
     resolved["firstTouchSplit"] = split;

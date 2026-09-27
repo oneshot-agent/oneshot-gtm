@@ -104,12 +104,57 @@ export function hashPick(prospectKey: string, count: number, excludeIndex: numbe
   return candidates[hash32(prospectKey.trim().toLowerCase()) % candidates.length]!;
 }
 
+/**
+ * How a trigger's multi-angle edge is resolved per prospect. `fit` (the
+ * default) asks the classifier which angle suits the person — good for
+ * sending, but it sends each angle to a different kind of reader, so the
+ * angles' outcomes can't be compared. `arm` gives every prospect one angle
+ * by an even, stable hash of their email, so each angle reaches a like-for-
+ * like share of the same finder's traffic: a controlled comparison.
+ */
+export type AngleAssignment = "fit" | "arm";
+
+/** The assignment a (trigger-overlaid) target opts into; anything but `arm` is `fit`. */
+export function angleAssignmentOf(target: object): AngleAssignment {
+  return (target as { angleAssignment?: unknown }).angleAssignment === "arm" ? "arm" : "fit";
+}
+
+/** Salt so the angle arm is independent of every other per-prospect hash (format arm, admission slot, fit fallback). */
+const ANGLE_ARM_SALT = "angle-arm:";
+
+/**
+ * murmur3's 32-bit finalizer. `hash32` is a polynomial hash, so a salt prefix
+ * only shifts it by a length-dependent constant and two salted splits of the
+ * same email stay correlated; this mix makes the salted buckets independent.
+ */
+function mix32(h: number): number {
+  let x = h >>> 0;
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x85ebca6b) >>> 0;
+  x ^= x >>> 13;
+  x = Math.imul(x, 0xc2b2ae35) >>> 0;
+  x ^= x >>> 16;
+  return x >>> 0;
+}
+
+/**
+ * The prospect's arm: an index into an edge of `count` angles, the same for
+ * the same email every time. Salted and mixed, so it is independent of the
+ * first-touch format arm and the fit fallback hash, and the two tests can
+ * run on one trigger without confounding.
+ */
+export function angleArmIndex(prospectKey: string, count: number): number {
+  if (count <= 1) return 0;
+  const bucket = mix32(hash32(ANGLE_ARM_SALT + prospectKey.trim().toLowerCase())) / 2 ** 32;
+  return Math.min(count - 1, Math.floor(bucket * count));
+}
+
 export interface AngleSelection {
   /** 0-based index into `splitEdgeAngles(edge)`. */
   index: number;
   angle: string;
   count: number;
-  method: "single" | "cached" | "classifier" | "hash";
+  method: "single" | "cached" | "classifier" | "hash" | "arm";
 }
 
 export interface SelectAngleInput {
@@ -127,6 +172,8 @@ export interface SelectAngleInput {
    * cache key is unchanged.
    */
   cacheContext?: string;
+  /** `arm` → the even per-prospect split, no classifier call. Absent / `fit` → unchanged. */
+  assignment?: AngleAssignment;
 }
 
 function cacheKeyFor(input: SelectAngleInput, excludeIndex: number | null): string {
@@ -173,6 +220,15 @@ export async function selectAngle(input: SelectAngleInput): Promise<AngleSelecti
     input.excludeIndex != null && input.excludeIndex >= 0 && input.excludeIndex < angles.length
       ? input.excludeIndex
       : null;
+  // Arm split: deterministic, so nothing is cached and no model is asked.
+  // An excluded arm (a caller rotating away from it) is not an arm pick any
+  // more; that case falls through to the fit path below.
+  if (input.assignment === "arm") {
+    const arm = angleArmIndex(input.prospectKey, angles.length);
+    if (arm !== exclude) {
+      return { index: arm, angle: angles[arm]!, count: angles.length, method: "arm" };
+    }
+  }
   const key = cacheKeyFor(input, exclude);
   const cached = readCached(key);
   if (cached != null && cached >= 0 && cached < angles.length && cached !== exclude) {
@@ -386,6 +442,18 @@ export async function followUpEdgeSelection(
     const frozen = splitEdgeAngles(frozenEdge);
     if (idx != null && idx >= 0 && idx < frozen.length) introText = frozen[idx]!;
   }
+  // Arm split: the whole cadence stays on the prospect's arm, so every step
+  // of the comparison measures one angle. The intro's angle when it is still
+  // in the edge (an edit that reorders angles must not move anyone), else the
+  // arm on the current edge. Only a founder's rotate leaves it, through the
+  // fit path below.
+  if (angleAssignmentOf(target) === "arm" && !opts.rotateFrom?.trim()) {
+    const introIndex = introText
+      ? angles.findIndex((a) => angleTextKey(a) === angleTextKey(introText!))
+      : -1;
+    const index = introIndex >= 0 ? introIndex : angleArmIndex(email, angles.length);
+    return { index, angle: angles[index]!, count: angles.length, method: "arm" };
+  }
   const excluded = new Set(
     [introText, opts.rotateFrom].filter((t): t is string => !!t?.trim()).map(angleTextKey),
   );
@@ -413,8 +481,19 @@ export async function followUpEdgeSelection(
  * when the play's sent row carries no multi-angle edge — byte-identical
  * output to before.
  */
-export function followUpEdgeBlock(angle: string | null): string | null {
+export function followUpEdgeBlock(
+  angle: string | null,
+  opts: { sameAsIntro?: boolean } = {},
+): string | null {
   if (!angle?.trim()) return null;
+  if (opts.sameAsIntro) {
+    // The arm split keeps one angle across the cadence, so the follow-up
+    // gets new material on the SAME argument, not a new argument.
+    return [
+      "YOUR EDGE (the same angle as the first email — build this follow-up on a new detail, example or consequence of it; never repeat the first email's wording, never mention that other angles exist):",
+      angle.trim(),
+    ].join("\n");
+  }
   return [
     "YOUR EDGE (a different angle from the first email — the new information this follow-up is built on; never re-use the first email's angle, never mention that other angles exist):",
     angle.trim(),

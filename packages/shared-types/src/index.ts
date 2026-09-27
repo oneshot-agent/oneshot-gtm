@@ -771,6 +771,14 @@ export interface AngleUsageView {
   replied: number;
   /** Distinct prospects this angle was sent to (reviewed or unattended) — the rate's denominator. */
   reached: number;
+  /**
+   * The same counts restricted to drafts whose angle the trigger's
+   * `angleAssignment: "arm"` split assigned instead of the fit classifier —
+   * the controlled comparison. Absent (or zero) when no arm draft exists.
+   */
+  armOffered?: number;
+  armReached?: number;
+  armReplied?: number;
 }
 
 /** Draft-version counts by outcome for one play and one scope (intro or follow-up). */
@@ -796,6 +804,13 @@ export interface DraftAngle {
   origin: "configured" | "generated";
   index?: number;
   count?: number;
+  /**
+   * `arm` when the trigger's `angleAssignment: "arm"` split assigned this
+   * angle (an even, stable per-prospect assignment) instead of the fit
+   * classifier; absent otherwise. A rotated angle is the founder's choice and
+   * never carries it.
+   */
+  assignment?: "arm";
   fingerprint: string;
   history: string[];
 }

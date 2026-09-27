@@ -134,7 +134,11 @@ Under `yourEdge`, the trigger editor on /queue shows:
 A reply rate appears only once a line has 30 sends, or 30 people for an
 angle line; below that the panel shows how far the sample has to go. Angles go
 to whoever they fit, so an angle comparison is a hint; the first-touch split
-is the controlled comparison. Earlier drafts per row are at
+is the controlled comparison. For a controlled angle comparison, set
+`angleAssignment: "arm"` on the trigger: each prospect gets one angle by a
+salted hash of their email instead of by fit, keeps it through the follow-ups
+(a founder's rotate still moves off it), and the panel's "angle arms" line
+counts only those drafts (`draft_versions.angle_assignment`). Earlier drafts per row are at
 `GET /api/queue/:id/drafts` and `GET /api/cadences/:id/drafts?play=`.
 
 ## First-touch format

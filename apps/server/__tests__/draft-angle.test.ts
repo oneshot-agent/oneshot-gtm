@@ -23,6 +23,7 @@ vi.mock("@oneshot-gtm/intel", () => ({
 }));
 vi.mock("@oneshot-gtm/plays", () => ({
   selectAngle,
+  angleAssignmentOf: (t: Record<string, unknown>) => (t.angleAssignment === "arm" ? "arm" : "fit"),
   // The ledger's angle key and the positioning fingerprint, mirrored so the
   // module under test sees the same identities production does.
   angleTextKey: (v: string) =>
