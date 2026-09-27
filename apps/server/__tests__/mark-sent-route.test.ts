@@ -91,6 +91,22 @@ describe("markSentRoute", () => {
     });
   });
 
+  it("records the handle the DM was drafted to, even when the row has only a handle", async () => {
+    row.payload_json = JSON.stringify({
+      name: "Some One",
+      handle: "@other",
+      twitterUrl: "https://x.com/someone",
+    });
+    expect((await markSentRoute(req, { id: "1" })).status).toBe(200);
+    expect(upserts[0]).toMatchObject({ linkedin_url: "https://x.com/other" });
+
+    upserts.length = 0;
+    row.status = "approved";
+    row.payload_json = JSON.stringify({ name: "Only Handle", handle: "onlyhandle" });
+    expect((await markSentRoute(req, { id: "1" })).status).toBe(200);
+    expect(upserts[0]).toMatchObject({ linkedin_url: "https://x.com/onlyhandle" });
+  });
+
   it("refuses a row whose channel has a real transport", async () => {
     row.play_name = "x-amplify";
     row.channel = "email";

@@ -1161,10 +1161,13 @@ export async function markSentRoute(
   const pstr = (k: string): string | null => (typeof payload[k] === "string" ? payload[k] : null);
   // The profile the touch went to. `prospects.linkedin_url` holds whichever
   // social profile a prospect was reached on (it has always carried X URLs).
-  const profileUrl = channel === "linkedin" ? pstr("linkedinUrl") : pstr("twitterUrl");
-  if (channel === "x" && !(xHandleFrom(pstr("handle")) ?? xHandleFrom(pstr("twitterUrl")))) {
+  // On X that is the handle the draft was addressed to (handle first, then
+  // the profile URL — draftXDm's order), recorded as its profile URL.
+  const xHandle = xHandleFrom(pstr("handle")) ?? xHandleFrom(pstr("twitterUrl"));
+  if (channel === "x" && !xHandle) {
     return jsonResponse({ error: "this row has no X handle to have sent it to" }, 400, req);
   }
+  const profileUrl = channel === "linkedin" ? pstr("linkedinUrl") : `https://x.com/${xHandle}`;
 
   const prospectId = ledger.upsertProspect({
     name: pstr("name"),
