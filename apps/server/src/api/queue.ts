@@ -1508,7 +1508,7 @@ export async function withdrawInviteRoute(
       kind: "withdraw",
       accountId: account.accountId,
       invitationId,
-      idempotencyKey: `gtm:${currentWorkspaceName()}:queue:${id}:withdraw`,
+      idempotencyKey: `gtm:${currentWorkspaceName()}:queue:${id}:withdraw:${invitationId}`,
       playName: row.play_name,
     })) as { status?: string };
     // not_pending: the invite was accepted or is otherwise gone — nothing
