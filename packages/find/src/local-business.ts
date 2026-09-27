@@ -301,6 +301,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     const bestWorkEmail = person.best_work_email?.trim() || null;
 
     let email: string;
+    let channel: "email" | "linkedin" = "email";
     let phone: string | null;
     let linkedinUrl: string | null;
     let finalTitle: string | null;
@@ -385,7 +386,9 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
         } else result.droppedEnrichment++;
         continue;
       }
-      email = contact.email;
+      // "" on a LinkedIn-channel contact: the row's channel decides how it is sent.
+      email = contact.email ?? "";
+      channel = contact.channel;
       phone = contact.phone;
       linkedinUrl = contact.linkedinUrl;
       finalTitle = contact.title ?? title;
@@ -426,6 +429,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       source: SOURCE,
       fitReason: filter.reason,
       notes: filter.reason,
+      channel,
     });
     if (id != null) result.enqueued++;
     else result.droppedDuplicate++;
@@ -620,7 +624,7 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
     const phone = contact.phone ?? biz.phone ?? null;
     const target = {
       name: contact.fullName ?? name,
-      email: contact.email,
+      email: contact.email ?? "",
       company: name,
       businessType,
       yourEdge,
@@ -649,6 +653,7 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
       source: SOURCE,
       fitReason: filter.reason,
       notes: filter.reason,
+      channel: contact.channel,
     });
     if (id != null) result.enqueued++;
     else result.droppedDuplicate++;

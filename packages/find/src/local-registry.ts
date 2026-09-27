@@ -534,7 +534,8 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
     const phone = contact.phone ?? resolvedPhone ?? record.phone ?? null;
     const target: LocalRegistryTarget = {
       name: contact.fullName ?? tradeName ?? record.name,
-      email: contact.email,
+      // "" on a LinkedIn-channel contact: the row's channel decides how it is sent.
+      email: contact.email ?? "",
       company: tradeName ?? record.name,
       ...(tradeName ? { registryName: record.name } : {}),
       source: record.source,
@@ -561,6 +562,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       source: SOURCE,
       fitReason: filter.reason,
       notes: `${record.sourceLabel} — ${filter.reason}`,
+      channel: contact.channel,
     });
     if (id != null) result.enqueued++;
     else result.droppedDuplicate++;

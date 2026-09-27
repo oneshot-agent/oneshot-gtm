@@ -16,6 +16,16 @@ The **topic gate** judges the source — the repo, event, or announcement — an
 
 The **person gate** judges the human's role, staged by cost: free role text the finder already holds (an event bio, an extracted title), then the job title off the enrichment every verified email already pays for, then — only when still ambiguous and a LinkedIn URL exists — one extra ~$0.005 lookup. What qualifies comes from your ICP one-liner in config, not from the prompt: the same title flips with the definition, so an ICP that says capability matters more than seniority passes a student shipping real projects and rejects a marketing manager, while an ICP about owners who run customer acquisition passes a head of growth and rejects a backend engineer. The shared prompts carry no assumptions about your product, your buying process or your industry. Only a _positive_ reject drops a candidate — ambiguity escalates or proceeds, never silently discards. Rejections land in `/queue` as auditable `auto: role — <reason>` rows you can override, count as `role-drop` on trigger cards, and a prospect judged off-ICP after contact stops receiving cadence follow-ups (terminal status `off-icp`).
 
+## Channels
+
+A finder queues each person on an outreach channel: `email`, `linkedin` or `x`. The `channels` setting lists the ones you want, in order of preference. The first channel a person has an address on wins:
+
+- `["email"]` (the default): today's behaviour. Anyone without a deliverable email is dropped.
+- `["email", "linkedin"]`: email when one is found. Otherwise the person is queued on LinkedIn, using the profile the finder already has or one search by name and company, instead of being dropped.
+- `["linkedin"]` or `["linkedin", "email"]`: LinkedIn first. No email lookup is paid for when a profile is found.
+
+Set it for the whole workspace in `config.json` (`"channels": [...]`) or per trigger in its config. The trigger's setting wins. The person gate applies on every channel. A LinkedIn row goes out as a connection request with a note; see [LinkedIn](./linkedin.md#connection-requests-as-a-first-touch). X handles come only from finders that surface them.
+
 ## Product research
 
 Qualified first-touch rows receive a product dossier before the trigger completes: up to two known first-party pages plus quick external research covering the product, ecosystem, architecture, and business model. Set `productResearch: false` on a trigger to disable it. Research counts toward that trigger's `maxCostUsd`; a failure or exhausted cap leaves the row reviewable with an explicit warning. `find research-products` backfills the same context onto active/replied prospects and pending queue rows (`--dry-run`, `--limit`, and `--refresh` are supported). Use `--first-party-only` for a resilient bulk backfill when the external research provider is unavailable.

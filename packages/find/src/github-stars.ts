@@ -272,7 +272,8 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       } else result.droppedEnrichment++;
       return;
     }
-    const email = contact.email;
+    // "" on a LinkedIn-channel contact: the row's channel decides how it is sent.
+    const email = contact.email ?? "";
     const enr = { phone: contact.phone, linkedinUrl: contact.linkedinUrl };
 
     const company = user.company?.trim() || "(unknown)";
@@ -355,6 +356,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       source: sourceFor(c.repo),
       fitReason: filter.reason,
       notes: filter.reason,
+      channel: contact.channel,
     });
     if (id != null) result.enqueued++;
     else result.droppedDuplicate++;

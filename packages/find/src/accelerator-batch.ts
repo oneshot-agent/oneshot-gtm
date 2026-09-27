@@ -520,13 +520,15 @@ export async function runAcceleratorBatchFinder(
       } else result.droppedEnrichment++;
       return;
     }
-    const email = contact.email;
+    // "" on a LinkedIn-channel contact: the row's channel decides how it is sent.
+    const email = contact.email ?? "";
     // Prefer the SDK's resolved name when available — it's the actual owner of
     // the email — and fall back to the founder name we resolved upstream.
     const fullName = contact.fullName?.trim() || founderName;
     const enr = { phone: contact.phone, linkedinUrl: contact.linkedinUrl };
     const phone = resolvedPhone ?? enr.phone;
-    let linkedinUrl = resolvedLinkedin ?? enr.linkedinUrl;
+    let linkedinUrl =
+      contact.channel === "linkedin" ? contact.linkedinUrl : (resolvedLinkedin ?? enr.linkedinUrl);
     if (!linkedinUrl) {
       linkedinUrl = await findLinkedInUrl({
         fullName,
@@ -570,6 +572,7 @@ export async function runAcceleratorBatchFinder(
       source,
       fitReason: filter.reason,
       notes: `${record.cohortLabel} — ${filter.reason}`,
+      channel: contact.channel,
     });
     if (id != null) result.enqueued++;
     else result.droppedDuplicate++;

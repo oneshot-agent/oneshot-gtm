@@ -10,6 +10,7 @@ import {
   type TriggerRow,
 } from "@oneshot-gtm/core";
 import { type CohortEntry, runAcceleratorBatchFinder } from "./accelerator-batch.ts";
+import { parseChannels, withFinderChannels } from "./_channels-context.ts";
 import { deriveCohortLabel } from "./_yc-oss-adapter.ts";
 import { runBreakupReviveFinder } from "./breakup-revive.ts";
 import { runCivicAgendaFinder } from "./civic-agenda.ts";
@@ -65,7 +66,10 @@ export async function runFinderWithProductResearch(
 ): Promise<FinderResult> {
   const ledger = getLedger();
   const afterId = ledger.latestQueueId();
-  const result = await spec.run(config);
+  // The trigger's channel order, seen by the shared contact step for this run.
+  const result = await withFinderChannels(parseChannels(config["channels"]), () =>
+    spec.run(config),
+  );
   await researchNewQueueRows({
     afterId,
     result,

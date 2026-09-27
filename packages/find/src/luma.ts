@@ -914,9 +914,13 @@ async function resolveAndEnqueueLumaAttendee(
       if (contact.reason === "duplicate") return "duplicate";
       return "dropped";
     }
-    const email = contact.email;
+    // "" on a LinkedIn-channel contact: the row's channel decides how it is sent.
+    const email = contact.email ?? "";
     const phone = contact.phone;
-    let linkedinUrl: string | null = resolvedLinkedinUrl ?? contact.linkedinUrl;
+    let linkedinUrl: string | null =
+      contact.channel === "linkedin"
+        ? contact.linkedinUrl
+        : (resolvedLinkedinUrl ?? contact.linkedinUrl);
     if (!linkedinUrl) {
       linkedinUrl = await findLinkedInUrl({
         fullName: work.attendee.name,
@@ -973,6 +977,7 @@ async function resolveAndEnqueueLumaAttendee(
       dedupeKey,
       source: SOURCE,
       notes: `${work.attendee.name} ${work.attendee.role === "Host" ? "hosting" : "going to"} ${work.event.title}`,
+      channel: contact.channel,
     });
     if (id != null) {
       onEnqueued?.(); // synchronous with the cap check above — keeps the cap exact

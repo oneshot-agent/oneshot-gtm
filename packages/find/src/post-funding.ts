@@ -232,7 +232,8 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       } else result.droppedEnrichment++;
       continue;
     }
-    const email = contact.email;
+    // "" on a LinkedIn-channel contact: the row's channel decides how it is sent.
+    const email = contact.email ?? "";
 
     const enr = { phone: contact.phone, linkedinUrl: contact.linkedinUrl };
     // Priority mirrors LinkedIn chain: page-specific extract beats generic
@@ -241,7 +242,8 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
     let linkedinUrl: string | null = isLinkedInProfileUrl(extract.linkedinUrl)
       ? extract.linkedinUrl
       : null;
-    linkedinUrl = linkedinUrl ?? enr.linkedinUrl;
+    linkedinUrl =
+      contact.channel === "linkedin" ? contact.linkedinUrl : (linkedinUrl ?? enr.linkedinUrl);
     if (!linkedinUrl) {
       linkedinUrl = await findLinkedInUrl({
         fullName: extract.founderName,
@@ -285,6 +287,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       source: SOURCE,
       fitReason: filter.reason,
       notes: `${extract.round ?? "?"} ${extract.amountUsd ? `$${extract.amountUsd.toLocaleString()}` : ""} — ${filter.reason}`,
+      channel: contact.channel,
     });
     if (id != null) result.enqueued++;
     else result.droppedDuplicate++;

@@ -239,7 +239,8 @@ async function resolveAndEnqueueShowHn(
     if (contact.reason === "duplicate") return "duplicate";
     return "dropped";
   }
-  const email = contact.email;
+  // "" on a LinkedIn-channel contact: the row's channel decides how it is sent.
+  const email = contact.email ?? "";
   const founderName = contact.fullName ?? hit.author;
   const enr = { phone: contact.phone, linkedinUrl: contact.linkedinUrl };
 
@@ -294,6 +295,7 @@ async function resolveAndEnqueueShowHn(
     source: SOURCE,
     fitReason: filterReason,
     notes: filterReason,
+    channel: contact.channel,
   });
   return id != null ? "enqueued" : "duplicate";
 }

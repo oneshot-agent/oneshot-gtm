@@ -329,7 +329,8 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       } else result.droppedEnrichment++;
       continue;
     }
-    const email = contact.email;
+    // "" on a LinkedIn-channel contact: the row's channel decides how it is sent.
+    const email = contact.email ?? "";
 
     const recipientName = extract.hiringManagerName ?? contact.fullName;
     const enr = { phone: contact.phone, linkedinUrl: contact.linkedinUrl };
@@ -339,7 +340,8 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
     let linkedinUrl: string | null = isLinkedInProfileUrl(extract.linkedinUrl)
       ? extract.linkedinUrl
       : null;
-    linkedinUrl = linkedinUrl ?? enr.linkedinUrl;
+    linkedinUrl =
+      contact.channel === "linkedin" ? contact.linkedinUrl : (linkedinUrl ?? enr.linkedinUrl);
     if (!linkedinUrl && recipientName) {
       linkedinUrl = await findLinkedInUrl({
         fullName: recipientName,
@@ -382,6 +384,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       source: SOURCE,
       fitReason: filter.reason,
       notes: `${extract.company} hiring "${extract.jobTitle}"${extract.team ? ` (${extract.team})` : ""} — ${filter.reason}`,
+      channel: contact.channel,
     });
     if (id != null) result.enqueued++;
     else result.droppedDuplicate++;

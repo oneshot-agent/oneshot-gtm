@@ -493,6 +493,12 @@ export interface OneShotConfig {
   linkedinSessionInvalidAt?: string | null;
   /** Reads per local day before the tier skips with a reason (account safety). Default 80. */
   linkedinReadsPerDay?: number;
+  /**
+   * Outreach channels finders may queue people on, in order of preference
+   * ("email", "linkedin", "x"). A trigger's own `channels` overrides it.
+   * Unset = email only.
+   */
+  channels?: string[];
 }
 
 export type QueueStatus = "pending" | "approved" | "rejected" | "sent" | "expired";

@@ -3,7 +3,14 @@ import {
   type GitHubIdentity,
   type EmailSource,
 } from "./_github-readme.ts";
-import { logEvent, type PersonResult } from "@oneshot-gtm/core";
+import {
+  canonicalLinkedInProfileKey,
+  logEvent,
+  type OutreachChannel,
+  type PersonResult,
+} from "@oneshot-gtm/core";
+import { finderChannels } from "./_channels-context.ts";
+import { findLinkedInUrl } from "./_linkedin.ts";
 import type { CallContext, FindEmailInput } from "@oneshot-gtm/core";
 import { isCircuitOpen, recordResolutionOutcome } from "./_breaker.ts";
 import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
@@ -313,7 +320,14 @@ export function pickNamedPerson(
 export type QualifiedContact =
   | {
       ok: true;
-      email: string;
+      /**
+       * The channel this person is queued on: the first in the run's channel
+       * order (`finderChannels`) they have an address for. `linkedin` means
+       * no email was needed or found and `linkedinUrl` is the address.
+       */
+      channel: "email" | "linkedin";
+      /** The verified email; null on the LinkedIn channel. */
+      email: string | null;
       emailSource?: EmailSource;
       /** Name as resolved by findEmail — some finders prefer it over their extract. */
       fullName: string | null;
@@ -407,7 +421,97 @@ export async function resolveVerifyEnrichQualify(args: {
   allowMissingFullName?: boolean;
   /** Forwarded to `resolveAndVerifyContact` — see its doc comment. Default off. */
   skipVerify?: boolean;
+  /**
+   * Channel order for this candidate. Defaults to the run's (`finderChannels`):
+   * the trigger's `channels`, else the workspace's, else email only.
+   */
+  channels?: OutreachChannel[];
 }): Promise<QualifiedContact> {
+  let costUsd = 0;
+  // Why email was ruled out, reported if no later channel works either.
+  let emailMiss: Extract<ContactResolution, { ok: false }>["reason"] | null = null;
+  for (const channel of args.channels ?? finderChannels()) {
+    if (channel === "email") {
+      const viaEmail = await qualifyViaEmail(args);
+      costUsd += viaEmail.costUsd;
+      if (viaEmail.ok || !isNoAddress(viaEmail.reason)) return { ...viaEmail, costUsd };
+      emailMiss = viaEmail.reason as Extract<ContactResolution, { ok: false }>["reason"];
+    } else if (channel === "linkedin") {
+      const viaLinkedIn = await qualifyViaLinkedIn(args);
+      costUsd += viaLinkedIn.costUsd;
+      // A found profile ends the walk either way (queued, or rejected by the
+      // person gate); only "no LinkedIn profile" moves on to the next channel.
+      if (viaLinkedIn.ok || viaLinkedIn.reason !== "not-found") return { ...viaLinkedIn, costUsd };
+    }
+    // x has no contact-step address: X handles come from the finders that
+    // surface them (x-reposters routes those itself).
+  }
+  return { ok: false, reason: emailMiss ?? "not-found", costUsd };
+}
+
+/** A contact miss that only means "no address on this channel" — try the next one. */
+function isNoAddress(reason: string): boolean {
+  return (
+    reason === "no-domain" ||
+    reason === "prescreen" ||
+    reason === "not-found" ||
+    reason === "undeliverable"
+  );
+}
+
+/**
+ * LinkedIn channel: the address is the person's profile URL — the finder's
+ * own, else one search by name (and company). Gated like the email path, on
+ * the role text the finder holds plus a paid profile lookup when unclear.
+ */
+async function qualifyViaLinkedIn(
+  args: Parameters<typeof resolveVerifyEnrichQualify>[0],
+): Promise<QualifiedContact> {
+  let costUsd = 0;
+  let linkedinUrl = args.linkedinUrlHint?.trim() || null;
+  if (!linkedinUrl && args.fullName) {
+    linkedinUrl = await findLinkedInUrl({
+      fullName: args.fullName,
+      disambiguators: args.person.company ? [args.person.company] : [],
+      accumCost: (c) => {
+        costUsd += c ?? 0;
+      },
+      errKindPrefix: args.errKindPrefix ?? args.playName,
+    });
+  }
+  if (!linkedinUrl || !canonicalLinkedInProfileKey(linkedinUrl)) {
+    return { ok: false, reason: "not-found", costUsd };
+  }
+  const gate = await qualifyPostEnrich({
+    icp: args.icp,
+    person: args.person,
+    enrichedTitle: args.titleHint ?? null,
+    linkedinUrl,
+    fillGaps: args.fillGaps ?? true,
+    playName: args.playName,
+    errKindPrefix: args.errKindPrefix ?? args.playName,
+  });
+  costUsd += gate.costUsd;
+  if (gate.action === "reject") return { ok: false, reason: "role", detail: gate.reason, costUsd };
+  if (gate.action === "defer") return { ok: false, reason: "platform-error", costUsd };
+  return {
+    ok: true,
+    channel: "linkedin",
+    email: null,
+    fullName: args.fullName,
+    phone: null,
+    linkedinUrl,
+    title: gate.roleText ?? args.titleHint ?? null,
+    verdict: gate.verdict === "transient" ? "unclear" : gate.verdict,
+    verdictReason: gate.reason,
+    costUsd,
+  };
+}
+
+/** Email channel: prescreen → findEmail → dedupe → verify → enrich → person gate. */
+async function qualifyViaEmail(
+  args: Parameters<typeof resolveVerifyEnrichQualify>[0],
+): Promise<QualifiedContact> {
   const contact = await resolveAndVerifyContact({
     playName: args.playName,
     fullName: args.fullName,
@@ -458,6 +562,7 @@ export async function resolveVerifyEnrichQualify(args: {
 
   return {
     ok: true,
+    channel: "email",
     email: contact.email,
     emailSource: contact.emailSource,
     fullName: contact.fullName,
