@@ -30,3 +30,13 @@ export function reachableChannels(payload: unknown): Channel[] {
   if (has("handle") || has("twitterUrl")) out.push("x");
   return out;
 }
+
+/** An X handle (no @) from a handle or an x.com / twitter.com profile URL. */
+export function xHandleFrom(value: string | null | undefined): string | null {
+  const v = (value ?? "").trim();
+  const m = v.match(
+    /^(?:https?:\/\/)?(?:www\.|mobile\.)?(?:x|twitter)\.com\/@?([A-Za-z0-9_]{1,15})(?:[/?#]|$)/i,
+  );
+  const handle = m ? m[1]! : v.replace(/^@/, "");
+  return /^[A-Za-z0-9_]{1,15}$/.test(handle) ? handle : null;
+}

@@ -24,7 +24,7 @@ A finder queues each person on an outreach channel: `email`, `linkedin` or `x`. 
 - `["email", "linkedin"]`: email when one is found. Otherwise the person is queued on LinkedIn, using the profile the finder already has or one search by name and company, instead of being dropped.
 - `["linkedin"]` or `["linkedin", "email"]`: LinkedIn first. No email lookup is paid for when a profile is found.
 
-Set it for the whole workspace in `config.json` (`"channels": [...]`) or per trigger in its config. The trigger's setting wins. The person gate applies on every channel. A LinkedIn row goes out as a connection request with a note; see [LinkedIn](./linkedin.md#connection-requests-as-a-first-touch). X handles come only from finders that surface them.
+Set it for the whole workspace in `config.json` (`"channels": [...]`) or per trigger in its config. The trigger's setting wins. The person gate applies on every channel. A LinkedIn row goes out as a connection request with a note; see [LinkedIn](./linkedin.md#connection-requests-as-a-first-touch). X is sent by hand: an X row gets a DM (280 characters at most) drafted from its signal. Copy it, send it from X, then **Mark sent**, because OneShot has no X action API yet. The contact step never searches X; a person is queued on X only when the finder already has their handle (Luma lists attendees' X profiles).
 
 ## Product research
 

@@ -8,6 +8,7 @@ import {
   channelOf,
   firstTouchSender,
   isOutreachChannel,
+  xHandleFrom,
 } from "../src/channels.ts";
 import { Ledger } from "../src/ledger.ts";
 
@@ -102,5 +103,16 @@ describe("queue channel column", () => {
     } finally {
       ledger.close();
     }
+  });
+});
+
+describe("xHandleFrom", () => {
+  it("reads handles and profile URLs, and refuses what isn't a profile", () => {
+    expect(xHandleFrom("@dana_lee")).toBe("dana_lee");
+    expect(xHandleFrom("https://x.com/dana_lee")).toBe("dana_lee");
+    expect(xHandleFrom("https://twitter.com/dana_lee/status/1")).toBe("dana_lee");
+    expect(xHandleFrom("https://x.com/home")).toBeNull();
+    expect(xHandleFrom("https://example.com/dana")).toBeNull();
+    expect(xHandleFrom("")).toBeNull();
   });
 });

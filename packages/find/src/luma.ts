@@ -895,6 +895,7 @@ async function resolveAndEnqueueLumaAttendee(
       // Free title from the LinkedIn-keyed enrichProfile above.
       titleHint: profileTitle,
       linkedinUrlHint: resolvedLinkedinUrl,
+      xHandleHint: work.attendee.twitterUrl ?? null,
       fillGaps: gate?.fillGaps ?? false,
     });
     costSink(contact.costUsd);
@@ -954,6 +955,9 @@ async function resolveAndEnqueueLumaAttendee(
       ...(work.attendee.role ? { role: work.attendee.role } : {}),
       // Lets a later re-judge (research-queue) apply the same gate mode.
       ...(gate?.affinity ? { icpAffinity: true } : {}),
+      // Their X profile, when Luma lists one: the X channel's address.
+      ...(work.attendee.twitterUrl ? { twitterUrl: work.attendee.twitterUrl } : {}),
+      ...(contact.channel === "x" && contact.xHandle ? { handle: contact.xHandle } : {}),
       eventTitle: work.event.title,
       eventDate: work.event.dateIso,
       eventTimezone: eventZone,

@@ -63,8 +63,11 @@ export function linkedInProfileOf(payload: Record<string, unknown>): string | nu
   return url && canonicalLinkedInProfileKey(url) ? url : null;
 }
 
-/** The finder's reason this person surfaced, as prompt lines. Only facts the payload carries. */
-function signalLines(row: LinkedInFirstTouchRow): string[] {
+/**
+ * The finder's reason this person surfaced, as prompt lines — shared by every
+ * non-email first touch. Only facts the payload carries.
+ */
+export function signalLines(row: LinkedInFirstTouchRow): string[] {
   const p = row.payload;
   const lines: string[] = [`PLAY: ${row.playName}`];
   const eventTitle = str(p, "eventTitle");

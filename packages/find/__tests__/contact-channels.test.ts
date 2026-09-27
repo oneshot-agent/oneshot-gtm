@@ -178,3 +178,23 @@ describe("parseChannels", () => {
     expect(parseChannels("email")).toBeNull();
   });
 });
+
+describe("the X channel", () => {
+  it("queues on X when the finder has a handle and email has no address", async () => {
+    find.mockResolvedValue({
+      result: { status: "completed", found: false, cost: 0 },
+      receiptId: 1,
+    });
+    const out = await resolveVerifyEnrichQualify({
+      ...base,
+      channels: ["email", "x"],
+      xHandleHint: "https://x.com/dana_lee",
+    });
+    expect(out).toMatchObject({ ok: true, channel: "x", email: null, xHandle: "dana_lee" });
+  });
+
+  it("moves on when there is no handle — the contact step never searches X", async () => {
+    const out = await resolveVerifyEnrichQualify({ ...base, channels: ["x", "email"] });
+    expect(out).toMatchObject({ ok: true, channel: "email" });
+  });
+});

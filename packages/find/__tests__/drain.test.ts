@@ -44,6 +44,7 @@ const ledgerStub = {
 const runStackConsolidationMock = vi.fn();
 const runXAmplifyDmMock = vi.fn();
 const draftLinkedInNoteMock = vi.fn();
+const draftXDmMock = vi.fn();
 const sendLinkedInInviteMock = vi.fn();
 
 vi.mock("@oneshot-gtm/core", async () => ({
@@ -85,6 +86,7 @@ vi.mock("@oneshot-gtm/plays", () => {
   return {
     PLAYS,
     draftLinkedInNote: (...args: unknown[]) => draftLinkedInNoteMock(...args),
+    draftXDm: (...args: unknown[]) => draftXDmMock(...args),
     sendLinkedInInvite: (...args: unknown[]) => sendLinkedInInviteMock(...args),
     MANUAL_PLAYS: { "x-amplify-dm": { channel: "x" } },
     isSupportedPlay: (name: string) => Object.prototype.hasOwnProperty.call(PLAYS, name),
@@ -496,5 +498,26 @@ describe("drainQueue LinkedIn rows", () => {
     });
     expect(sendLinkedInInviteMock).not.toHaveBeenCalled();
     expect(out.sent).toBe(0);
+  });
+});
+
+describe("drainQueue X rows", () => {
+  it("drafts an X DM for a non-amplifier row and never sends it", async () => {
+    draftXDmMock.mockReset();
+    draftXDmMock.mockResolvedValue({
+      subject: "X DM → @sam",
+      body: "dm",
+      flags: [],
+      voiceKey: null,
+    });
+    ledgerStub.dequeueApproved.mockReturnValue([
+      { ...row(40, { twitterUrl: "https://x.com/sam" }), channel: "x" },
+    ]);
+    const out = await drainQueue({ playName: "stack-consolidation", dryRun: false });
+    expect(draftXDmMock).toHaveBeenCalledTimes(1);
+    expect(runStackConsolidationMock).not.toHaveBeenCalled();
+    expect(out.sent).toBe(0);
+    const saved = ledgerStub.setQueueDraft.mock.calls.at(-1)![0] as { draft: { body: string } };
+    expect(saved.draft.body).toBe("dm");
   });
 });

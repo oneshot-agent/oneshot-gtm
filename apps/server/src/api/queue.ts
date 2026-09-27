@@ -47,6 +47,7 @@ import {
   playMetadata,
   sendDraftedEmail,
   draftLinkedInNote,
+  draftXDm,
   sendLinkedInInvite,
 } from "@oneshot-gtm/plays";
 import { reportServerExecution } from "../telemetry.ts";
@@ -1011,25 +1012,41 @@ async function regenerateDraftInner(
   try {
     // A LinkedIn row is drafted as a connection-request note with the play's
     // signal, not as the play's email (channels.ts).
+    const draftRow = {
+      id: row.id,
+      playName: row.play_name,
+      payload: target && typeof target === "object" ? (target as Record<string, unknown>) : {},
+      notes: row.notes,
+    };
     drafted =
-      channelOf(row.channel) === "linkedin"
+      channelOf(row.channel) === "x" && row.play_name !== "x-amplify-dm"
         ? [
             {
-              ...(await draftLinkedInNote(
-                {
-                  id: row.id,
-                  playName: row.play_name,
-                  payload:
-                    target && typeof target === "object" ? (target as Record<string, unknown>) : {},
-                  notes: row.notes,
-                },
-                { draftAngle: angle?.text ?? null },
-              )),
+              ...(await draftXDm(draftRow, { draftAngle: angle?.text ?? null })),
               sent: false,
               receiptIds: [],
             },
           ]
-        : await dispatchPlay(row.play_name, body, undefined, undefined, angle?.text);
+        : channelOf(row.channel) === "linkedin"
+          ? [
+              {
+                ...(await draftLinkedInNote(
+                  {
+                    id: row.id,
+                    playName: row.play_name,
+                    payload:
+                      target && typeof target === "object"
+                        ? (target as Record<string, unknown>)
+                        : {},
+                    notes: row.notes,
+                  },
+                  { draftAngle: angle?.text ?? null },
+                )),
+                sent: false,
+                receiptIds: [],
+              },
+            ]
+          : await dispatchPlay(row.play_name, body, undefined, undefined, angle?.text);
   } catch (err) {
     return jsonResponse({ error: (err as Error).message }, 400, req);
   }

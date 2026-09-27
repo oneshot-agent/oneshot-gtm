@@ -12,6 +12,7 @@ import {
 import {
   type DraftedRow,
   draftLinkedInNote,
+  draftXDm,
   isSupportedPlay,
   type LinkedInSender,
   PLAYS,
@@ -220,6 +221,23 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
 
 async function dispatchOneTarget(opts: DrainOpts, row: QueueRow): Promise<DrainDraft> {
   if (channelOf(row.channel) === "linkedin") return dispatchLinkedIn(opts, row);
+  // An X row outside the amplifier play gets the generic X DM. It is sent by
+  // hand (Mark sent), so the drain only drafts it.
+  if (channelOf(row.channel) === "x" && row.play_name !== "x-amplify-dm") {
+    const target = resolveQueueTarget(row);
+    const dm = await draftXDm({
+      id: row.id,
+      playName: row.play_name,
+      payload: target && typeof target === "object" ? (target as Record<string, unknown>) : {},
+      notes: row.notes,
+    });
+    return {
+      ...dm,
+      sent: false,
+      receiptIds: [],
+      ...(dm.voiceKey ? { voiceKey: dm.voiceKey } : {}),
+    };
+  }
   const play = PLAYS[opts.playName];
   if (!play) throw new Error(`drain: unsupported play '${opts.playName}'`);
   const target = resolveQueueTarget(row);

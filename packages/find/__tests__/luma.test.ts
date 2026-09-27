@@ -1185,3 +1185,47 @@ describe("luma-events channels", () => {
     expect(enqueued.find((r) => r.payload["name"] === "Gabe Guest")).toBeUndefined();
   });
 });
+
+describe("luma-events X channel", () => {
+  it("queues an attendee with no email on X when Luma lists their X profile", async () => {
+    const { withFinderChannels } = await import("../src/_channels-context.ts");
+    discoveredEvents = [
+      { slug: "sf-evt-1", name: "SF AI Builders", startAtIso: futureIso(3), city: "San Francisco" },
+    ];
+    eventDetails = {
+      eventTitle: "SF AI Builders",
+      eventDateIso: futureIso(3),
+      eventCity: "San Francisco",
+      attendees: [
+        {
+          name: "Xena Host",
+          profileUrl: null,
+          websiteUrl: "https://xena.dev",
+          linkedinUrl: null,
+          twitterUrl: "https://x.com/xena_dev",
+          bio: "Founder",
+          role: "Host",
+        },
+        {
+          name: "Gabe Guest",
+          profileUrl: null,
+          websiteUrl: null,
+          linkedinUrl: null,
+          twitterUrl: null,
+          bio: null,
+          role: "Guest",
+        },
+      ],
+    };
+    findEmailReturn = { found: false, email: null };
+
+    await withFinderChannels(["email", "x"], () => runLumaFinder(baseConfig));
+
+    const xena = enqueued.find((r) => r.payload["name"] === "Xena Host");
+    expect(xena).toMatchObject({ channel: "x" });
+    expect(xena!.payload).toMatchObject({
+      handle: "xena_dev",
+      twitterUrl: "https://x.com/xena_dev",
+    });
+  });
+});

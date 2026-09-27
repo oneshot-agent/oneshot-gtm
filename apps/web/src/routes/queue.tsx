@@ -73,7 +73,12 @@ import {
   type RejectReasonSource,
 } from "../lib/rejectReason.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
-import { CHANNEL_LABELS, CHANNEL_MAX_CHARS, reachableChannels } from "../lib/channels.ts";
+import {
+  CHANNEL_LABELS,
+  CHANNEL_MAX_CHARS,
+  reachableChannels,
+  xHandleFrom,
+} from "../lib/channels.ts";
 import { heldSummary } from "../lib/flagLabels.ts";
 import { caseRows, personResearchBadge, personResearchRows } from "../lib/queueCase.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
@@ -1391,6 +1396,7 @@ function DraftSection({
   const p = (payload ?? {}) as Record<string, unknown>;
   const pstr = (k: string): string | null => (typeof p[k] === "string" ? (p[k] as string) : null);
   const dmOpen = p["dmOpen"] === true;
+  const xHandle = xHandleFrom(pstr("handle")) ?? xHandleFrom(pstr("twitterUrl"));
   const xUserId = pstr("xUserId");
   const openOnXUrl = dmOpen
     ? xUserId
@@ -1421,12 +1427,18 @@ function DraftSection({
             className="inline-flex items-center gap-1 font-mono text-[11px] text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream"
             title={
               dmOpen
-                ? `DM @${pstr("handle") ?? ""} — their DMs are open`
-                : "Their DMs are closed — reply under the repost instead"
+                ? `DM @${xHandle ?? ""} — their DMs are open`
+                : pstr("tweetUrl")
+                  ? "Their DMs are closed — reply under the repost instead"
+                  : "Open their X profile to send the DM"
             }
           >
             <ExternalLink size={11} />{" "}
-            {dmOpen ? `DM @${pstr("handle") ?? ""}` : "reply on their repost"}
+            {dmOpen
+              ? `DM @${xHandle ?? ""}`
+              : pstr("tweetUrl")
+                ? "reply on their repost"
+                : `open @${xHandle ?? "profile"}`}
           </a>
         )}
         <Button

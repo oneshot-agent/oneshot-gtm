@@ -9,6 +9,7 @@ import {
   logEvent,
   type OutreachChannel,
   type PersonResult,
+  xHandleFrom,
 } from "@oneshot-gtm/core";
 import { finderChannels } from "./_channels-context.ts";
 import { findLinkedInUrl } from "./_linkedin.ts";
@@ -326,9 +327,11 @@ export type QualifiedContact =
        * order (`finderChannels`) they have an address for. `linkedin` means
        * no email was needed or found and `linkedinUrl` is the address.
        */
-      channel: "email" | "linkedin";
-      /** The verified email; null on the LinkedIn channel. */
+      channel: "email" | "linkedin" | "x";
+      /** The verified email; null on the LinkedIn and X channels. */
       email: string | null;
+      /** X handle (no @) when the person is queued on X. */
+      xHandle?: string | null;
       emailSource?: EmailSource;
       /** Name as resolved by findEmail — some finders prefer it over their extract. */
       fullName: string | null;
@@ -423,6 +426,11 @@ export async function resolveVerifyEnrichQualify(args: {
   /** Forwarded to `resolveAndVerifyContact` — see its doc comment. Default off. */
   skipVerify?: boolean;
   /**
+   * The person's X handle or profile URL, when the finder has one. The X
+   * channel's only address source: the contact step never searches X.
+   */
+  xHandleHint?: string | null;
+  /**
    * Channel order for this candidate. Defaults to the run's (`finderChannels`):
    * the trigger's `channels`, else the workspace's, else email only.
    */
@@ -443,9 +451,13 @@ export async function resolveVerifyEnrichQualify(args: {
       // A found profile ends the walk either way (queued, or rejected by the
       // person gate); only "no LinkedIn profile" moves on to the next channel.
       if (viaLinkedIn.ok || viaLinkedIn.reason !== "not-found") return { ...viaLinkedIn, costUsd };
+    } else if (channel === "x") {
+      const viaX = await qualifyViaX(args);
+      if (viaX) {
+        costUsd += viaX.costUsd;
+        return { ...viaX, costUsd };
+      }
     }
-    // x has no contact-step address: X handles come from the finders that
-    // surface them (x-reposters routes those itself).
   }
   return { ok: false, reason: emailMiss ?? "not-found", costUsd };
 }
@@ -518,6 +530,45 @@ async function qualifyViaLinkedIn(
     verdict: gate.verdict === "transient" ? "unclear" : gate.verdict,
     verdictReason: gate.reason,
     costUsd,
+  };
+}
+
+/**
+ * X channel: the address is the handle the finder surfaced (null when it has
+ * none, so the walk moves on). Gated on the finder's role text; X has no paid
+ * lookup of its own, so an unclear role stays unclear rather than bought.
+ */
+async function qualifyViaX(
+  args: Parameters<typeof resolveVerifyEnrichQualify>[0],
+): Promise<QualifiedContact | null> {
+  const xHandle = xHandleFrom(args.xHandleHint);
+  if (!xHandle) return null;
+  const gate = await qualifyPostEnrich({
+    icp: args.icp,
+    person: args.person,
+    enrichedTitle: args.titleHint ?? null,
+    linkedinUrl: args.linkedinUrlHint ?? null,
+    fillGaps: args.fillGaps ?? true,
+    playName: args.playName,
+    errKindPrefix: args.errKindPrefix ?? args.playName,
+  });
+  if (gate.action === "reject") {
+    return { ok: false, reason: "role", detail: gate.reason, costUsd: gate.costUsd };
+  }
+  if (gate.action === "defer")
+    return { ok: false, reason: "platform-error", costUsd: gate.costUsd };
+  return {
+    ok: true,
+    channel: "x",
+    email: null,
+    xHandle,
+    fullName: args.fullName,
+    phone: null,
+    linkedinUrl: args.linkedinUrlHint ?? null,
+    title: gate.roleText ?? args.titleHint ?? null,
+    verdict: gate.verdict === "transient" ? "unclear" : gate.verdict,
+    verdictReason: gate.reason,
+    costUsd: gate.costUsd,
   };
 }
 

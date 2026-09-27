@@ -70,3 +70,19 @@ export function channelAddresses(payload: Record<string, unknown>): OutreachChan
   if (has("handle") || has("twitterUrl")) out.push("x");
   return out;
 }
+
+/**
+ * An X handle (without the @) from a handle or an x.com / twitter.com
+ * profile URL; null when the value names no profile.
+ */
+export function xHandleFrom(value: string | null | undefined): string | null {
+  const v = (value ?? "").trim();
+  if (!v) return null;
+  const fromUrl = v.match(
+    /^(?:https?:\/\/)?(?:www\.|mobile\.)?(?:x|twitter)\.com\/@?([A-Za-z0-9_]{1,15})(?:[/?#]|$)/i,
+  );
+  const handle = fromUrl ? fromUrl[1]! : v.replace(/^@/, "");
+  if (!/^[A-Za-z0-9_]{1,15}$/.test(handle)) return null;
+  const reserved = ["home", "i", "intent", "search", "share", "messages", "explore", "settings"];
+  return reserved.includes(handle.toLowerCase()) ? null : handle;
+}

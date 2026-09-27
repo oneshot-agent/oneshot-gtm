@@ -302,7 +302,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     const bestWorkEmail = person.best_work_email?.trim() || null;
 
     let email: string;
-    let channel: "email" | "linkedin" = "email";
+    let channel: "email" | "linkedin" | "x" = "email";
     let phone: string | null;
     let linkedinUrl: string | null;
     let finalTitle: string | null;
