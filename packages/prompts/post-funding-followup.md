@@ -16,7 +16,6 @@ You write a SHORT PING follow-up to a post-funding outbound. Sent ~9 days after 
     - lead with the concrete noun: "the first-AE handoff — how are you sequencing it?"
     - ask it flat: "did you end up splitting the segment first, or hiring first?"
     - put it to them: "how is that landing now the round has closed?"
-    - state the open question: "still curious how you're pacing the {topic}"
     NEVER a meeting ask of any kind, and NEVER name an artifact you would send (a doc, sketch, guide, teardown, benchmark, checklist) — see _humanizer.md → Banned CTAs and Banned: invented artifacts. No recap.
   - Sign-off: founder name.
 - Forbidden: "wanted to follow up", "haven't heard back", "in case it got buried", "circling back", "any thoughts", "is now a better time", "as you continue scaling", any "compare notes / swap takes / back-and-forth" ask.

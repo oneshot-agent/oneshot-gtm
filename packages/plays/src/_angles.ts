@@ -155,6 +155,11 @@ export interface AngleSelection {
   angle: string;
   count: number;
   method: "single" | "cached" | "classifier" | "hash" | "arm";
+  /**
+   * Follow-ups only: the pick is the intro's own angle — the arm split, or a
+   * rotation that ran out of other angles. Callers must not present it as new.
+   */
+  sameAsIntro?: boolean;
 }
 
 export interface SelectAngleInput {
@@ -466,7 +471,7 @@ export async function followUpEdgeSelection(
       ? angles.findIndex((a) => angleTextKey(a) === angleTextKey(introText!))
       : -1;
     const index = introIndex >= 0 ? introIndex : angleArmIndex(email, angles.length);
-    return { index, angle: angles[index]!, count: angles.length, method: "arm" };
+    return { index, angle: angles[index]!, count: angles.length, method: "arm", sameAsIntro: true };
   }
   const excluded = new Set(
     [introText, opts.rotateFrom].filter((t): t is string => !!t?.trim()).map(angleTextKey),
@@ -486,7 +491,13 @@ export async function followUpEdgeSelection(
     cacheContext: angleCacheContext(target),
   });
   const index = angles.findIndex((a) => angleTextKey(a) === angleTextKey(pick.angle));
-  return { ...pick, index: index < 0 ? 0 : index, count: angles.length };
+  return {
+    ...pick,
+    index: index < 0 ? 0 : index,
+    count: angles.length,
+    // A rotation with nothing else left lands back on the intro's angle.
+    sameAsIntro: !!introText && angleTextKey(pick.angle) === angleTextKey(introText),
+  };
 }
 
 /**
@@ -511,5 +522,7 @@ export function followUpEdgeBlock(
   return [
     "YOUR EDGE (a different angle from the first email — the new information this follow-up is built on; never re-use the first email's angle, never mention that other angles exist):",
     angle.trim(),
+    "",
+    'This angle was NOT raised in PRIOR EMAILS, and it overrides any instruction to re-ask the first email\'s question: make this angle\'s point in a sentence, then ask one short question about it. Do not open as if it had been raised before — no "still curious", "did that turn out", "any luck with", "what did you end up doing", or any wording that treats it as a question already asked.',
   ].join("\n");
 }

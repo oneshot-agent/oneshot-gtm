@@ -277,6 +277,10 @@ describe("follow-ups under the arm split", () => {
     expect(same).toContain("the same angle as the first email");
     expect(same).toContain(A);
     expect(followUpEdgeBlock(A)).toContain("a different angle from the first email");
+    // A new angle must not open as a continuation; the same one may re-ask.
+    expect(followUpEdgeBlock(A)).toContain("still curious");
+    expect(followUpEdgeBlock(A)).toContain("NOT raised in PRIOR EMAILS");
+    expect(same).not.toContain("NOT raised in PRIOR EMAILS");
   });
 });
 

@@ -2212,7 +2212,7 @@ export function buildFollowUpEmail(opts: {
       rotateFrom,
     });
     const edgeBlock = followUpEdgeBlock(edgeSelection?.angle ?? null, {
-      sameAsIntro: edgeSelection?.method === "arm",
+      sameAsIntro: edgeSelection?.sameAsIntro === true,
     });
     // VOICE: the founder's register, when a card is set. The breakup step
     // gets the no-aphorism budget; every other follow-up the default one.
@@ -2307,6 +2307,7 @@ export function buildFollowUpEmail(opts: {
               index: edgeSelection.index,
               count: edgeSelection.count,
               ...(edgeSelection.method === "arm" ? { assignment: "arm" as const } : {}),
+              ...(edgeSelection.sameAsIntro ? { sameAsIntro: true } : {}),
             },
           }
         : {}),

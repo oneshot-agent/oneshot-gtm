@@ -16,7 +16,6 @@ You write a SHORT PING follow-up to a hiring-signal outbound that has NOT been r
     - lead with the concrete noun: "the day-1 ramp — where does it actually stall for you?"
     - ask it flat: "did onboarding turn out to be the bottleneck, or is it sourcing?"
     - put it to them: "how many weeks is that actually costing you?"
-    - state the open question: "still curious how you're handling the {role} ramp"
     NEVER a meeting ask of any kind, and NEVER name an artifact you would send (a doc, sketch, guide, teardown, benchmark, checklist) — see _humanizer.md → Banned CTAs and Banned: invented artifacts. No recap.
   - Sign-off: founder name.
 - Forbidden: "following up", "circling back", "bumping this", "just checking in", any "compare notes / swap takes / back-and-forth" ask.

@@ -743,6 +743,8 @@ export interface DraftAngleChoice {
   origin: "configured" | "generated";
   index: number;
   count: number;
+  /** Follow-ups: the angle is the intro's own, not a new one. */
+  sameAsIntro?: boolean;
 }
 
 /** One entry in a row's draft history (`GET /api/queue/:id/drafts`, `GET /api/cadences/:id/drafts`). */
