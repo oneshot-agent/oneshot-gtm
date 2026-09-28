@@ -1,3 +1,4 @@
+import { ProductResearch } from "../components/queue/ProductResearch.tsx";
 import { Explain } from "../components/primitives/Explain.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
@@ -1069,6 +1070,7 @@ export function QueueRow({
                   <CaseList rows={sheetRows} />
                 </>
               )}
+              <ProductResearch payload={row.payload} />
               {profileHistory.length > 0 && (
                 <Disclosure label="Profile history">
                   <CaseList rows={profileHistory} className="mt-3" />
