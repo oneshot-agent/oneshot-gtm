@@ -79,6 +79,7 @@ export async function deployPmfSurvey(input: PmfSurveyDeployInput): Promise<PmfS
   for (const userEmail of input.cohortEmails) {
     const draft = await draftEmailFromPrompt({
       promptName: "pmf-survey-email",
+      maxBodyWords: 200,
       inputBlock: [
         `FOUNDER: ${cfg.founderName}`,
         `PRODUCT: ${cfg.productOneLiner}`,

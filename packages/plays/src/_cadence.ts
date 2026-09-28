@@ -33,7 +33,6 @@ import {
   type DemoDay,
   demoDayLine,
   demoDayOf,
-  mentionsStaleDemoDay,
   canonicalLinkedInProfileKey,
   currentWorkspaceName,
   linkedInConversationFor,
@@ -44,10 +43,10 @@ import {
 import { complete, loadPrompt, tryParseJsonObject, triageEmails } from "@oneshot-gtm/intel";
 import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
 import {
-  closingEitherOrQuestion,
   firstNameFrom,
   humanizeDraft,
   lintEmail,
+  repairWritingLints,
   lintOpenerFrequency,
   overusedOpeners,
   signatureDirective,
@@ -58,6 +57,8 @@ export interface CadenceContext {
   prospect: ProspectRecord;
   cfg: ReturnType<typeof loadConfig>;
   metadata: Record<string, unknown>;
+  maxBodyWords?: number;
+  recentEmailBodies?: string[];
 }
 
 export type StepPayload =
@@ -1483,7 +1484,7 @@ export async function runCadenceStepForProspect(
     ? { kind: "direct_mail", draftId: mailDraft.id }
     : opts.persistedPayload
       ? opts.persistedPayload
-      : await step.builder({ prospect, cfg, metadata: {} });
+      : await step.builder({ prospect, cfg, metadata: {}, maxBodyWords: step.maxBodyWords ?? 100 });
 
   if (built?.kind === "direct_mail" && opts.directMailId !== built.draftId) {
     return {
@@ -1686,6 +1687,11 @@ export async function previewCadenceStep(input: {
         prospect,
         cfg,
         metadata: input.rotateAngle ? { rotateFrom: currentPreviewAngle(input) } : {},
+        maxBodyWords: step.maxBodyWords ?? 100,
+        recentEmailBodies: [
+          ...(input.extraRecentBodies ?? []),
+          ...ledger.recentSentEmailBodies({ playName: input.playName, stepIndex: nextIndex }),
+        ],
       });
   if (!built) throw new Error("builder returned null — nothing to preview");
 
@@ -2249,47 +2255,15 @@ export function buildFollowUpEmail(opts: {
       subject: parsed.subject.trim(),
       body: parsed.body.trim(),
     });
-    // An either/or closing question, or a demo day treated as ahead of them
-    // after it passed, gets one redraft in the same conversation; kept only
-    // if it fixes every problem found. Otherwise the original stays and lint
-    // holds it (`either-or-question`, `stale-demo-day`) for review.
-    const problems = (body: string) => ({
-      eitherOr: closingEitherOrQuestion(body),
-      staleDemoDay: mentionsStaleDemoDay(body, demoDay),
+    cleaned = await repairWritingLints(messages, cleaned, {
+      promptName: opts.promptName,
+      temperature: 0.4,
+      maxTokens: 500,
+      maxBodyWords: ctx.maxBodyWords ?? 100,
+      followUp: true,
+      demoDay,
+      extraLint: (draft) => lintOpenerFrequency(draft.body, ctx.recentEmailBodies ?? []),
     });
-    const found = problems(cleaned.body);
-    if (found.eitherOr || found.staleDemoDay) {
-      try {
-        const asks = [
-          ...(found.eitherOr
-            ? [
-                "That ends by offering the reader two options. Rewrite the last sentence: end with one specific question they can answer yes or no, or with no question at all. Never offer two options.",
-              ]
-            : []),
-          ...(found.staleDemoDay && demoDay
-            ? [
-                `Their demo day was ${demoDay.month}; it has already passed. Remove every mention of demo day and rewrite that sentence around something that is still true for them now.`,
-              ]
-            : []),
-        ];
-        messages.push(
-          { role: "assistant", content: JSON.stringify(cleaned) },
-          {
-            role: "user",
-            content: `${asks.join(" ")} Keep everything else. Return only the JSON object with "subject" and "body".`,
-          },
-        );
-        const retry = await complete({ messages, temperature: 0.4, maxTokens: 500 });
-        const again = tryParseJsonObject<{ subject?: string; body?: string }>(retry.content, {});
-        if (again.subject && again.body) {
-          const fixed = humanizeDraft({ subject: again.subject.trim(), body: again.body.trim() });
-          const left = problems(fixed.body);
-          if (!left.eitherOr && !left.staleDemoDay) cleaned = fixed;
-        }
-      } catch {
-        // Keep the original; lint holds it.
-      }
-    }
     return {
       kind: "email",
       subject: cleaned.subject,

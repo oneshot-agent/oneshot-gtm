@@ -65,6 +65,7 @@ export async function runDemoNoShow(opts: DemoNoShowRunOptions): Promise<DemoNoS
       // Same-day email
       const draft = await draftEmailFromPrompt({
         promptName: "demo-no-show-email",
+        maxBodyWords: 100,
         inputBlock: [
           `FOUNDER: ${cfg.founderName}`,
           `PRODUCT: ${cfg.productOneLiner}`,

@@ -7,7 +7,7 @@ import {
   type VoiceCallResult,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
-import { lintEmail } from "./_lib.ts";
+import { humanizeDraft, lintEmail, repairWritingLints } from "./_lib.ts";
 
 const PLAY_NAME = "concierge";
 
@@ -57,6 +57,7 @@ export async function runConcierge(opts: ConciergeRunOptions): Promise<Concierge
     if (!opts.skipPrepEmail) {
       const draft = await draftWithPrompt({
         promptName: "concierge-prep-email",
+        maxBodyWords: 80,
         inputBlock: [
           `FOUNDER: ${cfg.founderName}`,
           `PRODUCT: ${cfg.productOneLiner}`,
@@ -141,6 +142,7 @@ export async function runConcierge(opts: ConciergeRunOptions): Promise<Concierge
     if (!opts.skipSummaryEmail && voice) {
       const draft = await draftWithPrompt({
         promptName: "concierge-summary-email",
+        maxBodyWords: 100,
         inputBlock: [
           `FOUNDER: ${cfg.founderName}`,
           `PRODUCT: ${cfg.productOneLiner}`,
@@ -169,21 +171,26 @@ export async function runConcierge(opts: ConciergeRunOptions): Promise<Concierge
   return { outcomes };
 }
 
-async function draftWithPrompt(opts: { promptName: string; inputBlock: string }): Promise<{
+async function draftWithPrompt(opts: {
+  promptName: string;
+  inputBlock: string;
+  maxBodyWords: number;
+}): Promise<{
   subject: string;
   body: string;
 }> {
   const system = loadPrompt(opts.promptName);
-  const res = await complete({
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: opts.inputBlock },
-    ],
-    temperature: 0.5,
-    maxTokens: 400,
-  });
+  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+    { role: "system", content: system },
+    { role: "user", content: opts.inputBlock },
+  ];
+  const res = await complete({ messages, temperature: 0.5, maxTokens: 400 });
   const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(res.content, {});
-  return { subject: (parsed.subject ?? "").trim(), body: (parsed.body ?? "").trim() };
+  const draft = humanizeDraft({
+    subject: (parsed.subject ?? "").trim(),
+    body: (parsed.body ?? "").trim(),
+  });
+  return repairWritingLints(messages, draft, { ...opts, temperature: 0.5, maxTokens: 400 });
 }
 
 function fillTemplate(raw: string, vars: Record<string, string>): string {
