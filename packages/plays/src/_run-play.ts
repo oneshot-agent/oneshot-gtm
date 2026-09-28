@@ -389,6 +389,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           // The same cap lintEmail holds at, so an over-long first pass gets
           // one tighter redraft instead of becoming a lint-held send.
           maxBodyWords: bodyWordCap,
+          hardBans: def.hardBans,
           ...(bodySentenceCap !== undefined ? { maxBodySentences: bodySentenceCap } : {}),
           demoDay,
         });

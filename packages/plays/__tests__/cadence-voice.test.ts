@@ -62,7 +62,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
     complete: async (input: { messages: Array<{ role: string; content: string }> }) => {
       llmCalls.push({
         system: input.messages.find((m) => m.role === "system")?.content ?? "",
-        user: input.messages.find((m) => m.role === "user")?.content ?? "",
+        user: input.messages.findLast((m) => m.role === "user")?.content ?? "",
       });
       const user = input.messages.find((m) => m.role === "user")?.content ?? "";
       // The angle classifier (packages/plays/src/_angles.ts): pick the second angle.
@@ -308,5 +308,27 @@ describe("buildFollowUpEmail — demo day judged at draft time", () => {
     llmQueue.push(JSON.stringify({ subject: "s", body: "Is the count ready for demo day?" }));
     await builder()(ctx());
     expect(llmCalls).toHaveLength(1);
+  });
+});
+
+describe("follow-up writing repairs", () => {
+  it("repairs wording and uses the step-specific word budget", async () => {
+    llmQueue.push(
+      JSON.stringify({
+        subject: "workflow",
+        body: "I noticed your sourcing, outreach, and screening workflow.",
+      }),
+      JSON.stringify({ subject: "workflow", body: "Does your workflow send messages directly?" }),
+    );
+    const out = await buildFollowUpEmail({
+      playName: "stack-consolidation",
+      promptName: "followup-email",
+      contextLines: [],
+    })({ ...ctx(), maxBodyWords: 30 });
+    expect(out).toMatchObject({ body: "Does your workflow send messages directly?" });
+    expect(llmCalls).toHaveLength(2);
+    expect(llmCalls[1]!.user).toContain("rule-of-three");
+    expect(llmCalls[1]!.user).toContain("banned-opener:I-noticed");
+    expect(llmCalls[1]!.user).toContain("30 body words");
   });
 });

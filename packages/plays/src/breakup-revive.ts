@@ -83,6 +83,8 @@ export async function runBreakupRevive(
       throwIfCancelled(opts.signal, `${PLAY_NAME} draft`);
       const draft = await draftEmailFromPrompt({
         promptName: "breakup-revive-email",
+        maxBodyWords: 80,
+        followUp: true,
         inputBlock: [
           ...(opts.draftAngle
             ? [
