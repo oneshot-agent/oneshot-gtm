@@ -924,7 +924,10 @@ function ThreadRow({
           aria-label="Conversation and reply"
         >
           {t.channel === "email" && (
-            <h3 className="pt-4 text-[14px] font-medium">{t.subject || "(No subject)"}</h3>
+            <p className="replies-subject">
+              <span>{t.combinedEmailHistory ? "Latest subject:" : "Subject:"}</span>{" "}
+              {t.subject || "(No subject)"}
+            </p>
           )}
           {t.snoozedUntil && (
             <p className="pt-3 text-[12px] text-ink-muted">
@@ -933,6 +936,62 @@ function ThreadRow({
           )}
           <details className="replies-contact-details">
             <summary>Contact details & assignment</summary>
+            <dl className="replies-contact-fields">
+              <dt>Email address</dt>
+              <dd>
+                {(t.channel === "email" ? t.address : t.matchedProspect?.email) ? (
+                  <Pii kind="email">
+                    {t.channel === "email" ? t.address : t.matchedProspect!.email!}
+                  </Pii>
+                ) : (
+                  "Not available"
+                )}
+              </dd>
+              <dt>Company</dt>
+              <dd>
+                {replyCompany(t.company) ? (
+                  <Pii kind="company">{replyCompany(t.company)!}</Pii>
+                ) : (
+                  "Not available"
+                )}
+              </dd>
+              <dt>LinkedIn profile</dt>
+              <dd>
+                {profileUrl ? (
+                  <a
+                    href={profileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline"
+                  >
+                    Open LinkedIn profile<span className="sr-only"> (opens in a new tab)</span>
+                  </a>
+                ) : (
+                  "Not available"
+                )}
+              </dd>
+              <dt>Workspace</dt>
+              <dd>{t.workspace || "Not available"}</dd>
+              <dt>Matched prospect</dt>
+              <dd>
+                {t.matchedProspect ? (
+                  <>
+                    <Pii kind="name">{t.matchedProspect.name || "Unnamed prospect"}</Pii>
+                    {t.matchedProspect.email && (
+                      <>
+                        {" "}
+                        · <Pii kind="email">{t.matchedProspect.email}</Pii>
+                      </>
+                    )}{" "}
+                    (#{t.matchedProspect.id})
+                  </>
+                ) : t.prospectId != null ? (
+                  `Prospect #${t.prospectId}`
+                ) : (
+                  "Not matched"
+                )}
+              </dd>
+            </dl>
             <div className="mt-3 flex flex-wrap gap-2">
               {t.channel === "linkedin" && (
                 <>
@@ -944,16 +1003,6 @@ function ThreadRow({
                   >
                     {t.workspace ? "Change assignment" : "Assign workspace and prospect"}
                   </Button>
-                  {profileUrl && (
-                    <a
-                      href={profileUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="self-center text-[12px] text-ink-muted underline"
-                    >
-                      LinkedIn profile
-                    </a>
-                  )}
                 </>
               )}
               {t.mailboxThreadKey && (
@@ -977,16 +1026,16 @@ function ThreadRow({
                 </>
               )}
             </div>
+            {assignOpen && (
+              <Assignment
+                thread={t}
+                onDone={() => {
+                  setAssignOpen(false);
+                  void invalidate();
+                }}
+              />
+            )}
           </details>
-          {assignOpen && (
-            <Assignment
-              thread={t}
-              onDone={() => {
-                setAssignOpen(false);
-                void invalidate();
-              }}
-            />
-          )}
           {t.mailboxThreadKey && !t.historyComplete && (
             <Button
               size="sm"

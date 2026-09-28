@@ -149,7 +149,10 @@ export async function collectReplies(req: Request): Promise<RepliesResult> {
     ...linkedInThreads(),
   ];
   for (const t of incoming) {
-    const prospect = t.prospectId == null ? null : getLedger().getProspectById(t.prospectId);
+    const prospect =
+      t.prospectId != null && t.workspace === workspace
+        ? getLedger().getProspectById(t.prospectId)
+        : null;
     t.contextVersion = replyContextVersion({
       messages: t.messages.map((m) => [m.id, m.direction, m.body, m.deleted]),
       workspace: t.workspace,
@@ -180,14 +183,22 @@ export async function collectReplies(req: Request): Promise<RepliesResult> {
     ...incoming.filter((t) => t.channel === "linkedin").map((t) => review.get(t.key)!),
   ];
   for (const t of threads) {
-    // Resolve this at read time so saved email conversations also pick up a
-    // profile added to their prospect after the last provider sync.
-    t.profileUrl =
-      t.profileUrl ||
-      (t.prospectId != null && t.workspace === workspace
-        ? getLedger().getProspectById(t.prospectId)?.linkedin_url
-        : null) ||
-      null;
+    // Resolve saved conversations against this workspace only, including records
+    // outside the live provider window and fields cleared since the last sync.
+    const prospect =
+      t.prospectId != null && t.workspace === workspace
+        ? getLedger().getProspectById(t.prospectId)
+        : null;
+    t.matchedProspect = prospect
+      ? { id: prospect.id, name: prospect.name ?? null, email: prospect.email ?? null }
+      : null;
+    if (t.channel === "email" && prospect) {
+      t.name = prospect.name || t.name;
+      t.company = prospect.company;
+      t.profileUrl = prospect.linkedin_url ?? null;
+    } else {
+      t.profileUrl = t.profileUrl || prospect?.linkedin_url || null;
+    }
   }
   const accounts = getLinkedInInboxStore()
     .accounts()

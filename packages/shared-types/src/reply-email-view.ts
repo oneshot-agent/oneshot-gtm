@@ -105,6 +105,12 @@ export function emailThreads(
       messages(c.items.filter((i) => i.kind !== "reply" || !i.id.startsWith("mailbox:"))),
       c.prospectId,
       c.archivedAt,
+      {
+        combinedEmailHistory:
+          new Set(
+            inbound.map((i) => JSON.stringify([i.sourceIdentityId, i.threadId ?? i.threadKey])),
+          ).size > 1,
+      },
     );
   }
   const groups = new Map<string, InboxReplyView[]>();

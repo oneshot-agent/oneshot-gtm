@@ -649,3 +649,20 @@
     margin-top: 4px;
   }
 }
+
+.replies-subject {
+  padding-top: 16px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+.replies-contact-fields {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) minmax(0, 1fr);
+  gap: 8px 16px;
+  margin-top: 12px;
+}
+.replies-contact-fields dd {
+  margin: 0;
+  color: var(--ink-cream-2);
+  overflow-wrap: anywhere;
+}

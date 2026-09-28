@@ -107,6 +107,35 @@ describe("LinkedIn profile links in replies", () => {
       linkedin_url: "https://www.linkedin.com/in/someone-else",
     });
     expect((await read()).threads[0]?.profileUrl).toBeNull();
+    expect((await read()).threads[0]?.matchedProspect).toBeNull();
+    expect(mocks.prospect).not.toHaveBeenCalled();
+  });
+});
+
+describe("current matched contact details", () => {
+  it("replaces stale saved identity fields, including a cleared profile", async () => {
+    Object.assign(mocks.stored.get("saved")!, {
+      name: "Old name",
+      company: "Wrong company",
+      profileUrl: "https://www.linkedin.com/in/wrong",
+    });
+    mocks.prospect.mockReturnValue({
+      id: 7,
+      name: "Boardy Boardman",
+      email: "boardy@example.test",
+      company: "Boardy",
+      linkedin_url: null,
+    });
+    expect((await read()).threads[0]).toMatchObject({
+      name: "Boardy Boardman",
+      company: "Boardy",
+      profileUrl: null,
+      matchedProspect: { id: 7, name: "Boardy Boardman", email: "boardy@example.test" },
+    });
+  });
+  it("keeps unmatched legacy email readable without a summary", async () => {
+    mocks.stored.get("saved")!.prospectId = null;
+    expect((await read()).threads[0]).toMatchObject({ name: "Ada", matchedProspect: null });
     expect(mocks.prospect).not.toHaveBeenCalled();
   });
 });
