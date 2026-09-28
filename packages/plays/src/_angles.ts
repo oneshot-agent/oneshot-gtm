@@ -471,7 +471,15 @@ export async function followUpEdgeSelection(
       ? angles.findIndex((a) => angleTextKey(a) === angleTextKey(introText!))
       : -1;
     const index = introIndex >= 0 ? introIndex : angleArmIndex(email, angles.length);
-    return { index, angle: angles[index]!, count: angles.length, method: "arm", sameAsIntro: true };
+    return {
+      index,
+      angle: angles[index]!,
+      count: angles.length,
+      method: "arm",
+      // Only when the intro's angle is still on the edge: an arm re-picked
+      // after an edit removed it is a new angle to the reader.
+      sameAsIntro: introIndex >= 0,
+    };
   }
   const excluded = new Set(
     [introText, opts.rotateFrom].filter((t): t is string => !!t?.trim()).map(angleTextKey),

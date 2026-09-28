@@ -202,7 +202,7 @@ describe("compactReceiptPayloads", () => {
     expect(ledger.compactReceiptPayloads({ apply: true }).rows).toBe(1100);
     expect(JSON.parse(storedJson(ids.at(-1)!))["markdown"]).toBe("[omitted: 4200 chars]");
     expect(ledger.compactReceiptPayloads({ apply: false }).rows).toBe(0);
-  });
+  }, 30_000); // 1,100 rows of 4 KB: slow on shared CI runners
 
   it("skips rows whose JSON doesn't parse", () => {
     const bad = insertRaw("web.read", `{not json ${PAGE}`);
