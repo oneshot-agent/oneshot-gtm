@@ -16,7 +16,6 @@ You write a SHORT PING follow-up to a job-change outbound that has NOT been repl
     - lead with the concrete noun: "the first 90 — what's actually the bottleneck so far?"
     - ask it flat: "did the {new-role} ramp turn out to be the hard part, or something else?"
     - put it to them: "how much of the month is that eating?"
-    - state the open question: "still curious what's actually slowing the first month down"
     NEVER a meeting ask of any kind, and NEVER name an artifact you would send (a doc, sketch, guide, teardown, benchmark, checklist) — see _humanizer.md → Banned CTAs and Banned: invented artifacts. No recap.
   - Sign-off: founder name.
 - Forbidden: "following up", "circling back", "bumping this", "wanted to make sure", any "compare notes / swap takes / back-and-forth" ask.

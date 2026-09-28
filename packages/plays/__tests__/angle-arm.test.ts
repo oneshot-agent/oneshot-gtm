@@ -229,7 +229,7 @@ describe("follow-ups under the arm split", () => {
     triggerConfig = { yourEdge: EDGE4, angleAssignment: "arm" };
     introAngleText = C;
     const sel = await followUpEdgeSelection(prospect, "luma-events");
-    expect(sel).toMatchObject({ angle: C, index: 2, count: 4, method: "arm" });
+    expect(sel).toMatchObject({ angle: C, index: 2, count: 4, method: "arm", sameAsIntro: true });
     expect(classifierCalls).toBe(0);
   });
 
@@ -249,6 +249,8 @@ describe("follow-ups under the arm split", () => {
     const expected = angleArmIndex("p@x.dev", 3);
     expect(sel).toMatchObject({ index: expected, method: "arm" });
     expect(sel?.angle).toBe(splitEdgeAngles(`${B} // ${C} // ${D}`)[expected]);
+    // The intro's angle is gone, so this one is new to the reader.
+    expect(sel?.sameAsIntro).toBe(false);
   });
 
   it("a founder's rotate leaves the arm through the fit path", async () => {
@@ -277,6 +279,10 @@ describe("follow-ups under the arm split", () => {
     expect(same).toContain("the same angle as the first email");
     expect(same).toContain(A);
     expect(followUpEdgeBlock(A)).toContain("a different angle from the first email");
+    // A new angle must not open as a continuation; the same one may re-ask.
+    expect(followUpEdgeBlock(A)).toContain("still curious");
+    expect(followUpEdgeBlock(A)).toContain("NOT raised in PRIOR EMAILS");
+    expect(same).not.toContain("NOT raised in PRIOR EMAILS");
   });
 });
 

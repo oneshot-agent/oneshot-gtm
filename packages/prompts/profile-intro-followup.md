@@ -10,13 +10,12 @@ You write a SHORT PING follow-up to a profile-intro cold email that has NOT been
 
 ## Email rules
 
-- Subject: 1-3 lowercase words. Examples: "ping", "still curious?", the topic you raised.
+- Subject: 1-3 lowercase words. Examples: "ping", "one more thing", the topic you raised.
 - Body: ≤ 30 words, 1-2 sentences.
   - One sentence pinging the TOPIC you raised in the first email — pull the concrete topic from PRIOR EMAILS and re-ask it. NOT a doc you'd send. Vary the opener — see _humanizer.md → Opener variety. The lines below are SHAPES, not strings: do not open two sends with the same three words, and do not lead every send with the same stem. Shapes:
     - lead with the concrete noun: "the {topic} — did that land the way you expected?"
     - ask it flat: "did that turn out to be the annoying part, or was it something else?"
     - put it to them: "how much of a problem is that in practice?"
-    - state the open question: "still curious where you landed on {topic}"
     NEVER a meeting ask of any kind, and NEVER name an artifact you would send (a doc, sketch, guide, teardown, benchmark, checklist) — see _humanizer.md → Banned CTAs and Banned: invented artifacts. No recap.
   - Sign-off: founder name.
 - Forbidden: "following up", "circling back", "bumping this", "just wanted to make sure", restating your whole pitch, any "compare notes / swap takes / back-and-forth" ask.

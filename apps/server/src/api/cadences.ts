@@ -296,6 +296,7 @@ function draftAngleChoiceOf(payload: unknown): DraftAngleChoice | null {
     origin: c.origin === "generated" ? "generated" : "configured",
     index: Number.isInteger(c.index) ? (c.index as number) : 0,
     count: Number.isInteger(c.count) && (c.count as number) > 0 ? (c.count as number) : 1,
+    ...(c.sameAsIntro === true ? { sameAsIntro: true } : {}),
   };
 }
 

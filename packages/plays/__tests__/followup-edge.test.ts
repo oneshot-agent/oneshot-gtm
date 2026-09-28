@@ -87,12 +87,15 @@ describe("followUpEdgeSelection", () => {
     triggerConfig = { yourEdge: `${A} // ${B} // ${C}` };
     const sel = await followUpEdgeSelection(prospect, "luma-events", { rotateFrom: B });
     expect(sel?.angle).toBe(C);
+    expect(sel?.sameAsIntro).toBe(false);
   });
 
   it("rotating with only the intro's angle left uses it rather than nothing", async () => {
     triggerConfig = { yourEdge: `${A} // ${B}` };
     const sel = await followUpEdgeSelection(prospect, "luma-events", { rotateFrom: B });
     expect(sel?.angle).toBe(A);
+    // Back on the intro's angle: the draft must not be told, or show, it's a new one.
+    expect(sel?.sameAsIntro).toBe(true);
   });
 
   it("judges the intro row's demo day at follow-up time, for the classifier", async () => {

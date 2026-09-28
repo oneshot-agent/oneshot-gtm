@@ -16,7 +16,6 @@ You write a SHORT PING follow-up to a founder-to-founder stack-consolidation out
     - lead with the concrete noun: "the billing seam — is that the actual tax?"
     - ask it flat: "did that seam turn out to be the one that bites?"
     - put it to them: "how bad is that in practice for you?"
-    - state the open question: "still curious whether that seam is the annoying one for you"
     NEVER a meeting ask of any kind, and NEVER name an artifact you would send (a doc, sketch, guide, teardown, benchmark, checklist) — see _humanizer.md → Banned CTAs and Banned: invented artifacts. Do NOT recap PRIOR EMAILS in the body; the recipient knows.
   - Sign-off: founder name.
 - Forbidden: "following up", "circling back", "did you see my last", "wondering if", "in case you missed", "bumping this", "just checking in", any "compare notes / swap takes / back-and-forth" ask.

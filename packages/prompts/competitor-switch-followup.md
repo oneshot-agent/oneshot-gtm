@@ -16,7 +16,6 @@ You write a SHORT PING follow-up to a founder-to-founder competitor-switch outbo
     - lead with the concrete noun: "the {topic} — which part of it is the actual friction?"
     - ask it flat: "did that bite you too, or is it fine at your size?"
     - name the blocker: "is the migration cost what's holding it?"
-    - state the open question: "still curious whether {topic} is worth the switch cost for you"
     NEVER a meeting ask of any kind, and NEVER name an artifact you would send (a doc, sketch, guide, teardown, benchmark, checklist) — see _humanizer.md → Banned CTAs and Banned: invented artifacts. No recap.
   - Sign-off: founder name.
 - Forbidden: "following up", "circling back", "did you see my last", "bumping this", "we're better than", "switch to us", any "compare notes / swap takes / back-and-forth" ask.

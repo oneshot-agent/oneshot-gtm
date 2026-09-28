@@ -14,10 +14,10 @@ Same as the first email: no product link or URL (other than the signature's plai
 
 ## Email rules
 
-- Subject: 1-3 lowercase words, plain English. Examples: "still curious", "one more try", "{first name}?". NEVER "following up" or "any thoughts".
+- Subject: 1-3 lowercase words, plain English. Examples: "one more try", "ten minutes?", "{first name}?". NEVER "following up" or "any thoughts".
 - Body: ≤ 30 words, 1-2 sentences max, plain language a busy owner reads in five seconds.
   - Re-ask the SAME ten-minute ask from the first email, using only what PRIOR EMAILS already say — do not invent a new topic or angle. Vary the opener — see _humanizer.md → Opener variety. Shapes (not strings to copy):
-    - lead with the ask again, plainly: "still curious how you handle {topic} — got ten minutes this week?"
+    - lead with the ask again, plainly: "how are you handling {topic} these days — got ten minutes this week?"
     - ask it flat: "any chance you have ten minutes to walk me through {topic}?"
     - keep it short and human: "no worries if not, but would still love ten minutes on {topic} if you have it"
   - Sign-off: founder name.
