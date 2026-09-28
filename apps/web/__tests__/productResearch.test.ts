@@ -60,6 +60,14 @@ describe("product research evidence", () => {
     expect(html).not.toContain("<script>");
     expect(html).toContain("Source link unavailable");
   });
+  it("does not claim unavailable research was available to the writer", () => {
+    const html = render({ productResearch: { status: "unavailable", sources: [] } });
+    expect(html).not.toContain("Saved product context available");
+    expect(html).toContain("No saved product sources available");
+    expect(render({ productResearch: { status: "complete", sources: [] } })).toContain(
+      "Saved product context available",
+    );
+  });
   it("handles unavailable research, missing excerpts and invalid dates", () => {
     expect(render({ productResearch: { sources: [null], researchedAt: "bad" } })).toContain(
       "No saved product sources available",

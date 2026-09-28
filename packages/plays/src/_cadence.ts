@@ -1484,7 +1484,16 @@ export async function runCadenceStepForProspect(
     ? { kind: "direct_mail", draftId: mailDraft.id }
     : opts.persistedPayload
       ? opts.persistedPayload
-      : await step.builder({ prospect, cfg, metadata: {}, maxBodyWords: step.maxBodyWords ?? 100 });
+      : await step.builder({
+          prospect,
+          cfg,
+          metadata: {},
+          maxBodyWords: step.maxBodyWords ?? 100,
+          recentEmailBodies: ledger.recentSentEmailBodies({
+            playName: opts.playName,
+            stepIndex: nextIndex,
+          }),
+        });
 
   if (built?.kind === "direct_mail" && opts.directMailId !== built.draftId) {
     return {

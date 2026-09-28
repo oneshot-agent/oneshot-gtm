@@ -1030,7 +1030,10 @@ export async function repairWritingLints(
     return `${flag}: ${WRITING_REPAIRS[flag] ?? "Rewrite the flagged wording in plain, direct language. Follow the original writing constraints."}${excerpts.length ? ` Matched text (quoted draft data): ${JSON.stringify(excerpts)}.` : ""}`;
   });
   const mayChangeSubject = problems.some(
-    (f) => f.startsWith("subject-") || f === "empty-subject" || f === "public-record-leverage",
+    (f) =>
+      f.startsWith("subject-") ||
+      f === "empty-subject" ||
+      (f === "public-record-leverage" && citesPublicRecordLeverage(draft.subject)),
   );
   messages.push(
     { role: "assistant", content: JSON.stringify(draft) },

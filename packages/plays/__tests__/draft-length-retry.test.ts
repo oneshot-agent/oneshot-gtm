@@ -243,6 +243,24 @@ describe("shared writing lint repair", () => {
     expect(calls[0]?.[0]?.content).toContain("Verified context");
   });
 
+  it("keeps the subject locked for body-only public record wording", async () => {
+    const draft = { ...clean, body: "Your license expired." };
+    responses.push(JSON.stringify({ ...clean, subject: "changed subject" }));
+    expect(await repairWritingLints(messages(), draft, { promptName: "p" })).toEqual(draft);
+    expect(calls[0]?.at(-1)?.content).toContain("Keep the subject unchanged");
+  });
+
+  it("allows removing public record wording from the subject", async () => {
+    responses.push(JSON.stringify(clean));
+    expect(
+      await repairWritingLints(
+        messages(),
+        { ...clean, subject: "Your license expired." },
+        { promptName: "p" },
+      ),
+    ).toEqual(clean);
+  });
+
   it("repairs all writing failures in one request", async () => {
     responses.push(JSON.stringify(clean));
     const fixed = await repairWritingLints(

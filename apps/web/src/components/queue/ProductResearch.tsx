@@ -42,16 +42,18 @@ export function ProductResearch({ payload }: { payload: unknown }) {
         <p className="mt-2 text-[12px] text-ink-muted">Research hidden in privacy mode.</p>
       ) : (
         <>
-          <p className="mt-2 text-[12px] leading-4 text-ink-muted">
-            Saved product context available to the draft writer.
-            {research.status === "partial" && " Research is partial."}
-            {date && (
-              <>
-                {" "}
-                Retrieved <time dateTime={at!.toISOString()}>{date}</time>.
-              </>
-            )}
-          </p>
+          {research.status !== "unavailable" && (
+            <p className="mt-2 text-[12px] leading-4 text-ink-muted">
+              Saved product context available to the draft writer.
+              {research.status === "partial" && " Research is partial."}
+              {date && (
+                <>
+                  {" "}
+                  Retrieved <time dateTime={at!.toISOString()}>{date}</time>.
+                </>
+              )}
+            </p>
+          )}
           {sources.length ? (
             sources.map((source, index) => (
               <div key={`${source.url ?? ""}:${source.excerpt}`} className="mt-3 min-w-0">
