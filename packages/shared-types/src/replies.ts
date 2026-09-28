@@ -48,6 +48,9 @@ export interface ReplyThread {
   address: string;
   workspace: string | null;
   prospectId: number | null;
+  matchedProspect?: { id: number; name: string | null; email: string | null } | null;
+  /** True when the displayed email history spans multiple provider threads. */
+  combinedEmailHistory?: boolean;
   messages: ReplyMessage[];
   lastActivityAt: string;
   archivedAt: string | null;
