@@ -212,7 +212,10 @@ function QueuePage() {
   // nothing to prefill from. The box is editable throughout; a reply only
   // lands if the founder hasn't typed yet.
   const [rejectDrafting, setRejectDrafting] = useState(false);
+  const [rejectDraftOutcome, setRejectDraftOutcome] = useState<"idle" | "empty" | "error">("idle");
+  const [rejectDraftAttempt, setRejectDraftAttempt] = useState(0);
   useEffect(() => {
+    setRejectDraftOutcome("idle");
     if (!rejectModal) {
       setRejectReason("");
       setRejectDrafting(false);
@@ -232,15 +235,18 @@ function QueuePage() {
         if (!live) return;
         setRejectDrafting(false);
         if (r.reason) setRejectReason((cur) => (cur.trim() ? cur : r.reason!));
+        else setRejectDraftOutcome("empty");
       })
       .catch(() => {
-        // The box simply stays empty; the founder was never blocked on it.
-        if (live) setRejectDrafting(false);
+        if (live) {
+          setRejectDrafting(false);
+          setRejectDraftOutcome("error");
+        }
       });
     return () => {
       live = false;
     };
-  }, [rejectModal]);
+  }, [rejectModal, rejectDraftAttempt]);
   const [drainModal, setDrainModal] = useState<DrainModalState | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [drainLimit, setDrainLimit] = useState(10);
@@ -764,6 +770,46 @@ function QueuePage() {
           </>
         }
       >
+        <div role="status" aria-live="polite" aria-atomic="true">
+          {rejectDrafting ? (
+            <div className="mb-3 flex items-start gap-3 rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3">
+              <Loader2
+                size={18}
+                aria-hidden="true"
+                className="mt-0.5 shrink-0 animate-spin text-ink-cream-2 motion-reduce:animate-none"
+              />
+              <div>
+                <p className="m-0 text-[13px] font-medium text-ink-cream">
+                  Drafting rejection reason…
+                </p>
+                <p className="mt-1 text-[12px] leading-5 text-ink-muted">
+                  Checking the available prospect evidence. You can write your own reason while this
+                  runs.
+                </p>
+              </div>
+            </div>
+          ) : !rejectReason.trim() && rejectDraftOutcome !== "idle" ? (
+            <div className="mb-3 rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3">
+              <p className="m-0 text-[13px] text-ink-cream-2">
+                {rejectDraftOutcome === "error"
+                  ? "Couldn’t generate a suggestion."
+                  : "No suggestion returned."}
+              </p>
+              <p className="mt-1 text-[12px] leading-5 text-ink-muted">
+                Write your own reason or choose one below.
+              </p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2"
+                onClick={() => setRejectDraftAttempt((n) => n + 1)}
+                {...readOnly}
+              >
+                <RotateCw size={12} aria-hidden="true" /> Try again
+              </Button>
+            </div>
+          ) : null}
+        </div>
         <Field label="Reason (optional — kept on the prospect's timeline)">
           <Textarea
             rows={3}
@@ -787,7 +833,6 @@ function QueuePage() {
             Prefilled from the finder's note — edit freely, or clear it.
           </p>
         )}
-        {rejectDrafting && <p className="mt-1 text-xs text-ink-faint">drafting a reason…</p>}
         {rejectModal?.privacy && (
           <p className="mt-1 text-xs text-ink-faint">Privacy mode — nothing prefilled.</p>
         )}
