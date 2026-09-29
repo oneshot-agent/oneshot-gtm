@@ -12,7 +12,7 @@ vi.mock("@oneshot-gtm/core", async () => ({
   linkedInMatches: () => [],
 }));
 const { getLinkedInInboxStore, getReplyReviewStore } = await import("@oneshot-gtm/core");
-const { startLinkedInBackfill, runLinkedInBackfill, backfillStatus } =
+const { startLinkedInBackfill, runLinkedInBackfill, backfillStatus, reopenForNewSenders } =
   await import("../src/linkedin-backfill.ts");
 const store = getLinkedInInboxStore();
 const status = (over = {}) => ({
@@ -360,3 +360,48 @@ it.each(["account_disconnected", "rate_limited", "provider_unavailable"])(
     expect(store.identity("account", "internal")).toBeNull();
   },
 );
+
+it("reopens a completed backfill for a new sender, resolves it, and completes without a sync", async () => {
+  store.saveProgress("backfill:account", {
+    id: "done",
+    accountKey: "account",
+    stage: "complete",
+    counts: {},
+    failures: [],
+    updatedAt: "",
+  });
+  // Nothing new: stays complete.
+  expect(reopenForNewSenders("account", 1_000_000)).toBe(false);
+  expect(backfillStatus("account")?.stage).toBe("complete");
+
+  sender();
+  // Checked at most every five minutes per account.
+  expect(reopenForNewSenders("account", 1_000_000 + 60_000)).toBe(false);
+  expect(reopenForNewSenders("account", 1_000_000 + 6 * 60_000)).toBe(true);
+  expect(backfillStatus("account")).toMatchObject({ stage: "resolve", ongoing: true });
+
+  await runLinkedInBackfill("account");
+  expect(store.identity("account", "internal")?.profile).toBe("linkedin.com/in/ada");
+  expect(backfillStatus("account")?.stage).toBe("complete");
+  expect(backfillStatus("account")?.ongoing).toBeUndefined();
+  // Only the profile lookup was bought: no provider sync, no status poll.
+  expect(sdk.mock.calls.map(([, op]) => op.kind)).toEqual(["profile"]);
+});
+
+it("does not reopen without profile access", async () => {
+  store.saveAccount({
+    ...store.account("account")!,
+    account: { ...store.account("account")!.account, allowed_actions: ["read", "reply"] },
+  });
+  store.saveProgress("backfill:account", {
+    id: "done",
+    accountKey: "account",
+    stage: "complete",
+    counts: {},
+    failures: [],
+    updatedAt: "",
+  });
+  sender();
+  expect(reopenForNewSenders("account", 9_000_000)).toBe(false);
+  expect(backfillStatus("account")?.stage).toBe("complete");
+});
