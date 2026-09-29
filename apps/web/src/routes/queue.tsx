@@ -892,10 +892,7 @@ export function QueueRow({
   moveTargets: MoveTarget[];
   busy: boolean;
 }) {
-  const canApproveFit =
-    row.status === "approved" &&
-    row.sendHold != null &&
-    (row.payload as Record<string, unknown> | null)?.icpVerdict === "reject";
+  const canApproveFit = row.status === "approved" && row.sendHold != null;
   const email = emailFor(row.payload);
   const name = nameFor(row.payload);
   const company = companyFor(row.payload);
