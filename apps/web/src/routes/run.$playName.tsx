@@ -3,7 +3,7 @@ import { Explain } from "../components/primitives/Explain.tsx";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, CheckCircle2, Loader2, Play, Plus, RefreshCw, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { type RunPlayEvent, type RunPlayRequest, type RunRecord } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
@@ -16,6 +16,11 @@ import { useMask } from "../lib/privacy.tsx";
 import { pruneSentRows, remapFilteredEventIndexes } from "../lib/pruneSentRows.ts";
 import { IS_DEMO, demoWrite } from "../api/demo.ts";
 import { readOnly } from "../lib/readOnly.ts";
+import {
+  dryRunReturnSummary,
+  RETURN_TO_QUEUE_SECONDS,
+  shouldReturnToQueue,
+} from "../lib/runReturn.ts";
 
 /**
  * Search-param contract for arrivals from the `/queue` drain modal: `fromQueue=1`
@@ -245,6 +250,40 @@ function RunPage() {
     return { drafts, sent, flagged };
   }, [draftedByIndex]);
 
+  // A dry run drained from the queue heads back there once it finishes live,
+  // landing on the play's approved rows where the new drafts now sit. The
+  // countdown gives a beat to read the result; "stay" cancels it.
+  const errorCount = runRecord?.errorCount ?? errorEvents.length;
+  const prevModeRef = useRef<typeof mode | null>(null);
+  const [returnIn, setReturnIn] = useState<number | null>(null);
+  useEffect(() => {
+    const prevMode = prevModeRef.current;
+    if (prevMode === mode) return;
+    prevModeRef.current = mode;
+    if (
+      shouldReturnToQueue({
+        prevMode,
+        mode,
+        fromQueue: search.fromQueue === "1",
+        dryRun,
+        drafts: aggregate.drafts,
+        errors: errorCount,
+      })
+    ) {
+      setReturnIn(RETURN_TO_QUEUE_SECONDS);
+    }
+  }, [mode, search.fromQueue, dryRun, aggregate.drafts, errorCount]);
+  useEffect(() => {
+    if (returnIn == null) return;
+    if (returnIn <= 0) {
+      toast.success(dryRunReturnSummary(aggregate.drafts, aggregate.flagged));
+      void globalNavigate({ to: "/queue", search: { status: "approved", play: playName } });
+      return;
+    }
+    const timer = setTimeout(() => setReturnIn((n) => (n == null ? null : n - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [returnIn, aggregate.drafts, aggregate.flagged, globalNavigate, playName]);
+
   if (!schema) {
     return (
       <div className="-mx-6 -my-6 flex flex-col">
@@ -441,6 +480,14 @@ function RunPage() {
         >
           <ArrowLeft size={11} /> back to plays
         </Link>
+        {search.fromQueue === "1" && (
+          <Link
+            to="/queue"
+            className="ml-4 inline-flex items-center gap-1 font-mono text-[11px] text-ink-muted hover:text-ink-cream"
+          >
+            <ArrowLeft size={11} /> back to queue
+          </Link>
+        )}
         <div className="mt-3 flex items-baseline gap-3">
           <div className="ln-eyebrow">The Ledger · Run</div>
           <code
@@ -660,6 +707,18 @@ function RunPage() {
                 sent
               </span>
               {doneEvent?.kind === "done" && <span className="text-ink-muted">· done</span>}
+              {returnIn != null && (
+                <span className="text-ink-muted">
+                  · back to queue in {Math.max(returnIn, 0)}s ·{" "}
+                  <button
+                    type="button"
+                    onClick={() => setReturnIn(null)}
+                    className="underline decoration-ink-faint underline-offset-2 hover:text-ink-cream"
+                  >
+                    stay
+                  </button>
+                </span>
+              )}
               {cancelledEvent?.kind === "cancelled" && (
                 <span className="text-ink-muted">· cancelled</span>
               )}
@@ -732,6 +791,7 @@ function RunPage() {
               variant="ghost"
               disabled={running || resolvingContacts}
               onClick={() => {
+                setReturnIn(null);
                 setEvents([]);
                 setError(null);
                 if (runRecord?.targets) {

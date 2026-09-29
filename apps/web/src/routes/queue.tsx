@@ -110,6 +110,16 @@ import { INTERVAL_PRESETS_MS, withIntervalOverride } from "../lib/triggerInterva
 import { summarizeTriggers } from "../lib/triggerSummary.ts";
 import { useLocalStorage } from "../lib/useLocalStorage.ts";
 import {
+  hasQueueFilters,
+  loadQueueFilters,
+  loadQueueScroll,
+  queueFiltersKey,
+  type QueueSearch,
+  saveQueueFilters,
+  saveQueueScroll,
+  validateQueueSearch,
+} from "../lib/queueSearch.ts";
+import {
   clearDraftGenerating,
   markDraftGenerating,
   useGeneratingDrafts,
@@ -126,6 +136,7 @@ import {
 
 export const Route = createFileRoute("/queue")({
   staticData: { title: "Queue" },
+  validateSearch: validateQueueSearch,
   component: QueuePage,
 });
 
@@ -202,8 +213,38 @@ interface EditingState {
 function QueuePage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const [statusFilter, setStatusFilter] = useState<QueueStatusView | "all">("pending");
-  const [playFilter, setPlayFilter] = useState<string>("all");
+  // Filters live in the URL; a bare /queue restores the last set (see queueSearch.ts).
+  const search = Route.useSearch();
+  const queueNavigate = Route.useNavigate();
+  const statusFilter: QueueStatusView | "all" = search.status ?? "pending";
+  const playFilter = search.play ?? "all";
+  const orderOverride = search.order ?? null;
+  const setFilters = (patch: QueueSearch): void => {
+    void queueNavigate({ search: (prev) => ({ ...prev, ...patch }), replace: true });
+  };
+  const setStatusFilter = (status: QueueStatusView | "all"): void =>
+    setFilters({ status: status === "pending" ? undefined : status });
+  const setPlayFilter = (play: string): void =>
+    setFilters({ play: play === "all" ? undefined : play });
+  const setOrderOverride = (order: "ranked" | "newest"): void => setFilters({ order });
+  // `settled` flips once the URL holds the filters this visit will show: at
+  // once when the link carried some, else after the stored set is restored.
+  const [settled, setSettled] = useState(() => hasQueueFilters(search));
+  useEffect(() => {
+    if (settled) return;
+    const stored = loadQueueFilters();
+    if (!hasQueueFilters(stored)) {
+      setSettled(true);
+      return;
+    }
+    void queueNavigate({ search: stored, replace: true }).finally(() => setSettled(true));
+    // Mount-only: later filter changes save below instead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!settled) return;
+    saveQueueFilters({ status: search.status, play: search.play, order: search.order });
+  }, [settled, search.status, search.play, search.order]);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [rejectModal, setRejectModal] = useState<RejectModalState | null>(null);
@@ -252,7 +293,6 @@ function QueuePage() {
   const [drainLimit, setDrainLimit] = useState(10);
   const [drainDryRun, setDrainDryRun] = useState(true);
   // null = follow the configured default; the server echoes what it used.
-  const [orderOverride, setOrderOverride] = useState<"ranked" | "newest" | null>(null);
 
   const queueQuery = useQuery({
     queryKey: ["queue", statusFilter, playFilter, orderOverride],
@@ -260,6 +300,39 @@ function QueuePage() {
     refetchInterval: 20_000,
   });
   const effectiveOrder = queueQuery.data?.order ?? orderOverride ?? "newest";
+
+  // Scroll position survives a round trip away from /queue, but only back onto
+  // the same filters: arriving on a different view starts at the top.
+  const filtersKey = queueFiltersKey(search);
+  const filtersKeyRef = useRef(filtersKey);
+  filtersKeyRef.current = filtersKey;
+  // Read during the first render, before any unmount save (StrictMode's
+  // dev-only remount included) can overwrite it.
+  const [savedScroll] = useState(loadQueueScroll);
+  useEffect(() => {
+    // Tracked live: by the time an unmount cleanup runs, the next route has
+    // already replaced the content and `<main>` has clamped back to the top.
+    // That clamp fires its own scroll event, after the URL has moved on.
+    const main = document.querySelector("main");
+    if (!main) return;
+    let top = main.scrollTop;
+    const onScroll = (): void => {
+      if (window.location.pathname.endsWith("/queue")) top = main.scrollTop;
+    };
+    main.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      main.removeEventListener("scroll", onScroll);
+      saveQueueScroll(top, filtersKeyRef.current);
+    };
+  }, []);
+  const scrollRestored = useRef(false);
+  useEffect(() => {
+    if (scrollRestored.current || !settled || !queueQuery.isSuccess) return;
+    scrollRestored.current = true;
+    if (!savedScroll || savedScroll.filters !== filtersKey || savedScroll.top <= 0) return;
+    // After the root layout's own scroll-to-top on route change.
+    requestAnimationFrame(() => document.querySelector("main")?.scrollTo({ top: savedScroll.top }));
+  }, [settled, queueQuery.isSuccess, filtersKey, savedScroll]);
 
   const invalidate = (): void => {
     void qc.invalidateQueries({ queryKey: ["queue"] });
