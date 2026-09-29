@@ -2221,6 +2221,13 @@ export function buildFollowUpEmail(opts: {
    * plays whose follow-ups only re-ask keep byte-identical prompts.
    */
   prospectContext?: boolean;
+  /**
+   * Add the founder's admission (`founderAdmission`) on every prospect, for a
+   * step whose prompt reframes it (design-partner offer: early = the founder
+   * builds it with you). Unlike the first touch's ~1-in-3 slot, the step's
+   * prompt decides how it lands, so it is never withheld.
+   */
+  admission?: boolean;
 }): SequenceStep["builder"] {
   return async (ctx: CadenceContext) => {
     const system = loadPrompt(opts.promptName, { humanizer: "followup" }) + signatureDirective();
@@ -2266,6 +2273,9 @@ export function buildFollowUpEmail(opts: {
       `COMPANY: ${ctx.prospect.company ?? "(unknown)"}`,
       ...opts.contextLines,
       ...(opts.prospectContext ? prospectContextLines(ctx.prospect) : []),
+      ...(opts.admission && ctx.cfg.founderAdmission?.trim()
+        ? [`ADMISSION (true, about the sender): ${ctx.cfg.founderAdmission.trim()}`]
+        : []),
       ...(demoDayText ? [demoDayText] : []),
       ...(priorBlock ? ["", priorBlock] : []),
       ...(angleBlock ? ["", angleBlock] : []),

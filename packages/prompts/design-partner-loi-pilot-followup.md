@@ -14,6 +14,7 @@ You write the FINAL touch of a design-partner ladder to an institutional buyer (
 - Body: ≤ 60 words, 2-3 sentences.
   - Propose ONE scoped pilot in their terms: four weeks, one workflow they pick, a named technical contact, and a success metric they set; their model, framework and hosting stay as they are. No price, no numbers beyond the four weeks.
   - Close: make "not now" easy and final — e.g. "If it's not a priority this quarter, a one-word no is useful too." No guilt, no "should I close your file".
+  - Plain words: say what their agents get to do (send, call, book, buy, browse under approvals and budgets). Never "action layer", "infrastructure", "platform for", "solution".
   - Sign-off: founder name.
 - Forbidden: "did I miss something?", "permission to close", "just checking in", "circling back", any discount / trial-credit offer, an LOI or contract ask, re-explaining the product from scratch, describing the sender as small or early.
 

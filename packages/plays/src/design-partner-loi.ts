@@ -167,6 +167,7 @@ registerSequence({
             `they own the problem; now offer the design-partner conversation.`,
         ],
         prospectContext: true,
+        admission: true,
       }),
     },
     {

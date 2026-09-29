@@ -332,3 +332,30 @@ describe("follow-up writing repairs", () => {
     expect(llmCalls[1]!.user).toContain("30 body words");
   });
 });
+
+describe("follow-up prospect context and admission", () => {
+  it("adds ROLE, COMPANY FACTS and the admission only when the step asks for them", async () => {
+    const c = ctx();
+    c.prospect.title = "Head of AI Platform";
+    c.prospect.dossier_json = JSON.stringify({
+      person: { companyFacts: "Color · hospital & health care · 660 employees" },
+    });
+    (c.cfg as { founderAdmission: string | null }).founderAdmission = "small team, no logos yet";
+
+    llmCalls.length = 0;
+    await buildFollowUpEmail({ playName: "p", promptName: "x", contextLines: [] })(c);
+    expect(llmCalls.at(-1)!.user).not.toMatch(/ROLE:|COMPANY FACTS:|ADMISSION/);
+
+    await buildFollowUpEmail({
+      playName: "p",
+      promptName: "x",
+      contextLines: [],
+      prospectContext: true,
+      admission: true,
+    })(c);
+    const user = llmCalls.at(-1)!.user;
+    expect(user).toContain("ROLE: Head of AI Platform");
+    expect(user).toContain("COMPANY FACTS: Color · hospital & health care · 660 employees");
+    expect(user).toContain("ADMISSION (true, about the sender): small team, no logos yet");
+  });
+});
