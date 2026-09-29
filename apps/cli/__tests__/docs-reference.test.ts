@@ -25,13 +25,19 @@ describe("CLI documentation", () => {
     expect(text).toContain("| files... | No |");
     expect(text).toContain("--workspace &#60;name&#62;");
     expect(text).toContain("Pass &#60;input&#62; &#124; &#123;value&#125; &#38; &#96;code&#96;");
-    expect(text).toContain("| --target &#60;file&#62; | target | — | Yes |");
+    expect(text).toContain("| --target &#60;file&#62; | target | None | Yes |");
     expect(text).toContain("true (enabled)");
     expect(text).toContain('Choices: ranked, newest. | "newest"');
     expect(invoked).toBe(false);
     expect(renderCliReference(root, revision)).toBe(text);
     expect(referenceMatches(text, text.replace(revision, "b".repeat(40)))).toBe(true);
     expect(referenceMatches(text, text.replace("Disable browser", "Changed"))).toBe(false);
+  });
+
+  it("renders the live tree without em dashes", async () => {
+    process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
+    const { program } = await import("../src/index.ts");
+    expect(renderCliReference(program, revision)).not.toContain("—");
   });
 
   it("covers every command and flag in the live tree", async () => {

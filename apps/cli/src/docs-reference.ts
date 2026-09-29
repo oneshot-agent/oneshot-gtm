@@ -44,7 +44,7 @@ export function renderCliReference(program: Command, revision: string): string {
       );
       for (const arg of cmd.registeredArguments) {
         lines.push(
-          `| ${mdxText(arg.name() + (arg.variadic ? "..." : ""))} | ${arg.required ? "Yes" : "No"} | ${mdxText(arg.description)} | ${mdxText(arg.defaultValue === undefined ? "—" : JSON.stringify(arg.defaultValue))} |`,
+          `| ${mdxText(arg.name() + (arg.variadic ? "..." : ""))} | ${arg.required ? "Yes" : "No"} | ${mdxText(arg.description)} | ${mdxText(arg.defaultValue === undefined ? "None" : JSON.stringify(arg.defaultValue))} |`,
         );
       }
       lines.push("");
@@ -73,7 +73,7 @@ export function renderCliReference(program: Command, revision: string): string {
           option.defaultValue === undefined
             ? option.negate
               ? "true (enabled)"
-              : "—"
+              : "None"
             : JSON.stringify(option.defaultValue).replaceAll(homedir(), "~");
         lines.push(
           `| ${mdxText(option.flags)} | ${mdxText(description)} | ${mdxText(option.defaultValueDescription ?? fallback)} | ${option.mandatory ? "Yes" : "No"} | ${mdxText(owner.name())} |`,
