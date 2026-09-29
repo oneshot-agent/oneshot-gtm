@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cohortDemoDayDate,
   cohortDemoDay,
   cohortDemoDayMonth,
   demoDayLine,
@@ -35,7 +36,7 @@ describe("cohortDemoDay", () => {
       status: "passed",
       monthsAway: 6,
     });
-    expect(cohortDemoDay("yc-s26", on("2026-09-25"))?.status).toBe("this month");
+    expect(cohortDemoDay("yc-w26", on("2026-03-02"))?.status).toBe("this month");
     expect(cohortDemoDay("yc-f26", on("2026-09-25"))).toMatchObject({
       status: "upcoming",
       monthsAway: 3,
@@ -53,6 +54,30 @@ describe("cohortDemoDay", () => {
       status: "upcoming",
       monthsAway: 4,
     });
+  });
+});
+
+describe("exact demo-day dates", () => {
+  it("knows a cohort's exact date when listed", () => {
+    expect(cohortDemoDayDate("yc-s26")).toBe("2026-09-10");
+    expect(cohortDemoDayDate("YC S26")).toBe("2026-09-10");
+    expect(cohortDemoDayDate("yc-w26")).toBeNull();
+    expect(cohortDemoDayDate(null)).toBeNull();
+  });
+
+  it("calls a known date passed the day after, even inside its month", () => {
+    expect(cohortDemoDay("yc-s26", on("2026-09-29"))).toMatchObject({
+      status: "passed",
+      isoDate: "2026-09-10",
+      daysAway: 19,
+    });
+    expect(cohortDemoDay("yc-s26", on("2026-09-10"))?.status).toBe("upcoming");
+  });
+
+  it("prefers a row's own demoDayDate over the cohort's", () => {
+    expect(
+      demoDayOf({ demoDayDate: "2026-09-30", cohort: "yc-s26" }, on("2026-09-29"))?.status,
+    ).toBe("upcoming");
   });
 });
 
@@ -76,7 +101,18 @@ describe("demoDayLine", () => {
     expect(demoDayLine(cohortDemoDay("yc-w26", now))).toBe(
       "DEMO DAY: March 2026 (passed, ~6 months ago)",
     );
-    expect(demoDayLine(cohortDemoDay("yc-s26", now))).toBe("DEMO DAY: September 2026 (this month)");
+    expect(demoDayLine(cohortDemoDay("yc-w26", on("2026-03-20")))).toBe(
+      "DEMO DAY: March 2026 (this month, exact date unknown: it may already have passed)",
+    );
+    expect(demoDayLine(cohortDemoDay("yc-s26", now))).toBe(
+      "DEMO DAY: September 10, 2026 (passed, 15 days ago)",
+    );
+    expect(demoDayLine(cohortDemoDay("yc-s26", on("2026-09-05")))).toBe(
+      "DEMO DAY: September 10, 2026 (upcoming, in 5 days)",
+    );
+    expect(demoDayLine(cohortDemoDay("yc-s26", on("2026-09-10")))).toBe(
+      "DEMO DAY: September 10, 2026 (today)",
+    );
     expect(demoDayLine(cohortDemoDay("yc-f26", now))).toBe(
       "DEMO DAY: December 2026 (upcoming, in ~3 months)",
     );
@@ -94,6 +130,21 @@ describe("mentionsStaleDemoDay", () => {
     expect(mentionsStaleDemoDay("Numbers for demo day?", passed)).toBe(true);
     expect(mentionsStaleDemoDay("before Demo-Day hits", passed)).toBe(true);
     expect(mentionsStaleDemoDay("Are you logging replies?", passed)).toBe(false);
+  });
+
+  it("holds a mention inside the demo-day month when the date is unknown", () => {
+    expect(
+      mentionsStaleDemoDay(
+        "Locked down for demo day this month?",
+        cohortDemoDay("yc-w26", on("2026-03-20")),
+      ),
+    ).toBe(true);
+    expect(
+      mentionsStaleDemoDay(
+        "Locked down for demo day this month?",
+        cohortDemoDay("yc-s26", on("2026-09-29")),
+      ),
+    ).toBe(true);
   });
 
   it("never fires when demo day is ahead or unknown", () => {
