@@ -193,7 +193,7 @@ export function CredentialsSection({
         ),
       },
     ],
-    [cfg, sources, homeDir, isLegacyPool, xEngine, cookieSet, linkedinAdvanced],
+    [cfg, sources, isLegacyPool, xEngine, cookieSet, linkedinAdvanced],
   );
 
   return (

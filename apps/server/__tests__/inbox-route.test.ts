@@ -132,11 +132,10 @@ describe("inbox route — persisted drafts & sent replies", () => {
       }),
     );
     getInboxThreadsMock.mockReturnValue(new Map());
-    const req = () => new Request("http://x/api/inbox");
-    const first = listInboxRoute(req());
+    const first = listInboxRoute(new Request("http://x/api/inbox"));
     // 31 s later the first read is still pending: the second caller must join it.
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
-    const second = listInboxRoute(req());
+    const second = listInboxRoute(new Request("http://x/api/inbox"));
     release({ emails: [], has_more: false });
     await Promise.all([first, second]);
     nowSpy.mockRestore();

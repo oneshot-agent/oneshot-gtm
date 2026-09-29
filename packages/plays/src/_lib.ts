@@ -645,10 +645,11 @@ export function humanizeDraft(input: DraftedEmail): DraftedEmail {
 function applyAutofixes(s: string): string {
   return (
     s
-      // Collapse only horizontal whitespace around the em-dash. Using `\s*`
-      // here would eat a trailing newline when an em-dash ends a paragraph,
-      // silently merging paragraphs.
-      .replace(/[ \t]*—[ \t]*/g, ", ")
+      // Consume whole whitespace runs to avoid backtracking; preserve paragraph breaks.
+      .replace(/[ \t]+|—/g, (match: string, offset: number, source: string) => {
+        if (match === "—") return ", ";
+        return source[offset - 1] === "—" || source[offset + match.length] === "—" ? "" : match;
+      })
       .replace(/[“”]/g, '"')
       .replace(/[‘’]/g, "'")
       // Emoji ranges: main BMP+SMP block, dingbats, and the regional-
@@ -660,7 +661,9 @@ function applyAutofixes(s: string): string {
       .replace(/\u{FE0F}|\u{200D}/gu, "")
       .replace(/!\s*!+/g, "!")
       // Strip trailing horizontal whitespace left by em-dash/emoji removal.
-      .replace(/[ \t]+\n/g, "\n")
+      .replace(/[ \t]+/g, (spaces: string, offset: number, source: string) =>
+        source[offset + spaces.length] === "\n" ? "" : spaces,
+      )
       .trim()
   );
 }

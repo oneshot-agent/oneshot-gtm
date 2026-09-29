@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // skipped). The previously-untested path that decides whether the tool keeps
 // emailing someone who already replied.
 
+const at = (h: number) => `2026-08-20T${String(h).padStart(2, "0")}:00:00.000Z`;
+
 const calls = { sendEmail: 0 };
 let inboxEmails: Array<{
   id?: string;
@@ -93,7 +95,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     listInbox: async (opts: { since?: string; until?: string; limit?: number }) => {
       listInboxArgs.push(opts);
       const pool = inboxEmails
-        .map((e, i) => ({ id: e.id ?? `m${i}`, ...e }))
+        .map((e, i) => Object.assign({ id: e.id ?? `m${i}` }, e))
         .filter((e) => !opts.since || !e.received_at || e.received_at >= opts.since)
         .filter((e) => !opts.until || !e.received_at || e.received_at < opts.until)
         .toSorted((a, b) => ((a.received_at ?? "") < (b.received_at ?? "") ? 1 : -1));
@@ -628,7 +630,6 @@ describe("pollInboxReplies — watermark", () => {
   });
 
   it("pages backwards through a catch-up larger than one window and finds the reply on page 3", async () => {
-    const at = (h: number) => `2026-08-20T${String(h).padStart(2, "0")}:00:00.000Z`;
     inboxEmails = [
       { from: "a@elsewhere.com", subject: "noise", received_at: at(15) },
       { from: "b@elsewhere.com", subject: "noise", received_at: at(14) },
@@ -667,7 +668,6 @@ describe("pollInboxReplies — watermark", () => {
   });
 
   it("parks the unreached remainder as backlog and drains it on the next poll", async () => {
-    const at = (h: number) => `2026-08-20T${String(h).padStart(2, "0")}:00:00.000Z`;
     inboxEmails = [
       { from: "a@elsewhere.com", subject: "noise", received_at: at(16) },
       { from: "b@elsewhere.com", subject: "noise", received_at: at(15) },

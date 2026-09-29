@@ -424,7 +424,7 @@ export function listQueueRoute(req: Request): Response {
   try {
     views = ordered.map((row) =>
       url.searchParams.get("forRun") === "1"
-        ? { ...toView(row), payload: resolveQueueTarget(row) }
+        ? Object.assign(toView(row), { payload: resolveQueueTarget(row) })
         : toView(row),
     );
   } catch (error) {

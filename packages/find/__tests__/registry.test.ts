@@ -1,5 +1,5 @@
 import type { TriggerRow } from "@oneshot-gtm/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   checkReadiness,
   evaluateFinderApprovalHealth,

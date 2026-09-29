@@ -129,10 +129,6 @@ export function buildProspectTimeline(input: {
   // Newest first. Compare as instants, not strings: "…:34Z" and "…:34.443Z"
   // are the same second but sort the wrong way round lexically. Ties keep
   // insertion order reversed so a same-instant milestone reads sensibly.
-  const instant = (e: ProspectTimelineEvent): number => {
-    const t = Date.parse(e.at);
-    return Number.isFinite(t) ? t : 0;
-  };
   return events
     .map((e, i) => ({ e, i, t: instant(e) }))
     .toSorted((a, b) => b.t - a.t || b.i - a.i)
@@ -150,3 +146,8 @@ function parseMeta(raw: string | null): Record<string, unknown> {
     return {};
   }
 }
+
+const instant = (e: ProspectTimelineEvent): number => {
+  const t = Date.parse(e.at);
+  return Number.isFinite(t) ? t : 0;
+};

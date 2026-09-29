@@ -371,6 +371,16 @@ export function organizationsFromResearch(result: unknown): PersonResearchOrgani
   return [...dated, ...undated.filter((o) => !datedCompanies.has(normalizeCompany(o.name)))];
 }
 
+const byRecency = (
+  a: { start: number | null; i: number },
+  b: { start: number | null; i: number },
+): number => {
+  if (a.start != null && b.start != null && a.start !== b.start) return b.start - a.start;
+  if (a.start != null && b.start == null) return -1;
+  if (a.start == null && b.start != null) return 1;
+  return a.i - b.i;
+};
+
 /**
  * The current role and the history ordered for storage: current first, then
  * most recent start. Among several current entries the latest start wins;
@@ -382,14 +392,8 @@ export function deriveCurrentRole(orgs: PersonResearchOrganization[]): {
   organizations: PersonResearchOrganization[];
 } {
   const indexed = orgs.map((o, i) => ({ o, i, start: dateKey(o.startDate) }));
-  const byRecency = (a: (typeof indexed)[number], b: (typeof indexed)[number]): number => {
-    if (a.start != null && b.start != null && a.start !== b.start) return b.start - a.start;
-    if (a.start != null && b.start == null) return -1;
-    if (a.start == null && b.start != null) return 1;
-    return a.i - b.i;
-  };
-  const current = indexed.filter((x) => x.o.current).sort(byRecency);
-  const former = indexed.filter((x) => !x.o.current).sort(byRecency);
+  const current = indexed.filter((x) => x.o.current).toSorted(byRecency);
+  const former = indexed.filter((x) => !x.o.current).toSorted(byRecency);
   const organizations = [...current, ...former].map((x) => x.o).slice(0, MAX_ORGANIZATIONS);
   return { current: current[0]?.o ?? null, organizations };
 }

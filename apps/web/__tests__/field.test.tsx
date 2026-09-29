@@ -6,18 +6,12 @@ import { Field, Input, Select, Textarea } from "../src/components/primitives/Fie
 describe("Field accessibility", () => {
   it("keeps help outside labels and renders error and hint together", () => {
     const html = renderToStaticMarkup(
-      createElement(Field, {
-        label: "Daily cap",
-        explain: "warmup",
-        hint: "Keep this guidance",
-        error: "Invalid number",
-        children: createElement(
-          "div",
-          null,
-          createElement(Input, { id: "cap", "aria-describedby": "existing" }),
-          createElement("button", { type: "button" }, "Helper"),
-        ),
-      }),
+      <Field label="Daily cap" explain="warmup" hint="Keep this guidance" error="Invalid number">
+        <div>
+          <Input id="cap" aria-describedby="existing" />
+          <button type="button">Helper</button>
+        </div>
+      </Field>,
     );
     expect(html).toContain('for="cap"');
     expect(html).toContain('id="cap"');
@@ -31,10 +25,7 @@ describe("Field accessibility", () => {
   it("associates generated labels with native and custom controls", () => {
     for (const component of [Input, Select, Textarea, "input"] as const) {
       const html = renderToStaticMarkup(
-        createElement(Field, {
-          label: "Value",
-          children: createElement(component as typeof Input),
-        }),
+        <Field label="Value">{createElement(component as typeof Input)}</Field>,
       );
       const id = html.match(/<label[^>]*for="([^"]+)"/)?.[1];
       expect(id).toBeTruthy();

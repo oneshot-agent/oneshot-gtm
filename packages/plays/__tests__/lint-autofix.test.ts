@@ -23,6 +23,35 @@ describe("humanizeDraft — deterministic auto-fix", () => {
     expect(out.body).toBe("first paragraph,\nsecond paragraph");
   });
 
+  it.each([
+    ["a\t —\t b", "a, b"],
+    ["a— —b", "a, , b"],
+    ["a——b", "a, , b"],
+    ["a\n \t—\t\nb", "a\n,\nb"],
+    ["a\u00a0—\u00a0b", "a\u00a0, \u00a0b"],
+    ["a \t\nb", "a\nb"],
+    ["a \t\r\nb", "a \t\r\nb"],
+  ])("preserves whitespace semantics for %j", (input, expected) => {
+    expect(humanizeDraft({ subject: input, body: input })).toEqual({
+      subject: expected,
+      body: expected,
+    });
+  });
+
+  it("handles long whitespace runs with and without a following dash or newline", () => {
+    const spaces = " \t".repeat(50_000);
+    for (const [input, expected] of [
+      [`left${spaces}right`, `left${spaces}right`],
+      [`left${spaces}—${spaces}right`, "left, right"],
+      [`left${spaces}\nright`, "left\nright"],
+    ] as const) {
+      expect(humanizeDraft({ subject: input, body: input })).toEqual({
+        subject: expected,
+        body: expected,
+      });
+    }
+  });
+
   it("strips flag emoji (regional indicator pairs)", () => {
     const out = humanizeDraft({ subject: "🇺🇸 release", body: "shipping in 🇨🇦 too" });
     expect(out.subject).toBe("release");

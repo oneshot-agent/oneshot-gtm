@@ -65,12 +65,6 @@ describe("GET /api/workspace", () => {
 });
 
 describe("POST /api/workspace/launch", () => {
-  const req = (body: unknown) =>
-    new Request("http://x/api/workspace/launch", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-
   it("400s on the current workspace — switching to yourself is a no-op", async () => {
     const res = await workspaceLaunch(req({ name: "default" }));
     expect(res.status).toBe(400);
@@ -120,3 +114,9 @@ describe("POST /api/workspace/launch", () => {
     expect(spawns).toHaveLength(0);
   });
 });
+
+const req = (body: unknown) =>
+  new Request("http://x/api/workspace/launch", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });

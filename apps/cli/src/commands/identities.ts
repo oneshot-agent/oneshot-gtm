@@ -76,18 +76,20 @@ export async function commandIdentitiesList(opts: { json?: boolean } = {}): Prom
       identities: identities.map((i) => {
         const cap = caps.get(i.id);
         const capToday = cap && Number.isFinite(cap.capToday) ? cap.capToday : null;
-        return {
-          id: i.id,
-          provider: i.provider,
-          address:
-            i.mailbox && i.sendingDomain
-              ? `${i.mailbox}@${i.sendingDomain}`
-              : (i.address ?? i.sendingDomain ?? i.label ?? i.id),
-          sentToday: cap?.identitySentToday ?? 0,
-          capToday,
-          ...(cap?.domainSentToday != null ? { domainSentToday: cap.domainSentToday } : {}),
-          legacy,
-        };
+        return Object.assign(
+          {
+            id: i.id,
+            provider: i.provider,
+            address:
+              i.mailbox && i.sendingDomain
+                ? `${i.mailbox}@${i.sendingDomain}`
+                : (i.address ?? i.sendingDomain ?? i.label ?? i.id),
+            sentToday: cap?.identitySentToday ?? 0,
+            capToday,
+            legacy,
+          },
+          cap?.domainSentToday != null ? { domainSentToday: cap.domainSentToday } : {},
+        );
       }),
       domains: domains.map((d) => ({
         domain: d.domain,

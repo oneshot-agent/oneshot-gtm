@@ -190,7 +190,8 @@ export class XApiEngine implements HarvestEngine {
     return rows.map((u: any) => {
       const mapped = mapUser(u);
       const text = textByAuthor.get(mapped.id);
-      return text ? { ...mapped, quoteText: text } : mapped;
+      if (text) mapped.quoteText = text;
+      return mapped;
     });
   }
 }

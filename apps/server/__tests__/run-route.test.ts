@@ -282,13 +282,7 @@ describe("runPlay — verify-then-dispatch", () => {
     const targets = [{ founderEmail: "a@x.dev" }, { founderEmail: "b@x.dev" }];
     nextVerify = { verified: targets, dropped: [], receiptIds: [], costUsd: 0 };
     const straggler: { fire: () => void } = { fire: () => {} };
-    const draft = (i: number): FakeDraft => ({
-      subject: `subj-${i}`,
-      body: `body-${i}`,
-      flags: [],
-      sent: true,
-      receiptIds: [100 + i],
-    });
+
     runOverride = (input) => {
       input.onProgress?.(0, draft(0));
       straggler.fire = () => input.onProgress?.(1, draft(1));
@@ -391,4 +385,12 @@ describe("cancelRunRoute — origin validation", () => {
     const res = await cancelRunRoute(req, { runId: "1" });
     expect(res.status).toBe(403);
   });
+});
+
+const draft = (i: number): FakeDraft => ({
+  subject: `subj-${i}`,
+  body: `body-${i}`,
+  flags: [],
+  sent: true,
+  receiptIds: [100 + i],
 });

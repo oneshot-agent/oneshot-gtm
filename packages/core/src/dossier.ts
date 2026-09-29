@@ -358,12 +358,13 @@ export function renderFormerRoles(r: PersonResearchDossier, max = 3): string | u
   return clip(text, PERSON_RESEARCH_LINE_CHARS);
 }
 
+const size = (x: PersonResearchDossier): number => JSON.stringify(x).length;
+
 /**
  * Trim until the record fits `PERSON_RESEARCH_MAX_CHARS`: bio, then the
  * company description, then the oldest organisations. Never the current role.
  */
 export function boundPersonResearch(r: PersonResearchDossier): PersonResearchDossier {
-  const size = (x: PersonResearchDossier): number => JSON.stringify(x).length;
   let out: PersonResearchDossier = { ...r, organizations: [...r.organizations] };
   if (size(out) <= PERSON_RESEARCH_MAX_CHARS) return out;
   out = { ...out, ...(out.bio ? { bio: clip(out.bio, 300) } : {}) };

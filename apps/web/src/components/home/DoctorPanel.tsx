@@ -140,11 +140,11 @@ export function DoctorPanel({
               </span>
             </button>
             {expanded &&
-              rows.map((c, i) => {
+              rows.map((c) => {
                 const name = rowLabel(key, c.name);
                 return (
                   <div
-                    key={`${key}:${c.name}:${i}`}
+                    key={`${key}:${c.name}:${c.message}`}
                     className="ln-row"
                     data-tone={toneFor(c.severity)}
                   >

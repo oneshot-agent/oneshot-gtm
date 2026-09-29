@@ -149,7 +149,7 @@ afterEach(() => {
 
 /** Check if a string contains ANSI escape codes */
 function hasAnsiCodes(s: string): boolean {
-  return /\x1b\[|\u001b\[/.test(s);
+  return s.includes("\u001b[");
 }
 
 describe("doctor --json", () => {

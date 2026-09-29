@@ -8,12 +8,7 @@ import { SectionShell } from "./SectionShell.tsx";
 import { useConfigSection } from "./useConfigSection.ts";
 import type { SectionProps } from "./types.ts";
 
-export function WalletSection({
-  cfg,
-  sources,
-  homeDir,
-  onDirtyChange,
-}: SectionProps & { homeDir: string }) {
+export function WalletSection({ cfg, sources, onDirtyChange }: SectionProps & { homeDir: string }) {
   const server = useMemo(
     () => ({
       walletMode: cfg.walletMode as WalletMode,

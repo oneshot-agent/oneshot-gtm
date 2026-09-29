@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backoffDelayMs, isRetryableLlmError, parseRetryAfter } from "../src/client.ts";
 
+const fixed = () => 0.5;
+
 describe("isRetryableLlmError", () => {
   it("does NOT retry a bare Error — only the classified set is retryable", () => {
     // A TypeError here is a property access on a malformed body, not a socket
@@ -53,8 +55,6 @@ describe("backoffDelayMs", () => {
   });
 
   it("floors Retry-After at the exponential backoff", () => {
-    const fixed = () => 0.5;
-
     // Retry-After: 0 and a past HTTP-date both parse to 0. Honouring them
     // literally would fire every attempt within milliseconds, unpaced.
     expect(backoffDelayMs(1, 0, fixed)).toBe(375);
@@ -76,8 +76,6 @@ describe("backoffDelayMs", () => {
   });
 
   it("uses exponential backoff without Retry-After", () => {
-    const fixed = () => 0.5;
-
     // Attempt 1: 500 * 2^0 = 500, half fixed (250) + half jitter (250 * 0.5 = 125) = 375
     expect(backoffDelayMs(1, undefined, fixed)).toBe(375);
 
@@ -89,8 +87,6 @@ describe("backoffDelayMs", () => {
   });
 
   it("caps backoff at MAX_DELAY_MS (20s)", () => {
-    const fixed = () => 0.5;
-
     // Attempt 10: 500 * 2^9 = 256000 > 20000, capped to 20000, 10000 + 5000 = 15000
     expect(backoffDelayMs(10, undefined, fixed)).toBe(15_000);
   });

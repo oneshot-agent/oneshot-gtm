@@ -29,7 +29,7 @@ describe("accelerator-batch-email.md — claims about the linter are true (drift
     expect(sentence, "the provenance sentence should still exist").toBeTruthy();
     const phrases = [...sentence!.matchAll(/NEVER ((?:"[^"]+"(?:, )?)+)/g)]
       .flatMap((m) => [...m[1]!.matchAll(/"([^"]+)"/g)].map((q) => q[1]!))
-      .filter((p) => /^I /.test(p));
+      .filter((p) => p.startsWith("I "));
     expect(phrases.length).toBeGreaterThanOrEqual(4);
     for (const phrase of phrases) {
       const flags = lintEmail("x", `Hey Ada, your launch came up when ${phrase} the S26 list. Sam`);

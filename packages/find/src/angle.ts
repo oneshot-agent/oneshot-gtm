@@ -258,9 +258,9 @@ export async function gatherAngleEvidence(
       receivedAt: e.occurred_at,
     }));
   const replies: AngleReplyEvidence[] = [...emailReplies, ...linkedinReplies]
-    .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
+    .toSorted((a, b) => a.receivedAt.localeCompare(b.receivedAt))
     .slice(-MAX_REPLIES)
-    .map((r) => ({ ...r, body: r.body.slice(0, REPLY_BODY_SLICE) }));
+    .map((r) => Object.assign({}, r, { body: r.body.slice(0, REPLY_BODY_SLICE) }));
   if (replies.length > 0) sources.push(`replies:${replies.length}`);
 
   return {

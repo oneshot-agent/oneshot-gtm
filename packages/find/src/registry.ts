@@ -918,7 +918,7 @@ export const TRIGGERS: TriggerSpec[] = [
             typeof e["handle"] === "string" ? e["handle"].trim().replace(/^@/, "") : "";
           if (handle.length === 0) return null;
           const edge = typeof e["edge"] === "string" ? e["edge"].trim() : "";
-          return { handle, ...(edge ? { edge } : {}) };
+          return edge ? { handle, edge } : { handle };
         })
         .filter((s): s is XSeed => s !== null);
       return runXRepostersFinder({

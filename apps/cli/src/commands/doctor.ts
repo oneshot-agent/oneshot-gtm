@@ -28,20 +28,24 @@ export async function commandDoctor(opts: { json?: boolean } = {}): Promise<void
       ok: failed === 0,
       failed,
       warned,
-      checks: results.map((r) => ({
-        name: r.name,
-        group: r.group,
-        severity: r.severity,
-        message: r.message,
-        ...(r.hint ? { hint: r.hint } : {}),
-        ...(r.approvalRate !== undefined ? { approvalRate: r.approvalRate } : {}),
-        ...(r.approved !== undefined ? { approved: r.approved } : {}),
-        ...(r.reviewed !== undefined ? { reviewed: r.reviewed } : {}),
-        ...(r.threshold !== undefined ? { threshold: r.threshold } : {}),
-        ...(r.windowDays !== undefined ? { windowDays: r.windowDays } : {}),
-        ...(r.minSamples !== undefined ? { minSamples: r.minSamples } : {}),
-        ...(r.deprioritized !== undefined ? { deprioritized: r.deprioritized } : {}),
-      })),
+      checks: results.map((r) =>
+        Object.assign(
+          {
+            name: r.name,
+            group: r.group,
+            severity: r.severity,
+            message: r.message,
+          },
+          r.hint ? { hint: r.hint } : {},
+          r.approvalRate !== undefined ? { approvalRate: r.approvalRate } : {},
+          r.approved !== undefined ? { approved: r.approved } : {},
+          r.reviewed !== undefined ? { reviewed: r.reviewed } : {},
+          r.threshold !== undefined ? { threshold: r.threshold } : {},
+          r.windowDays !== undefined ? { windowDays: r.windowDays } : {},
+          r.minSamples !== undefined ? { minSamples: r.minSamples } : {},
+          r.deprioritized !== undefined ? { deprioritized: r.deprioritized } : {},
+        ),
+      ),
     });
   }
 

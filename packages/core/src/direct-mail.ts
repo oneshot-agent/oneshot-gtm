@@ -273,7 +273,7 @@ export async function refreshPendingDirectMail() {
     );
   const results = await Promise.allSettled(
     drafts
-      .sort((a, b) => (a.refreshedAt ?? "").localeCompare(b.refreshedAt ?? ""))
+      .toSorted((a, b) => (a.refreshedAt ?? "").localeCompare(b.refreshedAt ?? ""))
       .slice(0, 50)
       .map((d) => refreshDirectMail(d.id)),
   );

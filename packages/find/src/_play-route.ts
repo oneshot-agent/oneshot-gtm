@@ -109,7 +109,7 @@ export function buildDesignPartnerLoiPayload(input: {
     ...(input.title ? { title: input.title } : {}),
     ...(input.linkedinUrl ? { linkedinUrl: input.linkedinUrl } : {}),
     ...(input.phone ? { phone: input.phone } : {}),
-    ...(input.icp ?? {}),
+    ...input.icp,
   };
 }
 

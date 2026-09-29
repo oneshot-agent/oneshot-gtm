@@ -723,16 +723,18 @@ export class LinkedInInboxStore {
             "SELECT prospect_id FROM channel_events WHERE source='oneshot-linkedin' AND external_event_id=?",
           )
           .get(eventId) as { prospect_id: number } | null;
-        isOwner && !legacy && (!existing || existing.prospect_id === match.prospectId)
-          ? ledger.recordLinkedInReply({
-              prospectId: match.prospectId,
-              accountKey: t.accountKey,
-              source: "oneshot-linkedin",
-              externalEventId: eventId,
-              occurredAt: m.sent_at,
-              body: m.text,
-            })
-          : ledger.suppressCadencesForReply(match.prospectId, t.accountKey);
+        if (isOwner && !legacy && (!existing || existing.prospect_id === match.prospectId)) {
+          ledger.recordLinkedInReply({
+            prospectId: match.prospectId,
+            accountKey: t.accountKey,
+            source: "oneshot-linkedin",
+            externalEventId: eventId,
+            occurredAt: m.sent_at,
+            body: m.text,
+          });
+        } else {
+          ledger.suppressCadencesForReply(match.prospectId, t.accountKey);
+        }
         if (isOwner)
           this.db
             .query("INSERT OR IGNORE INTO deliveries VALUES(?,?,?,?)")

@@ -276,6 +276,11 @@ beforeEach(() => {
   providerLinkedIn = null;
 });
 
+const result = (linkedin_url: string) => ({
+  status: "completed",
+  result: { full_name: "Julia Zabrodska-Akinci", linkedin_url },
+});
+
 describe("deriveCurrentRole", () => {
   it("is_current wins, then the latest start among current entries; the history is current-first", () => {
     const { current, organizations } = deriveCurrentRole([
@@ -1037,10 +1042,6 @@ describe("the provider's linkedin_url", () => {
 
   it("is canonicalised to a /in/ profile and dropped when it is not one", async () => {
     const { providerLinkedInUrl } = await import("../src/_person-research.ts");
-    const result = (linkedin_url: string) => ({
-      status: "completed",
-      result: { full_name: "Julia Zabrodska-Akinci", linkedin_url },
-    });
     expect(providerLinkedInUrl(result("http://linkedin.com/in/Julia-Z/?trk=x"), githubSeed)).toBe(
       "https://www.linkedin.com/in/julia-z",
     );

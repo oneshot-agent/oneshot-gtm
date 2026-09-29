@@ -367,10 +367,11 @@ export async function listInboxRoute(req: Request): Promise<Response> {
   const out: InboxResult = {
     replies: visible,
     conversations: conversations
-      .map((c) => ({
-        ...c,
-        items: c.items.filter((i) => i.kind !== "reply" || !i.id.startsWith("mailbox:")),
-      }))
+      .map((c) =>
+        Object.assign({}, c, {
+          items: c.items.filter((i) => i.kind !== "reply" || !i.id.startsWith("mailbox:")),
+        }),
+      )
       .filter((c) => c.items.some((i) => i.kind === "reply")),
     hasMore,
     ...mailboxInboxView(),

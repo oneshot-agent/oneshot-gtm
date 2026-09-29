@@ -2388,7 +2388,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                   <code className="ln-mono text-[11.5px] text-[color:var(--ink-signal-2)]">
                     yourEdge
                   </code>
-                  : 3–4 angles separated by <code className="ln-mono text-[11.5px]">//</code>
+                  : 3–4 angles separated by <code className="ln-mono text-[11.5px]">{"//"}</code>
                   <Explain concept="edgeShape" />
                 </div>
               )}
