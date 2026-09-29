@@ -174,7 +174,7 @@ import {
   upsertPendingResolution as sysUpsertPendingResolution,
 } from "./ledger-system.ts";
 import { sharedDbPath } from "./shared-db.ts";
-import { SharedPeople, type SharedPerson } from "./shared-people.ts";
+import { SharedPeople } from "./shared-people.ts";
 import type { ReplyKind } from "./reply-classify.ts";
 import type {
   AuthVerdict,
@@ -261,7 +261,6 @@ export class Ledger {
   private drafts: DraftVersionStore;
   private prospects: ProspectStore;
   private people: SharedPeople | null = null;
-  private peopleVersion = "";
 
   constructor(path: string = DEFAULT_DB_PATH, options: { sharedPeoplePath?: string } = {}) {
     this.path = path;
@@ -289,6 +288,18 @@ export class Ledger {
     if (options.sharedPeoplePath || (!demoMode() && (path === DEFAULT_DB_PATH || namedWorkspace))) {
       this.people = new SharedPeople(options.sharedPeoplePath ?? sharedDbPath());
       this.prospects.ensureSharedPersonColumn();
+      // Scope `SharedPeople`'s ledger-agnostic membership/link calls to this
+      // ledger's own path, matching what the inline `Ledger.bindSharedPerson`
+      // used to do before issue #751 round-1 moved the transaction bodies
+      // into `ProspectStore`.
+      const people = this.people;
+      this.prospects.attachSharedIdentity({
+        get: (id) => people.get(id),
+        resolve: (input, knownId) => people.resolve(input, knownId),
+        membership: (prospectId) => people.membership(this.path, prospectId),
+        link: (prospectId, personId) => people.link(this.path, prospectId, personId),
+        version: () => people.version(),
+      });
       this.refreshSharedPeople();
     }
     // Build stores after migration so their tables exist.
@@ -892,7 +903,7 @@ export class Ledger {
 
   /** Full prospect record by id (PK seek). Avoids loading every prospect to find one. */
   getProspectById(id: number): ProspectRecord | null {
-    const prospect = this.withSharedIdentity(this.prospects.getProspectRow(id));
+    const prospect = this.prospects.withSharedIdentity(this.prospects.getProspectRow(id));
     return this.prospects.attachMailAddress(prospect, id);
   }
 
@@ -1162,50 +1173,14 @@ export class Ledger {
     return this.receipts.listReceipts(opts);
   }
 
-  /** Link legacy workspace IDs without renumbering any queue, cadence or reply history. */
+  /**
+   * Link legacy workspace IDs without renumbering any queue, cadence or
+   * reply history. The transaction body lives in `ProspectStore.refreshSharedIdentity`
+   * (issue #751 round-1 correction); `Ledger` keeps this method for
+   * backward-compat call sites and the module-level singleton getter below.
+   */
   refreshSharedPeople(): void {
-    if (!this.people) return;
-    if (this.peopleVersion === this.people.version()) return;
-    const rows = this.prospects.listAllProspects();
-    this.db
-      .transaction(() => {
-        for (const row of rows) {
-          const person = row.shared_person_id
-            ? this.people!.get(row.shared_person_id)
-            : this.bindSharedPerson(row);
-          if (!person) throw Error(`Missing shared person for prospect ${row.id}`);
-          for (const field of [
-            "name",
-            "email",
-            "phone",
-            "company",
-            "linkedin_url",
-            "title",
-          ] as const) {
-            if (row[field] === person[field]) continue;
-            // Legacy aliases can have separate historical IDs in one workspace.
-            // Keep their unique email keys; both still resolve to the same shared identity.
-            if (
-              field === "email" &&
-              person.email &&
-              this.prospects.hasOtherProspectWithEmail(person.email, row.id)
-            )
-              continue;
-            this.prospects.setSharedIdentityField(row.id, field, person[field]);
-          }
-        }
-      })
-      .immediate();
-    this.peopleVersion = this.people.version();
-  }
-
-  private bindSharedPerson(row: ProspectRecord): SharedPerson | null {
-    if (!this.people) return null;
-    const known = row.shared_person_id ?? this.people.membership(this.path, row.id);
-    const person = this.people.resolve(row, known ?? undefined);
-    this.prospects.setProspectSharedPersonId(row.id, person.id);
-    this.people.link(this.path, row.id, person.id);
-    return person;
+    this.prospects.refreshSharedIdentity();
   }
 
   /** Add membership to the same person, preserving this workspace's independent history. */
@@ -1216,64 +1191,14 @@ export class Ledger {
     return this.upsertProspect({ ...identity, shared_person_id: id, source: "workspace-link" });
   }
 
-  private withSharedIdentity(row: ProspectRecord | null): ProspectRecord | null {
-    if (!row || !this.people) return row;
-    const person = row.shared_person_id
-      ? this.people.get(row.shared_person_id)
-      : this.bindSharedPerson(row);
-    return person
-      ? {
-          ...row,
-          ...person,
-          id: row.id,
-          shared_person_id: person.id,
-          source_profile_url: row.source_profile_url,
-        }
-      : row;
-  }
-
+  /**
+   * Upsert with shared-identity resolution. The transaction body lives in
+   * `ProspectStore.upsertProspectWithIdentity` (issue #751 round-1
+   * correction); `Ledger` keeps this method name for its existing public
+   * signature, return value, and transaction boundary.
+   */
   upsertProspect(input: Partial<ProspectRecord> & { email?: string | null }): number {
-    return this.db.transaction(() => this.upsertProspectInTransaction(input)).immediate();
-  }
-
-  private upsertProspectInTransaction(
-    input: Partial<ProspectRecord> & { email?: string | null },
-  ): number {
-    // Store the canonical (lowercased) email so reply matching, which
-    // normalizes the inbound from-address the same way, always lands.
-    const person = this.people?.resolve(input, input.shared_person_id ?? undefined);
-    if (person) {
-      const membership = this.prospects.findExistingForUpsert(person.id, null);
-      if (membership) {
-        this.prospects.seedBusinessAddress(
-          membership.id,
-          input.businessAddress,
-          input.businessAddressSource,
-        );
-        return membership.id;
-      }
-      const { id, ...identity } = person;
-      input = {
-        ...input,
-        ...identity,
-        shared_person_id: id,
-        source_profile_url: input.source_profile_url ?? identity.source_profile_url,
-      };
-    }
-    const existing = this.prospects.findExistingForUpsert(null, input.email);
-    if (existing) {
-      if (person) this.bindSharedPerson({ ...input, id: existing.id } as ProspectRecord);
-      this.prospects.seedBusinessAddress(
-        existing.id,
-        input.businessAddress,
-        input.businessAddressSource,
-      );
-      return existing.id;
-    }
-    const id = this.prospects.insertProspect(input);
-    if (person) this.bindSharedPerson({ ...input, id } as ProspectRecord);
-    this.prospects.seedBusinessAddress(id, input.businessAddress, input.businessAddressSource);
-    return id;
+    return this.prospects.upsertProspectWithIdentity(input);
   }
 
   /**
