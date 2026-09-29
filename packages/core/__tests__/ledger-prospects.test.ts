@@ -14,11 +14,11 @@ import type { PostalAddress } from "../src/direct-mail.ts";
  * `ProspectStore`.
  *
  * `prospect-research.test.ts` and `prospect-identity.test.ts` already
- * exercise this behavior end-to-end through the public `Ledger` API — that
+ * exercise this behavior end-to-end through the public `Ledger` API. That
  * coverage predates this extraction (#570/#355) and continues to pass
  * unchanged, which is exactly the parity signal the extraction promises.
  * What's new here is exercising `ProspectStore` DIRECTLY, against a raw
- * `Database` handle with no `Ledger` in the loop at all — mirroring the
+ * `Database` handle with no `Ledger` in the loop at all: mirroring the
  * precedent set by `ledger-receipts.ts`'s "is a pure function of a raw
  * Database handle" section. That is only possible once the code is its own
  * module, so it is coverage this extraction adds, not coverage it inherits.
@@ -70,7 +70,7 @@ describe("ProspectStore is a pure function of a raw Database handle (issue #643)
 /**
  * Backlog-eligibility scoping for `listProspectsForResearch` /
  * `listProspectsForAngle`, exercised directly against `ProspectStore` with a
- * bare `Database` — no `Ledger` construction, no mail-address plumbing. Pins
+ * bare `Database`: no `Ledger` construction, no mail-address plumbing. Pins
  * the union-of-scopes contract and the "already researched/synthesized"
  * exclusion at the module boundary this extraction created.
  */
@@ -139,7 +139,7 @@ describe("ProspectStore backlog eligibility (issue #643 parity)", () => {
     expect(store.listProspectsForAngle({ scopes: ["replied"] }).map((r) => r.id)).toEqual([
       replied,
     ]);
-    // The equivalent research scope requires a URL or email — this row has neither.
+    // The equivalent research scope requires a URL or email. This row has neither.
     expect(store.listProspectsForResearch({ scopes: ["all"] }).map((r) => r.id)).not.toContain(
       replied,
     );
@@ -166,8 +166,8 @@ describe("ProspectStore backlog eligibility (issue #643 parity)", () => {
 });
 
 /**
- * `mergeProspectDossierHalf`'s core invariant — writing one half (person or
- * product) must never erase the other — exercised directly against
+ * `mergeProspectDossierHalf`'s core invariant: writing one half (person or
+ * product) must never erase the other: exercised directly against
  * `ProspectStore`'s own transaction, with no `Ledger` involved. Complements
  * (does not replace) `prospect-research.test.ts`'s Ledger-level coverage of
  * the same behavior.
@@ -227,7 +227,7 @@ describe("ProspectStore.mergeProspectDossierHalf (issue #643 parity)", () => {
   it("re-reads the row inside its own transaction rather than trusting a value read before the call", () => {
     const id = store.upsertProspect({ name: "Race", email: "merge-c@x.dev" });
     // Simulate two independent writers landing back-to-back, each calling
-    // straight into the module (no shared in-memory state between calls) —
+    // straight into the module (no shared in-memory state between calls):
     // the second call must still see the first call's write.
     store.mergeProspectDossierHalf(id, "product", {
       version: 1,
@@ -256,13 +256,13 @@ describe("ProspectStore.mergeProspectDossierHalf (issue #643 parity)", () => {
 
 /**
  * Round-1 review finding: the tests above only proved sequential behavior on
- * ONE connection — a fresh read on each call, and both write orders
+ * ONE connection. A fresh read on each call, and both write orders
  * preserving the other half. That leaves the actual concurrency claim
  * ("BEGIN IMMEDIATE takes the write lock before the re-read, so no one can
  * interleave") unproven, because a single connection can never race itself.
  *
  * These tests open a SECOND real `bun:sqlite` connection to the SAME
- * on-disk file — not just a second call through the same `ProspectStore` —
+ * on-disk file, not just a second call through the same `ProspectStore`:
  * mirroring the precedent `daily-spend.test.ts`'s "cross-connection
  * atomicity" describe block and `shared-people.test.ts` already set for
  * proving SQLite-level (not just JS-level) serialization. A `:memory:`
@@ -308,7 +308,7 @@ describe("ProspectStore.mergeProspectDossierHalf — cross-connection concurrenc
     });
 
     // Connection B simulates an independent writer mid-merge: it has taken
-    // the write lock (BEGIN IMMEDIATE) but not committed yet — exactly the
+    // the write lock (BEGIN IMMEDIATE) but not committed yet: exactly the
     // "read-to-write promotion" window mergeProspectDossierHalf's own
     // BEGIN IMMEDIATE exists to close.
     dbB.exec("BEGIN IMMEDIATE");
@@ -320,7 +320,7 @@ describe("ProspectStore.mergeProspectDossierHalf — cross-connection concurrenc
     // finding flags), connection A's SELECT could still slip in here, read
     // the pre-B value, and either silently interleave or fail AFTER already
     // computing a merge from stale data. With `.immediate()`, A cannot even
-    // start its transaction while B holds the RESERVED lock — it fails fast,
+    // start its transaction while B holds the RESERVED lock. It fails fast,
     // proving the two writers serialize rather than race.
     expect(() => storeA.mergeProspectDossierHalf(id, "person", { title: "From A" })).toThrow(
       /locked|busy/i,

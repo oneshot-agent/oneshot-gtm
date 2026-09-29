@@ -30,7 +30,7 @@ export function _resetLinkedInCache(): void {
   cache.clear();
 }
 
-/** Lowercase, de-accent, reduce punctuation to spaces — so "Ben-Israel" and
+/** Lowercase, de-accent, reduce punctuation to spaces, so "Ben-Israel" and
  *  "ben israel" compare equal. */
 function fold(s: string): string {
   return s
@@ -43,10 +43,10 @@ function fold(s: string): string {
 
 /**
  * Does this search result belong to the person we searched for? Checked
- * against the result **title**, deliberately NOT the URL — the slug is vanity
+ * against the result **title**, deliberately NOT the URL. The slug is vanity
  * text and matching it rejects real hits. Rule: the surname must appear, plus
  * at least one other name token. Returns true whenever the check can't reach
- * a verdict — a guard that can neither confirm nor refute must not invent a
+ * a verdict. A guard that can neither confirm nor refute must not invent a
  * rejection.
  */
 export function nameMatchesTitle(title: string, name: string): boolean {
@@ -60,7 +60,7 @@ export function nameMatchesTitle(title: string, name: string): boolean {
     .split(" ")
     .filter((t) => t.length >= 3);
   if (tokens.length < 2 || titleTokens.length === 0) return true;
-  // The surname is always compared in full — it's the load-bearing half, and
+  // The surname is always compared in full. It's the load-bearing half, and
   // it's ≥3 chars, so no single-letter title token can satisfy it.
   const surname = tokens[tokens.length - 1] ?? "";
   if (!titleTokens.includes(surname)) return false;
@@ -94,12 +94,12 @@ const ORG_WORDS = new Set([
   "ventures",
   "capital",
   "bot",
-  // Deliberately NOT "ai" or "co" — both collide with real given names.
+  // Deliberately NOT "ai" or "co". Both collide with real given names.
 ]);
 
 /**
  * True when a "name" is really an organisation. Searching an org as a person
- * doesn't miss — it finds *an* employee, landing outreach on the wrong human.
+ * doesn't miss. It finds *an* employee, landing outreach on the wrong human.
  */
 export function looksLikeOrgName(name: string | null | undefined): boolean {
   if (!name) return false;
@@ -110,7 +110,7 @@ export function looksLikeOrgName(name: string | null | undefined): boolean {
 
 /**
  * True when `url` looks like a LinkedIn profile URL. Validates LLM-extracted
- * `linkedinUrl` strings before persisting — real LLM outputs drift.
+ * `linkedinUrl` strings before persisting: real LLM outputs drift.
  */
 export function isLinkedInProfileUrl(url: string | null | undefined): boolean {
   if (!url || typeof url !== "string") return false;
@@ -126,28 +126,28 @@ export function isLinkedInProfileUrl(url: string | null | undefined): boolean {
  */
 export async function findLinkedInUrl(args: {
   fullName: string;
-  /** Optional tokens that narrow the search — company name, github handle,
+  /** Optional tokens that narrow the search: company name, github handle,
    *  podcast name, cohort label, etc. Each becomes a quoted token in the query. */
   disambiguators?: string[];
   accumCost: (c: number | undefined) => void;
   /** Used in the error.swallowed event kind, e.g. "github-topics" or "show-hn". */
   errKindPrefix: string;
   /**
-   * Called once per result discarded by the name/title check. Reporting only —
+   * Called once per result discarded by the name/title check. Reporting only:
    * deliberately NOT a validation hook: caches return before any result
    * metadata exists, so verification must stay built-in and non-overridable.
    */
   onTitleMismatch?: (result: { url: string; title: string }) => void;
   /**
    * Called when the lookup could not run (breaker open, or a transient
-   * provider error) — the null that follows is "unknown", not "no profile".
+   * provider error). The null that follows is "unknown", not "no profile".
    */
   onUnavailable?: () => void;
 }): Promise<string | null> {
   const fullName = args.fullName.trim();
   if (fullName.length === 0) return null;
 
-  // An org account can only resolve to some employee's profile — a paid wrong answer.
+  // An org account can only resolve to some employee's profile. A paid wrong answer.
   if (looksLikeOrgName(fullName)) {
     logEvent("linkedin.search.skipped_org", { full_name: fullName });
     return null;
@@ -162,14 +162,14 @@ export async function findLinkedInUrl(args: {
   ]);
   if (cache.has(cacheKey)) return cache.get(cacheKey) ?? null;
 
-  // Persistent cache — the in-process Map only survives one run.
+  // Persistent cache. The in-process Map only survives one run.
   const persisted = readPersistedLookup(cacheKey);
   if (persisted !== undefined) {
     cache.set(cacheKey, persisted);
     return persisted;
   }
 
-  // Breaker is shared with email resolution — a platform-wide failure trips it
+  // Breaker is shared with email resolution. A platform-wide failure trips it
   // once and every subsequent candidate short-circuits for free.
   if (isCircuitOpen()) {
     logEvent("linkedin.search.skipped_breaker", { full_name: fullName });
@@ -187,7 +187,7 @@ export async function findLinkedInUrl(args: {
       const url = typeof r.url === "string" ? r.url : "";
       if (LINKEDIN_PROFILE_RX.test(url)) {
         const title = typeof r.title === "string" ? r.title : "";
-        // Verify before accepting — a wrong URL here isn't a blank field, it's
+        // Verify before accepting. A wrong URL here isn't a blank field, it's
         // outreach to a stranger.
         if (!nameMatchesTitle(title, fullName)) {
           args.onTitleMismatch?.({ url, title });
@@ -243,7 +243,7 @@ function readPersistedLookup(cacheKey: string): string | null | undefined {
     if (age >= ttl) return undefined;
     return row.url ?? null;
   } catch {
-    // Cache is an optimisation — a ledger hiccup must not stop the lookup.
+    // Cache is an optimisation. A ledger hiccup must not stop the lookup.
     return undefined;
   }
 }
@@ -258,7 +258,7 @@ function writePersistedLookup(cacheKey: string, url: string | null): void {
 
 /**
  * First usable phone from an enrichProfile (`profile.phone`), LLM extract
- * (`extract.phone`), or deepResearchPerson (`enrichment.fullphone[]`) shape —
+ * (`extract.phone`), or deepResearchPerson (`enrichment.fullphone[]`) shape:
  * the single read site for all three. Raw string, no E.164 normalization.
  */
 export function extractFirstPhone(source: unknown): string | null {

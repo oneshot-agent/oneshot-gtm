@@ -104,7 +104,7 @@ describe("stripActionMarkers", () => {
   });
 
   it("strips a partial marker mid-stream so it doesn't flicker into view", () => {
-    // The closing `-->` hasn't arrived yet — the partial regex must still
+    // The closing `-->` hasn't arrived yet. The partial regex must still
     // hide the marker scaffolding from the founder.
     const out = stripActionMarkers(`Adding the config:\n\n<!--ACTION:apply-config:agent-bui`);
     expect(out).toBe("Adding the config:");

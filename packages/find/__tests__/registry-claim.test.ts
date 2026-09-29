@@ -51,7 +51,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       finderApprovalStats: () => ({ approved: 0, reviewed: 0, rate: null }),
       latestQueueId: () => 0,
       listPendingQueueAfterId: () => [],
-      // Methods downstream finders might call — only invoked on claim success,
+      // Methods downstream finders might call. Only invoked on claim success,
       // which we deliberately disable in these tests, so no-op stubs suffice.
       isQueueDuplicate: () => false,
       enqueueTarget: () => 0,
@@ -116,7 +116,7 @@ describe("runDueTriggers — atomic claim", () => {
     // All due triggers report fired:false because the claim was lost.
     for (const o of outcomes) {
       // Some triggers may be readiness-blocked (e.g. github-topics without
-      // topics in defaultConfig) — those skip BEFORE the claim. Filter them
+      // topics in defaultConfig). Those skip BEFORE the claim. Filter them
       // out by looking only at triggers that attempted a claim.
       const attempted = calls.markTriggerRunning.some((c) => c.name === o.name);
       if (attempted) {
@@ -156,7 +156,7 @@ describe("runDueTriggers — branch coverage (no claim attempt for these)", () =
     await runDueTriggers();
     expect(calls.markTriggerRunning).toEqual([]);
     expect(calls.updateTriggerLastPoll).toEqual([]);
-    // No skipped events either — disabled triggers exit silently before
+    // No skipped events either: disabled triggers exit silently before
     // reaching the readiness/claim/run path.
     const skipReasons = calls.events
       .filter((e) => e.kind === "trigger.run.skipped")
@@ -208,7 +208,7 @@ describe("runDueTriggers — corrupt config_json", () => {
 
     markReturnsTrue = false;
     // Pre-fix, the bare JSON.parse threw out of the loop and rejected the
-    // whole tick — every trigger stopped firing until the row was hand-fixed.
+    // whole tick. Every trigger stopped firing until the row was hand-fixed.
     const outcomes = await runDueTriggers();
 
     // The tick completed and produced an outcome for every registered trigger.
@@ -225,7 +225,7 @@ describe("runDueTriggers — corrupt config_json", () => {
 
 describe("runDueTriggers — happy path (claim succeeds → finder runs)", () => {
   it("invokes spec.run, persists the result via updateTriggerLastPoll, emits trigger.run.done", async () => {
-    // Pick the cheapest+fastest spec to mock — breakup-revive has no SDK calls.
+    // Pick the cheapest+fastest spec to mock: breakup-revive has no SDK calls.
     const spec = TRIGGERS.find((s) => s.name === "show-hn");
     if (!spec) throw new Error("show-hn spec missing — registry shape changed");
 
@@ -234,7 +234,7 @@ describe("runDueTriggers — happy path (claim succeeds → finder runs)", () =>
       if (row.name !== spec.name) row.enabled = 0;
     }
 
-    // Stub spec.run to a resolved FinderResult — we don't want to touch
+    // Stub spec.run to a resolved FinderResult. We don't want to touch
     // the real ledger or any SDK.
     const fakeResult = {
       source: "find:show-hn",
@@ -255,7 +255,7 @@ describe("runDueTriggers — happy path (claim succeeds → finder runs)", () =>
       // Exactly one claim for our spec.
       const claim = calls.markTriggerRunning.find((c) => c.name === spec.name);
       expect(claim).toBeDefined();
-      // updateTriggerLastPoll called with our spec — clears running_started_at.
+      // updateTriggerLastPoll called with our spec: clears running_started_at.
       expect(calls.updateTriggerLastPoll).toContain(spec.name);
       // Outcome reflects the result.
       const outcome = outcomes.find((o) => o.name === spec.name);
@@ -292,7 +292,7 @@ describe("runDueTriggers — happy path (claim succeeds → finder runs)", () =>
 
     try {
       expect(runSpy).toHaveBeenCalledTimes(1);
-      // updateTriggerLastPoll still called — cleanup runs even on error,
+      // updateTriggerLastPoll still called: cleanup runs even on error,
       // which is what clears running_started_at.
       expect(calls.updateTriggerLastPoll).toContain(spec.name);
       // Outcome is fired:true with an error message.

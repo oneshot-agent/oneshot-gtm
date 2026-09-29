@@ -21,7 +21,7 @@ export function angleKey(text: string): string {
  * The editor text with `angleText` removed from its edge field, re-serialized
  * the way the editor seeds it (2-space JSON, key order kept). Null when the
  * text is not a JSON object, carries no edge field, or the angle is not in
- * it — the caller leaves the textarea alone.
+ * it. The caller leaves the textarea alone.
  */
 export function removeAngleFromConfigText(text: string, angleText: string): string | null {
   let parsed: unknown;

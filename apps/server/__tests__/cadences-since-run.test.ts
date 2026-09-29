@@ -120,7 +120,7 @@ describe("listCadences — ?sinceRun filter", () => {
       cohort: "yc-s26",
     });
     expect(byEmail.get("b@x.dev")).toBeNull();
-    // Asked once, for the whole page — not once per row.
+    // Asked once, for the whole page, not once per row.
     expect(latestSentQueuePayloadsMock).toHaveBeenCalledTimes(1);
     expect(latestSentQueuePayloadsMock.mock.calls[0]![0]).toEqual(
       rows.map((r) => ({ playName: r.play_name, email: r.prospect_email })),

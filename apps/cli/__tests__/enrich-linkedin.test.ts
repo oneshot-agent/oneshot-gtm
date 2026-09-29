@@ -14,7 +14,7 @@ describe("looksLikeRealName", () => {
   });
 
   it("rejects the GitHub-handle shapes that dominate repo-interest", () => {
-    // Every one of these is a real unresolved name from the ledger — searching
+    // Every one of these is a real unresolved name from the ledger: searching
     // them costs ~$0.01 for a near-certain miss.
     expect(looksLikeRealName("yijin840")).toBe(false);
     expect(looksLikeRealName("AAAlexander")).toBe(false);
@@ -48,7 +48,7 @@ describe("cleanCompanyToken", () => {
   });
 
   it("strips the GitHub org sigil", () => {
-    // LinkedIn writes "iFood", never "@iFood" — the sigil alone would make the
+    // LinkedIn writes "iFood", never "@iFood". The sigil alone would make the
     // quoted token unmatchable.
     expect(cleanCompanyToken("@Corvux-Systems")).toBe("Corvux-Systems");
   });
@@ -91,7 +91,7 @@ describe("resolveCap", () => {
   });
 
   it("never widens the run on a negative limit", () => {
-    // slice(0, -1) returns every candidate but the last — asking for less than
+    // slice(0, -1) returns every candidate but the last: asking for less than
     // nothing would have billed for the whole ledger.
     expect(resolveCap(-1)).toBe(0);
     expect(resolveCap(-500)).toBe(0);

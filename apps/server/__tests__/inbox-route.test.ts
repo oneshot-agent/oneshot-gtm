@@ -40,7 +40,7 @@ const ledger = {
   getInboxThreads: getInboxThreadsMock,
   listAllCadences: () => [],
   listRepliedProspectEmails: () => [],
-  // v21 conversation machinery — empty by default; tests override with
+  // v21 conversation machinery: empty by default; tests override with
   // mockReturnValueOnce (one-shot, so nothing leaks across tests).
   listProspectIdsWithReplies: listProspectIdsWithRepliesMock,
   listInboxRepliesForProspect: listInboxRepliesForProspectMock,
@@ -55,9 +55,9 @@ const ledger = {
   listInboxReplyIntents: listInboxReplyIntentsMock,
   setInboxDraftSteer: setInboxDraftSteerMock,
   setInboxDraftBody: setInboxDraftBodyMock,
-  // round-2 correction (#480): the nav-dot ack signal — empty by default.
+  // Nav-dot acknowledgement signal; empty by default.
   listLatestOutcomeRecordedAtByProspect: listLatestOutcomeRecordedAtByProspectMock,
-  // issue #578: no meeting on the prospect by default — routes must fall
+  // No meeting on the prospect by default; routes must fall
   // back to null and keep the fallback ReplyContext byte-identical.
   latestMeetingOutcomeFor: () => null,
 };
@@ -81,7 +81,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 const draftInboxReplyMock = vi.fn();
-// bodyCommitsTerms is the real (deterministic, no-LLM) implementation — the
+// bodyCommitsTerms is the real (deterministic, no-LLM) implementation. The
 // send gate's regex check is cheap enough not to need mocking, and mocking
 // it to always-false would silently stop testing the gate at all.
 vi.mock("@oneshot-gtm/plays", async () => {
@@ -208,7 +208,7 @@ describe("inbox route — persisted drafts & sent replies", () => {
       const res = await listInboxRoute(new Request("http://localhost/api/inbox"));
       expect(res.status).toBe(200);
       // Both emails are recorded (opportunistic capture persists everything
-      // matched), but the Slack alert only fires for the human one — an
+      // matched), but the Slack alert only fires for the human one. An
       // autoresponder is not a reply by classifyReply's own contract and must
       // not raise a false "Reply from ..." alert (round-1 correction, #71).
       expect(recordInboxReplyMock).toHaveBeenCalledTimes(2);
@@ -261,7 +261,7 @@ describe("inbox route — persisted drafts & sent replies", () => {
         kind: "auto_permanent",
         status_code: null,
       });
-      // Not a human reply — must not also fire the reply-received alert.
+      // Not a human reply: must not also fire the reply-received alert.
       expect(notifySlackReplyReceivedMock).not.toHaveBeenCalled();
     } finally {
       knownProspect = null;
@@ -494,7 +494,7 @@ describe("inbox route — persisted drafts & sent replies", () => {
   });
 
   it("sendReplyRoute records the reply against the prospect it answers", async () => {
-    // Answering someone is proof they replied — the human is the detector of
+    // Answering someone is proof they replied. The human is the detector of
     // last resort when the background poll missed it.
     knownProspect = { id: 7 };
     replyEmailMock.mockResolvedValue({ request_id: "req-2", cost: 0 });
@@ -561,7 +561,7 @@ describe("inbox route — window honesty & empty-body drafting", () => {
     listInboxMock.mockResolvedValue({ emails: [], has_more: true });
     const res = await listInboxRoute(new Request("http://localhost/api/inbox"));
     const out = (await res.json()) as { hasMore: boolean };
-    // The UI renders this as a "+" on its counts — a clamped window must never
+    // The UI renders this as a "+" on its counts. A clamped window must never
     // be presented as the whole mailbox.
     expect(out.hasMore).toBe(true);
   });
@@ -629,7 +629,7 @@ describe("inbox route — research-grounded drafting", () => {
       prospectId: null,
       threadKey: "t1",
       excludeId: "e1",
-      skipPaid: false, // a human reply — the paid tier stays available
+      skipPaid: false, // a human reply. The paid tier stays available
     });
     expect(draftInboxReplyMock).toHaveBeenCalledWith(
       expect.objectContaining({

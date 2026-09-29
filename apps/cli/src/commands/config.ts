@@ -75,7 +75,7 @@ export async function configFounder(): Promise<void> {
         message: "Product one-liner",
         initial: cfg.productOneLiner ?? "",
       },
-      // Optional — press enter to skip. Mirrors the `init` wizard + /setup page.
+      // Optional: press enter to skip. Mirrors the `init` wizard + /setup page.
       {
         type: "text",
         name: "icpOneLiner",
@@ -154,7 +154,7 @@ export async function configTelemetry(state: "on" | "off"): Promise<void> {
 
 /**
  * Show or set the Slack incoming-webhook URL (reply/bounce/daily-summary
- * notifications, see slack-notify.ts). Blank input clears it — the feature is
+ * notifications, see slack-notify.ts). Blank input clears it. The feature is
  * off whenever this is unset, mirroring `config x-engine`'s show-then-set shape.
  */
 export async function configSlackWebhook(url?: string): Promise<void> {

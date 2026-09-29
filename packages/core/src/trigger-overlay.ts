@@ -16,7 +16,7 @@ export function triggerNameForSource(source: string | null | undefined): string 
 /**
  * The saved config of the trigger a row came from. Null when the source
  * names no trigger, the trigger is gone, or its config is empty or
- * unreadable — callers reading an opt-out flag treat that as the default.
+ * unreadable: callers reading an opt-out flag treat that as the default.
  */
 export function triggerConfigForSource(
   source: string | null | undefined,
@@ -40,7 +40,7 @@ export function triggerConfigForSource(
  * Overlay a trigger's CURRENT sender-authored settings (edge, first-touch
  * format) onto a queued target, keyed by the row's `source`
  * (`find:<trigger>[:…]`). Used wherever a draft is generated from a stored
- * payload — queue drafting and cadence follow-ups alike — so an edit to the
+ * payload (queue drafting and cadence follow-ups alike) so an edit to the
  * trigger reaches rows already queued or in cadence without rewriting
  * history. Returns the target unchanged when the source names no trigger or
  * the trigger has no config; throws on an invalid config.

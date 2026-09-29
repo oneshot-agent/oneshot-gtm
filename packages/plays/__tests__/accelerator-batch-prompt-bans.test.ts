@@ -10,8 +10,8 @@ import { lintEmail } from "../src/_lib.ts";
  * of the four it named had no pattern, and nothing could have noticed: the
  * existing coverage test checks that the humanizer doc MENTIONS every linter
  * label, never that a prompt's claim about the linter is TRUE. This test
- * checks the useful direction — every phrase the prompt's provenance sentence
- * quotes must actually be flagged when placed mid-body — plus the two other
+ * checks the useful direction. Every phrase the prompt's provenance sentence
+ * quotes must actually be flagged when placed mid-body: plus the two other
  * claims the prompt makes about enforcement.
  */
 const here = dirname(fileURLToPath(import.meta.url));

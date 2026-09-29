@@ -25,7 +25,7 @@ export function validateRunSearch(search: Record<string, unknown>): RunSearch {
     out.limit = Number.parseInt(search["limit"], 10);
   }
   // Keep an explicit-but-empty pick (`?ids=`, `?ids=abc`) as `[]` rather than
-  // dropping the field — hydration must load nothing, not silently widen to
+  // dropping the field: hydration must load nothing, not silently widen to
   // the play's whole approved batch.
   const ids = parseQueueIds(
     search["ids"] == null

@@ -73,7 +73,7 @@ describe("humanizeDraft + lintEmail — pipeline coverage", () => {
   it("removes em-dash, curly-quotes, emoji, excess-exclamations flags after auto-fix", () => {
     // `wow!!!` collapses to `wow!` (single run), leaving 1 `!` in the body.
     // Multi-clause cases like `fine! great!` would NOT auto-fix to silence
-    // `excess-exclamations` — that's a semantic decision the LLM should
+    // `excess-exclamations`. That's a semantic decision the LLM should
     // make, not a deterministic rewrite.
     const messy = {
       subject: "the question",
@@ -105,7 +105,7 @@ describe("humanizeDraft + lintEmail — pipeline coverage", () => {
  * Locks in the fix for "every borderline draft trips body-too-long". The
  * signatureDirective forces the LLM to append name + domain at the bottom
  * of every body, but those 2-3 deterministic words used to count against
- * the per-play maxBodyWords budget — so a prompt that said "≤110 words"
+ * the per-play maxBodyWords budget, so a prompt that said "≤110 words"
  * effectively gave the LLM ~107 for content, making /repo-interest reject
  * drafts that were inside the contract.
  */
@@ -131,7 +131,7 @@ describe("bodyWordsForLint — strips trailing signature lines", () => {
 
   it("does not chop content that just happens to contain the founder's name mid-paragraph", () => {
     // "Jane Doe" appears inside the body, but the trailing lines aren't a
-    // sig — strip stops at the first non-match and counts everything.
+    // sig: strip stops at the first non-match and counts everything.
     const body = "Jane Doe shipped this last week and it worked";
     // 9 content words; no trailing sig present.
     expect(bodyWordsForLint(body, ["example.com", "Jane Doe"])).toBe(9);

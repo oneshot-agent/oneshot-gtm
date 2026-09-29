@@ -3,7 +3,7 @@
  *
  * Ranking across lanes doesn't work: their weights differ, so a founder tops
  * out near 58 where an amplifier reaches 79. Sorting one list buried every
- * founder — and when founders were given priority instead, pure amplifiers
+ * founder, and when founders were given priority instead, pure amplifiers
  * stopped appearing at all. Both matter, so each lane gets a reserved share and
  * a short lane spills into the other rather than wasting slots.
  */

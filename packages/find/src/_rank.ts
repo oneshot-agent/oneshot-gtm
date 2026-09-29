@@ -1,20 +1,14 @@
 import { parseProspectPriority } from "@oneshot-gtm/core";
 
 /**
- * Constrained ranking for the /queue REVIEW surface (Phase 2 of #410, PR-3).
- * Pure and deterministic — zero I/O, no RNG, output is a permutation of the
- * input. Review order only: drains, approvals, cadences, and sends never
- * touch this.
+ * Deterministic ranking for /queue review only; output is a permutation of
+ * input. Drains, approvals, cadences, and sends do not use it.
  *
- * Cross-finder totals are NOT comparable (different adapters produce
- * different achievable ranges — the same argument `_x-lanes.ts` makes for
- * lanes), so ranking never sorts one flat list. Finders are interleaved
- * round-robin; the score only orders rows WITHIN a finder.
+ * Cross-finder scores have different ranges and cannot be compared. Interleave
+ * finders round-robin and use scores only to order rows within each finder.
  */
 
-/** Fairly interleave buckets; sparse buckets surrender unused capacity.
- *  (Moved verbatim from luma.ts, which now imports it — the same primitive
- *  drives Luma's city/event sampling and the ranked review order.) */
+/** Interleave buckets; sparse buckets surrender unused capacity. */
 export function roundRobin<T>(buckets: ReadonlyMap<string, readonly T[]>, cap: number): T[] {
   const out: T[] = [];
   const cursors = new Map<string, number>();
@@ -75,11 +69,9 @@ function bucketKeyOf(row: RankableRow): string {
 }
 
 /**
- * Rank pending rows for review: bucket by finder (luma by city), score-desc
- * within a bucket (unscored rows sink to the bucket tail), interleave buckets
- * in key order, and hand every Kth slot to an exploration pool so rows the
- * heuristic dislikes still get human eyes (the labels Phase 3 learns from
- * must not collapse into the heuristic's own blind spot).
+ * Rank by finder (Luma by city), then descending score within each bucket;
+ * unscored rows go last. Interleave buckets in key order and reserve every Kth
+ * slot for exploration so human labels include rows the heuristic dislikes.
  */
 export function rankPendingRows<T extends RankableRow>(rows: T[], opts: RankOptions = {}): T[] {
   const interval = Math.max(2, opts.explorationInterval ?? 5);
@@ -104,7 +96,7 @@ export function rankPendingRows<T extends RankableRow>(rows: T[], opts: RankOpti
   const poolIds = new Set(pool.map((r) => r.id));
 
   // Main stream: per-bucket score desc → found_at desc → id desc, buckets
-  // interleaved in KEY order — deliberately not by top score, because
+  // interleaved in KEY order: deliberately not by top score, because
   // cross-finder totals aren't comparable; interleaving is the fairness.
   const buckets = new Map<string, T[]>();
   for (const row of rows) {

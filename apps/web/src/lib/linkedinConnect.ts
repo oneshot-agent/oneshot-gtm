@@ -26,7 +26,7 @@ export interface LinkedInView {
 }
 
 /**
- * `pendingHere` — a sign-in this page started (the live URL is in memory);
+ * `pendingHere`. A sign-in this page started (the live URL is in memory);
  * the server's pending id also counts, so a reload mid-login resumes with
  * Done instead of starting over.
  */

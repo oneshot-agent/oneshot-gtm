@@ -130,7 +130,7 @@ export async function recordOutcome(req: Request): Promise<Response> {
   });
   // Tag the value of the receipts that earned this outcome. When no play is
   // given, tag every cadence the prospect is in. Best-effort (tagOutcomeValue
-  // swallows its own errors) — never block recording the outcome.
+  // swallows its own errors). Never block recording the outcome.
   const valueTag = outcomeToValueTag(body.outcome, body.amountUsd ?? undefined);
   if (valueTag) {
     const plays = body.playName

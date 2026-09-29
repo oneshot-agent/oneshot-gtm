@@ -7,7 +7,7 @@ import { Ledger } from "../src/ledger.ts";
 /*
  * `searchQueue` backs the /prospects browse view: every queue row, any status,
  * searched, sorted and paged. The contracts that matter are the ones a
- * browse page silently breaks on — a stable `total` under OFFSET, no row
+ * browse page silently breaks on. A stable `total` under OFFSET, no row
  * fan-out from the prospect join, and search that reads the same payload
  * keys the /queue row renders.
  */

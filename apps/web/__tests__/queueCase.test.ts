@@ -7,7 +7,7 @@ import {
 } from "../src/lib/queueCase.ts";
 
 // Issue #594: the case column lays the priority engine's reasons out as
-// key–value rows where they have a key and as plain lines where they don't.
+// key: value rows where they have a key and as plain lines where they don't.
 
 describe("caseRows", () => {
   it("splits a keyed reason and keeps a plain one whole", () => {

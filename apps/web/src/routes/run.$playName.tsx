@@ -40,11 +40,11 @@ function RunPage() {
   // Parallel to `rows`: each entry is the originating queue row's dedupeKey
   // (when hydrated from `?fromQueue=1`) or null (manual entry / added row).
   // The server uses these to persist drafts back to the matching queue row;
-  // null entries get skipped (correct — there's nothing to update).
+  // null entries get skipped (correct: there's nothing to update).
   const [dedupeKeys, setDedupeKeys] = useState<(string | null)[]>(schema ? [null] : []);
   const [extras, setExtras] = useState<Record<string, string>>({});
   // dryRun mirrors what the founder picked in the drain modal when arriving
-  // via `?fromQueue=1`. Default true otherwise — manual /run entry is more
+  // via `?fromQueue=1`. Default true otherwise: manual /run entry is more
   // commonly a preview than a real send.
   const [dryRun, setDryRun] = useState(search.dryRun !== "0");
   const [running, setRunning] = useState(false);
@@ -77,7 +77,7 @@ function RunPage() {
   });
   const runRecord: RunRecord | null = (runQuery.data as RunRecord | null | undefined) ?? null;
   // A 404 from /api/runs/:id (run was deleted, or the URL was hand-edited
-  // with a bad id) shouldn't pin the page on "progress" forever — flag the
+  // with a bad id) shouldn't pin the page on "progress" forever: flag the
   // missing-id case so the page can recover to edit mode.
   const runNotFound =
     search.runId != null &&
@@ -180,7 +180,7 @@ function RunPage() {
     return () => {
       ref.cancelled = true;
     };
-    // Mount-only on purpose — re-running on search-param edits would clobber
+    // Mount-only on purpose: re-running on search-param edits would clobber
     // founder edits to the loaded rows. The manual "Refresh from queue"
     // button invokes hydrateFromQueue directly on demand.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -225,7 +225,7 @@ function RunPage() {
   }, [events]);
 
   const doneEvent = events.find((e) => e.kind === "done");
-  // Terminal counterpart to `done` for an aborted run — present on both the
+  // Terminal counterpart to `done` for an aborted run: present on both the
   // live stream and the persisted resume view.
   const cancelledEvent = events.find((e) => e.kind === "cancelled");
   const errorEvents = events.filter((e) => e.kind === "error");
@@ -309,7 +309,7 @@ function RunPage() {
      * The read-only guarantee is enforced HERE and not only on the button.
      *
      * This dispatch is the one write in the app that does not go through
-     * `postJson` — it needs an SSE body, which that wrapper cannot carry — so
+     * `postJson` (it needs an SSE body, which that wrapper cannot carry) so
      * the transport-level refusal in api/demo.ts never sees it. A disabled
      * button is a courtesy; this is the guarantee, and without it a demo build
      * would POST a real run payload at whatever origin it was served from.
@@ -321,7 +321,7 @@ function RunPage() {
 
     // Enforce the schema's `required` keys before dispatch. Rows here render
     // outside a <form> (this is a plain button onClick, not a submit event),
-    // so the `required` attribute on each field is decorative — and `submit`
+    // so the `required` attribute on each field is decorative, and `submit`
     // strips blank fields below, which would otherwise let e.g. a blank
     // `agency` or `yourEdge` reach the play as `undefined` and produce a
     // malformed, paid draft.
@@ -330,7 +330,7 @@ function RunPage() {
     // checked target-row fields (`schema.fields`). Required EXTRAS
     // bypassed the guard entirely and
     // `submit` below omits a blank extra from the request despite its schema
-    // contract — validate both collections before dispatching.
+    // contract: validate both collections before dispatching.
     const rowIssues = rows
       .map((row, idx) => ({ idx, missing: missingRequiredFields(schema, row) }))
       .filter((r) => r.missing.length > 0);
@@ -370,7 +370,7 @@ function RunPage() {
       ...(hasAnyDedupeKey ? { dedupeKeys } : {}),
     };
 
-    // Local mirror of the SSE event stream — avoids reading React state in
+    // Local mirror of the SSE event stream: avoids reading React state in
     // the finally block (which would be stale due to async update batching)
     // and keeps setState calls below pure (one setter per concern).
     const streamedEvents: RunPlayEvent[] = [];
@@ -425,7 +425,7 @@ function RunPage() {
         setRows(pruned.rows);
         setDedupeKeys(pruned.dedupeKeys);
         // The per-index draft/send details from the just-finished run no
-        // longer line up with the surviving rows — clear so the UI doesn't
+        // longer line up with the surviving rows: clear so the UI doesn't
         // show stale previews under freshly-shifted indices.
         setEvents([]);
       }
@@ -716,7 +716,7 @@ function RunPage() {
                 variant="secondary"
                 onClick={() => {
                   if (search.runId == null) return;
-                  // TanStack navigate keeps the SPA mounted — no full reload,
+                  // TanStack navigate keeps the SPA mounted: no full reload,
                   // dev state intact, instant route swap.
                   void globalNavigate({
                     to: "/cadences",

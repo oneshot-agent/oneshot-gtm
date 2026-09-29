@@ -40,7 +40,7 @@ interface MockGhUser {
   blogDomain: string | null;
   company: string | null;
 }
-/** Default GitHub user info — has all fields populated so resolveContact's
+/** Default GitHub user info: has all fields populated so resolveContact's
  *  Path A (extract.companyDomain → findEmail) succeeds out of the box. */
 let defaultGhUser: MockGhUser | null = {
   login: "ada",
@@ -91,7 +91,7 @@ vi.mock("@oneshot-gtm/core", async () => {
         receiptId: 0,
       };
     },
-    // Path B' (linkedin-via-webSearch → enrichProfile) — default to no-result
+    // Path B' (linkedin-via-webSearch → enrichProfile): default to no-result
     // mocks so the existing tests don't trigger network calls.
     webSearch: async () => ({
       result: { results: [], cost: 0.01 },
@@ -122,7 +122,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
   return {
     ...actual,
     complete: async (input: { messages: Array<{ role: string; content: string }> }) => {
-      // The pipeline now only calls `complete` for the ICP filter — the
+      // The pipeline now only calls `complete` for the ICP filter. The
       // README+LLM extract step is gone.
       const userMsg = input.messages.find((m) => m.role === "user")?.content ?? "";
       calls.llmIcp++;
@@ -391,7 +391,7 @@ describe("github-topics — pipeline ordering", () => {
 describe("github-topics — minVendors gate", () => {
   it("drops candidates whose detected stack is below minVendors", async () => {
     nextSearchByTopic = { "llm-agents": [makeRepo("https://github.com/ada/agent")] };
-    nextDetectedStack = ["langchain"]; // only 1 vendor — below minVendors=2
+    nextDetectedStack = ["langchain"]; // only 1 vendor: below minVendors=2
     const out = await runGitHubTopicsFinder({ ...baseOpts, topics: ["llm-agents"], minVendors: 2 });
     expect(out.droppedEnrichment).toBe(1);
     expect(calls.findEmail).toBe(0); // never reached resolveContact

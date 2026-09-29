@@ -121,7 +121,7 @@ export async function commandIntelTriage(opts: {
 
 /**
  * Backfill sentiment intent onto persisted human replies that predate the
- * classifier (issue #480) — the ten replies the workspace had before this
+ * classifier (issue #480). The ten replies the workspace had before this
  * shipped, and anyone else's pre-existing history. Best-effort per row: a
  * triage failure on one batch is logged and skipped, never aborts the run.
  */

@@ -2,13 +2,13 @@ import { loadConfigCached } from "./config.ts";
 import type { OneShotConfig } from "./types.ts";
 
 /**
- * Anonymous distribution telemetry — ONE summary event per CLI invocation,
+ * Anonymous distribution telemetry: ONE summary event per CLI invocation,
  * separate from the local-only events.jsonl channel. TELEMETRY.md is the
  * authoritative payload spec; the field set here must stay in lockstep.
  *
  * Hard rules: the env kill switch (ONESHOT_GTM_TELEMETRY=0) and
  * `cfg.telemetryEnabled === false` are checked BEFORE any payload is built;
- * transmission never throws and never blocks process exit; no telemetry SDK —
+ * transmission never throws and never blocks process exit; no telemetry SDK:
  * a plain `fetch` POST to a first-party endpoint.
  */
 
@@ -16,7 +16,7 @@ import type { OneShotConfig } from "./types.ts";
 export type TelemetryOutcome = "ok" | "error" | "lint-blocked";
 
 /**
- * The exact wire shape. Field set is the TELEMETRY.md whitelist — do not add
+ * The exact wire shape. Field set is the TELEMETRY.md whitelist. Do not add
  * fields here without updating that file in the same change.
  */
 export interface TelemetryPayload {
@@ -29,7 +29,7 @@ export interface TelemetryPayload {
   bun_version: string;
   /**
    * Anonymous per-install id. Satisfied by the existing `clientId` UUID
-   * (config.json) rather than a machine fingerprint — random-per-install,
+   * (config.json) rather than a machine fingerprint: random-per-install,
    * already persisted, and carries nothing PII-adjacent.
    */
   anonymous_machine_id: string | null;
@@ -51,7 +51,7 @@ const TELEMETRY_TIMEOUT_MS = 1000;
 
 /**
  * Resolve the ingest URL. An *explicitly empty* ONESHOT_GTM_TELEMETRY_URL=""
- * resolves to "" — a hard no-op; only an absent var falls back to the default.
+ * resolves to "". A hard no-op; only an absent var falls back to the default.
  */
 export function telemetryUrl(env: NodeJS.ProcessEnv = process.env): string {
   const raw = env["ONESHOT_GTM_TELEMETRY_URL"];
@@ -85,7 +85,7 @@ export interface TelemetryInputs {
 }
 
 /**
- * Pure builder — no I/O, no clock, no globals. The field set IS the
+ * Pure builder: no I/O, no clock, no globals. The field set IS the
  * whitelist, so anything not listed can't be carried.
  */
 export function buildTelemetryPayload(input: TelemetryInputs): TelemetryPayload {
@@ -103,7 +103,7 @@ export function buildTelemetryPayload(input: TelemetryInputs): TelemetryPayload 
 }
 
 /**
- * Fire-and-forget POST. Resolves either way — a network error, a non-2xx, or
+ * Fire-and-forget POST. Resolves either way. A network error, a non-2xx, or
  * the timeout all resolve to undefined. Bounded by an AbortController so a
  * hung endpoint can't delay CLI exit beyond TELEMETRY_TIMEOUT_MS.
  */
@@ -124,7 +124,7 @@ export async function reportCommand(
       signal: controller.signal,
     });
   } catch {
-    // swallowed — telemetry must never surface to the user (see header)
+    // swallowed: telemetry must never surface to the user (see header)
   } finally {
     clearTimeout(timer);
   }

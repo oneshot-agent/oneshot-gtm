@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-// The registry must forward show-hn's `minPoints` config to the finder —
+// The registry must forward show-hn's `minPoints` config to the finder:
 // it silently ignored it before (config said 2, finder ran with default 5).
 
 const runShowHn = vi

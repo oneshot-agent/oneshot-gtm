@@ -2,15 +2,15 @@ import { stableHash } from "./_rank.ts";
 
 /**
  * Pure, dependency-free logistic regression for priority calibration
- * (Phase 3 of #410). Deterministic by construction — zero-init, full-batch
- * gradient descent, fixed iteration count, no RNG — so a refit on identical
+ * (Phase 3 of #410). Deterministic by construction: zero-init, full-batch
+ * gradient descent, fixed iteration count, no RNG, so a refit on identical
  * labels is bit-identical.
  *
  * Features are the 6 component scores / 100, deliberately NOT standardized:
- * they already share one constructed 0–100 scale, so standardization buys
+ * they already share one constructed 0-100 scale, so standardization buys
  * nothing statistically but would cost artifact simplicity (means/sds to
  * persist and version) and destroy direct comparability of fitted weights
- * against the hand-set heuristic weights — which is the whole point of the
+ * against the hand-set heuristic weights, which is the whole point of the
  * shadow display. At ~30 positives and 7 parameters, the fixed L2 penalty is
  * what makes the fit defensible at all; the holdout AUC display is the
  * honesty mechanism.
@@ -69,7 +69,7 @@ export function predictLogistic(fit: LogisticFit, x: number[]): number {
 
 /**
  * Deterministic ~20% holdout: the same stable hash that drives the ranked
- * view's exploration rotation, keyed per row — stable across refits and
+ * view's exploration rotation, keyed per row: stable across refits and
  * uncorrelated with time or score.
  */
 export function holdoutSplit<T>(rows: T[], keyOf: (r: T) => string): { train: T[]; holdout: T[] } {

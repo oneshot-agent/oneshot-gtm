@@ -9,7 +9,7 @@ export interface AcceleratorBatchTarget {
   email: string;
   company: string;
   cohort: string;
-  /** Human program name ("YC Summer 2026") — the row's signal label; the slug stays for scoring. */
+  /** Human program name ("YC Summer 2026"). The row's signal label; the slug stays for scoring. */
   cohortLabel?: string;
   /** `2026-03`: the cohort's demo-day month, stamped when its schedule is known. Status is computed at draft time. */
   demoDayMonth?: string;
@@ -17,19 +17,15 @@ export interface AcceleratorBatchTarget {
   productOneLiner?: string;
   linkedinUrl?: string;
   phone?: string;
-  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  /** Job title from the person-level ICP gate: persisted to prospects.title. */
   title?: string;
   /** The pitch angle, stamped onto finder rows from the trigger config (as
    *  every other finder stamps it) so the row drafts inline. */
   yourEdge: string;
   /**
-   * DEAD FIELDS, accepted so pre-existing queue rows still deserialize, never
-   * read. The sender's own cohort used to ride on the row, stamped from a
-   * trigger field a readiness gate made mandatory — which is exactly how
-   * installs ended up claiming a batch the founder was never in. Affiliation
-   * now comes from `founderCohort` in config, read once at draft time, so a
-   * stale stamp on an old row cannot resurrect the claim. `freeForCohortOffer`
-   * is gone outright: a cold discount is banned by _humanizer.md.
+   * Legacy fields accepted only for queue-row deserialization; never read.
+   * Sender affiliation comes from `founderCohort` in config at draft time,
+   * so stale row data cannot invent membership. Cold discounts are banned.
    */
   senderCohort?: string;
   freeForCohortOffer?: string;
@@ -43,7 +39,7 @@ export interface AcceleratorBatchRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -65,18 +61,14 @@ const PLAY_NAME = "accelerator-batch";
 export function runAcceleratorBatch(
   opts: AcceleratorBatchRunOptions,
 ): Promise<{ drafted: AcceleratorBatchDraft[] }> {
-  // The sender's affiliation is founder truth, so it comes from config and
-  // nowhere else — not from the target, not from the run options, both of
-  // which may still carry a fabricated cohort stamped by an older install.
-  // Absent (the honest default for most founders) the prompt gets no SENDER
-  // COHORT line at all and writes as the outsider it is.
+  // Read sender affiliation only from config. Omit SENDER COHORT when unset
+  // so target data and stale run options cannot invent a membership claim.
   const founderCohort = (loadConfig().founderCohort ?? "").trim();
   const def: EmailPlayDef<AcceleratorBatchTarget> = {
     playName: PLAY_NAME,
     promptName: "accelerator-batch-email",
     maxBodyWords: 150,
-    // The prompt forbids links, prices and any discount "regardless"; until
-    // #593 nothing enforced it. Same opt-in discovery-interview uses.
+    // Enforce the prompt's link, price, and discount bans, as discovery-interview does.
     hardBans: true,
     enrollCadence: true,
     toEmail: (t) => t.email,
@@ -101,11 +93,8 @@ export function runAcceleratorBatch(
           : {}),
       }),
     buildInputBlock: (t, prep, cfg) => {
-      // Rows enqueued before yourEdge existed carry none, and the Offer beat
-      // has no other material — an unguarded template literal would spend a
-      // paid LLM call on the string "undefined". runEmailPlay catches this per
-      // target and turns the row into an errorDraft, so it surfaces in /queue
-      // instead of shipping a hollow email.
+      // Missing edges must fail before a paid draft call. runEmailPlay turns this
+      // into an errorDraft for /queue instead of drafting from "undefined".
       if (!t.yourEdge?.trim()) {
         throw new Error(
           "accelerator-batch: this row carries no yourEdge — re-run the finder, or set it on the row, before drafting",

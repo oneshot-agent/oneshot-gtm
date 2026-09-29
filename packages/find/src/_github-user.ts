@@ -9,7 +9,7 @@ export interface GitHubUserInfo {
   /** Bare hostname extracted from the user's blog URL. */
   blogDomain: string | null;
   company: string | null;
-  /** Free-text profile bio — the one self-description a GitHub-only person gives. */
+  /** Free-text profile bio. The one self-description a GitHub-only person gives. */
   bio?: string | null;
   location?: string | null;
   /** The raw blog/website field as the user typed it (see `blogDomain` for the host). */
@@ -17,7 +17,7 @@ export interface GitHubUserInfo {
   /**
    * Account-maturity signal (issue #355 refinement): a `created_at` within
    * the last few months plus a low `publicRepos`/`followers` count is what
-   * separates a student/hobby account from an established one — the same
+   * separates a student/hobby account from an established one. The same
    * repo list reads very differently behind each. `null` on a field GitHub
    * didn't return (never observed in practice for `created_at`, but kept
    * optional-safe like every other field here).
@@ -42,7 +42,7 @@ export function _resetGitHubUserCache(): void {
 /**
  * Fetch a GitHub user's public profile via the unauth REST API. 403 is
  * GitHub's actual unauth rate-limit signal (not 429); treat both as
- * back-off. Null on any failure — caller falls through to the next
+ * back-off. Null on any failure: caller falls through to the next
  * enrichment strategy.
  *
  * Unauth quota is 60 req/hour per IP. The cache keeps a popular author
@@ -142,7 +142,7 @@ export function _resetTopReposCache(): void {
 /**
  * Fetch the candidate's top 10 OWN public repos, sorted by most-recent push.
  *
- * `null` return: any non-2xx / network error / parse failure — caller skips
+ * `null` return: any non-2xx / network error / parse failure: caller skips
  * the repos block in the prompt. Empty `[]` is distinct from `null` and means
  * "we asked, user has no public repos".
  */
@@ -179,7 +179,7 @@ export async function fetchTopRepos(login: string): Promise<TopRepo[] | null> {
       return null;
     }
     // Drop forks (GitHub's `type=owner` filters by ownership relation, NOT
-    // fork status — a daily-syncing fork of kubernetes/next.js would float to
+    // fork status. A daily-syncing fork of kubernetes/next.js would float to
     // the top via sort=pushed and read as shipping evidence to the LLM).
     // Drop archived + missing-name entries. Cap description at 160 chars.
     const repos: TopRepo[] = json
@@ -222,7 +222,7 @@ export async function fetchTopRepos(login: string): Promise<TopRepo[] | null> {
 }
 
 /**
- * One of the candidate's GitHub organizations — company/collective signal
+ * One of the candidate's GitHub organizations: company/collective signal
  * that a bare repo list can't distinguish (a student-led "lab" org reads the
  * same as a funded company until you check WHO'S behind it). Company/blog
  * dropped: `fetchGitHubOrgProfile` below fetches those for the org itself, on
@@ -298,7 +298,7 @@ export async function fetchGitHubOrgs(login: string): Promise<GitHubOrgRef[] | n
 }
 
 /**
- * Fetch an org's own profile — bio + public repo count. This is what
+ * Fetch an org's own profile: bio + public repo count. This is what
  * distinguishes "AxiomNode" the one-month-old student lab from a funded
  * company of the same shape: `fetchGitHubOrgs` only returns the name.
  * `null` on any failure; the caller treats a missing org profile as "unknown",
@@ -363,7 +363,7 @@ export interface GitHubFollowRef {
   login: string;
 }
 
-/** Following + followers, each capped — the network signal is "who's in their
+/** Following + followers, each capped. The network signal is "who's in their
  *  orbit", not a full graph; the caller looks for a handful of names it
  *  already recognizes (a colleague, a known builder), not a directory. */
 export interface GitHubFollowNetwork {
@@ -404,7 +404,7 @@ async function fetchLoginList(url: string): Promise<GitHubFollowRef[] | null> {
 
 /**
  * Fetch a capped page of who this candidate follows and who follows them.
- * Both lists fetched in parallel — this is one logical "network" lookup, not
+ * Both lists fetched in parallel. This is one logical "network" lookup, not
  * two independent calls a caller should have to sequence. `null` on total
  * failure (both lists unreachable); a partial failure degrades that one side
  * to an empty list rather than discarding the side that did succeed.

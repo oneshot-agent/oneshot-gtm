@@ -12,7 +12,7 @@ describe("firstNameFrom", () => {
     ["Mrs. J Doe", null],
     ["J. Eduardo", null],
     ["K.O", null],
-    // Roles and mailboxes — "Hey CEO," shipped once.
+    // Roles and mailboxes: "Hey CEO," shipped once.
     ["CEO", null],
     ["Founder", null],
     ["Admin", null],

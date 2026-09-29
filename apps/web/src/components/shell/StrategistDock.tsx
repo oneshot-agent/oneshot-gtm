@@ -10,7 +10,7 @@ const StrategistPanel = lazy(() => import("./StrategistPanel.tsx"));
  * Global strategist dock: a lightweight floating launcher (always in the main
  * bundle) plus a lazily-loaded chat drawer. The panel mounts on first open and
  * then stays mounted (toggled via translate) so chat history survives
- * close/reopen — and, since the dock lives in __root, across page navigation.
+ * close/reopen, and, since the dock lives in __root, across page navigation.
  */
 export function StrategistDock() {
   const [open, setOpen] = useState(false);
@@ -27,7 +27,7 @@ export function StrategistDock() {
 
   return (
     <>
-      {/* Launcher — bottom-right floating button (no assistant-ui dependency) */}
+      {/* Launcher: bottom-right floating button (no assistant-ui dependency) */}
       <button
         type="button"
         onClick={() => {

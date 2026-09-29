@@ -1,7 +1,7 @@
 /**
  * Concurrency helpers shared by `find` and `plays`. `parallelMap` runs `fn`
  * over `items` with at most `concurrency` in flight, preserving input order;
- * errors propagate via Promise.all — catch per-item if partial success matters.
+ * errors propagate via Promise.all: catch per-item if partial success matters.
  */
 /**
  * Bound a promise to `ms`. On deadline rejects with `<label> deadline
@@ -33,7 +33,7 @@ export async function parallelMap<T, R>(
   fn: (item: T, index: number) => Promise<R>,
   /**
    * Optional per-completion hook, fired after each `fn(item, i)` resolves.
-   * Fires in COMPLETION order across workers, not input order — key by
+   * Fires in COMPLETION order across workers, not input order: key by
    * `index`. A throw inside the callback propagates as if `fn` threw.
    */
   onItem?: (item: T, result: R, index: number) => void,

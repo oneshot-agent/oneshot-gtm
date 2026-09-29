@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Verifies discovery-interview drafts a learn-not-sell ask: the inputBlock
 // carries BUSINESS TYPE + TOPIC, and it enrolls a 2-touch cadence (ask + one
-// soft re-ask, no breakup) on a real send — mirrors repo-interest's shape.
+// soft re-ask, no breakup) on a real send: mirrors repo-interest's shape.
 
 const calls = { llmInputBlocks: [] as string[], enrolled: 0 };
 let completeResponse: { subject: string; body: string } = { subject: "s", body: "b" };

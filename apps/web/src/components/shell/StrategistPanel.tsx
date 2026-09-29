@@ -56,7 +56,7 @@ export default function StrategistPanel({ open, onClose }: { open: boolean; onCl
         />
       )}
 
-      {/* Drawer — stays mounted (preserves chat state when closed) */}
+      {/* Drawer: stays mounted (preserves chat state when closed) */}
       <aside
         className={
           "fixed right-0 top-0 z-50 flex h-full w-full flex-col border-l border-ink-rule bg-ink-bg-deep shadow-2xl transition-transform duration-200 sm:w-[440px] " +
@@ -222,7 +222,7 @@ function ActionChip({ action }: { action: ParsedStrategistAction }) {
         setDone(`config saved · ${action.trigger}`);
         toast.success(`config saved · ${action.trigger}`);
         // Edge lint (issue #585): the strategist writes most edges, so this is
-        // where a flat or pitch-shaped one gets caught — warned, not refused.
+        // where a flat or pitch-shaped one gets caught: warned, not refused.
         if (saved.warnings && saved.warnings.length > 0) {
           toast.warning(`${action.trigger} · yourEdge: ${saved.warnings.join(" · ")}`, {
             duration: 9000,

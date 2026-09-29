@@ -20,7 +20,7 @@ export interface StackConsolidationTarget {
   /** Profile URL this candidate was sourced from (GitHub). Persisted to the
    *  prospect row as a re-enrichment key. */
   sourceProfileUrl?: string;
-  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  /** Job title from the person-level ICP gate: persisted to prospects.title. */
   title?: string;
 }
 
@@ -32,7 +32,7 @@ export interface StackConsolidationRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -53,7 +53,7 @@ const stackConsolidationDef: EmailPlayDef<StackConsolidationTarget> = {
   maxBodyWords: 150,
   enrollCadence: true,
   toEmail: (t) => t.email,
-  // Enrich on both preview and real send (cached by email). No deepResearch —
+  // Enrich on both preview and real send (cached by email). No deepResearch:
   // the manifest-derived vendor stack is the load-bearing signal here.
   prepare: (t) =>
     standardEnrich({

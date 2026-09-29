@@ -15,7 +15,7 @@ interface SignalDay {
  *
  * Why calendar buckets, not rolling 24h windows: the labels say "Mon Apr 21"
  * etc, so the bars must mean the same thing. The previous version used
- * `Math.floor((now - ts) / 24h)` which drifted — a row from yesterday at
+ * `Math.floor((now - ts) / 24h)` which drifted. A row from yesterday at
  * 18:00 viewed at noon today (18h diff = 0.75 days = floor 0) landed in
  * the "today" bucket even though it's clearly yesterday by any calendar.
  *

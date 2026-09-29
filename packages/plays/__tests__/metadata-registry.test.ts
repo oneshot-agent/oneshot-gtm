@@ -10,10 +10,8 @@ import {
   sourcesSoughtMetadata,
 } from "../src/_metadata.ts";
 
-// The registry exists so the /queue send-draft route stamps the SAME step-0
-// metadata as runEmailPlay. Before it, queue sends stored {subject, body} only
-// — 178 of 351 repo-interest rows had no `repo` key, which mis-routed 19
-// prospects into the wrong arm of the LinkedIn A/B experiment.
+// Queue send-draft and runEmailPlay must stamp the same step-0 metadata
+// so evidence keys remain available for downstream routing.
 
 describe("playMetadata — lookup by play name", () => {
   it("produces the evidence key from a raw queue payload", () => {
@@ -60,7 +58,7 @@ describe("playMetadata — lookup by play name", () => {
 
 describe("shared fns are what the play defs reference", () => {
   // The defs import these exact functions, so equality here is equality there.
-  // These assertions pin the shape a typed target produces — if a play's
+  // These assertions pin the shape a typed target produces: if a play's
   // target fields are renamed, this fails alongside the def's typecheck.
   it("repo-interest", () => {
     expect(repoInterestMetadata({ repo: "a/b" })).toEqual({ repo: "a/b" });

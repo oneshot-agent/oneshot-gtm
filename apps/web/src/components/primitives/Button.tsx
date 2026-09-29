@@ -5,12 +5,12 @@ import { cn } from "../../lib/cn.ts";
 /**
  * Ledger Button.
  *
- *   primary   — stamped cream button (the only cream button on a page).
- *   secondary — surface with walnut rule.
- *   ghost     — unadorned; hover darkens only.
- *   danger    — oxblood outline, never a filled red.
- *   accent    — cobalt outline for rare informational actions.
- *   receipt   — receipt-green outline; the total line's "Send this one".
+ *   primary: stamped cream button (the only cream button on a page).
+ *   secondary: surface with walnut rule.
+ *   ghost: unadorned; hover darkens only.
+ *   danger: oxblood outline, never a filled red.
+ *   accent: cobalt outline for rare informational actions.
+ *   receipt: receipt-green outline; the total line's "Send this one".
  */
 const buttonStyles = cva(
   [
@@ -51,7 +51,7 @@ const buttonStyles = cva(
           "hover:bg-[color:var(--ink-signal)]/10",
         ].join(" "),
         // The total line's button: receipt-green outline, the one place a
-        // page spends the accent — "Send this one" on a clean draft.
+        // page spends the accent: "Send this one" on a clean draft.
         receipt: [
           "bg-transparent text-[color:var(--ink-receipt-2)]",
           "border border-[color:var(--ink-receipt)]/55",

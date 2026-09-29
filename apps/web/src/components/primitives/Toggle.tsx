@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes } from "react";
 import { cn } from "../../lib/cn.ts";
 
 /**
- * A pill toggle — the ledger's on/off affordance.
+ * A pill toggle. The ledger's on/off affordance.
  *
  *   on   → signal-cobalt fill, cream thumb flush right
  *   off  → walnut fill, muted thumb flush left

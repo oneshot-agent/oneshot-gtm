@@ -23,7 +23,7 @@ export function markDraftGenerating(id: number): void {
   try {
     localStorage.setItem(KEY_PREFIX + id, String(Date.now()));
   } catch {
-    // private mode / SSR — no-op
+    // private mode / SSR: no-op
   }
 }
 
@@ -91,7 +91,7 @@ export function useGeneratingDrafts(
     if (startedAt != null) startedAtById.set(id, startedAt);
   }
 
-  // Only tick while at least one draft is generating — otherwise the queue page
+  // Only tick while at least one draft is generating. Otherwise the queue page
   // re-renders every second for nothing. On remount with an active marker the
   // first render sets this true and starts the interval; it stops once all
   // markers clear (draft landed / zombie-expired).

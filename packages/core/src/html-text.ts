@@ -57,7 +57,7 @@ function findToken(lower: string, token: string, from: number): number {
 
 /**
  * One left-to-right pass removing every `<tag …>…</tag …>` block, contents
- * included — no iteration cap to leak the N+1th block. Unterminated opener or
+ * included: no iteration cap to leak the N+1th block. Unterminated opener or
  * missing close drops to end-of-input: raw script/style text must never leak.
  */
 function stripBlocksOnce(s: string, tag: string): string {
@@ -85,7 +85,7 @@ function stripBlocksOnce(s: string, tag: string): string {
 }
 
 /**
- * stripBlocksOnce to a bounded fixpoint — excising a span can reassemble an
+ * stripBlocksOnce to a bounded fixpoint: excising a span can reassemble an
  * opener from the flanking pieces. Any opener surviving the bound truncates
  * the output there: "no <tag content in the result" is an invariant.
  */
@@ -184,9 +184,9 @@ export function htmlToText(html: string): string {
   s = stripBlocks(s, "head");
   s = stripComments(s);
 
-  // Tag-shaped spans go, structural ones leave a newline — to a bounded
+  // Tag-shaped spans go, structural ones leave a newline: to a bounded
   // fixpoint (nested brackets can reassemble a tag from the pieces of a
-  // removed one; leftovers past the bound are inert prose — script/style
+  // removed one; leftovers past the bound are inert prose: script/style
   // content is already gone).
   for (let pass = 0; pass < 10; pass++) {
     const next = stripTagsOnce(s);

@@ -20,7 +20,7 @@ function toneFor(severity: DoctorCheck["severity"]): Tone {
 }
 
 /**
- * Sum the `today N/cap` usage suffixes off sender messages — tolerant, like
+ * Sum the `today N/cap` usage suffixes off sender messages: tolerant, like
  * StatusBar's shortValue: rows that don't parse are just left out of the sum.
  */
 function senderUsage(checks: DoctorCheck[]): string | null {

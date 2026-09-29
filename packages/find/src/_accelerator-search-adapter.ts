@@ -121,7 +121,7 @@ export function looksLikeAcceleratorNoise(url: string): boolean {
   } catch {
     return true; // un-parseable URL is always noise
   }
-  // Listicles, social roots, video aggregators — never a per-company page.
+  // Listicles, social roots, video aggregators. Never a per-company page.
   const noiseHosts = [
     "twitter.com",
     "x.com",
@@ -134,7 +134,7 @@ export function looksLikeAcceleratorNoise(url: string): boolean {
   ];
   if (noiseHosts.includes(host)) return true;
   // News aggregators that DO host accelerator coverage but rarely as
-  // single-company pages — keep the option to surface specific paths later
+  // single-company pages. Keep the option to surface specific paths later
   // by host-prefix matching, but block bare-host hits for now.
   if (host === "news.ycombinator.com") return true;
   if (host === "techcrunch.com") return true;
@@ -144,7 +144,7 @@ export function looksLikeAcceleratorNoise(url: string): boolean {
 /**
  * Companies of one non-YC cohort: listing pages and search hits, read up to
  * `MAX_PAGES_PER_COHORT`, every company on each page extracted and filtered
- * to the target cohort. `limit` bounds search results, not companies — the
+ * to the target cohort. `limit` bounds search results, not companies. The
  * run's enqueue limit applies downstream.
  */
 export async function fetchAcceleratorSearch(
@@ -423,7 +423,7 @@ export function sanitizeCompanyDomain(raw: string | null | undefined): string | 
   if (!raw || typeof raw !== "string") return null;
   let v = raw.trim().toLowerCase();
   if (v.length === 0) return null;
-  // Strip scheme and leading www. — prefix checks, no regex, so input
+  // Strip scheme and leading www.: prefix checks, no regex, so input
   // from a scraped page can't make this slow.
   if (v.startsWith("https://")) v = v.slice(8);
   else if (v.startsWith("http://")) v = v.slice(7);

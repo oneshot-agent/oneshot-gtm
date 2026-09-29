@@ -99,11 +99,11 @@ function statusTone(
 function ProspectsPage() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  // One row open at a time, expanded in place — the same shape as /queue.
+  // One row open at a time, expanded in place. The same shape as /queue.
   const [expanded, setExpanded] = useState<number | null>(null);
 
   const update = (patch: Partial<ProspectsSearch>, opts: { replace?: boolean } = {}): void => {
-    // Every filter change restarts at page one — page N of a different
+    // Every filter change restarts at page one: page N of a different
     // search is not a place.
     setExpanded(null);
     void navigate({
@@ -114,7 +114,7 @@ function ProspectsPage() {
 
   // The search box is local state, pushed to the URL 250 ms after typing
   // stops (replacing the entry, so Back does not walk through keystrokes);
-  // a browser back/forward that changes `q` pulls it back down — but only
+  // a browser back/forward that changes `q` pulls it back down, but only
   // when the box does not already say that, or the URL's trimmed value
   // would eat a trailing space or a character typed while the push landed.
   const [qDraft, setQDraft] = useState(search.q ?? "");
@@ -407,7 +407,7 @@ function BrowseRow({
   const detail = sourceDetail(row.source);
   const offIcp =
     (row.prospect?.icpVerdict ?? payloadString(row.payload, "icpVerdict")) === "reject";
-  // Line 2 answers this page's question — what happened to them — after the
+  // Line 2 answers this page's question (what happened to them) after the
   // finder's signal (#601). The signal is freeform and can name a person or a
   // company, so it drops under privacy mode; the decision names nobody.
   const signal = masked ? null : queueEvidence(row.playName, row.payload);
@@ -562,7 +562,7 @@ function DetailPanel({ id }: { id: number }) {
             size="sm"
             onClick={() => {
               // The gate's "why they don't fit" or the finder's note, never
-              // the raw `auto:` string — a human re-saving that would label
+              // the raw `auto:` string. A human re-saving that would label
               // their own decision as the machine's. Nothing under privacy
               // mode: the same text the sheet withholds there.
               setReason(

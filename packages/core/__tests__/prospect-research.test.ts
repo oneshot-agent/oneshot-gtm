@@ -80,7 +80,7 @@ describe("setProspectIcpVerdict", () => {
 describe("listProspectsForResearch", () => {
   it("selects unjudged rows that have a URL to chase", () => {
     const withUrl = add("f@x.dev", { source_profile_url: "https://github.com/f" });
-    add("g@x.dev"); // unjudged but no URL — nothing to research against
+    add("g@x.dev"); // unjudged but no URL: nothing to research against
     const ids = ledger.listProspectsForResearch({ scopes: ["unjudged"] }).map((r) => r.id);
     expect(ids).toContain(withUrl);
     expect(ids).toHaveLength(1);
@@ -136,7 +136,7 @@ describe("listProspectsForResearch", () => {
 
   it("falls back to the default scopes when none are given", () => {
     const id = add("m@x.dev", { source_profile_url: "https://github.com/m" });
-    // An empty list means "unspecified", not "match nothing" — same shape as
+    // An empty list means "unspecified", not "match nothing": same shape as
     // the other list* helpers. It must never widen to every row, though: this
     // one is picked up by the default `unjudged` scope, not by a missing filter.
     expect(ledger.listProspectsForResearch({ scopes: [] as never }).map((r) => r.id)).toEqual([id]);
@@ -152,7 +152,7 @@ describe("listProspectsForResearch", () => {
 });
 
 // `research-prospects` owns the `person` half and `research-products` owns
-// `product`. Both used to read the column, merge in memory, and write back —
+// `product`. Both used to read the column, merge in memory, and write back:
 // with the read outside any transaction and minutes of latency in between.
 // The later write silently reverted the earlier one. This happened for real
 // during the feature's own dogfood run.
@@ -207,7 +207,7 @@ describe("mergeProspectDossierHalf", () => {
 });
 
 // The per-prospect angle artifact (issue #355). `setProspectAngle` mirrors
-// `setProspectDossier`'s plain-UPDATE shape deliberately — NOT
+// `setProspectDossier`'s plain-UPDATE shape deliberately: NOT
 // `upsertProspect`, which would silently skip existing rows and no-op every
 // backfill call.
 describe("setProspectAngle", () => {
@@ -250,7 +250,7 @@ describe("listProspectsForAngle", () => {
 
   it("selects a replied prospect even with NO profile URL or email signal", () => {
     // Unlike listProspectsForResearch, angle synthesis has reply history as a
-    // standalone evidence input — a social URL is not required.
+    // standalone evidence input. A social URL is not required.
     const id = ledger.upsertProspect({ name: "No URL", email: null, source: "reply" });
     ledger.recordInboxReply({
       id: "msg-1",

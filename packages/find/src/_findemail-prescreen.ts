@@ -89,7 +89,7 @@ const DUD_DOMAINS: ReadonlySet<string> = new Set([
  * True when the domain is in the dud blocklist, exact or as a subdomain.
  * `null`/empty counts as dud (no usable signal). Defensively normalizes
  * scheme/path/www/trailing-dot so an accidental full URL can't slip past the
- * suffix match. Purely suffix-based — no DNS lookup.
+ * suffix match. Purely suffix-based: no DNS lookup.
  */
 export function isDudDomain(domain: string | null | undefined): boolean {
   if (!domain) return true;
@@ -141,7 +141,7 @@ export function looksLikeUserHandle(name: string | null | undefined): boolean {
  * an email. Without opting in, a missing name still blocks
  * the call (the default for every person-targeting finder, where a missing
  * name usually means the extraction failed rather than "no name exists").
- * A *provided* name that looks like a handle is rejected either way — the
+ * A *provided* name that looks like a handle is rejected either way. The
  * flag only waives the "no name at all" case, not a bad one.
  */
 export function shouldSkipFindEmail(input: {

@@ -9,7 +9,7 @@ const COLOR_DEFAULT = kleur.enabled;
 /**
  * `--json` mode. A scripted caller pipes stdout straight into a parser, so
  * under this flag stdout carries exactly ONE document (written by emitJson)
- * and every human line — headers, ok/warn/fail, notes, progress — is diverted
+ * and every human line (headers, ok/warn/fail, notes, progress) is diverted
  * to stderr. Colour is off too, so neither stream carries ANSI escapes.
  *
  * Process-global because the CLI runs one command per process; commands opt in
@@ -31,7 +31,7 @@ function humanStream(): NodeJS.WriteStream {
   return jsonMode ? process.stderr : process.stdout;
 }
 
-/** Raw write to the human stream — blank lines, progress, anything unstyled. */
+/** Raw write to the human stream: blank lines, progress, anything unstyled. */
 export function human(s: string): void {
   humanStream().write(s);
 }
@@ -110,7 +110,7 @@ export class CommandExit extends Error {
 /**
  * Print a failure message and abort the command. Replaces the
  * `fail(msg); process.exit(1)` pattern so every exit funnels through
- * runOrFail — that's the single place that records telemetry, so a guard
+ * runOrFail. That's the single place that records telemetry, so a guard
  * clause must not call process.exit() directly (it would skip the event).
  */
 export function bail(message: string, code = 1): never {
@@ -126,9 +126,9 @@ export function bail(message: string, code = 1): never {
 export const EXIT_EMPTY = 2;
 
 /**
- * Print the empty-run line to stderr and abort with EXIT_EMPTY. stderr (not
+ * Print the empty-run line to stderr and abort with EXIT_EMPTY. Stderr (not
  * stdout) because this line is the machine-facing signal a cron wrapper greps
- * — stdout stays the human report — and it carries no colour or glyph.
+ * (stdout stays the human report) and it carries no colour or glyph.
  */
 export function bailEmpty(message: string): never {
   process.stderr.write(`${message}\n`);

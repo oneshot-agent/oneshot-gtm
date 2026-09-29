@@ -43,7 +43,7 @@ vi.mock("@oneshot-gtm/plays", async () => {
   // Dispatch routes through PLAYS[name].run, so override the registry (not the
   // individual run* exports) to capture calls without hitting the real SDK.
   // Mirrors `runEmailPlay`: fires `onProgress(index, draft)` for each drafted
-  // row before resolving — so the SSE handler's per-target draft/send events
+  // row before resolving, so the SSE handler's per-target draft/send events
   // exercise the same callback path they do in production.
   const fakeRun =
     (name: string) =>
@@ -278,7 +278,7 @@ describe("runPlay — verify-then-dispatch", () => {
     // The play's Promise.all rejects on the first cancelled worker while a
     // sibling is still inside sendDraftedEmail. That sibling's email left and
     // enrolled in a cadence, so it has to reach prospect_emails_json even
-    // though it lands after the terminal write — /cadences?sinceRun reads it.
+    // though it lands after the terminal write: /cadences?sinceRun reads it.
     const targets = [{ founderEmail: "a@x.dev" }, { founderEmail: "b@x.dev" }];
     nextVerify = { verified: targets, dropped: [], receiptIds: [], costUsd: 0 };
     const straggler: { fire: () => void } = { fire: () => {} };
@@ -300,7 +300,7 @@ describe("runPlay — verify-then-dispatch", () => {
     const frames = await readSseFrames(res.body);
     const started = frames.find((f) => f.kind === "runStarted") as { runId: number };
     expect(frames.find((f) => f.kind === "cancelled")).toBeDefined();
-    // The stream is closed — i.e. the terminal ledger write already happened.
+    // The stream is closed, so the terminal ledger write has already happened.
     straggler.fire();
     const row = getLedger().getRun(started.runId);
     expect(row?.status).toBe("cancelled");
@@ -344,7 +344,7 @@ describe("runPlay — verify-then-dispatch", () => {
 
   it("reports a real error as an error even when the client already disconnected", async () => {
     // Disconnect fires the run's abort, but what actually ended the run was an
-    // SDK failure — it must land as `error`, not get relabelled a cancellation.
+    // SDK failure. It must land as `error`, not get relabelled a cancellation.
     const targets = [{ founderEmail: "a@x.dev" }];
     nextVerify = { verified: targets, dropped: [], receiptIds: [], costUsd: 0 };
     const clientGone = new AbortController();

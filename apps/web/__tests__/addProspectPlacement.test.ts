@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
  *
  * It used to be the second item in the sidebar, ahead of the Queue and the
  * Replies you read every day, for an act you perform occasionally. It moved to
- * the Queue — the page its result lands on — and the route stayed put so
+ * the Queue (the page its result lands on) and the route stayed put so
  * bookmarks and ⌘K still resolve. These are cheap guards on that arrangement,
  * because each half is easy to undo without noticing the other.
  */

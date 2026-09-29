@@ -80,17 +80,17 @@ function cadenceRank(status: string): number {
 /**
  * Read-only view of the OneShot inbox (replies to outreach). Each email is
  * matched to a known prospect by sender address, annotated with the play +
- * cadence status when available. Live fetch — no storage. The SDK exposes only
+ * cadence status when available. Live fetch: no storage. The SDK exposes only
  * inboxList (no reply/markRead), so this is read-only.
  */
 /**
  * The live mailbox read, shared by every caller that lands inside the window:
  * the nav's alert dot and the /inbox page each poll once a minute and used to
  * fire two full fetches (list + every message body, across every Gmail
- * account) within the same second — enough, with the scheduler's own poll,
+ * account) within the same second: enough, with the scheduler's own poll,
  * to trip Gmail's per-user-per-minute query-cost quota on all mailboxes at
  * once. One in-flight promise is handed to concurrent callers, and the result
- * is reused for `LIVE_INBOX_TTL_MS`; failures are never cached. Reads only —
+ * is reused for `LIVE_INBOX_TTL_MS`; failures are never cached. Reads only:
  * the opportunistic capture below still runs per request against whatever
  * this returns.
  */
@@ -116,13 +116,13 @@ function fetchLiveInbox(ledger: ReturnType<typeof getLedger>): Promise<LiveInbox
     // would bury a genuine prospect reply in a small one.
     const result = await listInbox({ limit: 200 });
     let emails = result.emails;
-    // Truthful truncation signal — the page must never present a clamped
+    // Truthful truncation signal. The page must never present a clamped
     // window as the entire mailbox.
     const hasMore = result.has_more;
     // Known repliers get a targeted all-time fetch on top of the window: the
     // ledger knows who replied, and their mail must never be pushed out by
     // noise or the broad query's 30d recency cutoff. Best-effort in its own
-    // try — a supplement failure must not take down the main list.
+    // try. A supplement failure must not take down the main list.
     try {
       const repliedEmails = ledger.listRepliedProspectEmails();
       if (repliedEmails.length > 0) {
@@ -186,7 +186,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
         ledger.listLatestOutcomeRecordedAtByProspect(),
       );
     } catch {
-      // degraded twice over — return the error state alone.
+      // degraded twice over. Return the error state alone.
     }
     const out: InboxResult = {
       ...mailboxInboxView(),
@@ -200,14 +200,14 @@ export async function listInboxRoute(req: Request): Promise<Response> {
 
   const byEmail = cadenceIndex(ledger);
 
-  // Provider per identity — the UI shows whether a reply threads (gmail) or
+  // Provider per identity. The UI shows whether a reply threads (gmail) or
   // is a best-effort OneShot send.
   const cfg = loadConfig();
   const providerById = new Map(resolveIdentities(cfg).map((i) => [i.id, i.provider]));
 
   // Persisted reply activity (saved draft + sent history), indexed by thread_key.
   const threads = ledger.getInboxThreads();
-  // Sentiment/intent per persisted reply id (issue #480) — set by the
+  // Sentiment/intent per persisted reply id (issue #480): set by the
   // background poll's triage call, read here for the badge. Absent/null =
   // not yet triaged.
   const intents = ledger.listInboxReplyIntents(emails.map((e) => e.id));
@@ -224,7 +224,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
         cadenceStatus: cadence.status,
       };
     } else {
-      // One-touch plays leave no cadence row — fall back to the prospect record.
+      // One-touch plays leave no cadence row: fall back to the prospect record.
       const p = ledger.getProspectByEmail(fromEmail);
       if (p) {
         matched = { name: p.name, company: p.company, playName: p.source, cadenceStatus: null };
@@ -267,7 +267,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
     try {
       selfAddresses.add((await getGmailProfile()).emailAddress.trim().toLowerCase());
     } catch {
-      // best-effort — `-from:me` already filters at the source.
+      // best-effort: `-from:me` already filters at the source.
     }
   }
   const visible = replies
@@ -276,10 +276,10 @@ export async function listInboxRoute(req: Request): Promise<Response> {
     .toSorted((a, b) => (a.receivedAt < b.receivedAt ? 1 : a.receivedAt > b.receivedAt ? -1 : 0));
 
   // Opportunistic capture: any matched live mail not yet persisted goes into
-  // inbox_replies now (INSERT OR IGNORE — re-sees are no-ops). This is also
+  // inbox_replies now (INSERT OR IGNORE: re-sees are no-ops). This is also
   // how pre-v21 history backfills itself: the targeted known-replier fetch
   // above flows through here on first load. Best-effort. Classification
-  // (issue #480/#558) is intentionally NOT done here — pollInboxReplies is
+  // (issue #480/#558) is intentionally NOT done here: pollInboxReplies is
   // the one choke point that also classifies rows this capture inserted but
   // didn't triage (see _cadence.ts's isNewReply-or-untriaged check).
   try {
@@ -305,7 +305,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
         kind: r.kind,
       });
       // Slack notification: fire-and-forget on first sight only, and only for
-      // real human replies — same `kind === "human"` gate as the primary
+      // real human replies: same `kind === "human"` gate as the primary
       // detection path in _cadence.ts (autoresponders/unsubscribes are not
       // replies by this codebase's own definition and must not alert).
       if (isNew && r.kind === "human") {
@@ -320,7 +320,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
       // scheduler's pollInboxReplies() both call recordInboxReply with the
       // same id (INSERT OR IGNORE), so `isNew` here is a first-sight claim
       // that can race the scheduler's own first-sight check in _cadence.ts
-      // (issue #71 review finding — a GET /api/inbox hitting a dead-mailbox
+      // (issue #71 review finding. A GET /api/inbox hitting a dead-mailbox
       // autoresponder before the next scheduled poll would claim isNew here,
       // leaving the scheduler's poll to see isNew=false and skip its own
       // alert, silently dropping the bounce notification entirely). Mirror
@@ -434,7 +434,7 @@ function buildConversations(
         if (typeof meta["subject"] === "string") subject = meta["subject"];
         if (typeof meta["body"] === "string") body = meta["body"];
       } catch {
-        // pre-v8 / malformed metadata — render the step with no body.
+        // pre-v8 / malformed metadata: render the step with no body.
       }
       items.push({
         kind: "outreach",
@@ -474,7 +474,7 @@ function buildConversations(
     const newestInbound = inbound.at(-1)!;
     // Round-2 correction (#480): a positive-intent inbound stays "awaiting
     // reply" until the founder answers it (any sent item on the thread after
-    // it arrived) or records a deal outcome for this prospect after it arrived — otherwise
+    // it arrived) or records a deal outcome for this prospect after it arrived. Otherwise
     // the nav dot lit by POSITIVE_REPLY_INTENTS never turns off.
     const positiveIntent =
       newestInbound.intent != null &&
@@ -504,7 +504,7 @@ function buildConversations(
       items,
     });
   }
-  // Most recent activity first — the row order of the matched tab.
+  // Most recent activity first. The row order of the matched tab.
   return out.toSorted((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : -1));
 }
 
@@ -565,12 +565,8 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
     };
   }
 
-  // Research before drafting: free tiers always, paid tier only for unknown
-  // senders. Research failing must degrade the draft, never block it.
-  // angleJson still seeds from the matched prospect on this fallback path —
-  // it's a free ledger field, not part of what research produces, so a
-  // research failure must not also throw away a stored angle (finding
-  // PRRT_kwDOSKzrBs6gZ7Qs).
+  // Use free research for every sender and paid research only for unknown ones.
+  // Research failure must not block drafting or discard the stored prospect angle.
   let context: Awaited<ReturnType<typeof gatherReplyContext>> = {
     dossier: null,
     angleJson: prospect?.angle_json ?? null,
@@ -589,7 +585,7 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
           ? inboxThreadKey({ threadId: body.threadId ?? null, id: body.id })
           : null,
       excludeId: typeof body.id === "string" ? body.id : null,
-      // Never pay to research an autoresponder or an unsubscribe — there is
+      // Never pay to research an autoresponder or an unsubscribe: there is
       // no human on the other end to ground a draft in. Prefer the persisted
       // classification (it saw the Gmail headers at capture time); the text
       // fallback covers mail that was never captured.
@@ -606,10 +602,10 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
   }
 
   try {
-    // Intent (issue #480) — persisted classification of the inbound being
+    // Intent (issue #480): persisted classification of the inbound being
     // answered, read the same way inboundReplyKind reads `kind`: prefer the
     // stored row (it's what the background poll actually classified), fall
-    // back to null (unclassified) rather than re-triaging inline — triage is
+    // back to null (unclassified) rather than re-triaging inline: triage is
     // an LLM call and the draft button is already paying for one.
     const intent =
       matched?.prospectId != null && typeof body.id === "string"
@@ -653,7 +649,7 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
 /**
  * Persist the in-progress reply draft for a thread (debounced auto-save).
  * Upsert-by-thread-key so typing overwrites. `status` is recomputed here
- * from the body's own text (issue #480's `commits-terms` lint) — never
+ * from the body's own text (issue #480's `commits-terms` lint). Never
  * trusted from the client, so a founder can't accidentally (or a hostile
  * client can't deliberately) unlock Send by lying about it.
  */
@@ -708,7 +704,7 @@ export async function saveDraftRoute(req: Request): Promise<Response> {
 /**
  * Persist a founder redraft instruction on a thread and generate a fresh
  * draft grounded in it (issue #480's steer box). Upserts the draft row first
- * (steer can arrive before any draft exists — e.g. the founder writes a
+ * (steer can arrive before any draft exists: e.g. the founder writes a
  * steer note before ever hitting "generate") so `setInboxDraftSteer`'s
  * UPDATE always has a row to land on.
  */
@@ -765,13 +761,13 @@ export async function steerRoute(req: Request): Promise<Response> {
   }
 
   // Persist the steer FIRST (issue #480: it's a standing instruction, not a
-  // one-shot prompt — it must survive even if the redraft below fails).
+  // one-shot prompt. It must survive even if the redraft below fails).
   // upsertInboxDraft needs an inboundEmailId/toEmail/subject/body to write a
   // row; if none exists yet, seed it with the inbound context and an empty
   // body so setInboxDraftSteer's UPDATE has something to land on.
   const existing = ledger.getInboxThreads().get(threadKey);
   // A thread with only sent history still yields an entry (draftBody null),
-  // so test the draft row itself — otherwise both UPDATEs below hit no rows.
+  // so test the draft row itself. Otherwise both UPDATEs below hit no rows.
   if (existing?.draftBody == null && existing?.steer == null) {
     ledger.upsertInboxDraft({
       threadKey,
@@ -833,7 +829,7 @@ export async function steerRoute(req: Request): Promise<Response> {
     });
     const needsDecision = draft.flags.includes("commits-terms");
     // Round-1 correction (#480): persist the generated body itself, not just
-    // the steer instruction — the client's autosave effects only fire on a
+    // the steer instruction. The client's autosave effects only fire on a
     // body DIFF from the last SAVED value, and `onSuccess` sets that value
     // directly from this response without ever calling the save API, so
     // without this write the redraft displayed in the composer was never
@@ -902,20 +898,10 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
       req,
     );
   }
-  // Send gate (issues #480, #647): flags are computed from the TEXT BEING SENT,
-  // not from a possibly-stale persisted `status` (the debounced autosave can lag
-  // a fast edit-then-send). Which of them actually block comes from the shared
-  // `blockingFlags`, the same helper the queue's send button uses, so the two
-  // surfaces cannot drift apart on what a founder may override. `commits-terms`
-  // is a soft review flag: it holds the draft for a second read, and sending
-  // as-is is the founder saying they stand behind the commitment.
-  //
-  // `commits-terms` is the only flag computed here, and it is soft, so the guard
-  // below is currently inert by construction. That is deliberate: /inbox replies
-  // are written and edited by hand, so body lint (em-dash, rule-of-three, …) has
-  // never gated this route and should not start — it would block the founder's
-  // own prose. The guard is the seam for a future flag that genuinely must stop
-  // a send, and it keeps the decision in `blockingFlags` rather than here.
+  // Evaluate the sent text because debounced draft status can lag a quick edit.
+  // Share blockingFlags with queue sends. The only flag here, commits-terms, is
+  // overridable after review, so this guard currently allows it. Keep body style
+  // lint off hand-edited replies; future blocking flags belong in the shared helper.
   const sendFlags = bodyCommitsTerms(replyBody) ? ["commits-terms"] : [];
   const blocking = blockingFlags(sendFlags);
   if (blocking.length > 0) {
@@ -948,7 +934,7 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
       identityId,
       requestId: result.request_id ?? null,
     });
-    // Answering someone is proof they replied — the human is the detector of
+    // Answering someone is proof they replied. The human is the detector of
     // last resort when the background poll misses. Idempotent, and never
     // allowed to fail a send that already happened.
     try {

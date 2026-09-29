@@ -16,32 +16,13 @@ import type {
 } from "./types.ts";
 
 /**
- * Queue (`target_queue`) persistence — the queue slice of the ledger split
- * tracked in ROADMAP.md (issue #641, re-filed from #631 after #635's inbox
- * extraction rewrote ledger.ts; follow-up to the inbox/bounce/canary/receipt
- * extractions in #634/#617/#616). Queue reads, writes, state transitions,
- * selection/drain operations and queue-only transactions live here.
+ * Queue persistence and transactions over a raw Database handle. Ledger creates
+ * one store after migration. Sent rows must never be re-approved: status updates
+ * and sending claims both guard against a non-null sent_at.
  *
- * Pure wrapper around a raw `Database` handle, mirroring `ledger-receipts.ts`'s
- * `ReceiptStore` and `delivery-health.ts`'s functions: no dependency on the
- * `Ledger` class, so this domain can be constructed and tested in isolation.
- * `Ledger` owns exactly one instance (constructed after `migrate()` runs, so
- * `target_queue` already exists) and delegates every queue method to it,
- * preserving each method's existing signature, return value, transaction
- * boundary and caller — including the invariant that a sent row can never be
- * re-approved (`setQueueStatus`'s guarded UPDATE + `throwIfSentRowGuardBlocked`,
- * and `claimQueueSendingMarker`'s own `sent_at IS NULL` guard, #561).
- *
- * `setQueueProspectId` is the one method split across the boundary: linking a
- * queue row to a prospect also best-effort seeds a mailing address from the
- * prospect and payload, which reaches into the prospect/mail-address domains
- * that stay on `Ledger` — so only the row's own `prospect_id` UPDATE lives
- * here, and `Ledger.setQueueProspectId` keeps the cross-domain orchestration.
- * Likewise `expireBreakupReviveQueue` is called directly by
- * `ledger-cadence.ts`'s reply-handling functions (`stopCadence`,
- * `recordLinkedInReply`, `recordProspectReply`), but only ever touches
- * `target_queue`, so its implementation lives here and callers construct
- * their own `QueueStore(db)` instance rather than going through `Ledger`.
+ * Ledger.setQueueProspectId handles mailing-address seeding across domains; this
+ * store only updates prospect_id. Cadence reply handlers use their own QueueStore
+ * to expire breakup-revive rows.
  */
 
 const QUEUE_STATUSES: readonly QueueStatus[] = [
@@ -87,7 +68,7 @@ function icpExampleCandidate(payload: unknown): Record<string, unknown> {
 }
 
 /**
- * Canonical form for matching prospect emails — trim + lowercase. Mirrors
+ * Canonical form for matching prospect emails: trim + lowercase. Mirrors
  * `Ledger`'s own `canonEmail` (ledger.ts) and `delivery-health.ts`'s copy, so
  * cross-play dedupe stays keyed identically to the rest of the ledger.
  * Duplicated rather than imported/exported across the module boundary for
@@ -100,7 +81,7 @@ function canonEmail(email: string): string {
 
 /**
  * The searchable text of a queue row for `searchQueue`: every identity key a
- * finder writes into `payload_json` (the same keys the /queue row reads —
+ * finder writes into `payload_json` (the same keys the /queue row reads:
  * `name`/`founderName`, `email`/`founderEmail`, company, title, the show-hn
  * post, the repo/post URLs a pre-enrichment reject only carries, LinkedIn),
  * plus the reviewer's notes, the play, and the joined prospect record. Built
@@ -249,7 +230,7 @@ export class QueueStore {
           reviewedAt,
           input.notes ?? null,
           input.priority ? JSON.stringify(input.priority) : null,
-          // An insert-time rejection is a gate's verdict, never a human's —
+          // An insert-time rejection is a gate's verdict, never a human's:
           // structural provenance replaces the `auto:` notes-sniffing (the
           // notes convention stays for humans and pre-v26 fallback).
           status === "rejected" ? "auto_reject" : null,
@@ -294,7 +275,7 @@ export class QueueStore {
 
   isEmailPendingInQueue(email: string): boolean {
     // Case-insensitive to match findProspectByEmail/upsertProspect, which store
-    // and look up the canonical (lowercased) email — otherwise a casing mismatch
+    // and look up the canonical (lowercased) email. Otherwise a casing mismatch
     // between two finders would slip a dup through. LOWER() on the JSON side,
     // canonEmail() on the arg.
     const row = this.db
@@ -310,7 +291,7 @@ export class QueueStore {
   }
 
   /**
-   * Look up a queue row by its (play_name, dedupe_key) — the unique pair.
+   * Look up a queue row by its (play_name, dedupe_key). The unique pair.
    * Used by the SSE /run endpoint to map drafts back to the originating
    * row so we can persist `last_draft_json`. Returns null when absent.
    */
@@ -336,7 +317,7 @@ export class QueueStore {
       args.push(opts.status);
     }
     // Explicit row picks (the /queue "drain selected" path). An empty array
-    // would compile to `IN ()` — a syntax error in SQLite — and semantically
+    // would compile to `IN ()` (a syntax error in SQLite) and semantically
     // means "nothing selected", so return early rather than silently listing
     // every row.
     if (opts.ids) {
@@ -359,14 +340,14 @@ export class QueueStore {
   }
 
   /**
-   * Most recent queue row linked to a prospect — the finder's original signal
+   * Most recent queue row linked to a prospect. The finder's original signal
    * that queued them, used as evidence input to angle synthesis (issue #355).
    * Not every prospect has one: manually added prospects, or rows whose queue
    * entry was never linked via `setQueueProspectId`, return null.
    *
    * Tiebreak on `id DESC` after `found_at DESC`: `found_at` is
    * second-granularity (`datetime('now')`), so two rows queued within the
-   * same second — routine in a fast backfill or a test — would otherwise tie
+   * same second (routine in a fast backfill or a test) would otherwise tie
    * and return whichever SQLite happens to prefer.
    */
   getQueueRowForProspect(prospectId: number): QueueRow | null {
@@ -383,7 +364,7 @@ export class QueueStore {
    * FROM + WHERE shared by `searchQueue` (rows and total) and
    * `searchQueueStatusCounts`. The prospect is resolved with a scalar
    * subquery (`LIMIT 1`) rather than an OR-join so one queue row can never
-   * fan out into two — two prospects sharing an email would otherwise
+   * fan out into two: two prospects sharing an email would otherwise
    * inflate `total` and shift every OFFSET. Filters that only need the queue
    * row (status, play, decided_by) go inside the derived table so the
    * existing status/play indexes still prune before the prospect lookup;
@@ -397,7 +378,7 @@ export class QueueStore {
     const outer: string[] = [];
     const args: unknown[] = [];
     // De-duplicated: `?status=sent,sent,sent,sent,sent` is one status, not
-    // "all five" — the length guard below must see distinct values.
+    // "all five". The length guard below must see distinct values.
     const statuses = [...new Set((opts.statuses ?? []).filter((s) => QUEUE_STATUSES.includes(s)))];
     if (withStatus && statuses.length > 0 && statuses.length < QUEUE_STATUSES.length) {
       inner.push(`q.status IN (${statuses.map(() => "?").join(",")})`);
@@ -448,7 +429,7 @@ export class QueueStore {
   /**
    * The /prospects browse view: every queue row, any status, searched, sorted
    * and paged. `q` is a deliberate full scan (LIKE over json_extract can use
-   * no index) — measured at ~50 ms on 9k rows. Past ~100k rows an FTS5
+   * no index): measured at ~50 ms on 9k rows. Past ~100k rows an FTS5
    * external-content table is the upgrade path; nothing here would change
    * shape. Without `q` the derived table is pruned by the status/play
    * indexes like `listQueue`.
@@ -496,7 +477,7 @@ export class QueueStore {
 
   /**
    * Per-status counts for the /prospects filter chips under the current
-   * search/play/decided filters — the status filter itself is left out so a
+   * search/play/decided filters. The status filter itself is left out so a
    * chip can show how many rows it would reveal.
    */
   searchQueueStatusCounts(
@@ -554,14 +535,14 @@ export class QueueStore {
      *   approves single rows today (bulk goes through approveAllPending).
      * - rejected/sent → "machine": auto-reject gates and drain sends call
      *   this unannotated, and an unannotated caller must never mint a human
-     *   REJECTION label (a mislabeled negative poisons any future fit) —
+     *   REJECTION label (a mislabeled negative poisons any future fit):
      *   the per-row UI routes pass "human" explicitly.
      */
     decidedBy?: "human" | "machine";
   }): void {
     const now = new Date().toISOString();
     const decidedBy = input.decidedBy ?? (input.status === "approved" ? "human" : "machine");
-    // Every status transition clears `send_started_at` — a deliberate status
+    // Every status transition clears `send_started_at`. A deliberate status
     // change means the previous "sending" attempt (if any) is settled. Terminal
     // states (sent/rejected/expired) clear naturally. Approved → approved
     // doesn't need to preserve a marker (caller re-claims on the next send).
@@ -586,13 +567,8 @@ export class QueueStore {
       // user-facing 400/409 messages), but this is the guard that can't be
       // forgotten by a future caller (#561).
       //
-      // The guard is baked into the UPDATE's WHERE clause instead of a
-      // separate SELECT-then-UPDATE: a single statement is its own atomic
-      // check-and-set, so two processes racing this call in WAL mode can't
-      // both pass a "not sent yet" check before either holds the write lock
-      // — the same class of race dequeueApproved's BEGIN IMMEDIATE guards
-      // against a few lines below (~3449), just closed here by folding the
-      // check into one statement instead of wrapping a transaction.
+      // Guard in the UPDATE itself so concurrent callers cannot both pass a
+      // separate "not sent yet" check before either holds the write lock.
       const decision = input.status === "approved" ? "approve" : null;
       // A person approving a row the finder's person gate rejected is
       // overriding that gate. Both send-side gates (first touch in
@@ -645,7 +621,7 @@ export class QueueStore {
       this.throwIfSentRowGuardBlocked(result.changes, input.id, input.status);
     } else if (input.status === "rejected") {
       // Always overwrites: the latest decision wins on a re-decide. Rejecting
-      // a sent row is allowed — it's a label, not a send, so no sent-row
+      // a sent row is allowed. It's a label, not a send, so no sent-row
       // guard here. `notes` follows the pending branch: present (even "")
       // means write it, so a founder can clear a stale reason; absent means
       // leave whatever is there.
@@ -686,7 +662,7 @@ export class QueueStore {
 
   /**
    * Atomic claim of the queue-send marker on `target_queue.send_started_at`.
-   * Mirrors `claimCadenceSendingMarker` semantics — survives server restart so
+   * Mirrors `claimCadenceSendingMarker` semantics: survives server restart so
    * `/queue` Send-draft UI doesn't lose its spinner on `bun --watch` reloads.
    * Cleared on success via `setQueueStatus('sent', …)`, on failure via
    * `clearQueueSendingMarker`, on cold boot via `sweepStaleQueueSends`.
@@ -703,7 +679,7 @@ export class QueueStore {
     if (input.staleCutoffIso) args.push(input.staleCutoffIso);
     const result = this.db
       .prepare(
-        // sent_at IS NULL is belt-and-braces alongside status = 'approved' —
+        // sent_at IS NULL is belt-and-braces alongside status = 'approved':
         // the same guard setQueueStatus and dequeueApproved apply, closed
         // here too so a row desynced back to 'approved' with a stale
         // sent_at can't be claimed and re-sent through this path (#561).
@@ -720,8 +696,8 @@ export class QueueStore {
 
   /**
    * Sweep queue rows whose `send_started_at` is older than `maxAgeMs` (or any
-   * non-null when 0 — cold-boot semantics). For each: classify by current
-   * status. status='sent' means the SDK call landed before the kill (clear
+   * non-null when 0, for cold-boot recovery). Classify each row by current
+   * status. Status='sent' means the SDK call landed before the kill (clear
    * the marker only); otherwise the send was stranded (clear the marker,
    * draft is still on the row for retry).
    */
@@ -760,7 +736,7 @@ export class QueueStore {
   }
 
   approveAllPending(opts: { playName?: string } = {}): number {
-    // `sent_at IS NULL` is belt-and-braces alongside `status = 'pending'` —
+    // `sent_at IS NULL` is belt-and-braces alongside `status = 'pending'`:
     // a pending row should never carry a sent_at, but the invariant lives
     // here, not in the caller (#561).
     const where: string[] = ["status = 'pending'", "sent_at IS NULL"];
@@ -770,7 +746,7 @@ export class QueueStore {
       args.push(opts.playName);
     }
     // decided_by='human_bulk': a human sanctioned the batch, but no per-row
-    // judgment happened — evaluation code can include or exclude these
+    // judgment happened: evaluation code can include or exclude these
     // explicitly instead of reverse-engineering shared timestamps.
     const now = new Date().toISOString();
     const result = this.db
@@ -813,7 +789,7 @@ export class QueueStore {
     // instead of the default DEFERRED (which only locks on the first write).
     // In WAL mode with two processes, DEFERRED lets both transactions pass
     // the SELECT before either holds the write lock, then the second UPDATE
-    // silently overwrites the first's claim — both drains would consider the
+    // silently overwrites the first's claim. Both drains would consider the
     // rows theirs. IMMEDIATE serializes the whole thing across connections.
     return txn.immediate();
   }
@@ -892,7 +868,7 @@ export class QueueStore {
   /**
    * Associate a queued target with a known prospect (so the queue page can
    * link back to the prospect record). Only the row's own `prospect_id`
-   * write lives here — `Ledger.setQueueProspectId` keeps the best-effort
+   * write lives here: `Ledger.setQueueProspectId` keeps the best-effort
    * mail-address seeding, which reaches into the prospect/mail-address
    * domains this store doesn't own.
    */
@@ -972,7 +948,7 @@ export class QueueStore {
     const json = JSON.stringify({ ...input.draft, draftedAt: draftedAtIso });
     this.db
       .transaction(() => {
-        // The envelope this write replaces — read before the UPDATE so a draft
+        // The envelope this write replaces: read before the UPDATE so a draft
         // that predates versioning can still be recorded as what was replaced.
         const before = this.db
           .query(`SELECT last_draft_json AS j FROM target_queue WHERE id = ?`)
@@ -988,7 +964,7 @@ export class QueueStore {
           before?.j ?? null,
         );
         // IMMEDIATE: the envelope is read before the UPDATE and the version
-        // table before its own writes — take the write lock up front.
+        // table before its own writes: take the write lock up front.
       })
       .immediate();
   }
@@ -1012,7 +988,7 @@ export class QueueStore {
     },
     discardReason: DraftDiscardReason | undefined,
     sentBy: "human" | "machine",
-    /** The `last_draft_json` this write replaced — seeds a version when the row had none. */
+    /** The `last_draft_json` this write replaced: seeds a version when the row had none. */
     previousStored: string | null,
   ): void {
     const key = this.queueVersionKey(id);
@@ -1041,7 +1017,7 @@ export class QueueStore {
   }
 
   /**
-   * Drop a row's stored draft so nothing can send it verbatim — a moved-in
+   * Drop a row's stored draft so nothing can send it verbatim. A moved-in
    * row's old draft was written against another workspace's edge. The open
    * draft version closes as a machine redraft: no founder judgment was made.
    */
@@ -1128,7 +1104,7 @@ export class QueueStore {
   }
 
   /**
-   * The `mark-sent` path records no draft write of its own — close what the
+   * The `mark-sent` path records no draft write of its own: close what the
    * founder marked, seeding it from the stored draft when the row predates
    * versioning.
    */
@@ -1158,7 +1134,7 @@ export class QueueStore {
   }
 
   /**
-   * The payload of the most recent SENT queue row for this play and address —
+   * The payload of the most recent SENT queue row for this play and address:
    * how a follow-up recovers the edge the intro drew its angle from (issue
    * #584), whichever path sent it (drain, /queue send-draft, mark-sent). Null
    * when nothing was sent to them on this play, or the payload won't parse.
@@ -1210,7 +1186,7 @@ export class QueueStore {
    * #599): one query over the sent rows of the plays involved, newest first,
    * keeping the first row per `play|email`. Keyed exactly like the single-row
    * lookup canonicalises (lower-cased, trimmed email). Pairs with no email are
-   * skipped; an empty input touches nothing. Never throws — `json_valid`
+   * skipped; an empty input touches nothing. Never throws: `json_valid`
    * keeps a malformed row out of `json_extract` (which would fail the whole
    * query), so a bad payload is simply absent from the map.
    */
@@ -1255,7 +1231,7 @@ export class QueueStore {
   }
 
   /**
-   * Merge a few keys into a LIVE queue row's payload (issue #592) — pending or
+   * Merge a few keys into a LIVE queue row's payload (issue #592): pending or
    * approved, not sent, not mid-send. One statement, so there is no window
    * between checking eligibility and writing: a row that got sent between the
    * caller's listing and this call is simply not updated, and the caller is
@@ -1315,7 +1291,7 @@ export class QueueStore {
 
   /**
    * Rows the score-prospects backfill considers: pending + approved. Approved
-   * implies unsent — a dispatched row moves to status 'sent'. id-ascending so
+   * implies unsent. A dispatched row moves to status 'sent'. Id-ascending so
    * an interrupted run resumes deterministically.
    */
   listQueueRowsForScoring(
@@ -1324,7 +1300,7 @@ export class QueueStore {
     const args: unknown[] = [];
     // Default scope is the live queue; `allStatuses` widens to full history so
     // scores can be compared against dispositions already made (methodology
-    // evaluation) — it never changes what any consumer DOES with a score.
+    // evaluation). It never changes what any consumer DOES with a score.
     let where = opts.allStatuses ? `1=1` : `status IN ('pending','approved')`;
     if (opts.playName) {
       where += ` AND play_name = ?`;
@@ -1346,10 +1322,10 @@ export class QueueStore {
   /**
    * Every sent queue row joined to its outcome evidence (Phase 3 of #410).
    * The prospect link is `prospect_id` when the post-send backfill caught it,
-   * else an email join (LOWER/TRIM defeats the index — acceptable, this is an
+   * else an email join (LOWER/TRIM defeats the index: acceptable, this is an
    * offline report path over hundreds of rows). `COALESCE(kind,'human')` is
    * mandatory: pre-v23 replies have NULL kind and read as human everywhere.
-   * `deal_lost`/`ghosted` map to no rank on purpose — deal_outcomes is
+   * `deal_lost`/`ghosted` map to no rank on purpose: deal_outcomes is
    * positives-only by construction (the cadences modal offers only the three
    * positive states), so its absence is never evidence of failure.
    */
@@ -1392,12 +1368,12 @@ export class QueueStore {
   }
 
   /**
-   * Expire live `breakup-revive` queue rows for a prospect — a stop or a
+   * Expire live `breakup-revive` queue rows for a prospect. A stop or a
    * reply (via any channel) means the deliberate re-engagement play should
    * no longer fire. Matches by prospect id (linked rows) OR the play's own
    * `prospect:<id>` dedupe key (rows enqueued before linking). Called
    * directly from `ledger-cadence.ts`'s `stopCadence`, `recordLinkedInReply`
-   * and `recordProspectReply`, which live outside this store's domain — but
+   * and `recordProspectReply`, which live outside this store's domain, but
    * the write itself only ever touches `target_queue`, so it lives here.
    */
   expireBreakupReviveQueue(prospectId: number, reason: string): void {

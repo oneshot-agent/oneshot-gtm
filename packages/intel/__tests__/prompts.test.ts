@@ -37,7 +37,7 @@ describe("loadPrompt — name validation", () => {
   });
 
   it("accepts hyphens, underscores, and digits", () => {
-    // All of these will either load (if present) or throw 'not found' — neither throws 'invalid name'.
+    // All of these will either load (if present) or throw 'not found': neither throws 'invalid name'.
     const unknowns = ["a-b", "a_b", "prompt123", "P", "x-y_z-1"];
     for (const name of unknowns) {
       try {

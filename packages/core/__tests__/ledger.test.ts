@@ -219,7 +219,7 @@ describe("Ledger receipts + prospects + spend rollups", () => {
       status: "sent",
       metadata: { subject: "s0", body: "b0" },
     });
-    // Wrong play — should be excluded.
+    // Wrong play: should be excluded.
     ledger.recordSequenceEvent({
       prospectId: pidA,
       playName: "show-hn",
@@ -227,7 +227,7 @@ describe("Ledger receipts + prospects + spend rollups", () => {
       channel: "email",
       status: "sent",
     });
-    // Non-final status — should be excluded.
+    // Non-final status: should be excluded.
     ledger.recordSequenceEvent({
       prospectId: pidA,
       playName: "stack-consolidation",
@@ -235,7 +235,7 @@ describe("Ledger receipts + prospects + spend rollups", () => {
       channel: "email",
       status: "queued",
     });
-    // Wrong prospect — should be excluded.
+    // Wrong prospect: should be excluded.
     ledger.recordSequenceEvent({
       prospectId: pidB,
       playName: "stack-consolidation",
@@ -283,7 +283,7 @@ describe("Ledger receipts + prospects + spend rollups", () => {
       channel: "email",
       status: "sent",
     });
-    // queued status — should be filtered out everywhere.
+    // queued status: should be filtered out everywhere.
     ledger.recordSequenceEvent({
       prospectId: pidA,
       playName: "stack-consolidation",
@@ -378,7 +378,7 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     // markLatestStepReplied flips the sent row in place, so created_at stays
     // pinned to the send date. A date-windowed rollup (the Slack daily
     // summary) opts into occurrenceWindow so it must not drop the reply just
-    // because it landed after the send day's window — it should show up on
+    // because it landed after the send day's window. It should show up on
     // the day it actually happened. Without occurrenceWindow (the default,
     // relied on by home.ts/measure.ts/weekly-review.ts), the reply stays
     // windowed on created_at like everything else, preserving replied<=sent.
@@ -399,13 +399,13 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     db.query(
       `UPDATE sequence_events SET created_at = '2026-08-20 09:00:00' WHERE prospect_id = ?`,
     ).run(id);
-    // The reply itself happens on 2026-08-28 — inside the window we query.
+    // The reply itself happens on 2026-08-28: inside the window we query.
     db.query(
       `UPDATE sequence_events SET status = 'replied', replied_at = '2026-08-28 10:00:00' WHERE prospect_id = ?`,
     ).run(id);
 
     // A window covering only the REPLY day, nowhere near the send day.
-    // occurrenceWindow: true credits the reply here — but that also means
+    // occurrenceWindow: true credits the reply here, but that also means
     // `sent` for this window is 0 (the send row's created_at doesn't fall
     // inside it), which is the intentional, documented replied>sent tradeoff
     // of this mode; asserting it here pins that tradeoff so a future change
@@ -422,14 +422,14 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     expect(windowed?.sent ?? 0).toBe(0);
 
     // The default (no occurrenceWindow) call windows replied on created_at
-    // like every other column, so the reply-day window sees nothing at all —
+    // like every other column, so the reply-day window sees nothing at all:
     // this is the behaviour home.ts/measure.ts/weekly-review.ts depend on.
     const defaultWindowed = ledger
       .eventsByPlay({ sinceIso: "2026-08-28 00:00:00", untilIso: "2026-08-29 00:00:00" })
       .find((r) => r.play_name === "repo-interest");
     expect(defaultWindowed).toBeUndefined();
 
-    // A window covering only the SEND day must NOT double-count the reply —
+    // A window covering only the SEND day must NOT double-count the reply:
     // the old created_at-only windowing would have credited it here instead.
     const sendDayWindow = ledger
       .eventsByPlay({
@@ -444,7 +444,7 @@ describe("Ledger receipts + prospects + spend rollups", () => {
 
   it("eventsByPlay windows a bounce by its OWN occurrence day, not the poll/detection day, when occurrenceWindow is requested", () => {
     // recordSequenceEvent always inserts a FRESH row for a bounce (unlike the
-    // reply flip-in-place), so created_at looks like occurrence time — but
+    // reply flip-in-place), so created_at looks like occurrence time, but
     // it's actually the time pollInboxBounces detected the DSN, which can lag
     // the provider's own bounce timestamp (bounced_at) by however long the
     // mailbox went unpolled. A date-windowed rollup (the Slack daily summary)
@@ -465,7 +465,7 @@ describe("Ledger receipts + prospects + spend rollups", () => {
       }
     ).db;
     // Back-date created_at to the (late) POLL day, far outside the window
-    // we'll query below — bounced_at (set above, at insert time) stays put.
+    // we'll query below: bounced_at (set above, at insert time) stays put.
     db.query(
       `UPDATE sequence_events SET created_at = '2026-08-28 10:00:00' WHERE prospect_id = ?`,
     ).run(id);
@@ -487,7 +487,7 @@ describe("Ledger receipts + prospects + spend rollups", () => {
       .find((r) => r.play_name === "post-funding");
     expect(defaultWindowed).toBeUndefined();
 
-    // A window covering only the POLL day must NOT count the bounce there —
+    // A window covering only the POLL day must NOT count the bounce there:
     // the old created_at-only windowing would have credited it here instead.
     const pollDayWindow = ledger
       .eventsByPlay({
@@ -558,7 +558,7 @@ describe("Ledger cadence state", () => {
     ledger.setCadenceStatus({ prospectId: pid, playName: "repo-interest", status: "replied" });
     expect(ledger.getCadence(pid, "repo-interest")?.last_send_error).toBeNull();
 
-    // Re-enrolling the same prospect (play re-run) must clear a stale error —
+    // Re-enrolling the same prospect (play re-run) must clear a stale error:
     // a re-activated cadence shouldn't show a failure from a prior cycle.
     ledger.recordCadenceSendError({ prospectId: pid, playName: "repo-interest", error: "stale" });
     expect(ledger.getCadence(pid, "repo-interest")?.last_send_error).toBe("stale");
@@ -613,7 +613,7 @@ describe("Ledger cadence state", () => {
     ledger.enrollCadence({ prospectId: pid, playName: "job-change", nextDueAt: firstDue });
     expect(ledger.getCadence(pid, "job-change")?.current_step).toBe(0);
 
-    // Founder skips step 0 (e.g. a direct-mail step with nothing to send) —
+    // Founder skips step 0 (e.g. a direct-mail step with nothing to send):
     // the skip is recorded as history at the step it replaces, then the
     // cadence advances past it exactly as a real send would.
     ledger.recordSequenceEvent({
@@ -637,7 +637,7 @@ describe("Ledger cadence state", () => {
     expect(cadence?.status).toBe("active");
     expect(cadence?.next_due_at).toBe(nextDue);
 
-    // The skip survives in the play's history for this exact step index —
+    // The skip survives in the play's history for this exact step index:
     // listSequenceEventsForProspectPlay explicitly includes 'skipped' rows
     // (unlike raw send counters) so the timeline can show why step 0 never went out.
     const history = ledger.listSequenceEventsForProspectPlay(pid, "job-change");
@@ -683,7 +683,7 @@ describe("Ledger cadence state", () => {
     expect(cadence?.status).toBe("stopped");
     expect(cadence?.stop_reason).toBe("not_a_fit");
     expect(cadence?.next_due_at).toBeNull();
-    // The draft is cleared as part of the same stop — a stopped cadence
+    // The draft is cleared as part of the same stop. A stopped cadence
     // shouldn't leave a sendable preview hanging around.
     expect(ledger.getCadenceDraft({ prospectId: pid, playName: "job-change" })).toBeNull();
 
@@ -902,7 +902,7 @@ describe("Ledger hasSentSequenceEvent", () => {
       status: "sent",
     });
     expect(ledger.hasSentSequenceEvent(pid, "show-hn", 1)).toBe(true);
-    // Scoped to the exact (play, step) — a different step / play is still unsent.
+    // Scoped to the exact (play, step). A different step / play is still unsent.
     expect(ledger.hasSentSequenceEvent(pid, "show-hn", 2)).toBe(false);
     expect(ledger.hasSentSequenceEvent(pid, "job-change", 1)).toBe(false);
   });
@@ -1140,7 +1140,7 @@ describe("Ledger runs", () => {
       dryRun: false,
       targets: [{}],
     });
-    // verify / stage / runStarted / done / unknown — none of these should
+    // verify / stage / runStarted / done / unknown: none of these should
     // touch drafted/sent/error counters.
     ledger.appendRunEvent({ runId, event: { kind: "verify", total: 1, verified: 1, dropped: [] } });
     ledger.appendRunEvent({ runId, event: { kind: "stage", stage: "drafting" } });
@@ -1161,7 +1161,7 @@ describe("Ledger runs", () => {
       targets: [{}],
     });
     // Stomp events_json with garbage to simulate a partial-write corruption.
-    // We open a parallel Database connection (same file) to issue raw SQL —
+    // We open a parallel Database connection (same file) to issue raw SQL:
     // ledger.ts intentionally keeps its `db` field private.
     const { Database } = await import("bun:sqlite");
     const raw = new Database(dbPath);
@@ -1335,7 +1335,7 @@ describe("Ledger outcomes + cold prospects", () => {
       channel: "email",
       status: "sent",
     });
-    // poke the row's timestamp via raw SQL accessor (the ledger doesn't expose one — bypass via internal db)
+    // poke the row's timestamp via raw SQL accessor (the ledger doesn't expose one: bypass via internal db)
     // Since we don't have a setter, just verify the in-window filter excludes this fresh event.
     const fresh = ledger.listColdProspects({
       minDaysSinceLastEvent: 60,
@@ -1463,7 +1463,7 @@ describe("Ledger recordCadenceReply — atomic control + analytics write", () =>
       playName: "repo-interest",
     });
 
-    expect(newlyReplied).toBe(false); // not a new reply — don't recount
+    expect(newlyReplied).toBe(false); // not a new reply: don't recount
     expect(
       ledger.listSequenceEventsForProspectPlay(id, "repo-interest").map((e) => e.status),
     ).toEqual(["replied"]); // but the event is backfilled
@@ -1472,7 +1472,7 @@ describe("Ledger recordCadenceReply — atomic control + analytics write", () =>
   it("records the reply for a terminal (breakup) cadence without resurrecting it", () => {
     // The common case in practice: most sequences have finished by the time a
     // reply lands. The cadence must stay stopped (control plane), but the reply
-    // is still a fact about the outbound (analytics plane) — dropping it is how
+    // is still a fact about the outbound (analytics plane): dropping it is how
     // 424 of 457 cadences became invisible to the reply rate.
     const id = enrollWithSentStep();
     ledger.setCadenceStatus({ prospectId: id, playName: "repo-interest", status: "breakup" });
@@ -1540,7 +1540,7 @@ describe("Ledger recordProspectReply — which plays a reply belongs to", () => 
     );
     expect(ledger.getCadence(id, "stack-consolidation")?.status).toBe("replied");
     expect(ledger.getCadence(id, "repo-interest")?.status).toBe("completed");
-    // One reply, one replied row — not one per play.
+    // One reply, one replied row, not one per play.
     const replied = ledger.eventsByPlay().filter((e) => e.replied > 0);
     expect(replied.map((e) => e.play_name)).toEqual(["stack-consolidation"]);
   });
@@ -1600,7 +1600,7 @@ describe("Ledger recordProspectReply — which plays a reply belongs to", () => 
     // luma-events never enrolls a cadence; before the fallback its replies had
     // nowhere to land and were dropped on the floor.
     const id = ledger.upsertProspect({ name: "Lu", email: "lu@co.com", source: "luma-events" });
-    // Two plays, inserted in order — same-second timestamps are tie-broken by id,
+    // Two plays, inserted in order: same-second timestamps are tie-broken by id,
     // so the later insert is the latest send.
     for (const play of ["show-hn", "luma-events"]) {
       ledger.recordSequenceEvent({
@@ -1798,7 +1798,7 @@ describe("applyTriggerConfigs", () => {
       configJson: JSON.stringify({ sinceDays: 1 }),
       enabled: true,
     });
-    // bun:sqlite's bind() throws for an unsupported JS value — force that on
+    // bun:sqlite's bind() throws for an unsupported JS value: force that on
     // the SECOND entry so the transaction has already run the first
     // statement before the throw, exercising the rollback.
     expect(() =>
@@ -1808,7 +1808,7 @@ describe("applyTriggerConfigs", () => {
         { name: "hiring-signal", configJson: { bad: true } },
       ]),
     ).toThrow();
-    // The first entry's write must NOT have persisted — the transaction
+    // The first entry's write must NOT have persisted. The transaction
     // rolled back the whole batch, not just the failing statement.
     const showHn = ledger.getTrigger("show-hn");
     expect(JSON.parse(showHn!.config_json!)).toEqual({ sinceDays: 1 });

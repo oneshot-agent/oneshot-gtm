@@ -4,7 +4,7 @@ import { githubHeaders } from "./_github-search.ts";
 /**
  * Deterministic stack detection from a GitHub repo's manifest files
  * (manifests are authoritative; READMEs aren't). `vocab` is the founder's
- * vendor list — substring-matched (case-insensitive) against manifest deps
+ * vendor list: substring-matched (case-insensitive) against manifest deps
  * and env-var keys; there is no hardcoded vendor catalog. Each manifest
  * fetch is independent and best-effort.
  */
@@ -23,7 +23,7 @@ export interface StackDetection {
 export async function detectRepoStack(args: {
   owner: string;
   repo: string;
-  /** Founder's vendor list — substring-matched (case-insensitive) against
+  /** Founder's vendor list: substring-matched (case-insensitive) against
    *  manifest deps + env-var keys. Empty vocab → empty detection. */
   vocab: string[];
 }): Promise<StackDetection> {
@@ -84,7 +84,7 @@ async function fetchRepoFile(owner: string, repo: string, path: string): Promise
     const res = await fetch(url, { headers });
     if (!res.ok) return null;
     const text = await res.text();
-    // Defensive cap — only substring matching happens downstream, so trimming is safe.
+    // Defensive cap. Only substring matching happens downstream, so trimming is safe.
     return text.length > 200_000 ? text.slice(0, 200_000) : text;
   } catch {
     return null;
@@ -126,7 +126,7 @@ function parsePackageJson(content: string): string[] {
 }
 
 /**
- * Regex-based pyproject.toml dep extraction (Poetry + PEP 621 shapes) — no
+ * Regex-based pyproject.toml dep extraction (Poetry + PEP 621 shapes): no
  * TOML parser shipped. Fail-soft: missing matches just yield no names.
  */
 function parsePyProject(content: string): string[] {
@@ -140,7 +140,7 @@ function parsePyProject(content: string): string[] {
       out.push(name);
     }
   }
-  // PEP 621: `dependencies = ["package_name>=1.0", ...]` — strings inside
+  // PEP 621: `dependencies = ["package_name>=1.0", ...]`: strings inside
   // an array of dependency specifiers.
   const pep621Rx = /["']([a-zA-Z0-9_\-.]+)\s*(?:[<>=!~][^"']*)?["']/g;
   while ((m = pep621Rx.exec(content)) !== null) {
@@ -192,7 +192,7 @@ function parseRequirementsTxt(content: string): string[] {
 }
 
 /**
- * Env-var keys from `.env.example` — vendor SDKs name keys after themselves
+ * Env-var keys from `.env.example`: vendor SDKs name keys after themselves
  * (`OPENAI_API_KEY`), so keys are signal even with placeholder values.
  */
 function parseEnvKeys(content: string): string[] {

@@ -178,7 +178,7 @@ describe("verifyAndFilterTargets", () => {
   it("contributes 0 to costUsd when the SDK omits cost (no fallback)", async () => {
     // Post-SDK-0.15.2 every result type declares `cost?: number`. If the SDK
     // omits it for some reason, the helper accumulates 0 (not a hardcoded
-    // approximation) — surfaces as a NULL receipt downstream so it's visible.
+    // approximation): surfaces as a NULL receipt downstream so it's visible.
     verifyResponseFor = (email) => ({
       status: "ok",
       email,

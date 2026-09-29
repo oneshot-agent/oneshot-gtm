@@ -1,14 +1,11 @@
 import { logEvent } from "@oneshot-gtm/core";
 
 /**
- * Pluggable source adapters for `local-registry` — keyless, free, public
- * JSON APIs that give the same thing `accelerator-batch`'s yc-oss adapter
- * gives for accelerators: a structured feed with a recency signal, no
- * per-record spend. See `local-registry.ts` for the per-candidate pipeline
- * these feed into.
+ * Free public JSON adapters for `local-registry`, with recency signals and no
+ * per-record spend. See `local-registry.ts` for the candidate pipeline.
  */
 
-/** One entity discovered from a public local-business registry — before contact resolution. */
+/** One entity discovered from a public local-business registry: before contact resolution. */
 export interface RegistryRecord {
   name: string;
   address: string | null;
@@ -22,19 +19,19 @@ export interface RegistryRecord {
    */
   matchedDateIso: string;
   source: "socrata-license" | "nppes" | "fmcsa";
-  /** Human label for the specific portal/taxonomy this record came from — carried onto the queue row. */
+  /** Human label for the specific portal/taxonomy this record came from: carried onto the queue row. */
   sourceLabel: string;
   /**
    * nppes only. NPPES enumerates two distinct subject types under one API:
-   * NPI-1 (individual — `name` is a person's first+last) vs NPI-2
-   * (organization — `name` is the business/org name). Both get billed
+   * NPI-1 (individual: `name` is a person's first+last) vs NPI-2
+   * (organization: `name` is the business/org name). Both get billed
    * downstream to `enrichCompany` as if `name` were a company name, so this
    * flag lets a reviewer of `/queue` rows tell why a "company" row shows a
    * person's name instead of assuming a mapping bug.
    */
   subjectType?: "individual" | "organization";
   /**
-   * What kind of business this is, in the registry's own words — a Socrata
+   * What kind of business this is, in the registry's own words. A Socrata
    * licence description ("Retail Food Establishment"), the NPPES taxonomy
    * that matched ("Dentist"), or "motor carrier" for FMCSA. Null when the
    * portal's row has no such column. The plays' `businessType` field.
@@ -47,7 +44,7 @@ export interface RegistryRecord {
    */
   licenseType?: string | null;
   /**
-   * The record's own on-file email (fmcsa only) — carries a published email,
+   * The record's own on-file email (fmcsa only): carries a published email,
    * so the caller skips `findEmail`/`verifyEmail` entirely for this
    * candidate rather than paying to re-derive what the record already
    * answers. Null/absent for every other source.
@@ -55,7 +52,7 @@ export interface RegistryRecord {
   knownEmail?: string | null;
 }
 
-/** One Socrata open-data portal + dataset — exactly the shape issue #459 specifies. */
+/** One Socrata open-data portal + dataset: exactly the shape issue #459 specifies. */
 export interface SocrataPortalConfig {
   /** Socrata host, e.g. "data.cityofnewyork.us". No scheme. */
   host: string;
@@ -74,12 +71,12 @@ export interface RegistryQuery {
   portals?: SocrataPortalConfig[];
   naics?: string[];
   licenseTypes?: string[];
-  /** nppes + fmcsa. Two-letter state codes — crossed with taxonomies (nppes) or filtering phy_state (fmcsa). */
+  /** nppes + fmcsa. Two-letter state codes: crossed with taxonomies (nppes) or filtering phy_state (fmcsa). */
   taxonomies?: string[];
   states?: string[];
   /** fmcsa only. Entity type(s): "carrier" | "broker" | "freight-forwarder", matched against `carship`. */
   entityTypes?: FmcsaEntityType[];
-  /** fmcsa only. Fleet-size floor/ceiling on `power_units` — the 10-100 band is who actually buys software. */
+  /** fmcsa only. Fleet-size floor/ceiling on `power_units`. The 10-100 band is who actually buys software. */
   minPowerUnits?: number;
   maxPowerUnits?: number;
 }
@@ -87,7 +84,7 @@ export interface RegistryQuery {
 export interface RegistryFetchOutcome {
   records: RegistryRecord[];
   costUsd: number;
-  /** One entry per portal (socrata) or taxonomy×state pair (nppes) — mirrors accelerator-batch's perCohort. */
+  /** One entry per portal (socrata) or taxonomy×state pair (nppes): mirrors accelerator-batch's perCohort. */
   perSource: Array<{ source: string; label: string; records: number; error?: string }>;
 }
 
@@ -95,11 +92,7 @@ export interface RegistrySource {
   id: "socrata-license" | "nppes" | "fmcsa";
   fetch: (cfg: RegistryQuery) => Promise<RegistryFetchOutcome>;
 }
-
-// ---------------------------------------------------------------------------
 // socrata-license
-// ---------------------------------------------------------------------------
-
 // Business-license open-data schemas vary portal to portal (no shared
 // convention), so field extraction tries the common Socrata column names
 // used across city/state license datasets rather than requiring the founder
@@ -125,7 +118,7 @@ const SOCRATA_ADDRESS_FIELDS = [
 const SOCRATA_CITY_FIELDS = ["city", "business_city", "city_name", "address_city"];
 const SOCRATA_STATE_FIELDS = ["state", "business_state", "state_code", "address_state"];
 const SOCRATA_PHONE_FIELDS = ["phone", "contact_phone", "business_phone", "telephone_number"];
-/** What the licence is for — the closest thing a business-licence row has to a business type. */
+/** What the licence is for. The closest thing a business-licence row has to a business type. */
 const SOCRATA_LICENSE_FIELDS = [
   "license_description",
   "licence_description",
@@ -186,14 +179,14 @@ function squashKey(k: string): string {
 
 /**
  * Which of the known date-column spellings this specific portal's schema
- * actually uses — needed so pagination can `$order`/`$where` on a real
+ * actually uses: needed so pagination can `$order`/`$where` on a real
  * SoQL column name. Returns the ACTUAL key (not the value), unlike
  * `pickField`, and doesn't require the value to be present on this one row.
  */
 /**
  * Does a column name read as "the date this licence started"? Portal schemas
- * never agree on a name — NYC says `license_creation_date`, WA L&I says
- * `licenseeffectivedate` with no separators — so the exact-name list above
+ * never agree on a name: NYC says `license_creation_date`, WA L&I says
+ * `licenseeffectivedate` with no separators, so the exact-name list above
  * is tried first and this is the fallback. Deliberately excludes the
  * expiry/renewal/update columns every licence dataset also carries: keying
  * freshness off an expiry date would surface businesses whose licence is
@@ -230,7 +223,7 @@ function pickDateIso(record: Record<string, unknown>, candidates: string[]): str
 
 /**
  * Resolve a street address, preferring a single combined field but falling
- * back to composing `address_building` + `address_street_name` — the split
+ * back to composing `address_building` + `address_street_name`. The split
  * form several city portals (e.g. NYC's DCA license dataset) use instead of
  * one string field.
  */
@@ -244,7 +237,7 @@ function pickAddress(record: Record<string, unknown>): string | null {
 }
 
 /**
- * The Socrata full-text `$q` terms for the naics/licenseTypes filters — ONE
+ * The Socrata full-text `$q` terms for the naics/licenseTypes filters: ONE
  * request per term, never joined. Socrata ANDs the words of a single `$q`,
  * so a joined "HVAC Plumbing Electrical Roofing" asked for rows matching all
  * four at once: measured 2026-09-07 on WA L&I, `HVAC` alone is 288 rows,
@@ -258,7 +251,7 @@ export function buildSocrataSearchTerms(
   return [...(naics ?? []), ...(licenseTypes ?? [])].map((t) => t.trim()).filter(Boolean);
 }
 
-/** @deprecated kept for the unit test's back-compat check — the fetch uses `buildSocrataSearchTerms`. */
+/** @deprecated kept for the unit test's back-compat check. The fetch uses `buildSocrataSearchTerms`. */
 export function buildSocrataSearchTerm(
   naics: string[] | undefined,
   licenseTypes: string[] | undefined,
@@ -272,7 +265,7 @@ export function mapSocrataRows(
   rows: unknown[],
   portalLabel: string,
   sinceDays: number,
-  /** The column the fetch already resolved for this portal — tried before the generic list. */
+  /** The column the fetch already resolved for this portal: tried before the generic list. */
   dateField?: string | null,
 ): RegistryRecord[] {
   const sinceMs = Date.now() - sinceDays * 86_400_000;
@@ -307,7 +300,7 @@ const SOCRATA_PAGE_SIZE = 200;
 /**
  * Cap on pages fetched per portal per run (1,000 rows @ 200/page). Recency
  * ordering + a server-side date predicate mean this ceiling is now about
- * bounding request volume/cost, not about correctness — unlike the old
+ * bounding request volume/cost, not about correctness: unlike the old
  * unordered single page, every row considered here is guaranteed to be
  * within the freshness window and returned newest-first.
  */
@@ -348,8 +341,8 @@ async function fetchSocrataPortal(
   const passes: Array<string | null> = terms.length === 0 ? [null] : terms;
 
   // Business-license schemas vary portal to portal (see SOCRATA_DATE_FIELDS).
-  // Prefer the dataset's own column metadata — it names every column
-  // regardless of row-level nulls — and fall back to a single cheap probe
+  // Prefer the dataset's own column metadata. It names every column
+  // regardless of row-level nulls, and fall back to a single cheap probe
   // row only when the metadata call itself is unavailable. Either way, the
   // resolved column is required for both `$order` (recency-first) and
   // `$where` (server-side freshness predicate) below.
@@ -372,7 +365,7 @@ async function fetchSocrataPortal(
       }
     } catch {
       // Schema probe is best-effort: fall through without ordering rather than
-      // failing the whole portal — the main fetch below still runs.
+      // failing the whole portal. The main fetch below still runs.
     }
   }
   const sinceIso = new Date(Date.now() - cfg.sinceDays * 86_400_000).toISOString().split(".")[0];
@@ -385,7 +378,7 @@ async function fetchSocrataPortal(
       params.set("$offset", String(page * SOCRATA_PAGE_SIZE));
       if (q) params.set("$q", q);
       if (dateField) {
-        // Recency-first ordering + a server-side freshness predicate — without
+        // Recency-first ordering + a server-side freshness predicate, without
         // this, `$limit=200` with no `$order` returns an arbitrary page of a
         // dataset that can be millions of rows, silently missing every
         // qualifying recent row that lands outside that arbitrary page.
@@ -484,11 +477,7 @@ export const socrataLicenseSource: RegistrySource = {
     return { records: records.slice(0, cfg.limit), costUsd: 0, perSource };
   },
 };
-
-// ---------------------------------------------------------------------------
 // nppes
-// ---------------------------------------------------------------------------
-
 interface NppesAddress {
   address_purpose?: string;
   address_1?: string;
@@ -533,7 +522,7 @@ export function mapNppesResults(
   label: string,
   fallbackState: string,
   sinceDays: number,
-  /** The taxonomy description the query matched on ("Dentist") — the record's business type. */
+  /** The taxonomy description the query matched on ("Dentist"). The record's business type. */
   taxonomy?: string,
 ): RegistryRecord[] {
   const sinceMs = Date.now() - sinceDays * 86_400_000;
@@ -566,7 +555,7 @@ export function mapNppesResults(
 }
 
 const NPPES_PAGE_SIZE = 200;
-/** NPPES's own documented ceiling: skip caps at 1000, so 6 pages of 200 (1200 records) is the max obtainable for any one query — matches the ropensci npi_search client's documented limit. */
+/** NPPES caps skip at 1000: six pages of 200 yield at most 1200 records per query, as documented by ropensci npi_search. */
 const NPPES_MAX_PAGES = 6;
 async function fetchNppesPair(
   taxonomy: string,
@@ -620,7 +609,7 @@ async function fetchNppesPair(
     // page up to the 1,200-record ceiling closes the gap ONLY when a
     // taxonomy×state pair's total result count is <=1200. A pair that
     // exceeds that (e.g. Dentist in a populous state like CA/TX/NY) can
-    // still leave a newly-enumerated provider past page 6 invisible —
+    // still leave a newly-enumerated provider past page 6 invisible:
     // there is no ordering guarantee to bring it forward, unlike the
     // Socrata fix's server-side $order+$where. See STATUS.md's known
     // limitations for the honest statement of what this does and doesn't
@@ -684,11 +673,7 @@ export const nppesSource: RegistrySource = {
     return { records: records.slice(0, cfg.limit), costUsd: 0, perSource };
   },
 };
-
-// ---------------------------------------------------------------------------
-// fmcsa — Company Census File, data.transportation.gov/resource/az4n-8mr2
-// ---------------------------------------------------------------------------
-
+// fmcsa: Company Census File, data.transportation.gov/resource/az4n-8mr2
 /** FMCSA `carship` letter codes: C=Carrier, B=Broker, F=Freight Forwarder. */
 export type FmcsaEntityType = "carrier" | "broker" | "freight-forwarder";
 
@@ -728,7 +713,7 @@ export function buildFmcsaWhere(cfg: RegistryQuery): string {
   // comparison against another zero-padded "YYYYMMDD" string sorts/filters
   // identically to a numeric/date comparison. Without this, $where never
   // touches add_date at all and Socrata's default row order has no
-  // relationship to it — against the ~2.2M-row active-carrier table, the
+  // relationship to it: against the ~2.2M-row active-carrier table, the
   // first $limit rows returned almost never fall inside `sinceDays`, so
   // the local freshness filter in `mapFmcsaRows` silently drops everything.
   const sinceDate = new Date(Date.now() - cfg.sinceDays * 86_400_000);
@@ -796,12 +781,12 @@ export const fmcsaSource: RegistrySource = {
     // least one FMCSA-specific filter, buildFmcsaWhere still yields a valid
     // non-empty $where (active status + published email + freshness) that
     // queries the full nationwide ~2.2M-row trucking dataset. A trigger
-    // configured for socrata-license/nppes only — never
-    // touching fmcsa's own config keys — must not silently fire this query
+    // configured for socrata-license/nppes only. Never
+    // touching fmcsa's own config keys: must not silently fire this query
     // and enqueue unrelated trucking carriers. `states` is deliberately
     // EXCLUDED here: it's shared with nppes (crossed with taxonomies), so an
     // NPPES-only config (taxonomies + states, no fmcsa-specific key) must not
-    // enable fmcsa just because `states` is also set — matches registry.ts's
+    // enable fmcsa just because `states` is also set: matches registry.ts's
     // `readiness` hasFmcsa check, which already excludes it for the same
     // reason. `states` still NARROWS the fmcsa query below once one of these
     // FMCSA-specific keys enables it.

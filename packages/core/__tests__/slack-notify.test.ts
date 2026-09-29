@@ -110,7 +110,7 @@ describe("slack-notify", () => {
       });
 
       const payload = JSON.parse(fetchMock.mock.calls![0]![1]!.body) as SlackNotification;
-      // The raw structured data is untouched — only the rendered `text` is escaped.
+      // The raw structured data is untouched. Only the rendered `text` is escaped.
       expect(payload.data).toMatchObject({
         subject: "<!channel> urgent <@U12345> & <#C123|general>",
       });
@@ -334,7 +334,7 @@ describe("slack-notify", () => {
     // function can trust that day's bounces are fully accounted for before
     // stamping the watermark. If that forced sweep itself comes back
     // partial (a source errored/skipped), stamping anyway would permanently
-    // drop whatever bounces the failed source hasn't reported — the
+    // drop whatever bounces the failed source hasn't reported. The
     // watermark never re-opens a stamped day.
     it("does NOT stamp the watermark or post when sweepClean is false", async () => {
       vi.spyOn(config, "loadConfig").mockReturnValue({
@@ -349,7 +349,7 @@ describe("slack-notify", () => {
 
       expect(posted).toBe(false);
       expect(fetchMock).not.toHaveBeenCalled();
-      // Watermark stays unset — a later, clean sweep must still be able to
+      // Watermark stays unset. A later, clean sweep must still be able to
       // stamp and post for this day.
       expect(ledger.getPollWatermark(SLACK_DAILY_SUMMARY_WATERMARK)).toBe("");
       expect(logEventSpy).toHaveBeenCalledWith(
@@ -431,7 +431,7 @@ describe("slack-notify", () => {
           db: { query(s: string): { run(...a: unknown[]): unknown } };
         }
       ).db;
-      // The email was sent 8 days before the reply — well outside the
+      // The email was sent 8 days before the reply: well outside the
       // completed day's 24h window the summary aggregates over.
       db.query(
         `UPDATE sequence_events SET created_at = '2026-08-20 09:00:00' WHERE prospect_id = ?`,
@@ -500,7 +500,7 @@ describe("slack-notify", () => {
     it("counts a bounce recorded on a prospect with no cadence match (round-3 review fix)", async () => {
       // Regression test: pollInboxBounces `continue`s before writing ANY
       // sequence_events row for a bounce on an address it can't match to a
-      // prospect — the old eventsByPlay-derived total silently dropped it.
+      // prospect. The old eventsByPlay-derived total silently dropped it.
       vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
       } as any);
@@ -556,7 +556,7 @@ describe("slack-notify", () => {
 
     it("counts a dead-mailbox autoresponder bounce that stopped multiple concurrent cadences as one", async () => {
       // The auto_permanent reply-stream path is counted from inbox_replies
-      // (issue #71 round-1 correction), not sequence_events — recordInboxReply
+      // (issue #71 round-1 correction), not sequence_events: recordInboxReply
       // is INSERT OR IGNORE keyed on the provider's own message id, so one
       // real event is already exactly one row regardless of how many
       // concurrent cadences the sequence_events loop separately wrote for it.

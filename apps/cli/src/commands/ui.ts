@@ -66,7 +66,7 @@ export async function commandUi(opts: UiOpts): Promise<void> {
       env,
     });
     // --hot makes Bun re-evaluate the entrypoint (and its imports) on file
-    // change within the same process, and — unlike --watch — preserves
+    // change within the same process, and (unlike --watch) preserves
     // `globalThis` across reloads. `bin.ts` caches the Bun.serve instance
     // there and calls `server.reload({fetch})` on re-entry to swap handlers
     // without rebinding the port (which would fail with EADDRINUSE).

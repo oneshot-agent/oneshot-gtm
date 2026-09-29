@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { reportServerExecution } from "../src/telemetry.ts";
 
 // reportServerExecution reaches the real telemetry endpoint via global fetch,
-// so every test that exercises the send path must spy on fetch — otherwise it
+// so every test that exercises the send path must spy on fetch. Otherwise it
 // would phone home. Tests run under ONESHOT_GTM_HOME = a temp dir (see
 // vitest.setup.ts), so loadConfig() reads a fresh config with telemetry on by
 // default.
@@ -44,7 +44,7 @@ describe("reportServerExecution — transport", () => {
     expect(payload["flags"]).toEqual(["dry-run", "from-queue"]);
     expect(payload["outcome"]).toBe("ok");
     expect(payload["duration_ms"]).toBe(1234);
-    // Server build carries a real version + platform — proves it's a server
+    // Server build carries a real version + platform: proves it's a server
     // event, not a CLI one.
     expect(typeof payload["version"]).toBe("string");
     expect(payload["os"]).toBe(process.platform);

@@ -125,7 +125,7 @@ describe("Ledger receipt methods delegate to ReceiptStore (issue #616)", () => {
     const first = ledger.recordMailReceipt("dm-receipt-1", input);
     expect(ledger.countReceipts({ playName: "direct-mail" })).toBe(1);
     // Re-recording the SAME direct-mail receipt id must not insert a second
-    // receipt row — the transaction reuses the existing local_id and just
+    // receipt row. The transaction reuses the existing local_id and just
     // refreshes signed_receipt, exactly as before the extraction.
     const second = ledger.recordMailReceipt("dm-receipt-1", {
       ...input,
@@ -139,8 +139,8 @@ describe("Ledger receipt methods delegate to ReceiptStore (issue #616)", () => {
   it("recordMailReceipt rolls back BOTH the receipts insert and the direct_mail_receipts insert when the transaction fails partway", () => {
     // Force the delegated ReceiptStore.recordReceipt call to throw AFTER
     // recordMailReceipt's db.transaction() has started, to prove the whole
-    // transaction — spanning the receipts insert (now in ledger-receipts.ts)
-    // and the direct_mail_receipts insert (still in ledger.ts) — rolls back
+    // transaction: spanning the receipts insert (now in ledger-receipts.ts)
+    // and the direct_mail_receipts insert (still in ledger.ts): rolls back
     // as one unit exactly like before the extraction, not just the
     // ledger.ts-owned half.
     const originalRecordReceipt = ledger.recordReceipt.bind(ledger);

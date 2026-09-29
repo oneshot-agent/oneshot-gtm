@@ -5,7 +5,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The workspace routes are what let the dashboard (a) name the workspace it
 // serves and (b) open/auto-start any other one. Identity comes from env
-// (ONESHOT_GTM_WORKSPACE, PORT), the roster from the registry — pointed at a
+// (ONESHOT_GTM_WORKSPACE, PORT), the roster from the registry: pointed at a
 // temp dir here via ONESHOT_GTM_WORKSPACES so the real registry is never read.
 
 const tmp = mkdtempSync(join(tmpdir(), "oneshot-ws-route-"));
@@ -54,7 +54,7 @@ describe("GET /api/workspace", () => {
     expect(names).toEqual(["default", "gtm"]);
 
     const self = out.workspaces.find((w) => w.name === "default")!;
-    // Current is running by definition — no self-probe.
+    // Current is running by definition: no self-probe.
     expect(self.isCurrent).toBe(true);
     expect(self.running).toBe(true);
 
@@ -102,7 +102,7 @@ describe("POST /api/workspace/launch", () => {
     expect(env["ONESHOT_GTM_WORKSPACE"]).toBe("gtm");
     expect(env["PORT"]).toBe("3999");
     expect(env["ONESHOT_GTM_NO_BROWSER"]).toBe("1");
-    // A dev-mode parent must not leak its vite URL — the child would 302 the
+    // A dev-mode parent must not leak its vite URL. The child would 302 the
     // whole UI to the wrong workspace's dev server.
     expect(env["VITE_DEV_SERVER_URL"]).toBeUndefined();
     expect(env["SMARTLEAD_API_KEY"]).toBeUndefined();

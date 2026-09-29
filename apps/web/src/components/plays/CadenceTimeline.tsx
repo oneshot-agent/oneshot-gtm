@@ -5,12 +5,12 @@ export interface CadenceStep {
   /** Day offset from enrollment (0 = first send). */
   day: number;
   label: string;
-  /** When true, this is the final "breakup" touch — dot is amber, not cobalt. */
+  /** When true, this is the final "breakup" touch: dot is amber, not cobalt. */
   breakup?: boolean;
 }
 
 /**
- * A small horizontal timeline of cadence steps — day-0 send on the left,
+ * A small horizontal timeline of cadence steps: day-0 send on the left,
  * follow-ups walking right, breakup amber. When there's only one step the
  * timeline reads "one-touch · no follow-ups".
  */

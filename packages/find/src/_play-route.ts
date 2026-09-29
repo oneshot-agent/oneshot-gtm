@@ -1,7 +1,7 @@
 import { isAllowedDesignPartnerLoiBuyerType } from "@oneshot-gtm/plays";
 
 /**
- * Buyer types `design-partner-loi` will actually draft for — mirrors that
+ * Buyer types `design-partner-loi` will actually draft for: mirrors that
  * play's own runtime allowlist (`isAllowedDesignPartnerLoiBuyerType`) so the
  * two can never drift apart. See issue #705: any finder that can surface a
  * person at a larger organization (enterprise/government/hardware) can be
@@ -26,7 +26,7 @@ export interface ResolvedPlayRoute {
 /**
  * Resolve whether a finder should route this run's rows to
  * `design-partner-loi`. Returns `null` when `play` isn't set to
- * `"design-partner-loi"` (fall back to the finder's own play — today's
+ * `"design-partner-loi"` (fall back to the finder's own play: today's
  * behaviour) OR when `buyerType` fails the play's own allowlist (the
  * readiness gate is expected to have already refused an unready trigger
  * before this is reached; a direct/ad-hoc caller that skips readiness still
@@ -46,7 +46,7 @@ export function resolvePlayRoute(cfg: {
 /**
  * Extra readiness the `play`/`buyerType` routing keys impose, layered on top
  * of a trigger's own gates. Returns `null` (no additional restriction) when
- * `play` isn't `"design-partner-loi"` — a trigger with no routing configured
+ * `play` isn't `"design-partner-loi"`. A trigger with no routing configured
  * is exactly as ready as it was before this feature existed. `edgeKey` names
  * whichever config field feeds `DesignPartnerLoiTarget.yourEdge` for this
  * finder (`yourEdge` for most; `yourClaim` for hiring-signal).
@@ -78,7 +78,7 @@ export function checkPlayRouteReadiness(
  * Build the `DesignPartnerLoiTarget`-shaped payload a routed finder enqueues
  * instead of its own play's target shape. `title`/`linkedinUrl`/`phone` are
  * optional on the play's own target too, so they're only included when
- * present — matching the `...(x ? {x} : {})` convention every finder in this
+ * present: matching the `...(x ? {x} : {})` convention every finder in this
  * package already follows for its own payload.
  */
 export function buildDesignPartnerLoiPayload(input: {

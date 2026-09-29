@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Ledger } from "@oneshot-gtm/core";
 
-// commandIntelBackfillIntent against a real ledger — zero network by
+// commandIntelBackfillIntent against a real ledger: zero network by
 // construction: triageEmails is mocked, so no SDK/LLM import happens.
 let ledger: Ledger;
 vi.mock("@oneshot-gtm/core", async () => {
@@ -62,7 +62,7 @@ describe("commandIntelBackfillIntent (issue #480)", () => {
     ledger.upsertProspect({ email: "p@prospect.example" });
     record("r1", "human");
     record("r2", null); // pre-v23: NULL reads as human
-    record("r3", "auto"); // never human — must not be sent to triage
+    record("r3", "auto"); // never human: must not be sent to triage
 
     triageEmailsMock.mockImplementation(async (emails: Array<{ id: string }>) =>
       emails.map((e) => ({
@@ -109,7 +109,7 @@ describe("commandIntelBackfillIntent (issue #480)", () => {
     const sentIds = (triageEmailsMock.mock.calls[0]![0] as Array<{ id: string }>).map((e) => e.id);
     expect(sentIds).toEqual(["r1"]);
     expect(ledger.listInboxReplyIntents(["r1", "r2"]).get("r1")?.intent).toBe("not_now");
-    // Still the poll's claim — a second claimant loses.
+    // Still the poll's claim. A second claimant loses.
     expect(ledger.claimInboxReplyForTriage("r2")).toBe(false);
   });
 
@@ -122,7 +122,7 @@ describe("commandIntelBackfillIntent (issue #480)", () => {
     record("r1", "human");
     triageEmailsMock.mockRejectedValue(new Error("provider 503"));
     await expect(commandIntelBackfillIntent()).resolves.toBeUndefined();
-    // The reply is still there, still untriaged — a triage failure never loses it.
+    // The reply is still there, still untriaged. A triage failure never loses it.
     expect(ledger.listUntriagedHumanReplies().map((r) => r.id)).toEqual(["r1"]);
   });
 });

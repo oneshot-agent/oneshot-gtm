@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Bootstrap shim — the real bin target. core's config.ts captures
+ * Bootstrap shim. The real bin target. Core's config.ts captures
  * ONESHOT_GTM_HOME at module load and ESM hoists imports, so the home must be
  * decided and set in env BEFORE importing the CLI proper; this file imports
  * only builtins until then. Resolution: `--workspace` > ONESHOT_GTM_WORKSPACE

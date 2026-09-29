@@ -19,7 +19,7 @@ export interface PodcastGuestTarget {
   bridge?: string;
   linkedinUrl?: string;
   phone?: string;
-  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  /** Job title from the person-level ICP gate: persisted to prospects.title. */
   title?: string;
 }
 
@@ -33,7 +33,7 @@ export interface PodcastGuestRunOptions {
   ) => void;
   /** Skip the optional web-search dossier enrichment. */
   skipSearch?: boolean;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -105,5 +105,5 @@ export function runPodcastGuest(
 
 registerSequence({
   playName: PLAY_NAME,
-  steps: [], // Intentionally empty — podcast-guest is one-touch only.
+  steps: [], // Intentionally empty: podcast-guest is one-touch only.
 });

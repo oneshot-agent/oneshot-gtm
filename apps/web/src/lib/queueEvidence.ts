@@ -132,14 +132,14 @@ export function queueEvidence(playName: string, payload: unknown): string | null
     case "new-business":
     case "free-pilot": {
       // local-business (#457) enqueues `businessType`; local-registry (#459)
-      // enqueues `sourceLabel`/`matchedDateIso`/`subjectType` — both route
+      // enqueues `sourceLabel`/`matchedDateIso`/`subjectType`. Both route
       // through this same play, so branch on whichever shape is present.
       const businessType = str(p, "businessType");
       if (businessType) return `matched ${businessType}`;
       const label = str(p, "sourceLabel");
       const matched = str(p, "matchedDateIso");
       const subjectType = str(p, "subjectType");
-      // nppes-only: NPI-1 (individual) vs NPI-2 (organization) — tells a
+      // For nppes, NPI-1 (individual) vs NPI-2 (organization) tells a
       // reviewer why a "company" row shows a person's name instead of
       // leaving them to assume a mapping bug (see RegistryRecord's doc).
       const subject = subjectType ? `${subjectType} record` : null;
@@ -158,9 +158,9 @@ export function queueEvidence(playName: string, payload: unknown): string | null
     }
 
     // Two payload shapes land on design-partner-loi: gov-solicitation's own
-    // routing (title/agency — a notice title) and the five finders
+    // routing (title/agency, a notice title) and the five finders
     // `_play-route.ts` (issue #705) can route rows to instead of their own
-    // play (name/email/company/buyerType/yourEdge — no notice at all).
+    // play (name/email/company/buyerType/yourEdge: no notice at all).
     // `buyerType` is present on exactly the routed shape, so it
     // discriminates: rendering a routed row's own job `title` captioned with
     // `agency` put a person's job title on the queue as if it were a

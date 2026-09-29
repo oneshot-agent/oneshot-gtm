@@ -14,14 +14,14 @@ import { voiceBlock } from "./_lib.ts";
 /**
  * First touch on the LinkedIn channel: a connection request with a note, sent
  * through OneShot's invite route. Channel is a property of the queue row, not
- * of the play — a luma-events or github-stars row on LinkedIn is drafted here,
+ * of the play. A luma-events or github-stars row on LinkedIn is drafted here,
  * with that play's signal, instead of by the play's email prompt.
  */
 
 /** How the caller reaches OneShot for the account that owns the LinkedIn connection. */
 export interface LinkedInSender {
   accountId: string;
-  /** Workspace that owns the account — recorded so a withdrawal reaches the same one. */
+  /** Workspace that owns the account: recorded so a withdrawal reaches the same one. */
   workspace?: string;
   call: (operation: LinkedInOperation) => Promise<unknown>;
 }
@@ -64,7 +64,7 @@ export function linkedInProfileOf(payload: Record<string, unknown>): string | nu
 }
 
 /**
- * The finder's reason this person surfaced, as prompt lines — shared by every
+ * The finder's reason this person surfaced, as prompt lines: shared by every
  * non-email first touch. Only facts the payload carries.
  */
 export function signalLines(row: LinkedInFirstTouchRow): string[] {

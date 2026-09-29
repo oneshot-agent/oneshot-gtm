@@ -4,7 +4,7 @@ import { AddProspectForm } from "../components/queue/AddProspectForm.tsx";
 /**
  * The standalone page.
  *
- * Not in the sidebar any more — adding one prospect by hand is an occasional
+ * Not in the sidebar any more: adding one prospect by hand is an occasional
  * act, and the Queue carries the action now, next to the rows it produces.
  * The route stays for bookmarks, for ⌘K, and for the Queue's empty state.
  */

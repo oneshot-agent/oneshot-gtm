@@ -194,7 +194,7 @@ describe("isBreakupStepAt + nextStepInfo (cross-play, centralized)", () => {
     // Position rule: the single step IS at the last position (steps.length-1 === 0).
     // And the label "single follow-up + breakup" matches breakup substring. So
     // isBreakupStepAt returns true. Documented: the helper's "cadence-final
-    // breakup" semantics are based on position+label only — the policy choice
+    // breakup" semantics are based on position+label only. The policy choice
     // of whether accelerator-batch's solo step should be UX-flagged as a
     // breakup lives at the call site (currently: yes, it IS treated as breakup
     // because position+label both match).

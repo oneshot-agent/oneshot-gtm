@@ -93,7 +93,7 @@ describe("socialProofBlock", () => {
   });
 });
 
-// An address that draws the admission slot, found by probing admissionSlot —
+// An address that draws the admission slot, found by probing admissionSlot:
 // pinned so the assertions below don't depend on the hash's distribution.
 async function slotted(): Promise<string> {
   const { admissionSlot } = await import("../src/_lib.ts");
@@ -126,7 +126,7 @@ describe("admissionBlock — the damaging-admission beat's only source of materi
   });
 
   it("gates the material per prospect: roughly a third draw it, deterministically", async () => {
-    // The frequency cap lives in code because the model can't hold one — given
+    // The frequency cap lives in code because the model can't hold one: given
     // "at most 1 in 3" it used the admission on 3 of 4 drafts.
     const { admissionBlock, admissionSlot } = await import("../src/_lib.ts");
     cfgOverride.founderAdmission = "two people, no enterprise logos yet";

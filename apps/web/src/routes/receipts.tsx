@@ -131,7 +131,7 @@ function ReceiptsPage() {
         </div>
       </section>
 
-      {/* Value filter — "valued" = calls a reply/meeting/deal tied value to. */}
+      {/* Value filter: "valued" = calls a reply/meeting/deal tied value to. */}
       <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-3">
         <span className="ln-eyebrow">show</span>
         {VALUE_FILTERS.map((f) => (

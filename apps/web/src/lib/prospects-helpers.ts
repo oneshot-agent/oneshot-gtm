@@ -12,7 +12,7 @@ import { companyFor, emailFor, nameFor, titleFor } from "./payloadIdentity.ts";
 /**
  * /prospects keeps its filters in the URL so a search is a link. Defaults are
  * left OUT of the URL (`parseProspectsSearch` drops them, `toApiQuery` omits
- * them) — `/prospects` stays clean and the demo's fixture path stays stable.
+ * them): `/prospects` stays clean and the demo's fixture path stays stable.
  */
 export interface ProspectsSearch {
   q?: string;
@@ -76,7 +76,7 @@ export function parseProspectsSearch(raw: Record<string, unknown>): ProspectsSea
   return out;
 }
 
-/** The `/queue/search?…` query string for a search — sorted keys, defaults omitted. */
+/** The `/queue/search?…` query string for a search: sorted keys, defaults omitted. */
 export function toApiQuery(s: ProspectsSearch): string {
   const q = new URLSearchParams();
   if (s.decided) q.set("decided", s.decided);
@@ -205,7 +205,7 @@ export function applyProspectFilters(
 
 /**
  * The /prospects row's second line, after the signal (issue #601): what
- * happened to this candidate and when — "approved by you 3d ago",
+ * happened to this candidate and when: "approved by you 3d ago",
  * "auto-rejected 2w ago", "undecided". `ago` is injected so the line stays
  * pure in tests.
  */

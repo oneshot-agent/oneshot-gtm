@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Verifies new-business drafts the greenfield ask: the inputBlock carries the
 // business type + license/authority + how recently it was issued, and it
-// enrolls a cadence whose single follow-up doubles as the breakup — same
+// enrolls a cadence whose single follow-up doubles as the breakup: same
 // one-touch shape as accelerator-batch and free-pilot.
 
 const calls = { llmInputBlocks: [] as string[], enrolled: 0 };

@@ -29,7 +29,7 @@ import { reportServerExecution } from "../telemetry.ts";
 /**
  * In-flight cadence sends are tracked on the row's `sending_started_at`
  * column (claimed atomically before the background SDK send, cleared on
- * success by `advanceCadence`, on failure in the catch) — DB-backed so it
+ * success by `advanceCadence`, on failure in the catch): DB-backed so it
  * survives restarts; the cold-boot sweeper recovers stranded rows. A fresh
  * Send click can reclaim a marker older than this cutoff.
  */
@@ -46,7 +46,7 @@ function toView(
       const parsed = JSON.parse(row.next_step_draft_json) as CadenceNextStepDraft & {
         payload?: unknown;
       };
-      // Strip `payload` from the wire view — only the send route reads it.
+      // Strip `payload` from the wire view. Only the send route reads it.
       // The angle it carries is the one field the founder reviews by.
       const angle = draftAngleChoiceOf(parsed.payload);
       nextStepDraft = {
@@ -120,10 +120,10 @@ function payloadKey(playName: string, email: string | null): string {
 export function viewsForRows(
   rows: ReadonlyArray<ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number]>,
 ): CadenceView[] {
-  // Single SQL fetch for ALL (prospect_id, play_name) pairs — avoids N+1.
+  // Single SQL fetch for ALL (prospect_id, play_name) pairs: avoids N+1.
   const pairs = rows.map((r) => ({ prospectId: r.prospect_id, playName: r.play_name }));
   const priorByKey = getPriorStepsBulk(pairs);
-  // The intro's queue payload (signal + fitReason) for the sheet's reminder —
+  // The intro's queue payload (signal + fitReason) for the sheet's reminder:
   // one query for the page (#599). Best-effort like the prior steps: a ledger
   // that cannot answer leaves every row without one, never without a page.
   let payloadByKey: Map<string, Record<string, unknown>>;
@@ -140,7 +140,7 @@ export function viewsForRows(
 export function listCadences(req: Request): Response {
   const url = new URL(req.url);
   const all = url.searchParams.get("all") === "1";
-  // Optional `?sinceRun=N` — the /run → /cadences deep-link; filters to run
+  // Optional `?sinceRun=N`. The /run → /cadences deep-link; filters to run
   // N's prospect set. Malformed run ids fall back to all-cadences.
   const sinceRunRaw = url.searchParams.get("sinceRun");
   const sinceRunId =
@@ -173,7 +173,7 @@ export function listCadences(req: Request): Response {
   return jsonResponse(body, 200, req);
 }
 
-/** Status breakdown for the summary tiles — `overdue` = active & past due. */
+/** Status breakdown for the summary tiles: `overdue` = active & past due. */
 function tallyCounts(
   rows: ReadonlyArray<{ status: string; next_due_at: string | null }>,
 ): CadenceCounts {
@@ -302,7 +302,7 @@ function draftAngleChoiceOf(payload: unknown): DraftAngleChoice | null {
 
 /**
  * Every draft the cadence's NEXT step went through, newest first. The step is
- * `current_step + 1` — the one a preview/regenerate/send acts on.
+ * `current_step + 1`. The one a preview/regenerate/send acts on.
  */
 export function cadenceDraftVersionsRoute(req: Request, params: Record<string, string>): Response {
   const parsed = parseProspectAndPlay(req, params);
@@ -326,7 +326,7 @@ export async function previewCadenceStepRoute(
 ): Promise<Response> {
   const parsed = parseProspectAndPlay(req, params);
   if (parsed instanceof Response) return parsed;
-  // Optional body: { rotateAngle?: boolean } — same contract as the queue's
+  // Optional body { rotateAngle?: boolean }, matching the queue's
   // regenerate route. An empty body is a plain regenerate.
   let rotateAngle = false;
   const text = await req.text();
@@ -374,7 +374,7 @@ export async function sendCadenceStepRoute(
   const parsed = parseProspectAndPlay(req, params);
   if (parsed instanceof Response) return parsed;
   // 409 synchronously when no persisted draft exists, but the actual send is
-  // fire-and-forget — an SDK send takes ~2 min and must not block the modal.
+  // fire-and-forget. An SDK send takes ~2 min and must not block the modal.
   const ledger = getLedger();
   try {
     const draft = ledger.getCadenceDraft(parsed);
@@ -384,7 +384,7 @@ export async function sendCadenceStepRoute(
   } catch (err) {
     return jsonResponse({ error: (err as Error).message ?? "send failed" }, 500, req);
   }
-  // Atomic claim — survives restart; `staleCutoffIso` lets a fresh click
+  // Atomic claim: survives restart; `staleCutoffIso` lets a fresh click
   // reclaim a stranded marker without waiting for the cold-boot sweep.
   const nowIso = new Date().toISOString();
   const staleCutoffIso = new Date(Date.now() - MAX_SEND_AGE_MS).toISOString();
@@ -424,7 +424,7 @@ export async function sendCadenceStepRoute(
         },
         "error",
       );
-      // advanceCadence never ran — release the stuck marker for a re-Send.
+      // advanceCadence never ran: release the stuck marker for a re-Send.
       try {
         ledger.clearCadenceSendingMarker(parsed);
       } catch {
@@ -499,7 +499,7 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
   const batchStartedAt = performance.now();
   void (async () => {
     try {
-      // Per-item marker clear — success already clears via advanceCadence,
+      // Per-item marker clear: success already clears via advanceCadence,
       // so this catches the failure path only; the clear is idempotent.
       await sendCadenceStepBatch(
         claimed,
@@ -521,7 +521,7 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
         outcome: "error",
         durationMs: performance.now() - batchStartedAt,
       });
-      // Only fires if the wrapper itself throws — release every marker so a
+      // Only fires if the wrapper itself throws: release every marker so a
       // retry needn't wait for the sweep.
       for (const item of claimed) {
         try {
@@ -545,7 +545,7 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
  * (issue #610). Mirrors `stopCadence`'s gates, then defers to
  * `skipDirectMailStep`, which re-checks them and records the skip as a
  * `skipped` sequence event. A mailpiece already submitted to the printer
- * cannot be skipped from here — recover it in the mail review first.
+ * cannot be skipped from here: recover it in the mail review first.
  */
 export function skipCadenceMailRoute(req: Request, params: Record<string, string>): Response {
   const parsed = parseProspectAndPlay(req, params);
@@ -608,7 +608,7 @@ export interface SkipMailBatchResult {
 }
 
 /**
- * Skip the letter on many cadences at once (issue #610) — the founder who
+ * Skip the letter on many cadences at once (issue #610). The founder who
  * never meant to send post; the rows are unselectable for email batches so
  * this takes its own item list. Sequential and per-item: one submitted
  * mailpiece reports its reason and never stops the rest.

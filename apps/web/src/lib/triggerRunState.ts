@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 const KEY_PREFIX = "oneshot-gtm:trigger-running:";
 /**
  * Client-side zombie cleanup for the spinner marker. 4h matches `MAX_RUN_AGE_MS`
- * in @oneshot-gtm/find — headroom so the spinner doesn't vanish during a
+ * in @oneshot-gtm/find: headroom so the spinner doesn't vanish during a
  * genuinely long finder run.
  */
 const MAX_RUNTIME_MS = 4 * 60 * 60 * 1000;
@@ -23,7 +23,7 @@ export function markTriggerRunning(name: string): void {
   try {
     localStorage.setItem(KEY_PREFIX + name, String(Date.now()));
   } catch {
-    // private mode / SSR — no-op
+    // private mode / SSR: no-op
   }
 }
 
@@ -74,7 +74,7 @@ export function useRunningTriggers(
   serverRunningSinceByName: Map<string, string | null>,
 ): Map<string, RunningInfo> {
   const [tick, setTick] = useState(0);
-  // Only run the 1s elapsed-counter tick while something is actually running —
+  // Only run the 1s elapsed-counter tick while something is actually running:
   // an idle page shouldn't re-render every second. Re-subscribes when the
   // boolean flips (a run starts/finishes).
   const anyRunning = names.some(

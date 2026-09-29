@@ -12,7 +12,7 @@ export function useLocalStorage(key: string, initial = false): [boolean, (v: boo
       const raw = localStorage.getItem(key);
       if (raw === "1" || raw === "true") setValue(true);
     } catch {
-      // private mode / SSR — ignore
+      // private mode / SSR: ignore
     }
   }, [key]);
   // Stable setter so consumers can memoize on it.

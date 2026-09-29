@@ -87,7 +87,7 @@ describe("pageSummary", () => {
     expect(pageSummary(7764, 0, 50)).toEqual({ from: 1, to: 50, page: 1, pages: 156 });
     expect(pageSummary(7764, 7750, 50)).toEqual({ from: 7751, to: 7764, page: 156, pages: 156 });
     expect(pageSummary(0, 0, 50)).toEqual({ from: 0, to: 0, page: 1, pages: 1 });
-    // An offset past the end reads as the last page — never "showing 101–95".
+    // An offset past the end reads as the last page. Never "showing 101–95".
     expect(pageSummary(10, 500, 50)).toEqual({ from: 1, to: 10, page: 1, pages: 1 });
     expect(pageSummary(95, 100, 50)).toEqual({ from: 51, to: 95, page: 2, pages: 2 });
     expect(pastEnd(95, 100)).toBe(true);

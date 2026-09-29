@@ -327,7 +327,7 @@ describe("pollCalendarMeetings — ingest + matching", () => {
   });
 
   it("a founder's dismiss survives a re-poll with an UNCHANGED attendee fingerprint", async () => {
-    // Use a non-exact (fuzzy) match so a dismiss is meaningful — an EXACT
+    // Use a non-exact (fuzzy) match so a dismiss is meaningful. An EXACT
     // match auto-links prospect_id, and dismissMeetingMatch only clears
     // suggested_prospect_id, not prospect_id (exact hits aren't the case
     // this mechanism exists to suppress). Deliberately NOT registering
@@ -381,7 +381,7 @@ describe("pollCalendarMeetings — ingest + matching", () => {
     calendarEventsQueue = [{ items: [event()] }];
     await pollCalendarMeetings();
     ledgerInstance.dismissMeetingMatch("primary", "e1");
-    // Same `updated` timestamp — the poller must not re-derive anything,
+    // Same `updated` timestamp. The poller must not re-derive anything,
     // including re-running the matcher that would otherwise flip a stale
     // dismiss back to exact.
     calendarEventsQueue = [{ items: [event()] }];

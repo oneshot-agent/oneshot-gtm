@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-// Unit-level proof that the safe wrappers never propagate a throw — a rejecting
+// Unit-level proof that the safe wrappers never propagate a throw. A rejecting
 // findEmail/verifyEmail (e.g. a OneShot backend "Job … timed out after N")
 // resolves to a graceful "drop this candidate" sentinel instead of aborting
 // the whole finder run.

@@ -2,7 +2,7 @@
  * Parse a JSON object out of an LLM response. Handles three shapes in order:
  *   1. A fenced ```json ... ``` block.
  *   2. A raw JSON document (with optional surrounding whitespace).
- *   3. A response with prose before/after — slice between the outer braces.
+ *   3. A response with prose before/after: slice between the outer braces.
  *
  * Returns `fallback` when all three attempts fail. The helper exists so every
  * finder/play that asks the LLM for structured JSON doesn't re-implement the

@@ -3,19 +3,14 @@ import { buildLinkedinUrl, buildTwitterUrl } from "./_luma-auth.ts";
 import type { LumaPublicAttendee } from "./_types.ts";
 
 /**
- * Primary discovery path for the luma-events finder. Instead of webSearch
- * (which surfaces search-INDEXED — i.e. older/established — Luma pages and so
- * reliably returns past events), this fetches Luma's per-city page directly.
+ * Discover upcoming Luma events from each city page
+ * (`https://luma.com/<city-slug>`). Its server-rendered `__NEXT_DATA__` blob
+ * contains start_at timestamps for filtering before paid event reads.
+ * City slugs work independently of caller IP, unlike `api.lu.ma/discover`.
+ * The webSearch fallback tends to return older indexed events.
  *
- * `https://luma.com/<city-slug>` server-renders the city's UPCOMING events into
- * a single `<script id="__NEXT_DATA__">` JSON blob. The city is selected by
- * slug (not by caller IP, unlike the `api.lu.ma/discover` endpoint), so it
- * works from any server. Each event carries a real `start_at` ISO timestamp,
- * so the caller can window-filter BEFORE spending on per-event reads.
- *
- * Undocumented surface: parsing is shape-tolerant (recursive collect) and every
- * failure mode returns null so the caller falls back to webSearch. Same posture
- * as `_luma-auth.ts`: spoofed UA, short timeout, graceful null, never throws.
+ * This undocumented surface uses recursive, shape-tolerant parsing, a spoofed
+ * user agent, and a short timeout. Failures return null for webSearch fallback.
  */
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -37,7 +32,7 @@ export interface LumaDiscoveredEvent {
 /**
  * Luma city slugs are irregular ("sf", not "sanfrancisco"), so map the common
  * hubs explicitly. An unmapped city returns null and the caller falls back to
- * webSearch. Trivially extensible — add the city-name → slug pair.
+ * webSearch. Trivially extensible: add the city-name → slug pair.
  */
 const CITY_SLUGS: Record<string, string> = {
   "san francisco": "sf",
@@ -82,7 +77,7 @@ export function cityToSlug(city: string): string | null {
 
 /**
  * Coarse, free topic gate on an event name. Returns true if the name contains
- * any word-boundary token derived from the founder's `topics` — so "AI Agents
+ * any word-boundary token derived from the founder's `topics`, so "AI Agents
  * Hackathon" passes for topic "AI agents" but "Evening Yoga" doesn't. Word
  * boundaries avoid substring false-hits (e.g. "ai" inside "Maizie"). Returns
  * true when `topics` is empty (no gate). Lenient by design: it only skips an
@@ -181,7 +176,7 @@ function collectEvents(root: unknown): LumaDiscoveredEvent[] {
 }
 
 /**
- * Fetch a Luma city page and return its embedded events (all of them — the
+ * Fetch a Luma city page and return its embedded events (all of them. The
  * caller applies the date window). Returns null on any failure (unknown slug,
  * non-2xx, no `__NEXT_DATA__`, parse error, network blip) so the caller falls
  * back to webSearch.
@@ -246,7 +241,7 @@ export interface LumaEventDetails {
   eventDateIso: string | null;
   /**
    * IANA zone Luma stamps on the event itself (e.g. "America/Los_Angeles").
-   * The most authoritative input to the date/time rendering chain — it beats
+   * The most authoritative input to the date/time rendering chain. It beats
    * the city lookup and the install zone. Null when the payload omits it.
    */
   eventTimezone: string | null;
@@ -309,7 +304,7 @@ function projectUrlPerson(raw: RawUrlPerson, role: "Host" | "Guest"): LumaPublic
 }
 
 /**
- * Fetch one event's structured details from `api.lu.ma/url?url=<slug>` — the
+ * Fetch one event's structured details from `api.lu.ma/url?url=<slug>`. The
  * same anonymous JSON the event page renders from. Unlike the webRead + LLM
  * extract (which only sees names in the rendered text), this carries each
  * person's `linkedin_handle` / `website`, which is exactly what the contact
@@ -395,7 +390,7 @@ export async function fetchEventDetails(slug: string): Promise<LumaEventDetails 
         if (typeof c === "string") eventCity = c;
       }
     }
-    // The event blurb is NOT on the event node — it sits on the wrapping
+    // The event blurb is NOT on the event node. It sits on the wrapping
     // `data` object as `description_mirror` (a ProseMirror doc). Capture the
     // first one found (the page's primary event; `data` is walked early), and
     // fall back to the calendar/category `description_short` / `description`

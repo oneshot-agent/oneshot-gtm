@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DomainPoolEntry } from "@oneshot-gtm/core";
 
 // The provisioned-domain list rides GET /api/setup only as a quick
-// best-effort copy: the platform's listDomains has taken 60–80s, and the
+// best-effort copy: the platform's listDomains has taken 60-80s, and the
 // sectioned /setup page renders nothing until the status call answers. The
 // status call must give up on the list fast (and answer with []), while the
 // dedicated /api/setup/domains route waits longer.
@@ -135,7 +135,7 @@ describe("domain pool cache", () => {
     };
     expect(await domainsOf(await getSetupStatus(req("/api/setup")))).toEqual([]);
     // Within a minute of an empty answer the status call answers at once
-    // with [] — the picker route is the one that retries.
+    // with []. The picker route is the one that retries.
     expect(await domainsOf(await getSetupStatus(req("/api/setup")))).toEqual([]);
     expect(calls).toBe(1);
     await vi.advanceTimersByTimeAsync(61_000);

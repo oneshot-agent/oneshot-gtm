@@ -85,7 +85,7 @@ const BASE = "/api";
  */
 /**
  * Error message for a non-2xx response: the server's `{ error }` string when
- * the body carries one (every 4xx we emit does — e.g. the /setup 400s that a
+ * the body carries one (every 4xx we emit does: e.g. the /setup 400s that a
  * section form shows inline), else `status statusText: fallback`.
  */
 async function errorMessage(res: Response, fallback: string): Promise<string> {
@@ -100,7 +100,7 @@ async function errorMessage(res: Response, fallback: string): Promise<string> {
       if (typeof body.requestId === "string") message += ` · request ${body.requestId}`;
     }
   } catch {
-    // body absent, empty, or not JSON — keep the fallback message
+    // body absent, empty, or not JSON. Keep the fallback message
   }
   return message;
 }
@@ -295,7 +295,7 @@ export const api = {
   recordOutcome: (req: OutcomeRequest) => postJson<{ id: number }>("/measure/outcome", req),
   doctor: () => getJson<{ checks: DoctorCheck[] }>("/doctor"),
   // Same checks, but the wallet balance is re-read instead of served from
-  // the day-old cache — the masthead pill's refresh control after a top-up.
+  // the day-old cache. The masthead pill's refresh control after a top-up.
   // The vendored demo has a fixture for /doctor only; there a "refresh" is
   // just the same read again, never a 404 on an uncaptured query variant.
   doctorRefreshBalance: () =>
@@ -357,7 +357,7 @@ export const api = {
     }>("/setup"),
   /**
    * The provisioned OneShot domain pool alone. Off the /setup critical path:
-   * the platform's listDomains has been seen taking 60–80s, so the status
+   * the platform's listDomains has been seen taking 60-80s, so the status
    * call above carries only a ~2.5s best-effort copy and the sender picker
    * refines it from this route.
    */
@@ -421,7 +421,7 @@ export const api = {
     limit?: number;
     /** Review-order override; omit to use the configured default. */
     order?: "ranked" | "newest";
-    /** Explicit row pick — the "drain selected" path. */
+    /** Explicit row pick. The "drain selected" path. */
     ids?: number[];
   }) => {
     const q = new URLSearchParams();
@@ -453,8 +453,8 @@ export const api = {
   resolveQueueContact: (id: number) =>
     postJson<{ ok: boolean; payload: Record<string, unknown> }>(`/queue/${id}/resolve-contact`, {}),
   approveQueue: (id: number) => postJson<{ ok: boolean }>(`/queue/${id}/approve`, {}),
-  // `reason` undefined → the row's note is left alone; a string — including
-  // "" — is written, so a founder can clear a prefilled reason.
+  // `reason` undefined → the row's note is left alone; a string: including
+  // "": is written, so a founder can clear a prefilled reason.
   rejectQueue: (id: number, reason?: string) =>
     postJson<{ ok: boolean }>(`/queue/${id}/reject`, reason === undefined ? {} : { reason }),
   // The reject box's LLM fallback: one sentence on why this row might not
@@ -484,7 +484,7 @@ export const api = {
   // here is rejected with a "moved to" note once the destination holds it.
   moveQueueRow: (id: number, workspace: string) =>
     postJson<MoveQueueRowResult>(`/queue/${id}/move`, { workspace }),
-  // Web UI no longer calls this — the drain modal navigates to /run/$playName
+  // Web UI no longer calls this. The drain modal navigates to /run/$playName
   // so drafts + lint flags are visible per row. Kept for the CLI's HTTP path
   // (`oneshot-gtm find drain`) and any external scripted callers.
   drainQueue: (req: DrainRequest) => postJson<DrainResult>("/queue/drain", req),

@@ -146,7 +146,7 @@ describe("registerAngleRefreshTrigger wiring (issue #357)", () => {
     });
 
     registeredTrigger!(1);
-    // The trigger is fire-and-forget (`void refreshProspectAngle(...)`) —
+    // The trigger is fire-and-forget (`void refreshProspectAngle(...)`):
     // flush the microtask queue so the async pipeline completes.
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
@@ -199,7 +199,7 @@ describe("registerAngleRefreshTrigger wiring (issue #357)", () => {
 
   // Round-2 correction, issue #357: refreshProspectAngle must reserve
   // against the install-wide daily spend ceiling before allowing
-  // gatherAngleEvidence to run its paid deepResearchPerson/webRead calls —
+  // gatherAngleEvidence to run its paid deepResearchPerson/webRead calls:
   // the same gate every other automated paid path (trigger runs, drains,
   // mail-research's address lookup) already enforces.
   it("reserves against the daily spend ceiling before gathering paid evidence", async () => {

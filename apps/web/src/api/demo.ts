@@ -4,7 +4,7 @@
  * `vite build --mode demo` sets VITE_DEMO=1, and from there every read in
  * `client.ts` is served from a static file under `fixtures/` and every write is
  * refused before it can touch anything. The point is that this is the same
- * dashboard, the same routes and the same rendering — only the transport moved.
+ * dashboard, the same routes and the same rendering. Only the transport moved.
  * A demo built out of hand-written screens would be a mockup, and the product's
  * one unfakeable claim is that it does not deal in those.
  *
@@ -90,7 +90,7 @@ function reportMiss(apiPath: string): void {
 /*
  * Responses are held for the life of the page.
  *
- * Several routes poll — Receipts every 20s, Today every 15s, the nav's alert
+ * Several routes poll: Receipts every 20s, Today every 15s, the nav's alert
  * queries every 60s. Against a static file that would be a request per tick
  * for a document that cannot have changed, on every open tab, forever. The
  * memo makes polling free, which is what lets demo mode leave the routes'
@@ -117,7 +117,7 @@ export function demoGet<T>(apiPath: string): Promise<T> {
        *
        * A rejected promise left in this map is handed to every later read of
        * the same path, so one dropped connection or one truncated body would
-       * keep failing for the life of the page — after the network came back,
+       * keep failing for the life of the page: after the network came back,
        * and with nothing to do about it but reload.
        */
       cache.delete(apiPath);

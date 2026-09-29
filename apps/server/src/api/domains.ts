@@ -7,8 +7,8 @@ import { jsonResponse } from "../server.ts";
  * UI calls these to act on a paused domain (the doctor flags one); the CLI
  * (`oneshot-gtm domains resume/pause`) hits the same core wrappers.
  *
- * Errors are surfaced verbatim (incl. the platform HTTP status) rather than
- * swallowed — a paused domain that won't resume because OneShot is returning
+ * Errors are surfaced verbatim (including the platform HTTP status) rather than
+ * swallowed. A paused domain that won't resume because OneShot is returning
  * 500s is exactly what the founder needs to see, not a silent no-op.
  */
 async function domainActionRoute(req: Request, action: "resume" | "pause"): Promise<Response> {

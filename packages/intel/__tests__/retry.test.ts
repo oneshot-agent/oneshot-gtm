@@ -41,7 +41,7 @@ describe("parseRetryAfter", () => {
     const pastDate = "Fri, 29 Aug 2026 09:59:00 GMT";
     const parsed = parseRetryAfter(pastDate, NOW);
     expect(parsed).toBe(0);
-    // Parsing yields 0, but the honoured delay is never 0 — see the floor test.
+    // Parsing yields 0, but the honoured delay is never 0: see the floor test.
     expect(backoffDelayMs(1, parsed, () => 0.5)).toBe(375);
   });
 });
@@ -68,8 +68,8 @@ describe("backoffDelayMs", () => {
   it("no longer silently caps Retry-After — over-budget values are rejected by complete() before a delay is computed", () => {
     // Finding 1 (#87): a Retry-After beyond MAX_RETRY_AFTER_MS used to be
     // silently truncated here and then honoured as a real (guaranteed-failing)
-    // wait. Capping is now complete()'s job — see the "gives up immediately on
-    // an over-budget Retry-After" integration test below — so at this layer an
+    // wait. Capping is now complete()'s job: see the "gives up immediately on
+    // an over-budget Retry-After" integration test below, so at this layer an
     // over-budget hint is honoured like any other, same as a hint under budget.
     expect(backoffDelayMs(1, 120_000)).toBe(120_000);
     expect(backoffDelayMs(1, 900_000)).toBe(900_000);
@@ -249,7 +249,6 @@ describe("complete() retry integration", () => {
     // Advance timers to trigger all retry attempts
     await vi.runAllTimersAsync();
 
-    // Verify the error matches expectations
     const error = await rejection;
     expect(error).toMatchObject({ status: 429 });
     expect(attemptCount).toBe(3);
@@ -424,7 +423,7 @@ describe("complete() retry integration", () => {
     const { complete } = await import("../src/client.ts");
 
     // Finding 2: Retry-After: 0 (and past HTTP-dates, which parse to 0) must not
-    // collapse the pacing — the honoured delay is floored at our own backoff.
+    // collapse the pacing. The honoured delay is floored at our own backoff.
     vi.spyOn(Math, "random").mockReturnValue(0.5);
 
     let attemptCount = 0;
@@ -510,7 +509,7 @@ describe("complete() retry integration", () => {
     global.fetch = vi.fn().mockImplementation(() => {
       attemptCount++;
       // Simulate a slow response (e.g., strategist with maxTokens: 4096 on reasoning model)
-      // that completes after 100 seconds — longer than the old 90s default.
+      // that completes after 100 seconds: longer than the old 90s default.
       return new Promise((resolve) => {
         setTimeout(() => {
           resolve({
@@ -527,7 +526,7 @@ describe("complete() retry integration", () => {
     const promise = complete({
       messages: [{ role: "user", content: "test" }],
       maxAttempts: 3,
-      // No timeoutMs — should wait indefinitely
+      // No timeoutMs: should wait indefinitely
     });
 
     // Advance past the old 90s default that would have aborted
@@ -552,7 +551,7 @@ describe("complete() retry integration", () => {
     global.fetch = vi.fn().mockImplementation(() => {
       attemptCount++;
       if (attemptCount === 1) {
-        // First call: 200 + {error:{code:429}} — should retry
+        // First call: 200 + {error:{code:429}}: should retry
         return Promise.resolve({
           ok: true,
           json: () =>
@@ -589,7 +588,7 @@ describe("complete() retry integration", () => {
     let attemptCount = 0;
     global.fetch = vi.fn().mockImplementation(() => {
       attemptCount++;
-      // 200 + non-numeric error code — should NOT retry
+      // 200 + non-numeric error code: should NOT retry
       return Promise.resolve({
         ok: true,
         json: () =>
@@ -618,7 +617,7 @@ describe("complete() retry integration", () => {
     const { complete } = await import("../src/client.ts");
 
     // Finding 1 (#87): Retry-After: 300 used to be silently capped to 60s and
-    // then honoured as a real wait — two guaranteed-failing retries and ~120s
+    // then honoured as a real wait: two guaranteed-failing retries and ~120s
     // of dead time. It must now fail on the FIRST attempt, with no sleep.
     let attemptCount = 0;
     global.fetch = vi.fn().mockImplementation(() => {
@@ -685,7 +684,7 @@ describe("complete() retry integration", () => {
   it("still retries a Retry-After within the budget, waiting the full hint", async () => {
     const { complete } = await import("../src/client.ts");
 
-    // A hint under MAX_RETRY_AFTER_MS is still honoured in full — only
+    // A hint under MAX_RETRY_AFTER_MS is still honoured in full. Only
     // over-budget hints are terminal.
     vi.spyOn(Math, "random").mockReturnValue(0.5);
 

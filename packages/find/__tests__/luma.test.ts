@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Integration test for runLumaFinder — mocks the SDK + helper boundaries the
+// Integration test for runLumaFinder: mocks the SDK + helper boundaries the
 // finder calls (webSearch, webRead, LLM extract, enrichProfile, findEmail,
 // verifyEmail, enrichVerifiedContact, findLinkedInUrl, ICP filter, ledger).
 //
 // Each case drives a specific scenario by mutating the shared state vars in
-// beforeEach + per-test setup. Concurrency = 1 isn't a knob here — runLumaFinder
-// is parallel by design at 3 — but the helpers are deterministic per-call so
+// beforeEach + per-test setup. Concurrency = 1 isn't a knob here: runLumaFinder
+// is parallel by design at 3, but the helpers are deterministic per-call so
 // ordering doesn't matter for the assertions below.
 
 interface EnqueuedRow {
@@ -227,7 +227,7 @@ function pastIso(days: number): string {
 beforeEach(() => {
   // Default to public-only mode regardless of the developer's local
   // LUMA_SESSION_COOKIE (applySecretsToEnv loads ~/.oneshot-gtm/.env on core
-  // import) — otherwise fetchAuthedGuestList makes REAL network calls per
+  // import). Otherwise fetchAuthedGuestList makes REAL network calls per
   // event. The auth-mode describe sets the cookie explicitly per test.
   delete process.env["LUMA_SESSION_COOKIE"];
   enqueued.length = 0;
@@ -517,7 +517,7 @@ describe("runLumaFinder — happy path", () => {
 
   // The finder is where an event instant stops being an instant. It resolves
   // the zone once (explicit → city → install) and stamps the rendered string on
-  // the row, so the play and the prompt never see `2026-08-27T02:30:00Z` — the
+  // the row, so the play and the prompt never see `2026-08-27T02:30:00Z`. The
   // shape that makes a model call a Wednesday SF evening "Thursday".
   describe("event zone resolution onto the queued row", () => {
     // 7:30pm Wednesday in San Francisco; "now" is the Monday before, so the
@@ -550,7 +550,7 @@ describe("runLumaFinder — happy path", () => {
     });
 
     it("keeps the raw instant on eventDate for the play's own date math", async () => {
-      // The machine field stays — the play still needs a real instant to decide
+      // The machine field stays. The play still needs a real instant to decide
       // upcoming/past/stale. It just never reaches the prompt.
       event("https://luma.com/abc", {
         eventDateIso: SF_EVENING,
@@ -876,7 +876,7 @@ describe("runLumaFinder — auth mode (LUMA_SESSION_COOKIE)", () => {
 
   it("with cookie unset, fetch is never called and public-only path runs (regression)", async () => {
     delete process.env["LUMA_SESSION_COOKIE"];
-    // Stub fetch anyway — if anything calls it, we'd see calls > 0.
+    // Stub fetch anyway: if anything calls it, we'd see calls > 0.
     stubFetch([]);
     event("https://luma.com/abc");
     const out = await runLumaFinder(baseConfig);
@@ -956,7 +956,7 @@ describe("runLumaFinder — auth mode (LUMA_SESSION_COOKIE)", () => {
 
   it("auth'd attendee dedupes against public one with the same name", async () => {
     process.env["LUMA_SESSION_COOKIE"] = "test-cookie";
-    // Auth surfaces "Alice" again — same person, should NOT double-enqueue.
+    // Auth surfaces "Alice" again: same person, should NOT double-enqueue.
     stubFetch([
       {
         status: 200,
@@ -976,7 +976,7 @@ describe("runLumaFinder — auth mode (LUMA_SESSION_COOKIE)", () => {
 });
 
 describe("runLumaFinder — person-level ICP gate", () => {
-  /** Two attendees, both carrying a bio — stage A can judge without spending. */
+  /** Two attendees, both carrying a bio: stage A can judge without spending. */
   const withBios = [
     {
       name: "Alice",
@@ -997,12 +997,12 @@ describe("runLumaFinder — person-level ICP gate", () => {
       role: "Guest",
     },
   ];
-  /** Two attendees with no bio at all — ~31% of real Luma candidates. */
+  /** Two attendees with no bio at all: ~31% of real Luma candidates. */
   const withoutBios = withBios.map((a) => ({ ...a, bio: null, role: null }));
 
   it("rejects on the attendee bio at stage A, before paying for anything", async () => {
     // The point of stage A: the bio is already on the payload, so a clear miss
-    // costs $0 to drop — no findEmail, no verify, no enrich.
+    // costs $0 to drop: no findEmail, no verify, no enrich.
     personVerdict = "reject";
     event("https://luma.com/abc", { publicAttendees: withBios });
     const out = await runLumaFinder(baseConfig);

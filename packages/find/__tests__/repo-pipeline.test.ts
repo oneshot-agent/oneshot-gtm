@@ -3,12 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 /**
  * Coverage for the shared `_repo-pipeline.ts` module: snippet-ICP-first
  * ordering, GitHub user fallback paths, deepResearchPerson last-resort,
- * concurrency. Driven through `runGitHubTopicsFinder` as the entry point —
+ * concurrency. Driven through `runGitHubTopicsFinder` as the entry point:
  * the only repo finder we have today.
  *
  * Discovery-shape concerns specific to github-topics live in
  * `github-topics-pipeline.test.ts`. This file deliberately does NOT re-test
- * those — focus stays on the per-candidate body.
+ * those: focus stays on the per-candidate body.
  */
 
 const { readme } = vi.hoisted(() => ({ readme: vi.fn() }));
@@ -98,9 +98,9 @@ interface MockProfile {
   phone?: string;
   fullphone?: Array<{ fullphone: string }>;
 }
-/** Path B' webSearch results — array of result URLs returned to the pipeline. */
+/** Path B' webSearch results: array of result URLs returned to the pipeline. */
 let nextWebSearchUrls: string[] = [];
-/** Path B' enrichProfile result — what the SDK returns when called with a linkedinUrl. */
+/** Path B' enrichProfile result: what the SDK returns when called with a linkedinUrl. */
 let nextEnrichProfile: MockProfile | null = null;
 const calls2 = { webSearch: 0, enrichProfile: 0 };
 
@@ -188,7 +188,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
   return {
     ...actual,
     complete: async () => {
-      // Pipeline only calls complete() for ICP now — README+LLM extract is gone.
+      // Pipeline only calls complete() for ICP now: README+LLM extract is gone.
       calls.llmIcp++;
       return {
         content: JSON.stringify({ match: icpMatchResult, reason: icpReason }),
@@ -343,7 +343,7 @@ describe("repo pipeline — ICP-first ordering", () => {
 describe("repo pipeline — GitHub user fallback in resolveContact", () => {
   it("uses GitHub blog domain when extract.companyDomain is null", async () => {
     nextSearchHits = [makeRepo("https://github.com/ada/agent")];
-    // blog domain only — no other companyDomain available
+    // blog domain only: no other companyDomain available
     defaultGhUser = {
       login: "ada",
       name: "Ada Lovelace",
@@ -379,7 +379,7 @@ describe("repo pipeline — GitHub user fallback in resolveContact", () => {
       login: "ada",
       name: "Ada Lovelace",
       email: "ada@personal.dev",
-      blogDomain: "acme.dev", // same as extract — but we'll fall back to direct email
+      blogDomain: "acme.dev", // same as extract, but we'll fall back to direct email
       company: null,
     };
     const out = await runGitHubTopicsFinder(baseOpts);
@@ -514,7 +514,7 @@ describe("repo pipeline — deepResearchPerson last-resort", () => {
 describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichProfile)", () => {
   it("rescues directly when enrichProfile returns an email", async () => {
     nextSearchHits = [makeRepo("https://github.com/ada/agent")];
-    // Name present but no company — exactly the Path B' trigger condition.
+    // Name present but no company: exactly the Path B' trigger condition.
     defaultGhUser = {
       login: "ada",
       name: "Ada Lovelace",
@@ -534,7 +534,7 @@ describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichPr
     // enrichProfile fires twice now: once on Path B' to recover the email,
     // and once post-verify to capture phone (the always-on enrichment step).
     expect(calls2.enrichProfile).toBe(2);
-    // enrichProfile gave us the email directly — no further findEmail / deep-research.
+    // enrichProfile gave us the email directly: no further findEmail / deep-research.
     expect(calls.findEmail).toBe(0);
     expect(calls.deepResearch).toBe(0);
     expect(out.enqueued).toBe(1);
@@ -551,7 +551,7 @@ describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichPr
       company: null,
     };
     nextWebSearchUrls = ["https://www.linkedin.com/in/ada-lovelace"];
-    // No email + no company_domain on the profile — but a company name.
+    // No email + no company_domain on the profile, but a company name.
     nextEnrichProfile = { full_name: "Ada Lovelace", company: "Stealth Agents" };
     nextDeepResearch = {
       best_work_email: "ada@stealth.dev",
@@ -579,7 +579,7 @@ describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichPr
     nextWebSearchUrls = ["https://example.com/not-linkedin"]; // no /in/ URL
     const out = await runGitHubTopicsFinder(baseOpts);
     expect(calls2.webSearch).toBe(1);
-    expect(calls2.enrichProfile).toBe(0); // never called — no URL to feed it
+    expect(calls2.enrichProfile).toBe(0); // never called: no URL to feed it
     expect(calls.deepResearch).toBe(0); // gate stays closed without company
     expect(out.droppedEnrichment).toBe(1);
   });
@@ -599,7 +599,7 @@ describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichPr
     await runGitHubTopicsFinder(baseOpts);
     // LinkedIn capture is a first-class output, so the webSearch runs for every
     // candidate. It used to be gated on `!companyForGate`, which meant the best
-    // candidates — the ones that already had a company — never got a LinkedIn
+    // candidates (the ones that already had a company) never got a LinkedIn
     // URL at all (11 of 80 in production).
     expect(calls2.webSearch).toBe(1);
     // The $0.005 enrichProfile stays gated: its only job is recovering a company
@@ -661,7 +661,7 @@ describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichPr
     // The LinkedIn webSearch still runs (it is no longer tied to the email
     // path), but Path B's paid enrichProfile is skipped because the company is
     // already known. The post-verify enrichVerifiedContact still fires to
-    // capture phone + linkedin from PersonResult — closing the gap where Path A
+    // capture phone + linkedin from PersonResult: closing the gap where Path A
     // candidates were never enriched in the past.
     nextSearchHits = [makeRepo("https://github.com/ada/agent")];
     defaultGhUser = {

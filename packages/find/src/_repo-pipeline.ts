@@ -40,7 +40,7 @@ export interface RepoCandidate {
 
 export interface RepoPipelineCtx {
   icp: string | null;
-  /** Founder's vendor list — passed to detectRepoStack as the matching vocabulary. */
+  /** Founder's vendor list: passed to detectRepoStack as the matching vocabulary. */
   vocab: string[];
   /**
    * Subset of `vocab` the founder competes with head-on. A candidate whose
@@ -55,7 +55,7 @@ export interface RepoPipelineCtx {
   /** Mutable accumulator. Workers mutate fields on this directly. */
   result: FinderResult;
   /**
-   * Boxed flag shared across the parallelMap pool. Soft halt — over-shoot up
+   * Boxed flag shared across the parallelMap pool. Soft halt: over-shoot up
    * to (concurrency-1) is acceptable.
    */
   halted: { value: boolean };
@@ -72,7 +72,7 @@ export interface RepoPipelineCtx {
 
 /**
  * Process a single candidate through the full pipeline. Mutates ctx.result.
- * Never throws — internal exceptions become droppedEnrichment increments via
+ * Never throws: internal exceptions become droppedEnrichment increments via
  * the surrounding try/catch blocks. Safe to call concurrently across workers.
  */
 export async function processRepoCandidate(
@@ -92,7 +92,7 @@ export async function processRepoCandidate(
   }
   const ledger = getLedger();
   // The play isn't known until the stack is detected below, so check both
-  // possible routes — a repo enqueued under either play is a duplicate.
+  // possible routes. A repo enqueued under either play is a duplicate.
   if (
     ledger.isQueueDuplicate("stack-consolidation", hit.url) ||
     ledger.isQueueDuplicate("competitor-switch", hit.url)
@@ -111,7 +111,7 @@ export async function processRepoCandidate(
   };
   const errKindPrefix = ctx.sourceTag.replace(/^find:/, "");
 
-  // 1) ICP on the snippet — cheap pre-filter ahead of the paid chain.
+  // 1) ICP on the snippet: cheap pre-filter ahead of the paid chain.
   const snippetFilter = await icpFilter({
     icp: ctx.icp,
     candidate: {
@@ -121,7 +121,7 @@ export async function processRepoCandidate(
     },
   });
   if (snippetFilter.match === null) {
-    // Transient classifier failure — drop without persisting. A rejection
+    // Transient classifier failure: drop without persisting. A rejection
     // would burn the dedupeKey forever (isQueueDuplicate ignores status).
     result.droppedEnrichment++;
     return;
@@ -139,7 +139,7 @@ export async function processRepoCandidate(
     return;
   }
 
-  // 2) Stack detection — deterministic manifest scan via the GitHub Contents
+  // 2) Stack detection: deterministic manifest scan via the GitHub Contents
   // API (free, authoritative). Author/company come from the user profile.
   const owner = ownerFromRepoUrl(hit.url);
   const repoName = repoNameFromRepoUrl(hit.url);
@@ -172,7 +172,7 @@ export async function processRepoCandidate(
     authorRole: null, // not derivable from GitHub user API
     companyName: ghUserInfo?.company ?? null,
     // GitHub's blog field could be corporate or personal; mapped to
-    // companyDomain — resolveContact reads both, so the choice is behavior-neutral.
+    // companyDomain: resolveContact reads both, so the choice is behavior-neutral.
     companyDomain: ghUserInfo?.blogDomain ?? null,
     personalDomain: null,
     stackDetected: stack.detected,
@@ -265,7 +265,7 @@ export async function processRepoCandidate(
   if (gate.action === "reject") {
     result.droppedRole = (result.droppedRole ?? 0) + 1;
     persistRoleRejection({
-      // The resolved play, not the module constant — a competitor-routed repo
+      // The resolved play, not the module constant. A competitor-routed repo
       // must audit under competitor-switch, or the override row lies.
       playName,
       dedupeKey: hit.url,
@@ -282,7 +282,7 @@ export async function processRepoCandidate(
     return;
   }
   if (gate.action === "defer") {
-    // Classifier/platform outage — not a verdict; retried, never blacklisted.
+    // Classifier/platform outage, not a verdict; retried, never blacklisted.
     result.droppedEnrichment++;
     return;
   }
@@ -407,12 +407,12 @@ interface ResolvedContact {
   phone: string | null;
   /** Job title, when any enrichment path surfaced one. Feeds the ICP gate. */
   title: string | null;
-  /** The raw deepResearchPerson result when Path C ran — stashed on the row as `personResearch`. */
+  /** The raw deepResearchPerson result when Path C ran: stashed on the row as `personResearch`. */
   research?: unknown;
   /** Free-text bio/headline from post-verify enrichment. Secondary gate evidence. */
   summary: string | null;
   /**
-   * True when Path B' already ran enrichProfile against `linkedinUrl` — lets
+   * True when Path B' already ran enrichProfile against `linkedinUrl`: lets
    * the ICP gate skip a duplicate fill-the-gap lookup.
    */
   enrichedByLinkedin: boolean;
@@ -447,7 +447,7 @@ export async function resolveContact(args: {
   // ICP gate never buys the same lookup a second time.
   let didEnrichByLinkedin = false;
 
-  // LinkedIn capture runs for EVERY candidate, ahead of the email paths — it
+  // LinkedIn capture runs for EVERY candidate, ahead of the email paths. It
   // is a first-class output read by all return paths, not a side effect of
   // company recovery. Cached inside findLinkedInUrl.
   if (extract.authorFullName || extract.githubHandle) {
@@ -495,7 +495,7 @@ export async function resolveContact(args: {
   }
 
   // Path B': enrichProfile off the LinkedIn URL, to recover company /
-  // company_domain / sometimes email — without it, Path C fails its
+  // company_domain / sometimes email, without it, Path C fails its
   // required-identifier gate. The paid enrichProfile only fires when a
   // company is still missing.
   let companyForGate: string | null = extract.companyName ?? null;
@@ -512,7 +512,7 @@ export async function resolveContact(args: {
       const enrichedPhone = extractFirstPhone(profile);
       // Cache the linkedin-keyed enrich by the SURFACED email so the later
       // by-email enrichVerifiedContact becomes a cache hit. Only when
-      // profile.email is directly surfaced — a findEmail-derived email may be
+      // profile.email is directly surfaced. A findEmail-derived email may be
       // a different person, and caching it would poison.
       if (profile?.email) {
         try {
@@ -524,7 +524,7 @@ export async function resolveContact(args: {
           // cache write is best-effort.
         }
       }
-      // 1) enrichProfile gave us a direct email — use it.
+      // 1) enrichProfile gave us a direct email. Use it.
       if (profile?.email) {
         const candidate: ResolvedContact = {
           title: profileTitle(profile),
@@ -538,7 +538,7 @@ export async function resolveContact(args: {
         };
         if (await accept(candidate)) return candidate;
       }
-      // 2) Got a company_domain — try findEmail with it.
+      // 2) Got a company_domain: try findEmail with it.
       if (profile?.company_domain) {
         const viaEnriched = await tryFindEmail(
           profile.company_domain,
@@ -561,7 +561,7 @@ export async function resolveContact(args: {
         }
         domainForGate = profile.company_domain;
       }
-      // 3) At minimum we may have learned a company name — feeds Path C's gate.
+      // 3) At minimum we may have learned a company name: feeds Path C's gate.
       if (profile?.company) companyForGate = profile.company;
     } catch (err) {
       if (err instanceof ContactStopped) throw err;
@@ -579,7 +579,7 @@ export async function resolveContact(args: {
 
   async function researchContact(): Promise<ResolvedContact | null> {
     // Last existing paid stage, ahead of the README. The API needs strong
-    // identifiers — a repo URL alone is empirically not enough, so require a
+    // identifiers. A repo URL alone is empirically not enough, so require a
     // known email OR full name AND company; the repoUrl still rides along as
     // `socialMediaUrl` for bonus signal.
     if (!useDeepResearch) return null;
@@ -666,9 +666,9 @@ export async function resolveContact(args: {
 }
 
 /**
- * Single findEmail attempt with consistent fault-handling. findEmail throws
+ * Single findEmail attempt with consistent fault-handling. FindEmail throws
  * synchronously without a `full_name`, and any throw here would tear down the
- * parallelMap pool — both failure modes return null so the caller falls
+ * parallelMap pool. Both failure modes return null so the caller falls
  * through to the next tier.
  */
 async function tryFindEmail(
@@ -707,7 +707,7 @@ async function tryFindEmail(
 
 /**
  * Compose the snippet-ICP `summary` from whichever signal is present
- * (vendors, topics, or bare description — never an empty `topics:` tail).
+ * (vendors, topics, or bare description. Never an empty `topics:` tail).
  * Exported for direct unit testing.
  */
 export function describeForIcp(hit: RepoCandidate): string {

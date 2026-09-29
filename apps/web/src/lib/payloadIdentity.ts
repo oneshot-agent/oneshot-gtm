@@ -26,7 +26,7 @@ export function nameFor(payload: unknown): string | null {
   if (!p) return null;
   if (typeof p["name"] === "string") return p["name"] as string;
   if (typeof p["founderName"] === "string") return p["founderName"] as string;
-  // Pre-enrichment rejected rows only carry a source URL — derive a handle.
+  // Pre-enrichment rejected rows only carry a source URL: derive a handle.
   const repoUrl = typeof p["repoUrl"] === "string" ? (p["repoUrl"] as string) : null;
   if (repoUrl) {
     const m = repoUrl.match(/github\.com\/([^/]+)\/([^/?#]+)/);
@@ -46,7 +46,7 @@ export function nameFor(payload: unknown): string | null {
 
 /**
  * The finder-specific tail of `source` ("find:github-stars:vercel/eve" ->
- * "vercel/eve") — which repo / cohort matched. Empty when source is just the
+ * "vercel/eve"), which repo / cohort matched. Empty when source is just the
  * finder name (fully redundant with the play column).
  */
 export function sourceDetail(source: string | null | undefined): string {
@@ -75,7 +75,7 @@ export function linkedinUrlFor(payload: unknown): string | null {
   if (!p) return null;
   const v = p["linkedinUrl"];
   if (typeof v !== "string" || v.length === 0) return null;
-  // Defense in depth — payload comes from sqlite but a stale/garbage row should
+  // Defense in depth: payload comes from sqlite but a stale/garbage row should
   // never render as a clickable javascript:// or data:// link.
   return /^https?:\/\/(?:[a-z0-9-]+\.)*linkedin\.com\/in\//i.test(v) ? v : null;
 }

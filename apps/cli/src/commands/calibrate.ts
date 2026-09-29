@@ -30,11 +30,11 @@ import { c, header, note, ok, warn } from "../output.ts";
  * Deliberately absent, as decisions not omissions:
  * - no `--force`: fitting below threshold produces noise dressed as a model;
  * - no approvals-fallback: fitting on human approve/reject labels was
- *   explicitly deferred — this command trains on OUTCOMES (human replies,
+ *   explicitly deferred. This command trains on OUTCOMES (human replies,
  *   meetings, deals) only, and automatic rejections are structurally
  *   excluded upstream (they are never outcome rows at all).
  *
- * These are fitting floors, not adoption bars — adoption stays evidence-
+ * These are fitting floors, not adoption bars: adoption stays evidence-
  * gated later (future config field: queuePriorityCalibration "off"|"shadow").
  */
 export const CALIBRATION_THRESHOLDS = {

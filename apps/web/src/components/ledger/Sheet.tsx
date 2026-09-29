@@ -3,7 +3,7 @@ import { cn } from "../../lib/cn.ts";
 import { SheetHeading } from "./SheetHeading.tsx";
 
 /**
- * The open row: a sheet under the entry that reads left to right — the case,
+ * The open row: a sheet under the entry that reads left to right. The case,
  * then the letter. No boxes: hierarchy comes from type and hairlines, and the
  * one accent on the page is the total line under a sendable letter.
  *

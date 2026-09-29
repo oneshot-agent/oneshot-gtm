@@ -47,7 +47,7 @@ export interface DrainOutcome {
   errors: Array<{ id: number; message: string }>;
   /**
    * Set when the install-wide daily spend ceiling (issue #481) was already
-   * reached before this drain could claim any rows — the named reason
+   * reached before this drain could claim any rows. The named reason
    * surfaced on trigger cards / in `doctor`. Rows stay approved untouched;
    * a manual `/queue` send-draft or mark-sent for an individual row still
    * works, only this BATCH drain path is bound by the ceiling.
@@ -67,12 +67,12 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
   const ledger = getLedger();
   const limit = opts.limit ?? 50;
   // Rows on a hand-sent channel (X DMs today; see channels.ts) never flip to
-  // sent on drain — their rows stay
+  // sent on drain: their rows stay
   // approved until the founder hand-sends and hits Mark sent. Once such a row
   // has a clean draft, later drains must leave it alone: re-dispatching would
   // pay the LLM again and stomp a draft the founder may have already copied.
   // But those rows still occupy the oldest-first claim slice, so keep claiming
-  // further batches past them — otherwise an un-hand-sent backlog the size of
+  // further batches past them. Otherwise an un-hand-sent backlog the size of
   // one batch starves every newer row of drafting.
   const rows: QueueRow[] = [];
   for (;;) {
@@ -107,19 +107,19 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
   // Install-wide daily spend ceiling (issue #481): a drain is an AUTOMATED
   // paid path (whether fired by the button, `find drain`, or a cron-driven
   // `--once`), so it's bound by the same ceiling as finder trigger runs.
-  // Reserved for the whole claimed batch up front — a conservative
-  // worst-case per row — and released once every row's actual spend has
+  // Reserved for the whole claimed batch up front. A conservative
+  // worst-case per row, and released once every row's actual spend has
   // posted to `receipts`. When refused, the claimed rows are left approved
   // untouched (dequeueApproved's lease self-expires) so the next drain
   // (today with headroom, or tomorrow after the reset) picks them up.
   //
-  // A refusal at the FULL batch size doesn't mean zero headroom, though —
+  // A refusal at the FULL batch size doesn't mean zero headroom, though:
   // it only means the whole batch's worst-case cost doesn't fit. Size the
   // batch down to what remainingUsd actually allows and retry once before
   // giving up outright, so e.g. a $10 ceiling with $0 spent and 10 rows at
   // $2/row (a $20 ask) still dispatches the four rows that fit under the
   // ceiling instead of none. The retry is still one atomic
-  // reserveSpendIfUnderCeiling call — this only changes how large a batch
+  // reserveSpendIfUnderCeiling call. This only changes how large a batch
   // we ask it to reserve, never how the reservation itself is checked.
   let reservation = tryReserveDailySpend(rows.length * DEFAULT_DRAIN_ROW_RESERVATION_USD);
   if (!reservation.granted) {
@@ -127,7 +127,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
     const remainingUsd = reservation.status.remainingUsd ?? 0;
     // Subtract a tiny epsilon before flooring so a remainingUsd that's an
     // exact multiple of rowCost doesn't round up into a batch cost that
-    // would land AT the ceiling — reserveSpendIfUnderCeiling's own check is
+    // would land AT the ceiling: reserveSpendIfUnderCeiling's own check is
     // strict (`>=` refuses), so the affordable batch must cost strictly
     // less than remainingUsd, not merely no more than it.
     const affordableRows = Math.max(0, Math.floor((remainingUsd - 1e-9) / rowCost));
@@ -149,7 +149,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
         draft = await dispatchOneTarget(opts, row);
       } catch (err) {
         // Daily caps exhausted: leave this row (and the rest of the batch)
-        // approved with their reviewed drafts intact — the 15-min drain lease
+        // approved with their reviewed drafts intact. The 15-min drain lease
         // expires and tomorrow's drain picks them up with fresh capacity.
         // Writing the "(error)" stub here would stomp a founder-reviewed draft.
         if (isSendDeferred(err)) {
@@ -183,7 +183,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
             ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
           },
           // Drain sends are unattended: the founder approved the row, never
-          // this draft — recorded as `auto_sent`, apart from reviewed sends.
+          // this draft: recorded as `auto_sent`, apart from reviewed sends.
           sentBy: "machine",
         });
         if (draft.needsReview && !draft.sent && !opts.dryRun) {
@@ -198,7 +198,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
             try {
               ledger.setQueueProspectId(row.id, prospectId);
             } catch {
-              // best-effort backfill — a schema mismatch shouldn't break the drain
+              // best-effort backfill. A schema mismatch shouldn't break the drain
             }
           }
           outcome.sent++;
@@ -259,7 +259,7 @@ function firstDraft(drafted: DraftedRow[]): DraftedRow {
  * draft per input target (in order), so drafted[i] always corresponds to
  * rows[i]. We only flip a row to `sent` when its draft actually sent (or in
  * dry-run, when we'd have sent it). The earlier `.filter().map((_, i) => rows[i])`
- * pattern was wrong — after filtering, the index no longer maps to the
+ * pattern was wrong: after filtering, the index no longer maps to the
  * original row, so partial sends marked the wrong rows as sent.
  */
 export function idsForSentDrafts(
@@ -277,7 +277,7 @@ export function idsForSentDrafts(
   return ids;
 }
 
-/** A persisted draft with a body and no error flag — reviewed or reviewable as-is. */
+/** A persisted draft with a body and no error flag: reviewed or reviewable as-is. */
 function hasCleanDraft(row: QueueRow): boolean {
   if (!row.last_draft_json) return false;
   try {
@@ -298,7 +298,7 @@ function hasCleanDraft(row: QueueRow): boolean {
  * Exported because `/api/run` persists sent rows through its own path
  * (`persistDraftsToQueue`) and never linked them: 680 of 681 sent queue rows
  * carried a NULL `prospect_id`, which quietly broke every join from a queued
- * target back to the person — including the one `ops/expandi-sync` reads.
+ * target back to the person: including the one `ops/expandi-sync` reads.
  */
 export function backfillProspectId(row: QueueRow | null): number | null {
   if (!row) return null;

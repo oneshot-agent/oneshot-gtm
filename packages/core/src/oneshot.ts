@@ -71,11 +71,11 @@ export interface SendEmailInput {
   to: string;
   subject: string;
   body: string;
-  /** OneShot provider only — ignored when config.emailProvider is "gmail" (Gmail always sends from the authenticated account). */
+  /** OneShot provider only: ignored when config.emailProvider is "gmail" (Gmail always sends from the authenticated account). */
   fromDomain?: string;
   /**
    * Send even if ANOTHER workspace emailed this recipient inside the hold
-   * window. Only the manual queue send sets this — the founder has seen the
+   * window. Only the manual queue send sets this. The founder has seen the
    * `contacted-elsewhere` flag and is choosing to send anyway.
    */
   allowContactedElsewhere?: boolean;
@@ -185,7 +185,7 @@ export async function getAgent(): Promise<OneShot> {
 }
 
 /**
- * The wallet's provisioned sending-domain pool — validates a `sendingDomain`
+ * The wallet's provisioned sending-domain pool: validates a `sendingDomain`
  * is wallet-owned before a live send 403s. Transient outages return `[]`:
  * callers must treat an empty list as "unknown", not "no domains owned".
  * Genuine auth failures DO propagate (a real config error).
@@ -215,7 +215,7 @@ export async function listSendingDomains(): Promise<DomainPoolEntry[]> {
 
 /**
  * Resume a paused sending domain in the wallet's pool (SDK `resumeDomain`).
- * Unlike `listSendingDomains`, errors PROPAGATE — this is an explicit operator
+ * Unlike `listSendingDomains`, errors PROPAGATE. This is an explicit operator
  * action, so a transient/auth failure must be surfaced (and retried), never
  * swallowed into a false "done". Returns the domain's new pool status.
  */
@@ -330,7 +330,7 @@ async function sendEmailViaGmail(input: SendEmailInput, ctx: CallContext, identi
 
 /**
  * Smartlead-path send. Same contract as Gmail: cost 0, Smartlead's message id
- * as request id. No idempotency mechanism — a timeout-then-retry can
+ * as request id. No idempotency mechanism. A timeout-then-retry can
  * double-send; OneShot is the only transport with a true idempotency key.
  */
 async function sendEmailViaSmartlead(
@@ -383,7 +383,7 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
   // Suppression backstop, ahead of everything else: a previously hard-bounced
   // address can only fail again, and the send is billed before dispatch. Every
   // caller funnels through here (plays, cadence, queue), so this is the one
-  // place that guarantees it. `replyEmail` is deliberately NOT gated — a manual
+  // place that guarantees it. `replyEmail` is deliberately NOT gated. A manual
   // inbox reply goes to someone who just emailed us, so they demonstrably exist.
   const suppression = getLedger().suppressionFor(input.to);
   if (suppression) {
@@ -393,7 +393,7 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
   }
   // Same backstop for reply-stream verdicts: an unsubscribe or a dead-mailbox
   // autoresponder is as final as a hard bounce, and stopping one cadence isn't
-  // enough — a later play could re-enroll the prospect and land here again.
+  // enough. A later play could re-enroll the prospect and land here again.
   const contactStop = getLedger().contactSuppressionFor(input.to);
   if (contactStop) {
     const why =
@@ -412,7 +412,7 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
   }
   // Sender rotation: resolve the sticky per-prospect identity BEFORE any
   // network call. Throws SendDeferredError when every identity is at its
-  // daily cap — callers leave the work queued for tomorrow.
+  // daily cap: callers leave the work queued for tomorrow.
   const identity = resolveSenderIdentity(input.to);
   if (identity.provider === "gmail") {
     return sendEmailViaGmail(input, ctx, identity);
@@ -431,7 +431,7 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
   // platform's domain rotation: the named domain auto-provisions if unknown and
   // sends as-is (the worker only requires status='verified'; there's no
   // domain_not_owned 403). The trade-off is that pinned sends BYPASS the
-  // server's warm-up gating — the per-identity client cap is the only throttle.
+  // server's warm-up gating. The per-identity client cap is the only throttle.
   // An unset domain falls back to the SDK's shared demo domain.
   const fromDomain = input.fromDomain ?? identity.sendingDomain ?? cfg.sendingDomain ?? null;
 
@@ -448,7 +448,7 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
   if (fromDomain) {
     // Send from <mailbox-or-first-name>@<domain> with the founder's name as the
     // display name. from_mailbox (localpart) + from_name (display name) are native fields in
-    // SDK ≥0.16.2 — from_name ships as a separate field, so the bare
+    // SDK ≥0.16.2: from_name ships as a separate field, so the bare
     // from_address still passes the server's strict email validation.
     opts.from_domain = fromDomain;
     opts.from_mailbox = identity.mailbox?.trim() || fromLocalpart(cfg.founderName);
@@ -469,10 +469,10 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
 }
 
 /**
- * Every outbound email funnels through here. Order matters: 1. hard-bounce
- * suppression (permanent, never overridable); 2. the ATOMIC cross-workspace
- * claim, before any routing or network; 3. dispatch, then confirm (success)
- * or release (failure) — a failed send never counts as a touch. `replyEmail`
+ * Every outbound email funnels through here. Order matters: 1. Hard-bounce
+ * suppression (permanent, never overridable); 2. The ATOMIC cross-workspace
+ * claim, before any routing or network; 3. Dispatch, then confirm (success)
+ * or release (failure). A failed send never counts as a touch. `replyEmail`
  * is deliberately not gated; it only records its touch.
  */
 export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
@@ -501,7 +501,7 @@ export interface ReplyEmailInput {
   /** Sender identity that RECEIVED the inbound email; the reply goes out from it. */
   identityId: string;
   to: string;
-  /** Inbound subject — normalized to "Re: …" here (idempotent). */
+  /** Inbound subject: normalized to "Re: …" here (idempotent). */
   subject: string;
   body: string;
   /** Gmail only: thread to attach the reply to (sender-side threading). */
@@ -523,7 +523,7 @@ export function replySubject(subject: string): string {
 }
 
 /**
- * Reply to an inbound email from the identity whose mailbox received it —
+ * Reply to an inbound email from the identity whose mailbox received it:
  * deliberately NOT sender-rotated: a reply must keep the thread's From
  * address and must not be deferred by warmup caps (callType "email.reply"
  * stays out of per-identity cap counting). Both transports thread for real
@@ -706,20 +706,20 @@ export async function enrichProfile(input: EnrichInput, ctx: CallContext) {
 }
 
 export interface DeepResearchPersonInput {
-  /** A known email address — feeds dossier lookup. */
+  /** A known email address: feeds dossier lookup. */
   email?: string;
   /** Any social URL (LinkedIn, Twitter, GitHub) the engine can chase. */
   socialMediaUrl?: string;
   /** Best-guess full name. */
   name?: string;
-  /** Best-guess company name (free text — can be a domain or a brand). */
+  /** Best-guess company name (free text: can be a domain or a brand). */
   company?: string;
 }
 
 /**
  * Multi-source person dossier: emails (work + personal + alts), phones,
- * org history, social profiles. Higher cost (~$0.05) and 2–5 min async vs.
- * findEmail's seconds-and-half-a-cent — use when you don't have a
+ * org history, social profiles. Higher cost (~$0.05) and 2-5 min async vs.
+ * findEmail's seconds-and-half-a-cent. Use when you don't have a
  * `companyDomain` to feed findEmail (e.g. GitHub repo owners with no
  * resolvable company), not as a default first-pass.
  */
@@ -833,11 +833,11 @@ export interface PeopleSearchInput {
 }
 
 /**
- * B2B-database-backed person search — $0.01 flat per call, up to 500 results
+ * B2B-database-backed person search: $0.01 flat per call, up to 500 results
  * (server cap; SDK default 100). Unlike `findEmail`/`enrichProfile`, this
  * doesn't resolve ONE known candidate: it discovers a whole slate up front,
  * each already carrying `best_work_email`/`phone`/`title`/`company_domain`
- * where the database has them — a finder can qualify against this list
+ * where the database has them. A finder can qualify against this list
  * directly instead of paying per-candidate through
  * `resolveVerifyEnrichQualify`.
  */
@@ -882,7 +882,7 @@ export interface CompanySearchInput {
   limit?: number;
 }
 
-/** Company-database search — $0.01 flat per call, up to 100 results. All filters optional (an empty call is valid per the SDK signature). */
+/** Company-database search: $0.01 flat per call, up to 100 results. All filters optional (an empty call is valid per the SDK signature). */
 export async function companySearch(input: CompanySearchInput, ctx: CallContext) {
   const agent = await getAgent();
   const opts: Parameters<OneShot["companySearch"]>[0] = {
@@ -920,9 +920,9 @@ export interface EnrichCompanyInput {
 }
 
 /**
- * Company enrichment from a domain, name, LinkedIn URL or stock ticker — $0.005 per call.
+ * Company enrichment from a domain, name, LinkedIn URL or stock ticker: $0.005 per call.
  *
- * The identifier check below is duplicated ahead of `getAgent()` — not because
+ * The identifier check below is duplicated ahead of `getAgent()`, not because
  * the pinned SDK's own `enrichCompany` (node_modules/@oneshot-agent/sdk
  * dist/index.js) fails to validate (it does, throwing the exact same
  * `ValidationError` before any network call), but because `getAgent()` runs
@@ -1006,7 +1006,7 @@ export interface GovSolicitationsInput {
 
 /**
  * Federal Sources Sought / Presolicitation notices by NAICS, with the
- * contracting officer's published contact and the description inline — one
+ * contracting officer's published contact and the description inline: one
  * flat-priced search per call. Replaces the two raw SAM.gov fetches (search +
  * per-notice description) gov-solicitation used to make itself, and with them
  * the SAM_GOV_API_KEY those needed.
@@ -1059,7 +1059,7 @@ export interface LocalSearchInput {
 
 /**
  * Local businesses (restaurants, contractors, practices) by category ×
- * location — flat price per search, not per row. The main-street discovery
+ * location: flat price per search, not per row. The main-street discovery
  * tool the B2B people database never was.
  */
 export async function localSearch(input: LocalSearchInput, ctx: CallContext) {
@@ -1102,7 +1102,7 @@ export interface LocalResolveInput {
 /**
  * Business name + one locating field → website domain, phone, category and
  * operating status, with a confidence. A miss is `found: false` (a completed
- * job), never a rejection — the same contract as findEmail. What
+ * job), never a rejection. The same contract as findEmail. What
  * local-registry uses to turn a licence row into a contactable domain,
  * using the address the registry already gave us instead of guessing from
  * the name alone.
@@ -1153,7 +1153,7 @@ export async function getBalance(
  * Hard deadline for one inbox source. Without it a hung upstream (the OneShot
  * inbox endpoint has been observed stalling to Bun's ~300s default fetch
  * timeout) blocks the /inbox route and stop-on-reply for minutes. The
- * underlying request keeps running after the race loses — fine, we only need
+ * underlying request keeps running after the race loses: fine, we only need
  * the caller unblocked; the next poll gets a fresh attempt.
  */
 const INBOX_SOURCE_TIMEOUT_MS = 15_000;
@@ -1182,8 +1182,8 @@ async function listOneShotInbox(opts?: {
 
 /**
  * InboxEmail plus local-only annotations: `message_id` (RFC 2822, Gmail
- * sources only — needed for In-Reply-To on a threaded reply) and
- * `source_identity_id` (which sender identity's mailbox received it — a reply
+ * sources only: needed for In-Reply-To on a threaded reply) and
+ * `source_identity_id` (which sender identity's mailbox received it. A reply
  * must go out from that same identity). Extends the SDK type, so existing
  * consumers (stop-on-reply reads `from` only) are unaffected.
  */
@@ -1192,7 +1192,7 @@ export type AnnotatedInboxEmail = InboxEmail & {
   matched_prospect_id?: number;
   message_id?: string;
   source_identity_id?: string;
-  /** Header-level autoresponder verdict (Gmail sources only — RFC 3834 et al.). */
+  /** Header-level autoresponder verdict (Gmail sources only: RFC 3834 et al.). */
   auto_submitted?: boolean;
 };
 
@@ -1229,12 +1229,12 @@ function annotateInboxResult(r: InboxListResult, identityId: string): AnnotatedI
 /**
  * Replies across the WHOLE sender pool (OneShot inbox + every Gmail account):
  * stop-on-reply must see a reply whichever identity sent the thread. Each
- * source has its own try/catch — one revoked token must not blind the rest —
- * but a single source keeps legacy throw semantics for the /inbox route.
+ * source has its own try/catch so one revoked token cannot blind the rest.
+ * A single source keeps legacy throw semantics for the /inbox route.
  */
 export async function listInbox(opts?: {
   since?: string;
-  /** Exclusive upper bound on received_at — for paging a backfill in slices. */
+  /** Exclusive upper bound on received_at: for paging a backfill in slices. */
   until?: string;
   limit?: number;
   /**
@@ -1277,7 +1277,7 @@ export async function listInbox(opts?: {
       fetch: () => {
         const account = gmailAccountFor(identity);
         if (!account) {
-          // Reject (not fall back to the env token — possibly a different
+          // Reject (not fall back to the env token: possibly a different
           // account's inbox). Multi-source: logged + skipped; single-source:
           // propagates like any other inbox failure.
           return Promise.reject(
@@ -1297,7 +1297,7 @@ export async function listInbox(opts?: {
       await withDeadline(only.fetch(), deadlineMs, `inbox source '${only.label}'`),
       only.identityId,
     );
-    // Same post-processing as the multi-source branch below — without it the
+    // Same post-processing as the multi-source branch below, without it the
     // two branches disagree about count semantics (the single-source result
     // came back unsliced, so `count` meant "fetched" there and "window" here),
     // which is exactly the kind of drift that made the /inbox numbers lie.
@@ -1337,7 +1337,7 @@ export async function listInbox(opts?: {
 
 /**
  * Targeted fetch of mail FROM the given addresses across every Gmail identity,
- * searched all-time — so a known replier's mail surfaces even when the broad
+ * searched all-time, so a known replier's mail surfaces even when the broad
  * newest-N window is full of noise or the reply predates its recency cutoff.
  * Best-effort: per-source failures are logged and skipped, and the OneShot
  * inbox is not queried (it can't filter by sender; its small replies-only
@@ -1396,7 +1396,7 @@ export async function listRepliesFrom(
 
 /**
  * Dedupe, sort newest-first and clamp source results to the requested window,
- * with `has_more` true whenever the window is not the whole story — either a
+ * with `has_more` true whenever the window is not the whole story: either a
  * source said so itself, or the clamp dropped rows. Shared by BOTH listInbox
  * branches so `count`/`has_more` mean the same thing regardless of how many
  * identities are configured.
@@ -1426,7 +1426,7 @@ function mergeInboxWindow(
 }
 
 export interface IdentityBounce extends GmailBounce {
-  /** Identity whose mailbox received the DSN — which is the identity that sent the message. */
+  /** Identity whose mailbox received the DSN, which is the identity that sent the message. */
   identityId: string;
 }
 
@@ -1434,7 +1434,7 @@ export interface BounceListResult {
   bounces: IdentityBounce[];
   /**
    * Identity ids whose mailbox errored or has no token this sweep (multi-source
-   * only — a lone source's failure still returns `[]` bounces here, never
+   * only. A lone source's failure still returns `[]` bounces here, never
    * throws). The bounce sweep needs this: a sweep that silently dropped a
    * source is NOT the same as "that mailbox truly has zero DSNs right now",
    * and a caller deciding whether it's safe to treat this sweep as a complete
@@ -1446,11 +1446,11 @@ export interface BounceListResult {
 }
 
 /**
- * Delivery failures across the sender pool. Gmail identities only — a DSN
+ * Delivery failures across the sender pool. Gmail identities only. A DSN
  * returns to the envelope sender, and OneShot's return path belongs to the
  * platform. The receiving mailbox IS the sending mailbox, so attribution
  * needs no join. Per-source try/catch, and unlike listInbox this NEVER
- * throws on total failure — it runs on a background sweep; report nothing
+ * throws on total failure. It runs on a background sweep; report nothing
  * and retry next tick.
  */
 export async function listBounces(opts?: {
@@ -1472,7 +1472,7 @@ export async function listBounces(opts?: {
         INBOX_SOURCE_TIMEOUT_MS,
         `bounce source '${identity.id}'`,
       );
-      // Freshly parsed objects with no other holder — assign in place.
+      // Freshly parsed objects with no other holder: assign in place.
       return bounces.map((b) => Object.assign(b, { identityId: identity.id }));
     } catch (err) {
       logEvent(
@@ -1646,7 +1646,7 @@ export interface BrowserTaskInput {
   sessionId?: string;
   /**
    * The platform's step-derived budget allowance (default 50, supported
-   * 25–100). Below 25 the session cost limit is under the initialisation
+   * 25-100). Below 25 the session cost limit is under the initialisation
    * cost and the task ends at step 0 with "Session cost limit reached".
    */
   maxSteps?: number;
@@ -1832,7 +1832,7 @@ export function receiptUrlForId(receiptId: number): string {
   return `local://receipt/${receiptId}`;
 }
 
-/** RoCS value tag — the shape OneShot's `tagReceiptValue` accepts. */
+/** RoCS value tag. The shape OneShot's `tagReceiptValue` accepts. */
 export type ValueTag = { type: string; amount?: number; label?: string };
 
 /**
@@ -1891,7 +1891,7 @@ export interface CadenceRocsGoal {
 /**
  * Per-cadence RoCS from OneShot (`rocsByGoal`): spend (receipts grouped by
  * `decisionContext.goalId`) vs value (outcomes tagged via `tagReceiptValue({goalId})`).
- * Transient-tolerant — a brief outage returns `[]` rather than blocking the
+ * Transient-tolerant. A brief outage returns `[]` rather than blocking the
  * Measure page; genuine auth errors propagate so misconfig is visible.
  */
 export async function cadenceRocs(opts: { periodDays?: number } = {}): Promise<CadenceRocsGoal[]> {
@@ -1932,7 +1932,7 @@ export async function cadenceRocs(opts: { periodDays?: number } = {}): Promise<C
 /**
  * Tag a cadence's value once its outcome is known: one `tagReceiptValue({goalId})`
  * call fans out across the goal's receipts, mirrored locally for /receipts.
- * Best-effort — failures are logged and swallowed. The precedence/dedup guard
+ * Best-effort: failures are logged and swallowed. The precedence/dedup guard
  * skips identical re-tags and never downgrades a higher-value tag (a late
  * reply must not overwrite `revenue` with `engagement`).
  */
@@ -1968,7 +1968,7 @@ export async function tagOutcomeValue(input: {
   // kind of signal that should change how the next touch reads this
   // prospect. Keyed by prospect_id per the issue, fires once the value tag
   // is actually applied (not on a no-op/downgraded re-tag above), and is
-  // itself debounced on `angle_synthesized_at` — never blocks this call.
+  // itself debounced on `angle_synthesized_at`. Never blocks this call.
   // The value tag itself is threaded through as refresh context (round-1
   // correction) so the resynthesis prompt can actually reflect the outcome
   // instead of re-running an unchanged evidence gather.

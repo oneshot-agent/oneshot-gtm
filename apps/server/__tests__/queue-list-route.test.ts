@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-// GET /api/queue carries `approvedByPlay` — whole-queue approved counts per
-// play — alongside the filtered `rows`. /queue's drain button reads it, so the
+// GET /api/queue carries `approvedByPlay`: whole-queue approved counts per
+// play: alongside the filtered `rows`. /queue's drain button reads it, so the
 // contract that matters is: the counts must NOT be narrowed by the request's
 // status/play filters (the button has to work from the default `pending` view).
 
@@ -61,7 +61,7 @@ describe("listQueueRoute", () => {
 
   it("keeps a present-but-empty ?ids= as an explicit empty pick", async () => {
     // Regression: `?ids=` used to read as absent, so the route dropped the
-    // filter and returned the ordinary batch — a mangled drain-selected URL
+    // filter and returned the ordinary batch. A mangled drain-selected URL
     // would hydrate rows the founder never picked.
     for (const url of ["http://x/api/queue?ids=", "http://x/api/queue?ids=abc"]) {
       listQueueCalls.length = 0;
@@ -88,7 +88,7 @@ describe("listQueueRoute", () => {
 });
 
 // Shadow-mode priority (issue #410): the view must carry a shape-checked
-// `priority` or null — malformed stored JSON must never 500 the listing.
+// `priority` or null: malformed stored JSON must never 500 the listing.
 
 const VALID_PRIORITY = {
   version: "heuristic-v1",

@@ -3,7 +3,7 @@ import { usePrivacy } from "../../lib/privacy.tsx";
 import { cn } from "../../lib/cn.ts";
 
 /**
- * Header toggle for privacy mode — masks structured PII (names, emails,
+ * Header toggle for privacy mode: masks structured PII (names, emails,
  * companies, phones) across the dashboard so the founder can screenshot
  * without leaking real contacts. Persists via `usePrivacy` (localStorage).
  */

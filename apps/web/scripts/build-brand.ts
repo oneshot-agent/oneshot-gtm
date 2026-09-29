@@ -1,7 +1,7 @@
 /**
  * Render the brand rasters from apps/web/public/icon.svg.
  *
- * Run by hand, never in CI — CI has neither tool. The outputs are committed,
+ * Run by hand, never in CI: CI has neither tool. The outputs are committed,
  * so a checkout needs nothing installed to build or serve the dashboard:
  *
  *   brew install librsvg          # rsvg-convert
@@ -9,14 +9,14 @@
  *
  * Two rules that are not obvious and cost real time to rediscover:
  *
- *   1. librsvg does not parse oklch(). `fill="oklch(0.7 0.14 155)"` renders
- *      byte-identically to black — no warning. The SVGs are written in the sRGB
+ *   1. Librsvg does not parse oklch(). `fill="oklch(0.7 0.14 155)"` renders
+ *      byte-identically to black: no warning. The SVGs are written in the sRGB
  *      transcriptions of the tokens for this reason, and assertColorsParsed() below
  *      fails the build if an oklch() ever creeps back in.
- *   2. rsvg-convert cannot use Host Grotesk at all. Homebrew's FreeType is
+ *   2. Rsvg-convert cannot use Host Grotesk at all. Homebrew's FreeType is
  *      built without brotli, and @fontsource-variable ships only .woff2, so it
  *      silently substitutes a default sans. That is why the one artifact with
- *      type in it — og.png — goes through headless Chrome instead, with the
+ *      type in it (og.png) goes through headless Chrome instead, with the
  *      font inlined as base64 (Chrome's file:// origins are opaque, so a
  *      cross-file font fetch is blocked).
  *
@@ -112,7 +112,7 @@ const sha = (path: string): string =>
  *
  * Render the master a second time with every fill stripped, so everything falls
  * back to black. If that is byte-identical to the real render, the fills never
- * parsed — which is exactly what happens if an oklch() or a var() gets back in.
+ * parsed, which is exactly what happens if an oklch() or a var() gets back in.
  */
 async function assertColorsParsed(size: number): Promise<void> {
   const dir = scratchDir("brand-probe-");
@@ -139,7 +139,7 @@ async function main(): Promise<void> {
   // One probe is enough; every icon comes off the same master at the same fills.
   await assertColorsParsed(512);
 
-  // ── og.png ────────────────────────────────────────────────────────────────
+  // og.png
   if (!existsSync(FONT)) throw new Error(`missing ${FONT} — is @fontsource-variable installed?`);
   const fontB64 = readFileSync(FONT).toString("base64");
   const markB64 = readFileSync(MASTER).toString("base64");
@@ -199,7 +199,7 @@ ${
         // Otherwise Chrome bakes display-dependent subpixel fringing into the PNG.
         "--disable-lcd-text",
         "--font-render-hinting=none",
-        // Without this the screenshot fires on `load` and can catch the FOUT —
+        // Without this the screenshot fires on `load` and can catch the FOUT:
         // exactly the silent failure the hash check below exists to catch.
         "--virtual-time-budget=4000",
         `--screenshot=${out}`,

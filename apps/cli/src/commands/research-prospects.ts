@@ -18,32 +18,19 @@ import {
   runNewsfeedPass,
 } from "./_newsfeed-pass.ts";
 
-// Re-exported for existing test/call-site imports; the real implementation
-// now lives in packages/find/src/_profile-url.ts so packages/find/src/angle.ts
-// (issue #355 evidence gather) can reuse the same profile-preference logic
-// instead of re-deriving it and reintroducing the luma.com-over-LinkedIn bug.
+// Keep existing imports compatible with the shared profile-selection helper.
 export { isResearchableUrl, researchUrl };
 
 /**
  * Backfill research dossiers onto existing prospects.
  *
- * `prospects.dossier_json` is READ as free Tier-1 context when drafting a reply
- * (apps/server/src/api/_reply-research.ts) but nothing in production ever wrote
- * it — so every reply draft fell through to paid enrich + webRead, and the
- * research the finders already bought was computed and discarded. This fills
- * the column so that work is done once and reused.
+ * Persist reusable reply context in `prospects.dossier_json` using the shared
+ * person-research record: current LinkedIn role, employer facts, corrected
+ * title/company, and a fresh person-gate verdict. Rejection stops cadence follow-ups.
  *
- * Since 2026-09-11 it writes the same record the post-finder person research
- * step writes on queue rows (`packages/find/src/_person-research.ts`): the
- * current role derived from the LinkedIn organisation history, facts about
- * the current employer, the `title` / `company` columns corrected when they
- * were stale, and the person gate re-judged on those facts. A `reject` on a
- * prospect in cadence stops its follow-ups through the existing off-ICP gate.
- *
- * Sibling of `enrich-linkedin`: same shape (dry-runnable, bounded
- * concurrency, breaker-aware), different call. Concurrency defaults lower
- * because deepResearchPerson runs minutes, not seconds. Uncapped by default;
- * `--max-cost-usd` bounds a rehearsal.
+ * Supports dry runs, bounded concurrency, and the circuit breaker. Research can
+ * take minutes, so concurrency is lower than enrich-linkedin. Spend is uncapped
+ * unless `--max-cost-usd` is set.
  */
 
 /** Person + company research per prospect, the same slice `research-queue` shows. */
@@ -109,7 +96,7 @@ export function resolveCap(limit: number | undefined): number | undefined {
 
 /**
  * True when the payload carries something worth persisting. Delegates to the
- * shared gate so this command and the play send-path agree on what counts —
+ * shared gate so this command and the play send-path agree on what counts:
  * they write the same column, and _reply-research.ts reads any non-empty value
  * as a free Tier-1 hit that suppresses paid research.
  */
@@ -120,7 +107,7 @@ export function hasSignal(payload: unknown): boolean {
 /**
  * Cap the person payload at `DOSSIER_SLICE`. An oversized payload degrades to
  * its own sliced JSON text, which `hasDossierSignal` reads as prose (it
- * explicitly treats truncated dossier JSON as context worth keeping) — so the
+ * explicitly treats truncated dossier JSON as context worth keeping), so the
  * bound never costs us the research, and the wrapper around it stays parseable.
  */
 export function bounded(payload: unknown): unknown {
@@ -134,11 +121,8 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
   const ledger = getLedger();
   const scopes = parseScopes(opts.scope);
 
-  // Read the backlog, then cap in memory — same reasoning as enrich-linkedin:
-  // pushing --limit into SQL would make it mean "consider N" not "research N".
-  // `--id` researches one named prospect regardless of scope or dossier state.
-  // Diagnosing a single bad row was otherwise impossible: the scopes are broad
-  // and `--refresh` would re-buy the whole backlog to reach one prospect.
+  // Apply --limit after filtering so it means rows researched, not rows considered.
+  // --id ignores scope and dossier state to target one prospect.
   const rows = opts.id
     ? ledger
         .listProspectsForResearch({ scopes: ["all"], includeResearched: true, limit: 100_000 })
@@ -157,12 +141,8 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
     warn(`prospect ${opts.id} not found, or has no email and no profile URL to research.`);
     return;
   }
-  // deepResearchPerson builds a person from a social profile. Handed only an
-  // email it fails — deterministically, not transiently: a 536-row backfill
-  // produced 281 failures, and re-running produced exactly 281 again, each
-  // spending minutes of wall clock to arrive at the same nothing. Skip those
-  // rows here rather than paying the latency to rediscover it one at a time.
-  // `--id` is exempt: an explicit request should try whatever it has.
+  // deepResearchPerson requires a social profile; email-only rows fail consistently.
+  // An explicit --id still attempts the requested row.
   const skipped = opts.id ? [] : rows.filter((row) => !isResearchableUrl(researchUrl(row)));
   const eligible = opts.id ? rows : rows.filter((row) => isResearchableUrl(researchUrl(row)));
   const cap = resolveCap(opts.limit);
@@ -229,10 +209,7 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
       haltedAt ??= index;
       return;
     }
-    // Spend ceiling. Checked before the call, so the cap can be exceeded by at
-    // most (concurrency - 1) in-flight calls — the same accounting the finders
-    // use for `maxCostUsd`. A backfill across the whole ledger is the one place
-    // a typo'd flag could bill three figures.
+    // Check before each call; up to (concurrency - 1) in-flight calls can exceed the cap.
     if (opts.maxCostUsd != null && costUsd >= opts.maxCostUsd) {
       cappedAt ??= index;
       return;
@@ -249,8 +226,7 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
     });
     const remainingUsd =
       opts.maxCostUsd != null ? Math.max(0, opts.maxCostUsd - costUsd) : Number.POSITIVE_INFINITY;
-    // Same cache key as before (`person:<url>`), so a prospect researched by
-    // the older code, the angle gather or the queue backfill is a free hit.
+    // Share person:<url> cache entries with angle gathering and queue research.
     const researched = await researchPerson({
       seed,
       playName: "research-prospects",
@@ -273,13 +249,9 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
     // Counted only for calls that returned real data, so `cached` and `failed`
     // stay mutually exclusive (a negative-cache hit is a failure, not a saving).
     if (researched.cached) cached++;
-    // Merge, never replace: `research-products` owns the `product` half of the
-    // same column and the two commands run independently; the earlier enrich
-    // record is kept under `enrichment`. The merge re-reads inside a write
-    // transaction rather than reusing `row.dossier_json`, which was read when
-    // the backlog was selected — minutes earlier. The PERSON half is bounded
-    // (DOSSIER_SLICE) before merging: truncating the wrapper would make it
-    // invalid JSON and take the product half down with it.
+    // Merge inside a write transaction to preserve concurrent product research and
+    // the earlier enrichment record. Bound the person slice before merging so
+    // truncation cannot corrupt the JSON wrapper or the product half.
     const applied = await applyPersonResearchToProspect(
       ledger,
       {

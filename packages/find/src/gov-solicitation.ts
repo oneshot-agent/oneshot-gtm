@@ -10,18 +10,18 @@ const PLAY_NAME = "gov-solicitation";
 const SOURCE = "find:gov-solicitation";
 /** SAM.gov's own ceiling: the posted-date window may span at most one year. */
 const MAX_WINDOW_DAYS = 365;
-/** Rows asked of the one flat-priced search per run — the SDK caps at 500. */
+/** Rows asked of the one flat-priced search per run. The SDK caps at 500. */
 const RESULTS_PER_RUN = 200;
 
 export interface GovSolicitationFinderOpts extends RunOpts {
   /** 6-digit NAICS codes to scan. REQUIRED via readiness gate. */
   naics?: string[];
   /**
-   * SAM.gov `ptype` codes. Default `["r","p"]` — Sources Sought + Presolicitation,
+   * SAM.gov `ptype` codes. Default `["r","p"]`: Sources Sought + Presolicitation,
    * the window where the requirement is still being written.
    */
   noticeTypes?: string[];
-  /** Optional agency-name substrings (case-insensitive) to keep — client-side filter. */
+  /** Optional agency-name substrings (case-insensitive) to keep: client-side filter. */
   agencies?: string[];
   /** Look-back window in days on the posted date. Default 30; clamped to 365 (SAM.gov's own cap). */
   sinceDays?: number;
@@ -41,7 +41,7 @@ export function isPreSolicitationType(typeName: string | null | undefined): bool
  * Strip the HTML SAM.gov description bodies are often wrapped in, cheaply.
  * The SDK says its `description` is already stripped; nothing guarantees it,
  * and this pass is O(n). Deliberately a single linear scan (not a `<[^>]+>`
- * regex replace) — that regex backtracks quadratically on a string of
+ * regex replace). That regex backtracks quadratically on a string of
  * unclosed `<` characters with no `>` (CodeQL "Polynomial regular expression
  * used on uncontrolled data": a notice body is exactly the uncontrolled string
  * this walks).
@@ -70,7 +70,7 @@ interface GovSolicitationCandidate {
   noticeId: string;
   title: string;
   noticeNumber: string;
-  /** Human notice-type name, e.g. "Sources Sought" — what the play shows. */
+  /** Human notice-type name, e.g. "Sources Sought": what the play shows. */
   noticeType: string;
   /** SAM.gov code when the SDK carries one; drives routing ahead of the name. */
   noticeTypeCode: string | null;
@@ -95,11 +95,11 @@ const NOTICE_TYPE_NAMES: Record<string, string> = {
 };
 
 /**
- * First contact carrying BOTH a name and an email — the only usable kind.
+ * First contact carrying BOTH a name and an email. The only usable kind.
  * The SDK's `has_contact: true` asks the server for exactly this, but the
  * declared field types aren't contractually guaranteed at runtime (a
  * malformed row can carry a non-string email or a non-array `contacts`), and
- * `.trim()` on a non-string throws outside any try/catch here — which would
+ * `.trim()` on a non-string throws outside any try/catch here, which would
  * abort the whole enqueue loop and drop every later notice in the batch.
  */
 function pickPoc(
@@ -211,7 +211,7 @@ function playForNotice(c: GovSolicitationCandidate): "sources-sought" | "design-
 
 /**
  * True when `deadline` parses to an instant strictly before `now`. An
- * unparseable/missing deadline is NOT treated as expired — the field is
+ * unparseable/missing deadline is NOT treated as expired. The field is
  * optional and its format isn't guaranteed, so failing open (keep the
  * candidate) beats silently dropping a real notice on a date this can't read.
  * Belt-and-braces over the SDK's `active_only`, which is asked for too.
@@ -238,7 +238,7 @@ export async function runGovSolicitationFinder(
   const yourEdge = (opts.yourEdge ?? "").trim();
   const ledger = getLedger();
   // No ICP gate runs here (the notice publishes its own contact), so the fit
-  // line is generated per row (#592) — one small call, or none without an ICP.
+  // line is generated per row (#592): one small call, or none without an ICP.
   const icp = resolveIcp(opts.icpOverride);
 
   const result: FinderResult = {
@@ -270,7 +270,7 @@ export async function runGovSolicitationFinder(
 
   // One flat-priced search for every NAICS code at once (the SDK takes up to
   // 20 per call); the contact and description come back inline, so there is
-  // no per-notice fetch left — and no SAM.gov key.
+  // no per-notice fetch left, and no SAM.gov key.
   const search = await safeGovSolicitations(
     {
       naics: naics.slice(0, 20),
@@ -286,7 +286,7 @@ export async function runGovSolicitationFinder(
   );
   result.costUsd += search.result.cost ?? 0;
   if (search.result.status === "error") {
-    // A caught throw, not a genuine "no notices" — say so, or an outage reads
+    // A caught throw, not a genuine "no notices": say so, or an outage reads
     // as bad NAICS targeting (the same distinction local-business draws).
     result.halted = "govSolicitations failed (platform error) — see logs";
     logEvent("finder.done", { name: PLAY_NAME, candidates: 0, halted: result.halted });
@@ -297,7 +297,7 @@ export async function runGovSolicitationFinder(
   const notices: Solicitation[] = [];
   for (const o of search.result.results as unknown[]) {
     // A result can carry a null/malformed element, or one with no notice_id,
-    // alongside good ones. Drop only that element — dereferencing it here
+    // alongside good ones. Drop only that element: dereferencing it here
     // throws outside any catch and fails the whole run; a missing notice_id
     // would otherwise become an `undefined` dedupe key and an
     // "https://sam.gov/opp/undefined/view" notice URL.
@@ -333,14 +333,14 @@ export async function runGovSolicitationFinder(
 
     const candidate = toCandidate(raw);
     if (!candidate) {
-      // No contact with both a name and an email — the one thing a notice must
+      // No contact with both a name and an email. The one thing a notice must
       // publish for this finder to be worth anything; nothing to enrich.
       result.droppedEnrichment++;
       continue;
     }
 
     if (isExpiredDeadline(candidate.responseDeadline)) {
-      // A closed response window is never a real candidate — keep the
+      // A closed response window is never a real candidate. Keep the
       // dry-run preview honest with what a live run would actually enqueue.
       result.droppedEnrichment++;
       continue;
@@ -364,7 +364,7 @@ export async function runGovSolicitationFinder(
 
     const target = buildTarget(candidate, yourEdge);
     // With an ICP configured the generator always makes its one small call,
-    // sentence or not — so the estimate is charged per call, and the cap is
+    // sentence or not, so the estimate is charged per call, and the cap is
     // checked before it like every other paid step.
     if (
       icp &&

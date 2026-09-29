@@ -8,8 +8,8 @@ import { SheetHeading } from "./SheetHeading.tsx";
 /**
  * The letter: the right half of an open row. Subject as the only heading,
  * the state in words under it, the body in prose, actions on the foot. The
- * foot is the total line — receipt green under a letter that can be sent
- * right now — and the card ends in the receipt's torn edge. Presentational:
+ * foot is the total line: receipt green under a letter that can be sent
+ * right now, and the card ends in the receipt's torn edge. Presentational:
  * the page owns every mutation and hands in the buttons.
  */
 export function LetterCard({
@@ -98,7 +98,7 @@ export function LetterEmpty({
 
 /**
  * A draft's state in words: sent; held, with the flags named and what to do
- * about them; or clean. `children` follow on the same line — receipt links,
+ * about them; or clean. `children` follow on the same line: receipt links,
  * an Explain, a stale-draft badge.
  */
 export function DraftStateLine({

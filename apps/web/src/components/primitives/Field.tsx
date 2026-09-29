@@ -7,7 +7,7 @@ import { cn } from "../../lib/cn.ts";
 import { Toggle } from "./Toggle.tsx";
 
 /**
- * Ledger form field — small eyebrow label, walnut-ruled input, a muted
+ * Ledger form field: small eyebrow label, walnut-ruled input, a muted
  * caption for hints. Invalid state uses an oxblood rule instead of a
  * red background.
  */
@@ -125,7 +125,7 @@ export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLText
 
 export function Select({ className, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
   // `appearance-none` strips the native arrow, so without a replacement the
-  // control reads as a text input — overlay a chevron to restore the
+  // control reads as a text input: overlay a chevron to restore the
   // "this opens a menu" affordance.
   return (
     <span className={cn("relative block w-full", className)}>
@@ -140,11 +140,11 @@ export function Select({ className, ...rest }: SelectHTMLAttributes<HTMLSelectEl
 }
 
 /**
- * Boolean field — pill toggle + label. Kept the `Checkbox` export name
+ * Boolean field: pill toggle + label. Kept the `Checkbox` export name
  * for backwards compatibility (prop shape still accepts a standard
  * ChangeEvent), but the UI is now a ledger toggle, not a traditional
  * checkbox. All callsites in this app are boolean-state settings
- * (telemetry on/off, dry-run on/off) — semantically a switch, not a
+ * (telemetry on/off, dry-run on/off): semantically a switch, not a
  * multi-select form control.
  */
 export function Checkbox({

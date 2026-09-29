@@ -27,7 +27,7 @@ import type { DirtyReporter, SetupStatus } from "../components/setup/types.ts";
 interface SetupSearch {
   /**
    * A pack's proposed ICP, deep-linked from /queue's "Accept in Setup" action
-   * (see PackRow in queue.tsx). Prefills the ICP field only — apply-pack never
+   * (see PackRow in queue.tsx). Prefills the ICP field only: apply-pack never
    * writes icpOneLiner to config.json itself; the founder still has to Save.
    */
   proposedIcp?: string;
@@ -48,7 +48,7 @@ const SECTION_IDS = new Set<string>(SECTIONS.map((s) => s.id));
 
 /**
  * /setup (issue #451): eleven sections, each with its own draft, validation
- * and Save. The page owns only what spans sections — the query, the dirty
+ * and Save. The page owns only what spans sections. The query, the dirty
  * registry behind the rail dots and the leave guard, the Smartlead-key epoch,
  * and the two URL round-trips (Gmail OAuth outcome, #section deep links).
  */
@@ -58,7 +58,7 @@ function SetupPage() {
   const triggers = useQuery({ queryKey: ["triggers"], queryFn: api.triggers });
   const { proposedIcp, packLabel } = Route.useSearch();
 
-  // Which sections have unsaved edits — reported by each section, read by
+  // Which sections have unsaved edits: reported by each section, read by
   // the rail and the leave guard. A ref mirrors it for the blocker callbacks.
   const [dirty, setDirty] = useState<Partial<Record<SectionId, boolean>>>({});
   const anyDirty = Object.values(dirty).some(Boolean);
@@ -90,7 +90,7 @@ function SetupPage() {
     }
     params.delete("gmailAuth");
     const qs = params.toString();
-    // Preserve history.state — TanStack Router keeps its index/key there.
+    // Preserve history.state: TanStack Router keeps its index/key there.
     window.history.replaceState(
       window.history.state,
       "",
@@ -101,8 +101,8 @@ function SetupPage() {
   }, [qc]);
 
   // #section deep link. The router's own hash scroll runs when the route
-  // resolves — before ["setup"] has data, so the target doesn't exist yet —
-  // and the root layout then resets <main> to the top. Jump once the
+  // resolves, before ["setup"] has data and the target exists. The root
+  // layout then resets <main> to the top. Jump once the
   // sections have rendered.
   const hashJumped = useRef(false);
   const loaded = Boolean(status.data);

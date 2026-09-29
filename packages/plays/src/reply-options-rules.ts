@@ -96,11 +96,7 @@ const STOPWORDS = new Set(
     " ",
   ),
 );
-
-// ---------------------------------------------------------------------------
 // Register: the founder's own voice in this thread, derived in code.
-// ---------------------------------------------------------------------------
-
 function sentenceStarts(text: string): string[] {
   return text
     .split(/(?<=[.!?])\s+|\n+/)
@@ -144,11 +140,7 @@ function registerDirective(register: Register): string {
       return "not established yet. Mirror their casing and punctuation; if they write casually or mostly lowercase, do the same.";
   }
 }
-
-// ---------------------------------------------------------------------------
 // Prompts
-// ---------------------------------------------------------------------------
-
 export function buildDraftSystemPrompt(channel: "email" | "linkedin" = "linkedin"): string {
   const moves = MOVE_NAMES.map((m) => `  ${m}: ${MOVES[m]}`).join("\n");
   return `${loadPrompt("_humanizer")}
@@ -246,11 +238,7 @@ export function buildDraftUserPrompt(i: DraftInput): string {
     .filter(Boolean)
     .join("\n\n");
 }
-
-// ---------------------------------------------------------------------------
 // Parsing
-// ---------------------------------------------------------------------------
-
 export function cleanDraft(value: unknown): string {
   if (typeof value !== "string") return "";
   return humanizeDraft({ subject: "linkedin", body: value.trim() }).body.replace(/\n{3,}/g, "\n\n");
@@ -305,11 +293,7 @@ export function parseDraftResponse(content: string): ParsedDraftResponse {
     typeof pick(parsed, "read") === "string" ? (pick(parsed, "read") as string).trim() : "";
   return { drafts, moves, read };
 }
-
-// ---------------------------------------------------------------------------
 // Lint gate
-// ---------------------------------------------------------------------------
-
 const URL_RE = /(?:https?:\/\/|www\.)[^\s<>()"'\]]+/gi;
 
 const TRAILING_PUNCT = new Set([".", ",", ";", ":", "!", "?", ")"]);

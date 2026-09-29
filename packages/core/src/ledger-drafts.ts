@@ -1,25 +1,14 @@
 import type { Database } from "bun:sqlite";
 
 /**
- * Draft versions — every draft persisted for founder review, intro or
- * follow-up, kept as a row so the review loop leaves a record.
+ * Persist each intro and follow-up draft for review and outcome attribution.
+ * The current draft is open. Regeneration discards it with a reason: regenerate
+ * rejects text, rotate changes angle, redraft is a machine revision, and abandoned
+ * means the cadence stopped, replied, or bounced. Sending closes it as sent after
+ * human review or auto_sent when the drain sends an approved row unseen.
  *
- * Before this table, `target_queue.last_draft_json` and
- * `cadence_state.next_step_draft_json` were overwritten in place on every
- * regenerate, so a discarded draft vanished and nothing said which angle a
- * send was built on once the edge text was edited. The row's current draft is
- * the `open` version; a regenerate closes it as `discarded` with the reason
- * the caller knew (`regenerate` = same angle, text rejected; `rotate` = the
- * founder changed angle; `redraft` = a machine re-draft, not a judgment;
- * `abandoned` = the cadence stopped/replied/bounced with a draft open); a
- * send closes it as `sent` when a human reviewed it, `auto_sent` when the
- * drain shipped an approved row unseen.
- *
- * Angles are keyed by normalized text (`angleTextKey`), never by index —
- * indices drift as soon as `yourEdge` is edited.
- *
- * Pure wrapper around a raw `Database` handle like `ledger-queue.ts`; both
- * `QueueStore` (intro drafts) and `Ledger` (cadence drafts) own one.
+ * Angle keys use normalized text because indices drift when yourEdge changes.
+ * QueueStore owns intro versions; Ledger owns cadence versions.
  */
 
 export type DraftVersionOutcome = "open" | "discarded" | "sent" | "auto_sent";
@@ -79,7 +68,7 @@ export interface AngleUsageRow {
   autoSent: number;
   /** Distinct prospects who replied to the send built on it (reviewed or unattended). */
   replied: number;
-  /** Distinct prospects it was sent to at all, reviewed or unattended — the reply-rate denominator. */
+  /** Distinct prospects it was sent to at all, reviewed or unattended. The reply-rate denominator. */
   reached: number;
   /** `offered` / `reached` / `replied` restricted to arm-assigned versions (`angle_assignment = 'arm'`). */
   armOffered: number;
@@ -220,7 +209,7 @@ export class DraftVersionStore {
   /**
    * Record a new draft for a slot: the slot's open version (if any) closes as
    * `discarded` with `discardReason`, then the new draft opens. Error stubs
-   * and empty bodies are not versions — nothing was put in front of anyone.
+   * and empty bodies are not versions: nothing was put in front of anyone.
    */
   open(input: {
     slot: DraftSlot;
@@ -236,7 +225,7 @@ export class DraftVersionStore {
     /** Outreach channel the draft is for (channels.ts); email when unset. */
     channel?: string;
     discardReason?: DraftDiscardReason;
-    /** When the draft was really written — a seeded pre-existing draft keeps its own time. */
+    /** When the draft was really written. A seeded pre-existing draft keeps its own time. */
     createdAt?: string;
   }): void {
     if (!input.body.trim() || input.subject === "(error)") return;
@@ -262,7 +251,7 @@ export class DraftVersionStore {
     stored: unknown;
   }): void {
     // Only a slot this store has never seen: once any version exists, the
-    // stored envelope IS a version (or was closed as one) — seeding again
+    // stored envelope IS a version (or was closed as one): seeding again
     // would double-count a send.
     const where = slotWhere(input.slot);
     const seen = this.db
@@ -314,7 +303,7 @@ export class DraftVersionStore {
   }
 
   /**
-   * Close every open version a cadence holds (any step) — the row-level
+   * Close every open version a cadence holds (any step). The row-level
    * clears (`stopCadence`, terminal statuses) do not know the step index.
    */
   closeAllForCadence(
@@ -442,7 +431,7 @@ export class DraftVersionStore {
   /**
    * Per play, per angle: how many distinct prospects were shown it, rotated
    * away from it, regenerated on it, sent it, or got it unattended. Intro and
-   * follow-up steps are summed — the founder's judgment on an angle is the
+   * follow-up steps are summed. The founder's judgment on an angle is the
    * same either way.
    */
   angleUsageByPlay(): Record<string, AngleUsageRow[]> {
@@ -505,7 +494,7 @@ export class DraftVersionStore {
 
   /**
    * Per play: version counts by outcome, split by whether a founder voice
-   * card was in the prompt (`voice_key` set) — the on/off comparison the
+   * card was in the prompt (`voice_key` set). The on/off comparison the
    * /setup voice card is judged by. Plays with no versions are absent.
    */
   draftUsageByVoice(): Record<string, { voiced: DraftUsage; plain: DraftUsage }> {
@@ -548,7 +537,7 @@ export class DraftVersionStore {
 
   /**
    * Per play: intro version counts by first-touch format arm, replies
-   * included — the side-by-side a founder reads to judge the formats. Only
+   * included. The side-by-side a founder reads to judge the formats. Only
    * versions whose trigger set a format count; plays with none are absent.
    */
   draftUsageByFormat(): Record<string, Record<string, DraftUsage>> {

@@ -4,7 +4,7 @@ import { jsonResponse } from "../server.ts";
 
 export async function doctor(req: Request): Promise<Response> {
   // `?refresh=1`: re-read the wallet balance instead of the day-old cached
-  // value — the masthead pill's refresh button, for right after a top-up.
+  // value. The masthead pill's refresh button, for right after a top-up.
   const refreshBalance = new URL(req.url).searchParams.get("refresh") === "1";
   const results = await runDoctor({ refreshBalance });
   const checks: DoctorCheck[] = results.map((r) => {

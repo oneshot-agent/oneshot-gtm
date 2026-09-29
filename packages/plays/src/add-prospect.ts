@@ -21,7 +21,7 @@ export interface ParsedProfileUrl {
 
 /**
  * Validate a pasted profile URL and classify the platform. Throws on an
- * unparseable URL or an unsupported host — `deepResearchPerson` chases
+ * unparseable URL or an unsupported host: `deepResearchPerson` chases
  * LinkedIn / X-Twitter / GitHub social URLs, so we gate to those.
  */
 export function parseProfileUrl(raw: string): ParsedProfileUrl {
@@ -35,7 +35,7 @@ export function parseProfileUrl(raw: string): ParsedProfileUrl {
   if (u.protocol !== "http:" && u.protocol !== "https:") {
     throw new Error("URL must be http(s)");
   }
-  // Match the registrable domain exactly or as a dotted subdomain — NOT a bare
+  // Match the registrable domain exactly or as a dotted subdomain: NOT a bare
   // `endsWith("linkedin.com")`, which also matches `evillinkedin.com` (CodeQL:
   // incomplete URL substring sanitization).
   const host = u.hostname.toLowerCase().replace(/^www\./, "");
@@ -91,7 +91,7 @@ export function createProspectResearchJob(input: {
   if (id != null) return { queueId: id };
 
   // Already queued under (profile-intro, dedupeKey). If the prior attempt never
-  // produced a draft — research failed, or is still in flight — reuse that row
+  // produced a draft (research failed, or is still in flight) reuse that row
   // so a re-add RETRIES instead of being blocked forever by the unique index.
   // A row that already has a draft (or was sent) is a genuine duplicate.
   const existing = ledger.getQueueRowByDedupe(PLAY_NAME, parsed.dedupeKey);
@@ -125,11 +125,11 @@ function str(v: unknown): string | null {
 
 /**
  * Async step: research the profile via the OneShot SDK (`deepResearchPerson`,
- * which accepts any social URL — LinkedIn / X / GitHub — and returns a
- * multi-source dossier incl. work/personal emails), have the LLM extract
+ * which accepts any social URL (LinkedIn / X / GitHub) and returns a
+ * multi-source dossier incl. Work/personal emails), have the LLM extract
  * identity + an ICP-grounded angle, draft the intro via the profile-intro play
  * (dry-run, no send), then persist the full target + draft onto the queue row.
- * Never throws — failures are written to the row's notes so the founder sees
+ * Never throws: failures are written to the row's notes so the founder sees
  * what happened. Safe to call as `void runProspectResearch(id)`.
  */
 export async function runProspectResearch(queueId: number): Promise<void> {
@@ -156,7 +156,7 @@ export async function runProspectResearch(queueId: number): Promise<void> {
     const enrichment = (research.result?.result?.enrichment ?? {}) as Record<string, unknown>;
     const articles = research.result?.result?.articles;
     // Research came back empty (bad/private URL, no match). Don't draft from
-    // nothing — a fabricated intro is exactly what we're avoiding. Leave the
+    // nothing. A fabricated intro is exactly what we're avoiding. Leave the
     // row note so the founder can fix the URL and re-add (which retries).
     const hasSignal =
       Object.keys(enrichment).length > 0 || (Array.isArray(articles) && articles.length > 0);
@@ -202,7 +202,7 @@ export async function runProspectResearch(queueId: number): Promise<void> {
       altEmails[0] ??
       null;
 
-    // Store the URL under the field matching its platform — a GitHub URL must
+    // Store the URL under the field matching its platform. A GitHub URL must
     // NOT land in `linkedinUrl` (downstream enrichment treats that as LinkedIn).
     const urlField: Pick<ProfileIntroTarget, "linkedinUrl" | "twitterUrl" | "githubUrl"> =
       payload.platform === "twitter"
@@ -225,7 +225,7 @@ export async function runProspectResearch(queueId: number): Promise<void> {
     // runEmailPlay never throws per-target: an LLM/provider failure comes back
     // as an errorDraft ({subject:"(error)", body:"", flags:["error: …"]}), and a
     // malformed LLM response yields an empty subject/body. Treat either as a
-    // failed draft — leave the note set (so a re-add retries) instead of
+    // failed draft: leave the note set (so a re-add retries) instead of
     // persisting a broken "(error)"/blank draft that would look ready to send.
     const errorFlag = draft?.flags.find((f) => f.startsWith("error:"));
     if (!draft || errorFlag || draft.subject.trim() === "" || draft.body.trim() === "") {
@@ -239,8 +239,8 @@ export async function runProspectResearch(queueId: number): Promise<void> {
       return;
     }
 
-    // The manual add runs no gate — the founder pasting a profile is the
-    // qualification — so the row's fit line is generated from the research it
+    // The manual add runs no gate. The founder pasting a profile is the
+    // qualification, so the row's fit line is generated from the research it
     // just paid for (#592). Null (no ICP, or a failed call) simply omits it.
     const fitReason = await generateFitReason({
       icp: loadConfig().icpOneLiner ?? null,
@@ -249,7 +249,7 @@ export async function runProspectResearch(queueId: number): Promise<void> {
       dossier,
     });
 
-    // 5. Persist — re-read first so a concurrent reject/send isn't clobbered.
+    // 5. Persist: re-read first so a concurrent reject/send isn't clobbered.
     // Only an untouched placeholder (still pending/approved, not sending) gets
     // the draft; a row the founder rejected mid-research stays rejected.
     const fresh = ledger.getQueueRow(queueId);
@@ -293,7 +293,7 @@ export async function runProspectResearch(queueId: number): Promise<void> {
         notes: `research failed: ${(err as Error)?.message ?? "unknown error"}`.slice(0, 200),
       });
     } catch {
-      // best-effort — the row simply keeps its "researching…" note
+      // best-effort. The row simply keeps its "researching…" note
     }
   }
 }

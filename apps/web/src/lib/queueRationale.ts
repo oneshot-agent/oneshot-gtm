@@ -1,7 +1,7 @@
 /**
  * The row's one sentence (issue #592): `<signal> — <why they fit>`.
  *
- * The signal half is `queueEvidence` — the deterministic, per-play line the
+ * The signal half is `queueEvidence`. The deterministic, per-play line the
  * row already had ("cohort YC Summer 2026", "starred X", "raised Seed · $4.2M").
  * The fit half is the `fitReason` every finder now stamps onto the payload
  * (company-gate reason, person-gate reason, or one generated sentence). Both

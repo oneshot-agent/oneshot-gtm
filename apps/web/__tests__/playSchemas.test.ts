@@ -31,7 +31,7 @@ describe("PLAY_SCHEMAS vs RUNNABLE_PLAYS", () => {
 });
 
 // finding PRRT_kwDOSKzrBs6ewQc8: /run's rows render outside a <form>, so the
-// `required` attribute on each field is decorative — this pure helper is
+// `required` attribute on each field is decorative. This pure helper is
 // what actually blocks dispatch (wired into run.$playName.tsx's submit()).
 describe("missingRequiredFields", () => {
   const schema = PLAY_SCHEMAS["sources-sought"]!;
@@ -75,11 +75,11 @@ describe("missingRequiredFields", () => {
 });
 
 // finding PRRT_kwDOSKzrBs6ewsAf: missingRequiredFields only ever filtered
-// schema.fields — a required EXTRA passed validation blank and reached
+// schema.fields. A required EXTRA passed validation blank and reached
 // /api/run omitted, a paid malformed draft. No shipped play declares extras
 // now (accelerator-batch, the last one, moved its angle onto the row and its
 // sender cohort into config), so the guard is exercised against a synthetic
-// schema — it has to keep working for the next play that wants one.
+// schema. It has to keep working for the next play that wants one.
 describe("missingRequiredExtras", () => {
   const schema: PlaySchema = {
     description: "synthetic",
@@ -130,7 +130,7 @@ describe("accelerator-batch schema", () => {
 
 // finding PRRT_kwDOSKzrBs6fD-hS/hc / issue #463: civic-pilot's pilot must be
 // sized under the micro-purchase threshold OR bought off a cooperative
-// purchasing vehicle — a bare per-field `required` on purchasingVehicle would
+// purchasing vehicle. A bare per-field `required` on purchasingVehicle would
 // force fabricating a vehicle for a threshold-only target.
 describe("missingRequiredFields — requireOneOf (civic-pilot purchasing route)", () => {
   const schema = PLAY_SCHEMAS["civic-pilot"]!;
@@ -166,7 +166,7 @@ describe("missingRequiredFields — requireOneOf (civic-pilot purchasing route)"
   });
 });
 
-// A stargazer or a stack-consolidation lead often has no company on record —
+// A stargazer or a stack-consolidation lead often has no company on record:
 // the GitHub profile is blank and the email is a gmail. The finder enqueues
 // them anyway and the queue's own send path drafts them fine, so the run
 // form must not refuse the same rows ("row 2: Company; row 4: Company").

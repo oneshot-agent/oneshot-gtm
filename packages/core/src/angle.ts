@@ -1,11 +1,11 @@
 /**
- * `prospects.angle_json` — the per-prospect synthesis this file's callers
+ * `prospects.angle_json`. The per-prospect synthesis this file's callers
  * (packages/plays/src/angle.ts, apps/cli synthesize-angles) produce and
  * persist via `Ledger.setProspectAngle` (issue #355).
  *
  * `relationship` answers WHAT they build (their own account of it);
  * `valueMode`/`buyerStage` answer HOW to treat them (could they buy, at what
- * stage) — kept as separate fields per the 2026-09-01 refinement so a warm,
+ * stage): kept as separate fields per the 2026-09-01 refinement so a warm,
  * technical reply from a student-led lab is never inflated into a buyer
  * signal just because the tone was friendly.
  */
@@ -37,7 +37,7 @@ export type AngleBuyerStage =
 
 export interface ProspectAngleEvidence {
   claim: string;
-  /** A real citation — a URL, or a named source like "dossier" / "replies:2". */
+  /** A real citation. A URL, or a named source like "dossier" / "replies:2". */
   source: string;
 }
 
@@ -47,12 +47,12 @@ export interface ProspectAngleEvidence {
  * merely non-blank.
  */
 export interface ProspectAngleGroundingContext {
-  /** The exact evidence text rendered into the synthesis prompt — a URL
+  /** The exact evidence text rendered into the synthesis prompt. A URL
    *  citation is grounded only when it appears literally in here (the URLs
    *  that show up in the GITHUB/DOSSIER/PROFILE PAGE blocks). */
   evidenceText: string;
   /** The evidence tiers actually gathered for this prospect, e.g.
-   *  `["dossier", "github:live", "replies:3"]` — a named citation like
+   *  `["dossier", "github:live", "replies:3"]`. A named citation like
    *  "dossier" or "replies:2" is grounded only when the matching tier is
    *  in here, i.e. it was really gathered rather than invented. */
   sourceTags: string[];
@@ -65,7 +65,7 @@ export interface ProspectAngle {
   hook: string;
   relationship: AngleRelationship;
   evidence: ProspectAngleEvidence[];
-  /** Premises they've already corrected in a reply — never repeat these. */
+  /** Premises they've already corrected in a reply. Never repeat these. */
   doNotSay: string[];
   /** The single most natural next move. */
   nextStep: string;
@@ -123,7 +123,7 @@ const URL_SOURCE: RegExp = /^https?:\/\//i;
  * either it or its RIGHT alias is in `sourceTags`. Needed because the DOSSIER
  * evidence block renders identically whether the dossier was already stored
  * (`sources` tag `"dossier"`) or freshly bought this run (tag
- * `"dossier:live"` — see `gatherAngleEvidence`), and the synthesis prompt's
+ * `"dossier:live"`: see `gatherAngleEvidence`), and the synthesis prompt's
  * own literal example tells the model to cite it as `"dossier"` either way
  * (packages/prompts/angle-synthesis.md:36). Without this, a legitimate
  * `"dossier"` citation on a paid-research prospect was silently dropped by
@@ -133,13 +133,12 @@ const URL_SOURCE: RegExp = /^https?:\/\//i;
 const NAMED_SOURCE_ALIASES: ReadonlyMap<string, string> = new Map([["dossier", "dossier:live"]]);
 
 /**
- * True when `source` is traceable to evidence the LLM was actually handed —
- * not merely a non-blank string. A URL-shaped source must appear literally in
+ * True when `source` is traceable to evidence given to the LLM. A URL must appear in
  * the rendered evidence text (the GITHUB/DOSSIER/PROFILE PAGE blocks); a
  * named-tier source (`"dossier"`, `"replies:2"`, `"github:live"`) must match
  * one of the tiers `gatherAngleEvidence` actually recorded, or that tier's
- * alias (see `NAMED_SOURCE_ALIASES`). Anything else — a hallucinated URL, an
- * invented tier name, "trust me" — is NOT grounded.
+ * alias (see `NAMED_SOURCE_ALIASES`). Other sources, including invented URLs
+ * or tier names, are not grounded.
  */
 function isGroundedSource(source: string, grounding: ProspectAngleGroundingContext): boolean {
   if (URL_SOURCE.test(source)) return grounding.evidenceText.includes(source);
@@ -155,13 +154,13 @@ function isGroundedSource(source: string, grounding: ProspectAngleGroundingConte
  * Every `evidence` entry without a claim, a non-blank source, AND a source
  * that actually traces to `grounding` (a URL literally present in the
  * rendered evidence, or a source tier that was really gathered) is DROPPED,
- * never kept on the strength of a non-empty string alone — an uncited or
+ * never kept on the strength of a non-empty string alone. An uncited or
  * fabricated claim in a "grounded" artifact is worse than no claim, because
  * it reads as sourced when it isn't. This is the anti-fabrication gate issue
  * #355 exists to enforce.
  *
  * `relationship` / `valueMode` / `buyerStage` outside the known enum collapse
- * to `"unknown"` rather than rejecting the whole synthesis — a slightly-off
+ * to `"unknown"` rather than rejecting the whole synthesis. A slightly-off
  * enum value from the model shouldn't throw away a usable `brief`/`hook`.
  *
  * Returns null only when BOTH `brief` and `hook` are missing/empty: at that
@@ -228,16 +227,16 @@ export function parseProspectAngle(
 
 /**
  * Render a persisted `prospects.angle_json` value into an ANGLE input block
- * for a draft prompt — issue #356, the payoff for #355's synthesis. `hook`
+ * for a draft prompt: issue #356, the payoff for #355's synthesis. `hook`
  * is what the next message should lead with; `doNotSay` is what stops a
- * draft re-asserting a premise the prospect already corrected — the
+ * draft re-asserting a premise the prospect already corrected. The
  * strongest signal of the two, since repeating it reads as not having read
  * their reply. `evidence`/`nextStep` are included when present because they
  * cost nothing extra and a concrete citation beats a vague hook.
  *
  * Guarded and additive by design: missing, blank, unparsable, or
  * all-empty-fields JSON returns null so callers can skip the block
- * entirely — a prospect with no synthesis yet must see byte-identical
+ * entirely. A prospect with no synthesis yet must see byte-identical
  * output to before this issue.
  */
 export function angleBlockFromJson(
@@ -291,21 +290,19 @@ export function angleBlockFromJson(
  * Fire-and-forget re-synthesis hook (issue #357): a new human reply or a
  * tagged outcome should refresh `angle_json` instead of leaving it frozen at
  * backfill time. The actual work (gatherAngleEvidence + synthesizePersonAngle)
- * lives in `@oneshot-gtm/find`, which depends on this package — core cannot
+ * lives in `@oneshot-gtm/find`, which depends on this package: core cannot
  * import find back without a cycle, so find registers its implementation
  * here at module load (`packages/find/src/angle.ts`) and core's hot paths
  * (ledger's `recordInboxReply` caller in `pollInboxReplies`, and
  * `tagOutcomeValue` below) call `triggerAngleRefresh` without ever knowing
- * find exists. Until find's module has loaded — e.g. a CLI invocation that
- * never touches `@oneshot-gtm/find` — the trigger is a no-op, the same
- * degrade-gracefully rule every other best-effort call in this codebase
- * follows.
+ * find exists. The trigger is a no-op until find loads, including CLI invocations that
+ * never import `@oneshot-gtm/find`.
  *
  * `AngleRefreshContext` (round-1 correction, issue #357) lets a caller hand
  * extra signal alongside the prospect id: an outcome tag carries data (deal
  * value, meeting booked, ...) that reply-triggered refreshes never have, and
  * without it the outcome-triggered path re-runs the identical
- * gather+synthesize pipeline against unchanged evidence — an LLM call that
+ * gather+synthesize pipeline against unchanged evidence. An LLM call that
  * can't reflect the outcome it was fired for.
  */
 export interface AngleRefreshContext {
@@ -327,7 +324,7 @@ export function registerAngleRefreshTrigger(fn: AngleRefreshTrigger): void {
  * burst of replies on the same live thread, or a reply immediately followed
  * by an outcome tag, must not each re-buy a synthesis. Re-synthesis only
  * fires when the existing `angle_synthesized_at` is missing or older than
- * this, so the guard is entirely a function of the persisted timestamp —
+ * this, so the guard is entirely a function of the persisted timestamp:
  * no extra state, and correct across process restarts and across the two
  * independent call sites (reply poll, outcome tagging).
  */
@@ -336,7 +333,7 @@ export const ANGLE_REFRESH_STALE_HOURS = 6;
 /**
  * In-flight guard (round-1 correction, issue #357): the timestamp-based
  * debounce above only protects once a prior refresh has already finished and
- * stamped `angle_synthesized_at` — two triggers for the same prospect that
+ * stamped `angle_synthesized_at`: two triggers for the same prospect that
  * land before that write (two replies in one `pollInboxReplies()` page, or a
  * reply immediately followed by an outcome tag) both read the same
  * stale/missing timestamp and would both launch a full paid gather+synthesize
@@ -353,15 +350,15 @@ const inFlightRefreshes = new Set<number>();
  * Outcome context dropped by the in-flight guard while a same-prospect
  * refresh is already running (round-2 correction, issue #357): the guard
  * above still drops the SECOND trigger outright (the in-flight refresh
- * can't be redirected mid-flight), but an outcome carries data — deal
- * value, meeting booked — a plain reply trigger never has, so silently
+ * can't be redirected mid-flight), but an outcome carries data: deal
+ * value, meeting booked. A plain reply trigger never has, so silently
  * losing it means the completed write can't reflect it and the freshness
  * debounce then blocks a retry for `ANGLE_REFRESH_STALE_HOURS`. Queuing it
  * here (last one wins) lets `launchAngleRefresh`'s completion hook fire a
  * follow-up refresh carrying this context the moment the in-flight one
  * settles, bypassing the freshness check since that check exists to guard
  * against a plain re-trigger, not this deliberate catch-up. A dropped
- * REPLY trigger (no `context.outcome`) is never queued — the in-flight
+ * REPLY trigger (no `context.outcome`) is never queued. The in-flight
  * refresh already reads replies fresh from the ledger, so nothing is lost.
  */
 const pendingOutcomeRefreshes = new Map<number, AngleRefreshContext>();
@@ -370,7 +367,7 @@ const pendingOutcomeRefreshes = new Map<number, AngleRefreshContext>();
  * Add the in-flight marker and launch the registered trigger, draining any
  * outcome queued for this prospect (see `pendingOutcomeRefreshes` above)
  * once this run settles. Self-contained try/catch so a synchronous throw
- * from `angleRefreshTrigger` — on the initial call or a queued follow-up —
+ * from `angleRefreshTrigger`, on the initial call or a queued follow-up,
  * never escapes as an unhandled exception.
  */
 function launchAngleRefresh(prospectId: number, context?: AngleRefreshContext): void {
@@ -378,7 +375,7 @@ function launchAngleRefresh(prospectId: number, context?: AngleRefreshContext): 
     inFlightRefreshes.add(prospectId);
     Promise.resolve(angleRefreshTrigger!(prospectId, context))
       .catch(() => {
-        // Best-effort — a rejected refresh must never surface as an
+        // Best-effort. A rejected refresh must never surface as an
         // unhandled rejection in a caller's hot path (reply recording,
         // outcome tagging).
       })
@@ -392,7 +389,7 @@ function launchAngleRefresh(prospectId: number, context?: AngleRefreshContext): 
       });
   } catch {
     // A trigger that throws synchronously must never propagate into a
-    // caller's hot path — release the in-flight slot it claimed above.
+    // caller's hot path: release the in-flight slot it claimed above.
     inFlightRefreshes.delete(prospectId);
   }
 }
@@ -400,9 +397,9 @@ function launchAngleRefresh(prospectId: number, context?: AngleRefreshContext): 
 /**
  * Best-effort, fire-and-forget: never throws. No-ops until a trigger is
  * registered (find's module hasn't loaded), no-ops when the angle was
- * synthesized more recently than `ANGLE_REFRESH_STALE_HOURS` ago — the
+ * synthesized more recently than `ANGLE_REFRESH_STALE_HOURS` ago. The
  * debounce that keeps a reply burst or a reply-then-outcome pair from paying
- * for synthesis twice — and no-ops when a refresh for this prospect is
+ * for synthesis twice, and no-ops when a refresh for this prospect is
  * already in flight (see `inFlightRefreshes` above), queuing the outcome
  * context instead when the dropped trigger carries one.
  */
@@ -417,7 +414,7 @@ export function triggerAngleRefresh(prospectId: number, context?: AngleRefreshCo
     if (!prospect) return;
     // The freshness debounce guards against a plain re-trigger. An outcome
     // is new evidence the stored angle cannot contain (deal value, meeting
-    // booked), so it bypasses the debounce (#573) — otherwise a reply that
+    // booked), so it bypasses the debounce (#573). Otherwise a reply that
     // refreshed the angle minutes earlier would silently discard the
     // outcome for the rest of the stale window, with no retry.
     if (prospect.angle_synthesized_at && !context?.outcome) {
@@ -426,7 +423,7 @@ export function triggerAngleRefresh(prospectId: number, context?: AngleRefreshCo
     }
     launchAngleRefresh(prospectId, context);
   } catch {
-    // Best-effort — a ledger read failure must never propagate into a
+    // Best-effort. A ledger read failure must never propagate into a
     // caller's hot path (reply recording, outcome tagging).
     inFlightRefreshes.delete(prospectId);
   }

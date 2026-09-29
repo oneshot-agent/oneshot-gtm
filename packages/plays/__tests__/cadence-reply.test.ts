@@ -20,11 +20,11 @@ let listInboxArgs: Array<Record<string, unknown>> = [];
 let failedSources: string[] = [];
 // (prospectId, playName) pairs whose sequence_events row flipped to `replied` this run.
 let repliedSteps: Array<{ prospectId: number; playName: string }> = [];
-// repliedAt values passed to the stub's recordProspectReply, in call order —
+// repliedAt values passed to the stub's recordProspectReply, in call order:
 // lets tests assert the poll threads the inbound email's own timestamp
 // through rather than defaulting to "now" (see markLatestStepReplied).
 let recordProspectReplyRepliedAts: Array<string | null | undefined> = [];
-// The play behind the prospect's latest sent step — the no-cadence-row fallback.
+// The play behind the prospect's latest sent step. The no-cadence-row fallback.
 let latestSentPlay: string | null = null;
 // v21 inbox_replies rows captured by the poll (id-keyed, INSERT OR IGNORE semantics).
 let persistedReplies: Array<{ id: string; kind?: string | null }> = [];
@@ -65,9 +65,9 @@ const notifySlackBounceRecordedMock = vi.fn(async () => {});
 // effect an unsubscribe-labeled reply must never trigger (it tags the play's
 // send receipts with `{type: "engagement"}`, which is what feeds RoCS/spend
 // accounting). _cadence.ts imports it from "@oneshot-gtm/core", so mocking it
-// here — rather than relying on the real oneshot.ts implementation, which
+// here, rather than relying on the real oneshot.ts implementation, which
 // resolves its own internal getLedger() independent of this file's ledger
-// stub — lets the tests below assert it fires exactly when a reply is real
+// stub: lets the tests below assert it fires exactly when a reply is real
 // engagement, and never for a triaged or phrase-matched opt-out.
 const tagOutcomeValueMock = vi.fn(async () => ({ tagged: true }));
 
@@ -162,7 +162,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       expireBreakupReviveQueue: () => {},
       // Mirrors the real ledger.recordProspectReply: every live cadence for the
       // prospect stops (control plane); the analytics event is credited to ONE
-      // play — `latestSentPlay` stands in for the subject/latest resolution —
+      // play: `latestSentPlay` stands in for the subject/latest resolution:
       // and recorded once (idempotent per prospect+play).
       recordProspectReply: (
         prospectId: number,
@@ -208,7 +208,7 @@ vi.mock("@oneshot-gtm/core", async () => {
         intents.set(id, { intent, intentReason });
       },
       // issue #558 round-1 correction: mirrors the real ledger's
-      // `UPDATE ... WHERE intent IS NULL` atomic claim — check-and-mark in
+      // `UPDATE ... WHERE intent IS NULL` atomic claim: check-and-mark in
       // one step so an overlapping poll racing the same row can't also
       // claim it. Returns true (claim won) only when intent isn't already
       // set (NULL or unset); the mock doesn't need real concurrency since a
@@ -221,7 +221,7 @@ vi.mock("@oneshot-gtm/core", async () => {
         return true;
       },
       // Round-2 correction (#663, F-1): mirrors the real ledger's
-      // `peekInboxReplyIntent` — what a claim LOSER reads back to tell
+      // `peekInboxReplyIntent`: what a claim LOSER reads back to tell
       // "another caller's triage is still in flight" (pending: true) from
       // "a prior poll already wrote back a real result" (pending: false,
       // the real category, possibly still null on a prior failed triage).
@@ -236,10 +236,10 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 // Round-1 correction (#558): claimInboxReplyForTriage's atomic
-// check-and-mark on `intent` gates the paid triageEmails call — mocked here
+// check-and-mark on `intent` gates the paid triageEmails call: mocked here
 // so the dedupe test below can assert call counts/args without hitting a
 // real LLM.
-// Local mirror of intel/triage.ts's TriageCategory — used only to let the
+// Local mirror of intel/triage.ts's TriageCategory: used only to let the
 // mock's return type vary the category across tests (see
 // mockImplementationOnce below for the intent=unsubscribe case, issue #663).
 type TriageCategoryStub =
@@ -294,7 +294,7 @@ beforeEach(() => {
       prospect_id: 1,
       play_name: "stack-consolidation",
       status: "active",
-      next_due_at: PAST, // due now — would send a step if not for the reply
+      next_due_at: PAST, // due now: would send a step if not for the reply
       prospect_email: STORED_EMAIL,
     },
   ];
@@ -316,7 +316,7 @@ describe("advanceCadence — reply detection", () => {
     expect(lookupArgs).toContain(STORED_EMAIL);
     expect(result.repliesDetected).toBe(1);
     expect(rows[0]?.status).toBe("replied");
-    // The due step did NOT fire — the reply stopped it.
+    // The due step did NOT fire. The reply stopped it.
     expect(result.stepsExecuted).toBe(0);
     expect(calls.sendEmail).toBe(0);
   });
@@ -439,7 +439,7 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
       playName: "stack-consolidation",
     });
 
-    // A later reply on the same (already-replied) thread is stored too — the
+    // A later reply on the same (already-replied) thread is stored too. The
     // per-(prospect, play) reply transition being idempotent must not stop
     // the message capture.
     inboxEmails = [
@@ -463,7 +463,7 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
     });
 
     // Re-polling the same window re-sees the same message id but must not
-    // notify again — recordInboxReply's INSERT OR IGNORE already dedupes it.
+    // notify again: recordInboxReply's INSERT OR IGNORE already dedupes it.
     await pollInboxReplies();
     expect(notifySlackReplyReceivedMock).toHaveBeenCalledTimes(1);
   });
@@ -528,7 +528,7 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
     expect(triageEmailsMock).toHaveBeenCalledTimes(1);
     expect(triageEmailsMock.mock.calls[0]![0]).toMatchObject([{ id: "m1" }]);
 
-    // Same watermark-overlap re-examination sees the identical email again —
+    // Same watermark-overlap re-examination sees the identical email again:
     // recordInboxReply reports it as not-new (INSERT OR IGNORE no-op), so the
     // triage call must be skipped this time.
     await pollInboxReplies();
@@ -540,7 +540,7 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
   // `cadence advance` CLI invocation) both observe the same freshly-inserted
   // row with intent still NULL while the first call's triageEmails() await is
   // in flight. The atomic claim (claimInboxReplyForTriage) must let only one
-  // of them actually call the paid triageEmails — a bare re-check of `intent`
+  // of them actually call the paid triageEmails. A bare re-check of `intent`
   // would let both through since neither has written back yet.
   it("does not double-triage the same reply across two overlapping polls", async () => {
     inboxEmails = [{ id: "m1", from: "sophia@agenticarchitect.ai", subject: "re: stack" }];
@@ -712,7 +712,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     expect(persistedReplies[0]?.kind).toBe("auto");
     // Issue #357: an auto-reply is never signal worth paying to re-synthesize.
     expect(angleRefreshCalls).toEqual([]);
-    // Autoresponders are not replies by classifyReply's own contract — must
+    // Autoresponders are not replies by classifyReply's own contract: must
     // not raise a false "Reply from ..." Slack alert (round-1 correction).
     expect(notifySlackReplyReceivedMock).not.toHaveBeenCalled();
   });
@@ -741,7 +741,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
         playName: "stack-consolidation",
         status: "bounced",
         // Occurrence time (the autoresponder's own received_at), not poll
-        // time — matches the DSN-bounce path's bouncedAt so both feed the
+        // time: matches the DSN-bounce path's bouncedAt so both feed the
         // Slack daily summary's occurrence window consistently.
         bouncedAt: "2026-08-27T16:07:46.000Z",
       },
@@ -765,7 +765,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
   // `kind === "auto_permanent"`, not on first-sight. The reply poll's `since`
   // window intentionally re-examines up to REPLY_WATERMARK_OVERLAP_MS (1h)
   // before the watermark on every poll, and `seen` only dedupes within a
-  // single pollInboxReplies() call — so the SAME dead-mailbox autoresponder,
+  // single pollInboxReplies() call, so the SAME dead-mailbox autoresponder,
   // still inside that overlap window on the next poll, would refire the
   // alert a second time. It must be gated on isNewReply (recordInboxReply's
   // INSERT OR IGNORE return), exactly like the human-reply branch is.
@@ -784,7 +784,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     expect(first.autoRepliesSkipped).toBe(1);
     expect(notifySlackBounceRecordedMock).toHaveBeenCalledTimes(1);
 
-    // Second poll re-fetches the same email id — exactly what happens when
+    // Second poll re-fetches the same email id: exactly what happens when
     // the next poll's `since` (watermark - 1h overlap) still covers this
     // email's received_at. recordInboxReply's INSERT OR IGNORE means
     // isNewReply is false this time; the alert must not refire.
@@ -815,7 +815,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     // Issue #357: an unsubscribe is never signal worth paying to re-synthesize.
     expect(angleRefreshCalls).toEqual([]);
     expect(notifySlackReplyReceivedMock).not.toHaveBeenCalled();
-    // Unsubscribe is a do-not-contact, not a bounce — must not raise a
+    // Unsubscribe is a do-not-contact, not a bounce: must not raise a
     // "Bounce recorded" alert (only auto_permanent is a bounce by this
     // codebase's own status mapping above).
     expect(notifySlackBounceRecordedMock).not.toHaveBeenCalled();
@@ -824,12 +824,12 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
   });
 
   // Issue #663: reply-classify.ts's phrase-based UNSUBSCRIBE_RE is what
-  // decides `kind` above — it can miss a real "remove me" request and land
+  // decides `kind` above. It can miss a real "remove me" request and land
   // it as `kind = 'human'` (a normal reply). The sentiment triage (issue
   // #480, mocked via triageEmailsMock) is the independent classifier that
   // gets it right. When triage labels a HUMAN reply intent=unsubscribe, the
   // cadence must flip to 'unsubscribed' the same way the kind='unsubscribe'
-  // branch above does, not be left in 'replied' — 'replied' is what
+  // branch above does, not be left in 'replied': 'replied' is what
   // breakup-revive's re-enrollment reads as "still eligible for another play".
   it("a human reply triaged intent=unsubscribe stops the cadence as unsubscribed, not replied", async () => {
     inboxEmails = [
@@ -857,12 +857,12 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     expect(seqEvents).toEqual([
       { prospectId: 1, playName: "stack-consolidation", status: "unsubscribed" },
     ]);
-    // classifyReply's own kind was 'human' (no phrase match) — persisted kind
+    // classifyReply's own kind was 'human' (no phrase match): persisted kind
     // proves this test exercises the label/kind disagreement, not the
     // existing kind==='unsubscribe' branch.
     expect(persistedReplies[0]?.kind).toBe("human");
     // F-1 (round-1 correction, #663): the reply must not ALSO fall through to
-    // recordProspectReply/tagOutcomeValue — an unsubscribe-labeled reply is a
+    // recordProspectReply/tagOutcomeValue. An unsubscribe-labeled reply is a
     // do-not-contact, not engagement, and must not be counted or billed as
     // one. Before this fix, `intent === "unsubscribe"` fell through
     // unconditionally into the ordinary reply-bookkeeping block below it.
@@ -872,7 +872,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
   });
 
   // A human reply triaged with any other intent (e.g. genuine interest) must
-  // not be treated as an opt-out — only intent='unsubscribe' does.
+  // not be treated as an opt-out. Only intent='unsubscribe' does.
   it("a human reply triaged intent=interested stops the cadence as replied, not unsubscribed", async () => {
     inboxEmails = [{ id: "m1", from: "sophia@agenticarchitect.ai", subject: "re: stack" }];
     // Default triageEmailsMock already returns category 'interested'.
@@ -882,7 +882,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     expect(rows[0]?.status).toBe("replied");
     expect(result.repliesDetected).toBe(1);
     expect(seqEvents).toEqual([]);
-    // Ordinary engagement is still tagged — only the unsubscribe branch above
+    // Ordinary engagement is still tagged. Only the unsubscribe branch above
     // must suppress this.
     expect(tagOutcomeValueMock).toHaveBeenCalledTimes(1);
   });

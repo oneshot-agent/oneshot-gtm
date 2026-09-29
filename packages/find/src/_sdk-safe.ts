@@ -30,17 +30,10 @@ import type {
 } from "@oneshot-gtm/core";
 
 /**
- * Per-candidate-safe wrappers for the job-based contact-resolution SDK calls.
- *
- * Finders process candidates concurrently via `parallelMap` (errors propagate
- * through Promise.all) or in sequential loops. An unguarded throw from one
- * candidate's `findEmail`/`verifyEmail` — e.g. a OneShot backend job timeout —
- * rejects the whole batch and aborts the entire trigger run. These wrappers
- * swallow the throw, log `error.swallowed`, and return a graceful "not found /
- * not deliverable" sentinel so the caller's existing drop branch handles just
- * that candidate and the run continues. Same pattern as `enrichVerifiedContact`
- * (_enrich.ts) and `findLinkedInUrl` (_linkedin.ts). The full `CallContext` is
- * forwarded unchanged, so audit/decisionContext metadata is preserved.
+ * Isolate failures from job-based contact-resolution SDK calls.
+ * Log thrown errors as `error.swallowed` and return failure sentinels so
+ * callers handle one candidate without aborting the parallel or sequential
+ * batch. Forward CallContext unchanged to preserve audit metadata.
  */
 
 function swallow(ctx: CallContext, call: string, err: unknown): void {
@@ -54,7 +47,7 @@ function swallow(ctx: CallContext, call: string, err: unknown): void {
   );
 }
 
-/** findEmail that never throws — a failure resolves to `found: false` (drop). */
+/** findEmail that never throws. A failure resolves to `found: false` (drop). */
 export async function safeFindEmail(
   input: FindEmailInput,
   ctx: CallContext,
@@ -83,7 +76,7 @@ export async function safeFindEmail(
     swallow(ctx, "find_email", err);
     // cost 0 / receiptId 0 mirror the cache-miss sentinels in _enrich.ts.
     // A ValidationError is the SDK refusing the CALL (nothing was sent, nothing
-    // billed) — SDK 0.32 rejects findEmail without a person name. That is a
+    // billed): SDK 0.32 rejects findEmail without a person name. That is a
     // verdict about our input, not a backend outage: reported as "invalid" so
     // the spine drops the candidate instead of feeding the circuit breaker
     // five times and blacking out contact resolution for every finder.
@@ -101,7 +94,7 @@ function isValidationError(err: unknown): boolean {
   );
 }
 
-/** verifyEmail that never throws — a failure resolves to `deliverable: false` (drop). */
+/** verifyEmail that never throws. A failure resolves to `deliverable: false` (drop). */
 export async function safeVerifyEmail(
   input: VerifyEmailInput,
   ctx: CallContext,
@@ -140,7 +133,7 @@ export async function safeVerifyEmail(
 }
 
 /**
- * peopleSearch that never throws — a failure resolves to an empty result set
+ * peopleSearch that never throws. A failure resolves to an empty result set
  * (no candidates found) instead of aborting the whole finder run.
  */
 /**
@@ -148,7 +141,7 @@ export async function safeVerifyEmail(
  * deadline of its own; a wedged job otherwise blocks the finder forever
  * (measured 2026-09-07: a sequential run sat 10+ minutes on one domain
  * lookup with no receipt and no error). Past the deadline the call is a
- * platform error — deferred, breaker-fed — not a stall.
+ * platform error (deferred, breaker-fed) not a stall.
  */
 const PEOPLE_SEARCH_DEADLINE_MS = 120_000;
 
@@ -165,7 +158,7 @@ export async function safePeopleSearch(
 }
 
 /**
- * companySearch that never throws — a failure resolves to an empty result
+ * companySearch that never throws. A failure resolves to an empty result
  * set instead of aborting the whole finder run.
  */
 export async function safeCompanySearch(
@@ -181,7 +174,7 @@ export async function safeCompanySearch(
 }
 
 /**
- * enrichCompany that never throws — a failure resolves to an empty company
+ * enrichCompany that never throws. A failure resolves to an empty company
  * record (drop) instead of aborting the whole finder run.
  */
 export async function safeEnrichCompany(
@@ -197,7 +190,7 @@ export async function safeEnrichCompany(
 }
 
 /**
- * govSolicitations that never throws — a failure resolves to an empty,
+ * govSolicitations that never throws. A failure resolves to an empty,
  * `status: "error"` result so the finder halts with a named platform
  * error instead of reading "no notices for these NAICS codes".
  */
@@ -224,7 +217,7 @@ export async function safeGovSolicitations(
   }
 }
 
-/** localSearch that never throws — same `status: "error"` sentinel as safeCompanySearch. */
+/** localSearch that never throws: same `status: "error"` sentinel as safeCompanySearch. */
 export async function safeLocalSearch(
   input: LocalSearchInput,
   ctx: CallContext,
@@ -248,7 +241,7 @@ export async function safeLocalSearch(
 }
 
 /**
- * localResolve that never throws — a failure resolves to `found: false`
+ * localResolve that never throws. A failure resolves to `found: false`
  * (drop), the same shape a genuine miss already has.
  */
 export async function safeLocalResolve(
@@ -276,7 +269,7 @@ export async function safeLocalResolve(
 /**
  * Cache key for a person dossier. Namespaced like `webread:<label>` so it can
  * share the enrichment_cache table (which lives in the cross-workspace SHARED
- * db — the whole point being that a person researched for one product is never
+ * db. The whole point being that a person researched for one product is never
  * re-bought for another). The social URL identifies a person more precisely
  * than an email, so it wins when both are present.
  */
@@ -290,7 +283,7 @@ export function personCacheKey(input: DeepResearchPersonInput): string | null {
 /**
  * True when `safeDeepResearchPerson` would answer this input from the cache
  * for free: a fresh, successful entry under its key. A negative entry does
- * not count — it returns the failed sentinel, which is not research.
+ * not count. It returns the failed sentinel, which is not research.
  */
 export function hasCachedResearch(input: DeepResearchPersonInput): boolean {
   const key = personCacheKey(input);
@@ -304,7 +297,7 @@ export function hasCachedResearch(input: DeepResearchPersonInput): boolean {
   }
 }
 
-/** Graceful sentinel — same `receiptId: 0` / `cost: 0` shape as the cache-miss
+/** Graceful sentinel: same `receiptId: 0` / `cost: 0` shape as the cache-miss
  *  sentinels in _enrich.ts, so callers spend nothing and drop just this row. */
 const FAILED_RESEARCH = {
   status: "failed",
@@ -318,7 +311,7 @@ const FAILED_RESEARCH = {
  *
  * Modelled on `safeEnrich` (packages/plays/src/_lib.ts) rather than
  * safeFindEmail, because this call is both the most expensive (~$0.05, 10x
- * enrich) and the slowest (2-5 min by its own doc comment) in the toolbox —
+ * enrich) and the slowest (2-5 min by its own doc comment) in the toolbox:
  * it needs caching and a deadline, not just a try/catch. Before this wrapper
  * existed all three call sites hand-rolled a catch and none cached, so the
  * same person could be researched repeatedly at full price.
@@ -347,7 +340,7 @@ export async function safeDeepResearchPerson(
         try {
           return { result: JSON.parse(cached.result_json), receiptId: 0 };
         } catch {
-          // corrupt cache row — fall through and refetch
+          // corrupt cache row: fall through and refetch
         }
       }
     }

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { validateCfgForStrategist, validateStrategistBody } from "../src/api/strategist.ts";
 import type { StrategistFrame } from "@oneshot-gtm/shared-types";
 
-// ─── Pure validator tests ────────────────────────────────────────────────
+// Pure validator tests
 
 describe("validateStrategistBody", () => {
   it("accepts a single user message", () => {
@@ -96,11 +96,11 @@ describe("validateCfgForStrategist", () => {
   });
 });
 
-// ─── Route-level HTTP tests (mocked loadConfig + complete) ─────────────────
+// Route-level HTTP tests (mocked loadConfig + complete)
 //
 // We mock the upstream modules so the handler runs end-to-end without
 // touching the real ledger or spending real LLM $. The route is tested
-// behind the actual `Request` / `Response` boundary — same way the browser
+// behind the actual `Request` / `Response` boundary: same way the browser
 // or `curl` would hit it.
 
 let mockCfg: {
@@ -311,7 +311,7 @@ describe("strategistRoute — success path streams SSE frames", () => {
     if (errorFrame?.kind === "error") {
       expect(errorFrame.message).toContain("upstream is down");
     }
-    // No `done` frame after an error — just thinking + error.
+    // No `done` frame after an error: just thinking + error.
     expect(frames.find((f) => f.kind === "done")).toBeUndefined();
   });
 });

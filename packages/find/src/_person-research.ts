@@ -1,23 +1,11 @@
 /**
- * Person research on queue rows and prospects: the current role from the
- * LinkedIn history, facts about the current company, and a re-judged person
- * gate — stored once, read by every consumer.
+ * Research the current role and company, then re-judge the person gate.
+ * Runs after the finder within the trigger's `maxCostUsd` budget; consumers
+ * read the stored result instead of waiting for research on a click.
  *
- * Why (2026-09-11, row #9144): the guest list gave a slogan for a title and a
- * company the person had left a year earlier. Enrichment by email failed. Her
- * LinkedIn experience said Founder & Product Owner somewhere else since March.
- * The gate said "unclear" on the slogan, the draft and the angle generator
- * worked from the stale company, and the reject box had nothing to read. The
- * founder found all of it by hand in two minutes.
- *
- * Sibling of `_product-research.ts`: runs after a finder over the rows it
- * created, budgeted by the trigger's `maxCostUsd`, never behind a click
- * (`deepResearchPerson` is minutes). Two write paths, one derivation:
- *
- *   - a row not yet sent keeps the record on `payload.personResearch` and gets
- *     its `title` / `company` corrected in place (finder originals kept);
- *   - an existing prospect gets the person half of `dossier_json`, its
- *     `title` / `company` columns corrected, and the ICP verdict re-judged.
+ * Unsent rows store `payload.personResearch` and corrected title/company,
+ * retaining finder originals. Existing prospects store the person half of
+ * `dossier_json`, corrected title/company columns, and the new ICP verdict.
  */
 import {
   boundPersonResearch,
@@ -116,11 +104,7 @@ function normalizeProfileUrl(value: string | null): string | null {
     return null;
   }
 }
-
-// ---------------------------------------------------------------------------
 // Seed: what to hand the research call
-// ---------------------------------------------------------------------------
-
 export interface PersonSeed {
   url: string | null;
   email: string | null;
@@ -131,9 +115,8 @@ export interface PersonSeed {
 }
 
 /**
- * Null when there is nothing `deepResearchPerson` can build a person from: no
- * researchable profile URL and no email + name. A name alone fails
- * deterministically (see research-prospects: 281 of 281 twice).
+ * Return null without a researchable profile URL or email plus name.
+ * A name alone cannot identify a person for `deepResearchPerson`.
  */
 export function personSeedFor(payload: JsonRecord): PersonSeed | null {
   // LinkedIn first (the live tier reads it), then whatever profile the finder
@@ -162,11 +145,7 @@ export function personSeedFor(payload: JsonRecord): PersonSeed | null {
   if (!url && !(email && name)) return null;
   return { url, email, name, company, title, domain };
 }
-
-// ---------------------------------------------------------------------------
 // Is the record about the person on the row?
-// ---------------------------------------------------------------------------
-
 function nameTokens(value: string): string[] {
   return value
     .normalize("NFKD")
@@ -285,11 +264,7 @@ export function providerLinkedInUrl(
   if (!namesIdentify(seed?.name, providerPersonName(result))) return null;
   return `https://www.linkedin.com/in/${encodeURIComponent(key.slice(LINKEDIN_KEY_PREFIX.length))}`;
 }
-
-// ---------------------------------------------------------------------------
 // Organisations → current role
-// ---------------------------------------------------------------------------
-
 /** "Mar 2026" / "2026-03" / "2026" → a sortable number, or null. */
 function dateKey(value: string | undefined): number | null {
   if (!value) return null;
@@ -459,11 +434,7 @@ function companyFromRecord(record: JsonRecord): PersonResearchCompany | null {
   if (description) c.description = description.replace(/\s+/g, " ").slice(0, 400);
   return Object.keys(c).length > 0 ? c : null;
 }
-
-// ---------------------------------------------------------------------------
 // Research one person
-// ---------------------------------------------------------------------------
-
 export interface ResearchPersonInput {
   seed: PersonSeed | null;
   playName: string;
@@ -818,11 +789,7 @@ export function dossierFromProviderResult(
     cached: !opts.billed,
   });
 }
-
-// ---------------------------------------------------------------------------
 // From research to the row: title/company overrides and rendered evidence
-// ---------------------------------------------------------------------------
-
 const COMPANY_SUFFIX =
   /\b(?:group|inc|incorporated|llc|ltd|limited|co|corp|corporation|gmbh|sas|srl|plc|ag|the)\b/g;
 
@@ -912,11 +879,7 @@ export function personPayloadPatch(
 export function roleChanged(patch: PersonPayloadPatch): boolean {
   return patch.title !== undefined || patch.company !== undefined;
 }
-
-// ---------------------------------------------------------------------------
 // Re-judge the person gate on real facts
-// ---------------------------------------------------------------------------
-
 export interface RejudgeResult {
   verdict: PersonVerdict | null;
   reason: string | null;
@@ -979,11 +942,7 @@ export async function rejudgePerson(input: {
   }
   return { verdict: decision.verdict, reason: decision.reason, patch: out };
 }
-
-// ---------------------------------------------------------------------------
 // Apply to a queue row
-// ---------------------------------------------------------------------------
-
 export type ApplyOutcome = "patched" | "rejected" | "skipped" | "unavailable";
 
 export interface ApplyPersonResearchOpts {
@@ -1017,7 +976,7 @@ export function researchMergePatch(dossier: PersonResearchDossier): JsonRecord {
  * Write research onto a live queue row. Guarded: `patchLiveQueuePayload`
  * refuses sent and mid-send rows. A pending row the re-judge rejects is
  * rejected as the finder would have (`auto: role — …`, machine); an approved
- * row only gets the verdict stamped and a note — the founder approved it, and
+ * row only gets the verdict stamped and a note. The founder approved it, and
  * the step-0 off-ICP gate holds the send with the reason visible. Never
  * touches `last_draft_json`.
  */
@@ -1157,7 +1116,7 @@ export async function researchNewQueueRowPeople(input: {
     }
     const seed = personSeedFor(payload);
     if (!seed) return;
-    // A row that already carries research is done — unless it is provider
+    // A row that already carries research is done, unless it is provider
     // history only (a finder paid for it before any live tier) and this row
     // can take a live read now: then research re-runs, the provider call is
     // a free cache hit, and the live Experience merges in on top.
@@ -1216,11 +1175,7 @@ export async function researchNewQueueRowPeople(input: {
 function hasLiveProfile(half: unknown): boolean {
   return isRecord(half) && isRecord(half["liveProfile"]);
 }
-
-// ---------------------------------------------------------------------------
 // Apply to an existing prospect
-// ---------------------------------------------------------------------------
-
 export interface ProspectForResearch {
   id: number;
   name: string | null;
@@ -1259,7 +1214,7 @@ export function personSeedForProspect(p: ProspectForResearch): PersonSeed | null
  * half kept, prior enrich record kept under `enrichment`), the `title` /
  * `company` columns corrected, and the ICP verdict re-judged. A `reject` on a
  * prospect with an active cadence stops its follow-ups through the existing
- * off-ICP gate — that is the point.
+ * off-ICP gate. That is the point.
  */
 export async function applyPersonResearchToProspect(
   ledger: LedgerLike,

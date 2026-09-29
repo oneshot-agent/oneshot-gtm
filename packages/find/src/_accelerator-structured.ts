@@ -4,7 +4,7 @@ import { logEvent } from "@oneshot-gtm/core";
  * Structured cohort sources: an accelerator's own listing that carries a
  * dated field per company (a founding year, an investment date, a numbered
  * cohort). Described as data in `_accelerators.ts` and read here by one
- * generic parser — plain HTTP, no LLM, no paid reads — so a listing that ties
+ * generic parser (plain HTTP, no LLM, no paid reads) so a listing that ties
  * companies to a year is filtered exactly instead of guessed at.
  */
 
@@ -20,7 +20,7 @@ export interface NumberedCohortYear {
 /**
  * Where each value lives in one listed item. Paths are dot paths; `[]` walks
  * every element of an array (`investments[].initialInvestDate`). The year is
- * the earliest four-digit year found at `year` — the date a company joined.
+ * the earliest four-digit year found at `year`. The date a company joined.
  */
 export interface StructuredFields {
   name: string;

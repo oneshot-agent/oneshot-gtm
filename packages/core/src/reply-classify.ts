@@ -2,22 +2,22 @@
  * Deterministic inbound-reply classifier. Every email from a prospect's
  * address used to count as a reply; real inboxes answer with vacation
  * autoresponders, "no longer at this company" notices, and "take me off your
- * list" one-liners — each of which must steer the pipeline differently
+ * list" one-liners. Each of which must steer the pipeline differently
  * (see kind docs below). Heuristic on purpose: this runs inside the 5-minute
  * scheduler tick, so no LLM call, no network, no nondeterminism.
  */
 
 /**
  * What an inbound email from a prospect actually is:
- * - `human`          — a person wrote back. The only kind that counts as a
+ * - `human`. A person wrote back. The only kind that counts as a
  *                      reply (metric, cadence stop, RoCS tag, friends push).
- * - `auto`           — temporary autoresponder (OOO/vacation). Stored for the
- *                      conversation history; changes nothing else — follow-ups
+ * - `auto`: temporary autoresponder (OOO/vacation). Stored for the
+ *                      conversation history; changes nothing else: follow-ups
  *                      continue as scheduled.
- * - `auto_permanent` — autoresponder saying the mailbox is dead ("retired",
+ * - `auto_permanent`: autoresponder saying the mailbox is dead ("retired",
  *                      "no longer with the company"). A human-layer hard
  *                      bounce: stops active cadences, never counts as a reply.
- * - `unsubscribe`    — a human wrote "remove me / do not contact". Stops ALL
+ * - `unsubscribe`. A human wrote "remove me / do not contact". Stops ALL
  *                      cadences and excludes the prospect from every campaign.
  */
 export type ReplyKind = "human" | "auto" | "auto_permanent" | "unsubscribe";
@@ -27,7 +27,7 @@ export type ReplyKind = "human" | "auto" | "auto_permanent" | "unsubscribe";
  * reply. Without this, a blind head-truncation can keep 2000 chars of OUR
  * own quoted email and cut off the prospect's actual new text below it. Cuts
  * at the first attribution line ("On <date>, <name> wrote:") or the first run
- * of `>`-quoted lines — whichever comes first. Falls back to the full body
+ * of `>`-quoted lines: whichever comes first. Falls back to the full body
  * when no quote marker is found (plain replies, or clients we don't match).
  */
 export function stripQuotedChain(body: string): string {
@@ -36,7 +36,7 @@ export function stripQuotedChain(body: string): string {
     const line = lines[i]!.trim();
     // Gmail/Apple/Outlook attribution line that precedes the quoted block.
     if (/^On\b.*\bwrote:$/.test(line)) return lines.slice(0, i).join("\n").trim();
-    // A quoted line with real content above it — the chain has started.
+    // A quoted line with real content above it. The chain has started.
     if (line.startsWith(">") && i > 0) return lines.slice(0, i).join("\n").trim();
   }
   return body.trim();
@@ -69,7 +69,7 @@ const AUTO_SUBJECT_RE = new RegExp(
 );
 
 // Body phrases an autoresponder opens with. Checked against the head of the
-// quote-stripped body only — deep in a long human reply these read as prose
+// quote-stripped body only: deep in a long human reply these read as prose
 // ("I was out of office last week"), near the top they read as a bot. The
 // past-tense lookbehinds keep a human's "sorry, I was out of the office last
 // week" from reading as a live responder: machines announce in present/future
@@ -89,7 +89,7 @@ const AUTO_BODY_RE = new RegExp(
   "i",
 );
 
-// Escalates an `auto` to `auto_permanent` — the responder says the mailbox or
+// Escalates an `auto` to `auto_permanent`. The responder says the mailbox or
 // the person is gone for good, not on leave. Only consulted once something
 // already classified as auto: "retired" alone in a human reply must not trip.
 const PERMANENT_RE = new RegExp(
@@ -103,7 +103,7 @@ const PERMANENT_RE = new RegExp(
   "i",
 );
 
-// A human asking off the list. Deliberately tight — a bare "not interested"
+// A human asking off the list. Deliberately tight. A bare "not interested"
 // is a soft no and stays human; these are explicit removal requests. Checked
 // on the quote-stripped body so OUR OWN footer in the quoted chain can't trip.
 const UNSUBSCRIBE_RE = new RegExp(
@@ -126,7 +126,7 @@ const BODY_HEAD_CHARS = 400;
 
 /**
  * Classify one inbound email. `autoSubmitted` is the header-level verdict the
- * Gmail source computes from Auto-Submitted / X-Autoreply / Precedence —
+ * Gmail source computes from Auto-Submitted / X-Autoreply / Precedence:
  * authoritative when present (OneShot-sourced mail never has it and relies on
  * the subject/body heuristics alone).
  */
@@ -141,7 +141,7 @@ export function classifyReply(input: {
   const permanent = PERMANENT_RE.test(subject) || PERMANENT_RE.test(head);
 
   // The header verdict is authoritative machine mail: no human wrote it, so
-  // it can never be an unsubscribe — even if the responder's boilerplate
+  // it can never be an unsubscribe: even if the responder's boilerplate
   // happens to contain the word.
   if (input.autoSubmitted === true) return permanent ? "auto_permanent" : "auto";
   // For text-classified mail an explicit removal request wins over OOO

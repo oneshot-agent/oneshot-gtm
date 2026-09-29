@@ -16,13 +16,13 @@ import { c, header, note, ok, warn } from "../output.ts";
 
 /**
  * Backfill `fitReason` onto queue rows enqueued before finders stamped it
- * (issue #592) — the sentence the /queue row shows after its signal.
+ * (issue #592). The sentence the /queue row shows after its signal.
  *
  * Free rungs first, for every pending/approved row that lacks one:
- *   1. the company-gate reason recovered from the finder's `notes` template;
- *   2. the person-gate reason already on the payload (`icpVerdictReason`),
+ *   1. The company-gate reason recovered from the finder's `notes` template;
+ *   2. The person-gate reason already on the payload (`icpVerdictReason`),
  *      unless that verdict was `reject`;
- *   3. one generated sentence — the only rung that spends, so it is capped by
+ *   3. One generated sentence. The only rung that spends, so it is capped by
  *      `--max-cost`, reserved against the daily ceiling, and skipped entirely
  *      with `--no-generate` or when no ICP is configured.
  *
@@ -31,7 +31,7 @@ import { c, header, note, ok, warn } from "../output.ts";
  * default is a DRY RUN: this command can spend. Writes go through
  * `Ledger.patchLiveQueuePayload`, one guarded statement, so a row that was
  * sent between listing and writing is skipped and counted, never clobbered.
- * Drafts are left alone — nothing in any prompt reads `fitReason`.
+ * Drafts are left alone: nothing in any prompt reads `fitReason`.
  */
 
 export interface BackfillFitReasonOpts {

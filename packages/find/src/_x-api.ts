@@ -1,5 +1,5 @@
 /**
- * First-party X API v2 engine — the default. OAuth1 user-context, with a call
+ * First-party X API v2 engine. The default. OAuth1 user-context, with a call
  * budget baked in.
  *
  * Observed limits (user-context OAuth1, probed 2026-08-27):
@@ -7,7 +7,7 @@
  *   /2/users/:id/tweets          900 / 15min
  *   /2/tweets/:id/retweeted_by   75 / 15min  (shared window with quote_tweets)
  *   /2/tweets/:id/quote_tweets   75 / 15min  (shared window with retweeted_by)
- *   /2/tweets/:id/liking_users   returns result_count: 0 — X killed it, unusable
+ *   /2/tweets/:id/liking_users   returns result_count: 0: X killed it, unusable
  */
 
 import { CostMeter } from "./_x-cost.ts";
@@ -30,12 +30,12 @@ const USER_FIELDS =
 function mapUser(u: any): XUser {
   const m = u.public_metrics ?? {};
   return {
-    // `receives_your_dm` is relationship data — it needs the user-context auth
+    // `receives_your_dm` is relationship data. It needs the user-context auth
     // we already use, and costs nothing extra on these calls.
     dmOpen: u.receives_your_dm === true,
     automated: undefined,
     site: u.entities?.url?.urls?.[0]?.expanded_url,
-    // Links inside the bio text as well as the website field — a GitHub URL is
+    // Links inside the bio text as well as the website field. A GitHub URL is
     // the cleanest available proof that someone builds things.
     links: [...(u.entities?.url?.urls ?? []), ...(u.entities?.description?.urls ?? [])]
       .map((l: any) => l.expanded_url ?? l.display_url ?? "")
@@ -95,7 +95,7 @@ export class XApiEngine implements HarvestEngine {
     const remaining = res.headers.get("x-rate-limit-remaining");
     if (remaining !== null) this.lastRemaining = Number(remaining);
     if (res.status === 429) throw new BudgetExhausted(`429 on ${path} — rate limited, stopping`);
-    // 402 is the monthly read quota on the X tier, not a rate limit — it does
+    // 402 is the monthly read quota on the X tier, not a rate limit. It does
     // not clear in fifteen minutes. Stop the run and keep what we harvested.
     if (res.status === 402) {
       throw new BudgetExhausted(
@@ -157,7 +157,7 @@ export class XApiEngine implements HarvestEngine {
     );
   }
 
-  /** Up to the 100 most recent plain reposters of a tweet. Single page — no cursor here. */
+  /** Up to the 100 most recent plain reposters of a tweet. Single page: no cursor here. */
   async retweetedBy(tweetId: string): Promise<XUser[]> {
     this.spendLookup();
     const json = await this.get(`/tweets/${tweetId}/retweeted_by`, {
@@ -169,7 +169,7 @@ export class XApiEngine implements HarvestEngine {
     return rows.map(mapUser);
   }
 
-  /** Quote-reposters — retweeted_by does not include them. */
+  /** Quote-reposters: retweeted_by does not include them. */
   async quoteTweets(tweetId: string): Promise<XUser[]> {
     this.spendLookup();
     const json = await this.get(`/tweets/${tweetId}/quote_tweets`, {
@@ -180,7 +180,7 @@ export class XApiEngine implements HarvestEngine {
     const rows = json?.includes?.users ?? [];
     const posts: any[] = json?.data ?? [];
     this.meter.charge({ posts: posts.length, users: rows.length });
-    // We are billed for the quote posts either way — keep their text: it is
+    // We are billed for the quote posts either way. Keep their text: it is
     // the strongest personalization hook the drafts have (THEIR_QUOTE).
     const textByAuthor = new Map<string, string>();
     for (const t of posts) {

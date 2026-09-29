@@ -4,14 +4,14 @@ import { cityTimeZone, isValidTimeZone, logEvent } from "@oneshot-gtm/core";
  * Legistar/Granicus Web API helpers for the `civic-agenda` finder. Same
  * fault-tolerance posture as `_luma-discover.ts`: undocumented/shape-drifting
  * upstream, so every parse is defensive. `fetchCityEvents`/`fetchEventItems`
- * return null on any failure rather than throwing — the caller decides what
+ * return null on any failure rather than throwing. The caller decides what
  * a missing result means. `fetchBodyContact` returns a discriminated
  * `LegistarContactOutcome` instead, since its caller needs to tell a
  * genuine platform error (retryable) apart from a body that simply
- * publishes no member email (not retryable) — see that type's doc comment.
+ * publishes no member email (not retryable): see that type's doc comment.
  *
  * No auth, no API key: the whole surface is public JSON (`Accept:
- * application/json` — the default response is XML). Docs:
+ * application/json`. The default response is XML). Docs:
  * https://webapi.legistar.com/Home/Examples
  */
 
@@ -27,7 +27,7 @@ const MAX_OFFICE_RECORDS = 50;
 /**
  * Curated city-name → Legistar client-slug map (case/whitespace-insensitive).
  * Legistar covers 80%+ of US municipalities, but each deployment's slug is
- * its own arbitrary string (confirmed against the live API, not guessed) —
+ * its own arbitrary string (confirmed against the live API, not guessed):
  * extend this map as founders name more cities. Unmapped cities are skipped
  * with a logged reason rather than guessed at.
  */
@@ -52,7 +52,7 @@ export interface LegistarEvent {
   eventId: number;
   eventBodyId: number;
   eventBodyName: string | null;
-  /** Raw `EventDate` — midnight local civil time, no offset. */
+  /** Raw `EventDate`: midnight local civil time, no offset. */
   eventDateIso: string;
   /** Raw `EventTime` display string (e.g. "10:00 AM"). Free-form; not always present. */
   eventTime: string | null;
@@ -75,7 +75,7 @@ interface RawLegistarEvent {
 function parseEvent(raw: RawLegistarEvent): LegistarEvent | null {
   // An `Events` response can contain a null/malformed element alongside good
   // ones. Guarding here means only THAT element drops (via the caller's
-  // `.filter`) — reading `.EventId` off a null `raw` would throw, and since
+  // `.filter`): reading `.EventId` off a null `raw` would throw, and since
   // this runs inside `fetchCityEvents`'s try/catch, an uncaught throw here
   // is classified as a full fetch failure and discards every valid event for
   // the city.
@@ -104,7 +104,7 @@ function odataDateTime(d: Date): string {
 
 /** `YYYY-MM-DD` for `d` as it reads on the wall clock in `zone`, via Intl (no manual offset math). */
 function calendarDateInZone(d: Date, zone: string): string {
-  // en-CA formats as YYYY-MM-DD directly — no field reassembly needed.
+  // en-CA formats as YYYY-MM-DD directly: no field reassembly needed.
   return new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(d);
 }
 
@@ -112,18 +112,18 @@ function calendarDateInZone(d: Date, zone: string): string {
  * The OData literal for midnight of `d`'s own calendar day IN THE CITY'S
  * OWN LOCAL TIMEZONE, in the same (offset-free) representation `EventDate`
  * itself uses. `EventDate` is a local civil date stamped at midnight, not
- * an instant — filtering with the exact "now" instant as the lower bound
+ * an instant: filtering with the exact "now" instant as the lower bound
  * excludes a meeting happening later on its own day (midnight-today <
  * now-this-afternoon) any time the finder runs after midnight.
  *
  * The calendar day itself must be the CITY's, not the run's UTC day: a
  * finder running at, say, 01:00 UTC is already 17:00 the previous day in
- * Los Angeles (UTC-8) — flooring to UTC's calendar day would send a lower
+ * Los Angeles (UTC-8): flooring to UTC's calendar day would send a lower
  * bound one day ahead of LA's actual "today" and silently omit that day's
  * remaining meetings. Symmetrically, a UTC-east city (say Vienna, UTC+1)
  * running early enough could floor to a UTC day still in Vienna's
- * yesterday and pull in already-past meetings. `zone` — the city's own
- * IANA zone, resolved by the caller — is what makes "today" mean the same
+ * yesterday and pull in already-past meetings. `zone`. The city's own
+ * IANA zone, resolved by the caller: is what makes "today" mean the same
  * thing here as it does on the ground in that city.
  */
 function odataStartOfDay(d: Date, zone: string): string {
@@ -135,7 +135,7 @@ function odataStartOfDay(d: Date, zone: string): string {
  * Returns null on any failure (unmapped-shape response, non-2xx, network
  * blip) so the caller can skip this city and continue with the rest.
  *
- * `city` — the founder-supplied city name (NOT the Legistar `slug`) — is
+ * `city` (the founder-supplied city name (NOT the Legistar `slug`)) is
  * used only to resolve the local timezone for the "start of today" boundary
  * (see `odataStartOfDay`); an unmapped/omitted city falls back to UTC, same
  * as the previous behavior, rather than guessing.
@@ -209,7 +209,7 @@ function parseEventItem(raw: RawLegistarEventItem): LegistarEventItem | null {
   // fetchEventItems' `.map`, the outer catch turns that into a full
   // fetch failure (`return null`), and the caller (civic-agenda.ts,
   // `if (!items) continue;`) silently discards every valid agenda item
-  // for the event — not just the one malformed element.
+  // for the event, not just the one malformed element.
   if (!raw || typeof raw !== "object") return null;
   const eventItemId = raw.EventItemId;
   if (typeof eventItemId !== "number") return null;
@@ -280,7 +280,7 @@ export interface LegistarContact {
  * Outcome of a body-contact lookup. Mirrors `DescriptionOutcome` in
  * `gov-solicitation.ts`: `ok: false` is a genuine platform failure the
  * caller should retry (network error, 5xx, 429); `ok: true` with a `null`
- * contact is a real negative — the body simply publishes no member email —
+ * contact is a real negative. The body simply publishes no member email:
  * which is NOT retryable (re-fetching a body with no email will never
  * resolve). Before this type existed, both cases collapsed to `null` and
  * were indistinguishable to the caller; see civic-agenda.ts's outage-retry
@@ -293,14 +293,14 @@ export type LegistarContactOutcome =
 interface RawOfficeRecord {
   OfficeRecordFullName?: unknown;
   OfficeRecordEmail?: unknown;
-  // Docs spell this without an "s" — matches the sample payload exactly.
+  // Docs spell this without an "s": matches the sample payload exactly.
   OfficeRecordPhone?: unknown;
   OfficeRecordTitle?: unknown;
 }
 
 /**
  * Legistar's own published-contact titles that read as "the person actually
- * running this body" rather than a rank-and-file member — preferred when more
+ * running this body" rather than a rank-and-file member: preferred when more
  * than one office record carries an email, same principle as SAM.gov's POC:
  * use the contact the source already elevated, don't guess.
  */
@@ -309,7 +309,7 @@ const PREFERRED_TITLE_RX = /chair|president|clerk|secretary/i;
 /**
  * Pick the best-published contact off a body's office records: prefer a
  * chair/president/clerk/secretary title, else the first record with an
- * email. Returns null when no record has one at all — a real, common case
+ * email. Returns null when no record has one at all. A real, common case
  * (many bodies publish no member emails), not a fetch failure.
  */
 export function pickOfficeContact(records: LegistarContact[]): LegistarContact | null {
@@ -347,9 +347,9 @@ function parseOfficeRecord(raw: RawOfficeRecord): LegistarContact | null {
 /**
  * Fetch the office-holders for one body and return the best publicly-listed
  * contact (see `pickOfficeContact`). Distinguishes a genuine platform error
- * (network failure, 5xx, 429 — worth retrying) from a real negative — a
+ * (network failure, 5xx, 429 (worth retrying) from a real negative) a
  * malformed/empty response or a body that simply publishes no member email
- * (a 404 for an unknown body, or 200 with no email on any record) — which is
+ * (a 404 for an unknown body, or 200 with no email on any record), which is
  * not retryable: re-fetching won't make an email appear. See
  * `LegistarContactOutcome`.
  */
@@ -374,7 +374,7 @@ export async function fetchBodyContact(
       // 5xx/429/408 are worth a retry; a 404 (unknown body) or any other
       // 4xx will never resolve on retry, so treat it as a real negative.
       // 408 Request Timeout is a transient server-side hiccup, not "this
-      // body has no email" — without it a timed-out lookup silently drops
+      // body has no email", without it a timed-out lookup silently drops
       // the agenda item instead of persisting it for outage retry.
       return res.status >= 500 || res.status === 429 || res.status === 408
         ? { ok: false, transient: true }
@@ -398,7 +398,7 @@ export async function fetchBodyContact(
       },
       "warn",
     );
-    // Network error / timeout — always transient.
+    // Network error / timeout. Always transient.
     return { ok: false, transient: true };
   }
 }

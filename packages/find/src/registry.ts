@@ -112,12 +112,12 @@ export type Readiness = { ready: true } | { ready: false; reason: string };
  * (issue #708): `runFinderWithProductResearch`'s two callers stamp
  * `_triggerBatchSeq` onto the resolved config with the trigger's PRE-run
  * `company_batch_seq` (0 for a trigger's first-ever run) before invoking
- * `spec.run` — so a config that spans several company batches starts at a
+ * `spec.run`, so a config that spans several company batches starts at a
  * different batch each run without any new persisted cursor state beyond
  * the counter itself. `company_batch_seq` is a monotonic per-trigger
  * counter that `updateTriggerLastPoll` increments by exactly 1 on every
  * completed run, so `cursor mod batchCount` visits every batch index in
- * turn before repeating — unlike the previous `last_polled_at` epoch-ms
+ * turn before repeating: unlike the previous `last_polled_at` epoch-ms
  * cursor, whose value modulo the batch count could repeat across
  * successive runs (e.g. whenever the batch count divides the elapsed
  * milliseconds). Never itself persisted: `storedTriggerConfig`/
@@ -132,7 +132,7 @@ export function companyBatchCursorFor(config: Record<string, unknown>): number {
 /**
  * Worst-case spend estimate for reserving against the daily ceiling before a
  * trigger fires. Reads `maxCostUsd` (every finder's SDK/LLM cap) plus, for
- * x-reposters, `maxSpendPerRun` (its separate X-read meter) — the two are
+ * x-reposters, `maxSpendPerRun` (its separate X-read meter). The two are
  * independent budgets on that one finder, so both must be held. Falls back
  * to `DEFAULT_SPEND_RESERVATION_USD` for a finder with neither configured
  * (e.g. `breakup-revive`, which is ledger-only and spends nothing) so a
@@ -180,7 +180,7 @@ const PERSON_RESEARCH_BRIEF =
 /**
  * Default cohort sweep for `accelerator-batch`. Only yc-* entries hit the
  * structured yc-oss/api directory; the rest use the websearch + LLM-extract
- * adapter with spotty recall. Per-cohort failures are isolated — the run only
+ * adapter with spotty recall. Per-cohort failures are isolated. The run only
  * halts when EVERY cohort comes back empty.
  * Kept for configs that pin cohorts explicitly. New installs default to
  * `DEFAULT_ACCELERATORS`, which resolves the latest cohorts from the date.
@@ -326,7 +326,7 @@ export const TRIGGERS: TriggerSpec[] = [
           ? { adapter: cfg["adapter"] as "yc-oss" | "websearch" }
           : {}),
         // Stamped onto every enqueued row so the play drafts inline without a
-        // run-level value — same shape as github-topics. Readiness gates it.
+        // run-level value: same shape as github-topics. Readiness gates it.
         ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 15,
@@ -569,7 +569,7 @@ export const TRIGGERS: TriggerSpec[] = [
         ? (cfg["states"] as unknown[]).filter((s) => typeof s === "string" && s.trim())
         : [];
       const hasNppes = taxonomies.length > 0 && states.length > 0;
-      // Same allowlist `run` applies below (validEntityTypes) — an invalid
+      // Same allowlist `run` applies below (validEntityTypes). An invalid
       // entityTypes value (e.g. "trucking" instead of "carrier") must not
       // pass readiness only to have `run` normalize it away and start with
       // no configured fmcsa source, which reports the unhelpful "every
@@ -968,7 +968,7 @@ export const TRIGGERS: TriggerSpec[] = [
     // One SDK govSolicitations search per run: every notice comes back with
     // its contracting officer's contact (name, title, email, phone) and the
     // description inline, so this finder needs no findEmail/verifyEmail and
-    // no second fetch — the search is the whole spend.
+    // no second fetch. The search is the whole spend.
     name: "gov-solicitation",
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
@@ -1007,7 +1007,7 @@ export const TRIGGERS: TriggerSpec[] = [
         // Omit noticeTypes entirely (rather than passing an empty array
         // through) when the stored config has no usable entries, so the
         // finder's own default (["r","p"]) applies instead of halting on
-        // "set `noticeTypes`" — the config endpoint persists an empty array
+        // "set `noticeTypes`". The config endpoint persists an empty array
         // without normalizing it to the default.
         ...(configuredNoticeTypes.length > 0 ? { noticeTypes: configuredNoticeTypes } : {}),
         ...(Array.isArray(cfg["agencies"])
@@ -1026,7 +1026,7 @@ export const TRIGGERS: TriggerSpec[] = [
   },
   {
     // Legistar/Granicus council agendas: keyword-gate agenda item titles free,
-    // then one LLM relevance call on the survivors — same pre-spend discipline
+    // then one LLM relevance call on the survivors: same pre-spend discipline
     // as luma.ts. The body's own OfficeRecords contact is used; no SDK spend.
     name: "civic-agenda",
     defaultIntervalMs: 24 * ONE_HOUR,
@@ -1191,7 +1191,7 @@ export function finderApprovalHealth(
 /**
  * Maximum age before an in-flight `running_started_at` is considered a
  * killed-by-restart zombie and swept. 4h leaves generous headroom over real
- * finder runtimes; a run that exceeds it gets marked killed and re-claimable —
+ * finder runtimes; a run that exceeds it gets marked killed and re-claimable:
  * bounded duplicate spend beats a permanently-stuck 409.
  */
 export const MAX_RUN_AGE_MS = 4 * 60 * 60 * 1000;
@@ -1199,7 +1199,7 @@ export const MAX_RUN_AGE_MS = 4 * 60 * 60 * 1000;
 /**
  * Truth of "is this trigger running" lives in the ledger and survives server
  * restart. The freshness gate hides stale rows the boot sweep hasn't cleaned
- * up yet — never report "still running" for a row older than any real run.
+ * up yet. Never report "still running" for a row older than any real run.
  */
 /**
  * Pure helper (unit-testable without the ledger): parsed start-epoch when the
@@ -1225,7 +1225,7 @@ export function getTriggerRunningSince(name: string): number | null {
 }
 
 /**
- * Stored config with corruption fallback — one corrupt config_json row must
+ * Stored config with corruption fallback: one corrupt config_json row must
  * not stall every trigger, so it runs on defaults with a warning instead.
  */
 export function storedTriggerConfig(
@@ -1245,7 +1245,7 @@ export function storedTriggerConfig(
  * Fire-and-forget wrapper around `runTriggerNow`. Throws synchronously if the
  * trigger is unknown, already running, or unready; finder errors are already
  * persisted by runTriggerNow. A process killed mid-run leaves
- * `running_started_at` set — the cold-boot sweep writes `killed_by_restart`.
+ * `running_started_at` set. The cold-boot sweep writes `killed_by_restart`.
  */
 export function fireTriggerNow(name: string): void {
   const spec = TRIGGERS.find((t) => t.name === name);
@@ -1264,14 +1264,14 @@ export function fireTriggerNow(name: string): void {
   // Daily spend ceiling gate (issue #481): a manual "run now" click is still
   // an AUTOMATED paid call (as opposed to a human-reviewed /queue send), so it
   // is bound by the same install-wide ceiling as scheduled runs. This is an
-  // early read-only check for a fast 409 — runTriggerNow re-checks
+  // early read-only check for a fast 409: runTriggerNow re-checks
   // atomically via tryReserveDailySpend right before firing, which is what
   // actually closes the race between two concurrent automated calls.
   const status = dailySpendStatus();
   if (status.ceilingReached) {
     throw new Error(`not ready: ${spendCeilingReason(status)}`);
   }
-  // Bootstrap the row if it doesn't exist yet — markTriggerRunning is an
+  // Bootstrap the row if it doesn't exist yet: markTriggerRunning is an
   // UPDATE that no-ops on a missing row, so we'd silently lose state.
   if (!stored) {
     ledger.upsertTrigger({
@@ -1280,7 +1280,7 @@ export function fireTriggerNow(name: string): void {
       enabled: spec.enabledByDefault !== false,
     });
   }
-  // Atomic claim — no TOCTOU race: exactly one of two concurrent fires wins.
+  // Claim atomically so exactly one concurrent fire wins.
   // `staleCutoffIso` lets a fresh click reclaim a row whose stale
   // `running_started_at` never got cleared, instead of 409ing every retry.
   const nowIso = new Date().toISOString();
@@ -1335,7 +1335,7 @@ export async function runTriggerNow(
     const message = `not ready: ${readiness.reason}`;
     // The finder never ran: release the claim and record why, but neither
     // stamp a poll nor step the company-batch cursor (company_batch_seq only
-    // advances on a completed run) — same as the scheduler's readiness skip.
+    // advances on a completed run): same as the scheduler's readiness skip.
     ledger.clearTriggerClaim({
       name,
       summary: { error: message, at: new Date().toISOString() },
@@ -1343,14 +1343,14 @@ export async function runTriggerNow(
     logEvent("trigger.run.skipped", { name, source: "ad_hoc", reason: readiness.reason });
     return { name, fired: false, error: message, nextDueInMs: intervalMs };
   }
-  // Company-batch rotation cursor (issue #708) — the PRE-run
+  // Company-batch rotation cursor (issue #708). The PRE-run
   // company_batch_seq, read before this run touches it. `stored` is the row
   // fetched above, before any upsert/claim; a null row (first-ever run)
   // reads as cursor 0, same as `companyBatchCursorFor`'s own fallback.
   // `storedTriggerConfig` may return `spec.defaultConfig` itself (same
   // object reference) when there is no stored row yet, so a plain-property
   // assignment would leak this key into the shared module-level default for
-  // every future call — spread into a fresh object instead.
+  // every future call: spread into a fresh object instead.
   const runConfig: Record<string, unknown> = {
     ...config,
     _triggerBatchSeq: stored?.company_batch_seq ?? 0,
@@ -1374,7 +1374,7 @@ export async function runTriggerNow(
   if (!reservation.granted) {
     // clearTriggerClaim, not updateTriggerLastPoll: the finder never ran, so
     // stamping last_polled_at would push this trigger's next-due a full
-    // interval out even though it was refused with $0 spent — the ceiling
+    // interval out even though it was refused with $0 spent. The ceiling
     // resetting (or headroom opening from a released reservation) wouldn't
     // un-stick it until the next scheduled poll, which could be hours away
     // (issue #481 review finding).
@@ -1457,13 +1457,13 @@ export async function runDueTriggers(
       continue;
     }
 
-    // Company-batch rotation cursor (issue #708) — the PRE-run
+    // Company-batch rotation cursor (issue #708). The PRE-run
     // company_batch_seq, read before this run touches it. Same fallback as
     // runTriggerNow: a never-polled trigger (`stored` null) reads as cursor
     // 0. `storedTriggerConfig` may return `spec.defaultConfig` itself (same
     // object reference) when there is no stored row yet, so a plain-property
     // assignment would leak this key into the shared module-level default
-    // for every future call — spread into a fresh object instead.
+    // for every future call: spread into a fresh object instead.
     const runConfig: Record<string, unknown> = {
       ...config,
       _triggerBatchSeq: stored?.company_batch_seq ?? 0,
@@ -1513,7 +1513,7 @@ export async function runDueTriggers(
       continue;
     }
 
-    // Atomic claim — same pattern as fireTriggerNow, so the scheduled path
+    // Atomic claim: same pattern as fireTriggerNow, so the scheduled path
     // can't race a manual click and double-spend; `staleCutoffIso` reclaims a
     // stale marker. Cleared by updateTriggerLastPoll on success/error.
     const claimNowIso = new Date().toISOString();
@@ -1536,7 +1536,7 @@ export async function runDueTriggers(
     const reservation = tryReserveDailySpend(estimatedTriggerSpendUsd(config));
     if (!reservation.granted) {
       // clearTriggerClaim, not updateTriggerLastPoll (issue #481 review
-      // finding) — see fireTriggerNow's matching comment: stamping
+      // finding): see fireTriggerNow's matching comment: stamping
       // last_polled_at on a refusal would delay the NEXT scheduled attempt
       // by a full interval even though this one never actually ran.
       ledger.clearTriggerClaim({

@@ -4,9 +4,9 @@
  * (or `{error: string}` on a thrown run).
  *
  * Returns "—" when nothing's been run yet. Precedence:
- *   1. `error: <msg>`  — thrown / 500
- *   2. `halted · <reason>` — finder returned `halted: "..."`
- *   3. counter breakdown: `cand=N · kept=M · icp=K · low=L · $X.YY`
+ *   1. `error: <msg>`: thrown / 500
+ *   2. `halted · <reason>`: finder returned `halted: "..."`
+ *   3. Counter breakdown: `cand=N · kept=M · icp=K · low=L · $X.YY`
  *   4. `—` when summary exists but has no usable fields
  */
 export function summarizeRun(summary: unknown): string {

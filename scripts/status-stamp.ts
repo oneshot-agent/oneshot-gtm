@@ -1,22 +1,9 @@
 #!/usr/bin/env bun
 /**
- * Regenerates the STATUS.md verification stamp — line 5:
- *   Last verified **<date>** · Bun <ver> · OneShot SDK <ver> · **N tests / M files** · <rest>
- *
- * The date, Bun version, SDK version and test/file counts are measured
- * fresh on every run; the trailing clause (typecheck/lint pass state) is
- * carried over unchanged, same as the rest of STATUS.md, which stays
- * hand-maintained. See issue #582: this line was the one spot in the repo
- * that conflicted by construction — two branches rewriting the same count
- * from different starting points always collide. Generating it on `main`
- * (see the `status:stamp` CI job) instead of hand-editing it in branches
- * removes that class of conflict entirely.
- *
- * Run: `bun run status:stamp`
- * Idempotent: re-running against an unchanged suite leaves STATUS.md
- * byte-identical (prints "already current" and exits 0 without writing).
- * Exits non-zero if the suite is red — a stamp built on a failing suite
- * would be exactly the kind of unverified claim this script exists to stop.
+ * Regenerate STATUS.md's date, versions, and test counts with `bun run status:stamp`.
+ * Preserve the hand-maintained check summary and remaining content.
+ * Run on main to avoid count conflicts between branches. A failing suite prevents
+ * stamping; unchanged results leave the file untouched.
  */
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -49,15 +36,13 @@ function runVitestJson(): VitestJsonReport {
     // `--bun` matches CI (ci.yml): bun:sqlite doesn't exist under plain Node.
     run(["bun", "--bun", "run", "test", "--", "--reporter=json", `--outputFile=${reportPath}`]);
   } catch (err) {
-    // vitest exits non-zero on a red suite but still writes the JSON report;
-    // surface real failure counts before failing loudly.
+    // Vitest can write a report even when it exits non-zero.
     let detail = (err as Error).message;
     try {
       const partial = JSON.parse(readFileSync(reportPath, "utf8")) as VitestJsonReport;
       detail = `${partial.numFailedTests}/${partial.numTotalTests} tests failed`;
     } catch {
-      // report wasn't written (e.g. a syntax error prevented collection) — fall
-      // back to the raw error message above.
+      // Use the raw error if Vitest could not write a report.
     }
     rmSync(reportDir, { recursive: true, force: true });
     console.error(`Test suite is red (${detail}). Fix it before stamping STATUS.md.`);

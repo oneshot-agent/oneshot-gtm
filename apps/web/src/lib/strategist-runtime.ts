@@ -8,7 +8,7 @@ const ENDPOINT = "/api/strategist/stream";
  * SSE strategist endpoint. Streams text deltas as they arrive; surfaces
  * server errors as inline assistant text so the chat doesn't go silent.
  *
- * Query invalidation lives in the action-chip onClick (StrategistChat) —
+ * Query invalidation lives in the action-chip onClick (StrategistChat):
  * the adapter has no notion of which trigger was applied, so wiring a
  * callback here was dead surface area. Removed.
  */
@@ -71,7 +71,7 @@ export function createStrategistAdapter(): ChatModelAdapter {
       let buffer = "";
       let accumulated = "";
 
-      // Generator output is a snapshot of the assistant message so far —
+      // Generator output is a snapshot of the assistant message so far:
       // we re-yield the full text on each delta so assistant-ui re-renders
       // it cleanly. Same shape soul-hunt-web uses.
       while (true) {
@@ -93,7 +93,7 @@ export function createStrategistAdapter(): ChatModelAdapter {
             return;
           }
           // 'thinking' frame is informational; the UI shows a spinner via
-          // assistant-ui's own pending state — no need to render extra text.
+          // assistant-ui's own pending state: no need to render extra text.
         }
       }
     },

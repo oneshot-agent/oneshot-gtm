@@ -66,7 +66,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 // A patch naming a trigger absent from the registry (typo, retired finder)
-// must be skipped with a named reason, not fail the whole apply — inject a
+// must be skipped with a named reason, not fail the whole apply: inject a
 // synthetic pack alongside the real ones to exercise that path without
 // depending on packs.ts ever shipping a deliberately-broken entry.
 vi.mock("@oneshot-gtm/find", async () => {
@@ -159,7 +159,7 @@ describe("applyPackRoute", () => {
     expect(showHn?.notReadyReason).toBeNull();
 
     // hiring-signal's readiness fn requires `yourClaim`, which this pack
-    // deliberately leaves unset (see packs.ts `requires`) — enabled but not
+    // deliberately leaves unset (see packs.ts `requires`): enabled but not
     // ready is the intended end state, named plainly for the UI.
     const hiring = body.applied.find((a) => a.name === "hiring-signal");
     expect(hiring?.enabled).toBe(true);

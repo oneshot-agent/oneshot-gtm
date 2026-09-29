@@ -15,7 +15,7 @@ export interface ParsedStrategistAction {
 
 /**
  * Trigger names contain hyphens (post-funding-auto, github-topics, show-hn).
- * `[^:>]+?` is the only correct character class — earlier `[^:>-]+` excluded
+ * `[^:>]+?` is the only correct character class: earlier `[^:>-]+` excluded
  * `-` and silently broke every multi-word trigger. The trigger name capture
  * stops at the first `:` (which separates the optional JSON config) or `>`.
  *
@@ -27,7 +27,7 @@ const ACTION_RE =
   /<!--ACTION:(enable|disable|apply-config|apply-pack):([^:>]+?)(?::([\s\S]*?))?-->/;
 
 /**
- * Looser match for partial markers mid-stream — strips "<!--ACTION:..." fragments
+ * Looser match for partial markers mid-stream: strips "<!--ACTION:..." fragments
  * from displayed text before the closing `-->` arrives.
  */
 const PARTIAL_ACTION_RE = /<!--ACTION:[\s\S]*$/;
@@ -42,7 +42,7 @@ export function parseStrategistAction(text: string): ParsedStrategistAction | nu
   if (kind === "apply-config") {
     try {
       const config = JSON.parse(rawConfig) as Record<string, unknown>;
-      // Guard against null / non-object payloads — JSON.parse("null") returns
+      // Guard against null / non-object payloads: JSON.parse("null") returns
       // null, which TS sees as an object but is useless to the consumer.
       if (!config || typeof config !== "object" || Array.isArray(config)) return null;
       return { kind, trigger, config };

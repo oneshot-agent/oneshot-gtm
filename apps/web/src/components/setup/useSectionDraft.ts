@@ -11,7 +11,7 @@ export interface SectionDraft<T extends Record<string, Primitive>> {
   /** Keys whose draft value differs from the server value right now. */
   dirtyKeys: (keyof T)[];
   dirty: boolean;
-  /** The draft restricted to dirtyKeys — what a section save posts. */
+  /** The draft restricted to dirtyKeys: what a section save posts. */
   snapshot: Partial<T>;
   /**
    * After a successful save + refetch: forget the keys whose CURRENT draft
@@ -27,7 +27,7 @@ export interface SectionDraft<T extends Record<string, Primitive>> {
  *
  * Nothing is ever copied from the server into local state. Inputs read
  * `draft[k]` when the founder has touched `k`, else `server[k]`, so a
- * background `["setup"]` refetch can only ever change untouched keys — the
+ * background `["setup"]` refetch can only ever change untouched keys. The
  * old hydrate-into-useState pattern silently reverted unsaved edits on every
  * refetch unless a field had its own hand-rolled dirty ref.
  *

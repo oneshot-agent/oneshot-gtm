@@ -3,7 +3,7 @@ import type { TriggerRunOutcome } from "@oneshot-gtm/find";
 import { triggerOutcome } from "../src/scheduler.ts";
 
 // triggerOutcome only reads `.error` and `.result?.halted`, so partial casts
-// are enough — no need to build a full FinderResult.
+// are enough: no need to build a full FinderResult.
 function outcome(partial: Partial<TriggerRunOutcome>): TriggerRunOutcome {
   return { name: "show-hn", fired: true, nextDueInMs: 0, ...partial } as TriggerRunOutcome;
 }

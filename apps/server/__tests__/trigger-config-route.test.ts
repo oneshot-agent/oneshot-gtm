@@ -153,7 +153,7 @@ describe("setTriggerConfigRoute — design-partner-loi routing warnings (issue #
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; warnings: string[] };
-    expect(body.ok).toBe(true); // still saves — never a refusal
+    expect(body.ok).toBe(true); // still saves. Never a refusal
     expect(
       body.warnings.some((w) => w.includes("yourEdge is required to route to design-partner-loi")),
     ).toBe(true);

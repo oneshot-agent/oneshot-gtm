@@ -6,7 +6,7 @@ import { Pii } from "../primitives/Pii.tsx";
 /**
  * The ledger row's identity cell, shared by /queue, /prospects and /cadences
  * (issue #600). A row is a ledger entry: one line of identity, one line that
- * answers the page's question — the signal on /queue, the decision on
+ * answers the page's question. The signal on /queue, the decision on
  * /prospects, the sequence state on /cadences. Nothing else at rest.
  *
  * `w-full max-w-0` takes the width the fixed columns leave and lets both lines
@@ -29,7 +29,7 @@ export function IdentityCell({
   className,
 }: {
   identity: Identity;
-  /** The page's line — a `SignalLabel`, usually. */
+  /** The page's line. A `SignalLabel`, usually. */
   line2: ReactNode;
   /**
    * Whether line 2 is freeform text that can name a person or a company
@@ -100,7 +100,7 @@ export function IdentityCell({
 
 export type SignalTone = "muted" | "spend" | "blocked" | "receipt";
 
-// Literal class strings per tone — Tailwind cannot see a concatenated name.
+// Literal class strings per tone: Tailwind cannot see a concatenated name.
 const SIGNAL_TONE: Record<SignalTone, string> = {
   muted: "text-ink-muted",
   spend: "text-ink-spend-2",
@@ -108,7 +108,7 @@ const SIGNAL_TONE: Record<SignalTone, string> = {
   receipt: "text-[color:var(--ink-receipt-2)]",
 };
 
-/** The small mono label that is a ledger row's second line — plain case, never shouting. */
+/** The small mono label that is a ledger row's second line: plain case, never shouting. */
 export function SignalLabel({
   children,
   tone = "muted",

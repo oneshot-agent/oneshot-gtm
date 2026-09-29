@@ -344,7 +344,7 @@ export async function runLinkedInBackfill(accountKey: string) {
         return;
       }
       // The key is kept across a failure so an accepted lookup is never bought
-      // twice — but the provider can consume a key without ever handing back
+      // twice, but the provider can consume a key without ever handing back
       // a request id (a dispatch failure that was recorded upstream). Then the
       // same key is refused on every retry and there is nothing to wait on:
       // resubmitting under a fresh key is the only way forward. Once, and

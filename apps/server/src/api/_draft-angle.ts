@@ -48,7 +48,7 @@ export function parseDraftAngle(value: unknown): DraftAngle | undefined {
  */
 export const ANGLE_POOL_SIZE = 12;
 
-// The ledger's angle key (ledger-drafts.ts) — one identity for an angle's text everywhere.
+// The ledger's angle key (ledger-drafts.ts): one identity for an angle's text everywhere.
 const normalize = angleTextKey;
 
 /** Chooses a preview argument; never changes trigger config or sends a message. */
@@ -146,7 +146,7 @@ export async function draftAngleFor(input: {
       ],
       temperature: 0.7,
       // Up to eleven ~60-word angles in one reply, on a model whose reasoning
-      // shares this budget (see #586) — 2000 truncated at six.
+      // shares this budget (see #586): 2000 truncated at six.
       maxTokens: 4000,
     });
     const parsed = tryParseJsonObject<{ angles?: unknown }>(response.content, {});

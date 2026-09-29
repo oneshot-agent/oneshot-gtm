@@ -4,11 +4,11 @@ import { getLedger } from "./ledger.ts";
 import type { OneShotConfig } from "./types.ts";
 
 /**
- * Slack incoming-webhook notifications — reply received, bounce recorded,
+ * Slack incoming-webhook notifications: reply received, bounce recorded,
  * daily send summary. Off unless `cfg.slackWebhookUrl` is set.
  *
  * Hard rules (mirrors telemetry.ts): never throws, never blocks the
- * triggering operation. A failed delivery is logged via logEvent and dropped —
+ * triggering operation. A failed delivery is logged via logEvent and dropped:
  * no retries, so a dead webhook can't stack up work behind a send or a poll.
  */
 
@@ -60,7 +60,7 @@ const SLACK_TIMEOUT_MS = 5_000;
 /**
  * Escape a string for safe interpolation into a Slack mrkdwn `text` field.
  * Per Slack's formatting spec, `&`, `<`, `>` are the only characters that
- * need escaping — but that's exactly what neutralizes the dangerous cases:
+ * need escaping, but that's exactly what neutralizes the dangerous cases:
  * `<!channel>`, `<!here>`, `<!everyone>`, `<@U123>` (user mention), and
  * `<#C123>` (channel link) all require literal angle brackets to be parsed
  * as special syntax. Escaping `<`/`>` to `&lt;`/`&gt;` renders any of those
@@ -76,7 +76,7 @@ function escapeSlackText(s: string): string {
  * (not the process-memoized `loadConfigCached()`) on every call: this is checked
  * once per event, not on a hot per-request path like telemetry, and the
  * long-running server process must see a CLI-driven enable/disable of the
- * webhook without a restart — a stale cached "on" would keep POSTing
+ * webhook without a restart. A stale cached "on" would keep POSTing
  * prospect data after the operator turned it off.
  */
 /**
@@ -107,7 +107,7 @@ export function slackWebhookUrl(
 }
 
 /**
- * One bounded POST — no retries. Failures (reject, timeout, non-2xx) are
+ * One bounded POST: no retries. Failures (reject, timeout, non-2xx) are
  * logged and swallowed; the returned promise always resolves.
  * Exported for test mocking only.
  */
@@ -207,44 +207,21 @@ function utcDay(d: Date): string {
 }
 
 /**
- * Aggregate and post the daily send summary for the most recently COMPLETED
- * UTC day. Cheap to call on every scheduler tick: it no-ops unless a webhook
- * is configured and that day hasn't been handled yet (poll_state watermark).
- * At-most-once — the watermark is stamped before the POST, so a failed
- * delivery is dropped rather than re-attempted (best-effort by contract).
- * Quiet days (no sequence events at all) stamp without posting.
- * `sent`/`replied` count `sequence_events` rows whose OWN occurrence landed
- * in the window — see Ledger.eventsByPlay's replied_at note. `bounced` is
- * NOT derived from `sequence_events`: `pollInboxBounces` writes one
- * `sequence_events` row per CONCURRENT cadence a bounced prospect is
- * enrolled in (so one DSN can appear several times there) and skips it
- * entirely for soft bounces and for bounces on prospects with no ledger
- * match (both still hit the `bounces` table and both still fire
- * `notifySlackBounceRecorded`); the dead-mailbox-autoresponder bounce path
- * (`auto_permanent`, via pollInboxReplies) has the identical multi-cadence
- * duplication problem but never touches `bounces` at all. So `bounced` is
- * the sum of `ledger.countBounces` (DSN path, one row per event in the
- * `bounces` table) and `ledger.countAutoPermanentBounces` (reply-stream
- * path, counted straight from `inbox_replies` — every matched auto_permanent
- * email is persisted there unconditionally via `recordInboxReply`, whether
- * or not the prospect had a live cadence for the `sequence_events` write
- * right after, so it is the complete source, issue #71 round-1 correction)
- * — the two disjoint, individually-deduplicated sources that together cover
- * every bounce this codebase records. Returns true when a summary was
- * posted. Never throws.
+ * Post the summary for the most recently completed UTC day when a webhook is
+ * configured and the poll_state watermark has not already covered it. Stamp the
+ * watermark before posting for at-most-once delivery; failures are not retried.
+ * Quiet days stamp without posting. Returns true when posted; never throws.
  *
- * `opts.sweepClean`: pass `false` when the CALLER's own bounce sweep this
- * tick came back partial (a source errored or was skipped — see
- * pollInboxBounces' `clean` flag) or didn't run at all when one was needed.
- * The watermark for the completed day must not be stamped on a tick where
- * this function cannot be sure every bounce for that day has actually been
- * swept yet — the scheduler forces a bounce sweep on the tick that crosses
- * the UTC day boundary specifically so this function has a trustworthy
- * answer here; a `sweepClean: false` on that same tick means the forced
- * sweep itself came back partial, so stamping now would permanently drop
- * whatever bounces the failed source hasn't reported yet (issue #71 round-4
- * review finding). Defaults to `true` (unchanged behaviour) for callers that
- * don't pass it, e.g. direct/test invocations.
+ * Count sends and replies by their occurrence times. Count bounces as the sum of
+ * countBounces (DSNs in bounces) and countAutoPermanentBounces (dead-mailbox
+ * autoresponders in inbox_replies). These sources are disjoint and deduplicated.
+ * sequence_events can duplicate bounces across cadences or omit soft bounces,
+ * unmatched prospects, and replies with no live cadence.
+ *
+ * Pass sweepClean=false when the caller's bounce sweep was partial, skipped a
+ * source, or did not run when needed. Stamping then would permanently omit
+ * unreported bounces. The scheduler forces a sweep at the UTC day boundary and
+ * passes its clean flag. Other callers default to sweepClean=true.
  */
 export async function postDailySendSummaryIfDue(
   now: Date = new Date(),
@@ -277,8 +254,8 @@ export async function postDailySendSummaryIfDue(
     const replied = rows.reduce((a, r) => a + r.replied, 0);
     // Both bounce sources stamp their own `bounced_at` as `.toISOString()`
     // (gmail.ts's DSN internalDate and the inbound autoresponder's
-    // received_at respectively) — NOT the sqlite `datetime('now')` format
-    // used above — hence the separate ISO-format window bounds here.
+    // received_at respectively): NOT the sqlite `datetime('now')` format
+    // used above: hence the separate ISO-format window bounds here.
     const isoWindow = { sinceIso: `${day}T00:00:00.000Z`, untilIso: `${nextDay}T00:00:00.000Z` };
     const bounced = ledger.countBounces(isoWindow) + ledger.countAutoPermanentBounces(isoWindow);
     if (sent === 0 && replied === 0 && bounced === 0) return false;
@@ -294,7 +271,7 @@ export async function postDailySendSummaryIfDue(
       // no single correct play to attribute it to. This is a best-effort,
       // known-approximate breakdown; the top-level `bounced` figure above is
       // the accurate one and the two are not guaranteed to sum to the same
-      // value (issue #71 round-3 review finding — scoped to the total only).
+      // value (issue #71 round-3 review finding: scoped to the total only).
       by_play: rows.map((r) => ({
         play_name: r.play_name,
         sent: r.sent,

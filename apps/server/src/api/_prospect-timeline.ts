@@ -11,7 +11,7 @@ import { describeDecision, type ProspectTimelineEvent } from "@oneshot-gtm/share
 /**
  * The history behind one /prospects row, newest first: the queue row's own
  * milestones (surfaced, decided, sent) merged with everything recorded
- * against the prospect it resolved to. Pure — the route gathers the rows,
+ * against the prospect it resolved to. Pure. The route gathers the rows,
  * this orders and labels them.
  *
  * No reply bodies on purpose. The drawer is a browse surface and the body is

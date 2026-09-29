@@ -89,9 +89,7 @@ export async function commandFindDrain(opts: {
     }
     throw err;
   }
-  // The document is emitted BEFORE any bail below, so `--json` still explains a
-  // non-zero exit rather than being swallowed by it. The exit code stays the
-  // health signal; the JSON says why.
+  // Emit JSON before any non-zero exit so it explains the failure.
   if (opts.json) {
     await emitJson({
       command: "find drain",
@@ -105,30 +103,23 @@ export async function commandFindDrain(opts: {
     });
   }
 
-  // Daily spend ceiling (issue #481): distinct from "nothing to drain" — rows
-  // ARE approved and waiting, the automated path is just blocked until the
-  // ceiling resets at local midnight or the founder raises it. Manual sends
-  // from /queue still work; only this batch path is gated.
+  // The daily ceiling blocks batch sends until local midnight or a higher limit.
+  // Approved rows remain queued; manual sends from /queue are still allowed.
   if (result.haltedReason) {
     warn(`find drain ${opts.play}: ${result.haltedReason}`);
     if (opts.failOnEmpty) bail(`find drain ${opts.play}: ${result.haltedReason}`);
     return;
   }
 
-  // Errors beat emptiness: a drain with row errors (or an invalid play) exits 1,
-  // not the 0 a clean drain returns nor the 2 an idle drain under --fail-on-empty
-  // returns. Check this before checking drained === 0, so an invalid play with no
-  // approved rows exits 1 (unsupported-play error) instead of 2 (empty drain).
+  // Check errors before emptiness: an invalid play with no rows must exit 1, not 2.
   if (result.errors.length > 0) {
     for (const e of result.errors) fail(`#${e.id}: ${e.message}`);
     if (opts.failOnEmpty) bail(`find drain ${opts.play}: ${result.errors.length} row(s) errored`);
-    // Without the flag, a drain with errors still exits 0 (the legacy behavior).
+    // Errors exit 0 unless --fail-on-empty is set.
   }
 
   if (result.drained === 0) {
     note(`No approved rows for ${c.cyan(opts.play)}. Approve some in the dashboard at /queue.`);
-    // Nothing was claimed, and we already checked that there were no errors, so
-    // this is the idle case, never the broken one.
     if (opts.failOnEmpty) bailEmpty(`find drain ${opts.play}: 0 rows drained`);
     return;
   }
@@ -181,9 +172,7 @@ export async function commandFindWatch(opts: {
           errored++;
           fail(`${o.name}: error — ${o.error}`);
         } else if (o.result) {
-          // `enqueued`, not `candidates`: the question --fail-on-empty answers
-          // is "did anything land in the queue", and a run whose every hit was
-          // a duplicate or off-ICP left the ledger exactly as it found it.
+          // Count enqueued rows; duplicate and off-ICP candidates leave the queue unchanged.
           queued += o.result.enqueued;
           printSummaryLine(o.name, o.result);
         }
@@ -203,8 +192,7 @@ export async function commandFindWatch(opts: {
     process.removeListener("SIGTERM", shutdown);
   }
 
-  // Emitted before the bail below so the document lands on stdout even on the
-  // exit-1 path — the exit code stays the health signal, JSON explains it.
+  // Emit JSON before the failure exit so stdout includes the outcome.
   if (opts.json) {
     await emitJson({
       command: "find watch",
@@ -222,18 +210,12 @@ export async function commandFindWatch(opts: {
     });
   }
 
-  // --once is the cron/launchd entry point, where the exit code is the only
-  // health signal there is: a finder that errored every run for a week must not
-  // look identical to a clean one. Daemon runs still exit 0 — they're killed by
-  // a signal, not by a bad tick.
+  // --once exposes failures to cron/launchd. Daemons keep polling after bad ticks.
   if (opts.once && errored > 0) {
     bail(`${errored} due trigger(s) errored`, 1);
   }
 
-  // Opt-in second signal for the same caller: a poll that ran cleanly but
-  // queued nothing exits 2, so cron can tell a dry run from a productive one
-  // without reading the ledger. The error check above runs first on purpose —
-  // a broken run reports as broken (1) even though it was also empty.
+  // A clean, empty poll exits 2 when requested; errors above take precedence.
   if (opts.once && opts.failOnEmpty && queued === 0) {
     bailEmpty(
       `find watch --once: 0 candidates queued (${

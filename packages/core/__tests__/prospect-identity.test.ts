@@ -43,7 +43,7 @@ describe("updateProspectIdentity", () => {
       email: "ada@acme.dev",
       linkedin_url: "https://www.linkedin.com/in/authoritative",
     });
-    // A backfill hit must lose to the finder's value — a real Luma handle beats
+    // A backfill hit must lose to the finder's value. A real Luma handle beats
     // a fuzzy web-search result.
     expect(
       ledger.updateProspectIdentity(id, { linkedin_url: "https://www.linkedin.com/in/guess" }),
@@ -74,7 +74,7 @@ describe("updateProspectIdentity", () => {
   it("fills a column holding an empty string, not just NULL", () => {
     // listProspectsMissingLinkedIn counts '' as missing, so the write path has
     // to agree. A bare COALESCE matches the row, reports a change, and leaves
-    // the '' in place — a silent no-op the caller counts as a success.
+    // the '' in place. A silent no-op the caller counts as a success.
     const id = ledger.upsertProspect({ name: "Ada", email: "ada@acme.dev", linkedin_url: "" });
     expect(ledger.getProspectById(id)?.linkedin_url).toBe("");
     expect(
@@ -130,14 +130,14 @@ describe("listProspectsMissingLinkedIn", () => {
       linkedin_url: "https://www.linkedin.com/in/x",
     });
     const missing = ledger.upsertProspect({ name: "Needs One", email: "b@x.dev" });
-    ledger.upsertProspect({ name: null, email: "c@x.dev" }); // nameless — nothing to search
+    ledger.upsertProspect({ name: null, email: "c@x.dev" }); // nameless: nothing to search
 
     expect(ledger.listProspectsMissingLinkedIn().map((r) => r.id)).toEqual([missing]);
   });
 
   it("skips rows whose column deliberately holds a GitHub/X URL", () => {
     // profile-intro stores whichever social link it has in this column, and
-    // updateProspectIdentity won't overwrite it — so reporting these would just
+    // updateProspectIdentity won't overwrite it, so reporting these would just
     // produce phantom candidates the backfill pays for and can't write.
     ledger.upsertProspect({
       name: "Gh User",

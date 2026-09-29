@@ -182,7 +182,7 @@ export function listPlays(req: Request): Response {
  * Set (or clear) per-play cadence timing. Body: { days: number[] | null }.
  * `days` are CUMULATIVE days from the initial send (intuitive in the UI); we
  * convert to the engine-native relative offsets before persisting. `null`
- * clears the override (reset to code defaults). Timing only — step structure
+ * clears the override (reset to code defaults). Timing only: step structure
  * is fixed in code.
  */
 export async function setCadenceRoute(

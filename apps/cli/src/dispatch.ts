@@ -12,7 +12,7 @@ export interface Invocation {
   flags: string[];
 }
 
-/** `dryRun` → `dry-run`, `skipSms` → `skip-sms`. Names only — never values. */
+/** `dryRun` → `dry-run`, `skipSms` → `skip-sms`. Names only. Never values. */
 export function toKebabCase(s: string): string {
   return s.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
 }
@@ -22,7 +22,7 @@ export function toKebabCase(s: string): string {
  * commander's action arguments. The Command instance is the last action arg;
  * we walk its parent chain (stopping before the root program) to build paths
  * like "motion show-hn", and use getOptionValueSource to keep only flags set
- * on the CLI — never their values.
+ * on the CLI. Never their values.
  */
 export function extractInvocation(args: unknown[]): Invocation {
   const cmd = args.findLast(

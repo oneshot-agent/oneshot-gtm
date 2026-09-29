@@ -1,5 +1,5 @@
 /**
- * Partial PII masking for "privacy mode" — used before screenshots so contact
+ * Partial PII masking for "privacy mode": used before screenshots so contact
  * data isn't identifying while the UI still reads naturally (see `usePrivacy`
  * + the `<Pii>` component). These are intentionally lossy/readable, NOT secure
  * redaction: the goal is "don't leak a real person in a screenshot", not
@@ -8,7 +8,7 @@
 
 const DOTS = "•••";
 
-/** "Asad Hussain" → "Asad H." — first token kept, rest reduced to initials. */
+/** "Asad Hussain" → "Asad H.": first token kept, rest reduced to initials. */
 export function maskName(name: string | null | undefined): string {
   if (!name) return name ?? "";
   const tokens = name.trim().split(/\s+/);
@@ -21,12 +21,12 @@ export function maskName(name: string | null | undefined): string {
   return initials ? `${first} ${initials}` : (first ?? "");
 }
 
-/** "asadhussain2408@gmail.com" → "asa•••@gmail.com" — keep a hint + the domain. */
+/** "asadhussain2408@gmail.com" → "asa•••@gmail.com". Keep a hint + the domain. */
 export function maskEmail(email: string | null | undefined): string {
   if (!email) return email ?? "";
   const at = email.indexOf("@");
   if (at === -1) {
-    // Not an address — mask everything past the first 3 chars.
+    // Not an address: mask everything past the first 3 chars.
     return email.length <= 3 ? `${email[0] ?? ""}${DOTS}` : `${email.slice(0, 3)}${DOTS}`;
   }
   const local = email.slice(0, at);
@@ -35,13 +35,13 @@ export function maskEmail(email: string | null | undefined): string {
   return `${keep}${DOTS}${domain}`;
 }
 
-/** "Acme AI" → "Acme" — keep the first word only. */
+/** "Acme AI" → "Acme". Keep the first word only. */
 export function maskCompany(company: string | null | undefined): string {
   if (!company) return company ?? "";
   return company.trim().split(/\s+/)[0] ?? "";
 }
 
-/** "+1 555 123 4567" → "•••-4567" — keep the last 4 digits. */
+/** "+1 555 123 4567" → "•••-4567". Keep the last 4 digits. */
 export function maskPhone(phone: string | null | undefined): string {
   if (!phone) return phone ?? "";
   const digits = phone.replace(/\D/g, "");
@@ -57,7 +57,7 @@ export function maskPhone(phone: string | null | undefined): string {
 export function maskFrom(raw: string | null | undefined): string {
   if (!raw) return raw ?? "";
   const m = raw.match(/^(.*?)<([^>]+)>\s*$/);
-  // No angle brackets — a bare address or a bare display name; let `auto` decide.
+  // No angle brackets. A bare address or a bare display name; let `auto` decide.
   if (!m) return maskAuto(raw.trim());
   const display = (m[1] ?? "").trim();
   const email = (m[2] ?? "").trim();
@@ -93,7 +93,7 @@ export function maskByKind(kind: PiiKind, value: string): string {
 
 /**
  * Identity-bearing keys inside a receipt payload, mapped to how each is masked.
- * Anything not listed here is left alone — which is the point: costs, receipt
+ * Anything not listed here is left alone, which is the point: costs, receipt
  * ids, request ids, timestamps, and every other figure must survive privacy
  * mode untouched, because the numbers are the whole reason to show a receipt.
  */
@@ -124,7 +124,7 @@ function maskProfileUrl(url: string): string {
 }
 
 /**
- * Recursively mask a decoded JSON payload for screenshots — used by the
+ * Recursively mask a decoded JSON payload for screenshots: used by the
  * receipts modal, where the signed payload is rendered verbatim and so cannot
  * be wrapped in `<Pii>` field by field.
  *
@@ -165,7 +165,7 @@ export function maskDeep<T>(value: T, masked: boolean, kind?: PiiKind): T {
 }
 
 /**
- * The single gate behind privacy mode — shared by `<Pii>` and `useMask` so the
+ * The single gate behind privacy mode: shared by `<Pii>` and `useMask` so the
  * on/off + empty-value logic lives in exactly one (testable) place. Returns the
  * raw value when privacy is off or the value is empty; masks otherwise.
  */

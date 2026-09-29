@@ -4,7 +4,7 @@ import { parallelMap } from "./parallel.ts";
 import type { AuthVerdict, BounceKind, GmailPlacement } from "./types.ts";
 
 /**
- * Gmail / Google Workspace send + reply path — plain-fetch OAuth2 + Gmail
+ * Gmail / Google Workspace send + reply path: plain-fetch OAuth2 + Gmail
  * REST, no googleapis dependency. Credentials are the three GMAIL_* secrets
  * minted by `gmail auth` (in ~/.oneshot-gtm/.env, applied by config.ts).
  */
@@ -15,7 +15,7 @@ const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 export const GMAIL_AUTH_HINT = "run: bun run cli -- gmail auth";
 
 /**
- * Read-only Calendar access — bundled into the same consent request as the
+ * Read-only Calendar access: bundled into the same consent request as the
  * Gmail scopes (issue #577) so a founder authorizes once and gets both. A
  * refresh token is scope-bound and never rotated by this codebase, so an
  * account authorized BEFORE this scope existed does not have it; see
@@ -45,7 +45,7 @@ export function gmailConsentUrl(opts: {
 /** Result of exchanging an authorization code for tokens. */
 export interface GmailAuthExchangeResult {
   refreshToken: string;
-  /** Space-delimited scopes Google actually granted — may be narrower than what was requested. */
+  /** Space-delimited scopes Google actually granted: may be narrower than what was requested. */
   scope: string | null;
 }
 
@@ -112,7 +112,7 @@ const profileCache = new Map<string, { emailAddress: string }>();
  * immutable once it exists, and every inbox poll (the nav dot and the /inbox
  * page each minute, the scheduler every few minutes) re-lists the same
  * 30-day window and used to re-fetch every message in it with
- * `format=full` — up to 200 `messages.get` calls per account per poll, which
+ * `format=full`: up to 200 `messages.get` calls per account per poll, which
  * is what tripped Gmail's per-user-per-minute "Total Query Cost" quota across
  * all three mailboxes at once. With this cache a repeat poll pays for the
  * list call plus only the ids it has not seen. Bounded so a long-running
@@ -133,9 +133,9 @@ export function _resetGmailCache(): void {
 
 /**
  * Drop ONE account's cached access token (shared by every Gmail-family API,
- * calendar included — see gcal.ts). `tokenCache` can hold a live token for
+ * calendar included: see gcal.ts). `tokenCache` can hold a live token for
  * up to an hour, so a token revoked at myaccount.google.com surfaces as a
- * 401 on the next API CALL, not as `invalid_grant` on the next refresh — the
+ * 401 on the next API CALL, not as `invalid_grant` on the next refresh. The
  * caller must evict the stale entry here or the next poll keeps reusing the
  * dead token until it naturally expires.
  */
@@ -205,7 +205,7 @@ export interface GoogleApiErrorEnvelope {
   error?: {
     code?: number;
     message?: string;
-    /** Canonical gRPC-style code — e.g. `RESOURCE_EXHAUSTED` (quota, self-heals)
+    /** Canonical gRPC-style code: e.g. `RESOURCE_EXHAUSTED` (quota, self-heals)
      *  vs `PERMISSION_DENIED` (scope/auth lost, needs re-auth). This is the
      *  field that actually distinguishes the two, and it was previously
      *  discarded along with the rest of the raw body. */
@@ -216,10 +216,10 @@ export interface GoogleApiErrorEnvelope {
 
 /**
  * Google's quota-exceeded messages read as: `Quota exceeded for quota metric
- * 'X' and limit 'Y' of service '...' for consumer '...'.` — the "of
+ * 'X' and limit 'Y' of service '...' for consumer '...'.`. The "of
  * service"/"for consumer" tail is boilerplate repeated on every quota error,
  * while the metric ('X': which API surface) and limit ('Y': which specific
- * quota — per-second, per-minute-per-user, or the daily project ceiling)
+ * quota: per-second, per-minute-per-user, or the daily project ceiling)
  * are the two facts a caller actually needs to diagnose the hit. Compacting
  * to just those two keeps both within the first ~90 chars of the rendered
  * error regardless of which endpoint failed, so they still survive the
@@ -236,7 +236,7 @@ function compactQuotaMessage(message: string): string | null {
  * `error.status` + `error.message` when the body parses as its stable error
  * envelope, so a quota 403 (`RESOURCE_EXHAUSTED`) reads differently from a
  * permission 403 (`PERMISSION_DENIED`) from the log line alone. Falls back
- * to today's raw-slice behaviour when the body isn't that shape — the raw
+ * to today's raw-slice behaviour when the body isn't that shape. The raw
  * JSON is mostly whitespace/scaffolding, so 200 chars of it is the same
  * "better than nothing" fallback the old code always used.
  */
@@ -250,7 +250,7 @@ export function formatGmailApiError(raw: string): string {
       return status ? `${status} — ${body}` : body;
     }
   } catch {
-    // Not Google's JSON envelope (or not JSON at all) — fall through.
+    // Not Google's JSON envelope (or not JSON at all): fall through.
   }
   return raw.slice(0, 200);
 }
@@ -263,7 +263,7 @@ async function gmailJson<T>(path: string, init?: RequestInit, account?: GmailAcc
     // to act on (re-auth), and there's nothing in that body worth parsing.
     if (res.status === 401) {
       // Release the unread body's stream now rather than leaving it open
-      // until GC — matters for a long-running worker hitting repeated 401s.
+      // until GC: matters for a long-running worker hitting repeated 401s.
       // cancel() can reject (locked stream / source cancel-algorithm
       // failure); swallow that rather than letting it surface as an
       // unhandled rejection right after the 401 error below is thrown.
@@ -274,7 +274,7 @@ async function gmailJson<T>(path: string, init?: RequestInit, account?: GmailAcc
     // The endpoint path is put LAST, not first: it's diagnostic but
     // variable-length (e.g. `/messages/<id>?format=full`), and every call
     // site truncates this message to its first ~120 chars for logging
-    // (oneshot.ts's `message_120`) — a long path pushed to the front would
+    // (oneshot.ts's `message_120`). A long path pushed to the front would
     // crowd out the status/quota-metric text that actually explains the
     // failure.
     throw new Error(
@@ -369,7 +369,7 @@ export interface GmailMessageMeta {
   threadId: string;
   internalDate: string;
   payload?: GmailPayloadPart;
-  /** Google-rendered plain-text preview — the last-resort body when no part decodes. */
+  /** Google-rendered plain-text preview. The last-resort body when no part decodes. */
   snippet?: string;
 }
 
@@ -388,7 +388,7 @@ function header(msg: GmailMessageMeta, name: string): string {
 /**
  * Header-level autoresponder verdict (RFC 3834 and the de-facto vendor
  * headers). The message is already fetched with format=full, so this costs
- * nothing — and it catches OOO mail whose subject/body give no textual hint.
+ * nothing, and it catches OOO mail whose subject/body give no textual hint.
  */
 function isAutoSubmitted(msg: GmailMessageMeta): boolean {
   const auto = header(msg, "Auto-Submitted").trim().toLowerCase();
@@ -422,12 +422,12 @@ function extractPlainText(part: GmailPayloadPart | undefined): string {
  */
 function extractBody(msg: GmailMessageMeta): string {
   const plain = extractPlainText(msg.payload);
-  // trim() — a whitespace-only text/plain part must not mask a meaningful
+  // trim(). A whitespace-only text/plain part must not mask a meaningful
   // text/html alternative in the same multipart.
   if (plain.trim()) return plain;
   const html = extractByMime(msg.payload, "text/html");
   if (html) {
-    // The conversion itself can come up empty (image-only mail is all tags) —
+    // The conversion itself can come up empty (image-only mail is all tags):
     // that must still fall through to the snippet, not return "".
     const text = htmlToText(html);
     if (text) return text;
@@ -437,19 +437,19 @@ function extractBody(msg: GmailMessageMeta): string {
 
 /**
  * Inbox replies, mapped to the OneShot InboxListResult contract. `-from:me`
- * excludes the founder's own sends. Deliberately NOT `in:inbox` — an archived
+ * excludes the founder's own sends. Deliberately NOT `in:inbox`. An archived
  * reply is still a reply. Spam/trash are already excluded by the API; the
  * explicit terms are there so nobody "widens" this to `in:anywhere`.
  */
 export async function listGmailReplies(
   opts?: {
     since?: string;
-    /** Exclusive upper bound — lets a backfill page through months of mail in slices. */
+    /** Exclusive upper bound: lets a backfill page through months of mail in slices. */
     until?: string;
     limit?: number;
     /**
      * Targeted mode: only mail FROM one of these addresses, searched across
-     * all time (no `newer_than` default) — known-replier fetches must not be
+     * all time (no `newer_than` default): known-replier fetches must not be
      * clipped by the recency window that keeps the broad poll cheap.
      */
     fromAnyOf?: string[];
@@ -487,7 +487,7 @@ export async function listGmailReplies(
         undefined,
         account,
       );
-      // RFC 2822 Message-ID — needed as In-Reply-To/References on a threaded reply.
+      // RFC 2822 Message-ID: needed as In-Reply-To/References on a threaded reply.
       const messageId = header(msg, "Message-ID");
       const autoSubmitted = isAutoSubmitted(msg);
       const email = {
@@ -526,26 +526,26 @@ const ENHANCED_STATUS_RE = /\b([45]\.\d{1,3}\.\d{1,3})\b/;
 /** Matches a bare 3-digit SMTP reply code, for servers that omit the enhanced one. */
 const SMTP_CODE_RE = /\b([45]\d\d)\b/;
 /**
- * Diagnostics meaning "we refused this message", not "address doesn't exist" —
+ * Diagnostics meaning "we refused this message", not "address doesn't exist":
  * a plain-550 policy reject would otherwise be miscounted as a dead address
  * and wrongly suppress a valid prospect.
  */
 const POLICY_DIAGNOSTIC_RE =
   /\b(spam|blocked|blocklist|blacklist|policy|reputation|unsolicited|bulk|rejected due to|spamhaus|barracuda|greylist)/i;
 /**
- * Canonical DSN envelope senders — fallback only, kept narrow deliberately: a
+ * Narrow fallback for canonical DSN envelope senders. A
  * broad pattern (no-reply@…) would also discard a genuine failed recipient at
  * one of those addresses.
  */
 const DAEMON_ADDRESS_RE = /^(mailer-daemon|postmaster)@/i;
 /**
- * Quantifiers bounded to RFC 5321's limits — an unbounded `[...]+@` over a
+ * Quantifiers bounded to RFC 5321's limits. An unbounded `[...]+@` over a
  * body with no `@` backtracks from every start position, and DSN bodies are
  * attacker-influenced. See also PROSE_SCAN_LIMIT.
  */
 export const EMAIL_RE = /[\w.!#$%&'*+/=?^`{|}~-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,8}/g;
 /**
- * Prose cap (chars) for the fallback parser — a real DSN states the failure
+ * Prose cap (chars) for the fallback parser. A real DSN states the failure
  * up front; the cap bounds regex work on hostile input.
  */
 const PROSE_SCAN_LIMIT = 8_000;
@@ -562,7 +562,7 @@ export function classifyBounce(statusCode: string | null, diagnostic: string | n
     if (code.startsWith("5.7.")) return "block";
     if (code.startsWith("5.")) return policy ? "block" : "hard";
   }
-  // No enhanced code — fall back to the bare SMTP reply class.
+  // No enhanced code: fall back to the bare SMTP reply class.
   const smtp = diagnostic?.match(SMTP_CODE_RE)?.[1];
   if (smtp?.startsWith("4")) return "soft";
   if (smtp?.startsWith("5")) return policy ? "block" : "hard";
@@ -589,7 +589,7 @@ function findPart(
  * The RFC 3464 field block of a `message/delivery-status` part. Two shapes
  * occur in the wild: fields directly on the part (Exchange, most MTAs) or
  * nested in a `text/plain` child (Gmail's own NDRs). Only the part's own body
- * and direct children are considered — descending further reaches the
+ * and direct children are considered: descending further reaches the
  * `message/rfc822` copy of the original mail, which would parse as a failure
  * for an address that never bounced.
  */
@@ -643,7 +643,7 @@ export interface ParsedBounce {
 }
 
 /**
- * Pull every failed recipient out of a DSN. Returns [] for ordinary mail —
+ * Pull every failed recipient out of a DSN. Returns [] for ordinary mail:
  * the parser, not the query, decides what counts as a bounce. Prefers the
  * structured `message/delivery-status` report; falls back to scraping the
  * human-readable part.
@@ -665,11 +665,11 @@ export function parseBounce(msg: GmailMessageMeta): ParsedBounce[] {
       const statusCode = status?.match(ENHANCED_STATUS_RE)?.[1] ?? null;
       const diagnostic = fieldValue(lines, "Diagnostic-Code");
       // `action: delivered/relayed/expanded` blocks are successes riding along
-      // in a multi-recipient report — not failures.
+      // in a multi-recipient report, not failures.
       const action = fieldValue(lines, "Action")?.toLowerCase() ?? "";
       if (action && !action.startsWith("failed") && !action.startsWith("delayed")) continue;
       // A 2.x.x status is a SUCCESS report. MTAs that emit these without an
-      // Action field would otherwise be recorded as bounces — harmless in
+      // Action field would otherwise be recorded as bounces: harmless in
       // effect (they classify soft) but they'd inflate the failure counts the
       // doctor check reports.
       if (status?.trim().startsWith("2.")) continue;
@@ -684,7 +684,7 @@ export function parseBounce(msg: GmailMessageMeta): ParsedBounce[] {
   }
 
   // Fallback: no conforming report. Gate on the message being a delivery
-  // report first — prose-scraping is loose enough that an ordinary email
+  // report first: prose-scraping is loose enough that an ordinary email
   // mentioning "550 users" would otherwise suppress a live prospect.
   const from = msg.payload?.headers?.find((h) => h.name.toLowerCase() === "from")?.value ?? "";
   const subject =
@@ -699,7 +699,7 @@ export function parseBounce(msg: GmailMessageMeta): ParsedBounce[] {
 
   /**
    * The DSN's own sender is never the address that failed. Exact address
-   * first, then the canonical daemon pattern — a broader pattern would
+   * first, then the canonical daemon pattern. A broader pattern would
    * discard a real failed recipient.
    */
   const isSender = (addr: string): boolean =>
@@ -712,10 +712,10 @@ export function parseBounce(msg: GmailMessageMeta): ParsedBounce[] {
 
   /*
    * Several addresses appear in DSN prose and only one failed. First-match is
-   * wrong (a quoted `From:` header would suppress the FOUNDER'S address) —
+   * wrong (a quoted `From:` header would suppress the FOUNDER'S address):
    * score candidates by how strongly their line implies failure, take best.
    */
-  // Header lines naming the originator — never the failed recipient.
+  // Header lines naming the originator. Never the failed recipient.
   const ORIGINATOR_LINE = /^\s*(from|sender|reply-to|return-path|x-original-from)\s*:/i;
   // Phrasing that introduces the failed recipient across common MTAs.
   const RECIPIENT_CUE =
@@ -737,7 +737,7 @@ export function parseBounce(msg: GmailMessageMeta): ParsedBounce[] {
       if (isSender(lower)) continue;
       recipient = lower;
       bestScore = score;
-      // Nothing outranks the SMTP response line — stop looking.
+      // Nothing outranks the SMTP response line: stop looking.
       if (score === CODED_LINE) break outer;
       break;
     }
@@ -765,7 +765,7 @@ export interface GmailBounce extends ParsedBounce {
 }
 
 /**
- * Delivery failures reported to this mailbox. The query is a coarse net —
+ * Delivery failures reported to this mailbox. The query is a coarse net:
  * parseBounce discards non-reports, so over-matching costs a fetch, not a
  * false bounce. No `in:inbox` (an archived DSN still counts) and no
  * `-from:me` (would drop self-relayed reports). Paginated: stopping at the
@@ -817,7 +817,7 @@ export async function listGmailBounces(
 
 /* ── Inbox placement ─────────────────────────────────────────────────────────
  * A message can be accepted and still be filtered into spam or a tab. Knowing
- * requires a real receiving mailbox — a SECOND authorized account, since mail
+ * requires a real receiving mailbox. A SECOND authorized account, since mail
  * you send to yourself is never filtered.
  */
 
@@ -843,7 +843,7 @@ export function classifyPlacement(labelIds: string[]): GmailPlacement {
   for (const tab of ["CATEGORY_SOCIAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS"]) {
     if (labels.has(tab)) return "tab";
   }
-  // CATEGORY_PERSONAL is the primary tab, not a demotion — INBOX decides.
+  // CATEGORY_PERSONAL is the primary tab, not a demotion: INBOX decides.
   if (labels.has("INBOX")) return "inbox";
   return "archived";
 }
@@ -859,7 +859,7 @@ const VERDICTS: AuthVerdict[] = ["pass", "fail", "softfail", "neutral", "none"];
 /**
  * SPF/DKIM/DMARC as judged by the RECEIVING server, read off the delivered
  * message's `Authentication-Results` header. Returns `unknown` per mechanism
- * when the header is absent or silent — normal for same-Workspace delivery.
+ * when the header is absent or silent: normal for same-Workspace delivery.
  */
 export function parseAuthResults(headers: string[]): AuthResults {
   const out: AuthResults = { spf: "unknown", dkim: "unknown", dmarc: "unknown" };
@@ -940,7 +940,7 @@ export async function findPlacedMessage(
   };
 }
 
-/** Gmail's `rfc822msgid:` operator wants the id bare — angle brackets make it match nothing. */
+/** Gmail's `rfc822msgid:` operator wants the id bare: angle brackets make it match nothing. */
 export function rfc822MsgIdQuery(messageId: string): string {
   return `rfc822msgid:${messageId.trim().replace(/^<|>$/g, "")}`;
 }

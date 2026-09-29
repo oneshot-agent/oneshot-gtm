@@ -22,7 +22,7 @@ export interface CompetitorSwitchTarget {
   /** Profile URL this candidate was sourced from (GitHub). Persisted to the
    *  prospect row as a re-enrichment key. */
   sourceProfileUrl?: string;
-  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  /** Job title from the person-level ICP gate: persisted to prospects.title. */
   title?: string;
 }
 
@@ -36,7 +36,7 @@ export interface CompetitorSwitchRunOptions {
   ) => void;
   /** Skip the browser-scraping step even if evidenceUrl is set. */
   skipBrowserScrape?: boolean;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -83,7 +83,7 @@ export function runCompetitorSwitch(
       if (!dryRun) {
         // Skip the browserTask scrape when evidenceText was already supplied
         // (or when the founder explicitly opts out). Two reasons:
-        // 1. The github-topics finder enqueues both — it builds evidenceText
+        // 1. The github-topics finder enqueues both. It builds evidenceText
         //    from the manifest scan and sets evidenceUrl to the repo. Scraping
         //    a code page for "pain points" returns nothing useful; the manifest-
         //    derived stitch line IS the evidence.
@@ -91,7 +91,7 @@ export function runCompetitorSwitch(
         //    30s-3min on JS-heavy pages). Re-scraping when we already have
         //    evidence wastes time + ~$0.30+ in browser-task spend.
         // The scrape still fires when the founder pasted only an evidenceUrl
-        // (e.g. a G2 review page) — that's when extracting structured pain-
+        // (e.g. a G2 review page). That's when extracting structured pain-
         // points actually pays off.
         const haveEvidenceText =
           typeof t.evidenceText === "string" && t.evidenceText.trim().length > 0;

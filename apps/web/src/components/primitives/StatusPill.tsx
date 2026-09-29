@@ -3,7 +3,7 @@ import type { HTMLAttributes } from "react";
 import { cn } from "../../lib/cn.ts";
 
 /**
- * Status pill — a small dot + label, used for chips like
+ * Status pill. A small dot + label, used for chips like
  * "wallet: $12.40" or "ledger: warm". Quieter than a Badge;
  * meant to sit in the top status bar and inline meta rows.
  */

@@ -21,9 +21,9 @@ export interface PodcastGuestFinderOpts extends RunOpts {
   /** Skip the deeper webRead step (cheaper but less accurate). */
   skipRead?: boolean;
   /**
-   * Founder's one-line angle. podcast-guest has no such field for its own
+   * Founder's one-line angle. Podcast-guest has no such field for its own
    * play (the hook quote/bridge IS the angle), but `design-partner-loi`
-   * requires one — only read/required when `play` routes there. See #705.
+   * requires one. Only read/required when `play` routes there. See #705.
    */
   yourEdge?: string;
   /**
@@ -124,7 +124,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       candidate: { title: hit.title, url: hit.url, summary: hit.description },
     });
     if (filter.match === null) {
-      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit):
       // drop without persisting. A rejection would burn the dedupeKey for
       // every future watch tick since isQueueDuplicate ignores status.
       result.droppedEnrichment++;
@@ -182,7 +182,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       continue;
     }
     // Stage A: judge the extracted role BEFORE paying for findEmail +
-    // verify + enrich — a clearly off-ICP guestRole must not consume
+    // verify + enrich. A clearly off-ICP guestRole must not consume
     // the run's cost budget and crowd out valid candidates behind it.
     const preSpend = await qualifyPreSpend({
       icp,

@@ -78,7 +78,7 @@ describe.each(REAL_PACK_IDS)("pack: %s", (id) => {
   it("fails checkReadiness with a named reason before yourEdge/yourClaim is supplied", () => {
     // #705: post-funding-auto and podcast-guest gained a readiness function
     // whose only restriction is the OPTIONAL design-partner-loi play-routing
-    // keys (`play`/`buyerType`) — a no-op (always ready) unless a trigger's
+    // keys (`play`/`buyerType`). A no-op (always ready) unless a trigger's
     // config sets `play`, which no pack patch does. Before #705 neither
     // trigger had a readiness function at all (also always ready), so this
     // is the same observable behaviour; only the two triggers now carry a
@@ -91,7 +91,7 @@ describe.each(REAL_PACK_IDS)("pack: %s", (id) => {
       const merged = { ...spec.defaultConfig, ...patch };
       const readiness = checkReadiness(spec, merged);
       // A pack's whole point is to leave the trigger enabled-but-not-ready
-      // until the founder supplies yourEdge/yourClaim — assert that's
+      // until the founder supplies yourEdge/yourClaim: assert that's
       // actually true for every trigger this pack touches whose spec has a
       // readiness gate at all.
       if (spec.readiness && !playRoutingOnlyGate.has(triggerName)) {

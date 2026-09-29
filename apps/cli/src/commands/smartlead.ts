@@ -12,7 +12,7 @@ import prompts from "prompts";
 import { c, header, note, ok, warn } from "../output.ts";
 
 /**
- * `smartlead connect` — store the workspace API key and add Smartlead-hosted
+ * `smartlead connect`: store the workspace API key and add Smartlead-hosted
  * mailboxes to the sender rotation pool. Send-only: Smartlead does the warmup
  * and hosts the inboxes; replies to Smartlead-sent mail are read in
  * Smartlead's own UI. The key is validated against the accounts API BEFORE it

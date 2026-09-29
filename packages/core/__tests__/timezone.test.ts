@@ -37,13 +37,13 @@ describe("formatLocalEventTime", () => {
   });
 
   it("renders the SAME instant as Thursday in London", () => {
-    // Same moment, genuinely a different calendar day there — proof the helper
+    // Same moment, genuinely a different calendar day there: proof the helper
     // reports the zone it was asked for rather than a single baked-in answer.
     expect(formatLocalEventTime(SF_EVENING, "Europe/London")).toContain("Thursday, August 27");
   });
 
   it("carries the zone abbreviation that matches the side of the DST boundary", () => {
-    // 2026-11-01 01:30 local happens TWICE in Los Angeles — an hour apart in
+    // 2026-11-01 01:30 local happens TWICE in Los Angeles. An hour apart in
     // UTC, once on daylight time and once on standard.
     expect(formatLocalEventTime("2026-11-01T08:30:00Z", "America/Los_Angeles")).toBe(
       "Sunday, November 1, 1:30 AM PDT",

@@ -115,7 +115,7 @@ describe("triggerAngleRefresh", () => {
     });
     const id = h.ledger.upsertProspect({ email: "d@x.dev" });
     h.ledger.setProspectAngle(id, JSON.stringify({ hook: "old" }));
-    // Backdate the stamp past the debounce window directly in the DB — the
+    // Backdate the stamp past the debounce window directly in the DB. The
     // public API only ever writes "now", so this simulates time passing.
     const staleAt = new Date(
       Date.now() - (ANGLE_REFRESH_STALE_HOURS * 3600_000 + 1000),
@@ -140,8 +140,8 @@ describe("triggerAngleRefresh", () => {
 
   // Round-1 correction (issue #357): the timestamp debounce alone only
   // protects once a PRIOR refresh has finished and stamped
-  // angle_synthesized_at. Two triggers landing before that write — e.g. two
-  // replies in one pollInboxReplies() page — must not both launch the paid
+  // angle_synthesized_at. Two triggers landing before that write: e.g. two
+  // replies in one pollInboxReplies() page: must not both launch the paid
   // pipeline concurrently.
   it("drops a second trigger for the same prospect while the first is still in flight", async () => {
     const calls: number[] = [];
@@ -156,8 +156,8 @@ describe("triggerAngleRefresh", () => {
     const id = h.ledger.upsertProspect({ email: "f@x.dev" });
 
     triggerAngleRefresh(id); // launches, never resolves yet
-    triggerAngleRefresh(id); // same prospect, still in flight — must be dropped
-    triggerAngleRefresh(id); // a third burst member — also dropped
+    triggerAngleRefresh(id); // same prospect, still in flight: must be dropped
+    triggerAngleRefresh(id); // a third burst member: also dropped
 
     expect(calls).toEqual([id]); // only one actual invocation
 
@@ -166,7 +166,7 @@ describe("triggerAngleRefresh", () => {
     await Promise.resolve();
 
     // Once the in-flight refresh has settled, a fresh trigger is allowed
-    // again (the in-flight guard doesn't leak past completion) — gated only
+    // again (the in-flight guard doesn't leak past completion): gated only
     // by the timestamp debounce, which this test's ledger row never set, so
     // it still fires.
     triggerAngleRefresh(id);
@@ -203,19 +203,19 @@ describe("triggerAngleRefresh", () => {
     const id = h.ledger.upsertProspect({ email: "i@x.dev" });
 
     triggerAngleRefresh(id);
-    triggerAngleRefresh(id); // dropped — still in flight
+    triggerAngleRefresh(id); // dropped: still in flight
 
     rejectFirst!(new Error("synthesis failed"));
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
 
-    triggerAngleRefresh(id); // in-flight slot released — allowed again
+    triggerAngleRefresh(id); // in-flight slot released: allowed again
     expect(calls).toEqual([id, id]);
   });
 
   // Round-2 correction, issue #357: an outcome dropped by the in-flight
-  // guard while a reply-triggered refresh is running must not be lost —
+  // guard while a reply-triggered refresh is running must not be lost:
   // the completed write can't reflect an outcome it never saw, and the
   // freshness debounce would then block a retry for
   // ANGLE_REFRESH_STALE_HOURS.
@@ -263,7 +263,7 @@ describe("triggerAngleRefresh", () => {
     const id = h.ledger.upsertProspect({ email: "k@x.dev" });
 
     triggerAngleRefresh(id);
-    triggerAngleRefresh(id); // dropped, no outcome — not queued
+    triggerAngleRefresh(id); // dropped, no outcome, not queued
 
     resolveFirst!();
     await Promise.resolve();

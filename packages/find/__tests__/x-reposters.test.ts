@@ -105,7 +105,7 @@ vi.mock("../src/_x-cache.ts", () => ({
   },
   loadXHarvest: () => cachedHarvest,
 }));
-// Engines never see the network in these tests — harvest is mocked — but the
+// Engines never see the network in these tests (harvest is mocked) but the
 // finder still constructs one, so give it a creds-free shell.
 vi.mock("../src/_x-api.ts", () => ({
   XApiEngine: class {
@@ -267,7 +267,7 @@ describe("runXRepostersFinder — lane → play routing", () => {
   it("a research failure on an amplifier falls through to the manual DM draft", async () => {
     // Observed on the first live run: deepResearchPerson "Could not find data
     // for this person" killed the only pick. The DM path needs no email and no
-    // dossier — the repost is the hook — so the amplifier must survive.
+    // dossier (the repost is the hook) so the amplifier must survive.
     harvestCandidates = [amplifierCandidate("ghost")];
     researchFailsFor = new Set(["ghost"]);
     const out = await runXRepostersFinder({ dryRun: false, seeds: SEEDS });
@@ -392,7 +392,7 @@ describe("runXRepostersFinder — gates and bookkeeping", () => {
     emailsByHandle = { amp: "a@b.co" };
     const out = await runXRepostersFinder({ dryRun: false, seeds: SEEDS });
     // 0.05 research + 0.001 for the one fit-reason completion an ICP triggers
-    // on the amplifier lane — charged per call, whether or not it yields a line.
+    // on the amplifier lane: charged per call, whether or not it yields a line.
     expect(out.costUsd).toBeCloseTo(0.051, 5);
   });
 

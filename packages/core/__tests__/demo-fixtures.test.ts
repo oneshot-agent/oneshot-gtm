@@ -6,7 +6,7 @@ import { demoFixture, demoFixtureDir, demoMode } from "../src/demo.ts";
 import { cadenceRocs, getBalance, listInbox, listSendingDomains } from "../src/oneshot.ts";
 
 // ONESHOT_GTM_HOME is a fresh temp dir per test file (vitest.setup.ts), so
-// configDir() — and therefore the fixture dir — is already isolated.
+// configDir() (and therefore the fixture dir) is already isolated.
 const dir = (): string => demoFixtureDir();
 
 function writeFixture(name: string, value: unknown): void {
@@ -14,7 +14,7 @@ function writeFixture(name: string, value: unknown): void {
   writeFileSync(join(dir(), name), JSON.stringify(value));
 }
 
-/** One RoCS goal row with the given spend — for the period-keyed fixture tests. */
+/** One RoCS goal row with the given spend: for the period-keyed fixture tests. */
 function g(spend: number): Array<Record<string, unknown>> {
   return [{ goalId: "goal_x", spend, value: 4800, pendingValue: 0, rocs: 1, receiptCount: 8 }];
 }
@@ -63,7 +63,7 @@ describe("demoFixture", () => {
 
 // No wallet credentials are set in the test env, so `getAgent()` throws. A
 // resolved promise is therefore proof that the demo seam short-circuited BEFORE
-// any agent construction — which is the property that lets the demo run with
+// any agent construction, which is the property that lets the demo run with
 // placeholder keys.
 describe("the four network reads under demo mode", () => {
   it("listInbox serves inbox.json", async () => {
@@ -113,7 +113,7 @@ describe("the four network reads under demo mode", () => {
 
   it("falls through to the real path when the fixture is absent", async () => {
     process.env["ONESHOT_GTM_DEMO"] = "1";
-    // No balance.json written — the seam must not swallow the call, so this
+    // No balance.json written. The seam must not swallow the call, so this
     // reaches getAgent() and fails on the missing wallet credentials.
     await expect(getBalance()).rejects.toThrow(/wallet credentials/i);
   });
@@ -127,7 +127,7 @@ describe("the four network reads under demo mode", () => {
 // In demo mode the home's .env must be the SOLE source of secrets. Fill-the-
 // blanks is not enough: the CLI parent inherits the real install's secrets
 // before spawning the demo server, and Bun auto-loads a repo-root .env into
-// every `bun run` child — either would shadow the demo placeholders and hand a
+// every `bun run` child: either would shadow the demo placeholders and hand a
 // "demo" dashboard a live wallet. This is the regression test for both paths.
 describe("applySecretsToEnv under demo mode", () => {
   const TOUCHED = [

@@ -23,7 +23,7 @@ export async function harvestReposters(
   seeds: XSeed[],
   knobs: HarvestKnobs,
   log: (msg: string) => void = () => {},
-  /** Tweet ids already paid for recently — skipped, never re-fetched. */
+  /** Tweet ids already paid for recently: skipped, never re-fetched. */
   skipTweets: Set<string> = new Set(),
 ): Promise<XHarvestResult> {
   const byHandle = new Map<string, XCandidate>();
@@ -37,7 +37,7 @@ export async function harvestReposters(
 
   const add = (u: XUser, tweet: SeedTweet, mode: "retweet" | "quote") => {
     // Per-hit mode (and quote text) so downstream grounding can pair the mode
-    // with the tweet it actually applies to — the merged `modes` list alone
+    // with the tweet it actually applies to. The merged `modes` list alone
     // can't say WHICH tweet was quoted.
     const hit: XHit = {
       ...tweet,
@@ -54,7 +54,7 @@ export async function harvestReposters(
     if (!prior) {
       existing.hits.push(hit);
     } else if (mode === "quote" && prior.mode !== "quote") {
-      // Same tweet both plain-reposted and quoted — the quote is the stronger hit.
+      // Same tweet both plain-reposted and quoted. The quote is the stronger hit.
       prior.mode = "quote";
       if (u.quoteText) prior.quoteText = u.quoteText;
     }
@@ -93,7 +93,7 @@ export async function harvestReposters(
         // Record the tweet as paid for as soon as the first (retweeted_by)
         // page is bought: if quoteTweets below hits the spend ceiling, the
         // skip ledger must still know this page was purchased, or the next
-        // run re-buys it — the exact double-billing the ledger prevents.
+        // run re-buys it. The exact double-billing the ledger prevents.
         harvestedIds.push(t.id);
         const quoters = await client.quoteTweets(t.id);
         for (const u of quoters) add(u, t, "quote");

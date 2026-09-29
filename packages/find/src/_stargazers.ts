@@ -64,7 +64,7 @@ export interface StargazersResult {
    * turns up empty (vs an outright failure). Null when nothing parsed.
    */
   newestSeen: string | null;
-  /** Set on a non-2xx / network / parse failure — distinguishes a real error
+  /** Set on a non-2xx / network / parse failure: distinguishes a real error
    *  (e.g. rate limit) from an honest "no recent stars". */
   error?: string;
 }
@@ -73,12 +73,12 @@ export interface StargazersResult {
  * Fallback path: recent stargazers via the public repo *events* feed.
  *
  * Since July 2026 GitHub restricts `/stargazers` to repo admins/collaborators
- * (401 unauth, 403/404 authed) — but `WatchEvent`s still flow through
+ * (401 unauth, 403/404 authed), but `WatchEvent`s still flow through
  * `/repos/{repo}/events`, which stays public. The feed is newest-first and
  * keeps at most ~90 days / 300 events per repo, so we walk forward up to
  * 3 pages of 100 and stop once a page's oldest event predates the window
  * (every later page is older still). Busy repos can wash stars out of the
- * 300-event cap between poll ticks — a scheduler that ticks at least daily
+ * 300-event cap between poll ticks. A scheduler that ticks at least daily
  * keeps the gap negligible for the repo sizes we watch.
  */
 async function recentStargazersViaEvents(
@@ -140,7 +140,7 @@ async function recentStargazersViaEvents(
 
 /**
  * Recent stargazers of a public repo. GitHub returns stargazers oldest-first,
- * so the newest stars live on the LAST page — we read the `Link: rel="last"`
+ * so the newest stars live on the LAST page. We read the `Link: rel="last"`
  * page number, then page backward (newest → older), collecting stars with
  * `starredAt >= sinceIso` and stopping as soon as a page has none fresh (every
  * earlier page is older still) or `maxPages` is hit. Fault-tolerant like
@@ -155,7 +155,7 @@ async function recentStargazersViaEvents(
  * full-history walk.
  *
  * Requires `GITHUB_TOKEN` for any real volume (5,000 req/hr core); without it
- * GitHub rate-limits hard at 60/hr — which a backward walk through a big repo
+ * GitHub rate-limits hard at 60/hr, which a backward walk through a big repo
  * hits fast.
  */
 export async function recentStargazers(
@@ -186,7 +186,7 @@ export async function recentStargazers(
     if (!firstRes.ok) {
       logEvent("github.stargazers", { repo, ok: false, status: firstRes.status }, "warn");
       // 401/403/404 here is the July-2026 access restriction (not-own-repo),
-      // not a transient failure — the events feed still publishes stars.
+      // not a transient failure. The events feed still publishes stars.
       if ([401, 403, 404].includes(firstRes.status)) {
         return recentStargazersViaEvents(repo, { sinceIso: opts.sinceIso });
       }
@@ -204,7 +204,7 @@ export async function recentStargazers(
         const res = await fetch(`${base}&page=${page}`, { headers });
         pagesFetched++;
         if (!res.ok) {
-          // Surface it — a 403/429 mid-walk is almost always the rate limit,
+          // Surface it. A 403/429 mid-walk is almost always the rate limit,
           // NOT "no recent stars". Return what we have so far + the error.
           logEvent("github.stargazers", { repo, ok: false, status: res.status, page }, "warn");
           return {
@@ -224,7 +224,7 @@ export async function recentStargazers(
       const fresh = parsed.filter((s) => s.starredAt >= opts.sinceIso);
       out.push(...fresh);
       // Pages get older as `page` decreases; once a page yields zero fresh
-      // stars, every earlier page is older too — stop.
+      // stars, every earlier page is older too: stop.
       if (fresh.length === 0) break;
     }
 

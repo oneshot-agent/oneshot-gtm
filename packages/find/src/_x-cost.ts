@@ -1,7 +1,7 @@
 /**
  * What an X harvest costs, counted as it happens.
  *
- * Both providers bill per *resource returned*, not per request — one
+ * Both providers bill per *resource returned*, not per request: one
  * `retweeted_by` page of 100 users is 100 billable reads. A day of filter
  * tuning against the live X API once cost ~$12 and emptied the account, so the
  * meter is not optional: every engine reports what it pulled, and the run

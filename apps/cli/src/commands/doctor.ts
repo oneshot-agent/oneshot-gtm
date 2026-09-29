@@ -21,7 +21,7 @@ export async function commandDoctor(opts: { json?: boolean } = {}): Promise<void
   human("\n");
 
   // Emit before the bail below: a failing doctor still owes the caller its
-  // document on stdout — the exit code is additive signal, not a substitute.
+  // document on stdout. The exit code is additive signal, not a substitute.
   if (opts.json) {
     await emitJson({
       command: "doctor",

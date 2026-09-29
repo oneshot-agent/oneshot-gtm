@@ -10,11 +10,11 @@ import { parseScopes, resolveCap, type ResearchScope } from "./research-prospect
  * dry-runnable, bounded concurrency, breaker-aware, resumable), different
  * artifact. Where `research-prospects` buys raw research, this command
  * SYNTHESIZES from research already on hand (plus live GitHub and reply
- * history) into one durable, evidence-cited angle — the value every hand-run
+ * history) into one durable, evidence-cited angle. The value every hand-run
  * qualification pass produces and today throws away.
  */
 
-/** Same shape as research-prospects' RESEARCH_COST_USD — this call may also
+/** Same shape as research-prospects' RESEARCH_COST_USD. This call may also
  *  buy a fresh dossier or a webRead when nothing free exists, atop the LLM
  *  synthesis call itself (BYO key, not billed through a OneShot receipt). */
 const SYNTHESIS_COST_USD = 0.05;

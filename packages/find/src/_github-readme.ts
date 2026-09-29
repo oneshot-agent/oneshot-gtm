@@ -178,7 +178,7 @@ export async function fetchProfileReadmeEmail(identity: GitHubIdentity): Promise
 }
 
 /**
- * The profile README's opening markdown (≤ 8 KB), for evidence — `null` when
+ * The profile README's opening markdown (≤ 8 KB), for evidence: `null` when
  * the account has no public profile README or GitHub couldn't be reached.
  * Shares the fetch and cache with `fetchProfileReadmeEmail`.
  */

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 // GET /api/queue/search backs /prospects. What matters is the translation
-// from a bookmarkable URL into ledger args — junk falls back rather than 400s,
+// from a bookmarkable URL into ledger args: junk falls back rather than 400s,
 // the page size is clamped, and the facet counts never see the status filter.
 
 const searchCalls: Array<Record<string, unknown>> = [];
@@ -110,7 +110,7 @@ describe("searchQueueRoute", () => {
       "http://x/api/queue/search?status=bogus,sent,&decided=robot&sort=price&dir=sideways",
     );
     expect(searchCalls[0]).toMatchObject({ statuses: ["sent"], sort: "found_at", dir: "desc" });
-    // The junk `decided` value is dropped, not forwarded — asserted on THIS
+    // The junk `decided` value is dropped, not forwarded: asserted on THIS
     // request, before the next call clears `searchCalls`.
     expect(searchCalls[0]).not.toHaveProperty("decidedBy");
     // Prototype names are not sort keys.

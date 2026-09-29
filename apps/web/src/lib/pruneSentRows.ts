@@ -76,7 +76,7 @@ export function remapFilteredEventIndexes(
 /**
  * After a /api/run SSE stream finishes, drop the row entries that
  * successfully sent (kind="send" with non-empty receiptIds) so the form
- * doesn't redisplay them — and a second submission can't fire another
+ * doesn't redisplay them, and a second submission can't fire another
  * email to the same prospect. Held drafts, errored rows, and unsent rows
  * stay so the founder can fix + retry.
  *

@@ -357,7 +357,7 @@ describe("follow-up drafts (cadence_state)", () => {
       ["two", "sent", null],
       ["one", "discarded", "regenerate"],
     ]);
-    // The next preview is for step 2 — a fresh slot.
+    // The next preview is for step 2. A fresh slot.
     ledger.setCadenceDraft({
       ...input,
       draft: { subject: "b", body: "three", flags: [], payload: payload() },

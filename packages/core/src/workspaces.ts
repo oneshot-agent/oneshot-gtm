@@ -1,5 +1,5 @@
 /**
- * Named workspaces — separate operating histories (one ONESHOT_GTM_HOME each).
+ * Named workspaces: separate operating histories (one ONESHOT_GTM_HOME each).
  * Person identities, paid lookup caches and contact protection are shared.
  * Imports ONLY node builtins, on purpose: the CLI shim must resolve
  * `--workspace` to a home dir BEFORE core's config.ts is evaluated (it
@@ -75,7 +75,7 @@ export function loadRegistry(): WorkspaceRegistry {
     return {
       default: typeof raw.default === "string" ? raw.default : DEFAULT_WORKSPACE,
       // A plain object only: an array would accept named properties and then
-      // drop them on stringify — the workspace would vanish after saving.
+      // drop them on stringify. The workspace would vanish after saving.
       workspaces:
         raw.workspaces && typeof raw.workspaces === "object" && !Array.isArray(raw.workspaces)
           ? raw.workspaces
@@ -109,7 +109,7 @@ function sleepSync(ms: number): void {
 /**
  * Serialize registry read-modify-write across processes via an O_EXCL lock
  * file (else concurrent creates lose a workspace and collide on ports). The
- * lock carries an owner token — release only unlinks OUR lock, so breaking a
+ * lock carries an owner token: release only unlinks OUR lock, so breaking a
  * stale lock can't be undone by the dead owner's `finally`; retries check the
  * deadline first so filesystem errors surface instead of spinning.
  */
@@ -134,13 +134,13 @@ export function withRegistryLock<T>(fn: () => T, opts: { waitMs?: number } = {})
     try {
       stale = Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS;
     } catch {
-      // vanished between create and stat, or unreadable — just retry
+      // vanished between create and stat, or unreadable: just retry
     }
     if (stale) {
       try {
         unlinkSync(lock);
       } catch {
-        // someone else broke it first, or we can't — the deadline bounds us
+        // someone else broke it first, or we can't. The deadline bounds us
       }
     }
     sleepSync(50);
@@ -156,7 +156,7 @@ export function withRegistryLock<T>(fn: () => T, opts: { waitMs?: number } = {})
   }
 }
 
-/** Every workspace incl. the implicit default, as (name, entry) — for listing and guardrails. */
+/** Every workspace including the implicit default, as (name, entry): for listing and guardrails. */
 export function listWorkspaces(
   reg: WorkspaceRegistry = loadRegistry(),
 ): Array<[string, WorkspaceEntry]> {
@@ -224,7 +224,7 @@ export function setDefaultWorkspace(name: string): void {
   });
 }
 
-/** Forget a workspace. Files are NOT deleted — the path is printed for the founder to remove. */
+/** Forget a workspace. Files are NOT deleted. The path is printed for the founder to remove. */
 export function removeWorkspace(name: string): WorkspaceEntry {
   if (name === DEFAULT_WORKSPACE)
     throw new WorkspaceError("the default workspace can't be removed");
@@ -267,7 +267,7 @@ export function workspaceNameForHome(
 
 /**
  * Dashboard port for the install at `home` (registered port, else BASE_PORT).
- * Keyed by home, not derived name — an unregistered ONESHOT_GTM_HOME must
+ * Keyed by home, not derived name. An unregistered ONESHOT_GTM_HOME must
  * never borrow a registered workspace's port.
  */
 export function portForHome(home: string, reg: WorkspaceRegistry = loadRegistry()): number {
@@ -296,8 +296,8 @@ export function resolveWorkspaceSelection(input: {
         `--workspace '${input.flag}' conflicts with ONESHOT_GTM_HOME=${explicitHome} — set one, not both`,
       );
     }
-    // An unregistered home must not collide with a registered one — or with
-    // another unregistered home of the same basename — in the shared DB's
+    // An unregistered home must not collide with a registered one, or with
+    // another unregistered home of the same basename: in the shared DB's
     // touch attribution, or the cross-workspace hold would treat two installs
     // as one. Identity is the canonical path.
     return {

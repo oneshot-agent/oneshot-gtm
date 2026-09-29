@@ -15,7 +15,7 @@ import {
 import prompts from "prompts";
 import { c, emitJson, header, note, ok, setJsonMode, warn } from "../output.ts";
 
-/** Best-effort domain pool — never let a transient/auth failure abort a list/add. */
+/** Best-effort domain pool. Never let a transient/auth failure abort a list/add. */
 async function safeListDomains(): Promise<{ domains: DomainPoolEntry[]; error: boolean }> {
   try {
     return { domains: await listSendingDomains(), error: false };
@@ -146,7 +146,7 @@ export async function commandIdentitiesAdd(): Promise<void> {
     warn("No domain provided.");
     return;
   }
-  // A domain not yet in the pool isn't an error — it auto-provisions on first
+  // A domain not yet in the pool isn't an error. It auto-provisions on first
   // send. But pinned sends bypass the server's warm-up gating, so flag the
   // cold-start so the founder leans on the client cap (the default ramp).
   if (domains.length > 0 && !domains.some((d) => d.domain.toLowerCase() === domain)) {

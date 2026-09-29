@@ -103,9 +103,7 @@ import {
   commandMotionPostFunding,
 } from "./commands/motion.ts";
 
-// Read the real version from package.json so the `--version` output and the
-// telemetry `version` field can't drift from the published release (the old
-// hardcoded "0.1.0" had gone stale against 0.6.0).
+// Share the package version with --version and telemetry.
 const CLI_VERSION = readPackageVersion(import.meta.url);
 
 const program = new Command();
@@ -117,13 +115,9 @@ program
       "The CLI is a thin headless layer; ad-hoc target discovery + review + send happens in the dashboard (oneshot-gtm ui).",
   )
   .version(CLI_VERSION)
-  // Documentation only: main.ts consumes this flag BEFORE commander runs (the
-  // home must be chosen before core is imported), so it never reaches here.
-  // Declared so `--help` shows it and a stray occurrence isn't an "unknown
-  // option" error.
+  // main.ts consumes this before core imports. Declare it here for --help
+  // and to tolerate occurrences commander still sees.
   .option("-w, --workspace <name>", "run against a named workspace (see: workspace list)");
-
-// Bootstrap + launcher
 
 program.command("init").description("First-run setup wizard").action(runOrFail(runInit));
 program
@@ -215,7 +209,7 @@ demo
 
 // Workspaces: named, fully isolated installs (one product each). Selection
 // (--workspace / ONESHOT_GTM_WORKSPACE / registry default) happens in main.ts
-// BEFORE core is imported — by the time these actions run the home is fixed.
+// BEFORE core is imported: by the time these actions run the home is fixed.
 const workspace = program
   .command("workspace")
   .description("Named isolated installs — one per product you're selling");
@@ -245,7 +239,6 @@ workspace
   .description("Forget a workspace (files are left in place)")
   .action(runOrFail(commandWorkspaceRemove));
 
-// Config (founder profile + LLM + secrets only; ICP lives in the dashboard)
 const config = program.command("config").description("Configure providers and profile");
 config.command("llm").description("Pick LLM provider and model").action(runOrFail(configLlm));
 config
@@ -312,7 +305,6 @@ config
   )
   .action(runOrFail((amount?: string) => configSpendCeiling(amount)));
 
-// Gmail send path: OAuth consent flow for the alternate (non-OneShot) provider.
 const gmail = program
   .command("gmail")
   .description("Gmail / Google Workspace send path (alternate email provider)");
@@ -455,7 +447,7 @@ find
         if (opts.installService) return commandInstallService({ write: opts.write });
         if (opts.write) bail("--write only makes sense with --install-service");
         // A daemon run never ends of its own accord, so it has no empty result
-        // to report — refuse the combination rather than silently ignore it.
+        // to report: refuse the combination rather than silently ignore it.
         // Same reasoning for --json: the document is written once, at the end.
         if (opts.failOnEmpty && !opts.once) bail("--fail-on-empty only makes sense with --once");
         if (opts.json && !opts.once) bail("--json only makes sense with --once");
@@ -830,14 +822,8 @@ find
           dryRun: opts.dryRun,
           refresh: opts.refresh,
           cheap: opts.cheap,
-          // Always forward limit — it carries a commander default (250), so
-          // it's never actually undefined, and resolveCap (this command's
-          // synthesize-angles handler → research-prospects.ts) is what
-          // decides what an explicit 0 or a NaN (bad --limit input) means.
-          // Gating this behind `opts.limit ?` treated both as "omit the
-          // field", which resolveCap reads as "no cap" — so a mistyped
-          // `--limit 0` on this paid backfill silently ran the entire
-          // backlog instead of stopping.
+          // Always forward the limit, including 0 and NaN. resolveCap validates
+          // them; omitting falsy values would remove the paid run's cap.
           limit: opts.limit,
           ...(opts.scope ? { scope: opts.scope } : {}),
           ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
@@ -898,7 +884,7 @@ find
     "ceiling on estimated generation spend for this run (default 1.00)",
     (v) => {
       // NaN would compare false against every row's spend and lift the cap
-      // for the whole run — refuse the value instead of running uncapped.
+      // for the whole run: refuse the value instead of running uncapped.
       const n = Number(v.trim());
       if (v.trim() === "" || !Number.isFinite(n) || n < 0) {
         throw new InvalidArgumentError("--max-cost must be a number >= 0");
@@ -941,7 +927,6 @@ find
   )
   .action(runOrFail((opts: { fit: boolean }) => commandCalibrate({ fit: opts.fit })));
 
-// Cadence: cron-able advance. List/stop are in the dashboard.
 const cadence = program
   .command("cadence")
   .description("Multi-touch sequence engine for in-flight prospects");
@@ -951,8 +936,7 @@ cadence
   .description("Poll inbound for replies, then execute due follow-up steps for active cadences")
   .action(runOrFail(commandCadenceAdvance));
 
-// Motion plays without a /run page yet (CLI is the only path). Drop as
-//    UI lands. show-hn / job-change / accelerator-batch already live in /run.
+// These motion plays are CLI-only until their /run pages exist.
 const motion = program
   .command("motion")
   .description("Run a named GTM play (CLI-only plays; the rest live in /run)");
@@ -1142,7 +1126,6 @@ motion
     ),
   );
 
-// Discover: ICP discovery + PMF survey workflows (no UI yet)
 const discover = program.command("discover").description("Find your people, prove they want it");
 const icp = discover.command("icp").description("ICP discovery loop");
 icp
@@ -1205,7 +1188,6 @@ measure
   .option("--json", "output as JSON")
   .action(runOrFail((opts: { json?: boolean }) => commandMeasureBenchmark(opts)));
 
-// Intel: interactive coaching + reply triage + personalize (no UI yet)
 const intel = program.command("intel").description("LLM-powered intelligence layer");
 intel
   .command("advise")
@@ -1256,7 +1238,6 @@ intel
   .description("Generate one anti-slop founder-to-founder opener for a single prospect")
   .action(runOrFail(commandIntelPersonalize));
 
-// Handoff: PMF→scale gates (no UI yet)
 const handoff = program.command("handoff").description("PMF→scale graduation gates");
 handoff
   .command("readiness")
@@ -1279,10 +1260,7 @@ handoff
 // instead of commander's default non-zero exit.
 attachHelpFallbacks(program);
 
-// The command tree itself is worth reading without running it — the README
-// count guard walks it to check the documented command total. Importing this
-// module used to parse process.argv as a side effect, which under a test
-// runner means parsing the runner's own argv.
+// Export without parsing argv so documentation checks can inspect the command tree.
 export { program };
 
 if (!process.env["ONESHOT_GTM_CLI_NO_PARSE"]) {
@@ -1299,8 +1277,7 @@ function runOrFail<A extends unknown[]>(fn: (...args: A) => void | Promise<void>
     try {
       await fn(...args);
     } catch (err) {
-      // Errors are valuable signal — record before exiting. A thrown error
-      // always wins over any outcome a command marked for itself.
+      // A thrown error overrides any outcome marked by the command.
       await sendTelemetry(inv, "error", start);
       // CommandExit already printed its message via bail(); a raw error hasn't.
       if (err instanceof CommandExit) process.exit(err.code);
@@ -1315,7 +1292,7 @@ function runOrFail<A extends unknown[]>(fn: (...args: A) => void | Promise<void>
 /**
  * Build and transmit the anonymous summary event for one invocation. Gated on
  * the opt-out flag + env kill switch, bounded by reportCommand's own timeout,
- * and fully best-effort — a telemetry failure must never affect the command.
+ * and fully best-effort. A telemetry failure must never affect the command.
  */
 async function sendTelemetry(
   inv: Invocation,
@@ -1335,7 +1312,6 @@ function attachHelpFallbacks(cmd: Command): void {
   for (const sub of cmd.commands) {
     const isGroup = sub.commands.length > 0;
     if (isGroup) {
-      // If the user invokes the group with no subcommand, show help and exit 0.
       if (!(sub as unknown as { _actionHandler?: unknown })._actionHandler) {
         sub.action(() => {
           sub.outputHelp();

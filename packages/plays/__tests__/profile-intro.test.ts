@@ -262,7 +262,7 @@ describe("runProspectResearch", () => {
 
     expect(state.calls.deepResearchPerson).toBe(1);
     // Three LLM calls: the ICP-grounded extract, the intro draft, and the
-    // row's fit sentence (#592 — the manual add runs no gate, so it is
+    // row's fit sentence (#592. The manual add runs no gate, so it is
     // generated from the research it just paid for).
     expect(state.calls.llm).toBe(3);
 

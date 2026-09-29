@@ -28,9 +28,9 @@ import type { CompanyRecord, FinderResult, RunOpts } from "./_types.ts";
  * Pulls an accelerator-cohort directory, ICP-filters, finds founder contact,
  * enqueues for outreach. Two adapters:
  *
- * - `yc-oss` — free structured directory at yc-oss.github.io (auto-selected
+ * - `yc-oss`: free structured directory at yc-oss.github.io (auto-selected
  *   when cohort matches `^yc-`). The right path for any YC batch.
- * - `websearch` — combo-search fallback for accelerators without a public API
+ * - `websearch`: combo-search fallback for accelerators without a public API
  *   (Techstars, Antler, 500 Global, AI Grant, …). Less reliable recall but
  *   works for any cohortLabel.
  *
@@ -52,7 +52,7 @@ const YC_OSS_READ_CAP = 2000;
 const PLAY_NAME = "accelerator-batch";
 
 export interface CohortEntry {
-  /** Cohort tag — e.g. `yc-w26`, `techstars-spring-2026`, `spc-2026-1`. */
+  /** Cohort tag: e.g. `yc-w26`, `techstars-spring-2026`, `spc-2026-1`. */
   cohort: string;
   /** Human-readable label fed into search queries + the email prompt. */
   cohortLabel: string;
@@ -60,7 +60,7 @@ export interface CohortEntry {
 
 export interface AcceleratorBatchFinderOpts extends RunOpts {
   /**
-   * Multi-cohort sweep. Each entry routes to its own adapter — yc-* → yc-oss,
+   * Multi-cohort sweep. Each entry routes to its own adapter: yc-* → yc-oss,
    * everything else → websearch. Per-cohort failures are isolated; the run
    * only halts if EVERY cohort returns 0 records.
    */
@@ -81,18 +81,18 @@ export interface AcceleratorBatchFinderOpts extends RunOpts {
   adapter?: "yc-oss" | "websearch";
   /** Concurrency for the per-company pipeline (over the unified pool). Default 3. */
   concurrency?: number;
-  /** The pitch angle — stamped onto every enqueued row so the play can draft
+  /** The pitch angle: stamped onto every enqueued row so the play can draft
    *  inline (self-contained), exactly as github-topics stamps it. */
   yourEdge?: string;
 }
 
 /**
  * Normalize the legacy single-cohort opts shape into the new multi-cohort
- * list. Old trigger rows with `{cohort, cohortLabel}` keep working — they
+ * list. Old trigger rows with `{cohort, cohortLabel}` keep working. They
  * become a one-entry list. Each entry's `cohort` is trimmed and an empty
  * `cohortLabel` is filled via `deriveCohortLabel`. Malformed entries
  * (missing or empty cohort tag) are dropped silently. Throws when zero
- * usable entries remain — readiness gate is supposed to prevent this.
+ * usable entries remain: readiness gate is supposed to prevent this.
  */
 export function normalizeCohorts(
   opts: Pick<AcceleratorBatchFinderOpts, "cohorts" | "cohort" | "cohortLabel">,
@@ -108,7 +108,7 @@ export function normalizeCohorts(
       })
       .filter((e): e is CohortEntry => e !== null);
     if (normalized.length > 0) return normalized;
-    // All entries malformed — fall through to the legacy fields below before
+    // All entries malformed: fall through to the legacy fields below before
     // throwing, in case the operator set both fields.
   }
   if (typeof opts.cohort === "string" && opts.cohort.trim().length > 0) {
@@ -125,7 +125,7 @@ export function normalizeCohorts(
 /**
  * Round-robin interleave records by their source cohort. Without this, the
  * per-company `parallelMap` would chew through every yc-w26 candidate before
- * touching Techstars — so the global `limit` enqueue cap (25 by default)
+ * touching Techstars, so the global `limit` enqueue cap (25 by default)
  * would be hit before any non-YC cohort got a chance. Interleaving picks
  * one record per cohort in turn until all cohort lists are exhausted, so
  * the eventual queue has a balanced cross-incubator footprint.
@@ -168,7 +168,7 @@ export type TaggedCompanyRecord = CompanyRecord & { cohort: string; cohortLabel:
 
 /**
  * Cross-cohort dedupe by company name slug. A company appearing in two
- * cohorts (e.g. a YC alum joining Techstars) is rare but possible — keep the
+ * cohorts (e.g. a YC alum joining Techstars) is rare but possible. Keep the
  * first occurrence so the per-company pipeline doesn't pay enrichment cost
  * twice. Slug = lowercase + whitespace→hyphens + non-alphanumerics stripped,
  * matching the dedupeKey shape downstream.
@@ -251,15 +251,15 @@ export async function runAcceleratorBatchFinder(
     costUsd: 0,
   };
 
-  // Step 1: discover cohort companies — one adapter call per cohort entry.
+  // Step 1: discover cohort companies: one adapter call per cohort entry.
   // Per-cohort failures (adapter throws, 0 hits) log and continue; we only
   // halt the run when EVERY cohort came back empty.
   //
   // Parallelized at `concurrency` to keep wall-clock reasonable: with 12
   // websearch cohorts at ~30s each, a sequential loop would burn 6+ minutes
   // of pure discovery before the first per-company pipeline starts. The
-  // cost-cap check is best-effort under parallelism — workers in flight
-  // can overshoot by ~(concurrency - 1) × (per-cohort cost) — acceptable
+  // cost-cap check is best-effort under parallelism: workers in flight
+  // can overshoot by ~(concurrency - 1) × (per-cohort cost): acceptable
   // since the per-company loop also overshoots by the same factor.
   type CohortOutcome = {
     records: TaggedCompanyRecord[];
@@ -391,7 +391,7 @@ export async function runAcceleratorBatchFinder(
   }
 
   // Step 2: per-company pipeline (parallel, ICP-first like github-topics).
-  // `halted` is a soft cap — workers may overshoot by up to (concurrency - 1)
+  // `halted` is a soft cap: workers may overshoot by up to (concurrency - 1)
   // candidates. Acceptable at our scale.
   let halted = false;
 
@@ -418,7 +418,7 @@ export async function runAcceleratorBatchFinder(
       return;
     }
 
-    // ICP filter — cheapest gate first ($0.001). Uses the structured
+    // ICP filter: cheapest gate first ($0.001). Uses the structured
     // one-liner + tags so the classifier sees more signal than a bare title.
     const filter = await icpFilter({
       icp,
@@ -429,7 +429,7 @@ export async function runAcceleratorBatchFinder(
       },
     });
     if (filter.match === null) {
-      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit):
       // drop without persisting. A rejection would burn the dedupeKey for
       // every future watch tick since isQueueDuplicate ignores status.
       result.droppedEnrichment++;
@@ -454,7 +454,7 @@ export async function runAcceleratorBatchFinder(
     //
     // Strategy: webRead the YC profile page (or fall back to the company
     // website) and run the same `accelerator-launch-extract` prompt the
-    // websearch adapter uses. ~$0.02 per ICP-pass — only paid for candidates
+    // websearch adapter uses. ~$0.02 per ICP-pass. Only paid for candidates
     // that survived the cheaper ICP gate.
     // Listing pages rarely link every company's site. Look the domain up by
     // name only for a company that passed the ICP gate (and so will actually
@@ -523,8 +523,8 @@ export async function runAcceleratorBatchFinder(
     }
     // "" on a LinkedIn-channel contact: the row's channel decides how it is sent.
     const email = contact.email ?? "";
-    // Prefer the SDK's resolved name when available — it's the actual owner of
-    // the email — and fall back to the founder name we resolved upstream.
+    // Prefer the SDK's resolved name when available. It's the actual owner of
+    // the email, and fall back to the founder name we resolved upstream.
     const fullName = contact.fullName?.trim() || founderName;
     const enr = { phone: contact.phone, linkedinUrl: contact.linkedinUrl };
     const phone = resolvedPhone ?? enr.phone;

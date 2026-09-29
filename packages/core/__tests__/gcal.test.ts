@@ -54,9 +54,9 @@ describe("listCalendarEvents", () => {
     expect(url).toContain("updatedMin=2026-01-01T00:00:00.000Z");
     expect(url).toContain("timeMin=2025-06-01T00:00:00.000Z");
     expect(url).toContain("timeMax=2027-02-01T00:00:00.000Z");
-    // Never sent — an event over the cap would drop the prospect otherwise.
+    // Never sent. An event over the cap would drop the prospect otherwise.
     expect(url).not.toContain("maxAttendees");
-    // Never sent — filtering happens in code so drops can be logged.
+    // Never sent: filtering happens in code so drops can be logged.
     expect(url).not.toContain("eventTypes");
     expect(url).toContain(
       "fields=nextPageToken,items(id,iCalUID,status,summary,start,end,updated,organizer,creator,attendees,attendeesOmitted,recurringEventId,originalStartTime,eventType,hangoutLink,visibility,transparency,description)",

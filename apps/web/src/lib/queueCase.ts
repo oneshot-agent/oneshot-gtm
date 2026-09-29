@@ -1,6 +1,6 @@
 /**
  * The case column of an open queue row (issue #594): what the priority engine
- * wrote about the prospect, laid out as key–value rows where a reason has a
+ * wrote about the prospect, laid out as key: value rows where a reason has a
  * key ("title: Co-Founder & CEO") and as plain lines where it does not
  * ("upcoming event", "2 evidence links").
  *
@@ -14,7 +14,7 @@ export interface CaseRow {
   value: string;
 }
 
-/** A leading `word: ` — one or two short words — is a key; anything else is prose. */
+/** A leading `word: ` (one or two short words) is a key; anything else is prose. */
 const KEYED = /^([a-z][a-z-]{0,13}(?: [a-z-]{1,13})?):\s+(\S.*)$/i;
 
 export function caseRows(reasons: readonly string[]): CaseRow[] {

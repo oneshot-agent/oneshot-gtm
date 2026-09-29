@@ -115,7 +115,7 @@ describe("readiness gate", () => {
 const FIT_TIMEOUT_MS = 30_000;
 describe("--fit on a ready finder", { timeout: FIT_TIMEOUT_MS }, () => {
   function seedReady(): void {
-    // 60 replied high-scorers, 120 silent low-scorers — separable by design.
+    // 60 replied high-scorers, 120 silent low-scorers: separable by design.
     for (let i = 0; i < 60; i++) seedSent(i, { replied: true, total: 80 });
     for (let i = 60; i < 180; i++) seedSent(i, { replied: false, total: 40 });
   }
@@ -139,7 +139,7 @@ describe("--fit on a ready finder", { timeout: FIT_TIMEOUT_MS }, () => {
     seedReady();
     commandCalibrate({ fit: true });
     const first = readFileSync(calPath, "utf8");
-    // Inject a second finder's entry, refit — luma is replaced, other kept.
+    // Inject a second finder's entry, refit: luma is replaced, other kept.
     const doctored = parseProspectCalibration(first)!;
     doctored.perFinder["show-hn"] = doctored.perFinder["luma-events"]!;
     rmSync(calPath);

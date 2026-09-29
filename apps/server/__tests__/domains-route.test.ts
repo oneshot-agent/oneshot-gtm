@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const resumeMock = vi.fn();
 const pauseMock = vi.fn();
 
-// Mock the core wrappers — the route's job is request validation + status
+// Mock the core wrappers. The route's job is request validation + status
 // mapping, not the live SDK call (covered by the wrappers themselves).
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");

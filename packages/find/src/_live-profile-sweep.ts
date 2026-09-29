@@ -3,7 +3,7 @@
  *
  * The post-finder hook reads the profile of every row a finder just created,
  * but it works under a 20-minute wall budget and a read takes ~5 minutes, so
- * a busy finder leaves rows with provider history only — and no later run
+ * a busy finder leaves rows with provider history only, and no later run
  * comes back for them. This sweep does: every few hours the server takes
  * the live queue rows (pending or approved, not sent) that have a LinkedIn
  * seed and no live read yet, approved first, and runs them through the same
@@ -64,7 +64,7 @@ export interface LiveProfileSweepResult {
  * not a LinkedIn profile never; a row whose trigger switched the tier off
  * never; a row that already carries a live read not again (the read cache
  * is 30 days and `--refresh` on the CLI is the way to force one). Approved
- * rows first — they are the ones about to send — then pending, newest first.
+ * rows first (they are the ones about to send) then pending, newest first.
  */
 export function selectLiveSweepCandidates(
   rows: readonly LiveSweepRow[],

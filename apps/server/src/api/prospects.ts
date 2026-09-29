@@ -4,7 +4,7 @@ import type { AddProspectRequest, AddProspectResult } from "@oneshot-gtm/shared-
 import { jsonResponse } from "../server.ts";
 
 /**
- * POST /api/prospects/add — manual add-prospect from a profile URL.
+ * POST /api/prospects/add: manual add-prospect from a profile URL.
  *
  * Validates + enqueues a placeholder `profile-intro` queue row synchronously,
  * then kicks off the ~2-5 min dossier research + draft in the background

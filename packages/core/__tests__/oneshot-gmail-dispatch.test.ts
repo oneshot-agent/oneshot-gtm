@@ -150,7 +150,7 @@ describe("listInbox — gmail provider dispatch", () => {
 
 describe("listInbox — multi-identity merge", () => {
   it("one failing source doesn't blind the others (oneshot fails, gmail still polls)", async () => {
-    // Pool: one oneshot identity (will fail — no wallet creds in test env)
+    // Pool: one oneshot identity (will fail: no wallet creds in test env)
     // and one gmail identity (mocked fetch succeeds).
     cfgOverride = {
       emailIdentities: [
@@ -221,7 +221,7 @@ describe("listInbox — multi-identity merge", () => {
     expect(out.emails.map((e) => e.id)).toEqual(["m-new", "m-dup", "m-old"]);
     expect(out.agent_id).toBe("gmail+gmail");
     // Source attribution: a reply must go out from the identity whose mailbox
-    // received the email. (m-dup arrived in both — either id is correct.)
+    // received the email. (m-dup arrived in both: either id is correct.)
     expect(out.emails.find((e) => e.id === "m-new")?.source_identity_id).toBe("gmail:b@x.com");
     expect(out.emails.find((e) => e.id === "m-old")?.source_identity_id).toBe("gmail:a@x.com");
     expect(out.emails.find((e) => e.id === "m-dup")?.source_identity_id).toMatch(

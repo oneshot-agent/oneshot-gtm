@@ -4,7 +4,7 @@ import { mannWhitneyAuc, meanOf, wilson95 } from "./_gauge.ts";
 import { SCORE_BUCKETS, bucketOf } from "./_buckets.ts";
 
 /**
- * Outcome labeling for sent queue rows (Phase 3 of #410). Pure — injected
+ * Outcome labeling for sent queue rows (Phase 3 of #410). Pure: injected
  * clock, no I/O; labels are recomputed on every read, never frozen, so a
  * late reply flips its row to positive on the next run.
  */
@@ -16,7 +16,7 @@ const RANK_ORDER: OutcomeRank[] = ["none", "reply", "meeting", "qualified", "rev
 /**
  * How long a joinable sent row must go without any outcome before it counts
  * as a negative. The cadence engine's last non-breakup touch lands inside
- * two weeks, and cold-email replies arrive within days of a touch — 14 days
+ * two weeks, and cold-email replies arrive within days of a touch: 14 days
  * balances label latency against false negatives.
  */
 export const OUTCOME_MATURITY_DAYS = 14;
@@ -24,7 +24,7 @@ export const OUTCOME_MATURITY_DAYS = 14;
 /**
  * Mirrors the monotone value-tag ladder in core/oneshot.ts (`valueTagRank`:
  * engagement 1 < meeting 2 < qualified 3 < revenue 4). Restated locally as a
- * display/label ladder — if a tag type is ever added there, add it here.
+ * display/label ladder: if a tag type is ever added there, add it here.
  */
 const VALUE_TAG_TO_RANK: Record<string, OutcomeRank> = {
   engagement: "reply",
@@ -42,7 +42,7 @@ const DEAL_RANK_TO_OUTCOME: Record<number, OutcomeRank> = {
 export interface SentOutcomeLabel {
   id: number;
   finder: string;
-  /** Stable per-row key — drives the deterministic calibration holdout split. */
+  /** Stable per-row key: drives the deterministic calibration holdout split. */
   dedupeKey: string;
   priorityTotal: number | null;
   components: ProspectPriorityComponents | null;
@@ -71,11 +71,11 @@ export function maxOutcomeRank(a: OutcomeRank, b: OutcomeRank): OutcomeRank {
 /**
  * Reply intents that are NEVER positive evidence, even though they are real
  * human replies (`kind: 'human'`). A classified decline or an explicit
- * unsubscribe on a `human`-kind row (e.g. "not interested, please stop" —
+ * unsubscribe on a `human`-kind row (e.g. "not interested, please stop":
  * `classifyReply` never promotes that to `kind: 'unsubscribe'`, see
  * reply-classify.ts) must not inflate the positive count `find calibrate`
- * trains on. Everything else — `interested`, `question`, `objection` (a live
- * back-and-forth, not a ghost), and `other` — counts as positive, same as
+ * trains on. Everything else: `interested`, `question`, `objection` (a live
+ * back-and-forth, not a ghost), and `other`: counts as positive, same as
  * NULL (untriaged, or the triage call failed): the reply itself is real
  * signal, and only a classified decline demotes it.
  */
@@ -106,7 +106,7 @@ export function labelSentRow(
 
   // Issue #480: a reply is positive evidence by INTENT, not by mere presence.
   // Vicente's polite decline ("It's too soon...") and Aladdin's partnership
-  // proposal used to carry the identical `positive` label — `find calibrate`
+  // proposal used to carry the identical `positive` label: `find calibrate`
   // was fitting on mislabeled data.
   const replied =
     (raw.first_email_reply_at !== null && replyIntentIsPositive(raw.first_email_reply_intent)) ||
@@ -151,7 +151,7 @@ export interface FinderOutcomeReport {
   sends: number;
   unjoinable: number;
   immature: number;
-  /** positives + negatives — the only rows rates are computed over. */
+  /** positives + negatives. The only rows rates are computed over. */
   mature: number;
   replies: number;
   replyRate: { rate: number; lo: number; hi: number } | null;
@@ -209,7 +209,7 @@ export function buildOutcomeReport(labels: SentOutcomeLabel[]): FinderOutcomeRep
     .toSorted((a, b) => a.finder.localeCompare(b.finder));
 }
 
-/** Mean days-to-reply among positives with a parsable send time — report color. */
+/** Mean days-to-reply among positives with a parsable send time: report color. */
 export function meanDaysToReply(labels: SentOutcomeLabel[]): number | null {
   return meanOf(labels.filter((l) => l.label === "positive").map((l) => l.daysSinceSend));
 }

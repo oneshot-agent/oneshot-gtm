@@ -4,7 +4,7 @@
 export interface XSeed {
   handle: string;
   /**
-   * Founder-authored line on why this seed's audience matters — the analog of
+   * Founder-authored line on why this seed's audience matters. The analog of
    * github-stars' `repoEdge`. Surfaced to the founder-lane prompt as optional
    * framing context; never sent verbatim.
    */
@@ -23,8 +23,8 @@ export interface SeedTweet {
 
 /**
  * Two reasons to contact someone off the same harvest.
- * `amplifier` — big enough, on-topic enough, to boost the launch. Ask: a repost.
- * `founder` — could actually run the product. Ask: does this fit how you work.
+ * `amplifier`: big enough, on-topic enough, to boost the launch. Ask: a repost.
+ * `founder`: could actually run the product. Ask: does this fit how you work.
  */
 export type XLane = "amplifier" | "founder";
 
@@ -43,13 +43,13 @@ export interface XUser {
   /**
    * Whether we could DM them. Engine semantics differ: xapi's
    * `receives_your_dm` is per-relationship truth; twitterapi.io's `canDm`
-   * means "accepts DMs from anyone" — payloads carry the engine name so the
+   * means "accepts DMs from anyone": payloads carry the engine name so the
    * hand-sender knows which question was answered.
    */
   dmOpen: boolean;
   /** The link in their bio, expanded. A founder signal. */
   site?: string;
-  /** Every expanded link on the profile — website field plus links in the bio. */
+  /** Every expanded link on the profile: website field plus links in the bio. */
   links: string[];
   /** Provider's own bot flag, where it has one. Better than our tweets/day guess. */
   automated?: boolean;
@@ -66,7 +66,7 @@ export interface XUser {
 /** A seed tweet someone amplified, plus HOW they amplified that tweet. */
 export interface XHit extends SeedTweet {
   mode: "retweet" | "quote";
-  /** Their quote-tweet text when mode is "quote" — the strongest draft hook. */
+  /** Their quote-tweet text when mode is "quote". The strongest draft hook. */
   quoteText?: string;
 }
 
@@ -81,7 +81,7 @@ export interface XCandidate {
 
 export interface XScoredCandidate {
   candidate: XCandidate;
-  /** The lane this row is being contacted in — it sets the ask. */
+  /** The lane this row is being contacted in. It sets the ask. */
   lane: XLane;
   /** Every lane they qualified for, so the note can say "also an amplifier". */
   lanes: XLane[];

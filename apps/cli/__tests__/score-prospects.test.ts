@@ -6,7 +6,7 @@ import type { Ledger } from "@oneshot-gtm/core";
 
 // The command reads the singleton; hand it a fresh real ledger per test so the
 // backfill semantics (resume-skip, refresh, dry-run) are exercised end-to-end
-// against real SQL — with zero network by construction (no SDK import at all).
+// against real SQL, with zero network by construction (no SDK import at all).
 let ledger: Ledger;
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -128,7 +128,7 @@ describe("pure helpers", () => {
     expect(hasCurrentScore({ priority_json: JSON.stringify({ version: "heuristic-v0" }) })).toBe(
       false,
     );
-    // A partial/corrupt artifact reads as unscored — the API hides it as
+    // A partial/corrupt artifact reads as unscored. The API hides it as
     // priority:null, so treating it as current would make it unrepairable.
     expect(hasCurrentScore({ priority_json: JSON.stringify({ version: "heuristic-v1" }) })).toBe(
       false,
@@ -137,7 +137,7 @@ describe("pure helpers", () => {
       hasCurrentScore({ priority_json: JSON.stringify({ version: "heuristic-v1", total: 50 }) }),
     ).toBe(false);
     // A complete v1 artifact still PARSES (keeps rendering) but is not
-    // CURRENT — a plain backfill run upgrades it to v2.
+    // CURRENT. A plain backfill run upgrades it to v2.
     expect(hasCurrentScore({ priority_json: artifact("heuristic-v1") })).toBe(false);
     const current = artifact("heuristic-v2");
     expect(hasCurrentScore({ priority_json: current })).toBe(true);
@@ -296,7 +296,7 @@ describe("--all-statuses methodology evaluation", () => {
     expect(funding.auc).toBe(1);
     // The scored auto-rejection influences neither side.
     expect(funding.humanReviewed).toBe(2);
-    // Buckets still describe the live queue only — nothing pending/approved here.
+    // Buckets still describe the live queue only: nothing pending/approved here.
     expect(funding.scored).toBe(0);
   });
 });
@@ -336,7 +336,7 @@ describe("buildShadowReport — human-vs-auto provenance", () => {
 
   it("expired rows are never human labels, even when reviewed_at is set", () => {
     // Reservation/expiry machinery stamps reviewed_at without any human
-    // decision — measured in prod: 137 expired luma rows deflated the
+    // decision. In production, 137 expired luma rows deflated the
     // approval rate from 65% to 38% before this guard.
     const approved = enqueue("post-funding", FUNDING_PAYLOAD);
     ledger.setQueueStatus({ id: approved, status: "approved" });

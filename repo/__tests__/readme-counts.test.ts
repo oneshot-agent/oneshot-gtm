@@ -1,15 +1,6 @@
 /**
- * README count guard.
- *
- * The README advertises hard numbers — how many CLI commands, plays and
- * finders ship — and those numbers go stale the moment someone adds a
- * command without re-counting. Each one here is derived from the code that
- * defines it, so the README can only drift for as long as this test is red.
- *
- * Some of those numbers appear twice: as digits in the tables and spelled out
- * in the prose above them ("Seventeen of them", "Eleven **finders**"). Both are
- * claims a visitor reads, and both drift on the same commit, so both are
- * asserted.
+ * Check README command, play, and finder counts against their registries.
+ * Check both table digits and spelled-out counts in prose.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -17,11 +8,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Command } from "commander";
 import { PLAYS } from "../../packages/plays/src/registry.ts";
 import { TRIGGERS } from "../../packages/find/src/registry.ts";
-// `PLAYS` is the *email* dispatch table, so it is two short of the play count
-// the README quotes: concierge is a voice play and demo-no-show is SMS, and
-// both are invoked straight from the CLI's `motion` group rather than through
-// the shared email runner. Importing their runners keeps the +2 honest — delete
-// either file and this test stops compiling rather than quietly under-counting.
+// Voice and SMS plays bypass the email registry. Import their runners so removal
+// fails compilation instead of leaving the count inflated.
 import { runConcierge } from "../../packages/plays/src/concierge.ts";
 import { runDemoNoShow } from "../../packages/plays/src/demo-no-show.ts";
 
@@ -31,11 +19,7 @@ const playCount = Object.keys(PLAYS).length + NON_EMAIL_PLAYS.length;
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const README = fs.readFileSync(path.join(REPO_ROOT, "README.md"), "utf8");
 
-/**
- * A leaf command is one a user can actually invoke — `find drain`, not the
- * `find` group that only exists to hold it. Groups print help and exit, so
- * counting them would inflate the total the README quotes.
- */
+/** Count invokable leaf commands; groups only print help. */
 function countLeafCommands(cmd: Command): number {
   let leaves = 0;
   for (const sub of cmd.commands) {
@@ -44,7 +28,6 @@ function countLeafCommands(cmd: Command): number {
   return leaves;
 }
 
-/** Pull a single capture group out of the README, failing loudly if the prose moved. */
 function readmeCapture(pattern: RegExp, label: string): string {
   const match = README.match(pattern);
   if (!match?.[1]) {
@@ -94,11 +77,6 @@ const TENS: Record<string, number> = {
   ninety: 90,
 };
 
-/**
- * Turn a spelled-out count ("seventeen", "twenty-one") into a number. The
- * README writes its counts as words in prose and as digits in the tables, and
- * both drift together — so the word forms need the same guard the digits get.
- */
 function wordToNumber(word: string): number {
   const parts = word.toLowerCase().split("-");
   if (parts.length === 1) {
@@ -121,7 +99,6 @@ function wordToNumber(word: string): number {
   return TENS[tens!]! + ONES[ones!]!;
 }
 
-/** Same as `readmeNumber`, but for a count the README spells out in prose. */
 function readmeWordNumber(pattern: RegExp, label: string): number {
   return wordToNumber(readmeCapture(pattern, label));
 }
@@ -129,8 +106,7 @@ function readmeWordNumber(pattern: RegExp, label: string): number {
 let commandCount: number;
 
 beforeAll(async () => {
-  // index.ts parses process.argv at import time when it is the real CLI entry
-  // point; the sentinel suppresses that so we get the command tree only.
+  // Import the command tree without parsing the test runner's argv.
   process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
   const { program } = await import("../../apps/cli/src/index.ts");
   commandCount = countLeafCommands(program);
@@ -156,8 +132,6 @@ describe("README counts match the code", () => {
     expect(claimed, `README claims ${claimed} plays but code has ${playCount}`).toBe(playCount);
   });
 
-  // "Seventeen of them." opens the play list a visitor actually reads, and it
-  // goes stale on exactly the commits the digit form does.
   it("spells out the right number of plays in the play list", () => {
     const claimed = readmeWordNumber(/^([A-Za-z]+(?:-[A-Za-z]+)?) of them\./m, "'<Word> of them'");
     expect(claimed, `README spells out ${claimed} plays but code has ${playCount}`).toBe(playCount);
@@ -170,8 +144,6 @@ describe("README counts match the code", () => {
     );
   });
 
-  // Likewise "Eleven **finders** discover prospects" — the sentence that
-  // introduces the finder table, one section above the digit form.
   it("spells out the right number of finders above the finder table", () => {
     const claimed = readmeWordNumber(
       /^([A-Za-z]+(?:-[A-Za-z]+)?) \*\*finders\*\*/m,
@@ -182,16 +154,7 @@ describe("README counts match the code", () => {
     );
   });
 
-  // The README also quotes "N cases across M files" for the test suite, and
-  // those two numbers are deliberately NOT asserted here. They are the one
-  // pair a test cannot check honestly: any commit that adds or removes a test
-  // changes them, and this file is itself a test — so the assertion would fail
-  // against the very commit that updates the README to the correct figure, and
-  // the correct figure depends on whether this test's own cases are counted.
-  // A self-referential guard like that reports red on every green change. The
-  // suite totals are spot-checked against a real `bun run test` run instead.
-  // We do still confirm the sentence exists, so a reformat can't silently drop
-  // the numbers the maintainer is expected to refresh.
+  // Suite totals are checked against an actual test run; only require the claim here.
   it("still states the test-suite totals for a human to refresh", () => {
     expect(README).toMatch(/(\d+) cases across (\d+) files/);
   });

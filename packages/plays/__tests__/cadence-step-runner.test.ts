@@ -46,7 +46,7 @@ let mailSends = 0;
 let throwOnSend = false;
 let deferOnSend = false;
 // Simulates a sequence_events row already existing at the step about to be sent
-// (nextIndex) — the crash-mid-send state the re-send guard must catch.
+// (nextIndex). The crash-mid-send state the re-send guard must catch.
 let alreadySentNextStep = false;
 // Simulates a prior hard bounce for this cadence's prospect.
 let suppression: { status_code: string | null; bounced_at: string } | null = null;
@@ -534,7 +534,7 @@ describe("runCadenceStepForProspect — meeting-outcome gate (issue #578)", () =
     expect(result.note).toMatch(/meeting held/);
     expect(calls.llm).toBe(0);
     expect(calls.sendEmail).toBe(0);
-    // The critical assertion: a preview must never write the stop — that
+    // The critical assertion: a preview must never write the stop. That
     // would cancel a real cadence (clear its schedule + pending draft) from
     // what the caller believed was a read-only dry run.
     expect(stopCalls).toHaveLength(0);
@@ -626,7 +626,7 @@ describe("runCadenceStepForProspect", () => {
   it("re-send guard: reconciles (advances without sending) when nextIndex already has a sent event", async () => {
     // The crash-mid-send state: the step was dispatched + recorded but the
     // process died before advanceCadence, leaving current_step lagging. The
-    // guard must advance past it WITHOUT re-sending — and without even drafting.
+    // guard must advance past it WITHOUT re-sending, and without even drafting.
     alreadySentNextStep = true;
     const result = await runCadenceStepForProspect({
       prospectId: 1,
@@ -705,7 +705,7 @@ describe("runCadenceStepForProspect", () => {
   describe("hard-bounce suppression", () => {
     it("skips a suppressed prospect without drafting or sending", async () => {
       // sendEmail would refuse this anyway, but only after an LLM draft has
-      // been paid for — the whole point of checking here is to not spend.
+      // been paid for. The whole point of checking here is to not spend.
       suppression = { status_code: "5.1.1", bounced_at: "2026-08-01T10:00:00.000Z" };
       const result = await runCadenceStepForProspect({
         prospectId: 1,

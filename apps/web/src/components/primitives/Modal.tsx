@@ -4,7 +4,7 @@ import { Button } from "./Button.tsx";
 import { cn } from "../../lib/cn.ts";
 
 /**
- * Ledger modal. No blur, no drop of fake depth — just the page darkened
+ * Ledger modal. No blur, no drop of fake depth: just the page darkened
  * and the modal card stamped on top with walnut rules. Escape closes;
  * click outside closes; focus trapped to the card while open.
  */

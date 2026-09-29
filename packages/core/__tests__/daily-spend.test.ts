@@ -11,7 +11,7 @@ import type { OneShotConfig } from "../src/types.ts";
  *  - concurrent reservations (two callers racing the same tick both get
  *    counted before either one's spend posts to `receipts`)
  *  - blocked-path reporting (the named reason string, refused-not-reserved)
- *  - manual-send behavior (nothing here ever calls tryReserveDailySpend —
+ *  - manual-send behavior (nothing here ever calls tryReserveDailySpend:
  *    that's the acceptance criterion: manual /queue actions never consult
  *    the ceiling. Asserted by omission: manual routes only ever call
  *    ledger.setQueueStatus/setQueueDraft directly, never daily-spend.ts)
@@ -60,7 +60,7 @@ function recordSpend(amountUsd: number, whenIso?: string): void {
     costUsd: amountUsd,
   });
   if (whenIso) {
-    // Backdate the receipt directly — recordReceipt always stamps "now".
+    // Backdate the receipt directly: recordReceipt always stamps "now".
     rawDb().prepare(`UPDATE receipts SET created_at = ? WHERE id = ?`).run(whenIso, id);
   }
 }
@@ -225,7 +225,7 @@ describe("tryReserveDailySpend — concurrent reservations", () => {
     expect(orphan.granted).toBe(true);
     // A fresh caller shortly after would normally be refused (5 held + a new
     // 5 estimate tips over 6), but tryReserveDailySpend sweeps anything past
-    // its stale window first — simulate that by aging the row past it.
+    // its stale window first: simulate that by aging the row past it.
     rawDb().prepare(`UPDATE spend_reservations SET created_at = datetime('now', '-6 hours')`).run();
     const later = tryReserveDailySpend(5);
     expect(later.granted).toBe(true); // the orphan was swept, so full room is available
@@ -262,7 +262,7 @@ describe("dailySpendStatus / tryReserveDailySpend — midnight-boundary behavior
 describe("estimation defaults", () => {
   it("DEFAULT_SPEND_RESERVATION_USD and DEFAULT_DRAIN_ROW_RESERVATION_USD are positive", () => {
     // Sanity check on the constants estimatedTriggerSpendUsd / drainQueue
-    // fall back to for a finder/drain with no explicit spend cap — a zero or
+    // fall back to for a finder/drain with no explicit spend cap. A zero or
     // negative default would let a "free" caller starve nothing (harmless)
     // or reserve nothing (defeats the whole point of reserving).
     expect(DEFAULT_SPEND_RESERVATION_USD).toBeGreaterThan(0);
@@ -273,15 +273,15 @@ describe("estimation defaults", () => {
 describe("Ledger.reserveSpendIfUnderCeiling — cross-connection atomicity", () => {
   // Round-1 review finding: tryReserveDailySpend's check-then-reserve used to
   // be a plain SELECT (dailySpendStatus) followed by a separate INSERT
-  // (ledger.reserveSpend) — two round-trips. That's serialized for free
+  // (ledger.reserveSpend): two round-trips. That's serialized for free
   // within one Bun process (same event loop, same Ledger instance, as every
   // other test in this file exercises), but the issue's own scope is eleven
   // independently-scheduled finders, and this repo runs `find watch --once`
   // as a SEPARATE OS process from the server's in-process scheduler. Two
   // separate SQLite connections in WAL mode can each pass a plain SELECT
   // before either INSERTs. This test opens a SECOND real connection to the
-  // SAME on-disk database — not just a second call on the same Ledger
-  // instance — to prove the check-then-reserve is atomic across connections,
+  // SAME on-disk database, not just a second call on the same Ledger
+  // instance: to prove the check-then-reserve is atomic across connections,
   // the way Ledger.dequeueApproved's own BEGIN IMMEDIATE closes the same
   // TOCTOU class for concurrent drains.
   it("two separate connections racing the same budget: only one is granted", () => {
@@ -290,7 +290,7 @@ describe("Ledger.reserveSpendIfUnderCeiling — cross-connection atomicity", () 
       const sinceIso = "1970-01-01 00:00:00";
       const ceilingUsd = 6;
       // Both "processes" read the SAME pre-reservation state (nothing spent
-      // yet) before either reserves — simulating two finders firing on the
+      // yet) before either reserves: simulating two finders firing on the
       // same tick from different OS processes.
       const first = ledger.reserveSpendIfUnderCeiling({ sinceIso, ceilingUsd, amountUsd: 4 });
       const second = secondConnection.reserveSpendIfUnderCeiling({
@@ -300,7 +300,7 @@ describe("Ledger.reserveSpendIfUnderCeiling — cross-connection atomicity", () 
       });
       expect(first).not.toBeNull();
       // Without cross-connection atomicity, `second` would also read "0
-      // reserved" and be granted too — 4+4=8 blowing past the 6 ceiling
+      // reserved" and be granted too: 4+4=8 blowing past the 6 ceiling
       // before either reservation's estimate was accounted for.
       expect(second).toBeNull();
       expect(ledger.reservedSpendUsd(sinceIso)).toBe(4);

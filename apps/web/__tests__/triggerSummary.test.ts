@@ -39,7 +39,7 @@ describe("dueInMs", () => {
     expect(dueInMs(trigger({ ready: false }), NOW)).toBeNull();
   });
 
-  // Older servers omit `ready` entirely, and absent means ready — the same
+  // Older servers omit `ready` entirely, and absent means ready. The same
   // rule the trigger row applies when it decides whether to grey out `run now`.
   it("treats an absent ready field as ready", () => {
     expect(dueInMs(trigger({ ready: undefined }), NOW)).toBe(5 * HOUR);

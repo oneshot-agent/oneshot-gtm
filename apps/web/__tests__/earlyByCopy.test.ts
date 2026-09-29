@@ -1,6 +1,6 @@
 /**
  * Inline copy of the `earlyByCopy` helper from apps/web/src/routes/cadences.tsx
- * (the helper isn't exported — it's a local function in the route module).
+ * (the helper isn't exported. It's a local function in the route module).
  * Mirror the implementation here so a behavior change in cadences.tsx without
  * a matching test update gets caught at review time.
  */

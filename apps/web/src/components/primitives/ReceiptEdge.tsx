@@ -1,7 +1,7 @@
 import { useId } from "react";
 
 /**
- * The torn bottom edge of a receipt — the brand mark's own tear
+ * The torn bottom edge of a receipt. The brand mark's own tear
  * (`apps/web/public/icon.svg`), drawn as a repeating tooth so it fits any
  * width. Sits directly under a card that has no bottom border: the teeth are
  * filled with the card's surface and stroked with the same walnut rule, so

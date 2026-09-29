@@ -28,7 +28,7 @@ describe("loadConfigCached", () => {
 
   // issue #71 round-6 review finding: slackWebhookUrl is a bearer credential
   // (whoever holds it can post to the operator's Slack channel) persisted in
-  // config.json, which — unlike SECRETS_PATH/GMAIL_TOKENS_PATH — had no chmod
+  // config.json, which (unlike SECRETS_PATH/GMAIL_TOKENS_PATH) had no chmod
   // call anywhere, leaving it at the directory's default (world-readable) mode.
   it("saveConfig chmods config.json to owner-only (0600), matching the .env/secrets convention", () => {
     const before = loadConfigCached();

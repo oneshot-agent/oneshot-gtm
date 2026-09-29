@@ -24,7 +24,7 @@ function realHome(): string {
 }
 
 /**
- * Resolve a path with symlinks followed, not just lexically — `resolve()`
+ * Resolve a path with symlinks followed, not just lexically: `resolve()`
  * alone would let a symlinked `--home` (or a symlinked parent) slip past the
  * guards below and write into the real install. Nonexistent paths canonicalize
  * via the nearest existing ancestor plus the remainder.
@@ -46,7 +46,7 @@ export class DemoSeedError extends Error {}
 
 /**
  * Every table a seed touches, cleared before it writes. Includes the caches and
- * retry queues the demo never populates — leftovers there would let a stale
+ * retry queues the demo never populates: leftovers there would let a stale
  * enrichment or a pending candidate from an earlier run surface on screen.
  */
 const SEEDED_TABLES = [
@@ -77,7 +77,7 @@ export interface SeedResult {
 
 /**
  * Build a complete, self-contained demo install at `home`. Deliberately avoids
- * `saveConfig()`/`getLedger()` — CONFIG_DIR is captured at module load and
+ * `saveConfig()`/`getLedger()`: CONFIG_DIR is captured at module load and
  * points at the founder's REAL home, which the demo must never touch; all
  * writes go through explicit paths.
  */
@@ -146,7 +146,7 @@ export function seedDemoHome(opts: { home?: string; anchor?: Date; force?: boole
 
 /**
  * Open the ledger once through `Ledger` so `migrate()` builds the real schema,
- * then write rows with raw SQL — required because `datetime('now')` column
+ * then write rows with raw SQL: required because `datetime('now')` column
  * DEFAULTs can't be backdated through any public method. A re-seed truncates
  * tables rather than deleting the file, so a dashboard's open handle survives
  * and a mid-session re-seed only needs a browser refresh.
@@ -164,7 +164,7 @@ function writeLedger(dbPath: string, data: DemoDataset): Record<string, number> 
     for (const table of SEEDED_TABLES) {
       db.prepare(`DELETE FROM ${table}`).run();
     }
-    // Reset AUTOINCREMENT counters so a re-seed reproduces the same row ids —
+    // Reset AUTOINCREMENT counters so a re-seed reproduces the same row ids:
     // receipt #5 has to stay receipt #5 across takes.
     db.prepare(
       `DELETE FROM sqlite_sequence WHERE name IN (${SEEDED_TABLES.map(() => "?").join(", ")})`,

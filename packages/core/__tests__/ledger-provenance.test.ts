@@ -73,7 +73,7 @@ describe("decision provenance writes (v26)", () => {
     const id = enqueue();
     ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });
     const decidedAt = ledger.getQueueRow(id)!.decided_at;
-    ledger.setQueueStatus({ id, status: "sent" }); // drain — machine default
+    ledger.setQueueStatus({ id, status: "sent" }); // drain: machine default
     const row = ledger.getQueueRow(id)!;
     expect(row.status).toBe("sent");
     expect(row.decision).toBe("approve");

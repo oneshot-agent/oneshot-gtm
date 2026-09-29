@@ -14,7 +14,7 @@ import { jsonResponse } from "../server.ts";
  * button navigates to /start, Google consent redirects back to /callback on
  * this same local server, and the founder lands back on /setup with the
  * outcome in a query param. Server is loopback-only, so the redirect URI is
- * always a 127.0.0.1/localhost origin — valid for Desktop-type OAuth clients.
+ * always a 127.0.0.1/localhost origin: valid for Desktop-type OAuth clients.
  */
 
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -51,7 +51,7 @@ export function startGmailAuthRoute(req: Request): Response {
   const state = randomUUID();
   // `?purpose=calendar` (used by the /setup calendar picker's "Connect a
   // calendar-only mailbox" affordance): a mailbox connected purely to read
-  // its calendar must NOT silently enrol as a sender (issue #577) — see
+  // its calendar must NOT silently enrol as a sender (issue #577): see
   // registerGmailIdentity's `calendarOnly` handling. Anything else defaults
   // to the ordinary sending purpose.
   const purpose = url.searchParams.get("purpose") === "calendar" ? "calendar" : "send";

@@ -30,7 +30,7 @@ import { useReportDirty, type SectionProps, type SetupStatus } from "./types.ts"
 /**
  * The sender rotation pool. Cap edits, removals, new OneShot senders and
  * picked Smartlead mailboxes are STAGED and commit together in one POST on
- * this section's Save — never as a side effect of saving another section.
+ * this section's Save. Never as a side effect of saving another section.
  * Pause/resume of a provisioned domain is the one immediate action here.
  */
 export function EmailTransportSection({
@@ -59,11 +59,11 @@ export function EmailTransportSection({
       : (status.provisionedDomains ?? []);
   // Legacy single-identity mode = the pool is auto-derived from emailProvider.
   // Once a real pool exists, the provider select is inert (routing is
-  // pool-driven) — hide it instead of misleading.
+  // pool-driven): hide it instead of misleading.
   const isLegacyPool = identities[0]?.legacy ?? true;
   const gmailCredsReady = Boolean(sources["GMAIL_CLIENT_ID"] && sources["GMAIL_CLIENT_SECRET"]);
   const smartleadKeyReady = Boolean(sources["SMARTLEAD_API_KEY"]);
-  // Default mailbox shown as a placeholder — founder's first name, normalized.
+  // Default mailbox shown as a placeholder: founder's first name, normalized.
   const founderLocalpart = ((cfg.founderName ?? "").trim().split(/\s+/)[0] ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
@@ -113,7 +113,7 @@ export function EmailTransportSection({
 
   // Resume / pause a provisioned sending domain in the OneShot pool. Refetches
   // the setup status (and doctor) so the status badge + warning update. Errors
-  // surface verbatim — incl. the OneShot HTTP status during a platform outage.
+  // surface verbatim, including the OneShot HTTP status during a platform outage.
   const domainAction = useMutation({
     mutationFn: (vars: { domain: string; action: "resume" | "pause" }) =>
       vars.action === "resume" ? api.resumeDomain(vars.domain) : api.pauseDomain(vars.domain),
@@ -125,7 +125,7 @@ export function EmailTransportSection({
     onError: (err: Error) => toast.error(err.message),
   });
 
-  // Smartlead workspace mailboxes — loaded with the SAVED key (the input now
+  // Smartlead workspace mailboxes: loaded with the SAVED key (the input now
   // lives in Credentials). A saved key change invalidates the list and any
   // staged picks: they'd register mailboxes the new key can't send as.
   const [smartleadAccounts, setSmartleadAccounts] = useState<SmartleadAccountView[] | null>(null);
@@ -215,7 +215,7 @@ export function EmailTransportSection({
         </div>
       )}
 
-      {/* Smartlead lives OUTSIDE the identities guard — connecting it is how an
+      {/* Smartlead lives OUTSIDE the identities guard: connecting it is how an
           empty pool gets rebuilt. */}
       <div className="mt-3 flex flex-col gap-2">
         <span className="ln-eyebrow">Smartlead accounts</span>
@@ -402,7 +402,7 @@ function IdentityRow({
   );
 }
 
-/** Provisioned OneShot domains — a paused domain sends nothing until resumed. */
+/** Provisioned OneShot domains. A paused domain sends nothing until resumed. */
 function ProvisionedDomains({
   domains,
   busyDomain,
@@ -449,7 +449,7 @@ function ProvisionedDomains({
   );
 }
 
-/** Add OneShot sender — domain + mailbox join the rotation pool on Save. */
+/** Add OneShot sender: domain + mailbox join the rotation pool on Save. */
 function AddOneShotSender({
   identities,
   provisionedDomains,
@@ -569,7 +569,7 @@ function AddOneShotSender({
           Add
         </Button>
       </div>
-      {/* A domain outside the warmed pool goes out cold — pinned sends bypass warm-up. */}
+      {/* A domain outside the warmed pool goes out cold: pinned sends bypass warm-up. */}
       {domain &&
         provisionedDomains.length > 0 &&
         !provisionedDomains.some((d) => d.domain.toLowerCase() === domain) && (

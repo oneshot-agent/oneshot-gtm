@@ -99,7 +99,7 @@ describe("listSentOutcomeRows", () => {
 
     const pUntriaged = ledger.upsertProspect({ email: "unt@a.dev" });
     const idUntriaged = sentRow(null, { prospectId: pUntriaged });
-    insertReply(pUntriaged, "human"); // no intent arg — NULL
+    insertReply(pUntriaged, "human"); // no intent arg: NULL
 
     const byId = new Map(ledger.listSentOutcomeRows().map((r) => [r.id, r]));
     expect(byId.get(idInterested)!.first_email_reply_intent).toBe("interested");

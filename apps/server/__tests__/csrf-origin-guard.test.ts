@@ -27,7 +27,7 @@ describe("cross-site request guard", () => {
   });
 
   it("lets a loopback page and a page-less client through to the route", async () => {
-    // The route itself answers 404 (no ledger row in this test) — the point is
+    // The route itself answers 404 (no ledger row in this test). The point is
     // that the guard did not answer 403.
     const cases: Array<Record<string, string>> = [{ origin: "http://localhost:5173" }, {}];
     for (const headers of cases) {

@@ -56,13 +56,13 @@ export async function workspaceInfo(req: Request): Promise<Response> {
       }),
     );
     // A server started with a bare ONESHOT_GTM_HOME (unregistered) won't match
-    // any roster row — surface it so the badge never lies about identity.
+    // any roster row: surface it so the badge never lies about identity.
     if (!roster.some((w) => w.isCurrent)) {
       roster.unshift({ ...current, isCurrent: true, isDefault: false, running: true });
     }
   } catch (err) {
     if (!(err instanceof WorkspaceError)) throw err;
-    // Corrupt registry: degrade to self-only rather than a 500 — the badge
+    // Corrupt registry: degrade to self-only rather than a 500. The badge
     // (identity) matters more than the switcher (roster).
     roster = [{ ...current, isCurrent: true, isDefault: name === "default", running: true }];
   }
@@ -97,7 +97,7 @@ export function _setLaunchSpawn(fn?: LaunchSpawn): void {
 }
 
 /**
- * POST /api/workspace/launch {name} — start another workspace's dashboard
+ * POST /api/workspace/launch {name}: start another workspace's dashboard
  * server in the background. Deliberately unsupervised (no PID file, no
  * lifecycle management); the roster's `running` probe is the source of truth.
  */
@@ -162,7 +162,7 @@ function spawnWorkspace(name: string, entry: { home: string; port: number }): vo
 }
 
 /**
- * Another workspace by name — never this one, never an unregistered one.
+ * Another workspace by name. Never this one, never an unregistered one.
  * Synchronous, so a caller can validate a destination before it commits to
  * anything (a move reserves its row only after this passes).
  */
@@ -193,7 +193,7 @@ const LAUNCH_POLL_MS = 500;
 
 /**
  * Resolve another workspace by name and make sure its server answers: probe,
- * spawn if needed, poll until healthy. The building block of a queue move —
+ * spawn if needed, poll until healthy. The building block of a queue move:
  * the move route talks to the destination over its own HTTP API, so the
  * destination must be up. Never throws on a registry problem; every failure
  * is a message the route can return verbatim.

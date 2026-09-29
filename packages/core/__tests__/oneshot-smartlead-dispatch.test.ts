@@ -87,7 +87,7 @@ describe("dispatch via smartlead", () => {
     expect(receiptId).toBe(42);
     expect(result.request_id).toBe("msg_1");
     expect(result.cost).toBe(0);
-    // The only network call is Smartlead's — the SDK was never constructed.
+    // The only network call is Smartlead's. The SDK was never constructed.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]![0])).toContain("/send-email/initiate");
     const payload = JSON.parse(String((fetchMock.mock.calls[0]![1] as RequestInit).body)) as {

@@ -84,7 +84,7 @@ describe("buildSignalDays — calendar-day bucketing (the bug fix)", () => {
   });
 
   it("rows older than 6 days are excluded from all buckets", () => {
-    // Apr 18 — 7 days back, outside the 7-day window
+    // Apr 18: 7 days back, outside the 7-day window
     const days = buildSignalDays([row(new Date(2026, 3, 18, 12, 0, 0).toISOString())], NOW);
     expect(days.reduce((s, d) => s + d.count, 0)).toBe(0);
   });

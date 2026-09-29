@@ -5,23 +5,22 @@ import { todayStartSqliteUtc } from "./send-routing.ts";
 /**
  * Install-wide daily USD spend ceiling (issue #481). Per-run caps
  * (`maxCostUsd` on a finder, `maxSpendPerRun` on x-reposters) bound one
- * automated call; this bounds the SUM of every automated paid call —
- * finder trigger runs (scheduled AND ad-hoc "run now") plus automatic
- * drains — over the local calendar day. Manual `/queue` row actions
+ * automated call; this bounds total automated spend over the local calendar
+ * day, including scheduled and ad-hoc finder runs and automatic drains. Manual `/queue` row actions
  * (approve, reject, mark-sent, send-draft) never consult this: a founder
  * reviewing and sending ONE email by hand is a deliberate decision the
  * ceiling should never block.
  *
  * Two numbers make up "effective" spend for the day:
- *  - `spentUsd`   — already-posted receipts (`receipts.cost_usd`, the same
+ *  - `spentUsd`: already-posted receipts (`receipts.cost_usd`, the same
  *                   column every other spend rollup in this codebase reads).
- *  - `reservedUsd` — amounts held by calls CURRENTLY in flight, via
+ *  - `reservedUsd`: amounts held by calls CURRENTLY in flight, via
  *                    `reserveSpend`/`releaseSpendReservation`. Without this,
  *                    two automated calls racing the same tick could both
  *                    read "today's spend" as $0 and both start, together
  *                    blowing past the ceiling before either one's receipts
  *                    post. The reservation is released the instant the call
- *                    ends (success, failure, or halt) — actual spend is
+ *                    ends (success, failure, or halt): actual spend is
  *                    already reflected in `receipts` by then, so releasing
  *                    promptly never double-counts.
  *
@@ -34,14 +33,14 @@ import { todayStartSqliteUtc } from "./send-routing.ts";
 /**
  * A held-open reservation older than this is presumed orphaned by a crashed
  * process and swept. Must stay ABOVE `find/src/registry.ts`'s
- * `MAX_RUN_AGE_MS` (4h) — that's the threshold governing how long a
+ * `MAX_RUN_AGE_MS` (4h). That's the threshold governing how long a
  * trigger's own claim (`running_started_at`) is still treated as a
  * legitimately-running, non-crashed process. `core` can't import that
  * constant directly (`find` depends on `core`, not the reverse), so this is
  * a deliberately-generous fixed value instead of a shared import; if
  * `MAX_RUN_AGE_MS` ever changes, this needs a matching bump. A shorter
  * staleness window here than the claim's own would let any concurrent
- * `tryReserveDailySpend` caller sweep — and re-grant to someone else — the
+ * `tryReserveDailySpend` caller sweep (and re-grant to someone else) the
  * reservation of a run that's still legitimately in flight and whose real
  * spend hasn't posted to `receipts` yet.
  */
@@ -50,7 +49,7 @@ const SPEND_RESERVATION_STALE_MS = 5 * 3600 * 1000;
 /**
  * Reservation estimate for an automated call whose own config doesn't state
  * a spend cap (e.g. `breakup-revive`, which is ledger-only and spends
- * nothing) — small on purpose so a truly free finder can't starve the day's
+ * nothing): small on purpose so a truly free finder can't starve the day's
  * budget for other finders on the tiny chance it collides with a paid one.
  */
 export const DEFAULT_SPEND_RESERVATION_USD = 1;
@@ -58,12 +57,12 @@ export const DEFAULT_SPEND_RESERVATION_USD = 1;
 /**
  * Worst-case per-row reservation for an automatic drain call. Drain rows are
  * already enriched (email found + verified) at enqueue time, so a drain's
- * per-row cost is just drafting (LLM) + send — but `tryReserveDailySpend`'s
+ * per-row cost is just drafting (LLM) + send, but `tryReserveDailySpend`'s
  * own contract requires callers pass their worst-case bound, not a typical
  * or low-end estimate. This repo's own launch copy quotes "$0.05-$2 per
  * outbound touch" depending on what enrichment/research is stacked on, so
  * the worst case for a drafting+send touch is the top of that range, not
- * the bottom — reserving the low end would let a batch of real per-touch
+ * the bottom: reserving the low end would let a batch of real per-touch
  * cost above $0.05 blow through the install-wide ceiling substantially
  * before the release-on-completion true-up ever catches it.
  */
@@ -76,7 +75,7 @@ export interface DailySpendStatus {
   spentUsd: number;
   /** Sum of currently-held reservations since local midnight. */
   reservedUsd: number;
-  /** spentUsd + reservedUsd — what the ceiling is actually compared against. */
+  /** spentUsd + reservedUsd: what the ceiling is actually compared against. */
   effectiveUsd: number;
   /** ceilingUsd - effectiveUsd, floored at 0; null when unlimited. */
   remainingUsd: number | null;
@@ -84,7 +83,7 @@ export interface DailySpendStatus {
   ceilingReached: boolean;
 }
 
-/** Current daily spend status. Pure read — never mutates reservations. */
+/** Current daily spend status. Pure read. Never mutates reservations. */
 export function dailySpendStatus(now = new Date()): DailySpendStatus {
   const ceilingUsd = loadConfig().dailySpendCeilingUsd;
   const sinceIso = todayStartSqliteUtc(now);
@@ -106,7 +105,7 @@ export function dailySpendStatus(now = new Date()): DailySpendStatus {
 /** The named reason string surfaced on trigger cards, in `doctor`, and in drain output. */
 export function spendCeilingReason(status: DailySpendStatus): string {
   // effectiveUsd (posted + reserved) is what ceilingReached and the
-  // reservation refusal actually compare against the ceiling — quoting
+  // reservation refusal actually compare against the ceiling: quoting
   // spentUsd here would understate the number that triggered the halt
   // whenever another in-flight call is holding a reservation (e.g. ceiling
   // $10, posted $1, a concurrent run holding a $9.50 reservation: refusing
@@ -123,32 +122,21 @@ export type SpendReservationOutcome =
  * Gate + reserve in one call: the shared entry point for every automated
  * paid path (finder trigger runs, automatic drains). Sweeps orphaned
  * reservations first so a crashed process can't hold spend hostage for the
- * rest of the day, then checks the ceiling and reserves atomically — a call
+ * rest of the day, then checks the ceiling and reserves atomically. A call
  * that would push effective spend OVER the ceiling is refused outright
  * rather than reserved-then-immediately-over. Landing exactly on it is
- * allowed (the ceiling is a cap, not a fence — see
+ * allowed (the ceiling is a cap, not a fence: see
  * `Ledger.reserveSpendIfUnderCeiling`); once effective spend has reached
  * it, `ceilingReached` halts everything after.
  *
- * The check-then-reserve itself happens in ONE SQLite transaction on the
- * ledger connection (`Ledger.reserveSpendIfUnderCeiling`, `BEGIN IMMEDIATE`
- * — the same pattern `Ledger.dequeueApproved`/`claimMarker` use to close
- * their own cross-process claim races). That matters beyond this one Bun
- * process: the issue's own scope is eleven independently-scheduled finders,
- * and this repo runs `find watch --once` as a separate cron/launchd process
- * from the server's in-process scheduler (apps/cli/src/commands/install-service.ts,
- * apps/server/src/scheduler.ts) — two OS processes hitting the same SQLite
- * file in WAL mode. A plain SELECT-then-INSERT across two connections can
- * let both pass the SELECT before either INSERTs; wrapping both steps in one
- * IMMEDIATE transaction on the ledger's own connection serializes them, so
- * the second caller's read only happens after the first caller's write has
- * committed (or vice versa).
+ * Ledger.reserveSpendIfUnderCeiling uses BEGIN IMMEDIATE to serialize the
+ * check and reservation across processes. Without it, the server scheduler
+ * and a separate `find watch --once` process could both read the available
+ * budget before either reserves it.
  *
- * `estimateUsd` should be the caller's own worst-case bound for this one
- * call (a finder's `maxCostUsd`, a drain's conservative per-batch estimate)
- * — it only needs to be good enough to close the race between two
- * concurrently-starting automated calls; actual spend is what ultimately
- * lands in `receipts` regardless of the estimate.
+ * `estimateUsd` is the caller's worst-case bound for this call, such as a
+ * finder's maxCostUsd or a drain's per-batch estimate. It protects against
+ * concurrent reservations; receipts still record the actual spend.
  */
 export function tryReserveDailySpend(
   estimateUsd: number,
@@ -159,7 +147,7 @@ export function tryReserveDailySpend(
   const amountUsd = Math.max(0, estimateUsd);
   const ceilingUsd = loadConfig().dailySpendCeilingUsd;
 
-  // Unlimited (no ceiling configured): nothing to race against — reserve
+  // With no ceiling, there is no reservation race. Reserve
   // directly so `reservedUsd` still reports accurately, same as before.
   const id =
     ceilingUsd == null
@@ -179,7 +167,7 @@ export function tryReserveDailySpend(
     granted: true,
     status,
     release: () => {
-      if (released) return; // idempotent — a finally + an explicit release must not double-delete
+      if (released) return; // idempotent. A finally + an explicit release must not double-delete
       released = true;
       ledger.releaseSpendReservation(id);
     },

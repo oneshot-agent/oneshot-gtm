@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Issue #584: the angle is chosen in code, by an isolated classifier call,
-// cached per (prospect, edge) — never by the writing prompt. A one-angle edge
+// cached per (prospect, edge). Never by the writing prompt. A one-angle edge
 // makes no call and reaches the prompt byte-identical to before.
 
 const calls = {

@@ -26,7 +26,7 @@ import { box, c, fail, header, note, ok, warn } from "../output.ts";
 /**
  * Verify all target emails upfront so undeliverable rows are dropped
  * before drafting cost is spent. Skipped on dryRun. Returns the filtered
- * target list — caller hands it to the play.
+ * target list: caller hands it to the play.
  */
 async function preVerify<T>(
   targets: T[],
@@ -69,7 +69,7 @@ function printDrafts(drafts: DraftedView[], dryRun: boolean): void {
     if (d.sent) ok(c.green("Sent."));
     else if (dryRun) note("(dry-run, not sent)");
     else if (d.flags.length > 0) {
-      // The send was withheld by the anti-slop linter — not an error, but
+      // The send was withheld by the anti-slop linter, not an error, but
       // distinct from a clean "ok". Surface it as its own telemetry outcome.
       markTelemetryOutcome("lint-blocked");
       fail("Not sent — fix lint flags or rerun.");

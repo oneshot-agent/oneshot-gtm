@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // The sender's own accelerator batch is founder truth: it comes from
 // `founderCohort` in config and from nowhere else. It used to ride on the
 // target row, stamped from a trigger field a readiness gate made mandatory,
-// which is how installs ended up claiming a batch the founder was never in —
+// which is how installs ended up claiming a batch the founder was never in:
 // so a stale stamp on an old queue row must not be able to bring it back.
 
 const calls = {
@@ -145,7 +145,7 @@ describe("runAcceleratorBatch — the sender's cohort comes from config only", (
   it("omits the SENDER COHORT line entirely when the founder was in no batch", async () => {
     await runAcceleratorBatch({ dryRun: true, targets: [{ ...base }] });
     expect(calls.llmInputBlocks[0]).not.toContain("SENDER COHORT");
-    // No "(unspecified)" placeholder either — a blank to fill is an invitation
+    // No "(unspecified)" placeholder either. A blank to fill is an invitation
     // to improvise a cohort, which is the failure this play is fixing.
     expect(calls.llmInputBlocks[0]).not.toContain("unspecified");
   });
@@ -163,7 +163,7 @@ describe("runAcceleratorBatch — the sender's cohort comes from config only", (
     });
     expect(calls.llmInputBlocks[0]).not.toContain("yc-w25");
     expect(calls.llmInputBlocks[0]).not.toContain("SENDER COHORT");
-    // The cohort discount is gone with it — a cold sweetener is banned by
+    // The cohort discount is gone with it. A cold sweetener is banned by
     // _humanizer.md, so the prompt must never see one to offer.
     expect(calls.llmInputBlocks[0]).not.toContain("demo day");
   });

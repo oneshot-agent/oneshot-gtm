@@ -10,21 +10,21 @@ import { isCircuitOpen, recordResolutionOutcome } from "./_breaker.ts";
 import { type PersonCandidate, type PersonVerdict, hasRoleText, qualifyPerson } from "./_filter.ts";
 
 /**
- * Staged person-level ICP qualification — up to three stages, cheapest first:
+ * Staged person-level ICP qualification: up to three stages, cheapest first:
  * A pre-spend (free role text from the finder), B post-enrich (title off the
  * enrichProfile already bought), C fill-the-gap (one extra enrichProfile keyed
  * by LinkedIn URL). `unclear` and "no role text" both mean "cannot decide" and
- * both escalate — guessing on ambiguity in either direction is wrong.
+ * both escalate: guessing on ambiguity in either direction is wrong.
  */
 
 /** What the caller should do next. */
 export type QualifyAction =
   /** Proceed with this candidate. */
   | "proceed"
-  /** Genuine ICP miss — drop AND persist a rejected row (audit trail). */
+  /** Genuine ICP miss: drop AND persist a rejected row (audit trail). */
   | "reject"
   /**
-   * Could not decide (classifier outage). Drop WITHOUT persisting — a
+   * Could not decide (classifier outage). Drop WITHOUT persisting. A
    * persisted rejection burns the dedupeKey forever.
    */
   | "defer";
@@ -52,21 +52,21 @@ function outcome(
 }
 
 /**
- * Stage A — before any spend. Only a `reject` is actionable here; `unclear`
+ * Stage A: before any spend. Only a `reject` is actionable here; `unclear`
  * deliberately proceeds because stage B is free.
  */
 export async function qualifyPreSpend(input: {
   icp: string | null;
   person: PersonCandidate;
 }): Promise<QualifyOutcome> {
-  // No role at discovery is normal for the repo finders — defer to stage B.
+  // No role at discovery is normal for the repo finders: defer to stage B.
   if (!hasRoleText(input.person)) {
     return outcome("unclear", "no role text at discovery; deferred to enrichment", null);
   }
   const res = await qualifyPerson(input);
   const roleText = input.person.roleText ?? null;
 
-  // A transient classifier failure pre-spend downgrades to proceed — stage B
+  // A transient classifier failure pre-spend downgrades to proceed: stage B
   // gets another look for free.
   if (res.verdict === "transient") {
     return outcome("unclear", "classifier unavailable pre-spend; deferred", roleText);
@@ -75,7 +75,7 @@ export async function qualifyPreSpend(input: {
 }
 
 /**
- * Stage B (+ C) — after `enrichVerifiedContact`, before `enqueueTarget`.
+ * Stage B (+ C): after `enrichVerifiedContact`, before `enqueueTarget`.
  *
  * `enrichedTitle` / `enrichedSummary` come free off the enrichProfile the
  * finder already paid for. If they still do not settle it and we have a
@@ -84,9 +84,9 @@ export async function qualifyPreSpend(input: {
 export async function qualifyPostEnrich(input: {
   icp: string | null;
   person: PersonCandidate;
-  /** `title` from `enrichVerifiedContact` — free. */
+  /** `title` from `enrichVerifiedContact`: free. */
   enrichedTitle?: string | null;
-  /** `summary` from `enrichVerifiedContact` — free secondary evidence. */
+  /** `summary` from `enrichVerifiedContact`: free secondary evidence. */
   enrichedSummary?: string | null;
   /** Stage C target. Without it there is nothing left to buy. */
   linkedinUrl?: string | null;
@@ -94,7 +94,7 @@ export async function qualifyPostEnrich(input: {
   fillGaps: boolean;
   /**
    * Set when the caller already ran enrichProfile on this same LinkedIn URL
-   * with no title — stage C would repeat that exact call, so it is skipped.
+   * with no title: stage C would repeat that exact call, so it is skipped.
    */
   alreadyEnrichedByLinkedin?: boolean;
   playName: string;
@@ -116,7 +116,7 @@ export async function qualifyPostEnrich(input: {
     return outcome("transient", stageB.reason, freeRole);
   }
 
-  // Stage C: unclear or still no role text — buy a real title.
+  // Stage C buys a title when the verdict is unclear or role text is missing.
   if (!input.fillGaps) {
     return outcome("unclear", "unclear; fill-the-gap lookup disabled for this finder", freeRole);
   }
@@ -127,7 +127,7 @@ export async function qualifyPostEnrich(input: {
     return outcome("unclear", "unclear; linkedin profile already enriched, no title", freeRole);
   }
   if (isCircuitOpen()) {
-    // Platform is down — do not spend, and do not reject on missing data.
+    // Platform is down. Do not spend, and do not reject on missing data.
     return outcome("transient", "unclear; enrichment circuit open", freeRole);
   }
 

@@ -248,7 +248,7 @@ describe("gatherAngleEvidence", () => {
     prospect!.source_profile_url = "https://x.com/pat";
     // Isolate the webRead cost being asserted below: a cache-hit dossier
     // (receiptId 0) is unbilled, so it doesn't also add its $0.05 on top of
-    // webRead's $0.01 — see "does not count a cache-hit dossier call as
+    // webRead's $0.01: see "does not count a cache-hit dossier call as
     // researched (receiptId 0)" above for the same pattern.
     deepResearchReceiptId = 0;
     webReadResult = { markdown: "   ", cost: 0.01 };
@@ -535,7 +535,7 @@ describe("synthesizePersonAngle", () => {
 
   it("drops an evidence entry whose source is a hallucinated citation, end to end", async () => {
     // The URL cited here never appears anywhere in the rendered evidence, and
-    // "replies:2" is never in `sources` — both must be dropped by the
+    // "replies:2" is never in `sources`. Both must be dropped by the
     // anti-fabrication gate even though both are non-blank strings.
     llmResponse = JSON.stringify({
       brief: "Builds agent infra.",

@@ -66,7 +66,7 @@ describe("transformDemoHead", () => {
   it("injects no root-absolute URL of its own except the absolute og:image", () => {
     // Anything the plugin emits is POST vite's URL rewrite, so a root-absolute
     // path here would stay root-absolute under /demo/ forever. Assert on the
-    // injected tags themselves — index.html's own icon links are root-absolute
+    // injected tags themselves: index.html's own icon links are root-absolute
     // on purpose, because vite rewrites those before this ever runs.
     for (const tag of demoHeadTags()) {
       const url = /content="(\/[^"/][^"]*)"/.exec(tag);

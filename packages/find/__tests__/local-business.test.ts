@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // instead of the per-candidate resolve spine. The crux under test: a
 // `best_work_email` on the search result routes to the cheap lane (skip
 // findEmail/verifyEmail, straight to the person gate) while its absence
-// falls back to the normal `resolveVerifyEnrichQualify` spine — and business-
+// falls back to the normal `resolveVerifyEnrichQualify` spine, and business-
 // shaped targeting (industries set, no jobTitles) runs `companySearch` first
 // and feeds its domains into `peopleSearch`. Mock the module boundaries the
 // finder calls (SDK-safe wrappers, ICP/person filter, enrich, dedupe, ledger).
@@ -211,7 +211,7 @@ describe("runLocalBusinessFinder — lane routing on best_work_email", () => {
     expect(out.enqueued).toBe(5);
     expect(findEmailCalls).toHaveLength(0);
     expect(verifyEmailCalls).toHaveLength(0);
-    // One $0.01 peopleSearch call total, no per-candidate resolve spend —
+    // One $0.01 peopleSearch call total, no per-candidate resolve spend:
     // against ~5 * $0.011 = $0.055 the old per-candidate spine would cost.
     expect(out.costUsd).toBeCloseTo(0.01, 5);
     expect(peopleSearchCalls).toHaveLength(1);
@@ -287,8 +287,7 @@ describe("runLocalBusinessFinder — business-shaped targeting", () => {
       "smiledental.com",
       "brightteeth.com",
     ]);
-    // Business-shaped targeting doesn't pass industry directly to peopleSearch
-    // — the resolved domains carry the targeting instead.
+    // Pass resolved domains to peopleSearch instead of industry targeting.
     expect(peopleSearchCalls[0]?.["industry"]).toBeUndefined();
     expect(out.enqueued).toBe(1);
     expect(enqueued[0]?.payload["businessType"]).toBe("Dental Practices");
@@ -319,7 +318,7 @@ describe("runLocalBusinessFinder — business-shaped targeting", () => {
       maxCostUsd: 0.01,
       yourEdge: "x",
     });
-    // companySearch alone costs $0.01 and hits the cap — peopleSearch must
+    // companySearch alone costs $0.01 and hits the cap: peopleSearch must
     // never run, so the second $0.01 charge never accrues.
     expect(companySearchCalls).toHaveLength(1);
     expect(peopleSearchCalls).toHaveLength(0);
@@ -423,7 +422,7 @@ describe("runLocalBusinessFinder — `local` engine (SDK localSearch)", () => {
       operatingStatus: "open",
     });
     // Every peopleSearch the local engine causes is the spine's lookup of a
-    // person at one business's domain — never a jobTitles/industry search.
+    // person at one business's domain. Never a jobTitles/industry search.
     for (const call of peopleSearchCalls) {
       expect(call).toMatchObject({ companyDomains: ["riverafamilydental.com"] });
       expect(call).not.toHaveProperty("jobTitles");

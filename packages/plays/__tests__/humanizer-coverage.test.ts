@@ -22,7 +22,7 @@ interface RuleProbe {
 }
 
 const PROBES: RuleProbe[] = [
-  // SLOP_PHRASES — banned openers
+  // SLOP_PHRASES: banned openers
   { flag: "banned-opener:I-noticed", marker: "i noticed" },
   { flag: "banned-opener:I-came-across", marker: "i came across" },
   { flag: "banned-opener:hope-this-finds", marker: "hope this" },
@@ -49,7 +49,7 @@ const PROBES: RuleProbe[] = [
   { flag: "negative-parallelism", marker: "not just" },
   // Generic positive ending
   { flag: "generic-positive-ending", marker: "the future looks bright" },
-  // AI vocab — sample a handful
+  // AI vocab: sample a handful
   { flag: "ai-vocab", marker: "additionally" },
   { flag: "ai-vocab", marker: "delve" },
   // Copula avoidance
@@ -63,7 +63,7 @@ const PROBES: RuleProbe[] = [
   { flag: "subject-shouty", marker: "lowercase the whole subject" },
   { flag: "body-too-long", marker: "≤80 words" },
   { flag: "calendar-link", marker: "calendly" },
-  // Not a SLOP_PHRASES regex — lintOpenerFrequency reads the ledger — but the
+  // Not a SLOP_PHRASES regex (lintOpenerFrequency reads the ledger) but the
   // humanizer must still document the rule it enforces.
   { flag: "opener-overused", marker: "opener-overused" },
 ];

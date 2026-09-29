@@ -7,7 +7,7 @@ import {
 
 // Schema validation + the anti-fabrication gate for issue #355's per-prospect
 // angle. Every evidence claim without a real, TRACEABLE source must be
-// dropped — a fabricated citation in a "grounded" artifact is worse than no
+// dropped. A fabricated citation in a "grounded" artifact is worse than no
 // evidence, and a citation that merely looks non-blank (but cites nothing
 // the LLM was actually given) is exactly as fabricated as an empty one.
 
@@ -19,7 +19,7 @@ const GROUNDED: ProspectAngleGroundingContext = {
   sourceTags: ["dossier", "github:live"],
 };
 
-/** A grounding context that covers NOTHING — every source should be rejected. */
+/** A grounding context that covers NOTHING. Every source should be rejected. */
 const UNGROUNDED: ProspectAngleGroundingContext = {
   evidenceText: "(no evidence found for this prospect)",
   sourceTags: [],
@@ -106,7 +106,7 @@ describe("parseProspectAngle", () => {
         evidence: [{ claim: "replied twice", source: "replies:2" }],
       },
       META,
-      GROUNDED, // sourceTags only has dossier/github:live — no replies tier
+      GROUNDED, // sourceTags only has dossier/github:live: no replies tier
     );
     expect(angle?.evidence).toEqual([]);
   });
@@ -246,7 +246,7 @@ describe("parseProspectAngle", () => {
     const angle = parseProspectAngle(
       { brief: "b", sources: ["dossier", "webread", "replies:3"] },
       META,
-      GROUNDED, // sourceTags only has dossier/github:live — webread and replies:3 were never gathered
+      GROUNDED, // sourceTags only has dossier/github:live: webread and replies:3 were never gathered
     );
     expect(angle?.sources).toEqual(["dossier"]);
   });
@@ -269,7 +269,7 @@ describe("parseProspectAngle", () => {
   });
 });
 
-// angleBlockFromJson — issue #356's guarded, read-only ANGLE block. Every
+// angleBlockFromJson: issue #356's guarded, read-only ANGLE block. Every
 // caller (cadence follow-up, reply, outbound) shares this renderer, so its
 // contract is tested once here rather than duplicated per call site.
 describe("angleBlockFromJson", () => {

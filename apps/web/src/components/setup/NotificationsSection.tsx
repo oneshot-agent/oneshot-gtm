@@ -6,7 +6,7 @@ import type { SectionProps } from "./types.ts";
 
 /**
  * Slack incoming-webhook URL for reply/bounce/daily-summary notifications
- * (issue #71, see slack-notify.ts). Blank clears it — the feature is off
+ * (issue #71, see slack-notify.ts). Blank clears it. The feature is off
  * whenever this is unset, the same show-then-set shape as the CLI's
  * `config slack-webhook`. No URL format validation here either, matching
  * that CLI path: any non-blank string is saved as-is.

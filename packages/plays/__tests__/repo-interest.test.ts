@@ -29,7 +29,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       upsertProspect: () => 1,
       recordSequenceEvent: () => 1,
       hasSentSequenceEvent: () => false,
-      // After a real send the prospect exists, so the enroll lookup resolves —
+      // After a real send the prospect exists, so the enroll lookup resolves:
       // repo-interest is 2-touch and must enroll a cadence here. [] prior events
       // means no step-0 yet, so sendDraftedEmail's dedup lets the send proceed.
       findProspectByEmail: () => ({ id: 1 }),

@@ -5,7 +5,7 @@ import { isCircuitOpen } from "./_breaker.ts";
  * Retry queue for candidates whose paid contact-resolution hit a TRANSIENT
  * platform error (the OneShot outage). Re-scannable finders self-heal on their
  * next run, but time-windowed ones (luma-events, show-hn) can't re-discover an
- * expired source — so they persist the raw candidate here and a scheduler pass
+ * expired source, so they persist the raw candidate here and a scheduler pass
  * drains it once the backend recovers.
  *
  * Each participating finder registers a retry handler keyed by play name; the
@@ -56,10 +56,10 @@ export async function runPendingRetries(): Promise<{
   const rows = ledger.listPendingResolution({ limit: MAX_PER_TICK });
   for (const row of rows) {
     const handler = handlers.get(row.play_name);
-    if (!handler) continue; // re-scannable finder (no handler) — leave for the sweep
+    if (!handler) continue; // re-scannable finder (no handler): leave for the sweep
     if (isCircuitOpen()) {
       out.deferred++;
-      continue; // platform still down — don't hammer it
+      continue; // platform still down: don't hammer it
     }
     out.retried++;
     ledger.markPendingResolutionAttempted(row.play_name, row.dedupe_key);

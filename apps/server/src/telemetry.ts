@@ -5,7 +5,7 @@ import { readPackageVersion, reportTelemetryEvent, type TelemetryOutcome } from 
  * from the CLI path in two deliberate ways: `outcome` is passed explicitly
  * (the `markTelemetryOutcome` global is unsafe under concurrent executions),
  * and `command` carries a `server.` prefix to separate the channels.
- * Best-effort and non-blocking — a telemetry failure must never affect a
+ * Best-effort and non-blocking. A telemetry failure must never affect a
  * request or the scheduler.
  */
 
@@ -17,7 +17,7 @@ let serverVersion: string | undefined;
 export interface ServerExecutionOpts {
   outcome: TelemetryOutcome;
   durationMs: number;
-  /** Flag-style labels only (e.g. "scheduled", "dry-run") — never values. */
+  /** Flag-style labels only (e.g. "scheduled", "dry-run"). Never values. */
   flags?: string[];
 }
 

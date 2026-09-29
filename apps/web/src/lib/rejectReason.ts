@@ -5,9 +5,9 @@
  * of two places, and until this the box was always empty:
  *
  *  - the person gate's verdict reason, when the verdict was `reject` or
- *    `unclear` — that sentence is literally "why they don't fit", which is
+ *    `unclear`. That sentence is literally "why they don't fit", which is
  *    exactly why `stampFitReason` refuses to promote it to the fit line;
- *  - the finder's own note, once the machine prefix is gone — but only a
+ *  - the finder's own note, once the machine prefix is gone, but only a
  *    machine negative (`auto: …`). A finder note without the prefix is
  *    provenance ("Bruno going to Corgi Founders Breakfast Club"), not a
  *    reason, and prefilling it hid the one tier that reads the dossier:
@@ -17,7 +17,7 @@
  * the pre-v26 `isHumanDecision` arm tell a machine negative from a human one,
  * and they read `notes` unconditionally. A human who re-saves an `auto: …`
  * note verbatim has just mislabeled their own decision, so the prefix never
- * survives into the box — and the server refuses it on the way back.
+ * survives into the box, and the server refuses it on the way back.
  */
 
 export type RejectReasonSource = "person-gate" | "notes" | null;
@@ -48,7 +48,7 @@ const MIN_REASON_CHARS = 8;
 const AUTO_PREFIX = /^auto:\s*(?:[a-z][\w-]{0,14}\s*[—-]\s*)?/i;
 const COHORT_LABEL = /^[A-Z][\w .]{1,40}?\s+[—-]\s+/;
 
-/** The gates' pass-through strings — never a reason. Mirrors `_fit-reason.ts`. */
+/** The gates' pass-through strings. Never a reason. Mirrors `_fit-reason.ts`. */
 const NOT_A_REASON = new Set([
   "no icp set; pass-through",
   "no role text available",
@@ -103,7 +103,7 @@ export function suggestRejectReason(input: {
 
 /**
  * `current` + a chip, joined with `; `; a chip already present is not
- * repeated. A sentence's closing period comes off before the joiner —
+ * repeated. A sentence's closing period comes off before the joiner:
  * "owns acquisition; not the buyer", not "acquisition.; not the buyer".
  */
 export function appendReason(current: string, chip: string): string {

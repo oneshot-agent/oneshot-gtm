@@ -33,7 +33,7 @@ const RESULT: FinderResult = {
   costUsd: 0.12,
 };
 
-/** Fired, scanned candidates, kept none — the ledger is exactly as it was. */
+/** Fired, scanned candidates, kept none. The ledger is exactly as it was. */
 const EMPTY_RESULT: FinderResult = {
   source: "stub",
   candidates: 4,
@@ -107,7 +107,7 @@ describe("commandFindWatch --once", () => {
     const err = await commandFindWatch({ once: true, quiet: true }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(CommandExit);
     expect((err as InstanceType<typeof CommandExit>).code).toBe(1);
-    // The per-trigger detail still prints — the exit code is additive signal.
+    // The per-trigger detail still prints. The exit code is additive signal.
     expect(stdout.join("")).toContain("GitHub 403");
   });
 
@@ -144,7 +144,7 @@ describe("commandFindWatch --once --fail-on-empty", () => {
     expect(line).toContain("0 candidates queued");
     expect(line).toContain("show-hn");
     expect(line).toContain("github-stars");
-    // One line, on stderr — stdout keeps the human report.
+    // One line, on stderr: stdout keeps the human report.
     expect(line.trimEnd().split("\n")).toHaveLength(1);
     expect(stdout.join("")).toContain("candidates=4");
   });
@@ -215,7 +215,7 @@ describe("commandFindWatch daemon", () => {
     vi.advanceTimersByTime(0);
     await new Promise(process.nextTick);
 
-    // Resolves — errors during a daemon tick never abort the loop.
+    // Resolves: errors during a daemon tick never abort the loop.
     await expect(done).resolves.toBeUndefined();
   });
 });

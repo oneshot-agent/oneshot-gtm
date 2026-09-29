@@ -3,14 +3,14 @@ import { Ledger } from "../../core/src/ledger.ts";
 
 // Round-1 correction (#663, finding F-t_1a68f4ce-2): cadence-reply.test.ts's
 // regression for the intent=unsubscribe triage path drives `pollInboxReplies`
-// against a fully mocked `getLedger()` stub — `setCadenceStatus`,
+// against a fully mocked `getLedger()` stub: `setCadenceStatus`,
 // `recordSequenceEvent` and `recordProspectReply` are hand-rolled fakes that
 // don't share ANY code with the real `Ledger` class, so a test passing there
 // proves nothing about the real SQLite composition of those three calls (the
 // exact thing under question: does the real `recordProspectReply` also write
 // an ordinary-reply `sequence_events` row / flip `cadence_state` for a
 // cadence this poll just marked `unsubscribed`?). This file drives the same
-// scenario against a real `Ledger` backed by `bun:sqlite` (`:memory:`) — only
+// scenario against a real `Ledger` backed by `bun:sqlite` (`:memory:`). Only
 // `listInbox`, `loadConfig` and `triageEmails` are mocked (the network/LLM
 // edges), exactly the pattern `mail-cadence.test.ts` and `calendar-poll.test.ts`
 // already use for their own real-Ledger coverage.
@@ -101,7 +101,7 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
     });
 
     // classifyReply's own phrase-based UNSUBSCRIBE_RE does NOT match this
-    // body (no "remove me" / "unsubscribe" / etc.) — it lands as kind=human,
+    // body (no "remove me" / "unsubscribe" / etc.). It lands as kind=human,
     // exactly the gap #663 exists to close. Only the sentiment triage mock
     // above (standing in for issue #480's LLM classifier) reads intent as
     // 'unsubscribe'.
@@ -123,17 +123,17 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
     expect(result.cadencesStopped).toBe(1);
 
     // Analytics plane: exactly one sequence_events row was added by this
-    // poll (the original 'sent' row plus this one) — 'unsubscribed', not
+    // poll (the original 'sent' row plus this one): 'unsubscribed', not
     // 'replied'. This is the real INSERT recordSequenceEvent/setCadenceStatus
     // produce through bun:sqlite, not a mock's in-memory array.
     const allEvents = ledger.listAllSequenceEventsForProspect(prospectId);
     expect(allEvents.map((e) => e.status)).toEqual(["sent", "unsubscribed"]);
     // F-2's core assertion: no 'replied' row exists anywhere for this
-    // (prospect, play) — proving recordProspectReply's markLatestStepReplied
+    // (prospect, play): proving recordProspectReply's markLatestStepReplied
     // (which flips the 'sent' row to 'replied') never ran for this poll.
     expect(allEvents.some((e) => e.status === "replied")).toBe(false);
 
-    // F-1's real-Ledger corollary: repliesDetected must stay 0 — the
+    // F-1's real-Ledger corollary: repliesDetected must stay 0. The
     // ordinary-reply counting path (recordProspectReply) must not have run
     // at all for this triaged-unsubscribe email.
     expect(result.repliesDetected).toBe(0);
@@ -172,14 +172,14 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
 
     // listCadencesForProspect's active/paused filter (in both the unsubscribe
     // branch and recordProspectReply) correctly leaves an already-terminal
-    // cadence alone — no cadence to stop, and (per F-1) no fallback into the
+    // cadence alone: no cadence to stop, and (per F-1) no fallback into the
     // ordinary-reply path either, so it isn't miscounted as a reply.
     expect(result.cadencesStopped).toBe(0);
     expect(result.repliesDetected).toBe(0);
     expect(ledger.getCadence(prospectId, "stack-consolidation")?.status).toBe("breakup");
   });
 
-  // Round-2 correction (#663, F-2): a REPEATED pass — the watermark-overlap
+  // Round-2 correction (#663, F-2): a REPEATED pass. The watermark-overlap
   // window re-examines a reply a prior poll already fully triaged as
   // 'unsubscribe'. This poll's `claimInboxReplyForTriage` loses (intent is
   // already non-NULL), so it must read the persisted result back via
@@ -224,28 +224,28 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
     // Second poll: the same email id is re-examined (overlap window /
     // backlog re-walk). recordInboxReply's INSERT OR IGNORE makes this a
     // no-op insert, and claimInboxReplyForTriage now loses (intent is
-    // already 'unsubscribe', not NULL) — before the round-2 fix this fell
+    // already 'unsubscribe', not NULL): before the round-2 fix this fell
     // straight through to recordProspectReply/tagOutcomeValue.
     const second = await pollInboxReplies();
 
-    // No second (paid) triage call — the claim loss is expected.
+    // No second (paid) triage call. The claim loss is expected.
     expect(triageEmailsMock).toHaveBeenCalledTimes(1);
     // The billing-relevant assertion: still zero replies detected/counted,
     // and no 'replied' sequence_events row was ever written for this
     // (prospect, play) across either pass.
     expect(second.repliesDetected).toBe(0);
-    expect(second.cadencesStopped).toBe(0); // already unsubscribed — no live cadence left to stop
+    expect(second.cadencesStopped).toBe(0); // already unsubscribed: no live cadence left to stop
     const allEvents = ledger.listAllSequenceEventsForProspect(prospectId);
     expect(allEvents.map((e) => e.status)).toEqual(["sent", "unsubscribed"]);
     expect(allEvents.some((e) => e.status === "replied")).toBe(false);
   });
 
-  // Round-2 correction (#663, F-2): a CONCURRENT claim loss — a second,
+  // Round-2 correction (#663, F-2): a CONCURRENT claim loss. A second,
   // overlapping pollInboxReplies() call observes the same row while the
   // first call's triageEmails() await is still in flight (intent is the
   // '__triage_pending__' sentinel, not yet a real category). The loser must
   // not guess and must skip BOTH the unsubscribe veto and the ordinary
-  // reply bookkeeping for this pass — `peekInboxReplyIntent` reports
+  // reply bookkeeping for this pass: `peekInboxReplyIntent` reports
   // `pending: true` for exactly this window.
   it("skips reply bookkeeping entirely for a concurrent claim-loss while triage is still in flight", async () => {
     const prospectId = ledger.upsertProspect({
@@ -306,7 +306,7 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
     (resolveFirst as (() => void) | null)?.();
     const [, secondResult] = await Promise.all([firstPoll, secondPoll]);
 
-    // Only one paid triage call — the second poll lost the claim.
+    // Only one paid triage call. The second poll lost the claim.
     expect(triageEmailsMock).toHaveBeenCalledTimes(1);
     // The loser's own poll result must not have counted this row as an
     // ordinary reply while the real category was still unresolved.

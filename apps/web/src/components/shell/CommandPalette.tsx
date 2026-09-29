@@ -37,7 +37,7 @@ type NavTarget =
   | "/setup";
 
 /**
- * ⌘K palette — bottom-docked. cmdk handles fuzzy search + keyboard nav;
+ * ⌘K palette: bottom-docked. Cmdk handles fuzzy search + keyboard nav;
  * we just supply the action groups. Closes on selection via the local
  * `run()` wrapper.
  */
@@ -169,7 +169,7 @@ export function CommandPalette({
                   key={w.name}
                   value={`workspace switch open ${w.name}`}
                   onSelect={act(() => {
-                    // Shared gesture-safe open/auto-start flow — the same one
+                    // Shared gesture-safe open/auto-start flow. The same one
                     // the sidebar switcher uses, so both entry points behave
                     // identically (this one used to launch and never open).
                     void openWorkspace(w);

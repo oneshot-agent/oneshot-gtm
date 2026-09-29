@@ -10,7 +10,7 @@ import { Ledger } from "../src/ledger.ts";
  * exercised entirely through the public `Ledger` surface so this file also
  * proves the extraction changed nothing observable. `ledger.test.ts` already
  * covers the enrichment-cache negative-entry (failure/success) transitions
- * and a basic product-research hit/expiry pair — this file goes deeper on
+ * and a basic product-research hit/expiry pair. This file goes deeper on
  * boundary conditions and the LinkedIn cache, without duplicating those.
  */
 
@@ -145,7 +145,7 @@ describe("LinkedIn cache (delegated to SharedDb) — hits, misses, replacement",
   // `getCachedLinkedIn`/`setCachedLinkedIn` are delegated to the process-wide
   // `getSharedDb()` singleton, whose tables are never truncated between
   // tests (unlike `dbPath`, which is recreated per test in beforeEach). Every
-  // case below therefore needs its own unique query key — reusing a key
+  // case below therefore needs its own unique query key: reusing a key
   // across cases makes assertions order-dependent on stale rows written by
   // an earlier case, the same footgun ledger.test.ts already avoids for the
   // enrichment cache by giving each case its own email.

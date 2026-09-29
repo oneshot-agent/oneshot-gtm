@@ -4,7 +4,7 @@ import { jumpToSection } from "./SectionNav.tsx";
 import type { Sources } from "./types.ts";
 
 /**
- * "OPENROUTER_API_KEY · from .env" — the one-line bridge from a preference
+ * "OPENROUTER_API_KEY · from .env". The one-line bridge from a preference
  * section to the Credentials section that now owns every secret input.
  */
 export function KeyStatusLine({

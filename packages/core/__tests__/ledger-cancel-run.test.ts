@@ -146,7 +146,7 @@ describe("runs.status CHECK widening", () => {
     // other ledger tests do it.
     const { Database } = await import("bun:sqlite");
     // A pre-v24 install: the CHECK constraint physically rejects the new
-    // state, and SQLite cannot ALTER it — so the open path has to rebuild.
+    // state, and SQLite cannot ALTER it, so the open path has to rebuild.
     ledger.close();
     const legacyPath = join(
       tmpdir(),

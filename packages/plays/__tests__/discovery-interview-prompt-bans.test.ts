@@ -5,8 +5,8 @@ import { describe, expect, it } from "vitest";
 
 /**
  * The card's acceptance requires a test that asserts the discovery-interview
- * prompt's link and price prohibitions rather than trusting the prompt text —
- * i.e. this must fail if a future edit to the .md file quietly drops one of
+ * prompt's link and price prohibitions rather than trusting the prompt text:
+ * i.e. This must fail if a future edit to the .md file quietly drops one of
  * the hard bans, not just eyeball the prose once at review time.
  */
 const here = dirname(fileURLToPath(import.meta.url));

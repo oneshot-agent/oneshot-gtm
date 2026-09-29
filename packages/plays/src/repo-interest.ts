@@ -21,21 +21,21 @@ export interface RepoInterestTarget {
    * flattery) that also shapes how the offer is framed.
    */
   repoEdge?: string;
-  /** The repo URL — founder reference only. */
+  /** The repo URL: founder reference only. */
   evidenceUrl?: string;
   linkedinUrl?: string;
   phone?: string;
   /** The GitHub profile URL this candidate came from. Persisted to the prospect
    *  row so a later LinkedIn lookup has a real identifier to work from. */
   sourceProfileUrl?: string;
-  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  /** Job title from the person-level ICP gate: persisted to prospects.title. */
   title?: string;
-  /** Candidate's GitHub login — kept on the payload so a future regenerate can
+  /** Candidate's GitHub login: kept on the payload so a future regenerate can
    *  re-fetch their repos if we ever want it. Not consumed by the prompt today. */
   candidateLogin?: string;
   /**
    * Candidate's own top public repos (sorted by recent push, forks excluded).
-   * Optional context fed to the prompt — the LLM picks at most one to weave
+   * Optional context fed to the prompt. The LLM picks at most one to weave
    * as shared-taste evidence, or ignores when nothing fits. Absent / empty =
    * the prompt's no-candidate-repos path kicks in.
    */
@@ -54,7 +54,7 @@ export interface RepoInterestRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -72,7 +72,7 @@ export interface RepoInterestDraft {
 const repoInterestDef: EmailPlayDef<RepoInterestTarget> = {
   playName: PLAY_NAME,
   promptName: "repo-interest-email",
-  // 150 across all plays — generous safety net. The prompt-side AIM stays
+  // 150 across all plays: generous safety net. The prompt-side AIM stays
   // tight (under ~90 reads tighter); the lint just stops gating drafts that
   // miss the aim by a few words. Real run-on slop still gets flagged.
   maxBodyWords: 150,
@@ -80,7 +80,7 @@ const repoInterestDef: EmailPlayDef<RepoInterestTarget> = {
   // starred an adjacent repo earns a single gentle nudge, not a full chase.
   enrollCadence: true,
   toEmail: (t) => t.email,
-  // Enrich on preview + send (cached by email). No deepResearch — the starred
+  // Enrich on preview + send (cached by email). No deepResearch. The starred
   // repo is the load-bearing signal, like stack-consolidation's vendor stack.
   prepare: (t) =>
     standardEnrich({

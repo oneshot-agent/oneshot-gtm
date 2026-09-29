@@ -50,7 +50,7 @@ describe("dedupeKeyFor", () => {
       sourceLabel: "x",
     };
     const b: RegistryRecord = { ...a, name: "上海小吃" };
-    // Distinct non-ASCII names must produce distinct keys — the old
+    // Distinct non-ASCII names must produce distinct keys. The old
     // `[^a-z0-9-]` slug stripped every character of both names to "",
     // colliding them into one dedupe key.
     expect(dedupeKeyFor(a)).not.toBe(dedupeKeyFor(b));
@@ -92,7 +92,7 @@ describe("dedupeKeyFor", () => {
 
   it("collapses apostrophe-bearing name variants to the SAME key (round 2 correction: #500)", () => {
     // finding: the ampersand fix (round 1, commit 2388ac8) collapsed EVERY
-    // punctuation run — apostrophes included — to a hyphen separator, so
+    // punctuation run (apostrophes included) to a hyphen separator, so
     // "Joe's Pizza" (-> "joe-s-pizza") and "Joes Pizza" (-> "joes-pizza")
     // stopped colliding even though the OLD slugify deduped them. Apostrophes
     // must be stripped WITHOUT a separator so possessive-spelling variants
@@ -115,7 +115,7 @@ describe("dedupeKeyFor", () => {
     const mcdonaldsNoApostrophe: RegistryRecord = { ...joesApostrophe, name: "McDonalds" };
     expect(dedupeKeyFor(mcdonaldsApostrophe)).toBe(dedupeKeyFor(mcdonaldsNoApostrophe));
 
-    // Still distinct from the ampersand case above — apostrophe-stripping
+    // Still distinct from the ampersand case above: apostrophe-stripping
     // must not regress the punctuation-as-separator fix for OTHER marks.
     const ampersand: RegistryRecord = { ...joesApostrophe, name: "A&B Plumbing" };
     const noAmpersand: RegistryRecord = { ...joesApostrophe, name: "AB Plumbing" };
@@ -136,7 +136,7 @@ describe("routePlayFor", () => {
 
   it("treats the boundary (exactly freshnessDays old) as still fresh", () => {
     // Freeze the clock so `boundary` and routePlayFor's own `Date.now()` read
-    // the identical millisecond — otherwise a 1ms advance between the two
+    // the identical millisecond. Otherwise a 1ms advance between the two
     // reads pushes cutoffMs past Date.parse(boundary) and the `>=` comparison
     // in local-registry.ts routes this record to free-pilot instead,
     // flaking the assertion (finding PRRT_kwDOSKzrBs6fCBc-).
@@ -153,7 +153,7 @@ describe("routePlayFor", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Full pipeline — mock the boundaries the finder calls, idiom of
+// Full pipeline: mock the boundaries the finder calls, idiom of
 // packages/find/__tests__/github-stars.test.ts.
 // ---------------------------------------------------------------------------
 
@@ -424,7 +424,7 @@ describe("runLocalRegistryFinder — routing + isolation", () => {
     expect(fresh?.payload["matchedDateIso"]).toBe(RECENT_ISO);
     expect(fresh?.payload["yourEdge"]).toBe("we set it up free");
     // #498: both plays REQUIRE these, and runEmailPlay drops a row without
-    // them before the LLM — every local-registry row used to be dropped.
+    // them before the LLM. Every local-registry row used to be dropped.
     expect(fresh?.payload["businessType"]).toBe("newly licensed local business");
     expect(fresh?.payload["licenseType"]).toBe("business licence");
     expect(fresh?.payload["issuedAgo"]).toMatch(/\S/);
@@ -570,7 +570,7 @@ describe("runLocalRegistryFinder — routing + isolation", () => {
   });
 
   it("never enqueues more than `limit` even at concurrency > 1 (finding PRRT_kwDOSKzrBs6ewnz7)", async () => {
-    // Five distinct fresh candidates, concurrency 3, limit 1 — the exact
+    // Five distinct fresh candidates, concurrency 3, limit 1. The exact
     // review-cited repro shape. A check against `result.enqueued` (mutated
     // only after each candidate's async pipeline fully resolves) lets every
     // in-flight worker see 0 < 1 and proceed; a slot reserved synchronously
@@ -593,7 +593,7 @@ describe("runLocalRegistryFinder — routing + isolation", () => {
     // A tick with `limit: 1`: the first record is already queued from a
     // prior run (isQueueDuplicate hits, no paid call runs), the second is
     // fresh. Pre-fix, `reserved` stayed at 1 forever after the duplicate and
-    // the fresh candidate never got a turn — the run halted having enqueued
+    // the fresh candidate never got a turn. The run halted having enqueued
     // nothing, even though the whole point of the tick was the fresh one.
     const dup = makeRecord({ name: "Already Queued LLC", matchedDateIso: RECENT_ISO });
     const fresh = makeRecord({ name: "Brand New Co", matchedDateIso: RECENT_ISO });
@@ -676,7 +676,7 @@ describe("runLocalRegistryFinder — fmcsa knownEmail skip", () => {
     expect(out.enqueued).toBe(1);
     expect(localResolveCalls).toHaveLength(0);
     expect(findEmailCalls).toBe(0);
-    // fmcsa's knownEmail is USDOT's own on-file contact address — trusted
+    // fmcsa's knownEmail is USDOT's own on-file contact address: trusted
     // enough to skip verifyEmail too (finding PRRT_kwDOSKzrBs6exPH2), unlike
     // github-stars/luma's knownEmail (a scraped/surfaced address) which still
     // verifies.

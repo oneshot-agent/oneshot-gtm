@@ -1,7 +1,7 @@
 /**
  * Per-play step-0 metadata, addressable by play name. The play defs and the
  * /queue send route must share these exact functions so they can't drift.
- * Contract: pure maps from target/payload to metadata — no run options, no
+ * Contract: pure maps from target/payload to metadata: no run options, no
  * config, no I/O; `object` params so typed targets and raw queue payloads both
  * work, fields read defensively.
  */
@@ -145,7 +145,7 @@ const REGISTRY: Record<string, (t: object) => Record<string, unknown>> = {
 
 /**
  * Metadata for one play's step-0 send, from a raw queue payload. Plays with no
- * evidence metadata (profile-intro, breakup-revive, …) return `{}` — the
+ * evidence metadata (profile-intro, breakup-revive, …) return `{}`. The
  * `{subject, body}` base is added by `sendDraftedEmail` regardless.
  *
  * Null-valued keys are stripped: `json_extract(metadata_json, '$.repo')`

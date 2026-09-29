@@ -34,7 +34,7 @@ const ANCHOR = new Date("2026-08-17T09:00:00.000Z");
  *
  * Measured locally: one seed is 640-800ms, and the two tests that seed twice
  * are 1.3-1.5s. CI runners are roughly 3-4x slower, which puts those two over
- * vitest's 5s default and leaves the single-seed tests with very little room —
+ * vitest's 5s default and leaves the single-seed tests with very little room:
  * so the timeout is set for the whole group rather than patched onto the two
  * that happened to cross the line first. These are not five-second unit tests
  * and should not be held to that budget.
@@ -299,7 +299,7 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
     };
     expect(rocs["all"].length).toBeGreaterThan(0);
     // The seeded history spans 30 days, so each narrower window must aggregate
-    // strictly less spend — equal totals would mean the filter isn't filtering.
+    // strictly less spend: equal totals would mean the filter isn't filtering.
     expect(totalSpend(rocs["7"])).toBeLessThan(totalSpend(rocs["30"]));
     expect(totalSpend(rocs["30"])).toBeLessThanOrEqual(totalSpend(rocs["all"]));
   });
@@ -317,7 +317,7 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
     db.close();
 
     // Every draft/sent row must live inside the thread of the prospect it
-    // addresses — a mismatch shows one person's reply inside another's thread.
+    // addresses. A mismatch shows one person's reply inside another's thread.
     for (const r of [...drafts, ...sent]) {
       const owner = threadOwner.get(String(r["thread_key"]));
       expect(
@@ -345,7 +345,7 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
         `SELECT play_name, call_type, signed_receipt FROM receipts WHERE id = ${id}`,
       );
       expect(receipt?.["call_type"]).toBe("email.send");
-      // The receipt must belong to THIS run's play — a recipient-only lookup
+      // The receipt must belong to THIS run's play. A recipient-only lookup
       // once linked a show-hn run to a post-funding send from another day.
       expect(receipt?.["play_name"]).toBe(run?.["play_name"]);
       const to = (JSON.parse(String(receipt?.["signed_receipt"])) as { to?: string }).to;
@@ -368,7 +368,7 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
 describe("scrubInheritedSecrets", () => {
   // The CLI parent has already run core's applySecretsToEnv() by the time
   // `demo ui` executes, so process.env carries the REAL install's credentials.
-  // The child server only fills BLANK vars from the demo .env — an unscrubbed
+  // The child server only fills BLANK vars from the demo .env. An unscrubbed
   // inherited key would shadow the placeholder and hand the "demo" a live
   // wallet. This is the regression test for that leak.
   it("removes every stored secret plus the env-only tokens", () => {

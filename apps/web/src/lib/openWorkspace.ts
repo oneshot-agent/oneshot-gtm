@@ -8,7 +8,7 @@ import { api } from "../api/client.ts";
  * points cannot drift (the palette originally fired the launch and never
  * opened the tab). MUST be called synchronously from a click/keyboard
  * handler: the tab is opened blank inside that user gesture and pointed at
- * the workspace once its health probe flips — a window.open after the
+ * the workspace once its health probe flips. A window.open after the
  * multi-second launch poll would be popup-blocked.
  */
 

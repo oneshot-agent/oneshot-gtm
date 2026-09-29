@@ -328,7 +328,7 @@ function MeasurePage() {
         )}
       </section>
 
-      {/* RoCS by cadence — OneShot's goal-level rollup (spend vs tagged value) */}
+      {/* RoCS by cadence: OneShot's goal-level rollup (spend vs tagged value) */}
       <section className="border-b border-ink-rule">
         <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
           <div className="ln-eyebrow">RoCS by cadence · goal-level</div>

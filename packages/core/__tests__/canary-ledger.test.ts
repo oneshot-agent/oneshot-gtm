@@ -156,8 +156,8 @@ describe("latestSentEmailCopy", () => {
 
   it("includes copy whose step later flipped to replied", () => {
     // markLatestStepReplied UPDATEs a 'sent' row in place. Matching only
-    // status='sent' would skip every prospect who answered — i.e. the
-    // best-performing copy there is — and silently replay something older.
+    // status='sent' would skip every prospect who answered: i.e. the
+    // best-performing copy there is, and silently replay something older.
     const prospectId = ledger.upsertProspect({ name: "P", email: "r@x.example", source: "t" });
     ledger.recordSequenceEvent({
       prospectId,
@@ -205,7 +205,7 @@ describe("latestSentEmailCopy", () => {
 
   it("finds usable copy behind a long run of bodyless rows", () => {
     // Unusable rows are discarded in SQL, so a fixed candidate bound can't be
-    // exhausted by them — copy this far back is still found.
+    // exhausted by them: copy this far back is still found.
     seedSent("post-funding", { subject: "buried", body: "the real copy" });
     for (let i = 0; i < 60; i++) seedSent("post-funding", { label: `no body ${i}` });
     expect(ledger.latestSentEmailCopy()?.subject).toBe("buried");

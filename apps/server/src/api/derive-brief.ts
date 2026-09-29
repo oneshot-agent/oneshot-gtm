@@ -4,7 +4,7 @@ import type { DeriveBriefResult } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
 const PLAY_NAME = "config:brief";
-/** Hard cap on sources per derive — each is one paid webRead (~$0.01). */
+/** Hard cap on sources per derive. Each is one paid webRead (~$0.01). */
 const MAX_SOURCES = 5;
 /** webRead has been observed taking ~75s per page; parallel + a hard deadline keeps the button honest. */
 const READ_DEADLINE_MS = 90_000;
@@ -12,12 +12,12 @@ const READ_DEADLINE_MS = 90_000;
 const PER_SOURCE_SLICE = 8000;
 
 /**
- * Derive a product brief (facts + canonical links) from a set of source URLs —
+ * Derive a product brief (facts + canonical links) from a set of source URLs:
  * the marketing site, the GitHub repo README, docs pages. Mirrors derive-icp
  * but multi-source, because the substance a reply needs (architecture, pricing
  * model, real doc links) usually lives in the repo and docs, not the landing
  * page. The proposal lands in the /setup textarea for the founder to edit
- * before saving — this endpoint never writes config.
+ * before saving. This endpoint never writes config.
  */
 export async function deriveBriefRoute(req: Request): Promise<Response> {
   startRun();
@@ -66,7 +66,7 @@ export async function deriveBriefRoute(req: Request): Promise<Response> {
       });
       return { raw, url, markdown, cost: typeof c === "number" ? c : 0, error: null };
     } catch (err) {
-      // One unreachable source must not sink the derive — report it and move on.
+      // One unreachable source must not sink the derive: report it and move on.
       logEvent(
         "derive_brief.read.error",
         { host, message_120: ((err as Error).message ?? "").slice(0, 120) },

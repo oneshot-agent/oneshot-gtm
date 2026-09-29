@@ -96,18 +96,8 @@ interface SequenceStep {
   /** Optional label for logs. */
   label?: string;
   /**
-   * Word cap enforced on this step's drafted body — same role as
-   * `EmailPlayDef.maxBodyWords` for a step 0 send. Every follow-up prompt
-   * states its own hard cap in prose (discovery-interview-followup.md's
-   * "Body: ≤ 30 words", new-business-followup.md's "≤ 45 words"), but
-   * `previewCadenceStep`/the batch preview path used to lint every step
-   * against a flat 100 regardless of what the prompt promised, so a
-   * 31-100-word discovery-interview re-ask or a 46-100-word new-business
-   * breakup could pass the lint clean and be sent (finding:
-   * discovery-interview-email.md:31 / discovery-interview-followup.md:18 /
-   * new-business-followup.md:14). Defaults to 100 (the prior flat value)
-   * when a step doesn't set one, so every other registered sequence's
-   * behavior is unchanged.
+   * Word cap for this follow-up, enforced by preview and batch linting.
+   * Defaults to 100 when unset; keep it consistent with the step prompt.
    */
   maxBodyWords?: number;
 }
@@ -193,7 +183,7 @@ export function defaultSequence(playName: string): Sequence | undefined {
 /**
  * The registered sequence with the founder's per-play timing overrides. Code
  * defines the structure; a matching-length `cadenceOverrides[playName]`
- * replaces each RELATIVE dayOffset. A length mismatch is ignored — code wins,
+ * replaces each RELATIVE dayOffset. A length mismatch is ignored: code wins,
  * never throws. Read fresh each call so a /plays edit applies without restart.
  */
 function mailStep(dayOffset: number): SequenceStep {
@@ -362,7 +352,7 @@ export function skipDirectMailStep(input: { prospectId: number; playName: string
   if (draft?.started) throw new Error("Recover the submitted mailpiece before continuing");
   const next = seq.steps[c.current_step + 1];
   // One transaction: the cancelled draft, the recorded skip and the advance
-  // land together or not at all — a retry after a crash never finds a
+  // land together or not at all. A retry after a crash never finds a
   // "skipped" row beside a cadence still parked on the letter.
   ledger.transaction(() => {
     if (draft) {
@@ -441,24 +431,18 @@ export interface ReplyPollResult {
   /** Inbox emails examined. */
   polled: number;
   /**
-   * Replies learned for the FIRST time this poll — the number the reply-rate
+   * Replies learned for the FIRST time this poll. The number the reply-rate
    * metrics move by, whatever state the cadence was in.
    */
   repliesDetected: number;
   /** Subset of the above that also stopped a still-active cadence. */
   cadencesStopped: number;
-  /** Matched inbound mail classified as non-human (OOO / dead mailbox / unsubscribe) — stored, never counted as a reply. */
+  /** Matched inbound mail classified as non-human (OOO / dead mailbox / unsubscribe): stored, never counted as a reply. */
   autoRepliesSkipped: number;
   /**
-   * No mailbox source errored or was skipped anywhere this poll touched (the
-   * live window walk, and the backlog drain when one ran) — mirrors
-   * BouncePollResult.clean below. False on a partial poll, so the caller
-   * (scheduler) must not treat a partial reply poll as proof every reply for
-   * the UTC day now closing has been recorded before stamping the daily
-   * summary watermark (issue #71 round-1 correction — same class of bug the
-   * round-3/round-4 findings already fixed for the bounce sweep, here
-   * applied to the reply-poll side). Defaults to true; only individual
-   * `walkInboxWindow` calls that come back non-clean flip it.
+   * True only when every source in the live window and backlog was clean.
+   * A partial poll cannot establish that all replies for a closing UTC day
+   * are recorded, so the scheduler must not advance the daily summary watermark.
    */
   clean: boolean;
   details: Array<{ prospectEmail: string; playName: string; subject: string }>;
@@ -468,7 +452,7 @@ export interface ReplyPollResult {
 const REPLY_WATERMARK_KEY = "inbox_replies";
 /**
  * poll_state key for an unfinished catch-up slice (JSON `{ since, until }`),
- * drained by later polls — a backlog is delayed, never skipped.
+ * drained by later polls. A backlog is delayed, never skipped.
  */
 const REPLY_BACKLOG_KEY = "inbox_replies_backlog";
 /**
@@ -479,10 +463,10 @@ const REPLY_BACKLOG_KEY = "inbox_replies_backlog";
 const REPLY_WATERMARK_OVERLAP_MS = 60 * 60_000;
 /** What the sources fall back to when no `since` is given (Gmail: `newer_than:30d`). */
 const REPLY_DEFAULT_WINDOW_MS = 30 * 24 * 60 * 60_000;
-/** Page size per fetch — the same window the /inbox route uses. */
+/** Page size per fetch. The same window the /inbox route uses. */
 const REPLY_POLL_LIMIT = 200;
 /**
- * Pages walked per poll before the rest is parked as backlog — bounds a single
+ * Pages walked per poll before the rest is parked as backlog: bounds a single
  * poll after an install or outage; steady-state polls never fill one page.
  */
 const REPLY_POLL_MAX_PAGES = 10;
@@ -495,7 +479,7 @@ const REPLY_POLL_DEADLINE_MS = 60_000;
 interface WalkResult {
   newest: string | null;
   oldest: string | null;
-  /** The whole (since, until) slice was examined — nothing older remains. */
+  /** The whole (since, until) slice was examined: nothing older remains. */
   exhausted: boolean;
   /** No source failed on any page. A partial walk must not move any cursor. */
   clean: boolean;
@@ -552,24 +536,20 @@ async function walkInboxWindow(
       if (!prospect) continue;
       // Autoresponders (OOO, "no longer here") and unsubscribe requests are
       // NOT replies: they must not stop cadences as engagement, move the reply
-      // metric, or tag RoCS. Classified here — the one choke point every
+      // metric, or tag RoCS. Classified here. The one choke point every
       // detection path funnels through.
       const kind = classifyReply({
         subject: e.subject,
         body: e.body,
         autoSubmitted: e.auto_submitted,
       });
-      // Persist the full inbound (body included) — the ledger, not the mailbox,
+      // Persist the full inbound (body included). The ledger, not the mailbox,
       // is the reply store. Every matched email, not just the first reply per
       // (prospect, play): later replies on a live thread must be kept too.
       // Same thread key convention as inboxThreadKey (thread_id, else id).
       const playName = ledger.latestSentPlayForProspect(prospect.id, e.subject);
-      // recordInboxReply is INSERT OR IGNORE — an idempotent re-sweep is a
-      // no-op on a row a prior poll already recorded. Whether THIS call
-      // inserted a new row no longer gates triage (round-1 correction,
-      // #558): see claimInboxReplyForTriage below for why the atomic claim
-      // on `intent` replaced it. It still gates the first-sight-only actions
-      // below (angle refresh, Slack "reply received").
+      // recordInboxReply is idempotent. A new insert gates angle refresh and
+      // Slack notifications; triage uses a separate atomic claim below.
       const insertedReply = ledger.recordInboxReply({
         id: e.id,
         threadKey: e.thread_id ?? e.id,
@@ -584,21 +564,11 @@ async function walkInboxWindow(
         messageId: e.message_id ?? null,
         kind,
       });
-      // Refresh the per-prospect angle (issue #357) on a genuinely new human
-      // reply only — never auto-replies/unsubscribes (no signal worth paying
-      // for), and never a re-swept row the watermark overlap re-examines
-      // (insertedReply false = recordInboxReply's INSERT OR IGNORE no-op).
-      // Fire-and-forget: triggerAngleRefresh itself debounces on
-      // angle_synthesized_at and never throws.
+      // Refresh only for newly inserted human replies, excluding overlap re-scans
+      // and autoresponders. Fire-and-forget; the refresh debounces and never throws.
       if (insertedReply && kind === "human") triggerAngleRefresh(prospect.id);
-      // Slack notification: fire-and-forget on first sight only, and only for
-      // real human replies. This is the primary reply-detection path
-      // (scheduler -> pollInboxReplies), unlike the opportunistic capture in
-      // apps/server/src/api/inbox.ts which only covers the UI-poll route.
-      // Gated on `kind === "human"` (not just `insertedReply`): autoresponders
-      // (OOO, dead mailbox) and unsubscribe requests are NOT replies by this
-      // codebase's own definition (see the classifyReply comment above) and
-      // must not raise a false "Reply from ..." alert.
+      // Notify only for newly inserted human replies. Autoresponders and
+      // unsubscribe requests must not produce reply alerts.
       if (insertedReply && kind === "human") {
         void notifySlackReplyReceived({
           from_email: from,
@@ -611,30 +581,14 @@ async function walkInboxWindow(
         out.autoRepliesSkipped++;
         // A dead mailbox ("retired", "no longer at company") is a human-layer
         // hard bounce; an unsubscribe is a do-not-contact. Either way active
-        // cadences stop — but with an honest status, no replied event, and no
+        // cadences stop, but with an honest status, no replied event, and no
         // bounces-table row (that would poison identity reputation stats).
         if (kind === "auto_permanent" || kind === "unsubscribe") {
           const status = kind === "unsubscribe" ? "unsubscribed" : "bounced";
-          // Slack notification: fire-and-forget, once per autoresponder email
-          // (not per cadence — the loop below can touch several). Gated on
-          // `insertedReply`, mirroring the human-reply branch above: the reply
-          // poll's `since` window intentionally re-examines up to
-          // REPLY_WATERMARK_OVERLAP_MS before the watermark on every poll
-          // (overlap costs fetches, not correctness — see the comment on
-          // `since` below), and `seen` only dedupes within a single
-          // `pollInboxReplies()` call, not across polls. Without this gate a
-          // dead-mailbox autoresponder re-seen in that overlap window on the
-          // next poll would refire this alert a second time.
-          // `recordInboxReply`'s INSERT OR IGNORE (and therefore `insertedReply`)
-          // is the only signal keyed on the email id itself, so it's the
-          // correct first-sight check here, same as it is for the human-reply
-          // notification. Mirrors the DSN path's notifySlackBounceRecorded
-          // call in pollInboxBounces; this is the reply-stream bounce source
-          // and is now counted into the same daily bounced total
-          // (Ledger.countAutoPermanentBounces), so it must also fire the same
-          // event (issue #71 review finding — "counted but never notified").
-          // No status_code: a dead-mailbox autoresponder carries no SMTP DSN
-          // code, unlike a real bounce.
+          // Notify once per newly inserted autoresponder email, not per cadence or
+          // poll. The overlap window re-reads emails, so only insertedReply prevents
+          // duplicate alerts across polls. This contributes to the daily bounce total.
+          // No status_code: autoresponders carry no SMTP DSN code.
           if (status === "bounced" && insertedReply) {
             void notifySlackBounceRecorded({
               recipient: from,
@@ -652,7 +606,7 @@ async function walkInboxWindow(
               status,
               metadata: { reason: kind === "unsubscribe" ? "unsubscribe" : "auto-reply-permanent" },
               // Occurrence time = when the autoresponder actually landed in the
-              // mailbox, not poll time — same reasoning as the DSN-bounce path
+              // mailbox, not poll time: same reasoning as the DSN-bounce path
               // in pollInboxBounces, so the Slack daily summary's occurrence
               // window credits this to the right UTC day. unsubscribe rows
               // don't carry bouncedAt: it's a bounced-column semantic, and this
@@ -666,46 +620,13 @@ async function walkInboxWindow(
         if (e.id.startsWith("mailbox:")) ledger.mailboxes.acknowledge(e.id, prospect.id);
         continue;
       }
-      // Sentiment/intent classification (issue #480), via the existing
-      // triage taxonomy — distinct from `kind` above (deliverability, not
-      // sentiment). Best-effort and non-blocking, like the neighbouring
-      // tagOutcomeValue call below: a triage failure logs and leaves
-      // `intent` NULL, it never loses the reply itself (already persisted
-      // above). `insertedReply` alone used to gate this and skipped rows the
-      // /inbox route's opportunistic capture had already inserted (issue
-      // #558) — those are real new replies from this poll's perspective but
-      // arrive here with insertedReply === false, so they were silently never
-      // triaged.
+      // Classify intent separately from deliverability. Replies are already stored;
+      // triage failures leave intent NULL for a later retry. Claim atomically with
+      // UPDATE ... WHERE intent IS NULL to prevent concurrent paid calls. Release
+      // the claim on failure; the pending marker is not a category.
       //
-      // Round-1 correction (#558): a bare re-check of the persisted `intent`
-      // column ("skip only when this row already carries a classification")
-      // is not atomic — two overlapping pollInboxReplies() calls (the
-      // server's background scheduler tick and a manually-run `cadence
-      // advance` CLI invocation both call it) can both observe the same
-      // freshly-inserted row with intent still NULL while the first call's
-      // triageEmails() await is in flight, so the second call re-triggers
-      // the paid triage call and races the write-back. claimInboxReplyForTriage
-      // does the check-and-mark in one UPDATE ... WHERE intent IS NULL
-      // statement, so only one caller's claim can succeed for a given row;
-      // the loser skips triage entirely this poll. The winner releases the
-      // claim (resets intent back to NULL) on any failure so a later poll
-      // can retry — the pending marker itself is never a real category.
-      //
-      // Round-2 correction (#663, F-1): losing the claim used to leave
-      // `triagedIntent` null unconditionally, and the caller fell straight
-      // through into the ordinary reply bookkeeping below (recordProspectReply
-      // / tagOutcomeValue) even when this row's persisted `intent` was
-      // already 'unsubscribe' — every repeated or concurrent pass over an
-      // already-triaged unsubscribe reply then got counted and billed as
-      // engagement (the same outcome the branch below exists to prevent for
-      // the winning pass). `peekInboxReplyIntent` tells a claim loser which
-      // of two different situations it's in: another caller's triage is
-      // still in flight (`pending: true` — the real category isn't known
-      // yet, so this pass must not guess and must skip reply bookkeeping
-      // entirely, exactly like a loser always did) vs. a prior poll already
-      // wrote back a real result (`pending: false` — read it and treat it
-      // exactly like a winning triage's own result, so an unsubscribe stays
-      // vetoed on every later pass, not just the one that discovered it).
+      // A claim loser skips bookkeeping while triage is pending. If a result is
+      // already stored, use it so an unsubscribe remains vetoed on every re-scan.
       let triagedIntent: string | null = null;
       let claimPending = false;
       if (ledger.claimInboxReplyForTriage(e.id)) {
@@ -730,23 +651,10 @@ async function walkInboxWindow(
         claimPending = peeked.pending;
         triagedIntent = peeked.intent;
       }
-      // Issue #663: the deliverability classifier above (`kind`) is
-      // phrase-based (reply-classify.ts's UNSUBSCRIBE_RE) and can miss a
-      // real "remove me" request, landing it as `kind = 'human'`. The
-      // sentiment triage just above (issue #480) reads the same reply
-      // correctly as `intent = 'unsubscribe'` in that case. Mirror the
-      // `kind === 'unsubscribe'` branch above — mark every live cadence
-      // unsubscribed with an honest sequence-events row — before the
-      // ordinary reply bookkeeping below would otherwise flip the same
-      // cadences to 'replied'. `contactAllowedClause` (contact-optout.ts)
-      // now also vetoes re-enrollment directly on this `intent` column;
-      // this keeps `cadence_state` (and the Slack/notes path) telling the
-      // same truth. Fires on THIS poll's own triage result, and (round-2
-      // correction, #663) also on any earlier poll's persisted result read
-      // back via `peekInboxReplyIntent` above — the cadence-stopping loop
-      // below is itself idempotent (it only touches still-active/paused
-      // cadences), so re-running it against an already-unsubscribed
-      // cadence on a later pass is always a safe no-op, not a double-count.
+      // Intent triage may catch an unsubscribe that phrase-based deliverability
+      // classification missed. Stop live cadences before reply bookkeeping, using
+      // either this poll's verdict or a stored verdict. The stop is idempotent, and
+      // contactAllowedClause also blocks re-enrollment on this intent.
       if (triagedIntent === "unsubscribe") {
         for (const cad of ledger.listCadencesForProspect(prospect.id)) {
           if (cad.status !== "active" && cad.status !== "paused") continue;
@@ -770,30 +678,18 @@ async function walkInboxWindow(
         // cadence_state only, so expire the queue rows here, as stopCadence
         // and the reply paths do.
         ledger.expireBreakupReviveQueue(prospect.id, "prospect unsubscribed");
-        // Round-1 correction (#663): an unsubscribe-labeled reply must not
-        // ALSO fall through to recordProspectReply/tagOutcomeValue below —
-        // that path counts the message as engagement (repliesDetected,
-        // markLatestStepReplied's replied_at) and tags the play's receipts
-        // with an "engagement" value, exactly the opt-out-still-billed
-        // outcome the `kind === 'unsubscribe'` branch above (and its
-        // `continue`) already exists to prevent. The cadences are already
-        // stopped as 'unsubscribed' by the loop just above, so there is
-        // nothing left for the ordinary reply bookkeeping to do here.
+        // Do not count or bill an unsubscribe as engagement after stopping cadences.
       } else if (!claimPending) {
         for (const r of ledger.recordProspectReply(prospect.id, {
           subject: e.subject,
-          // The inbound email's own timestamp, not "now" — this poll can walk a
-          // backlog page well after the reply actually landed in the mailbox,
-          // and eventsByPlay's date-windowed rollups (the Slack daily summary)
-          // must credit the reply to the day it happened, not the day this
-          // process happened to notice it.
+          // Use receipt time so backlog replies count toward the correct UTC day.
           repliedAt: e.received_at,
         })) {
           if (r.newlyReplied) out.cadencesStopped++;
           if (!r.eventRecorded) continue;
           out.repliesDetected++;
           out.details.push({ prospectEmail: from, playName: r.playName, subject: e.subject });
-          // A reply is the first value signal — tag the play's send receipts so
+          // A reply is the first value signal: tag the play's send receipts so
           // RoCS reflects engagement. Best-effort (tagOutcomeValue swallows errors).
           await tagOutcomeValue({
             prospectId: prospect.id,
@@ -802,12 +698,8 @@ async function walkInboxWindow(
           });
         }
       }
-      // Round-2 correction (#663, F-1): `claimPending` (a concurrent
-      // triage is still in flight for this exact row) falls through both
-      // branches above deliberately — the real category isn't known yet,
-      // so neither the unsubscribe veto nor the ordinary reply bookkeeping
-      // may run this pass. The next poll's claim attempt (or a peek once
-      // the winner has written back) resolves it correctly.
+      // While another caller is triaging, skip both opt-out and engagement
+      // bookkeeping until a later poll can read the verdict.
       if (e.id.startsWith("mailbox:")) ledger.mailboxes.acknowledge(e.id, prospect.id);
     }
     if (pageOldest && (res.oldest == null || pageOldest < res.oldest)) res.oldest = pageOldest;
@@ -928,17 +820,13 @@ function readBacklog(
 export interface BouncePollResult {
   /** Delivery failures parsed from the mailbox this poll (including already-known ones). */
   polled: number;
-  /** Failures seen for the FIRST time — the ones that were acted on. */
+  /** Failures seen for the FIRST time. The ones that were acted on. */
   recorded: number;
   /** Cadences stopped by a hard bounce this poll. */
   cadencesStopped: number;
   /**
-   * No bounce source errored or was skipped this sweep. False on a partial
-   * sweep — the caller (scheduler) must not treat a partial sweep as proof
-   * "no more bounces are coming" when deciding whether it's safe to
-   * permanently watermark a day for the Slack daily summary (issue #71
-   * round-4 review finding: forcing the sweep on day rollover is useless if
-   * the forced sweep itself can silently come back partial).
+   * True only when every bounce source was clean. A partial sweep must not
+   * advance the daily summary watermark, including a forced rollover sweep.
    */
   clean: boolean;
   details: Array<{
@@ -997,7 +885,7 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
     if (b.kind === "soft") continue;
 
     if (!prospect) {
-      // A bounce for an address we don't track — still counts toward the
+      // A bounce for an address we don't track: still counts toward the
       // identity's rate, which is the number that matters for reputation.
       out.details.push({
         recipient: b.recipient,
@@ -1010,7 +898,7 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
 
     for (const cad of ledger.listCadencesForProspect(prospect.id)) {
       // current_step is the most recently SENT step (intro = 0; each follow-up
-      // is recorded at current_step + 1 as it fires) — that's the touch that
+      // is recorded at current_step + 1 as it fires). That's the touch that
       // came back undelivered.
       ledger.recordSequenceEvent({
         prospectId: prospect.id,
@@ -1026,7 +914,7 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
         },
         bouncedAt: b.bouncedAt,
       });
-      // Only a HARD bounce stops the sequence — a 5.7.x block judges the
+      // Only a HARD bounce stops the sequence. A 5.7.x block judges the
       // message/domain, not the mailbox (blocks surface via the doctor check).
       // Only `active` rows flip: a `replied` cadence proved the human is there.
       if (b.kind === "hard" && cad.status === "active") {
@@ -1096,7 +984,7 @@ export async function advanceCadence(
 
     // 1b. Poll for delivery failures. Runs BEFORE the due-step loop below so a
     // bounce detected this pass stops today's follow-up rather than next
-    // pass's — otherwise we'd send one more email to a known-dead address.
+    // pass's. Otherwise we'd send one more email to a known-dead address.
     try {
       const bouncePoll = await pollInboxBounces();
       for (const d of bouncePoll.details) {
@@ -1170,7 +1058,7 @@ export async function advanceCadence(
       });
     } catch (err) {
       // Deferral mid-pass (caps filled while this batch ran): the step simply
-      // stays due. Anything else propagates — parallelMap rejects the whole
+      // stays due. Anything else propagates: parallelMap rejects the whole
       // pass, matching pre-rotation behavior for unexpected errors.
       if (isSendDeferred(err)) {
         return {
@@ -1216,7 +1104,7 @@ export interface RunCadenceStepOptions {
   playName: string;
   dryRun: boolean;
   /** Skip the step's builder and send this verbatim (mirrors /queue's
-      send-this-one — used by the /cadences UI after a Preview round-trip). */
+      send-this-one: used by the /cadences UI after a Preview round-trip). */
   persistedPayload?: StepPayload;
   /** Only the individual reviewed mail action may dispatch physical mail. */
   directMailId?: string;
@@ -1235,7 +1123,7 @@ export interface RunCadenceStepResult {
 }
 
 /**
- * Per-prospect cadence step runner — single source of truth for the batch
+ * Per-prospect cadence step runner: single source of truth for the batch
  * `advanceCadence` and the per-row /cadences UI. On a successful send,
  * advances `current_step`, sets `next_due_at`, and clears any persisted
  * preview draft via ledger.advanceCadence.
@@ -1276,7 +1164,7 @@ export async function runCadenceStepForProspect(
       };
     }
     // Reply-stream do-not-send (unsubscribe / dead-mailbox autoresponder):
-    // same shape as the bounce check — stop before paying for a draft, and
+    // same shape as the bounce check: stop before paying for a draft, and
     // record an honest terminal status instead of a send failure.
     const contactStop = ledger.contactSuppressionFor(cadence.prospect_email);
     if (contactStop) {
@@ -1291,7 +1179,7 @@ export async function runCadenceStepForProspect(
     }
   }
   // Person-level ICP gate: an off-ICP prospect must not receive follow-ups.
-  // Code-level on purpose — a prompt can be talked out of a rule, a status
+  // Code-level on purpose. A prompt can be talked out of a rule, a status
   // change cannot. Terminal + distinct ("off-icp") so reporting stays honest.
   {
     const prospect = ledger.getProspectById(opts.prospectId);
@@ -1309,22 +1197,22 @@ export async function runCadenceStepForProspect(
       };
     }
   }
-  // Meeting verdict (issue #578) — modelled on the suppression checks above:
+  // Meeting verdict (issue #578): modelled on the suppression checks above:
   // a ledger read returning a verdict, then a status change, before paying
   // for a draft. Code-level on purpose, same principle as the ICP gate.
   // Only 'held' is terminal here: a real conversation already happened, so
   // an automated follow-up cadence has been obsoleted by it. A no-show is
   // explicitly NOT terminal (the card: "a reason to write a different
   // reply, not to stop the cadence") and cancelled/rescheduled meetings
-  // never happened at all, so neither stops anything — the cadence
+  // never happened at all, so neither stops anything. The cadence
   // continues exactly as it would with no meeting on the prospect.
   //
   // dryRun must never mutate the live cadence (same rule the suppression
-  // and ICP checks above don't have to worry about because they only READ —
+  // and ICP checks above don't have to worry about because they only READ:
   // this is the one gate here that both reads and writes). A preview pass
   // (finding PRRT_kwDOSKzrBs6gwORi) still reports "skipped" so a caller sees
-  // the cadence would stop, but the actual stopCadence write — which clears
-  // the live schedule and any pending draft — only happens for a real run.
+  // the cadence would stop, but the actual stopCadence write, which clears
+  // the live schedule and any pending draft. Only happens for a real run.
   {
     const meeting = ledger.latestMeetingOutcomeFor(opts.prospectId);
     if (meeting?.outcome === "held") {
@@ -1345,7 +1233,7 @@ export async function runCadenceStepForProspect(
     }
   }
   // Cross-workspace hold, same reasoning as the suppression check above:
-  // decide before paying for a draft. Not a status change — the step stays
+  // decide before paying for a draft. Not a status change. The step stays
   // due and fires once the other workspace's touch ages out of the window.
   if (cadence.prospect_email) {
     const elsewhere = recentTouchElsewhere(cadence.prospect_email);
@@ -1381,7 +1269,7 @@ export async function runCadenceStepForProspect(
   if (!step) return { action: "skipped", payload: null, receiptIds: [] };
 
   // Re-send guard. `current_step` advances only AFTER a successful send, so a
-  // crash between dispatch and `advanceCadence` can leave a sent step behind —
+  // crash between dispatch and `advanceCadence` can leave a sent step behind:
   // and the SDK idempotency key is content-keyed, not step-keyed, so a redraft
   // would send a real duplicate. If the step already has a sent event,
   // reconcile forward WITHOUT re-sending, running the SAME terminal transition
@@ -1554,7 +1442,7 @@ export async function runCadenceStepForProspect(
         ...(step.label !== undefined ? { label: step.label } : {}),
       });
     } catch (err) {
-      // A daily-cap deferral isn't a failure — the step stays due for
+      // A daily-cap deferral isn't a failure. The step stays due for
       // tomorrow. Only genuine send errors are recorded.
       if (!isSendDeferred(err)) {
         ledger.recordCadenceSendError({
@@ -1627,7 +1515,7 @@ export interface CadenceStepPreview {
 
 /**
  * Build the next step's draft and persist it via setCadenceDraft. Never
- * sends. Mirrors the /queue regenerate route — the founder reviews on
+ * sends. Mirrors the /queue regenerate route. The founder reviews on
  * /cadences, then clicks Send next which calls sendCadenceStep.
  */
 /** The edge angle the current persisted preview was built on, if any. */
@@ -1644,7 +1532,7 @@ function currentPreviewAngle(input: { prospectId: number; playName: string }): s
 export async function previewCadenceStep(input: {
   prospectId: number;
   playName: string;
-  /** Bodies accepted earlier in the same batch — they are not in the ledger
+  /** Bodies accepted earlier in the same batch. They are not in the ledger
    *  yet, and without them a batch can agree on one brand-new opener and every
    *  row passes the cap individually. */
   extraRecentBodies?: readonly string[];
@@ -1724,7 +1612,7 @@ export async function previewCadenceStep(input: {
   // Opener-frequency cap on top of the phrase lint: the phrase rules cannot
   // see that this play's last 40 sends all opened the same way. Scoped to the
   // same play + step because that is the population a reader would ever
-  // compare — an intro and a day-3 ping are allowed to sound different.
+  // compare. An intro and a day-3 ping are allowed to sound different.
   const flags =
     built.kind === "email"
       ? [
@@ -1848,7 +1736,7 @@ export interface BatchSendResult {
 
 /**
  * Parallel preview of cadence rows (concurrency 3). Per-prospect failures are
- * captured in the result array — the batch never throws. `parallelMap`
+ * captured in the result array. The batch never throws. `parallelMap`
  * preserves input order so the result matches `items` 1:1.
  */
 export async function previewCadenceStepBatch(items: BatchItem[]): Promise<BatchPreviewResult[]> {
@@ -1887,7 +1775,7 @@ export async function previewCadenceStepBatch(items: BatchItem[]): Promise<Batch
  */
 export async function sendCadenceStepBatch(
   items: BatchItem[],
-  /** Fires after each item resolves (ok OR error) — lets the API layer
+  /** Fires after each item resolves (ok OR error): lets the API layer
    *  track per-row in-flight state without splitting the iteration. */
   onItemSettled?: (item: BatchItem, result: BatchSendResult) => void,
   linkedIn?: LinkedInCaller,
@@ -1948,7 +1836,7 @@ async function dispatchStepImpl(input: {
     prospectEmail: input.prospectEmail,
     stepIndex: input.stepIndex,
     label: input.label ?? null,
-    // Cadence correlation key — groups every step's receipts under one goal so an
+    // Cadence correlation key: groups every step's receipts under one goal so an
     // outcome tags the whole sequence at once. Same key the tagger derives from
     // (prospect, play) at outcome time.
     goalId: cadenceGoalId(input.playName, input.prospectEmail ?? `pid:${input.prospectId}`),
@@ -2114,7 +2002,7 @@ function loadProspect(id: number): ProspectRecord | null {
 /**
  * The OPENERS ALREADY WORN OUT block, or "" when nothing is over the cap.
  *
- * Scoped to this prospect's next step on this play — the same population the
+ * Scoped to this prospect's next step on this play. The same population the
  * `opener-overused` lint measures, so the guidance and the gate cannot
  * disagree. Returns "" on any missing cadence rather than throwing: steering
  * copy is a nicety, and a follow-up must still draft without it.
@@ -2139,7 +2027,7 @@ function overusedOpenersBlock(prospectId: number, playName: string): string {
 /**
  * A single field's value from a prospect's step-0 (initial send) metadata_json
  * for this play, e.g. sources-sought's `responseDeadline`. Returns null when
- * there's no step-0 row, no metadata, or the key isn't a string — callers
+ * there's no step-0 row, no metadata, or the key isn't a string: callers
  * treat that as "unknown deadline", never as "expired".
  */
 export function getStep0MetadataField(
@@ -2256,7 +2144,7 @@ export function buildFollowUpEmail(opts: {
     // identical output to before this issue.
     const angleBlock = angleBlockFromJson(ctx.prospect.angle_json);
     // YOUR EDGE for a follow-up (issue #584): until this, a follow-up never
-    // saw the edge at all — only the prior body under "do not repeat" — so it
+    // saw the edge at all (only the prior body under "do not repeat") so it
     // could not say anything new. It now gets a DIFFERENT angle from the
     // intro's. No multi-angle edge on the sent row → null → no block.
     const rotateFrom =
@@ -2303,7 +2191,7 @@ export function buildFollowUpEmail(opts: {
     const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(res.content, {});
     if (!parsed.subject || !parsed.body) return null;
     // Same deterministic humanization the initial-send plays get via
-    // draftEmailFromPrompt — without it, follow-ups ship em-dashes raw.
+    // draftEmailFromPrompt, without it, follow-ups ship em-dashes raw.
     let cleaned = humanizeDraft({
       subject: parsed.subject.trim(),
       body: parsed.body.trim(),
@@ -2324,8 +2212,8 @@ export function buildFollowUpEmail(opts: {
       // The voice card in the prompt, so the persisted preview's draft
       // version can be split voice on/off like an intro draft's.
       ...(voice ? { voiceKey: voice.key } : {}),
-      // Carried on the payload so the persisted preview — and its draft
-      // version — records the angle the way an intro draft does.
+      // Carried on the payload so the persisted preview, and its draft
+      // version: records the angle the way an intro draft does.
       ...(edgeSelection
         ? {
             angle: {
@@ -2349,7 +2237,7 @@ export interface PriorStepRow {
   subject: string;
   /** Null for legacy pre-v8 rows whose metadata_json didn't include the body. */
   body: string | null;
-  /** sequence_events.created_at as ISO (the column is SQLite-form) — for a skipped letter, when it was skipped. */
+  /** sequence_events.created_at as ISO (the column is SQLite-form): for a skipped letter, when it was skipped. */
   sentAt: string;
   status: "sent" | "delivered" | "replied" | "skipped";
 }
@@ -2391,7 +2279,7 @@ function rowToPriorStep(r: {
   );
   if (r.status === "skipped") {
     // A letter the founder skipped (#610): a line in the history, never a
-    // prior email — no subject, no body, so the LLM block ignores it.
+    // prior email: no subject, no body, so the LLM block ignores it.
     return {
       stepIndex: r.step_index,
       label: "letter skipped",
@@ -2565,7 +2453,7 @@ function advanceOrComplete(
 
 /**
  * Before a LinkedIn message: has the invite been accepted? A synced
- * conversation with the prospect says yes (null — go ahead). Otherwise the
+ * conversation with the prospect says yes (null: go ahead). Otherwise the
  * step waits a day, and after LINKEDIN_INVITE_TIMEOUT_DAYS the invite is
  * withdrawn and the cadence stops.
  */
@@ -2636,7 +2524,7 @@ async function awaitLinkedInAcceptance(
         playName: opts.playName,
       })) as { status?: string };
       withdrawStatus = res.status ?? null;
-      // not_pending: accepted or gone some other way — nothing was withdrawn.
+      // not_pending: accepted or gone some other way: nothing was withdrawn.
       if (isWithdrawnStatus(withdrawStatus)) {
         ledger.recordSequenceEvent({
           prospectId: opts.prospectId,

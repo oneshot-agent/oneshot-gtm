@@ -55,7 +55,7 @@ describe("cancelReasonOf", () => {
   it("falls back to the default rather than persisting a DOMException's shape", () => {
     const c = new AbortController();
     c.abort(); // reason defaults to an AbortError DOMException
-    // Either the exception's own message or the default — never "[object Object]".
+    // Either the exception's own message or the default. Never "[object Object]".
     expect(cancelReasonOf(c.signal)).not.toContain("[object");
     expect(cancelReasonOf(c.signal).length).toBeGreaterThan(0);
   });

@@ -17,7 +17,7 @@ import { jsonResponse } from "../server.ts";
  * needing a founder decision".
  */
 
-/** The match method rendered as a sentence, never the bare number — per the card. */
+/** The match method rendered as a sentence, never the bare number: per the card. */
 function matchReasonSentence(row: MeetingRecord): string | null {
   switch (row.match_method) {
     case "name_domain":
@@ -46,7 +46,7 @@ function toView(
       const parsed = JSON.parse(row.external_attendees_json) as unknown;
       if (Array.isArray(parsed)) externalAttendees = parsed.filter((x) => typeof x === "string");
     } catch {
-      // corrupt row — render with no attendee list rather than throwing the whole page.
+      // corrupt row: render with no attendee list rather than throwing the whole page.
     }
   }
   return {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { extractInvocation, toKebabCase } from "../src/dispatch.ts";
 
 /**
- * Structural fakes for commander's Command — extractInvocation only touches
+ * Structural fakes for commander's Command: extractInvocation only touches
  * name(), opts(), parent, and getOptionValueSource(), so we don't need a real
  * commander program (and can pin option sources precisely).
  */

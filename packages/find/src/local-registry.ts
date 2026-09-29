@@ -21,19 +21,19 @@ import type { FinderResult, RunOpts } from "./_types.ts";
  * Census (trucking/freight). The registries are the DISCOVERY step and stay
  * free: they are the only sources that carry a licence / enumeration /
  * registration date, which is what routes a row to `new-business` rather
- * than `free-pilot`. socrata-license/nppes give a business name + address but
- * no email — every such candidate resolves its domain via the SDK's
+ * than `free-pilot`. Socrata-license/nppes give a business name + address but
+ * no email. Every such candidate resolves its domain via the SDK's
  * `localResolve` (name + the address the registry already handed us →
  * domain, phone, operating status) before falling through to the normal
  * `resolveVerifyEnrichQualify` spine, exactly like `accelerator-batch`'s
- * yc-oss records resolve a founder name before `findEmail`. fmcsa carries an
- * email ON the record — like `gov-solicitation` carries a published contact,
+ * yc-oss records resolve a founder name before `findEmail`. Fmcsa carries an
+ * email ON the record: like `gov-solicitation` carries a published contact,
  * this skips resolution and `findEmail`/`verifyEmail` entirely rather than
  * paying to re-derive what the record already answers
  * (`RegistryRecord.knownEmail`).
  *
  * Recent-issue routing: a record inside `freshnessDays` of "now" is the
- * main-street equivalent of `post-funding` — nothing to rip out — and goes
+ * main-street equivalent of `post-funding` (nothing to rip out) and goes
  * to `new-business`; everything else goes to `free-pilot`. Same two-way
  * split `github-topics` does between stack-consolidation/competitor-switch.
  */
@@ -48,11 +48,11 @@ export interface LocalRegistryFinderOpts extends RunOpts {
   licenseTypes?: string[];
   /** nppes source config. */
   taxonomies?: string[];
-  /** Two-letter state codes — shared by nppes (crossed with taxonomies) and fmcsa (filters phy_state). */
+  /** Two-letter state codes: shared by nppes (crossed with taxonomies) and fmcsa (filters phy_state). */
   states?: string[];
   /** fmcsa source config. Entity type filter: carrier / broker / freight-forwarder. */
   entityTypes?: FmcsaEntityType[];
-  /** fmcsa source config. Fleet-size band — the 10-100 power-unit band is who actually buys software. */
+  /** fmcsa source config. Fleet-size band. The 10-100 power-unit band is who actually buys software. */
   minPowerUnits?: number;
   maxPowerUnits?: number;
   /** Discovery window against the issue/enumeration/registration date. Default 60. */
@@ -65,14 +65,14 @@ export interface LocalRegistryFinderOpts extends RunOpts {
   concurrency?: number;
 }
 
-/** Payload shape enqueued for both `new-business` and `free-pilot` — the plays that consume it ship in #462. */
+/** Payload shape enqueued for both `new-business` and `free-pilot`. The plays that consume it ship in #462. */
 export interface LocalRegistryTarget {
   name: string;
   email: string;
   company: string;
   source: "socrata-license" | "nppes" | "fmcsa";
   sourceLabel: string;
-  /** ISO issue/enumeration/registration date this record matched on — the trigger evidence. */
+  /** ISO issue/enumeration/registration date this record matched on. The trigger evidence. */
   matchedDateIso: string;
   yourEdge: string;
   /**
@@ -84,13 +84,13 @@ export interface LocalRegistryTarget {
    */
   businessType: string;
   licenseType: string;
-  /** "3 days ago", "2 weeks ago" — computed at enqueue time from `matchedDateIso`. */
+  /** "3 days ago", "2 weeks ago": computed at enqueue time from `matchedDateIso`. */
   issuedAgo: string;
   /**
    * nppes only. Carried through from `RegistryRecord.subjectType` so a
    * `/queue` reviewer sees the same NPI-1 (individual) vs NPI-2
    * (organization) signal that explains why a "company" row shows a
-   * person's name — see `_registry-sources.ts`'s `RegistryRecord` doc.
+   * person's name: see `_registry-sources.ts`'s `RegistryRecord` doc.
    */
   subjectType?: "individual" | "organization";
   /**
@@ -111,18 +111,18 @@ export interface LocalRegistryTarget {
  * separator), then collapse every remaining run of non-letter/non-number
  * characters (whitespace AND punctuation like "&") to a single hyphen
  * separator. `\p{L}`/`\p{N}` (not the old `a-z0-9` ASCII class) keep
- * non-Latin scripts intact — a Chinese or Cyrillic business name must not
+ * non-Latin scripts intact. A Chinese or Cyrillic business name must not
  * collapse to the same empty string as every other non-ASCII name in the
  * run. Preserving a boundary at every OTHER punctuation run also keeps
  * "A&B Plumbing" distinct from "AB Plumbing" ("a-b-plumbing" vs
- * "ab-plumbing") — stripping "&" outright collapsed both to "ab-plumbing"
+ * "ab-plumbing"): stripping "&" outright collapsed both to "ab-plumbing"
  * and silently dropped one as a duplicate of the other.
  *
  * Apostrophes are the one punctuation mark stripped WITHOUT a separator:
  * business names are spelled inconsistently across sources with vs.
  * without the possessive apostrophe ("Joe's Pizza" / "Joes Pizza",
  * "McDonald's" / "McDonalds"), and those variants must still collide to
- * the same dedupe key — both same-run cross-source dedup and the cross-run
+ * the same dedupe key. Both same-run cross-source dedup and the cross-run
  * ledger.isQueueDuplicate() check key off this slug, so a punctuation-only
  * spelling difference must not be treated as a new business.
  */
@@ -134,7 +134,7 @@ function slugify(s: string): string {
       .replace(/['’`]/g, "")
       .replace(/[^\p{L}\p{N}]+/gu, "-")
       // Single `-`, not `-+`: the collapse above already guarantees no run of
-      // dashes survives, so the quantifier can never match more than one — and
+      // dashes survives, so the quantifier can never match more than one, and
       // `-+$` is a polynomial-ReDoS shape on a long dash string (CodeQL
       // js/polynomial-redos, flagged on this PR). Same output, no backtracking.
       .replace(/^-|-$/g, "")
@@ -142,10 +142,10 @@ function slugify(s: string): string {
 }
 
 /** Stable within-run + cross-run dedupe key: name slug + state + city, source-agnostic.
- * Cross-source dedup is the stated intent (see the run-level dedupe below) —
+ * Cross-source dedup is the stated intent (see the run-level dedupe below):
  * a business appearing in both socrata-license and nppes must collapse to
  * one candidate, not be double-enriched and potentially double-queued. City
- * is included (address is not — its formatting varies too much between a
+ * is included (address is not: its formatting varies too much between a
  * Socrata portal and NPPES to dedupe reliably) so two genuinely distinct
  * same-name businesses in a state-less or shared-state/city record don't
  * collapse into one candidate.
@@ -163,10 +163,10 @@ export function dedupeKeyFor(record: RegistryRecord): string {
  * DENTAL ORGANIZATION") or, for an NPI-1, the dentist's own name, while the
  * places index carries the TRADE name on the door ("Smiles at Telfair Family
  * and Cosmetic Dentistry"). Measured on real rows 2026-09-07: every miss came
- * back at 0.37–0.59 with a `closest_match` at the identical street number
+ * back at 0.37-0.59 with a `closest_match` at the identical street number
  * and postal code. The address is the registry's own ground truth, so a
  * below-threshold candidate is accepted when the street number AND the
- * 5-digit postal code both agree — nothing looser, since a same-street
+ * 5-digit postal code both agree: nothing looser, since a same-street
  * neighbour is exactly the wrong business to email.
  */
 export function pickResolvedBusiness(
@@ -222,7 +222,7 @@ export function licenseTypeFor(record: RegistryRecord): string {
 }
 
 /**
- * "today", "3 days ago", "2 weeks ago", "3 months ago" — the `issuedAgo` the
+ * "today", "3 days ago", "2 weeks ago", "3 months ago". The `issuedAgo` the
  * new-business prompt reads. Computed when the row is enqueued, so a row
  * that sits in /queue for a while reads slightly fresher than it is; the
  * matched date itself is on the payload for anyone who needs the exact day.
@@ -278,7 +278,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
 
   // Step 1: fetch every configured source. Per-portal / per-taxonomy×state
   // isolation lives INSIDE each RegistrySource's own fetch (mirrors
-  // accelerator-batch's per-cohort isolation) — a dead portal or an empty
+  // accelerator-batch's per-cohort isolation). A dead portal or an empty
   // taxonomy×state pair logs and continues; this run only halts when EVERY
   // configured source across every adapter returns 0.
   const sourceResults = await Promise.all(
@@ -310,7 +310,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
   }
   result.perSource = perSource;
 
-  // Dedupe across sources within this run before touching the queue —
+  // Dedupe across sources within this run before touching the queue:
   // NY state + NYC-city portals commonly double-publish the same license.
   // Keep the record with the LATEST matchedDateIso, not just the first one
   // seen: source fetch order (socrata before nppes, see REGISTRY_SOURCES)
@@ -343,8 +343,8 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
   }
 
   let halted = false;
-  // Reserve a slot the moment a worker commits to processing a record —
-  // BEFORE its own paid calls run — not after. Checking `result.enqueued`
+  // Reserve a slot the moment a worker commits to processing a record:
+  // BEFORE its own paid calls run, not after. Checking `result.enqueued`
   // (mutated only once a candidate fully clears every gate) lets multiple
   // in-flight workers all see it below `limit` and all proceed: with
   // `limit:1, concurrency:3`, all three could enqueue before the first one's
@@ -374,7 +374,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       ledger.isQueueDuplicate(FREE_PILOT_PLAY, dedupeKey)
     ) {
       result.droppedDuplicate++;
-      // No paid call ran for this record — release the slot instead of
+      // No paid call ran for this record: release the slot instead of
       // spending it, or a tick full of prior-run duplicates (the common
       // steady-state case: isQueueDuplicate matches rows from every past
       // run) starves the fresh candidates behind them (finding
@@ -388,7 +388,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       return;
     }
 
-    // ICP filter — cheapest gate first, BEFORE any paid call (enrichCompany
+    // ICP filter: cheapest gate first, BEFORE any paid call (enrichCompany
     // included), as every sibling finder does.
     const filter = await icpFilter({
       icp,
@@ -399,7 +399,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       },
     });
     if (filter.match === null) {
-      // Transient classifier failure — drop without persisting. A rejection
+      // Transient classifier failure: drop without persisting. A rejection
       // would burn the dedupeKey forever (isQueueDuplicate ignores status).
       result.droppedEnrichment++;
       return;
@@ -417,13 +417,13 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       return;
     }
 
-    // Resolve a domain — the registries carry a name and address, never a
+    // Resolve a domain. The registries carry a name and address, never a
     // website. `localResolve` is built for exactly that pair: name plus the
     // locating fields the record already has → domain, phone and whether the
     // place is still operating (which is also what the health-inspection
     // lane used to exist to confirm). fmcsa is the one source that already
     // carries a published email on the record (like gov-solicitation's
-    // contracting-officer contact) — paying to re-derive a domain the record
+    // contracting-officer contact): paying to re-derive a domain the record
     // never needed is exactly the spend to skip.
     let domain: string | null = null;
     let resolvedPhone: string | null = null;
@@ -462,12 +462,12 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
 
     // Recheck the cap after localResolve's paid call and before
     // resolveVerifyEnrichQualify's own paid calls (findEmail/verifyEmail/
-    // enrich/qualify — up to 4 more). The top-of-turn check above only
+    // enrich/qualify: up to 4 more). The top-of-turn check above only
     // guards entry to a candidate's turn; concurrent workers can each pass
     // it at the same accumulated cost and then all incur enrichCompany +
     // contact-resolution spend before the next candidate's pre-check
     // catches it (finding PRRT_kwDOSKzrBs6exPH4). This narrows, not
-    // eliminates, the overshoot window — the alternative (a hard
+    // eliminates, the overshoot window. The alternative (a hard
     // reservation) would require threading a lock through every paid call
     // this spine makes, a bigger change than a correction round justifies.
     if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
@@ -478,15 +478,15 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
 
     const contact = await resolveVerifyEnrichQualify({
       playName,
-      // No owner/operator name in any registry — findEmail resolves a
+      // No owner/operator name in any registry: findEmail resolves a
       // company-level address off the domain alone (fullName is optional on
       // the SDK call; allowMissingFullName opts into that instead of the
       // prescreen's default "no name = probably a bad extraction" rejection).
       fullName: null,
       allowMissingFullName: true,
       ...(record.knownEmail ? { knownEmail: record.knownEmail } : { companyDomain: domain }),
-      // fmcsa's knownEmail is USDOT's own on-file carrier contact address —
-      // a federal registration field, not a scraped/guessed one — so paying
+      // fmcsa's knownEmail is USDOT's own on-file carrier contact address:
+      // a federal registration field, not a scraped/guessed one, so paying
       // to re-verify what the record already asserts is exactly the spend
       // this card says to skip (mirrors knownEmail already skipping
       // findEmail above). Has no effect for socrata-license/nppes/
@@ -525,7 +525,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
     // (icpFilter/enrichCompany/resolveVerifyEnrichQualify), so with
     // concurrency > 1 multiple workers can pass that check together and
     // each still be racing toward enqueueScoredTarget when `limit` is
-    // small (e.g. 1) — only the first to reach this point should win.
+    // small (e.g. 1). Only the first to reach this point should win.
     if (result.enqueued >= limit) {
       halted = true;
       return;

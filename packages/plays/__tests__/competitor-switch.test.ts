@@ -101,7 +101,7 @@ afterEach(() => {
 describe("runCompetitorSwitch — browserTask gating", () => {
   it("SKIPS browserTask when evidenceText is supplied (even if evidenceUrl is set too)", async () => {
     // This is exactly what github-topics enqueues: BOTH fields populated.
-    // Pre-fix the play would scrape — wasting 30s-3min on a code page that
+    // Pre-fix the play would scrape: wasting 30s-3min on a code page that
     // doesn't contain "pain points" or user complaints. Post-fix: trust the
     // text we already built from the manifest scan.
     await runCompetitorSwitch({
@@ -281,7 +281,7 @@ describe("runCompetitorSwitch — browserTask gating", () => {
       ],
     });
     // Enrich now runs on previews too (cached by email) so the reviewed draft
-    // is personalized — but the heavy browser scrape and the send stay gated.
+    // is personalized, but the heavy browser scrape and the send stay gated.
     expect(calls.enrichProfile).toBe(1);
     expect(calls.browserTask).toBe(0);
     expect(calls.sendEmail).toBe(0);

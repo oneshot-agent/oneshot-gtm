@@ -17,12 +17,12 @@ import type { FinderResult, RunOpts } from "./_types.ts";
 const PLAY_NAME = "civic-agenda";
 const SOURCE = "find:civic-agenda";
 /**
- * Rough per-call LLM cost for the `icpFilter` classifier — same estimate
+ * Rough per-call LLM cost for the `icpFilter` classifier: same estimate
  * documented (but never applied) at job-change.ts's and show-hn.ts's call
  * sites. Those finders have a real downstream paid call to fall back on, but
  * this finder's only network call after icpFilter is the free, keyless
  * Legistar `OfficeRecords` contact lookup (see resolveAndEnqueueAgendaItem's
- * docstring) — icpFilter is the ONLY spend source here. Leaving it out of
+ * docstring): icpFilter is the ONLY spend source here. Leaving it out of
  * `result.costUsd` left `opts.maxCostUsd` fully inert: costUsd never left 0,
  * so a configured cap could never halt a run regardless of how many paid
  * classifier calls it made.
@@ -68,13 +68,13 @@ function dedupeKeyFor(candidate: AgendaCandidate): string {
 /**
  * Resolve + enqueue one already keyword-and-ICP-gated agenda item. Shared by
  * the live run loop and the outage retry handler. The only network call is
- * the plain (keyless) Legistar `OfficeRecords` lookup — no OneShot SDK spend,
+ * the plain (keyless) Legistar `OfficeRecords` lookup: no OneShot SDK spend,
  * since the body itself publishes the contact.
  */
 async function resolveAndEnqueueAgendaItem(
   candidate: AgendaCandidate,
   yourEdge: string,
-  /** The company-gate reason from the caller's `icpFilter` — absent on a pending-retry replay. */
+  /** The company-gate reason from the caller's `icpFilter`: absent on a pending-retry replay. */
   fitReason?: string | null,
 ): Promise<"enqueued" | "duplicate" | "dropped" | "platform-error"> {
   const ledger = getLedger();
@@ -82,13 +82,13 @@ async function resolveAndEnqueueAgendaItem(
   const outcome = await fetchBodyContact(candidate.slug, candidate.event.eventBodyId);
   if (!outcome.ok) {
     // Genuine platform error (network/5xx/429) on the free Legistar contact
-    // lookup — retryable, unlike a body that simply publishes no email.
+    // lookup: retryable, unlike a body that simply publishes no email.
     return "platform-error";
   }
   const contact = outcome.contact;
   if (!contact) {
     // The body really does publish no member email (or a non-retryable 4xx
-    // like an unknown body id) — not a fetch failure. Treat as a drop, not
+    // like an unknown body id), not a fetch failure. Treat as a drop, not
     // a retry: retrying a body with no email will never resolve, and a run
     // that persisted every silent body would grow the pending table forever.
     return "dropped";
@@ -96,7 +96,7 @@ async function resolveAndEnqueueAgendaItem(
   // Cross-play + same-contact email dedupe, AFTER the contact is known:
   // two distinct agenda items from the same body (different item-level
   // dedupeKeys) resolve to the identical office-holder contact, so the
-  // item-scoped `dedupeKey` alone can't catch the second one — same
+  // item-scoped `dedupeKey` alone can't catch the second one: same
   // reasoning as gov-solicitation.ts's `resolveAndEnqueueNotice`.
   if (isDuplicate({ playName: "civic-pilot", dedupeKey, prospectEmail: contact.email })) {
     return "duplicate";
@@ -172,7 +172,7 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
     limit,
   });
 
-  // Phase 1: discover events per city, then agenda items per event —
+  // Phase 1: discover events per city, then agenda items per event:
   // FREE keyword gate on the title before anything else, per city so one
   // dead Legistar client doesn't starve the rest.
   const gated: AgendaCandidate[] = [];
@@ -207,11 +207,11 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
     return result;
   }
 
-  // Phase 2: one paid LLM relevance call per keyword-surviving title — the
+  // Phase 2: one paid LLM relevance call per keyword-surviving title. The
   // same pre-spend discipline as luma.ts's event-level icpFilter gate.
   // Bounded to the first `limit` gated candidates: `limit` is a cap on
   // candidates CONSIDERED (and therefore on paid icpFilter calls), not on
-  // successful enqueues — duplicates, rejections, contactless bodies, and
+  // successful enqueues: duplicates, rejections, contactless bodies, and
   // classifier failures don't consume it, so an unbounded `gated` array
   // could otherwise trigger icpFilter for every keyword match regardless of
   // how small `limit` is.
@@ -227,7 +227,7 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
     }
 
     // Compare the PROSPECTIVE cost (current spend + this candidate's paid
-    // icpFilter call, if one will actually happen) against the cap — not
+    // icpFilter call, if one will actually happen) against the cap, not
     // just the spend accrued so far. icpFilter is the only cost source in
     // this finder, and it's free (no LLM call) when `icp` is null, so the
     // estimate is 0 in that case. Checking post-hoc spend alone would let a
@@ -253,11 +253,11 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
       },
     });
     // icpFilter is a pass-through with no LLM call when no ICP is configured
-    // (see _filter.ts) — only count spend once an ICP is actually set, or a
+    // (see _filter.ts). Only count spend once an ICP is actually set, or a
     // no-ICP dry sweep would falsely trip maxCostUsd.
     if (icp) result.costUsd += ICP_FILTER_COST_ESTIMATE_USD;
     if (filter.match === null) {
-      // Transient classifier failure — drop without persisting (same
+      // Transient classifier failure: drop without persisting (same
       // reasoning as every other finder's icpFilter call site).
       result.droppedEnrichment++;
       continue;
@@ -290,7 +290,7 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
     if (outcome === "enqueued") result.enqueued++;
     else if (outcome === "duplicate") result.droppedDuplicate++;
     else if (outcome === "platform-error") {
-      // Backend outage on the free Legistar contact lookup — the meeting is
+      // Backend outage on the free Legistar contact lookup. The meeting is
       // heard and gone, so a re-scan can't recover this item. Persist.
       persistPending({
         playName: PLAY_NAME,
@@ -316,7 +316,7 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
 
 // Outage retry: re-run the contact lookup + enqueue for a persisted agenda
 // item. The meeting itself has aged out of "upcoming" by the time a retry
-// fires, but the office-holder contact and the ICP verdict already reached —
+// fires, but the office-holder contact and the ICP verdict already reached:
 // this is purely finishing a resolution the backend, not the source, failed.
 registerPendingRetry(PLAY_NAME, async (raw) => {
   const { candidate, yourEdge, fitReason } = raw as {

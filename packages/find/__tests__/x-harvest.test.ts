@@ -50,7 +50,7 @@ const engine = (impl: typeof fetch) =>
     knobs: KNOBS,
   });
 
-// Most specific paths first — the fake matches by substring.
+// Most specific paths first. The fake matches by substring.
 const routes = {
   "/retweeted_by": { data: [userJson("alice"), userJson("bob")] },
   "/quote_tweets": {

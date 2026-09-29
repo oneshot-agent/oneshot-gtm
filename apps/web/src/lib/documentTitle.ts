@@ -15,13 +15,13 @@ export const SUFFIX = "oneshot·gtm";
 /**
  * `Queue · sdk · oneshot·gtm`.
  *
- * The workspace segment is dropped for `default` and for the demo — matching
+ * The workspace segment is dropped for `default` and for the demo: matching
  * WorkspaceSwitcher's dot, which also treats the default install as the
  * unmarked case rather than colouring it.
  */
 export function composeTitle(page: string | null, workspace: string | null): string {
   // Only the suffix is de-duped. A workspace genuinely named "Queue" still has
-  // to appear beside the Queue page — collapsing them hides exactly the
+  // to appear beside the Queue page: collapsing them hides exactly the
   // identity this segment exists to carry.
   const parts = [page?.trim(), workspace?.trim()].filter(
     (p): p is string => !!p && p !== "default" && p !== SUFFIX,
@@ -33,7 +33,7 @@ export function composeTitle(page: string | null, workspace: string | null): str
  * The deepest matched route's declared title.
  *
  * A route may declare a function instead of a string when the useful title is
- * in the params — `/run/$playName` wants the play, not the word "Run". Keeping
+ * in the params: `/run/$playName` wants the play, not the word "Run". Keeping
  * that in the same field means one mechanism, not two.
  */
 export function resolveRouteTitle(

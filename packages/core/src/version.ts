@@ -6,10 +6,9 @@ import { fileURLToPath } from "node:url";
  * Read the `version` from the caller's package.json so `--version` output and
  * the telemetry `version` field can't drift from the published release.
  *
- * Pass `import.meta.url`. The assumption — true for both current callers
- * (`apps/cli/src/index.ts`, `apps/server/src/telemetry.ts`) — is that the
- * calling file sits one directory under its package root, so `../package.json`
- * relative to the file's directory is the package manifest. Any failure
+ * Pass `import.meta.url` from a file one directory below its package root,
+ * as apps/cli/src/index.ts and apps/server/src/telemetry.ts do. The manifest
+ * is read from ../package.json relative to that file's directory. Any failure
  * (unexpected layout, unreadable file, missing field) falls back to "0.0.0"
  * rather than throwing.
  */

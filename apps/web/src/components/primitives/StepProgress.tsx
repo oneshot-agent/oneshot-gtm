@@ -1,7 +1,7 @@
 import { cn } from "../../lib/cn.ts";
 
 /**
- * A compact dot progress indicator — one dot per cadence step, filled
+ * A compact dot progress indicator: one dot per cadence step, filled
  * for completed and outlined for pending. Used in the cadences table
  * to show how far along a given prospect is in their sequence.
  *
@@ -39,7 +39,7 @@ export function StepProgress({
     >
       {dots.map((done, i) => (
         <span
-          // Position IS the identity for a fixed-length progress bar — there
+          // Position IS the identity for a fixed-length progress bar: there
           // is no other unique data per dot. Index keys are correct here.
           // oxlint-disable-next-line react/no-array-index-key
           key={i}

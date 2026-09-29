@@ -2,12 +2,12 @@
  * Helpers for the editable trigger-interval control on /queue.
  *
  * The backend already honors a `config.intervalMs` override per trigger
- * (`effectiveIntervalMs` in packages/find/src/registry.ts — min 60s, invalid
+ * (`effectiveIntervalMs` in packages/find/src/registry.ts: min 60s, invalid
  * values fall back to the spec default). These helpers only shape what the UI
  * writes into the trigger's stored config.
  */
 
-/** Backend floor — `effectiveIntervalMs` ignores overrides below this. */
+/** Backend floor: `effectiveIntervalMs` ignores overrides below this. */
 export const MIN_INTERVAL_MS = 60_000;
 
 const HOUR_MS = 3600_000;
@@ -29,7 +29,7 @@ export const INTERVAL_PRESETS_MS = [
 
 /**
  * Merge an interval override into a trigger's stored config WITHOUT clobbering
- * other keys (topics, cities, …) — `setTriggerConfig` replaces config_json
+ * other keys (topics, cities, …): `setTriggerConfig` replaces config_json
  * wholesale, so the caller must send the full object back. `null` removes the
  * override (trigger reverts to its registry default). Values are floored and
  * clamped to the backend's 60s minimum so the UI can never write a value the

@@ -3,14 +3,14 @@
  *
  * This gate is load-bearing, not a tidiness check. `apps/server/src/api/
  * _reply-research.ts` treats ANY non-empty `prospects.dossier_json` as a free
- * Tier-1 hit and skips paid research entirely — so storing a dossier that says
+ * Tier-1 hit and skips paid research entirely, so storing a dossier that says
  * nothing leaves the reply drafter WORSE off than an empty column, because it
  * suppresses the enrich/webRead/profile-URL tiers that would have found
  * something. Two shapes reach this from real data and both look non-empty:
  *
  *   - a failed enrich:  {"status":"failed","profile":null,"cost":0}
  *   - a person lookup that found nobody: every key present, every value null,
- *     plus summary "<addr> is a role based email address" — a fact about the
+ *     plus summary "<addr> is a role based email address". A fact about the
  *     MAILBOX, not the person.
  */
 
@@ -33,7 +33,7 @@ const SIGNAL_FIELDS = [
  * would still suppress the paid tiers.
  */
 
-/** The provider's placeholder summary for a shared inbox — not role text. */
+/** The provider's placeholder summary for a shared inbox, not role text. */
 const ROLE_MAILBOX = /is a role based email address/i;
 
 /**
@@ -41,7 +41,7 @@ const ROLE_MAILBOX = /is a role based email address/i;
  * A Luma user page for someone who hosts no events is the common case: the
  * read succeeds, the excerpt is a few hundred non-empty characters, and every
  * one of them is chrome. Left unchecked it satisfies the `excerpt` test below,
- * marks the dossier as signal, and suppresses the paid reply-research tiers —
+ * marks the dossier as signal, and suppresses the paid reply-research tiers:
  * the exact failure this file exists to prevent.
  *
  * Kept deliberately narrow: only phrases a page shows INSTEAD of content.
@@ -142,7 +142,7 @@ export function hasPersonSignal(stored: string | null | undefined): boolean {
   try {
     parsed = JSON.parse(stored);
   } catch {
-    // Prose a play assembled — genuine person context (see hasDossierSignal).
+    // Prose a play assembled: genuine person context (see hasDossierSignal).
     return true;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -168,7 +168,7 @@ function substantive(scope: unknown): boolean {
 
 /**
  * True when `value` carries something worth storing. Accepts the parsed
- * payload or the serialized string a play assembled — prose that isn't JSON is
+ * payload or the serialized string a play assembled: prose that isn't JSON is
  * real dossier text and always counts.
  */
 export function hasDossierSignal(value: unknown): boolean {
@@ -183,7 +183,7 @@ export function hasDossierSignal(value: unknown): boolean {
     try {
       return hasDossierSignal(JSON.parse(text));
     } catch {
-      // Truncated JSON (dossiers are sliced) — treat as prose rather than
+      // Truncated JSON (dossiers are sliced): treat as prose rather than
       // discarding context we already paid for.
       return true;
     }
@@ -202,7 +202,7 @@ export function hasDossierSignal(value: unknown): boolean {
       const excerpt = (source as Record<string, unknown>)["excerpt"];
       if (typeof excerpt !== "string") return false;
       const trimmed = excerpt.trim();
-      // Non-empty is not the same as informative — a profile page's own
+      // Non-empty is not the same as informative. A profile page's own
       // "Nothing Here, Yet" is chrome, and counting it suppresses paid research.
       return trimmed !== "" && !isEmptyProfileExcerpt(trimmed);
     });
@@ -270,7 +270,7 @@ export interface PersonResearchDossier {
   organizations: PersonResearchOrganization[];
   bio?: string;
   location?: string;
-  /** `best_work_email` — informational; the stored address is never swapped. */
+  /** `best_work_email`: informational; the stored address is never swapped. */
   workEmail?: string;
   /**
    * The provider's `linkedin_url` for this person, canonical `https://www.linkedin.com/in/<slug>`.

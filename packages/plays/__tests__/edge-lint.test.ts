@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { describeEdgeWarning, factTermsFrom, lintEdge } from "../src/_edge-lint.ts";
 
-// Issue #585: a warn-tier read of the edge. Never a refusal — "x" must lint
+// Issue #585: a warn-tier read of the edge. Never a refusal: "x" must lint
 // to warnings, not throw, because it is a fixture across the suite.
 
 const GOOD = [

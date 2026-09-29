@@ -32,7 +32,7 @@ describe("recentIcpDecisions", () => {
   it("returns the newest reviewed labels and keeps sent rows as approvals", () => {
     // Human rejections happen post-enqueue via the /queue route (insert-time
     // rejections are always machine gates and are excluded structurally
-    // since v26 — decision='auto_reject').
+    // since v26: decision='auto_reject').
     const rejected = ledger.enqueueTarget({
       playName: "show-hn",
       payload: { title: "Wine meetup" },
@@ -177,7 +177,7 @@ describe("recordReceipt — cost handling", () => {
   });
 
   it("rejects non-finite costUsd (Infinity / NaN) as NULL", () => {
-    // Number.isFinite guard — undefined / Infinity / NaN never get coerced
+    // Number.isFinite guard: undefined / Infinity / NaN never get coerced
     // into a number that distorts CAC math.
     const id1 = ledger.recordReceipt({
       playName: "p",
@@ -248,7 +248,7 @@ describe("prospectHasFirstTouch (cross-play first-touch guard)", () => {
     const pid = ledger.upsertProspect({ name: "P", email: "p@x.com", source: "t" });
     expect(ledger.prospectHasFirstTouch(pid)).toBe(false);
 
-    // step-1 only (a follow-up with no recorded original) — still false.
+    // step-1 only (a follow-up with no recorded original): still false.
     ledger.recordSequenceEvent({
       prospectId: pid,
       playName: "stack-consolidation",
@@ -258,7 +258,7 @@ describe("prospectHasFirstTouch (cross-play first-touch guard)", () => {
     });
     expect(ledger.prospectHasFirstTouch(pid)).toBe(false);
 
-    // step-0 but bounced — status filter excludes it.
+    // step-0 but bounced: status filter excludes it.
     const bounced = ledger.upsertProspect({ name: "B", email: "b@x.com", source: "t" });
     ledger.recordSequenceEvent({
       prospectId: bounced,
@@ -269,7 +269,7 @@ describe("prospectHasFirstTouch (cross-play first-touch guard)", () => {
     });
     expect(ledger.prospectHasFirstTouch(bounced)).toBe(false);
 
-    // step-0 sent under ANY play — now true (cross-play: different play name).
+    // step-0 sent under ANY play: now true (cross-play: different play name).
     ledger.recordSequenceEvent({
       prospectId: pid,
       playName: "show-hn",
@@ -366,7 +366,7 @@ describe("setQueueStatus refuses to re-open a sent row (#561)", () => {
     })!;
     ledger.setQueueStatus({ id, status: "sent" });
     expect(() => ledger.setQueueStatus({ id, status: "approved" })).toThrow(/already sent/);
-    // Refused — the row is still sent, not silently re-approved.
+    // Refused. The row is still sent, not silently re-approved.
     expect(ledger.getQueueRow(id)?.status).toBe("sent");
   });
 
@@ -397,7 +397,7 @@ describe("setQueueStatus refuses to re-open a sent row (#561)", () => {
   it("guards on sent_at alone, even if a row's status were somehow desynced", () => {
     // Belt-and-braces: the guard checks `sent_at IS NOT NULL` independently
     // of `status`, so a hypothetical desynced row (sent_at set, status not
-    // yet 'sent') is still refused — not just the common case.
+    // yet 'sent') is still refused, not just the common case.
     const id = ledger.enqueueTarget({
       playName: "show-hn",
       payload: {},
@@ -503,7 +503,7 @@ describe("listQueue({ ids })", () => {
 
 describe("expirePendingOlderThan", () => {
   it("flips only pending rows older than the cutoff", () => {
-    // Fresh pending row — should NOT be expired.
+    // Fresh pending row: should NOT be expired.
     const freshId = ledger.enqueueTarget({
       playName: "show-hn",
       payload: {},
@@ -511,7 +511,7 @@ describe("expirePendingOlderThan", () => {
       source: "x",
     });
 
-    // Approved row — should NOT be expired regardless of age.
+    // Approved row: should NOT be expired regardless of age.
     const approvedId = ledger.enqueueTarget({
       playName: "show-hn",
       payload: {},
@@ -520,7 +520,7 @@ describe("expirePendingOlderThan", () => {
     });
     ledger.setQueueStatus({ id: approvedId!, status: "approved" });
 
-    // 100-day-old pending row — should be expired. Backdate via raw sql.
+    // 100-day-old pending row: should be expired. Backdate via raw sql.
     const oldId = ledger.enqueueTarget({
       playName: "show-hn",
       payload: {},
@@ -579,7 +579,7 @@ describe("dequeueApproved atomic lease", () => {
   it("an expired claim (lease elapsed) becomes re-claimable", () => {
     const id = enqueueApproved("a");
     ledger.dequeueApproved({ playName: "show-hn", limit: 1 });
-    // Backdate the claim to 20 min ago — older than the 15 min default lease.
+    // Backdate the claim to 20 min ago: older than the 15 min default lease.
     const stale = new Date(Date.now() - 20 * 60 * 1000).toISOString();
     (ledger as unknown as { db: { prepare(s: string): { run(...a: unknown[]): unknown } } }).db
       .prepare("UPDATE target_queue SET drain_claimed_at = ? WHERE id = ?")
@@ -993,7 +993,7 @@ describe("triggers listing", () => {
 describe("addColumnIfMissing identifier guards", () => {
   it("rejects unsafe table names", () => {
     // Defense-in-depth guard now lives in ledger-schema.ts, exercised
-    // directly against a throwaway in-memory database — the identifier
+    // directly against a throwaway in-memory database. The identifier
     // check runs before any table lookup, so no schema setup is needed.
     const db = new Database(":memory:");
     expect(() => addColumnIfMissing(db, "receipts; DROP TABLE receipts", "x", "TEXT")).toThrow(

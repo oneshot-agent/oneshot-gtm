@@ -1,5 +1,5 @@
 /**
- * twitterapi.io engine — the opt-in alternative, ~55x cheaper than the
+ * twitterapi.io engine. The opt-in alternative, ~55x cheaper than the
  * first-party API ($0.18/1k user profiles vs $0.010 each) and it returns a
  * superset of the fields we use, including `canDm` and `isAutomated`.
  *
@@ -23,12 +23,12 @@ const BASE = "https://api.twitterapi.io";
  * `canDm` reads as "accepts DMs from anyone" rather than X's per-relationship
  * `receives_your_dm`. For cold outreach to strangers that is the more useful
  * question; measured against 26 handles the X engine had answered for, the two
- * agreed 26/26 — but payloads still carry the engine name to keep them apart.
+ * agreed 26/26, but payloads still carry the engine name to keep them apart.
  */
 export function mapTwitterApiIoUser(u: any): XUser {
   // The retweeters endpoint returns a *reduced* user (no entities, no
   // isAutomated, `url` left as a raw t.co). The batch/profile endpoints return
-  // the full object with `entities` at the top level — and the docs show it
+  // the full object with `entities` at the top level, and the docs show it
   // nested under `profile_bio`. Read all three shapes.
   const entities = u.entities ?? u.profile_bio?.entities ?? {};
   const links = [...(entities.url?.urls ?? []), ...(entities.description?.urls ?? [])]
@@ -89,7 +89,7 @@ export class TwitterApiIoEngine implements HarvestEngine {
     });
     const body = await res.text();
     if (!res.ok || /credits? is not enough/i.test(body)) {
-      // Out of credits is a stop, not a crash — the partial harvest still writes.
+      // Out of credits is a stop, not a crash. The partial harvest still writes.
       if (res.status === 401 || res.status === 402 || /credits/i.test(body)) {
         throw new BudgetExhausted(`twitterapi.io ${path}: ${body.slice(0, 160)}`);
       }
@@ -127,7 +127,7 @@ export class TwitterApiIoEngine implements HarvestEngine {
   /**
    * Reduced rows from `retweeters` carry no links and no bot flag, so the
    * founder lane and the GitHub gate can never fire on them. Re-fetch the full
-   * profile for candidates that survived the cheap drops — a few hundred users
+   * profile for candidates that survived the cheap drops. A few hundred users
    * at $0.00018 each, cents, and only for people still in the running.
    */
   async enrich(users: XUser[]): Promise<void> {
@@ -199,7 +199,7 @@ export class TwitterApiIoEngine implements HarvestEngine {
       this.meter.charge({ posts: rows.length, users: rows.length });
       for (const t of rows) {
         const author = t.author ?? t.user;
-        // Billed for the quote post anyway — keep its text for THEIR_QUOTE.
+        // Billed for the quote post anyway. Keep its text for THEIR_QUOTE.
         if (author) {
           const mapped = mapTwitterApiIoUser(author);
           out.push(t.text ? { ...mapped, quoteText: t.text } : mapped);

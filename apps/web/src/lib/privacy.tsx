@@ -3,7 +3,7 @@ import { applyMask, type PiiKind } from "./mask.ts";
 import { useLocalStorage } from "./useLocalStorage.ts";
 
 /**
- * "Privacy mode" — a global toggle the founder flips before screenshots so
+ * "Privacy mode". A global toggle the founder flips before screenshots so
  * structured PII (names, emails, companies, phones) renders partially masked.
  * State persists to localStorage so it survives a refresh. Default off. The
  * masking itself lives in `lib/mask.ts`; the `<Pii>` component reads this.
@@ -30,7 +30,7 @@ export function usePrivacy(): PrivacyContextValue {
 
 /**
  * Mask helper bound to the live privacy state, for string-interpolation sites
- * that can't take a `<Pii>` element — modal titles, `title=` props, template
+ * that can't take a `<Pii>` element: modal titles, `title=` props, template
  * literals. Returns the raw value when privacy is off or the value is empty.
  */
 export function useMask(): (kind: PiiKind, value: string | null | undefined) => string {

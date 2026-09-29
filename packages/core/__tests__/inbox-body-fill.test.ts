@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { fillInboxBody } from "../src/oneshot.ts";
 
 // The OneShot inbox returns both `body` and `body_html`; an HTML-only mail has
-// an empty body and nothing used to read body_html — so /inbox rendered
+// an empty body and nothing used to read body_html, so /inbox rendered
 // "(no body)" and triage prompted the LLM with nothing. fillInboxBody runs in
 // listInbox's annotate funnel for every source.
 describe("fillInboxBody", () => {

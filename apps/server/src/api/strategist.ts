@@ -14,7 +14,7 @@ import { jsonResponse } from "../server.ts";
  * then calls `complete()` once per turn. The assistant proposes changes via
  * ACTION markers (<!--ACTION:enable:show-hn-->) that the client renders as
  * confirmation chips and posts back through the trigger REST endpoints. No native
- * tool calling — keeps the contract simple and works with any chat provider.
+ * tool calling: keeps the contract simple and works with any chat provider.
  */
 /**
  * Pure body-shape check, extracted so HTTP tests can exercise the failure
@@ -52,7 +52,7 @@ export function validateStrategistBody(
 }
 
 /**
- * Pure cfg readiness check — strategist needs ICP + product to anchor
+ * Pure cfg readiness check: strategist needs ICP + product to anchor
  * proposals. Same shape as validateStrategistBody so the route handler
  * can mirror either failure verbatim.
  */
@@ -112,7 +112,7 @@ export async function strategistRoute(req: Request): Promise<Response> {
   // is about cohort selection. Strategist's training-data knowledge of which
   // accelerators exist + are accepting applications is stale by months; live
   // search gives it fresh context to ground its proposal in. Empty string when
-  // not applicable — composeSystemPrompt then renders no extra section.
+  // not applicable: composeSystemPrompt then renders no extra section.
   const latestUserMessage = messages.toReversed().find((m) => m.role === "user")?.content ?? "";
   const webContext = await maybeAcceleratorWebContext(latestUserMessage, cfg.icpOneLiner!);
 
@@ -133,7 +133,7 @@ export async function strategistRoute(req: Request): Promise<Response> {
             encoder.encode(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`),
           );
         } catch {
-          // Client disconnected mid-stream — controller already closed by
+          // Client disconnected mid-stream: controller already closed by
           // the runtime. Mark and stop trying to write.
           closed = true;
         }
@@ -160,7 +160,7 @@ export async function strategistRoute(req: Request): Promise<Response> {
         // is a future hop on intel.complete; this is good enough for chat
         // turns that complete in ~5-10s.
         //
-        // Split on Unicode code points (Array.from), not UTF-16 code units —
+        // Split on Unicode code points (Array.from), not UTF-16 code units:
         // a midstream split through a surrogate pair would yield mojibake on
         // the client. Chunk size is in code-points, not bytes.
         const codePoints = Array.from(llm.content);
@@ -190,7 +190,7 @@ export async function strategistRoute(req: Request): Promise<Response> {
         try {
           controller.close();
         } catch {
-          // already closed by client disconnect — ignore
+          // already closed by client disconnect: ignore
         }
       }
     },

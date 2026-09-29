@@ -3,44 +3,14 @@ import type { ReplyKind } from "./reply-classify.ts";
 import type { InboxReplyRecord } from "./types.ts";
 
 /**
- * Inbound-message recording, conversation/thread reads, reply classification
- * state, archive/reopen operations, and inbox-specific transactions — the
- * inbox domain slice of the ledger split tracked in ROADMAP.md (issue #634,
- * the last named domain, following the receipt (#616), cache (#618), and
- * delivery-health (#617) extractions). Named `InboxStore` (like `LedgerCache`
- * and `ReceiptStore`) rather than a set of pure functions (like
- * `delivery-health.ts`) because several methods here call each other
- * (`recordInboxReply` → `restoreInboxConversation`,
- * `archiveInboxConversation` → `listInboxRepliesForProspect`) and a class
- * keeps those call sites as plain `this.` calls instead of threading `db`
- * through every helper.
- *
- * Covers `inbox_drafts` (single mutable draft per thread), `inbox_sent`
- * (append-only sent-reply history), `inbox_archives` (per-prospect
- * archive/reopen state), and `inbox_replies` (persisted inbound replies,
- * their deliverability `kind` and sentiment `intent` classifications, and
- * the triage claim marker). `Ledger`'s own upsertInboxDraft /
- * setInboxDraftSteer / setInboxDraftBody / clearInboxDraft / recordInboxSent
- * / getInboxThreads / listRepliedProspectEmails / listInboxArchives /
- * archiveInboxConversation / restoreInboxConversation / recordInboxReply /
- * setInboxReplyIntent / claimInboxReplyForTriage / sweepStaleInboxReplyTriage
- * / listInboxReplyIntents / listInboxRepliesForProspect / listInboxReplyIds /
- * listUntriagedHumanReplies / listProspectIdsWithReplies methods (ledger.ts)
- * are now thin delegates to the methods below — same names, same signatures,
- * same SQL — so every call site and the exported `Ledger` surface are
- * unchanged. Mailbox (Gmail/Smartlead IMAP) message storage lives separately
- * in `mailbox-store.ts`'s `MailboxStore`; this module owns only the
- * ledger-native inbox tables layered on top of it.
+ * Ledger-native inbox storage: mutable drafts, append-only sent replies, archive
+ * state, inbound replies, classifications, and triage claims. Ledger delegates to
+ * InboxStore. Provider mailbox messages live in mailbox-store.ts.
  */
 
 /**
- * Canonical form for matching prospect/reply emails — trim + lowercase.
- * Mirrors `Ledger`'s own `canonEmail` (ledger.ts) so inbox replies stay keyed
- * identically to the rest of the ledger (prospects, bounces, sender
- * assignments). Duplicated rather than imported/exported across the module
- * boundary — same call this codebase already made for `delivery-health.ts`'s
- * copy: it's a 3-line pure helper, and re-exporting it from ledger.ts would
- * widen that file's public surface for no benefit.
+ * Keep reply keys consistent with prospect, bounce, and sender assignment keys
+ * in Ledger: trim and lowercase.
  */
 function canonEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -54,7 +24,7 @@ function canonEmail(email: string): string {
  * of `intent` (`listInboxReplyIntents`, the /inbox route, `POSITIVE_REPLY_INTENTS`
  * checks) only sees it during the brief window between the claim and the
  * winner's `setInboxReplyIntent` call overwriting it with the real result (or
- * NULL on failure) — same transaction-scoped visibility any other in-flight
+ * NULL on failure): same transaction-scoped visibility any other in-flight
  * write has.
  */
 const INBOX_REPLY_TRIAGE_PENDING = "__triage_pending__";
@@ -75,10 +45,10 @@ export class InboxStore {
    * Save (or overwrite) the single in-progress draft for an inbox thread.
    * Backs the /inbox composer's debounced auto-save so a refresh or navigation
    * away no longer discards the draft. Keyed by thread_key (see `inboxThreadKey`
-   * in shared-types) — Gmail thread_id, else the email id.
+   * in shared-types): Gmail thread_id, else the email id.
    *
    * `status` is recomputed by the CALLER on every save from the body's own
-   * lint state (issue #480's `commits-terms` flag) — never trust a
+   * lint state (issue #480's `commits-terms` flag). Never trust a
    * client-sent value, so the caller passes the freshly-computed verdict.
    * `steer` is deliberately NOT part of this statement: an ordinary autosave
    * must never clobber a standing founder instruction. Use
@@ -120,7 +90,7 @@ export class InboxStore {
 
   /**
    * Persist the founder's standing redraft instruction for a thread (issue
-   * #480's steer box) — a no-op if the thread has no draft row yet (the
+   * #480's steer box). A no-op if the thread has no draft row yet (the
    * steer route always upserts a draft first, so this is only ever called
    * after that succeeds).
    */
@@ -134,7 +104,7 @@ export class InboxStore {
    * without ever writing it back to `inbox_drafts`, so the debounced
    * autosave (which only fires on a body DIFF) never saw a change and the
    * redraft was lost on refresh/collapse. Mirrors `saveDraftRoute`'s body
-   * write but leaves `steer` and every other column untouched — the standing
+   * write but leaves `steer` and every other column untouched. The standing
    * steer instruction is set separately via `setInboxDraftSteer` and must
    * survive this call.
    */
@@ -190,7 +160,7 @@ export class InboxStore {
   /**
    * Bulk-read persisted reply state for the inbox list route: the saved draft
    * (if any) plus the sent history per thread. Mirrors the `byEmail` map the
-   * list route builds for cadence context — one read, indexed by thread_key.
+   * list route builds for cadence context: one read, indexed by thread_key.
    */
   getInboxThreads(): Map<
     string,
@@ -235,7 +205,7 @@ export class InboxStore {
   }
 
   /**
-   * Emails of every prospect with a recorded reply — the target list for the
+   * Emails of every prospect with a recorded reply. The target list for the
    * inbox's known-replier fetch, so a reply is never lost to the live window.
    */
   listRepliedProspectEmails(): string[] {
@@ -284,7 +254,7 @@ export class InboxStore {
 
   /**
    * Persist one inbound reply (full body) keyed by provider email id.
-   * INSERT OR IGNORE — re-sweeps and double captures are no-ops. Returns true
+   * INSERT OR IGNORE: re-sweeps and double captures are no-ops. Returns true
    * when this call stored a NEW reply.
    */
   recordInboxReply(row: {
@@ -332,7 +302,7 @@ export class InboxStore {
 
   /**
    * Set the sentiment/intent classification on an already-persisted reply
-   * (issue #480) — the triage call runs AFTER recordInboxReply so a triage
+   * (issue #480). The triage call runs AFTER recordInboxReply so a triage
    * failure never loses the reply itself. `id IS` a no-op UPDATE if the row
    * somehow isn't there (e.g. a race), which is the correct behaviour: never
    * throw out of a best-effort classification path.
@@ -349,11 +319,11 @@ export class InboxStore {
    * the server's background scheduler tick and a manually-run `cadence
    * advance` CLI invocation) can both observe the same freshly-inserted row
    * with `intent` still NULL while the first call's `triageEmails()` await is
-   * in flight — a bare re-check of the nullable `intent` column can't tell
+   * in flight. A bare re-check of the nullable `intent` column can't tell
    * "nobody has started triaging this yet" from "I already looked a moment
    * ago", so both callers would re-trigger the paid triage call and race on
    * the write-back. This flips `intent` from NULL to `INBOX_REPLY_TRIAGE_PENDING`
-   * in the SAME statement that checks it's still NULL — SQLite serializes
+   * in the SAME statement that checks it's still NULL: SQLite serializes
    * writers, so only one caller's UPDATE can match a given row, and its
    * `changes` count is the claim. The winner must call `setInboxReplyIntent`
    * (real result) or release the claim (`setInboxReplyIntent(id, null, null)`
@@ -371,13 +341,13 @@ export class InboxStore {
    * Round-2 correction (#663, F-1): what a caller that just LOST
    * `claimInboxReplyForTriage` must read back before deciding whether it's
    * safe to run ordinary-reply bookkeeping for this row. Losing the claim
-   * means one of two very different things — (a) an earlier poll already
+   * means one of two very different things: (a) an earlier poll already
    * fully triaged this row, and its real classification (including
    * `unsubscribe`) is sitting in the column right now, or (b) a
    * concurrently-running caller's `triageEmails()` await is still in
    * flight and hasn't written the real result back yet. Unlike
    * `listInboxReplyIntents` (which folds the pending sentinel into `null`
-   * for UI/API readers — #559, an intentional simplification for display),
+   * for UI/API readers: #559, an intentional simplification for display),
    * this distinguishes the two: `pending: true` tells the caller a result
    * is still unresolved so it must not guess "not unsubscribe" and fall
    * through to billing-relevant bookkeeping, while `pending: false` hands
@@ -402,13 +372,13 @@ export class InboxStore {
    * paired sweep so a crash between the claim UPDATE and the try/catch's
    * release doesn't strand the marker forever. This one didn't: a process
    * death mid-triage left `intent = '__triage_pending__'` permanently on the
-   * row — it could never be re-claimed (the claim UPDATE only matches
+   * row. It could never be re-claimed (the claim UPDATE only matches
    * `intent IS NULL`) or classified again, and the non-`ReplyIntent` sentinel
    * was exposed to every reader of `intent` (`listInboxReplyIntents`, the
    * /inbox route). Unlike the other markers, the claim here has no
-   * `started_at` column to age against — it's held only for the duration of
+   * `started_at` column to age against. It's held only for the duration of
    * one in-process `await triageEmails(...)`, which cannot survive past that
-   * process's death — so there's no `maxAgeMs`: cold boot (called once, like
+   * process's death, so there's no `maxAgeMs`: cold boot (called once, like
    * the other sweeps, from apps/server/src/bin.ts) is the only moment a
    * stranded claim can be told apart from one a live process still holds.
    * Returns the number of rows reset so the caller can log it.
@@ -416,7 +386,7 @@ export class InboxStore {
    * Known trade-off: a claim held by a live `intel backfill-intent` CLI
    * process at the instant the server boots is cleared too, and the next
    * poll may re-claim that row. The cost is one duplicated triage call
-   * (cents) whose result is the same category — last writer wins, no data
+   * (cents) whose result is the same category: last writer wins, no data
    * is lost. Telling the two apart would need a claim timestamp column and
    * an age-gated sweep; not worth a schema change for that window.
    */
@@ -428,7 +398,7 @@ export class InboxStore {
   }
 
   /**
-   * Bulk intent lookup for a set of provider email ids — the /inbox route's
+   * Bulk intent lookup for a set of provider email ids. The /inbox route's
    * badge needs the persisted (LLM-classified) intent per visible reply
    * without an N+1 query. Empty input short-circuits (SQLite's `IN ()` is
    * invalid syntax, not just slow).
@@ -458,7 +428,7 @@ export class InboxStore {
     return rows;
   }
 
-  /** Provider ids of every persisted reply — dedupe set for capture passes. */
+  /** Provider ids of every persisted reply: dedupe set for capture passes. */
   listInboxReplyIds(): Set<string> {
     const rows = this.db.query(`SELECT id FROM inbox_replies`).all() as Array<{ id: string }>;
     return new Set(rows.map((r) => r.id));
@@ -466,7 +436,7 @@ export class InboxStore {
 
   /**
    * Every persisted HUMAN reply with no intent classification yet (issue
-   * #480) — the backfill target for `oneshot-gtm intel backfill-intent` and
+   * #480). The backfill target for `oneshot-gtm intel backfill-intent` and
    * for any pre-#480 install's existing history. `COALESCE(kind,'human')`
    * mirrors the same predicate `listSentOutcomeRows` uses: pre-v23 rows with
    * a NULL kind read as human everywhere.

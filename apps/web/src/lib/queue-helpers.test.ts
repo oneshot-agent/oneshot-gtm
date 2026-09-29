@@ -60,7 +60,7 @@ describe("queue selection and bulk approval", () => {
     // The page renders `rows.slice(0, ROW_CAP)` behind a "show all" disclosure,
     // so "visible" and "fetched" diverge. Handing the full set to these two is
     // how one click on the header checkbox silently selects rows the reader
-    // cannot see — and the bulk approve/reject bar then acts on them.
+    // cannot see, and the bulk approve/reject bar then acts on them.
     const fetched = Array.from({ length: 200 }, (_, i) => ({ id: i + 1 }));
     const visible = fetched.slice(0, 50);
 

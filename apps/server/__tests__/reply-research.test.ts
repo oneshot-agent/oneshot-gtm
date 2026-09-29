@@ -297,7 +297,7 @@ describe("dud-domain senders fall back to the finder's profile URL", () => {
     expect(ctx.dossier).toContain("PROFILE (https://github.com/rishibanota)");
     expect(ctx.dossier).toContain("remembrandt");
     expect(ctx.costUsd).toBe(0.01);
-    // The dud domain still buys no enrich — this is one page read, not a tier.
+    // The dud domain still buys no enrich. This is one page read, not a tier.
     expect(safeEnrichMock).not.toHaveBeenCalled();
   });
 
@@ -330,7 +330,7 @@ describe("dud-domain senders fall back to the finder's profile URL", () => {
 
   it("prefers a stored dossier over the profile read", async () => {
     ledger.getProspectById.mockReturnValue({
-      // Carries real signal (a title), so it is a genuine Tier-1 hit — the
+      // Carries real signal (a title), so it is a genuine Tier-1 hit. The
       // shape the demo seeder and the research backfill both write.
       dossier_json: '{"title":"CTO","company":"Acme","hook":"already known"}',
       source_profile_url: "https://github.com/rishibanota",
@@ -396,7 +396,7 @@ describe("review-finding regressions (#35)", () => {
     expect(siteDomainFor("mail.acme.com")).toBe("acme.com");
     expect(siteDomainFor("smtp.acme.co")).toBe("acme.co");
     expect(siteDomainFor("aliyev.site")).toBe("aliyev.site");
-    // Not a mail label — a real subdomain company site passes through.
+    // Not a mail label. A real subdomain company site passes through.
     expect(siteDomainFor("labs.acme.com")).toBe("labs.acme.com");
   });
 

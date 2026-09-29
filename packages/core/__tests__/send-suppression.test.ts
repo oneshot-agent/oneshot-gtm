@@ -112,7 +112,7 @@ describe("sendEmail suppression backstop", () => {
 
   it("lets an address with no bounce history through to routing", async () => {
     suppression = null;
-    // Routing runs (and then the real SDK call fails, which is fine) — the
+    // Routing runs (and then the real SDK call fails, which is fine). The
     // point is that the pre-flight didn't short-circuit it.
     await sendEmail(INPUT, CTX).catch(() => undefined);
     expect(getSenderAssignment).toHaveBeenCalled();

@@ -34,7 +34,7 @@ export interface JobChangeFinderOpts extends RunOpts {
    * always batch 0, so a list spanning several batches isn't scanned from
    * the top on every run. The registry passes the trigger's
    * `company_batch_seq` (one step per completed run); direct/CLI callers may
-   * omit it (defaults to 0 — first batch always starts the run).
+   * omit it (defaults to 0: first batch always starts the run).
    */
   companyBatchCursor?: number;
   /** Days back to bias the search query. Default 14. */
@@ -110,7 +110,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       // the cap was already reached, and a run that ended with zero hits
       // never reached the per-hit check below at all, so the cap never
       // fired. Checking here, ahead of every webSearch call, stops
-      // additional spend the moment the accumulated cost reaches the cap —
+      // additional spend the moment the accumulated cost reaches the cap:
       // including on the very next batch/persona, and even when no hit is
       // ever produced.
       if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
@@ -165,7 +165,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       candidate: { title: hit.title, url: hit.url, summary: hit.description },
     });
     if (filter.match === null) {
-      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit):
       // drop without persisting. A rejection would burn the dedupeKey for
       // every future watch tick since isQueueDuplicate ignores status.
       result.droppedEnrichment++;
@@ -226,7 +226,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       continue;
     }
     // Stage A: judge the extracted role BEFORE paying for findEmail +
-    // verify + enrich — a clearly off-ICP newRole must not consume
+    // verify + enrich. A clearly off-ICP newRole must not consume
     // the run's cost budget and crowd out valid candidates behind it.
     const preSpend = await qualifyPreSpend({
       icp,

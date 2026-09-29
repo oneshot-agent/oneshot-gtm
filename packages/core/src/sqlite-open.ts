@@ -3,25 +3,18 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
 
 /**
- * Open one of the install's own SQLite files (a workspace ledger, the shared
- * DB, the reply-review and LinkedIn inbox stores). They hold prospect emails,
- * reply bodies and research, so they are owner-only:
+ * Open state databases containing prospect emails, replies, and research.
+ * Create missing files with mode 0600 before SQLite opens them so WAL and SHM
+ * files inherit that mode. On each open, chmod existing database, WAL, and SHM
+ * files to 0600. Create directories with mode 0700; leave existing directories
+ * unchanged because ONESHOT_GTM_HOME may point to a user-managed location.
  *
- * - a missing file is created 0600 *before* SQLite opens it, since SQLite
- *   gives the `-wal` / `-shm` files it creates the main file's mode;
- * - an existing file and its `-wal` / `-shm` are chmodded to 0600 on every
- *   open, so an install created with the default umask heals itself;
- * - a directory this creates is 0700 (existing ones are left as they are: a
- *   custom ONESHOT_GTM_HOME may point somewhere the user set up).
+ * Ignore chmod failures, including unsupported Windows permissions or another
+ * owner; doctor reports files that remain readable by others.
  *
- * chmod failures (Windows, a file owned by someone else) are ignored, like
- * config.ts does for config.json. doctor reports a file that stayed readable.
- *
- * Pragmas: WAL; a busy timeout so a concurrent writer is waited out rather
- * than failing with "database is locked"; synchronous=NORMAL, the standard
- * pairing with WAL (durable across app crashes, fewer fsyncs than FULL); and
- * foreign keys when the schema relies on them. `foreign_keys` is a no-op inside
- * a transaction, so it has to be set here, before any migration runs.
+ * Use WAL with synchronous=NORMAL for app-crash durability and fewer fsyncs than
+ * FULL. The busy timeout lets concurrent writers wait. Enable requested foreign
+ * keys before migrations: foreign_keys has no effect inside a transaction.
  */
 export function openStateDatabase(
   path: string,
@@ -51,7 +44,7 @@ function makePrivate(file: string): void {
   }
 }
 
-/** True when a file exists and its mode grants any group or other access. */
+/** True when the mode grants group or other access. */
 export function isGroupOrWorldAccessible(mode: number): boolean {
   return (mode & 0o077) !== 0;
 }

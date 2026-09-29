@@ -138,7 +138,7 @@ describe("tagOutcomeValue (goal-level)", () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]?.id).toBe(prospectId);
       // Round-1 correction (issue #357): the value tag itself must reach the
-      // refresh pipeline as outcome context, not just a bare prospect id —
+      // refresh pipeline as outcome context, not just a bare prospect id:
       // otherwise the outcome-triggered synthesis can't reflect the outcome.
       expect(calls[0]?.context?.outcome).toEqual({ type: "meeting", label: "meeting booked" });
     } finally {

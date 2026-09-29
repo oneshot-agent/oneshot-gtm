@@ -9,9 +9,9 @@ import type { CalendarPickerEntry } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
 /**
- * GET /api/setup/calendars?identityId=gmail:jn@x.dev — the /setup calendar
+ * GET /api/setup/calendars?identityId=gmail:jn@x.dev. The /setup calendar
  * picker's source list. Refuses (server-side, via `listWritableCalendars`'
- * `minAccessRole=writer`) anything below writer access — a reader/
+ * `minAccessRole=writer`) anything below writer access. A reader/
  * freeBusyReader calendar returns every event as `summary: "busy"` with no
  * attendees, which reads as a self-block. Each entry carries a 7-day event
  * count because a founder cannot reliably say which calendar their booking

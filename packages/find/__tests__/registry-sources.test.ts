@@ -59,9 +59,9 @@ describe("mapSocrataRows — canned payload", () => {
       state: "NY",
       issue_date: OLD_ISO,
     },
-    // No usable name field — dropped.
+    // No usable name field: dropped.
     { address: "1 Nowhere Ave", license_creation_date: RECENT_ISO },
-    // No usable date field — dropped.
+    // No usable date field: dropped.
     { business_name: "No Date Co", address: "2 Elsewhere Ave" },
   ];
 
@@ -150,7 +150,7 @@ describe("socrataLicenseSource.fetch — per-portal isolation", () => {
   });
 
   it("paginates past the first 200 rows and finds a fresh record living on page 2 — the exact review finding", async () => {
-    // Page 1 (offset=0): 200 rows, all OLD — simulates the "arbitrary 200
+    // Page 1 (offset=0): 200 rows, all OLD: simulates the "arbitrary 200
     // rows" the old unordered $limit=200 call used to settle for, none of
     // which are fresh. Page 2 (offset=200): 1 row, RECENT. Without
     // pagination this recent row is invisible; with $order+$where+$offset
@@ -216,7 +216,7 @@ describe("mapNppesResults — canned payload", () => {
       basic: { first_name: "Pat", last_name: "Lee", enumeration_date: OLD_ISO },
       addresses: [{ address_purpose: "LOCATION", city: "Albany", state: "NY" }],
     },
-    // No enumeration_date — dropped.
+    // No enumeration_date: dropped.
     { number: "3333333333", basic: { organization_name: "No Date Dental" } },
   ];
 
@@ -304,7 +304,7 @@ describe("nppesSource.fetch — per taxonomy×state isolation", () => {
   });
 
   it("pages past 200 providers (skip) and finds a newly-enumerated one on page 2 — the exact review finding", async () => {
-    // Page 1 (skip=0): 200 providers, all OLD — the "arbitrary first 200"
+    // Page 1 (skip=0): 200 providers, all OLD. The "arbitrary first 200"
     // the old single-request adapter used to settle for. Page 2 (skip=200):
     // 1 provider, RECENT. Without walking skip, this newly-enumerated
     // provider is invisible and the pair would wrongly report "no providers
@@ -420,15 +420,15 @@ describe("mapFmcsaRows — canned payload", () => {
       phone: "3083802037",
       power_units: "4",
     },
-    // Old registration — dropped by the freshness window.
+    // Old registration: dropped by the freshness window.
     {
       legal_name: "Old Hauling Co",
       email_address: "old@hauling.com",
       add_date: OLD_STR,
     },
-    // No email on file — dropped (fmcsa never falls through to findEmail).
+    // No email on file: dropped (fmcsa never falls through to findEmail).
     { legal_name: "No Email Trucking", add_date: NOW_STR },
-    // No usable name — dropped.
+    // No usable name: dropped.
     { email_address: "noname@x.com", add_date: NOW_STR },
   ];
 
@@ -485,7 +485,7 @@ describe("fmcsaSource.fetch", () => {
     // fmcsa because states alone satisfied hasFmcsaFilter, so a dentist
     // search in CA silently enqueued CA trucking carriers too. states
     // narrows an already-enabled fmcsa query but must not enable one by
-    // itself — mirrors registry.ts's readiness hasFmcsa check.
+    // itself: mirrors registry.ts's readiness hasFmcsa check.
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     const out = await fmcsaSource.fetch({ sinceDays: 30, limit: 25, states: ["NE"] });
@@ -601,7 +601,7 @@ describe("Socrata date-column detection — portals never agree on the name", ()
       "WA L&I contractor licenses",
       60,
     );
-    // Exactly WA's spelling — no separators, no `business_name` alias to
+    // Exactly WA's spelling: no separators, no `business_name` alias to
     // lean on. That is the row the old exact-name lists dropped as nameless.
     expect(out.map((r) => r.name)).toEqual(["Rae's HVAC LLC"]);
     expect(out[0]?.matchedDateIso).toBe(new Date(RECENT_ISO).toISOString());

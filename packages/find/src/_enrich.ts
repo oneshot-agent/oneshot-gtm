@@ -35,7 +35,7 @@ interface RoleFields {
  * `title` is the primary field; when the SDK omits it, fall back to the
  * current (`is_primary`) experience entry, which carries the same string in a
  * different shape. Both fields ride on every enrichProfile response we already
- * pay for — reading them costs nothing extra.
+ * pay for: reading them costs nothing extra.
  */
 function readRole(profile: unknown): RoleFields {
   const p = profile as {
@@ -57,7 +57,7 @@ function readRole(profile: unknown): RoleFields {
   return { title, summary: summary.length > 0 ? summary : null };
 }
 
-/** Enrichment produced nothing usable — every field absent, no spend. */
+/** Enrichment produced nothing usable. Every field absent, no spend. */
 const EMPTY_ENRICHMENT: EnrichedContact = {
   phone: null,
   linkedinUrl: null,
@@ -79,7 +79,7 @@ const EMPTY_ENRICHMENT: EnrichedContact = {
  * separate enrichProfile calls. Adding one $0.005 call per verified
  * email closes the gap uniformly across every play.
  *
- * Throws are swallowed — one transient SDK blip should never kill an
+ * Throws are swallowed: one transient SDK blip should never kill an
  * otherwise valid enqueue. Same try/catch pattern as the existing
  * Path B' enrichProfile call in `_repo-pipeline.ts`.
  */
@@ -93,14 +93,14 @@ export async function enrichVerifiedContact(
   // Cache-read short-circuit. If a prior find pass already enriched this email
   // (either via this function OR via the linkedin-keyed sites in luma.ts /
   // _repo-pipeline.ts that ALSO populate the same cache by surfaced email),
-  // skip the SDK call entirely — phone + linkedin can be derived from the
+  // skip the SDK call entirely: phone + linkedin can be derived from the
   // cached profile. This eliminates the double-enrich on linkedin-bearing
   // candidates (find used to pay $0.005 twice + ~70s twice per such person).
   // Mirrors the read pattern in safeEnrich at packages/plays/src/_lib.ts:31.
   try {
     const cached = ledger.getCachedEnrichment(key);
-    // Fresh negative entry: the SDK job failed recently for this email —
-    // skip the retry, the finder proceeds without phone/linkedin.
+    // A recent SDK failure is cached. Skip retrying until expiry and proceed
+    // without phone or LinkedIn enrichment.
     if (
       cached?.status === "failed" &&
       Date.now() - new Date(cached.fetched_at).getTime() < ENRICH_FAILURE_TTL_MS
@@ -124,7 +124,7 @@ export async function enrichVerifiedContact(
           phone: extractFirstPhone(profile),
           linkedinUrl: isLinkedInProfileUrl(linkedinRaw) ? linkedinRaw : null,
           // The cache stores the whole EnrichProfileResult, so the title is
-          // already sitting here for every previously-enriched email — the
+          // already sitting here for every previously-enriched email. The
           // gate gets it for free on a re-run.
           title: role.title,
           summary: role.summary,
@@ -135,11 +135,11 @@ export async function enrichVerifiedContact(
           receiptId: null,
         };
       } catch {
-        // Corrupt cache row — fall through to a fresh SDK call.
+        // Corrupt cache row: fall through to a fresh SDK call.
       }
     }
   } catch {
-    // Ledger read failed — fall through to the SDK path.
+    // Ledger read failed: fall through to the SDK path.
   }
 
   try {
@@ -152,14 +152,14 @@ export async function enrichVerifiedContact(
     );
     // Populate the same per-email enrichment cache that `safeEnrich` reads on
     // /run dispatch. Rides on the LIVE promise (not the deadline race) so a
-    // call that outlives the deadline still records its outcome — a late
+    // call that outlives the deadline still records its outcome. A late
     // success overwrites the failure marker the catch below writes.
     live.then(
       (out) => {
         try {
           ledger.setCachedEnrichment(key, JSON.stringify(out.result));
         } catch {
-          // cache write is best-effort — find's contract is phone + linkedin,
+          // cache write is best-effort: find's contract is phone + linkedin,
           // not populating a cache. A SQLite hiccup shouldn't break the enqueue.
         }
       },
@@ -191,7 +191,7 @@ export async function enrichVerifiedContact(
       "warn",
     );
     // Negative-cache only a GENUINE no-data failure. A transient platform error
-    // (worker crash / timeout / 5xx — the 2026-06 outage) must NOT be cached, or
+    // (worker crash / timeout / 5xx. The 2026-06 outage) must NOT be cached, or
     // the email stays un-enrichable for ENRICH_FAILURE_TTL_MS after recovery.
     if (!isTransientToolError(err)) {
       try {

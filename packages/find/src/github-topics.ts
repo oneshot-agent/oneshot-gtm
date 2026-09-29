@@ -16,7 +16,7 @@ import { looksLikeNoiseRepo, normalizeRepoUrl } from "./_repo-utils.ts";
  * enqueue).
  *
  * Why topic search vs the retired combo-search approach: topic-tagged repos
- * are pre-curated by maintainers self-tagging — much higher signal-per-fetch
+ * are pre-curated by maintainers self-tagging: much higher signal-per-fetch
  * than `site:github.com "X" "Y"` Google scraping. The Search API also
  * returns actual repo metadata (description, stars, topics) instead of
  * misleading issue/PR snippets that judged the parent repo on text it didn't
@@ -85,7 +85,7 @@ export async function runGitHubTopicsFinder(opts: GitHubTopicsFinderOpts): Promi
   // Discovery: one Search API call per topic. Free, but we cap at limit*2 hits
   // BETWEEN topics so an unconfigured `topics: [...]` of length 20 doesn't
   // dispatch 20 search calls when the first three already over-fill the buffer.
-  // The cap is per-iteration, not per-hit — a single noisy topic returning all
+  // The cap is per-iteration, not per-hit. A single noisy topic returning all
   // perPage=50 results still feeds them all into the pool. That's intentional:
   // searchTopicRepos already pre-filters with `stars:>=N pushed:>=Y`, so even
   // 50 hits from one topic is healthy signal. `searchTopicRepos` swallows its

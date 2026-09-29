@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Sender-rotation deferral semantics in advanceCadence: when daily caps are
-// exhausted, steps must stay due (no advance, no error state, no LLM spend) —
+// exhausted, steps must stay due (no advance, no error state, no LLM spend):
 // not fail. Covers both the pre-pass capacity gate and a mid-pass
 // SendDeferredError thrown by sendEmail.
 
@@ -201,7 +201,7 @@ describe("advanceCadence — daily-cap deferral", () => {
     const result = await advanceCadence({ dryRun: false });
     expect(calls.sendEmail).toBe(1);
     expect(result.stepsExecuted).toBe(0);
-    expect(advanceCalls).toEqual([]); // step NOT advanced — stays due for tomorrow
+    expect(advanceCalls).toEqual([]); // step NOT advanced: stays due for tomorrow
     const detail = result.details.find((d) => d.playName === "stack-consolidation");
     expect(detail?.action).toBe("skipped");
     expect(detail?.note).toMatch(/deferred: daily send caps reached/);

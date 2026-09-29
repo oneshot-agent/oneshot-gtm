@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 // icpFilter wraps an LLM call (`complete`). A classifier failure must NOT throw
-// (which would abort the whole finder run) — it should drop the candidate.
+// (which would abort the whole finder run). It should drop the candidate.
 
 let completeShouldThrow = false;
 let capturedUser = "";

@@ -15,7 +15,7 @@ vi.mock("@oneshot-gtm/plays", async () => {
 });
 
 // The route now claims `cadence_state.sending_started_at` before kicking off
-// the background send (atomic CAS). Mock the ledger so claim always succeeds —
+// the background send (atomic CAS). Mock the ledger so claim always succeeds:
 // the tests below assert routing behavior, not the marker semantics (covered
 // in packages/core/__tests__/ledger.test.ts).
 vi.mock("@oneshot-gtm/core", async () => {
@@ -157,7 +157,7 @@ describe("previewCadenceBatchRoute", () => {
 
 describe("sendCadenceBatchRoute (fire-and-forget)", () => {
   it("returns 202 immediately and kicks off the background batch", async () => {
-    // Wrapper resolves after a microtask — verify the route returns BEFORE
+    // Wrapper resolves after a microtask: verify the route returns BEFORE
     // it completes.
     let backgroundResolved = false;
     sendBatchMock.mockImplementation(async () => {

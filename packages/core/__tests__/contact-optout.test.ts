@@ -56,7 +56,7 @@ it("does not interpret ordinary human replies or auto replies as opt-outs", () =
 // "remove me" request and land it as `kind = 'human'`, while the sentiment
 // triage (issue #480) correctly labels the same row `intent = 'unsubscribe'`.
 // The opt-out veto must catch that disagreement on the LABEL, not just the
-// deliverability kind — this is what makes the person ineligible for
+// deliverability kind. This is what makes the person ineligible for
 // breakup-revive re-enrollment.
 it("a human reply labeled intent=unsubscribe is opted out even though kind is human", () => {
   db.exec(
@@ -69,7 +69,7 @@ it("a human reply labeled intent=unsubscribe is opted out even though kind is hu
 });
 
 // Scope note (issue #663): wrong_person / not_now / objection are
-// conversation states, not opt-outs — only `intent = 'unsubscribe'` vetoes.
+// conversation states, not opt-outs. Only `intent = 'unsubscribe'` vetoes.
 it("a human reply labeled intent=objection is not opted out", () => {
   db.exec(
     `INSERT INTO inbox_replies (prospect_id, from_email, kind, intent) VALUES (1, 'person@example.com', 'human', 'objection')`,
@@ -78,7 +78,7 @@ it("a human reply labeled intent=objection is not opted out", () => {
 });
 
 // Pre-#480 ledgers have the `inbox_replies` table but not yet the `intent`
-// column — the clause must degrade to the `kind`-only check, not throw.
+// column. The clause must degrade to the `kind`-only check, not throw.
 it("supports ledgers with inbox_replies but no intent column (pre-#480)", () => {
   db.exec("DROP TABLE inbox_replies");
   db.exec(`

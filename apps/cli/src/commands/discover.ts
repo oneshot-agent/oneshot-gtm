@@ -43,7 +43,7 @@ async function resolveHypothesis(
     const buf = await Bun.stdin.text();
     if (buf.trim().length > 0) return buf.trim();
   }
-  // Interactive fallback — multi-line OK; press Enter on a blank line to submit.
+  // Interactive fallback: multi-line OK; press Enter on a blank line to submit.
   const a = (await prompts(
     {
       type: "text",

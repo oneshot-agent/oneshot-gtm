@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 // Issue #592: recovering the company-gate reason from the `notes` templates
-// finders wrote before `fitReason` existed. An allowlist per play — the
+// finders wrote before `fitReason` existed. An allowlist per play. The
 // negatives matter as much as the positives.
 
 vi.mock("@oneshot-gtm/core", async () => {

@@ -54,14 +54,14 @@ const MAX_BODY_CHARS = 8000;
  * can actually dedupe.
  *
  * This used to be `randomUUID()`, so every click minted a new row and the
- * dedupe never fired once — prospect 586 carries two "replied" events 47
+ * dedupe never fired once: prospect 586 carries two "replied" events 47
  * seconds apart from one double-submit.
  *
  * Deliberately keyed on `(prospectId, body)` with NO timestamp. Bucketing the
  * clock was the obvious fix and it does not work: those two rows land at
  * 20:51:13 and 20:52:00, either side of a minute boundary, and any fixed
  * bucket has an edge a double-click can straddle. Identity is the right key
- * anyway — marking "this person replied, and here is what they said" twice is
+ * anyway: marking "this person replied, and here is what they said" twice is
  * one event however far apart the clicks are, and the useful effect (stopping
  * live cadences) is idempotent. A genuine second reply with different text
  * gets a different key and records normally.
