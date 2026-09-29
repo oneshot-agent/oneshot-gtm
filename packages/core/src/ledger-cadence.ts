@@ -5,6 +5,7 @@ import {
   type DraftVersionStore,
 } from "./ledger-drafts.ts";
 import { QueueStore } from "./ledger-queue.ts";
+import { toSqliteUtc } from "./time.ts";
 import type { CadencePlanStep, ChannelEventRecord, SequenceEventRecord } from "./types.ts";
 
 /**
@@ -1030,4 +1031,176 @@ export function breakupReviveHoldFor(
       )
       .get(prospectId) as { reason: string; stopped_at: string }) ?? null
   );
+}
+
+/** Every sent step for a prospect across ALL plays. The outreach half of a conversation timeline. */
+export function listSequenceEventsForProspect(
+  db: Database,
+  prospectId: number,
+): SequenceEventRecord[] {
+  return db
+    .query(
+      `SELECT * FROM sequence_events
+       WHERE prospect_id = ?
+         AND status IN ('sent','delivered','replied')
+       ORDER BY created_at ASC, id ASC`,
+    )
+    .all(prospectId) as SequenceEventRecord[];
+}
+
+/**
+ * Every recorded step for a prospect across all plays: including bounced,
+ * failed and unsubscribed ones, which `listSequenceEventsForProspect`
+ * (the conversation view) filters out. `queued` rows are reservations,
+ * not history. Oldest first.
+ */
+export function listAllSequenceEventsForProspect(
+  db: Database,
+  prospectId: number,
+): SequenceEventRecord[] {
+  return db
+    .query(
+      `SELECT * FROM sequence_events
+       WHERE prospect_id = ? AND status != 'queued'
+       ORDER BY created_at ASC, id ASC`,
+    )
+    .all(prospectId) as SequenceEventRecord[];
+}
+
+/** Inbound engagement on non-email channels (LinkedIn replies) for one prospect, oldest first. */
+export function listChannelEventsForProspect(
+  db: Database,
+  prospectId: number,
+): ChannelEventRecord[] {
+  return db
+    .query(`SELECT * FROM channel_events WHERE prospect_id = ? ORDER BY occurred_at ASC, id ASC`)
+    .all(prospectId) as ChannelEventRecord[];
+}
+
+/**
+ * Cross-play dedup (send side): has this prospect already received an initial
+ * (step-0) touch under ANY play? The authoritative guard against first-touching
+ * the same person twice. Mirrors the step-0 existence check in
+ * sweepStaleCadenceSends. Note: deliberate re-engagement (breakup-revive)
+ * bypasses this via sendDraftedEmail's `allowRecontact`.
+ */
+export function prospectHasFirstTouch(db: Database, prospectId: number): boolean {
+  const row = db
+    .query(
+      `SELECT 1 FROM sequence_events
+       WHERE prospect_id = ? AND step_index = 0
+         AND status IN ('sent','delivered','replied')
+       LIMIT 1`,
+    )
+    .get(prospectId);
+  return row !== null && row !== undefined;
+}
+
+/** Whether `prospectId` has any outreach history (sequence_events). Calendar matcher tie-break. */
+export function hasOutreachHistory(db: Database, prospectId: number): boolean {
+  return (
+    db.query(`SELECT 1 FROM sequence_events WHERE prospect_id = ? LIMIT 1`).get(prospectId) != null
+  );
+}
+
+/** Most recent sequence_events timestamp for a prospect, or null with no history. Tie-break helper alongside `hasOutreachHistory`. */
+export function lastOutreachAt(db: Database, prospectId: number): string | null {
+  const row = db
+    .query(`SELECT MAX(created_at) AS at FROM sequence_events WHERE prospect_id = ?`)
+    .get(prospectId) as { at: string | null } | undefined;
+  return row?.at ?? null;
+}
+
+/** How many sends: all plays, or one. */
+export function countSends(db: Database, opts: { playName?: string } = {}): number {
+  const sql = opts.playName
+    ? "SELECT COUNT(*) AS n FROM sequence_events WHERE play_name = ? AND status IN ('sent', 'delivered', 'replied')"
+    : "SELECT COUNT(*) AS n FROM sequence_events WHERE status IN ('sent', 'delivered', 'replied')";
+  const args = opts.playName ? [opts.playName] : [];
+  return (db.query(sql).get(...(args as never[])) as { n: number } | null)?.n ?? 0;
+}
+
+/**
+ * Per-play rollup of sequence_events, windowed by `sinceIso`/`untilIso`.
+ *
+ * By default every column windows on `created_at` alone: byte-for-byte the
+ * pre-existing behaviour every current caller (home.ts's sentLast7d/
+ * repliedLast7d, measure.ts's reply-rate %, weekly-review.ts) depends on,
+ * which guarantees `replied <= sent` for any window: a reply can only be
+ * counted once its originating send's `created_at` already falls inside
+ * the same window.
+ *
+ * Pass `occurrenceWindow: true` to window `replied`/`bounced` on their OWN
+ * occurrence column instead (COALESCEd onto `created_at` for older rows
+ * that predate it), which the Slack daily summary needs so a reply or
+ * bounce landing the day AFTER it was sent still shows up on the day it
+ * actually happened rather than vanishing from every completed-day rollup:
+ *   - `replied`: `COALESCE(replied_at, created_at)`: `markLatestStepReplied`
+ *     flips the ORIGINAL sent row in place rather than inserting a new one,
+ *     so that row's `created_at` stays pinned to the SEND time.
+ *   - `bounced`: `COALESCE(bounced_at, created_at)`. A bounce DOES insert a
+ *     fresh row, but `created_at` is stamped at POLL/detection time, not the
+ *     provider's own bounce time; a poll resuming after downtime (or a
+ *     delayed DSN) would otherwise misattribute the bounce to the wrong day.
+ * This mode intentionally breaks the `replied <= sent` invariant for a
+ * window whose reply/bounce occurrence lands inside it but whose send
+ * predates it. That's why it's opt-in, scoped to the one caller that reads
+ * `sent`/`replied`/`bounced` as independent daily counts rather than a
+ * cohort funnel.
+ */
+export function eventsByPlay(
+  db: Database,
+  opts: { sinceIso?: string; untilIso?: string; occurrenceWindow?: boolean } = {},
+): Array<{
+  play_name: string;
+  sent: number;
+  delivered: number;
+  replied: number;
+  bounced: number;
+}> {
+  const createdClause: string[] = [];
+  const repliedClause: string[] = [];
+  const bouncedClause: string[] = [];
+  const repliedCol = opts.occurrenceWindow ? "COALESCE(replied_at, created_at)" : "created_at";
+  // created_at and replied_at are SQLite-form (replied_at is normalized on
+  // write), so they compare as strings against SQLite-form bounds. bounced_at
+  // is the provider's ISO timestamp: compare it by julianday, which reads both.
+  const bouncedCol = opts.occurrenceWindow
+    ? "COALESCE(julianday(bounced_at), julianday(created_at))"
+    : "created_at";
+  const bound = (name: string) => (opts.occurrenceWindow ? `julianday(${name})` : name);
+  if (opts.sinceIso) {
+    createdClause.push("created_at >= $sinceIso");
+    repliedClause.push(`${repliedCol} >= $sinceIso`);
+    bouncedClause.push(`${bouncedCol} >= ${bound("$sinceIso")}`);
+  }
+  if (opts.untilIso) {
+    createdClause.push("created_at < $untilIso");
+    repliedClause.push(`${repliedCol} < $untilIso`);
+    bouncedClause.push(`${bouncedCol} < ${bound("$untilIso")}`);
+  }
+  const createdWindow = createdClause.length ? `(${createdClause.join(" AND ")})` : "1";
+  const repliedWindow = repliedClause.length ? `(${repliedClause.join(" AND ")})` : "1";
+  const bouncedWindow = bouncedClause.length ? `(${bouncedClause.join(" AND ")})` : "1";
+  const params: Record<string, string> = {};
+  if (opts.sinceIso) params["$sinceIso"] = toSqliteUtc(opts.sinceIso);
+  if (opts.untilIso) params["$untilIso"] = toSqliteUtc(opts.untilIso);
+  const sql = `
+    SELECT
+      play_name,
+      SUM(CASE WHEN status IN ('sent', 'delivered', 'replied') AND ${createdWindow} THEN 1 ELSE 0 END) AS sent,
+      SUM(CASE WHEN status IN ('delivered', 'replied') AND ${createdWindow} THEN 1 ELSE 0 END) AS delivered,
+      SUM(CASE WHEN status = 'replied' AND ${repliedWindow} THEN 1 ELSE 0 END) AS replied,
+      SUM(CASE WHEN status = 'bounced' AND ${bouncedWindow} THEN 1 ELSE 0 END) AS bounced
+    FROM sequence_events
+    WHERE ${createdWindow} OR (status = 'replied' AND ${repliedWindow}) OR (status = 'bounced' AND ${bouncedWindow})
+    GROUP BY play_name
+  `;
+  return db.query(sql).all(params) as Array<{
+    play_name: string;
+    sent: number;
+    delivered: number;
+    replied: number;
+    bounced: number;
+  }>;
 }
