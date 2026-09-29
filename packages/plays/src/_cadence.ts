@@ -2196,19 +2196,30 @@ export function prospectDemoDay(
   }
 }
 
+/**
+ * One line, capped: a scraped title or company description must not be able
+ * to open a new section of the prompt.
+ */
+function oneLine(v: string, max: number): string {
+  const flat = v.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
 /** ROLE and COMPANY FACTS for a follow-up, from the prospect row and its researched dossier. */
 export function prospectContextLines(prospect: {
   title?: string | null;
   dossier_json?: string | null;
 }): string[] {
   const lines: string[] = [];
-  if (prospect.title?.trim()) lines.push(`ROLE: ${prospect.title.trim()}`);
+  if (prospect.title?.trim()) lines.push(`ROLE: ${oneLine(prospect.title, 120)}`);
   const half = readPersonHalf(prospect.dossier_json);
   const facts =
     half && typeof half === "object"
       ? (half as { companyFacts?: unknown }).companyFacts
       : undefined;
-  if (typeof facts === "string" && facts.trim()) lines.push(`COMPANY FACTS: ${facts.trim()}`);
+  if (typeof facts === "string" && facts.trim()) {
+    lines.push(`COMPANY FACTS: ${oneLine(facts, 300)}`);
+  }
   return lines;
 }
 
