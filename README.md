@@ -162,13 +162,13 @@ All finders start disabled in a new workspace. Choose sources for your buyers or
 
 ### The plays
 
-Twenty-three of them. Thirteen have a **Run** page in the dashboard and drain from the queue:
+Twenty-three of them. Sixteen have a **Run** page in the dashboard and drain from the queue:
 
-`show-hn` · `job-change` · `post-funding` · `accelerator-batch` · `hiring-signal` · `podcast-guest` · `competitor-switch` · `stack-consolidation` · `repo-interest` · `luma-events` · `sources-sought` · `civic-pilot` · `design-partner-loi`
+`show-hn` · `job-change` · `post-funding` · `accelerator-batch` · `hiring-signal` · `podcast-guest` · `competitor-switch` · `stack-consolidation` · `repo-interest` · `luma-events` · `discovery-interview` · `free-pilot` · `new-business` · `sources-sought` · `civic-pilot` · `design-partner-loi`
 
 The last three are the institutional counterparts to the founder-to-founder register: `sources-sought` cites a specific SAM.gov notice and agency, `civic-pilot` cites a council agenda item, meeting date and a cooperative purchasing vehicle, and `design-partner-loi` walks an ask ladder — does this problem sit with you, a design-partner conversation, one scoped pilot — for enterprise, government and hardware buyers, and refuses to draft at an owner-operator.
 
-Six more drain from the queue without a Run form — `profile-intro` (what Add Prospect enqueues), `breakup-revive`, `free-pilot`, and the three `x-reposters` feeds: `x-repost-intro`, `x-amplify`, and `x-amplify-dm`, the one play that never auto-sends (it drafts DM text you send by hand, then **Mark sent** records the touch). `concierge` and `demo-no-show` are CLI-only because they open with a voice call and an SMS respectively; both are fed by [trigger webhooks](./docs/webhooks.md).
+Five more drain from the queue without a Run form — `profile-intro` (what Add Prospect enqueues), `breakup-revive`, and the three `x-reposters` feeds: `x-repost-intro`, `x-amplify`, and `x-amplify-dm`, the one play that never auto-sends (it drafts DM text you send by hand, then **Mark sent** records the touch). `concierge` and `demo-no-show` are CLI-only because they open with a voice call and an SMS respectively; both are fed by [trigger webhooks](./docs/webhooks.md).
 
 Most carry a cadence — a value follow-up, then a breakup, over roughly three to nine days, editable per play from `/plays`. Any reply, email or LinkedIn, stops every live cadence for that prospect. You can also stop one deliberately from `/cadences` with a reason: bad-timing stops become breakup-revive candidates after the cold window, not-a-fit and do-not-contact stay excluded.
 
