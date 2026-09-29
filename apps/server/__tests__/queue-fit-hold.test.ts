@@ -3,6 +3,7 @@ const state = vi.hoisted(() => ({
   payload: {} as Record<string, unknown>,
   stored: null as null | { icp_verdict: string; icp_verdict_reason: string },
   cleared: 0,
+  recipient: "",
   draft: {
     subject: "Hello",
     body: "A reviewed draft",
@@ -25,7 +26,8 @@ vi.mock("@oneshot-gtm/core", async () => ({
 }));
 vi.mock("@oneshot-gtm/plays", async () => ({
   ...(await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays")),
-  sendDraftedEmail: async (opts: { flags: string[] }) => {
+  sendDraftedEmail: async (opts: { flags: string[]; to: string }) => {
+    state.recipient = opts.to;
     opts.flags.push("off-icp");
     return { sent: false, receiptIds: [] };
   },
@@ -51,6 +53,7 @@ beforeEach(() => {
   };
   state.stored = null;
   state.cleared = 0;
+  state.recipient = "";
 });
 describe("queue fit holds", () => {
   it("exposes a fit hold even when the row is approved", () => {
@@ -87,4 +90,18 @@ describe("queue fit holds", () => {
     expect(state.cleared).toBe(1);
     expect(row()).toEqual(before);
   });
+});
+
+it.each(["", "   "])("uses founderEmail consistently when email is %j", async (email) => {
+  state.payload = { email, founderEmail: "founder@example.test" };
+  state.stored = { icp_verdict: "reject", icp_verdict_reason: "Stored founder assessment" };
+  expect(toView(row()).sendHold?.reason).toBe("Stored founder assessment");
+  const res = await sendDraftRoute(
+    new Request("http://localhost/api/queue/1/send-draft", { method: "POST" }),
+    { id: "1" },
+  );
+  expect(res.status).toBe(409);
+  expect(await res.json()).toMatchObject({ reason: "off-icp" });
+  expect(state.recipient).toBe("founder@example.test");
+  expect(state.cleared).toBe(1);
 });

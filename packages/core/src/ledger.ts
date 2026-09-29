@@ -2473,7 +2473,10 @@ export class Ledger {
           /* Legacy malformed payload. */
         }
         if (payload && !["pass", "reject", "unclear"].includes(String(payload.icpVerdict))) {
-          const email = typeof payload.email === "string" ? payload.email : payload.founderEmail;
+          const email =
+            typeof payload.email === "string" && payload.email.trim()
+              ? payload.email.trim()
+              : payload.founderEmail;
           const prospect = typeof email === "string" ? this.getProspectByEmail(email) : null;
           if (prospect?.icp_verdict === "reject") {
             storedFitReason = prospect.icp_verdict_reason ?? "person gate rejected";

@@ -150,3 +150,23 @@ describe("human approval of a stored prospect fit rejection", () => {
     },
   );
 });
+
+it.each(["", "   "])("uses founderEmail for stored fit approval when email is %j", (email) => {
+  const prospectId = ledger.upsertProspect({
+    email: "founder@example.test",
+    name: "Founder",
+    source: "test",
+  });
+  ledger.setProspectIcpVerdict(prospectId, "reject", "Stored founder assessment");
+  const id = ledger.enqueueTarget({
+    playName: "luma-events",
+    payload: { email, founderEmail: "founder@example.test" },
+    dedupeKey: "fallback",
+    source: "test",
+  })!;
+  ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });
+  expect(payloadOf(id)).toMatchObject({
+    icpVerdict: "pass",
+    icpOverride: { reason: "Stored founder assessment" },
+  });
+});

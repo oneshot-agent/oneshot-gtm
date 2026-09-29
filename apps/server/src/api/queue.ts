@@ -98,7 +98,7 @@ function emailFitHold(payload: unknown): QueueRowView["sendHold"] {
   let verdict = p.icpVerdict;
   let reason = p.icpVerdictReason;
   if (verdict !== "pass" && verdict !== "reject" && verdict !== "unclear") {
-    const email = typeof p.email === "string" ? p.email : p.founderEmail;
+    const email = typeof p.email === "string" && p.email.trim() ? p.email.trim() : p.founderEmail;
     if (typeof email !== "string" || !email) return null;
     const ledger = getLedger();
     const existing = ledger.findProspectByEmail(email);
@@ -1376,7 +1376,7 @@ export async function sendDraftRoute(
   }
 
   const str = (k: string): string | null => (typeof payload[k] === "string" ? payload[k] : null);
-  const email = str("email") ?? str("founderEmail");
+  const email = str("email")?.trim() || str("founderEmail")?.trim();
   if (!email) return jsonResponse({ error: "row has no recipient email" }, 400, req);
 
   // Exactly one telemetry event per send attempt; declared after pre-send
