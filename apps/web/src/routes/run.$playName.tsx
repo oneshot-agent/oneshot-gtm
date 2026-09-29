@@ -17,6 +17,7 @@ import { pruneSentRows, remapFilteredEventIndexes } from "../lib/pruneSentRows.t
 import { IS_DEMO, demoWrite } from "../api/demo.ts";
 import { readOnly } from "../lib/readOnly.ts";
 import {
+  allTargetsLinked,
   dryRunReturnSummary,
   RETURN_TO_QUEUE_SECONDS,
   shouldReturnToQueue,
@@ -253,26 +254,32 @@ function RunPage() {
   // A dry run drained from the queue heads back there once it finishes live,
   // landing on the play's approved rows where the new drafts now sit. The
   // countdown gives a beat to read the result; "stay" cancels it.
-  const errorCount = runRecord?.errorCount ?? errorEvents.length;
-  const prevModeRef = useRef<typeof mode | null>(null);
+  // Evidence this mount watched the run live: it submitted it, or saw the
+  // record while still running. A late-loading finished record is neither.
+  const watchedLiveRef = useRef(false);
+  if (running || runRecord?.status === "running") watchedLiveRef.current = true;
   const [returnIn, setReturnIn] = useState<number | null>(null);
+  const returnDecidedRef = useRef<number | null>(null);
   useEffect(() => {
-    const prevMode = prevModeRef.current;
-    if (prevMode === mode) return;
-    prevModeRef.current = mode;
+    if (!runRecord || runRecord.status === "running") return;
+    // Decide once per run, from the completed record (not the event mirror,
+    // which catches up an effect later).
+    if (returnDecidedRef.current === runRecord.id) return;
+    returnDecidedRef.current = runRecord.id;
     if (
       shouldReturnToQueue({
-        prevMode,
-        mode,
+        watchedLive: watchedLiveRef.current,
+        status: runRecord.status,
         fromQueue: search.fromQueue === "1",
-        dryRun,
-        drafts: aggregate.drafts,
-        errors: errorCount,
+        dryRun: runRecord.dryRun,
+        drafts: runRecord.draftedCount,
+        errors: runRecord.errorCount,
+        allLinked: allTargetsLinked(runRecord.targetCount, runRecord.dedupeKeys),
       })
     ) {
       setReturnIn(RETURN_TO_QUEUE_SECONDS);
     }
-  }, [mode, search.fromQueue, dryRun, aggregate.drafts, errorCount]);
+  }, [runRecord, search.fromQueue]);
   useEffect(() => {
     if (returnIn == null) return;
     if (returnIn <= 0) {

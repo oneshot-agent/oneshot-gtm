@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { dryRunReturnSummary, shouldReturnToQueue } from "./runReturn.ts";
+import { allTargetsLinked, dryRunReturnSummary, shouldReturnToQueue } from "./runReturn.ts";
 
 const live = {
-  prevMode: "progress" as const,
-  mode: "done" as const,
+  watchedLive: true,
+  status: "done" as const,
   fromQueue: true,
   dryRun: true,
   drafts: 10,
   errors: 0,
+  allLinked: true,
 };
 
 describe("shouldReturnToQueue", () => {
@@ -15,14 +16,13 @@ describe("shouldReturnToQueue", () => {
     expect(shouldReturnToQueue(live)).toBe(true);
   });
 
-  it("stays when an old run is reopened (no live progress seen)", () => {
-    expect(shouldReturnToQueue({ ...live, prevMode: null })).toBe(false);
-    expect(shouldReturnToQueue({ ...live, prevMode: "edit" })).toBe(false);
+  it("stays when an old run is reopened (never seen running)", () => {
+    expect(shouldReturnToQueue({ ...live, watchedLive: false })).toBe(false);
   });
 
   it("stays on cancelled or interrupted runs", () => {
-    expect(shouldReturnToQueue({ ...live, mode: "cancelled" })).toBe(false);
-    expect(shouldReturnToQueue({ ...live, mode: "interrupted" })).toBe(false);
+    expect(shouldReturnToQueue({ ...live, status: "cancelled" })).toBe(false);
+    expect(shouldReturnToQueue({ ...live, status: "interrupted" })).toBe(false);
   });
 
   it("stays on real sends and manual entry", () => {
@@ -30,9 +30,19 @@ describe("shouldReturnToQueue", () => {
     expect(shouldReturnToQueue({ ...live, fromQueue: false })).toBe(false);
   });
 
-  it("stays when the run errored or drafted nothing", () => {
+  it("stays when the run errored, drafted nothing, or had a hand-added row", () => {
     expect(shouldReturnToQueue({ ...live, errors: 1 })).toBe(false);
     expect(shouldReturnToQueue({ ...live, drafts: 0 })).toBe(false);
+    expect(shouldReturnToQueue({ ...live, allLinked: false })).toBe(false);
+  });
+});
+
+describe("allTargetsLinked", () => {
+  it("needs a queue row for every target", () => {
+    expect(allTargetsLinked(2, ["k1", "k2"])).toBe(true);
+    expect(allTargetsLinked(2, ["k1", null])).toBe(false);
+    expect(allTargetsLinked(2, ["k1"])).toBe(false);
+    expect(allTargetsLinked(0, [])).toBe(false);
   });
 });
 
