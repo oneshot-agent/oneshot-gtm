@@ -16,6 +16,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     loadConfig: () => ({ ...actual.loadConfig(), queueReviewOrder: configOrder }),
     getLedger: () => ({
+      findProspectByEmail: () => null,
       getTrigger: () => ({ config_json: triggerConfig }),
       listQueue: (args: Record<string, unknown>) => {
         listQueueCalls.push(args);

@@ -567,6 +567,8 @@ export interface ProspectPriorityView {
 }
 
 export interface QueueRowView {
+  /** Known email fit hold; absent in older API responses. Approval status is independent. */
+  sendHold?: { code: "off-icp"; reason: string } | null;
   id: number;
   playName: string;
   /** Outreach channel of the first touch: email, linkedin or x. */

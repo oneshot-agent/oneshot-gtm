@@ -91,6 +91,32 @@ function parsePriority(raw: string | null): ProspectPriorityView | null {
   return parseProspectPriority(raw);
 }
 
+/** Resolve the same fresh-verdict precedence used by the email send gate. */
+function emailFitHold(payload: unknown): QueueRowView["sendHold"] {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const p = payload as Record<string, unknown>;
+  let verdict = p.icpVerdict;
+  let reason = p.icpVerdictReason;
+  if (verdict !== "pass" && verdict !== "reject" && verdict !== "unclear") {
+    const email = typeof p.email === "string" ? p.email : p.founderEmail;
+    if (typeof email !== "string" || !email) return null;
+    const ledger = getLedger();
+    const existing = ledger.findProspectByEmail(email);
+    const stored = existing ? ledger.getProspectById(existing.id) : null;
+    verdict = stored?.icp_verdict;
+    reason = stored?.icp_verdict_reason;
+  }
+  return verdict === "reject"
+    ? {
+        code: "off-icp",
+        reason:
+          typeof reason === "string" && reason.trim()
+            ? reason
+            : "Saved assessment says this person does not fit the target customer profile.",
+      }
+    : null;
+}
+
 export function toView(row: QueueRow): QueueRowView {
   let payload: unknown = null;
   try {
@@ -132,6 +158,10 @@ export function toView(row: QueueRow): QueueRowView {
     channel: channelOf(row.channel),
     sender: firstTouchSender(channelOf(row.channel)),
     payload,
+    sendHold:
+      channelOf(row.channel) === "email" && row.status !== "sent" && !lastDraft?.sent
+        ? emailFitHold(payload)
+        : null,
     dedupeKey: row.dedupe_key,
     source: row.source,
     status: row.status,
@@ -1448,6 +1478,21 @@ export async function sendDraftRoute(
       return done(
         "ok",
         jsonResponse({ error: `${reason} — not re-sent`, skipped: true, reason: dedup }, 409, req),
+      );
+    }
+    if (sendFlags.includes("off-icp")) {
+      const hold = emailFitHold(payload);
+      return done(
+        "ok",
+        jsonResponse(
+          {
+            error: `Send held for fit review: ${hold?.reason ?? "Saved assessment says this person does not fit the target customer profile."} Review their fit before sending; regenerating the draft will not clear this hold.`,
+            held: true,
+            reason: "off-icp",
+          },
+          409,
+          req,
+        ),
       );
     }
     return done("error", jsonResponse({ error: "send did not complete" }, 500, req));
