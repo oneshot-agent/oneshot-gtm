@@ -60,7 +60,7 @@ vi.mock("@oneshot-gtm/core", () => ({
     calls.eventKinds.push(kind);
   },
   // These cases exercise the real scheduler loop. Demo mode short-circuits it
-  // to a no-op handle — covered separately below.
+  // to a no-op handle: covered separately below.
   demoMode: () => demoModeValue,
   postDailySendSummaryIfDue: async (_now: Date, opts: { sweepClean?: boolean }) => {
     calls.postDailySendSummaryIfDue++;
@@ -203,7 +203,7 @@ describe("startScheduler", () => {
   it("stop() called while runDueTriggers is in flight does NOT reschedule", async () => {
     // Suspend runDueTriggers on a controllable gate so the tick genuinely
     // stays in flight (awaiting a real, unresolved promise) while we call
-    // stop() — this is what "in flight" has to mean for the test to prove
+    // stop(). This is what "in flight" has to mean for the test to prove
     // anything about in-flight cancellation.
     let resolveGate: (() => void) | null = null;
     runDueTriggersGate = new Promise<void>((res) => {
@@ -257,8 +257,7 @@ describe("startScheduler", () => {
 
   // A seeded demo home is a still life. If the scheduler ran, it would fire the
   // enabled triggers against placeholder credentials and overwrite the
-  // last_run_summary / last_polled_at values that make the dashboard look alive
-  // — mid-screenshot.
+  // last_run_summary / last_polled_at values mid-screenshot.
   it("never ticks in demo mode, no matter how far time advances", async () => {
     demoModeValue = true;
     const handle = startScheduler();
@@ -273,7 +272,7 @@ describe("startScheduler", () => {
   // (BOUNCE_POLL_INTERVAL_MS=30min vs. every tick). A tick that crossed
   // midnight UTC less than 30 minutes after the last sweep would skip the
   // bounce poll but still stamp the just-completed day's watermark via
-  // postDailySendSummaryIfDue — permanently excluding any bounce that
+  // postDailySendSummaryIfDue: permanently excluding any bounce that
   // hadn't been swept yet from every future daily summary. The scheduler
   // must force the sweep on the tick where the UTC calendar day changes,
   // even inside the 30-minute throttle window.
@@ -293,7 +292,7 @@ describe("startScheduler", () => {
     expect(calls.pollInboxBounces).toBe(1);
 
     // The next tick crosses midnight UTC into Aug 29, still well inside the
-    // 30-minute throttle window since the last real sweep — this is exactly
+    // 30-minute throttle window since the last real sweep. This is exactly
     // the scenario the round-3 finding describes. It must sweep anyway.
     vi.setSystemTime(new Date("2026-08-29T00:01:00.000Z"));
     await vi.advanceTimersByTimeAsync(60_000);
@@ -336,7 +335,7 @@ describe("startScheduler", () => {
   // issue #71 round-5 review finding: bouncePollClean used to be a `let`
   // re-initialized to `true` at the top of every tick's closure. Sequence:
   // a tick's sweep comes back partial (sweepClean: false, summary correctly
-  // deferred, watermark NOT stamped) — the very next tick, inside the
+  // deferred, watermark NOT stamped). The very next tick, inside the
   // 30-minute throttle so no sweep runs at all, would still reset the flag
   // to `true` and hand postDailySendSummaryIfDue a false "clean", stamping
   // the still-incomplete day one tick later. The flag must persist across
@@ -353,7 +352,7 @@ describe("startScheduler", () => {
     expect(postDailySendSummaryIfDueOpts.at(-1)).toEqual({ sweepClean: false });
 
     // Next tick, 1 minute later: well inside the 30-minute throttle and no
-    // day rollover, so no sweep runs. sweepClean must still be false — the
+    // day rollover, so no sweep runs. sweepClean must still be false. The
     // partial result from the last real sweep, not reset to true.
     await vi.advanceTimersByTimeAsync(60_000);
     expect(calls.pollInboxBounces).toBe(1); // confirms no sweep ran this tick
@@ -364,7 +363,7 @@ describe("startScheduler", () => {
 
   // issue #71 round-1 correction: postDailySendSummaryIfDue's watermark
   // stamping was gated only on the bounce sweep's `clean` flag, not on
-  // reply-poll completeness — but the summary's `bounced` total also
+  // reply-poll completeness, but the summary's `bounced` total also
   // depends on the reply poll (countAutoPermanentBounces reads
   // inbox_replies, which the reply poll writes). A partial reply poll must
   // defer the stamp exactly like a partial bounce sweep does.

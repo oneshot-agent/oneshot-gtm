@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { isSupportedPlay, PLAYS } from "../src/registry.ts";
 
 // Guards the single source of truth the SSE /run dispatch and the queue drainer
-// both consume. If a play is added/removed, this list must move with it — which
+// both consume. If a play is added/removed, this list must move with it, which
 // is the whole point of collapsing the two old switch statements into one table.
 const EXPECTED = [
   "show-hn",

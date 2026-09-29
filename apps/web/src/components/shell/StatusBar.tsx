@@ -12,7 +12,7 @@ import { StatusPill } from "../primitives/StatusPill.tsx";
 type Tone = "receipt" | "spend" | "blocked" | "neutral";
 
 /**
- * A live strip of doctor-health pills — wallet · llm · ledger. Clicking
+ * A live strip of doctor-health pills: wallet · llm · ledger. Clicking
  * any pill opens /setup. If a check fails, the pill turns oxblood and
  * signals the founder to fix something before the next run.
  *

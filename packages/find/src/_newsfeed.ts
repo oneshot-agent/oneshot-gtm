@@ -23,7 +23,7 @@ import {
 
 /**
  * Newsfeed capture: a person's recent posts, bought once per profile and kept
- * for later use. Nothing drafts from them yet — the dossier carries only a
+ * for later use. Nothing drafts from them yet. The dossier carries only a
  * pointer (`PersonResearchNewsfeed`), and the posts live in the shared
  * enrichment cache under `newsfeed:<canonical url>` for 14 days, readable by
  * `getCachedNewsfeed`. Measured 2026-09-27: LinkedIn 8/8 non-empty (7/8 with
@@ -199,7 +199,7 @@ export type NewsfeedOutcome =
 
 /**
  * personNewsfeed that never throws, caches, serializes and cannot hang.
- * `cacheOnly` answers from the cache or not at all — it never calls.
+ * `cacheOnly` answers from the cache or not at all. It never calls.
  */
 export async function safePersonNewsfeed(
   url: string,
@@ -512,7 +512,7 @@ export function scheduleNewsfeedOnApproval(rowIds: readonly number[]): void {
   });
 }
 
-/** Prospects per in-flight sweep. The newsfeed lane is one at a time, ~5–12 s a call. */
+/** Prospects per in-flight sweep. The newsfeed lane is one at a time, ~5-12 s a call. */
 export const IN_FLIGHT_NEWSFEED_MAX = 25;
 
 export interface InFlightNewsfeedCandidate {

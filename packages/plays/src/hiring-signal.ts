@@ -12,13 +12,13 @@ export interface HiringSignalTarget {
   company: string;
   /** Job title to search for. */
   jobTitle: string;
-  /** Optional direct URL to a known job post — skips the search. */
+  /** Optional direct URL to a known job post: skips the search. */
   jobPostUrl?: string;
   /** Your one-line claim about how your product compresses ramp time for this role. */
   yourClaim: string;
   linkedinUrl?: string;
   phone?: string;
-  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  /** Job title from the person-level ICP gate: persisted to prospects.title. */
   title?: string;
 }
 
@@ -32,7 +32,7 @@ export interface HiringSignalRunOptions {
   ) => void;
   /** Skip the web-search/read steps. */
   skipScrape?: boolean;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -81,7 +81,7 @@ export function runHiringSignal(
         }
 
         if (jobUrl) {
-          // Second paid call of the phase — the search above may have landed
+          // Second paid call of the phase. The search above may have landed
           // after the abort, so re-check before buying the page read.
           throwIfCancelled(signal, `${PLAY_NAME} job-post read`);
           const read = await webRead({ url: jobUrl }, { playName: PLAY_NAME });
@@ -106,7 +106,7 @@ export function runHiringSignal(
         `JOB POST HOOK (real phrase from the post): ${prep.extra?.jobPostHook ?? NO_HOOK}`,
         // Labelled YOUR EDGE, not YOUR CLAIM: hiring-signal-email.md lists its
         // input as "YOUR EDGE", and _humanizer.md scopes the `//` multi-angle
-        // rule to that name. The config key stays `yourClaim` — renaming it
+        // rule to that name. The config key stays `yourClaim`: renaming it
         // would strand every existing trigger config.
         `YOUR EDGE: ${t.yourClaim}`,
       ].join("\n"),

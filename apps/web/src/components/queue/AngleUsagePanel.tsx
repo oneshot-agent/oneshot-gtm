@@ -7,7 +7,7 @@ import { Explain } from "../primitives/Explain.tsx";
 
 /**
  * What the founder did with each configured angle, shown inside the trigger
- * config editor under `yourEdge`, and how often its sends were answered — the
+ * config editor under `yourEdge`, and how often its sends were answered. The
  * side-by-side a founder reads to compare angles (a lesson against an
  * opportunity, say). Counts are distinct prospects. `retire`
  * only rewrites the editor text (lib/angleRetire.ts); the editor's own save

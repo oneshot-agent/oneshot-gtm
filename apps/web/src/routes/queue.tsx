@@ -129,13 +129,13 @@ export const Route = createFileRoute("/queue")({
   component: QueuePage,
 });
 
-/** Stable empty page — see `fetchedRows` below. */
+/** Stable empty page: see `fetchedRows` below. */
 const EMPTY_ROWS: QueueRowView[] = [];
 
 /**
  * Rows rendered before the "show all" disclosure. The API hands back up to 200
  * (`queue-helpers.ts`), which at ~70px each is ~14,000px of uninterrupted
- * table — and `rejected` alone holds thousands.
+ * table, and `rejected` alone holds thousands.
  */
 const ROW_CAP = 50;
 
@@ -167,7 +167,7 @@ function statusTone(
 
 /**
  * One modal for both the row button and the bulk bar. `suggested` is what the
- * box opens with — the row's own evidence, computed at open time so the box
+ * box opens with. The row's own evidence, computed at open time so the box
  * belongs to THIS row and not to whichever one was cancelled before it.
  */
 interface RejectModalState {
@@ -178,7 +178,7 @@ interface RejectModalState {
   /**
    * Opened under privacy mode: nothing is prefilled and the LLM fallback is
    * not asked, for the same reason the sheet hides `fitReason` and `notes`
-   * there — a gate's reason routinely names the person.
+   * there. A gate's reason routinely names the person.
    */
   privacy: boolean;
 }
@@ -187,7 +187,7 @@ interface DrainModalState {
   playName: string;
   approvedCount: number;
   /**
-   * Set when draining an explicit selection — /run hydrates exactly these rows
+   * Set when draining an explicit selection: /run hydrates exactly these rows
    * and the modal's limit field steps aside (the pick IS the limit).
    */
   ids?: number[];
@@ -320,7 +320,7 @@ function QueuePage() {
     onError: (err) => toast.error(`couldn't approve all · ${err.message}`),
   });
 
-  // Bulk selection mutations — operate over the current `selected` set.
+  // Bulk selection mutations: operate over the current `selected` set.
   const bulkApprove = useMutation({
     mutationFn: async (ids: number[]) => {
       let ok = 0;
@@ -365,7 +365,7 @@ function QueuePage() {
   // hitting POST /api/queue/drain. The drain endpoint dropped draft content
   // on the floor (counts only); the /run page streams every draft live with
   // its lint flags so partial batches and lint-blocked sends are visible.
-  // Both dryRun and real-send paths route through here — the founder picks
+  // Both dryRun and real-send paths route through here. The founder picks
   // mode via the modal toggle and /run honors it via the URL param.
   const submitDrainViaRun = (): void => {
     if (!drainModal) return;
@@ -401,11 +401,11 @@ function QueuePage() {
    */
   const [showAllRows, setShowAllRows] = useState(false);
   const visibleRows = showAllRows ? rows : rows.slice(0, ROW_CAP);
-  // Whole-queue approved counts per play — NOT scoped to the current filters,
+  // Whole-queue approved counts per play: NOT scoped to the current filters,
   // so the drain button works from the default `pending` view too.
   const approvedByPlay = queueQuery.data?.approvedByPlay ?? {};
   // Play/status of every row seen this session. Rows can only be selected while
-  // visible, so every selected id has an entry — and it stays correct after the
+  // visible, so every selected id has an entry, and it stays correct after the
   // filters hide the row. Refreshed whenever a row reappears in a fetch, so a
   // status that moved on (someone else sent it) is picked up.
   const [rowMeta, setRowMeta] = useState<RowMeta>(new Map());
@@ -424,7 +424,7 @@ function QueuePage() {
     new Map(rows.map((r) => [r.id, r.lastDraftedAt])),
   );
 
-  // Plays on the visible page, plus any play holding approved rows anywhere —
+  // Plays on the visible page, plus any play holding approved rows anywhere:
   // the chip both filters the table and scopes the drain button, so a play with
   // drainable rows must stay selectable even when the page shows none of them.
   const playList = queuePlayList(rows, approvedByPlay);
@@ -432,7 +432,7 @@ function QueuePage() {
   if (playFilter !== "all" && !playList.includes(playFilter)) playList.push(playFilter);
   const drain = drainButtonState({ playFilter, approvedByPlay, isRunnable: isRunnablePlay });
   // Selection outlives the filters, so read each selected row from the session
-  // map rather than the visible page — otherwise filtering to one play makes a
+  // map rather than the visible page. Otherwise filtering to one play makes a
   // cross-play selection look single-play and drains only what's on screen.
   const drainSelected = drainSelectionState({
     selected: [...selected].map((id) => {
@@ -442,15 +442,8 @@ function QueuePage() {
     isRunnable: isRunnablePlay,
   });
 
-  // Selection derived state — stable across renders even if rows refetch.
-  /*
-   * Selection state is computed against the rows actually on screen, not the
-   * whole fetched set. With the row cap in place `rows` can hold 200 while 50
-   * are rendered, and the header checkbox is named for what it does —
-   * `selectVisibleQueueRows`. Passing `rows` would tick one box and silently
-   * select 150 rows the reader cannot see, which the bulk approve/reject bar
-   * would then act on.
-   */
+  // Select only rendered rows; fetched rows beyond the display cap must not
+  // become invisible targets of bulk approval or rejection.
   const { someSelected, allSelected } = queueSelectionState(visibleRows, selected);
 
   return (
@@ -635,7 +628,7 @@ function QueuePage() {
                 />
               ))}
               {/* The fetch returns up to 200 rows (queue-helpers.ts `limit`)
-                  and every one used to render into this tbody — ~14,000px of
+                  and every one used to render into this tbody: ~14,000px of
                   table. Same one-quiet-row disclosure the inactive finders use
                   in the Triggers panel, colSpan trick included so the shared
                   column widths hold. */}
@@ -873,7 +866,7 @@ function QueuePage() {
         }
       >
         <div className="flex flex-col gap-3">
-          {/* A selection IS the limit — never show a second, contradictory number. */}
+          {/* A selection IS the limit. Never show a second, contradictory number. */}
           <p className="text-[13px] text-ink-muted">
             Drain approved rows <Explain concept="drain" />
           </p>
@@ -955,14 +948,12 @@ export function QueueRow({
   const eventUrl = eventUrlFor(row.payload);
   const eventRole = eventRoleFor(row.payload);
   const eventPassed = eventDate != null && eventIsPast(eventDate);
-  // Privacy mode suppresses the rationale — both halves are freeform text
+  // Privacy mode suppresses the rationale. Both halves are freeform text
   // that can name a person or a company, which the structured <Pii> masking
   // cannot reach inside. The row keeps its height so the list does not jump.
   const { masked } = usePrivacy();
-  // The row is a ledger entry: one line of identity, one line of why (#594).
-  // The why is the same shape on every play — the finder's signal as a small
-  // label, then the fit sentence every finder stamps (#592). The event's date
-  // rides on the signal label: it is what makes a luma row urgent.
+  // Show identity, finder signal, and fit reason consistently across plays.
+  // Event dates stay on the signal label to make timing visible.
   const signal = queueEvidence(row.playName, row.payload);
   const fitReason = fitReasonFor(row.payload);
   const emptyResearch = !fitReason ? researchEmptyState(row.payload) : null;
@@ -1016,9 +1007,7 @@ export function QueueRow({
               className={cn(
                 "h-[13px] w-[13px] rounded-[var(--radius-xs)]",
                 "border border-ink-rule bg-ink-bg-deep accent-[color:var(--ink-signal)]",
-                // Hide until the row is hovered OR any other row is selected —
-                // so the default look stays clean, but once you start selecting
-                // the checkboxes stay visible for rapid batch picking.
+                // Keep checkboxes visible during batch selection, otherwise show on hover.
                 "transition-opacity duration-[var(--dur-stamp)]",
                 selected || anySelected
                   ? "opacity-100"
@@ -1045,7 +1034,7 @@ export function QueueRow({
         <td className="whitespace-nowrap py-[10px] pr-6 leading-4 text-ink-cream-2">
           {row.playName}
           {/* The source column is gone (redundant with play), but its meaningful
-              suffix — which repo / cohort the finder matched — survives here. */}
+              suffix (which repo / cohort the finder matched) survives here. */}
           {detail && <div className="font-mono text-[10.5px] text-ink-faint">{detail}</div>}
         </td>
         <td className="whitespace-nowrap py-[10px] pr-6">
@@ -1210,14 +1199,9 @@ export function QueueRow({
 }
 
 /**
- * The letter: the right half of an open row. Shows the persisted draft
- * (subject, why it is held in words, body, receipt links, send state) with a
- * regenerate action, or a thin "no draft yet" bar with a generate action. Both
- * actions hit the same preview-only endpoint (dry-run, never sends). The card
- * ends in the receipt's torn edge; a sendable letter's foot is the total line,
- * the one place the page spends receipt green. All plays are self-contained —
- * every finder stamps its pitch angle onto the row it enqueues, so any row
- * generates inline.
+ * Persisted draft with receipt links, send state, and generate/regenerate actions.
+ * Both draft actions use the preview-only endpoint and never send. Each finder
+ * stores its pitch angle on the row so drafts can be generated inline.
  */
 function DraftSection({
   id,
@@ -1244,7 +1228,7 @@ function DraftSection({
   /** Set once the send has created a prospect row; null before that. */
   prospectId: number | null;
   /**
-   * True when the server's `target_queue.send_started_at` marker is set —
+   * True when the server's `target_queue.send_started_at` marker is set:
    * survives nav-away-and-back AND `bun --watch` reloads, unlike the
    * mutation's local `isPending`. Cleared on terminal status flip.
    */
@@ -1265,10 +1249,7 @@ function DraftSection({
     },
     onError: (err) => {
       clearDraftGenerating(id);
-      // Refetch on failure too: if a concurrent send completed/claimed the row
-      // during the regenerate (server returns a 409 TOCTOU), the cached row is
-      // stale-`approved` and would keep the regenerate button live. Mirrors
-      // send.onError so the row flips to `sent` and the button disappears.
+      // Refetch on failure: a concurrent send may have made the cached approved row stale.
       void qc.invalidateQueries({ queryKey: ["queue"] });
       toast.error(`couldn't draft · ${err.message}`);
     },
@@ -1284,9 +1265,7 @@ function DraftSection({
       toast.success("sent · the reviewed draft went out as-is");
     },
     onError: (err) => {
-      // Always refetch on failure too: a stale already-sent row (or one claimed
-      // by another tab / in-flight) self-corrects — the row flips to `sent` and
-      // the button disappears — instead of leaving a dead-end click to repeat.
+      // Refetch failed sends so rows claimed or sent elsewhere update their controls.
       void qc.invalidateQueries({ queryKey: ["queue"] });
       if (err.message.includes("already sent")) toast.success("already sent ✓");
       else if (err.message.startsWith("Send held for fit review:"))
@@ -1298,19 +1277,10 @@ function DraftSection({
       else toast.error(`couldn't send · ${err.message}`);
     },
   });
-  // Combine the local mutation spinner with the server-persisted `isSending`
-  // flag so the spinner survives navigate-away-and-back AND server restart.
-  // Hoisted above canDraft so the regenerate gate uses the same definition as
-  // the send button below (asymmetry would re-open the UX window between
-  // send.mutate() firing and the queue refetch landing the server marker).
+  // Combine local and persisted send state to survive remounts and cover the gap
+  // before the server marker is refetched. Use it for both send and regenerate
+  // controls; sent or in-flight drafts cannot be regenerated.
   const sending = send.isPending || isSending;
-  // Once the row is sent (or a send is in flight), the server rejects
-  // regenerate (queue.ts guards: row.status === "sent" → 400; send_started_at
-  // != null → 409). Hide the button client-side too so post-send stale rows
-  // (draft.sent=false but status=sent) and mid-send rows don't tempt a click
-  // that would error. Gate on `sending` (not just `isSending`) so the mid-
-  // mutation window (send.mutate() fired but server marker not yet refetched)
-  // is also covered — symmetric with the sendButton's own gate below.
   const canDraft = status !== "sent" && !sending && !(draft?.sent ?? false);
   const verb = draft ? "Regenerate draft" : "Generate draft";
   const pendingVerb = draft ? "Regenerating…" : "Generating…";
@@ -1342,7 +1312,7 @@ function DraftSection({
     </div>
   ) : null;
 
-  // Hand-sent channel (X DMs today): there is no transport — the founder
+  // Hand-sent channel (X DMs today): there is no transport. The founder
   // copies the text, sends it by hand, then records it here. "Mark sent"
   // writes the step-0 event on the row's channel server-side.
   const isManualPlay = sender === "manual";
@@ -1411,11 +1381,8 @@ function DraftSection({
       )}
     </>
   );
-  // Recording a LinkedIn reply used to live only on /cadences, which is a join
-  // on `cadence_state` — so it was unreachable for every one-touch play. All
-  // 130 luma-events prospects were in that hole: emailed, never enrolled in a
-  // cadence, and therefore impossible to mark when they replied on LinkedIn.
-  // The queue row is where every sent prospect is visible, so it belongs here.
+  // Queue rows also cover one-touch plays without cadence_state, so they need
+  // their own action for recording LinkedIn replies.
   const [linkedinBody, setLinkedinBody] = useState("");
   const [linkedinOpen, setLinkedinOpen] = useState(false);
   const markLinkedIn = useMutation({
@@ -1432,10 +1399,7 @@ function DraftSection({
     },
     onError: (err) => toast.error(`couldn't record · ${err.message}`),
   });
-  // Split in two so the trigger sits with the other row actions on the
-  // letter's foot — where every other row-level action already lives — while
-  // the textarea stays under the body, which is the only part that earns full
-  // width.
+  // Keep the trigger with row actions and give the textarea the full body width.
   const canMarkLinkedIn = status === "sent" && prospectId != null;
   const linkedinReplyButton =
     canMarkLinkedIn && !linkedinOpen ? (
@@ -1492,7 +1456,7 @@ function DraftSection({
       : (pstr("twitterUrl") ?? "")
     : (pstr("tweetUrl") ?? pstr("twitterUrl") ?? "");
   // Same review gate as the send button: a rejected (or still-pending) row
-  // must not offer Mark sent — the server refuses non-approved rows too.
+  // must not offer Mark sent. The server refuses non-approved rows too.
   const manualButtons =
     isManualPlay && draft != null && status === "approved" && !draft.sent ? (
       <>
@@ -1550,7 +1514,7 @@ function DraftSection({
   // Send THIS prospect now, using the reviewed draft VERBATIM (no LLM re-roll).
   // Enabled for an approved, not-yet-sent draft with no BLOCKING flags. Lint /
   // dedup flags block (regenerate until clean, then send); soft review flags
-  // (e.g. stale-event) don't — this button IS their review-then-send override.
+  // (e.g. stale-event) don't. This button IS their review-then-send override.
   const blocking = draft ? blockingFlags(draft.flags) : [];
   const cleanDraft = draft != null && blocking.length === 0 && !draft.sent && !sendHold;
   // Soft-flagged but otherwise sendable: held for review, founder is overriding.
@@ -1598,7 +1562,7 @@ function DraftSection({
         actions={
           <>
             {/* A sent row whose draft was never persisted used to return here
-                before the LinkedIn control rendered — so exactly the rows most
+                before the LinkedIn control rendered, so exactly the rows most
                 likely to have been replied to by hand could not record one. */}
             {linkedinReplyButton}
             {channelButtons}
@@ -1717,19 +1681,9 @@ function DraftSection({
 const TRIGGERS_OPEN_KEY = "oneshot-gtm:queue-triggers-open";
 
 /**
- * Industry pack picker — one selector, not eight cards.
- *
- * A pack IS trigger config: `POST /packs/:id/apply` merges each patch over the
- * trigger's stored config and enables it. So it belongs inside the Triggers
- * panel, which is already collapsed by default and already auto-opens on the
- * two occasions a pack is what you came for — nothing configured yet, or an
- * empty queue.
- *
- * It used to be eight always-expanded cards sitting above the candidates on a
- * page titled "Candidates, for review.", costing ~900px — more than a whole
- * viewport — for a once-per-vertical action. Every founder paid that on every
- * visit, and seven of the eight are verticals any given founder will never
- * pick.
+ * Applying a pack merges patches into trigger config and enables the triggers.
+ * Keep the picker in the Triggers panel, which opens when nothing is configured
+ * or the queue is empty.
  */
 function PackPicker() {
   const qc = useQueryClient();
@@ -1773,12 +1727,8 @@ function PackPicker() {
           value={selectedId}
           aria-label="industry pack"
           /*
-           * Locked while an apply is in flight. The onChange below clears
-           * `lastResult` so one pack's outcome never reads as another's — but
-           * switching mid-apply meant the result landed against a pack that was
-           * no longer selected and rendered nowhere, so the founder saw a
-           * success toast and never the list of triggers that still need
-           * config. The write has already happened; the report has to survive.
+           * Lock selection during apply so the result stays attached to its pack
+           * and the list of triggers needing configuration remains visible.
            */
           disabled={applyPack.isPending}
           onChange={(e) => {
@@ -1811,7 +1761,7 @@ function PackPicker() {
         <div className="mt-2">
           {/* `summary` is the founder-facing line; `buyerBrief` is the
               provenance behind it and reads like the engineering note it is.
-              `summary` is optional, so the fallback is clamped — without it a
+              `summary` is optional, so the fallback is clamped, without it a
               pack that omits one renders the whole paragraph inline, the exact
               thing this picker exists to avoid. */}
           <div className={cn("text-[12px] text-ink-cream-2", !selected.summary && "line-clamp-2")}>
@@ -1823,7 +1773,7 @@ function PackPicker() {
           <div className="mt-1 font-mono text-[11px] text-ink-muted">
             ICP · <span className="text-ink-cream-2">{selected.icpOneLiner}</span>
           </div>
-          {/* Always available, including on the no-summary path — otherwise the
+          {/* Always available, including on the no-summary path. Otherwise the
               clamp above would make the rest of the reasoning unreachable. */}
           <details className="mt-1.5">
             <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint hover:text-ink-cream-2">
@@ -1851,7 +1801,7 @@ function PackPicker() {
               skipped: {result.skipped.map((s) => `${s.name} (${s.reason})`).join(" · ")}
             </div>
           )}
-          {/* Apply never touches icpOneLiner in config.json (see packs.ts) —
+          {/* Apply never touches icpOneLiner in config.json (see packs.ts):
               the proposed ICP only reaches the founder's config if they
               explicitly accept it from /setup. */}
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-ink-muted">
@@ -1863,7 +1813,7 @@ function PackPicker() {
                 navigate({
                   to: "/setup",
                   search: { proposedIcp: result.proposedIcpOneLiner, packLabel: selected.label },
-                  // Land on the ICP section — the seeded field is the point.
+                  // Land on the ICP section. The seeded field is the point.
                   hash: "icp",
                 })
               }
@@ -1900,13 +1850,13 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
     mutationFn: (vars: { name: string; config: unknown; source: "editor" | "inline" }) =>
       api.setTriggerConfig(vars.name, vars.config),
     onSuccess: (data, vars) => {
-      // Edge lint (issue #585) — warn, never refuse: the save already landed.
+      // Edge lint warns after saving; it cannot refuse a save that already succeeded.
       if (data.warnings && data.warnings.length > 0) {
         toast.warning(`${vars.name} · yourEdge: ${data.warnings.join(" · ")}`, {
           duration: 9000,
         });
       }
-      // Close the JSON editor only when the save CAME from it — an inline
+      // Close the JSON editor only when the save CAME from it. An inline
       // interval change on another row must not discard unsaved editor text.
       if (vars.source === "editor") {
         setEditing(null);
@@ -1957,7 +1907,7 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
       toast.success(`${name} · ${parts.join(" · ")}`);
     },
     onError: (err, name) => {
-      // 409 = server already running it — keep the local marker so the
+      // 409 = server already running it. Keep the local marker so the
       // spinner stays lit until the authoritative `running` flag clears.
       if (err.message.includes("already running")) {
         void qc.invalidateQueries({ queryKey: ["triggers"] });
@@ -1973,7 +1923,7 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
   const [editError, setEditError] = useState<string | null>(null);
 
   const triggers = triggersQuery.data?.triggers ?? [];
-  // Disabled finders are dormant — collapsed behind a count row by default.
+  // Disabled finders are dormant: collapsed behind a count row by default.
   const activeTriggers = triggers.filter((t) => t.enabled);
   const inactiveTriggers = triggers.filter((t) => !t.enabled);
   const [showInactive, setShowInactive] = useState(false);
@@ -1981,27 +1931,15 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
   const summary = summarizeTriggers(triggers);
 
   /*
-   * Shut by default, because this page is named for the candidates below it
-   * and the table was taking 336px of the first screen. Trigger status is
-   * already on /home; this panel is where you act on them, which is
-   * occasional. The choice is remembered per browser.
-   *
-   * `useLocalStorage` only ever hydrates a stored value TO true, so the stored
-   * flag has to be the open one with a false default. Storing "collapsed"
-   * instead would make the remembered state unreadable.
+   * Remember the open state with a false default: useLocalStorage only hydrates
+   * stored values to true, so storing "collapsed" would lose the preference.
    */
   const [storedOpen, setStoredOpen] = useLocalStorage(TRIGGERS_OPEN_KEY, false);
 
   /*
-   * Open itself once when the panel is the thing you came for: something is
-   * mid-run, something refuses to fire until it is configured, or the queue is
-   * empty and EmptyQueueHelp is telling the reader to pick a finder from a
-   * panel that would otherwise be shut.
-   *
-   * Kept separate from the stored flag on purpose. A panel that opened because
-   * a finder happened to be running must not write itself into the reader's
-   * remembered preference. Seeded through a ref so it fires once per mount:
-   * without that, every 30s refetch would re-open a panel just closed.
+   * Auto-open once per mount for running or unconfigured finders, or an empty queue.
+   * Keep this separate from the stored preference so automatic opens do not
+   * overwrite it and refetches do not reopen a panel the user closed.
    */
   const [autoOpen, setAutoOpen] = useState(false);
   const seeded = useRef(false);
@@ -2141,11 +2079,8 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
           onClick={toggle}
           aria-expanded={expanded}
           /*
-           * No aria-label. The summary beside the chevron is the whole point of
-           * the collapsed state, and a label would replace it as the button's
-           * accessible name — leaving a screen reader with "expand the triggers
-           * table" where a sighted reader gets "5 on, next in 4h".
-           * `aria-expanded` already carries the open/shut part.
+           * Use the visible summary as the accessible name; aria-label would hide
+           * its counts and timing. aria-expanded already communicates open state.
            */
           className="flex min-w-0 flex-1 flex-wrap items-center gap-3 px-6 py-2.5 text-left transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/40"
         >
@@ -2177,7 +2112,7 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
         </button>
       </div>
       {/* Packs configure the triggers below, so the picker rides inside this
-          panel and inherits its collapse — including the autoOpen rule, which
+          panel and inherits its collapse: including the autoOpen rule, which
           fires on exactly the occasions a pack is the thing you came for. */}
       {expanded && <PackPicker />}
       {!expanded ? null : triggersQuery.isLoading ? (
@@ -2203,7 +2138,7 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
           </thead>
           <tbody>
             {activeTriggers.map(renderTriggerRow)}
-            {/* Disabled finders are dormant, not broken — collapsed behind one
+            {/* Disabled finders are dormant, not broken: collapsed behind one
                   quiet row (same-tbody colSpan trick as SchedulerStrip, so the
                   shared column widths hold). */}
             {inactiveTriggers.length > 0 && (
@@ -2261,7 +2196,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
   const notReady = t.ready === false;
   const notReadyReason = t.notReadyReason ?? "missing required config";
   const approvalBlocked = t.deprioritized === true;
-  // Configured angles the founder has had chances to send and never did —
+  // Configured angles the founder has had chances to send and never did:
   // the nudge to open the editor, where the per-angle tally lives.
   const neverSent = neverSentAngles(t.angleUsage);
   // Block enabling an unready trigger but still allow disabling.
@@ -2362,7 +2297,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
         <td
           className={cn(
             "py-2 font-mono text-[11.5px]",
-            // Missing config on a DISABLED finder is dormancy, not an error —
+            // Missing config on a DISABLED finder is dormancy, not an error:
             // only an enabled-but-unready row (or a real run failure) goes red.
             (notReady && t.enabled) ||
               props.summary.startsWith("error:") ||
@@ -2453,7 +2388,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                   <code className="ln-mono text-[11.5px] text-[color:var(--ink-signal-2)]">
                     yourEdge
                   </code>
-                  : 3–4 angles separated by <code className="ln-mono text-[11.5px]">//</code>
+                  : 3–4 angles separated by <code className="ln-mono text-[11.5px]">{"//"}</code>
                   <Explain concept="edgeShape" />
                 </div>
               )}
@@ -2583,7 +2518,7 @@ function EmptyQueueHelp({ filterActive }: { filterActive: boolean }) {
   );
 }
 
-// Event metadata — present only on luma-events payloads (the persisted
+// Event metadata: present only on luma-events payloads (the persisted
 // LumaEventsTarget). All return null for other plays so the chip + EVENT strip
 // render nothing on non-luma rows.
 function eventTitleFor(payload: unknown): string | null {
@@ -2608,13 +2543,13 @@ function eventUrlFor(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
   const v = (payload as Record<string, unknown>)["eventUrl"];
   if (typeof v !== "string" || v.length === 0) return null;
-  // Defense in depth — payload comes from sqlite; only render a real Luma link,
+  // Defense in depth: payload comes from sqlite; only render a real Luma link,
   // never a javascript:// or data:// URL. Mirrors linkedinUrlFor. The finder
   // stores luma.com/<slug> (see packages/find/src/luma.ts); lu.ma is the short host.
   return /^https?:\/\/(?:[a-z0-9-]+\.)*(?:luma\.com|lu\.ma)\//i.test(v) ? v : null;
 }
 
-// Relationship to the event ("Host" vs "Guest") — fed to the prompt and worth
+// Relationship to the event ("Host" vs "Guest"): fed to the prompt and worth
 // surfacing for review so a host isn't read as a mere attendee.
 function eventRoleFor(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;

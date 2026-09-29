@@ -3,7 +3,7 @@ import type { SendsToday } from "@oneshot-gtm/shared-types";
 
 /**
  * Whole-pool sends-today for the dashboard pages. Best-effort: a capacity
- * failure (unreadable config, ledger hiccup) must never take down the page —
+ * failure (unreadable config, ledger hiccup) must never take down the page:
  * callers attach the field only when it resolves.
  */
 export function sendsToday(): SendsToday | undefined {

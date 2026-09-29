@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Verifies the registry stamps `_triggerBatchSeq` (companyBatchCursorFor's
 // input) from the trigger's PRE-run `company_batch_seq` before invoking
 // `spec.run`, for both the `runTriggerNow` (ad-hoc/"Run now") and
-// `runDueTriggers` (scheduled watch loop) paths — issue #708's rotation
+// `runDueTriggers` (scheduled watch loop) paths: issue #708's rotation
 // cursor. `company_batch_seq` is a monotonic per-trigger counter (not the
 // `last_polled_at` wall-clock timestamp) so that `cursor mod batchCount`
 // advances by exactly one index every completed run and cannot repeat the
@@ -188,11 +188,11 @@ describe("companyBatchCursor wiring (#708)", () => {
     if (!spec) throw new Error("hiring-signal spec missing — registry shape changed");
     expect(spec.defaultConfig["_triggerBatchSeq"]).toBeUndefined();
 
-    // No fakeStore row — runTriggerNow bootstraps one from spec.defaultConfig,
+    // No fakeStore row: runTriggerNow bootstraps one from spec.defaultConfig,
     // exercising the `storedTriggerConfig` "return the default object itself"
     // path this guard protects.
     const runSpy = vi.spyOn(spec, "run").mockImplementation(async (cfg) => {
-      // yourClaim is required for readiness — the bootstrap uses defaultConfig,
+      // yourClaim is required for readiness. The bootstrap uses defaultConfig,
       // which has no yourClaim, so this branch is only reachable once we set
       // the row up manually below. Kept as a type-correct no-op fallback.
       void cfg;
@@ -209,7 +209,7 @@ describe("companyBatchCursor wiring (#708)", () => {
 
     try {
       // Give the not-ready default config a readiness pass by pre-seeding a
-      // row that mirrors defaultConfig plus the required yourClaim — this is
+      // row that mirrors defaultConfig plus the required yourClaim. This is
       // what "no stored row yet" would upsert if readiness passed.
       fakeStore["hiring-signal"] = {
         name: "hiring-signal",
@@ -305,7 +305,7 @@ describe("companyBatchCursor wiring (#708)", () => {
     });
 
     try {
-      // Two runs back-to-back — with the old epoch-ms cursor these could
+      // Two runs back-to-back, with the old epoch-ms cursor these could
       // land in the same millisecond (or otherwise share a residue mod
       // batchCount); the counter guarantees they never do.
       await runTriggerNow("hiring-signal");

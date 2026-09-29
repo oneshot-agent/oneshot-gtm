@@ -6,7 +6,7 @@ import type { DraftedRow } from "./registry.ts";
 /**
  * Amplifier-lane prospect with no findable email: the draft is X DM (or
  * reply-under-their-repost) text, hand-sent from the X app. This play NEVER
- * sends — `sent` is always false, so a drained row keeps its draft and stays
+ * sends: `sent` is always false, so a drained row keeps its draft and stays
  * visible on /queue until the founder copies the text, sends it by hand, and
  * hits Mark sent (which records the channel:"x" sequence event).
  *
@@ -19,7 +19,7 @@ export interface XAmplifyDmTarget {
   /** X handle, without the @. */
   handle: string;
   twitterUrl: string;
-  /** Numeric X user id — enables the DM compose deep-link in the queue UI. */
+  /** Numeric X user id: enables the DM compose deep-link in the queue UI. */
   xUserId?: string;
   /**
    * Whether their DMs are open. `engine` says which question was answered:
@@ -33,12 +33,12 @@ export interface XAmplifyDmTarget {
   tweetUrl: string;
   tweetText: string;
   mode: "retweet" | "quote";
-  /** Their own words when they quoted — the best hook when present. */
+  /** Their own words when they quoted. The best hook when present. */
   quote?: string | null;
   followers?: number;
   score?: number;
   why?: string;
-  /** ISO launch date — the ONLY timing fact the draft may state. */
+  /** ISO launch date. The ONLY timing fact the draft may state. */
   launchDate?: string | null;
 }
 
@@ -46,7 +46,7 @@ export interface XAmplifyDmRunOptions {
   dryRun: boolean;
   targets: XAmplifyDmTarget[];
   onProgress?: (index: number, draft: DraftedRow) => void;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -122,7 +122,7 @@ export async function runXAmplifyDm(
           receiptIds: [],
         };
       } catch (err) {
-        // Cancellation is not a target failure — propagate so the run row
+        // Cancellation is not a target failure: propagate so the run row
         // lands 'cancelled' instead of a batch of error drafts.
         if (isRunCancelled(err)) throw err;
         logTargetError({ playName: PLAY_NAME, err });

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The manual mark-sent flow: a hand-sent x-amplify-dm draft is recorded as a
-// channel:"x" step-0 sequence event (no receipt — no SDK call) and the row
+// channel:"x" step-0 sequence event (no receipt: no SDK call) and the row
 // flips to sent. Non-manual plays must be refused: they have a real transport.
 
 interface FakeRow {

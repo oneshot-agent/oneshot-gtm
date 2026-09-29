@@ -140,12 +140,12 @@ describe("age sweeps against SQLite-form columns", () => {
   });
 });
 
-describe("listPendingOutcomeMeetings (ends_at carries the event's offset)", () => {
-  /** RFC 3339 at UTC-7, the shape Google returns for a timed event. */
-  function pacific(ms: number): string {
-    return `${new Date(ms - 7 * 3600 * 1000).toISOString().slice(0, 19)}-07:00`;
-  }
+/** RFC 3339 at UTC-7, the shape Google returns for a timed event. */
+function pacific(ms: number): string {
+  return `${new Date(ms - 7 * 3600 * 1000).toISOString().slice(0, 19)}-07:00`;
+}
 
+describe("listPendingOutcomeMeetings (ends_at carries the event's offset)", () => {
   it("returns a meeting that ended two hours ago and holds one ending in ten minutes", () => {
     const now = Date.now();
     for (const [eventId, endMs] of [

@@ -1,20 +1,20 @@
 /**
  * Lane assignment, hard drops and the 0-100 score for the x-reposters finder.
- * Pure functions — no I/O, no clock except what's passed in, so the whole
+ * Pure functions: no I/O, no clock except what's passed in, so the whole
  * ranking is unit-testable.
  *
  * Two different questions get asked of the same harvest:
- *   amplifier — would this person plausibly boost a launch tweet from a
+ *   amplifier: would this person plausibly boost a launch tweet from a
  *               stranger? Reach past a few hundred thousand scores *worse*,
  *               because those accounts don't repost strangers.
- *   founder   — could this person actually run the product? Reach barely
+ *   founder: could this person actually run the product? Reach barely
  *               matters; what they've shipped does.
  */
 
 import type { XCandidate, XLane, XScoredCandidate, XUser } from "./_x-types.ts";
 
 export interface XDropContext {
-  /** The seed accounts themselves — lowercase handles. */
+  /** The seed accounts themselves: lowercase handles. */
   seeds: Set<string>;
   /** Handles we never want contacted: our own accounts. */
   blocked: Set<string>;
@@ -35,7 +35,7 @@ export interface XLaneConfig {
   minTopicHits: number;
   /** A link in the bio that isn't a promo page. Something shipped beats something described. */
   requiresSite: boolean;
-  /** A GitHub link satisfies the topic gate on its own — it's proof, not a hint. */
+  /** A GitHub link satisfies the topic gate on its own. It's proof, not a hint. */
   requiresDevSignal: boolean;
   keywords: string[];
   weights: { reach: number; reciprocity: number; habit: number; topic: number };
@@ -45,14 +45,14 @@ export interface XLaneConfig {
  * Two lanes over the same harvest. A candidate can qualify for both; the
  * founder lane wins, because a founder who could *use* the thing is worth more
  * than one more repost. The lanes disagree about follower count on purpose:
- * a founder under 1k is the median user — gating them on reach would throw
+ * a founder under 1k is the median user: gating them on reach would throw
  * away the whole point.
  */
 export const X_LANES: Record<XLane, XLaneConfig> = {
   amplifier: {
     /**
      * The win condition is adoption by people who build, and that comes from
-     * audience composition, not follower count — measured on AI-influencer
+     * audience composition, not follower count: measured on AI-influencer
      * seeds: 0 of 214 reposters had a GitHub link in bio. So the floor is low
      * and the gate moves to evidence they build things.
      */
@@ -99,7 +99,7 @@ export const X_LANES: Record<XLane, XLaneConfig> = {
     weights: { reach: 0.2, reciprocity: 0.15, habit: 0.25, topic: 0.4 },
   },
   founder: {
-    /** Low, not zero — under this the bio signal is usually aspirational. */
+    /** Low, not zero: under this the bio signal is usually aspirational. */
     minFollowers: 300,
     /** Two hits, because "founder" alone is the most-claimed word on X. */
     minTopicHits: 2,
@@ -133,7 +133,7 @@ export const X_LANES: Record<XLane, XLaneConfig> = {
 /**
  * Hosts that make a bio link worthless as a founder signal: sponsorship
  * marketplaces, promo networks, link aggregators and social profiles. Three
- * accounts in one day's harvest shared the same hyperagent.com referral link —
+ * accounts in one day's harvest shared the same hyperagent.com referral link:
  * that's a promo network, not a product.
  */
 export const X_SITE_DENYLIST = [
@@ -183,7 +183,7 @@ export function tweetsPerDay(u: XUser, now: Date): number | null {
 
 /**
  * Disqualifiers that hold whatever we'd be contacting them about, or null if
- * they survive. Lane fit is a separate question — see `lanesFor`. Deliberately
+ * they survive. Lane fit is a separate question: see `lanesFor`. Deliberately
  * no follower floor here: the lanes own their floors.
  */
 export function dropReason(u: XUser, ctx: XDropContext, now: Date = new Date()): string | null {
@@ -277,7 +277,7 @@ export function reciprocityScore(u: XUser): number {
 
 /**
  * The strongest amplifier signal: they repost this kind of thing, repeatedly.
- * `prior` is a hook for a future "seen N times before" boost — the pack fed it
+ * `prior` is a hook for a future "seen N times before" boost. The pack fed it
  * from its roster; here queue dedupe means a candidate is only enqueued once,
  * so v1 passes nothing.
  */

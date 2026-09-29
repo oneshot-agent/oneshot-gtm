@@ -29,14 +29,14 @@ import { persistRoleRejection, qualifyPreSpend } from "./_qualify.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "x-reposters";
-/** The three plays this finder routes to — one shared dedupe-key namespace. */
+/** The three plays this finder routes to: one shared dedupe-key namespace. */
 const ROUTED_PLAYS = ["x-repost-intro", "x-amplify", "x-amplify-dm"] as const;
 
 export interface XRepostersFinderOpts extends RunOpts {
   seeds: XSeed[];
   engine?: XEngineName;
   /**
-   * Ceiling on X read spend (the CostMeter) — distinct from RunOpts.maxCostUsd,
+   * Ceiling on X read spend (the CostMeter): distinct from RunOpts.maxCostUsd,
    * which caps SDK/LLM spend. Defaults per engine (xapi $5, twitterapiio $1).
    */
   maxSpendPerRun?: number;
@@ -44,7 +44,7 @@ export interface XRepostersFinderOpts extends RunOpts {
   laneSplit?: number;
   /** ISO launch date, stamped onto amplifier payloads. */
   launchDate?: string;
-  /** Our own handles — never contacted. */
+  /** Our own handles. Never contacted. */
   ownHandles?: string[];
   knobs?: Partial<HarvestKnobs>;
   /** Re-score the cached harvest instead of paying for a live one. */
@@ -79,7 +79,7 @@ function buildEngine(
 /**
  * The hit the drafts talk about: prefer a quote hit (strongest signal, and it
  * carries their own words), else the first. Mode and tweet MUST come from the
- * same hit — someone who plain-retweeted tweet A and quoted tweet B must not
+ * same hit: someone who plain-retweeted tweet A and quoted tweet B must not
  * be pitched as having "quoted" tweet A.
  */
 function primaryHit(c: XCandidate) {
@@ -110,9 +110,9 @@ function grounding(s: XScoredCandidate) {
 /**
  * x-reposters finder: people who reposted/quoted a watched X account's recent
  * tweets → prospects, in two lanes. The founder lane (bio + real site say they
- * build things) routes to `x-repost-intro` — a normal email play behind the
+ * build things) routes to `x-repost-intro`. A normal email play behind the
  * person-ICP gate. The amplifier lane (dev/AI audience with reach) routes to
- * `x-amplify` when research finds an email, else `x-amplify-dm` — a manual
+ * `x-amplify` when research finds an email, else `x-amplify-dm`. A manual
  * hand-send draft. Ported from the x-amplifiers pack: same engines, cost
  * meter, hard drops, lane scoring and slot split; the Obsidian side is
  * replaced by the queue.
@@ -159,7 +159,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     opts.seeds.filter((s) => s.edge?.trim()).map((s) => [s.handle.toLowerCase(), s.edge!.trim()]),
   );
 
-  // Step 1: harvest (paid), or replay a cached one (free — both providers
+  // Step 1: harvest (paid), or replay a cached one (free. Both providers
   // bill per resource returned, so filter tuning replays offline).
   let candidates: XCandidate[];
   let stoppedEarly: string | null = null;
@@ -207,11 +207,11 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
       }
     }
 
-    // Record what was paid for even on dry runs — the harvest itself is the
+    // Record what was paid for even on dry runs. The harvest itself is the
     // paid step here (unlike GitHub), and not recording it would make the next
     // run buy the same tweets again. A run that PAID for nothing (every fresh
     // tweet already in the skip ledger) must not overwrite the day's replay
-    // cache with an empty harvest — that file is the paid data replay re-scores.
+    // cache with an empty harvest. That file is the paid data replay re-scores.
     if (harvest.harvestedIds.length > 0) {
       saveXHarvest(
         {
@@ -234,14 +234,14 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
   let sdkCost = 0;
   if (stoppedEarly) result.halted = stoppedEarly;
 
-  // Step 2: hard drops (re-run — `automated`/`protected` only arrive with
+  // Step 2: hard drops (re-run: `automated`/`protected` only arrive with
   // enrichment on the twitterapi.io engine; on replay the cache is pre-dropped
   // but re-checking is free and keeps one code path).
   const ctx = { seeds: seedHandles, blocked };
   const survivors = candidates.filter((c) => dropReason(c.user, ctx, now) === null);
 
   // Step 3: lanes + score + reserved slot split. Lanes rank within themselves
-  // only — their weights differ, so scores are not comparable across lanes.
+  // only: their weights differ, so scores are not comparable across lanes.
   const scored = survivors
     .map((c) => ({ c, lanes: lanesFor(c.user) }))
     .filter((x) => x.lanes.length > 0)
@@ -319,7 +319,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
         return;
       }
       if (stageA.action === "defer") {
-        // Classifier outage — drop WITHOUT persisting so the dedupeKey
+        // Classifier outage: drop WITHOUT persisting so the dedupeKey
         // survives for the next tick.
         result.droppedEnrichment++;
         return;
@@ -337,7 +337,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     // deepResearchPerson is the contact path for BOTH lanes. A research
     // failure is fatal only for founders (that lane is email-only); an
     // amplifier falls through to the manual DM draft, which needs neither an
-    // email nor a dossier — the repost itself is the hook.
+    // email nor a dossier. The repost itself is the hook.
     const twitterUrl = `https://x.com/${c.user.username}`;
     let research: Awaited<ReturnType<typeof deepResearchPerson>> | null = null;
     try {
@@ -386,7 +386,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     const base = { ...grounding(pick), engine: engineName };
 
     if (pick.lane === "amplifier") {
-      // No ICP/person gate — we never pitch amplifiers; the lane gate is the
+      // No ICP/person gate. We never pitch amplifiers; the lane gate is the
       // qualification. Email found → automated ask; none → manual X draft.
       const target: XAmplifyTarget | XAmplifyDmTarget = sdkEmail
         ? {
@@ -403,14 +403,14 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
             ...base,
             ...(opts.launchDate ? { launchDate: opts.launchDate } : {}),
           };
-      // Amplifiers are never pitched, so no gate ran — the row still needs its
+      // Amplifiers are never pitched, so no gate ran. The row still needs its
       // fit line (#592); the prompt says plainly when nothing connects.
       const fitReason = await generateFitReason({
         icp,
         playName: sdkEmail ? "x-amplify" : "x-amplify-dm",
         payload: target,
       });
-      // One small LLM call whenever an ICP is set — it counts against the
+      // One small LLM call whenever an ICP is set. It counts against the
       // same SDK/LLM ceiling as research, sentence or not.
       if (icp) sdkCost += FIT_REASON_COST_ESTIMATE_USD;
       const id = enqueueScoredTarget(ledger, {
@@ -429,13 +429,13 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     }
 
     // Founder lane: extract identity + angle from the dossier, then stage-B
-    // person gate on the extracted role. Email is required — this lane is the
+    // person gate on the extracted role. Email is required. This lane is the
     // normal email cadence path.
     if (!hasSignal) {
       result.droppedEnrichment++;
       return;
     }
-    // One LLM failure must not reject the whole parallelMap — that would
+    // One LLM failure must not reject the whole parallelMap. That would
     // abort the run AFTER the paid harvest and the other picks' paid research,
     // and skip the closing cost accounting below.
     let extractRes: Awaited<ReturnType<typeof complete>>;
@@ -468,7 +468,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     const fullName = str(extracted.name) ?? c.user.name;
     const role = str(extracted.role);
 
-    // Email is a hard requirement for this lane — check it BEFORE paying for
+    // Email is a hard requirement for this lane: check it BEFORE paying for
     // the stage-B qualifier, which can't change the outcome for a no-email pick.
     if (!email) {
       result.droppedEnrichment++;

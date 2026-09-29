@@ -42,7 +42,7 @@ export interface BreakupReviveOptions {
   limit?: number;
   /** Optional value drop to lead with (a new feature, a benchmark, a case study you can offer). */
   valueDrop?: string;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -119,7 +119,7 @@ export async function runBreakupRevive(
         },
         metadata: { daysCold: t.daysCold, lastEventAt: t.lastEventAt },
         dryRun: opts.dryRun,
-        // Re-engaging an already-contacted cold prospect is the whole point —
+        // Re-engaging an already-contacted cold prospect is the whole point:
         // opt out of the cross-play first-touch guard.
         allowRecontact: true,
       });
@@ -136,7 +136,7 @@ export async function runBreakupRevive(
         originalTargetIndex: index,
       };
     } catch (err) {
-      // Daily-cap deferral is not a per-target failure — abort the run so the
+      // Daily-cap deferral is not a per-target failure: abort the run so the
       // caller leaves remaining targets queued instead of stamping error drafts.
       if (isSendDeferred(err)) throw err;
       // Same for a cancellation: propagate so the run row lands 'cancelled'.

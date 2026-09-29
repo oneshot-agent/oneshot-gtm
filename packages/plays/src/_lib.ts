@@ -39,7 +39,7 @@ export async function safeEnrich(
     const cached = ledger.getCachedEnrichment(email);
     if (cached) {
       const ageMs = Date.now() - new Date(cached.fetched_at).getTime();
-      // Negative entry: recent SDK failure — don't retry until the TTL expires.
+      // A recent SDK failure is cached; retry after the TTL expires.
       if (cached.status === "failed") {
         if (ageMs < ENRICH_FAILURE_TTL_MS) {
           return { result: FAILED_ENRICH, receiptId: 0 } as unknown as Awaited<
@@ -52,7 +52,7 @@ export async function safeEnrich(
             ReturnType<typeof enrichProfile>
           >;
         } catch {
-          // corrupt cache row — fall through and refetch
+          // corrupt cache row: fall through and refetch
         }
       }
     }
@@ -72,7 +72,7 @@ export async function safeEnrich(
       },
     };
     const live = enrichProfile(input, enrichedCtx);
-    // Cache writes ride on the LIVE promise, not the deadline race — a call
+    // Cache writes ride on the LIVE promise, not the deadline race. A call
     // that outlives the deadline still records its outcome when it settles
     // (late success overwrites the failure marker written below).
     live.then(
@@ -119,9 +119,7 @@ export const SLOP_PHRASES: Array<[RegExp, string]> = [
   [/\bQuick question\b/i, "banned-opener:quick-question"],
   [/\bLoved your launch\b/i, "banned-opener:loved-your-launch"],
   [/\bReaching out because\b/i, "banned-opener:reaching-out"],
-  // The provenance verbs accelerator-batch-email.md bans "wherever they appear"
-  // — two of the four it named had no pattern, and "…while I was looking at
-  // new infrastructure teams." shipped with zero flags (#593).
+  // Provenance verbs are banned wherever they appear, not just in openers.
   [
     /\bI(?:'ve| have)? (?:was|been) looking (?:at|through|into)\b|\bI stumbled (?:on|upon|across)\b|\bI happened (?:across|upon)\b/i,
     "banned-opener:provenance-verb",
@@ -136,7 +134,7 @@ export const SLOP_PHRASES: Array<[RegExp, string]> = [
   // text alone did not hold it: 120 of 312 repo-interest second touches shipped
   // with one, because several play prompts quoted the phrase while banning it.
   [/\b(?:compare notes|swap takes|back.?and.?forth|trade notes)\b/i, "banned-cta:compare-notes"],
-  // "3:30 today or 12:00 tomorrow?" — a meeting ask dressed as a scheduling question.
+  // "3:30 today or 12:00 tomorrow?". A meeting ask dressed as a scheduling question.
   [
     /\b\d{1,2}(?::\d{2})?(?:\s?[ap]m)?\s+(?:today|tomorrow|(?:on\s+)?(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b[^.?!]{0,40}\bor\b[^.?!]{0,40}\b\d{1,2}(?::\d{2})?(?:\s?[ap]m)?\b/i,
     "banned-cta:time-slots",
@@ -190,11 +188,11 @@ function configuredSigLines(): string[] {
 
 /**
  * Word count for body-too-long lint, minus the trailing signature lines the
- * signatureDirective forces — so those deterministic words don't eat the
+ * signatureDirective forces, so those deterministic words don't eat the
  * prompt's word budget. `sigLines` (last-line-first) is exposed for tests;
  * production passes nothing and reads config.
  */
-/** The SLOP_PHRASES labels a piece of text trips — the phrase-level half of lintEmail, for text that is not an email (a generated angle). */
+/** The SLOP_PHRASES labels a piece of text trips. The phrase-level half of lintEmail, for text that is not an email (a generated angle). */
 export function slopFlags(text: string): string[] {
   return SLOP_PHRASES.filter(([re]) => re.test(text)).map(([, label]) => label);
 }
@@ -229,7 +227,7 @@ const OTHER_ABBREVIATIONS = /\b(?:vs|etc|e\.g|i\.e|approx|Inc|Ltd|Co)\.(?!\s+\p{
 function bodyWithoutSignature(body: string, sigLines?: string[]): string {
   const lines = sigLines ?? configuredSigLines();
   let trimmed = body.trimEnd();
-  // Peel each sig line off the tail only if it matches the current last line —
+  // Peel each sig line off the tail only if it matches the current last line:
   // never chop content that merely contains the founder's name mid-paragraph.
   for (const line of lines) {
     const i = trimmed.lastIndexOf("\n");
@@ -282,7 +280,7 @@ const OPENER_MAX_SHARE = 0.25;
 
 /**
  * The body's first `words` words, minus a greeting line, lowercased and
- * stripped of punctuation — the unit the opener-frequency cap compares.
+ * stripped of punctuation. The unit the opener-frequency cap compares.
  *
  * The greeting goes because it is generated from the prospect's name: leaving
  * "Hey Sam," in would make every stem unique and the cap would never fire.
@@ -311,15 +309,15 @@ export function openerStem(body: string, words = OPENER_STEM_WORDS): string {
  *
  * A frequency cap rather than a ban: the goal is not that every opener be
  * unique, it is that no single opener speaks for the majority of a domain's
- * touches. Prompt text alone did not hold this — the prompts advertise four
- * shapes and the model still reached for the same one — so it is gated here,
+ * touches. Prompt text alone did not hold this. The prompts advertise four
+ * shapes and the model still reached for the same one, so it is gated here,
  * where a rule cannot be talked out of.
  *
  * `recentBodies` is the caller's window (newest first); an empty or short
  * window returns no flags rather than guessing.
  *
  * Paired with `overusedOpeners`, which the follow-up builder feeds to the
- * model BEFORE it drafts — the flag alone would only reject, and every
+ * model BEFORE it drafts. The flag alone would only reject, and every
  * rejection costs another paid draft.
  */
 export function overusedOpeners(
@@ -352,9 +350,9 @@ export function lintOpenerFrequency(
 
 /**
  * A run of 2+ consecutive uppercase letters normally reads as shouting
- * (the humanizer's own rule: "lowercase the whole subject line ... acronyms
+ * (the humanizer's own rule: "lowercase the whole subject line ... Acronyms
  * (`api` not `API`)"). But a token shaped like a SAM.gov solicitation number
- * — hyphen-separated alphanumeric segments such as `W912DY-26-R-0042` — is an
+ * (hyphen-separated alphanumeric segments such as `W912DY-26-R-0042`) is an
  * identifier the play is REQUIRED to reproduce verbatim
  * (packages/prompts/sources-sought-email.md line 11/20), not a shouted word
  * choice. Exempt only that hyphenated identifier shape so a compliant
@@ -363,14 +361,14 @@ export function lintOpenerFrequency(
  *
  * round-2 correction: exempting ANY token with a letter+digit mix (regardless
  * of hyphens) let plain shouty promo tokens like "SAVE20NOW" or "URGENT2"
- * slip past. round-3 correction (finding PRRT_kwDOSKzrBs6ewQdB, round 3):
+ * slip past. Round-3 correction (finding PRRT_kwDOSKzrBs6ewQdB, round 3):
  * even WITH the hyphen-count guard, a purely alphabetic shouty phrase written
- * with hyphens instead of spaces — "SAVE-20-NOW" — still matched, because the
+ * with hyphens instead of spaces ("SAVE-20-NOW") still matched, because the
  * regex only checked segment SHAPE (alphanumeric), not that at least one
  * segment carries digits the way a real SAM.gov solicitation number's suffix
- * segments do. round-4 correction (finding PRRT_kwDOSKzrBs6ewQdB, round 4):
+ * segments do. Round-4 correction (finding PRRT_kwDOSKzrBs6ewQdB, round 4):
  * the round-3 fix required the final segment to be all-digits, but real
- * SAM.gov/DoD PIID serial segments can be alphanumeric — e.g.
+ * SAM.gov/DoD PIID serial segments can be alphanumeric: e.g.
  * `N00164-24-Q-GR04` (final segment `GR04`) or a multi-segment procurement
  * type such as `N00164-26-RFPREQ-CR-JXN-0036`. Match the real shape: a
  * leading alphanumeric agency code, a 2-digit fiscal year, one or more
@@ -396,7 +394,7 @@ function subjectShouty(subject: string): boolean {
  */
 export function closingEitherOrQuestion(body: string, sigLines?: string[]): boolean {
   // Peel the ending: configured signature lines in any order, plus short
-  // sign-off lines (a bare name, "Thanks,") — a draft that drops part of the
+  // sign-off lines (a bare name, "Thanks,"). A draft that drops part of the
   // signature must not hide the question above it.
   const sig = new Set((sigLines ?? configuredSigLines()).map((l) => l.trim().toLowerCase()));
   const lines = body
@@ -475,7 +473,7 @@ export function lintEmail(
 
 /**
  * A public record (health inspection, license status, registration) may
- * establish RELEVANCE, never LEVERAGE — see issue #460's copy guardrail. A
+ * establish RELEVANCE, never LEVERAGE: see issue #460's copy guardrail. A
  * draft that opens on a failed inspection, a violation, a score, or a
  * lapsed/revoked licence is both a bad look and the fastest way to burn a
  * sending domain, so it's held here where a rule can't be talked out of it
@@ -493,7 +491,7 @@ export function citesPublicRecordLeverage(body: string): boolean {
     /\b(?:inspection|health)\s+(?:scores?|grades?)\b/i.test(body) ||
     // Bare `/\bviolation\b/` also flagged legitimate non-leverage copy like
     // "we help teams avoid compliance violations" (finding
-    // PRRT_kwDOSKzrBs6exPH6) — a violation only reads as public-record
+    // PRRT_kwDOSKzrBs6exPH6). A violation only reads as public-record
     // LEVERAGE when the copy points at a specific one on record (cited,
     // reported, flagged, found, noted), in either word order.
     /\b(?:cit(?:e|es|ed|ation)|report(?:ed)?|flagged|found|noted)\b[\s\S]{0,60}\bviolation(?:s)?\b/i.test(
@@ -505,10 +503,10 @@ export function citesPublicRecordLeverage(body: string): boolean {
     /\b(?:licen[sc]e|permit|registration)s?\s+(?:lapsed|expired|revoked|suspended)\b/i.test(body) ||
     // Adjective-first phrasing ("expired permit", "revoked license") reused
     // the SAME state alternation the noun-first check above uses, instead of
-    // matching only `lapsed` — the other three states passed the guardrail
+    // matching only `lapsed`. The other three states passed the guardrail
     // reversed (finding PRRT_kwDOSKzrBs6fCBd-). Plural nouns ("licenses",
     // "permits", "registrations") added alongside plural inspections/scores
-    // above — the singular-only regexes missed "failed inspections",
+    // above. The singular-only regexes missed "failed inspections",
     // "inspection scores", and "expired licenses" (shipped-regression
     // finding on PR #473).
     /\b(?:lapsed|expired|revoked|suspended)\s+(?:licen[sc]e|permit|registration)s?\b/i.test(body)
@@ -517,7 +515,7 @@ export function citesPublicRecordLeverage(body: string): boolean {
 
 /**
  * Additional pre-send flags for plays whose prompt declares a hard ban on a
- * product link, a price/cost figure, or a discount/trial framing — e.g.
+ * product link, a price/cost figure, or a discount/trial framing: e.g.
  * discovery-interview-email.md's "Hard bans (binding, no exceptions)"
  * section. `lintEmail()` only ever checked for the literal string "calendly"
  * as a link-like pattern and had no price/discount check at all, so a
@@ -550,7 +548,7 @@ export interface DraftedEmail {
 
 /**
  * Stub drafted-row for a target whose per-target processing threw, so the rest
- * of the batch keeps going. Same shape `drain.ts` synthesizes — one source of
+ * of the batch keeps going. Same shape `drain.ts` synthesizes: one source of
  * truth for the error envelope.
  */
 interface ErrorDraft {
@@ -580,7 +578,7 @@ export function errorDraft(message: string | null | undefined): ErrorDraft {
 export function logTargetError(input: {
   playName: string;
   /**
-   * Recipient address. Only its DOMAIN is logged — events.jsonl is a PII-free
+   * Recipient address. Only its DOMAIN is logged: events.jsonl is a PII-free
    * sink. Redaction lives here, not at call sites, so no caller can leak the
    * address by accident.
    */
@@ -594,7 +592,7 @@ export function logTargetError(input: {
   };
   // Nothing here may throw: this runs INSIDE the per-target catch, so a
   // TypeError while logging would abort the entire drain. Thrown values are
-  // `unknown` — coerce, don't assume.
+  // `unknown`: coerce, don't assume.
   try {
     logTargetErrorUnsafe(e, input);
   } catch {
@@ -602,7 +600,7 @@ export function logTargetError(input: {
   }
 }
 
-/** Coerce an unknown thrown field to a string — never assume `.slice()` exists. */
+/** Coerce an unknown thrown field to a string. Never assume `.slice()` exists. */
 function text(v: unknown): string {
   return typeof v === "string" ? v : v == null ? "" : String(v);
 }
@@ -622,7 +620,7 @@ function logTargetErrorUnsafe(
         : {}),
       message_200: text(e?.message).slice(0, 200),
       // OneShot SDK ToolError carries the failing call's HTTP status + server
-      // response body — the real reason, vs the generic message.
+      // response body. The real reason, vs the generic message.
       status_code: typeof e?.statusCode === "number" ? e.statusCode : null,
       response_body_400: typeof e?.responseBody === "string" ? e.responseBody.slice(0, 400) : null,
       cause_200: causeMsg ? causeMsg.slice(0, 200) : null,
@@ -647,22 +645,25 @@ export function humanizeDraft(input: DraftedEmail): DraftedEmail {
 function applyAutofixes(s: string): string {
   return (
     s
-      // Collapse only horizontal whitespace around the em-dash. Using `\s*`
-      // here would eat a trailing newline when an em-dash ends a paragraph,
-      // silently merging paragraphs.
-      .replace(/[ \t]*—[ \t]*/g, ", ")
+      // Consume whole whitespace runs to avoid backtracking; preserve paragraph breaks.
+      .replace(/[ \t]+|—/g, (match: string, offset: number, source: string) => {
+        if (match === "—") return ", ";
+        return source[offset - 1] === "—" || source[offset + match.length] === "—" ? "" : match;
+      })
       .replace(/[“”]/g, '"')
       .replace(/[‘’]/g, "'")
       // Emoji ranges: main BMP+SMP block, dingbats, and the regional-
       // indicator pair used for country flags (🇺🇸 = 1F1FA + 1F1F8).
       .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}]/gu, "")
-      // Variation-selector + ZWJ stripped in a second pass — leaving them
+      // Variation-selector + ZWJ stripped in a second pass: leaving them
       // would produce a dangling glyph after the emoji itself is gone
       // (e.g. `☀️` → `️`).
       .replace(/\u{FE0F}|\u{200D}/gu, "")
       .replace(/!\s*!+/g, "!")
       // Strip trailing horizontal whitespace left by em-dash/emoji removal.
-      .replace(/[ \t]+\n/g, "\n")
+      .replace(/[ \t]+/g, (spaces: string, offset: number, source: string) =>
+        source[offset + spaces.length] === "\n" ? "" : spaces,
+      )
       .trim()
   );
 }
@@ -765,7 +766,7 @@ export function socialProofBlock(): string | null {
 }
 
 /**
- * ADMISSION line for the prompt's damaging-admission beat — surfaced only when
+ * ADMISSION line for the prompt's damaging-admission beat: surfaced only when
  * the founder set one AND this prospect drew the slot, so the model can never
  * invent a weakness. The roughly-1-in-3 cap lives HERE, not in the prompt: a
  * model cannot hold a frequency across independent calls. Keyed on the
@@ -785,11 +786,11 @@ export function admissionSlot(prospectEmail: string): boolean {
 }
 
 /**
- * Code-gated directive per classified reply intent (issue #480) — the
+ * Code-gated directive per classified reply intent (issue #480). The
  * structured input `draftInboxReply` acts on, instead of the model guessing
  * "are they interested?" from prose on every draft. `intent` is the
  * TriageCategory persisted on `inbox_replies.intent`; unclassified (null) or
- * a category with no special handling (unsubscribe/auto_reply/other — those
+ * a category with no special handling (unsubscribe/auto_reply/other. Those
  * never reach the drafter in practice) returns null and the prompt's default
  * rules apply unmodified.
  */
@@ -827,7 +828,7 @@ export function intentDirectiveBlock(intent: string | null | undefined): string 
 }
 
 /**
- * FOUNDER STEER block (issue #480) — a short standing instruction the founder
+ * FOUNDER STEER block (issue #480). A short standing instruction the founder
  * typed on `/inbox` ("docs listing only, no exclusivity, no traffic
  * promise"), persisted on the thread's draft row and passed back in on every
  * redraft. Binding: it overrides the prompt's default framing, not just a
@@ -840,7 +841,7 @@ export function founderSteerBlock(steer: string | null | undefined): string | nu
 }
 
 /**
- * MEETING block (issue #578) — the direct path from a founder-recorded
+ * MEETING block (issue #578). The direct path from a founder-recorded
  * meeting outcome into the reply prompt, alongside the indirect
  * `tagOutcomeValue` → `triggerAngleRefresh` → `angle_json` path (which never
  * hands the outcome to the synthesizer as text). Same shape as
@@ -850,7 +851,7 @@ export function founderSteerBlock(steer: string | null | undefined): string | nu
  * What each outcome should do to the draft is a prompt decision (this
  * function only states the fact and, for `held`/`no_show`, a one-line
  * steer); the founder's pasted note is untrusted input to reason from, never
- * instructions to follow — it is wrapped as data, not appended as a directive.
+ * instructions to follow. It is wrapped as data, not appended as a directive.
  */
 export function meetingBlock(
   meeting: {
@@ -860,7 +861,7 @@ export function meetingBlock(
   } | null,
 ): string | null {
   if (!meeting) return null;
-  // A cancelled/rescheduled meeting never happened — nothing to relay to a
+  // A cancelled/rescheduled meeting never happened: nothing to relay to a
   // reply drafter that it wouldn't already infer from the thread itself.
   if (meeting.outcome !== "held" && meeting.outcome !== "no_show") return null;
   const lines = [
@@ -892,11 +893,8 @@ interface DraftCallOpts {
 }
 
 /**
- * The redraft asks for this share of the cap, not the cap itself: a model
- * that just wrote 160 words against "150" will land near 150 again if told
- * "150". Measured 2026-09-11 on accelerator-batch (cap 150): gemini-3.8-flash
- * averaged 106 words and never crossed; kimi-k3 crossed on 2 of 4, kimi-k2.6
- * on 1 of 6, both by 10-16 words. Three quarters leaves room for that drift.
+ * Ask for three quarters of the word cap on redraft to leave room for model
+ * overshoot; repeating the full cap tends to produce another overlong draft.
  */
 export const LENGTH_RETRY_RATIO = 0.75;
 
@@ -1121,7 +1119,7 @@ async function draftOnce(messages: DraftMessages, opts: DraftCallOpts): Promise<
  * Over the cap → one redraft in the same conversation, asking for
  * `LENGTH_RETRY_RATIO` of the cap and to cut sentences rather than compress
  * them. The shorter of the two drafts wins, even when the redraft is still
- * over — lint decides what is sendable, this only stops a model's house style
+ * over: lint decides what is sendable, this only stops a model's house style
  * from holding every other send. A failed redraft returns the original.
  */
 async function tightenIfTooLong(
@@ -1215,7 +1213,7 @@ export interface SendDraftedOpts {
     title?: string | null;
     /** Research the play assembled for this person while drafting. Persisted so
      *  the reply drafter's free Tier-1 read (_reply-research.ts) has something
-     *  to use — before this it was always empty and every reply draft paid for
+     *  to use: before this it was always empty and every reply draft paid for
      *  enrich + webRead again. Read as TEXT, never parsed. */
     dossier_json?: string | null;
   };
@@ -1268,16 +1266,8 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
         return { receiptIds: [], sent: false };
       }
     }
-    // Person-level ICP gate on the FIRST touch. The identical check has always
-    // existed for follow-ups (`_cadence.ts`, "off-icp"), but step 0 had none —
-    // so 65 prospects carrying a `reject` verdict were emailed while only 3
-    // cadences ever stopped for it. A verdict arrives either from the finder
-    // that just judged this candidate (`opts.icp`) or from a prior audit on the
-    // stored row; both are honoured, the fresh one first.
-    //
-    // Only `reject` blocks. `unclear` and NULL fail open, exactly as the
-    // cadence gate documents — this gate must not become a silent narrowing of
-    // the funnel on the strength of an undecided classifier.
+    // Prefer the fresh finder verdict over the stored audit verdict.
+    // As in the cadence gate, only `reject` blocks; `unclear` and NULL fail open.
     const stored = existing ? ledger.getProspectById(existing.id) : null;
     const icpVerdict = opts.icp?.verdict ?? stored?.icp_verdict ?? null;
     if (icpVerdict === "reject") {
@@ -1315,10 +1305,8 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
         },
       );
       const prospectId = ledger.upsertProspect(opts.prospectMeta);
-      // Persist the verdict the finder's gate already paid to compute. Without
-      // this the only production writer of the column was `ops/audit-icp.ts`,
-      // run by hand — which is why 23 rows created after its last run had no
-      // verdict at all. `transient` never reaches here (it is not a verdict).
+      // Persist the finder verdict for subsequent cadence checks.
+      // `transient` is not a verdict and never reaches here.
       if (opts.icp?.verdict) {
         ledger.setProspectIcpVerdict(prospectId, opts.icp.verdict, opts.icp.reason ?? null);
       }
@@ -1365,7 +1353,7 @@ const HONORIFIC_TOKENS = new Set([
   "sr",
   "jr.",
   "jr",
-  // "Md. Naimur Rahman" — Mohammed, abbreviated; common in South Asian names.
+  // "Md. Naimur Rahman": Mohammed, abbreviated; common in South Asian names.
   "md.",
   "md",
   "eng.",
@@ -1445,7 +1433,7 @@ const ORG_SUFFIX_RE = /(labs?|team|studios?|\.(dev|ai|io|com|app|xyz|net|org|co)
 /**
  * Best-effort first-name extraction from a prospect's `name` field. Returns
  * `null` whenever a greeting shouldn't be used (handle, company, role word,
- * initial, non-capitalized token) — a wrong greeting is worse than none. The
+ * initial, non-capitalized token). A wrong greeting is worse than none. The
  * LLM owns the decision to actually greet; this helper only gates whether
  * `PROSPECT_FIRST_NAME` is present in the input block.
  */
@@ -1467,7 +1455,7 @@ export function firstNameFrom(name: string | null | undefined): string | null {
   let first = tokens[i]?.replace(/,$/, "");
   if (!first) return null;
 
-  // "LAST, First" — the comma marks the family name; greet with what follows.
+  // "LAST, First". The comma marks the family name; greet with what follows.
   if (tokens[i]!.endsWith(",") && tokens[i + 1]) first = tokens[i + 1]!.replace(/,$/, "");
 
   if (ROLE_TOKENS.has(first.toLowerCase())) return null;
@@ -1475,12 +1463,12 @@ export function firstNameFrom(name: string | null | undefined): string | null {
   if (/\d/.test(first)) return null;
   // An initial is not a greeting ("J. Eduardo", "K.O", "Mrs. J Doe").
   if (/^[A-Za-z]\.?$/.test(first) || /^[A-Z]\.[A-Z]\.?$/.test(first)) return null;
-  // Dotted pair "Wei.Jiang" — greet with the half before the dot.
+  // Dotted pair "Wei.Jiang": greet with the half before the dot.
   const dotted = first.match(/^([A-Z][a-z]+)\.[A-Z][a-z]+$/);
   if (dotted) first = dotted[1]!;
 
   // ALL CAPS: a whole name shouted ("JAGADISH SUNIL PEDNEKAR") is a name with
-  // the shift key stuck — title-case it. A lone shouted token ("KEVINWONG",
+  // the shift key stuck: title-case it. A lone shouted token ("KEVINWONG",
   // "KERNEL", "CEO") is a handle or a word, not a greeting. Two letters ("KC")
   // read as a nickname and pass through as written.
   if (/^[A-Z]{3,}$/.test(first)) {
@@ -1506,11 +1494,11 @@ interface VerifyAndFilterResult<T> {
  * Verify a batch of target emails BEFORE drafting + sending, for direct-input
  * entry points (CLI motion commands + dashboard /run). Skips on dryRun and
  * empty input; de-dupes verifyEmail calls so duplicates don't double-bill.
- * Finder-sourced rows through /queue → drain do NOT call this — they were
+ * Finder-sourced rows through /queue → drain do NOT call this. They were
  * verified at enqueue time.
  *
  * `signal` is the run's cancellation signal: the whole batch fires in one
- * Promise.all, so the boundary that matters is the one before it — a run
+ * Promise.all, so the boundary that matters is the one before it. A run
  * cancelled during the pre-flight buys no verifications at all.
  */
 export async function verifyAndFilterTargets<T>(
@@ -1531,7 +1519,7 @@ export async function verifyAndFilterTargets<T>(
 
   const uniqueEmails = [...new Set(emailFor.values())];
   // Catch SDK throws and drop the affected target rather than aborting the
-  // whole run — one bad verify call shouldn't kill the batch.
+  // whole run: one bad verify call shouldn't kill the batch.
   const verifications = await Promise.all(
     uniqueEmails.map(async (email) => {
       try {

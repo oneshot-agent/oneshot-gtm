@@ -327,7 +327,7 @@ describe("resolveAndVerifyContact — circuit breaker on platform errors", () =>
     // 6th call: breaker open → short-circuit, no new findEmail call.
     const res = await call();
     expect(res).toEqual({ ok: false, reason: "platform-error", costUsd: 0 });
-    expect(findCalls).toBe(5); // unchanged — short-circuited
+    expect(findCalls).toBe(5); // unchanged: short-circuited
   });
 
   it("a genuine outcome resets the breaker (isolated errors don't trip it)", async () => {

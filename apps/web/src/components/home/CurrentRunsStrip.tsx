@@ -6,7 +6,7 @@ import { Badge } from "../primitives/Badge.tsx";
 
 /**
  * Compact "in flight" strip on /home. Shows the founder a path back to any
- * currently-running /run dispatch — the URL `/run/<play>?runId=N` is the
+ * currently-running /run dispatch. The URL `/run/<play>?runId=N` is the
  * durable handle, but most founders won't remember it after they navigate
  * away. This widget surfaces every `status='running'` row from the runs
  * table so they can click "Resume" to land back on the progress view.

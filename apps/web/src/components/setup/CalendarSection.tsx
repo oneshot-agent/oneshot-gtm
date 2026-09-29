@@ -10,8 +10,7 @@ import type { SectionProps } from "./types.ts";
 /**
  * Which Gmail identity's calendar the scheduler polls for past meetings
  * needing an outcome (issue #577). `calendarIdentityId: ""` (empty select
- * value) maps to `null` server-side — the feature entirely off, nothing
- * polls. Only `provider: 'gmail'` identities can be picked; a Gmail identity
+ * value) maps to `null` server-side, which disables calendar polling. Only `provider: 'gmail'` identities can be picked; a Gmail identity
  * with no calendar.readonly scope is shown but flagged so a founder doesn't
  * pick one that will just fail doctor.
  */

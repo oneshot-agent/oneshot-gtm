@@ -5,36 +5,10 @@ import type { ProductResearchDossier } from "./dossier.ts";
 import type { ProspectRecord } from "./types.ts";
 
 /**
- * Prospect CRUD, research-backlog queries, dossier merge/update operations,
- * person/company facts, and stored ICP-verdict persistence — extracted from
- * `Ledger` (#643, re-filed from #632) as the next slice of the ledger split
- * tracked in ROADMAP.md, following the receipts (#616), cache (#618),
- * delivery-health (#617), inbox (#634), queue (#641) and cadence (#642)
- * extractions.
- *
- * Scope is deliberately narrow: only methods whose SQL touches the
- * `prospects` table alone (a bare `FROM prospects`/`WHERE`/correlated EXISTS
- * subquery, never a JOIN against cadence_state/sequence_events/inbox_replies/
- * channel_events/target_queue) live here. Cross-domain prospect queries —
- * `listActiveCadences`, `listColdProspects`, `listRepliedProspectEmails`,
- * `recordLinkedInReply`, everything keyed by target_queue — stay in
- * `ledger.ts`.
- *
- * The shared-people cross-workspace identity resolution (`SharedPeople`,
- * `bindSharedPerson`/`withSharedIdentity`/`refreshSharedPeople`) also stays
- * in `Ledger`: it needs the `Ledger` instance's own `path` and `people`
- * fields, which are unrelated to raw SQL against `prospects`. `Ledger`'s
- * `findProspectByEmail`, `getProspectById` and `upsertProspect` wrap the
- * shared-identity resolution around the plain SQL calls below.
- *
- * Pure wrapper around a raw `Database` handle plus the minimal mail-address
- * accessor `getProspectById`/`upsertProspect` need for the `businessAddress`
- * fields — mirroring `ledger-cache.ts`'s and `ledger-receipts.ts`'s shape so
- * this domain can be constructed and exercised without the rest of Ledger's
- * surface. `Ledger` owns exactly one instance (constructed after `migrate()`
- * runs) and delegates every prospect method to it, preserving each method's
- * existing signature, return value, null handling, ordering and transaction
- * boundary — an observer of the public surface sees no difference.
+ * Prospect persistence, dossier updates, and ICP verdicts. Queries here touch
+ * only prospects; cross-domain joins and shared-person identity resolution belong
+ * to Ledger. The mail-address accessor supplies businessAddress fields. Ledger
+ * creates one store after migration.
  */
 export interface ProspectMailAddress {
   get(key: string): PostalAddress | null;
@@ -43,16 +17,8 @@ export interface ProspectMailAddress {
 }
 
 /**
- * Canonical form for matching prospect emails — trim + lowercase. Inbound reply
- * addresses (cadence inbox poll) are normalized the same way, so a prospect
- * stored from a mixed-case address still matches when they reply. Applied on
- * both store (upsertProspect) and every lookup so the two never diverge.
- *
- * Duplicated (not imported/exported across the module boundary) rather than
- * shared with `ledger.ts`'s own copy — mirrors the precedent already set by
- * `delivery-health.ts`'s `canonEmail`: a 3-line pure helper, and re-exporting
- * it from either module would widen that module's public surface for no
- * benefit. Every call site keeps behaving identically either way.
+ * Normalize stored and queried emails the same way as inbound replies so
+ * mixed-case addresses match across the ledger.
  */
 function canonEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -106,7 +72,7 @@ export class ProspectStore {
   }
 
   /**
-   * `Ledger.findProspectByEmail`'s shared-person fallback — the same SQL
+   * `Ledger.findProspectByEmail`'s shared-person fallback. The same SQL
    * shape as `findExistingForUpsert`'s shared_person_id branch, kept as its
    * own method since it's keyed by a resolved shared-person id, not an email.
    */
@@ -173,7 +139,7 @@ export class ProspectStore {
   }
 
   /**
-   * Raw prospect row by id (PK seek) — no mail address, no shared-identity
+   * Raw prospect row by id (PK seek): no mail address, no shared-identity
    * resolution. `Ledger.getProspectById` wraps this with `withSharedIdentity`
    * then `attachMailAddress`.
    */
@@ -182,7 +148,7 @@ export class ProspectStore {
   }
 
   /**
-   * Every prospect row, unfiltered — `Ledger.refreshSharedPeople`'s backfill
+   * Every prospect row, unfiltered: `Ledger.refreshSharedPeople`'s backfill
    * sweep needs to walk the whole table once per shared-people version bump.
    * Read OUTSIDE any transaction, matching the original inline call: the
    * sweep itself (each row's resolve + write) is what needs the write lock,
@@ -193,7 +159,7 @@ export class ProspectStore {
   }
 
   /**
-   * True when some OTHER prospect already holds `email` — the guard
+   * True when some OTHER prospect already holds `email`. The guard
    * `Ledger.refreshSharedPeople` checks before backfilling a shared person's
    * email onto a row, so two legacy aliases with distinct historical IDs
    * that happen to resolve to the same shared person never collide on
@@ -209,7 +175,7 @@ export class ProspectStore {
   /**
    * Backfill one shared-identity column onto a prospect row.
    * `Ledger.refreshSharedPeople` calls this per changed field, inside its own
-   * `db.transaction(...).immediate()` — this method issues a single bound
+   * `db.transaction(...).immediate()`. This method issues a single bound
    * UPDATE and does not open its own transaction, so the caller's lock
    * boundary is unaffected.
    */
@@ -226,7 +192,7 @@ export class ProspectStore {
    * onto the `prospects` table. `Ledger`'s constructor calls this once, the
    * first time it enables shared-people resolution for a database (a fresh
    * `sharedPeoplePath` option, or the live home/named-workspace database),
-   * before its first `refreshSharedPeople()` sweep — mirroring the original
+   * before its first `refreshSharedPeople()` sweep: mirroring the original
    * inline `PRAGMA table_info`/`ALTER TABLE`/`CREATE INDEX` sequence exactly,
    * just moved here since all three statements touch `prospects` alone.
    */
@@ -244,7 +210,7 @@ export class ProspectStore {
 
   /**
    * Link a prospect row to its resolved shared person. The `IS NOT ?` guard
-   * makes the write a no-op when the row already points at this person —
+   * makes the write a no-op when the row already points at this person:
    * `Ledger.bindSharedPerson` relies on that to avoid a WAL write (and a
    * `peopleVersion` bump upstream) for rows that are already correct.
    */
@@ -256,8 +222,8 @@ export class ProspectStore {
 
   /**
    * `getProspectRow` + `attachMailAddress`, no shared-identity resolution.
-   * `Ledger.getProspectById` doesn't call this — it needs `withSharedIdentity`
-   * in between the two steps — but the pair is useful together for
+   * `Ledger.getProspectById` doesn't call this. It needs `withSharedIdentity`
+   * in between the two steps, but the pair is useful together for
    * exercising `ProspectStore` standalone (no `Ledger`), same reason
    * `upsertProspect` exists on this store.
    */
@@ -290,7 +256,7 @@ export class ProspectStore {
   /**
    * Lookup an existing prospect by shared_person_id or email, for the
    * shared-identity resolution in `Ledger.upsertProspect`. Returns the row id
-   * only — `Ledger` handles the business-address seeding and shared-person
+   * only: `Ledger` handles the business-address seeding and shared-person
    * binding around it.
    */
   findExistingForUpsert(
@@ -314,7 +280,7 @@ export class ProspectStore {
   }
 
   /**
-   * Plain INSERT of a new prospect row — no shared-identity resolution, no
+   * Plain INSERT of a new prospect row: no shared-identity resolution, no
    * existing-row lookup (the caller, `Ledger.upsertProspectInTransaction`,
    * already checked via `findExistingForUpsert`). Business-address seeding
    * also stays with the caller, which needs the freshly-inserted id first.
@@ -341,12 +307,12 @@ export class ProspectStore {
   }
 
   /**
-   * Plain upsert with no shared-identity resolution — the composition of
+   * Plain upsert with no shared-identity resolution. The composition of
    * `findExistingForUpsert` + `insertProspect` + `seedBusinessAddress` that
    * `Ledger.upsertProspectInTransaction` performs around the shared-person
    * merge. Exposed on the store itself (not just as private plumbing) so
    * `ProspectStore` remains exercisable standalone, without constructing a
-   * `Ledger` — same precedent as `ledger-receipts.ts`'s "pure function of a
+   * `Ledger`: same precedent as `ledger-receipts.ts`'s "pure function of a
    * raw Database handle" tests. `Ledger.upsertProspect` does NOT call this;
    * it has its own transaction wrapping the shared-identity resolution.
    */
@@ -365,7 +331,7 @@ export class ProspectStore {
       .immediate();
   }
 
-  /** Seed a prospect's business mail address if it isn't set yet — best-effort helper for upsertProspect callers. */
+  /** Seed a prospect's business mail address if it isn't set yet: best-effort helper for upsertProspect callers. */
   seedBusinessAddress(
     id: number,
     address: PostalAddress | null | undefined,
@@ -377,7 +343,7 @@ export class ProspectStore {
   }
 
   /**
-   * Backfill identity columns that are NULL on an existing prospect — the only
+   * Backfill identity columns that are NULL on an existing prospect. The only
    * such path (`upsertProspect` never writes twice). COALESCE on purpose: a
    * backfill must never clobber a URL a finder already resolved, and
    * `undefined`/`null` leaves the column untouched. True when a column changed.
@@ -443,16 +409,16 @@ export class ProspectStore {
   }
 
   /**
-   * Record the person-level ICP verdict for a prospect. Overwrites — a
+   * Record the person-level ICP verdict for a prospect. Overwrites. A
    * re-audit with better data (a real title instead of a stale event bio)
    * must be able to flip an earlier call in either direction.
    *
    * `unclear` is a real, persisted verdict: qualifyPerson is 4-state, and
    * writing its ambiguity as NULL made "we looked and couldn't tell"
-   * indistinguishable from "never judged". It is PROVISIONAL, not settled —
+   * indistinguishable from "never judged". It is PROVISIONAL, not settled:
    * _qualify.ts escalates `unclear` rather than dropping a candidate, so a
    * re-audit re-judges those rows (picking up role text that arrived since)
-   * and skips only pass/reject. Suppression is unaffected — the cadence gate
+   * and skips only pass/reject. Suppression is unaffected. The cadence gate
    * tests `=== "reject"`, so `unclear` fails open exactly as NULL did.
    * `transient` is never persisted; it stays a retry signal.
    */
@@ -471,7 +437,7 @@ export class ProspectStore {
    *
    * Deliberately NOT part of updateProspectIdentity: that method's column
    * allowlist is write-once (COALESCE(NULLIF(col,''), ?)), which is right for
-   * identity fields but wrong here — re-researching a person must be able to
+   * identity fields but wrong here: re-researching a person must be able to
    * refresh a stale dossier. Plain overwrite; callers decide whether to skip
    * rows that already have one. Pass null to clear.
    */
@@ -481,7 +447,7 @@ export class ProspectStore {
 
   /**
    * Persist a synthesized per-prospect angle (issue #355) onto an existing
-   * prospect. Plain UPDATE, mirroring `setProspectDossier` — NOT
+   * prospect. Plain UPDATE, mirroring `setProspectDossier`: NOT
    * `upsertProspect`, which skips existing rows and would silently no-op
    * every backfill call. Pass null to clear both columns together, so
    * `angle_synthesized_at` can never point at a row with no `angle_json`.
@@ -500,13 +466,13 @@ export class ProspectStore {
    * any transaction. Two writers, one column, a wide window between them: the
    * later write silently reverts the earlier one.
    *
-   * Not theoretical — it happened during this feature's own dogfood run. The
+   * Not theoretical. It happened during this feature's own dogfood run. The
    * workspace server researched a prospect while a script held a merge in
    * flight, and the curated person half vanished under an API one. The reads
    * were seconds apart.
    *
    * `.immediate()` takes the write lock (`BEGIN IMMEDIATE`, a RESERVED lock)
-   * BEFORE the re-read runs, not on the first write inside the transaction —
+   * BEFORE the re-read runs, not on the first write inside the transaction:
    * the default `db.transaction(...)()` call opens a DEFERRED transaction,
    * which only escalates to a write lock at the first write statement, so a
    * second writer's SELECT can still land in the gap between this
@@ -515,7 +481,7 @@ export class ProspectStore {
    * other connection's transaction can interleave a write until this one
    * commits. Same pattern as `ledger-queue.ts`'s `dequeueApproved` and
    * `ledger.ts`'s `reserveSpendIfUnderCeiling` (see `daily-spend.test.ts`'s
-   * "cross-connection atomicity" tests) — proven the same way in
+   * "cross-connection atomicity" tests): proven the same way in
    * `ledger-prospects.test.ts`'s "two independent connections racing"
    * cases below, which open a SECOND real connection to the same on-disk
    * file rather than just calling the method twice on one connection.
@@ -545,7 +511,7 @@ export class ProspectStore {
   /**
    * Prospects that could take a LinkedIn URL but don't have one. Rows already
    * holding a GitHub/X URL in `linkedin_url` are skipped (updateProspectIdentity
-   * won't overwrite them); a name is required — the lookup searches by name.
+   * won't overwrite them); a name is required. The lookup searches by name.
    */
   listProspectsMissingLinkedIn(opts: { limit?: number; play?: string } = {}): Array<{
     id: number;
@@ -583,14 +549,14 @@ export class ProspectStore {
   /**
    * Prospects worth buying a research dossier for, by scope:
    *
-   * - `active`   — a cadence is still running, so a dossier changes what gets sent
-   * - `replied`  — a live conversation, where reply drafting reads the dossier
-   * - `unjudged` — no ICP verdict AND a profile URL to research, so the gate can judge
-   * - `all`      — every prospect
+   * - `active`. A cadence is still running, so a dossier changes what gets sent
+   * - `replied`. A live conversation, where reply drafting reads the dossier
+   * - `unjudged`: no ICP verdict AND a profile URL to research, so the gate can judge
+   * - `all`. Every prospect
    *
    * Scopes union. Rows that already hold a dossier are excluded unless
    * `includeResearched`, so an interrupted run resumes instead of re-buying.
-   * A row needs a social URL or an email — deepResearchPerson has nothing to
+   * A row needs a social URL or an email: deepResearchPerson has nothing to
    * chase otherwise.
    */
   listProspectsForResearch(
@@ -661,7 +627,7 @@ export class ProspectStore {
     // `{person, product}` wrapper onto every row: 531 of 684 prospects held a
     // product half and a null person half, looked researched to that test, and
     // became permanently unreachable. `hasPersonSignal` asks the question the
-    // caller actually means — is there PERSON research here — and matches the
+    // caller actually means (is there PERSON research here) and matches the
     // gate every other consumer of this column already uses.
     //
     // `limit` is applied AFTER the filter so it keeps meaning "return N rows to
@@ -678,16 +644,16 @@ export class ProspectStore {
    * Prospects worth synthesizing a per-prospect angle for (issue #355), by
    * scope. Mirrors `listProspectsForResearch`'s scope semantics exactly:
    *
-   * - `active`   — a cadence is still running, so a sharper angle changes what
+   * - `active`. A cadence is still running, so a sharper angle changes what
    *                gets sent once drafting reads it (#356)
-   * - `replied`  — a live conversation; the reply history is itself an input
+   * - `replied`. A live conversation; the reply history is itself an input
    *                to the synthesis (corrections, "not what I meant", etc.)
-   * - `unjudged` — no ICP verdict yet, so the angle's `relationship` /
+   * - `unjudged`: no ICP verdict yet, so the angle's `relationship` /
    *                `valueMode` read can inform the gate
-   * - `all`      — every prospect
+   * - `all`. Every prospect
    *
    * Scopes union, not intersect. Unlike `listProspectsForResearch`, this does
-   * NOT require a social URL or email — reply history alone is enough input
+   * NOT require a social URL or email: reply history alone is enough input
    * for a synthesis, and gatherAngleEvidence degrades gracefully when GitHub
    * lookups have nothing to chase. Rows that already hold an angle are
    * excluded unless `includeSynthesized`, so an interrupted backfill resumes
@@ -762,7 +728,7 @@ export class ProspectStore {
 
   /**
    * Every prospect's (id, name, email, company), for the calendar matcher's
-   * fuzzy domain/name signals — there's no `company_domain` column, so the
+   * fuzzy domain/name signals: there's no `company_domain` column, so the
    * matcher derives a domain from `email` and slug-compares `company`
    * against it in JS. A full scan is fine at founder scale (same precedent
    * `resolveProspectForLinkedInReply` already relies on).

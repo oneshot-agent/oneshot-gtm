@@ -81,7 +81,7 @@ export function humanizeEventDate(iso: string): string {
 
 /**
  * Whether an event's ISO date is in the past. Uses the SAME day-rounding
- * threshold as humanizeEventDate so "today" (delta 0) never reads as passed —
+ * threshold as humanizeEventDate so "today" (delta 0) never reads as passed:
  * an all-day event whose UTC-midnight timestamp already slipped behind the
  * local clock still counts as today, not passed.
  */
@@ -94,7 +94,7 @@ export function eventIsPast(iso: string): boolean {
 export function timeAgo(iso: string | null, nowMs: number = Date.now()): string {
   if (!iso) return "—";
   const seconds = Math.floor((nowMs - new Date(normalizeUtcIso(iso)).getTime()) / 1000);
-  // Future deltas cascade through the same buckets as past deltas — without
+  // Future deltas cascade through the same buckets as past deltas, without
   // this, the /cadences "NEXT DUE" column rendered "in 150983s" instead of
   // "in 2d" for a step due ~42h from now. `Math.abs` once; bucket once.
   const future = seconds < 0;

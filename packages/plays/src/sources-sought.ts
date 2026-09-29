@@ -6,13 +6,13 @@ import { buildFollowUpEmail, getStep0MetadataField, registerSequence } from "./_
 const PLAY_NAME = "sources-sought";
 
 export interface SourcesSoughtTarget {
-  /** Contact from SAM.gov's published pointOfContact — full name, title, email. */
+  /** Contact from SAM.gov's published pointOfContact: full name, title, email. */
   name: string;
   email: string;
   agency: string;
   /** The specific SAM.gov notice number (e.g. "W912DY-26-R-0042"). */
   noticeNumber: string;
-  /** "Sources Sought" or "Presolicitation" — the human label for ptype r/p. */
+  /** "Sources Sought" or "Presolicitation". The human label for ptype r/p. */
   noticeType: string;
   noticeTitle: string;
   noticeUrl?: string;
@@ -21,7 +21,7 @@ export interface SourcesSoughtTarget {
   /** One fact about how your product answers the requirement (specific, not a capability list). */
   yourEdge: string;
   phone?: string;
-  /** Job title from the published POC — persisted to prospects.title. */
+  /** Job title from the published POC: persisted to prospects.title. */
   title?: string;
   /**
    * The notice's response-window close date (ISO). Optional (not every
@@ -40,7 +40,7 @@ export interface SourcesSoughtRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -60,11 +60,11 @@ const sourcesSoughtDef: EmailPlayDef<SourcesSoughtTarget> = {
   promptName: "sources-sought-email",
   maxBodyWords: 150,
   // One-touch + one follow-up: the notice has a response deadline, so a long
-  // chase doesn't fit — either the capability conversation happens before the
+  // chase doesn't fit: either the capability conversation happens before the
   // solicitation is written, or the window closes.
   enrollCadence: true,
   toEmail: (t) => t.email,
-  // Published POC contact — no findEmail/verifyEmail spend (gov-solicitation
+  // Published POC contact: no findEmail/verifyEmail spend (gov-solicitation
   // already carries a verified address from SAM.gov). Enrich is best-effort
   // personalization only.
   prepare: (t) =>
@@ -108,7 +108,7 @@ export function runSourcesSought(
 }
 
 // One-touch + one follow-up: a Sources Sought response window is weeks, not
-// months — a long chase outlives the notice.
+// months. A long chase outlives the notice.
 registerSequence({
   playName: PLAY_NAME,
   steps: [
@@ -121,7 +121,7 @@ registerSequence({
         // finding PRRT_kwDOSKzrBs6ewQdC / issue #463: the follow-up asks for
         // a pre-solicitation conversation that's no longer actionable once
         // the notice's response window has closed. `responseDeadline` is
-        // optional (not every finder captures it) — an unknown deadline is
+        // optional (not every finder captures it). An unknown deadline is
         // NOT treated as expired, only a deadline that has actually passed
         // skips the send.
         //
@@ -132,7 +132,7 @@ registerSequence({
         // `Date.now()` treated the entire deadline day (and, in US
         // timezones, part of the day before) as already expired, suppressing
         // a legitimate day-5 follow-up up to a day early. A calendar date
-        // deadline means "actionable through the end of that day" — compare
+        // deadline means "actionable through the end of that day": compare
         // against the end of the deadline's UTC day instead of its start.
         const deadline = getStep0MetadataField(ctx.prospect.id, PLAY_NAME, "responseDeadline");
         if (deadline) {

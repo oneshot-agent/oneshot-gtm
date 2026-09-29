@@ -1,22 +1,8 @@
 /**
- * Warn-tier lint for a `yourEdge` / `yourClaim` string (issue #585).
- *
- * The edge is the only founder-authored input the Offer beat is built from,
- * and until this nothing looked at it: every readiness gate is
- * `trim().length > 0`, `lintEmail` runs only on drafted mail, and the
- * strategist writes edges into config with no definition of a good one. So
- * feature lists and single flat pitches went in, and the drafts inherited
- * them.
- *
- * This is guidance, not a gate: it returns warnings for the UI to show and
- * never blocks a save — `yourEdge: "x"` is a fixture throughout the test
- * suite, and a founder mid-edit should not be refused. Selection (#584)
- * happens in code, so the checks are about what a selectable, non-pitch angle
- * looks like: several of them, each opening with who it fits, long enough to
- * carry a lesson (a named failure and what was learned) or an opportunity
- * resting on one concrete fact, and free of the vocabulary `_humanizer.md`
- * bans. An opportunity that promises an outcome with nothing behind it — no
- * number, nothing the product description names — is flagged as unbacked.
+ * Warnings for `yourEdge` / `yourClaim`; never blocks a save.
+ * Checks for multiple selectable angles, routing clauses, enough detail for a
+ * lesson or concrete opportunity, and vocabulary banned by `_humanizer.md`.
+ * Outcome claims need a number or a fact from the product description.
  */
 import { SLOP_PHRASES } from "./_lib.ts";
 import { splitEdgeAngles } from "./_angles.ts";
@@ -25,12 +11,12 @@ import { splitEdgeAngles } from "./_angles.ts";
 const MIN_ANGLE_WORDS = 12;
 /** A routing clause: the condition the angle fits, which selection matches on. */
 const ROUTING_OPENER = /^(?:for|when|if)\b/i;
-/** Landing-page verbs — the "could this sit on your site?" test, mechanically. */
+/** Landing-page verbs. The "could this sit on your site?" test, mechanically. */
 const PITCH_SHAPE =
   /\b(?:connects|provides|enables|empowers|streamlines|helps (?:you|founders|teams|companies)|lets you|is an? (?:open[- ]source|all-in-one|unified|complete))\b/i;
 
 /**
- * Outcome language — what an opportunity angle promises. Only an angle that
+ * Outcome language: what an opportunity angle promises. Only an angle that
  * uses it is checked for a backing fact; a lesson angle rarely does.
  */
 const OUTCOME_CLAIM =
@@ -71,7 +57,7 @@ export function factTermsFrom(...texts: Array<string | null | undefined>): Set<s
 
 /**
  * The claim part of an angle: everything after its routing clause ("For a
- * clinic group —", "When the buyers are engineers,"). Who the angle fits is
+ * clinic group: ", "When the buyers are engineers,"). Who the angle fits is
  * not evidence for what it promises, so the fact must be in the claim.
  */
 function claimOf(angle: string): string {

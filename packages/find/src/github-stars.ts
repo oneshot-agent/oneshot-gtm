@@ -24,7 +24,7 @@ export interface RepoWatch {
   /**
    * Optional, per-repo: one true line about why THIS repo is notable plus how
    * your offer bridges to it respectfully. Surfaced to the email as a
-   * shared-taste nod (never flattery) that also shapes the offer's framing —
+   * shared-taste nod (never flattery) that also shapes the offer's framing:
    * e.g. a privacy-first repo's edge leads the pitch with control/auditability
    * rather than "we do it for you". Adjacent repos only (→ repo-interest).
    */
@@ -126,7 +126,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
     // empty window, and when empty, say how stale the newest star is so the
     // founder knows to widen `sinceDays` rather than wonder what broke.
     if (firstError) {
-      // Both the stargazers list AND the events-feed fallback failed — that's
+      // Both the stargazers list AND the events-feed fallback failed. That's
       // a rate limit or outage, not the (handled) July-2026 access restriction.
       result.halted = `github fetch failed (${firstError}) — set GITHUB_TOKEN for higher rate limits`;
     } else if (newestSeen) {
@@ -169,8 +169,8 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
     const fullName = user.name ?? c.login;
     const profileUrl = `https://github.com/${c.login}`;
 
-    // ICP filter on what GitHub actually says about the person — bio, site,
-    // account maturity, their own repos (README only on a bare profile) — plus
+    // ICP filter on what GitHub actually says about the person: bio, site,
+    // account maturity, their own repos (README only on a bare profile): plus
     // the repo they starred. A star alone is not evidence either way.
     const evidence = await buildGitHubEvidence(user);
     const filter = await icpFilter({
@@ -182,7 +182,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       },
     });
     if (filter.match === null) {
-      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit):
       // drop without persisting. A rejection would burn the dedupeKey for
       // every future watch tick since isQueueDuplicate ignores status.
       result.droppedEnrichment++;
@@ -234,7 +234,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       companyDomain: user.blogDomain,
       isDuplicate: (email) => isDuplicate({ playName, dedupeKey, prospectEmail: email }),
       icp,
-      // GitHub's user API carries no title, so stage A has nothing to judge —
+      // GitHub's user API carries no title, so stage A has nothing to judge:
       // the gate decides on the enriched title (stage B), which is free. The
       // bio rides as evidence, never as roleText: roleText becomes the
       // prospect's persisted title.
@@ -282,7 +282,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
     // Tier 3 of the standard LinkedIn chain (see post-funding.ts for the
     // canonical shape). GitHub's user API carries no LinkedIn field, so without
     // this a stargazer the SDK can't enrich by email has no LinkedIn path at
-    // all — which is why this finder produced 17 of 334.
+    // all, which is why this finder produced 17 of 334.
     // The login is a strong disambiguator: many devs use the same handle on
     // both platforms.
     let linkedinUrl: string | null = enr.linkedinUrl;
@@ -307,7 +307,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       ...(contact.emailSource ? { emailSource: contact.emailSource } : {}),
     };
 
-    // repo-interest is a peer-builder pitch — what the candidate ships gives
+    // repo-interest is a peer-builder pitch: what the candidate ships gives
     // the LLM concrete shared-taste evidence. competitor-switch is a head-on
     // pitch where the starred repo IS the signal; candidate's own repos add
     // noise, so we only pass them on the repo-interest branch. Already fetched

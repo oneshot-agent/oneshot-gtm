@@ -3,7 +3,7 @@
  * over in one shot instead of the strategist proposing one `apply-config`
  * marker per trigger (`packages/prompts/strategist-trigger.md`: "ONE marker
  * per message"). A pack bundles config patches for several triggers at once
- * plus the buyer framing behind them — `TriggerSpec.defaultConfig` already
+ * plus the buyer framing behind them: `TriggerSpec.defaultConfig` already
  * carries generic per-trigger defaults; a pack is a curated OVERLAY on top,
  * anchored in one vertical.
  *
@@ -15,14 +15,13 @@
  *
  * WEIGHTING (per #464's card): the coverage spike #456 ran against three
  * verticals with `peopleSearch` (Austin, TX, 50/vertical, best_work_email
- * hit rate) measured the OPPOSITE of the card's stated hypothesis —
- * restaurants 80%, home-services (plumbers) 70%, dental 64% — so
+ * hit rate) measured the OPPOSITE of the card's stated hypothesis (* restaurants 80%, home-services (plumbers) 70%, dental 64%) so
  * `restaurants-food-service` below leans PRIMARILY on `local-business`
  * (best-covered of the three, not worst as hypothesized), while
  * `healthcare-practices` still leans on `local-registry`'s NPPES adapter
  * (dental's B2B coverage was the weakest measured, confirming that half of
  * the original hypothesis). `auto-services`, `professional-services-smb`,
- * `trucking-freight` and `civic-gov` were not part of the spike — those
+ * `trucking-freight` and `civic-gov` were not part of the spike. Those
  * follow the card's original reasoning unchanged.
  *
  * `vertical-ai-startups` is the exception to that shape: its buyers are
@@ -33,12 +32,12 @@
  * `yourClaim`.
  *
  * Every pack's `requires` lists only founder-voice keys (`yourEdge`) and
- * deliberately omits them from every trigger patch — those words describe
+ * deliberately omits them from every trigger patch. Those words describe
  * the founder's OWN product, and a pack that guessed at them would produce
  * generic email, the exact failure mode this epic exists to avoid. A trigger
  * a pack touches therefore comes out of Apply enabled but NOT ready until
  * the founder fills `yourEdge` in (via the strategist's `apply-config` or
- * `/queue`'s trigger card) — the intended end state, not a bug.
+ * `/queue`'s trigger card). The intended end state, not a bug.
  */
 
 export interface IndustryPack {
@@ -46,7 +45,7 @@ export interface IndustryPack {
   id: string;
   label: string;
   /**
-   * One line of plain buyer language for the picker — who this sells to, no
+   * One line of plain buyer language for the picker: who this sells to, no
    * provenance. `buyerBrief` carries the reasoning and reads like the
    * engineering note it is ("the #456 coverage spike measured `peopleSearch`
    * at 80% best_work_email hit rate"), which is the right thing to feed the
@@ -57,7 +56,7 @@ export interface IndustryPack {
   summary?: string;
   /** Who a pre-PMF startup in this vertical actually sells to, and WHY these channels. Fed to the strategist; shown behind a disclosure in the picker. */
   buyerBrief: string;
-  /** Proposed icpOneLiner for this buyer — founder edits before it sticks. Never written to config.json by apply. */
+  /** Proposed icpOneLiner for this buyer: founder edits before it sticks. Never written to config.json by apply. */
   icpOneLiner: string;
   /** trigger name -> config patch, merged over that trigger's STORED config (falling back to its defaultConfig). */
   triggers: Record<string, Record<string, unknown>>;
@@ -78,13 +77,13 @@ export const PACKS: IndustryPack[] = [
       "Pre-PMF dev-tool founders sell to the engineers already active in public dev communities: Show HN readers reacting to launches, and companies whose founding/staff-engineer hiring signals a build-vs-buy decision in flight. Placeholder pack — the full vertical library ships separately.",
     icpOneLiner: "Engineers and technical founders evaluating new developer tooling",
     triggers: {
-      // No readiness gate — comes out of Apply already ready. minPoints=1
+      // No readiness gate: comes out of Apply already ready. MinPoints=1
       // because a quiet Show HN launch (few points) is itself the signal for
       // a founder-tool motion, not traction (see the STRATEGIST NOTE on
       // show-hn's configBrief).
       "show-hn": { minPoints: 1 },
       // Has a readiness gate requiring `yourClaim` (registry.ts hiring-signal
-      // spec) — deliberately left unset here (see `requires` below), so this
+      // spec): deliberately left unset here (see `requires` below), so this
       // trigger comes out of Apply enabled-but-not-ready. Exercises that path.
       "hiring-signal": {
         roles: ["Founding Engineer", "Staff Engineer", "Head of Engineering"],
@@ -279,7 +278,7 @@ export const PACKS: IndustryPack[] = [
       },
       // Slugs verified against the GitHub search API (topic:<slug> returns
       // thousands of repos each); `rag` and other retrieval-only topics are
-      // deliberately absent — this pack wants agents that act.
+      // deliberately absent. This pack wants agents that act.
       "github-topics": {
         topics: ["ai-agents", "agentic-ai", "ai-automation", "voice-ai", "conversational-ai"],
         vendors: [

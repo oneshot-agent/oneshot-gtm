@@ -81,8 +81,8 @@ export interface ReceiptCompaction {
  * from `Ledger` (see ledger.ts) as the next slice of the split tracked in
  * ROADMAP.md, following the schema extraction in #452.
  *
- * Pure wrapper around a raw `Database` handle — same shape as
- * `migrateLedgerSchema` in ledger-schema.ts — so it can be constructed and
+ * Pure wrapper around a raw `Database` handle: same shape as
+ * `migrateLedgerSchema` in ledger-schema.ts, so it can be constructed and
  * exercised without the rest of Ledger's surface. `Ledger` owns exactly one
  * instance (constructed after `migrate()` runs) and delegates every receipt
  * method to it, preserving each method's existing signature, return value,
@@ -97,11 +97,11 @@ export class ReceiptStore {
     /** Per-call USD cost. Every wrapper in `oneshot.ts` reads `result.cost`
      *  from the SDK response (declared on every result type in
      *  `@oneshot-agent/sdk@0.15.2+`) and forwards it here. NULL in the
-     *  column when undefined — visible signal that the SDK omitted cost. */
+     *  column when undefined: visible signal that the SDK omitted cost. */
     costUsd?: number;
     signedReceipt?: unknown;
     oneshotRequestId?: string;
-    /** EmailIdentity id for email.send receipts — drives per-identity daily caps. */
+    /** EmailIdentity id for email.send receipts: drives per-identity daily caps. */
     senderIdentity?: string;
     /** Call-time memo (the same value sent to OneShot); defaults to "{play} {callType}". */
     memo?: string;
@@ -110,18 +110,18 @@ export class ReceiptStore {
   }): number {
     // Idempotent on the job id: the SDK's idempotency replay returns the
     // ORIGINAL request_id when a timed-out/double-fired send is retried, and a
-    // Gmail message id is unique per send — so a non-null request_id already in
+    // Gmail message id is unique per send, so a non-null request_id already in
     // the table means "same underlying send". Return the existing receipt
     // instead of inserting a duplicate that would double-count spend and caps.
     // Null request_ids (cache hits, SDK omissions) are distinct events and skip
-    // this — they must never collapse together.
+    // this. They must never collapse together.
     if (input.oneshotRequestId) {
       const existing = this.db
         .query("SELECT id FROM receipts WHERE oneshot_request_id = ?")
         .get(input.oneshotRequestId) as { id: number } | undefined;
       if (existing) return existing.id;
     }
-    // Number.isFinite guard rejects undefined / Infinity / NaN — those land
+    // Number.isFinite guard rejects undefined / Infinity / NaN. Those land
     // as NULL in the column, NOT silently distorted into a number.
     const costUsd =
       typeof input.costUsd === "number" && Number.isFinite(input.costUsd) ? input.costUsd : null;
@@ -417,8 +417,8 @@ export class ReceiptStore {
 
   /**
    * The local funnel ladder: receipts value-tagged by outcome attribution
-   * (engagement < meeting < qualified < revenue). goal_id is a sha256 of
-   * (play, email) — not computable in SQLite, so the caller joins in JS via
+   * (engagement < meeting < qualified < revenue). Goal_id is a sha256 of
+   * (play, email), not computable in SQLite, so the caller joins in JS via
    * `cadenceGoalId`.
    */
   listValueTaggedReceipts(): Array<{ goal_id: string; value_tag: string }> {

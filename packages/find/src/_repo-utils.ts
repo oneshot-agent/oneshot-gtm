@@ -1,6 +1,6 @@
 /**
  * Generic GitHub-repo URL utilities used by the github-topics finder + the
- * shared `_repo-pipeline.ts`. Kept finder-agnostic — no combo / topic state.
+ * shared `_repo-pipeline.ts`. Kept finder-agnostic: no combo / topic state.
  */
 
 const NOISE_REPO_PATTERNS = [

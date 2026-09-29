@@ -135,13 +135,6 @@ describe("skipCadenceMailBatchRoute", () => {
     skipMock.mockReset();
   });
 
-  const batch = (body: unknown): Request =>
-    new Request("http://localhost/api/cadences/skip-mail-batch", {
-      method: "POST",
-      headers: { "content-type": "application/json", host: "127.0.0.1:3030" },
-      body: JSON.stringify(body),
-    });
-
   it("skips each item on its own and reports the ones it could not", async () => {
     skipMock.mockImplementation((item: { prospectId: number }) => {
       if (item.prospectId === 2)
@@ -180,3 +173,10 @@ describe("skipCadenceMailBatchRoute", () => {
     expect(skipMock).not.toHaveBeenCalled();
   });
 });
+
+const batch = (body: unknown): Request =>
+  new Request("http://localhost/api/cadences/skip-mail-batch", {
+    method: "POST",
+    headers: { "content-type": "application/json", host: "127.0.0.1:3030" },
+    body: JSON.stringify(body),
+  });

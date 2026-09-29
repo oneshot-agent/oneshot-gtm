@@ -84,7 +84,7 @@ describe("suppressionFor", () => {
 
   it("does NOT suppress on a policy block", () => {
     // A 5.7.x is the receiving server refusing a message, not evidence the
-    // mailbox is dead — suppressing would permanently burn a live prospect
+    // mailbox is dead: suppressing would permanently burn a live prospect
     // over one spam-filter verdict.
     record({ kind: "block", statusCode: "5.7.1" });
     expect(ledger.suppressionFor("jane@dead.example")).toBeNull();
@@ -157,7 +157,7 @@ describe("bounced cadence status", () => {
     const cad = ledger.getCadence(prospectId, "p");
     expect(cad?.status).toBe("bounced");
     // A stale "send failed · retrying" marker on a dead address is actively
-    // misleading — no retry can ever succeed.
+    // misleading: no retry can ever succeed.
     expect(cad?.last_send_error).toBeNull();
     expect(ledger.getCadenceDraft({ prospectId, playName: "p" })).toBeNull();
   });
@@ -179,7 +179,7 @@ describe("countBounces", () => {
 
   it("counts every kind, including soft (no cadence stop) and unmatched (no prospect)", () => {
     // pollInboxBounces `continue`s before writing any sequence_events row for
-    // both of these — they must still show up here, since they still fire
+    // both of these. They must still show up here, since they still fire
     // notifySlackBounceRecorded.
     record({ messageId: "soft", recipient: "1@x.example", kind: "soft" });
     record({ messageId: "unmatched", recipient: "2@x.example", prospectId: null });
@@ -201,7 +201,7 @@ describe("countBounces", () => {
 describe("countAutoPermanentBounces", () => {
   // issue #71 round-1 correction: countAutoPermanentBounces now reads
   // `inbox_replies` (via recordInboxReply, kind='auto_permanent') instead of
-  // `sequence_events` — a dead-mailbox reply for a prospect with no
+  // `sequence_events`. A dead-mailbox reply for a prospect with no
   // active/paused cadence still gets persisted to inbox_replies and still
   // fires notifySlackBounceRecorded, but pollInboxReplies only writes
   // sequence_events inside its active/paused-cadence loop, so the old
@@ -233,7 +233,7 @@ describe("countAutoPermanentBounces", () => {
     // Even though pollInboxReplies loops every active/paused cadence to
     // write sequence_events (potentially several rows for one email),
     // recordInboxReply is INSERT OR IGNORE keyed on the provider's own
-    // message id — exactly one inbox_replies row per real inbound email.
+    // message id: exactly one inbox_replies row per real inbound email.
     const prospectId = ledger.upsertProspect({
       name: "Gone",
       email: "gone2@dead.example",

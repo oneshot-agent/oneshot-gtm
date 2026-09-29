@@ -12,7 +12,7 @@ export const LEGACY_GMAIL_ID = "legacy-gmail";
 
 /**
  * Cold-start warm-up ramp for a freshly added sending identity: 10/day,
- * +10/week, capped at 50/day. Provider-agnostic — a brand-new Gmail account and
+ * +10/week, capped at 50/day. Provider-agnostic. A brand-new Gmail account and
  * a brand-new OneShot domain/mailbox both start cold, so both ramp the same way.
  */
 export const WARMUP_DEFAULTS: Pick<EmailIdentity, "maxPerDay" | "warmup"> = {
@@ -38,7 +38,7 @@ function normalizeMailbox(raw: string | null | undefined): string {
 /**
  * The active sender pool. `emailIdentities` set → returned verbatim. Null =
  * legacy single-identity mode: synthesize one identity from the pre-rotation
- * fields. Legacy identities stay uncapped — capping would silently stall sends.
+ * fields. Legacy identities stay uncapped: capping would silently stall sends.
  */
 export function resolveIdentities(cfg: OneShotConfig): EmailIdentity[] {
   if (cfg.emailIdentities && cfg.emailIdentities.length > 0) return cfg.emailIdentities;
@@ -70,8 +70,8 @@ export function resolveIdentities(cfg: OneShotConfig): EmailIdentity[] {
  * identity → pool). The legacy pool is materialized first so existing prospect
  * pins survive; re-auth only refreshes the token, tuned caps are left alone.
  *
- * `calendarOnly` (issue #577): the connect flow's `?purpose=calendar` path —
- * a mailbox authorized purely to read its calendar must register at
+ * For `calendarOnly` (`?purpose=calendar` in the connect flow), a mailbox
+ * authorized purely to read its calendar must register at
  * `maxPerDay: 0` (never sends) instead of the warm-up ramp, or connecting it
  * silently enrols the account as a sender. Only applies to a genuinely NEW
  * identity: re-authing an existing sender (`created: false`) must never touch
@@ -104,10 +104,10 @@ export function registerGmailIdentity(input: {
 }
 
 /**
- * Add a Smartlead-connected mailbox to the pool. No per-identity credential —
+ * Add a Smartlead-connected mailbox to the pool. No per-identity credential:
  * sends use the workspace-wide SMARTLEAD_API_KEY and pin From by address.
  * Default ramp is clamped to Smartlead's own `message_per_day` when given; an
- * explicit `maxPerDay` (incl. null = uncapped) is respected as-is. Re-add = no-op.
+ * explicit `maxPerDay` (including null = uncapped) is respected as-is. Re-add = no-op.
  */
 export function registerSmartleadIdentity(input: {
   address: string;
@@ -162,7 +162,7 @@ function defaultMailbox(founderName: string | null): string {
 /**
  * Add a OneShot sending identity (wallet-owned domain + mailbox local-part) to
  * the pool. Same invariants as the Gmail path: legacy pool materialized on
- * first add, duplicate id = no-op. `sendingDomain` is NOT validated here —
+ * first add, duplicate id = no-op. `sendingDomain` is NOT validated here:
  * callers check against `listSendingDomains()`. Caps: neither field → default
  * ramp; `maxPerDay: n` → ceiling with ramp; `maxPerDay: null` → uncapped AND
  * warmup cleared (a ramp would re-impose 50); explicit `warmup` always wins.
@@ -195,7 +195,7 @@ export function registerOneShotIdentity(input: {
       "warmup" in input
         ? (input.warmup ?? null)
         : maxPerDay == null
-          ? null // uncapped — don't let a default ramp silently re-cap at 50
+          ? null // uncapped: don't let a default ramp silently re-cap at 50
           : WARMUP_DEFAULTS.warmup;
   }
   const caps: Pick<EmailIdentity, "maxPerDay" | "warmup"> = { maxPerDay, warmup };
@@ -213,7 +213,7 @@ export function registerOneShotIdentity(input: {
 
 /**
  * Drop an identity from the pool (legacy pool materialized first). NOTE:
- * prospects pinned to this id refuse to send until it's restored —
+ * prospects pinned to this id refuse to send until it's restored:
  * `resolveSenderIdentity` surfaces that loudly by design.
  */
 export function removeIdentity(identityId: string): { removed: boolean } {
@@ -229,7 +229,7 @@ export function removeIdentity(identityId: string): { removed: boolean } {
   saveConfig({
     ...cfg,
     emailIdentities: next,
-    // A removed identity can't be polled — leaving the pointer dangling
+    // A removed identity can't be polled: leaving the pointer dangling
     // would either silently stop the calendar poll (poller sees an unknown
     // id and skips) or, worse, resolve against whatever identity id happens
     // to be reused later. Clearing it here makes the feature visibly "off"
@@ -241,7 +241,7 @@ export function removeIdentity(identityId: string): { removed: boolean } {
 
 /**
  * Refresh token for a gmail identity (gmail-tokens.json, keyed by id). ONLY
- * the legacy synthetic identity may fall back to GMAIL_REFRESH_TOKEN — a
+ * the legacy synthetic identity may fall back to GMAIL_REFRESH_TOKEN. A
  * general fallback could switch a thread's From address mid-conversation.
  */
 export function gmailAccountFor(

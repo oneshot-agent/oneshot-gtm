@@ -1,24 +1,11 @@
 /**
- * Angle selection for `yourEdge` (issue #584).
+ * Select one `//`-separated `yourEdge` angle before drafting so the writing
+ * model does not repeatedly choose the easiest angle. Cache the classifier's
+ * choice per (prospect, edge) across regenerations. A single angle passes
+ * through unchanged without a classifier call.
  *
- * An edge may hold several `//`-separated angles. Until this module, all of
- * them went into the writing prompt and the model picked one inside a
- * 100-word writing task — and on every independent call it reached for the
- * most writable angle. Measured on a live ledger: 25 of 30 accelerator-batch
- * drafts and 26 of 36 luma-events drafts on a single angle, with three of
- * luma's six never used once. Same failure the admission beat already names
- * (`admissionBlock`): a model cannot hold a distribution across independent
- * calls, so the decision lives HERE, before the prompt sees anything.
- *
- * The choice is a small isolated classifier call — fit is what the design was
- * reaching for, and asking for it in isolation is what stops the collapse —
- * cached per (prospect, edge) so a regenerate makes the same decision instead
- * of flapping, and a second draft costs nothing. A one-angle edge never calls
- * anything and reaches the prompt byte-identical to before.
- *
- * Everything here fails open: a classifier error, an out-of-range answer, or a
- * ledger double without the cache methods falls back to a stable per-prospect
- * hash (the `admissionSlot` shape). A draft is never blocked by selection.
+ * Classifier errors, invalid answers, and missing cache methods fall back to
+ * a stable per-prospect hash. Selection never blocks a draft.
  */
 import { createHash } from "node:crypto";
 import {
@@ -36,7 +23,7 @@ import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 export { angleTextKey };
 
 export const ANGLE_SEPARATOR = "//";
-/** Cache namespace inside `product_research_cache` — a keyed JSON cache with a TTL read, which is exactly what a verdict needs. */
+/** Cache namespace inside `product_research_cache`. A keyed JSON cache with a TTL read, which is exactly what a verdict needs. */
 const CACHE_PREFIX = "angle-choice:";
 /** A verdict outlives any cadence; the edge text changing is the real invalidation (it's in the key). */
 const CACHE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
@@ -65,7 +52,7 @@ export function edgeFieldOf(target: object): EdgeField | null {
 }
 
 /**
- * Stable 32-bit string hash — same construction as `admissionSlot`. Callers
+ * Stable 32-bit string hash: same construction as `admissionSlot`. Callers
  * that bucket prospects with it salt the input so buckets stay independent.
  */
 export function hash32(s: string): number {
@@ -80,7 +67,7 @@ export function edgeKey(edge: string): string {
 }
 
 /**
- * Fingerprint of the positioning a draft's angle was chosen under — product,
+ * Fingerprint of the positioning a draft's angle was chosen under: product,
  * brief, ICP and the edge text. A stored `DraftAngle` whose fingerprint no
  * longer matches is stale: rotate re-seeds its pool and regenerate re-selects.
  * Lives here (not in the server's rotate module) so the drain can stamp the
@@ -106,7 +93,7 @@ export function hashPick(prospectKey: string, count: number, excludeIndex: numbe
 
 /**
  * How a trigger's multi-angle edge is resolved per prospect. `fit` (the
- * default) asks the classifier which angle suits the person — good for
+ * default) asks the classifier which angle suits the person: good for
  * sending, but it sends each angle to a different kind of reader, so the
  * angles' outcomes can't be compared. `arm` gives every prospect one angle
  * by an even, stable hash of their email, so each angle reaches a like-for-
@@ -156,7 +143,7 @@ export interface AngleSelection {
   count: number;
   method: "single" | "cached" | "classifier" | "hash" | "arm";
   /**
-   * Follow-ups only: the pick is the intro's own angle — the arm split, or a
+   * Follow-ups only: the pick is the intro's own angle. The arm split, or a
    * rotation that ran out of other angles. Callers must not present it as new.
    */
   sameAsIntro?: boolean;
@@ -164,7 +151,7 @@ export interface AngleSelection {
 
 export interface SelectAngleInput {
   edge: string;
-  /** Stable identity for the prospect — the email, lowercased by the callee. */
+  /** Stable identity for the prospect. The email, lowercased by the callee. */
   prospectKey: string;
   /** What the classifier judges fit from: the person, not just the trigger's signal. */
   description: string;
@@ -287,7 +274,7 @@ async function classify(
   return idx;
 }
 
-/** Keys that are identifiers, URLs, or the edge itself — not evidence of who the prospect is. */
+/** Keys that are identifiers, URLs, or the edge itself, not evidence of who the prospect is. */
 const NOT_EVIDENCE = new Set<string>([
   // The finder's originals once research corrected the row: a stale title is
   // never evidence again.
@@ -306,7 +293,7 @@ const NOT_EVIDENCE = new Set<string>([
   "sourceProfileUrl",
   "dedupeKey",
   "icpVerdictReason",
-  // Our own summaries of the row — never evidence for a classifier (#592).
+  // Our own summaries of the row. Never evidence for a classifier (#592).
   "fitReason",
   "fitReasonSource",
   // Provenance of a row moved in from another workspace (queue-portable.ts).
@@ -322,7 +309,7 @@ const NOT_EVIDENCE = new Set<string>([
 ]);
 
 /**
- * The PROSPECT block the classifier judges from — built generically from the
+ * The PROSPECT block the classifier judges from: built generically from the
  * target's short string fields (company, product one-liner, title, bio, event,
  * repo, stack, cohort…) so every play gets the person, not only its trigger
  * signal, without each play def naming its fields. Optionally the head of the
@@ -354,7 +341,7 @@ export function withSelectedAngle<T>(target: T, field: EdgeField, angle: string)
 
 /**
  * The angle a follow-up should be built on: a different one from the intro's,
- * chosen from the trigger's CURRENT edge. Null — and therefore no block — when
+ * chosen from the trigger's CURRENT edge. Null (and therefore no block) when
  * the play's sent row carries no multi-angle edge, or the ledger can't answer
  * (test doubles, older rows).
  */
@@ -396,7 +383,7 @@ function introAngle(
 /**
  * `followUpEdgeAngle` with the whole selection (index and count, into the
  * current edge), so the follow-up draft can carry which angle it was built on
- * the way an intro draft does — the draft-version record keys on it.
+ * the way an intro draft does. The draft-version record keys on it.
  *
  * The edge is the trigger's current one (`resolveTriggerOverlay` over the
  * intro's sent row), so an edit reaches prospects already in cadence; the
@@ -511,7 +498,7 @@ export async function followUpEdgeSelection(
 /**
  * YOUR EDGE block for a follow-up (issue #584): a DIFFERENT angle from the
  * intro's, so the follow-up has new material instead of being a bump. Null
- * when the play's sent row carries no multi-angle edge — byte-identical
+ * when the play's sent row carries no multi-angle edge: byte-identical
  * output to before.
  */
 export function followUpEdgeBlock(

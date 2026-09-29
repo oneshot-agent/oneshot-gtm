@@ -116,7 +116,7 @@ describe("bootstrapClientId", () => {
     const { cfg, minted } = bootstrapClientId(stored);
     expect(minted).toBe(false);
     expect(cfg.clientId).toBe("11111111-2222-3333-4444-555555555555");
-    // Same reference — no defensive clone when nothing was minted.
+    // Same reference: no defensive clone when nothing was minted.
     expect(cfg).toBe(stored);
   });
 

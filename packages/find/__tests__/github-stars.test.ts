@@ -72,7 +72,7 @@ vi.mock("../src/_filter.ts", () => ({
   qualifyPerson: async () => ({ verdict: personVerdict, reason: "stub" }),
 }));
 // Tier 2. `linkedinUrl: null` is the common case for a stargazer the SDK can't
-// resolve — which is exactly what tier 3 exists to rescue.
+// resolve, which is exactly what tier 3 exists to rescue.
 let enrichLinkedinUrl: string | null = null;
 vi.mock("../src/_enrich.ts", () => ({
   enrichVerifiedContact: async () => ({
@@ -299,7 +299,7 @@ describe("runGitHubStarsFinder — per-repo rel routing", () => {
 
   it("falls back to a LinkedIn webSearch when enrichment returns no profile", async () => {
     // The gap this finder had: capture stopped at tier 2, so a stargazer the
-    // SDK couldn't resolve had no LinkedIn URL at all — 17 of 334 emailed
+    // SDK couldn't resolve had no LinkedIn URL at all: 17 of 334 emailed
     // repo-interest prospects had one.
     nextWebSearchResults = [{ url: "https://www.linkedin.com/in/bob-builder" }];
     await runGitHubStarsFinder({
@@ -308,7 +308,7 @@ describe("runGitHubStarsFinder — per-repo rel routing", () => {
       repos: [{ repo: "modelcontextprotocol/servers", rel: "adjacent", label: "MCP" }],
     });
     expect(enqueued[0]?.payload["linkedinUrl"]).toBe("https://www.linkedin.com/in/bob-builder");
-    // Both the GitHub handle and the company narrow the query — a bare name
+    // Both the GitHub handle and the company narrow the query. A bare name
     // search is far too weak to trust.
     expect(webSearchQueries[0]).toContain('"bob"');
     expect(webSearchQueries[0]).toContain('"Acme"');

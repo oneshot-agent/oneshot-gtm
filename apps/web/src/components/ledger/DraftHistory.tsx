@@ -4,7 +4,7 @@ import type { DraftVersionView } from "@oneshot-gtm/shared-types";
 import { timeAgo } from "../../lib/cn.ts";
 
 /**
- * The drafts a row went through before the one on screen — what the founder
+ * The drafts a row went through before the one on screen: what the founder
  * regenerated, rotated away from, or (for a sent row) finally sent. Loads on
  * first open; the current `open` version is the letter above, so it is not
  * repeated here.

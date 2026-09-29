@@ -13,7 +13,7 @@ export function meanOf(xs: number[]): number | null {
 /**
  * Mann-Whitney AUC: the probability that a random positive outranks a random
  * negative (ties count half). 0.5 = no separation, 1 = perfect, <0.5 =
- * inverted. Midrank tie handling; null when either side is empty — a
+ * inverted. Midrank tie handling; null when either side is empty. A
  * one-sided comparison is not evidence.
  */
 export function mannWhitneyAuc(positives: number[], negatives: number[]): number | null {
@@ -41,14 +41,9 @@ export function mannWhitneyAuc(positives: number[], negatives: number[]): number
 }
 
 /**
- * Wilson 95% confidence interval for a proportion. Preferred over the normal
- * approximation at the small n this workspace's labels actually have. n = 0
- * returns the uninformative full interval.
- *
- * NOT dead code: consumed by ops/gauge-priority-features.ts, which is
- * maintainer-local tooling kept out of the public tree (/ops/ is gitignored)
- * — a caller grep will find only the tests. Same situation as
- * SENIORITY_BANDS in _priority.ts.
+ * Wilson 95% confidence interval, suitable for small label samples.
+ * N = 0 returns the full interval. Also used by the maintainer-local
+ * ops/gauge-priority-features.ts, which is outside the public tree.
  */
 export function wilson95(successes: number, n: number): { lo: number; hi: number } {
   if (n === 0) return { lo: 0, hi: 1 };

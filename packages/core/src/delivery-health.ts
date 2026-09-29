@@ -8,27 +8,13 @@ import type {
 } from "./types.ts";
 
 /**
- * Bounce harvesting, suppression, and inbox-placement canary persistence —
- * the delivery-health slice of the ledger split tracked in ROADMAP.md
- * (issue #617, follow-up to the schema-migration extraction in #452).
- *
- * Pure functions of a raw `Database` handle, mirroring `ledger-schema.ts`'s
- * pattern: no dependency on the `Ledger` class, so this domain can be read
- * and tested in isolation. `Ledger`'s own `recordBounce` / `suppressionFor` /
- * `contactSuppressionFor` / `bounceStatsByIdentity` / `listRecentBounces` /
- * `countBounces` / `countAutoPermanentBounces` / `recordCanaryResult` /
- * `latestCanaryResult` / `latestSentEmailCopy` methods (ledger.ts) are now
- * thin delegates to the functions below — same names, same signatures, same
- * SQL — so every call site and the exported `Ledger` surface are unchanged.
+ * Bounce, suppression, and placement-canary persistence over a raw Database
+ * handle. Ledger delegates delivery-health operations here.
  */
 
 /**
- * Canonical form for matching prospect/bounce emails — trim + lowercase.
- * Mirrors `Ledger`'s own `canonEmail` (ledger.ts) so bounces and suppression
- * stay keyed identically to the rest of the ledger (prospects, replies,
- * sender assignments). Duplicated rather than imported/exported across the
- * module boundary: it's a 3-line pure helper, and re-exporting it from
- * ledger.ts would widen that file's public surface for no benefit.
+ * Keep bounce and suppression keys consistent with prospect, reply, and sender
+ * assignment keys in Ledger: trim and lowercase.
  */
 function canonEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -37,7 +23,7 @@ function canonEmail(email: string): string {
 /**
  * Record one delivery failure. INSERT OR IGNORE on (message_id, recipient):
  * the sweep re-sees the same DSN every tick and it must count once. Returns
- * true only for a NEW bounce — callers gate receipt-tagging/logging on that.
+ * true only for a NEW bounce: callers gate receipt-tagging/logging on that.
  */
 export function recordBounce(
   db: Database,
@@ -73,7 +59,7 @@ export function recordBounce(
 
 /**
  * The hard bounce that suppresses this address, or null if it's still
- * sendable. HARD ONLY — a `block` is the receiving server refusing a message
+ * sendable. HARD ONLY. A `block` is the receiving server refusing a message
  * on policy, not a statement that the mailbox is dead, so suppressing on it
  * would permanently burn valid prospects over one spam-filter verdict.
  * Soft bounces are transient by definition.
@@ -90,12 +76,9 @@ export function suppressionFor(db: Database, email: string): BounceRecord | null
 }
 
 /**
- * True once, per Database handle: whether inbox_replies has the `intent`
- * column (issue #480 — postdates the table itself, so an older ledger may
- * legitimately lack it). Cached because contactSuppressionFor is the
- * dispatch-time backstop on every send path — checking every call would add
- * a PRAGMA query to the hot path for no benefit, since a ledger's schema
- * doesn't change mid-process.
+ * Cache whether inbox_replies has an intent column. Older ledgers may lack it.
+ * The schema is stable during a process, so dispatch need not query PRAGMA on
+ * every send.
  */
 const intentColumnCache = new WeakMap<Database, boolean>();
 function hasIntentColumn(db: Database): boolean {
@@ -110,29 +93,13 @@ function hasIntentColumn(db: Database): boolean {
 }
 
 /**
- * A do-not-send verdict from the reply stream: the newest 'unsubscribe'
- * (they asked to stop) or 'auto_permanent' (their responder says the
- * mailbox is dead) captured from this address. Durable on purpose — it
- * outlives any one cadence, so a later play can never re-enroll and email
- * an unsubscribed or gone prospect. Sibling of suppressionFor (bounces).
+ * Suppress addresses with unsubscribe or auto_permanent replies across all
+ * cadences, including future enrollment. Check both kind and intent: the phrase
+ * classifier can miss an opt-out that sentiment classification catches. Older
+ * ledgers without intent fall back to kind.
  *
- * Issue #666 (follow-up to #663/#665): the phrase-based `kind` classifier
- * (reply-classify.ts's UNSUBSCRIBE_RE) can miss a real "remove me" request,
- * leaving `kind = 'human'` while the sentiment `intent` column (issue #480)
- * correctly reads 'unsubscribe'. This IS the final dispatch-time backstop —
- * dispatchEmail (oneshot.ts) and every play/cadence/queue send path funnels
- * through it — so it must veto on `intent` too, the same gap
- * contactAllowedClause (contact-optout.ts) already closed for re-enrollment
- * eligibility. Guarded on the column existing: an older ledger without the
- * issue #480 migration must keep working on `kind` alone rather than error.
- *
- * The returned `kind` is the declared REASON, not a copy of the raw column:
- * an intent-only match (row `kind` still 'human', `intent` = 'unsubscribe')
- * reports 'unsubscribe' here too, because every caller — cadence status
- * ('unsubscribed' vs 'bounced'), the send-refusal message, and the dashboard
- * badge — branches on this value to say "they asked to stop" rather than
- * "their mailbox is dead". Reporting the raw 'human' kind would mislabel an
- * opt-out as a bounce everywhere downstream.
+ * Return the suppression reason, not the raw kind. An intent-only unsubscribe
+ * must report unsubscribe so callers do not label the opt-out as a bounce.
  */
 export function contactSuppressionFor(
   db: Database,
@@ -154,7 +121,7 @@ export function contactSuppressionFor(
   );
 }
 
-/** Bounce counts per sending identity since `sinceIso` — the doctor check's numerator. */
+/** Bounce counts per sending identity since `sinceIso`. The doctor check's numerator. */
 export function bounceStatsByIdentity(
   db: Database,
   opts: { sinceIso: string },
@@ -186,20 +153,10 @@ export function listRecentBounces(db: Database, opts: { limit?: number } = {}): 
 }
 
 /**
- * Count of distinct recorded delivery-failure events in the window, keyed
- * by `bounces`' own (message_id, recipient) PK — the Slack daily summary's
- * `bounced` total (issue #71 round-3 review finding). Deliberately NOT
- * derived from `sequence_events`: `pollInboxBounces` inserts one
- * sequence_events row PER CADENCE a bounced prospect is enrolled in, so a
- * single DSN for a prospect in 2+ concurrent cadences would be counted
- * multiple times there, and it skips sequence_events entirely for soft
- * bounces and for bounces on prospects with no ledger match — both of
- * which still land here and still fire `notifySlackBounceRecorded`. This
- * table is the one row per real bounce event; `bounced_at` is NOT NULL on
- * every row (unlike sequence_events', which predates the column on old
- * rows), so no COALESCE fallback is needed. Sibling of
- * countAutoPermanentBounces (the reply-stream bounce path, which never
- * writes to this table).
+ * Count DSN events by the bounces (message_id, recipient) primary key for the
+ * Slack daily summary. sequence_events can duplicate a bounce across cadences
+ * and omit soft bounces or unmatched prospects. bounced_at is always non-null.
+ * Dead-mailbox autoresponders are counted separately by countAutoPermanentBounces.
  */
 export function countBounces(
   db: Database,
@@ -220,23 +177,10 @@ export function countBounces(
 }
 
 /**
- * Count of distinct dead-mailbox autoresponder events ("auto_permanent"
- * reply kind, see reply-classify.ts) in the window — the OTHER bounce
- * source the Slack daily summary's `bounced` total must include alongside
- * countBounces (DSN bounces never touch `sequence_events`; this reply-
- * stream path never touches `bounces`). Counted from `inbox_replies`, NOT
- * `sequence_events` (issue #71 round-1 correction): `pollInboxReplies`
- * (and the /inbox route's opportunistic capture) call `recordInboxReply`
- * for EVERY matched auto_permanent email unconditionally, but only write a
- * `sequence_events` row inside the `listCadencesForProspect(...).filter
- * (status active|paused)` loop right after — a dead-mailbox reply for a
- * prospect whose only cadence is already terminal (or who has none) still
- * fires `notifySlackBounceRecorded` and is persisted here, but would never
- * produce a `sequence_events` row to count. `inbox_replies.id` is the
- * provider's own message id and PRIMARY KEY (INSERT OR IGNORE), so each
- * real event is already exactly one row — no de-dup math needed, unlike
- * countBounces' sibling problem on the multi-cadence `sequence_events`
- * path.
+ * Count auto_permanent replies alongside DSN bounces in the Slack daily summary.
+ * inbox_replies records these even when a prospect has no active cadence;
+ * sequence_events does not. The provider message ID is the primary key and
+ * INSERT OR IGNORE ensures each event counts once.
  */
 export function countAutoPermanentBounces(
   db: Database,
@@ -316,7 +260,7 @@ export function latestSentEmailCopy(
   const rows = db
     .query(
       // 'sent' rows are UPDATEd in place to 'replied', so all three statuses
-      // mean "sent" — matching only 'sent' would skip every prospect who
+      // mean "sent": matching only 'sent' would skip every prospect who
       // answered. Usability is filtered in SQL (not a JS slice) so the small
       // bound below only ever trims genuinely valid candidates.
       `SELECT play_name, metadata_json FROM sequence_events
@@ -335,7 +279,7 @@ export function latestSentEmailCopy(
     play_name: string;
     metadata_json: string;
   }>;
-  // Backstop for shapes SQL can't reject — a numeric subject, say, which
+  // Backstop for shapes SQL can't reject. A numeric subject, say, which
   // json_extract happily returns but which isn't usable copy.
   for (const row of rows) {
     let meta: { subject?: unknown; body?: unknown };

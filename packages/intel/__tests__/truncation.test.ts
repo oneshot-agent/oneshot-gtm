@@ -77,7 +77,7 @@ describe("complete() truncation — openrouter", () => {
     expect(err.message).toBe(
       "truncated at max_tokens=512 (raise maxTokens) — openrouter test-model.",
     );
-    // Truncation is terminal — a resend reproduces it exactly.
+    // Truncation is terminal. A resend reproduces it exactly.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(requestOf(fetchMock).url).toBe("https://openrouter.ai/api/v1/chat/completions");
     expect(requestOf(fetchMock).headers["X-Title"]).toBe("oneshot-gtm");
@@ -101,7 +101,7 @@ describe("complete() truncation — openrouter", () => {
     expect(err.message).toContain(
       "Use a model that does not reason by default, or raise maxTokens above the reasoning budget.",
     );
-    // The plain-overrun advice ("just raise it") must NOT appear — it is the
+    // The plain-overrun advice ("just raise it") must NOT appear. It is the
     // wrong instruction when the budget went to reasoning.
     expect(err.message).not.toContain("(raise maxTokens)");
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -172,7 +172,7 @@ describe("complete() reasoning switch — openrouter vs openai", () => {
       JSON.parse((init as RequestInit).body as string),
     );
     expect(bodies[0]).toHaveProperty("reasoning", { enabled: false });
-    // Issue #586: the retry is not "the same request without the switch" — a
+    // Issue #586: the retry is not "the same request without the switch". A
     // mandatory model spends its thinking inside max_tokens, so it gets the
     // lowest effort and a raised budget (see reasoning-mandatory.test.ts).
     expect(bodies[1]).toHaveProperty("reasoning", { effort: "low" });

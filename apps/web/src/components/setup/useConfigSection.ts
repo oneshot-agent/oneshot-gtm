@@ -10,7 +10,7 @@ type Primitive = string | number | boolean;
 /**
  * Draft + validation + save for a section whose fields live in config.json
  * and go out through `POST /api/setup`. Errors are only reported for dirty
- * keys — a value the server already holds isn't the founder's to fix until
+ * keys. A value the server already holds isn't the founder's to fix until
  * they touch it, and Save is inert while nothing is dirty anyway.
  */
 export function useConfigSection<T extends Record<string, Primitive>>(opts: {

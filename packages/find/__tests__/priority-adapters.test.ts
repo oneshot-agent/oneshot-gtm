@@ -10,7 +10,7 @@ const NOW = new Date("2026-09-01T12:00:00Z");
 
 /**
  * Every play a registered finder enqueues under. A new finder whose play is
- * missing here (and from PRIORITY_ADAPTERS) fails this suite — add an adapter
+ * missing here (and from PRIORITY_ADAPTERS) fails this suite: add an adapter
  * or an explicit null-path entry below.
  */
 const SCORED_PLAYS = [
@@ -487,7 +487,7 @@ describe("design-partner-loi — two payload shapes, discriminated by buyerType 
     const p = safeScorePriority("design-partner-loi", routedPayload, NOW)!;
     expect(p).not.toBeNull();
     // Must never assert notice/agency/solicitation evidence a routed row has
-    // no fields for — the bug the review caught: a fixed "<agency> notice"
+    // no fields for. The bug the review caught: a fixed "<agency> notice"
     // / "<noticeType>: <title>" reason on a prospect with no notice at all.
     const allReasons = p.reasons.join(" ");
     expect(allReasons).not.toMatch(/notice/i);

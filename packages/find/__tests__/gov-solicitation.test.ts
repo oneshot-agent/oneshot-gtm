@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // with its contracting officer's contact and the description inline. The
 // SDK boundary is mocked at `_sdk-safe.ts` (the way local-business mocks
 // `safePeopleSearch`), so what is under test is the mapping, routing,
-// dedupe and halt behaviour around that one call — there is no per-notice
+// dedupe and halt behaviour around that one call: there is no per-notice
 // fetch, no SAM.gov key, and no description retry left to exercise.
 
 interface EnqueuedRow {
@@ -248,7 +248,7 @@ describe("runGovSolicitationFinder — contact guards", () => {
   });
 
   it("drops a notice with a non-string email or name in an otherwise valid contact instead of throwing", async () => {
-    // The declared field types aren't contractually guaranteed at runtime —
+    // The declared field types aren't contractually guaranteed at runtime:
     // `.trim()` on a number throws outside any try/catch and would abort
     // the whole enqueue loop, dropping every later notice in the batch.
     nextResults = [

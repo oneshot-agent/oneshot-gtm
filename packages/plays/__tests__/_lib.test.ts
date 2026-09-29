@@ -96,7 +96,7 @@ describe("lintEmail — humanizer canon", () => {
 
   // finding PRRT_kwDOSKzrBs6ewQdB: a SAM.gov notice number the play must
   // reproduce verbatim (e.g. W912DY-26-R-0042) mixes letters and digits in
-  // one token — that's an identifier, not shouting, so it must not trip the
+  // one token. That's an identifier, not shouting, so it must not trip the
   // guarded send-path lint that sources-sought-email.md line 20 requires.
   it("does not flag alphanumeric identifier tokens as shouty", () => {
     expect(lintEmail("W912DY-26-R-0042 — capability question", "Body. Sam")).not.toContain(
@@ -109,7 +109,7 @@ describe("lintEmail — humanizer canon", () => {
   });
 
   // round-4 correction, same finding: real DoD PIID notice numbers can end in
-  // an alphanumeric serial segment, not just digits — e.g. N00164-24-Q-GR04's
+  // an alphanumeric serial segment, not just digits: e.g. N00164-24-Q-GR04's
   // `GR04` suffix, or a multi-segment procurement type such as
   // N00164-26-RFPREQ-CR-JXN-0036. The round-3 fix required an all-digit final
   // segment, which would have flagged these as shouty and held a compliant
@@ -141,7 +141,7 @@ describe("lintEmail — humanizer canon", () => {
 
   // round-3 correction, same finding: the round-2 fix required 3+ hyphenated
   // alphanumeric segments, which a purely-alphabetic shouty phrase written
-  // with hyphens (e.g. "SAVE-20-NOW") still matched — the hyphen-count guard
+  // with hyphens (e.g. "SAVE-20-NOW") still matched. The hyphen-count guard
   // checked segment SHAPE only, not that the token actually has a real
   // solicitation number's fiscal-year+type-code+sequence structure.
   it("still flags a shouty hyphenated phrase shaped like a solicitation number but isn't one", () => {
@@ -347,7 +347,7 @@ describe("lintOpenerFrequency — cap, not ban", () => {
 
   it("measures the real shape: a six-word stem would have missed this", () => {
     // "still curious how you handle the" held 18% of 411 real follow-ups while
-    // "still curious" held 55% — the cap has to compare the short stem.
+    // "still curious" held 55%. The cap has to compare the short stem.
     const recent = [
       ...withStem("still curious how you handle the", 8),
       ...withStem("still curious whether the keys are", 8),

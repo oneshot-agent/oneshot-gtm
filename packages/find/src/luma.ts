@@ -29,16 +29,16 @@ import type { LumaEventExtract, LumaPublicAttendee, RunOpts } from "./_types.ts"
 
 const PLAY_NAME = "luma-events";
 const SOURCE = "find:luma-events";
-/** Cap per-event LLM extract input — Luma event pages are usually under 8k chars. */
+/** Cap per-event LLM extract input: Luma event pages are usually under 8k chars. */
 const READ_MARKDOWN_SLICE = 12000;
 /**
  * How much event description the relevance gate sees. Enough for the opening
- * lines that say what an event actually is — the "agentic after-hours, lightning
- * panel with …" sentence that a punning title hides — without paying to classify
+ * lines that say what an event actually is. The "agentic after-hours, lightning
+ * panel with …" sentence that a punning title hides, without paying to classify
  * a full agenda.
  */
 const GATE_SUMMARY_SLICE = 600;
-/** Sane upper bound — no event we care about has >30 public attendees. */
+/** Sane upper bound: no event we care about has >30 public attendees. */
 const MAX_ATTENDEES_PER_EVENT = 30;
 
 export interface LumaFinderOpts extends RunOpts {
@@ -149,7 +149,7 @@ const MONTHS = [
 ];
 
 /**
- * Literal month-name tokens spanning [now, now + sinceDays] — e.g. "June 2026"
+ * Literal month-name tokens spanning [now, now + sinceDays]: e.g. "June 2026"
  * or "June 2026 July 2026" across a boundary. Appended to the discovery query
  * so search ranks upcoming Luma pages (which render the month) above stale
  * ones. A relative phrase like "next 7 days" is useless to an index that has
@@ -159,7 +159,7 @@ function upcomingMonths(sinceDays: number): string {
   const start = new Date(Date.now());
   const end = new Date(Date.now() + sinceDays * 24 * 3600 * 1000);
   // Walk by month index (not by adding days) so a multi-month window names
-  // EVERY month it spans — June+July+August, not just the two endpoints.
+  // EVERY month it spans: June+July+August, not just the two endpoints.
   const endIdx = end.getFullYear() * 12 + end.getMonth();
   const months: string[] = [];
   for (let y = start.getFullYear(), m = start.getMonth(); y * 12 + m <= endIdx; ) {
@@ -226,7 +226,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
 
   // Phase 1: discover event URLs via webSearch over each (topic × city) pair.
   // Bias toward UPCOMING events: a search index has no notion of "today", so a
-  // relative phrase ("next 7 days") doesn't work — but Luma event pages render
+  // relative phrase ("next 7 days") doesn't work, but Luma event pages render
   // the literal month + year, so naming the month(s) the forward window spans
   // (plus "upcoming") ranks future pages above last quarter's. The date defense
   // after extract still enforces the exact window.
@@ -250,7 +250,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     return true;
   };
 
-  // webSearch fallback for a single city — used when the city isn't a mapped
+  // webSearch fallback for a single city: used when the city isn't a mapped
   // Luma hub or its page can't be parsed. This path surfaces search-INDEXED
   // (older) pages, which is why the date defense downstream still matters.
   const webSearchCity = async (city: string): Promise<void> => {
@@ -265,7 +265,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
         result.costUsd += search.result.cost ?? 0;
         for (const hit of search.result.results ?? []) {
           if (!hit.url) continue;
-          // Gate on the ORIGINAL URL — `looksLikeLumaEventUrl` inspects the
+          // Gate on the ORIGINAL URL: `looksLikeLumaEventUrl` inspects the
           // query string (`?k=t` / `?k=c` mark Luma's category + calendar
           // pages); canonicalizing first would strip those markers.
           if (!looksLikeLumaEventUrl(hit.url)) continue;
@@ -288,7 +288,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   };
 
   // Discovery-first: Luma's per-city page (`luma.com/<slug>`) lists UPCOMING
-  // events directly with real start_at timestamps — geo-robust and free (a
+  // events directly with real start_at timestamps: geo-robust and free (a
   // plain fetch, no SDK spend). Window-filter here so Phase 2 only pays to read
   // genuinely-upcoming events. Fall back to webSearch per city when the city
   // isn't a mapped hub, the page won't parse, or nothing lands in the window.
@@ -365,7 +365,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       // Gate ordering matters, and it used to be wrong. The gate ran on the
       // event NAME alone, before any fetch, to avoid paying to read the
       // dance-cardio noise city pages surface. But `fetchEventDetails` is a
-      // FREE anonymous JSON call, and it returns the description — so the gate
+      // FREE anonymous JSON call, and it returns the description, so the gate
       // was blind for no saving, and titles that are puns got dropped.
       //
       // "AI Infra Kebab" (Vercel/Neon, panel of Malte Ubl, Nikita Shamgunov,
@@ -375,7 +375,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       //
       // So: fetch free details first, gate on title + description when we have
       // them, and fall back to the old title-only gate ONLY when the structured
-      // fetch missed — because there the next step is a paid webRead and the
+      // fetch missed, because there the next step is a paid webRead and the
       // original reasoning still holds.
       const gate = async (description: string | null): Promise<boolean> => {
         if (!relevanceCriteria) return true;
@@ -407,7 +407,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
 
       try {
         // Structured-first: the anonymous `api.lu.ma/url` JSON carries the
-        // event meta AND each host/featured-guest's linkedin/website — exactly
+        // event meta AND each host/featured-guest's linkedin/website: exactly
         // what contact resolution needs and what the rendered page (webRead +
         // LLM extract) loses, since attendee cards only render names as text.
         // Free, so it replaces the paid webRead+extract whenever it succeeds;
@@ -438,7 +438,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
             "info",
           );
         } else {
-          // Structured fetch missed. The next call is PAID, so gate first — on
+          // Structured fetch missed. The next call is PAID, so gate first: on
           // the city-page description when the hub gave us one, otherwise on
           // the title alone, which is the pre-existing behaviour and the reason
           // this ordering exists at all.
@@ -524,7 +524,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
         // v2 auth merge: when the founder's session cookie is set, fetch the
         // full guest list and merge it with the LLM-extracted public ones.
         // Auth wins on name collision (canonical source). Failures (no cookie,
-        // expired, network blip, shape drift) return null — we keep the
+        // expired, network blip, shape drift) return null. We keep the
         // public-only list. Gate the <2 check AFTER the merge so an
         // auth-unlocked event isn't dropped because the public extract was thin.
         if (sessionCookie) {
@@ -624,7 +624,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   // Phase 3: per-attendee contact resolution, concurrency 3 to bound SDK
   // burst. Soft halt via boxed flag (same pattern as _repo-pipeline): workers
   // check at the top of each iteration but several may pass before any flips
-  // it — enrichment SPEND can overshoot by up to (concurrency-1) attendees.
+  // it: enrichment SPEND can overshoot by up to (concurrency-1) attendees.
   // The enqueue count itself stays exact via the synchronous re-check right
   // before enqueueTarget below.
   const phase3Halted = { value: false };
@@ -657,12 +657,12 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       return;
     }
 
-    // Person-level ICP gate, stage A — free, and before any spend.
+    // Person-level ICP gate, stage A: free, and before any spend.
     //
     // The event-level gate in Phase 2 proves the EVENT is on-topic; it says
     // nothing about the attendee. An audit found 23% of enqueued Luma
-    // attendees were off-ICP — investors, marketers, designers, an events
-    // coordinator — because "attended an AI hackathon" is not a job.
+    // attendees were off-ICP: investors, marketers, designers, an events
+    // coordinator, because "attended an AI hackathon" is not a job.
     //
     // `attendeeBio` was already on the payload and used only for email copy.
     // Judging it here rejects the clear misses (e.g. "GTM @AhaCreator")
@@ -673,7 +673,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       person: {
         name: work.attendee.name,
         // `??` only falls through on null/undefined, and Luma returns an EMPTY
-        // STRING for an attendee with no bio_short — so `bio ?? role` yielded
+        // STRING for an attendee with no bio_short, so `bio ?? role` yielded
         // "" and the gate saw no role text at all, silently deferring every
         // such candidate to a stage B that this finder never reaches. Take the
         // first value with actual characters in it.
@@ -685,7 +685,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     if (preSpend.action === "reject") {
       result.droppedRole++;
       // Persist an auditable rejected row so the founder can see and override
-      // the call — same pattern as the company-level ICP rejections.
+      // the call: same pattern as the company-level ICP rejections.
       try {
         ledger.enqueueTarget({
           playName: PLAY_NAME,
@@ -741,7 +741,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     else if (outcome === "role-rejected") result.droppedRole++;
     else if (outcome === "platform-error") {
       // Backend outage: the event ages out of "upcoming", so a re-scan can't
-      // recover this attendee — persist for retry once the platform recovers.
+      // recover this attendee: persist for retry once the platform recovers.
       persistPending({
         playName: PLAY_NAME,
         dedupeKey,
@@ -798,7 +798,7 @@ async function resolveAndEnqueueLumaAttendee(
    *  exact under concurrency (a worker may finish enrichment after the cap
    *  filled). Omitted on retry (no cap). */
   capReached?: () => boolean,
-  /** Called synchronously immediately after a successful enqueue — the cap
+  /** Called synchronously immediately after a successful enqueue. The cap
    *  re-check, enqueue, and this increment run with no await between them, so
    *  the queue cap is exact. Omitted on retry. */
   onEnqueued?: () => void,
@@ -972,7 +972,7 @@ async function resolveAndEnqueueLumaAttendee(
       ...icpFields(contact),
       ...(work.attendee.profileUrl ? { sourceProfileUrl: work.attendee.profileUrl } : {}),
     };
-    // Synchronous cap re-check right before enqueue — no await between here and
+    // Synchronous cap re-check right before enqueue: no await between here and
     // the caller's enqueued++, so the queue cap is exact even under concurrency.
     if (capReached?.()) return "capped";
     const id = enqueueScoredTarget(ledger, {
@@ -984,7 +984,7 @@ async function resolveAndEnqueueLumaAttendee(
       channel: contact.channel,
     });
     if (id != null) {
-      onEnqueued?.(); // synchronous with the cap check above — keeps the cap exact
+      onEnqueued?.(); // synchronous with the cap check above: keeps the cap exact
       return "enqueued";
     }
     return "duplicate";

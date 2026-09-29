@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Verifies free-pilot drafts the main-street close: the inputBlock carries
 // BUSINESS TYPE + YOUR EDGE, and it enrolls a cadence whose single follow-up
-// doubles as the breakup — mirrors accelerator-batch's one-touch shape.
+// doubles as the breakup: mirrors accelerator-batch's one-touch shape.
 
 const calls = { llmInputBlocks: [] as string[], enrolled: 0 };
 

@@ -34,9 +34,9 @@ import { renderGitHubProfileLine } from "./_github-evidence.ts";
 /**
  * Evidence gathering + LLM synthesis for the per-prospect angle (issue #355).
  *
- * Every high-quality reply comes from the same loop — pull the prospect,
+ * Every high-quality reply comes from the same loop: pull the prospect,
  * fetch their live public work, read what they actually replied, synthesize
- * one sharp evidence-grounded angle — and today that synthesis is discarded
+ * one sharp evidence-grounded angle, and today that synthesis is discarded
  * every time. This assembles the inputs and calls the LLM once, so the
  * result can be persisted onto `prospects.angle_json`
  * (`Ledger.setProspectAngle`) and reused by drafting (#356) instead of
@@ -54,7 +54,7 @@ export interface AngleGitHubEvidence {
   profile: GitHubUserInfo | null;
   topRepos: TopRepo[] | null;
   orgs: GitHubOrgRef[] | null;
-  /** The first org's own profile (bio + repo count) — what tells a one-month
+  /** The first org's own profile (bio + repo count): what tells a one-month
    *  student lab apart from a funded company of the same shape. */
   linkedOrg: GitHubOrgProfile | null;
   network: GitHubFollowNetwork | null;
@@ -68,16 +68,16 @@ export interface AngleReplyEvidence {
 
 /** Everything gathered about one prospect, before the LLM sees any of it. */
 export interface AngleEvidenceBundle {
-  /** Free Tier-1 dossier text, else a freshly bought one — bounded. */
+  /** Free Tier-1 dossier text, else a freshly bought one: bounded. */
   dossierText: string | null;
   /** True when a paid `deepResearchPerson` call actually ran (not cached/free). */
   dossierResearched: boolean;
-  /** The finder's original signal that queued this prospect, if any — bounded JSON text. */
+  /** The finder's original signal that queued this prospect, if any: bounded JSON text. */
   queueSignal: string | null;
   github: AngleGitHubEvidence | null;
   /** First-party page text for a non-GitHub profile URL (LinkedIn/X/Luma etc). */
   webReadText: string | null;
-  /** The URL `webReadText` was read from — rendered alongside the text so a
+  /** The URL `webReadText` was read from: rendered alongside the text so a
    *  citation of it can satisfy the URL-must-appear-literally grounding
    *  check even when the fetched markdown doesn't happen to repeat its own
    *  URL (issue #569 freshness audit). Null exactly when `webReadText` is. */
@@ -85,13 +85,13 @@ export interface AngleEvidenceBundle {
   /** True when a paid `webRead` call actually ran. */
   webReadResearched: boolean;
   replies: AngleReplyEvidence[];
-  /** Paid spend this gather incurred (deepResearchPerson + webRead only — GitHub reads are free). */
+  /** Paid spend this gather incurred (deepResearchPerson + webRead only: GitHub reads are free). */
   costUsd: number;
   /** Which tiers actually contributed evidence, e.g. ["dossier", "github:live", "replies:3"]. */
   sources: string[];
   /**
    * The value-tag outcome that triggered this refresh, if any (round-1
-   * correction, issue #357) — e.g. a meeting booked or a deal's amount.
+   * correction, issue #357): e.g. a meeting booked or a deal's amount.
    * Optional/absent for reply-triggered and CLI-backfill gathers, which have
    * no outcome to report.
    */
@@ -100,7 +100,7 @@ export interface AngleEvidenceBundle {
 
 /**
  * Fetch every GitHub signal for one login, fanned out in parallel rather than
- * sequentially — the six-lookups-by-hand problem this issue exists to close.
+ * sequentially. The six-lookups-by-hand problem this issue exists to close.
  * `orgs` resolves first among the independent calls; `linkedOrg` is a genuine
  * dependency on its result (GitHub has no single endpoint for "the org's own
  * profile, keyed by user"), so it fires once `orgs` is known and stays the
@@ -127,7 +127,7 @@ export interface GatherAngleEvidenceOpts {
   allowPaidResearch?: boolean;
   /**
    * The value-tag outcome that triggered this gather, if any (round-1
-   * correction, issue #357) — threaded straight onto the returned bundle so
+   * correction, issue #357): threaded straight onto the returned bundle so
    * `renderEvidenceForPrompt` can put it in front of the LLM instead of the
    * outcome-triggered path paying for a synthesis call that can't reflect
    * the outcome it was fired for.
@@ -137,7 +137,7 @@ export interface GatherAngleEvidenceOpts {
 
 /**
  * Assemble every input the synthesis prompt needs for one prospect. Returns
- * null when the prospect doesn't exist. Best-effort throughout — a failure in
+ * null when the prospect doesn't exist. Best-effort throughout. A failure in
  * any one tier degrades that tier to empty rather than aborting the gather;
  * the LLM synthesis step decides what it can honestly say from what's left.
  */
@@ -190,7 +190,7 @@ export async function gatherAngleEvidence(
     }
   }
 
-  // The finder's original signal — why this prospect was queued in the first place.
+  // The finder's original signal: why this prospect was queued in the first place.
   const queueRow = ledger.getQueueRowForProspect(prospectId);
   const queueSignal = queueRow ? queueRow.payload_json.slice(0, DOSSIER_SLICE) : null;
 
@@ -216,7 +216,7 @@ export async function gatherAngleEvidence(
         },
       );
       // Cost is billed the moment the call completes (a receipt is recorded
-      // for it), independent of whether the markdown it returned was usable —
+      // for it), independent of whether the markdown it returned was usable:
       // mirrors the dossier tier above, which adds `billed` cost before
       // checking `hasDossierSignal`. Gating this on `text` truthiness let a
       // billed-but-empty webRead run silently uncounted against
@@ -238,9 +238,9 @@ export async function gatherAngleEvidence(
     }
   }
 
-  // Reply history — the prospect's own corrections outrank any inferred signal.
+  // Reply history. The prospect's own corrections outrank any inferred signal.
   // Includes both inbox (email) replies and LinkedIn channel_events replies
-  // (recordLinkedInReply) — a prospect who only ever replied on LinkedIn must
+  // (recordLinkedInReply). A prospect who only ever replied on LinkedIn must
   // not have that reply invisible to synthesis (finding PRRT_kwDOSKzrBs6gUX7P).
   const emailReplies: AngleReplyEvidence[] = ledger
     .listInboxRepliesForProspect(prospectId)
@@ -258,9 +258,9 @@ export async function gatherAngleEvidence(
       receivedAt: e.occurred_at,
     }));
   const replies: AngleReplyEvidence[] = [...emailReplies, ...linkedinReplies]
-    .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
+    .toSorted((a, b) => a.receivedAt.localeCompare(b.receivedAt))
     .slice(-MAX_REPLIES)
-    .map((r) => ({ ...r, body: r.body.slice(0, REPLY_BODY_SLICE) }));
+    .map((r) => Object.assign({}, r, { body: r.body.slice(0, REPLY_BODY_SLICE) }));
   if (replies.length > 0) sources.push(`replies:${replies.length}`);
 
   return {
@@ -282,12 +282,12 @@ export async function gatherAngleEvidence(
  * Render one GitHub evidence bundle into prompt-sized prose.
  *
  * Each entity carries its own `https://github.com/...` URL alongside its
- * bare name/login — the LLM's `evidence[].source` schema (and the prompt's
+ * bare name/login. The LLM's `evidence[].source` schema (and the prompt's
  * own example) shows a per-repo/per-profile URL like
  * `https://github.com/ada/agent-loop`, and `isGroundedSource`
  * (packages/core/src/angle.ts) only grounds a URL-shaped source when it
  * appears literally in this rendered text. Without the URL here, a genuine,
- * non-fabricated GitHub citation could never pass grounding — only the
+ * non-fabricated GitHub citation could never pass grounding. Only the
  * coarse `"github:live"` tier tag could.
  */
 function renderGitHubEvidence(gh: AngleGitHubEvidence): string {
@@ -378,7 +378,7 @@ export interface SynthesizePersonAngleInput {
 
 export interface SynthesizePersonAngleResult {
   angle: ProspectAngle | null;
-  /** LLM completions aren't billed through OneShot receipts (BYO key) — this
+  /** LLM completions aren't billed through OneShot receipts (BYO key). This
    *  is always 0 today, kept for symmetry with the evidence-gather cost and
    *  so a future per-token cost estimate has somewhere to report through. */
   costUsd: number;
@@ -442,7 +442,7 @@ export async function synthesizePersonAngle(
 }
 
 /**
- * Re-synthesize and persist one prospect's angle (issue #357) — the same
+ * Re-synthesize and persist one prospect's angle (issue #357). The same
  * gather → synthesize → `setProspectAngle` pipeline `synthesize-angles`
  * drives, invoked from `triggerAngleRefresh`'s fire-and-forget hook instead
  * of a CLI backfill row. Never throws: every failure mode (demo mode, an
@@ -454,7 +454,7 @@ async function refreshProspectAngle(
   prospectId: number,
   context?: AngleRefreshContext,
 ): Promise<void> {
-  // Demo mode is read-only by design (packages/core/src/demo.ts) — a stray
+  // Demo mode is read-only by design (packages/core/src/demo.ts). A stray
   // reply/outcome on a seeded demo install must not synthesize for real.
   if (demoMode()) return;
   // The circuit breaker guards paid OneShot resolution calls; an open
@@ -463,7 +463,7 @@ async function refreshProspectAngle(
   if (isCircuitOpen()) return;
   // Install-wide daily spend ceiling (issue #481, round-2 correction to
   // #357): this fire-and-forget refresh has no cap of its own, and
-  // `gatherAngleEvidence` defaults `allowPaidResearch` to true — the same
+  // `gatherAngleEvidence` defaults `allowPaidResearch` to true. The same
   // deepResearchPerson/webRead calls every OTHER automated paid path
   // (trigger runs, drains, mail-research's address lookup) gates behind
   // `tryReserveDailySpend` first. A reply or outcome tag can fire this on
@@ -472,7 +472,7 @@ async function refreshProspectAngle(
   // configured `dailySpendCeilingUsd`. Reserved at the same worst-case
   // bound `researchBusinessAddress` (packages/plays/src/_mail-research.ts)
   // uses for its own uncapped automated research, and released the moment
-  // the gather returns regardless of whether it actually spent — the
+  // the gather returns regardless of whether it actually spent. The
   // reservation only needs to close the race against other concurrently
   // starting automated calls.
   const reservation = tryReserveDailySpend(DEFAULT_SPEND_RESERVATION_USD);
@@ -513,7 +513,7 @@ async function refreshProspectAngle(
 
 // Registered at module load so core's hot paths (recordInboxReply's caller
 // in pollInboxReplies, tagOutcomeValue) can trigger a refresh without
-// importing this package back — see registerAngleRefreshTrigger's doc in
+// importing this package back: see registerAngleRefreshTrigger's doc in
 // packages/core/src/angle.ts for why the wiring runs this direction.
 registerAngleRefreshTrigger((prospectId: number, context?: AngleRefreshContext) => {
   return refreshProspectAngle(prospectId, context);

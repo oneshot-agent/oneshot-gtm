@@ -19,10 +19,10 @@ export interface GitHubSearchRepo {
  * Uses `GITHUB_TOKEN` from env if set (30 req/min, exempt from secondary
  * abuse detection); falls back to unauthenticated (10 req/min, AND vulnerable
  * to GitHub silently returning empty results when soft-blocked for "too many"
- * unauth queries from the same IP — no 429, no error, just zero hits).
+ * unauth queries from the same IP: no 429, no error, just zero hits).
  *
  * Returns [] on:
- *   - 422 (invalid query — usually a malformed topic slug)
+ *   - 422 (invalid query: usually a malformed topic slug)
  *   - 403 (GitHub's actual unauth rate-limit signal)
  *   - 429 (explicit rate-limit)
  *   - any other non-2xx
@@ -60,7 +60,7 @@ export async function searchTopicRepos(args: {
     const repos = items.map(parseSearchItem).filter((r): r is GitHubSearchRepo => r !== null);
     // Detect GitHub's silent soft-block: 200 OK + empty items + total_count
     // reported as 0 even on slugs that should match (e.g. `langchain`). When
-    // the unauth IP gets flagged for abuse, this is the failure mode — no
+    // the unauth IP gets flagged for abuse, this is the failure mode: no
     // 429, just 0 hits forever for an hour or two. Surface a hint so the
     // caller can stop hammering and the operator can act (set GITHUB_TOKEN).
     const totalCount =

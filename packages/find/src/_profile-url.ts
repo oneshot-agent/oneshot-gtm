@@ -20,14 +20,14 @@ export function isResearchableUrl(url: string | null | undefined): boolean {
  *
  * `source_profile_url` used to win unconditionally, which sent research at
  * whatever page the finder happened to surface. For a luma-event that is a
- * `luma.com/user/<handle>` page — for someone who hosts no events its entire
+ * `luma.com/user/<handle>` page: for someone who hosts no events its entire
  * content is "Nothing Here, Yet", so the call burned a slot and returned
  * nothing while a perfectly good `linkedin_url` sat unused in the next column.
  * 68 prospects were in exactly that state.
  *
  * So: prefer whichever column holds a researchable profile, `source_profile_url`
  * first when both qualify. Fall back to a non-researchable `source_profile_url`
- * only when there is nothing better — it is still more than an email alone.
+ * only when there is nothing better. It is still more than an email alone.
  */
 export function researchUrl(row: {
   source_profile_url: string | null;

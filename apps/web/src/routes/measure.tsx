@@ -2,7 +2,6 @@ import { Explain } from "../components/primitives/Explain.tsx";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import type { ReceiptView } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
@@ -328,7 +327,7 @@ function MeasurePage() {
         )}
       </section>
 
-      {/* RoCS by cadence — OneShot's goal-level rollup (spend vs tagged value) */}
+      {/* RoCS by cadence: OneShot's goal-level rollup (spend vs tagged value) */}
       <section className="border-b border-ink-rule">
         <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
           <div className="ln-eyebrow">RoCS by cadence · goal-level</div>
@@ -402,34 +401,6 @@ function MeasurePage() {
       </section>
     </div>
   );
-}
-
-/**
- * Group receipts by play and compute a daily spend histogram (oldest → newest).
- * Returns a Map keyed by playName. Receipts without a `costUsd` value are
- * skipped. Days beyond `windowDays` are dropped.
- */
-function buildSpendSeries(receipts: ReceiptView[], windowDays: number): Map<string, number[]> {
-  const days = Math.max(7, Math.min(windowDays, 90));
-  const now = Date.now();
-  const DAY_MS = 24 * 3600 * 1000;
-  const out = new Map<string, number[]>();
-
-  for (const r of receipts) {
-    if (r.costUsd == null) continue;
-    const ts = new Date(r.createdAt).getTime();
-    if (Number.isNaN(ts)) continue;
-    const daysAgo = Math.floor((now - ts) / DAY_MS);
-    if (daysAgo < 0 || daysAgo >= days) continue;
-    const idx = days - 1 - daysAgo;
-    let arr = out.get(r.playName);
-    if (!arr) {
-      arr = Array.from({ length: days }, () => 0);
-      out.set(r.playName, arr);
-    }
-    arr[idx] = (arr[idx] ?? 0) + r.costUsd;
-  }
-  return out;
 }
 
 function Summary({

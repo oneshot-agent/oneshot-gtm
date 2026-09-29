@@ -46,7 +46,7 @@ function record(over: Partial<Parameters<Ledger["recordInboxReply"]>[0]> = {}): 
 describe("inbox_replies (v21)", () => {
   it("stores a reply and is idempotent on the provider id", () => {
     expect(record()).toBe(true);
-    // Re-sweep sees the same mail — must be a no-op, not a duplicate row.
+    // Re-sweep sees the same mail: must be a no-op, not a duplicate row.
     expect(record({ body: "different body, same id" })).toBe(false);
     const rows = ledger.listInboxRepliesForProspect(1);
     expect(rows).toHaveLength(1);
@@ -165,7 +165,7 @@ describe("contactSuppressionFor", () => {
 
   it("human replies never suppress", () => {
     record({ kind: "human" });
-    record({ id: "msg-2" }); // NULL kind (legacy) — also human
+    record({ id: "msg-2" }); // NULL kind (legacy): also human
     expect(ledger.contactSuppressionFor("jane@prospect.example")).toBeNull();
   });
 
@@ -173,7 +173,7 @@ describe("contactSuppressionFor", () => {
   // re-enrollment gap, but this final dispatch-time backstop still filtered
   // only `kind`. A reply that reply-classify.ts's phrase-based UNSUBSCRIBE_RE
   // missed (kind stays 'human') but the sentiment triage (issue #480)
-  // correctly labels intent = 'unsubscribe' must still veto here — every
+  // correctly labels intent = 'unsubscribe' must still veto here. Every
   // send path funnels through dispatchEmail's contactSuppressionFor call.
   it("suppresses on an intent-only unsubscribe even when kind stayed 'human'", () => {
     record({ kind: "human", receivedAt: "2026-08-27T09:00:00.000Z" });
@@ -192,7 +192,7 @@ describe("contactSuppressionFor", () => {
 
   it("a pre-#480 ledger without the intent column still suppresses on kind alone", () => {
     // Simulate a legacy install: drop the intent column entirely, leaving
-    // only kind — the dispatch-time check must not throw or silently bypass
+    // only kind. The dispatch-time check must not throw or silently bypass
     // suppression when the optional column is missing.
     const db = (ledger as unknown as { db: { exec(s: string): void } }).db;
     db.exec("DROP TABLE inbox_replies");
@@ -227,12 +227,12 @@ describe("inbox_replies.intent (issue #480)", () => {
     const row = ledger.listInboxRepliesForProspect(1)[0]!;
     expect(row.intent).toBe("interested");
     expect(row.intent_reason).toBe("asked about pricing tiers");
-    // kind is untouched by the intent write — the two classifiers are independent.
+    // kind is untouched by the intent write. The two classifiers are independent.
     expect(row.kind).toBe("human");
   });
 
   it("a bare 'not interested' stays kind: human AND classifies as a decline", () => {
-    // classifyReply (reply-classify.ts) keeps a soft no as `human` — only an
+    // classifyReply (reply-classify.ts) keeps a soft no as `human`. Only an
     // explicit removal request promotes to `unsubscribe`. The intent
     // classifier is the layer that tells declines apart from interest.
     record({ kind: "human", body: "Thanks, but not interested right now." });
@@ -281,7 +281,7 @@ describe("inbox_replies.intent (issue #480)", () => {
   it("claimInboxReplyForTriage: a failed triage releases the claim so a later poll can retry", () => {
     record({ kind: "human" });
     expect(ledger.claimInboxReplyForTriage("msg-1")).toBe(true);
-    // Winner's triage call fails — it releases the claim back to NULL.
+    // Winner's triage call fails. It releases the claim back to NULL.
     ledger.setInboxReplyIntent("msg-1", null, null);
     expect(ledger.listInboxRepliesForProspect(1)[0]!.intent).toBeNull();
     // A later poll can now claim and succeed.
@@ -300,7 +300,7 @@ describe("inbox_replies.intent (issue #480)", () => {
   // Round-2 correction (#558, this round): every other claim-marker in
   // ledger.ts pairs its atomic claim with a sweepStale* recovery so a crash
   // between the claim and the release doesn't strand the marker forever.
-  // claimInboxReplyForTriage had none — a process death mid-triage left
+  // claimInboxReplyForTriage had none. A process death mid-triage left
   // '__triage_pending__' on the row permanently (unclaimable, unclassified,
   // and visible to every intent reader). sweepStaleInboxReplyTriage is the
   // cold-boot recovery, called once from apps/server/src/bin.ts like the
@@ -337,7 +337,7 @@ describe("inbox_replies.intent (issue #480)", () => {
   it("listUntriagedHumanReplies finds human replies with no intent yet, oldest first", () => {
     record({ id: "msg-1", kind: "human", receivedAt: "2026-08-20T00:00:00.000Z" });
     record({ id: "msg-2", kind: "human", receivedAt: "2026-08-25T00:00:00.000Z" });
-    record({ id: "msg-3", kind: "auto" }); // never human — excluded
+    record({ id: "msg-3", kind: "auto" }); // never human: excluded
     ledger.setInboxReplyIntent("msg-2", "interested", "already triaged");
 
     const untriaged = ledger.listUntriagedHumanReplies();

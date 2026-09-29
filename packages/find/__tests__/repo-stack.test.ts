@@ -56,7 +56,7 @@ twilio = "^9.0"
 anthropic = { version = "^0.30" }
 `;
     const out = namesFromManifest("pyproject.toml", content);
-    // Strict subset — the regex catches more than just deps but the names we
+    // Strict subset. The regex catches more than just deps but the names we
     // care about are present.
     expect(out).toContain("openai");
     expect(out).toContain("twilio");

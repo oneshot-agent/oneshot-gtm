@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { lintGrounding } from "../src/_run-play.ts";
 
 // `standardEnrich` serializes safeEnrich's result straight into the prompt's
-// DOSSIER block — the failure sentinel included. `prep.enrichmentFailed` was
+// DOSSIER block. The failure sentinel included. `prep.enrichmentFailed` was
 // already set and already shown in the queue UI, but nothing pushed a flag, and
 // `sendDraftedEmail` only holds a draft when `flags` is non-empty. So the draft
 // went out with `{"status":"failed","profile":null,"cost":0}` as its dossier.
@@ -30,7 +30,7 @@ describe("lintGrounding", () => {
   });
 
   it("does not count a bare event role as grounding", () => {
-    // "Guest" says nothing about what the person does — it is why the
+    // "Guest" says nothing about what the person does. It is why the
     // person-level ICP gate treats a bare event role as `unclear`.
     expect(lintGrounding({ role: "Host", title: "" }, { enrichmentFailed: true })).toEqual([
       "ungrounded",

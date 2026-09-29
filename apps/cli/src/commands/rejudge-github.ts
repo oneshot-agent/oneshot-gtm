@@ -8,7 +8,7 @@ import { header, note, ok, warn } from "../output.ts";
  * The free counterpart to `research-queue` for people whose only footprint is
  * GitHub, where paid person research usually comes back unavailable. Costs
  * one classifier call per row (two when a bio'd, emailed row also meets the
- * person gate) and 1–3 GitHub API calls.
+ * person gate) and 1-3 GitHub API calls.
  */
 
 export interface RejudgeGitHubOpts {

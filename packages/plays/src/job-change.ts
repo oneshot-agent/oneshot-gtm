@@ -10,12 +10,12 @@ export interface JobChangeTarget {
   previousRole?: string;
   previousCompany?: string;
   /** The pitch angle, stamped onto finder rows from the trigger config. The
-   *  Offer beat draws from this and nothing else — without it the prompt has
+   *  Offer beat draws from this and nothing else, without it the prompt has
    *  only the product one-liner to improvise from. */
   yourEdge: string;
   linkedinUrl?: string;
   phone?: string;
-  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  /** Job title from the person-level ICP gate: persisted to prospects.title. */
   title?: string;
 }
 
@@ -27,7 +27,7 @@ export interface JobChangeRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;

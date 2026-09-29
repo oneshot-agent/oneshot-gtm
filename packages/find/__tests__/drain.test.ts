@@ -275,8 +275,8 @@ describe("drainQueue per-target dispatch + persistence", () => {
   });
 
   it("an unsupported play fails the drain up-front (the only global precondition left)", async () => {
-    // No play needs drain-level options any more — every finder row is
-    // self-contained — so the only up-front failure is an unknown play.
+    // No play needs drain-level options any more. Every finder row is
+    // self-contained, so the only up-front failure is an unknown play.
     ledgerStub.dequeueApproved.mockReturnValue([row(10)]);
     const out = await drainQueue({ playName: "no-such-play", dryRun: false });
     expect(out.errors[0]?.id).toBe(-1);
@@ -326,7 +326,7 @@ describe("drainQueue per-target dispatch + persistence", () => {
     expect(out.drained).toBe(0);
     expect(out.haltedReason).toContain("daily spend ceiling reached");
     expect(runStackConsolidationMock).not.toHaveBeenCalled();
-    // No retry attempted — affordableRows was 0.
+    // No retry attempted: affordableRows was 0.
     expect(tryReserveDailySpendMock).toHaveBeenCalledTimes(1);
   });
 

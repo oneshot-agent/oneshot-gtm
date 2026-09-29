@@ -1,7 +1,7 @@
 /**
  * Field validators + request builders for the sectioned /setup page. Pure and
  * DOM-free so the rules that used to live inline in the form (and the two
- * that silently failed open — identity caps and the add-sender cap) are unit
+ * that silently failed open: identity caps and the add-sender cap) are unit
  * tested. Every validator returns `null` for "fine" and a short lowercase
  * message for `Field error=`.
  */
@@ -19,7 +19,7 @@ export function validateEmail(raw: string): string | null {
 }
 
 /**
- * Optional field; when present must be a bare host name — no scheme, path,
+ * Optional field; when present must be a bare host name: no scheme, path,
  * port, mailbox or whitespace. Both the signature domain and the sending
  * domain are interpolated verbatim (signature line, `from_domain`), so
  * `https://acme.com/` would ship as-is.
@@ -40,7 +40,7 @@ export const CAP_ERROR = "enter a whole number of sends per day";
  *   blank → `null` when `blank: "uncapped"` (identity rows: no cap)
  *         → `undefined` when `blank: "omit"` (add-sender form: warm-up ramp)
  *   digits only → that integer
- *   anything else → error (never "uncapped" — that was the fail-open bug)
+ *   anything else → error (never silently uncapped)
  */
 export function parseCap(
   raw: string,
@@ -58,8 +58,8 @@ export const SPEND_CEILING_ERROR = "enter a positive number of USD, or leave bla
 
 /**
  * Install-wide daily spend ceiling. Blank = unlimited (`null`). Uses
- * `Number()` rather than `parseFloat` — the same choice the CLI's
- * `configSpendCeiling` makes — so "2usd" is rejected instead of read as 2.
+ * `Number()`, like the CLI's `configSpendCeiling`, so "2usd" is rejected
+ * instead of being parsed as 2 by `parseFloat`.
  */
 export function parseSpendCeiling(raw: string): Parsed<number | null> {
   const v = raw.trim();
@@ -128,7 +128,7 @@ export function capText(maxPerDay: number | null): string {
  * Turn the section's staging into the single POST that commits it. A cap edit
  * only counts when the row still exists AND the text differs from the stored
  * cap; a removal only when the id still exists. Any invalid cap fails the
- * whole build — nothing partial goes out.
+ * whole build: nothing partial goes out.
  */
 export function buildIdentityPoolRequest(s: IdentityPoolStaging): IdentityPoolBuild {
   const capErrors: Record<string, string> = {};

@@ -1,8 +1,8 @@
 /**
- * `find watch --install-service` — emit a service file that keeps the watch
+ * `find watch --install-service`: emit a service file that keeps the watch
  * daemon running in the background: a launchd user agent on macOS, a systemd
  * user unit on Linux. Pure templating over paths resolved at generation time
- * (bun binary, CLI entry, ONESHOT_GTM_HOME) — service managers don't inherit
+ * (bun binary, CLI entry, ONESHOT_GTM_HOME): service managers don't inherit
  * a shell, so nothing here may rely on $PATH or a login profile. Windows has
  * no user-service equivalent; the README covers the schtasks + `--once` route.
  */
@@ -36,7 +36,7 @@ export function resolveServicePaths(): ServicePaths {
 
 /**
  * launchd runs the ProgramArguments vector directly (no shell), so every path
- * is a separate <string> and needs XML escaping only — never shell quoting.
+ * is a separate <string> and needs XML escaping only. Never shell quoting.
  * KeepAlive.SuccessfulExit=false restarts crashes but respects a clean
  * SIGTERM shutdown; logs land in the workspace home next to events.jsonl.
  */

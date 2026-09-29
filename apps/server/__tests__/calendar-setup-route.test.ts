@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// GET /api/setup/calendars — the /setup calendar picker's source list
+// GET /api/setup/calendars. The /setup calendar picker's source list
 // (issue #577). Refusal of sub-writer access is enforced by
 // listWritableCalendars itself (core, tested there); this route's own job is
 // identity resolution, the 7-day count fan-out, and error mapping.

@@ -25,8 +25,8 @@ export const DEMO_DESCRIPTION =
 export const DEMO_URL = "https://oneshot-gtm.com/demo";
 /**
  * Absolute on purpose, and the ONLY absolute URL this module emits: unfurlers
- * do not resolve relative image URLs. Everything else the demo needs — the
- * icons, the manifest — stays in index.html, where vite rewrites it to /demo/
+ * do not resolve relative image URLs. Other assets, including icons and the
+ * manifest, stay in index.html, where vite rewrites their URLs to /demo/
  * before this plugin ever sees the HTML.
  */
 export const DEMO_OG_IMAGE = `${DEMO_URL}/og.png`;

@@ -282,7 +282,7 @@ const notFound = (): Response =>
 /**
  * Vite content-hashes everything under assets/, so those are immutable. Nothing
  * else is: index.html must never be cached, or a `bunx oneshot-gtm-server`
- * upgrade serves a stale document pointing at deleted chunks — a white screen
+ * upgrade serves a stale document pointing at deleted chunks. A white screen
  * that a reload does not fix. The brand files in public/ are unhashed too, so
  * they land in the same revalidate bucket, which is what we want the first time
  * an icon changes.
@@ -293,7 +293,7 @@ function cacheHeaders(rel: string): Record<string, string> {
     : { "cache-control": "no-cache" };
 }
 
-/** Exported for tests — CI never runs the web build, so this is the only cover it gets. */
+/** Exported for tests: CI never runs the web build, so this is the only cover it gets. */
 export async function serveStatic(staticDir: string, pathname: string): Promise<Response> {
   const root = resolve(staticDir);
   const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
@@ -309,7 +309,7 @@ export async function serveStatic(staticDir: string, pathname: string): Promise<
   if (stat?.isFile()) {
     return new Response(Bun.file(candidate), { headers: cacheHeaders(rel) });
   }
-  // An existing non-file — /assets, say — is not a client route, so it must not
+  // An existing non-file (/assets, say) is not a client route, so it must not
   // be handed the SPA shell just for having no dot in it.
   if (stat) return notFound();
   // SPA fallback: serve index.html for non-asset paths (paths without a dot).
@@ -319,7 +319,7 @@ export async function serveStatic(staticDir: string, pathname: string): Promise<
     });
   }
   // A missing asset used to fall through to the 200 text/plain "server running"
-  // body below, which the browser then tried to decode AS the asset — a missing
+  // body below, which the browser then tried to decode AS the asset. A missing
   // icon looked like a corrupt one, with no status to explain it.
   return notFound();
 }
@@ -382,7 +382,7 @@ export function buildFetchHandler(): (req: Request) => Promise<Response> | Respo
     }
 
     // Dev: the real UI is served by Vite (with HMR), so redirect non-API
-    // requests there — preserving the path so a bookmarked deep-link like
+    // requests there: preserving the path so a bookmarked deep-link like
     // :3030/cadences lands on :5173/cadences. This takes precedence over the
     // built `dist`: in dev that bundle is stale (frontend changes only land in
     // `dist` on a rebuild), and serving it silently is a footgun.
@@ -402,7 +402,7 @@ export function buildFetchHandler(): (req: Request) => Promise<Response> | Respo
   };
 }
 
-/** Shared options; idleTimeout 255 is the max — Bun defaults to 10s which is short for sync handlers. */
+/** Shared options; idleTimeout 255 is the max: Bun defaults to 10s which is short for sync handlers. */
 export const SERVER_BASE_OPTS = { idleTimeout: 255 } as const;
 
 export async function startServer(

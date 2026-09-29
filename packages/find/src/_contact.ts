@@ -24,7 +24,7 @@ import { qualifyPostEnrich } from "./_qualify.ts";
 /**
  * Outcome of the shared contact-resolution spine. On `ok`, the caller has a
  * verified, non-duplicate email; otherwise `reason` says which gate dropped the
- * candidate. `costUsd` is the find + verify spend accrued so far — returned on
+ * candidate. `costUsd` is the find + verify spend accrued so far: returned on
  * EVERY path so callers never lose cost tracking on a drop.
  */
 export type ContactResolution =
@@ -45,7 +45,7 @@ export type ContactResolution =
         | "not-found"
         | "duplicate"
         | "undeliverable"
-        // The backend threw/timed out — NOT a verdict about the candidate.
+        // The backend threw/timed out: NOT a verdict about the candidate.
         // Callers should defer/persist-for-retry rather than treat as bad.
         | "platform-error";
       attemptedEmail?: string;
@@ -53,23 +53,10 @@ export type ContactResolution =
     };
 
 /**
- * The prescreen → findEmail → dedupe → verify spine shared by every enqueueing
- * finder. Extracted so the per-candidate isolation (safeFindEmail/safeVerifyEmail
- * never throw) and the dedupe-before-verify ordering live in one place instead
- * of being re-implemented (and drifting) in each finder.
- *
- * Boundary: this owns email resolution + verification only. Downstream steps
- * (enrichVerifiedContact, findLinkedInUrl, webRead, enqueue) stay in the caller
- * because they vary too much between finders.
- *
- * - `knownEmail`: when the caller already has a usable email (a public profile
- *   email, or one surfaced by LinkedIn enrichment), pass it to skip the
- *   prescreen + findEmail entirely.
- * - `companyDomain`: required when `knownEmail` is absent (the findEmail input).
- * - `isDuplicate`: called with the resolved email BEFORE verify, so a
- *   cross-table duplicate is dropped without paying for a verify call. Dedupe
- *   stays caller-owned (each finder has its own `dedupeKey`).
- * - `decisionContext`: threaded to both findEmail and verify as audit metadata.
+ * Resolve and verify email with per-candidate failure isolation.
+ * `knownEmail` skips prescreen and lookup; otherwise `companyDomain` is required.
+ * Caller-owned `isDuplicate` runs before paid verification. `decisionContext`
+ * is audit metadata for both calls. Enrichment and enqueue stay with callers.
  */
 async function resolvePrimaryContact(args: {
   playName: string;
@@ -79,7 +66,7 @@ async function resolvePrimaryContact(args: {
   isDuplicate?: (email: string) => boolean;
   decisionContext?: CallContext["decisionContext"];
   /**
-   * Forwarded to `shouldSkipFindEmail` — opt in only when the caller has no
+   * Forwarded to `shouldSkipFindEmail`: opt in only when the caller has no
    * owner/operator name on the source record at all (see that function's
    * doc comment). Defaults to off.
    */
@@ -87,7 +74,7 @@ async function resolvePrimaryContact(args: {
   /**
    * Skip the paid `verifyEmail` call for a `knownEmail` the caller trusts as
    * already-deliverable (e.g. a government filing's on-file contact address,
-   * not a scraped/guessed one) — mirrors `knownEmail` itself skipping
+   * not a scraped/guessed one): mirrors `knownEmail` itself skipping
    * `findEmail`. Has no effect when `knownEmail` is absent (the
    * findEmail-resolved path is never trusted enough to skip verify). Default
    * off, so every existing `knownEmail` caller (github-stars, luma) keeps
@@ -108,8 +95,6 @@ async function resolvePrimaryContact(args: {
     email = args.knownEmail;
   } else {
     if (!args.companyDomain) {
-      // Logged like a prescreen skip: a silent drop here made a whole b2b
-      // lane's misses invisible (100 candidates, 3 tried, nothing to say why).
       logEvent("finder.skipped_findemail", { name: args.playName, reason: "no-domain" }, "info");
       return { ok: false, reason: "no-domain", costUsd };
     }
@@ -122,16 +107,13 @@ async function resolvePrimaryContact(args: {
       logEvent("finder.skipped_findemail", { name: args.playName, reason: skip.reason }, "info");
       return { ok: false, reason: "prescreen", costUsd };
     }
-    // Circuit open (backend outage): skip the paid call entirely — fast-fail as
+    // Circuit open (backend outage): skip the paid call entirely: fast-fail as
     // a platform error so the caller defers instead of burning spend + ~70s.
     if (isCircuitOpen()) return { ok: false, reason: "platform-error", costUsd };
 
-    // No person on the source record (a licence row, a places result): SDK
-    // 0.32's findEmail refuses a domain-only lookup, so find a person first.
-    // One flat-priced peopleSearch scoped to the domain returns whoever the
-    // B2B database has there — often with a work email already, in which
-    // case findEmail is skipped outright. Nobody named at the domain is a
-    // genuine negative for this candidate, not an outage.
+    // findEmail requires a person: search the domain first when no name is
+    // known, reusing any returned work email. No named person is a candidate
+    // miss, not an outage.
     let lookedUpEmail: string | null = null;
     if (!fullName?.trim()) {
       const people = await safePeopleSearch(
@@ -168,7 +150,7 @@ async function resolvePrimaryContact(args: {
       // status:"error" = the safe wrapper caught a throw (platform/transport
       // failure), NOT a genuine "no email for this person". Don't treat as a
       // verdict; feed the breaker and defer. status:"invalid" = the SDK
-      // refused our input before sending anything — a verdict, never an outage.
+      // refused our input before sending anything. A verdict, never an outage.
       if (found.result.status === "error") {
         recordResolutionOutcome(true);
         return { ok: false, reason: "platform-error", costUsd };
@@ -271,7 +253,7 @@ const DECISION_OWNER_TITLE =
 
 /**
  * The person to write to out of a domain-scoped peopleSearch: needs a usable
- * name; prefers a decision owner (founder, chief, head, VP — see
+ * name; prefers a decision owner (founder, chief, head, VP: see
  * `DECISION_OWNER_TITLE`), among those one with a work email on file (skips
  * a paid findEmail); then anyone with a work email, then anyone with a title
  * (feeds the role gate). Exported for the unit test.
@@ -333,24 +315,17 @@ export type QualifiedContact =
       /** X handle (no @) when the person is queued on X. */
       xHandle?: string | null;
       emailSource?: EmailSource;
-      /** Name as resolved by findEmail — some finders prefer it over their extract. */
+      /** Name as resolved by findEmail: some finders prefer it over their extract. */
       fullName: string | null;
       phone: string | null;
       /** LinkedIn surfaced by enrichment. Finders may prefer their own source. */
       linkedinUrl: string | null;
-      /** Job title the gate judged on — persist it so the next run is free. */
+      /** Job title the gate judged on: persist it so the next run is free. */
       title: string | null;
       /**
-       * What the person-level ICP gate decided. Carried out of here so the
-       * enqueue/send path can persist it onto `prospects.icp_verdict`.
-       *
-       * It used to be collapsed to `ok: true` and dropped, which meant the
-       * only production writer of that column was the manual `ops/audit-icp.ts`
-       * — so a verdict the gate had already paid to compute was recomputed by
-       * hand later, or never. `unclear` is a real value here and must be
-       * persisted as such: the cadence gate tests `=== "reject"`, so `unclear`
-       * fails open exactly as NULL does, but recording it stops the audit
-       * re-judging a row it has already settled.
+       * Persist the person-level verdict onto `prospects.icp_verdict` for enqueue
+       * and send. Store `unclear` too: it fails open like NULL because cadence
+       * only blocks `reject`, but retaining it avoids another paid judgment.
        */
       verdict: Exclude<PersonVerdict, "transient">;
       /** One-sentence reason from the classifier, for `icp_verdict_reason`. */
@@ -379,7 +354,7 @@ export type QualifiedContact =
  * cost-accumulation were re-implemented identically in eight finders
  * (github-stars, post-funding, job-change, hiring-signal, podcast-guest,
  * accelerator-batch, show-hn, luma). Adding the role gate to each of them
- * separately would have made that nine copies of a rule that must not drift —
+ * separately would have made that nine copies of a rule that must not drift:
  * the gate decides who gets emailed, so a finder that quietly skips it
  * reintroduces the exact problem this was built to fix.
  *
@@ -389,7 +364,7 @@ export type QualifiedContact =
  * with the caller.
  *
  * Stage A (judging role text the finder already holds, before any spend) also
- * stays with the caller — the field differs per finder (`attendeeBio`,
+ * stays with the caller. The field differs per finder (`attendeeBio`,
  * `founderRole`, `guestRole`, `hiringManagerRole`, `newRole`).
  */
 export async function resolveVerifyEnrichQualify(args: {
@@ -418,12 +393,12 @@ export async function resolveVerifyEnrichQualify(args: {
    */
   titleHint?: string | null;
   /**
-   * Forwarded to `resolveAndVerifyContact` / `shouldSkipFindEmail` — opt in
+   * Forwarded to `resolveAndVerifyContact` / `shouldSkipFindEmail`: opt in
    * only when the caller has no owner/operator name on the source record at
    * all. Defaults to off.
    */
   allowMissingFullName?: boolean;
-  /** Forwarded to `resolveAndVerifyContact` — see its doc comment. Default off. */
+  /** Forwarded to `resolveAndVerifyContact`: see its doc comment. Default off. */
   skipVerify?: boolean;
   /**
    * The person's X handle or profile URL, when the finder has one. The X
@@ -462,7 +437,7 @@ export async function resolveVerifyEnrichQualify(args: {
   return { ok: false, reason: emailMiss ?? "not-found", costUsd };
 }
 
-/** A contact miss that only means "no address on this channel" — try the next one. */
+/** A contact miss that only means "no address on this channel": try the next one. */
 function isNoAddress(reason: string): boolean {
   return (
     reason === "no-domain" ||
@@ -473,7 +448,7 @@ function isNoAddress(reason: string): boolean {
 }
 
 /**
- * LinkedIn channel: the address is the person's profile URL — the finder's
+ * LinkedIn channel: the address is the person's profile URL. The finder's
  * own, else one search by name (and company). Gated like the email path, on
  * the role text the finder holds plus a paid profile lookup when unclear.
  */
@@ -618,7 +593,7 @@ async function qualifyViaEmail(
       costUsd,
     };
   }
-  // A classifier/platform outage is not a verdict — surface it as the same
+  // A classifier/platform outage is not a verdict: surface it as the same
   // platform-error the callers already know how to defer and retry.
   if (gate.action === "defer") {
     return { ok: false, reason: "platform-error", costUsd };
@@ -634,7 +609,7 @@ async function qualifyViaEmail(
     linkedinUrl: enr.linkedinUrl,
     title: gate.roleText ?? enr.title,
     // `reject` and `transient` returned above, so what reaches here is a
-    // settled pass or an unresolved unclear — both worth persisting.
+    // settled pass or an unresolved unclear. Both worth persisting.
     verdict: gate.verdict === "transient" ? "unclear" : gate.verdict,
     verdictReason: gate.reason,
     costUsd,

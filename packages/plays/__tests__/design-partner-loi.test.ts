@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Verifies design-partner-loi drafts the first rung of the ask ladder (a
 // scoped conversation ask, not a pilot or LOI ask), enrolls the 3-step ladder
-// cadence on a real send, and — the acceptance criterion in issue #463 —
+// cadence on a real send, and. The acceptance criterion in issue #463:
 // REFUSES to draft for an owner-operator buyer rather than relying on the
 // finders routing correctly by convention.
 
@@ -91,7 +91,7 @@ describe("assertNotOwnerOperatorBuyer — the routing guard", () => {
   });
 
   // The guard is an ALLOWLIST of the three supported buyer types, not an
-  // enumeration of known-bad labels — so an owner-operator-ish label the
+  // enumeration of known-bad labels, so an owner-operator-ish label the
   // guard has never seen before (a future finder/pack's own wording, or a
   // typo of a known-bad string) is refused too, not let through.
   it("throws for an unrecognized owner-operator-ish label, not just the known ones", () => {
@@ -135,7 +135,7 @@ describe("runDesignPartnerLoi", () => {
   });
 
   // The acceptance criterion: design-partner-loi must never be routed at an
-  // owner-operator, asserted here rather than trusted to finder config — a
+  // owner-operator, asserted here rather than trusted to finder config. A
   // future pack could point the wrong lane at it. This is BEFORE any paid
   // call (no LLM draft is produced), and lands as an errorDraft, not a sent
   // email, so the target never reaches a real send.
@@ -147,7 +147,7 @@ describe("runDesignPartnerLoi", () => {
     expect(out.drafted).toHaveLength(1);
     expect(out.drafted[0]?.sent).toBe(false);
     expect(out.drafted[0]?.flags.some((f) => f.startsWith("error:"))).toBe(true);
-    // No LLM call was made for this target — the guard fires in `prepare`.
+    // No LLM call was made for this target. The guard fires in `prepare`.
     expect(calls.llmInputBlocks).toHaveLength(0);
   });
 

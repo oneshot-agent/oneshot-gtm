@@ -5,11 +5,10 @@ import { linkedInConnectionView } from "./linkedinConnection.ts";
 /**
  * The one LinkedIn card on /setup: two connections, one button.
  *
- * Messaging (the OneShot-connected account Replies imports from and sends
- * through — one for every workspace) and profile reads (the browser session
- * research reads Experience with — one per workspace) cannot share a
- * sign-in: the platform's profile view returns a headline, not a history,
- * and the browser profile cannot message. What they share is the button.
+ * Messaging uses one OneShot-connected account across workspaces; profile
+ * research uses a browser session per workspace. They need separate sign-ins:
+ * the platform profile view lacks Experience history, and the browser profile
+ * cannot message. Both connections share the Connect button.
  * Connect runs whichever sign-ins are missing, messaging first because it
  * completes on its own; the profile session ends with the founder's Done.
  *

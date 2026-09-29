@@ -42,10 +42,10 @@ if (cache.__oneshotGtmServer) {
   process.stdout.write(`\n  oneshot-gtm dashboard: http://127.0.0.1:${port}  (reloaded)\n\n`);
 } else {
   // Cold boot only (hot reload preserves the event loop, so in-flight runs
-  // continue) — sweep trigger rows left marked running by a dead process.
+  // continue): sweep trigger rows left marked running by a dead process.
   // `maxAgeMs: 0` is intentional and important: at cold boot any non-null
   // `running_started_at` is a zombie; applying the 4h UI freshness gate here
-  // would block re-runs with `409 already running`. Wrapped — a SQL hiccup
+  // would block re-runs with `409 already running`. Wrapped. A SQL hiccup
   // must not take down the server.
   try {
     const swept = getLedger().sweepStaleRunningTriggers({
@@ -99,7 +99,7 @@ if (cache.__oneshotGtmServer) {
     process.stderr.write(`  warn: stale-send sweep failed: ${(err as Error).message}\n`);
   }
 
-  // Mirror of the cadence sweep for `target_queue.send_started_at` — cold
+  // Mirror of the cadence sweep for `target_queue.send_started_at`: cold
   // boot wipes every existing marker; drafts survive for retry.
   try {
     const swept = getLedger().sweepStaleQueueSends({
@@ -133,7 +133,7 @@ if (cache.__oneshotGtmServer) {
 
   // Cold-boot recovery for `claimInboxReplyForTriage` (round-2 correction,
   // #558): a process death mid-triage leaves `intent = '__triage_pending__'`
-  // permanently on a row — the claim UPDATE only matches `intent IS NULL`,
+  // permanently on a row. The claim UPDATE only matches `intent IS NULL`,
   // so a stranded row could never be re-claimed or classified again without
   // this. Unlike the other markers there's no `started_at` column to age
   // against (the claim only lives for one in-process `await`), so this is
@@ -201,12 +201,12 @@ if (cache.__oneshotGtmServer) {
     try {
       await open(url);
     } catch {
-      // ignore — terminal output already shows the URL.
+      // ignore: terminal output already shows the URL.
     }
   }
 
   // Graceful drain: on a signal, wait for in-flight sends to finish writing
-  // their sequence_events rows — closes the sent-but-unrecorded re-send
+  // their sequence_events rows: closes the sent-but-unrecorded re-send
   // window. SIGKILL skips this; the cold-boot sweep is the backstop.
   const drainTimeoutMs = Number.parseInt(
     process.env["ONESHOT_GTM_DRAIN_TIMEOUT_MS"] ?? "30000",

@@ -1,8 +1,8 @@
 /**
  * The words a held draft shows instead of its raw lint labels (issue #594).
  *
- * `lintEmail` labels are identifiers — `banned-opener:I-noticed`,
- * `rule-of-three`, `hard-ban:discount-offer` — fine in a log, wrong on a card
+ * `lintEmail` labels are identifiers: `banned-opener:I-noticed`,
+ * `rule-of-three`, `hard-ban:discount-offer`: fine in a log, wrong on a card
  * a founder reads before sending. This is the one place they become a
  * sentence: "Held · 2 flags: banned opener, “I noticed”, rule of three".
  *

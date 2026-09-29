@@ -215,7 +215,7 @@ describe("webhook trigger intake", () => {
     const signed = request("signup", signup, secret);
 
     // First attempt: icpFilter passes but enqueueTarget throws (simulated
-    // DB enqueue failure — the exact "database enqueue failure" scenario
+    // DB enqueue failure. The exact "database enqueue failure" scenario
     // named by issue #433).
     enqueueTargetImpl = () => {
       throw new Error("database enqueue failure");

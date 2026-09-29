@@ -1,15 +1,15 @@
 /**
- * `rejectReason` — the one sentence the reject box opens with when the row
+ * `rejectReason`. The one sentence the reject box opens with when the row
  * has nothing better to offer.
  *
  * The box prefills from the person gate's verdict reason or the finder's
  * note first (that ladder lives in the web app, it is free). This is the
- * fallback for the rows that reach a human with neither — most approved
+ * fallback for the rows that reach a human with neither: most approved
  * rows, where the gate said *pass* and nothing on the row says why one
  * would say no. One small isolated call, the mirror image of
  * `generateFitReason`: same evidence block, same shape rules, same cap,
  * same "never throws" contract. The model may answer null when nothing in
- * the block argues against fit, and that null is respected — an invented
+ * the block argues against fit, and that null is respected. An invented
  * mismatch in a human's mouth is worse than an empty box.
  */
 import { loadConfig, logEvent } from "@oneshot-gtm/core";
@@ -61,7 +61,7 @@ export function describeCompanyForReject(
 
 /**
  * The dossier as evidence: a person-research JSON becomes its facts (title,
- * company, summary, the experience history with periods — where "founded
+ * company, summary, the experience history with periods, where "founded
  * 2014, still CEO" lives), anything else is a bounded raw slice.
  */
 export function describeDossierForReject(dossier: string | null | undefined): string {

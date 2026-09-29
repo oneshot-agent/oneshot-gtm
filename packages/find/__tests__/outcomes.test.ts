@@ -16,7 +16,7 @@ function raw(overrides: Partial<SentOutcomeRawRow> = {}): SentOutcomeRawRow {
     play_name: "post-funding",
     dedupe_key: "k1",
     priority_json: null,
-    sent_at: "2026-08-01 10:00:00", // ~32 days before NOW — mature
+    sent_at: "2026-08-01 10:00:00", // ~32 days before NOW: mature
     decision: "approve",
     decided_by: "human",
     joined_prospect_id: 7,

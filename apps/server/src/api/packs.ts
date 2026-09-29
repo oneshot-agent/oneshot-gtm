@@ -26,7 +26,7 @@ export function listPacksRoute(req: Request): Response {
  * `maxCostUsd`) survives because the patch is merged on top, not swapped in
  * wholesale. A patch naming a trigger absent from the registry is skipped
  * with a named reason rather than failing the whole apply. Never touches
- * `icpOneLiner` in config.json — the pack's proposed ICP rides back in the
+ * `icpOneLiner` in config.json. The pack's proposed ICP rides back in the
  * response for the founder to accept separately.
  */
 export async function applyPackRoute(
@@ -57,7 +57,7 @@ export async function applyPackRoute(
 
   // One transaction for the whole batch: a later write throwing must not
   // leave earlier triggers in this pack half-applied (finding
-  // PRRT_kwDOSKzrBs6fCBct) — either every trigger in `toApply` lands, or
+  // PRRT_kwDOSKzrBs6fCBct): either every trigger in `toApply` lands, or
   // none do.
   ledger.applyTriggerConfigs(
     toApply.map(({ name, mergedConfig }) => ({ name, configJson: JSON.stringify(mergedConfig) })),
@@ -71,7 +71,7 @@ export async function applyPackRoute(
       enabled: true,
       ready: readiness.ready,
       // An enabled-but-not-ready trigger (missing a `requires` key the pack
-      // deliberately left blank) is the intended end state, not an error —
+      // deliberately left blank) is the intended end state, not an error:
       // named plainly here so the UI can render it.
       notReadyReason: readiness.ready ? null : readiness.reason,
     });

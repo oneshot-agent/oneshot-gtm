@@ -22,10 +22,9 @@ export function formatUsd(amount: number): string {
 }
 
 /**
- * What the masthead's wallet pill shows. The balance check wins when the
- * doctor produced one (it is what the founder actually needs to see — an
- * empty wallet refuses every paid call while the env check still says ok);
- * otherwise the env check, as before; otherwise a neutral dash.
+ * Prefer the doctor's balance check: an empty wallet blocks paid calls even
+ * when the environment check passes. Fall back to the environment check,
+ * then to a neutral dash.
  */
 export function walletPill(checks: DoctorCheck[], loading = false): WalletPill {
   if (loading) return { value: "…", tone: "neutral", title: "checking", hasBalance: false };

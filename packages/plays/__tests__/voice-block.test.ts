@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The VOICE block: the founder's register card reaches the drafts as one
 // runtime input block, mirrors socialProofBlock's contract (null when blank),
 // controls tone within factual/channel constraints and a per-surface budget, and stays
-// platform-generic — no founder, product or influence named in the directive.
+// platform-generic: no founder, product or influence named in the directive.
 
 let cfgOverride: Record<string, unknown> = {};
 

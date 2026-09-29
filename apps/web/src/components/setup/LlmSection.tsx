@@ -25,7 +25,7 @@ export function LlmSection({ cfg, sources, onDirtyChange }: SectionProps) {
     const prev = s.values.llmProvider;
     s.set("llmProvider", next);
     // Follow the provider with its default model unless the founder typed
-    // their own — a model id from the old provider is never valid on the new one.
+    // their own. A model id from the old provider is never valid on the new one.
     const model = s.values.llmModel.trim();
     if (model.length === 0 || model === LLM_DEFAULTS[prev]) {
       s.set("llmModel", LLM_DEFAULTS[next] ?? "");

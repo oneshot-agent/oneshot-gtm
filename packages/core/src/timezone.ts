@@ -10,14 +10,14 @@ import { loadConfig } from "./config.ts";
  *
  * So every event instant is resolved HERE, to a human string in the event's
  * own local zone, before it reaches a prompt. Rendering goes through
- * `Intl.DateTimeFormat` — there is no hand-rolled offset arithmetic anywhere in
+ * `Intl.DateTimeFormat`: there is no hand-rolled offset arithmetic anywhere in
  * this module; the calendar-day helpers difference two zoned Y-M-D triples that
  * Intl produced, they never add or subtract an offset.
  */
 
-/** `2026-08-26` — a calendar date with no time and no zone. */
+/** `2026-08-26`. A calendar date with no time and no zone. */
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
-/** `2026-08-26T19:30` / `2026-08-26 19:30:00` — a wall clock with no zone. */
+/** `2026-08-26T19:30` / `2026-08-26 19:30:00`. A wall clock with no zone. */
 const NAIVE_DATETIME = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/;
 /** Calendar fields at the start of an ISO timestamp with a zone or offset. */
 const ZONED_DATETIME_DATE = /^(\d{4})-(\d{2})-(\d{2})[Tt ]/;
@@ -26,8 +26,8 @@ const ZONED_DATETIME_DATE = /^(\d{4})-(\d{2})-(\d{2})[Tt ]/;
  * City → IANA zone for the cities the luma-events finder can be configured
  * with (mirrors `CITY_SLUGS` in `packages/find/src/_luma-discover.ts`, plus the
  * Bay Area suburbs Luma's `geo_address_info.city` actually returns). An
- * unmapped city resolves to null and the caller falls back to the install zone
- * — a wrong guess here would be worse than the founder's own timezone.
+ * unmapped city resolves to null so the caller uses the install zone rather
+ * than guessing.
  */
 const CITY_ZONES: Record<string, string> = {
   "san francisco": "America/Los_Angeles",
@@ -75,7 +75,7 @@ const CITY_ZONES: Record<string, string> = {
 export function isValidTimeZone(zone: string | null | undefined): boolean {
   if (!zone || typeof zone !== "string" || zone.trim().length === 0) return false;
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: zone.trim() });
+    Intl.DateTimeFormat("en-US", { timeZone: zone.trim() });
     return true;
   } catch {
     return false;
@@ -138,7 +138,7 @@ export function resolveEventZone(input: EventZoneInput = {}): string {
 
 /**
  * An event's date/time as wall-clock fields in the target zone. `time` and
- * `tzAbbr` are null when the SOURCE carried no time or no zone — we render what
+ * `tzAbbr` are null when the SOURCE carried no time or no zone. We render what
  * we were given rather than inventing a midnight or an abbreviation.
  */
 interface WallClock {
@@ -161,7 +161,7 @@ function partsOf(fmt: Intl.DateTimeFormat, at: Date): Record<string, string> {
   return out;
 }
 
-/** Weekday/month names for a bare calendar date — identical in every zone. */
+/** Weekday/month names for a bare calendar date: identical in every zone. */
 function namesForCalendarDate(
   year: number,
   month: number,
@@ -201,7 +201,7 @@ function twelveHour(hour24: number, minute: number): string {
  *
  * Three input shapes, because all three reach us from Luma:
  *   - `2026-08-26` (date-only, from the LLM extract): no conversion is possible
- *     or wanted — the calendar date IS the answer, rendered without a time.
+ *     or wanted. The calendar date IS the answer, rendered without a time.
  *   - `2026-08-26T19:30` (no offset): the wall clock is already local to the
  *     event; we present it verbatim and omit the zone abbreviation rather than
  *     guessing which zone it was written in.
@@ -380,7 +380,7 @@ export function localDayOffset(
 }
 
 /**
- * The inverse of `wallClock`: a naive local date or date-time (no zone —
+ * The inverse of `wallClock`: a naive local date or date-time (no zone:
  * Calendar's `start.date`/`start.dateTime` when the source is date-only, or
  * any other "this clock reading, in this zone" input) → the real UTC
  * instant it names. Every OTHER helper in this file goes instant → local
@@ -391,7 +391,7 @@ export function localDayOffset(
  * Standard two-pass technique: guess the instant as if the wall clock were
  * UTC, read back what THAT instant looks like in `zone`, then shift the
  * guess by the difference. Convergent to the second for any zone with a
- * whole-minute DST transition (all IANA zones qualify) — the only failure
+ * whole-minute DST transition (all IANA zones qualify). The only failure
  * mode is a wall-clock value that never occurs (spring-forward gap), which
  * this treats as its nearest valid instant rather than throwing, since a
  * calendar's own date-only fields can never land in a gap.

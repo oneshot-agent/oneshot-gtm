@@ -40,7 +40,7 @@ export function cancelReasonOf(signal: AbortSignal | undefined): string {
 /**
  * The guard that goes immediately before a paid call. `where` names the call
  * site so the persisted reason says which phase was about to bill. Cheap
- * enough to run per target per phase — the whole point is that nothing bills
+ * enough to run per target per phase. The whole point is that nothing bills
  * after the abort.
  */
 export function throwIfCancelled(signal: AbortSignal | undefined, where: string): void {
@@ -68,7 +68,7 @@ export function releaseRunController(runId: number): void {
 
 /**
  * Abort the live run `runId`, if this process is the one running it. Returns
- * false when there is no live controller — the caller (the cancel route) then
+ * false when there is no live controller. The caller (the cancel route) then
  * knows the row is either already terminal or orphaned, and writes the ledger
  * itself instead of waiting for a handler that will never unwind.
  */
@@ -76,7 +76,7 @@ export function abortRun(runId: number, reason: string): boolean {
   const controller = inFlightRuns.get(runId);
   if (!controller) return false;
   // Idempotent: aborting an already-aborted controller is a no-op, and the
-  // first reason wins — which is the one the run will actually record.
+  // first reason wins, which is the one the run will actually record.
   controller.abort(reason);
   return true;
 }

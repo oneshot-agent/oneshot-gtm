@@ -20,7 +20,7 @@ import { logEvent } from "./events.ts";
 export const CONTACT_TOUCH_WINDOW_MS = 7 * 24 * 3600 * 1000;
 /**
  * An orphaned pre-send reservation (process died mid-send) stops counting as
- * a touch after this long — covers a slow SDK send without holding a real
+ * a touch after this long: covers a slow SDK send without holding a real
  * first touch hostage to a crash.
  */
 export const RESERVATION_TTL_MS = 10 * 60 * 1000;
@@ -123,8 +123,6 @@ export class SharedDb {
     }
   }
 
-  // ── caches (identical contracts to the former Ledger methods) ──────────────
-
   getCachedEnrichment(
     email: string,
   ): { result_json: string; fetched_at: string; status: string | null } | null {
@@ -165,7 +163,7 @@ export class SharedDb {
       );
   }
 
-  /** How many cache rows under a key prefix were written since `sinceIso` — the daily counter for throttled paid reads. */
+  /** How many cache rows under a key prefix were written since `sinceIso`. The daily counter for throttled paid reads. */
   countCachedEnrichmentSince(prefix: string, sinceIso: string): number {
     const row = this.db
       .query(
@@ -198,8 +196,6 @@ export class SharedDb {
       .run(queryKey, url, url ? "hit" : "miss", new Date().toISOString());
   }
 
-  // ── contact touches ────────────────────────────────────────────────────────
-
   /** Rows that count as "this address was touched": confirmed sends, plus unexpired reservations. */
   private static readonly LIVE_TOUCH_SQL = `(status = 'sent' OR (status = 'reserved' AND sent_at >= ?))`;
 
@@ -207,7 +203,7 @@ export class SharedDb {
     return [new Date(Date.now() - RESERVATION_TTL_MS).toISOString()];
   }
 
-  /** Record a completed touch directly (no reservation step — used by replies, which aren't held). */
+  /** Record a completed touch directly (no reservation step: used by replies, which aren't held). */
   recordTouch(input: {
     email: string;
     workspace: string;
@@ -263,7 +259,7 @@ export class SharedDb {
 
   /**
    * Atomic check-and-reserve (closes the check→dispatch→record race): under
-   * BEGIN IMMEDIATE either another workspace holds this address — return it —
+   * BEGIN IMMEDIATE either another workspace holds this address. Return it:
    * or a 'reserved' row lands BEFORE any network call. Confirm on success,
    * release on failure; orphans expire after RESERVATION_TTL_MS.
    */
@@ -294,7 +290,7 @@ export class SharedDb {
     }
   }
 
-  /** Reserve without checking — the manual override still has to be visible to other workspaces. */
+  /** Reserve without checking. The manual override still has to be visible to other workspaces. */
   reserveTouch(input: { email: string; workspace: string; playName: string }): number {
     return this.reserveTouchUnlocked(
       input.email.trim().toLowerCase(),
@@ -335,16 +331,14 @@ export class SharedDb {
       .all(...emails, ...this.liveTouchArgs(), limit) as ContactTouch[];
   }
 
-  // ── legacy import ──────────────────────────────────────────────────────────
-
   /**
    * One-time copy of a ledger's cache tables into the shared file (INSERT OR
-   * IGNORE — shared rows win). Keyed by ledger path; the ledger's own tables
+   * IGNORE: shared rows win). Keyed by ledger path; the ledger's own tables
    * are left in place for rollback.
    */
   ensureImported(ledgerDb: Database, ledgerPath: string): void {
     if (this.importedFrom.has(ledgerPath)) return;
-    // Everything — marker check, row copy, marker insert — under ONE write
+    // Everything (marker check, row copy, marker insert) under ONE write
     // lock. Committing the marker first would let a copy failure permanently
     // abandon the rows, and let a concurrent process see "imported" while the
     // copy was still running.
@@ -426,7 +420,7 @@ export function getSharedDb(): SharedDb {
 
 /**
  * Advisory read (draft time); the authoritative gate is `claimContactTouch`
- * at send time. Fail-open: a shared-DB hiccup must not block a send — this is
+ * at send time. Fail-open: a shared-DB hiccup must not block a send. This is
  * reputation hygiene, not hard-bounce suppression.
  */
 export function recentTouchElsewhere(email: string): ContactTouch | null {
@@ -444,7 +438,7 @@ export function recentTouchElsewhere(email: string): ContactTouch | null {
 
 /**
  * Send-time gate: atomically learn another workspace holds this address, or
- * reserve it. Caller invokes `finish(ok)` — confirm on success, release on
+ * reserve it. Caller invokes `finish(ok)`: confirm on success, release on
  * failure. `override` reserves without checking (the manual send must still
  * be visible to other workspaces). Fail-open; no-op in demo mode.
  */

@@ -23,7 +23,7 @@ export interface HarvestEngine {
   recentTweets(userId: string, seedHandle: string): Promise<SeedTweet[]>;
   /** Plain reposters of a post. */
   retweetedBy(tweetId: string): Promise<XUser[]>;
-  /** Quote-reposters — never included in `retweetedBy`. */
+  /** Quote-reposters. Never included in `retweetedBy`. */
   quoteTweets(tweetId: string): Promise<XUser[]>;
   /**
    * Optional second pass filling fields the bulk endpoints omit. Mutates the
@@ -56,9 +56,9 @@ export interface HarvestKnobs {
 }
 
 /**
- * Per-engine defaults. The xapi knobs are deliberately tighter than the pack's
- * — first-party reads cost $0.01/user, and the pack's knobs price a full run
- * at $12.59 there vs ~$0.24 on twitterapi.io.
+ * The xapi defaults are tighter than the pack defaults because first-party
+ * reads cost $0.01/user. A full run at the pack defaults costs $12.59 on
+ * xapi versus about $0.24 on twitterapi.io.
  */
 export const DEFAULT_KNOBS: Record<XEngineName, HarvestKnobs> = {
   xapi: {

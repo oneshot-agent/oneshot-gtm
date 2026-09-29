@@ -26,7 +26,7 @@ function releaseReplayBestEffort(replayKey: string | null): void {
   } catch {
     // Swallow: the original error takes priority and is re-thrown by the
     // caller. Worst case here is the replay key stays consumed until it
-    // expires, which is safe (just delays a retry) — unlike masking the
+    // expires, which is safe (just delays a retry): unlike masking the
     // original error, which is not.
   }
 }

@@ -107,7 +107,7 @@ describe("fetchCityEvents", () => {
     // Freeze "now" to mid-afternoon on the meeting's own day. A lower bound
     // of the exact instant (old behavior) would read
     // `EventDate ge datetime'2026-09-10T15:30:00'`, which excludes a
-    // meeting stamped at that day's midnight — the meeting has already
+    // meeting stamped at that day's midnight. The meeting has already
     // "started" relative to the instant, per Legistar's date-only semantics.
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-10T15:30:00Z"));
@@ -184,7 +184,7 @@ describe("fetchEventItems", () => {
       json: async () => [
         { EventItemId: 1, EventItemTitle: "Resolution on AI use", EventItemMatterFile: "R-1" },
         // A null/non-object element (malformed upstream payload) must not
-        // throw inside the outer .map — that would trip fetchEventItems'
+        // throw inside the outer .map. That would trip fetchEventItems'
         // catch and silently drop every valid item for the event, not just
         // this one malformed element.
         null,
@@ -309,7 +309,7 @@ describe("fetchBodyContact", () => {
       status: 200,
       json: async () => [
         // A null/non-object element (malformed upstream payload) must not
-        // throw inside parseOfficeRecord — that would trip fetchBodyContact's
+        // throw inside parseOfficeRecord. That would trip fetchBodyContact's
         // outer catch and turn a partial payload into a full `{ ok: false,
         // transient: true }` failure, discarding every valid contact in the
         // same response and retrying forever via civic-agenda.ts's

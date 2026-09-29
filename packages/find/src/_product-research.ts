@@ -45,7 +45,7 @@ function str(body: JsonRecord, ...keys: string[]): string | null {
 
 /**
  * Academic and alumni domains. A university address says where someone studied,
- * not where they work — and `https://<that domain>` is a university homepage,
+ * not where they work, and `https://<that domain>` is a university homepage,
  * or (for an alumni forwarder like `network.rca.ac.uk`) not a website at all.
  *
  * This is the shape that produced a dossier whose only source was a Luma
@@ -328,7 +328,7 @@ export async function researchQueueRowProduct(
   };
   // A partial result usually means the external call failed. Keep the
   // first-party evidence on the row, but don't make that failure sticky for
-  // 30 days — a later backfill/run should be allowed to complete it.
+  // 30 days. A later backfill/run should be allowed to complete it.
   if (seed.cacheKey && dossier.status === "complete") {
     ledger.setProductResearchCache(seed.cacheKey, JSON.stringify(dossier));
   }

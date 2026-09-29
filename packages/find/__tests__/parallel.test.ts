@@ -99,7 +99,7 @@ describe("parallelMap", () => {
     expect(out).toEqual(["a-done-0", "b-done-1", "c-done-2", "d-done-3"]);
     expect(calls).toHaveLength(4);
     // Same set of (index → result) pairs as `out`, but the callback may have
-    // fired in completion order rather than index order — sort before assert.
+    // fired in completion order rather than index order: sort before assert.
     expect(calls.toSorted((a, b) => a.index - b.index)).toEqual([
       { item: "a", result: "a-done-0", index: 0 },
       { item: "b", result: "b-done-1", index: 1 },

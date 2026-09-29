@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Ledger } from "../src/ledger.ts";
 
 // Issue #592: the backfill writes through a guarded primitive, not a bare
-// UPDATE — a row that got sent (or started sending) between listing and
+// UPDATE. A row that got sent (or started sending) between listing and
 // writing must be left alone, and the caller must be told.
 
 let ledger: Ledger;

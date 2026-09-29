@@ -13,7 +13,7 @@ type Identity = {
 };
 
 let identities: Identity[] = [];
-/** Queue of findPlacedMessage results — one shift per poll. */
+/** Queue of findPlacedMessage results: one shift per poll. */
 let pollResults: Array<null | {
   id: string;
   labelIds: string[];
@@ -212,7 +212,7 @@ describe("runPlacementCanary", () => {
 
   it("bounds the fallback query to this run, so an earlier canary can't match", async () => {
     // The subject is REPLAYED copy, so a previous canary of the same play is a
-    // valid match for it — an unbounded query would report that older run's
+    // valid match for it. An unbounded query would report that older run's
     // placement as if it were this one's.
     sentMessageIdResult = null;
     realCopy = { subject: "your Series A", body: "b", playName: "post-funding" };
@@ -235,7 +235,7 @@ describe("runPlacementCanary", () => {
   });
 
   it("reports not_delivered rather than guessing when nothing arrives", async () => {
-    // Silence is ambiguous — dropped, or just slow. Calling it "spam" would be
+    // Silence is ambiguous: dropped, or just slow. Calling it "spam" would be
     // a fabricated verdict.
     pollResults = [];
     const result = await runPlacementCanary({ sleep: noSleep, deadlineMs: 0 });
@@ -245,7 +245,7 @@ describe("runPlacementCanary", () => {
   });
 
   it("replays real shipping copy when the ledger has any", async () => {
-    // Filters judge CONTENT — a verdict on invented filler wouldn't transfer.
+    // Filters judge CONTENT. A verdict on invented filler wouldn't transfer.
     realCopy = { subject: "your Series A", body: "Hey — saw the round.", playName: "post-funding" };
     pollResults = [placed(["INBOX"])];
     const result = await runPlacementCanary({ sleep: noSleep });
@@ -257,7 +257,7 @@ describe("runPlacementCanary", () => {
 
   it("escapes HTML in replayed copy with the real send path's encoder", async () => {
     // Unescaped & < > would reach the filter as different content from what
-    // ships — the canary would then be measuring the wrong message.
+    // ships. The canary would then be measuring the wrong message.
     realCopy = {
       subject: "Q&A",
       body: "Tips & tricks for <founders>\nsecond line",

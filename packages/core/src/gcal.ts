@@ -8,11 +8,11 @@ import {
 } from "./gmail.ts";
 
 /**
- * Google Calendar REST client (issue #577) — mirrors gmail.ts's plain-fetch
+ * Google Calendar REST client (issue #577): mirrors gmail.ts's plain-fetch
  * shape deliberately: same OAuth client, same refresh token, and (critically)
  * the SAME `tokenCache` inside gmail.ts. `getGmailAccessToken` is reused
  * as-is rather than duplicated, so a Gmail-family access token minted for a
- * send is reused for a calendar read within its lifetime, and vice versa —
+ * send is reused for a calendar read within its lifetime, and vice versa:
  * building a second cache here would double the refresh-token traffic for
  * no reason and risk the two caches disagreeing about whether a token is
  * still valid.
@@ -22,7 +22,7 @@ const CALENDAR_API = "https://www.googleapis.com/calendar/v3";
 
 /**
  * Thrown by `calendarJson` on any non-2xx response. Carries the HTTP status
- * and (when parseable) Google's own `error.status` gRPC-style code — the
+ * and (when parseable) Google's own `error.status` gRPC-style code. The
  * field that separates `PERMISSION_DENIED` (scope/auth lost) from
  * `RESOURCE_EXHAUSTED` (quota, self-heals) from
  * `ACCESS_TOKEN_SCOPE_INSUFFICIENT` (persisted scope says calendar, live
@@ -61,13 +61,13 @@ async function calendarJson<T>(
   const res = await calendarFetch(path, init, account);
   if (!res.ok) {
     // Mirror gmailJson's 401 handling exactly (gmail.ts:218-225 in the
-    // implementer's own words): check the status before reading the body —
+    // implementer's own words): check the status before reading the body:
     // there's nothing in an auth-rejected body worth parsing, and a
     // stuck/slow/unclosed stream must not delay the re-auth message the
     // caller needs to act on. Additionally (calendar-specific): tokenCache
     // can hold a live access token for up to an hour, so a token REVOKED at
     // myaccount.google.com surfaces as a 401 on this very call, not as
-    // `invalid_grant` on the next refresh — evict the cached token now or
+    // `invalid_grant` on the next refresh: evict the cached token now or
     // every poll until natural expiry keeps handing back the dead one.
     if (res.status === 401) {
       res.body?.cancel().catch(() => {});
@@ -95,9 +95,9 @@ async function calendarJson<T>(
 }
 
 export interface CalendarEventDateTime {
-  /** Set for a timed event — RFC3339 instant. */
+  /** Set for a timed event: RFC3339 instant. */
   dateTime?: string;
-  /** Set for an all-day event — bare YYYY-MM-DD, no time, no zone. */
+  /** Set for an all-day event: bare YYYY-MM-DD, no time, no zone. */
   date?: string;
   /** IANA zone the event was created in; absent for UTC/all-day. */
   timeZone?: string;
@@ -108,7 +108,7 @@ export interface CalendarEventAttendee {
   /** True on the row representing the authenticated calendar owner. */
   self?: boolean;
   organizer?: boolean;
-  /** A room / equipment resource, not a person — never a match candidate. */
+  /** A room / equipment resource, not a person. Never a match candidate. */
   resource?: boolean;
   responseStatus?: string;
 }
@@ -126,7 +126,7 @@ export interface CalendarEventItem {
   summary?: string;
   start?: CalendarEventDateTime;
   end?: CalendarEventDateTime;
-  /** Last-modified instant — the field this poller sorts/watermarks on. */
+  /** Last-modified instant. The field this poller sorts/watermarks on. */
   updated?: string;
   organizer?: CalendarEventPerson;
   creator?: CalendarEventPerson;
@@ -139,7 +139,7 @@ export interface CalendarEventItem {
   hangoutLink?: string;
   visibility?: string;
   transparency?: string;
-  /** NEVER persisted past the ingest step — may carry dial-in PINs or private notes. */
+  /** NEVER persisted past the ingest step: may carry dial-in PINs or private notes. */
   description?: string;
 }
 
@@ -163,7 +163,7 @@ const EVENT_FIELDS =
 /**
  * One page of `calendars.events.list`. Deliberately does NOT send
  * `maxAttendees` (an event over the cap would return only the authenticated
- * participant — the prospect vanishes and the meeting misreads as a
+ * participant. The prospect vanishes and the meeting misreads as a
  * self-block) or `eventTypes` (filtering happens in code so dropped events
  * can be logged, not silently excluded server-side).
  */
@@ -174,7 +174,7 @@ export async function listCalendarEvents(
   const params = new URLSearchParams({
     singleEvents: "true",
     showDeleted: "true",
-    // Ascending — load-bearing. An interrupted walk leaves a SUFFIX of
+    // Ascending: load-bearing. An interrupted walk leaves a SUFFIX of
     // unexamined updates, not a hole, which is what lets this poller skip
     // the backlog machinery pollInboxReplies needs (see the scheduler-side
     // comment for the full argument).
@@ -201,7 +201,7 @@ export interface CalendarListEntry {
 }
 
 /**
- * `GET /users/me/calendarList?minAccessRole=writer` — the /setup picker's
+ * `GET /users/me/calendarList?minAccessRole=writer`. The /setup picker's
  * source list. `writer` is the floor deliberately: on a `reader` or
  * `freeBusyReader` calendar every event comes back as `summary: "busy"`
  * with no attendees, which reads exactly like a self-block and would poison
@@ -219,7 +219,7 @@ export async function listWritableCalendars(account: GmailAccount): Promise<Cale
 }
 
 /**
- * How many events landed on `calendarId` in the trailing 7 days — shown
+ * How many events landed on `calendarId` in the trailing 7 days: shown
  * beside each calendar in the /setup picker, because a founder cannot
  * reliably say which calendar their booking tool actually writes to.
  * Best-effort: any failure (including a calendar this account can no longer

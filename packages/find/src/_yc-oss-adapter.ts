@@ -2,12 +2,12 @@ import type { CompanyRecord } from "./_types.ts";
 
 /**
  * Adapter for the [yc-oss/api](https://github.com/yc-oss/api) public dataset.
- * Free, daily-updated, no auth — strictly better than scraping YC's
+ * Free, daily-updated, no auth: strictly better than scraping YC's
  * client-rendered launches page.
  *
  * Schema reference (from `https://yc-oss.github.io/api/batches/<slug>.json`):
  * each record has `name, slug, website, one_liner, long_description, industry,
- * subindustry, tags, batch, status, url, api`. No founder names — the
+ * subindustry, tags, batch, status, url, api`. No founder names. The
  * downstream pipeline still calls findEmail on the company domain.
  */
 
@@ -21,7 +21,7 @@ const YC_OSS_BASE = "https://yc-oss.github.io/api/batches";
  * (`winter-2026`, `summer-2024`, etc.) is returned unchanged so founders can
  * paste either form into config.
  *
- * Returns null when the tag doesn't match any known pattern — caller should
+ * Returns null when the tag doesn't match any known pattern: caller should
  * surface this as a diagnostic, not throw, so the trigger card shows the
  * real reason instead of a 500.
  */
@@ -34,7 +34,7 @@ export function cohortToBatchSlug(tag: string): string | null {
     return normalized;
   }
 
-  // yc-w26 / yc-s25 — single-letter season + 2-digit year.
+  // yc-w26 / yc-s25: single-letter season + 2-digit year.
   const short = normalized.match(/^yc-([wsfp])(\d{2})$/);
   if (short) {
     const letter = short[1] as "w" | "s" | "f" | "p";
@@ -44,13 +44,13 @@ export function cohortToBatchSlug(tag: string): string | null {
     return `${season}-20${yy}`;
   }
 
-  // yc-spring-26 / yc-fall-25 — full season name + 2-digit year.
+  // yc-spring-26 / yc-fall-25: full season name + 2-digit year.
   const long = normalized.match(/^yc-(winter|summer|spring|fall)-(\d{2})$/);
   if (long) {
     return `${long[1]}-20${long[2]}`;
   }
 
-  // yc-w-2026 / yc-winter-2026 — 4-digit year variants.
+  // yc-w-2026 / yc-winter-2026: 4-digit year variants.
   const fourYear = normalized.match(/^yc-(winter|summer|spring|fall|[wsfp])-(\d{4})$/);
   if (fourYear) {
     const seasonRaw = fourYear[1] as string;
@@ -70,7 +70,7 @@ const SHORT_SEASON: Record<"w" | "s" | "f" | "p", "winter" | "summer" | "fall" |
   w: "winter",
   s: "summer",
   f: "fall",
-  p: "spring", // "p" for sPring — yc convention varies; spring is rare so this is a best-guess fallback
+  p: "spring", // "p" for sPring: yc convention varies; spring is rare so this is a best-guess fallback
 };
 
 /**
@@ -82,7 +82,7 @@ const SHORT_SEASON: Record<"w" | "s" | "f" | "p", "winter" | "summer" | "fall" |
  * - `techstars-toronto-2025` → `Techstars Toronto 2025` (Title-Case + spaces)
  *
  * Used by the websearch adapter's query builder, so a wrong default would
- * search for the wrong program. Tightens behavior after a `cohort` edit —
+ * search for the wrong program. Tightens behavior after a `cohort` edit:
  * the previous hardcoded `"YC W26"` default would silently mismatch.
  */
 export function deriveCohortLabel(cohort: string): string {
@@ -128,7 +128,7 @@ interface YcOssCompany {
  *   error, unknown tag) so the UI can surface it instead of treating zero
  *   as success.
  *
- * Cost is always 0 — yc-oss is GitHub Pages, no LLM, no auth.
+ * Cost is always 0: yc-oss is GitHub Pages, no LLM, no auth.
  */
 export async function fetchYcOssBatch(
   cohort: string,
@@ -212,7 +212,7 @@ export function mapYcOssCompany(c: YcOssCompany): CompanyRecord | null {
     industry: typeof c.industry === "string" && c.industry.length > 0 ? c.industry : null,
     tags: Array.isArray(c.tags) ? (c.tags.filter((t) => typeof t === "string") as string[]) : [],
     ycUrl: typeof c.url === "string" && c.url.length > 0 ? c.url : null,
-    // yc-oss schema doesn't include founder names — pipeline resolves them on
+    // yc-oss schema doesn't include founder names: pipeline resolves them on
     // demand via webRead+extract on the YC profile URL.
     founderName: null,
     founderLinkedinUrl: null,

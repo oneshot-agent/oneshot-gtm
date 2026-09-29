@@ -17,19 +17,19 @@ export interface CivicPilotTarget {
   /**
    * A cooperative purchasing vehicle the city/county can buy off (Sourcewell,
    * NASPO ValuePoint, OMNIA). One of `purchasingVehicle` /
-   * `microPurchaseThreshold` must be set — issue #463's ask is a pilot sized
+   * `microPurchaseThreshold` must be set: issue #463's ask is a pilot sized
    * under the micro-purchase threshold OR bought off a cooperative vehicle,
    * so a target on the threshold-only route can't be forced to fabricate a
    * vehicle name.
    */
   purchasingVehicle?: string;
   /** The dollar ceiling this buyer can approve without a full procurement
-   *  process — the alternate route to `purchasingVehicle`. */
+   *  process. The alternate route to `purchasingVehicle`. */
   microPurchaseThreshold?: string;
   /** One fact about how your product fits the agenda item's stated need. */
   yourEdge: string;
   phone?: string;
-  /** Job title (e.g. "City Manager", "IT Director") — persisted to prospects.title. */
+  /** Job title (e.g. "City Manager", "IT Director"): persisted to prospects.title. */
   title?: string;
 }
 
@@ -41,7 +41,7 @@ export interface CivicPilotRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -58,7 +58,7 @@ export interface CivicPilotDraft {
 
 /**
  * Throws unless at least one of `purchasingVehicle` / `microPurchaseThreshold`
- * is set — issue #463's civic-pilot ask is a pilot sized under the
+ * is set: issue #463's civic-pilot ask is a pilot sized under the
  * micro-purchase threshold OR bought off a cooperative purchasing vehicle;
  * with neither set there is no concrete purchase route to offer and the
  * draft would either fabricate one or ask for an RFP (exactly what this play
@@ -81,7 +81,7 @@ export function assertHasPurchaseRoute(
 
 /**
  * The concrete purchase-route sentence for the prompt's PURCHASING ROUTE
- * input — names whichever of the two routes the target actually supplied
+ * input: names whichever of the two routes the target actually supplied
  * (both, when set) instead of assuming `purchasingVehicle` is always present.
  */
 function purchaseRouteLine(

@@ -4,12 +4,12 @@ import { getLedger } from "@oneshot-gtm/core";
  * True if this (play, dedupe-key) pair is already in the queue,
  * OR a prospect with the same email is already known,
  * OR the same email is already pending in the queue under ANOTHER play
- * (cross-play dedup — don't queue + enrich someone a different play already
+ * (cross-play dedup: don't queue + enrich someone a different play already
  * surfaced and is about to email).
  *
  * `playName` accepts an array so a finder that can route its rows to a
  * different play (`play`/`buyerType` config keys, issue #705) can check
- * dedupe against every play it might have enqueued this candidate under —
+ * dedupe against every play it might have enqueued this candidate under:
  * toggling `play` between runs must not let the same person back through.
  *
  * The email-based checks are gated on `prospectEmail`, so callers that pass

@@ -5,7 +5,7 @@ import { resolveAndVerifyContact } from "./_contact.ts";
 /**
  * The stargazer's GitHub login on a github-stars queue row, recovered from the
  * source (`find:github-stars:<owner/repo>`) plus the dedupe key
- * (`github-stars:<owner/repo>:<login>`) — the one place every such row carries
+ * (`github-stars:<owner/repo>:<login>`). The one place every such row carries
  * it, including early rejections that stored no profile fields. `null` for any
  * other row or a malformed login.
  */

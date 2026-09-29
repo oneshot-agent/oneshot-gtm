@@ -130,7 +130,7 @@ describe("buildRawMessage", () => {
 });
 
 describe("gmailJson error formatting", () => {
-  // A representative Google quota envelope — same shape and metric wording
+  // A representative Google quota envelope: same shape and metric wording
   // as the truncated production sample from issue #485.
   const QUOTA_BODY = JSON.stringify({
     error: {
@@ -169,7 +169,7 @@ describe("gmailJson error formatting", () => {
           status: 200,
         });
       }
-      // /messages/18c2a9f4e6b7d3a1?format=full — the long path in question.
+      // /messages/18c2a9f4e6b7d3a1?format=full. The long path in question.
       return new Response(QUOTA_BODY, { status: 403 });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -180,13 +180,13 @@ describe("gmailJson error formatting", () => {
       message = (err as Error).message;
     }
     // Mirrors the message_120 truncation every call site applies (e.g.
-    // oneshot.ts's inbox.source_failed logging) — this is the actual
+    // oneshot.ts's inbox.source_failed logging). This is the actual
     // acceptance bar, not just "the untruncated message is fine".
     const truncated = message.slice(0, 120);
     expect(truncated).toContain("RESOURCE_EXHAUSTED");
     // Both facts the issue calls out as necessary for diagnosis: WHICH
     // metric, and WHICH specific limit (per-user-per-second vs
-    // per-minute-per-user vs the daily project ceiling) — not just the
+    // per-minute-per-user vs the daily project ceiling), not just the
     // coarser status.
     expect(truncated).toContain("quota metric 'Gmail API requests'");
     expect(truncated).toContain("limit 'Requests per minute per user'");
@@ -201,7 +201,7 @@ describe("gmailJson error formatting", () => {
       message = (err as Error).message;
     }
     // Mirrors the message_120 truncation every call site applies (e.g.
-    // oneshot.ts's inbox.source_failed logging) — this is the actual
+    // oneshot.ts's inbox.source_failed logging). This is the actual
     // acceptance bar, not just "the untruncated message is fine".
     const truncated = message.slice(0, 120);
     expect(truncated).toContain("RESOURCE_EXHAUSTED");
@@ -253,7 +253,7 @@ describe("gmailJson error formatting", () => {
   });
 
   it("cancels an unread body's stream on a 401 instead of leaving it open", async () => {
-    // cancel() always returns a Promise per the ReadableStream spec — a
+    // cancel() always returns a Promise per the ReadableStream spec. A
     // mock that returned undefined would let a `.catch()` on the call
     // site go unexercised, so resolve it like the real API does.
     const cancelSpy = vi.fn().mockResolvedValue(undefined);
@@ -427,7 +427,7 @@ describe("listGmailReplies", () => {
    * Serve one message with the given payload/snippet and return its extracted
    * body. The body-extraction tiers below are the regression suite for the
    * "(no body)" bug: our outbound is HTML-only, reply clients mirror the
-   * format, so HTML-only replies are the NORMAL case — and the old extractor
+   * format, so HTML-only replies are the NORMAL case, and the old extractor
    * only ever read text/plain.
    */
   async function bodyFor(payload: unknown, snippet?: string): Promise<string> {

@@ -28,13 +28,13 @@ const SOURCE = "find:local-business";
 const PEOPLE_SEARCH_LIMIT = 40;
 /** Server cap on `research/company`. */
 const COMPANY_SEARCH_LIMIT = 100;
-/** Server cap on `local/search` — flat price per search, so always ask for the max. */
+/** Server cap on `local/search`: flat price per search, so always ask for the max. */
 const LOCAL_SEARCH_LIMIT = 500;
 
 /**
  * Which SDK tool discovers candidates. `b2b` (default, the original finder) is
  * `peopleSearch`/`companySearch` against the B2B people database; `local` is
- * the SDK's `localSearch` — category × location over the places index, which
+ * the SDK's `localSearch`: category × location over the places index, which
  * is where a main-street business with no LinkedIn footprint actually lives.
  * Opt-in: no existing trigger or pack changes engine by itself.
  */
@@ -47,7 +47,7 @@ export interface LocalBusinessFinderOpts extends RunOpts {
   industries?: string[];
   /** Metro/city/state filters, fed to both peopleSearch and companySearch. */
   locations?: string[];
-  /** Company-size band, e.g. "1-10", "11-50" — fed to both search calls. */
+  /** Company-size band, e.g. "1-10", "11-50": fed to both search calls. */
   employeeRange?: string;
   /** Free-text keywords, fed to peopleSearch only. */
   keywords?: string[];
@@ -101,14 +101,14 @@ function readPhone(person: PersonResult): string | null {
  * local-business finder: `peopleSearch` (and, for business-shaped targeting,
  * a `companySearch` pass first) against the OneShot B2B database, routed to
  * the `free-pilot` play. This is the only finder that reaches a business with
- * no GitHub repo, no Show HN post, no funding round and no accelerator batch —
+ * no GitHub repo, no Show HN post, no funding round and no accelerator batch:
  * see issue #457.
  *
  * Two lanes off one search, because the cost profile differs sharply:
  * a `PersonResult` carrying `best_work_email` skips `findEmail`/`verifyEmail`
  * entirely and goes straight to the person-level ICP gate; one without it
  * runs the normal `resolveVerifyEnrichQualify` spine. `FinderResult` doesn't
- * distinguish the lanes in its shape — both funnel into the same enqueue —
+ * distinguish the lanes in its shape. Both funnel into the same enqueue:
  * but the cost each accrues is very different, which is the whole point of
  * this finder over the per-candidate spine every other finder uses.
  */
@@ -166,7 +166,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     );
     result.costUsd += companyRes.result.cost ?? 0;
     // `status === "error"` means safeCompanySearch caught a throw (backend
-    // outage/transport failure) — the sentinel's `results: []` is not a
+    // outage/transport failure). The sentinel's `results: []` is not a
     // genuine "no companies for this industry" answer. Treating it as one
     // reported misleading targeting guidance for what was really a platform
     // failure (finding PRRT_kwDOSKzrBs6fCBdS).
@@ -261,7 +261,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       continue;
     }
 
-    // ICP gate BEFORE any per-candidate paid call — the spend discipline every
+    // ICP gate BEFORE any per-candidate paid call. The spend discipline every
     // sibling finder follows (peopleSearch/companySearch above is a single
     // flat-rate call per RUN, not per candidate, so it isn't gated here).
     const filter = await icpFilter({
@@ -273,7 +273,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       },
     });
     if (filter.match === null) {
-      // Transient classifier failure — drop without persisting (same
+      // Transient classifier failure: drop without persisting (same
       // rationale as every other finder: a persisted rejection would burn
       // the dedupeKey for every future watch tick).
       result.droppedEnrichment++;
@@ -306,7 +306,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     let phone: string | null;
     let linkedinUrl: string | null;
     let finalTitle: string | null;
-    // ICP verdict fields for the routed (design-partner-loi) payload only —
+    // ICP verdict fields for the routed (design-partner-loi) payload only:
     // never spread onto `target` below, which must keep matching its
     // pre-#705 shape (finding PRRT_kwDOSKzrBs6mB74J, issue #705 round 1).
     let routedIcp: Record<string, unknown> = {};
@@ -314,7 +314,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     // Lane 1 only when email leads the run's channel order; otherwise the
     // shared spine walks the order, reusing the search's email if it gets there.
     if (bestWorkEmail && finderChannels()[0] === "email") {
-      // Lane 1 — the search already carries a usable email: skip
+      // Lane 1. The search already carries a usable email: skip
       // findEmail/verifyEmail entirely and go straight to the person gate.
       const gate = await qualifyPostEnrich({
         icp,
@@ -351,7 +351,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       phone = readPhone(person);
       linkedinUrl = person.linkedin_url ?? null;
       finalTitle = gate.roleText ?? title;
-      // `gate` is a `QualifyOutcome`, not a `QualifiedContact` — build the
+      // `gate` is a `QualifyOutcome`, not a `QualifiedContact`: build the
       // same `icpVerdict`/`icpVerdictReason` shape `icpFields` produces for
       // the other lane, by hand.
       routedIcp = {
@@ -359,7 +359,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
         ...(gate.reason ? { icpVerdictReason: gate.reason } : {}),
       };
     } else {
-      // Lane 2 — no email on the search result (or email isn't first): the normal
+      // Lane 2: no email on the search result (or email isn't first): the normal
       // resolve → verify → enrich → qualify spine every other finder uses.
       const contact = await resolveVerifyEnrichQualify({
         playName: PLAY_NAME,
@@ -400,7 +400,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     }
 
     // Payload mirrors the (issue #462) free-pilot play's `FreePilotTarget`
-    // shape structurally — `enqueueTarget`'s payload is untyped `unknown`, so
+    // shape structurally: `enqueueTarget`'s payload is untyped `unknown`, so
     // this finder doesn't need to import that type to stay in sync with it.
     const target = {
       name: fullName,
@@ -455,7 +455,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
 
 /**
  * The `local` engine: one flat-priced `localSearch` (category × location),
- * then the domain-only contact spine per business — the same path
+ * then the domain-only contact spine per business. The same path
  * local-registry walks for a licence row, because a places result is the
  * same shape: a business with a domain and no owner name. Rows enqueue with
  * the `businessType` payload the free-pilot play, the ranking adapter and
@@ -542,7 +542,7 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
       result.droppedEnrichment++;
       continue;
     }
-    // The SDK's `id` is a stable hash of normalized name + address — the
+    // The SDK's `id` is a stable hash of normalized name + address. The
     // dedupe key it documents for exactly this cross-run purpose.
     const dedupeKey =
       typeof biz.id === "string" && biz.id
@@ -590,7 +590,7 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
       continue;
     }
 
-    // No owner name on a places result — findEmail resolves a company-level
+    // No owner name on a places result: findEmail resolves a company-level
     // address off the domain alone, the same opt-in local-registry uses.
     const contact = await resolveVerifyEnrichQualify({
       playName: PLAY_NAME,

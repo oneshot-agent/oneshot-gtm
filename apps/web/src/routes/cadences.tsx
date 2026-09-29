@@ -45,7 +45,7 @@ import { CaseList, Disclosure, type CaseListRow } from "../components/ledger/Cas
 import { DraftStateLine, LetterCard, LetterEmpty } from "../components/ledger/LetterCard.tsx";
 import { DraftHistory } from "../components/ledger/DraftHistory.tsx";
 
-/** Tailwind can't build class names dynamically — enumerate the tile-count variants. */
+/** Tailwind can't build class names dynamically: enumerate the tile-count variants. */
 const TILE_GRID_COLS: Record<number, string> = {
   4: "md:grid-cols-4",
   5: "md:grid-cols-5",
@@ -55,7 +55,7 @@ const TILE_GRID_COLS: Record<number, string> = {
 
 export const Route = createFileRoute("/cadences")({
   staticData: { title: "Cadences" },
-  // ?sinceRun=N deep-link from /run/<play>?runId=N done-mode — filters the
+  // ?sinceRun=N deep-link from /run/<play>?runId=N done-mode: filters the
   // listing to cadences whose prospect email is in the run's prospect_emails
   // set. The page shows a clear banner with a [clear filter] CTA.
   validateSearch: (search: Record<string, unknown>) => ({
@@ -67,7 +67,7 @@ export const Route = createFileRoute("/cadences")({
   component: CadencesPage,
 });
 
-/** Human-readable "in N days/hours/minutes" — used in the send-early warning. */
+/** Human-readable "in N days/hours/minutes": used in the send-early warning. */
 function earlyByCopy(iso: string | null | undefined): string {
   if (!iso) return "now";
   const ms = new Date(iso).getTime() - Date.now();
@@ -133,7 +133,7 @@ function CadencesPage() {
   const [linkedinReplyBody, setLinkedinReplyBody] = useState("");
   // Every close path must clear the body. Cancel used to bypass the onClose
   // cleanup, so reopening the modal for a DIFFERENT prospect showed the
-  // previous one's text — one stray click from filing person A's message
+  // previous one's text: one stray click from filing person A's message
   // against person B.
   const closeLinkedinReplyModal = (): void => {
     setLinkedinReplyModal(null);
@@ -165,7 +165,7 @@ function CadencesPage() {
   const cadenceNavigate = Route.useNavigate();
   const clearSinceRun = (): void => {
     // validateSearch's return type makes `sinceRun` a required (if undefined)
-    // key, so `{}` doesn't typecheck — spell the cleared filter out.
+    // key, so `{}` doesn't typecheck: spell the cleared filter out.
     void cadenceNavigate({ search: { sinceRun: undefined } });
   };
 
@@ -257,7 +257,7 @@ function CadencesPage() {
     mutationFn: (vars: { prospectId: number; playName: string }) =>
       api.sendCadenceNext(vars.prospectId, vars.playName),
     onSuccess: (_data, vars) => {
-      // Server returned 202 — actual SDK email send is fire-and-forget in the
+      // Server returned 202: actual SDK email send is fire-and-forget in the
       // background (~2 min). We close the modal + clear expansion immediately
       // so the founder isn't stuck staring at a "Sending…" button; the next
       // refetch will show the row's preview cleared once the send completes.
@@ -351,7 +351,7 @@ function CadencesPage() {
     onError: (err) => toast.error(`couldn't log outcome: ${err.message}`),
   });
 
-  // Memo on cadences.data directly — `list` would be a fresh reference each
+  // Memo on cadences.data directly: `list` would be a fresh reference each
   // render because of the `?? []` fallback, which would thrash useMemo's
   // cache.
   const list = useMemo(() => cadences.data?.cadences ?? [], [cadences.data]);
@@ -360,7 +360,7 @@ function CadencesPage() {
     [list, mailKey],
   );
   // Tiles read the server's full-status counts (scoped only by sinceRun), NOT
-  // the table rows — so REPLIED/BREAKUP/COMPLETED stay accurate even while the
+  // the table rows, so REPLIED/BREAKUP/COMPLETED stay accurate even while the
   // table is filtered to active.
   const counts = cadences.data?.counts ?? EMPTY_COUNTS;
   const mask = useMask();
@@ -458,7 +458,7 @@ function CadencesPage() {
         </div>
       </section>
 
-      {/* sinceRun filter banner — deep-link from /run/<play>?runId=N done mode. */}
+      {/* sinceRun filter banner: deep-link from /run/<play>?runId=N done mode. */}
       {sinceRun != null && (
         <section className="flex items-center justify-between border-b border-ink-rule bg-ink-surface/60 px-6 py-2.5">
           <div className="text-[12px] text-ink-muted">
@@ -471,7 +471,7 @@ function CadencesPage() {
         </section>
       )}
 
-      {/* The bounced tile appears only once any cadence has bounced — a permanent 0
+      {/* The bounced tile appears only once any cadence has bounced. A permanent 0
           would read as reassurance on installs that never ran bounce detection. */}
       <section
         className={cn(
@@ -739,7 +739,7 @@ function CadencesPage() {
                       ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
                       : `send next step — sends now${earlyNote}`;
                 // The reminder: why this person was written to in the first
-                // place — the intro's signal and fit sentence, off the sent
+                // place. The intro's signal and fit sentence, off the sent
                 // queue row (#599). Freeform, so it drops under privacy mode.
                 const reminderSignal =
                   !masked && c.queuePayload ? queueEvidence(c.playName, c.queuePayload) : null;
@@ -972,11 +972,7 @@ function CadencesPage() {
                   <Fragment key={`${c.prospectId}-${c.playName}`}>
                     <tr
                       onClick={(e) => {
-                        // Ignore clicks that originated on interactive
-                        // controls inside the row (buttons / inputs /
-                        // links / labels). Without this guard, clicking
-                        // Preview / Send / Stop / the checkbox would
-                        // ALSO toggle the row expansion.
+                        // Interactive row controls must not also toggle expansion.
                         const t = e.target as HTMLElement;
                         if (t.closest("button, input, a, label, [role='button']")) return;
                         toggleExpanded(key);
@@ -1192,7 +1188,7 @@ function CadencesPage() {
                                 </>
                               );
                             })()}
-                          {/* Chevron for non-active rows with history — the active-status
+                          {/* Chevron for non-active rows with history. The active-status
                             block renders its own above. */}
                           {c.status !== "active" &&
                             (c.priorSteps.length > 0 || c.status === "stopped") &&

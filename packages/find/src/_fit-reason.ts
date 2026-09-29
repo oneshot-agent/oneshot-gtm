@@ -1,13 +1,7 @@
 /**
- * Enqueue-time `fitReason` (issue #592): the pure ladder every finder's row
- * goes through in `enqueueScoredTarget`, and the per-play parser the backfill
- * uses to recover a reason from the `notes` templates finders wrote before
- * the field existed.
- *
- * Nothing here calls the LLM or the ledger — the chokepoint is synchronous and
- * hot, and every finder test hands it a ledger double that implements only
- * `enqueueTarget`. Generation (`generateFitReason`) happens in the finders that
- * have no gate reason, before they enqueue, where they are already async.
+ * Enqueue-time `fitReason` precedence and per-play recovery from legacy notes.
+ * No LLM or ledger calls: finders that lack a gate reason generate one before
+ * calling the synchronous `enqueueScoredTarget`.
  */
 import { logEvent } from "@oneshot-gtm/core";
 import {
@@ -80,7 +74,7 @@ const WHOLE_NOTE = new Set(["show-hn", "repo-interest"]);
 
 /**
  * Recover the company-gate reason from a row's `notes`, per play, using only
- * the templates the finders actually wrote. Deliberately an allowlist — a
+ * the templates the finders actually wrote. Deliberately an allowlist. A
  * generic "text after the dash" rule would read breakup-revive's
  * `47d cold — Acme` and gov-solicitation's `type — agency — title` as reasons.
  * Anything machine-labelled (`auto:`), any CSV-import status, luma's
@@ -106,7 +100,7 @@ export function parseReasonFromNotes(
   // writes the bare reason; github-topics writes `<prefix>: <stack> (N vendors) — <reason>`
   // truncated at 220 chars (a truncated note may have lost the reason itself).
   if (playName === "competitor-switch" || playName === "stack-consolidation") {
-    // Locate the marker, then slice — no `(.+)$` capture, which CodeQL flags
+    // Locate the marker, then slice: no `(.+)$` capture, which CodeQL flags
     // as polynomial on adversarial input (a note is library-supplied text).
     const marker = /\(\d+ vendors?\) — /.exec(n);
     if (marker) {

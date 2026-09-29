@@ -168,7 +168,7 @@ describe("runLumaEvents", () => {
       dryRun: true,
       targets: [{ ...base, eventDate: inFutureDays(30) }],
     });
-    // Format: "Sat, Jul 4" — short weekday + comma + month + day (locale-dependent).
+    // Format: "Sat, Jul 4": short weekday + comma + month + day (locale-dependent).
     expect(calls.llmInputBlocks[0]).toMatch(/EVENT WHEN: \w{3},? \w{3} \d{1,2}\n/);
   });
 
@@ -234,12 +234,12 @@ describe("runLumaEvents", () => {
 
 // A 7:30pm Wednesday event in San Francisco IS the instant 2026-08-27T02:30:00Z.
 // Handed that instant, the model reads "27" and writes "Thursday" into a cold
-// email about the reader's own event — a factual error the prospect notices and
+// email about the reader's own event. A factual error the prospect notices and
 // one we can't take back. So the play must hand the prompt a pre-resolved local
 // string and no instant at all.
 describe("runLumaEvents event dates reach the prompt already localized", () => {
   const SF_EVENING = "2026-08-27T02:30:00Z";
-  /** ISO-8601 with an explicit UTC `Z` or a numeric offset — what must NOT leak. */
+  /** ISO-8601 with an explicit UTC `Z` or a numeric offset: what must NOT leak. */
   const ISO_INSTANT = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})/;
 
   beforeEach(() => {

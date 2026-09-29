@@ -4,7 +4,7 @@ import { Button } from "./Button.tsx";
 import { cn } from "../../lib/cn.ts";
 
 /**
- * Empty state — a single founder note + optional CLI hint. No
+ * Empty state. A single founder note + optional CLI hint. No
  * illustration, no blank-state clip art; the note speaks to the
  * founder directly in Plex Sans (no italics, no serif).
  *

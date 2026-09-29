@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 // registry.ts's local-registry readiness trims each `entityTypes` entry
 // before checking it against the carrier/broker/freight-forwarder allowlist
 // (so " carrier " passes readiness), but `run` filtered the SAME array
-// against the raw, untrimmed value — a whitespace-padded value reported
+// against the raw, untrimmed value. A whitespace-padded value reported
 // ready:true yet started with zero FMCSA entityTypes forwarded to the finder.
 
 const runLocalRegistry = vi.fn().mockResolvedValue({

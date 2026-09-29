@@ -8,11 +8,11 @@ import type { SmartleadAccountView } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
 /**
- * POST /api/smartlead/accounts — list the Smartlead workspace's connected
+ * POST /api/smartlead/accounts: list the Smartlead workspace's connected
  * mailboxes so /setup can offer them as identities. POST (not GET) on
  * purpose: the body may carry a just-pasted, not-yet-saved API key, and a key
  * must never ride a URL (server logs, proxies, history). Doubles as key
- * validation — a bad key surfaces here before anything is persisted.
+ * validation. A bad key surfaces here before anything is persisted.
  * Responses are sanitized in core (no passwords) and error messages never
  * contain the key.
  */
@@ -22,7 +22,7 @@ export async function smartleadAccountsRoute(req: Request): Promise<Response> {
     const body = (await req.json()) as { apiKey?: string };
     pastedKey = typeof body.apiKey === "string" ? body.apiKey : undefined;
   } catch {
-    // empty body is fine — fall back to the stored key
+    // empty body is fine: fall back to the stored key
   }
   const key = pastedKey?.trim() || smartleadApiKey();
   if (!key) {

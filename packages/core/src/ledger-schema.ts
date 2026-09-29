@@ -1,32 +1,17 @@
 import type { Database } from "bun:sqlite";
 
 /**
- * Fresh-install schema construction + inline migrations for the ledger's
- * SQLite file. Extracted from `Ledger.migrate()` (see ledger.ts) as the
- * first slice of the ledger split tracked in ROADMAP.md — the highest-risk
- * inline DDL, isolated before the domain methods that follow it.
+ * Ledger schema and migrations over a raw Database handle. Ledger.migrate calls
+ * this once per connection after opening the database and setting PRAGMAs.
  *
- * Pure function of a raw `Database` handle: no dependency on the `Ledger`
- * class, so it can be exercised (and schema-snapshotted) without spinning up
- * the rest of the ledger's surface. `Ledger.migrate()` is the sole caller —
- * it runs this once per connection, immediately after opening the database
- * and setting its PRAGMAs.
+ * SQL-stamped timestamps use YYYY-MM-DD HH:MM:SS, JS writes use toISOString(),
+ * and provider timestamps retain their input format. String comparison is valid
+ * only within a format: normalize cutoffs with toSqliteUtc and compare mixed
+ * formats with julianday().
  *
- * Timestamp formats: columns stamped by SQL (`DEFAULT (datetime('now'))`,
- * `datetime(...)` in an UPDATE) hold SQLite form `YYYY-MM-DD HH:MM:SS`; columns
- * written from JS hold `toISOString()` form; provider timestamps (reply
- * received_at, calendar starts_at/ends_at) arrive as the provider sent them.
- * Since `' ' < 'T'`, a string comparison is only valid within one format:
- * query methods convert their cutoffs to the column's form (`toSqliteUtc` in
- * time.ts) and compare across formats with `julianday()`. Callers never need
- * to know which form a column uses.
- *
- * Money: the existing USD columns (receipts.cost_usd, deal_outcomes.amount_usd,
- * spend_reservations.amount_usd) are REAL; totals and caps compare in integer
- * cents (`cents()` in ledger.ts). New money columns are INTEGER micro-dollars.
- *
- * Foreign keys are enforced on Ledger connections (sqlite-open.ts): a row that
- * references prospects(id) must point at an existing prospect.
+ * Existing USD columns use REAL, with totals and caps compared in integer cents.
+ * New money columns use INTEGER micro-dollars. Foreign keys are enforced: rows
+ * referencing prospects(id) require an existing prospect.
  */
 export interface LedgerMigration {
   version: number;
@@ -49,7 +34,7 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
   { version: 1, name: "baseline", up: (db) => migrateLedgerSchema(db) },
   {
     // Which first-touch format arm (`standard` / `brief`) a draft was written
-    // in, NULL when its trigger never set one — so outcomes split by format
+    // in, NULL when its trigger never set one, so outcomes split by format
     // the way `voice_key` splits them by voice card.
     version: 2,
     name: "draft-versions-format-key",
@@ -362,14 +347,14 @@ export function migrateLedgerSchema(db: Database): void {
 
   // Lightweight migrations for installs that pre-date a column.
   addColumnIfMissing(db, "prospects", "phone", "TEXT");
-  // v17: source profile URL (GitHub / X / Luma) as a re-enrichment key —
+  // v17: source profile URL (GitHub / X / Luma) as a re-enrichment key:
   // `linkedin_url` is polymorphic and can't serve that role.
   addColumnIfMissing(db, "prospects", "source_profile_url", "TEXT");
   // v18: job title at contact time (person-level ICP gate, _qualify.ts).
   // NULL on rows contacted before the gate existed.
   addColumnIfMissing(db, "prospects", "title", "TEXT");
   // v18: person-level ICP verdict ('pass' | 'reject', NULL = unjudged) +
-  // reason. The cadence step runner refuses follow-ups to 'reject' rows —
+  // reason. The cadence step runner refuses follow-ups to 'reject' rows:
   // the gate must be code-level, not prompt-level.
   addColumnIfMissing(db, "prospects", "icp_verdict", "TEXT");
   addColumnIfMissing(db, "prospects", "icp_verdict_reason", "TEXT");
@@ -379,7 +364,7 @@ export function migrateLedgerSchema(db: Database): void {
   // v6: persisted per-row drafts (the /run SSE stream is ephemeral).
   addColumnIfMissing(db, "target_queue", "last_draft_json", "TEXT");
   addColumnIfMissing(db, "target_queue", "last_drafted_at", "TEXT");
-  // v7: lease column — dequeueApproved flips it in a transaction so
+  // v7: lease column: dequeueApproved flips it in a transaction so
   // concurrent drains claim disjoint slices; 15-min lease self-heals a
   // crashed drain.
   addColumnIfMissing(db, "target_queue", "drain_claimed_at", "TEXT");
@@ -401,7 +386,7 @@ export function migrateLedgerSchema(db: Database): void {
   // v11: sender rotation. sender_identity feeds the per-identity daily
   // counter + warm-up date; sender_assignments pins each prospect to their
   // first-touch identity so follow-ups never switch From address mid-thread.
-  // Keyed by email, NOT prospect_id — some sends predate the prospect row.
+  // Keyed by email, NOT prospect_id: some sends predate the prospect row.
   addColumnIfMissing(db, "receipts", "sender_identity", "TEXT");
   // v12: negative enrichment caching. NULL/"ok" = success, "failed" = skip
   // retries within ENRICH_FAILURE_TTL_MS instead of re-paying ~70s timeouts.
@@ -468,7 +453,7 @@ export function migrateLedgerSchema(db: Database): void {
   // sent to OneShot at call time; value_tag(_at) hold the outcome value set
   // by tagOutcomeValue. sequence_events.receipt_id links a sent step to its
   // send receipt so outcomes know which receipts to tag (resolved upstream
-  // via request_id — no platform receipt-id backfill needed).
+  // via request_id: no platform receipt-id backfill needed).
   addColumnIfMissing(db, "receipts", "memo", "TEXT");
   addColumnIfMissing(db, "receipts", "decision_context", "TEXT");
   addColumnIfMissing(db, "receipts", "value_tag", "TEXT");
@@ -479,7 +464,7 @@ export function migrateLedgerSchema(db: Database): void {
       CREATE INDEX IF NOT EXISTS idx_receipts_value_tag
         ON receipts(value_tag, created_at) WHERE value_tag IS NOT NULL;
     `);
-  // v17: goal-level value attribution — goal_id mirrors decisionContext.goalId
+  // v17: goal-level value attribution: goal_id mirrors decisionContext.goalId
   // so an outcome tags every receipt in the cadence at once.
   addColumnIfMissing(db, "receipts", "goal_id", "TEXT");
   db.exec(`
@@ -507,7 +492,7 @@ export function migrateLedgerSchema(db: Database): void {
       -- suppressionFor, on the send pre-flight path — must be an index seek.
       CREATE INDEX IF NOT EXISTS idx_bounces_recipient ON bounces(recipient, kind);
     `);
-  // v19: inbox-placement canary results — one row per manual A→B test.
+  // v19: inbox-placement canary results: one row per manual A→B test.
   // Append-only so the reputation trend stays visible.
   db.exec(`
       CREATE TABLE IF NOT EXISTS canary_results (
@@ -527,7 +512,7 @@ export function migrateLedgerSchema(db: Database): void {
       );
       CREATE INDEX IF NOT EXISTS idx_canary_created ON canary_results(created_at DESC);
     `);
-  // v20: reply-poll watermark — persisted high-water mark makes the inbox
+  // v20: reply-poll watermark: persisted high-water mark makes the inbox
   // poll "everything since last success"; a failed tick leaves the mark in
   // place so the next good poll re-covers the gap.
   db.exec(`
@@ -542,7 +527,7 @@ export function migrateLedgerSchema(db: Database): void {
     prospect_id INTEGER PRIMARY KEY,
     archived_at TEXT NOT NULL
   )`);
-  // v21: inbound replies persisted at detection (body included) — the ledger,
+  // v21: inbound replies persisted at detection (body included). The ledger,
   // not the mailbox, is the store; a reply must never depend on a live fetch
   // window. PK is the provider email id so the poll's overlap re-sweeps and
   // the /inbox route's opportunistic captures are idempotent (mirrors
@@ -585,15 +570,15 @@ export function migrateLedgerSchema(db: Database): void {
   // v23: reply classification ('human' | 'auto' | 'auto_permanent' |
   // 'unsubscribe', see reply-classify.ts). NULL = row predates the
   // classifier and reads as 'human' everywhere (coalesce). Must run after
-  // the CREATE TABLE above — ALTER on a fresh install needs the table.
+  // the CREATE TABLE above: ALTER on a fresh install needs the table.
   addColumnIfMissing(db, "inbox_replies", "kind", "TEXT");
-  // contactSuppressionFor, on the send pre-flight path — must be an index seek.
+  // contactSuppressionFor, on the send pre-flight path: must be an index seek.
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_inbox_replies_from_kind ON inbox_replies(from_email, kind)`,
   );
   // v22: tweets the x-reposters finder already paid to harvest. Both X data
   // providers bill per resource RETURNED, and the finder's freshness window
-  // (48h) is wider than its daily cadence — without this ledger every fresh
+  // (48h) is wider than its daily cadence, without this ledger every fresh
   // tweet would be re-bought on two consecutive runs.
   db.exec(`
       CREATE TABLE IF NOT EXISTS x_harvested_tweets (
@@ -601,7 +586,7 @@ export function migrateLedgerSchema(db: Database): void {
         harvested_at TEXT NOT NULL
       );
     `);
-  // v24: 'cancelled' — the terminal state a run lands in when the SSE client
+  // v24: 'cancelled'. The terminal state a run lands in when the SSE client
   // disconnects or POST /api/run/:runId/cancel fires, plus the reason that
   // got it there. The CREATE TABLE above already allows it on a fresh
   // install; older installs carry the narrower CHECK and need the rebuild.
@@ -612,10 +597,10 @@ export function migrateLedgerSchema(db: Database): void {
   // v25: shadow-mode prospect priority (issue #410). Serialized
   // ProspectPriority computed at enqueue time from payload evidence; NULL on
   // manual/legacy rows, auto-rejections, and everything pre-v25. Read-only
-  // metadata — nothing orders, gates, or drains by it in Phase 1.
+  // metadata: nothing orders, gates, or drains by it in Phase 1.
   addColumnIfMissing(db, "target_queue", "priority_json", "TEXT");
   // v26: decision provenance (issue #410 Phase 3). `status` is a lossy
-  // record of the decision HISTORY — expiry overwrites approvals (a reply
+  // record of the decision HISTORY: expiry overwrites approvals (a reply
   // used to destroy the approval label on its own breakup-revive row),
   // re-open nulls reviewed_at, and bulk approves share one timestamp.
   // These columns record the decision itself and are never touched by
@@ -639,7 +624,7 @@ export function migrateLedgerSchema(db: Database): void {
       CREATE INDEX IF NOT EXISTS idx_webhook_replays_expiry
         ON webhook_replays(expires_at);
     `);
-  // v28 (issue #481): install-wide daily USD spend ceiling — reservations
+  // v28 (issue #481): install-wide daily USD spend ceiling: reservations
   // held for the duration of an automated call (finder trigger run,
   // automatic drain) so two concurrent automated paths across processes
   // can't both slip under the ceiling before either one's spend has
@@ -658,7 +643,7 @@ export function migrateLedgerSchema(db: Database): void {
       );
       CREATE INDEX IF NOT EXISTS idx_spend_reservations_created ON spend_reservations(created_at);
     `);
-  // v29: reply INTENT (issue #480) — sentiment classification, distinct from
+  // v29: reply INTENT (issue #480): sentiment classification, distinct from
   // `kind` (deliverability triage, v23). Populated best-effort by
   // pollInboxReplies right after a reply classifies as `kind: 'human'`, via
   // the existing intel/triage.ts taxonomy (TriageCategory). NULL = not yet
@@ -670,43 +655,43 @@ export function migrateLedgerSchema(db: Database): void {
   // only, no exclusivity"), set from /inbox and read by draftInboxReply.
   // `status` is recomputed on every save from the draft body's own lint
   // state ('needs_decision' when the commits-terms flag survives, else
-  // NULL) — never hand-set, so it can never drift from the text it
+  // NULL). Never hand-set, so it can never drift from the text it
   // describes.
   addColumnIfMissing(db, "inbox_drafts", "steer", "TEXT");
   addColumnIfMissing(db, "inbox_drafts", "status", "TEXT");
   // v31: occurrence timestamp for a reply, separate from created_at.
   // markLatestStepReplied flips the ORIGINAL sent row's status in place, so
-  // created_at stays pinned to the send time — eventsByPlay's sinceIso/
+  // created_at stays pinned to the send time: eventsByPlay's sinceIso/
   // untilIso window (used by the Slack daily-summary aggregate) was
   // silently dropping any reply landing after the SENT step's created_at
   // window instead of the reply's own occurrence day. replied_at is stamped
   // at the moment of the flip and is what date-windowed rollups must filter
-  // on for replies. (Bounces get the equivalent fix in v33 — created_at
+  // on for replies. (Bounces get the equivalent fix in v33: created_at
   // alone turned out NOT to be occurrence time for them either: see that
   // migration's comment.)
   addColumnIfMissing(db, "sequence_events", "replied_at", "TEXT");
-  // v32: per-prospect angle (issue #355) — LLM synthesis of dossier + live
+  // v32: per-prospect angle (issue #355): LLM synthesis of dossier + live
   // public work + reply history, distinct from `dossier_json` (raw research
   // input) and from `yourEdge` (founder config stamped identically on every
   // target). `angle_synthesized_at` NULL = never synthesized; set alongside
   // `angle_json` by `setProspectAngle`, cleared together when passed null.
   addColumnIfMissing(db, "prospects", "angle_json", "TEXT");
   addColumnIfMissing(db, "prospects", "angle_synthesized_at", "TEXT");
-  // v33: issue #71 round-2 review finding — a bounced sequence_events row IS
+  // v33: issue #71 round-2 review finding. A bounced sequence_events row IS
   // freshly inserted per occurrence (unlike the replied flip-in-place), so
   // created_at looked like occurrence time, but it's actually POLL/detection
   // time: pollInboxBounces only sees a DSN once the mailbox is next polled,
   // and a poll resuming after downtime (or a delayed bounce) can misattribute
   // the bounce to the wrong UTC calendar day in the Slack daily summary.
   // bounced_at carries the provider's own bounce timestamp (already captured
-  // as `bouncedAt` from the message's internalDate — see gmail.ts) so
+  // as `bouncedAt` from the message's internalDate: see gmail.ts) so
   // eventsByPlay can window bounces the same way it windows replies, via
   // COALESCE(bounced_at, created_at).
   addColumnIfMissing(db, "sequence_events", "bounced_at", "TEXT");
   // v34 (issue #577): past calendar meetings needing an outcome. Composite
   // PK because a Google Calendar event id is only unique WITHIN one
   // calendar. `singleEvents=true` derives a recurring instance's id from its
-  // ORIGINAL start, so it survives a reschedule — recurring_event_id is kept
+  // ORIGINAL start, so it survives a reschedule: recurring_event_id is kept
   // so a moved instance is never forked into a ghost row. `ical_uid` is
   // indexed (not unique) because the same meeting on two calendars produces
   // two distinct (calendar_id, event_id) rows sharing one iCalUID.
@@ -714,7 +699,7 @@ export function migrateLedgerSchema(db: Database): void {
   // Every write here MUST be an idempotent `ON CONFLICT DO UPDATE`, never
   // `INSERT OR REPLACE` (a cancellation stub carries almost no fields and
   // would wipe summary/prospect_id/outcome) and never `INSERT OR IGNORE`
-  // (unlike an immutable inbox_replies row, an event mutates in place —
+  // (unlike an immutable inbox_replies row, an event mutates in place:
   // reschedules and cancellations are updates to the SAME row, not new
   // ones). See `upsertMeeting` in ledger.ts for the COALESCE(excluded.col,
   // meetings.col) pattern this requires.
@@ -791,7 +776,7 @@ export function migrateLedgerSchema(db: Database): void {
         ON meetings(ical_uid) WHERE ical_uid IS NOT NULL;
     `);
 
-  // v33: draft versions — every draft put in front of the founder, intro or
+  // v33: draft versions. Every draft put in front of the founder, intro or
   // follow-up, with what became of it (see ledger-drafts.ts). Before this,
   // `target_queue.last_draft_json` and `cadence_state.next_step_draft_json`
   // were overwritten in place, so a regenerate erased the draft it replaced
@@ -828,7 +813,7 @@ export function migrateLedgerSchema(db: Database): void {
     `);
 
   // v34: which founder voice card (a short hash of it) a draft was written
-  // with, NULL when none was set — so approve/reject outcomes split by card
+  // with, NULL when none was set, so approve/reject outcomes split by card
   // even if the card changes mid-review.
   addColumnIfMissing(db, "draft_versions", "voice_key", "TEXT");
   db.exec(`
@@ -841,7 +826,7 @@ export function migrateLedgerSchema(db: Database): void {
  * One-time (guard-idempotent, boot-run) inference of decision provenance
  * for pre-v26 rows, reproducing the status-based `isHumanDecision`
  * predicate exactly so every existing metric is unchanged by the migration.
- * Pending/expired rows stay NULL — labels machinery already destroyed are
+ * Pending/expired rows stay NULL: labels machinery already destroyed are
  * not fabricated. Safe under concurrent boots: the `decision IS NULL`
  * guard makes the loser's UPDATE a no-op.
  */
@@ -898,7 +883,7 @@ export function backfillDecisionProvenance(db: Database): void {
  * SQLite cannot ALTER a CHECK constraint, so admitting 'cancelled' into
  * `runs.status` means rebuilding the table. The sqlite_master probe makes
  * this a no-op on fresh installs and on every boot after the first. Only the
- * original columns are copied — `cancel_reason` is added by the ALTER that
+ * original columns are copied: `cancel_reason` is added by the ALTER that
  * follows, so this stays correct whichever order an install arrives in.
  * DROP TABLE takes the indexes with it, hence the recreate.
  */

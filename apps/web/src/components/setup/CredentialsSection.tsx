@@ -24,7 +24,7 @@ type Secrets = Record<SecretKey, string>;
 /**
  * The badge next to a key. "in use" means the runtime reads THIS key today
  * (selected by the saved preferences AND present). A selected key that is
- * missing is "needed" when core can't run without it, "optional" otherwise —
+ * missing is "needed" when core can't run without it, "optional" otherwise:
  * never "in use", which read as a contradiction next to an empty field.
  */
 function keyState(
@@ -37,7 +37,7 @@ function keyState(
   return g.optional ? { label: "optional", tone: "neutral" } : { label: "needed", tone: "spend" };
 }
 
-/** Every secret starts blank on screen — the server never echoes a value. */
+/** Every secret starts blank on screen. The server never echoes a value. */
 const EMPTY: Secrets = Object.fromEntries(
   (Object.keys(SECRET_LABELS) as SecretKey[]).map((k) => [k, ""]),
 ) as Secrets;
@@ -80,7 +80,7 @@ interface Group {
 /**
  * Every `type="password"` input on the page, in one place (issue #451 scope
  * item 4). Preferences stay in their own sections; this one posts only
- * `{ secrets }`. A blank field means "keep what's there" — there is no
+ * `{ secrets }`. A blank field means "keep what's there": there is no
  * delete path for a secret from the web UI, same as before.
  */
 export function CredentialsSection({
@@ -193,7 +193,7 @@ export function CredentialsSection({
         ),
       },
     ],
-    [cfg, sources, homeDir, isLegacyPool, xEngine, cookieSet, linkedinAdvanced],
+    [cfg, sources, isLegacyPool, xEngine, cookieSet, linkedinAdvanced],
   );
 
   return (

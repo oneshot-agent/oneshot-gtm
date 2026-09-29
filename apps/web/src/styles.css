@@ -3,7 +3,7 @@
 @import "./design/tokens.css";
 
 /*
- * Tailwind theme — map our semantic tokens to utilities so class names
+ * Tailwind theme: map our semantic tokens to utilities so class names
  * read like the design language (bg-ink-surface, text-ink-cream, etc.).
  * We keep the default Tailwind colour palette available for edge cases
  * but prefer ink-* tokens throughout the app.
@@ -40,7 +40,7 @@
   --radius-xl: var(--radius-xl);
 }
 
-/* ── base ─────────────────────────────────────────────────────────── */
+/* base */
 
 html,
 body,
@@ -58,7 +58,7 @@ html {
   background-image:
     /* noise (subtle grain) */
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.035 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"),
-    /* ruled lines — 1px every 8px */
+    /* ruled lines: 1px every 8px */
     linear-gradient(
         to bottom,
         transparent 0,
@@ -92,7 +92,7 @@ body {
   color: var(--ink-cream);
 }
 
-/* ── focus ────────────────────────────────────────────────────────── */
+/* focus */
 
 :focus-visible {
   outline: none;
@@ -100,7 +100,7 @@ body {
   border-radius: var(--radius-sm);
 }
 
-/* ── link baseline ────────────────────────────────────────────────── */
+/* link baseline */
 
 a {
   color: inherit;
@@ -109,7 +109,7 @@ a {
   text-underline-offset: 3px;
 }
 
-/* ── type helpers (used by primitives + routes directly) ──────────── */
+/* type helpers (used by primitives + routes directly) */
 
 .ln-display {
   font-family: var(--font-display);
@@ -155,7 +155,7 @@ a {
 }
 
 /*
- * Big display numerals — Plex Mono monumental. Tabular-nums so columns
+ * Big display numerals: Plex Mono monumental. Tabular-nums so columns
  * of $ and integers align, and slashed-zero so a cold 0 doesn't look
  * like an O.
  */
@@ -168,28 +168,13 @@ a {
   font-feature-settings: "zero", "ss01";
 }
 
-/* ── the foot of the page ────────────────────────────────────────── */
+/* the foot of the page */
 
 /*
- * Every page here ends in a list, and the last row used to sit 24px off the
- * footer rule, which reads as a row that got cut off rather than a ledger that
- * ended.
- *
- * The obvious fix, padding-bottom on <main>, is wrong: `sticky bottom-0`
- * resolves against the scroller's content box, so padding lifts the queue's
- * selection bar and the setup and run action bars away from the footer at every
- * scroll position. The gutter belongs to the page's last in-flow block instead.
- *
- * Two selectors, because the last block is not always the one that wants it.
- * When an action bar ends the page it stays flush and the block above it takes
- * the gutter, so the list breathes and the bar still sits on the footer rule.
- *
- * The second one is depth-agnostic on purpose. /queue puts its bar beside the
- * table as a sibling; /setup puts its save bar inside the form. Matching only
- * direct children handled the first and quietly broke the second: the form was
- * the last block, took the gutter, and lifted the save bar 56px off the footer
- * — the exact bug this rule exists to prevent. The `:has` exclusion keeps a
- * container that holds a bar from taking the gutter meant for the block above.
+ * Put the gutter on the last in-flow block, or the block before an action bar.
+ * Padding main would lift sticky bottom-0 bars away from the footer.
+ * Match bars at any depth: queue uses siblings, while setup nests its bar in a
+ * form. Exclude containers holding bars so they do not inherit the gutter.
  */
 :root {
   --ledger-gutter: 3.5rem;
@@ -200,7 +185,7 @@ main :has(+ [data-foot-bar]) {
   margin-bottom: var(--ledger-gutter);
 }
 
-/* ── ledger row rhythm ───────────────────────────────────────────── */
+/* ledger row rhythm */
 
 .ln-row {
   border-bottom: 1px solid var(--ink-rule);
@@ -234,7 +219,7 @@ main :has(+ [data-foot-bar]) {
   background: var(--ink-signal);
 }
 
-/* ── sparkline animation keyframes ───────────────────────────────── */
+/* sparkline animation keyframes */
 
 @keyframes ln-draw {
   from {
@@ -268,7 +253,7 @@ main :has(+ [data-foot-bar]) {
   }
 }
 
-/* Reduced-motion respect — kill all non-essential motion. */
+/* Reduced-motion respect: kill all non-essential motion. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -279,7 +264,7 @@ main :has(+ [data-foot-bar]) {
   }
 }
 
-/* ── command palette (cmdk) ──────────────────────────────────────── */
+/* command palette (cmdk) */
 
 [cmdk-root] {
   display: flex;
@@ -403,7 +388,7 @@ main :has(+ [data-foot-bar]) {
   }
 }
 
-/* ── scrollbars (subtle) ─────────────────────────────────────────── */
+/* scrollbars (subtle) */
 
 * {
   scrollbar-width: thin;

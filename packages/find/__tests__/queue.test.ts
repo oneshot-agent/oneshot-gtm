@@ -273,7 +273,7 @@ describe("trigger registry state", () => {
     ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
     ledger.markTriggerRunning("show-hn", iso);
     expect(ledger.getTrigger("show-hn")?.running_started_at).toBe(iso);
-    // last_polled_at starts null (never successfully polled) — a ceiling
+    // last_polled_at starts null (never successfully polled). A ceiling
     // refusal must leave it null so the trigger is still "due" the instant
     // headroom opens, not stuck for a full interval as if it had run.
     expect(ledger.getTrigger("show-hn")?.last_polled_at).toBeNull();
@@ -285,7 +285,7 @@ describe("trigger registry state", () => {
 
     const t = ledger.getTrigger("show-hn");
     expect(t?.running_started_at).toBeNull(); // claim released
-    expect(t?.last_polled_at).toBeNull(); // NOT stamped — the key behavior
+    expect(t?.last_polled_at).toBeNull(); // NOT stamped. The key behavior
     expect(JSON.parse(t!.last_run_summary ?? "{}")).toMatchObject({
       error: expect.stringContaining("ceiling reached"),
     });
@@ -326,7 +326,7 @@ describe("trigger run-state persistence (survives restart)", () => {
     // be rejected. Closes the TOCTOU race two concurrent fireTriggerNow
     // calls would otherwise hit.
     expect(ledger.markTriggerRunning("show-hn", "2026-04-24T18:01:00Z")).toBe(false);
-    // Original timestamp preserved — the second claim doesn't overwrite.
+    // Original timestamp preserved. The second claim doesn't overwrite.
     expect(ledger.getTrigger("show-hn")?.running_started_at).toBe("2026-04-24T18:00:00Z");
   });
 
@@ -360,7 +360,7 @@ describe("trigger run-state persistence (survives restart)", () => {
   it("markTriggerRunning still rejects when the existing flag is fresh (within cutoff)", () => {
     ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
     expect(ledger.markTriggerRunning("show-hn", "2026-04-24T18:00:00Z")).toBe(true);
-    // Only 30 minutes later — well inside the 4h freshness window. A click
+    // Only 30 minutes later: well inside the 4h freshness window. A click
     // here would double-spend on a still-genuinely-running finder.
     const nowIso = "2026-04-24T18:30:00Z";
     const staleCutoffIso = "2026-04-24T14:30:00Z";
@@ -371,7 +371,7 @@ describe("trigger run-state persistence (survives restart)", () => {
 
   it("markTriggerRunning without a cutoff keeps the strict IS NULL gate", () => {
     // Backwards compat: callers that don't pass a cutoff get the old
-    // behavior — any in-flight flag (fresh or stale) blocks the claim.
+    // behavior: any in-flight flag (fresh or stale) blocks the claim.
     ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
     expect(ledger.markTriggerRunning("show-hn", "2026-04-24T10:00:00Z")).toBe(true);
     expect(ledger.markTriggerRunning("show-hn", "2026-04-24T20:00:00Z")).toBe(false);
@@ -450,7 +450,7 @@ describe("trigger run-state persistence (survives restart)", () => {
     ledger.upsertTrigger({ name: "idle", configJson: "{}" });
     ledger.markTriggerRunning("fresh", "2026-04-24T18:55:00Z");
     ledger.markTriggerRunning("stale", "2026-04-24T17:00:00Z");
-    // "idle" has no running_started_at — should never appear in the sweep.
+    // "idle" has no running_started_at: should never appear in the sweep.
     const swept = ledger.sweepStaleRunningTriggers({
       now: new Date("2026-04-24T19:00:00Z"),
       maxAgeMs: 15 * 60_000,

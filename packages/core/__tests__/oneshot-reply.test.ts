@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // replyEmail dispatch: a reply goes out from the identity whose mailbox
-// received the inbound email — Gmail path threads (threadId + In-Reply-To),
+// received the inbound email: Gmail path threads (threadId + In-Reply-To),
 // records a cost-0 "email.reply" receipt, and never touches sender rotation.
 // Config + ledger are mocked so no real ~/.oneshot-gtm is touched.
 
@@ -156,7 +156,7 @@ describe("replyEmail — gmail identity", () => {
       raw: string;
       threadId?: string;
     };
-    // threadId is a Message-resource field — threads our copy in the sender's mailbox.
+    // threadId is a Message-resource field: threads our copy in the sender's mailbox.
     expect(payload.threadId).toBe("t-9");
     const mime = Buffer.from(payload.raw, "base64url").toString("utf8");
     expect(mime).toContain("Subject: Re: trustclaw stack");

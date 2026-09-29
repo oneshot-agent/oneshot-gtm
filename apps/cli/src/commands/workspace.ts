@@ -74,7 +74,7 @@ export async function commandWorkspaceUse(name: string): Promise<void> {
 }
 
 export async function commandWorkspaceCurrent(): Promise<void> {
-  // configDir() is the home this process is actually bound to — which, under
+  // configDir() is the home this process is actually bound to, which, under
   // an explicit ONESHOT_GTM_HOME, needn't be a registered workspace at all.
   process.stdout.write(`${currentWorkspaceName()}	${configDir()}
 `);

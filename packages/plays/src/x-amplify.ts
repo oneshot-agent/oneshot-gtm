@@ -5,11 +5,11 @@ import { type EmailPlayDef, type Prepared, runEmailPlay } from "./_run-play.ts";
 /**
  * Amplifier-lane prospect from the x-reposters finder: a dev/AI account that
  * reposted a watched tweet and whose email the research pass found. The ask is
- * exactly one thing — a look, and a repost on launch day if it's their kind of
+ * exactly one thing. A look, and a repost on launch day if it's their kind of
  * thing. NEVER a product pitch: the lane gate is the qualification, and
  * pitching adoption at an amplifier burns both asks.
  *
- * One touch, no cadence — cadence offsets are relative to the send date and
+ * One touch, no cadence: cadence offsets are relative to the send date and
  * can't express "near launch day", and a breakup sequence on a favor-ask reads
  * as pressure.
  */
@@ -28,12 +28,12 @@ export interface XAmplifyTarget {
   tweetUrl: string;
   tweetText: string;
   mode: "retweet" | "quote";
-  /** Their own words when they quoted — the best hook when present. */
+  /** Their own words when they quoted. The best hook when present. */
   quote?: string | null;
   followers?: number;
   score?: number;
   why?: string;
-  /** ISO launch date — the ONLY timing fact the draft may state. */
+  /** ISO launch date. The ONLY timing fact the draft may state. */
   launchDate?: string | null;
   dmOpen?: boolean;
   engine?: string;
@@ -46,7 +46,7 @@ export interface XAmplifyRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -69,7 +69,7 @@ const xAmplifyDef: EmailPlayDef<XAmplifyTarget> = {
   maxBodyWords: 90,
   enrollCadence: false,
   toEmail: (t) => t.email ?? "",
-  // The finder already researched the person for the email hunt — the dossier
+  // The finder already researched the person for the email hunt. The dossier
   // rides along. No re-pay, no fallback enrichment: the repost is the hook.
   prepare: (t, _dryRun): Promise<Prepared> =>
     Promise.resolve({ receiptIds: [], dossier: t.dossier ?? "" }),

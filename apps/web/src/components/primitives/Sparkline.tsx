@@ -27,7 +27,7 @@ const TONE_VAR: Record<NonNullable<SparklineProps["tone"]>, string> = {
 };
 
 /**
- * A tiny SVG sparkline. No chart library — just a smooth polyline over
+ * A tiny SVG sparkline. No chart library: just a smooth polyline over
  * the values you give it, optionally with a faint fill and a tip dot.
  * The line draws in like an EKG on mount when `animateIn` is true.
  */

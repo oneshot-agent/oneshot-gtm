@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // The LinkedIn session behind live profile reads: nothing connected is a
 // plain "ok" (provider history only), a cookie or a started login without a
 // checked session warns, an expired one warns, a checked session reports who
-// it is logged in as — whether it came from a hosted login or a cookie.
+// it is logged in as: whether it came from a hosted login or a cookie.
 
 let cfgOverride: Record<string, unknown> = {};
 

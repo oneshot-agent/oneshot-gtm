@@ -103,7 +103,7 @@ function RootLayout() {
     closePalette: () => setPaletteOpen(false),
   });
 
-  // Alert signals — cheap queries, polled at a slower cadence than the
+  // Alert signals: cheap queries, polled at a slower cadence than the
   // primary route data. These let the nav show a red dot without asking
   // the user to open the route.
   const queueQuery = useQuery({
@@ -117,14 +117,14 @@ function RootLayout() {
     refetchInterval: 60_000,
   });
   // A positive reply is the highest-value event in the product and the one
-  // thing that never announced itself (issue #480) — polled at the same
+  // thing that never announced itself (issue #480): polled at the same
   // cadence /inbox itself uses, so the dot and the page never disagree.
   const inboxAlertQuery = useQuery({
     queryKey: ["replies"],
     queryFn: () => api.replies(),
     refetchInterval: 60_000,
   });
-  // A past meeting with no outcome logged (issue #577) — same idea as the
+  // A past meeting with no outcome logged (issue #577): same idea as the
   // inbox dot: the founder should never have to open /meetings to notice one
   // is waiting.
   const meetingsAlertQuery = useQuery({
@@ -135,7 +135,7 @@ function RootLayout() {
 
   // <main> is the scroll container and it persists across routes, so without
   // this a navigation inherits the previous page's scroll offset: scroll down
-  // the Home feed, click Queue, and Queue opens 1000px in — the top of the
+  // the Home feed, click Queue, and Queue opens 1000px in. The top of the
   // list (and the triggers card) are above the fold, which reads as "only
   // some of the prospects show until I refresh". Every route change starts
   // at the top, the way a full page load does.
@@ -167,9 +167,8 @@ function RootLayout() {
   const alerts: Record<NonNullable<NavItem["alert"]>, boolean> = {
     "queue-pending": (queueQuery.data?.counts.pending ?? 0) > 0,
     "doctor-fail": (doctor.data?.checks ?? []).some((c) => c.severity === "fail"),
-    // Round-2 correction (#480): `awaitingReply` (not a bare `intent` check)
-    // — it clears once the founder replies to the thread or records a deal
-    // outcome, so the dot doesn't stay lit forever after the first use.
+    // `awaitingReply` clears when the founder replies or records a deal outcome.
+    // A bare intent check would keep the alert lit after the reply was handled.
     "inbox-positive": (inboxAlertQuery.data?.threads ?? []).some(replyNeedsAttention),
     "meetings-pending": (meetingsAlertQuery.data?.awaitingOutcome.length ?? 0) > 0,
   };
@@ -335,7 +334,7 @@ function RootLayout() {
             against this scroller's content box, so padding-bottom lifts the
             queue's selection bar and the setup and run action bars off the
             footer at every scroll position, not just at the end. The gutter is
-            a margin on the page's last in-flow block instead — see
+            a margin on the page's last in-flow block instead: see
             `--ledger-gutter` in styles.css.
           */}
           <main

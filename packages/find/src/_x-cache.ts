@@ -2,11 +2,11 @@
  * Harvest replay cache for the x-reposters finder.
  *
  * Both X providers bill per resource returned, so re-running a harvest to try
- * a filter change costs real money — a day of that once emptied the X account.
+ * a filter change costs real money. A day of that once emptied the X account.
  * Every live run saves its raw (post-enrichment) harvest here; a replay run
  * re-scores it offline for nothing.
  *
- * The companion state — tweet ids already paid for — lives in the SQLite
+ * The companion state (tweet ids already paid for) lives in the SQLite
  * ledger (`x_harvested_tweets`), not here: it guards money and must be durable
  * and workspace-aware.
  */

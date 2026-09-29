@@ -25,7 +25,7 @@ export function contactAllowedClause(db: Database): string {
     // (reply-classify.ts's UNSUBSCRIBE_RE) and can miss a real "remove me"
     // request, landing it as `kind = 'human'`. The sentiment triage (issue
     // #480) reads the same reply's `intent` column correctly as
-    // 'unsubscribe' in that case. Either signal is a do-not-contact — veto
+    // 'unsubscribe' in that case. Either signal is a do-not-contact: veto
     // on both, guarded separately since `intent` postdates `kind` and an
     // older ledger may have the table without the column.
     if (inboxReplyColumns.has("intent"))

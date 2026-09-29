@@ -3,7 +3,7 @@ import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 
 /**
  * A manually-added prospect researched from a LinkedIn or X/Twitter URL. Unlike
- * the signal-specific plays, there's no external trigger artifact — the hook is
+ * the signal-specific plays, there's no external trigger artifact. The hook is
  * the person's own dossier, and the LLM picks the angle. `dossier` is the
  * pre-researched context (from deepResearchPerson); when present, `prepare`
  * uses it verbatim instead of re-enriching (so X profiles with no email still
@@ -30,7 +30,7 @@ export interface ProfileIntroRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;

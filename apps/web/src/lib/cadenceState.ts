@@ -1,6 +1,6 @@
 /**
  * The /cadences row's second line (issue #602): where this person is in the
- * sequence, in one mono label — "step 2 of 4 · sent 3d ago · next in 1d",
+ * sequence, in one mono label: "step 2 of 4 · sent 3d ago · next in 1d",
  * "replied on linkedin · 2d ago", "stopped · not a fit · 5d ago". Pure: the
  * clock is injected so the cases are testable, and the label uppercases in
  * the row, so the text here is plain case.
@@ -30,7 +30,7 @@ export function cadenceStateLabel(c: CadenceView, now: Date): CadenceState {
   const ago = (iso: string): string => timeAgo(iso, nowMs);
   const total = c.followupCount + 1;
   const step = `step ${Math.min(c.currentStep + 1, total)} of ${total}`;
-  // A skipped letter is history, not a send — "sent 3d ago" stays the last email.
+  // A skipped letter is history, not a send: "sent 3d ago" stays the last email.
   const lastSent = c.priorSteps.findLast((s) => s.status !== "skipped")?.sentAt ?? null;
 
   if (c.isSending) return { text: join([step, "sending…"]), tone: "receipt" };

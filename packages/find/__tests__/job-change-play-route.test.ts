@@ -5,8 +5,8 @@ import { assertNotOwnerOperatorBuyer } from "@oneshot-gtm/plays";
 // job-change through a REAL run with `play`/`buyerType` set and inspected
 // what actually lands in target_queue. This exercises the finder's real
 // call site (not `buildDesignPartnerLoiPayload` as a pure function on
-// hand-written input) so a wrong field mapping — e.g. `company` silently
-// coming from the wrong extract field — would fail here.
+// hand-written input) so a wrong field mapping: e.g. `company` silently
+// coming from the wrong extract field: would fail here.
 
 interface EnqueuedRow {
   playName: string;
@@ -138,14 +138,13 @@ describe("runJobChangeFinder — routed to design-partner-loi (#705)", () => {
 
     // The non-obvious mapping the review flagged as unmeasured: company comes
     // from `target.newCompany` (the new employer), not the person's name/old
-    // company/role — a helper test on hand-written input can't catch a finder
+    // company/role. A helper test on hand-written input can't catch a finder
     // wiring the wrong field here.
     expect(p["company"]).toBe("NewCo Industries");
     expect(p["email"]).toBe("kim@newco.example");
     expect(p["buyerType"]).toBe("enterprise");
 
-    // The routed payload is DesignPartnerLoiTarget-shaped, not JobChangeTarget
-    // — it must not carry job-change's own fields.
+    // The routed payload must omit job-change fields.
     expect(p).not.toHaveProperty("newRole");
     expect(p).not.toHaveProperty("newCompany");
     expect(p).not.toHaveProperty("previousCompany");
@@ -170,7 +169,7 @@ describe("runJobChangeFinder — routed to design-partner-loi (#705)", () => {
 
   it("drops a candidate already queued under the OTHER play — dedupe survives a `play` toggle in either direction", async () => {
     // Candidate already sitting under design-partner-loi; this run's own
-    // play is job-change (routing absent) — must still be treated as a dup.
+    // play is job-change (routing absent): must still be treated as a dup.
     queueDuplicateFor = new Set(["design-partner-loi"]);
     const out = await runJobChangeFinder({ dryRun: false, yourEdge: "x" });
     expect(out.enqueued).toBe(0);

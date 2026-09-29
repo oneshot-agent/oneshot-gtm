@@ -16,7 +16,7 @@ export const CHANNEL_MAX_CHARS: Record<Channel, number | null> = {
 };
 
 /**
- * Channels a row's person can be reached on, from its payload — the same
+ * Channels a row's person can be reached on, from its payload. The same
  * rule the server's channelAddresses applies before it switches a channel.
  */
 export function reachableChannels(payload: unknown): Channel[] {

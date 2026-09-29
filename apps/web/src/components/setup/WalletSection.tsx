@@ -8,12 +8,7 @@ import { SectionShell } from "./SectionShell.tsx";
 import { useConfigSection } from "./useConfigSection.ts";
 import type { SectionProps } from "./types.ts";
 
-export function WalletSection({
-  cfg,
-  sources,
-  homeDir,
-  onDirtyChange,
-}: SectionProps & { homeDir: string }) {
+export function WalletSection({ cfg, sources, onDirtyChange }: SectionProps & { homeDir: string }) {
   const server = useMemo(
     () => ({
       walletMode: cfg.walletMode as WalletMode,
@@ -78,8 +73,8 @@ export function WalletSection({
           hint="Across all automated finder runs and drains; they pause until local midnight once it's hit. Manual /queue sends are never blocked. Blank = unlimited."
         >
           {/* A text input on purpose: type="number" lets Firefox/Safari accept
-              junk and report value="" — exactly the silent path a cap must not
-              have. parseSpendCeiling is the validator. */}
+              junk and report value="": exactly the silent path a cap must not
+              have. ParseSpendCeiling is the validator. */}
           <Input
             inputMode="decimal"
             placeholder="unlimited"

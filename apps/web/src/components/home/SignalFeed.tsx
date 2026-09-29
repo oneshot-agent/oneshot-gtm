@@ -7,15 +7,15 @@ import { applyMask } from "../../lib/mask.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
 
 /**
- * A reverse-chron signal feed — the "what's happening right now" list
+ * A reverse-chron signal feed. The "what's happening right now" list
  * the founder checks first thing in the morning. Merges two event
  * streams (receipts + queue rows) into one ruled timeline.
  *
- *   ● signed receipt   — something was sent, spent, or searched
- *   ◉ queued candidate — a trigger or finder landed a new target
+ *   ● signed receipt: something was sent, spent, or searched
+ *   ◉ queued candidate. A trigger or finder landed a new target
  *
  * Each event links to its canonical source (receipt id / queue row) so
- * you can drill down. Pure client-side — no new API.
+ * you can drill down. Pure client-side: no new API.
  */
 
 interface FeedEvent {

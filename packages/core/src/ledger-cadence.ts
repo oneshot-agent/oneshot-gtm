@@ -8,20 +8,9 @@ import { QueueStore } from "./ledger-queue.ts";
 import type { CadencePlanStep, ChannelEventRecord, SequenceEventRecord } from "./types.ts";
 
 /**
- * Cadence persistence extracted from `Ledger` (#633) — the next slice of the
- * ledger split tracked in ROADMAP.md, following the receipt (#616), cache
- * (#618) and delivery-health (#617) extractions. Covers cadence creation,
- * lookup, step advancement, skip records, stop/disposition handling,
- * due-step queries, and the cadence-specific transactions that credit a
- * reply to a play and stop live cadences (email + LinkedIn), plus the
- * `cadence_plans` (direct-mail schedule) table.
- *
- * Pure functions of a raw `Database` handle, mirroring `delivery-health.ts`'s
- * pattern: no dependency on the `Ledger` class, so this domain can be read
- * and tested in isolation. `Ledger`'s own cadence methods (ledger.ts) are now
- * thin delegates to the functions below — same names, same signatures, same
- * SQL, same transaction boundaries — so every call site and the exported
- * `Ledger` surface are unchanged.
+ * Cadence persistence and transactions over a raw Database handle, including
+ * reply attribution, stopping live email/LinkedIn cadences, and direct-mail
+ * cadence plans. Ledger delegates its cadence methods here.
  */
 
 /** A `cadence_state` row joined with the prospect details needed by cadence surfaces. */
@@ -48,7 +37,7 @@ export interface CadenceWithProspect {
   sending_started_at: string | null;
   /** Last send-failure message (truncated); cleared on any forward progress.
    *  Non-null = the most recent send attempt failed and nothing has succeeded
-   *  since — drives the "send failed · retrying" row indicator. */
+   *  since: drives the "send failed · retrying" row indicator. */
   last_send_error: string | null;
   /** ISO timestamp of `last_send_error`. */
   last_send_error_at: string | null;
@@ -98,7 +87,7 @@ export function enrollCadence(
 }
 
 /**
- * Move an active cadence's due time without advancing it — the LinkedIn
+ * Move an active cadence's due time without advancing it. The LinkedIn
  * step waiting for an invite to be accepted checks again later instead of
  * being retried on every run.
  */
@@ -167,7 +156,7 @@ export function listAllCadences(db: Database): CadenceWithProspect[] {
 }
 
 /**
- * Single cadence (joined with its prospect) by (prospect_id, play_name) — an
+ * Single cadence (joined with its prospect) by (prospect_id, play_name). An
  * index seek on the `cadence_state` PRIMARY KEY. Replaces the O(n)
  * `listAllCadences().find(...)` scan callers used to do per row.
  */
@@ -194,7 +183,7 @@ export function getCadence(
   return (db.query(sql).get(prospectId, playName) as CadenceWithProspect) ?? null;
 }
 
-/** All cadences for one prospect — index seek on cadence_state.prospect_id (PK prefix). */
+/** All cadences for one prospect: index seek on cadence_state.prospect_id (PK prefix). */
 export function listCadencesForProspect(db: Database, prospectId: number): CadenceWithProspect[] {
   const sql = `
     SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
@@ -225,14 +214,14 @@ export function advanceCadence(
     nextDueAt: string | null;
   },
 ): void {
-  // Also clear any persisted next-step draft AND the sending marker — the
+  // Also clear any persisted next-step draft AND the sending marker. The
   // draft was for the OLD next step (stale after advance), and a successful
   // advance means the in-flight send for this row is done. /cadences will
   // surface a fresh "no preview yet" state.
   // A successful advance also clears any prior send-failure marker (the send
   // that just advanced us obviously succeeded).
   db.transaction(() => {
-    // A preview that predates versioning is still the draft being sent —
+    // A preview that predates versioning is still the draft being sent:
     // seed it before the clear below erases the envelope.
     seedCadenceDraftVersion(db, drafts, input.prospectId, input.playName);
     db.prepare(
@@ -244,7 +233,7 @@ export function advanceCadence(
        WHERE prospect_id = ? AND play_name = ?`,
     ).run(input.newStep, input.nextDueAt, input.prospectId, input.playName);
     // The step just advanced past is the one the open draft was for, and
-    // every cadence send is founder-reviewed — it was sent.
+    // every cadence send is founder-reviewed. It was sent.
     drafts.close(
       { prospectId: input.prospectId, playName: input.playName, stepIndex: input.newStep },
       "sent",
@@ -318,7 +307,7 @@ export function setCadenceStatus(
   },
 ): void {
   // Non-active terminal states clear the persisted draft AND any send
-  // marker — a replied / breakup / completed / bounced cadence shouldn't have
+  // marker. A replied / breakup / completed / bounced cadence shouldn't have
   // a sendable preview hanging around or a stuck "sending" flag. A reply /
   // breakup / completion / bounce also clears any stale send-failure marker
   // (for a bounce that marker is actively misleading: it reads as
@@ -344,7 +333,7 @@ export function setCadenceStatus(
   );
   // `breakup` is stamped only after the breakup step was sent (reviewed,
   // like every cadence send); every other terminal state abandons whatever
-  // preview was open — no judgment on the draft was made.
+  // preview was open: no judgment on the draft was made.
   if (input.status === "breakup") {
     drafts.closeAllForCadence(input.prospectId, input.playName, "sent");
   } else if (input.status !== "active") {
@@ -475,7 +464,7 @@ export function clearCadenceDraft(
 
 /**
  * Sweep stale `sending_started_at` markers (any non-null value when
- * `staleAgeMs` is 0 — cold-boot semantics). A matching sequence_event means
+ * `staleAgeMs` is 0, for cold-boot recovery). A matching sequence_event means
  * the send went out: clear the marker only; no event means it was stranded:
  * clear the marker but keep the draft. Returns swept rows; takes `now` +
  * `maxAgeMs` as args so tests don't fake the clock.
@@ -652,18 +641,18 @@ function markCadenceReplied(
 }
 
 /**
- * Mark the latest sent step `replied` — a state transition of the existing
+ * Mark the latest sent step `replied`. A state transition of the existing
  * step, NOT a new event, so `sent` counts stay correct. Idempotent per
  * (prospect, play) via the NOT EXISTS guard; returns true on the one call
- * that flips a row. Stamps `replied_at` to the actual reply moment — the
+ * that flips a row. Stamps `replied_at` to the actual reply moment. The
  * row's `created_at` stays pinned to the original SEND time, so date-windowed
  * rollups (eventsByPlay, the Slack daily summary) must use replied_at, not
  * created_at, to count a reply on the day it happened rather than the day it
  * was sent. `repliedAt` defaults to now (the manual-reply / UI-send path,
  * where the moment of the call IS the reply); the background inbox poll
  * passes the inbound email's own `received_at` so a reply pulled from a
- * backlog page — arriving in this process well after it actually landed in
- * the mailbox — is still credited to the day it was actually sent, not the
+ * backlog page (arriving in this process well after it actually landed in
+ * the mailbox) is still credited to the day it was actually sent, not the
  * day this poll happened to run.
  */
 export function markLatestStepReplied(
@@ -675,7 +664,7 @@ export function markLatestStepReplied(
   },
 ): boolean {
   // datetime(?) normalizes any SQLite-recognized input (an ISO 8601 string
-  // with 'T'/'Z', or the 'YYYY-MM-DD HH:MM:SS' form) to the latter — the
+  // with 'T'/'Z', or the 'YYYY-MM-DD HH:MM:SS' form) to the latter. The
   // same format datetime('now') already writes everywhere else in this
   // table. Storing repliedAt un-normalized would make replied_at sort
   // lexicographically wrong against created_at / sinceIso / untilIso
@@ -705,12 +694,12 @@ export function markLatestStepReplied(
 }
 
 /**
- * Single source of truth for "a prospect replied to a cadence" — writes both
+ * Single source of truth for "a prospect replied to a cadence": writes both
  * planes in one transaction so they can't drift. Control plane
  * (`cadence_state.status='replied'`) is conservative: only a live cadence
  * (`active`/`paused`) flips, so a terminal sequence is never resurrected.
  * Analytics plane (sequence_events) is unconditional: the event is recorded
- * for ANY status — gating the two together silently drops replies that
+ * for ANY status: gating the two together silently drops replies that
  * arrive after a sequence finishes. Count replies on `eventRecorded` (true
  * exactly once per (prospect, play)); `newlyReplied` marks the control
  * transition.
@@ -777,12 +766,12 @@ export function latestSentPlayForProspect(
 }
 
 /**
- * Record a reply. Control: EVERY live cadence for the prospect stops —
+ * Record a reply and stop every live cadence for the prospect:
  * nobody keeps getting follow-ups after answering. Analytics: the reply is
- * credited to exactly ONE play — the one whose sent subject it threads on
+ * credited to the play whose sent subject it threads on
  * (`Re: …`), else the most recent play that emailed them. Returns one entry
  * per play touched. `repliedAt` (default now) should be the inbound
- * email's own received/sent timestamp when known — see
+ * email's own received/sent timestamp when known: see
  * markLatestStepReplied's note on why the background inbox poll must pass
  * it rather than let this stamp the moment the poll happened to run.
  */
@@ -849,7 +838,7 @@ export function saveCadencePlan(
 /**
  * True when a (prospect, play, step) already has a terminal-sent
  * sequence_event. Pre-dispatch guard: a crash between recordSequenceEvent
- * and advanceCadence leaves current_step lagging the sent step — this stops
+ * and advanceCadence leaves current_step lagging the sent step. This stops
  * the re-send on the next due tick.
  */
 export function hasSentSequenceEvent(
@@ -879,12 +868,12 @@ export function recordSequenceEvent(
     channel: SequenceEventRecord["channel"];
     status: SequenceEventRecord["status"];
     metadata?: unknown;
-    /** The send receipt this step produced — links the step to its billable call
+    /** The send receipt this step produced: links the step to its billable call
      *  so an outcome (reply/deal) can tag the receipt's value. */
     receiptId?: number;
     /**
      * The provider's own bounce timestamp (DSN `bouncedAt`), for `status:
-     * "bounced"` rows only. `created_at` is stamped at POLL/detection time —
+     * "bounced"` rows only. `created_at` is stamped at POLL/detection time:
      * this is the real occurrence time, so date-windowed rollups (the Slack
      * daily summary) attribute the bounce to the day it actually happened
      * rather than the day the mailbox happened to be polled.
@@ -910,7 +899,7 @@ export function recordSequenceEvent(
 }
 
 /**
- * A play's prior steps for one prospect — every send, plus a letter the
+ * A play's prior steps for one prospect. Every send, plus a letter the
  * founder skipped (#610), so the cadence history says why step N never
  * went out. The conversation view (`listSequenceEventsForProspect`) stays
  * sends-only; so does every counter.
@@ -991,7 +980,7 @@ export function listSequenceEventsForCadences(
  * the same opening words is a fingerprint, and only the ledger knows what
  * the last N sends actually opened with.
  *
- * Same status set as `latestSentEmailCopy` — 'sent' rows are UPDATEd in
+ * Same status set as `latestSentEmailCopy`: 'sent' rows are UPDATEd in
  * place to 'replied', so matching only 'sent' would silently drop every
  * prospect who answered and skew the share.
  */

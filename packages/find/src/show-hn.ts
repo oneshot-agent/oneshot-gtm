@@ -61,7 +61,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
   logEvent("finder.fetched", { name: PLAY_NAME, candidates: result.candidates });
 
   // Per-candidate pipeline runs at `concurrency` (mirrors accelerator-batch /
-  // github-topics) — the serial version spent ~70s on 50 candidates waiting on
+  // github-topics). The serial version spent ~70s on 50 candidates waiting on
   // findEmail/verify/enrich one at a time. `halted` is a soft cap: workers in
   // flight when the limit/cost-cap trips may overshoot by up to
   // (concurrency - 1) candidates. The `result.*` accumulators are mutated in
@@ -85,7 +85,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
       return;
     }
 
-    // Dedupe BEFORE any LLM/OneShot spend — against the queue AND the
+    // Dedupe BEFORE any LLM/OneShot spend: against the queue AND the
     // pending-retry table (so a re-scan doesn't recreate a candidate already
     // awaiting outage retry).
     if (
@@ -108,7 +108,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     });
     // Rough cost: ~$0.001 per filter call (LLM tokens; not OneShot $).
     if (filter.match === null) {
-      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit):
       // drop without persisting. A rejection would burn the dedupeKey for
       // every future watch tick since isQueueDuplicate ignores status.
       result.droppedEnrichment++;
@@ -133,7 +133,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     }
 
     if (opts.dryRun) {
-      // Just count — don't enrich or enqueue.
+      // Just count: don't enrich or enqueue.
       result.enqueued++;
       return;
     }

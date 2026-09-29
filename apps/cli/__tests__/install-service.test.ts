@@ -10,7 +10,7 @@ import {
 } from "../src/commands/install-service.ts";
 
 // Fixed fake paths: snapshots must not depend on the machine running the
-// suite. These tests only render strings — they NEVER touch launchctl,
+// suite. These tests only render strings. They NEVER touch launchctl,
 // systemctl, or any real service path.
 const PATHS = {
   bunBin: "/opt/homebrew/bin/bun",
@@ -28,7 +28,7 @@ describe("renderLaunchdPlist", () => {
     expect(plist).toContain("<string>/opt/homebrew/bin/bun</string>");
     expect(plist).toContain("<string>/Users/jo/oneshot-gtm/apps/cli/src/main.ts</string>");
     expect(plist).toContain("<string>/Users/jo/.oneshot-gtm</string>");
-    // PATH must carry bun's own dir — launchd doesn't source a login shell.
+    // PATH must carry bun's own dir: launchd doesn't source a login shell.
     expect(plist).toContain("<string>/opt/homebrew/bin:/usr/bin:/bin</string>");
   });
 
@@ -91,7 +91,7 @@ describe("resolveServicePaths", () => {
     expect(p.bunBin.startsWith("/")).toBe(true);
     expect(p.cliEntry.endsWith("/apps/cli/src/main.ts")).toBe(true);
     expect(p.cliEntry.startsWith("/")).toBe(true);
-    // Under vitest this is the throwaway temp home from vitest.setup.ts —
+    // Under vitest this is the throwaway temp home from vitest.setup.ts:
     // the point is that it's absolute and flows into the template verbatim.
     expect(p.home.startsWith("/")).toBe(true);
     expect(typeof p.home).toBe("string");

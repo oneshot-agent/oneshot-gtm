@@ -152,10 +152,10 @@ describe("queueRowDetailRoute", () => {
     });
     const timeline = body["timeline"] as Array<Record<string, unknown>>;
     expect(timeline.map((e) => e["kind"])).toEqual([
-      "sequence", // 2026-09-04 — the bounced step, visible in history
+      "sequence", // 2026-09-04. The bounced step, visible in history
       "reply", // 2026-09-03
       "sequence", // 2026-09-02 09:00 (SQLite format, normalised)
-      "sent", // 2026-09-02 09:00 ISO — same instant, later insertion first
+      "sent", // 2026-09-02 09:00 ISO: same instant, later insertion first
       "decided",
       "surfaced",
     ]);

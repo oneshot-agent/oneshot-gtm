@@ -1,14 +1,7 @@
 #!/usr/bin/env bash
-#
-# Safely stop (and optionally restart) the oneshot-gtm dashboard server,
-# WAITING for any in-flight email sends to finish first so a restart never
-# severs a send mid-delivery.
-#
-# Why: a hard SIGTERM mid-send makes the server wait out its 30s drain and then
-# force-exit, stranding the send (boot sweep + idempotency keys reconcile it,
-# but it's avoidable noise). This guard polls the live in-flight count from
-# GET /api/health — the same in-memory counter the drain reads — and only kills
-# once it hits 0 (or after MAX_WAIT, which aborts unless FORCE=1).
+# Wait for in-flight sends before stopping or restarting the dashboard.
+# Poll /api/health until idle; abort after MAX_WAIT unless FORCE=1.
+# This avoids stranding sends when the server's 30s shutdown drain expires.
 #
 # Usage:
 #   scripts/safe-restart.sh                 # safe-stop the server on :3030
@@ -41,7 +34,6 @@ pid="$(lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null || true)"
 if [ -z "${pid}" ]; then
   echo "no server listening on :${PORT} — nothing to stop"
 else
-  # --- The guard: wait for in-flight sends to drain before killing. ---
   waited=0
   while :; do
     n="$(inflight)"

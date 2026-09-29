@@ -29,7 +29,7 @@ function tryOpenBrowser(url: string): void {
   try {
     Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
   } catch {
-    // best-effort — the URL is printed either way.
+    // best-effort. The URL is printed either way.
   }
 }
 

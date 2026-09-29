@@ -7,7 +7,7 @@ import { safeParseJsonRecord } from "./json.ts";
 import type { OneShotConfig } from "./types.ts";
 
 // Data dir for config.json, .env, ledger.sqlite, events.jsonl, gmail-tokens.json.
-// `ONESHOT_GTM_HOME` overrides the default — tests redirect data-dir I/O to a temp
+// `ONESHOT_GTM_HOME` overrides the default: tests redirect data-dir I/O to a temp
 // dir (see vitest.setup.ts) so they never touch the real ~/.oneshot-gtm. Read once
 // at module load.
 const CONFIG_DIR = process.env["ONESHOT_GTM_HOME"]?.trim() || join(homedir(), ".oneshot-gtm");
@@ -80,12 +80,12 @@ export function loadConfig(): OneShotConfig {
   // First-sight bootstrap of the anonymous install id. Persisted immediately
   // so subsequent reads (and any future telemetry sink) see a stable value.
   // Failures are non-fatal: returning the in-memory id still works for this
-  // process, we just won't have it on disk yet — next call will retry.
+  // process, we just won't have it on disk yet: next call will retry.
   if (minted) {
     try {
       saveConfig(cfg);
     } catch {
-      // ignore — read-only fs, permission denied, etc. Caller still gets the id.
+      // ignore: read-only fs, permission denied, etc. Caller still gets the id.
     }
   }
   return cfg;
@@ -96,7 +96,7 @@ let cachedConfig: OneShotConfig | null = null;
 /**
  * Process-memoized `loadConfig` for hot read-only callers (telemetry emit).
  * Busted by `saveConfig`; a write from a SEPARATE process only propagates on
- * this process's next write or restart — the ONESHOT_GTM_TELEMETRY=0 env kill
+ * this process's next write or restart. The ONESHOT_GTM_TELEMETRY=0 env kill
  * switch (checked live in `shouldSendTelemetry`) is the immediate override.
  */
 export function loadConfigCached(): OneShotConfig {
@@ -134,7 +134,7 @@ export function saveConfig(cfg: OneShotConfig): void {
   ensureConfigDir();
   if (!existsSync(dirname(CONFIG_PATH))) mkdirSync(dirname(CONFIG_PATH), { recursive: true });
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
-  // config.json can carry a bearer credential (slackWebhookUrl — whoever
+  // config.json can carry a bearer credential (slackWebhookUrl: whoever
   // holds it can post to the operator's Slack channel), so it gets the same
   // owner-only permissions as SECRETS_PATH/GMAIL_TOKENS_PATH below (issue #71
   // round-6 review finding: config.json was world-readable at the directory's
@@ -174,7 +174,7 @@ function loadSecretsFile(): Record<string, string> {
 
 /**
  * Env-only credentials read directly from the environment by finders. Demo
- * mode must neutralize these too — same leak category as a real wallet key.
+ * mode must neutralize these too: same leak category as a real wallet key.
  */
 export const ENV_ONLY_SECRET_KEYS = [
   "GITHUB_TOKEN",
@@ -191,10 +191,10 @@ export type EnvOnlySecretKey = (typeof ENV_ONLY_SECRET_KEYS)[number];
 function applySecretsToEnv(): void {
   const stored = loadSecretsFile();
 
-  // Demo mode (checked inline — importing demo.ts would be circular): this
+  // Demo mode (checked inline: importing demo.ts would be circular): this
   // home's .env is the SOLE secret source, never a fallback for blanks. The
   // CLI parent's inherited env and Bun's auto-loaded repo-root .env would both
-  // shadow demo placeholders with live keys — overwrite-or-delete closes both.
+  // shadow demo placeholders with live keys: overwrite-or-delete closes both.
   if (process.env["ONESHOT_GTM_DEMO"] === "1") {
     for (const k of [...SECRET_KEYS, ...ENV_ONLY_SECRET_KEYS]) {
       const v = stored[k];
@@ -211,7 +211,7 @@ function applySecretsToEnv(): void {
   }
 }
 
-/** Test-only re-run hook — applySecretsToEnv normally fires once at import. */
+/** Test-only re-run hook: applySecretsToEnv normally fires once at import. */
 export function _applySecretsToEnvForTests(): void {
   applySecretsToEnv();
 }
@@ -227,7 +227,7 @@ export function saveSecrets(updates: Partial<Record<SecretKey | EnvOnlySecretKey
     "# oneshot-gtm secrets — do not commit",
     "# this file is read on every CLI invocation; values here override blank process.env",
     "",
-    // Env-only keys (GITHUB_TOKEN, the X credentials, …) are writable here —
+    // Env-only keys (GITHUB_TOKEN, the X credentials, …) are writable here:
     // /setup and `config keys` store them; only `init` never asks, and demo
     // mode still neutralizes them. This rewrites the whole file, so every key
     // in either list has to survive the filter or a save silently deletes a
@@ -277,7 +277,7 @@ export interface GmailTokenEntry {
   /**
    * Space-delimited scopes Google granted at consent time (issue #577).
    * `undefined`/absent means "unknown, pre-dates scope tracking" and is
-   * always read as NOT having calendar access — an absent scope must never
+   * always read as NOT having calendar access. An absent scope must never
    * be treated as "unknown, try anyway": a Gmail-only token making a
    * Calendar call just burns a 403 for nothing, and worse, the caller has
    * no way to distinguish a real revoke from a token this old.
@@ -342,7 +342,7 @@ export function deleteGmailToken(identityId: string): void {
 /**
  * True when the stored scope string for this identity includes Calendar
  * read access. Absent scope (pre-#577 token, or one this codebase never
- * saw the grant for) reads as false, never "unknown, try anyway" — see the
+ * saw the grant for) reads as false, never "unknown, try anyway": see the
  * `GmailTokenEntry.scope` doc.
  */
 export function hasCalendarScope(entry: GmailTokenEntry | null | undefined): boolean {
@@ -352,7 +352,7 @@ export function hasCalendarScope(entry: GmailTokenEntry | null | undefined): boo
 
 /**
  * Clear the persisted scope for one identity WITHOUT touching its refresh
- * token — used when a live API call answers `403
+ * token: used when a live API call answers `403
  * ACCESS_TOKEN_SCOPE_INSUFFICIENT` even though the stored scope claims
  * calendar access (a scope revoked at myaccount.google.com doesn't
  * invalidate the refresh token, so this is the only signal that arrives).

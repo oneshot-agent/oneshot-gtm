@@ -115,7 +115,7 @@ export async function runDemoNoShow(opts: DemoNoShowRunOptions): Promise<DemoNoS
         receiptIds,
       });
     } catch (err) {
-      // Daily-cap deferral is not a per-target failure — abort so remaining
+      // Daily-cap deferral is not a per-target failure: abort so remaining
       // targets stay queued instead of getting error drafts.
       if (isSendDeferred(err)) throw err;
       logTargetError({ playName: PLAY_NAME, to: t.email, err });

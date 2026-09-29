@@ -4,7 +4,7 @@ import { logEvent } from "@oneshot-gtm/core";
  * Process-wide circuit breaker for OneShot paid contact-resolution calls
  * (findEmail/verifyEmail), so a backend outage doesn't drain a whole run
  * through doomed paid calls. Trips OPEN after THRESHOLD consecutive platform
- * errors; after COOLDOWN_MS the next call probes (half-open) — success closes
+ * errors; after COOLDOWN_MS the next call probes (half-open): success closes
  * the breaker, failure re-arms the cooldown (without which it would latch open
  * forever). Only platform errors count toward tripping; any genuine outcome
  * resets the counter, so legitimately-unresolvable candidates never open it.
@@ -28,7 +28,7 @@ export function recordResolutionOutcome(isPlatformError: boolean): void {
         "warn",
       );
     } else if (open) {
-      // A half-open probe failed (or errors kept landing while open) — re-arm
+      // A half-open probe failed (or errors kept landing while open): re-arm
       // the cooldown so we short-circuit again instead of hammering.
       openedAt = Date.now();
     }
@@ -40,7 +40,7 @@ export function recordResolutionOutcome(isPlatformError: boolean): void {
 }
 
 /**
- * True while the breaker is open AND within the cooldown — callers short-circuit
+ * True while the breaker is open AND within the cooldown: callers short-circuit
  * (skip paid resolution, defer). Returns false once the cooldown elapses
  * (half-open: let the next call probe for recovery) or when fully closed.
  */

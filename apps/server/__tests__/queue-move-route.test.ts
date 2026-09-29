@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-// POST /api/queue/:id/move — the source side of a cross-workspace move.
+// POST /api/queue/:id/move. The source side of a cross-workspace move.
 // Registry from a temp dir (never the real one); every network call stubbed:
 // the destination's health probe and its /api/queue/import.
 
@@ -61,7 +61,7 @@ type Row = {
   drain_claimed_at: string | null;
 };
 let row: Row | null = null;
-/** Every status/notes write, in order — the reserve/restore dance is the point. */
+/** Every status/notes write, in order. The reserve/restore dance is the point. */
 const statusCalls: Array<Record<string, unknown>> = [];
 const noteCalls: Array<Record<string, unknown>> = [];
 

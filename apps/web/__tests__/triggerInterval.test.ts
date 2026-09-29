@@ -10,7 +10,7 @@ describe("withIntervalOverride", () => {
     const config = { topics: ["AI agents"], cities: ["San Francisco"], limit: 25 };
     const out = withIntervalOverride(config, 6 * 3600_000);
     expect(out).toEqual({ ...config, intervalMs: 6 * 3600_000 });
-    // No mutation of the input — the caller hands over the live query-cache object.
+    // No mutation of the input. The caller hands over the live query-cache object.
     expect(config).not.toHaveProperty("intervalMs");
   });
 

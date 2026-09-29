@@ -4,7 +4,7 @@ import { parseQueueIds } from "../src/index";
 // The distinction this function exists to preserve: "no pick" (undefined →
 // list normally) vs "a pick that resolved to nothing" ([] → list nothing).
 // Collapsing the second into the first turns a drain-selected URL into an
-// unscoped drain of rows the founder never selected — which they could then send.
+// unscoped drain of rows the founder never selected, which they could then send.
 describe("parseQueueIds", () => {
   it("returns undefined only when the parameter is absent", () => {
     expect(parseQueueIds(null)).toBeUndefined();

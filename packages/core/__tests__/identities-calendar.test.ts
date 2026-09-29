@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OneShotConfig } from "../src/types.ts";
 
 // registerGmailIdentity(calendarOnly) and removeIdentity(calendarIdentityId
-// clearing) — issue #577. Config is mocked stateful so no real ~/.oneshot-gtm
+// clearing): issue #577. Config is mocked stateful so no real ~/.oneshot-gtm
 // is touched; saveGmailToken/deleteGmailToken are mocked out too so this file
 // never writes gmail-tokens.json.
 

@@ -20,7 +20,7 @@ const TONE_CLASS: Record<DoctorTone, string> = {
  * It does not open itself. Auto-expanding put a wall of install checks at the
  * top of Today whenever anything was warning, which on a working install is
  * most days, and it buried the signal feed that is the page's subject. The
- * summary line already carries the finding in the tone colour — "2 warnings"
+ * summary line already carries the finding in the tone colour: "2 warnings"
  * in amber is the signal, and opening it is the reader's call.
  */
 export function HealthCard() {

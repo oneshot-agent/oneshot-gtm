@@ -32,7 +32,7 @@ function zoneFor(t: Pick<LumaEventsTarget, "eventTimezone" | "eventCity">): stri
 }
 
 /**
- * Classify an event's date relative to now — IN THE EVENT'S OWN ZONE — and
+ * Classify an event's date relative to now (IN THE EVENT'S OWN ZONE) and
  * produce a concrete human phrase for the prompt. Three states drive the copy +
  * send decision:
  *   - "upcoming": today or future → forward-looking pitch, auto-sends.
@@ -41,7 +41,7 @@ function zoneFor(t: Pick<LumaEventsTarget, "eventTimezone" | "eventCity">): stri
  *     extraFlags). Signal too old to cold-open on without a human glance.
  *
  * The phrase keeps the prompt input concrete so the LLM never does calendar
- * math (and can't infer a future weekday from a date that's already gone — the
+ * math (and can't infer a future weekday from a date that's already gone. The
  * bug this replaces: a passed Friday read back as "this Friday").
  *
  * The day count is a CALENDAR-day difference in `zone`, not a millisecond
@@ -101,12 +101,12 @@ export interface LumaEventsTarget {
   /**
    * Short summary of what the event is about (from the Luma page). Grounds the
    * draft's TOPIC so the Offer/CTA aren't guessed from a vague title. Founder
-   * reference only — the prompt won't quote it verbatim. Absent for events
+   * reference only. The prompt won't quote it verbatim. Absent for events
    * found before this was wired (falls back to title-only inference).
    */
   eventDescription?: string;
   /**
-   * ISO date or datetime — the machine field. Drives the upcoming/past
+   * ISO date or datetime. The machine field. Drives the upcoming/past
    * classification, the staleness hold and the queue UI's "· passed" treatment.
    * It is NEVER put in front of the model: `eventDateLocal` is.
    */
@@ -120,7 +120,7 @@ export interface LumaEventsTarget {
   /**
    * `eventDate` already rendered in `eventTimezone`, e.g.
    * "Wednesday, August 26, 7:30 PM PDT". This is the ONLY form of the event's
-   * date/time the draft prompt sees — handed the raw instant, the model
+   * date/time the draft prompt sees: handed the raw instant, the model
    * converts it into its own zone and names the wrong weekday, which in a cold
    * email about the reader's own event is unrecoverable. Absent on older rows;
    * the play formats from `eventDate` + the resolved zone then.
@@ -128,7 +128,7 @@ export interface LumaEventsTarget {
   eventDateLocal?: string;
   /** City or "Online". */
   eventCity: string;
-  /** luma.com/<slug>; founder reference only — prompt won't paste it in the body. */
+  /** luma.com/<slug>; founder reference only: prompt won't paste it in the body. */
   eventUrl: string;
   /** Founder-provided one-liner about why their product helps attendees of events like this. */
   yourEdge: string;
@@ -136,7 +136,7 @@ export interface LumaEventsTarget {
   phone?: string;
   /** The attendee's Luma profile URL. Persisted as a re-enrichment key. */
   sourceProfileUrl?: string;
-  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  /** Job title from the person-level ICP gate: persisted to prospects.title. */
   title?: string;
 }
 
@@ -148,7 +148,7 @@ export interface LumaEventsRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -167,11 +167,11 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
   playName: PLAY_NAME,
   promptName: "luma-events-email",
   maxBodyWords: 150,
-  // One-touch: events are time-sensitive — a multi-touch chase reads worse
+  // One-touch: events are time-sensitive. A multi-touch chase reads worse
   // than silence after the event passes. Matches show-hn / podcast-guest /
   // repo-interest.
   toEmail: (t) => t.email,
-  // Enrich on preview + send (cached by email). No deepResearch — the event
+  // Enrich on preview + send (cached by email). No deepResearch. The event
   // attendance itself is the load-bearing signal.
   prepare: (t) =>
     standardEnrich({
@@ -179,7 +179,7 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
       enrichInput: {
         ...(t.email ? { email: t.email } : {}),
         // The finder already resolved a LinkedIn profile for this attendee and
-        // `enrichProfile` keys on one — passing it was simply missed. It
+        // `enrichProfile` keys on one: passing it was simply missed. It
         // matters most for exactly the people this play finds: an event
         // attendee's address is routinely personal or academic (the prospect
         // this was traced from used a university alumni forwarder), and
@@ -205,7 +205,7 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
     // Anchor "today" in the SAME zone so relative phrasing is read off a stated
     // date instead of the model's guess at what day it is.
     const todayLocal = formatLocalDay(new Date().toISOString(), zone) ?? "(unknown)";
-    // "stale" still reads as PAST to the prompt — it drafts retrospectively;
+    // "stale" still reads as PAST to the prompt. It drafts retrospectively;
     // the staleness only changes whether we hold (see extraFlags below).
     const timing =
       when.status === "upcoming"
@@ -216,14 +216,14 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
       `PRODUCT: ${cfg.productOneLiner}`,
       `PROSPECT: ${t.name}${t.company ? ` at ${t.company}` : ""}`,
       // Both, because they come from different places and either can be empty.
-      // `attendeeBio` is Luma's self-written headline — absent on 168 of 432
+      // `attendeeBio` is Luma's self-written headline: absent on 168 of 432
       // rows. `title` is what the person-level ICP gate resolved via a PAID
       // enrichProfile, and it was persisted to prospects.title and then never
       // shown to the model: the one hard fact about what this person does was
       // bought and thrown away at the prompt boundary.
       `TITLE: ${t.title ?? "(unknown)"}`,
       `ATTENDEE BIO/ROLE: ${t.attendeeBio ?? "(none)"}`,
-      // "Host" = they RUN the event — never write as if they're merely going.
+      // "Host" = they RUN the event. Never write as if they're merely going.
       `RELATIONSHIP TO EVENT: ${t.role ?? "(unknown — assume attendee)"}`,
       `EVENT TITLE: ${t.eventTitle}`,
       // Collapse whitespace defensively: the description is already flattened
@@ -241,7 +241,7 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
       `DOSSIER:\n${prep.dossier || "(dry-run)"}`,
     ].join("\n");
   },
-  // Hold (don't auto-send) drafts for events past the staleness window — the
+  // Hold (don't auto-send) drafts for events past the staleness window. The
   // guest-list signal is too old to cold-open on without a founder glance. A
   // non-empty flags array is what holds a draft (see _lib.ts sendDraftedEmail).
   extraFlags: (t) =>

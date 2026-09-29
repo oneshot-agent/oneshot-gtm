@@ -1,22 +1,11 @@
 /**
- * Live LinkedIn profile reads through a OneShot browser profile.
+ * Read live LinkedIn Experience data through a persistent OneShot browser
+ * profile. Connect through hosted login (including 2FA) or import a `li_at`
+ * cookie. Reads use the founder's identity, so serialize them, space them,
+ * and cap daily usage. A login wall invalidates the session until reconnect.
  *
- * The enrichment provider behind `deepResearchPerson` can be a year behind a
- * person's live profile (row #9144: provider said one employer "to Present",
- * the page showed a new company since March). The founder connects LinkedIn
- * once: either by logging in through a hosted browser the platform opens
- * (`startLinkedInLogin` → live URL, 2FA included → `finishLinkedInLogin`),
- * or by pasting their `li_at` cookie, which is imported into a fresh profile
- * at creation (`connectLinkedInWithCookie`). Either way the platform keeps
- * the session in a persistent browser profile, and every later read is a
- * cheap browser task in that profile that returns the Experience section as
- * JSON. Reads use the founder's LinkedIn identity, so they are serialized,
- * spaced and capped per day, and a login wall marks the session invalid
- * until it is reconnected.
- *
- * Cached cross-workspace in the shared enrichment cache under
- * `linkedin-profile:<url>` (30 days; 3-day negative cache), the same way
- * `safeDeepResearchPerson` and the reply drafter's `webread:` reads are.
+ * Cache across workspaces under `linkedin-profile:<url>` for 30 days, with a
+ * 3-day negative cache.
  */
 import {
   browserTask,
@@ -47,7 +36,7 @@ const LINKEDIN_DOMAINS = ["linkedin.com", "www.linkedin.com"];
 /** Upper bound for one read used by the budget checks; the SDK quote refuses anything past READ_MAX_COST_USD. */
 export const LINKEDIN_READ_COST_ESTIMATE_USD = 0.02;
 // The platform's step budget is an allowance the provider's spend is bounded
-// by, not an action count (default 50, supported 25–100). A feed check alone
+// by, not an action count (default 50, supported 25-100). A feed check alone
 // runs the provider ~$0.29 inside 25; a profile read with "Show all
 // experiences" overran 30 with `cost_limit` (2026-09-14), so reads get the
 // upper half of the range. What we are billed is far lower (~$0.01) and is
@@ -153,10 +142,10 @@ export function linkedinCookie(): string {
 }
 
 /**
- * `unset` — nothing to connect with (no profile on record, no cookie);
- * `unchecked` — a profile or cookie exists but no verified login yet;
- * `invalid` — a login wall (or a failed verify) since the last connect;
- * `ok` — verified, reads run.
+ * `unset`: nothing to connect with (no profile on record, no cookie);
+ * `unchecked`. A profile or cookie exists but no verified login yet;
+ * `invalid`. A login wall (or a failed verify) since the last connect;
+ * `ok`: verified, reads run.
  */
 export function linkedinSessionState(cfg = loadConfig()): LinkedInSessionState {
   if (!cfg.linkedinBrowserProfileId && !linkedinCookie()) return "unset";
@@ -206,7 +195,7 @@ export function linkedInReadsToday(now = new Date()): number {
  * wallet share it), else a new one. With `fresh`, a new profile is created
  * first (cookies can only be imported at creation, and a reconnect must not
  * inherit a dead session) and only the profile this workspace's config
- * pointed at is deleted afterwards — another workspace's profile is never
+ * pointed at is deleted afterwards: another workspace's profile is never
  * touched, and a failed create leaves the working one in place. Persists
  * the id.
  */
@@ -441,7 +430,7 @@ export async function finishLinkedInLogin(ctx: CallContext): Promise<LinkedInSes
   const verified = await verifyLinkedInSession(profileId, ctx, { record: false });
   if (!verified.loggedIn) return verified;
   // Two awaits passed since the pending id was read; a cancel or a fresh
-  // start meanwhile makes this profile stale — it must not become the
+  // start meanwhile makes this profile stale. It must not become the
   // session, nor clear whatever login is now pending.
   if (loadConfig().linkedinPendingProfileId !== profileId) {
     logEvent("linkedin_profile.login_superseded", { profile_id: profileId }, "warn");
@@ -504,7 +493,7 @@ export async function linkedinLoginState(ctx: CallContext): Promise<
 
 /**
  * A fresh profile for a hosted login. A stale pending login (started, never
- * finished) is replaced; the verified profile — the one reads run in — is
+ * finished) is replaced; the verified profile (the one reads run in) is
  * never touched here. Persists the pending id only.
  */
 async function createPendingLoginProfile(ctx: CallContext): Promise<string> {

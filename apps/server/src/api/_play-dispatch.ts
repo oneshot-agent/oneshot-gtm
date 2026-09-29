@@ -57,7 +57,7 @@ export function toDraftedView(d: {
  * `signal`: the run's cancellation signal, forwarded to the play so it can
  * bail at its paid-call boundaries. When it fires mid-run this call rejects
  * with a `RunCancelledError` (see `isRunCancelled`) instead of resolving with
- * a partial batch — the drafts already finished were reported via `onProgress`.
+ * a partial batch. The drafts already finished were reported via `onProgress`.
  */
 export async function dispatchPlay(
   playName: string,

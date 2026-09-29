@@ -132,7 +132,7 @@ describe("sendDraftedEmail pre-send cadence check", () => {
     // listSequenceEventsForProspectPlay already filters to status IN
     // ('sent','delivered','replied') at the SQL layer, so a replied row
     // shows up here as a normal step-0 entry. The guard must treat it the
-    // same as 'sent' — re-sending step 0 to someone who's already replied
+    // same as 'sent': re-sending step 0 to someone who's already replied
     // is the worst-flavor duplicate (lands as a fresh thread, in their
     // face, while they're already mid-conversation).
     findProspectByEmailMock.mockReturnValue({ id: 7 });
@@ -209,7 +209,7 @@ describe("sendDraftedEmail cross-workspace override pass-through", () => {
 });
 
 // The person-level ICP gate on the FIRST touch. This check has always existed
-// for follow-ups (_cadence.ts, status "off-icp"), but step 0 had none — so 65
+// for follow-ups (_cadence.ts, status "off-icp"), but step 0 had none, so 65
 // prospects carrying a `reject` verdict were emailed while only 3 cadences ever
 // stopped for it.
 describe("sendDraftedEmail person-level ICP gate", () => {

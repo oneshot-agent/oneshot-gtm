@@ -73,7 +73,7 @@ describe("inflight send tracker", () => {
   });
 
   it("waitForSendsToDrain reports not-drained on timeout, with the remaining count", async () => {
-    beginSend(); // never ends — simulates a stuck send
+    beginSend(); // never ends: simulates a stuck send
     const res = await waitForSendsToDrain({ timeoutMs: 30, pollMs: 5 });
     expect(res.drained).toBe(false);
     expect(res.remaining).toBe(1);

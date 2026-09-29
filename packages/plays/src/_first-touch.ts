@@ -2,13 +2,10 @@ import { loadPrompt } from "@oneshot-gtm/intel";
 import { hash32 } from "./_angles.ts";
 
 /**
- * The first-touch format a trigger opts into (issue: measured first-touch
- * formats). `standard` is the play's own prompt, unchanged; `brief` adds a
- * binding FORMAT block (≤3 sentences, no about-you opener, register by
- * seniority); `split` puts each prospect in one arm by a stable hash so the
- * two can be compared on the same finder's traffic. Nothing is decided for
- * the founder: the arms are measured and shown side by side, never switched
- * automatically.
+ * Opt-in first-touch formats: `standard` uses the play prompt; `brief` adds a
+ * binding FORMAT block (at most 3 sentences, no about-you opener, seniority
+ * register). `split` assigns a stable per-prospect arm for comparison on the
+ * same finder's traffic. Arms are shown side by side, never switched automatically.
  */
 export type FirstTouchFormat = "standard" | "brief";
 export type FirstTouchSetting = FirstTouchFormat | "split";
@@ -26,10 +23,9 @@ function settingOf(v: unknown): FirstTouchSetting | null {
 }
 
 /**
- * The arm this prospect's first touch is drafted in, or `null` when the
- * trigger never set `firstTouchFormat` (the draft is then untracked by format
- * and byte-identical to before). Deterministic per email, so a regenerate or
- * a later send lands in the same arm without storing it.
+ * Return the first-touch arm, or `null` when `firstTouchFormat` is unset
+ * (the draft then has no format tracking or added format instructions).
+ * Assignment is deterministic per email across regenerations and sends.
  */
 export function firstTouchArm(target: unknown, email: string): FirstTouchFormat | null {
   if (!target || typeof target !== "object") return null;

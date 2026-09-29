@@ -93,7 +93,7 @@ describe("htmlToText", () => {
     expect(htmlToText("before<!-- never closed")).toBe("before");
   });
 
-  // Review findings on the merged #33 — the second round.
+  // Review findings on the merged #33. The second round.
   it("does not treat <script-widget> custom elements as script blocks", () => {
     expect(htmlToText("<script-widget>visible text</script-widget>")).toBe("visible text");
     expect(htmlToText("<style-guide>also visible</style-guide>")).toBe("also visible");
@@ -114,7 +114,7 @@ describe("htmlToText", () => {
     expect(performance.now() - t0).toBeLessThan(1_000);
   });
 
-  // Review findings on #33 — each of these destroyed or leaked real content.
+  // Review findings on #33. Each of these destroyed or leaked real content.
   it("preserves comparison operators in prose", () => {
     expect(htmlToText("<p>Revenue < $1m and growth > 20%</p>")).toBe(
       "Revenue < $1m and growth > 20%",

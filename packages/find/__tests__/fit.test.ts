@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { calibrationBuckets, fitLogistic, holdoutSplit, predictLogistic } from "../src/_fit.ts";
 import { mannWhitneyAuc } from "../src/_gauge.ts";
 
-/** Deterministic synthetic data — no RNG anywhere in these tests. */
+/** Deterministic synthetic data: no RNG anywhere in these tests. */
 function separable(n: number): { xs: number[][]; ys: Array<0 | 1> } {
   const xs: number[][] = [];
   const ys: Array<0 | 1> = [];

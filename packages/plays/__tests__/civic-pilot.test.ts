@@ -88,7 +88,7 @@ describe("runCivicPilot", () => {
   });
 
   // finding PRRT_kwDOSKzrBs6fD-hc / issue #463: the pilot must be sized under
-  // the micro-purchase threshold OR bought off a cooperative vehicle — a
+  // the micro-purchase threshold OR bought off a cooperative vehicle. A
   // target that only gave the threshold route must not be forced to name a
   // vehicle, and the threshold must appear in the drafting input.
   it("supports the micro-purchase-threshold-only route (no purchasing vehicle)", async () => {
@@ -107,7 +107,7 @@ describe("runCivicPilot", () => {
     const out = await runCivicPilot({ dryRun: true, targets: [{ ...withoutVehicle }] });
     // The per-target error is caught by the shared runner and lands as an
     // errorDraft (flags: ["error: ..."]) rather than throwing out of
-    // runCivicPilot — assert the flag names the refusal reason.
+    // runCivicPilot: assert the flag names the refusal reason.
     expect(out.drafted[0]?.flags[0]).toContain("refusing to draft");
   });
 

@@ -22,7 +22,7 @@ export const readOnly: { disabled?: true; title?: string } = IS_DEMO
 
 /**
  * The same fact as a boolean, for controls that derive their own disabled
- * state instead of taking it as a prop — the trigger row's toggle, and its
+ * state instead of taking it as a prop. The trigger row's toggle, and its
  * `run now`, which gates clicks through pointer-events rather than `disabled`.
  */
 export const READ_ONLY = IS_DEMO;

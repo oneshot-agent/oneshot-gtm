@@ -4,12 +4,12 @@ import { withDeadline } from "./parallel.ts";
 /**
  * Smartlead REST transport (send-only v1). Smartlead hosts + warms the
  * mailboxes; we send one-off emails through their API choosing the From
- * account by address. One workspace-wide API key (SMARTLEAD_API_KEY) — there
+ * account by address. One workspace-wide API key (SMARTLEAD_API_KEY): there
  * is no per-mailbox credential on our side.
  *
  * Security invariants:
  *  - Smartlead authenticates via an `api_key` QUERY PARAM. The key must never
- *    appear in thrown errors, logs, receipts, or telemetry — error messages
+ *    appear in thrown errors, logs, receipts, or telemetry: error messages
  *    are built from a pre-computed path with the query string stripped.
  *  - The accounts listing response includes base64 mailbox passwords. Rows are
  *    whitelist-destructured into SmartleadAccount at parse time; the raw
@@ -92,7 +92,7 @@ function str(v: unknown): string | null {
 
 /**
  * Whitelist-destructure one raw account row. The raw object carries mailbox
- * passwords (base64) — only the fields below may survive. Returns null for
+ * passwords (base64). Only the fields below may survive. Returns null for
  * rows without a usable id + from_email.
  */
 function sanitizeAccount(raw: Record<string, unknown>): SmartleadAccount | null {
@@ -146,7 +146,7 @@ export interface SmartleadSendInput {
   subject: string;
   /** Pre-rendered HTML (Smartlead renders `body` as HTML). */
   htmlBody: string;
-  /** The connected account to send as — must match a Smartlead from_email. */
+  /** The connected account to send as: must match a Smartlead from_email. */
   fromEmail: string;
   fromName?: string | null;
 }
@@ -154,7 +154,7 @@ export interface SmartleadSendInput {
 /**
  * One-off send via POST /send-email/initiate. Returns Smartlead's message id
  * for the ledger receipt (`oneshot_request_id`, which also dedupes re-records).
- * Smartlead documents no idempotency mechanism, so — like the Gmail path — a
+ * Smartlead documents no idempotency mechanism, so (like the Gmail path) a
  * timeout-then-retry can double-send. When the response carries no id we fall
  * back to a UUID: receipts stay unique, retry-dedupe is lost for that send.
  */

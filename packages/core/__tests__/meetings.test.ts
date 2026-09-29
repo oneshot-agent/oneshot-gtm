@@ -60,7 +60,7 @@ describe("Ledger.upsertMeeting", () => {
       calendarId: "primary",
       eventId: "never-seen",
       status: "cancelled",
-      // No startsAt — the stub carries almost nothing, exactly like a real
+      // No startsAt. The stub carries almost nothing, exactly like a real
       // cancellation-only payload from the API.
     });
     expect(ledger.getMeeting("primary", "never-seen")).toBeNull();
@@ -72,7 +72,7 @@ describe("Ledger.upsertMeeting", () => {
       calendarId: "primary",
       eventId: "e1",
       status: "cancelled",
-      // The stub carries no summary/prospectId/matchStatus — those must
+      // The stub carries no summary/prospectId/matchStatus. Those must
       // survive via COALESCE, never wiped by INSERT OR REPLACE semantics.
     });
     const row = ledger.getMeeting("primary", "e1")!;
@@ -221,7 +221,7 @@ describe("Ledger.confirmMeetingMatch / dismissMeetingMatch", () => {
     ledger.upsertMeeting(BASE);
     ledger.dismissMeetingMatch("primary", "e1");
     // Re-poll: same attendee set, so the caller (the real poller) would not
-    // even attempt to re-match — but prove the ledger layer alone preserves
+    // even attempt to re-match, but prove the ledger layer alone preserves
     // the dismissal when matchStatus is omitted on the next upsert.
     ledger.upsertMeeting({ ...BASE, summary: "touched again" });
     expect(ledger.getMeeting("primary", "e1")!.match_status).toBe("dismissed");

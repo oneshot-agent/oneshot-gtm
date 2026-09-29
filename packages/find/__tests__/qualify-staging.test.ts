@@ -160,7 +160,7 @@ describe("stage C — the paid lookup", () => {
 
   it("proceeds (never rejects) when the bought title still does not settle it", async () => {
     // Softened 2026-08-25: a genuine coin-flip after buying the real title
-    // sends anyway — self-serve product, one email risked vs a prospect lost.
+    // sends anyway: self-serve product, one email risked vs a prospect lost.
     // Only a positive reject drops. The distinct reason keeps it measurable.
     verdictQueue = ["unclear", "unclear"];
     const r = await qualifyPostEnrich({

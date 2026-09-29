@@ -28,9 +28,8 @@ import {
  * company the finder saw. This command runs the same derivation over the
  * existing backlog: `deepResearchPerson` from the profile URL, the current
  * role from the organisation history, `enrichCompany` for the current
- * employer, and the person gate re-judged on real facts. Uncapped by default
- * — the founder's call (2026-09-11): research everyone. `--max-cost-usd` is
- * there for a bounded rehearsal.
+ * employer, and the person gate re-judged on real facts. Spend is uncapped
+ * by default; use `--max-cost-usd` for a bounded run.
  *
  * Sibling of `research-prospects` (which does the same for sent prospects);
  * rows here have no prospect row yet, so the research lands on the payload.
@@ -137,7 +136,7 @@ function parsePayload(row: CandidateRow): Record<string, unknown> {
 
 /**
  * Pure: which rows this run may research. A sent or mid-send row is never a
- * candidate — `patchLiveQueuePayload` would refuse the write anyway, but the
+ * candidate: `patchLiveQueuePayload` would refuse the write anyway, but the
  * research call would already have been paid for. `explicit` (from `--id`)
  * bypasses the play, status and already-researched filters only.
  */

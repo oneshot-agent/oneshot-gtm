@@ -41,7 +41,7 @@ export async function runInit(): Promise<void> {
         initial: cfg.productOneLiner ?? "",
         validate: (s) => (s.trim().length >= 10 ? true : "be specific"),
       },
-      // All of the following are optional — press enter to skip. They sharpen
+      // All of the following are optional: press enter to skip. They sharpen
       // discovery + email personalization but aren't required to get started.
       {
         type: "text",
@@ -212,7 +212,7 @@ export async function runInit(): Promise<void> {
  * value. An omitted key (the field wasn't part of this wizard run) falls
  * back to whatever was already stored. An explicitly supplied empty string
  * (the user cleared the field) normalizes to null rather than persisting
- * "" — downstream fallbacks like `cfg.icpOneLiner ?? "(not set)"` only work
+ * "": downstream fallbacks like `cfg.icpOneLiner ?? "(not set)"` only work
  * against null, not an empty string.
  */
 function normalizeOptionalAnswer(

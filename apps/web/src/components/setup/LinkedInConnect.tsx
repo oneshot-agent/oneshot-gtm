@@ -82,7 +82,7 @@ function StatusLine({
  *
  *   nothing connected  → [Connect LinkedIn]  messaging sign-in, then the profile session
  *   messaging step     → waiting line · open the tab again · cancel   (OneShot confirms by itself)
- *   profile step       → [Done — I've signed in] · open the tab again · cancel
+ *   profile step       → [Done: I've signed in] · open the tab again · cancel
  *   both connected     → ✓ Messaging · ✓ Profile reads · reconnect
  *
  * The messaging sign-in is a platform intent polled until it completes;

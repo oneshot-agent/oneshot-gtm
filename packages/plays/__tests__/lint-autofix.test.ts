@@ -23,6 +23,35 @@ describe("humanizeDraft — deterministic auto-fix", () => {
     expect(out.body).toBe("first paragraph,\nsecond paragraph");
   });
 
+  it.each([
+    ["a\t —\t b", "a, b"],
+    ["a— —b", "a, , b"],
+    ["a——b", "a, , b"],
+    ["a\n \t—\t\nb", "a\n,\nb"],
+    ["a\u00a0—\u00a0b", "a\u00a0, \u00a0b"],
+    ["a \t\nb", "a\nb"],
+    ["a \t\r\nb", "a \t\r\nb"],
+  ])("preserves whitespace semantics for %j", (input, expected) => {
+    expect(humanizeDraft({ subject: input, body: input })).toEqual({
+      subject: expected,
+      body: expected,
+    });
+  });
+
+  it("handles long whitespace runs with and without a following dash or newline", () => {
+    const spaces = " \t".repeat(50_000);
+    for (const [input, expected] of [
+      [`left${spaces}right`, `left${spaces}right`],
+      [`left${spaces}—${spaces}right`, "left, right"],
+      [`left${spaces}\nright`, "left\nright"],
+    ] as const) {
+      expect(humanizeDraft({ subject: input, body: input })).toEqual({
+        subject: expected,
+        body: expected,
+      });
+    }
+  });
+
   it("strips flag emoji (regional indicator pairs)", () => {
     const out = humanizeDraft({ subject: "🇺🇸 release", body: "shipping in 🇨🇦 too" });
     expect(out.subject).toBe("release");
@@ -73,7 +102,7 @@ describe("humanizeDraft + lintEmail — pipeline coverage", () => {
   it("removes em-dash, curly-quotes, emoji, excess-exclamations flags after auto-fix", () => {
     // `wow!!!` collapses to `wow!` (single run), leaving 1 `!` in the body.
     // Multi-clause cases like `fine! great!` would NOT auto-fix to silence
-    // `excess-exclamations` — that's a semantic decision the LLM should
+    // `excess-exclamations`. That's a semantic decision the LLM should
     // make, not a deterministic rewrite.
     const messy = {
       subject: "the question",
@@ -105,7 +134,7 @@ describe("humanizeDraft + lintEmail — pipeline coverage", () => {
  * Locks in the fix for "every borderline draft trips body-too-long". The
  * signatureDirective forces the LLM to append name + domain at the bottom
  * of every body, but those 2-3 deterministic words used to count against
- * the per-play maxBodyWords budget — so a prompt that said "≤110 words"
+ * the per-play maxBodyWords budget, so a prompt that said "≤110 words"
  * effectively gave the LLM ~107 for content, making /repo-interest reject
  * drafts that were inside the contract.
  */
@@ -131,7 +160,7 @@ describe("bodyWordsForLint — strips trailing signature lines", () => {
 
   it("does not chop content that just happens to contain the founder's name mid-paragraph", () => {
     // "Jane Doe" appears inside the body, but the trailing lines aren't a
-    // sig — strip stops at the first non-match and counts everything.
+    // sig: strip stops at the first non-match and counts everything.
     const body = "Jane Doe shipped this last week and it worked";
     // 9 content words; no trailing sig present.
     expect(bodyWordsForLint(body, ["example.com", "Jane Doe"])).toBe(9);

@@ -12,13 +12,13 @@ export interface FreePilotTarget {
   company: string;
   /** e.g. "family-owned taqueria", "HVAC contractor", "two-chair dental practice". */
   businessType: string;
-  /** The concrete thing you set up for them free, and what it saves them —
+  /** The concrete thing you set up for them free, and what it saves them:
    *  plain English, hours/dollars terms, never a feature list. */
   yourEdge: string;
   linkedinUrl?: string;
   phone?: string;
   sourceProfileUrl?: string;
-  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  /** Job title from the person-level ICP gate: persisted to prospects.title. */
   title?: string;
 }
 
@@ -30,7 +30,7 @@ export interface FreePilotRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -49,13 +49,12 @@ const freePilotDef: EmailPlayDef<FreePilotTarget> = {
   playName: PLAY_NAME,
   promptName: "free-pilot-email",
   maxBodyWords: 90,
-  // One touch + one follow-up that doubles as the breakup — mirrors
+  // One touch + one follow-up that doubles as the breakup: mirrors
   // accelerator-batch's shape. An owner-operator who didn't bite on a free,
   // no-obligation setup doesn't want a multi-touch chase.
   enrollCadence: true,
-  // Server-side mirror of playSchemas.ts's required fields for this play
-  // (finding: apps/web/src/lib/playSchemas.ts:417 — the client-only check
-  // can be bypassed by a direct API call or a hand-edited queue row).
+  // Mirror the web form requirements for API calls and queued rows that
+  // bypass browser validation.
   requiredFields: ["name", "email", "company", "businessType", "yourEdge"],
   toEmail: (t) => t.email,
   prepare: (t) =>
@@ -93,7 +92,7 @@ export function runFreePilot(opts: FreePilotRunOptions): Promise<{ drafted: Free
   return runEmailPlay(freePilotDef, opts);
 }
 
-// One-touch + one follow-up that IS the breakup — mirrors accelerator-batch,
+// One-touch + one follow-up that IS the breakup: mirrors accelerator-batch,
 // not the five-step profile-intro. An owner-operator who ignored a free,
 // no-obligation offer doesn't want a chase.
 registerSequence({
@@ -104,7 +103,7 @@ registerSequence({
       channel: "email",
       breakOnReply: true,
       label: "single follow-up + breakup",
-      // Prompt caps this at ≤ 45 words (free-pilot-followup.md) — enforced
+      // Prompt caps this at ≤ 45 words (free-pilot-followup.md): enforced
       // here, not the cadence-wide default of 100 (finding:
       // discovery-interview-email.md:31, listing free-pilot-followup.md:14
       // as one of the affected plays).

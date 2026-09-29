@@ -6,7 +6,7 @@ import { xRepostIntroMetadata } from "./_metadata.ts";
  * Founder-lane prospect from the x-reposters finder: someone who reposted a
  * watched X account's tweet and whose bio/site say they build things. The hook
  * is the specific tweet they amplified; the ask is product adoption through
- * the founder's ICP frame. Never asks for a repost — that spends the better
+ * the founder's ICP frame. Never asks for a repost. That spends the better
  * ask on the cheaper one.
  */
 export interface XRepostIntroTarget {
@@ -30,7 +30,7 @@ export interface XRepostIntroTarget {
   tweetUrl: string;
   tweetText: string;
   mode: "retweet" | "quote";
-  /** Their own words when they quoted — the best hook when present. */
+  /** Their own words when they quoted. The best hook when present. */
   quote?: string | null;
   followers?: number;
   score?: number;
@@ -47,7 +47,7 @@ export interface XRepostIntroRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -71,7 +71,7 @@ const xRepostIntroDef: EmailPlayDef<XRepostIntroTarget> = {
   enrollCadence: true,
   toEmail: (t) => t.email ?? "",
   // The finder does the research up-front (deepResearchPerson on the X
-  // profile) and passes the dossier in — use it verbatim, don't re-pay. The
+  // profile) and passes the dossier in. Use it verbatim, don't re-pay. The
   // generic fallback covers /queue regenerates on rows without one.
   prepare: (t, _dryRun): Promise<Prepared> =>
     t.dossier != null
@@ -103,7 +103,7 @@ const xRepostIntroDef: EmailPlayDef<XRepostIntroTarget> = {
     name: t.name,
     email: t.email ?? null,
     company: t.company ?? null,
-    // Polymorphic social-URL column — this one is an X profile.
+    // Polymorphic social-URL column. This one is an X profile.
     linkedin_url: t.twitterUrl,
     source: "x-reposters",
     source_profile_url: t.twitterUrl,

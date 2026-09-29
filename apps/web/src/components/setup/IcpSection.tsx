@@ -20,7 +20,7 @@ export function IcpSection({
   packLabel?: string;
 }) {
   const server = useMemo(() => ({ icpOneLiner: cfg.icpOneLiner ?? "" }), [cfg]);
-  // The pack proposal seeds the DRAFT, never config.json — the founder still
+  // The pack proposal seeds the DRAFT, never config.json. The founder still
   // has to Save. Being a draft it also survives every ["setup"] refetch.
   const s = useConfigSection({
     id: "icp",
@@ -31,7 +31,7 @@ export function IcpSection({
   });
 
   // Clear proposedIcp/packLabel from the URL once consumed so a later reload
-  // of /setup doesn't re-seed — and re-save — the stale proposal over the
+  // of /setup doesn't re-seed (and re-save) the stale proposal over the
   // founder's own edits. Preserve window.history.state: TanStack Router's
   // __TSR_index/__TSR_key live there, and replacing it with {} desyncs the
   // router's history index (next back/forward becomes a generic GO).
@@ -52,7 +52,7 @@ export function IcpSection({
   const showPackBanner = Boolean(proposedIcp) && s.dirtyKeys.includes("icpOneLiner");
 
   // The derive prompt reads "a company's marketing site" and writes who THEY
-  // sell to — so the founder's own site is the default input, not a peer's.
+  // sell to, so the founder's own site is the default input, not a peer's.
   // Seeded once; the section mounts only after ["setup"] has data.
   const [icpDomain, setIcpDomain] = useState(() => cfg.productDomain ?? "");
   const [deriveError, setDeriveError] = useState<string | null>(null);
@@ -70,7 +70,7 @@ export function IcpSection({
     },
   });
 
-  // Elapsed counter so the ~30–60s derive feels alive instead of frozen.
+  // Elapsed counter so the ~30-60s derive feels alive instead of frozen.
   // Server doesn't stream progress; we cycle a phase label by elapsed time.
   const [deriveElapsed, setDeriveElapsed] = useState(0);
   useEffect(() => {

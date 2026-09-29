@@ -3,7 +3,7 @@
  *
  * Both halves of the demo depend on agreeing about this: `scripts/capture-fixtures.ts`
  * writes the tree with it, and `demo.ts` reads the tree with it in a browser. It
- * therefore imports nothing — no node, no vite, no DOM.
+ * therefore imports nothing: no node, no vite, no DOM.
  *
  *   /home                        → home/index.json
  *   /receipts/12                 → receipts/12/index.json
@@ -16,7 +16,7 @@
  * collide onto the same document.
  */
 
-/** FNV-1a, 32-bit. Not a checksum — a short stable name for a string. */
+/** FNV-1a, 32-bit. Not a checksum. A short stable name for a string. */
 function hash(s: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -34,7 +34,7 @@ function slug(s: string): string {
 }
 
 /**
- * Map an API path — everything the client puts after `/api` — to a path
+ * Map an API path (everything the client puts after `/api`) to a path
  * relative to the fixture root, with no leading slash.
  */
 export function fixturePath(apiPath: string): string {

@@ -6,7 +6,7 @@ import { MAX_QUERY_WORDS } from "../src/_query-batch.ts";
 // each stay under the search-engine word-length bound, dedupe hits across
 // batches, respect the existing hit/cost guards, and rotate which batch
 // starts a run. Downstream enrichment (icpFilter/complete) is never
-// exercised here — every case runs `dryRun: true`, which the finder itself
+// exercised here. Every case runs `dryRun: true`, which the finder itself
 // short-circuits BEFORE any of those calls, so only the ledger's
 // `isQueueDuplicate` boundary needs a stub.
 
@@ -168,7 +168,7 @@ describe("runJobChangeFinder — company batching (#708)", () => {
     // 40 companies split into several batches; each batch search costs more
     // than maxCostUsd on its own, and every search returns zero hits, so the
     // only thing that can stop further paid searches is the pre-search cap
-    // check — the post-loop per-hit check is never reached.
+    // check. The post-loop per-hit check is never reached.
     const companies = Array.from({ length: 40 }, (_, i) => `Cap${i}`);
     webSearchImpl = () => ({ results: [], cost: 3 });
 

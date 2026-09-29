@@ -4,7 +4,7 @@ import { assertNotOwnerOperatorBuyer } from "@oneshot-gtm/plays";
 // Correction round 1, F-t_1ec69ea6-1/2: exercises hiring-signal's REAL
 // enqueue call site with `play`/`buyerType` routing set, rather than only
 // `buildDesignPartnerLoiPayload` in isolation. hiring-signal is the one
-// finder whose readiness edge key is `yourClaim`, not `yourEdge` — and the
+// finder whose readiness edge key is `yourClaim`, not `yourEdge`, and the
 // review specifically flagged `yourEdge` being fed from `yourClaim` as a
 // non-obvious mapping a helper test cannot catch.
 

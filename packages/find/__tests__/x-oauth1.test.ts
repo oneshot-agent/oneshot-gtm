@@ -3,7 +3,7 @@ import { loadXCreds, oauth1Header, queryString, rfc3986 } from "../src/_x-oauth1
 
 describe("rfc3986", () => {
   test("encodes the five characters encodeURIComponent leaves literal", () => {
-    // A signer that skips these signs one string and sends another — a 401
+    // A signer that skips these signs one string and sends another. A 401
     // that looks like bad creds.
     expect(rfc3986("!*'()")).toBe("%21%2A%27%28%29");
   });
@@ -40,7 +40,7 @@ describe("loadXCreds", () => {
 
 describe("oauth1Header", () => {
   test("reproduces the worked example from the X developer docs", () => {
-    // docs.x.com "Creating a signature" — the canonical known-answer vector.
+    // docs.x.com "Creating a signature". The canonical known-answer vector.
     // The example signs body params; sent as query params they normalize into
     // the identical signature base string.
     const creds = {

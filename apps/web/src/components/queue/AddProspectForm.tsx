@@ -18,7 +18,7 @@ import { readOnly } from "../../lib/readOnly.ts";
  * the route stays for bookmarks and for the link in the Queue's empty state.
  *
  * `onQueued` is what distinguishes the two. In the modal it closes the dialog,
- * so the confirmation panel below would never be seen and is skipped — the
+ * so the confirmation panel below would never be seen and is skipped. The
  * toast and the new row are the confirmation. On the standalone page there is
  * nowhere to go, so the panel renders and points at the Queue.
  */

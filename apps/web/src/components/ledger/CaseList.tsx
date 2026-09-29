@@ -14,7 +14,7 @@ export interface CaseListRow extends CaseRow {
   tone?: "blocked" | "spend";
 }
 
-// Literal class strings per tone — Tailwind cannot see a concatenated name.
+// Literal class strings per tone: Tailwind cannot see a concatenated name.
 const ROW_TONE = { blocked: "text-ink-blocked-2", spend: "text-ink-spend-2" } as const;
 
 export function CaseList({ rows, className }: { rows: CaseListRow[]; className?: string }) {
@@ -55,7 +55,7 @@ export function CaseList({ rows, className }: { rows: CaseListRow[]; className?:
 }
 
 /**
- * A quiet disclosure — mono eyebrow with a chevron that turns when open. The
+ * A quiet disclosure: mono eyebrow with a chevron that turns when open. The
  * score breakdown and the payload json live behind one; so does a sent
  * step's body on /cadences.
  */

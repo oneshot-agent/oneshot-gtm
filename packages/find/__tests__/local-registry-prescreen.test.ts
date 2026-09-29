@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // ok: true })`), which hid the real prescreen unconditionally rejecting
 // every non-knownEmail registry candidate with `no-fullname` (fullName was
 // always passed as `null` with no opt-in). This file exercises the REAL
-// `shouldSkipFindEmail` — everything else is stubbed the same way
-// local-registry.test.ts does it — so a regression that drops the
+// `shouldSkipFindEmail`: everything else is stubbed the same way
+// local-registry.test.ts does it, so a regression that drops the
 // `allowMissingFullName: true` opt-in on the call site (local-registry.ts)
 // fails this test instead of being invisible behind the mock.
 
@@ -76,7 +76,7 @@ vi.mock("../src/_dedupe.ts", () => ({
   urlDomain: () => null,
 }));
 
-// Deliberately NOT mocking ../src/_findemail-prescreen.ts — the real
+// Deliberately NOT mocking ../src/_findemail-prescreen.ts. The real
 // shouldSkipFindEmail runs against the real domain/name this test supplies.
 
 vi.mock("@oneshot-gtm/core", async () => {

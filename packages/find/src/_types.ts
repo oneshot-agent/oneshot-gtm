@@ -8,13 +8,13 @@ export interface FinderResult {
   droppedDuplicate: number;
   /** How many were dropped because enrichment failed (no email, undeliverable, etc). */
   droppedEnrichment: number;
-  /** How many were dropped because a per-finder low-signal threshold wasn't met (e.g. show-hn minPoints). Optional — not every finder has such a gate. */
+  /** How many were dropped because a per-finder low-signal threshold wasn't met (e.g. Show-hn minPoints). Optional, not every finder has such a gate. */
   droppedLowSignal?: number;
   /**
-   * How many were dropped by the PERSON-level ICP gate — i.e. the human's job
+   * How many were dropped by the PERSON-level ICP gate: i.e. the human's job
    * title is a different function (sales, marketing, investor, design, intern).
    * Distinct from `droppedIcp`, which judges the company / repo / event.
-   * Optional — only finders that have adopted the gate set it.
+   * Optional. Only finders that have adopted the gate set it.
    */
   droppedRole?: number;
   /** How many were enqueued. */
@@ -85,13 +85,13 @@ export interface CompanyRecord {
   /**
    * Founder/CEO name when known up-front (websearch path extracts it; yc-oss
    * path leaves it null). The pipeline resolves null values via a per-company
-   * webRead+extract before calling findEmail — the OneShot SDK requires a
+   * webRead+extract before calling findEmail. The OneShot SDK requires a
    * person name for email-by-domain to work.
    */
   founderName: string | null;
-  /** LinkedIn URL of the founder when surfaced by the source (websearch extract) — null otherwise. */
+  /** LinkedIn URL of the founder when surfaced by the source (websearch extract): null otherwise. */
   founderLinkedinUrl: string | null;
-  /** Phone number of the founder when surfaced by the source — rare; null otherwise. */
+  /** Phone number of the founder when surfaced by the source: rare; null otherwise. */
   founderPhone: string | null;
   /** `listing`: a dated structured listing (_accelerator-structured.ts). */
   source: "yc-oss" | "websearch" | "listing";
@@ -163,12 +163,12 @@ export interface LumaEventExtract {
   eventDateIso: string | null;
   /**
    * IANA zone the event page states (e.g. "America/Los_Angeles" for "7:30 PM
-   * PDT"). First choice when rendering the date for a draft — see
+   * PDT"). First choice when rendering the date for a draft: see
    * `resolveEventZone` in `@oneshot-gtm/core`. Null when the page doesn't say.
    */
   eventTimezone: string | null;
   eventCity: string | null;
-  /** Short summary of what the event is about — grounds the draft's topic. Null when the page has none. */
+  /** Short summary of what the event is about: grounds the draft's topic. Null when the page has none. */
   eventDescription: string | null;
   eventHasPassed: boolean;
   publicAttendees: LumaPublicAttendee[];
@@ -197,7 +197,7 @@ export interface RunOpts {
   /**
    * Person-level ICP gate: when the free role text is still ambiguous, buy one
    * extra enrichProfile (~$0.005) to get a real job title before deciding.
-   * Defaults to on — the alternative is guessing, which is what let 15% of the
+   * Defaults to on. The alternative is guessing, which is what let 15% of the
    * emailed population be off-ICP. Turn off to cap spend on a wide sweep.
    */
   qualifyFillGaps?: boolean;

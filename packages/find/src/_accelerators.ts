@@ -164,7 +164,7 @@ export function acceleratorOfCohortId(
 /** A resolved cohort plus what the search adapter needs to target it. */
 export interface ResolvedCohort extends CohortEntry {
   accelerator: string;
-  /** The year the cohort belongs to — the extraction filter keys on it. */
+  /** The year the cohort belongs to. The extraction filter keys on it. */
   year: number;
   /** For yearly cohorts: the previous year's cohort, tried when this one yields nothing. */
   fallback?: CohortEntry & { year: number };

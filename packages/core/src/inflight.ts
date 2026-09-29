@@ -1,9 +1,7 @@
 /**
- * Process-wide in-flight SEND tracker for graceful shutdown. A kill landing
- * between "OneShot accepted the send" and "sequence_events row written" would
- * dedup as unsent and re-send a duplicate — so shutdown waits for
- * activeSendCount() to hit 0. In-memory by design: the persisted send markers
- * + cold-boot sweep are the backstop for a hard SIGKILL.
+ * Shutdown waits for each send and its local record write to finish; exiting
+ * between them could cause a duplicate send after restart. Persisted markers
+ * and the cold-boot sweep handle SIGKILL, which this in-memory tracker cannot.
  */
 
 let active = 0;
@@ -20,9 +18,8 @@ export function endSend(): void {
 }
 
 /**
- * Wrap a send-and-persist span so it's counted as in-flight for its whole
- * duration — including the local record write that follows the SDK call. The
- * counter decrements even if `fn` throws.
+ * Count the SDK send and its subsequent local record write as one in-flight
+ * operation. The counter decrements even if fn throws.
  */
 export async function trackSend<T>(fn: () => Promise<T>): Promise<T> {
   beginSend();
@@ -33,17 +30,15 @@ export async function trackSend<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** How many sends are currently in-flight. */
 export function activeSendCount(): number {
   return active;
 }
 
-/** Flip the draining flag — send routes should start refusing new work (503). */
+/** Flip the draining flag: send routes should start refusing new work (503). */
 export function beginDraining(): void {
   draining = true;
 }
 
-/** True once shutdown has begun draining; new sends should be refused. */
 export function isDraining(): boolean {
   return draining;
 }
@@ -66,7 +61,7 @@ export async function waitForSendsToDrain(opts: {
   const poll = opts.pollMs ?? 200;
   const deadline = Date.now() + opts.timeoutMs;
   // `active` is mutated by concurrent endSend() calls during the await, not in
-  // this body — read it through the accessor each tick.
+  // this body: read it through the accessor each tick.
   while (activeSendCount() > 0 && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, poll));
   }

@@ -13,12 +13,12 @@ const promptsDir = [
   join(process.cwd(), "packages", "prompts"),
 ].find((dir) => existsSync(dir));
 
-// Repo root — the ancestor holding `packages` and `apps`. From
+// Repo root. The ancestor holding `packages` and `apps`. From
 // packages/intel/__tests__ that is three levels up.
 const repoRoot = join(here, "..", "..", "..");
 
 // Deliberate orphans: prompt files that ship but no `loadPrompt` path reaches.
-// Every entry needs a one-line reason so the gate stays honest — an unexplained
+// Every entry needs a one-line reason so the gate stays honest. An unexplained
 // orphan is exactly the fork-editing-a-dead-file bug this test exists to catch.
 const ALLOWED_ORPHANS: Record<string, string> = {
   "agent-builder-extract":
@@ -42,13 +42,13 @@ function sourceFiles(root: string): string[] {
     const dir = loc.parentPath ?? loc.path ?? abs;
     const full = join(dir, entry.name);
     // Match SKIP_DIRS against the path *inside* the scanned root only. The
-    // absolute prefix can legitimately contain a skip name — a git worktree
+    // absolute prefix can legitimately contain a skip name. A git worktree
     // lives under `.worktrees/<id>/`, so checking `full` would drop every file.
     const rel = relative(abs, full);
     if (rel.split(/[/\\]/).some((seg) => SKIP_DIRS.has(seg))) continue;
     if (!/\.(ts|tsx)$/.test(entry.name)) continue;
     // Test files reference prompt names (e.g. to exercise the loader) but are
-    // not callers — counting them would mask a genuine orphan.
+    // not callers: counting them would mask a genuine orphan.
     if (/\.test\.tsx?$/.test(entry.name) || rel.split(/[/\\]/).includes("__tests__")) continue;
     out.push(full);
   }
@@ -61,7 +61,7 @@ const LITERAL_PATTERNS = [
   /loadPrompt\(\s*["'`]([A-Za-z0-9_-]+)["'`]/g,
   /promptName:\s*["'`]([A-Za-z0-9_-]+)["'`]/g,
 ];
-// Play names — a play draws its prompt from `${play}` (loadPrompt(PLAY_NAME))
+// Play names. A play draws its prompt from `${play}` (loadPrompt(PLAY_NAME))
 // or the derived `${play}-email` / `${play}-followup` shapes.
 const PLAY_PATTERNS = [
   /PLAY_NAME\s*=\s*["'`]([A-Za-z0-9_-]+)["'`]/g,
@@ -70,11 +70,11 @@ const PLAY_PATTERNS = [
 // Prompt names loaded through a variable or template rather than a string
 // literal, e.g. `loadPrompt(PLAY_NAME)` or `loadPrompt(`${PLAY_NAME}-email`)`.
 // These resolve to a concrete loadable name via the referenced const's value,
-// so a deleted file behind one must still trip the missing-file check — the
+// so a deleted file behind one must still trip the missing-file check. The
 // name must not depend on the file's own existence to be counted as loadable.
 const DYNAMIC_BARE_RE = /loadPrompt\(\s*([A-Za-z_$][\w$]*)\s*\)/g;
 const DYNAMIC_TEMPLATE_RE = /loadPrompt\(\s*`\$\{\s*([A-Za-z_$][\w$]*)\s*\}([A-Za-z0-9_-]*)`\s*\)/g;
-// `const NAME = "value"` / `let` / `var` — used to resolve the identifier a
+// `const NAME = "value"` / `let` / `var`: used to resolve the identifier a
 // dynamic loadPrompt call references back to its string value, within a file.
 const STRING_CONST_RE = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*["'`]([A-Za-z0-9_-]+)["'`]/g;
 
@@ -126,7 +126,7 @@ describe("prompt inventory — files and loadable names stay in sync", () => {
 
   // The loadable names: every name some loadPrompt path can resolve. Literal
   // names plus dynamically resolved ones (`loadPrompt(PLAY_NAME)` and the
-  // `${play}-email` / `${play}-followup` template shapes) — resolved from the
+  // `${play}-email` / `${play}-followup` template shapes): resolved from the
   // call site, NOT gated on the file existing, so a deleted file behind a
   // dynamic load still fails the no-file check below.
   const loadableNames = new Set([...literalNames, ...dynamicNames]);

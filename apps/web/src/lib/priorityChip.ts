@@ -3,7 +3,7 @@ import { PRIORITY_WEIGHTS_BY_VERSION, type ProspectPriorityView } from "@oneshot
 /**
  * Display logic for the shadow-mode priority score (issue #410). Pure so it's
  * testable without a DOM, like `drainButton.ts`. The chip is informational
- * only — no sort, no filter, no gate — and its tones deliberately stop short
+ * only (no sort, no filter, no gate) and its tones deliberately stop short
  * of "blocked": a low shadow score is not a rejection.
  */
 
@@ -52,7 +52,7 @@ export interface PriorityBreakdownRow {
 }
 
 /**
- * Display order and labels only — the weights come from the canonical
+ * Display order and labels only. The weights come from the canonical
  * per-version table in shared-types, so a v1 artifact renders v1's weights
  * and a v2 artifact v2's, and nothing here can drift from the engine.
  */

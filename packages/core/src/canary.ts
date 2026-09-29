@@ -19,7 +19,7 @@ import type { EmailIdentity, GmailPlacement } from "./types.ts";
  *
  * Bounce harvesting answers "was it refused?". This answers the question that
  * silently kills cold outreach: accepted, but into spam or a tab. There is no
- * API that reports this — the only source of truth is a mailbox you control on
+ * API that reports this. The only source of truth is a mailbox you control on
  * the receiving side, which is why this needs TWO connected accounts. A message
  * sent to itself is never filtered, so a self-send would always read "inbox"
  * and mean nothing.
@@ -42,7 +42,7 @@ export interface CanaryOptions {
   /** Play whose most recent real email is replayed as the canary body. Default: newest of any play. */
   playName?: string;
   deadlineMs?: number;
-  /** Test seam — polling clock. */
+  /** Test seam: polling clock. */
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -57,7 +57,7 @@ export interface CanaryResult {
   subject: string;
   /** Play whose copy was replayed, or null when no real send existed to borrow. */
   sourcePlay: string | null;
-  /** True when both mailboxes share a domain — see `sameDomainWarning`. */
+  /** True when both mailboxes share a domain: see `sameDomainWarning`. */
   sameDomain: boolean;
   latencyMs: number | null;
 }
@@ -179,7 +179,7 @@ export async function runPlacementCanary(opts: CanaryOptions = {}): Promise<Cana
   // Subject+sender is the fallback query. Deliberately no marker token in the
   // subject: anything we added to make it findable would also be judged by the
   // filter we're trying to measure. `after:` is bounded to this run because the
-  // subject is REPLAYED copy — an earlier canary of the same play would
+  // subject is REPLAYED copy. An earlier canary of the same play would
   // otherwise be a valid match, and a stale hit would report the previous run's
   // placement as if it were this one's.
   const afterEpoch = Math.floor(sentAt / 1000) - 60;
@@ -202,7 +202,7 @@ export async function runPlacementCanary(opts: CanaryOptions = {}): Promise<Cana
     toIdentity: to.id,
     toAddress,
     // Never seen inside the deadline. Reported as its own outcome rather than
-    // folded into "spam" — it may still be in transit, and guessing either way
+    // folded into "spam". It may still be in transit, and guessing either way
     // would be a fabricated verdict.
     placement: found?.placement ?? "not_delivered",
     labelIds: found?.labelIds ?? [],

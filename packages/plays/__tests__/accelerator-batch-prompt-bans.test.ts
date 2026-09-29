@@ -10,8 +10,8 @@ import { lintEmail } from "../src/_lib.ts";
  * of the four it named had no pattern, and nothing could have noticed: the
  * existing coverage test checks that the humanizer doc MENTIONS every linter
  * label, never that a prompt's claim about the linter is TRUE. This test
- * checks the useful direction — every phrase the prompt's provenance sentence
- * quotes must actually be flagged when placed mid-body — plus the two other
+ * checks the useful direction. Every phrase the prompt's provenance sentence
+ * quotes must actually be flagged when placed mid-body: plus the two other
  * claims the prompt makes about enforcement.
  */
 const here = dirname(fileURLToPath(import.meta.url));
@@ -29,7 +29,7 @@ describe("accelerator-batch-email.md — claims about the linter are true (drift
     expect(sentence, "the provenance sentence should still exist").toBeTruthy();
     const phrases = [...sentence!.matchAll(/NEVER ((?:"[^"]+"(?:, )?)+)/g)]
       .flatMap((m) => [...m[1]!.matchAll(/"([^"]+)"/g)].map((q) => q[1]!))
-      .filter((p) => /^I /.test(p));
+      .filter((p) => p.startsWith("I "));
     expect(phrases.length).toBeGreaterThanOrEqual(4);
     for (const phrase of phrases) {
       const flags = lintEmail("x", `Hey Ada, your launch came up when ${phrase} the S26 list. Sam`);

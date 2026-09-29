@@ -216,7 +216,7 @@ describe("buildLinkedinUrl", () => {
     ["@sarah", "https://www.linkedin.com/in/sarah"],
     ["https://linkedin.com/in/sarah", "https://linkedin.com/in/sarah"],
     ["https://www.linkedin.com/in/sarah", "https://www.linkedin.com/in/sarah"],
-    // No-scheme variants previously double-prefixed — now stripped correctly.
+    // No-scheme variants previously double-prefixed: now stripped correctly.
     ["linkedin.com/in/sarah", "https://www.linkedin.com/in/sarah"],
     ["www.linkedin.com/in/sarah", "https://www.linkedin.com/in/sarah"],
     // Bare-path shape returned by api.lu.ma's linkedin_handle field.
@@ -323,8 +323,8 @@ describe("mergeAttendees", () => {
       {
         name: "Sarah Chen",
         profileUrl: "https://luma.com/user/sarah-chen",
-        websiteUrl: null, // auth doesn't surface — should be filled from public
-        linkedinUrl: null, // auth doesn't surface — should be filled from public
+        websiteUrl: null, // auth doesn't surface: should be filled from public
+        linkedinUrl: null, // auth doesn't surface: should be filled from public
         twitterUrl: "https://x.com/schen", // auth has it; should win
         bio: "from auth bio", // auth has it; should win
         role: "Speaker", // auth has it; should win

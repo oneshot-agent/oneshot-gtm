@@ -48,7 +48,7 @@ describe("qualifyPerson — verdict plumbing", () => {
   it("returns `unclear` (not reject) when there is no role text, without calling the LLM", async () => {
     // Missing data must take the SAME escalation path as ambiguous data.
     // Rejecting here would silently drop everyone whose bio happened to be
-    // blank — 31% of Luma candidates.
+    // blank: 31% of Luma candidates.
     completeShouldThrow = true; // proves complete() is never reached
     const res = await qualifyPerson({ icp: ICP, person: { name: "Nick", roleText: "" } });
     expect(res.verdict).toBe("unclear");

@@ -6,7 +6,7 @@ import { MAX_QUERY_WORDS } from "../src/_query-batch.ts";
 // that each stay under the search-engine word-length bound, dedupe hits
 // across batches, respect the existing hit/cost guards, and rotate which
 // batch starts a run. Downstream enrichment (icpFilter/webRead/complete) is
-// never exercised here — every case runs `dryRun: true`, which the finder
+// never exercised here. Every case runs `dryRun: true`, which the finder
 // itself short-circuits BEFORE any of those calls (see hiring-signal.ts's
 // per-hit loop), so only the ledger's `isQueueDuplicate` boundary needs a
 // stub.
@@ -18,7 +18,7 @@ let webSearchImpl: (query: string) => {
 };
 
 vi.mock("../src/_filter.ts", () => ({
-  // No ICP configured — same pass-through every other finder test uses
+  // No ICP configured: same pass-through every other finder test uses
   // (civic-agenda.test.ts, luma.test.ts) so `loadConfig()` never touches disk.
   resolveIcp: () => null,
   icpFilter: async () => ({ match: true, reason: "no ICP set; pass-through" }),
@@ -46,7 +46,7 @@ function wordCount(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
 }
 
-/** Job-board URL under one of the default ATS hosts — passes isJobBoardUrl. */
+/** Job-board URL under one of the default ATS hosts: passes isJobBoardUrl. */
 function jobUrl(id: string): string {
   return `https://boards.greenhouse.io/acme/jobs/${id}`;
 }
@@ -77,7 +77,7 @@ describe("runHiringSignalFinder — company batching (#708)", () => {
     for (const call of searchCalls) {
       expect(wordCount(call.query)).toBeLessThanOrEqual(MAX_QUERY_WORDS);
     }
-    // Every company must appear in exactly one query — nobody silently dropped.
+    // Every company must appear in exactly one query: nobody silently dropped.
     for (const company of companies) {
       const hits = searchCalls.filter((c) => c.query.includes(`"${company}"`));
       expect(hits).toHaveLength(1);
@@ -178,7 +178,7 @@ describe("runHiringSignalFinder — company batching (#708)", () => {
     // 40 companies split into several batches; each batch search costs more
     // than maxCostUsd on its own, and every search returns zero hits, so the
     // only thing that can stop further paid searches is the pre-search cap
-    // check — the post-loop per-hit check is never reached.
+    // check. The post-loop per-hit check is never reached.
     const companies = Array.from({ length: 40 }, (_, i) => `Cap${i}`);
     webSearchImpl = () => ({ results: [], cost: 3 });
 
@@ -190,7 +190,7 @@ describe("runHiringSignalFinder — company batching (#708)", () => {
 
     // The pre-batch-search cap check fires as soon as costUsd (3) is below
     // 5 after the first search but >= 5 would need a second search to push
-    // it over — with cost 3 per search, the SECOND search's pre-check still
+    // it over, with cost 3 per search, the SECOND search's pre-check still
     // passes (3 < 5) and fires, pushing cost to 6; the THIRD search's
     // pre-check (6 >= 5) must then refuse to fire.
     expect(searchCalls.length).toBe(2);

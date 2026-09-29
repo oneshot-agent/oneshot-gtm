@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Integration test for runCivicAgendaFinder — mocks the Legistar HTTP
+// Integration test for runCivicAgendaFinder: mocks the Legistar HTTP
 // boundary (via _civic-legistar.ts) and the ICP filter / ledger. Verifies the
 // free keyword gate runs BEFORE the paid icpFilter call, and that a body with
 // no published contact drops (not a retry) while a fetch failure on the
 // contact lookup persists for retry.
 //
 // fetchCityEvents / fetchEventItems are mocked out entirely (canned in-memory
-// data — no HTTP involved for event discovery). fetchBodyContact is left as
+// data: no HTTP involved for event discovery). FetchBodyContact is left as
 // the REAL implementation from _civic-legistar.ts; its own HTTP call is
 // driven through a stubbed global `fetch`, the same pattern
 // gov-solicitation.test.ts uses for fetchDescription. This means the
@@ -76,7 +76,7 @@ vi.mock("../src/_civic-legistar.ts", async () => {
       ({ "new york": "nyc", chicago: "chicago" })[city.trim().toLowerCase()] ?? null,
     fetchCityEvents: async (slug: string) => eventsBySlug[slug] ?? null,
     fetchEventItems: async (_slug: string, eventId: number) => itemsByEventId[eventId] ?? null,
-    // fetchBodyContact is intentionally NOT overridden — the real
+    // fetchBodyContact is intentionally NOT overridden. The real
     // implementation runs, hitting the stubbed global `fetch` below.
   };
 });
@@ -189,7 +189,7 @@ describe("runCivicAgendaFinder — happy path", () => {
   it("keyword-gates titles before any paid call, then enqueues the surviving item with city/title/date", async () => {
     const out = await runCivicAgendaFinder(baseConfig);
     expect(out.candidates).toBe(2); // both agenda items counted
-    // Only the AI-matching item reaches icpFilter — the librarian item never does.
+    // Only the AI-matching item reaches icpFilter. The librarian item never does.
     expect(icpCalls).toBe(1);
     expect(out.enqueued).toBe(1);
     expect(enqueued).toHaveLength(1);
@@ -292,7 +292,7 @@ describe("runCivicAgendaFinder — happy path", () => {
 
   it("accounts for icpFilter spend in result.costUsd so maxCostUsd can halt the run", async () => {
     // Regression for #503: icpFilter is the ONLY paid call this finder makes
-    // (fetchBodyContact is a free, keyless Legistar lookup) — before the fix,
+    // (fetchBodyContact is a free, keyless Legistar lookup): before the fix,
     // result.costUsd never left 0, so maxCostUsd could never trip regardless
     // of classifier spend.
     itemsByEventId = {
@@ -320,7 +320,7 @@ describe("runCivicAgendaFinder — happy path", () => {
     // The cost guard sits BELOW the duplicate check. A duplicate returns before
     // icpFilter, so its prospective cost is zero and a cap must not halt on it.
     // With the guard above the duplicate check, a cap under one classifier
-    // estimate (0.0005 < 0.001) halted the whole run on the first candidate —
+    // estimate (0.0005 < 0.001) halted the whole run on the first candidate:
     // one that was never going to spend anything.
     queueDuplicate = true;
     itemsByEventId = {
@@ -338,7 +338,7 @@ describe("runCivicAgendaFinder — happy path", () => {
 
   it("does not charge icpFilter spend when no ICP is configured (pass-through)", async () => {
     // resolveIcp() returning null is a normal, documented state (see
-    // _filter.ts's tri-state contract) — icpFilter() is then a free
+    // _filter.ts's tri-state contract): icpFilter() is then a free
     // pass-through with zero LLM calls, so result.costUsd must stay at 0
     // no matter how many keyword-surviving candidates it classifies.
     // Without the `if (icp)` gate this would falsely accrue spend and could
@@ -382,11 +382,11 @@ describe("runCivicAgendaFinder — max-cost cap", () => {
   it("does not let a duplicate's zero prospective cost halt the run before a later non-duplicate candidate", async () => {
     // Regression for finding PRRT_kwDOSKzrBs6fG5vp: the cost guard used to
     // run BEFORE the duplicate check. A duplicate never reaches icpFilter,
-    // so its prospective cost is always 0 — with 0 < maxCostUsd <
+    // so its prospective cost is always 0, with 0 < maxCostUsd <
     // ICP_FILTER_COST_ESTIMATE_USD, that 0 cost passed the guard and then
     // the duplicate `continue` skipped straight past the halt, but a later
     // NON-duplicate candidate would then find `result.halted` never got
-    // set even though its own prospective cost exceeds the cap — worse,
+    // set even though its own prospective cost exceeds the cap: worse,
     // in the actual bug the duplicate's continue meant the halt check was
     // simply skipped for it, silently letting the loop under-halt. Moving
     // the duplicate check first ensures duplicates are dropped as

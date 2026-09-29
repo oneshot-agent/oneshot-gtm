@@ -121,7 +121,7 @@ describe("runSourcesSought", () => {
 
   // finding PRRT_kwDOSKzrBs6fD-h0 / issue #463: title generically flows
   // target -> prospectMeta via _run-play.ts's runner (mirrors the /queue
-  // route's prospectMeta), same mechanism as accelerator-batch etc. — no
+  // route's prospectMeta), same mechanism as accelerator-batch etc.: no
   // per-play `title: t.title` line needed in prospectMeta itself.
   it("persists the POC's title generically via the shared runner", async () => {
     await runSourcesSought({
@@ -195,7 +195,7 @@ describe("sources-sought follow-up step — deadline gate", () => {
   });
 
   it("still sends the follow-up mid-day on the deadline date itself (date-only string)", async () => {
-    // "now" is 20:00 UTC on the deadline date — Date.parse(\"2026-07-01\")
+    // "now" is 20:00 UTC on the deadline date: Date.parse(\"2026-07-01\")
     // resolves to 2026-07-01T00:00:00Z, which is BEFORE this instant. The
     // old `deadlineMs < Date.now()` check treated the entire day as expired.
     vi.useFakeTimers();

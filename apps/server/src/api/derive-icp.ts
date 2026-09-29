@@ -21,7 +21,7 @@ export async function deriveIcpRoute(req: Request): Promise<Response> {
   if (!url) {
     return jsonResponse({ error: `not a valid domain or URL: ${body.domain}` }, 400, req);
   }
-  // Hostname is the public domain the founder pasted — not user-typed PII.
+  // Hostname is the public domain the founder pasted, not user-typed PII.
   const host = new URL(url).hostname;
   logEvent("derive_icp.start", { host });
 

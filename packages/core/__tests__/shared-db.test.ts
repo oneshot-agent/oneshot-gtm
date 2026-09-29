@@ -119,7 +119,7 @@ describe("Ledger cache delegation + legacy import", () => {
         "INSERT INTO linkedin_lookup_cache(query_key, url, status, fetched_at) VALUES(?, ?, ?, ?)",
       )
       .run("k-legacy", "https://linkedin.com/in/legacy", "hit", "2026-08-01T00:00:00.000Z");
-    // Shared already knows a newer answer for one of them — it must win.
+    // Shared already knows a newer answer for one of them. It must win.
     getSharedDb().setCachedEnrichment("legacy@old.dev", '{"legacy":false}');
 
     // First cache access triggers the import.
@@ -232,7 +232,7 @@ describe("schema upgrade of a pre-reservation shared file", () => {
       id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL, workspace TEXT NOT NULL,
       play_name TEXT NOT NULL, sent_at TEXT NOT NULL)`);
     // Relative timestamp: recentTouchElsewhere applies the 7-day contact
-    // window, so a hardcoded date rots — this test went red the day the
+    // window, so a hardcoded date rots. This test went red the day the
     // fixture's date aged past the window (green 2026-08-26, red 08-27).
     const recentIso = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     raw.exec(

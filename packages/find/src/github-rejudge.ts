@@ -85,7 +85,7 @@ function selectRows(opts: GitHubRejudgeOpts): QueueRow[] {
 /**
  * Re-run the github-stars ICP decision on existing queue rows from the
  * evidence GitHub itself publishes (bio, site, account maturity, own repos,
- * profile README on bare profiles) — no paid research. Built for rows the
+ * profile README on bare profiles): no paid research. Built for rows the
  * gate judged on a bare star, or that a human re-opened in bulk.
  *
  * Writes the evidence and verdict onto the payload. A reject moves a pending

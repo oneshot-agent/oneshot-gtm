@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 let nextResults: Array<{ url: string; title: string; description: string }> = [];
 let nextCost = 0.01;
 let throwOnSearch = false;
-/** Message the mocked webSearch throws — drives the transient-vs-genuine branch. */
+/** Message the mocked webSearch throws: drives the transient-vs-genuine branch. */
 let searchErrorMessage = "simulated network error";
 const calls = { webSearch: 0, queries: [] as string[] };
 
@@ -21,7 +21,7 @@ vi.mock("@oneshot-gtm/core", () => ({
     };
   },
   logEvent: () => {},
-  // Real implementation — the transient/genuine split is the behaviour under
+  // Real implementation. The transient/genuine split is the behaviour under
   // test, so mocking it would defeat the purpose.
   isTransientToolError: (err: unknown) => {
     const msg = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
@@ -192,7 +192,7 @@ describe("findLinkedInUrl — built-in name verification", () => {
   beforeEach(reset);
 
   it("skips a result whose title names someone else and takes the next", async () => {
-    // Every finder gets this for free — a wrong URL here becomes outreach to a
+    // Every finder gets this for free. A wrong URL here becomes outreach to a
     // stranger, not a blank field.
     nextResults = [
       {
@@ -283,7 +283,7 @@ describe("findLinkedInUrl — persistent cache", () => {
 
     _resetLinkedInCache();
     expect(await lookup("Ghost")).toBeNull();
-    expect(calls.webSearch).toBe(1); // a miss is a real answer — don't re-pay
+    expect(calls.webSearch).toBe(1); // a miss is a real answer: don't re-pay
   });
 
   it("does NOT persist a transient failure — it would poison the cache for weeks", async () => {
@@ -438,14 +438,14 @@ describe("nameMatchesTitle", () => {
   });
 
   it("accepts a title that initialises the first name", () => {
-    // Rejecting this wouldn't just lose the profile — the miss gets cached for
+    // Rejecting this wouldn't just lose the profile. The miss gets cached for
     // LINKEDIN_MISS_TTL_MS, so the person stays unreachable for two weeks.
     expect(nameMatchesTitle("J. Smith - Acme | LinkedIn", "John Smith")).toBe(true);
     expect(nameMatchesTitle("A Cabero - Dev", "Andres Cabero")).toBe(true);
   });
 
   it("does not let an initial match an unrelated first name", () => {
-    // Same surname, but "ann" doesn't start with "j" — the initial narrows,
+    // Same surname, but "ann" doesn't start with "j". The initial narrows,
     // it doesn't wave everything through.
     expect(nameMatchesTitle("J. Smith - Acme", "Ann Smith")).toBe(false);
   });
@@ -489,7 +489,7 @@ describe("looksLikeOrgName", () => {
   });
 
   it("does not treat 'ai' or 'co' as org markers", () => {
-    // Both collide with real given names — dropping a person is worse than the
+    // Both collide with real given names: dropping a person is worse than the
     // rare org that slips through to a title check.
     expect(looksLikeOrgName("Ai Tanaka")).toBe(false);
     expect(looksLikeOrgName("Co Nguyen")).toBe(false);

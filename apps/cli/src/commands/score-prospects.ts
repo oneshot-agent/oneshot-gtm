@@ -28,17 +28,9 @@ import {
 import { c, header, note, ok } from "../output.ts";
 
 /**
- * Backfill shadow-mode priority scores onto queue rows (issue #410, Phase 1).
- *
- * Reads ONLY the payloads the finders already persisted — no network, no LLM,
- * no SDK, $0. Resumable by state-in-the-row: a re-run skips rows that already
- * carry a current-version artifact unless `--refresh`. Scores are anchored to
- * each row's `found_at` (both freshness and `scoredAt`), so a backfilled score
- * matches what enqueue-time scoring would have produced and re-runs are
- * deterministic.
- *
- * Sibling of `research-prospects`: same shape (scoped, capped, dry-runnable),
- * but synchronous and free.
+ * Backfill shadow priority scores from persisted finder payloads without network calls.
+ * Skip current-version artifacts unless --refresh. Anchor freshness and scoredAt
+ * to found_at so reruns match enqueue-time scores. Supports scope, caps, and dry runs.
  */
 
 export interface ScoreProspectsOpts {
@@ -51,8 +43,8 @@ export interface ScoreProspectsOpts {
   /** Print the per-finder shadow report (works with --dry-run). */
   report: boolean;
   /**
-   * Widen the backfill from the live queue (pending/approved) to EVERY row —
-   * sent, rejected, expired — so historical scores can be compared against
+   * Widen the backfill from the live queue (pending/approved) to every row
+   * (sent, rejected, expired) so historical scores can be compared against
    * the dispositions humans already made. Evaluation only: nothing anywhere
    * acts on a score, and auto-rejections stay separated from human labels.
    */
@@ -60,7 +52,7 @@ export interface ScoreProspectsOpts {
 }
 
 /**
- * Parse `--scope`. Unknown names are rejected rather than ignored — a typo'd
+ * Parse `--scope`. Unknown names are rejected rather than ignored. A typo'd
  * play must not silently widen the run to nothing (or to everything).
  */
 export function parseScope(raw: string | undefined): string {
@@ -82,7 +74,7 @@ export function resolveCap(limit: number | undefined): number | undefined {
 
 /**
  * True when the row already carries a valid CURRENT-version artifact. Uses
- * the same full-shape validator as the API projection — an artifact the API
+ * the same full-shape validator as the API projection. An artifact the API
  * would hide as `priority: null` (partial, corrupt, out-of-range) must read
  * as "not scored" here too, or a plain backfill run could never repair it.
  * Older versions parse (they keep rendering) but are not current, so a plain
@@ -98,7 +90,7 @@ export function shouldSkipRow(row: Pick<QueueRow, "priority_json">, refresh: boo
 
 /**
  * The freshness/scoredAt anchor for a backfilled row. `found_at` comes from
- * SQLite's `datetime('now')` — UTC without a zone marker — so normalize it to
+ * SQLite's `datetime('now')` (UTC without a zone marker), so normalize it to
  * ISO before parsing; a malformed value falls back to the run clock.
  */
 export function anchorFor(row: Pick<QueueRow, "found_at">): Date {
@@ -107,8 +99,7 @@ export function anchorFor(row: Pick<QueueRow, "found_at">): Date {
   return Number.isFinite(t) ? new Date(t) : new Date();
 }
 
-// Moved to @oneshot-gtm/find (_buckets.ts) so the outcome report shares the
-// bands; re-exported here for existing importers/tests.
+// Share score bands with outcome reports; retain existing imports.
 export { SCORE_BUCKETS, bucketOf };
 
 /**
@@ -125,7 +116,7 @@ export interface FinderShadowReport {
   rows: number;
   scored: number;
   buckets: Record<(typeof SCORE_BUCKETS)[number], number>;
-  /** Rows a human actually reviewed — auto: rejections excluded. */
+  /** Rows a human actually reviewed: auto: rejections excluded. */
   humanReviewed: number;
   /** approved+sent over humanReviewed, or null when no human labels exist. */
   humanApprovalRate: number | null;
@@ -137,9 +128,8 @@ export interface FinderShadowReport {
   approvedScored: { n: number; mean: number | null };
   rejectedScored: { n: number; mean: number | null };
   /**
-   * Mann-Whitney AUC of score vs human call: P(random approved outranks a
-   * random rejected). 0.5 = no separation. Null until both sides have scored
-   * rows. The Phase 2 acceptance bar reads this number.
+   * Mann-Whitney AUC: P(random approved outranks random rejected).
+   * 0.5 means no separation; null until both groups contain scored rows.
    */
   auc: number | null;
 }
@@ -147,17 +137,15 @@ export interface FinderShadowReport {
 /**
  * Aggregate shadow report by finder. Descriptive only: score buckets next to
  * the human approval rate where labels exist. This is NOT a conversion
- * probability — no calibration has been measured.
+ * probability: no calibration has been measured.
  */
 export function buildShadowReport(rows: QueueRow[]): FinderShadowReport[] {
-  // One accumulator per finder; the report objects are constructed once at
-  // the end so no field ever depends on a placeholder being overwritten.
   interface Acc {
     rows: number;
     scored: number;
     buckets: Record<(typeof SCORE_BUCKETS)[number], number>;
     humanReviewed: number;
-    /** Human approvals INCLUDING unscored rows — not derivable from approved.length. */
+    /** Human approvals INCLUDING unscored rows, not derivable from approved.length. */
     approvedCount: number;
     approved: number[];
     rejected: number[];
@@ -179,16 +167,12 @@ export function buildShadowReport(rows: QueueRow[]): FinderShadowReport[] {
     }
     acc.rows++;
     const priority = parseProspectPriority(row.priority_json);
-    // Buckets describe the live queue only — a dispatched (sent) or dropped
-    // row keeps its historical priority_json, and counting it here would make
-    // the distribution misrepresent the claimed pending/approved population.
+    // Only live pending/approved rows belong in the queue distribution.
     if (priority !== null && (row.status === "pending" || row.status === "approved")) {
       acc.scored++;
       acc.buckets[bucketOf(priority.total)]++;
     }
-    // Human label = a person decided (shared predicate — expiry machinery
-    // stamps reviewed_at without judgment; counting those as non-approvals
-    // deflated approval rates: measured luma 38% vs true 65%).
+    // Expiry can stamp reviewed_at without a human decision; exclude those labels.
     if (isHumanDecision(row)) {
       acc.humanReviewed++;
       if (isHumanApproval(row)) {
@@ -219,7 +203,7 @@ export function buildShadowReport(rows: QueueRow[]): FinderShadowReport[] {
 /**
  * Per-finder outcome section (Phase 3 of #410): what the sends actually did.
  * Positives are real outcomes only (human replies, meetings, deals, receipt
- * value tags); a row counts negative only once mature and joinable —
+ * value tags); a row counts negative only once mature and joinable:
  * immature and unjoinable rows never enter a denominator. This is NOT a
  * conversion probability.
  */
@@ -256,7 +240,7 @@ function printOutcomeReport(ledger: ReturnType<typeof getLedger>, scope: string)
   if (labels.length === 0) return;
 
   // Shadow display of the fitted calibration, when one exists (written by
-  // `find calibrate --fit`). Display only — nothing consumes it for ordering.
+  // `find calibrate --fit`). Display only: nothing consumes it for ordering.
   let calibration: ReturnType<typeof readProspectCalibration> = null;
   try {
     calibration = readProspectCalibration();
@@ -315,7 +299,7 @@ export function commandScoreProspects(opts: ScoreProspectsOpts): void {
   const ledger = getLedger();
   const scope = parseScope(opts.scope);
 
-  // Read the backlog, then cap in memory after the skip filter — `--limit N`
+  // Read the backlog, then cap in memory after the skip filter: `--limit N`
   // means "score N rows", not "consider N rows".
   const rows = ledger.listQueueRowsForScoring({
     ...(scope === "all" ? {} : { playName: scope }),
@@ -347,7 +331,7 @@ export function commandScoreProspects(opts: ScoreProspectsOpts): void {
       ? safeScorePriority(row.play_name, payload, anchorFor(row))
       : null;
     if (priority === null) {
-      // Unknown play (no adapter) vs malformed payload / scoring failure —
+      // Unknown play (no adapter) vs malformed payload / scoring failure:
       // either way the row keeps whatever it had; failures never clear a score.
       if (PRIORITY_ADAPTERS[row.play_name]) failed++;
       else unsupported++;
@@ -370,7 +354,7 @@ export function commandScoreProspects(opts: ScoreProspectsOpts): void {
   }
 
   if (opts.report) {
-    // Same scope as the backfill, and effectively unbounded — a real limit
+    // Same scope as the backfill, and effectively unbounded. A real limit
     // would silently truncate the history the rates are computed over.
     const report = buildShadowReport(
       ledger.listQueue({

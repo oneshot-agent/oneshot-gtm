@@ -3,19 +3,12 @@ import { join } from "node:path";
 import { configDir } from "./config.ts";
 
 /**
- * The fitted priority-calibration artifact (Phase 3 of #410) — written by
- * `find calibrate --fit`, read for SHADOW DISPLAY only. Nothing orders,
- * gates, drains, or sends by it; the future adoption gate
- * (`queuePriorityCalibration?: "off" | "shadow"`) is deliberately NOT a
- * config field yet — it would be dead config until adoption is
- * evidence-gated in a later phase.
+ * Priority calibration written by `find calibrate --fit` for shadow display.
+ * It does not control ordering, eligibility, draining, or sends.
  *
- * Lives as a configDir JSON file (not a ledger table): it is per-workspace
- * configuration the scoring engine must be able to read without a ledger
- * dependency, and the file is trivially inspectable and deletable. Resolver
- * shape follows ops/_titles.ts: env override, then configDir; a MISSING file
- * is null (not calibrated), an EXISTING-but-unusable file throws — silence
- * there would misreport "not calibrated" over a real artifact.
+ * Stored as workspace config JSON so scoring can read it without a ledger.
+ * Resolve the environment override before configDir. Missing files return null;
+ * existing but unusable files throw rather than report an absent calibration.
  */
 
 const COMPONENT_KEYS = [
@@ -28,7 +21,7 @@ const COMPONENT_KEYS = [
 ] as const;
 
 export interface FinderCalibration {
-  /** Keyed, not positional — order drift between packages cannot corrupt it. */
+  /** Keyed, not positional: order drift between packages cannot corrupt it. */
   weights: Record<(typeof COMPONENT_KEYS)[number], number>;
   bias: number;
   nPos: number;
@@ -50,7 +43,7 @@ export function calibrationPath(): string {
   return process.env["ONESHOT_GTM_CALIBRATION"] ?? join(configDir(), "priority-calibration.json");
 }
 
-/** Strict on numbers, normalizing on trimmings — parseProspectPriority style. */
+/** Strict on numbers, normalizing on trimmings: parseProspectPriority style. */
 export function parseProspectCalibration(raw: string): ProspectCalibration | null {
   let parsed: unknown;
   try {

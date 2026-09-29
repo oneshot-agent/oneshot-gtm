@@ -1,19 +1,8 @@
 /**
- * `fitReason` — the one sentence on a queue row that says why this prospect
- * fits the founder's ICP (issue #592).
- *
- * Until this, the only human-readable rationale a row carried was `notes`, a
- * free-text string each finder formatted differently, and the only place the
- * company-level `icpFilter` reason ever landed. Some finders wrote no reason at
- * all. The row's line is now `${queueEvidence} — ${fitReason}`, with
- * `fitReason` a payload field every finder stamps the same way (see
- * `packages/find/src/_fit-reason.ts` for the enqueue-time ladder).
- *
- * This module holds the pieces that need an LLM or are shared by plays, find
- * and the CLI: normalization, and the generator used where no gate produced a
- * reason (gov notices, amplifiers, manual adds, the backfill). Plays is the
- * right home — find already depends on plays (`drain.ts`), and
- * `describeTargetForAngle` is here.
+ * Normalize and generate the sentence explaining why a queue prospect fits
+ * the founder's ICP. Shared by plays, find, and the CLI. Generation covers
+ * rows with no gate reason; enqueue-time precedence lives in
+ * `packages/find/src/_fit-reason.ts`.
  */
 import { loadConfig, logEvent } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
@@ -28,7 +17,7 @@ export const FIT_REASON_COST_ESTIMATE_USD = 0.001;
 export const FIT_REASON_MAX_CHARS = 240;
 
 /**
- * What the gates say when they did NOT judge anything — pass-throughs and
+ * What the gates say when they did NOT judge anything: pass-throughs and
  * deferrals from `_filter.ts` / `_qualify.ts`. A row must never show one as
  * its reason. `unclear-after-enrich: <sentence>` wraps a real sentence and
  * is unwrapped instead.
@@ -42,17 +31,15 @@ const NOT_A_REASON = new Set([
 ]);
 
 /**
- * The same family by prefix: what a gate or the product-research step writes
- * when it could NOT judge ("fill-the-gap enrichment returned no title",
- * "product research unavailable: …"). Three of these reached live rows as
- * their fit line before this pattern existed (#594).
+ * Gate and product-research diagnostic prefixes indicate that no fit judgment
+ * was made, so they must not appear as a row's fit reason.
  */
 const DIAGNOSTIC =
   /^(?:fill-the-gap enrichment|product research unavailable|no role text|classifier unavailable|no icp set)\b/i;
 
 /**
  * Trim, collapse whitespace, strip wrapping quotes, drop the gates' canned
- * non-reasons, cap length. Null for blank or non-string input — the caller's
+ * non-reasons, cap length. Null for blank or non-string input. The caller's
  * "nothing to stamp" signal.
  */
 export function normalizeFitReason(raw: unknown): string | null {
@@ -76,12 +63,9 @@ export interface GenerateFitReasonInput {
 }
 
 /**
- * One small isolated call: the ICP, the play, the prospect's own evidence → a
- * sentence. Never throws — a provider failure or unusable answer logs
- * `error.swallowed` and returns null, so an enqueue or a backfill row is never
- * blocked by a missing rationale. No ICP configured → null without a call:
- * there is nothing to judge fit against, and the UI's half-line contract
- * handles absence.
+ * Generate a fit sentence from the ICP, play, and prospect evidence.
+ * Provider failures and unusable answers log `error.swallowed` and return null
+ * without blocking enqueue or backfill. No configured ICP means no call.
  */
 export async function generateFitReason(input: GenerateFitReasonInput): Promise<string | null> {
   const icp = input.icp?.trim() ?? loadConfig().icpOneLiner?.trim() ?? "";

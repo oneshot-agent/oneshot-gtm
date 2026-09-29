@@ -71,7 +71,7 @@ describe("sendEmail cross-workspace hold", () => {
     const err = await sendEmail({ to: "own@startup.example", subject: "s", body: "b" }, CTX).catch(
       (e: unknown) => e,
     );
-    // Gets past the gate and fails later on the (absent) wallet — proof the
+    // Gets past the gate and fails later on the (absent) wallet: proof the
     // hold did not fire.
     expect(isRecentlyContacted(err)).toBe(false);
     expect((err as Error).message).toMatch(/wallet credentials/i);

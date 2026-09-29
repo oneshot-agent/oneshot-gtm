@@ -194,7 +194,7 @@ describe("shouldSkipFindEmail", () => {
 
   it("dud-domain dominates handle-not-name when both apply", () => {
     // We surface the domain reason first because the domain check is
-    // more decisive — fixing the name wouldn't make the call succeed.
+    // more decisive: fixing the name wouldn't make the call succeed.
     const out = shouldSkipFindEmail({
       fullName: "samaralihussain",
       companyDomain: "github.io",

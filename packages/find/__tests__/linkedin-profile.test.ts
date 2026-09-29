@@ -127,7 +127,7 @@ const {
 } = await import("../src/_linkedin-profile.ts");
 
 const URL = "https://www.linkedin.com/in/julia-zabrodska-akinci-cv/";
-/** Cached profile rows only — the shared gate lease lives in the same map under another prefix. */
+/** Cached profile rows only. The shared gate lease lives in the same map under another prefix. */
 const profileRows = () => [...cache.keys()].filter((k) => k.startsWith("linkedin-profile:")).length;
 const ctx = { playName: "luma-events" };
 const ok = () => ({

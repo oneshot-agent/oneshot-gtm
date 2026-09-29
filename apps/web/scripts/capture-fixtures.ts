@@ -22,7 +22,7 @@
  * demo that opens on an empty room.
  *
  * WHAT THIS WRITES IS PUBLISHED. The seeded install is fictional by
- * construction — Mira Vance, tracepoint.dev, placeholder credentials — but the
+ * construction: Mira Vance, tracepoint.dev, placeholder credentials, but the
  * server still answers three questions about the machine it is running on:
  * /workspace enumerates the operator's OTHER workspaces by name, home and port,
  * and /doctor and /setup quote absolute paths. Those are scrubbed below, and
@@ -46,11 +46,11 @@ const PLACEHOLDER_HOME = "/home/founder/.oneshot-gtm";
 
 const HOME = homedir();
 
-// ── the seeds ────────────────────────────────────────────────────────────────
+// the seeds
 //
 // Every path an api client read can produce, with the parameters the routes
-// actually pass. Anything parameterised by data — a receipt id, a play chip on
-// the queue's filter bar — is discovered from the responses instead, in
+// actually pass. Anything parameterised by data. A receipt id, a play chip on
+// the queue's filter bar: is discovered from the responses instead, in
 // `expand` below, so the captured set is the set the UI can reach rather than a
 // cross-product mostly made of combinations no click produces.
 
@@ -80,12 +80,12 @@ const SEEDS = [
   // Queue: the table (limit 200), the Today strip (16), and the nav's alert dot.
   "/queue?limit=16",
 
-  // Prospects: one document — the whole seeded ledger — and the page
+  // Prospects: one document (the whole seeded ledger) and the page
   // searches, sorts and pages it client-side (client.ts `prospectSearch`).
   "/queue/search?limit=500",
   "/queue?status=pending&limit=1",
 
-  // Measure: all-time, 30d, 7d — the three range buttons.
+  // Measure: all-time, 30d, 7d. The three range buttons.
   "/measure/cac",
   "/measure/rocs",
   "/measure/rocs-by-goal",
@@ -162,7 +162,7 @@ function expand(url: string, body: unknown): string[] {
   return [];
 }
 
-// ── scrubbing ────────────────────────────────────────────────────────────────
+// scrubbing
 
 /**
  * /workspace is the one response that has to be rebuilt rather than edited.
@@ -211,7 +211,7 @@ function scrubText(text: string, demoHome: string): string {
   return out;
 }
 
-// ── the walk ─────────────────────────────────────────────────────────────────
+// the walk
 
 async function main(): Promise<void> {
   if (PORT === "3030") {
@@ -278,7 +278,7 @@ async function main(): Promise<void> {
 /**
  * Re-read everything and refuse to ship a home directory.
  *
- * Deliberately not a check on the scrubbing that just ran — it is a check on
+ * Deliberately not a check on the scrubbing that just ran. It is a check on
  * the tree, which is what actually gets published, and it will keep working
  * when an endpoint starts returning a path that nothing above knows about.
  */

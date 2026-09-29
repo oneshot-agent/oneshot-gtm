@@ -15,16 +15,16 @@ export interface NewBusinessTarget {
   /** What was recently issued, e.g. "food service permit", "contractor licence",
    *  "motor carrier authority". */
   licenseType: string;
-  /** How recently, in plain words — e.g. "3 weeks ago", "this month". Fed by the
+  /** How recently, in plain words: e.g. "3 weeks ago", "this month". Fed by the
    *  recent-issue lane of the local-registry finder (#459). */
   issuedAgo: string;
-  /** The concrete thing that helps a business at this exact starting point —
+  /** The concrete thing that helps a business at this exact starting point:
    *  plain English, hours/dollars terms, never a feature list. */
   yourEdge: string;
   linkedinUrl?: string;
   phone?: string;
   sourceProfileUrl?: string;
-  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  /** Job title from the person-level ICP gate: persisted to prospects.title. */
   title?: string;
 }
 
@@ -36,7 +36,7 @@ export interface NewBusinessRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
@@ -54,13 +54,12 @@ export interface NewBusinessDraft {
 const newBusinessDef: EmailPlayDef<NewBusinessTarget> = {
   playName: PLAY_NAME,
   promptName: "new-business-email",
-  maxBodyWords: 89, // prompt caps the body under 90 words (finding: new-business.ts:55 — 150 let a 90-150 word draft through)
-  // One touch + one follow-up that doubles as the breakup — mirrors
+  maxBodyWords: 89, // prompt caps the body under 90 words (finding: new-business.ts:55: 150 let a 90-150 word draft through)
+  // One touch + one follow-up that doubles as the breakup: mirrors
   // accelerator-batch's shape and free-pilot's, above.
   enrollCadence: true,
-  // Server-side mirror of playSchemas.ts's required fields for this play
-  // (finding: apps/web/src/lib/playSchemas.ts:417 — the client-only check
-  // can be bypassed by a direct API call or a hand-edited queue row).
+  // Mirror the web form requirements for API calls and queued rows that
+  // bypass browser validation.
   requiredFields: [
     "name",
     "email",
@@ -109,7 +108,7 @@ export function runNewBusiness(
   return runEmailPlay(newBusinessDef, opts);
 }
 
-// One-touch + one follow-up that IS the breakup — mirrors accelerator-batch
+// One-touch + one follow-up that IS the breakup: mirrors accelerator-batch
 // and free-pilot, not the five-step profile-intro.
 registerSequence({
   playName: PLAY_NAME,
@@ -119,7 +118,7 @@ registerSequence({
       channel: "email",
       breakOnReply: true,
       label: "single follow-up + breakup",
-      // Prompt caps this at ≤ 45 words (new-business-followup.md) — enforced
+      // Prompt caps this at ≤ 45 words (new-business-followup.md): enforced
       // here, not the cadence-wide default of 100 (finding:
       // discovery-interview-email.md:31, listing new-business-followup.md:14
       // as one of the affected plays).

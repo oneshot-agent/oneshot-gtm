@@ -16,7 +16,7 @@ describe("withXEngine", () => {
     const flipped = withXEngine(CONFIG, "xapi");
     expect(flipped["engine"]).toBe("xapi");
     // Carrying twitterapi.io's $1 ceiling onto the X API buys ~100 user reads
-    // and stalls the run — the registry's per-engine defaults must re-apply.
+    // and stalls the run. The registry's per-engine defaults must re-apply.
     expect(flipped).not.toHaveProperty("maxSpendPerRun");
     expect(flipped).not.toHaveProperty("knobs");
   });

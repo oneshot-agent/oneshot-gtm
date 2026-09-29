@@ -23,7 +23,7 @@ import {
  * Calendar ingest (issue #577): read the founder's designated calendar and
  * turn past meetings into rows the founder can log an outcome against.
  *
- * Deliberately NOT a TRIGGERS registry entry — triggers are spend-gated
+ * Deliberately NOT a TRIGGERS registry entry: triggers are spend-gated
  * candidate finders behind an approval-rate gate; this is a free read that
  * belongs in the scheduler tick body (see apps/server/src/scheduler.ts).
  */
@@ -32,19 +32,19 @@ import {
 const CALENDAR_WATERMARK_KEY = "calendar_events";
 /**
  * poll_state key for the weekly belt-and-braces full resync (no
- * `updatedMin`) — guards against the silent-data-loss failure mode where a
+ * `updatedMin`): guards against the silent-data-loss failure mode where a
  * meeting booked far in the future is invisible today (outside timeMax) and
  * by the time it slides into range its `updated` is already older than the
  * watermark, so an incremental poll would never see it.
  */
 const CALENDAR_FULL_RESYNC_KEY = "calendar_events_full_resync";
 const FULL_RESYNC_INTERVAL_MS = 7 * 24 * 60 * 60_000;
-/** `updatedMin` is re-examined this much before the watermark — Google's timestamps are second-granular and delivery isn't strictly ordered. */
+/** `updatedMin` is re-examined this much before the watermark: Google's timestamps are second-granular and delivery isn't strictly ordered. */
 const WATERMARK_OVERLAP_MS = 10 * 60_000;
 /** `timeMin` is an exclusive lower bound on the event's END. */
 const TIME_MIN_MS = 90 * 24 * 60 * 60_000;
 /**
- * `timeMax` is an exclusive upper bound on the event's START — and must be
+ * `timeMax` is an exclusive upper bound on the event's START, and must be
  * ~400 days out, not 90: a meeting booked six months ahead is stamped
  * `updated` today; if it falls outside `timeMax` it's invisible now, and by
  * the time it slides into a narrower window its `updated` predates the
@@ -52,10 +52,10 @@ const TIME_MIN_MS = 90 * 24 * 60 * 60_000;
  * this design is built around.
  */
 const TIME_MAX_MS = 400 * 24 * 60 * 60_000;
-/** Mirrors REPLY_POLL_MAX_PAGES's precedent — bounds one poll after an install or outage. */
+/** Mirrors REPLY_POLL_MAX_PAGES's precedent: bounds one poll after an install or outage. */
 const CALENDAR_POLL_MAX_PAGES = 10;
 const CALENDAR_PAGE_SIZE = 250;
-/** More than this many externals reads as a webinar, not a 1:1 — auto-link is refused even on an exact hit. */
+/** Above this external-attendee count, refuse auto-linking even on an exact hit: likely a webinar. */
 const LARGE_INVITE_THRESHOLD = 8;
 const EXTERNAL_ATTENDEES_CAP = 20;
 /** Fuzzy-match record floor; below this the event is stored unmatched rather than guessed at. */
@@ -63,7 +63,7 @@ const FUZZY_MATCH_THRESHOLD = 0.5;
 
 /**
  * eventType values that are never a prospect call, even when they happen to
- * carry an external-looking address — `fromGmail` in particular
+ * carry an external-looking address: `fromGmail` in particular
  * auto-creates flight/hotel events with a real external (airline/hotel)
  * address that would otherwise pass the self-block check.
  */
@@ -185,19 +185,19 @@ const NO_MATCH: MatchResult = {
 /**
  * Resolve a calendar event's external candidates to a prospect.
  *
- * 1. Exact — `findProspectByEmail` per candidate. One hit links outright
+ * 1. Exact: `findProspectByEmail` per candidate. One hit links outright
  *    (confidence 1.0). Multiple distinct prospects hit (two attendees who
  *    each independently match a ledger row) is the GOOD case, not a founder
  *    question: tie-break to the one with outreach history, most recent
  *    first; ambiguous only when neither has history.
- * 2. Fuzzy (suggestion only, NEVER auto-linked) — scored across every
+ * 2. Fuzzy (suggestion only, NEVER auto-linked): scored across every
  *    prospect: domain + full-name match (0.90, `name_domain`), unique
  *    prospect at the same domain (0.65, `domain`), exact full-name match at
- *    a different domain (0.55, `name` — the job-change case),
+ *    a different domain (0.55, `name`. The job-change case),
  *    description-scraped email (0.50, `description`). Record at >= 0.5.
  *
  * Downgrades even a single exact hit to `suggested` when `attendeesOmitted`
- * is set or there are more externals than `LARGE_INVITE_THRESHOLD` — you
+ * is set or there are more externals than `LARGE_INVITE_THRESHOLD`: you
  * cannot see the whole room, so auto-linking is refused.
  */
 function matchCandidates(input: {
@@ -305,7 +305,7 @@ function matchCandidates(input: {
   };
 }
 
-/** Bounded scrape of an event description for a fuzzy-only linking signal — never persisted. */
+/** Bounded scrape of an event description for a fuzzy-only linking signal. Never persisted. */
 function scrapeDescriptionEmails(description: string | undefined): string[] {
   if (!description) return [];
   const PROSE_SCAN_LIMIT = 8_000;
@@ -337,7 +337,7 @@ function parseWatermark(raw: string | null): StoredWatermark | null {
 }
 
 export interface CalendarPollResult {
-  /** True when the feature is off (no identity configured) or in demo mode — not an error. */
+  /** True when the feature is off (no identity configured) or in demo mode, not an error. */
   idle: boolean;
   eventsPolled: number;
   meetingsIngested: number;
@@ -365,7 +365,7 @@ const loggedDanglingIdentity = new Set<string>();
 /**
  * Poll the designated calendar, upsert every relevant event as a `meetings`
  * row, and (re)match its external attendees to a prospect. Belongs in the
- * scheduler tick body, throttled like the bounce sweep — nothing about a
+ * scheduler tick body, throttled like the bounce sweep: nothing about a
  * meeting is minute-sensitive.
  */
 export async function pollCalendarMeetings(): Promise<CalendarPollResult> {
@@ -399,7 +399,7 @@ export async function pollCalendarMeetings(): Promise<CalendarPollResult> {
   const prospects = ledger.listProspectsForFuzzyMatch();
 
   const storedWatermark = parseWatermark(ledger.getPollWatermark(CALENDAR_WATERMARK_KEY));
-  // Repointing the calendar or identity invalidates the watermark — a
+  // Repointing the calendar or identity invalidates the watermark. A
   // mismatch forces a full-window resync, or the newly-pointed calendar
   // would be silently under-polled forever.
   const watermarkApplies =
@@ -453,7 +453,7 @@ export async function pollCalendarMeetings(): Promise<CalendarPollResult> {
           err instanceof CalendarApiError &&
           err.googleStatus === "ACCESS_TOKEN_SCOPE_INSUFFICIENT"
         ) {
-          // Live token disagrees with the persisted scope — clear it so the
+          // Live token disagrees with the persisted scope: clear it so the
           // reconnect affordance reappears (it would otherwise be invisible
           // exactly when it's needed).
           clearGmailTokenScope(identity.id);
@@ -503,7 +503,7 @@ export async function pollCalendarMeetings(): Promise<CalendarPollResult> {
   }
   out.clean = result.clean;
 
-  // Advance the watermark only on a clean walk — a partial poll must not
+  // Advance the watermark only on a clean walk. A partial poll must not
   // move the cursor, or the gap the failure left behind is skipped rather
   // than re-covered by the next good poll.
   if (result.clean && result.newestUpdated) {
@@ -539,17 +539,15 @@ function ingestEvent(
 ): void {
   const { ledger, calendarId, exclusions, prospects, out, cfg } = ctx;
 
-  // A cancellation for an event never seen is a no-op UPDATE, not an insert
-  // — the stub has no start time to file a ghost row under. `upsertMeeting`
-  // itself refuses to INSERT this shape; short-circuit here too so we skip
-  // the (pointless) matching work for a stub.
+  // An unseen cancellation without a start time cannot be inserted.
+  // upsertMeeting also enforces this; skip matching work for the stub here.
   const existing = ledger.getMeeting(calendarId, item.id);
   if (!existing && item.status === "cancelled" && !item.start) {
     ledger.upsertMeeting({ calendarId, eventId: item.id, status: "cancelled" });
     return;
   }
 
-  // Idempotency fast path: event_updated_at hasn't advanced — touch
+  // If event_updated_at has not advanced, touch
   // last_seen_at only, skip re-deriving anything.
   if (existing && item.updated && existing.event_updated_at === item.updated) {
     ledger.touchMeetingLastSeen(calendarId, item.id);
@@ -559,12 +557,12 @@ function ingestEvent(
   const eventType = item.eventType ?? "default";
   if (EXCLUDED_EVENT_TYPES.has(eventType)) return;
 
-  // A cancellation STUB (status cancelled, no start time — the shape a
+  // A cancellation STUB (status cancelled, no start time. The shape a
   // cancelled event actually arrives in) for an event already in the
   // ledger: update status in place and stop. Stub payloads carry no
   // attendees, so falling through to the self-block check below would
   // wrongly read every existing-row cancellation as a self-block and
-  // silently drop the status update — upsertMeeting's own COALESCE already
+  // silently drop the status update: upsertMeeting's own COALESCE already
   // guarantees this never wipes summary/prospect_id/match_status.
   if (existing && item.status === "cancelled" && !item.start) {
     ledger.upsertMeeting({
@@ -598,7 +596,7 @@ function ingestEvent(
     .join(",");
 
   // Self-block: no external candidate survives the exclusion set. Never
-  // stored — a cancellation of one of these later is correctly a no-op
+  // stored. A cancellation of one of these later is correctly a no-op
   // (never seen).
   if (candidates.length === 0) {
     out.selfBlocksSkipped++;
@@ -609,7 +607,7 @@ function ingestEvent(
   const attendeesOmitted = Boolean(item.attendeesOmitted);
 
   // A founder's dismiss must stick until the attendee set genuinely
-  // changes — re-matching runs ONLY when the fingerprint changed since last
+  // changes: re-matching runs ONLY when the fingerprint changed since last
   // seen, or this event has never been matched at all. Without this, every
   // poll would re-suggest the prospect the founder just dismissed.
   const shouldRematch = !existing || existing.attendees_fingerprint !== fingerprint;

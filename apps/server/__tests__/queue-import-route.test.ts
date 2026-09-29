@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// POST /api/queue/import — the destination side of a cross-workspace move.
+// POST /api/queue/import. The destination side of a cross-workspace move.
 // The row must land pending with the sender's positioning and verdicts
 // stripped, and a rejected row this workspace already holds for the same
 // play + dedupe key must be re-opened, not refused.

@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { Ledger } from "../src/ledger.ts";
 
 // Issue #599: the /cadences page asks for every row's intro payload at once.
-// The bulk lookup must agree with the single-row one — latest SENT row per
-// (play, email), email canonicalised — and never widen to unsent rows.
+// The bulk lookup must agree with the single-row one: latest SENT row per
+// (play, email), email canonicalised, and never widen to unsent rows.
 
 let ledger: Ledger;
 let dbPath: string;

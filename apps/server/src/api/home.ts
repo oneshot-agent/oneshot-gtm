@@ -24,7 +24,7 @@ export function homeMetrics(req: Request): Response {
     // queue rows can be removed or change status after a real send. Sequence
     // events are the durable record of transport success.
     hasFirstSend: ledger.countSends() > 0,
-    // In-flight /run dispatches — surfaces a "Resume" link on the home dashboard
+    // In-flight /run dispatches: surfaces a "Resume" link on the home dashboard
     // so the founder can hop back to a running batch without remembering the URL.
     // Capped at 5 (the widget hides itself when empty).
     currentRuns: ledger.listRuns({ status: "running", limit: 5 }),

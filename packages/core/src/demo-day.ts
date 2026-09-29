@@ -106,7 +106,7 @@ export function demoDayOf(
   return typeof t.cohort === "string" ? cohortDemoDay(t.cohort, now) : null;
 }
 
-/** "March 2026 (passed, ~6 months ago)" — the text a prompt and a classifier see. */
+/** "March 2026 (passed, ~6 months ago)". The text a prompt and a classifier see. */
 export function describeDemoDay(d: DemoDay): string {
   const n = d.monthsAway;
   const span = `~${n} month${n === 1 ? "" : "s"}`;

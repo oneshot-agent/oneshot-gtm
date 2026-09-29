@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 // A per-target failure surfaces on the queue row as errorDraft's 80-char slice
-// of err.message — for an SDK ToolError that's the generic "Tool request
+// of err.message: for an SDK ToolError that's the generic "Tool request
 // failed". The 2026-08-13 luma-events drain failed all 8 of its sends that way
 // and left NOTHING in events.jsonl to diagnose from. logTargetError is what
 // keeps the status code + response body, which is where the real reason lives.
@@ -46,13 +46,13 @@ describe("logTargetError", () => {
     expect(entry?.level).toBe("error");
     expect(entry?.ctx).toMatchObject({
       play: "luma-events",
-      // Domain only — events.jsonl is a PII-free sink.
+      // Domain only: events.jsonl is a PII-free sink.
       to_domain: "b.dev",
       message_200: "Tool request failed",
       status_code: 403,
     });
     expect(JSON.stringify(entry?.ctx)).not.toContain("a@b.dev");
-    // The reason the founder actually needs — absent from the queue row.
+    // The reason the founder actually needs: absent from the queue row.
     expect(String(entry?.ctx["response_body_400"])).toContain("domain_not_owned");
 
     // Contrast: this is all the row itself carries.
@@ -90,7 +90,7 @@ describe("logTargetError", () => {
 });
 
 describe("logTargetError redaction", () => {
-  // Asserts on the address itself, not on "@" — stack_300 legitimately carries
+  // Asserts on the address itself, not on "@": stack_300 legitimately carries
   // node_modules paths like `@vitest+runner@4.1.5`.
   it("keeps the domain and drops the local part, whatever the caller passes", () => {
     for (const [to, domain] of [
@@ -113,7 +113,7 @@ describe("logTargetError redaction", () => {
 
 describe("logTargetError never throws", () => {
   // It runs inside the per-target catch. A TypeError raised while logging
-  // would escape that catch and abort the whole drain — the exact failure the
+  // would escape that catch and abort the whole drain. The exact failure the
   // catch exists to prevent. A thrown value is `unknown`, so nothing about its
   // shape can be assumed.
   const nasty: Array<[string, unknown]> = [

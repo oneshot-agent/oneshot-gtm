@@ -225,7 +225,7 @@ export async function setTriggerConfigRoute(
   // Warn-tier edge lint (issue #585): this route is the one place both the
   // strategist's apply-config chip and the /queue JSON editor write through,
   // so it is where a founder learns their edge is a single flat pitch. Never
-  // a refusal — the save above already happened; readiness stays a non-empty
+  // a refusal. The save above already happened; readiness stays a non-empty
   // check and `yourEdge: "x"` stays a valid fixture.
   const cfg = body.config as Record<string, unknown>;
   const edge =
@@ -240,8 +240,8 @@ export async function setTriggerConfigRoute(
       "angleAssignment 'arm' splits prospects across the edge's angles — add at least two `//`-separated angles, or nothing is compared",
     );
   }
-  // Warn-tier `play`/`buyerType` validation (issue #705): never a refusal —
-  // the save above already happened — but a founder routing rows to
+  // Warn-tier `play`/`buyerType` validation never refuses the request:
+  // the save above already happened, but a founder routing rows to
   // design-partner-loi with a missing/invalid buyerType should learn that
   // immediately rather than discover it only when the trigger silently
   // reports "not ready" later.
@@ -253,7 +253,7 @@ export async function setTriggerConfigRoute(
       );
     }
     // The routed edge field is a separate readiness gate from buyerType (see
-    // `checkPlayRouteReadiness` in @oneshot-gtm/find) — hiring-signal reads
+    // `checkPlayRouteReadiness` in @oneshot-gtm/find): hiring-signal reads
     // `yourClaim`, every other routable finder reads `yourEdge`. Without this
     // warning a blank edge saved fine here but silently failed registry
     // readiness later, with no warning at save time (finding
@@ -272,7 +272,7 @@ export async function setTriggerConfigRoute(
 /**
  * What an opportunity angle may lean on as its fact: the product's own
  * description. A config read failure only weakens the check (numbers still
- * count) — the lint is guidance and must never fail a save.
+ * count). The lint is guidance and must never fail a save.
  */
 function edgeLintContext(): EdgeLintContext {
   try {

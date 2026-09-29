@@ -1,5 +1,5 @@
 import type { TriggerRow } from "@oneshot-gtm/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   checkReadiness,
   evaluateFinderApprovalHealth,
@@ -375,7 +375,7 @@ describe("checkReadiness", () => {
 
   // The gate that USED to stand here demanded the sender's own cohort, so an
   // install with no accelerator behind it had to invent one to run the finder
-  // at all — and the email then claimed a batch the founder was never in.
+  // at all, and the email then claimed a batch the founder was never in.
   // Affiliation is optional now and lives in config, never in trigger config.
   it("accelerator-batch never gates on the sender's own cohort", () => {
     const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
@@ -401,7 +401,7 @@ describe("checkReadiness", () => {
     expect(Array.isArray(accelerators)).toBe(true);
     // Every default is a known accelerator, resolved to its latest cohort at run time.
     for (const a of accelerators) expect(getAccelerator(a.id)).not.toBeNull();
-    // Sweep must cover more than just YC — the whole point is multi-incubator.
+    // Sweep must cover more than just YC. The whole point is multi-incubator.
     expect(accelerators.some((a) => a.id === "yc")).toBe(true);
     expect(accelerators.filter((a) => a.id !== "yc").length).toBeGreaterThan(0);
     expect(spec.readiness?.({ ...spec.defaultConfig, yourEdge: "e" })).toEqual({ ready: true });
@@ -459,7 +459,7 @@ describe("checkReadiness", () => {
 
   it("local-registry stays not ready when entityTypes carries only an invalid value (matches run's allowlist)", () => {
     // finding: readiness accepted any non-empty string in entityTypes, but
-    // `run` filters the same array against validEntityTypes — a config with
+    // `run` filters the same array against validEntityTypes. A config with
     // entityTypes: ["trucking"] (not a valid carrier/broker/freight-forwarder
     // value) and no other fmcsa key passed readiness, then normalized to an
     // empty array and reported the generic "every configured source
@@ -649,7 +649,7 @@ describe("freshRunningStartedAtMs — freshness gate", () => {
   });
 
   it("returns null when the timestamp exceeds MAX_RUN_AGE_MS", () => {
-    // 5 hours before NOW — well outside the 4h window.
+    // 5 hours before NOW: well outside the 4h window.
     const startedAt = new Date(NOW - 5 * 60 * 60 * 1000).toISOString();
     expect(freshRunningStartedAtMs(startedAt, NOW)).toBeNull();
   });
@@ -663,7 +663,7 @@ describe("freshRunningStartedAtMs — freshness gate", () => {
   });
 
   it("returns the start epoch when the timestamp is in the future (clock skew)", () => {
-    // We don't actively defend against future timestamps — better to keep
+    // We don't actively defend against future timestamps: better to keep
     // the row visible than to silently hide a real run.
     const future = new Date(NOW + 60_000).toISOString();
     expect(freshRunningStartedAtMs(future, NOW)).toBe(new Date(future).getTime());

@@ -10,7 +10,7 @@ import {
 /**
  * Per-play adapters: payload already persisted at enqueue time → normalized
  * `PriorityEvidence` (issue #410, Phase 1). Adapters only READ fields the
- * finder already paid for — no enrichment, no network. Payloads are treated
+ * finder already paid for: no enrichment, no network. Payloads are treated
  * as untrusted `Record<string, unknown>` because the backfill replays legacy
  * rows whose shape may predate today's `*Target` interfaces.
  */
@@ -33,7 +33,7 @@ function urlCount(...urls: unknown[]): number {
 
 /**
  * Label-mined title prior for the indie-builder finders (luma, github-stars):
- * exec-band titles measured at 35–44% approval vs a 55–92% baseline — the
+ * exec-band titles measured at 35-44% approval vs a 55-92% baseline. The
  * classic seniority boost is an ANTI-signal for this ICP. Non-exec titles are
  * plain neutral evidence; a missing title stays unknown (no signal at all).
  */
@@ -53,7 +53,7 @@ function fmtFollowers(followers: number): string {
   return followers >= 1_000 ? `${(followers / 1_000).toFixed(1)}k` : String(followers);
 }
 
-/** Shared evidence for the three X lanes — lane-local reach/repost signals feed
+/** Shared evidence for the three X lanes: lane-local reach/repost signals feed
  *  components; `XScoredCandidate.score` is deliberately never read. */
 function xEvidence(p: Record<string, unknown>): PriorityEvidence {
   const accountSignals: PrioritySignal[] = [];
@@ -82,7 +82,7 @@ function xEvidence(p: Record<string, unknown>): PriorityEvidence {
     accountSignals,
     intentSignals,
     // No eventAt on purpose: the repost itself is inside the finder's 48h
-    // harvest window, so it's inherently fresh at enqueue time — while the
+    // harvest window, so it's inherently fresh at enqueue time, while the
     // campaign's configured launchDate can be far in the past and would
     // wrongly decay a repost that happened yesterday.
     evidenceUrlCount: urlCount(p["tweetUrl"], p["twitterUrl"]),
@@ -205,13 +205,13 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
       { kind: "greenfield", strength: 80, reason: "newly licensed — nothing to rip out" },
     ],
     // matchedDateIso is the license/enumeration/registration date
-    // this record matched on — the same freshness evidence routePlayFor used
+    // this record matched on. The same freshness evidence routePlayFor used
     // to route it to new-business vs free-pilot in the first place. Without
     // it every registry row scores a neutral timingFreshness component,
     // regardless of whether it's 2 days or 55 days old.
     // hasEvidenceText intentionally omitted: sourceLabel is registry
     // metadata (e.g. "NPPES Dentist (NY)"), not quoted/concrete candidate
-    // evidence — mapping it here overstated the signalConfidence component
+    // evidence: mapping it here overstated the signalConfidence component
     // on every registry row regardless of whether any real evidence text
     // exists (finding PRRT_kwDOSKzrBs6exPH9, filed against free-pilot;
     // new-business shares the identical payload shape and had the same
@@ -221,13 +221,13 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
   }),
 
   // Both local-business (#457, `businessType` field) and local-registry
-  // (#459, `sourceLabel`+`matchedDateIso`) route through this one play —
+  // (#459, `sourceLabel`+`matchedDateIso`) route through this one play:
   // branch on whichever shape the payload carries.
   "free-pilot": (p) => {
     const businessType = str(p["businessType"]);
     if (businessType !== null) {
       // local-business: reuses the exec-title inversion mined for
-      // luma/repo-interest — an owner-operator main-street buyer is the
+      // luma/repo-interest. An owner-operator main-street buyer is the
       // opposite population of a startup founder, and title data here is
       // thin/absent for most rows anyway.
       return {
@@ -236,7 +236,7 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
         intentSignals: [
           { kind: "business-match", strength: 55, reason: `matched ${businessType} search` },
         ],
-        // The local-business payload has no evidence-text field — matched
+        // The local-business payload has no evidence-text field: matched
         // businessType/company category is not quoted/concrete candidate
         // evidence, same distinction new-business/free-pilot's registry
         // branch below already draws for sourceLabel. A hardcoded `true`
@@ -258,7 +258,7 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
       intentSignals: [
         { kind: "free-pilot-fit", strength: 50, reason: "main-street pilot candidate" },
       ],
-      // See new-business above — same registry payload shape, same missing
+      // See new-business above: same registry payload shape, same missing
       // freshness signal.
       eventAt: str(p["matchedDateIso"]),
       ...contact(p),
@@ -319,8 +319,8 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
   }),
 
   // v2: exec-title prior inverted here too (44% approval at n=9, matching
-  // luma's direction; repo-interest labels are direction-only — bulk-approve
-  // heavy — so only the title change is applied, candidateRepos left alone).
+  // luma's direction; repo-interest labels are direction-only: bulk-approve
+  // heavy, so only the title change is applied, candidateRepos left alone).
   "repo-interest": (p) => ({
     personSignals: minedTitleSignals(str(p["title"])),
     companyKnown: str(p["company"]) !== null,
@@ -353,7 +353,7 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
   "x-amplify": xEvidence,
   "x-amplify-dm": xEvidence,
 
-  // gov-solicitation routes here for ptype r/p (Sources Sought / Presolicitation) —
+  // gov-solicitation routes here for ptype r/p (Sources Sought / Presolicitation):
   // the pre-PMF window: the agency is still writing the requirement.
   "sources-sought": (p) => ({
     title: str(p["role"]),
@@ -377,14 +377,14 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
   }),
 
   // design-partner-loi is fed by two payload shapes: gov-solicitation's own
-  // routing (GovSolicitationTarget — agency/noticeNumber/noticeType/role/
+  // routing (GovSolicitationTarget: agency/noticeNumber/noticeType/role/
   // naicsCode, no buyerType) for every non-presolicitation notice, and the
   // five finders `_play-route.ts` lets route here instead of their own play
-  // (DesignPartnerLoiTarget — name/email/company/buyerType/yourEdge/title,
+  // (DesignPartnerLoiTarget: name/email/company/buyerType/yourEdge/title,
   // issue #705). `buyerType` is present on exactly the routed shape
   // (gov-solicitation never sets it), so it is the discriminator: scoring a
   // routed row with the gov-solicitation reasons below persisted a
-  // fabricated "<agency> notice" / "<noticeType>: <title>" — a routed row
+  // fabricated "<agency> notice" / "<noticeType>: <title>". A routed row
   // carries no agency/noticeType, and its own `title` is the prospect's job
   // title, not a solicitation title (finding F-t_1ec69ea6-3).
   "design-partner-loi": (p) => {
@@ -453,7 +453,7 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
 /**
  * Score a payload for a play, or null when it can't be scored: unknown play
  * (manual/legacy producers), non-object payload, or any adapter/engine throw.
- * NEVER throws — a scoring failure must not block an enqueue or a backfill.
+ * NEVER throws. A scoring failure must not block an enqueue or a backfill.
  */
 export function safeScorePriority(
   playName: string,
@@ -475,10 +475,9 @@ export function safeScorePriority(
 }
 
 /**
- * The finders' enqueue choke point: compute the shadow priority, then
- * delegate to `ledger.enqueueTarget` unchanged. Auto-rejections skip scoring
- * — their thin payloads carry no evidence, and a gate must never be argued
- * with by a score.
+ * Compute shadow priority before delegating to `ledger.enqueueTarget`.
+ * Auto-rejections skip scoring: their payloads lack evidence, and scores
+ * cannot override a gate.
  */
 /** `enqueueTarget`'s input plus the finder's ICP-fit sentence, when it has one in hand (#592). */
 export type ScoredEnqueueInput = Parameters<Ledger["enqueueTarget"]>[0] & {

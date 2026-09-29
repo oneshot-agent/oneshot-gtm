@@ -12,7 +12,7 @@ export type TriageCategory =
   | "auto_reply"
   | "other";
 
-/** The exact `TriageCategory` values — the runtime source of truth `triageEmails`
+/** The exact `TriageCategory` values. The runtime source of truth `triageEmails`
  *  validates the model's output against, so a hallucinated/malformed category can
  *  never reach the ledger and silently read as positive intent (issue #558:
  *  `replyIntentIsPositive` treats any unrecognized string as positive). */

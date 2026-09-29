@@ -16,7 +16,7 @@ type Bounce = {
 
 let bounces: Bounce[] = [];
 let failedSources: string[] = [];
-/** message ids the stub ledger has already stored — mirrors the real PK dedupe. */
+/** message ids the stub ledger has already stored: mirrors the real PK dedupe. */
 let seen: Set<string>;
 let recorded: Array<{ recipient: string; kind: string; prospectId: number | null }> = [];
 let sequenceEvents: Array<{ playName: string; stepIndex: number; status: string }> = [];
@@ -105,7 +105,7 @@ describe("pollInboxBounces", () => {
     const out = await pollInboxBounces();
 
     expect(out).toMatchObject({ polled: 1, recorded: 1, cadencesStopped: 1 });
-    // current_step is the most recently SENT touch — that's what bounced.
+    // current_step is the most recently SENT touch. That's what bounced.
     expect(sequenceEvents).toEqual([{ playName: "post-funding", stepIndex: 2, status: "bounced" }]);
     expect(statusWrites).toEqual([{ prospectId: 1, playName: "post-funding", status: "bounced" }]);
   });
@@ -149,7 +149,7 @@ describe("pollInboxBounces", () => {
   });
 
   it("records a bounce for an unknown address without touching any cadence", async () => {
-    // Still counts toward the identity's rate — reputation damage is the same
+    // Still counts toward the identity's rate: reputation damage is the same
     // whether or not we happen to track the recipient.
     bounces = [bounce({ recipient: "stranger@elsewhere.example" })];
     const out = await pollInboxBounces();
@@ -163,7 +163,7 @@ describe("pollInboxBounces", () => {
   });
 
   it("leaves a replied cadence alone", async () => {
-    // They answered — the mailbox demonstrably works, whatever this DSN is.
+    // They answered. The mailbox demonstrably works, whatever this DSN is.
     rows = [{ prospect_id: 1, play_name: "post-funding", status: "replied", current_step: 1 }];
     bounces = [bounce()];
     const out = await pollInboxBounces();

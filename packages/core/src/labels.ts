@@ -3,13 +3,13 @@ import type { QueueRow } from "./types.ts";
 type LabelRow = Pick<QueueRow, "status" | "notes" | "reviewed_at" | "decision" | "decided_by">;
 
 /**
- * THE single definition of "a human decided this queue row" — shared by the
+ * THE single definition of "a human decided this queue row": shared by the
  * shadow-score gauge, finder approval stats, and ICP few-shot selection so
  * they can never drift apart (each had hand-rolled copies before; one missed
  * the auto: clause, one counted expiry timeouts as rejections).
  *
  * v26 makes this provenance-first: the `decision`/`decided_by` columns are
- * written at decision time and survive expiry and re-open — a reply that
+ * written at decision time and survive expiry and re-open. A reply that
  * expires an approved breakup-revive row no longer destroys the label. Rows
  * with NULL provenance (pre-v26, or never backfillable) fall back to the
  * status inference, same COALESCE-to-legacy pattern as `inbox_replies.kind`:
@@ -17,7 +17,7 @@ type LabelRow = Pick<QueueRow, "status" | "notes" | "reviewed_at" | "decision" |
  * `expired` is never a human status there (reservation inserts, bulk stamps,
  * and cadence-stop expiry all write reviewed_at without per-row judgment).
  *
- * `human_bulk` (approve-all batches) COUNTS as a human decision — parity
+ * `human_bulk` (approve-all batches) COUNTS as a human decision: parity
  * with the status inference; evaluation code that wants per-row judgment
  * only filters `decided_by === "human"` explicitly.
  */
@@ -48,7 +48,7 @@ export function humanDecisionWhereSql(prefix = ""): string {
   // Provenance arm first; the legacy arm is guarded by `decision IS NULL` so
   // a machine-stamped row can never fall through to the status inference.
   // COALESCE matters in the legacy arm: `NULL LIKE 'auto:%'` is NULL, and
-  // `NOT (… AND NULL)` is NULL too — without it a notes-less human rejection
+  // `NOT (… AND NULL)` is NULL too, without it a notes-less human rejection
   // silently drops out of the result set (three-valued logic; this bug
   // shipped in recentIcpDecisions before the predicate was unified here).
   return (

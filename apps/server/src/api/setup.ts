@@ -38,15 +38,7 @@ import {
 } from "@oneshot-gtm/find";
 import { jsonResponse } from "../server.ts";
 
-/**
- * The anonymous clientId is local-only — never exposed to the web layer.
- * Strip it before any HTTP response so the browser never sees it (and can't
- * accidentally clobber it on a subsequent POST).
- */
-/**
- * Strip the anonymous clientId before sending cfg to the web layer. Exported
- * so we can unit-test the privacy boundary directly.
- */
+/** Keep clientId local: strip it from responses so browser updates cannot clobber it. */
 export function publicCfg(cfg: OneShotConfig): Omit<OneShotConfig, "clientId"> {
   const { clientId: _omit, ...rest } = cfg;
   void _omit;
@@ -91,11 +83,8 @@ function domainViews(entries: DomainPoolEntry[]): DomainPoolView[] {
 }
 
 /**
- * How long GET /api/setup waits for the platform's domain list before
- * answering without it. The sectioned /setup page (issue #451) renders
- * nothing until this call returns, and `listDomains` has been observed
- * taking 60–80s — so the status call carries only a quick best-effort copy
- * and the picker fetches the full list separately via /api/setup/domains.
+ * Bound the setup status wait: listDomains can take 60-80s. The sender picker
+ * fetches the full list separately through /api/setup/domains.
  */
 const SETUP_STATUS_DOMAINS_DEADLINE_MS = 2_500;
 /** The dedicated domain-list route can wait longer; it's off the page's critical path. */
@@ -106,14 +95,14 @@ const DOMAIN_CACHE_FRESH_MS = 60_000;
 
 /**
  * The last pool the platform returned, shared by both routes. `[]` is never
- * cached — it means "unknown", and a later real answer must replace it. One
+ * cached. It means "unknown", and a later real answer must replace it. One
  * underlying `listSendingDomains()` is shared between concurrent callers, and
  * it keeps running after a caller's deadline fires, so a status call that
  * gave up at 2.5s still fills the cache for the next load.
  */
 let domainCache: { views: DomainPoolView[]; at: number } | null = null;
 let domainInflight: Promise<DomainPoolView[]> | null = null;
-/** When the platform last answered empty (or failed) — "unknown", not cached, but not re-asked on every page load either. */
+/** When the platform last answered empty (or failed): "unknown", not cached, but not re-asked on every page load either. */
 let lastEmptyAt = 0;
 
 /** Test seam: forget the cached pool between cases. */
@@ -146,7 +135,7 @@ function refreshDomainViews(): Promise<DomainPoolView[]> {
 /**
  * Best-effort provisioned-domain pool for the setup UI. Swallows every failure
  * (transient, auth, OR the deadline) to the last good pool, or `[]` when there
- * is none, so the setup page always renders — a missing domain list degrades
+ * is none, so the setup page always renders. A missing domain list degrades
  * the picker, it shouldn't 500 or stall the status call.
  */
 async function provisionedDomainViews(deadlineMs: number): Promise<DomainPoolView[]> {
@@ -158,12 +147,9 @@ async function provisionedDomainViews(deadlineMs: number): Promise<DomainPoolVie
 }
 
 /**
- * What the status call carries: a cached pool is served at once (and
- * refreshed in the background when stale). With a cold cache, only the FIRST
- * call waits, briefly: while that fetch is still in flight, or after it came
- * back empty within the last minute, later calls answer at once with `[]`
- * rather than each paying the deadline again — that was the live pattern
- * after #540 (platform answers empty after ~70s, so every load waited 2.5s).
+ * Serve cached pools immediately and refresh stale ones in the background.
+ * Only the first cold-cache caller waits; later callers get [] while the fetch
+ * is in flight or for one minute after an empty response.
  */
 async function cachedDomainViews(): Promise<DomainPoolView[]> {
   if (domainCache) {
@@ -179,7 +165,7 @@ async function cachedDomainViews(): Promise<DomainPoolView[]> {
   return provisionedDomainViews(SETUP_STATUS_DOMAINS_DEADLINE_MS);
 }
 
-/** GET /api/setup/domains — the provisioned pool alone, for the sender picker. */
+/** GET /api/setup/domains. The provisioned pool alone, for the sender picker. */
 export async function getSetupDomains(req: Request): Promise<Response> {
   const fresh = domainCache && Date.now() - domainCache.at <= DOMAIN_CACHE_FRESH_MS;
   return jsonResponse(
@@ -230,12 +216,12 @@ export async function getSetupStatus(req: Request): Promise<Response> {
 
 /**
  * The three LinkedIn connect routes. Two ways in, one outcome shape:
- *  - POST /api/setup/linkedin-login/start  — open a hosted browser on the
+ *  - POST /api/setup/linkedin-login/start: open a hosted browser on the
  *    LinkedIn login page in a fresh OneShot browser profile and return its
  *    live URL (a credential: shown to the founder, never logged);
- *  - POST /api/setup/linkedin-login/finish — save the logged-in state into
+ *  - POST /api/setup/linkedin-login/finish: save the logged-in state into
  *    the profile and verify it;
- *  - POST /api/setup/linkedin-session      — import the stored `li_at`
+ *  - POST /api/setup/linkedin-session: import the stored `li_at`
  *    cookie into a fresh profile and verify it (no browser login needed).
  * The cookie never appears in a response or a log; only the outcome does.
  */
@@ -341,11 +327,8 @@ export class SetupValidationError extends Error {
 }
 
 /**
- * Per-identity daily cap as submitted by the web form or a raw API client:
- * `null` = uncapped, a finite number >= 0 = that cap (floored). Anything else
- * — a string, NaN, a negative — is rejected instead of being coerced to
- * "uncapped": the old fail-open coercion turned a typo in the cap box into
- * unlimited sends for that identity.
+ * Accept null (uncapped) or a finite non-negative number (floored). Reject all
+ * other values so malformed caps cannot silently permit unlimited sends.
  */
 export function validateIdentityCap(value: unknown, where: string): number | null {
   if (value === null) return null;
@@ -369,9 +352,7 @@ export async function setup(req: Request): Promise<Response> {
 }
 
 /**
- * Validate everything first, then write. A SetupValidationError thrown from
- * any check below leaves config.json, the identity pool and .env exactly as
- * they were — a partial write behind a 400 would make the 400 a lie.
+ * Validate before writing so a 400 leaves config, identity pool, and .env unchanged.
  */
 function applySetup(body: SetupRequest): void {
   if (body.onboardingStep === 1) {
@@ -393,15 +374,9 @@ function applySetup(body: SetupRequest): void {
   const llmProvider: LlmProvider = body.llmProvider ?? current.llmProvider;
   const walletMode: WalletMode = body.walletMode ?? current.walletMode;
 
-  // NOTE: we deliberately do NOT reject domains absent from the provisioned
-  // pool. A pinned send (we always set from_domain + from_mailbox) names the
-  // domain, which AUTO-PROVISIONS it on the platform on first reference — there
-  // is no `domain_not_owned` error to pre-empt. The /setup picker and CLI steer
-  // toward already-warmed domains; a brand-new one is a legitimate add (it
-  // provisions on the first cadence send). The real risk is deliverability, not
-  // a hard failure: pinned sends bypass the server's warmup gating, so the
-  // client-side warm-up ramp is the only throttle — hence new identities
-  // default to it.
+  // New domains are valid: pinned sends auto-provision them on first use.
+  // Pinned sends bypass platform warmup gating, so new identities default to
+  // the client-side warmup ramp for deliverability.
   const adds = body.addIdentities ?? [];
   for (const add of adds) {
     if ("maxPerDay" in add && add.maxPerDay !== undefined) {
@@ -426,7 +401,7 @@ function applySetup(body: SetupRequest): void {
     emailIdentities = pool;
   }
 
-  // clientId is preserved from current — body.clientId is intentionally
+  // clientId is preserved from current: body.clientId is intentionally
   // ignored so a malicious or accidental web POST can't rotate the anonymous
   // install id. saveConfig writes the entire cfg, so omitting clientId here
   // would silently drop it from disk.
@@ -435,7 +410,7 @@ function applySetup(body: SetupRequest): void {
   const merged = mergeSetupConfig(current, body, emailIdentities, llmProvider, walletMode);
 
   // A calendarIdentityId must point at a Gmail identity actually in the pool
-  // (post-edits) — refusing here is much cheaper than a scheduler tick
+  // (post-edits): refusing here is much cheaper than a scheduler tick
   // discovering it can't find the identity every 10 minutes forever.
   if (body.calendarIdentityId !== undefined && body.calendarIdentityId !== null) {
     const pool = merged.emailIdentities ?? resolveIdentities(merged);
@@ -548,7 +523,7 @@ export function mergeSetupConfig(
  */
 /**
  * Same merge as `mergeString`, but a non-empty value must be a real Slack
- * incoming-webhook URL — the server POSTs reply/bounce/summary data to it, so
+ * incoming-webhook URL. The server POSTs reply/bounce/summary data to it, so
  * an arbitrary destination is a data-exfiltration hole, not a typo.
  */
 function mergeSlackWebhookUrl(incoming: string | undefined, current: string | null): string | null {
@@ -569,12 +544,12 @@ function mergeString(incoming: string | undefined, current: string | null): stri
 
 /**
  * Same validation the CLI path (`configSpendCeiling`) already enforces
- * before persisting the daily USD spend ceiling — `null` clears it back to
+ * before persisting the daily USD spend ceiling: `null` clears it back to
  * unlimited, anything else must be a positive finite number. Without this,
  * a direct API client (or a founder typing/submitting 0 in the /setup form,
  * whose `<Input type="number" min="0">` doesn't stop 0) could persist a
  * ceiling of 0, negative, or NaN. A ceiling of 0 makes
- * `effectiveUsd (0) >= ceilingUsd (0)` true immediately with zero spend —
+ * `effectiveUsd (0) >= ceilingUsd (0)` true immediately with zero spend:
  * silently halting every scheduled finder, run-now, and automatic drain
  * install-wide, the opposite of the unlimited default this feature ships.
  */
@@ -591,7 +566,7 @@ function validateSpendCeiling(value: number | null): number | null {
 /**
  * Time zone merge: undefined keeps the stored zone, null/blank clears it back
  * to the runtime default (installTimeZone in core), anything else must be an
- * IANA name Intl recognises — "Mars/Olympus" is a 400, not a saved string that
+ * IANA name Intl recognises: "Mars/Olympus" is a 400, not a saved string that
  * later makes every Luma slot resolve to UTC.
  */
 function mergeTimeZone(incoming: string | null | undefined, current: string | null): string | null {

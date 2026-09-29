@@ -39,7 +39,7 @@ const { weeklyReview } = await import("../src/weekly-review.ts");
 const realFetch = global.fetch;
 
 /** One mocked OpenRouter-shaped 2xx. Every failure below is terminal, so a
- * single response is enough — no retries, no timers, no flake. */
+ * single response is enough: no retries, no timers, no flake. */
 function respondWith(content: string | null, finishReason = "stop") {
   const fn = vi.fn().mockResolvedValue({
     ok: true,
@@ -196,7 +196,7 @@ describe("synthesizeInterviews", () => {
     expect(out.painQuotes).toEqual(["I spend Sundays writing emails"]);
     expect(out.switchMoment).toBe("when the founder-led list ran dry");
     expect(out.icpLanguage).toEqual(["technical founder", "seed stage"]);
-    // raw is the model text verbatim, fences included — it is the audit trail.
+    // raw is the model text verbatim, fences included. It is the audit trail.
     expect(out.raw).toBe(raw);
   });
 
@@ -311,7 +311,7 @@ describe("weeklyReview", () => {
 
     const out = await weeklyReview();
 
-    // The aggregates come from the ledger, not the model — a blank narrative
+    // The aggregates come from the ledger, not the model. A blank narrative
     // must not zero them out or throw.
     expect(out.markdown).toBe("");
     expect(out.totalSpend).toBe(6.25);

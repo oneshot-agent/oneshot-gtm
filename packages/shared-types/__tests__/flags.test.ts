@@ -4,7 +4,7 @@ import { blockingFlags, SOFT_REVIEW_FLAGS } from "../src/index.ts";
 // The soft/hard flag split is the shared contract between the server send gate
 // (apps/server/src/api/queue.ts) and the queue UI's send button
 // (apps/web/src/routes/queue.tsx). If they ever disagree, a held draft becomes
-// either un-sendable or silently auto-sent — so pin the behavior here.
+// either un-sendable or silently auto-sent, so pin the behavior here.
 
 describe("blockingFlags", () => {
   it("treats stale-event as soft (founder-overridable, not blocking)", () => {

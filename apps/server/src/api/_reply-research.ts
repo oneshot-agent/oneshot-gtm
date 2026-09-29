@@ -22,20 +22,20 @@ export interface ReplyContext {
   dossier: string | null;
   /**
    * The prospect's `angle_json` verbatim, when one exists (issue #355/#356).
-   * Free — read alongside the stored dossier, no extra research call.
+   * Free: read alongside the stored dossier, no extra research call.
    */
   angleJson: string | null;
   /**
    * The founder's most recently recorded outcome for this prospect's
-   * calendar meeting(s) (issue #578) — the direct path into the reply
+   * calendar meeting(s) (issue #578). The direct path into the reply
    * prompt, alongside the indirect `tagOutcomeValue` → `angle_json` path.
-   * Free — a ledger read alongside `angleJson`, Tier 0, must survive a
+   * Free. A ledger read alongside `angleJson`, Tier 0, must survive a
    * research failure the same way.
    */
   meeting: { outcome: string; note: string | null; summary: string | null } | null;
   /** Replies the founder already sent in this thread (oldest first). */
   threadSent: Array<{ body: string; sentAt: string }>;
-  /** The prospect's earlier inbound messages (persisted replies, oldest first) — the other half of the exchange. */
+  /** The prospect's earlier inbound messages (persisted replies, oldest first). The other half of the exchange. */
   priorInbound: Array<{ body: string; subject: string | null; receivedAt: string }>;
   /** Paid spend this call actually incurred (cache hits are $0). */
   costUsd: number;
@@ -44,8 +44,8 @@ export interface ReplyContext {
 }
 
 /**
- * Assemble sender context cheapest-first: (1) free — stored dossier + prior
- * replies in this thread; (2) paid, only when no dossier exists — enrich the
+ * Assemble sender context cheapest-first: (1) free: stored dossier + prior
+ * replies in this thread; (2) paid, only when no dossier exists: enrich the
  * email and read the apex domain, both gated by isDudDomain. Best-effort
  * throughout: research failing for ANY reason must never block the draft.
  */
@@ -53,9 +53,9 @@ export async function gatherReplyContext(input: {
   fromEmail: string;
   prospectId: number | null;
   threadKey: string | null;
-  /** Provider id of the email being answered — excluded from priorInbound (it IS the inbound). */
+  /** Provider id of the email being answered: excluded from priorInbound (it IS the inbound). */
   excludeId?: string | null;
-  /** Skip the paid tier entirely (enrich + site read) — set for non-human inbound (OOO/unsubscribe). */
+  /** Skip the paid tier entirely (enrich + site read): set for non-human inbound (OOO/unsubscribe). */
   skipPaid?: boolean;
 }): Promise<ReplyContext> {
   const ledger = getLedger();
@@ -64,7 +64,7 @@ export async function gatherReplyContext(input: {
     ? (ledger.getInboxThreads().get(input.threadKey)?.sent ?? [])
     : [];
 
-  // Tier 0 (free): the prospect's earlier inbound messages from the ledger —
+  // Tier 0 (free): the prospect's earlier inbound messages from the ledger:
   // the drafter should see the whole exchange, not just the newest email.
   let priorInbound =
     input.prospectId != null
@@ -108,7 +108,7 @@ export async function gatherReplyContext(input: {
       // Non-human inbound (OOO, unsubscribe): no one to ground a draft for.
     } else if (isDudDomain(domain)) {
       // Tier 2b: a personal-provider address has no company site to read and
-      // nothing for enrich to key on, so both are skipped — which used to
+      // nothing for enrich to key on, so both are skipped, which used to
       // leave the drafter with zero facts about the sender. The finder's
       // source_profile_url (GitHub / X / Luma) is the one handle we do own.
       // webRead, not deepResearchPerson: this runs behind the founder's
@@ -176,7 +176,7 @@ export async function gatherReplyContext(input: {
   };
 }
 
-/** Cache writes are strictly best-effort — a SQLite hiccup must never turn a successful read into a failure. */
+/** Cache writes are strictly best-effort. A SQLite hiccup must never turn a successful read into a failure. */
 function bestEffort(fn: () => void): void {
   try {
     fn();
@@ -218,12 +218,12 @@ export function siteDomainFor(domain: string): string {
 }
 
 /**
- * Read one page about the sender — their company site, or the profile URL the
- * finder sourced them from — cached in enrichment_cache under `webread:<label>`
+ * Read one page about the sender: their company site, or the profile URL the
+ * finder sourced them from: cached in enrichment_cache under `webread:<label>`
  * (30d TTL + negative-cache semantics). Returns null on any failure;
  * transient errors are NOT negative-cached (an outage must not suppress
  * research for a month). The cache write rides the LIVE promise, not the
- * deadline race — a read settling after the deadline was still PAID for and
+ * deadline race. A read settling after the deadline was still PAID for and
  * must reach the cache.
  */
 async function readSenderPage(
@@ -247,7 +247,7 @@ async function readSenderPage(
         const parsed = JSON.parse(cached.result_json) as { text?: string };
         if (parsed.text) return { text: parsed.text, paid: false, costUsd: 0 };
       } catch {
-        // corrupt cache row — fall through and refetch
+        // corrupt cache row: fall through and refetch
       }
     }
   }

@@ -16,9 +16,9 @@ import { SkeletonRow } from "../primitives/Skeleton.tsx";
 /**
  * Compact per-trigger status strip on /home. Answers the three questions
  * a founder asks when they suspect the scheduler is dead:
- *   1. Did anything run recently? — "show-hn ran 4h ago"
- *   2. Is anything due soon? — "github-topics next in 2h"
- *   3. What happened on the last run? — "cand=50 · kept=0 · icp=5 · $0.05"
+ *   1. Did anything run recently?: "show-hn ran 4h ago"
+ *   2. Is anything due soon?: "github-topics next in 2h"
+ *   3. What happened on the last run?: "cand=50 · kept=0 · icp=5 · $0.05"
  *
  * Read-only, no new API. Refetches every 30s alongside the other /home
  * sections. Drill-down is via the strip header → /queue, where the full

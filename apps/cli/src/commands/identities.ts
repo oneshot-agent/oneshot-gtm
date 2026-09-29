@@ -15,7 +15,7 @@ import {
 import prompts from "prompts";
 import { c, emitJson, header, note, ok, setJsonMode, warn } from "../output.ts";
 
-/** Best-effort domain pool — never let a transient/auth failure abort a list/add. */
+/** Best-effort domain pool. Never let a transient/auth failure abort a list/add. */
 async function safeListDomains(): Promise<{ domains: DomainPoolEntry[]; error: boolean }> {
   try {
     return { domains: await listSendingDomains(), error: false };
@@ -76,18 +76,20 @@ export async function commandIdentitiesList(opts: { json?: boolean } = {}): Prom
       identities: identities.map((i) => {
         const cap = caps.get(i.id);
         const capToday = cap && Number.isFinite(cap.capToday) ? cap.capToday : null;
-        return {
-          id: i.id,
-          provider: i.provider,
-          address:
-            i.mailbox && i.sendingDomain
-              ? `${i.mailbox}@${i.sendingDomain}`
-              : (i.address ?? i.sendingDomain ?? i.label ?? i.id),
-          sentToday: cap?.identitySentToday ?? 0,
-          capToday,
-          ...(cap?.domainSentToday != null ? { domainSentToday: cap.domainSentToday } : {}),
-          legacy,
-        };
+        return Object.assign(
+          {
+            id: i.id,
+            provider: i.provider,
+            address:
+              i.mailbox && i.sendingDomain
+                ? `${i.mailbox}@${i.sendingDomain}`
+                : (i.address ?? i.sendingDomain ?? i.label ?? i.id),
+            sentToday: cap?.identitySentToday ?? 0,
+            capToday,
+            legacy,
+          },
+          cap?.domainSentToday != null ? { domainSentToday: cap.domainSentToday } : {},
+        );
       }),
       domains: domains.map((d) => ({
         domain: d.domain,
@@ -146,7 +148,7 @@ export async function commandIdentitiesAdd(): Promise<void> {
     warn("No domain provided.");
     return;
   }
-  // A domain not yet in the pool isn't an error — it auto-provisions on first
+  // A domain not yet in the pool isn't an error. It auto-provisions on first
   // send. But pinned sends bypass the server's warm-up gating, so flag the
   // cold-start so the founder leans on the client cap (the default ramp).
   if (domains.length > 0 && !domains.some((d) => d.domain.toLowerCase() === domain)) {

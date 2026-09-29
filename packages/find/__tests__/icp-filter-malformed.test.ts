@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 // A malformed / truncated LLM response (non-throwing) must resolve to
-// `match: null` — the transient-failure signal — NOT `match: false`, so
+// `match: null`. The transient-failure signal: NOT `match: false`, so
 // callers drop the candidate WITHOUT persisting a rejected row that would
 // burn its dedupeKey forever.
 

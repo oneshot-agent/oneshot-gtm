@@ -13,13 +13,13 @@ export interface LlmCompleteInput {
   /**
    * Accept a response cut off at max_tokens instead of throwing. For callers
    * that consume PROSE (weekly review, advise), where a truncated report is
-   * still usable. JSON-parsing callers must leave this unset — truncated JSON
+   * still usable. JSON-parsing callers must leave this unset: truncated JSON
    * silently degrades to an empty object downstream.
    */
   allowTruncation?: boolean;
   /**
    * Per-request wall-clock budget. The request is aborted when it expires and
-   * the attempt counts as retryable — a hung socket is the failure mode that
+   * the attempt counts as retryable. A hung socket is the failure mode that
    * otherwise stalls a whole 50-target drain behind one target.
    */
   timeoutMs?: number;
@@ -31,17 +31,13 @@ const DEFAULT_MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 500;
 const MAX_DELAY_MS = 20_000;
 /**
- * Ceiling on a server-supplied Retry-After we are willing to wait out. Beyond
- * this it is a give-up, not a wait — see the budget check in complete(),
- * which fails fast instead of burning attempts on a guaranteed-failing retry.
+ * Maximum accepted Retry-After. complete() fails fast above this budget rather
+ * than retrying before the server permits it.
  */
 const MAX_RETRY_AFTER_MS = 60_000;
 /**
- * Floor on an explicitly-supplied timeoutMs. `maxAttempts` is already clamped
- * to >= 1; timeoutMs needs the same treatment — 0 (or a negative value) would
- * abort the request before it ever reaches the provider, on every attempt.
- * Leaving timeoutMs unset is unaffected: that still means no client-side
- * timeout at all, not "use the floor".
+ * Minimum explicit timeout. Zero or negative values would abort every attempt
+ * before dispatch. An omitted timeoutMs still means no client-side timeout.
  */
 const MIN_TIMEOUT_MS = 1_000;
 
@@ -74,11 +70,9 @@ class LlmTimeoutError extends LlmError {
 }
 
 /**
- * A transport-level rejection — DNS, TLS, socket reset. Raised only where we
- * know no HTTP response was obtained, so a second attempt can plausibly land.
- * Classifying at the call site rather than by error type matters: fetch signals
- * these with a bare TypeError, and so does every accidental property access on
- * a malformed response body.
+ * DNS, TLS, or socket failures caught before an HTTP response arrives. Classify
+ * at the fetch call site: a TypeError from parsing a malformed body is not a
+ * transport failure and must not trigger retries.
  */
 class LlmNetworkError extends LlmError {
   constructor(message: string) {
@@ -88,12 +82,9 @@ class LlmNetworkError extends LlmError {
 }
 
 /**
- * Retry only the explicitly retryable set: rate limits, provider-side faults,
- * timeouts, and transport failures. Everything else is terminal — a 400 bad
- * request, a 401 bad key and a 404 unknown model are deterministic, a
- * truncation / no-choices / no-content LlmError carries no status and will
- * reproduce exactly, and a stray TypeError from parsing a malformed body is a
- * bug in us, not weather. Retrying any of those triples the bill for nothing.
+ * Retry rate limits, provider faults, timeouts, and transport failures. Bad
+ * requests, invalid credentials/models, truncated or empty completions, and
+ * response-parsing bugs are terminal; retries would repeat the failure and cost.
  */
 export function isRetryableLlmError(err: unknown): boolean {
   if (err instanceof LlmTimeoutError || err instanceof LlmNetworkError) return true;
@@ -118,9 +109,8 @@ export function parseRetryAfter(header: string | null, now: number): number | un
 }
 
 /**
- * Bounded exponential backoff with equal jitter — half the delay is fixed so
- * attempts still spread out, half is random so a batch that hits the same 429
- * doesn't march back in lockstep. `attempt` is 1-based (the delay AFTER it).
+ * Bounded exponential backoff with equal jitter: half fixed, half random.
+ * `attempt` is 1-based and identifies the attempt preceding this delay.
  */
 export function backoffDelayMs(
   attempt: number,
@@ -130,13 +120,8 @@ export function backoffDelayMs(
   const capped = Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS);
   const backoff = Math.round(capped / 2 + rand() * (capped / 2));
   if (retryAfterMs === undefined) return backoff;
-  // Retry-After raises the wait, it never lowers it. `Retry-After: 0` and an
-  // HTTP-date already in the past (clock skew, second-rounding) are both common
-  // and both parse to 0 — honouring them literally would fire every attempt
-  // within milliseconds, unpaced and unjittered. Anything past our retry
-  // budget (MAX_RETRY_AFTER_MS) never reaches here — complete() rejects it as
-  // terminal before computing a delay, rather than silently truncating a
-  // 300s hint down to a guaranteed-failing 60s wait.
+  // Keep jittered pacing even for zero or past Retry-After values.
+  // complete() rejects hints above MAX_RETRY_AFTER_MS before reaching here.
   return Math.max(retryAfterMs, backoff);
 }
 
@@ -145,10 +130,8 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Names the two ways a call hits the token ceiling, because they need opposite
- * fixes: a model that reasons by default can burn the whole budget before it
- * emits a character (raising maxTokens does not help much — pick a model that
- * doesn't reason, or budget for both), while a plain overrun just needs more room.
+ * Distinguish reasoning-budget exhaustion from answer overflow so callers can
+ * choose a non-reasoning model or increase the appropriate token budget.
  */
 function truncationMessage(d: {
   provider: string;
@@ -213,7 +196,7 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
 
   // `??` treats 0 as "supplied", and 0 (or a negative value) would abort every
   // attempt before it reaches the provider. Only clamp when a value was
-  // actually given — leaving timeoutMs unset must keep meaning "no timeout".
+  // actually given: leaving timeoutMs unset must keep meaning "no timeout".
   const timeoutMs =
     input.timeoutMs === undefined ? undefined : Math.max(MIN_TIMEOUT_MS, input.timeoutMs);
   const maxAttempts = Math.max(1, input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
@@ -228,10 +211,8 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
     timeout_ms: timeoutMs ?? null,
   });
 
-  // Only the dispatch itself sits inside the retry try. Success-path logging
-  // used to live in here, and a throw from it (a null `content` field on an
-  // already-billed response) discarded the paid-for completion and re-sent the
-  // whole prompt — the retry loop must never be able to reject work we have.
+  // Keep success logging outside the retry block: a logging failure must not
+  // discard a paid completion and resend the prompt.
   let result: LlmCompleteOutput | undefined;
   let attempts = 0;
 
@@ -243,15 +224,9 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
     } catch (err) {
       const status = err instanceof LlmError ? (err.status ?? null) : null;
       const retryAfterMs = err instanceof LlmError ? err.retryAfterMs : undefined;
-      // A Retry-After past our budget is a guaranteed-failing retry: honouring
-      // it literally would burn the remaining attempts on ~120s+ of dead wait
-      // in a sequential caller. Treat it as terminal instead, with a message
-      // that names the wait so it reads as a deliberate give-up, not a bug.
-      // Only applies when a retry was actually still on the table — a
-      // non-retryable status (400/401/404) or an exhausted attempt count was
-      // never going to retry regardless of Retry-After, so there is nothing
-      // to "give up" on and the original error (status + provider body) must
-      // survive unchanged.
+      // Reject Retry-After above the wait budget only if another retry is
+      // possible. Preserve the original error for terminal statuses or an
+      // exhausted attempt count.
       const overRetryBudget =
         attempt < maxAttempts &&
         isRetryableLlmError(err) &&
@@ -319,27 +294,11 @@ function dispatch(
           "X-Title": "oneshot-gtm",
         },
       };
-      // Models that reason by default (Claude Sonnet 5 / Opus 5, o-series,
-      // Gemini thinking) spend their reasoning INSIDE `max_tokens` on
-      // OpenRouter, and every caller here sets a small, deliberate budget
-      // (200–2000 tokens of JSON). Measured on anthropic/claude-sonnet-5 at
-      // max_tokens=500: default → finish_reason=length with 313 reasoning
-      // tokens and truncated JSON; reasoning off → a clean 184-token answer
-      // at 40% of the cost. OpenRouter's unified `reasoning` parameter maps
-      // to each provider's own switch, so this is one line for all of them —
-      // except the models OpenRouter marks `reasoning.mandatory` (gpt-5, the
-      // Gemini 3.5+ flashes, Fable 5.1), which answer the switch with a 400.
-      //
-      // For those, retrying WITHOUT the switch is not enough (issue #586):
-      // the retry keeps the caller's budget and the model spends all of it
-      // thinking — google/gemini-3.8-flash at max_tokens=500 returned
-      // finish_reason=length with 481/496 tokens of reasoning and an empty
-      // body, on every single draft. So the mandatory path asks for the
-      // lowest effort AND tops the budget up by an allowance, so the caller's
-      // maxTokens keeps meaning "tokens of answer I want". The model is
-      // remembered for the rest of the process (and the common families are
-      // seeded) so the founder's model choice never has to know which kind
-      // it is, and only the first call of a boot pays for the 400.
+      // OpenRouter counts reasoning against max_tokens. Disable it for callers'
+      // small JSON budgets. Models that require reasoning reject that switch
+      // with a 400; use low effort plus extra tokens so maxTokens remains an
+      // answer budget. Cache the requirement and seed known families to avoid
+      // repeating the initial rejection.
       if (mandatoryReasoningModels.has(model) || seededMandatory(model)) {
         return completeWithMandatoryReasoning(args);
       }
@@ -366,24 +325,18 @@ function dispatch(
 }
 
 /**
- * Completion budget granted on top of the caller's `maxTokens` for a
- * reasoning-mandatory model. One data point behind the number: gemini-3.8-flash
- * at effort=medium used 481 reasoning tokens for what would have been a
- * ~200-token answer. `low` should need less, but a too-small allowance costs a
- * truncated draft and a too-large one costs nothing (unused budget is not
- * billed), so it errs high.
+ * Extra tokens for mandatory reasoning, preserving maxTokens as the answer
+ * budget. Gemini-3.8-flash at medium effort used 481 reasoning tokens for an
+ * approximately 200-token answer. Leave headroom: unused tokens are not billed.
  */
 export const MANDATORY_REASONING_ALLOWANCE_TOKENS = 1536;
 /** Every reasoning-mandatory model on OpenRouter accepts `low`; not all accept `minimal`. */
 export const MANDATORY_REASONING_EFFORT = "low";
 
 /**
- * OpenRouter models that cannot have reasoning switched off — see the
- * openrouter dispatch. Learned at runtime from the 400, seeded with the
- * families known to be mandatory so the first call of a boot doesn't pay for
- * it. The seed is an optimisation, never the authority: an unlisted model is
- * still detected, and a listed one that later allows the switch merely wastes
- * a little budget.
+ * Cache mandatory-reasoning models discovered from provider 400s and seed known
+ * families to avoid that first rejection. Unlisted models are still detected;
+ * seeds that later allow reasoning to be disabled only waste token headroom.
  */
 const mandatoryReasoningModels = new Set<string>();
 const MANDATORY_REASONING_SEED = [/^google\/gemini-3\.[5-9]-flash/, /^openai\/gpt-5/];
@@ -394,7 +347,7 @@ function seededMandatory(model: string): boolean {
 /**
  * The mandatory path: lowest effort plus the allowance. A model that rejects
  * the `effort` parameter too (a second 400 about reasoning) is called with no
- * reasoning parameter at all — but still with the raised budget, which is the
+ * reasoning parameter at all, but still with the raised budget, which is the
  * half of the fix that actually matters.
  */
 function completeWithMandatoryReasoning(args: OpenAIArgs): Promise<LlmCompleteOutput> {
@@ -413,7 +366,7 @@ function isMandatoryReasoningRejection(err: unknown): boolean {
 }
 
 /**
- * One POST under a single abort budget covering the body read too — a provider
+ * One POST under a single abort budget covering the body read too. A provider
  * that accepts the connection and then stalls mid-stream is the same failure as
  * one that never answers. Non-2xx becomes an LlmError carrying status and
  * Retry-After so the retry loop can classify and pace it.
@@ -446,7 +399,7 @@ async function postJson(args: {
     }
 
     if (!res.ok) {
-      // The status is known, so the status decides — a 401 that happens to time
+      // The status is known, so the status decides. A 401 that happens to time
       // out while we read its body is still a 401, and retrying it three times
       // just burns the budget on the same rejected key.
       let text = "";
@@ -465,7 +418,7 @@ async function postJson(args: {
     try {
       const parsed: unknown = await res.json();
       // A 2xx body that parses to JSON `null` (or any non-object shape) is the
-      // same "nothing usable" case as a body that never arrives — both provider
+      // same "nothing usable" case as a body that never arrives. Both provider
       // paths immediately do `data.choices` / `data.content`, so an
       // unclassified null here used to surface as a bare TypeError at the call
       // site instead of a named, retry-classified error.
@@ -497,10 +450,10 @@ interface OpenAIArgs {
   input: LlmCompleteInput;
   timeoutMs: number | undefined;
   extraHeaders?: Record<string, string>;
-  /** Send OpenRouter's `reasoning: { enabled: false }` — see the openrouter dispatch. */
+  /** Send OpenRouter's `reasoning: { enabled: false }`: see the openrouter dispatch. */
   disableReasoning?: boolean;
   /**
-   * Send OpenRouter's `reasoning: { effort }` instead — for models whose
+   * Send OpenRouter's `reasoning: { effort }` instead: for models whose
    * reasoning cannot be switched off. Mutually exclusive with disableReasoning.
    */
   reasoningEffort?: string;
@@ -522,7 +475,7 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
       messages: args.input.messages,
       temperature: args.input.temperature ?? 0.7,
       max_tokens: maxTokens,
-      // OpenRouter only — the OpenAI API rejects unknown parameters.
+      // OpenRouter only. The OpenAI API rejects unknown parameters.
       ...(args.disableReasoning
         ? { reasoning: { enabled: false } }
         : args.reasoningEffort
@@ -542,7 +495,7 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
   };
 
   // OpenRouter answers upstream faults with 200 and an error envelope instead of
-  // choices. Naming it here keeps the failure a terminal LlmError — reaching for
+  // choices. Naming it here keeps the failure a terminal LlmError: reaching for
   // data.choices[0] on it would throw a bare TypeError, which reads as weather.
   if (data.error) {
     const code = data.error.code === undefined ? "" : ` (code ${data.error.code})`;

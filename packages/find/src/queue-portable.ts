@@ -1,6 +1,6 @@
 /**
  * The part of a queue payload that belongs to the PERSON, not to the
- * workspace that found them — what a "move to workspace X" carries across.
+ * workspace that found them: what a "move to workspace X" carries across.
  *
  * A payload mixes three kinds of keys: identity and research (name, email,
  * LinkedIn, `personResearch`, `productResearch`, the finder's evidence such as
@@ -24,7 +24,7 @@ export const WORKSPACE_SPECIFIC_PAYLOAD_KEYS: readonly string[] = [
   "emailOverride",
 ];
 
-/** Provenance stamped on a moved row — read by the review UI, never by a classifier. */
+/** Provenance stamped on a moved row: read by the review UI, never by a classifier. */
 export interface MovedFrom {
   workspace: string;
   queueId: number;

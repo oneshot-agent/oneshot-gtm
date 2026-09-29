@@ -3,7 +3,7 @@ import type { LumaPublicAttendee } from "./_types.ts";
 
 /**
  * Optional auth path for luma-events: with `LUMA_SESSION_COOKIE` set, fetch
- * the full guest list from Luma's internal (undocumented) API. HOST-ONLY —
+ * the full guest list from Luma's internal (undocumented) API. HOST-ONLY:
  * a valid cookie on someone else's event 403s, so this only adds coverage for
  * events the founder hosts; cold-discovery contacts come from the public event
  * JSON (`_luma-discover.ts`). Null on any failure mode = caller stays in
@@ -86,7 +86,7 @@ function projectRawGuest(raw: RawGuest): LumaPublicAttendee | null {
 /**
  * Fetch a Luma event's full guest list using the founder's session cookie.
  * Returns null on any failure mode (no cookie, expired cookie, 4xx, shape
- * drift, network blip) — the caller falls back to public-only mode.
+ * drift, network blip). The caller falls back to public-only mode.
  */
 export async function fetchAuthedGuestList(
   eventSlug: string,
@@ -119,7 +119,7 @@ export async function fetchAuthedGuestList(
         },
         "warn",
       );
-      // Network blip — try the next endpoint.
+      // Network blip: try the next endpoint.
       lastStatus = null;
       continue;
     }
@@ -158,7 +158,7 @@ export async function fetchAuthedGuestList(
     }
     return projected;
   }
-  // Both endpoints returned 404 — likely wrong slug or API path drift.
+  // Both endpoints returned 404: likely wrong slug or API path drift.
   if (lastStatus === 404) {
     logEvent(
       "error.swallowed",
@@ -171,7 +171,7 @@ export async function fetchAuthedGuestList(
 
 /**
  * Merge public (LLM-extracted) + auth'd attendees. Dedupe key: lowercased
- * trimmed name (matches the downstream per-event key). Per-field union — auth
+ * trimmed name (matches the downstream per-event key). Per-field union: auth
  * values win on conflict, public values fill nulls.
  */
 export function mergeAttendees(

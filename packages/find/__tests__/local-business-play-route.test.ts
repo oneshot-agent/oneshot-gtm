@@ -7,7 +7,7 @@ import { assertNotOwnerOperatorBuyer } from "@oneshot-gtm/plays";
 // `buildDesignPartnerLoiPayload` in isolation on hand-written input. The
 // review specifically flagged the local engine's mapping as non-obvious:
 // `company` comes from the business `name` local var while `name` (the
-// person) comes from `contact.fullName ?? name` — the SAME business-name
+// person) comes from `contact.fullName ?? name`. The SAME business-name
 // variable as a fallback. A helper test on hand-written input cannot catch a
 // wire-up bug where those two get swapped or collapsed.
 

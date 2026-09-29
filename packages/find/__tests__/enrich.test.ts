@@ -205,7 +205,7 @@ describe("enrichVerifiedContact — cache write + read contract", () => {
     expect(r.phone).toBe("+1 555-9999");
     expect(r.linkedinUrl).toBe("https://www.linkedin.com/in/cached-person");
     // Cache hit means no new SDK call, so no new spend / receipt is attributed
-    // to this invocation — the original receipt still lives where it was paid.
+    // to this invocation. The original receipt still lives where it was paid.
     expect(r.costUsd).toBe(0);
     expect(r.receiptId).toBeNull();
   });
@@ -262,7 +262,7 @@ describe("enrichVerifiedContact — negative caching", () => {
       receiptId: null,
     });
     expect(cache.failureCalls).toHaveLength(0); // NOT poisoned
-    // Next call (platform recovered) re-attempts — nothing suppressing it.
+    // Next call (platform recovered) re-attempts: nothing suppressing it.
     nextProfile = { phone: "+1 555-2222" };
     const r2 = await enrichVerifiedContact("outage@x.dev", { playName: "show-hn" });
     expect(r2.phone).toBe("+1 555-2222");

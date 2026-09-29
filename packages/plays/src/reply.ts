@@ -13,14 +13,14 @@ import {
   voiceBlock,
 } from "./_lib.ts";
 
-// stripQuotedChain moved to core (reply-classify.ts) — the classifier needs it
+// stripQuotedChain moved to core (reply-classify.ts). The classifier needs it
 // too. Re-exported so existing imports of this module keep working.
 export { stripQuotedChain };
 
-/** Mirror triage.ts's truncation — inbound bodies can be huge (quoted chains). */
+/** Mirror triage.ts's truncation: inbound bodies can be huge (quoted chains). */
 const INBOUND_BODY_MAX = 2000;
 
-/** Words in a body, quoted chain stripped — the unit both length rules use. */
+/** Words in a body, quoted chain stripped. The unit both length rules use. */
 function wordCount(text: string): number {
   return stripQuotedChain(text).split(/\s+/).filter(Boolean).length;
 }
@@ -76,13 +76,13 @@ export function repeatsPriorText(body: string, priorTexts: readonly string[]): b
 /**
  * A commitment pattern paired with how strictly it must be gated. Each entry
  * names one commitment shape; ANY match is one `commits-terms` flag, not one
- * per pattern — `replyPenalty` counts flags, and a draft that trips three of
+ * per pattern: `replyPenalty` counts flags, and a draft that trips three of
  * these is not three times worse than one that trips one.
  *
  * `requireAffirmative`: some keywords (pricing, discount) show up just as
  * often in a neutral or declining sentence ("Our pricing is public, check
  * the website.") as in an actual commitment ("Sure, I can do a 20% discount
- * for the first year."). For those, a bare keyword match is not enough —
+ * for the first year."). For those, a bare keyword match is not enough:
  * the sentence must also carry an affirmative commitment cue (can/could/
  * will/would/I'll/we'll/happy to/etc).
  */
@@ -93,7 +93,7 @@ interface CommitPattern {
 
 const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
   // Pricing, discounts, free tiers. Bare mentions ("our pricing is public")
-  // are common in ordinary, harmless replies — only count it when the same
+  // are common in ordinary, harmless replies. Only count it when the same
   // sentence also affirmatively offers something.
   {
     regex: /\b(?:pric(?:e|es|ing)|discount(?:s|ed)?|% off|free tier|for free)\b/i,
@@ -101,7 +101,7 @@ const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
   },
   // Distribution / traffic promises ("point our builders toward X", "route users to Y").
   // Round-2 correction (#480): a bare mention ("we read about your distribution
-  // model") is as common as an actual promise — same affirmative-cue gate as pricing.
+  // model") is as common as an actual promise: same affirmative-cue gate as pricing.
   {
     regex:
       /\bdistribution\b|\btraffic\b|\bpoint\b[^.]{0,60}\btoward\b|\brout(?:e|ing)\b[^.]{0,40}\b(?:users|traffic|customers|people)\b/i,
@@ -111,7 +111,7 @@ const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
   // explaining the partnership, that makes sense" is not a commitment.
   { regex: /\bpartner(?:ship)?\b|\bexclusiv(?:e|ity)\b/i, requireAffirmative: true },
   // Roadmap dates. Round-2 correction (#480): "could you clarify your roadmap?"
-  // is a question, not a commitment — gated the same way (QUESTION_CUE below
+  // is a question, not a commitment: gated the same way (QUESTION_CUE below
   // also strips the "could you"/"can you" phrasing the bare cue list would miss).
   {
     regex: /\broadmap\b|\bby (?:Q[1-4]\s?\d{0,4}|\d{4})\b|\bnext (?:quarter|month)\b/i,
@@ -142,7 +142,7 @@ const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
 const NEGATION_CUE = /\b(?:not|no|never|nobody|nothing|unable|cannot)\b|n['’]t\b/i;
 
 /**
- * Trailing hedge idioms that use the word "no" without negating anything —
+ * Trailing hedge idioms that use the word "no" without negating anything:
  * "no problem" / "no worries" acknowledge a commitment just made, they don't
  * retract it. Stripped before the negation check so `bodyCommitsTerms` can
  * check the whole sentence for real negations (round-2 correction, #558)
@@ -155,7 +155,7 @@ const TRAILING_HEDGE = /,?\s*no (?:problem|worries|issue|big deal)\b[.!?]?/gi;
  * A sentence that affirmatively offers or agrees to something. Includes
  * "plan(ning) to" / "aim to" (round-2 correction, #480) so a founder stating a
  * roadmap intent ("we're planning to ship SSO by Q1") still counts as a
- * commitment — only the *question* form ("could you clarify your roadmap?")
+ * commitment. Only the *question* form ("could you clarify your roadmap?")
  * is meant to fall through, and that's excluded separately by QUESTION_CUE.
  */
 const AFFIRMATIVE_CUE =
@@ -163,7 +163,7 @@ const AFFIRMATIVE_CUE =
 
 /**
  * A modal cue addressed AT the recipient ("could you", "can you", "would
- * you", "will you") — a question, never a commitment, even though it shares
+ * you", "will you"). A question, never a commitment, even though it shares
  * the same modal verbs AFFIRMATIVE_CUE looks for ("we could hire someone" is
  * a commitment; "could you clarify your roadmap?" is not). Round-2
  * correction (#480): without this, "Could you clarify your roadmap?" still
@@ -171,7 +171,7 @@ const AFFIRMATIVE_CUE =
  */
 const QUESTION_CUE = /\b(?:could|can|would|will)\s+you\b/i;
 
-/** Body split into sentence-ish chunks — the unit `bodyCommitsTerms` reasons about, so a
+/** Body split into sentence-ish chunks. The unit `bodyCommitsTerms` reasons about, so a
  *  commitment made in one sentence can't be masked by a negation two sentences away. */
 function splitSentences(text: string): string[] {
   return text
@@ -183,7 +183,7 @@ function splitSentences(text: string): string[] {
 /**
  * True when the body makes (or looks like it's making) a commitment the
  * founder never authorised. `NEGATION_CUE` is checked against the WHOLE
- * sentence — matching main's original behaviour — after stripping
+ * sentence (matching main's original behaviour) after stripping
  * `TRAILING_HEDGE` idioms ("no problem"/"no worries"/etc), which use "no"
  * without negating anything.
  *
@@ -191,10 +191,10 @@ function splitSentences(text: string): string[] {
  * discount, no problem." (should stay `true`) by scoping the negation check
  * to the leading clause up to the next comma. Round-4 correction (#558) then
  * had to special-case the clause boundary again for a parenthetical aside
- * ("We will not, under any circumstances, offer a discount." — the
+ * ("We will not, under any circumstances, offer a discount.". The
  * comma-delimited clause split "not" from "discount" and flipped this to
  * `true`). Round-2 correction (#558, THIS round): the clause-scoping
- * approach itself is unsound — ANY clause boundary drawn on commas cuts off
+ * approach itself is unsound: ANY clause boundary drawn on commas cuts off
  * a genuine refusal that legitimately follows a comma in the same sentence
  * ("We can review pricing, but cannot offer a discount." regressed to
  * `true` against main's `false`). Stripping the specific hedge idiom instead
@@ -257,7 +257,7 @@ export function citesLinkOutsideBrief(body: string, allowed: ReadonlySet<string>
 
 /**
  * Body-only lint: a reply keeps the inbound "Re: …", so subject flags are not
- * ours to raise — lintEmail gets a dummy subject and they're dropped.
+ * ours to raise: lintEmail gets a dummy subject and they're dropped.
  */
 function lintReply(
   body: string,
@@ -274,7 +274,7 @@ function lintReply(
 
 /**
  * How bad a draft is: flag count first, then how far over the word budget it
- * runs. The overage tiebreak matters — a repair that cuts 101 words to 60 is a
+ * runs. The overage tiebreak matters. A repair that cuts 101 words to 60 is a
  * real improvement but still carries the single `body-too-long` flag, so
  * comparing flag counts alone would discard it and keep the worse draft.
  */
@@ -294,8 +294,8 @@ function better(a: [number, number], b: [number, number]): boolean {
 }
 
 /** Parse the model's JSON and apply the deterministic autofixes (em-dash,
- *  curly quotes, emoji) BEFORE linting — otherwise the gate burns a retry on
- *  what humanizeDraft already repairs. humanizeDraft wants a subject; the
+ *  curly quotes, emoji) BEFORE linting. Otherwise the gate burns a retry on
+ *  what humanizeDraft already repairs. HumanizeDraft wants a subject; the
  *  reply has none, so pass a dummy. */
 function bodyFrom(raw: string): string {
   const parsed = tryParseJsonObject<{ body?: string }>(raw, {});
@@ -305,11 +305,11 @@ function bodyFrom(raw: string): string {
 
 /**
  * Sentences the founder already asked in this thread ("does that work for
- * you?", "what's the actual proposal here?") — extracted from every reply
+ * you?", "what's the actual proposal here?"): extracted from every reply
  * already sent, so `draftInboxReply` can tell the model never to restate an
  * outstanding ask (issue #480, the Aladdin Aug 26/27 exchange: three
  * discovery questions in a row with no named purpose). A crude sentence
- * split on `.`/`?`/`!` is enough — this feeds a "don't repeat" instruction,
+ * split on `.`/`?`/`!` is enough. This feeds a "don't repeat" instruction,
  * not a structured parse.
  */
 export function priorAsks(threadSent: readonly { body: string }[]): string[] {
@@ -331,7 +331,7 @@ export function priorAsks(threadSent: readonly { body: string }[]): string[] {
 export interface DraftInboxReplyInput {
   /** Normalized sender address of the inbound email. */
   fromEmail: string;
-  /** Inbound subject (the reply keeps it as "Re: …" — only the body is drafted). */
+  /** Inbound subject (the reply keeps it as "Re: …". Only the body is drafted). */
   subject: string;
   /** Inbound plain-text body. */
   body: string;
@@ -343,7 +343,7 @@ export interface DraftInboxReplyInput {
     playName: string | null;
   } | null;
   /**
-   * Research about the sender — the prospect's stored dossier, or enrichment +
+   * Research about the sender. The prospect's stored dossier, or enrichment +
    * a read of their site gathered by the route. What lets the reply engage a
    * technical message with substance instead of curiosity questions.
    */
@@ -352,13 +352,13 @@ export interface DraftInboxReplyInput {
    * Synthesized per-prospect angle JSON (issue #355), verbatim from
    * `prospects.angle_json`. Threaded through so the ANGLE block's
    * `doNotSay` can stop a reply re-asserting a premise the prospect already
-   * corrected — the "not sure what you mean" / "starred for research"
+   * corrected. The "not sure what you mean" / "starred for research"
    * cases. Missing/empty → no block, unchanged output (issue #356).
    */
   angleJson?: string | null;
   /**
    * The founder's most recently recorded outcome for this prospect's
-   * calendar meeting(s) (issue #578) — a direct, structured fact from the
+   * calendar meeting(s) (issue #578). A direct, structured fact from the
    * ledger, not inferred from prose. Only `held`/`no_show` render (a
    * cancelled/rescheduled meeting never happened, so there's nothing to
    * relay); the founder's optional pasted note is untrusted content to
@@ -366,18 +366,18 @@ export interface DraftInboxReplyInput {
    * unchanged output.
    */
   meeting?: { outcome: string; note: string | null; summary: string | null } | null;
-  /** Replies the founder already sent in this thread (oldest first) — round 2+ must not repeat round 1. */
+  /** Replies the founder already sent in this thread (oldest first): round 2+ must not repeat round 1. */
   threadSent?: Array<{ body: string; sentAt: string }>;
-  /** The prospect's earlier inbound messages (oldest first) — the other half of the exchange. */
+  /** The prospect's earlier inbound messages (oldest first). The other half of the exchange. */
   priorInbound?: Array<{ body: string; subject: string | null; receivedAt: string }>;
-  /** Sentiment classification of the inbound being answered (issue #480) — selects the intent directive block. */
+  /** Sentiment classification of the inbound being answered (issue #480): selects the intent directive block. */
   intent?: string | null;
-  /** Founder's standing redraft instruction for this thread (issue #480) — binding on this draft. */
+  /** Founder's standing redraft instruction for this thread (issue #480): binding on this draft. */
   steer?: string | null;
   /**
    * The ICP gate's call on this prospect (`prospects.icp_verdict` + reason):
    * title-based and made before the conversation. Rendered with the caveat
-   * that the thread outranks it — a reject whose reply shows they build
+   * that the thread outranks it. A reject whose reply shows they build
    * agent systems is a stale verdict, not a reason to disengage. Missing or
    * null verdict → no line, unchanged output.
    */
@@ -395,7 +395,7 @@ export interface DraftInboxReplyResult {
  * scaffolding as cadence follow-ups (signature directive, social proof, prior
  * touches, humanizer autofixes) but answering THEIR message rather than
  * continuing a sequence. Returns the body plus any lint flags that survived
- * the repair pass — the subject stays "Re: …". Throws on LLM/provider
+ * the repair pass. The subject stays "Re: …". Throws on LLM/provider
  * errors; the route maps that to a 4xx message.
  */
 export async function draftInboxReply(input: DraftInboxReplyInput): Promise<DraftInboxReplyResult> {
@@ -432,7 +432,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
 
   // ASKS ALREADY MADE (issue #480): outstanding questions from your own prior
   // replies. An ask you've already made must be answered or waited on, never
-  // restated — this is the "circling" half of the Aladdin failure.
+  // restated. This is the "circling" half of the Aladdin failure.
   const asks = input.threadSent ? priorAsks(input.threadSent) : [];
   const asksBlock =
     asks.length > 0
@@ -448,7 +448,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
     input.priorInbound && input.priorInbound.length > 0
       ? [
           "THEIR EARLIER MESSAGES (what the prospect already told you — don't re-ask any of it):",
-          // Newest 6, each capped at 1000 chars — a long exchange must not
+          // Newest 6, each capped at 1000 chars. A long exchange must not
           // grow the prompt without bound (the recent messages carry the
           // conversation; ancient ones add tokens, not context).
           ...input.priorInbound
@@ -460,18 +460,18 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
         ].join("\n")
       : null;
 
-  // Structured intent directive (issue #480) — code-gated per classified
+  // Structured intent directive (issue #480): code-gated per classified
   // sentiment, the same way admissionBlock/socialProofBlock are code-gated
   // rather than left to the model to infer "are they interested?" from prose.
   const intentBlock = intentDirectiveBlock(input.intent);
-  // Founder steer (issue #480) — a binding redraft instruction from /inbox.
+  // Founder steer (issue #480). A binding redraft instruction from /inbox.
   const steerBlock = founderSteerBlock(input.steer);
-  // MEETING (issue #578) — the direct outcome-to-draft path.
+  // MEETING (issue #578). The direct outcome-to-draft path.
   const meetingBlockText = meetingBlock(input.meeting ?? null);
 
   // No SOCIAL PROOF block here, deliberately. It is an instruction ("pick the
   // ONE beat that best fits this play"), and in a reply it contradicts the
-  // prompt's "do not re-introduce yourself or the product" — the credentials
+  // prompt's "do not re-introduce yourself or the product". The credentials
   // and portfolio lines only render as a self-introduction, which the prospect
   // already read in the intro email. Social proof belongs in outbound drafts.
   // VOICE is the one founder-specific block that does belong here: it is
@@ -480,7 +480,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
   const voice = voiceBlock("reply");
   const firstName = firstNameFrom(input.matched?.name ?? null);
   const angleBlock = angleBlockFromJson(input.angleJson);
-  // ICP GATE — a free ledger fact, rendered with its caveat inline so the
+  // ICP GATE. A free ledger fact, rendered with its caveat inline so the
   // model never reads a title-based reject as an instruction to disengage.
   const icpGateLine = input.icp?.verdict
     ? `ICP GATE (title-based, decided before this conversation; the thread outranks it): ${input.icp.verdict}${input.icp.reason ? ` - ${input.icp.reason}` : ""}`
@@ -526,7 +526,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
 
   // The outbound plays lint their drafts and let sendDraftedEmail block on the
   // flags. A reply has no send gate for most flags (the founder reviews it in
-  // the composer), so the gate is a single repair pass — except `commits-terms`
+  // the composer), so the gate is a single repair pass: except `commits-terms`
   // (issue #480), which DOES get a send gate: see the route's needsDecision.
   const priorTexts = [...prior.map((r) => r.body!), ...(input.threadSent ?? []).map((t) => t.body)];
   const budget = replyWordBudget(input.body);
@@ -534,7 +534,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
   let flags = lintReply(body, budget, priorTexts, allowedUrls);
   if (flags.length > 0) {
     const repaired = await repairReply({ messages, first: res.content, flags, budget, input });
-    // Keep the rewrite only when it is strictly better — fewer flags, or the
+    // Keep the rewrite only when it is strictly better: fewer flags, or the
     // same flags but closer to the budget. A repair that trades one violation
     // for another is not an improvement worth the swap.
     if (
@@ -552,7 +552,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
 }
 
 /** One corrective turn, naming the flags the draft tripped. Returns "" when the
- *  retry fails for any reason — a linted-but-imperfect draft still beats none. */
+ *  retry fails for any reason. A linted-but-imperfect draft still beats none. */
 async function repairReply(opts: {
   messages: LlmMessage[];
   first: string;

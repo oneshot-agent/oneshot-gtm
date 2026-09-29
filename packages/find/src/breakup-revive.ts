@@ -17,7 +17,7 @@ export interface BreakupReviveFinderOpts extends RunOpts {
 /**
  * Scan the local ledger for cold prospects (no activity in the last
  * min/maxDays window) and enqueue them into target_queue. No LLM calls,
- * no OneShot spend — this is a ledger-only finder that reuses the same
+ * no OneShot spend. This is a ledger-only finder that reuses the same
  * review → approve → drain lifecycle as every other finder.
  */
 export function runBreakupReviveFinder(opts: BreakupReviveFinderOpts): FinderResult {
@@ -96,7 +96,7 @@ export function runBreakupReviveFinder(opts: BreakupReviveFinderOpts): FinderRes
       try {
         ledger.setQueueProspectId(id, p.id);
       } catch {
-        // best-effort — drain.ts will also try to backfill
+        // best-effort: drain.ts will also try to backfill
       }
       result.enqueued++;
     } else {

@@ -26,7 +26,7 @@ export function renderGitHubProfileLine(login: string, p: ProfileFields): string
 
 /**
  * Reduce README markdown to readable prose: drop HTML, comments, images and
- * badges, keep link text, collapse whitespace. Purely presentational — the
+ * badges, keep link text, collapse whitespace. Purely presentational. The
  * email extractor keeps its own stricter parse.
  */
 export function readmeExcerpt(markdown: string, max = README_EXCERPT_CHARS): string {
@@ -77,11 +77,10 @@ export interface GitHubEvidence {
 
 /**
  * Everything GitHub already says about a person, as one bounded text block:
- * bio, company/site/location, account maturity, their own recent repos and —
- * only when all of that is empty — an excerpt of their profile README.
+ * bio, company/site/location, account maturity, their own recent repos and (* only when all of that is empty) an excerpt of their profile README.
  *
  * API cost: the user record is passed in (already fetched); repos are one
- * call (cached per run); the README is 0–2 calls and only on thin profiles.
+ * call (cached per run); the README is 0-2 calls and only on thin profiles.
  */
 export async function buildGitHubEvidence(
   user: GitHubUserInfo,

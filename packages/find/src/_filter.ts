@@ -8,7 +8,7 @@ export interface IcpFilterResult {
    *   - `false` → real ICP miss → callers persist a rejected row (audit trail
    *               + manual override path)
    *   - `null`  → TRANSIENT classifier failure (LLM 5xx / timeout / rate-limit).
-   *               Callers must DROP the candidate without persisting — the
+   *               Callers must DROP the candidate without persisting. The
    *               dedupeKey would otherwise burn for every future watch tick
    *               (isQueueDuplicate ignores status).
    */
@@ -18,7 +18,7 @@ export interface IcpFilterResult {
 
 /**
  * Resolve the ICP one-liner: explicit override beats config.
- * Returns null if neither is set — caller should fall back to "match all".
+ * Returns null if neither is set: caller should fall back to "match all".
  */
 export function resolveIcp(override?: string): string | null {
   if (override && override.trim().length > 0) return override.trim();
@@ -28,7 +28,7 @@ export function resolveIcp(override?: string): string | null {
 
 /**
  * Run the ICP classifier against a single candidate. If no ICP is set, every
- * candidate matches (founder hasn't filtered yet — they'll review in queue).
+ * candidate matches (founder hasn't filtered yet. They'll review in queue).
  */
 export async function icpFilter(input: {
   icp: string | null;
@@ -87,7 +87,7 @@ export async function icpFilter(input: {
     decision = parseIcpJson(res.content);
   } catch (err) {
     // A classifier failure (LLM timeout / provider error) must not abort the
-    // whole finder run — drop just this candidate. Drop-on-error (not
+    // whole finder run: drop just this candidate. Drop-on-error (not
     // pass-through) keeps a systematic outage visible as an empty run rather
     // than flooding the queue with unfiltered candidates.
     logEvent(
@@ -102,7 +102,7 @@ export async function icpFilter(input: {
   }
   // Title is a category-ish label sourced from public listings (post titles,
   // job titles, episode titles); reason is the LLM's own classifier output.
-  // Neither is user-typed prospect data — safe to log.
+  // Neither is user-typed prospect data: safe to log.
   logEvent("icp.decision", {
     match: decision.match,
     reason_120: decision.reason.slice(0, 120),
@@ -142,8 +142,8 @@ function publicCandidateContext(candidate: unknown): Record<string, unknown> {
 function parseIcpJson(raw: string): IcpFilterResult {
   const parsed = tryParseJsonObject<{ match?: unknown; reason?: unknown }>(raw, {});
   // A malformed / truncated / refused response yields the `{}` fallback (no
-  // boolean `match`). Treat that as a transient failure (`null`) — same as a
-  // thrown classifier error — so callers drop WITHOUT persisting a rejected
+  // boolean `match`). Treat that as a transient failure (`null`): same as a
+  // thrown classifier error, so callers drop WITHOUT persisting a rejected
   // row. Collapsing it to `false` would burn the dedupeKey forever, since
   // isQueueDuplicate ignores status.
   if (typeof parsed.match !== "boolean") {
@@ -161,7 +161,7 @@ function parseIcpJson(raw: string): IcpFilterResult {
  * Four states, not the boolean `icpFilter` uses, because the distinction that
  * matters here is the one a boolean cannot express: "this role text is real
  * but does not settle the question". That case must trigger a paid profile
- * lookup, not a guess — guessing is what let a snowboard-team coordinator and
+ * lookup, not a guess: guessing is what let a snowboard-team coordinator and
  * an Account Executive through.
  *
  *   - `pass`      → role fits the ICP; proceed
@@ -210,7 +210,7 @@ export function hasRoleText(person: PersonCandidate): boolean {
  * default to false", and its boolean cannot carry `unclear`. Feeding a bare
  * headline into it produces confident rejections of people who are fine.
  *
- * Callers must escalate on BOTH `unclear` and missing role text — see
+ * Callers must escalate on BOTH `unclear` and missing role text: see
  * `_contact.ts` / the finder call sites for the staged A→B→C ordering.
  */
 export async function qualifyPerson(input: {
@@ -222,7 +222,7 @@ export async function qualifyPerson(input: {
   if (!input.icp) {
     return { verdict: "pass", reason: "no ICP set; pass-through" };
   }
-  // Nothing to judge. Not a rejection — the caller escalates to enrichment.
+  // Nothing to judge. Not a rejection. The caller escalates to enrichment.
   if (!hasRoleText(input.person)) {
     return { verdict: "unclear", reason: "no role text available" };
   }
@@ -254,7 +254,7 @@ export async function qualifyPerson(input: {
   }
 
   // roleText is a public job title / self-written headline, not private
-  // prospect data — same logging rationale as `icp.decision` above.
+  // prospect data: same logging rationale as `icp.decision` above.
   logEvent("icp.person_decision", {
     verdict: decision.verdict,
     reason_120: decision.reason.slice(0, 120),
@@ -268,7 +268,7 @@ function parsePersonJson(raw: string): PersonQualification {
   const reason = typeof parsed.reason === "string" ? parsed.reason : "no reason given";
   // A malformed / truncated / refused response is a platform failure, not a
   // verdict. Returning `transient` (never `reject`) keeps the dedupeKey alive.
-  // Note `transient` is code-only — the prompt is never asked to emit it.
+  // Note `transient` is code-only. The prompt is never asked to emit it.
   if (parsed.verdict === "pass" || parsed.verdict === "reject" || parsed.verdict === "unclear") {
     return { verdict: parsed.verdict, reason };
   }

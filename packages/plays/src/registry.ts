@@ -23,8 +23,8 @@ import { type XRepostIntroTarget, runXRepostIntro } from "./x-repost-intro.ts";
 
 /**
  * The fields every play runner's drafted row exposes. Callers (the SSE /run
- * endpoint and the queue drainer) read only these — `target`/`scrapedEvidence`/
- * `jobPostHook`/etc. are extra and ignored here.
+ * endpoint and the queue drainer) read only these: `target`/`scrapedEvidence`/
+ * `jobPostHook`/etc. Are extra and ignored here.
  */
 export interface DraftedRow {
   subject: string;
@@ -32,7 +32,7 @@ export interface DraftedRow {
   flags: string[];
   sent: boolean;
   receiptIds: number[];
-  /** Enrichment SDK failed — draft built from payload only (non-blocking; surfaced on /queue). */
+  /** Enrichment SDK failed: draft built from payload only (non-blocking; surfaced on /queue). */
   enrichmentFailed?: boolean;
   /** Which edge angle the draft was built on, when the runner chose it (see `PlayDraft.angle`). */
   angle?: DraftAngle;
@@ -52,7 +52,7 @@ export interface PlayRunInput {
    * input order). The /api/run SSE handler installs this so the UI's
    * counters tick from 0/N → N/N as targets finish, instead of jumping at
    * the end. Plays that don't use `runEmailPlay` (e.g. breakup-revive's
-   * custom loop) silently ignore this field — they still work, just without
+   * custom loop) silently ignore this field. They still work, just without
    * live ticks.
    */
   onProgress?: (index: number, draft: DraftedRow) => void;

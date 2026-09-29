@@ -147,7 +147,7 @@ describe("buildFollowUpEmail — PRIOR EMAILS injection", () => {
   it("emits prior subjects + bodies in the order the ledger returns them, with labels", async () => {
     // The ledger's ORDER BY guarantees ascending step order; the builder must
     // not re-sort. We feed rows in reverse to prove the builder preserves the
-    // ledger's order rather than imposing its own — a regression catch for
+    // ledger's order rather than imposing its own. A regression catch for
     // anyone adding a defensive .sort() to the block.
     storedRows = [
       {

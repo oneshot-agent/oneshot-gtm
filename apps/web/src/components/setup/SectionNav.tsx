@@ -69,7 +69,7 @@ export function SectionNav({
 /**
  * Scroll a section into view and record the hash without adding a history
  * entry. `<main>` is the scroll container, so scrollIntoView (nearest
- * scrollable ancestor) is the right primitive — not window.scrollTo.
+ * scrollable ancestor) is the right primitive, not window.scrollTo.
  */
 export function jumpToSection(id: SectionId, behavior: ScrollBehavior = "smooth"): void {
   document.getElementById(id)?.scrollIntoView({ behavior, block: "start" });

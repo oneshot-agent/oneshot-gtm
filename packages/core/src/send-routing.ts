@@ -25,7 +25,7 @@ export function isSendDeferred(err: unknown): boolean {
 
 /**
  * Thrown by sendEmail (pre-flight) when the recipient has previously HARD
- * bounced. Permanent — callers must not re-queue, no retry can succeed.
+ * bounced. Permanent: callers must not re-queue, no retry can succeed.
  * Name-based for the same cross-module reason.
  */
 export class SuppressedRecipientError extends Error {
@@ -59,7 +59,7 @@ export function isRecentlyContacted(err: unknown): boolean {
 /**
  * True when an error is a TRANSIENT platform/transport failure rather than a
  * genuine negative ("not found", "undeliverable" → false). Callers must NOT
- * treat transient as a durable verdict: don't drop, don't negative-cache —
+ * treat transient failures as durable verdicts. Do not drop or negative-cache;
  * defer/retry. Message-based so it works across the SDK's thrown errors, the
  * `withDeadline` rejection, and serialized boundaries.
  */
@@ -80,7 +80,7 @@ export function isTransientToolError(err: unknown): boolean {
     msg.includes("etimedout") ||
     msg.includes("socket hang up") ||
     // Bare "network" over-matches genuine negatives (e.g. "professional
-    // network") — the econn*/fetch-failed/socket checks already cover real
+    // network"). The econn*/fetch-failed/socket checks already cover real
     // network faults; match only explicit network errors.
     /network (error|unreachable|timeout)/.test(msg) ||
     msg.includes("rate limit") || // rate-limited → back off + retry, not a verdict
@@ -108,7 +108,7 @@ export function todayStartSqliteUtc(now = new Date()): string {
   return toSqliteUtc(localMidnight);
 }
 
-/** `days` ago in the SQLite UTC format receipts.created_at stores — trailing-window queries (doctor's bounce rate). */
+/** `days` ago in the SQLite UTC format receipts.created_at stores: trailing-window queries (doctor's bounce rate). */
 export function daysAgoSqliteUtc(days: number, now = new Date()): string {
   return toSqliteUtc(new Date(now.getTime() - days * 24 * 3600 * 1000));
 }
@@ -236,11 +236,11 @@ export function remainingToday(identity: EmailIdentity, now = new Date()): numbe
   const identities = resolveIdentities(loadConfig());
   const pool = computeCapacities(identities, now);
   if (pool.groupOf.has(identity.id)) return capacityFor(pool, identity).remaining;
-  // Identity not in the active pool — evaluate it as its own group.
+  // Identity not in the active pool: evaluate it as its own group.
   return capacityFor(computeCapacities([identity], now), identity).remaining;
 }
 
-/** True when at least one cap-group can still send today — lets the cadence engine skip LLM drafting on fully capped days. */
+/** True when at least one cap-group can still send today: lets the cadence engine skip LLM drafting on fully capped days. */
 export function hasAnySendCapacity(now = new Date()): boolean {
   const pool = computeCapacities(resolveIdentities(loadConfig()), now);
   for (const g of pool.byGroup.values()) if (g.remaining > 0) return true;
@@ -279,7 +279,7 @@ export function identityCapacities(now = new Date()): Map<string, IdentityCapaci
 /**
  * Whole-pool sends-today figure for the dashboard. Aggregated per cap-GROUP
  * (a shared OneShot domain's budget counts once, not per mailbox).
- * `capToday: null` when any group is uncapped — there is no honest finite
+ * `capToday: null` when any group is uncapped: there is no honest finite
  * total; render as "X/∞".
  */
 export function poolSendCapacity(now = new Date()): { sentToday: number; capToday: number | null } {
@@ -297,7 +297,7 @@ export function poolSendCapacity(now = new Date()): { sentToday: number; capToda
 
 /**
  * Which identity sends to this address. Resolution order:
- *  1. Existing pin → that identity (error if removed from the pool — never
+ *  1. Existing pin → that identity (error if removed from the pool. Never
  *     silently re-route a live thread).
  *  2. Emailed pre-rotation → lazy-pin to the legacy identity.
  *  3. Fresh prospect → capped groups by most remaining, tie → fewer own sends;
@@ -331,7 +331,7 @@ export function resolveSenderIdentity(to: string, now = new Date()): EmailIdenti
       const winner = ledger.assignSender(to, legacy.id);
       return byId.get(winner) ?? legacy;
     }
-    // No identity of the legacy provider left in the pool — fall through to
+    // No identity of the legacy provider left in the pool: fall through to
     // the capacity picker rather than stranding the prospect forever. This
     // DOES switch the thread's From address (the founder removed the
     // original sender), so surface it loudly.

@@ -31,7 +31,7 @@ const CHANNEL_ICON = {
 const DASHBOARD_PLAYS = new Set(["profile-intro"]);
 
 /**
- * Per-play metadata the API doesn't expose yet — human description + day-
+ * Per-play metadata the API doesn't expose yet: human description + day-
  * offset timeline. Values mirror the sequences defined in
  * packages/plays/src/_cadence.ts on the server.
  */
@@ -153,7 +153,7 @@ function PlaysPage() {
           >
             The motion catalogue.
           </h1>
-          {/* Counts come from the data — never hardcode play counts in this copy. */}
+          {/* Counts come from the data. Never hardcode play counts in this copy. */}
           <p className="ln-note mt-2 max-w-[64ch] text-[13px] text-ink-cream-2">
             {plays.data ? `${plays.data.plays.length} motion plays` : "Motion plays"}. Each one is a
             known signal you can act on — trigger, cadence, anti-slop lint, signed receipt. Run them
@@ -314,7 +314,7 @@ function groupByPlay<T extends { playName: string }>(rows: T[]): Map<string, num
 
 /**
  * Cadence timeline + inline timing editor for a play. The day-0 send is fixed;
- * the founder edits each follow-up's cumulative day (1–120, strictly
+ * the founder edits each follow-up's cumulative day (1-120, strictly
  * increasing). Save persists a per-play override; reset clears it back to the
  * code default. Structure (which prompts, breakup position) isn't editable.
  */
@@ -324,7 +324,7 @@ function CadenceEditor({ play: descriptor }: { play: PlayDescriptor }) {
   const [editing, setEditing] = useState(false);
   const [days, setDays] = useState<number[]>(play.steps.map((s) => s.day));
 
-  // Re-sync local state from the server after save/reset — but never while the
+  // Re-sync local state from the server after save/reset, but never while the
   // founder is mid-edit (a background refetch, e.g. on window focus, must not
   // clobber in-progress input).
   useEffect(() => {

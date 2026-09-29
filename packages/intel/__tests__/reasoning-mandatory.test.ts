@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Issue #586. A reasoning-mandatory OpenRouter model answers
-// `reasoning: { enabled: false }` with a 400 — and, before this, the retry
+// `reasoning: { enabled: false }` with a 400, and, before this, the retry
 // kept the caller's small max_tokens, so the model spent every token
 // thinking and every draft came back truncated and empty. The retry must
 // now carry the lowest effort AND a raised budget, and the model must be

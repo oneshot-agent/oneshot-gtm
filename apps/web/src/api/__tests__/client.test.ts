@@ -75,10 +75,6 @@ describe("reject body shapes", () => {
       json: () => Promise.resolve(body),
     });
   }
-  const sentBody = (): unknown => {
-    const call = (global.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
-    return JSON.parse((call[1] as RequestInit).body as string);
-  };
 
   it("omits `reason` when undefined, sends it verbatim otherwise — including empty", async () => {
     okJson({ ok: true });
@@ -99,3 +95,8 @@ describe("reject body shapes", () => {
     expect(String(call[0])).toMatch(/\/queue\/7\/reject-reason$/);
   });
 });
+
+const sentBody = (): unknown => {
+  const call = (global.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
+  return JSON.parse((call[1] as RequestInit).body as string);
+};

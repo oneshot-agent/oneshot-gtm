@@ -15,9 +15,7 @@ export const Route = createFileRoute("/")({
 });
 
 function HomePage() {
-  // Drop the poll to 5s while any /run dispatch is in flight so the In-flight
-  // strip's counters tick visibly (drafted/sent climb 0/N → N/N as targets
-  // complete). Idle pages stay at 30s to avoid hammering the server.
+  // Poll every 5s during runs for progress, otherwise every 30s.
   const home = useQuery({
     queryKey: ["home"],
     queryFn: api.home,
@@ -132,7 +130,7 @@ function HomePage() {
       <CurrentRunsStrip runs={home.data?.currentRuns ?? []} />
       <HealthCard />
 
-      {/* Signal feed — reverse-chron timeline mixing receipts and queue events */}
+      {/* Signal feed: reverse-chron timeline mixing receipts and queue events */}
       <SignalFeed
         receipts={recent.data?.receipts ?? []}
         queue={queueRecent.data?.rows ?? []}
@@ -146,11 +144,6 @@ function HomePage() {
   );
 }
 
-/**
- * A single KPI in ledger-column style. No card chrome — just a column of
- * eyebrow label, big numeral, and caption underneath, separated from
- * neighbours by the vertical hairline on the parent grid.
- */
 function LedgerNumber({
   label,
   value,
@@ -160,7 +153,7 @@ function LedgerNumber({
   label: string;
   value: string | undefined;
   caption?: string;
-  /** A subtle caption tint — the number itself stays cream. */
+  /** A subtle caption tint. The number itself stays cream. */
   tone?: "neutral" | "spend" | "receipt";
 }) {
   const captionColor =

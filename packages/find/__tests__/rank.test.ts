@@ -66,7 +66,7 @@ describe("rankPendingRows", () => {
   it("interleaves finders instead of sorting one flat list", () => {
     const rows = [row("aaa", 90), row("aaa", 89), row("aaa", 88), row("zzz", 10), row("zzz", 9)];
     const plays = rankPendingRows(rows, { explorationInterval: 100 }).map((r) => r.play_name);
-    // zzz's low totals must not banish it to the tail — the second slot is zzz.
+    // zzz's low totals must not banish it to the tail. The second slot is zzz.
     expect(plays[1]).toBe("zzz");
   });
 

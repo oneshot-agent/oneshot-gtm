@@ -1,6 +1,6 @@
 /**
  * Outreach channels a queue row or cadence step can use. Email is the default;
- * LinkedIn and X are first-class choices, not fallbacks — a workspace or
+ * LinkedIn and X are first-class choices, not fallbacks. A workspace or
  * trigger can run on any of them.
  *
  * Each channel says how a person is addressed on it and who sends: `api`

@@ -1,7 +1,7 @@
 import { cn } from "../../lib/cn.ts";
 
 /**
- * Content-shaped skeleton. No shimmer — a quiet walnut wash that matches
+ * Content-shaped skeleton. No shimmer. A quiet walnut wash that matches
  * the final text length. The goal is zero layout shift on data arrival:
  * pass the expected `lines` count and character width so the placeholder
  * holds the space precisely.

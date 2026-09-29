@@ -18,7 +18,7 @@ const SOURCE = "find:hiring-signal";
  * Job boards the finder searches (`site:` clauses) and accepts hits from.
  * The four ATS hosts are where funded companies post; Work at a Startup is
  * YC's own board, where a company that has no GTM yet posts its first
- * intern or generalist — the stage a pre-PMF tool is for. A trigger's
+ * intern or generalist. The stage a pre-PMF tool is for. A trigger's
  * `sites` picks from these (or adds its own host); default: the four ATS.
  */
 export const JOB_BOARD_HOSTS = {
@@ -48,11 +48,11 @@ export interface HiringSignalFinderOpts extends RunOpts {
    * always batch 0, so a list spanning several batches isn't scanned from
    * the top on every run. The registry passes the trigger's
    * `company_batch_seq` (one step per completed run); direct/CLI callers may
-   * omit it (defaults to 0 — first batch always starts the run).
+   * omit it (defaults to 0: first batch always starts the run).
    */
   companyBatchCursor?: number;
   /**
-   * The "your one-line claim" that goes onto every queued target — required for the
+   * The "your one-line claim" that goes onto every queued target: required for the
    * downstream hiring-signal play. If unset, we fall back to a generic placeholder.
    */
   yourClaim?: string;
@@ -90,7 +90,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
   const system = loadPrompt("hiring-signal-extract");
   const roles = opts.roles && opts.roles.length > 0 ? opts.roles : DEFAULT_ROLES;
   const sites = normalizeSites(opts.sites);
-  // No hardcoded fallback claim — a generic one would assert a product capability
+  // No hardcoded fallback claim. A generic one would assert a product capability
   // the founder may not have. The trigger's readiness gate blocks the scheduled
   // path; this guards the CLI/direct path so an empty claim never ships.
   const yourClaim = (opts.yourClaim ?? "").trim();
@@ -140,7 +140,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       // the cap was already reached, and a run that ended with zero hits
       // never reached the per-hit check below at all, so the cap never
       // fired. Checking here, ahead of every webSearch call, stops
-      // additional spend the moment the accumulated cost reaches the cap —
+      // additional spend the moment the accumulated cost reaches the cap:
       // including on the very next batch/role, and even when no hit is
       // ever produced.
       if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
@@ -195,7 +195,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       candidate: { title: hit.title, url: hit.url, summary: hit.description },
     });
     if (filter.match === null) {
-      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit):
       // drop without persisting. A rejection would burn the dedupeKey for
       // every future watch tick since isQueueDuplicate ignores status.
       result.droppedEnrichment++;
@@ -264,10 +264,10 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
 
     // Email target = the hiring manager when the page names one in full,
     // else whoever the B2B database has at the company domain (a founder,
-    // on a seed-stage board) — the spine's own domain-scoped lookup.
+    // on a seed-stage board). The spine's own domain-scoped lookup.
     const managerName = hiringManagerFullName(extract.hiringManagerName);
     // Stage A: judge the extracted role BEFORE paying for findEmail +
-    // verify + enrich — a clearly off-ICP hiringManagerRole must not consume
+    // verify + enrich. A clearly off-ICP hiringManagerRole must not consume
     // the run's cost budget and crowd out valid candidates behind it.
     const preSpend = await qualifyPreSpend({
       icp,
@@ -457,7 +457,7 @@ export function hiringManagerFullName(name: string | null | undefined): string |
   const trimmed = (name ?? "").replace(/\s+/g, " ").trim();
   if (!trimmed) return null;
   // Every token must read as a name: letters (with the usual hyphen,
-  // apostrophe, period) and nothing else — "@sacha" or "sacha_dev" is a
+  // apostrophe, period) and nothing else: "@sacha" or "sacha_dev" is a
   // handle, and a handle next to a first name is still not a full name.
   const parts = trimmed.split(" ");
   return parts.length >= 2 && parts.every((p) => NAME_TOKEN.test(p)) ? trimmed : null;

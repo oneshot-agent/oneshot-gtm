@@ -82,13 +82,9 @@ export const LOW_BALANCE_USD = 5;
 const BALANCE_CACHE_KEY = "wallet-balance";
 
 /**
- * The wallet balance, read at most once a day. The masthead polls the doctor
- * every minute, and a balance is an RPC round-trip that does not change
- * minute to minute — so the read is kept in the ledger's keyed cache with the
- * time it was taken, and served from there until it is a day old or the
- * founder asks for a fresh one (`refresh`, the pill's refresh button). Cache
- * reads and writes fail open to a live read: an older ledger or a test double
- * without the cache methods still gets a balance.
+ * Cache wallet balance in the ledger for a day because the masthead polls every
+ * minute and each live read costs an RPC round-trip. Refresh bypasses the cache.
+ * Cache failures fall back to a live read for older ledgers and test doubles.
  */
 export async function cachedBalance(
   refresh = false,
@@ -103,7 +99,7 @@ export async function cachedBalance(
         }
       }
     } catch {
-      // no cache on this ledger — read live
+      // no cache on this ledger: read live
     }
   }
   const bal = await getBalance();
@@ -138,16 +134,13 @@ function finderApprovalChecks(): CheckResult[] {
       storedTriggerConfig(ledger.getTrigger(spec.name), spec),
     );
     const pct = health.rate == null ? "no reviewed rows" : `${(health.rate * 100).toFixed(1)}%`;
-    return {
+    const result: CheckResult = {
       name: `finder ${spec.name}`,
       group: "finders",
       severity: health.deprioritized ? "warn" : "ok",
       message: health.sufficientData
         ? `${pct} approved (${health.approved}/${health.reviewed}, ${health.windowDays}d)${health.deprioritized ? " — deprioritized: low-approval-rate" : ""}`
         : `${pct} (${health.reviewed}/${health.minSamples} reviewed minimum) — insufficient data, no penalty`,
-      ...(health.deprioritized
-        ? { hint: "tune approvalRateThreshold in the trigger config or use --ignore-approval-rate" }
-        : {}),
       approvalRate: health.rate,
       approved: health.approved,
       reviewed: health.reviewed,
@@ -156,38 +149,37 @@ function finderApprovalChecks(): CheckResult[] {
       minSamples: health.minSamples,
       deprioritized: health.deprioritized,
     };
+    if (health.deprioritized) {
+      result.hint =
+        "tune approvalRateThreshold in the trigger config or use --ignore-approval-rate";
+    }
+    return result;
   });
 }
 
-/** Trailing window for the bounce rate — long enough to accumulate signal at founder-scale volume. */
+/** Trailing window for the bounce rate: long enough to accumulate signal at founder-scale volume. */
 const BOUNCE_WINDOW_DAYS = 30;
 /**
- * Sends required before a rate is reported at all. At low volume the rate is
- * mostly noise: one bad address out of three sends is 33%, which would scream
- * about a perfectly healthy mailbox.
+ * Minimum send sample for reporting a bounce rate; at low volume a single bad
+ * address can make a healthy mailbox look unhealthy.
  */
 const MIN_SENDS_TO_JUDGE = 20;
 /** Industry rule of thumb: sustained hard bounces above ~2% start costing reputation, ~5% is where providers act. */
 const HARD_WARN_RATE = 0.02;
 const HARD_FAIL_RATE = 0.05;
 /**
- * Extra days of SENDS included in the denominator beyond the bounce window.
- *
- * The two sides are timestamped by different events: a bounce is dated when the
- * DSN arrived, a send when it went out. Using an identical window would count a
- * DSN that landed just inside it while excluding the send that caused it —
- * inflating the rate, on a check that can report `fail`. A DSN almost always
- * arrives within minutes and effectively always within two days, so widening
- * only the denominator makes the ratio honest. It biases the rate very slightly
- * LOW, which is the right direction for an error that would otherwise cry wolf.
+ * Extra send-history days in the bounce-rate denominator. DSNs arrive after
+ * the send, so equal windows can count a bounce while excluding its send and
+ * inflate the rate. Two extra days cover delayed DSNs, biasing the rate slightly
+ * low instead.
  */
 const SEND_WINDOW_GRACE_DAYS = 2;
 
 /**
  * Per-identity delivery health from harvested DSNs. Two numbers, deliberately
  * not averaged together:
- *  - hard-bounce RATE — list quality. Noisy at low volume, hence the sample gate.
- *  - policy-block COUNT — reputation. Reported from the first occurrence, because
+ *  - hard-bounce RATE: list quality. Noisy at low volume, hence the sample gate.
+ *  - policy-block COUNT: reputation. Reported from the first occurrence, because
  *    a single "blocked as spam" is a real signal about the sending domain and
  *    would vanish if divided into a percentage.
  */
@@ -201,7 +193,7 @@ function deliverabilityChecks(): CheckResult[] {
 
     // Bounce detection reads DSNs out of a mailbox we can authenticate to, so
     // it only covers Gmail identities. A OneShot send's return path belongs to
-    // the platform, and Smartlead hosts its mailboxes — neither surfaces DSNs
+    // the platform, and Smartlead hosts its mailboxes: neither surfaces DSNs
     // to us, so those identities are structurally invisible here. Saying so
     // matters: silence about an unmonitored sender reads as "no bounces" when
     // it means "we can't tell".
@@ -216,7 +208,7 @@ function deliverabilityChecks(): CheckResult[] {
       });
     }
 
-    // Nothing has ever bounced anywhere — say so once instead of emitting a
+    // Nothing has ever bounced anywhere: say so once instead of emitting a
     // reassuring "0.0%" per identity that only means the sweep hasn't run.
     if (stats.size === 0) {
       const gmailCount = identities.length - blind.length;
@@ -241,7 +233,7 @@ function deliverabilityChecks(): CheckResult[] {
       const label = identity.address ?? identity.sendingDomain ?? identity.id;
       // A monitored identity with no bounces gets its own line rather than
       // being skipped. Silently omitting it is indistinguishable from "not
-      // evaluated" — and once ANOTHER identity is reporting numbers, the
+      // evaluated", and once ANOTHER identity is reporting numbers, the
       // absence of a line reads as an oversight rather than as good news.
       if (!s) {
         results.push({
@@ -300,14 +292,13 @@ function deliverabilityChecks(): CheckResult[] {
   return results;
 }
 
-/** A placement result older than this is reported as stale — reputation moves. */
+/** A placement result older than this is reported as stale: reputation moves. */
 const CANARY_STALE_DAYS = 14;
 
 /**
- * REPORTS the last inbox-placement canary; never runs one. doctor is expected
- * to be safe to run at any time, and a canary sends real mail — firing one per
- * doctor invocation would both spend sending reputation and, by repeatedly
- * mailing the same seed address, train its filter until the test always passed.
+ * Report the last placement canary without sending mail. Running a canary on
+ * every doctor invocation would spend reputation and train the seed filter
+ * through repeated sends.
  */
 function placementCheck(): CheckResult {
   try {
@@ -360,7 +351,7 @@ function placementCheck(): CheckResult {
 
 /**
  * Workspace identity + cross-workspace guardrails. Other workspaces' homes are
- * read by PATH (config.json / gmail-tokens.json) — core's config is bound to
+ * read by PATH (config.json / gmail-tokens.json): core's config is bound to
  * THIS home at import time and can't be re-pointed. Sharing a sending domain
  * across workspaces silently doubles its daily budget (caps are per-ledger);
  * sharing a Gmail account cross-wires reply detection (both pollers see both
@@ -505,11 +496,9 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
 }
 
 /**
- * Both GitHub finders share ONE unauthenticated quota: 60 req/hr per IP, which
- * a single `github-stars` pass (repos x up to 3 pages) can exhaust on its own.
- * Unauthenticated, the finder does not run slower — it halts on a 403 that reads
- * like a broken endpoint. Only worth reporting when a GitHub finder is actually
- * enabled, so it stays silent for users who never turn them on.
+ * Both GitHub finders share the unauthenticated quota of 60 requests/hour/IP.
+ * A github-stars pass can exhaust it, causing a 403 rather than slower reads.
+ * Report credentials only when a GitHub finder is enabled.
  */
 function githubTokenCheck(): CheckResult | null {
   let enabled: string[];
@@ -519,7 +508,7 @@ function githubTokenCheck(): CheckResult | null {
       .filter((t) => t.enabled === 1 && t.name.startsWith("github-"))
       .map((t) => t.name);
   } catch {
-    return null; // ledger unreadable — its own check already reports that
+    return null; // ledger unreadable: its own check already reports that
   }
   if (enabled.length === 0) return null;
 
@@ -545,7 +534,7 @@ function githubTokenCheck(): CheckResult | null {
  * The LinkedIn session behind live profile reads. Unset is fine (person
  * research falls back to the provider's history) and says so at "ok";
  * a cookie that never seeded a session, or one a read found expired, is a
- * warn — the tier silently degrades otherwise.
+ * warn. The tier silently degrades otherwise.
  */
 function linkedinSessionCheck(cfg: OneShotConfig): CheckResult {
   const cookieSrc = secretSource("LINKEDIN_SESSION_COOKIE");
@@ -589,7 +578,7 @@ function linkedinSessionCheck(cfg: OneShotConfig): CheckResult {
 /**
  * Same only-when-enabled shape as the GitHub check, but engine-aware: the
  * x-reposters trigger reads whichever credentials its configured engine needs.
- * First-party (default) needs all four OAuth1 user-context vars — an app-only
+ * First-party (default) needs all four OAuth1 user-context vars. An app-only
  * bearer token 401s on every v2 read the finder makes, so "some creds set" is
  * not enough. The twitterapi.io engine needs only its API key.
  */
@@ -600,7 +589,7 @@ function xCredsCheck(): CheckResult | null {
       .listTriggers()
       .filter((t) => t.enabled === 1 && t.name.startsWith("x-"));
   } catch {
-    return null; // ledger unreadable — its own check already reports that
+    return null; // ledger unreadable: its own check already reports that
   }
   if (rows.length === 0) return null;
 
@@ -609,7 +598,7 @@ function xCredsCheck(): CheckResult | null {
     const cfg = JSON.parse(rows[0]?.config_json ?? "{}") as Record<string, unknown>;
     if (cfg["engine"] === "twitterapiio") engine = "twitterapiio";
   } catch {
-    // unparseable config — assume the default engine
+    // unparseable config: assume the default engine
   }
 
   if (engine === "twitterapiio") {
@@ -660,12 +649,8 @@ function readJson<T>(path: string): T | null {
 }
 
 /**
- * Install-wide daily USD spend ceiling (issue #481). Read-only: never
- * reserves or mutates anything, just reports today's spend against the
- * configured ceiling so a founder sees the same number that gates automated
- * finder/drain runs. Absent a configured ceiling, this is silent — the
- * historical behavior — so an install that never opted in doesn't get a
- * confusing "unlimited" line cluttering the panel.
+ * Report today's install-wide spend against the configured automation ceiling.
+ * This check neither reserves nor mutates spend. Hide it when no ceiling is set.
  */
 function dailySpendCeilingCheck(): CheckResult | null {
   let status: ReturnType<typeof dailySpendStatus>;
@@ -687,9 +672,8 @@ function dailySpendCeilingCheck(): CheckResult | null {
     message: status.ceilingReached
       ? spendCeilingReason(status)
       : // effectiveUsd = spentUsd (posted receipts) + reservedUsd (calls
-        // currently in flight) — the same total the ceiling is compared
-        // against. Labeling it "spent" alone would understate it whenever a
-        // concurrent automated call is holding a reservation.
+        // currently in flight), matching the ceiling check. "Spent" alone
+        // would understate the total while another call holds a reservation.
         `$${status.effectiveUsd.toFixed(2)}/$${status.ceilingUsd.toFixed(2)} spent or reserved today (resets at local midnight)`,
     ...(status.ceilingReached
       ? { hint: "automated finder runs + drains are halted; manual /queue sends still work" }
@@ -698,21 +682,11 @@ function dailySpendCeilingCheck(): CheckResult | null {
 }
 
 /**
- * Live-probes the designated calendar identity's Gmail-family token for
- * calendar scope (issue #577). `calendarIdentityId: null` = feature off —
- * returns null so the check is invisible when the founder never opted in,
- * matching the daily-spend-ceiling check's own "null = don't report"
- * convention just above.
- *
- * The persisted `GmailTokenEntry.scope` is checked FIRST (cheap, no
- * network) — an absent/Gmail-only scope is reported as a failing check with
- * the reconnect instruction without ever making a live call. Only when the
- * stored scope claims calendar access does this go on to actually probe
- * `getGmailProfile` (mirroring the existing per-identity sender probe
- * above), because a scope can be revoked at myaccount.google.com without
- * invalidating the refresh token — the persisted string alone is not
- * authoritative, and a live 403 ACCESS_TOKEN_SCOPE_INSUFFICIENT is the only
- * way to catch that case.
+ * Check calendar access for the designated Gmail identity; return null when
+ * calendarIdentityId is null. Check stored scope first and request reconnection
+ * without a live call if it lacks calendar access. Otherwise probe getGmailProfile:
+ * a scope can be revoked without invalidating the refresh token, so a live
+ * ACCESS_TOKEN_SCOPE_INSUFFICIENT response can contradict stored scope.
  */
 async function calendarIdentityCheck(
   cfg: ReturnType<typeof loadConfig>,
@@ -907,7 +881,7 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
     // "couldn't enumerate" → skip the warmth report rather than cry wolf.
     // We report warmth, not ownership: a pinned send (we always set from_domain)
     // AUTO-PROVISIONS an unknown domain and BYPASSES the server's warmup gating,
-    // so there is no domain_not_owned failure to pre-empt — the deliverability
+    // so there is no domain_not_owned failure to pre-empt. The deliverability
     // risk is sending from a cold/warming domain with only the client cap as a
     // throttle.
     let domainPool: Map<string, { warmupScore: number | null; status: string }> | null = null;
@@ -923,7 +897,7 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
           );
         }
       } catch {
-        // Leave null — transient/auth failure shouldn't downgrade the check.
+        // Leave null: transient/auth failure shouldn't downgrade the check.
       }
     }
 
@@ -1048,7 +1022,7 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
           });
         } else if (domainPool && !entry) {
           // Known pool, domain absent: not an error (auto-provisions on first
-          // send) but it'll go out cold with no server warmup — lean on the cap.
+          // send) but it'll go out cold with no server warmup: lean on the cap.
           results.push({
             name,
             group: "senders",
@@ -1110,7 +1084,7 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
       const amount = Number.parseFloat(bal.balance.trim());
       // An empty wallet is a FAIL, not a warning: every paid call (research,
       // enrichment, sends) is refused at the payment rail, and the finders
-      // quietly enqueue nothing researchable — the founder needs the red pill.
+      // quietly enqueue nothing researchable. The founder needs the red pill.
       const severity: CheckSeverity = !Number.isFinite(amount)
         ? "warn"
         : amount <= 0

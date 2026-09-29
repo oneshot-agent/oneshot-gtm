@@ -55,8 +55,8 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
 
   // The run's cancellation signal. Two things can fire it: the client going
   // away (below) and POST /api/run/:runId/cancel, which reaches this
-  // controller through the process-local registry. Everything downstream —
-  // verify, every play, every paid call — reads the same signal, so an abort
+  // controller through the process-local registry. Everything downstream:
+  // verify, every play, every paid call: reads the same signal, so an abort
   // stops the spend instead of merely abandoning the stream.
   const runAbort = new AbortController();
   registerRunController(runId, runAbort);
@@ -76,18 +76,18 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
     async start(controller) {
       const encoder = new TextEncoder();
       const ledger = getLedger();
-      // Telemetry bookkeeping for this run — emitted once in `finally`.
+      // Telemetry bookkeeping for this run: emitted once in `finally`.
       const t0 = performance.now();
       let runOutcome: TelemetryOutcome = "ok";
       let fromQueue = false;
       // Hoisted out of the try so the cancel path can report what the run got
-      // through before the abort — the `cancelled` frame carries the same
+      // through before the abort. The `cancelled` frame carries the same
       // counters `done` would have.
       let sentCount = 0;
       let draftedCount = 0;
-      // Set once the run reached a terminal state of its own — a `done` frame
+      // Set once the run reached a terminal state of its own. A `done` frame
       // or a real error. The `finally` needs to tell "the run ended, then the
-      // client left" from "the client left, so the run ended" — only the
+      // client left" from "the client left, so the run ended". Only the
       // second is a cancellation.
       let finished = false;
       // Set once the terminal ledger write happened. Past that point a send
@@ -97,7 +97,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
       // reason that gets persisted on the row.
       let cancelledReason: string | null = null;
       const send = (event: RunPlayEvent): void => {
-        // Persist FIRST — the resume view needs every event even after a
+        // Persist FIRST. The resume view needs every event even after a
         // client disconnect. SSE write second; swallow if the client is gone.
         try {
           ledger.appendRunEvent({ runId, event });
@@ -107,7 +107,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
         } catch {
-          // client gone — ignore
+          // client gone: ignore
         }
       };
 
@@ -188,7 +188,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
             })),
           });
         }
-        // If verify dropped every target, skip dispatch entirely — the play
+        // If verify dropped every target, skip dispatch entirely. The play
         // could throw an irrelevant pre-check error on an empty array.
         if (verify.verified.length === 0 && inputCount > 0) {
           if (runAbort.signal.aborted) {
@@ -226,7 +226,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
               if (!email) return;
               sentEmails.push(email);
               // A cancellation rejects the play's Promise.all at once, but its
-              // sibling workers can still be inside sendDraftedEmail — they
+              // sibling workers can still be inside sendDraftedEmail. They
               // report here AFTER the terminal row was written. That email did
               // leave and did enrol in the cadence, so re-write the list or
               // /cadences?sinceRun silently omits its recipient.
@@ -266,11 +266,11 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           // fall through to finally block for persistence instead of returning early
         } else {
           runOutcome = "error";
-          // The run ended on its own terms, badly — not because the client left.
+          // The run ended on its own terms, badly, not because the client left.
           // Mark it settled so a disconnect that follows (or caused nothing but
           // an abort on the way out) can't relabel a real failure a cancellation.
           finished = true;
-          // Log the full error server-side — the SSE event only carries a short
+          // Log the full error server-side. The SSE event only carries a short
           // message, and the SDK's generic "Tool request failed" is useless
           // without status/body/stack.
           const e = err as Error & {
@@ -314,7 +314,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         }
       } finally {
         // Persist drafts to their originating queue rows for /queue review.
-        // Best-effort — a SQLite hiccup here must not surface to the user.
+        // Best-effort. A SQLite hiccup here must not surface to the user.
         if (indexToDedupeKey.size > 0) {
           try {
             persistDraftsToQueue({
@@ -338,7 +338,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           }
         }
 
-        // The abort can also land without anything throwing — a play that
+        // The abort can also land without anything throwing. A play that
         // never reached a guarded boundary, or the last target finishing
         // between the abort and the next check. An aborted run that never
         // emitted `done` is a cancellation too; one that did is genuinely
@@ -370,7 +370,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           // sweeper safety net
         }
         // Any send reported from here on is a straggler and writes its own row
-        // update — the array captured above is already in the database.
+        // update. The array captured above is already in the database.
         terminalWritten = true;
         // Release BEFORE closing the stream: past here there is nothing left
         // to abort, and a retained entry would leak a controller per run and
@@ -379,7 +379,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         try {
           controller.close();
         } catch {
-          // already closed (client disconnected) — ignore
+          // already closed (client disconnected): ignore
         }
         const flags: string[] = [];
         if (body.dryRun) flags.push("dry-run");
@@ -434,7 +434,7 @@ const MAX_CANCEL_REASON = 200;
 const DEFAULT_UI_CANCEL_REASON = "cancelled by user";
 
 /**
- * `POST /api/run/:runId/cancel` — stop an in-flight run.
+ * `POST /api/run/:runId/cancel`: stop an in-flight run.
  *
  * Two independent halves, because a `running` row and a live handler are not
  * the same thing:
@@ -442,7 +442,7 @@ const DEFAULT_UI_CANCEL_REASON = "cancelled by user";
  *    what actually stops the spend: every play checks the signal before each
  *    paid call, so nothing bills past the next boundary.
  *  - the ledger write makes the row terminal now rather than whenever the
- *    handler unwinds — and covers the orphan case, where the run's process is
+ *    handler unwinds, and covers the orphan case, where the run's process is
  *    gone and no controller will ever unwind. `cancelRun` CASes on 'running',
  *    so the handler's own write later is a harmless no-op.
  *
@@ -467,7 +467,7 @@ export async function cancelRunRoute(
   const runId = Number.parseInt(rawRunId, 10);
   if (!Number.isFinite(runId)) return jsonResponse({ error: "bad run id" }, 400, req);
 
-  // Body is optional — the dashboard's stop button sends none.
+  // Body is optional. The dashboard's stop button sends none.
   let reason = DEFAULT_UI_CANCEL_REASON;
   try {
     const body = (await req.json()) as { reason?: unknown } | null;
@@ -475,7 +475,7 @@ export async function cancelRunRoute(
       reason = body.reason.trim().slice(0, MAX_CANCEL_REASON);
     }
   } catch {
-    // no/!JSON body — the default reason stands
+    // no/!JSON body. The default reason stands
   }
 
   const run = getLedger().getRun(runId);
@@ -553,15 +553,13 @@ function persistDraftsToQueue(input: {
       // same row forever. Held drafts and dry-runs intentionally stay approved.
       if (draft.sent && !input.dryRun) {
         ledger.setQueueStatus({ id: row.id, status: "sent" });
-        // Link the row to the prospect the send just created. `drain.ts` has
-        // always done this; this path never did, which is why almost every
-        // sent row in the ledger has a NULL prospect_id.
+        // Link the sent queue row to the prospect created by this send.
         const prospectId = backfillProspectId(row);
         if (prospectId != null) {
           try {
             ledger.setQueueProspectId(row.id, prospectId);
           } catch {
-            // Best-effort link — the send is already recorded either way.
+            // Best-effort link. The send is already recorded either way.
           }
         }
       }

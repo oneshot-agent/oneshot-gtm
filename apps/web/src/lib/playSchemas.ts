@@ -1,12 +1,12 @@
 /**
- * Per-play form schemas for the /run page — the fields a founder fills in (or
+ * Per-play form schemas for the /run page. The fields a founder fills in (or
  * that get hydrated from an approved queue row) before dispatching a play.
  *
  * Lives in lib/ rather than inside the route so it can be unit-tested and so
  * other pages can reason about it without importing a route module (which drags
  * the whole table into the entry bundle).
  *
- * The key set must match RUNNABLE_PLAYS in @oneshot-gtm/shared-types — the
+ * The key set must match RUNNABLE_PLAYS in @oneshot-gtm/shared-types. The
  * server's run gate keys off that list, and playSchemas.test.ts pins the two
  * together so a play can never be runnable-but-formless (or vice versa).
  */
@@ -21,7 +21,7 @@ export interface FieldSpec {
 
 /**
  * A group where at least one of the listed target-row field keys must be
- * non-blank — an OR constraint the per-field `required` flag can't express.
+ * non-blank. An OR constraint the per-field `required` flag can't express.
  * e.g. civic-pilot's ask is "a pilot sized under the micro-purchase
  * threshold OR bought off a cooperative purchasing vehicle" (issue #463):
  * either field alone answers the requirement, so neither can be a bare
@@ -44,19 +44,19 @@ export interface PlaySchema {
 }
 
 /**
- * Required fields left blank on a target row, by label — used to block
+ * Required fields left blank on a target row, by label: used to block
  * dispatch before `/api/run` instead of relying on native `required`
  * validation, which never fires here: /run's rows render outside a `<form>`
  * (submit is a plain button onClick, not a form submit event), so the
  * `required` attribute on each `<Input>`/`<Textarea>` is decorative only.
  * `submit()` strips blank fields before POSTing, so an unenforced required
- * field reaches the play as `undefined` — e.g. sources-sought dispatching
+ * field reaches the play as `undefined`: e.g. sources-sought dispatching
  * with a blank `agency` or `yourEdge` produces a malformed institutional
  * outreach email.
  *
  * Only checks `schema.fields` (the per-row target). Required `schema.extras`
- * — a single value shared across every row, not addressable by `row[key]` —
- * are validated separately by `missingRequiredExtras`.
+ * are shared across rows and cannot be read with `row[key]`;
+ * `missingRequiredExtras` validates them separately.
  */
 export function missingRequiredFields(schema: PlaySchema, row: Record<string, string>): string[] {
   const missing = schema.fields
@@ -69,10 +69,10 @@ export function missingRequiredFields(schema: PlaySchema, row: Record<string, st
 }
 
 /**
- * Required EXTRA fields (`schema.extras`) left blank, by label. finding
+ * Required EXTRA fields (`schema.extras`) left blank, by label. Finding
  * PRRT_kwDOSKzrBs6ewsAf: `missingRequiredFields` only ever filtered
  * `schema.fields`, so a required extra passed validation blank and reached
- * `/api/run` omitted — a paid, malformed draft. No play declares extras
+ * `/api/run` omitted. A paid, malformed draft. No play declares extras
  * today; the guard stays so the next one that does can't reintroduce it. Extras are a single `Record<string,string>`
  * shared across every row (not per-row like `schema.fields`), so they need
  * their own check against that separate value instead of `row[key]`.
@@ -569,7 +569,7 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
     },
     // finding PRRT_kwDOSKzrBs6fD-hc / issue #463: the civic-pilot ask is a
     // pilot under the micro-purchase threshold OR bought off a cooperative
-    // purchasing vehicle — either route satisfies it, so this can't be a
+    // purchasing vehicle: either route satisfies it, so this can't be a
     // bare per-field `required` without blocking the other route.
     requireOneOf: [
       {

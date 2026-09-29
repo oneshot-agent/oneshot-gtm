@@ -9,8 +9,8 @@ const PLAY_NAME = "design-partner-loi";
 /**
  * Buyer-type strings this play is allowed to draft for. The finders that
  * feed this play route by config (gov-solicitation, a future local-business
- * pack), so a misconfigured trigger — or a future pack pointing the wrong
- * lane at it — could hand this play an owner-operator target under a label
+ * pack), so a misconfigured trigger, or a future pack pointing the wrong
+ * lane at it: could hand this play an owner-operator target under a label
  * we've never seen (e.g. "restaurant", "small-business", a typo of
  * "owner-operator"). An enumeration of known-bad labels can't defend against
  * an unknown future one, so this is an ALLOWLIST of the three supported
@@ -36,7 +36,7 @@ export function isAllowedDesignPartnerLoiBuyerType(buyerType: string): boolean {
 
 /**
  * Throws unless `buyerType` is one of the supported buyer types
- * (enterprise/government/hardware) — the "design partner" / "non-binding
+ * (enterprise/government/hardware). The "design partner" / "non-binding
  * LOI" register is real language for those buyers and exactly the wrong
  * language for an owner-operator counterpart such as an independent
  * restaurateur or a two-truck plumber (see #457's free-pilot /
@@ -60,7 +60,7 @@ export interface DesignPartnerLoiTarget {
   email: string;
   company: string;
   /**
-   * Who is being emailed — deliberately a plain string (not a union) so the
+   * Who is being emailed: deliberately a plain string (not a union) so the
    * runtime guard above is what enforces the rule, not the type system: a
    * finder payload arrives untyped off JSON. Expected values: "enterprise",
    * "government", "hardware". "owner-operator" (or any main-street label)
@@ -71,7 +71,7 @@ export interface DesignPartnerLoiTarget {
   yourEdge: string;
   linkedinUrl?: string;
   phone?: string;
-  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  /** Job title from the person-level ICP gate: persisted to prospects.title. */
   title?: string;
 }
 
@@ -83,7 +83,7 @@ export interface DesignPartnerLoiRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
-  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  /** Abort signal for the run: see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;

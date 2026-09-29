@@ -52,7 +52,7 @@ export function useKeyboard(opts: {
     const onKey = (e: KeyboardEvent): void => {
       const current = optsRef.current;
 
-      // ⌘K / Ctrl+K — always available, even inside inputs.
+      // ⌘K / Ctrl+K. Always available, even inside inputs.
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         if (current.paletteOpen) current.closePalette();

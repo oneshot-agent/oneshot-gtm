@@ -54,7 +54,7 @@ describe("parseAuthResults", () => {
   });
 
   it("reports unknown for mechanisms the header doesn't mention", () => {
-    // Absence is not a pass — an internal relay may evaluate nothing at all.
+    // Absence is not a pass. An internal relay may evaluate nothing at all.
     expect(parseAuthResults(["mx.google.com; spf=pass"])).toEqual({
       spf: "pass",
       dkim: "unknown",

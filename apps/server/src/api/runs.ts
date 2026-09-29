@@ -3,7 +3,7 @@ import type { RunRecord, RunPlayEvent } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
 /**
- * `GET /api/runs/:id` — snapshot of one /run-page dispatch. The UI polls this
+ * `GET /api/runs/:id`: snapshot of one /run-page dispatch. The UI polls this
  * every 2s while `status === 'running'`, then stops once `status` flips to
  * `done`, `interrupted` or `cancelled`. The full events array is returned so the resume
  * view can rebuild per-target rows identically to a live SSE consumer.

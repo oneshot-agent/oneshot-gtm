@@ -102,7 +102,7 @@ describe("queueEvidence", () => {
 
   // local-registry's NPPES adapter tags a record NPI-1 (individual) or
   // NPI-2 (organization) so a queue reviewer isn't left assuming a mapping
-  // bug when a "company" row shows a person's name — that signal has to
+  // bug when a "company" row shows a person's name. That signal has to
   // reach this line, the only evidence a reviewer actually sees.
   it("surfaces subjectType on new-business/free-pilot rows sourced from nppes", () => {
     expect(
@@ -118,7 +118,7 @@ describe("queueEvidence", () => {
         subjectType: "organization",
       }),
     ).toBe("NPPES Dentist (NY) (organization record)");
-    // socrata-license rows carry no subjectType — unaffected.
+    // socrata-license rows carry no subjectType: unaffected.
     expect(
       queueEvidence("new-business", {
         sourceLabel: "NYC licenses",
@@ -146,7 +146,7 @@ describe("queueEvidence", () => {
 
   // Correction round 1, F-t_1ec69ea6-4: a routed finder's design-partner-loi
   // row carries the PROSPECT's job title (e.g. "Head of AI Platform"), never
-  // a notice — rendering it as `title — agency` displayed a person's job
+  // a notice: rendering it as `title — agency` displayed a person's job
   // title as if it were a solicitation. `buyerType` discriminates the shape.
   it("renders a routed design-partner-loi row (buyerType present) as a buyer-type line, never the prospect's job title as a notice", () => {
     expect(
@@ -198,7 +198,7 @@ describe("queueEvidence", () => {
 
 /*
  * The queue row and the priority scorer read the same payloads, and the row's
- * first draft drifted from the scorer immediately — wrong field on one play,
+ * first draft drifted from the scorer immediately: wrong field on one play,
  * five plays missing entirely. This pins them together: every play the scorer
  * knows how to read must also render an evidence line.
  */

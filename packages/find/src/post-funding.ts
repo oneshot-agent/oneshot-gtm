@@ -41,9 +41,9 @@ export interface PostFundingFinderOpts extends RunOpts {
   /** Look back this many days in auto mode (used in the search query). Default 7. */
   autoSinceDays?: number;
   /**
-   * Founder's one-line angle. post-funding has no such field for its own
+   * Founder's one-line angle. Post-funding has no such field for its own
    * play (the round itself is the angle), but `design-partner-loi` requires
-   * one — only read/required when `play` routes there. See issue #705.
+   * one. Only read/required when `play` routes there. See issue #705.
    */
   yourEdge?: string;
   /**
@@ -146,7 +146,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       },
     });
     if (filter.match === null) {
-      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit):
       // drop without persisting. A rejection would burn the dedupeKey for
       // every future watch tick since isQueueDuplicate ignores status.
       result.droppedEnrichment++;
@@ -173,7 +173,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
 
     // Resolve + verify the founder's email (prescreen → findEmail → dedupe → verify).
     // Stage A: judge the extracted role BEFORE paying for findEmail +
-    // verify + enrich — a clearly off-ICP founderRole must not consume
+    // verify + enrich. A clearly off-ICP founderRole must not consume
     // the run's cost budget and crowd out valid candidates behind it.
     const preSpend = await qualifyPreSpend({
       icp,

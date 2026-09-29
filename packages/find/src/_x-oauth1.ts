@@ -1,6 +1,6 @@
 /**
  * OAuth 1.0a request signing for the X API v2 reads the x-reposters finder
- * does. Self-contained RFC 5849 HMAC-SHA1 — GET only, no bodies to sign.
+ * does. Self-contained RFC 5849 HMAC-SHA1: GET only, no bodies to sign.
  *
  * User-context OAuth1 is required: the app-only bearer token 401s on every v2
  * read this finder makes, and user context is also what makes
@@ -36,9 +36,9 @@ export function loadXCreds(env: Record<string, string | undefined> = process.env
 }
 
 /**
- * RFC-3986 percent-encoding. encodeURIComponent leaves `!*'()` literal but the
+ * RFC-3986 percent-encoding. EncodeURIComponent leaves `!*'()` literal but the
  * OAuth signer encodes them, so a query containing any of those would be signed
- * one way and sent another — a 401 that looks like bad creds.
+ * one way and sent another. A 401 that looks like bad creds.
  */
 export function rfc3986(s: string): string {
   return encodeURIComponent(s).replace(
@@ -56,7 +56,7 @@ export function queryString(params: Record<string, string | number | undefined>)
 }
 
 /**
- * Signed Authorization header for a GET of `url` (query string included — the
+ * Signed Authorization header for a GET of `url` (query string included. The
  * exact URL being fetched must be the one signed). `nonce`/`timestamp` are
  * injectable for known-answer tests only.
  */
@@ -79,7 +79,7 @@ export function oauth1Header(
   };
 
   // Signature base: every query + oauth param, encoded, sorted by encoded key
-  // (then encoded value), joined — per RFC 5849 §3.4.1.3.2.
+  // (then encoded value), joined: per RFC 5849 §3.4.1.3.2.
   const pairs: [string, string][] = [];
   for (const [k, v] of u.searchParams.entries()) pairs.push([rfc3986(k), rfc3986(v)]);
   for (const [k, v] of Object.entries(oauthParams)) pairs.push([rfc3986(k), rfc3986(v)]);

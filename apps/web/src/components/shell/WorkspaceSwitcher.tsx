@@ -10,10 +10,10 @@ import { workspaceHue } from "../../lib/workspaceHue.ts";
  * Workspace identity chip + switcher.
  *
  * Sits in the sidebar masthead. The chip ALWAYS names the workspace this
- * dashboard serves — including "default", which the old header suppressed and
+ * dashboard serves: including "default", which the old header suppressed and
  * left the founder unable to tell installs apart. Clicking opens a roster of
  * every registered workspace; each is its own server on its own port, so
- * "switch" means opening that server's tab — auto-starting it first when it
+ * "switch" means opening that server's tab: auto-starting it first when it
  * isn't running (the launch endpoint spawns it detached; see
  * apps/server/src/api/workspace.ts for the no-supervision trade-off).
  */

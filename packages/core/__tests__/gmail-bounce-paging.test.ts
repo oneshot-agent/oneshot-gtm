@@ -3,7 +3,7 @@ import { _resetGmailCache, listGmailBounces } from "../src/gmail.ts";
 
 // Pagination for the bounce sweep. Stopping at the first Gmail results page
 // leaves hard-bounced recipients unsuppressed AND reports a falsely low bounce
-// rate — a silent undercount, the worst failure mode for a check whose job is
+// rate. A silent undercount, the worst failure mode for a check whose job is
 // to notice trouble.
 
 const GMAIL_KEYS = ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"] as const;

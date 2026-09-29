@@ -44,7 +44,7 @@ describe("classifyBounce", () => {
     ["5.0.0", null, "hard"],
     ["4.2.2", "smtp; 452 mailbox full", "soft"],
     ["4.4.1", null, "soft"],
-    // 5.7.x is the policy class — a verdict on the message, not the mailbox.
+    // 5.7.x is the policy class. A verdict on the message, not the mailbox.
     ["5.7.1", "smtp; 550 5.7.1 message rejected", "block"],
     ["5.7.26", "smtp; 550 unauthenticated", "block"],
     // Servers that reject on policy with a plain 5.x.x and say so only in prose.

@@ -15,7 +15,7 @@ import { commandUi } from "./ui.ts";
 /**
  * Strip every real credential from an env before it reaches the demo server.
  * core's `applySecretsToEnv()` fills blank env vars from the REAL home's .env
- * at import time, and the spawned child's loader only fills vars still blank —
+ * at import time, and the spawned child's loader only fills vars still blank:
  * so without this scrub the inherited real keys would SHADOW the demo home's
  * placeholders and a demo "Send" could spend real money. Also drops every
  * env-only credential (GITHUB_TOKEN, the X keys, …), which live only in env.
@@ -74,9 +74,8 @@ interface DemoUiOpts {
 
 export async function commandDemoUi(opts: DemoUiOpts): Promise<void> {
   // Canonicalized (symlinks followed), and required to carry the seed marker.
-  // Without the marker check, `demo ui --home ~/.oneshot-gtm` — or a symlink
-  // pointing there — would launch the REAL install under the demo flag: real
-  // credentials behind a UI the operator believes is fake.
+  // Without the marker check, `demo ui --home ~/.oneshot-gtm` or a symlink
+  // pointing there would expose real credentials through a UI presented as a demo.
   const home = canonicalize(opts.home);
   if (!existsSync(home)) {
     bail(`no demo home at ${home}. Run ${c.cyan("bun run cli -- demo seed")} first.`);
@@ -90,7 +89,7 @@ export async function commandDemoUi(opts: DemoUiOpts): Promise<void> {
 
   // `commandUi` spawns the server with `...process.env`, so mutating it here
   // redirects the whole child process at the demo install. The scrub comes
-  // first — see its doc comment: without it, real credentials inherited at
+  // first: without it, real credentials inherited at
   // core-import time shadow the demo home's placeholders in the child.
   scrubInheritedSecrets(process.env);
   process.env["ONESHOT_GTM_HOME"] = home;

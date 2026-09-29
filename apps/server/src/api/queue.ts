@@ -81,7 +81,7 @@ import { buildProspectTimeline } from "./_prospect-timeline.ts";
 import { viewsForRows } from "./cadences.ts";
 
 /**
- * Shape-check a stored priority artifact via the shared core validator —
+ * Shape-check a stored priority artifact via the shared core validator:
  * strict integers 0..100 on every score, so corruption like `total: -1` or
  * `personFit: 999` reads as null instead of rendering. The backfill's
  * resume-skip uses the same validator, so anything hidden here is seen as
@@ -128,7 +128,7 @@ export function toView(row: QueueRow): QueueRowView {
   if (row.last_draft_json) {
     try {
       const parsed = JSON.parse(row.last_draft_json) as Partial<LastDraft>;
-      // Shape check — schema drift must not crash the queue listing.
+      // Shape check: schema drift must not crash the queue listing.
       if (parsed && typeof parsed.subject === "string" && typeof parsed.body === "string") {
         lastDraft = {
           subject: parsed.subject,
@@ -214,11 +214,11 @@ const SORT_KEYS: Record<ProspectSortKey, QueueSearchOpts["sort"]> = {
   name: "name",
 };
 const DECIDED_FILTERS = new Set<DecidedByFilter>(["human", "machine", "none"]);
-/** Longest search string accepted — anything longer is a paste, not a search. */
+/** Longest search string accepted: anything longer is a paste, not a search. */
 const MAX_QUERY_CHARS = 200;
 
 /**
- * GET /api/queue/search — the /prospects browse view. Every queue row, any
+ * GET /api/queue/search. The /prospects browse view. Every queue row, any
  * status, with free-text search, sort and offset paging. `status` is a comma
  * list; absent means all. Junk values fall back rather than 400: a stale
  * bookmark should still open the page.
@@ -260,7 +260,7 @@ export function searchQueueRoute(req: Request): Response {
   if (playName) countOpts.playName = playName;
   if (decidedBy) countOpts.decidedBy = decidedBy;
   // The facets are computed under every filter but status, so the total of
-  // the selected statuses IS the page total — no separate COUNT(*) scan.
+  // the selected statuses IS the page total: no separate COUNT(*) scan.
   const counts = ledger.searchQueueStatusCounts(countOpts);
   const selected = statuses.length > 0 ? statuses : ([...QUEUE_STATUS_VALUES] as QueueStatus[]);
   const total = [...new Set(selected)].reduce((n, st) => n + counts[st], 0);
@@ -314,7 +314,7 @@ function prospectHasReplied(ledger: ReturnType<typeof getLedger>, prospectId: nu
 }
 
 /**
- * GET /api/queue/:id — the /prospects detail drawer. The queue row, the
+ * GET /api/queue/:id. The /prospects detail drawer. The queue row, the
  * prospect it resolved to, and everything recorded against that prospect.
  * Reads only; nothing here spends (no `gatherReplyContext`).
  */
@@ -382,11 +382,9 @@ export function queueRowDetailRoute(req: Request, params: Record<string, string>
 }
 
 /**
- * Ranked mode reads a wider pending window than the page, ranks it in memory
- * (interleave + score-within-finder + exploration — see find/_rank.ts), then
- * slices. Product logic stays in the tested pure function; listQueue SQL is
- * untouched. Rows past the window never enter the ranking — the same
- * truncation class as the 200-row page itself.
+ * Rank a wider pending window in memory, then slice the page. Ranking uses
+ * interleaving, scores within each finder, and exploration (find/_rank.ts).
+ * Rows beyond the window are excluded.
  */
 const RANK_WINDOW = 1000;
 
@@ -394,7 +392,7 @@ export function listQueueRoute(req: Request): Response {
   const url = new URL(req.url);
   const playName = url.searchParams.get("play") ?? undefined;
   const status = (url.searchParams.get("status") ?? undefined) as QueueStatus | undefined;
-  // `?ids=1,2,3` — explicit row pick. A present-but-unusable value yields
+  // `?ids=1,2,3`: explicit row pick. A present-but-unusable value yields
   // `[]`, NOT `undefined`: falling back to the unscoped batch would hand the
   // caller rows it never picked.
   const ids = parseQueueIds(url.searchParams.get("ids"));
@@ -420,13 +418,13 @@ export function listQueueRoute(req: Request): Response {
   const rows = ledger.listQueue(filterArgs);
   const ordered = ranked ? rankPendingRows(rows).slice(0, limit) : rows;
   const counts: QueueCounts = ledger.queueCounts();
-  // Unfiltered on purpose — the drain button needs per-play approved counts
+  // Unfiltered on purpose. The drain button needs per-play approved counts
   // regardless of the page's current filter.
   let views: QueueRowView[];
   try {
     views = ordered.map((row) =>
       url.searchParams.get("forRun") === "1"
-        ? { ...toView(row), payload: resolveQueueTarget(row) }
+        ? Object.assign(toView(row), { payload: resolveQueueTarget(row) })
         : toView(row),
     );
   } catch (error) {
@@ -485,15 +483,13 @@ export async function approveQueueRoute(
   return jsonResponse({ ok: true }, 200, req);
 }
 
-/* ── Moving a row to another workspace ─────────────────────────────── */
-
 /** `dequeueApproved`'s default lease: a row claimed more recently than this is mid-drain. */
 const DRAIN_LEASE_MS = 15 * 60 * 1000;
 
 /**
  * The source row's note once it has been handed over: a human reason is
  * kept and the destination appended; otherwise the destination alone. Never
- * `auto:` — the founder clicked.
+ * `auto:`. The founder clicked.
  */
 export function moveNote(existing: string | null | undefined, workspace: string): string {
   const moved = `moved to ${workspace}`;
@@ -524,13 +520,13 @@ function isImportRequest(body: unknown): body is ImportQueueRowRequest {
 }
 
 /**
- * POST /api/queue/import — the destination side of a move. Another workspace's
+ * POST /api/queue/import. The destination side of a move. Another workspace's
  * server on this machine hands over a row; only loopback callers get here
  * (the Host and Origin gates in server.ts). The row lands `pending` for
  * review, with the person's research intact and the sender's positioning
  * and verdicts stripped (queue-portable.ts). A rejected/expired row this
  * workspace already holds for the same play + dedupe key is re-opened rather
- * than refused — that is how a prospect comes back after a move away.
+ * than refused. That is how a prospect comes back after a move away.
  */
 export async function importQueueRowRoute(req: Request): Promise<Response> {
   let body: unknown;
@@ -598,7 +594,7 @@ export async function importQueueRowRoute(req: Request): Promise<Response> {
 }
 
 /**
- * POST /api/queue/:id/move {workspace} — hand this row to another workspace.
+ * POST /api/queue/:id/move {workspace}: hand this row to another workspace.
  * The destination is started if it is not running, the row is imported
  * through its own API, and only then is the row here rejected with a
  * `moved to <workspace>` note so it never drafts from this workspace again.
@@ -810,18 +806,12 @@ export function rejectLookupDomain(payload: unknown): string | null {
 }
 
 /**
- * The reject box's LLM fallback: when the row carries neither a person-gate
- * verdict reason nor a machine-negative note, the web asks for one sentence
- * on why this prospect might not fit. Preview only — nothing is written,
- * nothing is decided. A provider failure or a model that sees no mismatch
- * both answer `{ reason: null }`, and the box simply stays empty.
- *
- * A row with no stored dossier gets one bounded company lookup by domain
- * (SDK enrichCompany, $0.005), so the facts a stage judgment turns on —
- * founded year, headcount, funding stage — reach the model. Row #882
- * (2026-09-11) was a ten-year-old company whose only evidence was the
- * breakfast it attended. Best-effort: a personal-provider address, a
- * failure, or a slow answer all leave the lookup out.
+ * Preview a one-sentence rejection reason when no stored gate reason or machine
+ * negative exists. Write nothing; return { reason: null } on provider failure
+ * or no mismatch.
+ * Prefer a stored dossier. Otherwise try one bounded enrichCompany lookup by
+ * domain ($0.005) for founding year, headcount, and funding stage. Skip personal
+ * provider addresses and omit failed or slow lookups.
  */
 export async function suggestRejectReasonRoute(
   req: Request,
@@ -982,9 +972,9 @@ async function regenerateDraftInner(
   const ledger = getLedger();
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
-  // Once sent, last_draft_json IS the frozen sent content — never overwrite it.
+  // Once sent, last_draft_json IS the frozen sent content. Never overwrite it.
   if (row.status === "sent") return jsonResponse({ error: "row already sent" }, 400, req);
-  // A send claimed the row but hasn't flipped status yet — refuse to start a
+  // A send claimed the row but hasn't flipped status yet: refuse to start a
   // regenerate that would race it.
   if (row.send_started_at != null) {
     return jsonResponse({ error: "send in flight, can't regenerate" }, 409, req);
@@ -1090,7 +1080,7 @@ async function regenerateDraftInner(
     );
   }
 
-  // TOCTOU close: re-read after the multi-second dispatchPlay await — a
+  // TOCTOU close: re-read after the multi-second dispatchPlay await. A
   // concurrent send completing mid-LLM-call must not get its canonical sent
   // body/receiptIds overwritten below.
   const fresh = ledger.getQueueRow(id);
@@ -1135,7 +1125,7 @@ async function regenerateDraftInner(
 /**
  * Record that a MANUAL play's draft was sent by hand (e.g. x-amplify-dm: the
  * founder copied the DM text and sent it from the X app). No transport, no
- * receipt — writes the prospect + a step-0 sequence event on the play's manual
+ * receipt: writes the prospect + a step-0 sequence event on the play's manual
  * channel and flips the row to `sent`. Only plays in MANUAL_PLAYS qualify;
  * everything else must go through the real send route.
  */
@@ -1148,7 +1138,7 @@ export async function markSentRoute(
   const ledger = getLedger();
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
-  // Hand-sent channels only (X DMs today — channels.ts); every other channel
+  // Hand-sent channels only (X DMs today: channels.ts); every other channel
   // goes through its real sender.
   const channel = channelOf(row.channel);
   if (firstTouchSender(channel) !== "manual") {
@@ -1160,7 +1150,7 @@ export async function markSentRoute(
   }
   if (row.status === "sent") return jsonResponse({ error: "row already marked sent" }, 400, req);
   // Same review gate as the send path: only an approved row may be recorded
-  // as sent — marking a rejected (or never-reviewed) row would silently
+  // as sent: marking a rejected (or never-reviewed) row would silently
   // un-reject it and log outreach to a person the founder killed.
   if (row.status !== "approved") {
     return jsonResponse(
@@ -1186,13 +1176,13 @@ export async function markSentRoute(
     const p = JSON.parse(row.payload_json);
     if (p && typeof p === "object") payload = p as Record<string, unknown>;
   } catch {
-    // tolerated — prospect fields below just come up null
+    // tolerated: prospect fields below just come up null
   }
   const pstr = (k: string): string | null => (typeof payload[k] === "string" ? payload[k] : null);
   // The profile the touch went to. `prospects.linkedin_url` holds whichever
   // social profile a prospect was reached on (it has always carried X URLs).
   // On X that is the handle the draft was addressed to (handle first, then
-  // the profile URL — draftXDm's order), recorded as its profile URL.
+  // the profile URL: draftXDm's order), recorded as its profile URL.
   const xHandle = xHandleFrom(pstr("handle")) ?? xHandleFrom(pstr("twitterUrl"));
   if (channel === "x" && !xHandle) {
     return jsonResponse({ error: "this row has no X handle to have sent it to" }, 400, req);
@@ -1217,21 +1207,21 @@ export async function markSentRoute(
   try {
     ledger.setQueueProspectId(row.id, prospectId);
   } catch {
-    // best-effort backfill — the marked send is already recorded
+    // best-effort backfill. The marked send is already recorded
   }
   // A per-row human action (manually sent via another channel).
   ledger.setQueueStatus({ id: row.id, status: "sent", decidedBy: "human" });
-  // No draft write on this path — close the reviewed draft's version by hand.
+  // No draft write on this path: close the reviewed draft's version by hand.
   try {
     ledger.closeQueueDraftVersion(row.id, "sent");
   } catch {
-    // older ledgers / test doubles without draft versions — the send is recorded regardless
+    // older ledgers / test doubles without draft versions. The send is recorded regardless
   }
   return jsonResponse({ ok: true, prospectId }, 200, req);
 }
 
 /**
- * Every draft this row went through, newest first — what the founder
+ * Every draft this row went through, newest first: what the founder
  * regenerated or rotated away from, and what was finally sent.
  */
 export function queueDraftVersionsRoute(req: Request, params: Record<string, string>): Response {
@@ -1255,7 +1245,7 @@ export async function sendDraftRoute(
 ): Promise<Response> {
   const id = Number.parseInt(params["id"] ?? "", 10);
   if (!Number.isFinite(id)) return jsonResponse({ error: "bad id" }, 400, req);
-  // Server is draining for shutdown — don't start a new send.
+  // Server is draining for shutdown: don't start a new send.
   if (isDraining()) {
     return jsonResponse({ error: "server restarting — retry in a moment" }, 503, req);
   }
@@ -1282,7 +1272,7 @@ export async function sendDraftRoute(
   if (!subject || !body) {
     return jsonResponse({ error: "stored draft is empty — regenerate first" }, 400, req);
   }
-  // Soft review flags are founder-overridable here — this IS the
+  // Soft review flags are founder-overridable here. This IS the
   // review-then-send step. Only blocking flags refuse a manual send.
   if (blockingFlags(flags).length > 0) {
     return jsonResponse(
@@ -1322,7 +1312,7 @@ export async function sendDraftRoute(
     const p = JSON.parse(row.payload_json);
     if (p && typeof p === "object") payload = p as Record<string, unknown>;
   } catch {
-    // fall through — handled by the missing-email check below
+    // fall through: handled by the missing-email check below
   }
   // LinkedIn row: the reviewed note goes out verbatim as a connection request
   // through OneShot's invite route, from the account's owning workspace.
@@ -1350,7 +1340,7 @@ export async function sendDraftRoute(
       try {
         ledger.setQueueProspectId(id, out.prospectId);
       } catch {
-        // best-effort backfill — the invite is already recorded
+        // best-effort backfill. The invite is already recorded
       }
       ledger.setQueueStatus({ id, status: "sent", decidedBy: "human" });
       try {
@@ -1390,7 +1380,7 @@ export async function sendDraftRoute(
     return res;
   };
 
-  // sendDraftedEmail pushes dedup outcomes here — distinguishes a deliberate
+  // sendDraftedEmail pushes dedup outcomes here: distinguishes a deliberate
   // skip from a genuine send failure below.
   const sendFlags: string[] = [];
   let result: Awaited<ReturnType<typeof sendDraftedEmail>>;
@@ -1406,7 +1396,7 @@ export async function sendDraftRoute(
         name: str("name") ?? str("founderName"),
         email,
         company: str("company"),
-        // Falls back to twitter/github URL — the column is the de-facto
+        // Falls back to twitter/github URL. The column is the de-facto
         // social-profile URL (mirrors the play's own prospectMeta).
         linkedin_url: str("linkedinUrl") ?? str("twitterUrl") ?? str("githubUrl"),
         phone: str("phone"),
@@ -1429,9 +1419,8 @@ export async function sendDraftRoute(
             },
           }
         : {}),
-      // The play's evidence metadata (`repo`, `eventTitle`, `vendorStack`, …)
-      // MUST be included — step-0 rows without their evidence key silently
-      // break everything downstream that reads it.
+      // Include evidence keys (repo, eventTitle, vendorStack, etc.); downstream
+      // step-0 readers depend on them.
       metadata: playMetadata(row.play_name, payload),
       dryRun: false,
       // This route IS the review-then-send override for `contacted-elsewhere`.
@@ -1444,7 +1433,7 @@ export async function sendDraftRoute(
     } catch {
       /* sweeper safety net */
     }
-    // Daily caps exhausted — not a failure; row stays approved.
+    // Daily caps exhausted, not a failure; row stays approved.
     if (isSendDeferred(err)) {
       return done("ok", jsonResponse({ error: (err as Error).message, deferred: true }, 429, req));
     }
@@ -1500,7 +1489,7 @@ export async function sendDraftRoute(
 
   const prospect = ledger.findProspectByEmail(email);
   if (prospect) enrollInCadence({ prospectId: prospect.id, playName: row.play_name });
-  // The human read this draft and clicked Send — a per-row judgment.
+  // The human read this draft and clicked Send. A per-row judgment.
   ledger.setQueueStatus({ id, status: "sent", decidedBy: "human" });
   ledger.setQueueDraft({
     id,
@@ -1522,7 +1511,7 @@ export async function sendDraftRoute(
 /**
  * Withdraw the LinkedIn invite a sent row went out with, through OneShot's
  * withdraw route. Recorded as its own step-0 `withdrawn` event; the original
- * send stays in the history. Never disconnects an accepted connection —
+ * send stays in the history. Never disconnects an accepted connection:
  * OneShot answers `not_pending` for those.
  */
 export async function withdrawInviteRoute(
@@ -1580,7 +1569,7 @@ export async function withdrawInviteRoute(
       idempotencyKey: `gtm:${currentWorkspaceName()}:queue:${id}:withdraw:${invitationId}`,
       playName: row.play_name,
     })) as { status?: string };
-    // not_pending: the invite was accepted or is otherwise gone — nothing
+    // not_pending means the invite was accepted or is otherwise gone. Nothing
     // was withdrawn, so nothing is recorded.
     if (!isWithdrawnStatus(result.status)) {
       return jsonResponse(

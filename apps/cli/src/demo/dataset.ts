@@ -3,29 +3,29 @@ import { cadenceGoalId, type PersonResearchDossier } from "@oneshot-gtm/core";
 import { lintEmail } from "@oneshot-gtm/plays";
 
 /**
- * The demo install, as pure data — `seed.ts` writes it. Deterministic: every
+ * The demo install, as pure data: `seed.ts` writes it. Deterministic: every
  * timestamp is an offset from the caller's anchor, no randomness, so the same
  * anchor yields the same ledger. Per-column timestamp format must match what
  * production writes (`datetime('now')` columns: SQLite `YYYY-MM-DD HH:MM:SS`;
- * `toISOString()` columns: ISO) — mixing silently breaks string comparisons
+ * `toISOString()` columns: ISO): mixing silently breaks string comparisons
  * like `next_due_at <= ?`.
  */
 
 const DAY_MS = 86_400_000;
 
-/** ISO — for columns the app writes with `new Date().toISOString()`. */
+/** ISO: for columns the app writes with `new Date().toISOString()`. */
 function isoAt(anchor: Date, daysAgo: number, hour: number, minute: number): string {
   const d = new Date(anchor.getTime() - daysAgo * DAY_MS);
   d.setUTCHours(hour, minute, 0, 0);
   return d.toISOString();
 }
 
-/** SQLite `datetime('now')` format — for columns filled by the column DEFAULT. */
+/** SQLite `datetime('now')` format: for columns filled by the column DEFAULT. */
 function sqlAt(anchor: Date, daysAgo: number, hour: number, minute: number): string {
   return isoAt(anchor, daysAgo, hour, minute).slice(0, 19).replace("T", " ");
 }
 
-/** ISO, minutes before the anchor — for trigger poll times, see buildTriggers. */
+/** ISO, minutes before the anchor: for trigger poll times, see buildTriggers. */
 function isoMinutesAgo(anchor: Date, minutesAgo: number): string {
   return new Date(anchor.getTime() - minutesAgo * 60_000).toISOString();
 }
@@ -98,7 +98,7 @@ interface DemoPerson {
   play: string;
   source: string;
   linkedin: string | null;
-  /** Why this person surfaced — becomes the receipt memo and the dossier hook. */
+  /** Why this person surfaced: becomes the receipt memo and the dossier hook. */
   hook: string;
   /** Days before the anchor that the first touch went out. */
   daysAgo: number;
@@ -543,7 +543,7 @@ const PEOPLE: DemoPerson[] = [
 // Generated cast
 
 /**
- * The hand-written PEOPLE above are the install's legible surface — the rows a
+ * The hand-written PEOPLE above are the install's legible surface. The rows a
  * visitor can actually reach, since /receipts caps at 500 newest-first and
  * /queue at 200. Behind them sits the volume a thirty-day install accumulates,
  * and that volume is what makes the spend total real rather than a fixture.
@@ -552,7 +552,7 @@ const PEOPLE: DemoPerson[] = [
  * never written to. That is the install this product argues for. Sends are
  * capped at fifty a day, so the twenty-seven days this ledger spans cannot hold
  * more than about thirteen hundred of them however many prospects the finders
- * surface — which means the spend has to come from the finding, not from the
+ * surface, which means the spend has to come from the finding, not from the
  * sending. SEQUENCED_TOTAL is set from that ceiling backwards, not chosen: at
  * roughly two steps a head it is what keeps every single day under the cap.
  *
@@ -874,7 +874,7 @@ const TITLES = [
 
 /**
  * The eight plays the generated rows are drawn from, each with the shape its
- * evidence actually takes. A hook here is not invented prose — it is the same
+ * evidence actually takes. A hook here is not invented prose. It is the same
  * structured signal the finder returns, rendered the way the finder renders it.
  */
 const GEN_PLAYS: Array<{
@@ -986,8 +986,8 @@ const RESEARCH_TOTAL = 5_400;
 /**
  * Outcomes on the generated cadences, by row index.
  *
- * Eight closed deals across the whole install — six here, two in the
- * hand-written cast — totalling $48,000 against roughly $2,000 of spend. That
+ * Eight closed deals across the whole install: six here, two in the
+ * hand-written cast: totalling $48,000 against roughly $2,000 of spend. That
  * ratio is the number worth printing: it divides every dollar the agent spent,
  * including the fourteen thousand prospects that went nowhere, rather than one
  * winner's own cadence cost.
@@ -1043,8 +1043,8 @@ function generatedOutcome(i: number, company: string, daysAgo: number): DemoPers
  * Plain mixed radix is injective but reads terribly: whichever field lands on
  * the slowest digit changes only every FIRST × LAST rows, so the Receipts page
  * shows nine thousand consecutive people sharing a surname. Multiplying by a
- * stride coprime with the radix is still a bijection over the whole space —
- * every index maps to its own triple — but it scatters consecutive rows across
+ * stride coprime with the radix is still a bijection over the whole space
+ * (every index maps to its own triple), but it scatters consecutive rows across
  * that space, so adjacent receipts differ in all three fields.
  *
  * 774,400 = 80 × 80 × 121 = 2^8 · 5^2 · 11^2. 7919 is prime and none of 2, 5
@@ -1101,7 +1101,7 @@ function buildGeneratedPeople(count: number): DemoPerson[] {
      * The step count must not be drawn with a modulus that shares a factor with
      * the one picking the day. `i % 3` against `i % 27` gives every cohort a
      * single step count, which stacks all of a day's follow-ups onto the same
-     * two later days and puts a visible four-day beat in the send volume — with
+     * two later days and puts a visible four-day beat in the send volume, with
      * peaks over the daily cap. Dividing instead of taking the remainder varies
      * the step count *within* each day's cohort.
      */
@@ -1179,7 +1179,7 @@ export interface DemoProspectRow {
   name: string;
   email: string;
   company: string;
-  /** The role, as the prospects table stores it — not only inside the dossier. */
+  /** The role, as the prospects table stores it, not only inside the dossier. */
   title: string;
   linkedinUrl: string | null;
   dossierJson: string;
@@ -1342,7 +1342,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
   /*
    * The research budget, spent deliberately rather than emergently.
    *
-   * Everyone we actually write to gets a deep person-research call first —
+   * Everyone we actually write to gets a deep person-research call first:
    * that is the gate doing its job. The remainder is spread evenly across the
    * discovery rows by a stride, so about a third of the prospects the finders
    * surface are researched before the gate declines them. At $0.12 it is ten
@@ -1434,16 +1434,8 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
         valueTag,
         valueTaggedAt,
         goalId,
-        // Spread across the working day rather than stacked on one hour. Prep
-        // landed at 08:00 and every send at 09:00, so within a day the sends
-        // sorted above all of it and the Receipts page opened on a wall of
-        // identical $0.0040 rows — the cheapest call in the table standing in
-        // for the whole ledger.
-        //
-        // The stride has to be coprime with the number of hours or the call
-        // types stay stacked: `i * 4 + k` against 14 shares a factor of two, so
-        // each hour drew from only some of the five prep calls and the top of
-        // the list was still eighty per cent two call types.
+        // Spread calls across the working day. Use a stride coprime with 14
+        // so each hour mixes call types instead of grouping identical receipts.
         createdAt: sqlAt(anchor, p.daysAgo, 6 + ((i * 5 + k * 3) % 14), jitter(i * 4 + k)),
       });
     });
@@ -1523,7 +1515,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
                 subject: subjectFor(p, p.steps),
                 body: bodyFor(p, p.steps),
                 // What the real linter says about this exact text, so a demo
-                // draft can never claim a flag its body does not earn — nor hide
+                // draft can never claim a flag its body does not earn or hide
                 // one it does.
                 flags: lintEmail(subjectFor(p, p.steps), bodyFor(p, p.steps)),
                 payload: { name: p.name, company: p.company, hook: p.hook },
@@ -1812,7 +1804,7 @@ function buildQueue(anchor: Date, prospects: DemoProspectRow[]): DemoDataset["qu
     };
   };
   const idByEmail = new Map(prospects.map((p) => [p.email, p.id]));
-  // Rows the finders surfaced but that haven't shipped yet — the founder's
+  // Rows the finders surfaced but that haven't shipped yet. The founder's
   // actual inbox of work. A mix of statuses so every filter chip has something
   // behind it, and drafts on the approved rows so the preview expands.
   const pending = [
@@ -1890,7 +1882,7 @@ function buildQueue(anchor: Date, prospects: DemoProspectRow[]): DemoDataset["qu
    *
    * The held one is the point. Every play runs its draft through `lintEmail`
    * before it is allowed out, and with three clean drafts the demo showed a
-   * gate that never fires — a claim with nothing behind it. This body is what
+   * gate that never fires. A claim with nothing behind it. This body is what
    * an unlinted model writes: a borrowed opener, an em dash, a rule of three
    * and a soft CTA. Its flags are not written down anywhere; they are whatever
    * the real linter says about this exact text, computed at seed time below.
@@ -2083,8 +2075,8 @@ function buildTriggers(anchor: Date): DemoDataset["triggers"] {
   //
   // Enabled triggers are polled MINUTES before the anchor, not at a fixed hour.
   // The dashboard derives "next due" as last_polled_at + interval and flags
-  // anything past due as overdue — and the demo scheduler is idle, so nothing
-  // will ever clear that flag. Recent polls (against 6h–24h intervals) keep the
+  // anything past due as overdue, and the demo scheduler is idle, so nothing
+  // will ever clear that flag. Recent polls (against 6-24h intervals) keep the
   // strip reading "due in 5h" instead of a wall of red. This is why `--now`
   // defaults to seed time: film soon after seeding.
   return [
@@ -2213,13 +2205,8 @@ function buildTriggers(anchor: Date): DemoDataset["triggers"] {
 // Runs
 
 function buildRuns(anchor: Date, receipts: DemoReceipt[]): DemoDataset["runs"] {
-  // Receipt ids are assigned globally while iterating PEOPLE, so a run's send
-  // events must look up the actual email.send receipt per recipient — a
-  // hardcoded [1]/[2] would link this run's sends to whoever's prep calls
-  // happened to be recorded first. Matching is by (play, recipient), not
-  // recipient alone: a prospect who was ALSO emailed by another play would
-  // otherwise satisfy the lookup with the wrong play's receipt and timestamp,
-  // and a run must only ever claim sends that belong to it.
+  // Receipt IDs are global. Match email.send receipts by both play and recipient
+  // so a run cannot claim another play's send or timestamp.
   const sendReceiptIdFor = (playName: string, email: string): number => {
     const r = receipts.find(
       (x) =>
@@ -2231,10 +2218,7 @@ function buildRuns(anchor: Date, receipts: DemoReceipt[]): DemoDataset["runs"] {
     return r.id;
   };
 
-  // Single target on purpose: Elin is the only show-hn send from the day this
-  // run ran. Padding the run with a prospect from another play (as an earlier
-  // draft did with Ravi) makes the run claim a send with the wrong play and
-  // timestamp — the play-aware lookup above now throws on that.
+  // Elin is the only show-hn recipient on this run's day.
   const targets = [{ name: "Elin Dahl", email: "elin@northport.works", company: "Northport" }];
   const events = [
     { kind: "runStarted", runId: 1, startedAt: isoAt(anchor, 1, 9, 0) },
@@ -2312,7 +2296,7 @@ function buildCanaries(anchor: Date): DemoDataset["canaries"] {
       subject: "placement canary — tracepoint.email → trace-mail.dev",
       sourcePlay: "show-hn",
       // Cross-domain, which is the only configuration that yields a verdict
-      // worth reporting — a same-domain canary tells you nothing about how a
+      // worth reporting. A same-domain canary tells you nothing about how a
       // stranger's mail server files your mail.
       sameDomain: 0,
       latencyMs: 3120,
@@ -2333,7 +2317,7 @@ function repliers(): DemoPerson[] {
 /**
  * Thread/email ids are positional in the repliers() ordering, so any row that
  * references one (inbox_drafts, inbox_sent) must derive it from the SAME
- * ordering by email — a hardcoded "thread_demo_0001" silently attaches to
+ * ordering by email. A hardcoded "thread_demo_0001" silently attaches to
  * whichever reply happens to sort first, putting one prospect's history inside
  * another prospect's thread.
  */
@@ -2443,7 +2427,7 @@ function buildInterviews(anchor: Date): DemoDataset["interviews"] {
 
 /**
  * Keyed by period ("7" / "30" / "all") because the Measure page's range chips
- * pass `periodDays` through to `cadenceRocs` — a single all-time rollup would
+ * pass `periodDays` through to `cadenceRocs`. A single all-time rollup would
  * show identical numbers on every chip, which reads as a broken filter on
  * camera. The demo seam in `cadenceRocs` picks the matching key.
  */
@@ -2457,7 +2441,7 @@ function buildRocsFixture(receipts: DemoReceipt[], anchor: Date): unknown {
 
 function rocsForWindow(receipts: DemoReceipt[]): unknown {
   // Derived from the receipts we just wrote, so the platform rollup and the
-  // local ledger agree — the goalIds match, and so does the spend.
+  // local ledger agree. The goalIds match, and so does the spend.
   const byGoal = new Map<
     string,
     { spend: number; count: number; value: number; tagged: boolean }
@@ -2471,7 +2455,7 @@ function rocsForWindow(receipts: DemoReceipt[]): unknown {
       entry.tagged = true;
       // Only closed revenue carries a dollar value. A booked meeting is real
       // progress but it is not money, and inventing a number for it would
-      // inflate every RoCS figure on the Measure page — exactly the estimated,
+      // inflate every RoCS figure on the Measure page: exactly the estimated,
       // dashboard-shaped accounting this tool exists to avoid. One value per
       // goal, not per receipt: the platform records the outcome once and fans
       // it across the goal's receipts.

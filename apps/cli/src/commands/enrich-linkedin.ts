@@ -20,7 +20,7 @@ export interface EnrichLinkedInOpts {
 /**
  * True when a name looks like something a LinkedIn profile search could match:
  * two Latin-script tokens. GitHub display names are often handles, single
- * tokens, or non-Latin — searching those is a paid near-certain miss.
+ * tokens, or non-Latin: searching those is a paid near-certain miss.
  */
 export function looksLikeRealName(name: string | null | undefined): boolean {
   if (!name) return false;
@@ -31,7 +31,7 @@ export function looksLikeRealName(name: string | null | undefined): boolean {
   // At least one token has to carry real signal. "A B" is two valid tokens but
   // searching bare initials is indistinguishable from noise.
   if (!tokens.some((t) => t.length >= 2)) return false;
-  // Every token must start with a Latin letter — filters CJK/emoji handles that
+  // Every token must start with a Latin letter: filters CJK/emoji handles that
   // happen to contain a space.
   return tokens.every((t) => /^[A-Za-z][A-Za-z.'-]*$/.test(t));
 }
@@ -39,7 +39,7 @@ export function looksLikeRealName(name: string | null | undefined): boolean {
 /**
  * Turn a stored `company` into a search token, or null if it isn't usable.
  * Disambiguators become *quoted* (exact-phrase) query tokens, and GitHub
- * `company` is free text — requiring it verbatim guarantees a paid zero-result
+ * `company` is free text: requiring it verbatim guarantees a paid zero-result
  * search. Take the first company-looking segment, drop anything free-form.
  */
 export function cleanCompanyToken(company: string | null | undefined): string | null {
@@ -58,8 +58,8 @@ export function cleanCompanyToken(company: string | null | undefined): string | 
   // Trailing parenthetical (a URL, usually).
   s = s.replace(/\s*\([^)]*\)\s*$/, "").trim();
   if (s.length < 2) return null;
-  // Anything outside the character set a company name actually uses — emoji,
-  // CJK, a stray sigil — means this is a bio line, not an employer.
+  // Anything outside the character set a company name actually uses: emoji,
+  // CJK, a stray sigil: means this is a bio line, not an employer.
   if (!/^[A-Za-z0-9 .,&'/-]+$/.test(s)) return null;
   s = s.replace(/[.,]+$/, "").trim();
   // Still a sentence rather than a name → not a usable exact-match constraint.
@@ -83,7 +83,7 @@ export async function commandEnrichLinkedIn(opts: EnrichLinkedInOpts): Promise<v
   const ledger = getLedger();
 
   // Read the whole backlog, then cap. Pushing `--limit` into the query would
-  // make it mean "consider N rows" rather than "search N" — with
+  // make it mean "consider N rows" rather than "search N", with
   // `--skip-handles` a `--limit 5` would then search however many of the first
   // five rows happened to be real names.
   const rows = ledger.listProspectsMissingLinkedIn({
@@ -159,7 +159,7 @@ export async function commandEnrichLinkedIn(opts: EnrichLinkedInOpts): Promise<v
       return;
     }
     found++;
-    // COALESCE semantics — this can only fill an empty column, never clobber a
+    // COALESCE semantics. This can only fill an empty column, never clobber a
     // URL a finder already resolved.
     if (ledger.updateProspectIdentity(row.id, { linkedin_url: url })) {
       written++;
@@ -178,7 +178,7 @@ export async function commandEnrichLinkedIn(opts: EnrichLinkedInOpts): Promise<v
   }
   process.stdout.write(
     `${c.dim("Found:")} ${found}  ${c.dim("written:")} ${written}  ` +
-      // Counts results, not candidates — one search can discard several before
+      // Counts results, not candidates: one search can discard several before
       // finding the right person (or none).
       `${c.dim("no profile:")} ${missed}  ${c.dim("wrong-person results skipped:")} ${rejected}  ` +
       `${c.dim("spent:")} $${costUsd.toFixed(2)}\n\n`,

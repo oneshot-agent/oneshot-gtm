@@ -2,8 +2,8 @@ import { useCallback, useState } from "react";
 import type { PendingOneShotAdd, PendingSmartleadAdd } from "../../lib/setupValidation.ts";
 
 /**
- * The Email-transport section's pending operations — cap edits, removals and
- * new senders — held until its Save commits them in ONE request. Unlike the
+ * The Email-transport section's pending operations: cap edits, removals and
+ * new senders: held until its Save commits them in ONE request. Unlike the
  * draft overlay these are operations, not field values, so they get their
  * own store; `clear()` runs after the post-save refetch has landed.
  */

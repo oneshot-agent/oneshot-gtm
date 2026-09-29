@@ -3,7 +3,7 @@ import type { SmartleadAccount } from "@oneshot-gtm/core";
 
 // /api/smartlead/accounts: key resolution (pasted > stored), sanitized
 // pass-through with alreadyRegistered, and upstream-failure mapping. The core
-// client is mocked — its own paging/sanitization is covered in core tests.
+// client is mocked: its own paging/sanitization is covered in core tests.
 
 const listMock = vi.fn();
 const registerSmartleadMock = vi.fn().mockReturnValue({ identityId: "smartlead:x", created: true });

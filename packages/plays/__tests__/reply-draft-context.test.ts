@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// What draftInboxReply's user block contains, per input — the regression suite
+// What draftInboxReply's user block contains, per input. The regression suite
 // for "the reply draft has nothing real to draw on". The LLM is mocked; we
 // assert on the assembled prompt block.
 
@@ -152,7 +152,7 @@ describe("draftInboxReply context assembly", () => {
     expect(lastUserBlock()).not.toContain("ASKS ALREADY MADE");
   });
 
-  // ANGLE injection (issue #356) — the reply-path payoff for #355's synthesis.
+  // ANGLE injection (issue #356). The reply-path payoff for #355's synthesis.
   // `doNotSay` matters most here: it's what stops a reply re-asserting a
   // premise the prospect already corrected ("not sure what you mean" /
   // "starred for research").
@@ -187,7 +187,7 @@ describe("draftInboxReply context assembly", () => {
     expect(block).toContain("this was starred for research only");
   });
 
-  // MEETING injection (issue #578) — the direct outcome-to-draft path,
+  // MEETING injection (issue #578). The direct outcome-to-draft path,
   // alongside the indirect tagOutcomeValue -> angle_json path.
   it("omits the MEETING block when there is no meeting", async () => {
     await draftInboxReply(BASE);

@@ -131,7 +131,7 @@ describe("commandSynthesizeAngles", () => {
 
   it("stops at --max-cost-usd once the ceiling is crossed", async () => {
     gatherCostUsd = 1; // one row alone crosses a $0.5 ceiling
-    // concurrency: 1 serializes the check — with the default concurrency the
+    // concurrency: 1 serializes the check, with the default concurrency the
     // cap can be exceeded by up to (concurrency - 1) in-flight calls, same as
     // research-prospects.ts's own documented accounting.
     await commandSynthesizeAngles({

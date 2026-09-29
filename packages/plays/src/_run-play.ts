@@ -52,7 +52,7 @@ import {
 
 type AppConfig = ReturnType<typeof loadConfig>;
 
-/** Cap on the dossier persisted onto a prospect — matches the slice the
+/** Cap on the dossier persisted onto a prospect: matches the slice the
  *  finders already apply to a queued dossier (x-reposters, add-prospect). */
 const DOSSIER_SLICE = 12_000;
 
@@ -67,7 +67,7 @@ export interface Prepared<X = Record<string, never>> {
   receiptIds: number[];
   dossier: string;
   /**
-   * The enrichment SDK call failed (live or negative-cached) — the draft was
+   * The enrichment SDK call failed (live or negative-cached). The draft was
    * built from payload context only. Travels to the persisted draft envelope
    * so /queue can surface it; deliberately NOT a lint flag (flags block
    * sending, and a payload-only draft is still sendable).
@@ -88,7 +88,7 @@ export type PlayDraft<T, X = Record<string, never>> = {
   enrichmentFailed?: boolean;
   /**
    * Which edge angle the draft was built on, when the runner chose it (a
-   * one-angle edge counts — the founder's verdict on it is still a verdict).
+   * one-angle edge counts. The founder's verdict on it is still a verdict).
    * Absent when the caller supplied `draftAngle` (regenerate/rotate keep the
    * full `DraftAngle` themselves) or the target has no edge field.
    */
@@ -118,7 +118,7 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    *
    * `signal` is the run's cancellation signal. The executor already guards the
    * boundary before `prepare` is entered, so a def that ignores the arg is
-   * still safe — forward it (or `throwIfCancelled` on it) when `prepare` makes
+   * still safe: forward it (or `throwIfCancelled` on it) when `prepare` makes
    * more than one paid call, so the second one doesn't fire after an abort.
    */
   prepare: (t: T, dryRun: boolean, signal?: AbortSignal) => Promise<Prepared<X>>;
@@ -136,7 +136,7 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    * When true, run `hardBanFlags()` (link / price / discount patterns)
    * against the drafted body and merge any hits into the lint flags before
    * sending. `lintEmail()` alone only checks for the literal string
-   * "calendly" — no generic link, price or discount check — so a play whose
+   * "calendly" (no generic link, price or discount check) so a play whose
    * prompt declares those a hard, no-exceptions ban (discovery-interview:
    * no product link, no price, no discount) needs this to actually block an
    * offending completion rather than relying on prompt text alone. Opt-in
@@ -146,20 +146,9 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    */
   hardBans?: boolean;
   /**
-   * Keys on `T` that must be a non-empty (post-trim) string before this
-   * target is processed — server-side mirror of the web app's
-   * `PLAY_SCHEMAS[playName].fields[].required` (apps/web/src/lib/
-   * playSchemas.ts, enforced client-side by `missingRequiredFields()`).
-   * That check runs in the browser only: `/run`'s `submit()` calls
-   * `fetch('/api/run/...')` directly, so a target missing a required field
-   * (blank `businessType`, `topic`, `yourEdge`, ...) still reaches
-   * `buildInputBlock` as `undefined` if it arrives by any other path — a
-   * direct API call, a future refactor of the web form, or a queue row
-   * hand-edited before drain (finding: apps/web/src/lib/playSchemas.ts:417
-   * — "validate each play's target shape server-side"). Checked before any
-   * paid call, same boundary as `design-partner-loi`'s
-   * `assertNotOwnerOperatorBuyer` guard: a failing target lands as an
-   * `errorDraft`, not a malformed send.
+   * Required non-empty, trimmed string fields, mirroring the web form schema.
+   * Validate before any paid call because API and queue inputs can bypass
+   * browser validation. Invalid targets become errorDrafts.
    */
   requiredFields?: ReadonlyArray<keyof T & string>;
   /** Enroll the prospect in this play's cadence after a real send. */
@@ -219,7 +208,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
   // small enough that 6 workers comfortably halve wall-clock without tripping
   // SDK rate limits in observed runs.
   // toEmail may hand back a non-string (undefined/blank) for a malformed
-  // target — that's Guard #0's job to catch, inside the per-target try/catch
+  // target. That's Guard #0's job to catch, inside the per-target try/catch
   // below. Normalizing here must not throw ahead of that guard, so only
   // string emails get trimmed/lowercased; anything else passes through
   // as-is for the dupe check.
@@ -235,7 +224,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
     concurrency,
     async (target) => {
       try {
-        // Guard #0 — required-field shape check, before Guard #1's paid
+        // Guard #0: required-field shape check, before Guard #1's paid
         // `prepare` call. Mirrors the web form's client-side
         // `missingRequiredFields()` so a target that skipped that check
         // (direct API call, hand-edited queue row) can't reach the LLM with
@@ -249,7 +238,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
             throw new Error(`missing required field(s): ${missing.join(", ")}`);
           }
         }
-        // Guard #1 — the whole target. Workers pull from a shared cursor, so
+        // Guard #1. The whole target. Workers pull from a shared cursor, so
         // every target still queued behind the abort dies here having billed
         // nothing at all.
         throwIfCancelled(opts.signal, `${def.playName} prepare`);
@@ -310,14 +299,14 @@ export async function runEmailPlay<T, X = Record<string, never>>(
             draftTarget = withSelectedAngle(target, edgeField, angleSelection.angle);
           } else if (angles.length === 1) {
             // No choice to make, but the draft still records which angle it
-            // carries — the founder's send/regenerate verdict counts against
+            // carries. The founder's send/regenerate verdict counts against
             // a lone angle exactly as it does against one of four.
             angleSelection = { index: 0, angle: angles[0]!, count: 1, method: "single" };
           }
         }
 
         // Append SOCIAL PROOF block when any of the three optional fields is
-        // set. Prompts treat it as conditional input — present only when set,
+        // set. Prompts treat it as conditional input: present only when set,
         // and the prompt picks ONE beat per email (never stacks).
         const proof = socialProofBlock();
         let inputBlock = proof
@@ -345,7 +334,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         if (brief) inputBlock = `${inputBlock}\n\n${briefFormatBlock(titleForRegister)}`;
         const bodyWordCap = brief ? Math.min(def.maxBodyWords, BRIEF_MAX_WORDS) : def.maxBodyWords;
         const bodySentenceCap = brief ? BRIEF_MAX_SENTENCES : undefined;
-        // ANGLE (issue #356, lowest priority of the three draft paths — most
+        // ANGLE (issue #356, lowest priority of the three draft paths: most
         // outbound is first-touch, so a stored angle_json is the exception,
         // not the rule): only present when a prior finder/synthesis run
         // already persisted one for this email, e.g. a re-contact. Missing →
@@ -353,7 +342,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // Uses findProspectByEmail + getProspectById (not getProspectByEmail)
         // deliberately: both are already the lookup pair every play's
         // sendDraftedEmail call relies on, so every existing ledger test
-        // double already implements them — no test churn to add this read.
+        // double already implements them: no test churn to add this read.
         const existingProspectId = getLedger().findProspectByEmail(def.toEmail(target))?.id;
         const existingAngle =
           existingProspectId != null
@@ -368,20 +357,16 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         if (firstName) {
           inputBlock = `${inputBlock}\n\nPROSPECT_FIRST_NAME: ${firstName}`;
         }
-        // The researched role and employer, when the row carries them. Every
-        // play gets these lines without naming the fields; absent → the input
-        // block is byte-identical to before.
+        // Include researched role and employer when available.
         const researchedLines = researchedRoleLines(target);
         if (researchedLines) inputBlock = `${inputBlock}\n\n${researchedLines}`;
-        // DEMO DAY: when the row's cohort has a public demo-day schedule,
-        // judged now, so the prompt knows whether it is ahead of them or
-        // behind. Unknown → no line, byte-identical to before.
+        // Judge the known cohort demo-day schedule at draft time; omit when unknown.
         const demoDay = demoDayOf(rawTarget);
         const demoDayText = demoDayLine(demoDay);
         if (demoDayText) inputBlock = `${inputBlock}\n\n${demoDayText}`;
         if (opts.draftAngle)
           inputBlock += `\n\nSELECTED ANGLE: ${opts.draftAngle}\nBuild this draft around this argument. Preserve the play’s channel, tone, and factual constraints. Do not blend in other arguments.`;
-        // Guard #2 — the LLM draft, the paid call `prepare` was feeding.
+        // Guard #2. The LLM draft, the paid call `prepare` was feeding.
         throwIfCancelled(opts.signal, `${def.playName} draft`);
         const draft = await draftEmailFromPrompt({
           promptName: def.promptName,
@@ -406,9 +391,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // sending to someone another workspace emailed this week.
         if (recentTouchElsewhere(def.toEmail(target))) flags.push(CONTACTED_ELSEWHERE_FLAG);
 
-        // Guard #3 — the send. The one call that both bills AND is visible to
-        // the prospect, so it is the boundary that matters most: past here the
-        // founder has an email in someone's inbox they asked us not to send.
+        // Check cancellation before the send, which bills and contacts the prospect.
         throwIfCancelled(opts.signal, `${def.playName} send`);
         const send = await sendDraftedEmail({
           playName: def.playName,
@@ -426,14 +409,9 @@ export async function runEmailPlay<T, X = Record<string, never>>(
             ...(typeof (target as { title?: unknown }).title === "string"
               ? { title: (target as { title: string }).title }
               : {}),
-            // Persist the research this play just assembled. Every play returns
-            // a dossier from `prepare`, and until now all of it was thrown away
-            // the moment the draft was written — so the reply drafter's free
-            // Tier-1 read always missed and re-bought the same research.
-            // hasDossierSignal, not a bare trim: a FAILED enrich still
-            // serializes to `{"status":"failed",...}`, and storing that would
-            // register as a Tier-1 hit and suppress the paid research the
-            // reply drafter would otherwise do.
+            // Persist useful research for reply drafting. hasDossierSignal excludes
+            // serialized failures, which would otherwise suppress paid research by
+            // registering as a cache hit.
             ...(hasDossierSignal(prep.dossier)
               ? { dossier_json: prep.dossier.slice(0, DOSSIER_SLICE) }
               : {}),
@@ -503,7 +481,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           ...(prep.extra ?? ({} as X)),
         } as PlayDraft<T, X>;
       } catch (err) {
-        // Daily-cap deferral is not a per-target failure — propagate so the
+        // Daily-cap deferral is not a per-target failure: propagate so the
         // caller (drain / SSE run) leaves remaining targets queued.
         if (isSendDeferred(err)) throw err;
         // Neither is a cancellation: swallowing it here would turn every
@@ -518,7 +496,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         } as PlayDraft<T, X>;
       }
     },
-    // parallelMap's per-completion hook — forward through if the caller wired
+    // parallelMap's per-completion hook: forward through if the caller wired
     // a progress sink. Stays in completion order (not index order); the SSE
     // consumer keys by the `index` arg.
     opts.onProgress ? (_target, result, index) => opts.onProgress?.(index, result) : undefined,
@@ -530,7 +508,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
 /**
  * The common `prepare` body for plays that personalize via `safeEnrich` (cached
  * by email, never throws) and, on real sends only, a `deepResearch` dossier.
- * Pass `research` only when you want the research call to fire — callers gate it
+ * Pass `research` only when you want the research call to fire: callers gate it
  * on `!dryRun` (and, for accelerator-batch, on a launch URL being present).
  *
  * `signal` is forwarded by every play's `prepare`: this is the one place two
@@ -589,28 +567,10 @@ function icpFromTarget(target: unknown): {
 }
 
 /**
- * Flag a draft the system already knows is ungrounded.
- *
- * `standardEnrich` serializes whatever `safeEnrich` returned straight into the
- * prompt's DOSSIER block — including the failure sentinel. So when the enrich
- * fails the model is handed, verbatim:
- *
- *     DOSSIER:
- *     { "status": "failed", "profile": null, "cost": 0 }
- *
- * and drafts anyway. `prep.enrichmentFailed` was already set, already carried
- * to the queue UI as a badge, and already ignored by the send: `sendDraftedEmail`
- * only holds a draft when `flags` is non-empty, and nothing ever pushed one.
- *
- * That is how prospect 679 was emailed "did the vendor proxy babysitting bite
- * you at taxheaven too?" — the company string was the only prospect-specific
- * noun in the whole prompt, so the model welded it onto the stock `yourEdge`.
- *
- * The flag fires only when there is nothing ELSE to write from. A failed
- * enrich on a target that still carries a real title or bio is fine: the draft
- * has something true to say. Every sent row in this ledger was drafted AFTER
- * its human approval (681 of 681), so a flag here is the only checkpoint that
- * sees the draft at all.
+ * Hold a draft when enrichment failed and no other prospect-specific evidence
+ * is available. A real title, bio, or researched role can still ground a draft;
+ * a serialized enrichment failure cannot. Send holds depend on lint flags,
+ * so the enrichment-failed UI badge alone is insufficient.
  */
 export function lintGrounding(target: unknown, prep: { enrichmentFailed?: boolean }): string[] {
   if (!prep.enrichmentFailed) return [];

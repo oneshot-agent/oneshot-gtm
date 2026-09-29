@@ -40,7 +40,7 @@ describe("triageEmails category validation (issue #558)", () => {
       ]),
     });
     const [triaged] = await triageEmails([inbound("e1")]);
-    // Never the raw hallucinated string — a `false-not-in-set` value must not
+    // Never the raw hallucinated string. A `false-not-in-set` value must not
     // leak through and read as positive intent (replyIntentIsPositive treats
     // any unrecognized string as positive, same as null).
     expect(triaged?.category).toBe("other");

@@ -14,7 +14,7 @@ import {
   ownerFromRepoUrl,
 } from "../src/_github-user.ts";
 
-// vi.mock at module-level isn't enough — we want to swap the global fetch
+// vi.mock at module-level isn't enough. We want to swap the global fetch
 // per-test so we can assert on call count and shape without bringing in MSW.
 const realFetch = globalThis.fetch;
 
@@ -268,7 +268,7 @@ describe("fetchTopRepos", () => {
 
   it("filters out archived + forked + missing-name entries", async () => {
     // Regression guard for ultrareview bug_001. type=owner does NOT exclude
-    // forks (it filters by ownership relation, not fork status) — a fork of
+    // forks (it filters by ownership relation, not fork status). A fork of
     // kubernetes the user owns would be returned and, with sort=pushed,
     // float to the top because forks track upstream pushes. Client-side
     // filter on r.fork drops them.

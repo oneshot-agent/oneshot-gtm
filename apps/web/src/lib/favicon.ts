@@ -5,14 +5,14 @@ import { workspaceHue } from "./workspaceHue.ts";
  *
  * Titles tell two dashboards apart once you read them; at tab-strip width you
  * mostly see the icon. The sidebar already colours its workspace dot by
- * workspaceHue(), so the tab uses the same hue for the receipt's total line —
+ * workspaceHue(), so the tab uses the same hue for the receipt's total line:
  * one visual language for "which install is this".
  *
  * The SVG is fetched from the served /favicon.svg rather than duplicated here.
  * A copy of the mark in a TS string is a copy that drifts.
  */
 
-/** The accent in public/favicon.svg — --ink-receipt, transcribed to sRGB. */
+/** The accent in public/favicon.svg: --ink-receipt, transcribed to sRGB. */
 export const ACCENT_HEX = "#47b777";
 
 /** oklch(0.72 0.14 h) → sRGB hex, matching WorkspaceDot's CSS exactly. */
@@ -52,7 +52,7 @@ export function tintSvg(svg: string, hue: number): string {
  * nothing to replace and silently leave the previous workspace's colour up.
  */
 let canonicalHref: string | null = null;
-/** Which call is newest — a slower earlier fetch must not overwrite it. */
+/** Which call is newest. A slower earlier fetch must not overwrite it. */
 let generation = 0;
 
 /** Test seam: module state would otherwise leak between cases. */
@@ -62,7 +62,7 @@ export function resetFaviconState(): void {
 }
 
 /**
- * Swap the tab icon for a tinted copy. Silent no-op on any failure — a missing
+ * Swap the tab icon for a tinted copy. Silent no-op on any failure. A missing
  * or unreadable icon is not worth an error boundary, and the untinted mark is
  * already correct.
  */
@@ -72,7 +72,7 @@ export async function applyWorkspaceFavicon(workspace: string | null): Promise<v
   canonicalHref ??= link.href;
   const mine = ++generation;
 
-  // "default" is the unmarked case, same as the sidebar dot — and it has to
+  // "default" is the unmarked case, same as the sidebar dot, and it has to
   // actively restore the plain mark, not just decline to tint.
   if (!workspace || workspace === "default") {
     link.href = canonicalHref;
