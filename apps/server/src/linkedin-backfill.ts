@@ -41,6 +41,11 @@ export interface LinkedInBackfill {
   nextAttemptAt?: string;
   providerLimit?: { limit: number; used: number; pending: number; resetsAt: string };
   senders?: { total: number; resolved: number; failed?: number };
+  /**
+   * Reopened after completion only to identify new inbound senders: after
+   * resolve and replay it completes again instead of buying a provider sync.
+   */
+  ongoing?: boolean;
 }
 const key = (accountKey: string) => `backfill:${accountKey}`;
 export function backfillStatus(accountKey: string) {
@@ -250,7 +255,13 @@ export async function runLinkedInBackfill(accountKey: string) {
     }
     if (job.stage === "replay") {
       replay(accountKey, matches);
-      job.stage = "provider";
+      if (job.ongoing) {
+        // New senders only: the inbox itself is already complete.
+        delete job.ongoing;
+        job.stage = "complete";
+      } else {
+        job.stage = "provider";
+      }
       save(job);
     }
     if (job.stage === "provider" || job.stage === "waiting") {
@@ -452,6 +463,44 @@ async function paidStep(
     unknown
   >;
 }
+/** Inbound senders on this account the store has never identified (no lookup yet). */
+export function unidentifiedInboundSenders(accountKey: string): number {
+  const store = getLinkedInInboxStore();
+  const ids = new Set<string>();
+  for (const m of store.allMessages(accountKey))
+    if (m.direction === "inbound" && !m.deleted && m.sender_provider_id)
+      ids.add(m.sender_provider_id);
+  return [...ids].filter((id) => !store.identity(accountKey, id)).length;
+}
+
+/**
+ * A completed backfill resolved every sender it saw, and never runs again —
+ * so a person who writes first afterwards could never be matched to their
+ * prospect, and their reply could not stop a cadence. Reopen it at `resolve`
+ * when unidentified inbound senders appear; `ongoing` completes it again
+ * after replay without a provider sync.
+ */
+const REOPEN_CHECK_MS = 5 * 60_000;
+const lastReopenCheck = new Map<string, number>();
+export function reopenForNewSenders(accountKey: string, now = Date.now()): boolean {
+  const last = lastReopenCheck.get(accountKey) ?? 0;
+  if (now - last < REOPEN_CHECK_MS) return false;
+  lastReopenCheck.set(accountKey, now);
+  const store = getLinkedInInboxStore();
+  const account = store.account(accountKey);
+  if (!account || account.removedAt) return false;
+  // Without profile access every lookup would fail; the manual backfill surfaces that.
+  if (!account.account.allowed_actions.includes("view_profile")) return false;
+  const job = backfillStatus(accountKey);
+  if (job?.stage !== "complete") return false;
+  if (unidentifiedInboundSenders(accountKey) === 0) return false;
+  job.stage = "resolve";
+  job.ongoing = true;
+  delete job.error;
+  save(job);
+  return true;
+}
+
 let running = false;
 export async function resumeLinkedInBackfills() {
   if (running) return;
@@ -459,6 +508,7 @@ export async function resumeLinkedInBackfills() {
   try {
     await adoptPendingLinkedInReplacements();
     for (const a of getLinkedInInboxStore().accounts()) {
+      reopenForNewSenders(a.key);
       const job = backfillStatus(a.key);
       if (
         job &&

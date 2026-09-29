@@ -58,13 +58,17 @@ function canonEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-/** Stable LinkedIn profile key across www/mobile hosts, schemes, query strings and trailing slashes. */
+/**
+ * Stable LinkedIn profile key across www/mobile/country hosts, schemes, query
+ * strings, trailing slashes and a trailing locale segment (`/in/<slug>/en`,
+ * `/pt-br`), which LinkedIn appends to shared profile links.
+ */
 export function canonicalLinkedInProfileKey(value: string): string | null {
   try {
     const url = new URL(value.trim());
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
     if (!/(^|\.)linkedin\.com$/i.test(url.hostname)) return null;
-    const match = /^\/in\/([^/]+)\/?$/i.exec(url.pathname);
+    const match = /^\/in\/([^/]+)(?:\/[a-z]{2}(?:[-_][a-z]{2})?)?\/?$/i.exec(url.pathname);
     if (!match?.[1]) return null;
     return `linkedin.com/in/${decodeURIComponent(match[1]).toLowerCase()}`;
   } catch {
