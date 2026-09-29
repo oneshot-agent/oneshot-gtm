@@ -1073,10 +1073,13 @@ export async function repairWritingLints(
   }
 }
 
-/** The redraft turn for a draft that treats a passed demo day as ahead of the reader. */
+/** The redraft turn for a draft that treats a passed (or maybe passed) demo day as ahead of the reader. */
 export function staleDemoDayInstruction(d: DemoDay): string {
   return (
-    `Their demo day was ${d.month}; it has already passed. Remove every mention of demo day and rewrite that sentence around something that is still true for them now. ` +
+    (d.status === "passed"
+      ? `Their demo day was ${d.month}; it has already passed. `
+      : `Their demo day falls some time in ${d.month} and may already have passed. `) +
+    "Remove every mention of demo day and rewrite that sentence around something that is still true for them now. " +
     'Keep the subject, the facts and everything else. Return only the JSON object with "subject" and "body".'
   );
 }
