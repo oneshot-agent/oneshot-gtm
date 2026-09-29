@@ -12,29 +12,33 @@
  *
  * Two independent checks, deliberately overlapping:
  *
- * 1. `noRawDbCalls` is structural, not text-pattern-based: it bans calling
- *    `.query(`/`.prepare(`/`.exec(`/`.run(` on `this.db` (or a destructured
- *    alias of it) at all, regardless of whether the SQL is a literal, a
- *    variable, a concatenation, a CTE, `REPLACE INTO`, `PRAGMA`, or
- *    lower-cased keywords. Round-1 review found the prior version of this
- *    file only ran a keyword regex, which is exactly the class of gap a
- *    structural "is this API even called" check can't have: it doesn't
- *    look at the SQL text at all, so there is nothing for a differently-cased
- *    or differently-shaped statement to slip past.
+ * 1. `findRawDbCalls` is AST-based (via the TypeScript compiler API), not
+ *    text-pattern-based: it resolves every local alias of `this.db` —
+ *    `const db = this.db`, chained aliases (`const raw = db; raw.query(...)`),
+ *    and destructured method aliases (`const { query } = this.db`, including
+ *    renames like `const { query: q } = this.db`) — and flags a call to
+ *    `.query(`/`.prepare(`/`.exec(`/`.run(` through ANY of them, regardless
+ *    of what the SQL argument looks like (literal, variable, concatenation,
+ *    CTE, `REPLACE INTO`, `PRAGMA`, any case). Round-2 review found the
+ *    prior version of this check was a `this\.db\.` text-prefix regex, so it
+ *    only caught the literal spelling `this.db.query(...)` and missed SQL
+ *    executed through an aliased handle (`const db = this.db; db.query(x)`)
+ *    or a destructured method reference (`const { query } = this.db;
+ *    query(x)`) entirely — exactly the gap an alias-resolving AST walk
+ *    closes, because it does not care what name the call site uses, only
+ *    whether that name provably traces back to `this.db`.
  * 2. `noSqlKeywordsInLiterals` is the original keyword scan, kept as
- *    defense-in-depth against a hypothetical destructured `{ query } =
- *    getDb()` or similar indirection that `noRawDbCalls` wouldn't name-match.
- *    Broadened per the round-1 finding: case-insensitive (was
- *    uppercase-only, so a reintroduced `select`/`update ... set` slipped
- *    through), and covers `WITH ... AS (` (CTE), `REPLACE INTO` /
+ *    defense-in-depth against any indirection the AST walk doesn't name
+ *    (e.g. SQL text assembled from an import rather than a local alias).
+ *    Case-insensitive, and covers `WITH ... AS (` (CTE), `REPLACE INTO` /
  *    `INSERT OR REPLACE`, and `PRAGMA` (no longer exempt: `ledger.ts` has
  *    zero legitimate PRAGMA calls post-extraction, so there is nothing left
- *    to carve an exception for; the pre-round-1 exemption comment referred
- *    to `ledger-admin.ts`, a different file, and never applied here).
+ *    to carve an exception for).
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 
 const LEDGER_PATH = join(import.meta.dirname, "../src/ledger.ts");
 
@@ -47,32 +51,140 @@ const LEDGER_PATH = join(import.meta.dirname, "../src/ledger.ts");
 const SQL_VERB =
   /\b(SELECT\s|INSERT\s+(?:INTO\b|OR\s+REPLACE\b)|UPDATE\s+\w+\s+SET\b|DELETE\s+FROM\b|CREATE\s+TABLE\b|REPLACE\s+INTO\b|WITH\s+\w+\s+AS\s*\(|PRAGMA\s+\w)/i;
 
+/** The four bun:sqlite entry points that execute SQL text. */
+const DB_EXEC_METHODS = new Set(["query", "prepare", "exec", "run"]);
+
+interface RawDbCallSite {
+  line: number;
+  text: string;
+}
+
 /**
- * `this.db.query(...)`, `.prepare(...)`, `.exec(...)`, or `.run(...)` — the
- * four bun:sqlite entry points that execute SQL text. Also matches a
- * destructured local alias (`const { query, prepare, exec, run } = this.db`)
- * used the same way, since that is the obvious way to dodge a `this.db.`
- * prefix check while keeping the exact same capability.
+ * Parses `source` and returns every call site that executes SQL through
+ * `this.db` (or any local alias / destructured method reference of it),
+ * regardless of the argument shape. This is a real alias analysis, not a
+ * text match on the spelling `this.db.`: it resolves
+ *
+ *   const db = this.db;                    // direct alias
+ *   const raw = db;                        // chained alias
+ *   const { query } = this.db;             // destructured method alias
+ *   const { query: q } = this.db;          // renamed destructured alias
+ *
+ * and flags `db.query(...)`, `raw.exec(...)`, `query(...)`, `q.run(...)`-
+ * style calls made through any of them.
  */
-const RAW_DB_CALL = /\bthis\.db\s*\.\s*(query|prepare|exec|run)\s*\(/;
+function findRawDbCalls(source: string): RawDbCallSite[] {
+  const sourceFile = ts.createSourceFile(
+    "ledger.ts",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+
+  // Identifiers that are provably local aliases of the `this.db` object
+  // itself (so `<alias>.query(...)` is equivalent to `this.db.query(...)`).
+  const dbObjectAliases = new Set<string>();
+  // Identifiers that are provably a destructured reference to one of
+  // `this.db`'s exec methods (so calling the bare identifier is equivalent
+  // to calling `this.db.<method>(...)`). Maps local name -> method name.
+  const dbMethodAliases = new Map<string, string>();
+
+  const isThisDb = (node: ts.Node): boolean =>
+    ts.isPropertyAccessExpression(node) &&
+    node.expression.kind === ts.SyntaxKind.ThisKeyword &&
+    node.name.text === "db";
+
+  const isKnownDbAlias = (node: ts.Node): boolean =>
+    isThisDb(node) || (ts.isIdentifier(node) && dbObjectAliases.has(node.text));
+
+  // Fixed-point iteration over all variable declarations so declaration
+  // order (including chained aliases declared before or after each other
+  // in ways a single top-down pass could miss) can't hide an alias.
+  const declarations: ts.VariableDeclaration[] = [];
+  const visitForDecls = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node)) declarations.push(node);
+    ts.forEachChild(node, visitForDecls);
+  };
+  visitForDecls(sourceFile);
+
+  let changed = true;
+  let guard = 0;
+  while (changed && guard < declarations.length + 5) {
+    changed = false;
+    guard++;
+    for (const decl of declarations) {
+      if (!decl.initializer) continue;
+      // const alias = this.db;  OR  const alias = <known alias>;
+      if (ts.isIdentifier(decl.name) && isKnownDbAlias(decl.initializer)) {
+        if (!dbObjectAliases.has(decl.name.text)) {
+          dbObjectAliases.add(decl.name.text);
+          changed = true;
+        }
+      }
+      // const { query, prepare: p, ... } = this.db;  OR  = <known alias>;
+      if (ts.isObjectBindingPattern(decl.name) && isKnownDbAlias(decl.initializer)) {
+        for (const element of decl.name.elements) {
+          if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue;
+          const sourceMethodName = element.propertyName
+            ? ts.isIdentifier(element.propertyName)
+              ? element.propertyName.text
+              : undefined
+            : element.name.text;
+          if (sourceMethodName && DB_EXEC_METHODS.has(sourceMethodName)) {
+            const local = element.name.text;
+            if (dbMethodAliases.get(local) !== sourceMethodName) {
+              dbMethodAliases.set(local, sourceMethodName);
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const offenses: RawDbCallSite[] = [];
+  const lines = source.split("\n");
+  const recordOffense = (node: ts.Node) => {
+    const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+    offenses.push({ line: line + 1, text: (lines[line] ?? "").trim() });
+  };
+
+  const visitForCalls = (node: ts.Node) => {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      if (ts.isPropertyAccessExpression(callee)) {
+        const receiver = callee.expression;
+        const method = callee.name.text;
+        if (
+          DB_EXEC_METHODS.has(method) &&
+          (isThisDb(receiver) || (ts.isIdentifier(receiver) && dbObjectAliases.has(receiver.text)))
+        ) {
+          recordOffense(node);
+        }
+      } else if (ts.isIdentifier(callee) && dbMethodAliases.has(callee.text)) {
+        recordOffense(node);
+      }
+    }
+    ts.forEachChild(node, visitForCalls);
+  };
+  visitForCalls(sourceFile);
+
+  return offenses;
+}
 
 describe("ledger.ts has no inline SQL (issue #751)", () => {
-  it("never calls this.db.query/prepare/exec/run directly (structural, content-agnostic)", () => {
+  it("never executes SQL via this.db (or any alias of it) directly (structural, alias-resolving)", () => {
     const source = readFileSync(LEDGER_PATH, "utf8");
-    const offendingLines = source
-      .split("\n")
-      .map((line, i) => ({ line, num: i + 1 }))
-      .filter(({ line }) => {
-        const trimmed = line.trim();
-        if (trimmed.startsWith("*") || trimmed.startsWith("//")) return false;
-        return RAW_DB_CALL.test(line);
-      });
+    const offendingLines = findRawDbCalls(source);
     expect(
       offendingLines,
-      `ledger.ts must not call this.db.query/prepare/exec/run directly, ` +
-        `no matter what argument shape (literal, variable, CTE, PRAGMA, any case): ` +
-        `move the call into the owning ledger-*.ts store. Offending lines:\n` +
-        offendingLines.map((o) => `  ${o.num}: ${o.line.trim()}`).join("\n"),
+      `ledger.ts must not execute SQL via this.db.query/prepare/exec/run, ` +
+        `whether called directly, through a local alias, or through a destructured ` +
+        `method reference, no matter what argument shape (literal, variable, CTE, ` +
+        `PRAGMA, any case): move the call into the owning ledger-*.ts store. ` +
+        `Offending lines:\n` +
+        offendingLines.map((o) => `  ${o.line}: ${o.text}`).join("\n"),
     ).toEqual([]);
   });
 
@@ -108,13 +220,82 @@ describe("ledger.ts has no inline SQL (issue #751)", () => {
       expect(SQL_VERB.test(sample), `expected SQL_VERB to match: ${sample}`).toBe(true);
   });
 
-  it("RAW_DB_CALL catches this.db.query/prepare/exec/run regardless of argument shape", () => {
-    for (const sample of [
-      "this.db.query(sql).run(...args);",
-      "this.db.prepare(buildStatement()).run();",
-      'this.db.exec("PRAGMA optimize");',
-      "this.db.run(someVariable);",
-    ])
-      expect(RAW_DB_CALL.test(sample), `expected RAW_DB_CALL to match: ${sample}`).toBe(true);
+  it("findRawDbCalls catches direct this.db calls regardless of argument shape (AST self-test)", () => {
+    const source = `
+      class Ledger {
+        run() {
+          this.db.query(sql).run(...args);
+          this.db.prepare(buildStatement()).run();
+          this.db.exec("PRAGMA optimize");
+          this.db.run(someVariable);
+        }
+      }
+    `;
+    expect(findRawDbCalls(source).length).toBe(4);
+  });
+
+  it("findRawDbCalls catches SQL executed through an aliased db handle (AST self-test)", () => {
+    const source = `
+      class Ledger {
+        run() {
+          const db = this.db;
+          db.query(dynamicallyComposedSql).run();
+        }
+      }
+    `;
+    expect(findRawDbCalls(source).length).toBe(1);
+  });
+
+  it("findRawDbCalls catches SQL executed through a chained alias of the db handle (AST self-test)", () => {
+    const source = `
+      class Ledger {
+        run() {
+          const raw = this.db;
+          const handle = raw;
+          handle.exec(\`REPLACE INTO prospects(id) VALUES (\${id})\`);
+        }
+      }
+    `;
+    expect(findRawDbCalls(source).length).toBe(1);
+  });
+
+  it("findRawDbCalls catches SQL executed through a destructured method alias, including renames (AST self-test)", () => {
+    const source = `
+      class Ledger {
+        run() {
+          const { query, exec: rawExec } = this.db;
+          query(dynamicSql);
+          rawExec(buildStatement());
+        }
+      }
+    `;
+    expect(findRawDbCalls(source).length).toBe(2);
+  });
+
+  it("findRawDbCalls does not flag the allowed this.db.transaction/close escape hatches (AST self-test)", () => {
+    const source = `
+      class Ledger {
+        run(fn: () => void) {
+          const db = this.db;
+          return db.transaction(fn)();
+        }
+        close() {
+          this.db.close();
+        }
+      }
+    `;
+    expect(findRawDbCalls(source)).toEqual([]);
+  });
+
+  it("findRawDbCalls does not flag unrelated variables named like db methods (AST self-test)", () => {
+    const source = `
+      class Ledger {
+        run() {
+          const query = buildQueryObject();
+          query.run();
+        }
+      }
+    `;
+    expect(findRawDbCalls(source)).toEqual([]);
   });
 });
