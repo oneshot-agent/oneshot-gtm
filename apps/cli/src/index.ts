@@ -212,7 +212,7 @@ demo
 // BEFORE core is imported: by the time these actions run the home is fixed.
 const workspace = program
   .command("workspace")
-  .description("Named isolated installs — one per product you're selling");
+  .description("Named isolated installs, one per product you're selling");
 workspace
   .command("list")
   .description("Show every workspace, the current and the default")
@@ -248,7 +248,7 @@ config
 config
   .command("keys")
   .description(
-    "Set or update API keys (LLM + OneShot wallet + X/Twitter) — saved chmod 600 to the workspace's .env",
+    "Set or update API keys (LLM + OneShot wallet + X/Twitter). Saved to the workspace's .env with chmod 600",
   )
   .action(runOrFail(configKeys));
 config
@@ -797,7 +797,7 @@ find
   .option("--refresh", "re-synthesize prospects that already have an angle", false)
   .option(
     "--cheap",
-    "free evidence tiers only — skip a fresh deepResearchPerson/webRead call",
+    "free evidence tiers only; skips a fresh deepResearchPerson/webRead call",
     false,
   )
   .option("--max-cost-usd <n>", "stop once this much has been billed this run", (v) =>
@@ -846,7 +846,7 @@ find
   )
   .option(
     "--all-statuses",
-    "widen from pending/approved to every row (sent/rejected/expired) — evaluation only",
+    "widen from pending/approved to every row (sent/rejected/expired), for evaluation only",
     false,
   )
   .description(
