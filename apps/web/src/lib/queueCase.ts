@@ -103,3 +103,23 @@ export function personResearchBadge(
     lastDraft.draftedAt < research.researchedAt;
   return stale ? "researched · regenerate to use it" : "researched";
 }
+
+/** Explain an empty case without confusing a missing record with a failed research attempt. */
+export function researchEmptyState(payload: unknown): string | null {
+  const p =
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {};
+  const records = [p.personResearch, p.productResearch].filter((r) => r != null);
+  if (
+    records.some(
+      (r) =>
+        r &&
+        typeof r === "object" &&
+        !Array.isArray(r) &&
+        ["complete", "partial"].includes(String((r as Record<string, unknown>).status)),
+    )
+  )
+    return null;
+  return records.length ? "Research unavailable" : "Not researched yet";
+}

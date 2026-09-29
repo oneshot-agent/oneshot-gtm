@@ -82,7 +82,12 @@ import {
   xHandleFrom,
 } from "../lib/channels.ts";
 import { heldSummary } from "../lib/flagLabels.ts";
-import { caseRows, personResearchBadge, personResearchRows } from "../lib/queueCase.ts";
+import {
+  caseRows,
+  personResearchBadge,
+  personResearchRows,
+  researchEmptyState,
+} from "../lib/queueCase.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
 import { CaseSection, Rule, Sheet } from "../components/ledger/Sheet.tsx";
 import {
@@ -915,6 +920,7 @@ export function QueueRow({
   // rides on the signal label: it is what makes a luma row urgent.
   const signal = queueEvidence(row.playName, row.payload);
   const fitReason = fitReasonFor(row.payload);
+  const emptyResearch = !fitReason ? researchEmptyState(row.payload) : null;
   const when = eventDate
     ? `${humanizeEventDate(eventDate)}${eventPassed ? " · passed" : ""}`
     : null;
@@ -1074,6 +1080,16 @@ export function QueueRow({
           colSpan={7}
           theCase={
             <CaseSection>
+              {emptyResearch && (
+                <div role="note" className="text-[12px] leading-5 text-ink-muted">
+                  <p className="m-0 font-medium">{emptyResearch}</p>
+                  <p className="m-0">
+                    {emptyResearch === "Not researched yet"
+                      ? "No person or product research is saved for this row."
+                      : "No usable person or product research is saved for this row."}
+                  </p>
+                </div>
+              )}
               {!masked && fitReason && (
                 <p className="m-0 text-[13px] leading-5 text-ink-cream-2 [text-wrap:pretty]">
                   {fitReason}
