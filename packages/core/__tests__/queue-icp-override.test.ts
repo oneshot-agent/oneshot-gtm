@@ -103,3 +103,70 @@ describe("human approval of an ICP-rejected row", () => {
     expect(payloadOf(id)["icpVerdict"]).toBe("pass");
   });
 });
+
+describe("human approval of a stored prospect fit rejection", () => {
+  it.each(["human", "machine"] as const)(
+    "handles %s approval without changing the original assessment",
+    (decidedBy) => {
+      const prospectId = ledger.upsertProspect({
+        email: "stored@example.test",
+        name: "Stored Person",
+        source: "test",
+      });
+      ledger.setProspectIcpVerdict(prospectId, "reject", "Stored role mismatch");
+      const id = ledger.enqueueTarget({
+        playName: "luma-events",
+        payload: { email: "stored@example.test" },
+        dedupeKey: "stored",
+        source: "test",
+      })!;
+      ledger.setQueueStatus({ id, status: "approved", decidedBy });
+      if (decidedBy === "human") {
+        expect(payloadOf(id)).toMatchObject({
+          icpVerdict: "pass",
+          icpOverride: { by: "human", verdict: "reject", reason: "Stored role mismatch" },
+        });
+      } else expect(payloadOf(id)).not.toHaveProperty("icpVerdict");
+      expect(ledger.getProspectById(prospectId)?.icp_verdict).toBe("reject");
+    },
+  );
+  it.each(["pass", "unclear"])(
+    "preserves a newer %s verdict over a stored rejection",
+    (verdict) => {
+      const prospectId = ledger.upsertProspect({
+        email: "fresh@example.test",
+        name: "Fresh Person",
+        source: "test",
+      });
+      ledger.setProspectIcpVerdict(prospectId, "reject", "Old assessment");
+      const id = ledger.enqueueTarget({
+        playName: "luma-events",
+        payload: { email: "fresh@example.test", icpVerdict: verdict },
+        dedupeKey: "fresh",
+        source: "test",
+      })!;
+      ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });
+      expect(payloadOf(id)).toEqual({ email: "fresh@example.test", icpVerdict: verdict });
+    },
+  );
+});
+
+it.each(["", "   "])("uses founderEmail for stored fit approval when email is %j", (email) => {
+  const prospectId = ledger.upsertProspect({
+    email: "founder@example.test",
+    name: "Founder",
+    source: "test",
+  });
+  ledger.setProspectIcpVerdict(prospectId, "reject", "Stored founder assessment");
+  const id = ledger.enqueueTarget({
+    playName: "luma-events",
+    payload: { email, founderEmail: "founder@example.test" },
+    dedupeKey: "fallback",
+    source: "test",
+  })!;
+  ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });
+  expect(payloadOf(id)).toMatchObject({
+    icpVerdict: "pass",
+    icpOverride: { reason: "Stored founder assessment" },
+  });
+});

@@ -13,6 +13,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   return {
     ...actual,
     getLedger: () => ({
+      findProspectByEmail: () => null,
       searchQueue: (args: Record<string, unknown>) => {
         searchCalls.push(args);
         return { rows: nextRows, total: null };

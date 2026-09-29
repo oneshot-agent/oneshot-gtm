@@ -545,6 +545,8 @@ export class QueueStore {
     id: number;
     status: QueueStatus;
     notes?: string;
+    /** Stored rejection resolved by Ledger for an explicit human approval. */
+    storedFitReason?: string | null;
     /**
      * Who made this transition. Defaults are per-status, chosen so every
      * existing unannotated caller stays correctly classified:
@@ -602,15 +604,16 @@ export class QueueStore {
       const overrideSql =
         decidedBy === "human"
           ? `, payload_json = CASE
-               WHEN json_valid(payload_json) AND json_extract(payload_json, '$.icpVerdict') = 'reject'
+               WHEN json_valid(payload_json) AND (json_extract(payload_json, '$.icpVerdict') = 'reject'
+                 OR (COALESCE(json_extract(payload_json, '$.icpVerdict'), '') NOT IN ('pass', 'reject', 'unclear') AND $storedFitReason IS NOT NULL))
                THEN json_set(payload_json,
                  '$.icpOverride', json_object(
                    'by', 'human', 'at', $now,
                    'verdict', 'reject',
-                   'reason', json_extract(payload_json, '$.icpVerdictReason')),
+                   'reason', CASE WHEN json_extract(payload_json, '$.icpVerdict') = 'reject' THEN json_extract(payload_json, '$.icpVerdictReason') ELSE $storedFitReason END),
                  '$.icpVerdict', 'pass',
                  '$.icpVerdictReason', 'human override: ' ||
-                   COALESCE(json_extract(payload_json, '$.icpVerdictReason'), 'person gate rejected'))
+                   COALESCE(CASE WHEN json_extract(payload_json, '$.icpVerdict') = 'reject' THEN json_extract(payload_json, '$.icpVerdictReason') ELSE $storedFitReason END, 'person gate rejected'))
                ELSE payload_json END`
           : "";
       const result =
@@ -625,6 +628,9 @@ export class QueueStore {
                 $decision: decision,
                 $decidedBy: decidedBy,
                 $id: input.id,
+                ...(decidedBy === "human"
+                  ? { $storedFitReason: input.storedFitReason ?? null }
+                  : {}),
                 ...(input.notes ? { $notes: input.notes } : {}),
               })
           : this.db

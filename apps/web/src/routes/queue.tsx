@@ -1,3 +1,4 @@
+import { FitHold } from "../components/queue/FitHold.tsx";
 import { ProductResearch } from "../components/queue/ProductResearch.tsx";
 import { Explain } from "../components/primitives/Explain.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -891,6 +892,7 @@ export function QueueRow({
   moveTargets: MoveTarget[];
   busy: boolean;
 }) {
+  const canApproveFit = row.status === "approved" && row.sendHold != null;
   const email = emailFor(row.payload);
   const name = nameFor(row.payload);
   const company = companyFor(row.payload);
@@ -998,6 +1000,7 @@ export function QueueRow({
         <td className="whitespace-nowrap py-[10px] pr-6">
           <div className="flex items-center gap-1.5">
             <Badge tone={statusTone(row.status)}>{row.status}</Badge>
+            {row.sendHold && <Badge tone="blocked">held · fit review</Badge>}
             {!expanded &&
               row.status !== "sent" &&
               row.lastDraft &&
@@ -1025,12 +1028,24 @@ export function QueueRow({
         </td>
         <td className="px-6 py-[10px] text-right" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-end gap-1.5">
-            {(row.status === "pending" ||
+            {(canApproveFit ||
+              row.status === "pending" ||
               row.status === "rejected" ||
               (row.status === "expired" && !isQueueImportInProgress(row))) && (
-              <Button variant="primary" size="sm" disabled={busy} onClick={onApprove} {...readOnly}>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={busy}
+                onClick={onApprove}
+                title={
+                  canApproveFit
+                    ? "Override the saved fit rejection and approve this prospect for sending"
+                    : undefined
+                }
+                {...readOnly}
+              >
                 <Check size={12} />
-                approve
+                {canApproveFit ? "Approve fit" : "approve"}
               </Button>
             )}
             {(row.status === "pending" || row.status === "approved") && (
@@ -1119,6 +1134,7 @@ export function QueueRow({
               sender={row.sender}
               payload={row.payload}
               status={row.status}
+              sendHold={row.sendHold}
               draft={row.lastDraft}
               draftedAt={row.lastDraftedAt}
               generating={generating}
@@ -1153,12 +1169,14 @@ function DraftSection({
   generating,
   isSending,
   prospectId,
+  sendHold,
 }: {
   id: number;
   channel: QueueRowView["channel"];
   sender: QueueRowView["sender"];
   payload: unknown;
   status: QueueStatusView;
+  sendHold?: QueueRowView["sendHold"];
   draft: QueueRowView["lastDraft"];
   draftedAt: string | null;
   generating: boolean;
@@ -1172,6 +1190,7 @@ function DraftSection({
   isSending: boolean;
 }): React.ReactElement {
   const qc = useQueryClient();
+  const { masked } = usePrivacy();
   const regenerate = useMutation({
     mutationFn: (rotateAngle: boolean) => api.regenerateDraft(id, rotateAngle),
     // Persist a localStorage marker so the spinner survives leaving + returning
@@ -1209,6 +1228,12 @@ function DraftSection({
       // the button disappears — instead of leaving a dead-end click to repeat.
       void qc.invalidateQueries({ queryKey: ["queue"] });
       if (err.message.includes("already sent")) toast.success("already sent ✓");
+      else if (err.message.startsWith("Send held for fit review:"))
+        toast.error(
+          masked
+            ? "Send held for fit review. Review the saved assessment before sending."
+            : err.message,
+        );
       else toast.error(`couldn't send · ${err.message}`);
     },
   });
@@ -1466,7 +1491,7 @@ function DraftSection({
   // dedup flags block (regenerate until clean, then send); soft review flags
   // (e.g. stale-event) don't — this button IS their review-then-send override.
   const blocking = draft ? blockingFlags(draft.flags) : [];
-  const cleanDraft = draft != null && blocking.length === 0 && !draft.sent;
+  const cleanDraft = draft != null && blocking.length === 0 && !draft.sent && !sendHold;
   // Soft-flagged but otherwise sendable: held for review, founder is overriding.
   const softHold = cleanDraft && draft != null && draft.flags.length > 0;
   const softHoldDetail = draft?.flags.includes("contacted-elsewhere")
@@ -1483,17 +1508,25 @@ function DraftSection({
       onClick={() => send.mutate()}
       {...readOnly}
       title={
-        softHold
-          ? softHoldDetail
-          : cleanDraft
-            ? "Send this prospect now — sends the reviewed draft, as-is"
-            : draft == null
-              ? "Generate a draft first, then send it"
-              : "Draft has lint flags — regenerate to clear them, then send"
+        sendHold
+          ? "Review this person’s fit before sending; regenerating will not clear this hold"
+          : softHold
+            ? softHoldDetail
+            : cleanDraft
+              ? "Send this prospect now — sends the reviewed draft, as-is"
+              : draft == null
+                ? "Generate a draft first, then send it"
+                : "Draft has lint flags — regenerate to clear them, then send"
       }
     >
       {sending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
-      {sending ? "Sending…" : softHold ? "Send anyway" : "Send now"}
+      {sending
+        ? "Sending…"
+        : sendHold
+          ? "Held · fit review"
+          : softHold
+            ? "Send anyway"
+            : "Send now"}
     </Button>
   ) : null;
 
@@ -1513,7 +1546,12 @@ function DraftSection({
             {draftButton}
           </>
         }
-        below={linkedinReplyEditor}
+        below={
+          <>
+            {" "}
+            {sendHold && <FitHold hold={sendHold} />} {linkedinReplyEditor}{" "}
+          </>
+        }
       />
     );
   }
@@ -1532,6 +1570,7 @@ function DraftSection({
   const sendable = showSend && cleanDraft && !sending;
   const researchWarning = researchBadge !== "researched" ? researchBadge : null;
   const hasDraftDetails =
+    sendHold ||
     (!draft.sent && draft.flags.length > 0) ||
     draft.receiptIds.length > 0 ||
     isStalePostSend ||
@@ -1550,6 +1589,7 @@ function DraftSection({
       stateLine={
         hasDraftDetails ? (
           <>
+            {sendHold && <FitHold hold={sendHold} />}
             {!draft.sent && draft.flags.length > 0 && (
               <DraftStateLine sent={false} flags={draft.flags} />
             )}

@@ -2462,7 +2462,31 @@ export class Ledger {
      */
     decidedBy?: "human" | "machine";
   }): void {
-    this.queue.setQueueStatus(input);
+    let storedFitReason: string | null = null;
+    if (input.status === "approved" && input.decidedBy !== "machine") {
+      const row = this.queue.getQueueRow(input.id);
+      if (row && (row.channel == null || row.channel === "email")) {
+        let payload: Record<string, unknown> | null = null;
+        try {
+          payload = JSON.parse(row.payload_json);
+        } catch {
+          /* Legacy malformed payload. */
+        }
+        if (payload && !["pass", "reject", "unclear"].includes(String(payload.icpVerdict))) {
+          const email =
+            typeof payload.email === "string" && payload.email.trim()
+              ? payload.email.trim()
+              : payload.founderEmail;
+          const prospect = typeof email === "string" ? this.getProspectByEmail(email) : null;
+          if (prospect?.icp_verdict === "reject") {
+            storedFitReason = prospect.icp_verdict_reason ?? "person gate rejected";
+          }
+        }
+      }
+    }
+    // Persist a row-local human override. Keep the original prospect assessment
+    // intact; sendDraftedEmail honors the fresh queue verdict first.
+    this.queue.setQueueStatus({ ...input, storedFitReason });
   }
 
   /**
