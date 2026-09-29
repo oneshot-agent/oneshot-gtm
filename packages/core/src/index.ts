@@ -43,6 +43,7 @@ export * from "./reply-learning-store.ts";
 export * from "./linkedin-sdk.ts";
 export * from "./linkedin-error.ts";
 export * from "./linkedin-inbox.ts";
+export * from "./newsfeed.ts";
 
 export * from "./direct-mail.ts";
 export * from "./mail-address.ts";
