@@ -12,6 +12,7 @@ import {
   listInbox,
   loadConfig,
   logEvent,
+  readPersonHalf,
   parallelMap,
   cadenceGoalId,
   receiptUrlForId,
@@ -2195,10 +2196,31 @@ export function prospectDemoDay(
   }
 }
 
+/** ROLE and COMPANY FACTS for a follow-up, from the prospect row and its researched dossier. */
+export function prospectContextLines(prospect: {
+  title?: string | null;
+  dossier_json?: string | null;
+}): string[] {
+  const lines: string[] = [];
+  if (prospect.title?.trim()) lines.push(`ROLE: ${prospect.title.trim()}`);
+  const half = readPersonHalf(prospect.dossier_json);
+  const facts =
+    half && typeof half === "object"
+      ? (half as { companyFacts?: unknown }).companyFacts
+      : undefined;
+  if (typeof facts === "string" && facts.trim()) lines.push(`COMPANY FACTS: ${facts.trim()}`);
+  return lines;
+}
+
 export function buildFollowUpEmail(opts: {
   playName: string;
   promptName: string;
   contextLines: string[];
+  /**
+   * Add the prospect's role and researched company facts. Off by default so
+   * plays whose follow-ups only re-ask keep byte-identical prompts.
+   */
+  prospectContext?: boolean;
 }): SequenceStep["builder"] {
   return async (ctx: CadenceContext) => {
     const system = loadPrompt(opts.promptName, { humanizer: "followup" }) + signatureDirective();
@@ -2243,6 +2265,7 @@ export function buildFollowUpEmail(opts: {
       `EMAIL: ${ctx.prospect.email ?? ""}`,
       `COMPANY: ${ctx.prospect.company ?? "(unknown)"}`,
       ...opts.contextLines,
+      ...(opts.prospectContext ? prospectContextLines(ctx.prospect) : []),
       ...(demoDayText ? [demoDayText] : []),
       ...(priorBlock ? ["", priorBlock] : []),
       ...(angleBlock ? ["", angleBlock] : []),

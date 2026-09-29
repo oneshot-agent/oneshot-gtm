@@ -2,6 +2,7 @@ import { emailDomain } from "./_lib.ts";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
 import { designPartnerLoiMetadata } from "./_metadata.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
+import { recentPostsBlock } from "./_recent-posts.ts";
 
 const PLAY_NAME = "design-partner-loi";
 
@@ -117,15 +118,19 @@ const designPartnerLoiDef: EmailPlayDef<DesignPartnerLoiTarget> = {
       enrichSlice: 3500,
     });
   },
-  buildInputBlock: (t, prep, cfg) =>
-    [
+  buildInputBlock: (t, prep, cfg) => {
+    const posts = recentPostsBlock(t as unknown as Record<string, unknown>);
+    return [
       `FOUNDER: ${cfg.founderName}`,
       `PRODUCT: ${cfg.productOneLiner}`,
       `PROSPECT: ${t.name} at ${t.company}`,
+      ...(t.title ? [`ROLE: ${t.title}`] : []),
       `BUYER TYPE: ${t.buyerType}`,
       `YOUR EDGE: ${t.yourEdge}`,
       `DOSSIER:\n${prep.dossier || "(dry-run)"}`,
-    ].join("\n"),
+      ...(posts ? ["", posts] : []),
+    ].join("\n");
+  },
   prospectMeta: (t) => ({
     name: t.name,
     email: t.email,
@@ -143,10 +148,9 @@ export function runDesignPartnerLoi(
   return runEmailPlay(designPartnerLoiDef, opts);
 }
 
-// Ask ladder: day-0 asks for the conversation; day-6 steps up to a scoped
-// pilot slot; day-14 steps up again to the non-binding LOI itself. Each rung
-// is a bigger ask than the last, which is the whole point of the ladder —
-// never re-ask the same thing twice.
+// Ask ladder, one rung per touch: day 0 asks whether they own the problem;
+// day ~6 offers the design-partner conversation; day ~14 proposes a scoped
+// pilot and closes. Each touch adds substance, not just a bigger ask.
 registerSequence({
   playName: PLAY_NAME,
   steps: [
@@ -154,28 +158,29 @@ registerSequence({
       dayOffset: 6,
       channel: "email",
       breakOnReply: true,
-      label: "scoped pilot ask",
+      label: "design-partner offer",
       builder: buildFollowUpEmail({
         playName: PLAY_NAME,
-        promptName: "design-partner-loi-pilot-followup",
+        promptName: "design-partner-loi-offer-followup",
         contextLines: [
-          `PLAY: design-partner-loi. Step 2 of the ask ladder: no reply to the conversation ask, ` +
-            `so step up to proposing a scoped design-partner pilot slot instead.`,
+          `PLAY: design-partner-loi. Step 2 of the ask ladder: the first email asked whether ` +
+            `they own the problem; now offer the design-partner conversation.`,
         ],
+        prospectContext: true,
       }),
     },
     {
       dayOffset: 8, // ~14 days from enrollment
       channel: "email",
       breakOnReply: true,
-      label: "loi ask",
+      label: "scoped pilot + close",
       builder: buildFollowUpEmail({
         playName: PLAY_NAME,
-        promptName: "design-partner-loi-loi-followup",
+        promptName: "design-partner-loi-pilot-followup",
         contextLines: [
-          `PLAY: design-partner-loi. Final rung of the ask ladder: propose the non-binding LOI ` +
-            `directly, framed as the lowest-commitment way to lock in early access.`,
+          `PLAY: design-partner-loi. Final rung: propose one scoped pilot and close the thread.`,
         ],
+        prospectContext: true,
       }),
     },
   ],

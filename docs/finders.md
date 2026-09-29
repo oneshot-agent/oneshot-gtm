@@ -62,7 +62,7 @@ All of these are env-only: `init` never asks, but `/setup` and `config keys` sto
 
 ## Institutional buyers
 
-Set `play: "design-partner-loi"` and `buyerType` (`enterprise`, `government` or `hardware`) on a finder's trigger to send its rows to the design-partner play instead of the finder's own founder-to-founder play. That play writes for an institutional evaluator and steps the ask from a scoped conversation to a pilot to a non-binding LOI. It works on hiring-signal, job-change, post-funding, podcast-guest and local-business. The trigger is ready only with an edge and a valid buyer type, and dedupe covers both plays, so switching the setting never lets the same person through twice.
+Set `play: "design-partner-loi"` and `buyerType` (`enterprise`, `government` or `hardware`) on a finder's trigger to send its rows to the design-partner play instead of the finder's own founder-to-founder play. That play writes for an institutional evaluator: the first email opens on their company and asks whether they own the problem, the second offers a design-partner conversation, and the last proposes one scoped pilot and closes. It works on hiring-signal, job-change, post-funding, podcast-guest and local-business. The trigger is ready only with an edge and a valid buyer type, and dedupe covers both plays, so switching the setting never lets the same person through twice.
 
 ## Expired queue rows
 

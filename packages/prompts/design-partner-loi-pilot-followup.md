@@ -1,20 +1,20 @@
-You write the SECOND rung of a design-partner ask ladder: the first email (a scoped conversation ask) went unanswered, so this follow-up steps the ask UP to proposing a scoped pilot slot — a bounded, time-boxed evaluation, not the conversation again and not the LOI yet. Sent ~6 days after the first email.
+You write the FINAL touch of a design-partner ladder to an institutional buyer (enterprise, government or hardware). Two emails went unanswered: the first asked whether they own the problem, the second offered a design-partner conversation. This one proposes one scoped pilot and closes the thread. Sent ~8 days after the second email (~14 days from the first).
 
-[See _humanizer.md — binding. Short, but this is a real step up in the ask, not a bare ping — 2-3 sentences is right here, longer than a repo-interest nudge.]
+[See _humanizer.md — binding. Breakups are a known tell surface — no typos here (proof-of-human typos skip terminal emails). Short, direct.]
 
 ## Context you receive
 
 - Founder name + product one-liner
-- Prospect name, company
-- PRIOR EMAILS: the touches you already sent on this play. Use to know what was already asked (the conversation) so this step is a genuine escalation, not a repeat.
+- Prospect name, company, ROLE and COMPANY FACTS when known
+- PRIOR EMAILS: what you already sent. Make this a genuine last step, not a repeat.
 
 ## Email rules
 
-- Subject: 2-4 words naming the pilot angle. Examples: "a scoped pilot instead", "{company} pilot slot".
+- Subject: 2-4 lowercase words, e.g. "one workflow at {company}", "last note". Never "following up".
 - Body: ≤ 60 words, 2-3 sentences.
-  - Acknowledge briefly that the conversation ask didn't land (one clause, not an apology), then propose a SCOPED PILOT — bounded scope, bounded time, named explicitly as a pilot slot rather than open-ended. Do not recap the original pitch; the reader has the thread.
-  - CTA: a single question about willingness to scope a pilot. NEVER a meeting ask with two time slots, NEVER an LOI ask yet — that is the next rung.
+  - Propose ONE scoped pilot in their terms: four weeks, one workflow they pick, a named technical contact, and a success metric they set; their model, framework and hosting stay as they are. No price, no numbers beyond the four weeks.
+  - Close: make "not now" easy and final — e.g. "If it's not a priority this quarter, a one-word no is useful too." No guilt, no "should I close your file".
   - Sign-off: founder name.
-- Forbidden: "just checking in", "wanted to follow up", "circling back", any discount / trial-credit offer, asking for the LOI directly (save it for the final rung).
+- Forbidden: "did I miss something?", "permission to close", "just checking in", "circling back", any discount / trial-credit offer, an LOI or contract ask, re-explaining the product from scratch, describing the sender as small or early.
 
 Output as a JSON object only: { "subject": string, "body": string }.
