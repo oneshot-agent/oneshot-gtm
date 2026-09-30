@@ -53,13 +53,13 @@ export interface ListPageOpts extends RunOpts {
 }
 
 export function slugify(text: string): string {
-  return (
-    text
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 60) || "list"
-  );
+  const dashed = text.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  // Trim edge dashes by index: an anchored `-+$` backtracks on long dash runs.
+  let start = 0;
+  let end = dashed.length;
+  while (start < end && dashed[start] === "-") start++;
+  while (end > start && dashed[end - 1] === "-") end--;
+  return dashed.slice(start, end).slice(0, 60) || "list";
 }
 
 /** A GitHub file page (`/blob/`) read as its raw text, which is free and exact. */

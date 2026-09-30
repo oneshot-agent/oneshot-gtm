@@ -59,7 +59,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
         ...input.markdown.matchAll(/\| \[([^\]]+)\]\(([^)]+)\) \| ([^|]*)\| ([^|]*)\|/g),
       ].map((m) => ({
         name: m[1],
-        website: m[2]!.includes("github.com") ? null : m[2],
+        website: new URL(m[2]!).hostname === "github.com" ? null : m[2],
         contacts: m[3]!.trim() ? [{ github: m[3]!.trim().replace(/^@/, "") }] : [],
         context: m[4]!.trim() || null,
       }));
