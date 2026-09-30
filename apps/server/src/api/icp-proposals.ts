@@ -67,7 +67,6 @@ export function approveIcpProposalRoute(req: Request, params: Record<string, str
   if ("error" in decided) return jsonResponse({ error: decided.error }, 409, req);
   try {
     saveConfig({ ...cfg, icpOneLiner: decided.view.proposedIcp });
-    ledger.icpProposals.dismissStalePending(now);
   } catch (err) {
     ledger.icpProposals.revertToPending(id);
     logEvent(
@@ -77,6 +76,7 @@ export function approveIcpProposalRoute(req: Request, params: Record<string, str
     );
     return jsonResponse({ error: "could not update the active ICP; try again" }, 500, req);
   }
+  ledger.icpProposals.dismissStalePending(now);
   const body: IcpProposalDecisionResult = { ok: true, icpOneLiner: decided.view.proposedIcp };
   return jsonResponse(body, 200, req);
 }
