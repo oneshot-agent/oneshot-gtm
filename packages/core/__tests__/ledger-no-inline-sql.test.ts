@@ -15,18 +15,23 @@
  * 1. `findRawDbCalls` is AST-based (via the TypeScript compiler API), not
  *    text-pattern-based: it resolves every local alias of `this.db` —
  *    `const db = this.db`, chained aliases (`const raw = db; raw.query(...)`),
- *    and destructured method aliases (`const { query } = this.db`, including
- *    renames like `const { query: q } = this.db`) — and flags a call to
- *    `.query(`/`.prepare(`/`.exec(`/`.run(` through ANY of them, regardless
- *    of what the SQL argument looks like (literal, variable, concatenation,
- *    CTE, `REPLACE INTO`, `PRAGMA`, any case). Round-2 review found the
- *    prior version of this check was a `this\.db\.` text-prefix regex, so it
- *    only caught the literal spelling `this.db.query(...)` and missed SQL
- *    executed through an aliased handle (`const db = this.db; db.query(x)`)
- *    or a destructured method reference (`const { query } = this.db;
- *    query(x)`) entirely — exactly the gap an alias-resolving AST walk
- *    closes, because it does not care what name the call site uses, only
- *    whether that name provably traces back to `this.db`.
+ *    destructured method aliases (`const { query } = this.db`, including
+ *    renames like `const { query: q } = this.db`), and direct (non-
+ *    destructured) method-reference aliases (`const q = this.db.query;
+ *    q(sql)`) — and flags a call to `.query(`/`.prepare(`/`.exec(`/`.run(`
+ *    through ANY of them, regardless of what the SQL argument looks like
+ *    (literal, variable, concatenation, CTE, `REPLACE INTO`, `PRAGMA`, any
+ *    case). Round-2 review found the prior version of this check was a
+ *    `this\.db\.` text-prefix regex, so it only caught the literal spelling
+ *    `this.db.query(...)` and missed SQL executed through an aliased handle
+ *    (`const db = this.db; db.query(x)`) or a destructured method reference
+ *    (`const { query } = this.db; query(x)`) entirely. Round-3 review found
+ *    the alias resolution added for round 2 still missed a direct method-
+ *    reference alias (`const q = this.db.query; q(x)`, no destructuring) —
+ *    closed by also recognizing `const <ident> = <known db alias>.<method>`
+ *    as binding `<ident>` into the same method-alias map destructuring uses.
+ *    None of this cares what name the call site uses, only whether that name
+ *    provably traces back to `this.db`.
  * 2. `noSqlKeywordsInLiterals` is the original keyword scan, kept as
  *    defense-in-depth against any indirection the AST walk doesn't name
  *    (e.g. SQL text assembled from an import rather than a local alias).
@@ -161,6 +166,23 @@ function findRawDbCalls(source: string): RawDbCallSite[] {
                 : undefined;
           if (sourceMethodName && DB_EXEC_METHODS.has(sourceMethodName)) {
             const local = element.name.text;
+            if (dbMethodAliases.get(local) !== sourceMethodName) {
+              dbMethodAliases.set(local, sourceMethodName);
+              changed = true;
+            }
+          }
+        }
+      }
+      // const q = this.db.query;  OR  const q = <known alias>.query;
+      // (a direct method-reference alias, not destructured) — same effect as the
+      // destructured form above: calling the bare identifier later is equivalent
+      // to calling `this.db.<method>(...)`.
+      if (ts.isIdentifier(decl.name)) {
+        const init = unwrap(decl.initializer);
+        if (isMemberAccess(init) && isKnownDbAlias(init.expression)) {
+          const sourceMethodName = memberName(init);
+          if (sourceMethodName && DB_EXEC_METHODS.has(sourceMethodName)) {
+            const local = decl.name.text;
             if (dbMethodAliases.get(local) !== sourceMethodName) {
               dbMethodAliases.set(local, sourceMethodName);
               changed = true;
@@ -309,6 +331,31 @@ describe("ledger.ts has no inline SQL (issue #751)", () => {
       }
     `;
     expect(findRawDbCalls(source).length).toBe(2);
+  });
+
+  it("findRawDbCalls catches SQL executed through a direct method-reference alias, not destructured (AST self-test, round-3 finding)", () => {
+    const source = `
+      class Ledger {
+        run() {
+          const q = this.db.query;
+          q(dynamicallyComposedSql).run();
+        }
+      }
+    `;
+    expect(findRawDbCalls(source).length).toBe(1);
+  });
+
+  it("findRawDbCalls catches a direct method-reference alias through a chained db-object alias (AST self-test)", () => {
+    const source = `
+      class Ledger {
+        run() {
+          const db = this.db;
+          const runIt = db.run;
+          runIt(dynamicallyComposedSql);
+        }
+      }
+    `;
+    expect(findRawDbCalls(source).length).toBe(1);
   });
 
   it("findRawDbCalls catches element-access, computed-key and call/apply/bind forms (AST self-test)", () => {
