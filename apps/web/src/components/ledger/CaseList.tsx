@@ -1,6 +1,7 @@
 import { ChevronRight, ExternalLink } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 import { cn } from "../../lib/cn.ts";
+import { usePrivacy } from "../../lib/privacy.tsx";
 import type { CaseRow } from "../../lib/queueCase.ts";
 
 /**
@@ -64,15 +65,21 @@ export function Disclosure({
   summary,
   children,
   className,
+  onToggle,
 }: {
   label: string;
   /** Something to sit before the label on the summary line (a chip). */
   summary?: ReactNode;
   children: ReactNode;
   className?: string;
+  /** Called with the new open state, e.g. to load the body only once it is shown. */
+  onToggle?: (open: boolean) => void;
 }) {
   return (
-    <details className={cn("group/disclosure text-ink-faint", className)}>
+    <details
+      className={cn("group/disclosure text-ink-faint", className)}
+      onToggle={onToggle ? (e) => onToggle(e.currentTarget.open) : undefined}
+    >
       <summary className="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
         {summary}
         <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint group-hover/disclosure:text-ink-cream-2">
@@ -90,6 +97,10 @@ export function Disclosure({
 
 /** The row's raw payload, behind a disclosure at the foot of the case. */
 export function PayloadJson({ value }: { value: unknown }) {
+  // The payload holds the person research and the finder's free text, which
+  // the structured masking cannot reach: privacy mode hides it whole.
+  const { masked } = usePrivacy();
+  if (masked) return null;
   return (
     <Disclosure label="payload json">
       <pre className="mt-2 max-h-[300px] overflow-auto rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3 font-mono text-[11.5px] leading-[1.55] text-ink-cream-2">

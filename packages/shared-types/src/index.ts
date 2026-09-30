@@ -678,6 +678,71 @@ export interface ProspectTimelineEvent {
 }
 
 /** GET /api/queue/:id: everything the /prospects detail drawer shows. */
+/** One post by (or reposted by) a prospect, from research or the newsfeed capture. */
+export interface DossierPostView {
+  platform: string | null;
+  content: string | null;
+  url: string | null;
+  postedAt: string | null;
+  likes: number | null;
+  replies: number | null;
+  shares: number | null;
+  /** Someone else's words ("RT @handle: …"). */
+  isRepost: boolean;
+  source: "research" | "newsfeed";
+}
+
+export interface DossierRoleView {
+  company: string;
+  title: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  current: boolean;
+}
+
+export interface DossierEducationView {
+  school: string;
+  degree: string | null;
+  period: string | null;
+}
+
+/**
+ * `GET /api/queue/:id/dossier`: the full cached person research behind a row,
+ * which the row payload only carries a bounded summary of, plus every cached
+ * recent post. Read-only: it never buys research or a newsfeed.
+ */
+export interface QueueDossierView {
+  /** complete = the full research cache entry was found; summary-only = only the row's bounded summary. */
+  status: "complete" | "summary-only" | "none";
+  researchedAt: string | null;
+  person: {
+    fullName: string | null;
+    title: string | null;
+    company: string | null;
+    location: string | null;
+    summary: string | null;
+    linkedinUrl: string | null;
+    emails: string[];
+    phones: string[];
+    skills: string[];
+  };
+  experience: DossierRoleView[];
+  education: DossierEducationView[];
+  company: {
+    name: string | null;
+    domain: string | null;
+    industry: string | null;
+    location: string | null;
+    size: string | null;
+    fundingStage: string | null;
+    description: string | null;
+  } | null;
+  /** Newest first, deduped across both sources. */
+  posts: DossierPostView[];
+  /** When the newsfeed was captured, or null when it never ran (it runs on approval). */
+  newsfeedFetchedAt: string | null;
+}
+
 export interface QueueRowDetail {
   row: ProspectBrowseRow;
   prospect: (ProspectLinkView & { linkedinUrl: string | null; createdAt: string }) | null;

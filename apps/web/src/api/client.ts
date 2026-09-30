@@ -12,6 +12,7 @@ import type {
 import type { InboxArchiveRequest, InboxArchiveResult } from "@oneshot-gtm/shared-types";
 import type {
   AddProspectResult,
+  QueueDossierView,
   BusinessMailAddress,
   CadencesResult,
   CadenceStopReason,
@@ -450,6 +451,7 @@ export const api = {
         )
       : getJson<ProspectSearchResponse>(`/queue/search?${toApiQuery(search)}`),
   queueRowDetail: (id: number) => getJson<QueueRowDetail>(`/queue/${id}`),
+  queueDossier: (id: number) => getJson<QueueDossierView>(`/queue/${id}/dossier`),
   resolveQueueContact: (id: number) =>
     postJson<{ ok: boolean; payload: Record<string, unknown> }>(`/queue/${id}/resolve-contact`, {}),
   approveQueue: (id: number) => postJson<{ ok: boolean }>(`/queue/${id}/approve`, {}),
