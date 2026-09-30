@@ -125,6 +125,17 @@ describe("runDesignPartnerLoi", () => {
     await runDesignPartnerLoi({ dryRun: true, targets: [{ ...base }] });
     expect(calls.llmInputBlocks[0]).toContain("BUYER TYPE: enterprise");
     expect(calls.llmInputBlocks[0]).toContain("PROSPECT: Jamie Buyer at Enterprise Corp");
+    expect(calls.llmInputBlocks[0]).not.toContain("SIGNAL:");
+  });
+
+  it("gives the writer the list a list-page row came from", async () => {
+    await runDesignPartnerLoi({
+      dryRun: true,
+      targets: [{ ...base, signal: "runs Backstage", signalContext: "developer portal" }],
+    });
+    expect(calls.llmInputBlocks[0]).toContain(
+      "SIGNAL: runs Backstage (the list says: developer portal)",
+    );
   });
 
   it("enrolls the ask-ladder cadence on a real send", async () => {

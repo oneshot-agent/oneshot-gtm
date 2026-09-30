@@ -62,7 +62,17 @@ All of these are env-only: `init` never asks, but `/setup` and `config keys` sto
 
 ## Institutional buyers
 
-Set `play: "design-partner-loi"` and `buyerType` (`enterprise`, `government` or `hardware`) on a finder's trigger to send its rows to the design-partner play instead of the finder's own founder-to-founder play. That play writes for an institutional evaluator: the first email opens on their company and asks whether they own the problem, the second offers a design-partner conversation, and the last proposes one scoped pilot and closes. It works on hiring-signal, job-change, post-funding, podcast-guest and local-business. The trigger is ready only with an edge and a valid buyer type, and dedupe covers both plays, so switching the setting never lets the same person through twice.
+Set `play: "design-partner-loi"` and `buyerType` (`enterprise`, `government` or `hardware`) on a finder's trigger to send its rows to the design-partner play instead of the finder's own founder-to-founder play. That play writes for an institutional evaluator: the first email opens on their company and asks whether they own the problem, the second offers a design-partner conversation, and the last proposes one scoped pilot and closes. It works on hiring-signal, job-change, post-funding, podcast-guest, local-business and list-page (which routes only there). The trigger is ready only with an edge and a valid buyer type, and dedupe covers both plays, so switching the setting never lets the same person through twice.
+
+## List pages
+
+`list-page` turns any public page that lists companies into a source: an open-source project's `ADOPTERS` file, a conference sponsor page, a vendor's customers page. Each entry in `sources` is `{url, signal}`, where `signal` says in a few words what being on the list means, for example `runs Backstage`.
+
+- A GitHub file link (`/blob/`) is read raw for free; any other page costs one web read. The companies are extracted once per version of the page and cached, so an unchanged list costs nothing to re-read.
+- Companies are worked in page order, `limit` per run, skipping any already queued. For each, the finder finds the company's decision owner from its domain (people search, the person gate, then email). When the page gives no website, one company search looks the domain up by name.
+- People the page names, often the engineers who set the tool up, are kept on the row as context and never emailed.
+- Every row carries the signal and the page's own line about that company. An angle in `yourEdge` can open on it (_For a company that runs Backstage —_), and the design-partner email may use it as its hook, stated as the public fact it is.
+- For now it routes only to `design-partner-loi`, so it needs `play`, `buyerType` and `yourEdge` to be ready.
 
 ## Expired queue rows
 

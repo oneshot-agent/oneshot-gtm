@@ -306,6 +306,8 @@ const NOT_EVIDENCE = new Set<string>([
   "emailOverride",
   // Stamped month; the computed demoDay line says whether it has passed.
   "demoDayMonth",
+  // list-page: people the source page names (context for a human, not fit).
+  "listContact",
 ]);
 
 /**

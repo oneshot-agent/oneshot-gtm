@@ -25,6 +25,7 @@ import { runLocalRegistryFinder } from "./local-registry.ts";
 import type { SocrataPortalConfig } from "./_registry-sources.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
 import { runPostFundingFinder } from "./post-funding.ts";
+import { runListPageFinder, type ListPageSource } from "./list-page.ts";
 import { runShowHnFinder } from "./show-hn.ts";
 import { runXRepostersFinder } from "./x-reposters.ts";
 import type { XSeed } from "./_x-types.ts";
@@ -218,6 +219,25 @@ export const DEFAULT_ACCELERATORS: Array<{ id: string; recent?: number }> = [
   { id: "hf0" },
   { id: "a16z-speedrun" },
 ];
+
+/** `list-page` sources that can run: an http(s) URL and a non-empty signal each. */
+export function listPageSources(cfg: Record<string, unknown>): ListPageSource[] {
+  const raw = Array.isArray(cfg["sources"]) ? (cfg["sources"] as unknown[]) : [];
+  const out: ListPageSource[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    const url = typeof r["url"] === "string" ? r["url"].trim() : "";
+    const signal = typeof r["signal"] === "string" ? r["signal"].trim() : "";
+    if (!signal || !/^https?:\/\//i.test(url)) continue;
+    try {
+      out.push({ url: new URL(url).toString(), signal });
+    } catch {
+      // not a URL: skipped, readiness reports none usable
+    }
+  }
+  return out;
+}
 
 export const TRIGGERS: TriggerSpec[] = [
   {
@@ -857,6 +877,49 @@ export const TRIGGERS: TriggerSpec[] = [
         ...(typeof cfg["buyerType"] === "string" ? { buyerType: cfg["buyerType"] as string } : {}),
       });
     },
+  },
+  {
+    name: "list-page",
+    defaultIntervalMs: 7 * 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      ...RESEARCH_DEFAULT,
+      sources: [] as ListPageSource[],
+      play: "design-partner-loi",
+      buyerType: "",
+      yourEdge: "",
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    configBrief:
+      "Turns any public page that lists companies into a source: an open-source project's ADOPTERS file, a conference sponsor page, a vendor's customers page. `sources` is a list of `{url, signal}`: `signal` says in a few words what being on the list means (e.g. `runs Backstage`), and every row carries it plus the page's own line about that company, so an angle can open with who it fits on that fact. A GitHub file URL (`/blob/`) is read raw for free; any other page costs one webRead. Companies are extracted once per page version and cached, then worked `limit` per run in page order: the company's decision owner is found from its domain (people search → ICP gate → email); people the page names are kept as context, never emailed. Enterprise only for now: `play` must be `design-partner-loi` with `buyerType` (`enterprise` | `government` | `hardware`) and `yourEdge` (REQUIRED: `//`-separated angles, each opening with who it fits; an angle can key on the signal, e.g. *For a company that runs Backstage —*). `limit` (companies per run, default 25), `maxCostUsd`.",
+    readiness: (cfg) => {
+      const sources = listPageSources(cfg);
+      if (sources.length === 0) {
+        return {
+          ready: false,
+          reason:
+            "add `sources`: at least one `{url, signal}` (an http(s) page and what being on it means)",
+        };
+      }
+      if (cfg["play"] !== "design-partner-loi") {
+        return {
+          ready: false,
+          reason: "set `play` to `design-partner-loi` (the only route list-page supports)",
+        };
+      }
+      return checkPlayRouteReadiness(cfg, "yourEdge") ?? { ready: true };
+    },
+    run: (cfg) =>
+      runListPageFinder({
+        dryRun: false,
+        sources: listPageSources(cfg),
+        yourEdge: typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "",
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+        ...(typeof cfg["play"] === "string" ? { play: cfg["play"] as string } : {}),
+        ...(typeof cfg["buyerType"] === "string" ? { buyerType: cfg["buyerType"] as string } : {}),
+      }),
   },
   {
     name: "x-reposters",
