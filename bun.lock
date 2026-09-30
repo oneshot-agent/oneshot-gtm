@@ -44,7 +44,7 @@
         "oneshot-gtm-server": "./dist/bin.mjs",
       },
       "dependencies": {
-        "@oneshot-agent/sdk": "0.38.0",
+        "@oneshot-agent/sdk": "0.43.0",
         "open": "^11.0.0",
         "pdf-lib": "^1.17.1",
       },
@@ -95,7 +95,7 @@
       "name": "@oneshot-gtm/core",
       "version": "0.9.0",
       "dependencies": {
-        "@oneshot-agent/sdk": "0.38.0",
+        "@oneshot-agent/sdk": "0.43.0",
         "imapflow": "^2.0.2",
         "mailparser": "^3.9.24",
         "nodemailer": "^10.0.3",
@@ -301,7 +301,7 @@
 
     "@noble/hashes": ["@noble/hashes@1.3.2", "", {}, "sha512-MVC8EAQp7MvEcm30KWENFjgR+Mkmf+D189XJTkFIlwohU5hcBbn1ZkKq7KVTi2Hme3PMGF390DaL52beVrIihQ=="],
 
-    "@oneshot-agent/sdk": ["@oneshot-agent/sdk@0.38.0", "", { "dependencies": { "ethers": "6.16.0" }, "peerDependencies": { "@coinbase/cdp-sdk": ">=1.0.0", "typescript": ">=5.0.0" }, "optionalPeers": ["@coinbase/cdp-sdk", "typescript"], "bin": { "oneshot-verify-receipt": "dist/bin/verify-receipt.js" } }, "sha512-97kLk7hmh78tgmwzt98pMMtv1084LXWwc/i+Vs+yedts9L3BUVDNvEV0+hLa9DUP0T41ujtWZjJeXLdoGei1Fg=="],
+    "@oneshot-agent/sdk": ["@oneshot-agent/sdk@0.43.0", "", { "dependencies": { "ethers": "6.16.0" }, "peerDependencies": { "@coinbase/cdp-sdk": ">=1.0.0", "typescript": ">=5.0.0" }, "optionalPeers": ["@coinbase/cdp-sdk", "typescript"], "bin": { "oneshot-verify-receipt": "dist/bin/verify-receipt.js" } }, "sha512-eo9xWzHL+53w5AHEPcqo6KtIb7GnDRVqNQp61iRTThVp62l5zjwUNFadafM9YKmC5dgDXVoPJvGKOIjjwZzbwQ=="],
 
     "@oneshot-gtm/core": ["@oneshot-gtm/core@workspace:packages/core"],
 
