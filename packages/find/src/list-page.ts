@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
-import { getLedger, logEvent, webRead } from "@oneshot-gtm/core";
+import { getLedger, logEvent, type PersonResult, webRead } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { sanitizeCompanyDomain } from "./_accelerator-search-adapter.ts";
-import { icpFields, resolveVerifyEnrichQualify } from "./_contact.ts";
+import { icpFields, type QualifiedContact, resolveVerifyEnrichQualify } from "./_contact.ts";
 import { isDuplicate } from "./_dedupe.ts";
 import { resolveIcp } from "./_filter.ts";
 import { buildDesignPartnerLoiPayload, dedupePlayNames, resolvePlayRoute } from "./_play-route.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection } from "./_qualify.ts";
-import { safeCompanySearch } from "./_sdk-safe.ts";
+import { safeCompanySearch, safePeopleSearch } from "./_sdk-safe.ts";
 import type { FinderResult, ListPageCompany, RunOpts } from "./_types.ts";
 
 /**
@@ -47,6 +47,14 @@ export interface ListPageOpts extends RunOpts {
   sources: ListPageSource[];
   /** The angles for design-partner-loi (`//`-separated). */
   yourEdge?: string;
+  /**
+   * Titles to look for at each company, most wanted first (e.g. "Head of AI
+   * Platform", "VP Platform Engineering"). Set: one people search per company
+   * scoped to these titles, candidates tried in this order. Empty: the
+   * domain-only pick of any senior title (which at a large company can land
+   * on PR or recruiting).
+   */
+  jobTitles?: string[];
   /** Must be `design-partner-loi` in this version. */
   play?: string;
   buyerType?: string;
@@ -204,6 +212,95 @@ export async function extractListPage(
   return unique;
 }
 
+/** Candidates tried per company before the company is recorded as a miss. */
+const MAX_OWNER_ATTEMPTS = 3;
+
+function personName(p: PersonResult): string | null {
+  const full = p.full_name?.trim() || `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim();
+  return full || null;
+}
+
+/**
+ * People search results ordered by `jobTitles`: a title matching an earlier
+ * entry first (every word of the entry in the title), unmatched last, and a
+ * database work email breaking ties. Nameless results are dropped.
+ */
+export function rankByTitles(people: PersonResult[], jobTitles: string[]): PersonResult[] {
+  const wanted = jobTitles.map((t) => t.toLowerCase().split(/\s+/).filter(Boolean));
+  const rank = (p: PersonResult): number => {
+    const title = (p.title ?? "").toLowerCase();
+    const i = wanted.findIndex(
+      (words) => words.length > 0 && words.every((w) => title.includes(w)),
+    );
+    return i === -1 ? wanted.length : i;
+  };
+  return people
+    .filter((p) => personName(p) !== null)
+    .map((p, i) => ({ p, i, r: rank(p), e: p.best_work_email ? 0 : 1 }))
+    .toSorted((a, b) => a.r - b.r || a.e - b.e || a.i - b.i)
+    .map((x) => x.p);
+}
+
+/**
+ * The company's decision owner. With `jobTitles`, one title-scoped people
+ * search ($0.01) and up to three candidates through the contact spine until
+ * one passes the person gate; without, the spine's own domain-only pick.
+ */
+async function findOwner(args: {
+  opts: ListPageOpts;
+  domain: string;
+  companyName: string;
+  evidence: string;
+  icp: string | null;
+  isDup: (email: string) => boolean;
+}): Promise<{ contact: QualifiedContact | null; costUsd: number; noMatch: boolean }> {
+  const { opts, domain, companyName, evidence, icp } = args;
+  const jobTitles = (opts.jobTitles ?? []).map((t) => t.trim()).filter(Boolean);
+  const base = {
+    playName: PLAY_NAME,
+    companyDomain: domain,
+    isDuplicate: args.isDup,
+    icp,
+    fillGaps: opts.qualifyFillGaps ?? true,
+    errKindPrefix: "list-page",
+  };
+  if (jobTitles.length === 0) {
+    const contact = await resolveVerifyEnrichQualify({
+      ...base,
+      fullName: null,
+      allowMissingFullName: true,
+      person: { name: null, company: companyName, roleText: null, evidence },
+    });
+    return { contact, costUsd: contact.costUsd, noMatch: false };
+  }
+  const search = await safePeopleSearch(
+    { companyDomains: [domain], jobTitles, limit: 25 },
+    { playName: PLAY_NAME },
+  );
+  let costUsd = search.result.cost ?? 0;
+  if (search.result.status === "error") return { contact: null, costUsd, noMatch: false };
+  const ranked = rankByTitles((search.result.results ?? []) as PersonResult[], jobTitles);
+  if (ranked.length === 0) return { contact: null, costUsd, noMatch: true };
+  let last: QualifiedContact | null = null;
+  for (const person of ranked.slice(0, MAX_OWNER_ATTEMPTS)) {
+    const name = personName(person)!;
+    const contact = await resolveVerifyEnrichQualify({
+      ...base,
+      fullName: name,
+      knownEmail: person.best_work_email?.trim() || null,
+      linkedinUrlHint: person.linkedin_url ?? null,
+      titleHint: person.title ?? null,
+      person: { name, company: companyName, roleText: person.title ?? null, evidence },
+    });
+    costUsd += contact.costUsd;
+    last = contact;
+    // Only a role verdict is worth another candidate; a duplicate or a
+    // platform error would repeat for the next one too.
+    if (contact.ok || contact.reason !== "role") break;
+  }
+  return { contact: last, costUsd, noMatch: false };
+}
+
 export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResult> {
   const limit = opts.limit ?? 25;
   const route = resolvePlayRoute(opts);
@@ -292,29 +389,32 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
       }
 
       const evidence = company.context ? `${source.signal}: ${company.context}` : source.signal;
-      const contact = await resolveVerifyEnrichQualify({
-        playName: PLAY_NAME,
-        fullName: null,
-        allowMissingFullName: true,
-        companyDomain: domain,
-        isDuplicate: (email) =>
-          isDuplicate({ playName: dedupeScope, dedupeKey, prospectEmail: email }),
+      const found = await findOwner({
+        opts,
+        domain,
+        companyName: company.name,
+        evidence,
         icp,
-        person: { name: null, company: company.name, roleText: null, evidence },
-        fillGaps: opts.qualifyFillGaps ?? true,
-        errKindPrefix: "list-page",
+        isDup: (email) => isDuplicate({ playName: dedupeScope, dedupeKey, prospectEmail: email }),
       });
-      result.costUsd += contact.costUsd;
-      if (!contact.ok) {
-        if (contact.reason === "duplicate") result.droppedDuplicate++;
-        else if (contact.reason === "role") {
+      result.costUsd += found.costUsd;
+      const contact = found.contact;
+      if (!contact || !contact.ok) {
+        const reason = contact ? contact.reason : found.noMatch ? "no-match" : "platform-error";
+        if (reason === "duplicate") result.droppedDuplicate++;
+        else if (reason === "role" || reason === "no-match") {
+          // Both are a verdict on the company, not a hiccup: record it once so
+          // later runs move on down the list instead of paying for it again.
           result.droppedRole = (result.droppedRole ?? 0) + 1;
           persistRoleRejection({
             playName: PLAY_NAME,
             dedupeKey,
             payload: { company: company.name, signal: source.signal },
             source: rowSource,
-            reason: contact.detail ?? "off-ICP role",
+            reason:
+              reason === "no-match"
+                ? `no one matching jobTitles at ${domain}`
+                : ((contact && !contact.ok ? contact.detail : null) ?? "off-ICP role"),
             dryRun: opts.dryRun,
           });
         } else result.droppedEnrichment++;

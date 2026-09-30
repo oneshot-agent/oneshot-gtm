@@ -885,6 +885,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultConfig: {
       ...RESEARCH_DEFAULT,
       sources: [] as ListPageSource[],
+      jobTitles: [] as string[],
       play: "design-partner-loi",
       buyerType: "",
       yourEdge: "",
@@ -892,7 +893,7 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Turns any public page that lists companies into a source: an open-source project's ADOPTERS file, a conference sponsor page, a vendor's customers page. `sources` is a list of `{url, signal}`: `signal` says in a few words what being on the list means (e.g. `runs Backstage`), and every row carries it plus the page's own line about that company, so an angle can open with who it fits on that fact. A GitHub file URL (`/blob/`) is read raw for free; any other page costs one webRead. Companies are extracted once per page version and cached, then worked `limit` per run in page order: the company's decision owner is found from its domain (people search → ICP gate → email); people the page names are kept as context, never emailed. Enterprise only for now: `play` must be `design-partner-loi` with `buyerType` (`enterprise` | `government` | `hardware`) and `yourEdge` (REQUIRED: `//`-separated angles, each opening with who it fits; an angle can key on the signal, e.g. *For a company that runs Backstage —*). `limit` (companies per run, default 25), `maxCostUsd`.",
+      "Turns any public page that lists companies into a source: an open-source project's ADOPTERS file, a conference sponsor page, a vendor's customers page. `sources` is a list of `{url, signal}`: `signal` says in a few words what being on the list means (e.g. `runs Backstage`), and every row carries it plus the page's own line about that company, so an angle can open with who it fits on that fact. A GitHub file URL (`/blob/`) is read raw for free; any other page costs one webRead. Companies are extracted once per page version and cached, then worked `limit` per run in page order: the company's decision owner is found from its domain (people search → ICP gate → email); people the page names are kept as context, never emailed. `jobTitles` (recommended for large companies: the roles you sell to, most wanted first, e.g. `Head of AI Platform`, `VP Platform Engineering`) makes that one title-scoped people search per company and tries up to three matches in that order; a company with no one matching is recorded once and skipped on later runs. Without it the pick is any senior title at the domain, which at a big company can land on PR or recruiting. Enterprise only for now: `play` must be `design-partner-loi` with `buyerType` (`enterprise` | `government` | `hardware`) and `yourEdge` (REQUIRED: `//`-separated angles, each opening with who it fits; an angle can key on the signal, e.g. *For a company that runs Backstage —*). `limit` (companies per run, default 25), `maxCostUsd`.",
     readiness: (cfg) => {
       const sources = listPageSources(cfg);
       if (sources.length === 0) {
@@ -914,6 +915,9 @@ export const TRIGGERS: TriggerSpec[] = [
       runListPageFinder({
         dryRun: false,
         sources: listPageSources(cfg),
+        jobTitles: Array.isArray(cfg["jobTitles"])
+          ? (cfg["jobTitles"] as unknown[]).filter((t): t is string => typeof t === "string")
+          : [],
         yourEdge: typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "",
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,

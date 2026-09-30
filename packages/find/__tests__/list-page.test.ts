@@ -20,6 +20,7 @@ let webReads = 0;
 let llmCalls = 0;
 let contactCalls: Array<Record<string, unknown>> = [];
 let contactResult: Record<string, unknown> = {};
+let contactByName: Record<string, Record<string, unknown>> = {};
 let companySearchDomain: string | null = null;
 const roleRejections: Array<Record<string, unknown>> = [];
 
@@ -74,16 +75,25 @@ vi.mock("../src/_qualify.ts", () => ({
   persistRoleRejection: (args: Record<string, unknown>) => void roleRejections.push(args),
 }));
 
+let peopleSearchCalls: Array<Record<string, unknown>> = [];
+let peopleSearchResult: { status?: string; results: Array<Record<string, unknown>> } = {
+  results: [],
+};
 vi.mock("../src/_sdk-safe.ts", () => ({
   safeCompanySearch: async () => ({
     result: { cost: 0.01, results: companySearchDomain ? [{ domain: companySearchDomain }] : [] },
   }),
+  safePeopleSearch: async (input: Record<string, unknown>) => {
+    peopleSearchCalls.push(input);
+    return { result: { cost: 0.01, ...peopleSearchResult } };
+  },
 }));
 
 vi.mock("../src/_contact.ts", () => ({
   resolveVerifyEnrichQualify: async (args: Record<string, unknown>) => {
     contactCalls.push(args);
-    return contactResult;
+    const byName = contactByName[args["fullName"] as string];
+    return byName ?? contactResult;
   },
   icpFields: () => ({ icpVerdict: "pass", icpVerdictReason: "owns AI platform" }),
 }));
@@ -104,7 +114,7 @@ const fetchMock = vi.fn(async (url: string) => ({
   text: async () => (url.startsWith("https://raw.githubusercontent.com/") ? ADOPTERS : ""),
 }));
 
-const { chunkLines, parseListPageExtract, rawGitHubUrl, runListPageFinder } =
+const { chunkLines, parseListPageExtract, rankByTitles, rawGitHubUrl, runListPageFinder } =
   await import("../src/list-page.ts");
 
 const SOURCE = {
@@ -128,6 +138,9 @@ beforeEach(() => {
   llmCalls = 0;
   contactCalls = [];
   companySearchDomain = "beta.example";
+  peopleSearchCalls = [];
+  peopleSearchResult = { results: [] };
+  contactByName = {};
   contactResult = {
     ok: true,
     channel: "email",
@@ -278,5 +291,102 @@ describe("runListPageFinder", () => {
     expect(webReads).toBe(1);
     expect(out.candidates).toBe(1);
     expect(enqueued[0]?.source).toBe("find:list-page:customer-of-example");
+  });
+});
+
+const person = (full_name: string, title: string, email?: string) => ({
+  full_name,
+  title,
+  ...(email ? { best_work_email: email } : {}),
+});
+
+describe("jobTitles targeting", () => {
+  const titles = ["Head of AI Platform", "VP Platform Engineering", "CTO"];
+
+  it("ranks people by the order of the wanted titles, work email breaking ties", () => {
+    const ranked = rankByTitles(
+      [
+        person("Pat PR", "Head of Communications"),
+        person("Cam CTO", "CTO"),
+        person("Val VP", "VP, Platform Engineering", "val@acme.example"),
+        person("Vic VP", "VP Platform Engineering"),
+        person("Ada AI", "Head of AI Platform"),
+        { title: "Head of AI Platform" },
+      ] as never,
+      titles,
+    );
+    expect(ranked.map((p) => p.full_name)).toEqual([
+      "Ada AI",
+      "Val VP",
+      "Vic VP",
+      "Cam CTO",
+      "Pat PR",
+    ]);
+  });
+
+  it("searches the domain for the titles and hands the best match to the contact spine", async () => {
+    peopleSearchResult = {
+      results: [
+        person("Pat PR", "Head of Communications"),
+        person("Ada AI", "Head of AI Platform", "ada@acme.example"),
+      ],
+    };
+    await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(peopleSearchCalls[0]).toMatchObject({
+      companyDomains: ["acme.example"],
+      jobTitles: titles,
+    });
+    expect(contactCalls[0]).toMatchObject({
+      fullName: "Ada AI",
+      knownEmail: "ada@acme.example",
+      titleHint: "Head of AI Platform",
+    });
+    expect(enqueued[0]?.payload["company"]).toBe("Acme");
+  });
+
+  it("tries the next match after a role rejection, and records the company once when all fail", async () => {
+    peopleSearchResult = {
+      results: [
+        person("A One", "CTO"),
+        person("B Two", "CTO"),
+        person("C Three", "CTO"),
+        person("D Four", "CTO"),
+      ],
+    };
+    contactResult = { ok: false, reason: "role", detail: "not the buyer", costUsd: 0.02 };
+    const out = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(contactCalls.map((c) => c["fullName"])).toEqual(["A One", "B Two", "C Three"]);
+    expect(out.droppedRole).toBe(1);
+    expect(roleRejections).toHaveLength(1);
+
+    contactCalls = [];
+    roleRejections.length = 0;
+    contactByName = {
+      "B Two": {
+        ...contactResult,
+        ok: true,
+        channel: "email",
+        email: "b@acme.example",
+        fullName: "B Two",
+        title: "CTO",
+        costUsd: 0.02,
+      },
+    };
+    const second = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(contactCalls.map((c) => c["fullName"])).toEqual(["A One", "B Two"]);
+    expect(second.enqueued).toBe(1);
+  });
+
+  it("records a company with no matching person, but not a failed search", async () => {
+    const none = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(contactCalls).toHaveLength(0);
+    expect(roleRejections[0]?.["reason"]).toBe("no one matching jobTitles at acme.example");
+    expect(none.droppedRole).toBe(1);
+
+    roleRejections.length = 0;
+    peopleSearchResult = { status: "error", results: [] };
+    const failed = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(roleRejections).toHaveLength(0);
+    expect(failed.droppedEnrichment).toBe(1);
   });
 });
