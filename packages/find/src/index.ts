@@ -6,6 +6,7 @@ export * from "./_dedupe.ts";
 export * from "./_findemail-prescreen.ts";
 export * from "./show-hn.ts";
 export * from "./post-funding.ts";
+export * from "./list-page.ts";
 export * from "./accelerator-batch.ts";
 export * from "./_yc-oss-adapter.ts";
 export * from "./_accelerator-search-adapter.ts";

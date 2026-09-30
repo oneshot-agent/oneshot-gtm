@@ -94,6 +94,7 @@ describe("TRIGGERS registry", () => {
       "gov-solicitation",
       "hiring-signal",
       "job-change",
+      "list-page",
       "local-business",
       "local-registry",
       "luma-events",
@@ -116,6 +117,36 @@ describe("TRIGGERS registry", () => {
     for (const spec of TRIGGERS) {
       expect(spec.enabledByDefault, `${spec.name} should be opt-in`).toBe(false);
     }
+  });
+});
+
+describe("list-page readiness", () => {
+  const spec = TRIGGERS.find((t) => t.name === "list-page")!;
+  const ready = {
+    sources: [
+      {
+        url: "https://github.com/backstage/backstage/blob/master/ADOPTERS.md",
+        signal: "runs Backstage",
+      },
+    ],
+    play: "design-partner-loi",
+    buyerType: "enterprise",
+    yourEdge: "For a company that runs Backstage — one paved path",
+  };
+  it("is ready with a source, the design-partner route and an edge", () => {
+    expect(checkReadiness(spec, ready)).toEqual({ ready: true });
+  });
+  it("needs a usable source, the route and an edge", () => {
+    expect(checkReadiness(spec, { ...ready, sources: [] }).ready).toBe(false);
+    expect(
+      checkReadiness(spec, { ...ready, sources: [{ url: "ftp://x", signal: "s" }] }).ready,
+    ).toBe(false);
+    expect(
+      checkReadiness(spec, { ...ready, sources: [{ url: "https://x.example", signal: "" }] }).ready,
+    ).toBe(false);
+    expect(checkReadiness(spec, { ...ready, play: "" }).ready).toBe(false);
+    expect(checkReadiness(spec, { ...ready, buyerType: "" }).ready).toBe(false);
+    expect(checkReadiness(spec, { ...ready, yourEdge: "" }).ready).toBe(false);
   });
 });
 
@@ -347,6 +378,7 @@ describe("checkReadiness", () => {
       "local-registry",
       "gov-solicitation",
       "civic-agenda",
+      "list-page",
     ]);
     for (const spec of TRIGGERS) {
       if (intentionallyUnreadyByDefault.has(spec.name)) continue;

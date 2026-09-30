@@ -202,3 +202,14 @@ export interface RunOpts {
    */
   qualifyFillGaps?: boolean;
 }
+
+/** One company a list page names, as `list-page` extracts it. */
+export interface ListPageCompany {
+  name: string;
+  /** Bare host of the company's own site; null when the page doesn't give one. */
+  domain: string | null;
+  /** The page's own line about this company (e.g. how it uses the listed tool), ≤240 chars. */
+  context: string | null;
+  /** People the page names for the company: kept as context, never emailed. */
+  contacts: Array<{ name?: string; github?: string; linkedin?: string }>;
+}

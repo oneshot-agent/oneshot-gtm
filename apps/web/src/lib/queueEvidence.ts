@@ -169,7 +169,10 @@ export function queueEvidence(playName: string, payload: unknown): string | null
       const buyerType = str(p, "buyerType");
       if (buyerType !== null) {
         const company = str(p, "company");
-        return company ? `${buyerType} buyer at ${company}` : `${buyerType} buyer`;
+        const who = company ? `${buyerType} buyer at ${company}` : `${buyerType} buyer`;
+        // list-page rows carry what the list they came from means ("runs Backstage").
+        const signal = str(p, "signal");
+        return signal ? `${signal} · ${who}` : who;
       }
       const title = str(p, "title");
       if (!title) return null;

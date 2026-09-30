@@ -73,6 +73,10 @@ export interface DesignPartnerLoiTarget {
   phone?: string;
   /** Job title from the person-level ICP gate: persisted to prospects.title. */
   title?: string;
+  /** A public list the company is on and what that means ("runs Backstage"): list-page rows. */
+  signal?: string;
+  /** The list's own line about this company. */
+  signalContext?: string;
 }
 
 export interface DesignPartnerLoiRunOptions {
@@ -127,6 +131,9 @@ const designPartnerLoiDef: EmailPlayDef<DesignPartnerLoiTarget> = {
       ...(t.title ? [`ROLE: ${t.title}`] : []),
       `BUYER TYPE: ${t.buyerType}`,
       `YOUR EDGE: ${t.yourEdge}`,
+      ...(t.signal
+        ? [`SIGNAL: ${t.signal}${t.signalContext ? ` (the list says: ${t.signalContext})` : ""}`]
+        : []),
       `DOSSIER:\n${prep.dossier || "(dry-run)"}`,
       ...(posts ? ["", posts] : []),
     ].join("\n");

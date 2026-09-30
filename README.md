@@ -138,7 +138,7 @@ A floating strategist dock on every page reads your ICP and product one-liner an
 
 ## Where targets come from
 
-Fifteen **finders** discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve or reject. Each runs as a trigger with its own interval and spend cap; the dashboard server runs the scheduler in-process, so enabling a trigger is enough.
+Sixteen **finders** discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve or reject. Each runs as a trigger with its own interval and spend cap; the dashboard server runs the scheduler in-process, so enabling a trigger is enough.
 
 | Finder              | Signal                                                                                                                                                                                                                                             |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -157,6 +157,7 @@ Fifteen **finders** discover prospects, ICP-filter them, and enqueue into `/queu
 | `x-reposters`       | people who repost/quote X accounts you watch, in two lanes: builders who'd adopt (email cadence) and dev accounts with reach who'd boost a launch (one-touch email, or a hand-sent DM draft) — needs X API keys or `TWITTERAPI_IO_KEY`             |
 | `local-business`    | main-street businesses via `peopleSearch`/`companySearch` (job title × industry × location × company size), or the SDK's `localSearch` places index with `engine: local` — routed to the `free-pilot` play                                         |
 | `local-registry`    | newly-licensed main-street businesses over free public registries (Socrata business licenses, NPPES NPI, FMCSA Company Census), resolved to a domain with the SDK's `localResolve` — recent matches route to `new-business`, older to `free-pilot` |
+| `list-page`         | companies on any public list page — an open-source project's ADOPTERS file, a sponsor or customers page — each stamped with what the list means (e.g. "runs Backstage"); finds the decision owner by domain and routes to `design-partner-loi`     |
 
 All finders start disabled in a new workspace. Choose sources for your buyers or apply an industry pack; existing workspaces retain their saved settings. Two ICP gates run per candidate: a **topic gate** on the source, before any spend, and a **person gate** on the human's role, staged by cost and judging the role against your own ICP, without assuming technical skills or a founder title. Only a positive reject drops a candidate; rejections land in `/queue` as auditable rows you can override. [Finders](./docs/finders.md) covers the prescreen, the gates, product research and review ordering.
 
@@ -242,7 +243,7 @@ packages/
   core/       SDK wrapper, SQLite ledger, config + secrets, Gmail transport, JSONL events
   intel/      LLM client, advise, personalize, triage, weekly-review
   plays/      23 outreach plays + handoff/icp/pmf modules + cadence engine
-  find/       15 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
+  find/       16 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
   prompts/    Markdown prompts — humanizer canon, per-play, per-extract
   doctor/     Wallet, ledger, key and deliverability health checks
   shared-types/  Wire types shared across CLI / server / web
