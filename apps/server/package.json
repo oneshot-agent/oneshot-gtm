@@ -41,7 +41,7 @@
     "prepublishOnly": "bun run --cwd ../web build && bun run build"
   },
   "dependencies": {
-    "@oneshot-agent/sdk": "0.38.0",
+    "@oneshot-agent/sdk": "0.43.0",
     "open": "^11.0.0",
     "pdf-lib": "^1.17.1"
   },
