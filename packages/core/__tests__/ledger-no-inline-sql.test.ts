@@ -90,13 +90,38 @@ function findRawDbCalls(source: string): RawDbCallSite[] {
   // to calling `this.db.<method>(...)`). Maps local name -> method name.
   const dbMethodAliases = new Map<string, string>();
 
-  const isThisDb = (node: ts.Node): boolean =>
-    ts.isPropertyAccessExpression(node) &&
-    node.expression.kind === ts.SyntaxKind.ThisKeyword &&
-    node.name.text === "db";
+  // The member name of `a.b` or `a["b"]` / a[`b`]; undefined when the key
+  // is computed at runtime (`a[name]`), which the guard cannot resolve.
+  const memberName = (node: ts.Node): string | undefined => {
+    if (ts.isPropertyAccessExpression(node)) return node.name.text;
+    if (
+      ts.isElementAccessExpression(node) &&
+      (ts.isStringLiteral(node.argumentExpression) ||
+        ts.isNoSubstitutionTemplateLiteral(node.argumentExpression))
+    ) {
+      return node.argumentExpression.text;
+    }
+    return undefined;
+  };
+  const isMemberAccess = (
+    node: ts.Node,
+  ): node is ts.PropertyAccessExpression | ts.ElementAccessExpression =>
+    ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node);
+  const unwrap = (node: ts.Node): ts.Node =>
+    ts.isParenthesizedExpression(node) ? unwrap(node.expression) : node;
 
-  const isKnownDbAlias = (node: ts.Node): boolean =>
-    isThisDb(node) || (ts.isIdentifier(node) && dbObjectAliases.has(node.text));
+  // `this.db` or `this["db"]`.
+  const isThisDb = (node: ts.Node): boolean => {
+    const n = unwrap(node);
+    return (
+      isMemberAccess(n) && n.expression.kind === ts.SyntaxKind.ThisKeyword && memberName(n) === "db"
+    );
+  };
+
+  const isKnownDbAlias = (node: ts.Node): boolean => {
+    const n = unwrap(node);
+    return isThisDb(n) || (ts.isIdentifier(n) && dbObjectAliases.has(n.text));
+  };
 
   // Fixed-point iteration over all variable declarations so declaration
   // order (including chained aliases declared before or after each other
@@ -126,11 +151,14 @@ function findRawDbCalls(source: string): RawDbCallSite[] {
       if (ts.isObjectBindingPattern(decl.name) && isKnownDbAlias(decl.initializer)) {
         for (const element of decl.name.elements) {
           if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue;
-          const sourceMethodName = element.propertyName
-            ? ts.isIdentifier(element.propertyName)
-              ? element.propertyName.text
-              : undefined
-            : element.name.text;
+          const key = element.propertyName;
+          const sourceMethodName = !key
+            ? element.name.text
+            : ts.isIdentifier(key) || ts.isStringLiteral(key)
+              ? key.text
+              : ts.isComputedPropertyName(key) && ts.isStringLiteralLike(key.expression)
+                ? key.expression.text
+                : undefined;
           if (sourceMethodName && DB_EXEC_METHODS.has(sourceMethodName)) {
             const local = element.name.text;
             if (dbMethodAliases.get(local) !== sourceMethodName) {
@@ -150,19 +178,30 @@ function findRawDbCalls(source: string): RawDbCallSite[] {
     offenses.push({ line: line + 1, text: (lines[line] ?? "").trim() });
   };
 
+  // `<db>.query`, `<db>["query"]`, and `<db>[name]`: a runtime key cannot be
+  // proven to be an allowed escape hatch, so it counts as an exec method.
+  const isDbExecMember = (node: ts.Node): boolean => {
+    const n = unwrap(node);
+    if (!isMemberAccess(n) || !isKnownDbAlias(n.expression)) return false;
+    const name = memberName(n);
+    return name === undefined || DB_EXEC_METHODS.has(name);
+  };
+  const isDbExecMethodAlias = (node: ts.Node): boolean => {
+    const n = unwrap(node);
+    return ts.isIdentifier(n) && dbMethodAliases.has(n.text);
+  };
+
   const visitForCalls = (node: ts.Node) => {
     if (ts.isCallExpression(node)) {
-      const callee = node.expression;
-      if (ts.isPropertyAccessExpression(callee)) {
-        const receiver = callee.expression;
-        const method = callee.name.text;
-        if (
-          DB_EXEC_METHODS.has(method) &&
-          (isThisDb(receiver) || (ts.isIdentifier(receiver) && dbObjectAliases.has(receiver.text)))
-        ) {
-          recordOffense(node);
-        }
-      } else if (ts.isIdentifier(callee) && dbMethodAliases.has(callee.text)) {
+      const callee = unwrap(node.expression);
+      if (isDbExecMember(callee) || isDbExecMethodAlias(callee)) {
+        recordOffense(node);
+      } else if (
+        // this.db.query.call(this.db, sql), .apply(...), .bind(...)(sql)
+        isMemberAccess(callee) &&
+        ["call", "apply", "bind"].includes(memberName(callee) ?? "") &&
+        (isDbExecMember(callee.expression) || isDbExecMethodAlias(callee.expression))
+      ) {
         recordOffense(node);
       }
     }
@@ -270,6 +309,40 @@ describe("ledger.ts has no inline SQL (issue #751)", () => {
       }
     `;
     expect(findRawDbCalls(source).length).toBe(2);
+  });
+
+  it("findRawDbCalls catches element-access, computed-key and call/apply/bind forms (AST self-test)", () => {
+    const source = `
+      class Ledger {
+        run(method: string) {
+          this.db["query"](dynamicSql);
+          this["db"].exec(sql);
+          this.db[\`prepare\`](sql).run();
+          this.db[method](sql);
+          (this.db.run)(sql);
+          const db = this["db"];
+          db["exec"](sql);
+          const { ["query"]: q, "exec": e } = this.db;
+          q(sql);
+          e(sql);
+          this.db.query.call(this.db, sql);
+          this.db["exec"].apply(this.db, [sql]);
+        }
+      }
+    `;
+    expect(findRawDbCalls(source).length).toBe(10);
+  });
+
+  it("findRawDbCalls does not flag the allowed escape hatches in element-access form (AST self-test)", () => {
+    const source = `
+      class Ledger {
+        run(fn: () => void) {
+          this.db["transaction"](fn)();
+          this["db"].close();
+        }
+      }
+    `;
+    expect(findRawDbCalls(source)).toEqual([]);
   });
 
   it("findRawDbCalls does not flag the allowed this.db.transaction/close escape hatches (AST self-test)", () => {
