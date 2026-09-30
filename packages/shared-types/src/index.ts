@@ -1685,6 +1685,7 @@ export interface CalendarPickerEntry {
   recentEventCount: number;
 }
 export * from "./replies.ts";
+export * from "./icp-proposals.ts";
 
 /** CSV classification reserves a queue row before it is ready for review. */
 export function isQueueImportInProgress(row: {

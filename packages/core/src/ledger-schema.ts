@@ -99,6 +99,35 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       );
     },
   },
+  {
+    // Learning-loop v2 (issue #750): founder-approved ICP rewrite proposals.
+    // `icp_proposal_state` is a single evaluation lease/cooldown row (mirrors
+    // `reply_learning_state`'s token/until_ms shape); `icp_proposals` holds
+    // the generated proposals themselves, reviewed on `/queue`.
+    version: 7,
+    name: "icp-proposals",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS icp_proposal_state (
+          id INTEGER PRIMARY KEY CHECK(id = 1),
+          attempted_ms INTEGER NOT NULL DEFAULT 0,
+          error TEXT,
+          token TEXT,
+          until_ms INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS icp_proposals (
+          id TEXT PRIMARY KEY,
+          current_icp TEXT NOT NULL,
+          proposed_icp TEXT NOT NULL,
+          evidence_summary TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          decided_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_icp_proposals_status ON icp_proposals(status, created_at DESC);
+      `);
+    },
+  },
 ];
 
 export const LEDGER_SCHEMA_VERSION = LEDGER_MIGRATIONS[LEDGER_MIGRATIONS.length - 1]!.version;

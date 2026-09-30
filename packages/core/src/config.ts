@@ -64,6 +64,7 @@ const DEFAULTS: OneShotConfig = {
   linkedinSessionName: null,
   linkedinSessionInvalidAt: null,
   linkedinReadsPerDay: 80,
+  icpProposalMinDecisions: 30,
 };
 
 export function configDir(): string {

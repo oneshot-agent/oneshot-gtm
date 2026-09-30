@@ -115,6 +115,7 @@ import {
   outcomesByPlay as outOutcomesByPlay,
   recordOutcome as outRecordOutcome,
 } from "./ledger-outcomes.ts";
+import { IcpProposalStore } from "./icp-proposal-store.ts";
 import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.ts";
 import { QueueStore } from "./ledger-queue.ts";
 import {
@@ -253,6 +254,7 @@ export class Ledger {
   private cache: LedgerCache;
   private inbox: InboxStore;
   private queue: QueueStore;
+  readonly icpProposals: IcpProposalStore;
   /**
    * Draft versions for cadence follow-ups (ledger-drafts.ts). Intro drafts
    * are versioned by `QueueStore` through its own instance. The table is the
@@ -309,6 +311,7 @@ export class Ledger {
     this.mailboxes = new MailboxStore(this.db);
     this.queue = new QueueStore(this.db);
     this.drafts = new DraftVersionStore(this.db);
+    this.icpProposals = new IcpProposalStore(this.db);
   }
 
   getDirectMail(id: string): DirectMailDraft | null {
@@ -1773,6 +1776,11 @@ export class Ledger {
   /** Recent reviewed rows for few-shot ICP classification. */
   recentIcpDecisions(limit = 20): IcpDecisionExample[] {
     return this.queue.recentIcpDecisions(limit);
+  }
+
+  /** Count of human approve/reject decisions available to the ICP classifiers (learning-loop v2, #750). */
+  countHumanIcpDecisions(): number {
+    return this.queue.countHumanIcpDecisions();
   }
 
   /**

@@ -181,6 +181,29 @@ export class QueueStore {
   }
 
   /**
+   * Count of the SAME rows `recentIcpDecisions` draws its few-shot examples
+   * from (identical predicate, no LIMIT): the evidence floor learning-loop v2
+   * (issue #750) gates a model call behind, so "enough evidence" always means
+   * "enough of the evidence the classifier can actually see".
+   */
+  countHumanIcpDecisions(): number {
+    const row = this.db
+      .query(
+        `SELECT COUNT(*) AS n
+         FROM target_queue
+         WHERE ${humanDecisionWhereSql()}
+           AND play_name IN (
+             'show-hn', 'post-funding', 'accelerator-batch', 'job-change',
+             'hiring-signal', 'podcast-guest', 'github-topics', 'github-stars',
+             'competitor-switch', 'stack-consolidation', 'repo-interest', 'luma-events'
+           )
+           AND json_valid(payload_json)`,
+      )
+      .get() as { n: number };
+    return row.n;
+  }
+
+  /**
    * Insert a row into target_queue. Returns the new id, or null if a row with
    * the same (play_name, dedupe_key) already exists.
    */

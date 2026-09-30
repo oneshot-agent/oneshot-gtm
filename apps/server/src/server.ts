@@ -108,6 +108,11 @@ import {
   setTriggerEnabledRoute,
 } from "./api/triggers.ts";
 import { applyPackRoute, listPacksRoute } from "./api/packs.ts";
+import {
+  approveIcpProposalRoute,
+  dismissIcpProposalRoute,
+  listIcpProposalsRoute,
+} from "./api/icp-proposals.ts";
 import { addProspectRoute } from "./api/prospects.ts";
 import { calNoShowWebhookRoute, signupWebhookRoute } from "./api/webhook-triggers.ts";
 import { markLinkedInReplyRoute } from "./api/linkedin-replies.ts";
@@ -244,6 +249,9 @@ const routes: RouteEntry[] = [
   route("POST", "/api/triggers/:name/run", runTriggerRoute),
   route("GET", "/api/packs", listPacksRoute),
   route("POST", "/api/packs/:id/apply", applyPackRoute),
+  route("GET", "/api/icp-proposals", listIcpProposalsRoute),
+  route("POST", "/api/icp-proposals/:id/approve", approveIcpProposalRoute),
+  route("POST", "/api/icp-proposals/:id/dismiss", dismissIcpProposalRoute),
 ];
 
 function findRoute(req: Request): { handler: RouteHandler; params: Record<string, string> } | null {

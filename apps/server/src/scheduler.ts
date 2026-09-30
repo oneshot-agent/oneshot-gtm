@@ -1,4 +1,5 @@
 import { refreshReplyLearning } from "./reply-learning.ts";
+import { refreshIcpProposal } from "./icp-proposals.ts";
 import { resumeLinkedInBackfills } from "./linkedin-backfill.ts";
 import { refreshLinkedInInbox } from "./linkedin-sync.ts";
 import {
@@ -105,6 +106,7 @@ export function startScheduler(): SchedulerHandle {
     void refreshReplyLearning().catch(() =>
       logEvent("scheduler.reply_learning.failed", {}, "warn"),
     );
+    void refreshIcpProposal().catch(() => logEvent("scheduler.icp_proposal.failed", {}, "warn"));
     void Promise.resolve()
       .then(() => refreshLinkedInInbox())
       .catch((e) => logEvent("scheduler.linkedin.failed", { message: String(e) }, "warn"));

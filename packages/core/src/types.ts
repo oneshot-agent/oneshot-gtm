@@ -497,6 +497,15 @@ export interface OneShotConfig {
    * Unset = email only.
    */
   channels?: string[];
+  /**
+   * Learning-loop v2 (issue #750): minimum number of human approve/reject
+   * queue decisions required before the background job will spend a model
+   * call proposing a tighter ICP one-liner. Optional so pre-existing config
+   * literals stay valid; unset reads as `DEFAULT_ICP_PROPOSAL_MIN_DECISIONS`
+   * (icp-proposals.ts). The proposal never changes the active ICP itself —
+   * only an explicit founder approval on `/queue` does that.
+   */
+  icpProposalMinDecisions?: number;
 }
 
 export type QueueStatus = "pending" | "approved" | "rejected" | "sent" | "expired";
