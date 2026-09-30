@@ -1,4 +1,3 @@
-import { contactAllowedClause } from "./contact-optout.ts";
 import { extractBusinessAddress } from "./mail-address.ts";
 import type { DirectMailDraft, PostalAddress } from "./direct-mail.ts";
 import { Database } from "bun:sqlite";
@@ -7,9 +6,17 @@ import { basename, dirname, join, resolve } from "node:path";
 import { demoMode } from "./demo.ts";
 import { openStateDatabase } from "./sqlite-open.ts";
 import type { OutreachChannel } from "./channels.ts";
-import { toSqliteUtc } from "./time.ts";
 import { workspacesDir } from "./workspaces.ts";
 import { configDir } from "./config.ts";
+import {
+  applyReadonlyBusyTimeout,
+  freePages as adminFreePages,
+  LEDGER_BUSY_TIMEOUT_MS,
+  optimizeOnClose,
+  truncateWal,
+  vacuum as adminVacuum,
+} from "./ledger-admin.ts";
+import { claimMarker, clearMarker } from "./ledger-markers.ts";
 import {
   bounceStatsByIdentity as delivBounceStatsByIdentity,
   contactSuppressionFor as delivContactSuppressionFor,
@@ -27,7 +34,14 @@ import {
   breakupReviveHoldFor as cadBreakupReviveHoldFor,
   type CadenceWithProspect,
   clearCadenceDraft as cadClearCadenceDraft,
+  countSends as cadCountSends,
   enrollCadence as cadEnrollCadence,
+  eventsByPlay as cadEventsByPlay,
+  hasOutreachHistory as cadHasOutreachHistory,
+  lastOutreachAt as cadLastOutreachAt,
+  listAllSequenceEventsForProspect as cadListAllSequenceEventsForProspect,
+  listChannelEventsForProspect as cadListChannelEventsForProspect,
+  listSequenceEventsForProspect as cadListSequenceEventsForProspect,
   postponeCadence as cadPostponeCadence,
   listLinkedInInviteEvents as cadListLinkedInInviteEvents,
   getCadence as cadGetCadence,
@@ -41,6 +55,7 @@ import {
   listSequenceEventsForCadences as cadListSequenceEventsForCadences,
   listSequenceEventsForProspectPlay as cadListSequenceEventsForProspectPlay,
   markLatestStepReplied as cadMarkLatestStepReplied,
+  prospectHasFirstTouch as cadProspectHasFirstTouch,
   recentSentEmailBodies as cadRecentSentEmailBodies,
   recordCadenceReply as cadRecordCadenceReply,
   recordCadenceSendError as cadRecordCadenceSendError,
@@ -64,14 +79,102 @@ import {
   type DraftUsageByStep,
   type DraftVersionRow,
 } from "./ledger-drafts.ts";
+import {
+  deleteDirectMail as dmDeleteDirectMail,
+  findDirectMail as dmFindDirectMail,
+  getDirectMail as dmGetDirectMail,
+  getMailAddress as dmGetMailAddress,
+  getMailAddressMetadata as dmGetMailAddressMetadata,
+  getMailPreparation as dmGetMailPreparation,
+  listDirectMail as dmListDirectMail,
+  recordMailReceipt as dmRecordMailReceipt,
+  saveDirectMail as dmSaveDirectMail,
+  saveMailPreparation as dmSaveMailPreparation,
+  deleteMailPreparation as dmDeleteMailPreparation,
+  setMailAddress as dmSetMailAddress,
+  setMailAddresses as dmSetMailAddresses,
+  setMailAddressMetadata as dmSetMailAddressMetadata,
+} from "./ledger-direct-mail.ts";
 import { InboxStore } from "./ledger-inbox.ts";
+import {
+  confirmMeetingMatch as mtgConfirmMeetingMatch,
+  dismissMeetingMatch as mtgDismissMeetingMatch,
+  getMeeting as mtgGetMeeting,
+  latestMeetingOutcomeFor as mtgLatestMeetingOutcomeFor,
+  listMeetingsForReview as mtgListMeetingsForReview,
+  listPendingOutcomeMeetings as mtgListPendingOutcomeMeetings,
+  markMeetingPrompted as mtgMarkMeetingPrompted,
+  setMeetingOutcome as mtgSetMeetingOutcome,
+  touchMeetingLastSeen as mtgTouchMeetingLastSeen,
+  upsertMeeting as mtgUpsertMeeting,
+} from "./ledger-meetings.ts";
+import {
+  countOutcomes as outCountOutcomes,
+  listDealOutcomesForProspect as outListDealOutcomesForProspect,
+  listLatestOutcomeRecordedAtByProspect as outListLatestOutcomeRecordedAtByProspect,
+  outcomesByPlay as outOutcomesByPlay,
+  recordOutcome as outRecordOutcome,
+} from "./ledger-outcomes.ts";
 import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.ts";
 import { QueueStore } from "./ledger-queue.ts";
+import {
+  appendRunEvent as runAppendRunEvent,
+  cancelRun as runCancelRun,
+  createRun as runCreateRun,
+  getRun as runGetRun,
+  listRuns as runListRuns,
+  markRunComplete as runMarkRunComplete,
+  setRunSentEmails as runSetRunSentEmails,
+  sweepStaleRuns as runSweepStaleRuns,
+} from "./ledger-runs.ts";
 import { runLedgerMigrations } from "./ledger-schema.ts";
+import {
+  applyTriggerConfigs as trgApplyTriggerConfigs,
+  clearTriggerClaim as trgClearTriggerClaim,
+  getTrigger as trgGetTrigger,
+  listTriggers as trgListTriggers,
+  markTriggerRunning as trgMarkTriggerRunning,
+  setTriggerConfig as trgSetTriggerConfig,
+  setTriggerEnabled as trgSetTriggerEnabled,
+  sweepStaleRunningTriggers as trgSweepStaleRunningTriggers,
+  updateTriggerLastPoll as trgUpdateTriggerLastPoll,
+  upsertTrigger as trgUpsertTrigger,
+} from "./ledger-triggers.ts";
+import {
+  assignSender as sendAssignSender,
+  countEmailSendsSince as sendCountEmailSendsSince,
+  firstEmailSendAt as sendFirstEmailSendAt,
+  getSenderAssignment as sendGetSenderAssignment,
+  hasPriorEmailSend as sendHasPriorEmailSend,
+} from "./ledger-sending.ts";
+import {
+  releaseSpendReservation as spendReleaseSpendReservation,
+  reserveSpend as spendReserveSpend,
+  reserveSpendIfUnderCeiling as spendReserveSpendIfUnderCeiling,
+  reservedSpendUsd as spendReservedSpendUsd,
+  sweepStaleSpendReservations as spendSweepStaleSpendReservations,
+} from "./ledger-spend.ts";
 import { MailboxStore } from "./mailbox-store.ts";
 import { type ReceiptCompaction, ReceiptStore } from "./ledger-receipts.ts";
+import {
+  clearWebhookReplays as sysClearWebhookReplays,
+  consumeWebhookReplay as sysConsumeWebhookReplay,
+  deletePendingResolution as sysDeletePendingResolution,
+  getPollWatermark as sysGetPollWatermark,
+  isPendingResolution as sysIsPendingResolution,
+  listColdProspects as sysListColdProspects,
+  listPendingResolution as sysListPendingResolution,
+  markPendingResolutionAttempted as sysMarkPendingResolutionAttempted,
+  recentXHarvestedTweetIds as sysRecentXHarvestedTweetIds,
+  recordInterview as sysRecordInterview,
+  recordXHarvestedTweets as sysRecordXHarvestedTweets,
+  releaseWebhookReplay as sysReleaseWebhookReplay,
+  setPollWatermark as sysSetPollWatermark,
+  sweepStalePendingResolution as sysSweepStalePendingResolution,
+  upsertPendingResolution as sysUpsertPendingResolution,
+} from "./ledger-system.ts";
 import { sharedDbPath } from "./shared-db.ts";
-import { SharedPeople, type SharedPerson } from "./shared-people.ts";
+import { SharedPeople } from "./shared-people.ts";
 import type { ReplyKind } from "./reply-classify.ts";
 import type {
   AuthVerdict,
@@ -113,38 +216,16 @@ export {
   RESEARCH_DEADLINE_MS,
 } from "./ledger-cache.ts";
 
-/** USD as integer cents, so money comparisons are exact. */
-function cents(usd: number): number {
-  return Math.round(usd * 100);
-}
-
-/**
- * Canonical form for matching prospect emails: trim + lowercase. Inbound reply
- * addresses (cadence inbox poll) are normalized the same way, so a prospect
- * stored from a mixed-case address still matches when they reply. Applied on
- * both store (upsertProspect) and every lookup so the two never diverge.
- */
-function canonEmail(email: string): string {
-  return email.trim().toLowerCase();
-}
-
 // Re-export the profile-key helper for the Ledger public API.
 export { canonicalLinkedInProfileKey };
-
-function safeParseJsonArray(raw: string): unknown[] {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
 
 // Re-export cadence types for the Ledger public API.
 export type { CadenceWithProspect } from "./ledger-cadence.ts";
 
-/** How long a ledger connection waits on another process's write lock before SQLITE_BUSY. */
-export const LEDGER_BUSY_TIMEOUT_MS = 5000;
+// Re-export the busy-timeout constant and truncateWal for the Ledger
+// public API (ledger-admin.ts); several call sites import these directly
+// off ledger.ts rather than the module they actually live in now.
+export { LEDGER_BUSY_TIMEOUT_MS, truncateWal };
 
 /**
  * A plain connection to a ledger file, for code that reads (or, like LinkedIn
@@ -160,20 +241,8 @@ export function openLedgerDatabase(path: string, opts: { readonly?: boolean } = 
     return openStateDatabase(path, { busyTimeoutMs: LEDGER_BUSY_TIMEOUT_MS, foreignKeys: true });
   }
   const db = new Database(path, { readonly: true });
-  db.exec(`PRAGMA busy_timeout = ${LEDGER_BUSY_TIMEOUT_MS}`);
+  applyReadonlyBusyTimeout(db, LEDGER_BUSY_TIMEOUT_MS);
   return db;
-}
-
-/**
- * `PRAGMA wal_checkpoint(TRUNCATE)`, failing loudly. A reader still inside a
- * transaction makes SQLite report `busy = 1` in the result row rather than
- * throw, which would leave the WAL at full size behind a "success".
- */
-export function truncateWal(db: Database): void {
-  const row = db.query("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number } | null;
-  if (row?.busy) {
-    throw new Error("database is locked: another connection kept the WAL from being checkpointed");
-  }
 }
 
 export class Ledger {
@@ -192,7 +261,6 @@ export class Ledger {
   private drafts: DraftVersionStore;
   private prospects: ProspectStore;
   private people: SharedPeople | null = null;
-  private peopleVersion = "";
 
   constructor(path: string = DEFAULT_DB_PATH, options: { sharedPeoplePath?: string } = {}) {
     this.path = path;
@@ -220,6 +288,18 @@ export class Ledger {
     if (options.sharedPeoplePath || (!demoMode() && (path === DEFAULT_DB_PATH || namedWorkspace))) {
       this.people = new SharedPeople(options.sharedPeoplePath ?? sharedDbPath());
       this.prospects.ensureSharedPersonColumn();
+      // Scope `SharedPeople`'s ledger-agnostic membership/link calls to this
+      // ledger's own path, matching what the inline `Ledger.bindSharedPerson`
+      // used to do before issue #751 round-1 moved the transaction bodies
+      // into `ProspectStore`.
+      const people = this.people;
+      this.prospects.attachSharedIdentity({
+        get: (id) => people.get(id),
+        resolve: (input, knownId) => people.resolve(input, knownId),
+        membership: (prospectId) => people.membership(this.path, prospectId),
+        link: (prospectId, personId) => people.link(this.path, prospectId, personId),
+        version: () => people.version(),
+      });
       this.refreshSharedPeople();
     }
     // Build stores after migration so their tables exist.
@@ -232,17 +312,10 @@ export class Ledger {
   }
 
   getDirectMail(id: string): DirectMailDraft | null {
-    const row = this.db.query("SELECT data FROM direct_mail_drafts WHERE id=?").get(id) as {
-      data: string;
-    } | null;
-    return row ? JSON.parse(row.data) : null;
+    return dmGetDirectMail(this.db, id);
   }
   listDirectMail(): DirectMailDraft[] {
-    return (
-      this.db.query("SELECT data FROM direct_mail_drafts ORDER BY rowid DESC").all() as {
-        data: string;
-      }[]
-    ).map((r) => JSON.parse(r.data));
+    return dmListDirectMail(this.db);
   }
   findDirectMail(
     prospect: number,
@@ -250,42 +323,13 @@ export class Ledger {
     enrollment: string,
     step: number,
   ): DirectMailDraft | null {
-    const row = this.db
-      .query(
-        "SELECT data FROM direct_mail_drafts WHERE prospect_id=? AND play_name=? AND enrollment=? AND step_index=?",
-      )
-      .get(prospect, play, enrollment, step) as { data: string } | null;
-    return row ? JSON.parse(row.data) : null;
+    return dmFindDirectMail(this.db, prospect, play, enrollment, step);
   }
   saveDirectMail(draft: DirectMailDraft): void {
-    this.db
-      .transaction(() => {
-        const previous = this.getDirectMail(draft.id);
-        if (previous && previous.revision !== draft.revision)
-          throw new Error("Mailpiece changed; refresh before retrying");
-        const next = { ...draft, revision: (draft.revision ?? 0) + 1 };
-        this.db
-          .query(
-            "INSERT INTO direct_mail_drafts(id,prospect_id,play_name,enrollment,step_index,data) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
-          )
-          .run(
-            next.id,
-            next.prospectId,
-            next.playName,
-            next.enrollment,
-            next.stepIndex,
-            JSON.stringify(next),
-          );
-        draft.revision = next.revision;
-      })
-      .immediate();
+    dmSaveDirectMail(this.db, draft);
   }
   deleteDirectMail(id: string): void {
-    this.db
-      .query(
-        "DELETE FROM direct_mail_drafts WHERE id=? AND coalesce(json_extract(data,'$.started'),0)=0",
-      )
-      .run(id);
+    dmDeleteDirectMail(this.db, id);
   }
   getCadencePlan(
     prospectId: number,
@@ -303,29 +347,13 @@ export class Ledger {
     cadSaveCadencePlan(this.db, prospectId, playName, enrollment, steps);
   }
   setMailAddress(key: string, address: PostalAddress, source = "manual"): void {
-    this.db
-      .transaction(() => {
-        this.db
-          .query(
-            "INSERT INTO direct_mail_addresses VALUES (?,?) ON CONFLICT(key) DO UPDATE SET address=excluded.address",
-          )
-          .run(key, JSON.stringify(address));
-        this.setMailAddressMetadata(key, { source, collectedAt: new Date().toISOString() });
-      })
-      .immediate();
+    dmSetMailAddress(this.db, key, address, source);
   }
   setMailAddressMetadata(key: string, data: Record<string, unknown>): void {
-    this.db
-      .query(
-        "INSERT INTO mail_address_metadata VALUES (?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
-      )
-      .run(key, JSON.stringify(data));
+    dmSetMailAddressMetadata(this.db, key, data);
   }
   getMailAddressMetadata(key: string): Record<string, unknown> | null {
-    const row = this.db.query("SELECT data FROM mail_address_metadata WHERE key=?").get(key) as {
-      data: string;
-    } | null;
-    return row ? JSON.parse(row.data) : null;
+    return dmGetMailAddressMetadata(this.db, key);
   }
   getMailPreparation(
     prospectId: number,
@@ -333,12 +361,7 @@ export class Ledger {
     enrollment: string,
     stepIndex: number,
   ): import("./direct-mail.ts").MailPreparation | null {
-    const row = this.db
-      .query(
-        "SELECT data FROM mail_preparations WHERE prospect_id=? AND play_name=? AND enrollment=? AND step_index=?",
-      )
-      .get(prospectId, playName, enrollment, stepIndex) as { data: string } | null;
-    return row ? JSON.parse(row.data) : null;
+    return dmGetMailPreparation(this.db, prospectId, playName, enrollment, stepIndex);
   }
   saveMailPreparation(
     prospectId: number,
@@ -347,11 +370,7 @@ export class Ledger {
     stepIndex: number,
     data: import("./direct-mail.ts").MailPreparation,
   ): void {
-    this.db
-      .query(
-        "INSERT INTO mail_preparations VALUES(?,?,?,?,?) ON CONFLICT(prospect_id,play_name,enrollment,step_index) DO UPDATE SET data=excluded.data",
-      )
-      .run(prospectId, playName, enrollment, stepIndex, JSON.stringify(data));
+    dmSaveMailPreparation(this.db, prospectId, playName, enrollment, stepIndex, data);
   }
   deleteMailPreparation(
     prospectId: number,
@@ -359,49 +378,16 @@ export class Ledger {
     enrollment: string,
     stepIndex: number,
   ): void {
-    this.db
-      .query(
-        "DELETE FROM mail_preparations WHERE prospect_id=? AND play_name=? AND enrollment=? AND step_index=?",
-      )
-      .run(prospectId, playName, enrollment, stepIndex);
+    dmDeleteMailPreparation(this.db, prospectId, playName, enrollment, stepIndex);
   }
   setMailAddresses(prospect: number, to: PostalAddress, from: PostalAddress): void {
-    const put = this.db.query(
-      "INSERT INTO direct_mail_addresses(key,address) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET address=excluded.address",
-    );
-    this.db
-      .transaction(() => {
-        put.run(`prospect:${prospect}`, JSON.stringify(to));
-        put.run("return", JSON.stringify(from));
-      })
-      .immediate();
+    dmSetMailAddresses(this.db, prospect, to, from);
   }
   getMailAddress(key: string): PostalAddress | null {
-    const row = this.db.query("SELECT address FROM direct_mail_addresses WHERE key=?").get(key) as {
-      address: string;
-    } | null;
-    return row ? JSON.parse(row.address) : null;
+    return dmGetMailAddress(this.db, key);
   }
   recordMailReceipt(receipt: string, input: Parameters<Ledger["recordReceipt"]>[0]): number {
-    return this.db
-      .transaction(() => {
-        const previous = this.db
-          .query("SELECT local_id FROM direct_mail_receipts WHERE receipt_id=?")
-          .get(receipt) as { local_id: number } | null;
-        if (previous) {
-          if (input.signedReceipt)
-            this.db
-              .query("UPDATE receipts SET signed_receipt=? WHERE id=?")
-              .run(JSON.stringify(input.signedReceipt), previous.local_id);
-          return previous.local_id;
-        }
-        const id = this.recordReceipt(input);
-        this.db
-          .query("INSERT INTO direct_mail_receipts(receipt_id,local_id) VALUES (?,?)")
-          .run(receipt, id);
-        return id;
-      })
-      .immediate();
+    return dmRecordMailReceipt(this.db, receipt, input, (i) => this.recordReceipt(i));
   }
 
   private migrate(): void {
@@ -413,8 +399,8 @@ export class Ledger {
   /**
    * CAS-claim a timestamp marker on a single row: true when the marker was
    * NULL (or older than `staleCutoffIso`) and was set; false when another
-   * caller holds the claim. Shared by every in-flight marker in the ledger.
-   * Table/column names are whitelisted to bare ASCII (SQLite can't bind them).
+   * caller holds the claim. Shared by every in-flight marker in the ledger
+   * (ledger-markers.ts).
    */
   private claimMarker(opts: {
     table: string;
@@ -424,21 +410,7 @@ export class Ledger {
     startedAtIso: string;
     staleCutoffIso?: string;
   }): boolean {
-    this.assertSafeIdentifiers(opts.table, opts.column);
-    const staleClause = opts.staleCutoffIso
-      ? ` AND (${opts.column} IS NULL OR ${opts.column} < ?)`
-      : ` AND ${opts.column} IS NULL`;
-    const args = opts.staleCutoffIso
-      ? [opts.startedAtIso, ...opts.pkeyValues, opts.staleCutoffIso]
-      : [opts.startedAtIso, ...opts.pkeyValues];
-    const result = this.db
-      .prepare(
-        `UPDATE ${opts.table}
-         SET ${opts.column} = ?
-         WHERE ${opts.pkeyWhere}${staleClause}`,
-      )
-      .run(...(args as never[]));
-    return result.changes > 0;
+    return claimMarker(this.db, opts);
   }
 
   /**
@@ -451,17 +423,7 @@ export class Ledger {
     column: string;
     pkeyValues: unknown[];
   }): void {
-    this.assertSafeIdentifiers(opts.table, opts.column);
-    this.db
-      .prepare(`UPDATE ${opts.table} SET ${opts.column} = NULL WHERE ${opts.pkeyWhere}`)
-      .run(...(opts.pkeyValues as never[]));
-  }
-
-  private assertSafeIdentifiers(table: string, column: string): void {
-    const ident = /^[A-Za-z_][A-Za-z0-9_]*$/;
-    if (!ident.test(table) || !ident.test(column)) {
-      throw new Error(`unsafe identifier in marker helper: ${table}.${column}`);
-    }
+    clearMarker(this.db, opts);
   }
 
   enrollCadence(input: {
@@ -941,7 +903,7 @@ export class Ledger {
 
   /** Full prospect record by id (PK seek). Avoids loading every prospect to find one. */
   getProspectById(id: number): ProspectRecord | null {
-    const prospect = this.withSharedIdentity(this.prospects.getProspectRow(id));
+    const prospect = this.prospects.withSharedIdentity(this.prospects.getProspectRow(id));
     return this.prospects.attachMailAddress(prospect, id);
   }
 
@@ -999,10 +961,7 @@ export class Ledger {
   }
 
   getSenderAssignment(email: string): string | null {
-    const row = this.db
-      .query("SELECT identity_id FROM sender_assignments WHERE email = ?")
-      .get(canonEmail(email)) as { identity_id: string } | undefined;
-    return row?.identity_id ?? null;
+    return sendGetSenderAssignment(this.db, email);
   }
 
   /**
@@ -1011,11 +970,7 @@ export class Ledger {
    * single winning assignment instead of splitting the thread across senders.
    */
   assignSender(email: string, identityId: string): string {
-    const canon = canonEmail(email);
-    this.db
-      .prepare("INSERT OR IGNORE INTO sender_assignments(email, identity_id) VALUES(?, ?)")
-      .run(canon, identityId);
-    return this.getSenderAssignment(canon) ?? identityId;
+    return sendAssignSender(this.db, email, identityId);
   }
 
   /**
@@ -1026,13 +981,7 @@ export class Ledger {
    * excluding today's rows.
    */
   countEmailSendsSince(identityId: string, sinceUtcSqlite: string): number {
-    const row = this.db
-      .query(
-        `SELECT COUNT(*) AS n FROM receipts
-         WHERE call_type = 'email.send' AND sender_identity = ? AND created_at >= ?`,
-      )
-      .get(identityId, sinceUtcSqlite) as { n: number };
-    return row.n;
+    return sendCountEmailSendsSince(this.db, identityId, sinceUtcSqlite);
   }
 
   /**
@@ -1041,27 +990,12 @@ export class Ledger {
    * letting the rotation picker move their thread to a new From address.
    */
   hasPriorEmailSend(email: string): boolean {
-    const row = this.db
-      .query(
-        `SELECT 1 FROM sequence_events se
-         JOIN prospects p ON p.id = se.prospect_id
-         WHERE p.email = ? AND se.channel = 'email'
-           AND se.status IN ('sent','delivered','replied')
-         LIMIT 1`,
-      )
-      .get(canonEmail(email)) as 1 | undefined;
-    return row != null;
+    return sendHasPriorEmailSend(this.db, email);
   }
 
   /** First email.send by this identity (warm-up ramp anchor). SQLite-format UTC or null. */
   firstEmailSendAt(identityId: string): string | null {
-    const row = this.db
-      .query(
-        `SELECT MIN(created_at) AS first FROM receipts
-         WHERE call_type = 'email.send' AND sender_identity = ?`,
-      )
-      .get(identityId) as { first: string | null };
-    return row.first;
+    return sendFirstEmailSendAt(this.db, identityId);
   }
 
   /**
@@ -1239,50 +1173,14 @@ export class Ledger {
     return this.receipts.listReceipts(opts);
   }
 
-  /** Link legacy workspace IDs without renumbering any queue, cadence or reply history. */
+  /**
+   * Link legacy workspace IDs without renumbering any queue, cadence or
+   * reply history. The transaction body lives in `ProspectStore.refreshSharedIdentity`
+   * (issue #751 round-1 correction); `Ledger` keeps this method for
+   * backward-compat call sites and the module-level singleton getter below.
+   */
   refreshSharedPeople(): void {
-    if (!this.people) return;
-    if (this.peopleVersion === this.people.version()) return;
-    const rows = this.prospects.listAllProspects();
-    this.db
-      .transaction(() => {
-        for (const row of rows) {
-          const person = row.shared_person_id
-            ? this.people!.get(row.shared_person_id)
-            : this.bindSharedPerson(row);
-          if (!person) throw Error(`Missing shared person for prospect ${row.id}`);
-          for (const field of [
-            "name",
-            "email",
-            "phone",
-            "company",
-            "linkedin_url",
-            "title",
-          ] as const) {
-            if (row[field] === person[field]) continue;
-            // Legacy aliases can have separate historical IDs in one workspace.
-            // Keep their unique email keys; both still resolve to the same shared identity.
-            if (
-              field === "email" &&
-              person.email &&
-              this.prospects.hasOtherProspectWithEmail(person.email, row.id)
-            )
-              continue;
-            this.prospects.setSharedIdentityField(row.id, field, person[field]);
-          }
-        }
-      })
-      .immediate();
-    this.peopleVersion = this.people.version();
-  }
-
-  private bindSharedPerson(row: ProspectRecord): SharedPerson | null {
-    if (!this.people) return null;
-    const known = row.shared_person_id ?? this.people.membership(this.path, row.id);
-    const person = this.people.resolve(row, known ?? undefined);
-    this.prospects.setProspectSharedPersonId(row.id, person.id);
-    this.people.link(this.path, row.id, person.id);
-    return person;
+    this.prospects.refreshSharedIdentity();
   }
 
   /** Add membership to the same person, preserving this workspace's independent history. */
@@ -1293,64 +1191,14 @@ export class Ledger {
     return this.upsertProspect({ ...identity, shared_person_id: id, source: "workspace-link" });
   }
 
-  private withSharedIdentity(row: ProspectRecord | null): ProspectRecord | null {
-    if (!row || !this.people) return row;
-    const person = row.shared_person_id
-      ? this.people.get(row.shared_person_id)
-      : this.bindSharedPerson(row);
-    return person
-      ? {
-          ...row,
-          ...person,
-          id: row.id,
-          shared_person_id: person.id,
-          source_profile_url: row.source_profile_url,
-        }
-      : row;
-  }
-
+  /**
+   * Upsert with shared-identity resolution. The transaction body lives in
+   * `ProspectStore.upsertProspectWithIdentity` (issue #751 round-1
+   * correction); `Ledger` keeps this method name for its existing public
+   * signature, return value, and transaction boundary.
+   */
   upsertProspect(input: Partial<ProspectRecord> & { email?: string | null }): number {
-    return this.db.transaction(() => this.upsertProspectInTransaction(input)).immediate();
-  }
-
-  private upsertProspectInTransaction(
-    input: Partial<ProspectRecord> & { email?: string | null },
-  ): number {
-    // Store the canonical (lowercased) email so reply matching, which
-    // normalizes the inbound from-address the same way, always lands.
-    const person = this.people?.resolve(input, input.shared_person_id ?? undefined);
-    if (person) {
-      const membership = this.prospects.findExistingForUpsert(person.id, null);
-      if (membership) {
-        this.prospects.seedBusinessAddress(
-          membership.id,
-          input.businessAddress,
-          input.businessAddressSource,
-        );
-        return membership.id;
-      }
-      const { id, ...identity } = person;
-      input = {
-        ...input,
-        ...identity,
-        shared_person_id: id,
-        source_profile_url: input.source_profile_url ?? identity.source_profile_url,
-      };
-    }
-    const existing = this.prospects.findExistingForUpsert(null, input.email);
-    if (existing) {
-      if (person) this.bindSharedPerson({ ...input, id: existing.id } as ProspectRecord);
-      this.prospects.seedBusinessAddress(
-        existing.id,
-        input.businessAddress,
-        input.businessAddressSource,
-      );
-      return existing.id;
-    }
-    const id = this.prospects.insertProspect(input);
-    if (person) this.bindSharedPerson({ ...input, id } as ProspectRecord);
-    this.prospects.seedBusinessAddress(id, input.businessAddress, input.businessAddressSource);
-    return id;
+    return this.prospects.upsertProspectWithIdentity(input);
   }
 
   /**
@@ -1574,28 +1422,12 @@ export class Ledger {
     amountUsd?: number;
     notes?: string;
   }): number {
-    const stmt = this.db.prepare(`
-      INSERT INTO deal_outcomes(prospect_id, play_name, outcome, amount_usd, notes)
-      VALUES(?, ?, ?, ?, ?)
-    `);
-    const result = stmt.run(
-      input.prospectId,
-      input.playName ?? null,
-      input.outcome,
-      input.amountUsd ?? null,
-      input.notes ?? null,
-    );
-    return Number(result.lastInsertRowid);
+    return outRecordOutcome(this.db, input);
   }
 
   /** Latest outcome timestamp per prospect, bulk-read to acknowledge earlier positive replies. */
   listLatestOutcomeRecordedAtByProspect(): Map<number, string> {
-    const rows = this.db
-      .query(
-        `SELECT prospect_id, MAX(recorded_at) AS recorded_at FROM deal_outcomes GROUP BY prospect_id`,
-      )
-      .all() as Array<{ prospect_id: number; recorded_at: string }>;
-    return new Map(rows.map((r) => [r.prospect_id, r.recorded_at]));
+    return outListLatestOutcomeRecordedAtByProspect(this.db);
   }
 
   countOutcomes(
@@ -1605,22 +1437,7 @@ export class Ledger {
       outcome?: string;
     } = {},
   ): number {
-    const where: string[] = [];
-    const args: unknown[] = [];
-    if (opts.sinceIso) {
-      where.push("recorded_at >= ?");
-      args.push(toSqliteUtc(opts.sinceIso));
-    }
-    if (opts.playName) {
-      where.push("play_name = ?");
-      args.push(opts.playName);
-    }
-    if (opts.outcome) {
-      where.push("outcome = ?");
-      args.push(opts.outcome);
-    }
-    const sql = `SELECT COUNT(*) AS n FROM deal_outcomes ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;
-    return (this.db.query(sql).get(...(args as never[])) as { n: number } | null)?.n ?? 0;
+    return outCountOutcomes(this.db, opts);
   }
 
   outcomesByPlay(opts: { sinceIso?: string } = {}): Array<{
@@ -1632,31 +1449,7 @@ export class Ledger {
     ghosted: number;
     won_value_usd: number;
   }> {
-    const where: string[] = [];
-    const args: unknown[] = [];
-    if (opts.sinceIso) {
-      where.push("recorded_at >= ?");
-      args.push(toSqliteUtc(opts.sinceIso));
-    }
-    const sql = `
-      SELECT
-        play_name,
-        SUM(CASE WHEN outcome = 'meeting_booked' THEN 1 ELSE 0 END) AS meetings,
-        SUM(CASE WHEN outcome = 'sql_qualified' THEN 1 ELSE 0 END) AS sqls,
-        SUM(CASE WHEN outcome = 'deal_won' THEN 1 ELSE 0 END) AS won,
-        SUM(CASE WHEN outcome = 'deal_lost' THEN 1 ELSE 0 END) AS lost,
-        SUM(CASE WHEN outcome = 'ghosted' THEN 1 ELSE 0 END) AS ghosted,
-        -- The return side. amount_usd has been written since v16 and read by
-        -- nothing; without it the only figure putting dollars over dollars is
-        -- the platform's per-goal RoCS, which divides one winner's cadence cost
-        -- into its own deal and so ignores every prospect that went nowhere.
-        COALESCE(SUM(CASE WHEN outcome = 'deal_won' THEN amount_usd ELSE 0 END), 0) AS won_value_usd
-      FROM deal_outcomes
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      GROUP BY play_name
-      ORDER BY play_name ASC NULLS LAST
-    `;
-    return this.db.query(sql).all(...(args as never[])) as never;
+    return outOutcomesByPlay(this.db, opts);
   }
 
   listColdProspects(opts: {
@@ -1672,44 +1465,7 @@ export class Ledger {
     phone: string | null;
     last_event_at: string | null;
   }> {
-    const sql = `
-      SELECT cold.*, strftime('%Y-%m-%dT%H:%M:%fZ', cold.last_event_jd) AS last_event_at
-      FROM (
-      SELECT p.id, p.name, p.email, p.company, p.linkedin_url, p.phone,
-             MAX(s.created_at) AS last_sequence_at,
-             MAX(CASE WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
-                      THEN c.stopped_at END) AS last_revivable_stop_at,
-             -- The four sources mix SQLite-form (created_at, stopped_at) and
-             -- ISO (received_at, occurred_at) timestamps, so compare them as
-             -- julianday numbers, not strings. 0 stands in for "none" because
-             -- multi-argument MAX() returns NULL if any argument is NULL.
-             NULLIF(MAX(
-               COALESCE(MAX(julianday(s.created_at)), 0),
-               COALESCE(MAX(CASE WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
-                                 THEN julianday(c.stopped_at) END), 0),
-               COALESCE((SELECT MAX(julianday(ir.received_at)) FROM inbox_replies ir
-                         WHERE ir.prospect_id = p.id AND coalesce(ir.kind,'human') = 'human'), 0),
-               COALESCE((SELECT MAX(julianday(ce.occurred_at)) FROM channel_events ce
-                         WHERE ce.prospect_id = p.id AND ce.event_type = 'reply'), 0)
-             ), 0) AS last_event_jd
-      FROM prospects p
-      LEFT JOIN sequence_events s ON s.prospect_id = p.id
-      LEFT JOIN cadence_state c ON c.prospect_id = p.id
-      WHERE ${contactAllowedClause(this.db)} AND NOT EXISTS (
-        SELECT 1 FROM cadence_state blocked
-        WHERE blocked.prospect_id = p.id AND blocked.status = 'stopped'
-          AND blocked.stop_reason IN ('not_a_fit', 'do_not_contact')
-      )
-      GROUP BY p.id
-      HAVING last_event_jd IS NOT NULL
-        AND julianday('now') - last_event_jd BETWEEN ? AND ?
-      ) cold
-      ORDER BY cold.last_event_jd ASC
-      LIMIT ?
-    `;
-    return this.db
-      .query(sql)
-      .all(opts.minDaysSinceLastEvent, opts.maxDaysSinceLastEvent, opts.limit ?? 50) as never;
+    return sysListColdProspects(this.db, opts);
   }
 
   recordSequenceEvent(input: {
@@ -1843,19 +1599,11 @@ export class Ledger {
   }
 
   getPollWatermark(key: string): string | null {
-    const row = this.db.query(`SELECT value FROM poll_state WHERE key = ?`).get(key) as {
-      value: string;
-    } | null;
-    return row?.value ?? null;
+    return sysGetPollWatermark(this.db, key);
   }
 
   setPollWatermark(key: string, value: string): void {
-    this.db
-      .prepare(
-        `INSERT INTO poll_state(key, value, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-      )
-      .run(key, value);
+    sysSetPollWatermark(this.db, key, value);
   }
 
   /**
@@ -1870,14 +1618,7 @@ export class Ledger {
 
   /** Every sent step for a prospect across ALL plays. The outreach half of a conversation timeline. */
   listSequenceEventsForProspect(prospectId: number): SequenceEventRecord[] {
-    return this.db
-      .query(
-        `SELECT * FROM sequence_events
-         WHERE prospect_id = ?
-           AND status IN ('sent','delivered','replied')
-         ORDER BY created_at ASC, id ASC`,
-      )
-      .all(prospectId) as SequenceEventRecord[];
+    return cadListSequenceEventsForProspect(this.db, prospectId);
   }
 
   /**
@@ -1892,25 +1633,11 @@ export class Ledger {
   }
 
   recordInterview(input: Omit<InterviewRecord, "id" | "created_at">): number {
-    const stmt = this.db.prepare(`
-      INSERT INTO interviews(person, transcript_path, jtbd, pain_quotes_json)
-      VALUES(?, ?, ?, ?)
-    `);
-    const result = stmt.run(
-      input.person,
-      input.transcript_path,
-      input.jtbd,
-      input.pain_quotes_json,
-    );
-    return Number(result.lastInsertRowid);
+    return sysRecordInterview(this.db, input);
   }
 
   countSends(opts: { playName?: string } = {}): number {
-    const sql = opts.playName
-      ? "SELECT COUNT(*) AS n FROM sequence_events WHERE play_name = ? AND status IN ('sent', 'delivered', 'replied')"
-      : "SELECT COUNT(*) AS n FROM sequence_events WHERE status IN ('sent', 'delivered', 'replied')";
-    const args = opts.playName ? [opts.playName] : [];
-    return (this.db.query(sql).get(...(args as never[])) as { n: number } | null)?.n ?? 0;
+    return cadCountSends(this.db, opts);
   }
 
   spendByPlay(
@@ -1933,19 +1660,8 @@ export class Ledger {
    * occurrence column instead (COALESCEd onto `created_at` for older rows
    * that predate it), which the Slack daily summary needs so a reply or
    * bounce landing the day AFTER it was sent still shows up on the day it
-   * actually happened rather than vanishing from every completed-day rollup:
-   *   - `replied`: `COALESCE(replied_at, created_at)`: `markLatestStepReplied`
-   *     flips the ORIGINAL sent row in place rather than inserting a new one,
-   *     so that row's `created_at` stays pinned to the SEND time.
-   *   - `bounced`: `COALESCE(bounced_at, created_at)`. A bounce DOES insert a
-   *     fresh row, but `created_at` is stamped at POLL/detection time, not the
-   *     provider's own bounce time; a poll resuming after downtime (or a
-   *     delayed DSN) would otherwise misattribute the bounce to the wrong day.
-   * This mode intentionally breaks the `replied <= sent` invariant for a
-   * window whose reply/bounce occurrence lands inside it but whose send
-   * predates it. That's why it's opt-in, scoped to the one caller that reads
-   * `sent`/`replied`/`bounced` as independent daily counts rather than a
-   * cohort funnel.
+   * actually happened rather than vanishing from every completed-day rollup.
+   * See `ledger-cadence.ts`'s `eventsByPlay` for the full contract.
    */
   eventsByPlay(
     opts: { sinceIso?: string; untilIso?: string; occurrenceWindow?: boolean } = {},
@@ -1956,51 +1672,7 @@ export class Ledger {
     replied: number;
     bounced: number;
   }> {
-    const createdClause: string[] = [];
-    const repliedClause: string[] = [];
-    const bouncedClause: string[] = [];
-    const repliedCol = opts.occurrenceWindow ? "COALESCE(replied_at, created_at)" : "created_at";
-    // created_at and replied_at are SQLite-form (replied_at is normalized on
-    // write), so they compare as strings against SQLite-form bounds. bounced_at
-    // is the provider's ISO timestamp: compare it by julianday, which reads both.
-    const bouncedCol = opts.occurrenceWindow
-      ? "COALESCE(julianday(bounced_at), julianday(created_at))"
-      : "created_at";
-    const bound = (name: string) => (opts.occurrenceWindow ? `julianday(${name})` : name);
-    if (opts.sinceIso) {
-      createdClause.push("created_at >= $sinceIso");
-      repliedClause.push(`${repliedCol} >= $sinceIso`);
-      bouncedClause.push(`${bouncedCol} >= ${bound("$sinceIso")}`);
-    }
-    if (opts.untilIso) {
-      createdClause.push("created_at < $untilIso");
-      repliedClause.push(`${repliedCol} < $untilIso`);
-      bouncedClause.push(`${bouncedCol} < ${bound("$untilIso")}`);
-    }
-    const createdWindow = createdClause.length ? `(${createdClause.join(" AND ")})` : "1";
-    const repliedWindow = repliedClause.length ? `(${repliedClause.join(" AND ")})` : "1";
-    const bouncedWindow = bouncedClause.length ? `(${bouncedClause.join(" AND ")})` : "1";
-    const params: Record<string, string> = {};
-    if (opts.sinceIso) params["$sinceIso"] = toSqliteUtc(opts.sinceIso);
-    if (opts.untilIso) params["$untilIso"] = toSqliteUtc(opts.untilIso);
-    const sql = `
-      SELECT
-        play_name,
-        SUM(CASE WHEN status IN ('sent', 'delivered', 'replied') AND ${createdWindow} THEN 1 ELSE 0 END) AS sent,
-        SUM(CASE WHEN status IN ('delivered', 'replied') AND ${createdWindow} THEN 1 ELSE 0 END) AS delivered,
-        SUM(CASE WHEN status = 'replied' AND ${repliedWindow} THEN 1 ELSE 0 END) AS replied,
-        SUM(CASE WHEN status = 'bounced' AND ${bouncedWindow} THEN 1 ELSE 0 END) AS bounced
-      FROM sequence_events
-      WHERE ${createdWindow} OR (status = 'replied' AND ${repliedWindow}) OR (status = 'bounced' AND ${bouncedWindow})
-      GROUP BY play_name
-    `;
-    return this.db.query(sql).all(params) as Array<{
-      play_name: string;
-      sent: number;
-      delivered: number;
-      replied: number;
-      bounced: number;
-    }>;
+    return cadEventsByPlay(this.db, opts);
   }
 
   /**
@@ -2044,25 +1716,17 @@ export class Ledger {
    * against the ceiling until `sweepStaleSpendReservations` reclaims it.
    */
   reserveSpend(amountUsd: number): number {
-    const result = this.db
-      .prepare(`INSERT INTO spend_reservations(amount_usd) VALUES(?)`)
-      .run(amountUsd);
-    return Number(result.lastInsertRowid);
+    return spendReserveSpend(this.db, amountUsd);
   }
 
   /** Release a reservation once the caller's actual spend has posted (or the call was skipped/failed). */
   releaseSpendReservation(id: number): void {
-    this.db.prepare(`DELETE FROM spend_reservations WHERE id = ?`).run(id);
+    spendReleaseSpendReservation(this.db, id);
   }
 
   /** Sum of currently-held reservations since `sinceIso` (the local-midnight boundary). */
   reservedSpendUsd(sinceIso: string): number {
-    const row = this.db
-      .query(
-        `SELECT COALESCE(SUM(amount_usd), 0) AS total FROM spend_reservations WHERE created_at >= ?`,
-      )
-      .get(sinceIso) as { total: number } | null;
-    return row?.total ?? 0;
+    return spendReservedSpendUsd(this.db, sinceIso);
   }
 
   /**
@@ -2091,15 +1755,10 @@ export class Ledger {
     ceilingUsd: number;
     amountUsd: number;
   }): number | null {
-    const txn = this.db.transaction((): number | null => {
-      const effectiveUsd =
-        this.totalSpendUsd({ sinceIso: opts.sinceIso }) + this.reservedSpendUsd(opts.sinceIso);
-      // Compare in integer cents: receipts are REALs and three $0.10 calls
-      // sum to 0.30000000000000004, which would read as over a $0.30 ceiling.
-      if (cents(effectiveUsd) + cents(opts.amountUsd) > cents(opts.ceilingUsd)) return null;
-      return this.reserveSpend(opts.amountUsd);
+    return spendReserveSpendIfUnderCeiling(this.db, {
+      ...opts,
+      postedSpendUsd: (sinceIso) => this.totalSpendUsd({ sinceIso }),
     });
-    return txn.immediate();
   }
 
   /**
@@ -2108,14 +1767,7 @@ export class Ledger {
    * the rest of the day. Returns the number of rows swept.
    */
   sweepStaleSpendReservations(maxAgeMs: number, now = new Date()): number {
-    const cutoffIso = new Date(now.getTime() - maxAgeMs)
-      .toISOString()
-      .slice(0, 19)
-      .replace("T", " ");
-    const result = this.db
-      .prepare(`DELETE FROM spend_reservations WHERE created_at < ?`)
-      .run(cutoffIso);
-    return Number(result.changes);
+    return spendSweepStaleSpendReservations(this.db, maxAgeMs, now);
   }
 
   /** Recent reviewed rows for few-shot ICP classification. */
@@ -2166,23 +1818,12 @@ export class Ledger {
     source: string;
     raw: unknown;
   }): void {
-    this.db
-      .prepare(
-        `INSERT INTO pending_resolution(play_name, dedupe_key, source, raw_json)
-         VALUES(?, ?, ?, ?)
-         ON CONFLICT(play_name, dedupe_key) DO UPDATE SET
-           source = excluded.source,
-           raw_json = excluded.raw_json`,
-      )
-      .run(input.playName, input.dedupeKey, input.source, JSON.stringify(input.raw));
+    sysUpsertPendingResolution(this.db, input);
   }
 
   /** True when (play, dedupeKey) is awaiting retry: finders OR this into their dedup. */
   isPendingResolution(playName: string, dedupeKey: string): boolean {
-    const row = this.db
-      .query("SELECT 1 FROM pending_resolution WHERE play_name = ? AND dedupe_key = ?")
-      .get(playName, dedupeKey);
-    return row !== null && row !== undefined;
+    return sysIsPendingResolution(this.db, playName, dedupeKey);
   }
 
   /** Pending rows (optionally one play), oldest first, for the retry pass. */
@@ -2195,28 +1836,16 @@ export class Ledger {
     last_attempt_at: string | null;
     attempts: number;
   }> {
-    const where = opts?.playName ? "WHERE play_name = ?" : "";
-    const limit = opts?.limit ? `LIMIT ${Math.max(1, Math.floor(opts.limit))}` : "";
-    const sql = `SELECT * FROM pending_resolution ${where} ORDER BY first_seen_at ASC ${limit}`;
-    const q = this.db.query(sql);
-    return (opts?.playName ? q.all(opts.playName) : q.all()) as never;
+    return sysListPendingResolution(this.db, opts);
   }
 
   /** Mark a pending row as just-attempted (bumps attempts + last_attempt_at). */
   markPendingResolutionAttempted(playName: string, dedupeKey: string): void {
-    this.db
-      .prepare(
-        `UPDATE pending_resolution
-         SET attempts = attempts + 1, last_attempt_at = datetime('now')
-         WHERE play_name = ? AND dedupe_key = ?`,
-      )
-      .run(playName, dedupeKey);
+    sysMarkPendingResolutionAttempted(this.db, playName, dedupeKey);
   }
 
   deletePendingResolution(playName: string, dedupeKey: string): void {
-    this.db
-      .prepare("DELETE FROM pending_resolution WHERE play_name = ? AND dedupe_key = ?")
-      .run(playName, dedupeKey);
+    sysDeletePendingResolution(this.db, playName, dedupeKey);
   }
 
   /**
@@ -2225,21 +1854,12 @@ export class Ledger {
    * re-discovery and the table doesn't silt. Returns the number removed.
    */
   sweepStalePendingResolution(maxAgeMs: number): number {
-    // first_seen_at is SQLite-form (column DEFAULT); an ISO cutoff would
-    // purge every row from the cutoff's own day.
-    const cutoff = toSqliteUtc(new Date(Date.now() - maxAgeMs));
-    const res = this.db
-      .prepare("DELETE FROM pending_resolution WHERE first_seen_at < ?")
-      .run(cutoff);
-    return Number(res.changes ?? 0);
+    return sysSweepStalePendingResolution(this.db, maxAgeMs);
   }
 
   /** Tweet ids the x-reposters finder paid for since `cutoffIso`: skipped on the next harvest. */
   recentXHarvestedTweetIds(cutoffIso: string): Set<string> {
-    const rows = this.db
-      .query("SELECT tweet_id FROM x_harvested_tweets WHERE harvested_at >= ?")
-      .all(cutoffIso) as Array<{ tweet_id: string }>;
-    return new Set(rows.map((r) => r.tweet_id));
+    return sysRecentXHarvestedTweetIds(this.db, cutoffIso);
   }
 
   /**
@@ -2248,15 +1868,7 @@ export class Ledger {
    * timestamp (a re-buy inside the freshness window restarts its clock).
    */
   recordXHarvestedTweets(ids: string[], nowIso: string, pruneCutoffIso: string): void {
-    const insert = this.db.prepare(
-      `INSERT INTO x_harvested_tweets(tweet_id, harvested_at) VALUES(?, ?)
-       ON CONFLICT(tweet_id) DO UPDATE SET harvested_at = excluded.harvested_at`,
-    );
-    const tx = this.db.transaction(() => {
-      this.db.prepare("DELETE FROM x_harvested_tweets WHERE harvested_at < ?").run(pruneCutoffIso);
-      for (const id of ids) insert.run(id, nowIso);
-    });
-    tx();
+    sysRecordXHarvestedTweets(this.db, ids, nowIso, pruneCutoffIso);
   }
 
   /**
@@ -2285,15 +1897,7 @@ export class Ledger {
    * bypasses this via sendDraftedEmail's `allowRecontact`.
    */
   prospectHasFirstTouch(prospectId: number): boolean {
-    const row = this.db
-      .query(
-        `SELECT 1 FROM sequence_events
-         WHERE prospect_id = ? AND step_index = 0
-           AND status IN ('sent','delivered','replied')
-         LIMIT 1`,
-      )
-      .get(prospectId);
-    return row !== null && row !== undefined;
+    return cadProspectHasFirstTouch(this.db, prospectId);
   }
 
   /**
@@ -2365,27 +1969,17 @@ export class Ledger {
    * not history. Oldest first.
    */
   listAllSequenceEventsForProspect(prospectId: number): SequenceEventRecord[] {
-    return this.db
-      .query(
-        `SELECT * FROM sequence_events
-         WHERE prospect_id = ? AND status != 'queued'
-         ORDER BY created_at ASC, id ASC`,
-      )
-      .all(prospectId) as SequenceEventRecord[];
+    return cadListAllSequenceEventsForProspect(this.db, prospectId);
   }
 
   /** Inbound engagement on non-email channels (LinkedIn replies) for one prospect, oldest first. */
   listChannelEventsForProspect(prospectId: number): ChannelEventRecord[] {
-    return this.db
-      .query(`SELECT * FROM channel_events WHERE prospect_id = ? ORDER BY occurred_at ASC, id ASC`)
-      .all(prospectId) as ChannelEventRecord[];
+    return cadListChannelEventsForProspect(this.db, prospectId);
   }
 
   /** Recorded deal outcomes for one prospect, oldest first. */
   listDealOutcomesForProspect(prospectId: number): DealOutcomeRecord[] {
-    return this.db
-      .query(`SELECT * FROM deal_outcomes WHERE prospect_id = ? ORDER BY recorded_at ASC, id ASC`)
-      .all(prospectId) as DealOutcomeRecord[];
+    return outListDealOutcomesForProspect(this.db, prospectId);
   }
 
   /** Remove an unreviewed queue reservation, leaving reviewed rows untouched. */
@@ -2528,21 +2122,7 @@ export class Ledger {
     runId: number;
     startedAt: string;
   } {
-    const startedAt = new Date().toISOString();
-    const result = this.db
-      .prepare(
-        `INSERT INTO runs(play_name, dry_run, status, started_at, target_count, targets_json, dedupe_keys_json)
-         VALUES(?, ?, 'running', ?, ?, ?, ?)`,
-      )
-      .run(
-        input.playName,
-        input.dryRun ? 1 : 0,
-        startedAt,
-        input.targets.length,
-        JSON.stringify(input.targets),
-        JSON.stringify(input.dedupeKeys ?? []),
-      );
-    return { runId: Number(result.lastInsertRowid), startedAt };
+    return runCreateRun(this.db, input);
   }
 
   /**
@@ -2551,45 +2131,7 @@ export class Ledger {
    * runs are bounded at ~25 targets typically.
    */
   appendRunEvent(input: { runId: number; event: unknown }): void {
-    const row = this.db
-      .query(
-        `SELECT events_json, drafted_count, sent_count, error_count
-         FROM runs WHERE id = ?`,
-      )
-      .get(input.runId) as {
-      events_json: string;
-      drafted_count: number;
-      sent_count: number;
-      error_count: number;
-    } | null;
-    if (!row) return;
-    let events: unknown[];
-    try {
-      events = JSON.parse(row.events_json) as unknown[];
-      if (!Array.isArray(events)) events = [];
-    } catch {
-      events = [];
-    }
-    events.push(input.event);
-    // Counter bump driven by event.kind: keeps the writer side simple and
-    // the read side stable. Unknown kinds are appended without counter change.
-    const kind =
-      input.event && typeof input.event === "object"
-        ? ((input.event as { kind?: string }).kind ?? null)
-        : null;
-    let drafted = row.drafted_count;
-    let sent = row.sent_count;
-    let errors = row.error_count;
-    if (kind === "draft") drafted++;
-    else if (kind === "send") sent++;
-    else if (kind === "error") errors++;
-    this.db
-      .prepare(
-        `UPDATE runs
-         SET events_json = ?, drafted_count = ?, sent_count = ?, error_count = ?
-         WHERE id = ?`,
-      )
-      .run(JSON.stringify(events), drafted, sent, errors, input.runId);
+    runAppendRunEvent(this.db, input);
   }
 
   /**
@@ -2602,14 +2144,7 @@ export class Ledger {
     status: "done" | "interrupted";
     sentEmails?: string[];
   }): void {
-    const completedAt = new Date().toISOString();
-    this.db
-      .prepare(
-        `UPDATE runs
-         SET status = ?, completed_at = ?, prospect_emails_json = ?
-         WHERE id = ? AND status = 'running'`,
-      )
-      .run(input.status, completedAt, JSON.stringify(input.sentEmails ?? []), input.runId);
+    runMarkRunComplete(this.db, input);
   }
 
   /**
@@ -2619,9 +2154,7 @@ export class Ledger {
    * and the /cadences?sinceRun deep-link needs them.
    */
   setRunSentEmails(input: { runId: number; sentEmails: string[] }): void {
-    this.db
-      .prepare(`UPDATE runs SET prospect_emails_json = ? WHERE id = ?`)
-      .run(JSON.stringify(input.sentEmails), input.runId);
+    runSetRunSentEmails(this.db, input);
   }
 
   /**
@@ -2638,25 +2171,7 @@ export class Ledger {
     cancelled: boolean;
     status: "running" | "done" | "interrupted" | "cancelled" | null;
   } {
-    // Sent-email bookkeeping is deliberately outside the CAS below: the cancel
-    // route may have flipped the row already by the time the SSE handler
-    // unwinds, and the emails it collected still belong on the record. Only
-    // that handler passes `sentEmails`, so the two callers can't clobber
-    // each other whichever order they land in.
-    if (input.sentEmails)
-      this.setRunSentEmails({ runId: input.runId, sentEmails: input.sentEmails });
-    const completedAt = new Date().toISOString();
-    const result = this.db
-      .prepare(
-        `UPDATE runs
-         SET status = 'cancelled', completed_at = ?, cancel_reason = ?
-         WHERE id = ? AND status = 'running'`,
-      )
-      .run(completedAt, input.reason, input.runId);
-    const row = this.db.query(`SELECT status FROM runs WHERE id = ?`).get(input.runId) as {
-      status: "running" | "done" | "interrupted" | "cancelled";
-    } | null;
-    return { cancelled: result.changes > 0, status: row?.status ?? null };
+    return runCancelRun(this.db, input);
   }
 
   getRun(runId: number): {
@@ -2676,41 +2191,7 @@ export class Ledger {
     prospectEmails: string[];
     cancelReason: string | null;
   } | null {
-    const row = this.db.query(`SELECT * FROM runs WHERE id = ?`).get(runId) as {
-      id: number;
-      play_name: string;
-      dry_run: number;
-      status: "running" | "done" | "interrupted" | "cancelled";
-      started_at: string;
-      completed_at: string | null;
-      target_count: number;
-      drafted_count: number;
-      sent_count: number;
-      error_count: number;
-      targets_json: string;
-      dedupe_keys_json: string;
-      events_json: string;
-      prospect_emails_json: string;
-      cancel_reason: string | null;
-    } | null;
-    if (!row) return null;
-    return {
-      id: row.id,
-      playName: row.play_name,
-      dryRun: row.dry_run === 1,
-      status: row.status,
-      startedAt: row.started_at,
-      completedAt: row.completed_at,
-      targetCount: row.target_count,
-      draftedCount: row.drafted_count,
-      sentCount: row.sent_count,
-      errorCount: row.error_count,
-      targets: safeParseJsonArray(row.targets_json),
-      dedupeKeys: safeParseJsonArray(row.dedupe_keys_json) as Array<string | null>,
-      events: safeParseJsonArray(row.events_json),
-      prospectEmails: safeParseJsonArray(row.prospect_emails_json) as string[],
-      cancelReason: row.cancel_reason ?? null,
-    };
+    return runGetRun(this.db, runId);
   }
 
   /**
@@ -2733,40 +2214,7 @@ export class Ledger {
     sentCount: number;
     errorCount: number;
   }> {
-    const limit = Math.max(1, Math.min(50, opts.limit ?? 5));
-    const where = opts.status ? "WHERE status = ?" : "";
-    const args = opts.status ? [opts.status, limit] : [limit];
-    const rows = this.db
-      .query(
-        `SELECT id, play_name, status, started_at, completed_at,
-                target_count, drafted_count, sent_count, error_count
-         FROM runs
-         ${where}
-         ORDER BY started_at DESC
-         LIMIT ?`,
-      )
-      .all(...(args as never[])) as Array<{
-      id: number;
-      play_name: string;
-      status: "running" | "done" | "interrupted" | "cancelled";
-      started_at: string;
-      completed_at: string | null;
-      target_count: number;
-      drafted_count: number;
-      sent_count: number;
-      error_count: number;
-    }>;
-    return rows.map((r) => ({
-      id: r.id,
-      playName: r.play_name,
-      status: r.status,
-      startedAt: r.started_at,
-      completedAt: r.completed_at,
-      targetCount: r.target_count,
-      draftedCount: r.drafted_count,
-      sentCount: r.sent_count,
-      errorCount: r.error_count,
-    }));
+    return runListRuns(this.db, opts);
   }
 
   /**
@@ -2784,55 +2232,19 @@ export class Ledger {
     startedAt: string;
     ageMs: number;
   }> {
-    const cutoffMs = input.now.getTime() - input.maxAgeMs;
-    const rows = this.db
-      .query(`SELECT id, play_name, started_at FROM runs WHERE status = 'running'`)
-      .all() as Array<{ id: number; play_name: string; started_at: string }>;
-    const swept: Array<{
-      id: number;
-      playName: string;
-      startedAt: string;
-      ageMs: number;
-    }> = [];
-    const update = this.db.prepare(
-      // Re-check the status in the write: it closes the window between the
-      // SELECT above and here, where a concurrent cancel could land. A row
-      // that moved on under us reports 0 changes and stays out of `swept`.
-      `UPDATE runs SET status = 'interrupted', completed_at = ? WHERE id = ? AND status = 'running'`,
-    );
-    for (const row of rows) {
-      const startedMs = new Date(row.started_at).getTime();
-      if (Number.isFinite(startedMs) && startedMs > cutoffMs) continue;
-      const ageMs = Number.isFinite(startedMs) ? input.now.getTime() - startedMs : -1;
-      if (update.run(input.now.toISOString(), row.id).changes === 0) continue;
-      swept.push({
-        id: row.id,
-        playName: row.play_name,
-        startedAt: row.started_at,
-        ageMs,
-      });
-    }
-    return swept;
+    return runSweepStaleRuns(this.db, input);
   }
 
   upsertTrigger(input: { name: string; configJson: string; enabled?: boolean }): void {
-    this.db
-      .prepare(
-        `INSERT INTO triggers(name, enabled, config_json)
-         VALUES(?, ?, ?)
-         ON CONFLICT(name) DO UPDATE SET
-           enabled = excluded.enabled,
-           config_json = excluded.config_json`,
-      )
-      .run(input.name, input.enabled === false ? 0 : 1, input.configJson);
+    trgUpsertTrigger(this.db, input);
   }
 
   getTrigger(name: string): TriggerRow | null {
-    return (this.db.query("SELECT * FROM triggers WHERE name = ?").get(name) as TriggerRow) ?? null;
+    return trgGetTrigger(this.db, name);
   }
 
   listTriggers(): TriggerRow[] {
-    return this.db.query("SELECT * FROM triggers ORDER BY name ASC").all() as TriggerRow[];
+    return trgListTriggers(this.db);
   }
 
   /**
@@ -2846,14 +2258,7 @@ export class Ledger {
    * can repeat.
    */
   updateTriggerLastPoll(input: { name: string; summary: unknown }): void {
-    this.db
-      .prepare(
-        `UPDATE triggers
-         SET last_polled_at = ?, last_run_summary = ?, running_started_at = NULL,
-             company_batch_seq = company_batch_seq + 1
-         WHERE name = ?`,
-      )
-      .run(new Date().toISOString(), JSON.stringify(input.summary), input.name);
+    trgUpdateTriggerLastPoll(this.db, input);
   }
 
   /**
@@ -2867,13 +2272,7 @@ export class Ledger {
    * refusal reason so the dashboard/doctor surface it, same as before.
    */
   clearTriggerClaim(input: { name: string; summary: unknown }): void {
-    this.db
-      .prepare(
-        `UPDATE triggers
-         SET last_run_summary = ?, running_started_at = NULL
-         WHERE name = ?`,
-      )
-      .run(JSON.stringify(input.summary), input.name);
+    trgClearTriggerClaim(this.db, input);
   }
 
   /**
@@ -2884,14 +2283,7 @@ export class Ledger {
    * Cleared by updateTriggerLastPoll or sweepStaleRunningTriggers.
    */
   markTriggerRunning(name: string, startedAtIso: string, staleCutoffIso?: string): boolean {
-    return this.claimMarker({
-      table: "triggers",
-      pkeyWhere: "name = ?",
-      column: "running_started_at",
-      pkeyValues: [name],
-      startedAtIso,
-      ...(staleCutoffIso ? { staleCutoffIso } : {}),
-    });
+    return trgMarkTriggerRunning(this.db, name, startedAtIso, staleCutoffIso);
   }
 
   /**
@@ -2903,54 +2295,15 @@ export class Ledger {
     now: Date;
     maxAgeMs: number;
   }): Array<{ name: string; startedAt: string; ageMs: number }> {
-    const cutoffMs = input.now.getTime() - input.maxAgeMs;
-    const rows = this.db
-      .query(`SELECT name, running_started_at FROM triggers WHERE running_started_at IS NOT NULL`)
-      .all() as Array<{ name: string; running_started_at: string }>;
-    const swept: Array<{ name: string; startedAt: string; ageMs: number }> = [];
-    const update = this.db.prepare(
-      `UPDATE triggers
-       SET last_polled_at = ?, last_run_summary = ?, running_started_at = NULL
-       WHERE name = ?`,
-    );
-    for (const row of rows) {
-      const startedMs = new Date(row.running_started_at).getTime();
-      if (!Number.isFinite(startedMs)) {
-        // Garbage timestamp: clear it so it doesn't perpetually re-trip.
-        update.run(
-          input.now.toISOString(),
-          JSON.stringify({
-            error: "killed_by_restart",
-            reason: "running_started_at unparseable",
-            at: input.now.toISOString(),
-          }),
-          row.name,
-        );
-        continue;
-      }
-      if (startedMs > cutoffMs) continue; // still fresh
-      const ageMs = input.now.getTime() - startedMs;
-      update.run(
-        input.now.toISOString(),
-        JSON.stringify({
-          error: "killed_by_restart",
-          startedAt: row.running_started_at,
-          ageMs,
-          at: input.now.toISOString(),
-        }),
-        row.name,
-      );
-      swept.push({ name: row.name, startedAt: row.running_started_at, ageMs });
-    }
-    return swept;
+    return trgSweepStaleRunningTriggers(this.db, input);
   }
 
   setTriggerEnabled(name: string, enabled: boolean): void {
-    this.db.prepare(`UPDATE triggers SET enabled = ? WHERE name = ?`).run(enabled ? 1 : 0, name);
+    trgSetTriggerEnabled(this.db, name, enabled);
   }
 
   setTriggerConfig(name: string, configJson: string): void {
-    this.db.prepare(`UPDATE triggers SET config_json = ? WHERE name = ?`).run(configJson, name);
+    trgSetTriggerConfig(this.db, name, configJson);
   }
 
   /**
@@ -2964,17 +2317,7 @@ export class Ledger {
    * back every write in the batch, not just the failing one.
    */
   applyTriggerConfigs(entries: Array<{ name: string; configJson: string }>): void {
-    const upsert = this.db.prepare(
-      `INSERT INTO triggers(name, enabled, config_json)
-       VALUES(?, 1, ?)
-       ON CONFLICT(name) DO UPDATE SET
-         enabled = 1,
-         config_json = excluded.config_json`,
-    );
-    const tx = this.db.transaction(() => {
-      for (const entry of entries) upsert.run(entry.name, entry.configJson);
-    });
-    tx();
+    trgApplyTriggerConfigs(this.db, entries);
   }
 
   /**
@@ -3195,15 +2538,12 @@ export class Ledger {
    * actually shrinks the file.
    */
   vacuum(): void {
-    truncateWal(this.db);
-    this.db.exec("VACUUM");
-    truncateWal(this.db);
+    adminVacuum(this.db);
   }
 
   /** Pages VACUUM would reclaim. */
   freePages(): number {
-    return (this.db.query("PRAGMA freelist_count").get() as { freelist_count: number })
-      .freelist_count;
+    return adminFreePages(this.db);
   }
 
   /** Path of the SQLite file this ledger opened. */
@@ -3213,12 +2553,7 @@ export class Ledger {
 
   close(): void {
     this.people?.close();
-    try {
-      // Refresh planner stats when SQLite thinks they're stale; cheap otherwise.
-      this.db.exec("PRAGMA optimize");
-    } catch {
-      // Never let housekeeping fail a close.
-    }
+    optimizeOnClose(this.db);
     this.db.close();
   }
 
@@ -3269,109 +2604,11 @@ export class Ledger {
     eventUpdatedAt?: string | null;
     attendeesFingerprint?: string | null;
   }): { isNew: boolean; fingerprintChanged: boolean } {
-    const existing = this.db
-      .query(
-        `SELECT starts_at, attendees_fingerprint FROM meetings
-         WHERE calendar_id = ? AND event_id = ?`,
-      )
-      .get(input.calendarId, input.eventId) as
-      | { starts_at: string | null; attendees_fingerprint: string | null }
-      | undefined;
-    const isNew = !existing;
-    const fingerprintChanged =
-      !existing ||
-      (existing.attendees_fingerprint ?? null) !== (input.attendeesFingerprint ?? null);
-
-    const isUnseenCancellationStub =
-      isNew && input.status === "cancelled" && input.startsAt == null;
-    if (isUnseenCancellationStub) {
-      // Nothing to file this under: deliberately never inserted.
-      return { isNew: true, fingerprintChanged: false };
-    }
-
-    this.db
-      .prepare(
-        `INSERT INTO meetings (
-           calendar_id, event_id, ical_uid, recurring_event_id, status, summary,
-           all_day, starts_at, ends_at, event_timezone, organizer_email,
-           self_response, external_attendee_count, external_attendees_json,
-           attendees_omitted, prospect_id, suggested_prospect_id, match_status,
-           match_method, match_confidence, event_updated_at, attendees_fingerprint,
-           first_seen_at, last_seen_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                   datetime('now'), datetime('now'))
-         ON CONFLICT(calendar_id, event_id) DO UPDATE SET
-           ical_uid                = COALESCE(excluded.ical_uid, meetings.ical_uid),
-           recurring_event_id      = COALESCE(excluded.recurring_event_id, meetings.recurring_event_id),
-           status                  = COALESCE(excluded.status, meetings.status),
-           summary                 = COALESCE(excluded.summary, meetings.summary),
-           all_day                 = COALESCE(excluded.all_day, meetings.all_day),
-           -- A reschedule (starts_at genuinely changes) withdraws any stale
-           -- nudge; the recorded outcome itself is untouched either way.
-           outcome_prompted_at     = CASE
-             WHEN excluded.starts_at IS NOT NULL AND excluded.starts_at IS NOT meetings.starts_at
-               THEN NULL ELSE meetings.outcome_prompted_at END,
-           starts_at               = COALESCE(excluded.starts_at, meetings.starts_at),
-           ends_at                 = COALESCE(excluded.ends_at, meetings.ends_at),
-           event_timezone          = COALESCE(excluded.event_timezone, meetings.event_timezone),
-           organizer_email         = COALESCE(excluded.organizer_email, meetings.organizer_email),
-           self_response           = COALESCE(excluded.self_response, meetings.self_response),
-           external_attendee_count = COALESCE(excluded.external_attendee_count, meetings.external_attendee_count),
-           external_attendees_json = COALESCE(excluded.external_attendees_json, meetings.external_attendees_json),
-           attendees_omitted       = COALESCE(excluded.attendees_omitted, meetings.attendees_omitted),
-           -- A founder dismissal ('dismissed') must survive a re-poll that
-           -- carries no new match verdict (matchStatus undefined) — but a
-           -- fresh verdict from the matcher (always passed together with a
-           -- changed fingerprint) overwrites it, which is how a dismiss is
-           -- allowed to lapse once the attendee set actually changes.
-           prospect_id             = COALESCE(excluded.prospect_id, meetings.prospect_id),
-           suggested_prospect_id   = excluded.suggested_prospect_id,
-           match_status            = COALESCE(excluded.match_status, meetings.match_status),
-           match_method            = excluded.match_method,
-           match_confidence        = excluded.match_confidence,
-           event_updated_at        = COALESCE(excluded.event_updated_at, meetings.event_updated_at),
-           attendees_fingerprint   = COALESCE(excluded.attendees_fingerprint, meetings.attendees_fingerprint),
-           last_seen_at            = datetime('now')`,
-      )
-      .run(
-        input.calendarId,
-        input.eventId,
-        input.icalUid ?? null,
-        input.recurringEventId ?? null,
-        input.status,
-        input.summary ?? null,
-        // NOT NULL columns (schema DEFAULT 0): must never bind NULL, or a
-        // fresh INSERT (no existing row for the ON CONFLICT COALESCE to
-        // fall back to) violates the constraint. The real caller
-        // (packages/plays' calendar poller) always supplies these three
-        // explicitly on every call, so defaulting an omitted one to
-        // false/0 here never actually fires in production.
-        input.allDay ? 1 : 0,
-        input.startsAt ?? null,
-        input.endsAt ?? null,
-        input.eventTimezone ?? null,
-        input.organizerEmail ?? null,
-        input.selfResponse ?? null,
-        input.externalAttendeeCount ?? 0,
-        input.externalAttendeesJson ?? null,
-        input.attendeesOmitted ? 1 : 0,
-        input.prospectId ?? null,
-        input.suggestedProspectId ?? null,
-        input.matchStatus ?? null,
-        input.matchMethod ?? null,
-        input.matchConfidence ?? null,
-        input.eventUpdatedAt ?? null,
-        input.attendeesFingerprint ?? null,
-      );
-    return { isNew, fingerprintChanged };
+    return mtgUpsertMeeting(this.db, input);
   }
 
   getMeeting(calendarId: string, eventId: string): MeetingRecord | null {
-    return (
-      (this.db
-        .query(`SELECT * FROM meetings WHERE calendar_id = ? AND event_id = ?`)
-        .get(calendarId, eventId) as MeetingRecord) ?? null
-    );
+    return mtgGetMeeting(this.db, calendarId, eventId);
   }
 
   /**
@@ -3380,12 +2617,7 @@ export class Ledger {
    * anything else. Returns false (no-op) if the row doesn't exist.
    */
   touchMeetingLastSeen(calendarId: string, eventId: string): boolean {
-    const res = this.db
-      .prepare(
-        `UPDATE meetings SET last_seen_at = datetime('now') WHERE calendar_id = ? AND event_id = ?`,
-      )
-      .run(calendarId, eventId);
-    return res.changes > 0;
+    return mtgTouchMeetingLastSeen(this.db, calendarId, eventId);
   }
 
   /**
@@ -3411,19 +2643,12 @@ export class Ledger {
    * has history is the match `ambiguous`.
    */
   hasOutreachHistory(prospectId: number): boolean {
-    return (
-      this.db
-        .query(`SELECT 1 FROM sequence_events WHERE prospect_id = ? LIMIT 1`)
-        .get(prospectId) != null
-    );
+    return cadHasOutreachHistory(this.db, prospectId);
   }
 
   /** Most recent sequence_events timestamp for a prospect, or null with no history. Tie-break helper alongside `hasOutreachHistory`. */
   lastOutreachAt(prospectId: number): string | null {
-    const row = this.db
-      .query(`SELECT MAX(created_at) AS at FROM sequence_events WHERE prospect_id = ?`)
-      .get(prospectId) as { at: string | null } | undefined;
-    return row?.at ?? null;
+    return cadLastOutreachAt(this.db, prospectId);
   }
 
   /**
@@ -3436,31 +2661,12 @@ export class Ledger {
    * silently dropping it from the nudge.
    */
   listPendingOutcomeMeetings(): MeetingRecord[] {
-    return this.db
-      .query(
-        `SELECT * FROM meetings
-         WHERE outcome IS NULL AND status = 'confirmed' AND all_day = 0
-           AND prospect_id IS NOT NULL
-           AND COALESCE(self_response, 'accepted') <> 'declined'
-           -- ends_at is Google's RFC 3339 with the event's own offset
-           -- (or ISO Z for all-day events); julianday reads both as UTC. A
-           -- string compare against datetime('now') held back every meeting
-           -- ending on today's UTC date.
-           AND julianday(ends_at) < julianday('now', '-30 minutes')
-         ORDER BY julianday(ends_at) DESC`,
-      )
-      .all() as MeetingRecord[];
+    return mtgListPendingOutcomeMeetings(this.db);
   }
 
   /** Founder-facing review queue: events with a fuzzy suggestion or an ambiguous multi-candidate match, unresolved. */
   listMeetingsForReview(): MeetingRecord[] {
-    return this.db
-      .query(
-        `SELECT * FROM meetings
-         WHERE match_status IN ('suggested', 'ambiguous')
-         ORDER BY julianday(starts_at) DESC`,
-      )
-      .all() as MeetingRecord[];
+    return mtgListMeetingsForReview(this.db);
   }
 
   /** Record a founder-set outcome. Clears outcome_prompted_at is NOT done here. The row is resolved, not withdrawn. */
@@ -3470,13 +2676,7 @@ export class Ledger {
     outcome: MeetingOutcome;
     note?: string | null;
   }): void {
-    this.db
-      .prepare(
-        `UPDATE meetings
-         SET outcome = ?, outcome_note = ?, outcome_recorded_at = datetime('now')
-         WHERE calendar_id = ? AND event_id = ?`,
-      )
-      .run(input.outcome, input.note ?? null, input.calendarId, input.eventId);
+    mtgSetMeetingOutcome(this.db, input);
   }
 
   /**
@@ -3492,19 +2692,7 @@ export class Ledger {
   latestMeetingOutcomeFor(
     prospectId: number,
   ): { outcome: MeetingOutcome; note: string | null; summary: string | null } | null {
-    return (
-      (this.db
-        .query(
-          `SELECT outcome, outcome_note AS note, summary
-           FROM meetings
-           WHERE prospect_id = ? AND outcome IS NOT NULL
-           ORDER BY outcome_recorded_at DESC, julianday(starts_at) DESC
-           LIMIT 1`,
-        )
-        .get(prospectId) as
-        | { outcome: MeetingOutcome; note: string | null; summary: string | null }
-        | undefined) ?? null
-    );
+    return mtgLatestMeetingOutcomeFor(this.db, prospectId);
   }
 
   /**
@@ -3515,11 +2703,7 @@ export class Ledger {
    * a stale nudge withdraws on its own.
    */
   markMeetingPrompted(calendarId: string, eventId: string): void {
-    this.db
-      .prepare(
-        `UPDATE meetings SET outcome_prompted_at = datetime('now') WHERE calendar_id = ? AND event_id = ?`,
-      )
-      .run(calendarId, eventId);
+    mtgMarkMeetingPrompted(this.db, calendarId, eventId);
   }
 
   /**
@@ -3528,13 +2712,7 @@ export class Ledger {
    * (it's still surfaced via prospect_id everywhere else).
    */
   confirmMeetingMatch(calendarId: string, eventId: string, prospectId: number): void {
-    this.db
-      .prepare(
-        `UPDATE meetings
-         SET prospect_id = ?, match_status = 'exact', suggested_prospect_id = NULL
-         WHERE calendar_id = ? AND event_id = ?`,
-      )
-      .run(prospectId, calendarId, eventId);
+    mtgConfirmMeetingMatch(this.db, calendarId, eventId, prospectId);
   }
 
   /**
@@ -3544,29 +2722,17 @@ export class Ledger {
    * point of storing the fingerprint.
    */
   dismissMeetingMatch(calendarId: string, eventId: string): void {
-    this.db
-      .prepare(
-        `UPDATE meetings
-         SET match_status = 'dismissed', suggested_prospect_id = NULL
-         WHERE calendar_id = ? AND event_id = ?`,
-      )
-      .run(calendarId, eventId);
+    mtgDismissMeetingMatch(this.db, calendarId, eventId);
   }
 
   /** Atomically consume a signed webhook replay key. */
   consumeWebhookReplay(replayKey: string, expiresAt: number, now: number): boolean {
-    return this.db.transaction(() => {
-      this.db.prepare("DELETE FROM webhook_replays WHERE expires_at < ?").run(now);
-      const result = this.db
-        .prepare("INSERT OR IGNORE INTO webhook_replays(replay_key, expires_at) VALUES(?, ?)")
-        .run(replayKey, expiresAt);
-      return result.changes > 0;
-    })();
+    return sysConsumeWebhookReplay(this.db, replayKey, expiresAt, now);
   }
 
   /** Test helper for isolating webhook verification cases. */
   clearWebhookReplays(): void {
-    this.db.exec("DELETE FROM webhook_replays");
+    sysClearWebhookReplays(this.db);
   }
 
   /**
@@ -3576,7 +2742,7 @@ export class Ledger {
    * signed payload isn't rejected as a replay.
    */
   releaseWebhookReplay(replayKey: string): void {
-    this.db.prepare("DELETE FROM webhook_replays WHERE replay_key = ?").run(replayKey);
+    sysReleaseWebhookReplay(this.db, replayKey);
   }
 }
 

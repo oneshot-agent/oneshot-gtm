@@ -2,19 +2,56 @@ import type { Database } from "bun:sqlite";
 import type { PostalAddress } from "./direct-mail.ts";
 import { hasPersonSignal, mergePersonDossier, mergeProductDossier } from "./dossier.ts";
 import type { ProductResearchDossier } from "./dossier.ts";
+import type { SharedPerson } from "./shared-people.ts";
 import type { ProspectRecord } from "./types.ts";
 
 /**
- * Prospect persistence, dossier updates, and ICP verdicts. Queries here touch
- * only prospects; cross-domain joins and shared-person identity resolution belong
- * to Ledger. The mail-address accessor supplies businessAddress fields. Ledger
- * creates one store after migration.
+ * Prospect persistence, dossier updates, ICP verdicts, AND shared-person
+ * identity resolution (issue #751 round-1 correction: this used to say
+ * identity resolution "belongs to Ledger", but that left the
+ * `refreshSharedPeople`/`upsertProspect` transaction bodies inline in
+ * `ledger.ts`, which is exactly the SQL-in-the-facade problem #751 exists to
+ * remove). Queries here touch only prospects; cross-domain joins still
+ * belong to Ledger. The mail-address accessor supplies businessAddress
+ * fields; the shared-identity accessor (`ProspectSharedIdentity`, below)
+ * supplies the `SharedPeople` operations, both scoped to whichever ledger
+ * constructed this store. Ledger creates one store after migration.
  */
 export interface ProspectMailAddress {
   get(key: string): PostalAddress | null;
   set(key: string, address: PostalAddress, source?: string): void;
   getMetadata(key: string): Record<string, unknown> | null;
 }
+
+/**
+ * The `SharedPeople` (shared-people.ts) operations this store needs, scoped
+ * to one ledger's `path` by the closures `Ledger`'s constructor passes in.
+ * Keeping this as an interface (not an import of `SharedPeople` itself)
+ * means `ProspectStore` never needs to know `Ledger`'s `path` field or reach
+ * into `SharedPeople`'s constructor; `Ledger` remains the only thing that
+ * decides whether shared-person resolution is enabled for a given database
+ * (demo homes and arbitrary fixture databases pass `null`).
+ */
+export interface ProspectSharedIdentity {
+  get(id: string): SharedPerson | null;
+  resolve(input: Partial<ProspectRecord>, knownId?: string): SharedPerson;
+  membership(prospectId: number): string | undefined;
+  link(prospectId: number, personId: string): void;
+  version(): string;
+}
+
+/**
+ * The identity columns backfilled from a resolved shared person, used by
+ * both `bindSharedPerson` and the `refreshSharedIdentity` sweep below.
+ */
+const SHARED_IDENTITY_FIELDS: readonly ProspectSharedIdentityField[] = [
+  "name",
+  "email",
+  "phone",
+  "company",
+  "linkedin_url",
+  "title",
+];
 
 /**
  * Normalize stored and queried emails the same way as inbound replies so
@@ -58,10 +95,154 @@ export type ProspectSharedIdentityField =
   | "title";
 
 export class ProspectStore {
+  private sharedIdentity: ProspectSharedIdentity | null = null;
+  private peopleVersion = "";
+
   constructor(
     private readonly db: Database,
     private readonly mailAddress: ProspectMailAddress,
   ) {}
+
+  /**
+   * Enable shared-person identity resolution for this store. `Ledger`'s
+   * constructor calls this once, right after `ensureSharedPersonColumn`,
+   * only for the databases that participate in the shared registry (the
+   * live home/named-workspace database, or an explicit `sharedPeoplePath`
+   * option); demo homes and arbitrary fixture databases never call this, so
+   * `refreshSharedIdentity`/`withSharedIdentity`/`upsertProspectWithIdentity`
+   * all degrade to plain prospect CRUD, matching the pre-#751 inline
+   * behavior exactly (`if (!this.people) return`).
+   */
+  attachSharedIdentity(identity: ProspectSharedIdentity): void {
+    this.sharedIdentity = identity;
+  }
+
+  /**
+   * Resolve (or create) the shared person for a prospect row and bind the
+   * row to it. Moved here from `Ledger.bindSharedPerson` (issue #751
+   * round-1 correction): it only ever called `this.sharedIdentity`
+   * (formerly `this.people`) and `setProspectSharedPersonId`, both of which
+   * this store already owns, so keeping it in `Ledger` served no purpose
+   * beyond leaving a shared-identity method next to the SQL it never
+   * touched directly. `membership`/`link` are pre-scoped to this ledger's
+   * path by the closure `Ledger`'s constructor passes to
+   * `attachSharedIdentity`.
+   */
+  private bindSharedPerson(row: ProspectRecord): SharedPerson | null {
+    if (!this.sharedIdentity) return null;
+    const known = row.shared_person_id ?? this.sharedIdentity.membership(row.id);
+    const person = this.sharedIdentity.resolve(row, known ?? undefined);
+    this.setProspectSharedPersonId(row.id, person.id);
+    this.sharedIdentity.link(row.id, person.id);
+    return person;
+  }
+
+  /**
+   * Overlay a prospect row with its resolved shared-person fields. Moved
+   * here from `Ledger.withSharedIdentity` alongside `bindSharedPerson`,
+   * which it calls: `Ledger.getProspectById` composes this with
+   * `attachMailAddress`, same as before the move.
+   */
+  withSharedIdentity(row: ProspectRecord | null): ProspectRecord | null {
+    if (!row || !this.sharedIdentity) return row;
+    const person = row.shared_person_id
+      ? this.sharedIdentity.get(row.shared_person_id)
+      : this.bindSharedPerson(row);
+    return person
+      ? {
+          ...row,
+          ...person,
+          id: row.id,
+          shared_person_id: person.id,
+          source_profile_url: row.source_profile_url,
+        }
+      : row;
+  }
+
+  /**
+   * Link legacy workspace IDs without renumbering any queue, cadence or
+   * reply history. Moved here from `Ledger.refreshSharedPeople` (issue #751
+   * round-1 correction: the finding was that this transaction body still
+   * lived inline in `ledger.ts`). `Ledger.refreshSharedPeople` is now a
+   * one-line delegate; behavior, including the version-gate short-circuit
+   * and the `.immediate()` transaction boundary, is unchanged.
+   */
+  refreshSharedIdentity(): void {
+    if (!this.sharedIdentity) return;
+    const identity = this.sharedIdentity;
+    if (this.peopleVersion === identity.version()) return;
+    const rows = this.listAllProspects();
+    this.db
+      .transaction(() => {
+        for (const row of rows) {
+          const person = row.shared_person_id
+            ? identity.get(row.shared_person_id)
+            : this.bindSharedPerson(row);
+          if (!person) throw Error(`Missing shared person for prospect ${row.id}`);
+          for (const field of SHARED_IDENTITY_FIELDS) {
+            if (row[field] === person[field]) continue;
+            // Legacy aliases can have separate historical IDs in one workspace.
+            // Keep their unique email keys; both still resolve to the same shared identity.
+            if (
+              field === "email" &&
+              person.email &&
+              this.hasOtherProspectWithEmail(person.email, row.id)
+            )
+              continue;
+            this.setSharedIdentityField(row.id, field, person[field]);
+          }
+        }
+      })
+      .immediate();
+    this.peopleVersion = identity.version();
+  }
+
+  /**
+   * Upsert with shared-identity resolution: the transaction body moved here
+   * from `Ledger.upsertProspectInTransaction` (issue #751 round-1
+   * correction). `Ledger.upsertProspect` is now a one-line delegate that
+   * wraps this in the same `.immediate()` transaction boundary; every
+   * lookup/write below was already a `ProspectStore` method (or, for
+   * `bindSharedPerson`, now is one — see above), so nothing here reaches
+   * back into `Ledger`.
+   */
+  upsertProspectWithIdentity(input: Partial<ProspectRecord> & { email?: string | null }): number {
+    return this.db
+      .transaction(() => this.upsertProspectWithIdentityInTransaction(input))
+      .immediate();
+  }
+
+  private upsertProspectWithIdentityInTransaction(
+    input: Partial<ProspectRecord> & { email?: string | null },
+  ): number {
+    // Store the canonical (lowercased) email so reply matching, which
+    // normalizes the inbound from-address the same way, always lands.
+    const person = this.sharedIdentity?.resolve(input, input.shared_person_id ?? undefined);
+    if (person) {
+      const membership = this.findExistingForUpsert(person.id, null);
+      if (membership) {
+        this.seedBusinessAddress(membership.id, input.businessAddress, input.businessAddressSource);
+        return membership.id;
+      }
+      const { id, ...identity } = person;
+      input = {
+        ...input,
+        ...identity,
+        shared_person_id: id,
+        source_profile_url: input.source_profile_url ?? identity.source_profile_url,
+      };
+    }
+    const existing = this.findExistingForUpsert(null, input.email);
+    if (existing) {
+      if (person) this.bindSharedPerson({ ...input, id: existing.id } as ProspectRecord);
+      this.seedBusinessAddress(existing.id, input.businessAddress, input.businessAddressSource);
+      return existing.id;
+    }
+    const id = this.insertProspect(input);
+    if (person) this.bindSharedPerson({ ...input, id } as ProspectRecord);
+    this.seedBusinessAddress(id, input.businessAddress, input.businessAddressSource);
+    return id;
+  }
 
   findProspectByEmail(email: string): { id: number } | null {
     return (
@@ -141,14 +322,14 @@ export class ProspectStore {
   /**
    * Raw prospect row by id (PK seek): no mail address, no shared-identity
    * resolution. `Ledger.getProspectById` wraps this with `withSharedIdentity`
-   * then `attachMailAddress`.
+   * (this store's own method, since #751 round-1) then `attachMailAddress`.
    */
   getProspectRow(id: number): ProspectRecord | null {
     return this.db.query("SELECT * FROM prospects WHERE id = ?").get(id) as ProspectRecord | null;
   }
 
   /**
-   * Every prospect row, unfiltered: `Ledger.refreshSharedPeople`'s backfill
+   * Every prospect row, unfiltered: `refreshSharedIdentity`'s backfill
    * sweep needs to walk the whole table once per shared-people version bump.
    * Read OUTSIDE any transaction, matching the original inline call: the
    * sweep itself (each row's resolve + write) is what needs the write lock,
@@ -160,7 +341,7 @@ export class ProspectStore {
 
   /**
    * True when some OTHER prospect already holds `email`. The guard
-   * `Ledger.refreshSharedPeople` checks before backfilling a shared person's
+   * `refreshSharedIdentity` checks before backfilling a shared person's
    * email onto a row, so two legacy aliases with distinct historical IDs
    * that happen to resolve to the same shared person never collide on
    * `prospects.email`'s implicit uniqueness.
@@ -174,7 +355,7 @@ export class ProspectStore {
 
   /**
    * Backfill one shared-identity column onto a prospect row.
-   * `Ledger.refreshSharedPeople` calls this per changed field, inside its own
+   * `refreshSharedIdentity` calls this per changed field, inside its own
    * `db.transaction(...).immediate()`. This method issues a single bound
    * UPDATE and does not open its own transaction, so the caller's lock
    * boundary is unaffected.
@@ -192,7 +373,7 @@ export class ProspectStore {
    * onto the `prospects` table. `Ledger`'s constructor calls this once, the
    * first time it enables shared-people resolution for a database (a fresh
    * `sharedPeoplePath` option, or the live home/named-workspace database),
-   * before its first `refreshSharedPeople()` sweep: mirroring the original
+   * before its first `refreshSharedIdentity()` sweep: mirroring the original
    * inline `PRAGMA table_info`/`ALTER TABLE`/`CREATE INDEX` sequence exactly,
    * just moved here since all three statements touch `prospects` alone.
    */
@@ -211,8 +392,9 @@ export class ProspectStore {
   /**
    * Link a prospect row to its resolved shared person. The `IS NOT ?` guard
    * makes the write a no-op when the row already points at this person:
-   * `Ledger.bindSharedPerson` relies on that to avoid a WAL write (and a
-   * `peopleVersion` bump upstream) for rows that are already correct.
+   * `bindSharedPerson` (this store's own method, since #751 round-1) relies
+   * on that to avoid a WAL write (and a `peopleVersion` bump) for rows that
+   * are already correct.
    */
   setProspectSharedPersonId(id: number, personId: string): void {
     this.db
@@ -255,9 +437,10 @@ export class ProspectStore {
 
   /**
    * Lookup an existing prospect by shared_person_id or email, for the
-   * shared-identity resolution in `Ledger.upsertProspect`. Returns the row id
-   * only: `Ledger` handles the business-address seeding and shared-person
-   * binding around it.
+   * shared-identity resolution in `upsertProspectWithIdentity` (this
+   * store's own method, since #751 round-1). Returns the row id only: the
+   * caller handles the business-address seeding and shared-person binding
+   * around it.
    */
   findExistingForUpsert(
     sharedPersonId: string | null | undefined,
