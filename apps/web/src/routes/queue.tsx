@@ -1,4 +1,5 @@
 import { FitHold } from "../components/queue/FitHold.tsx";
+import { PersonDossier } from "../components/queue/PersonDossier.tsx";
 import { ProductResearch } from "../components/queue/ProductResearch.tsx";
 import { Explain } from "../components/primitives/Explain.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1208,6 +1209,7 @@ export function QueueRow({
                   <CaseList rows={sheetRows} />
                 </>
               )}
+              <PersonDossier rowId={row.id} />
               <ProductResearch payload={row.payload} />
               {profileHistory.length > 0 && (
                 <Disclosure label="Profile history">
