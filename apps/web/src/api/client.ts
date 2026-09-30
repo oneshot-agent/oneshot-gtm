@@ -66,6 +66,8 @@ import type {
   SpendByPlay,
   SpendSeries,
   TriggerView,
+  IcpProposalDecisionResult,
+  IcpProposalsResult,
 } from "@oneshot-gtm/shared-types";
 import { demoGet, demoWrite, IS_DEMO } from "./demo.ts";
 import {
@@ -509,4 +511,9 @@ export const api = {
   packs: () => getJson<{ packs: PackView[] }>("/packs"),
   applyPack: (id: string) =>
     postJson<PackApplyResult>(`/packs/${encodeURIComponent(id)}/apply`, {}),
+  icpProposals: () => getJson<IcpProposalsResult>("/icp-proposals"),
+  approveIcpProposal: (id: string) =>
+    postJson<IcpProposalDecisionResult>(`/icp-proposals/${encodeURIComponent(id)}/approve`, {}),
+  dismissIcpProposal: (id: string) =>
+    postJson<IcpProposalDecisionResult>(`/icp-proposals/${encodeURIComponent(id)}/dismiss`, {}),
 };
