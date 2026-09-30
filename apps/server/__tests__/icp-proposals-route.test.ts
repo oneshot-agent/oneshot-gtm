@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const proposals = new Map<string, Record<string, unknown>>();
 const decideCalls: Array<{ id: string; status: string }> = [];
 const revertCalls: string[] = [];
+const dismissStaleCalls: string[] = [];
 let saveConfigImpl: (cfg: Record<string, unknown>) => void = () => {};
 let currentConfig: Record<string, unknown> = { icpOneLiner: "old ICP" };
 
@@ -25,6 +26,7 @@ vi.mock("@oneshot-gtm/core", async () => {
           const all = [...proposals.values()];
           return status ? all.filter((p) => p["status"] === status) : all;
         },
+        get: (id: string) => proposals.get(id) ?? null,
         decide: (id: string, status: "approved" | "dismissed", now: string) => {
           decideCalls.push({ id, status });
           const row = proposals.get(id);
@@ -42,6 +44,15 @@ vi.mock("@oneshot-gtm/core", async () => {
           if (row) {
             row["status"] = "pending";
             row["decidedAt"] = null;
+          }
+        },
+        dismissStalePending: (now: string) => {
+          dismissStaleCalls.push(now);
+          for (const row of proposals.values()) {
+            if (row["status"] === "pending") {
+              row["status"] = "dismissed";
+              row["decidedAt"] = now;
+            }
           }
         },
       },
@@ -68,6 +79,7 @@ beforeEach(() => {
   proposals.clear();
   decideCalls.length = 0;
   revertCalls.length = 0;
+  dismissStaleCalls.length = 0;
   currentConfig = { icpOneLiner: "old ICP" };
   saveConfigImpl = (cfg) => {
     currentConfig = cfg;
@@ -150,6 +162,28 @@ describe("approveIcpProposalRoute", () => {
     expect(proposals.get("a")!["status"]).toBe("pending");
     // The active ICP in config is untouched by the failed write.
     expect(currentConfig["icpOneLiner"]).toBe("old ICP");
+  });
+
+  it("409s when the active ICP moved since this proposal's baseline was captured, without deciding it", async () => {
+    seed("a", "pending", "New tighter ICP");
+    currentConfig = { icpOneLiner: "a different ICP set via /setup since" };
+    const res = await post("a");
+    expect(res.status).toBe(409);
+    expect(decideCalls).toEqual([]);
+    expect(proposals.get("a")!["status"]).toBe("pending");
+    expect(currentConfig["icpOneLiner"]).toBe("a different ICP set via /setup since");
+  });
+
+  it("dismisses every OTHER pending proposal on a successful approval, leaving the approved row alone", async () => {
+    seed("a", "pending", "Winning rewrite");
+    seed("b", "pending", "Some other rewrite");
+    seed("c", "pending", "A third rewrite");
+    const res = await post("a");
+    expect(res.status).toBe(200);
+    expect(proposals.get("a")!["status"]).toBe("approved");
+    expect(proposals.get("b")!["status"]).toBe("dismissed");
+    expect(proposals.get("c")!["status"]).toBe("dismissed");
+    expect(dismissStaleCalls).toHaveLength(1);
   });
 });
 

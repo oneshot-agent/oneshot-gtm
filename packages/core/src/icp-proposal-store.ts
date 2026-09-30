@@ -127,21 +127,27 @@ export class IcpProposalStore {
   }
 
   /**
-   * True when the MOST RECENT decision on this exact (normalized) text was a
-   * dismissal: prevents an identical proposal from immediately recurring
-   * right after the founder dismissed it, without permanently banning the
-   * text (a later re-evaluation whose evidence has moved on can propose it
-   * again once a different proposal has since been decided).
+   * True when the most recently DECIDED proposal — of ANY text, not just
+   * this one — was a dismissal of this exact (normalized) text: prevents an
+   * identical proposal from immediately recurring right after the founder
+   * dismissed it, without permanently banning the text. Once any other
+   * proposal has since been decided (approved or dismissed, on this text or
+   * a different one), the single most-recent decision is no longer "this
+   * text, dismissed", the ban lifts, and a later re-evaluation whose
+   * evidence has moved on can propose this text again. Filtering by text
+   * first (the most recent decision *for this text*) would make the ban
+   * permanent instead: the generator's own duplicate-of-a-dismissal guard
+   * blocks inserting that text again, so no later row could ever exist to
+   * overtake it.
    */
   wasJustDismissed(proposedIcp: string): boolean {
-    const target = normalize(proposedIcp);
-    const rows = this.db
+    const latestDecided = this.db
       .query<{ proposed_icp: string; status: IcpProposalStatus }, []>(
-        "SELECT proposed_icp, status FROM icp_proposals ORDER BY created_at DESC, rowid DESC",
+        "SELECT proposed_icp, status FROM icp_proposals WHERE decided_at IS NOT NULL ORDER BY decided_at DESC, rowid DESC LIMIT 1",
       )
-      .all();
-    const mostRecentForText = rows.find((r) => normalize(r.proposed_icp) === target);
-    return mostRecentForText?.status === "dismissed";
+      .get();
+    if (!latestDecided || latestDecided.status !== "dismissed") return false;
+    return normalize(latestDecided.proposed_icp) === normalize(proposedIcp);
   }
 
   insert(input: {
@@ -211,5 +217,20 @@ export class IcpProposalStore {
    */
   revertToPending(id: string): void {
     this.db.query("UPDATE icp_proposals SET status='pending', decided_at=NULL WHERE id=?").run(id);
+  }
+
+  /**
+   * Called right after an approval successfully rewrites the active ICP:
+   * every OTHER still-pending row was generated against the baseline this
+   * approval just replaced, so none of them can still be approved as-is —
+   * their `currentIcp` snapshot, and the "Current:" line the founder reads
+   * on `/queue`, would already be stale the moment they're shown. Dismissing
+   * them (rather than silently deleting them) keeps a visible record and
+   * lets `wasJustDismissed` do its normal job if the same text resurfaces.
+   */
+  dismissStalePending(now: string): void {
+    this.db
+      .query("UPDATE icp_proposals SET status='dismissed', decided_at=? WHERE status='pending'")
+      .run(now);
   }
 }

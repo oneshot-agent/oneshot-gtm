@@ -138,16 +138,41 @@ describe("IcpProposalStore proposal lifecycle", () => {
     });
   });
 
-  it("wasJustDismissed is true only when the MOST RECENT decision on that text was a dismissal", () => {
+  it("wasJustDismissed is true only when the MOST RECENTLY DECIDED proposal, of any text, was a dismissal of this text", () => {
     const first = insertOne("Series A fintech CTOs");
     ledger.icpProposals.decide(first.id, "dismissed", "2026-09-29T01:00:00Z");
     expect(ledger.icpProposals.wasJustDismissed("Series A fintech CTOs")).toBe(true);
     expect(ledger.icpProposals.wasJustDismissed("Unrelated text")).toBe(false);
 
-    // A later decision on the identical text flips the "most recent" verdict.
-    const second = insertOne("Series A fintech CTOs");
+    // A later decision — on a DIFFERENT text — is now the most recent decided
+    // row, so the ban on the original text lifts (it does not need to be
+    // decided again to overtake the dismissal, and in practice can't be: the
+    // generator's own duplicate-of-a-dismissal guard blocks re-proposing an
+    // identical text while it's still banned).
+    const second = insertOne("A completely different rewrite");
     ledger.icpProposals.decide(second.id, "approved", "2026-09-29T02:00:00Z");
     expect(ledger.icpProposals.wasJustDismissed("Series A fintech CTOs")).toBe(false);
+  });
+
+  it("dismissStalePending flips every pending row to dismissed, leaving already-decided rows untouched", () => {
+    const a = insertOne("Rewrite A");
+    const b = insertOne("Rewrite B");
+    const c = insertOne("Rewrite C");
+    ledger.icpProposals.decide(c.id, "approved", "2026-09-29T01:00:00Z");
+    ledger.icpProposals.dismissStalePending("2026-09-29T02:00:00Z");
+    expect(ledger.icpProposals.get(a.id)).toMatchObject({
+      status: "dismissed",
+      decidedAt: "2026-09-29T02:00:00Z",
+    });
+    expect(ledger.icpProposals.get(b.id)).toMatchObject({
+      status: "dismissed",
+      decidedAt: "2026-09-29T02:00:00Z",
+    });
+    // Already-decided row is untouched, not re-stamped.
+    expect(ledger.icpProposals.get(c.id)).toMatchObject({
+      status: "approved",
+      decidedAt: "2026-09-29T01:00:00Z",
+    });
   });
 });
 
