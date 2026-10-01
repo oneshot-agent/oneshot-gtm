@@ -322,6 +322,42 @@ describe("runDeliveryChecks with the ledger store", () => {
     expect(readers.smartlead).not.toHaveBeenCalled();
   });
 
+  it("an unreadable mailbox costs one read per sweep and cannot starve a healthy one", async () => {
+    for (let i = 0; i < 30; i++) {
+      addReceipt({
+        provider: "smartlead",
+        identity: smartlead.id,
+        to: `p${i}@x.example`,
+        subject: "s",
+        createdAt: at(i),
+      });
+    }
+    addReceipt({
+      provider: "gmail",
+      identity: gmail.id,
+      to: "ok@b.example",
+      subject: "hi",
+      createdAt: at(40),
+    });
+    const failing = vi.fn(async () => {
+      throw new TransientDeliveryError("IMAP timeout");
+    });
+    const healthy = vi.fn(async () => [copy("g", 45, "hi")]);
+    const s = await runDeliveryChecks({
+      store: ledger.sendDelivery,
+      nowMs: SENT_MS + DELIVERY_FINAL_AFTER_MS + 120_000,
+      sinceIso: at(-3600),
+      untilIso: at(3600),
+      limit: 25,
+      readers: { smartlead: failing, gmail: healthy },
+      identities: [smartlead, gmail],
+    });
+    expect(failing).toHaveBeenCalledTimes(1);
+    expect(healthy).toHaveBeenCalledTimes(1);
+    expect(s.ok).toBe(1);
+    expect(s.transient).toBe(30);
+  });
+
   it("a dry run records nothing", async () => {
     addReceipt({
       provider: "smartlead",

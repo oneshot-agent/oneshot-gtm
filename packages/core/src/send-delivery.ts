@@ -171,9 +171,27 @@ export const gmailSentReader: SentFolderReader = async ({
   try {
     return await listGmailSentTo({ to: recipient, afterIso, beforeIso }, account);
   } catch (err) {
-    throw new TransientDeliveryError((err as Error).message || "Gmail read failed");
+    throw classifyGmailReadError(err);
   }
 };
+
+/** Gmail errors that mean the stored authorization is gone (see gmail.ts), not a passing outage. */
+const GMAIL_AUTH_LOST_RE =
+  /Gmail credentials missing|Gmail auth expired or revoked|Gmail auth rejected \(401\)|PERMISSION_DENIED/i;
+
+/**
+ * Lost authorization will not heal by itself before the send ages out of the
+ * sweep, so it is permanent (recorded as skipped). Quota and network errors
+ * are transient (retried next sweep).
+ */
+export function classifyGmailReadError(
+  err: unknown,
+): PermanentDeliveryError | TransientDeliveryError {
+  const msg = (err as Error)?.message || "Gmail read failed";
+  return GMAIL_AUTH_LOST_RE.test(msg)
+    ? new PermanentDeliveryError(msg)
+    : new TransientDeliveryError(msg);
+}
 
 export const DEFAULT_DELIVERY_READERS: DeliveryReaders = {
   smartlead: imapSentReader,
@@ -221,12 +239,19 @@ export async function runDeliveryChecks(opts: {
   const nowMs = opts.nowMs ?? Date.now();
   const readers = opts.readers ?? DEFAULT_DELIVERY_READERS;
   const identities = opts.identities ?? resolveIdentities(loadConfig());
+  const readLimit = opts.limit ?? DELIVERY_SWEEP_LIMIT;
+  // Look past the read budget: sends on a mailbox that is unreadable right
+  // now are passed over without a read (below), so they must not crowd
+  // healthy mailboxes' sends out of the batch on every sweep.
   const candidates = opts.store.listCandidates({
     sinceIso: opts.sinceIso ?? new Date(nowMs - DELIVERY_MAX_AGE_MS).toISOString(),
     untilIso: opts.untilIso ?? new Date(nowMs - DELIVERY_MIN_AGE_MS).toISOString(),
-    limit: opts.limit ?? DELIVERY_SWEEP_LIMIT,
+    limit: readLimit * 4,
     ...(opts.includeChecked ? { includeChecked: true } : {}),
   });
+  /** Identities whose mailbox failed transiently in this run: one failed read each, not one per send. */
+  const unreadable = new Map<string, string>();
+  let reads = 0;
   const summary: DeliveryRunSummary = {
     checked: 0,
     ok: 0,
@@ -239,6 +264,22 @@ export async function runDeliveryChecks(opts: {
   };
   for (const candidate of candidates) {
     if (opts.deadlineAt != null && Date.now() > opts.deadlineAt) break;
+    const knownFailure = unreadable.get(candidate.identity);
+    if (knownFailure != null) {
+      // Same mailbox already failed this run: leave the send for next time.
+      summary.checked++;
+      summary.transient++;
+      summary.results.push({
+        candidate,
+        outcome: "transient",
+        observed: null,
+        deliveredAt: [],
+        error: knownFailure,
+      });
+      continue;
+    }
+    if (reads >= readLimit) break;
+    reads++;
     summary.checked++;
     const sentMs = Date.parse(candidate.sentAt);
     const afterIso = new Date(sentMs - DELIVERY_WINDOW_BEFORE_MS).toISOString();
@@ -289,6 +330,7 @@ export async function runDeliveryChecks(opts: {
           error: message,
         };
       } else {
+        unreadable.set(candidate.identity, message);
         result = {
           candidate,
           outcome: "transient",
