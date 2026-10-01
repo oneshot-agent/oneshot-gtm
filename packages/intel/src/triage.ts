@@ -1,31 +1,15 @@
 import { listInbox, type InboxEmail } from "@oneshot-gtm/core";
+import { REPLY_INTENT_LABELS, type ReplyIntent } from "@oneshot-gtm/shared-types";
 import { complete } from "./client.ts";
 import { loadPrompt } from "./prompts.ts";
 
-export type TriageCategory =
-  | "interested"
-  | "not_now"
-  | "wrong_person"
-  | "objection"
-  | "question"
-  | "unsubscribe"
-  | "auto_reply"
-  | "other";
+/** One label from the shared REPLY_INTENTS table (packages/shared-types). */
+export type TriageCategory = ReplyIntent;
 
-/** The exact `TriageCategory` values. The runtime source of truth `triageEmails`
- *  validates the model's output against, so a hallucinated/malformed category can
- *  never reach the ledger and silently read as positive intent (issue #558:
- *  `replyIntentIsPositive` treats any unrecognized string as positive). */
-const TRIAGE_CATEGORIES: ReadonlySet<string> = new Set<TriageCategory>([
-  "interested",
-  "not_now",
-  "wrong_person",
-  "objection",
-  "question",
-  "unsubscribe",
-  "auto_reply",
-  "other",
-]);
+/** The exact label set, from the shared table. The runtime source of truth
+ *  `triageEmails` validates the model's output against, so a hallucinated or
+ *  malformed category can never reach the ledger (issue #558). */
+export const TRIAGE_CATEGORIES: ReadonlySet<string> = new Set<string>(REPLY_INTENT_LABELS);
 
 export interface TriagedReply {
   id: string;

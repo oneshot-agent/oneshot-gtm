@@ -51,7 +51,22 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 vi.mock("@oneshot-gtm/intel", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/intel")>("@oneshot-gtm/intel");
-  return { ...actual, triageEmails: triageEmailsMock };
+  // The poll labels through classifyReplyIntent: route it to the same stub.
+  const classifyReplyIntent = async (email: { id: string }) => {
+    const [r] = await triageEmailsMock([email]);
+    if (!r) throw new Error("triage returned no label");
+    return {
+      intent: r.category,
+      reason: r.reasoning ?? "",
+      confidence: null,
+      probabilities: null,
+      classifier: "llm:test",
+      costMicros: null,
+      review: false,
+      fellBack: false,
+    };
+  };
+  return { ...actual, triageEmails: triageEmailsMock, classifyReplyIntent };
 });
 
 const { pollInboxReplies } = await import("../src/_cadence.ts");
@@ -318,5 +333,119 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
     const allEvents = ledger.listAllSequenceEventsForProspect(prospectId);
     expect(allEvents.map((e) => e.status)).toEqual(["sent", "unsubscribed"]);
     expect(allEvents.some((e) => e.status === "replied")).toBe(false);
+  });
+});
+
+describe("expanded reply labels against the real Ledger", () => {
+  function seed(email: string): number {
+    const prospectId = ledger.upsertProspect({ name: "P", email, source: "stack-consolidation" });
+    ledger.enrollCadence({
+      prospectId,
+      playName: "stack-consolidation",
+      nextDueAt: "2026-01-01T00:00:00Z",
+    });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "stack-consolidation",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "hi" },
+    });
+    return prospectId;
+  }
+
+  it("a not_interested or complaint reply is an ordinary reply, never an opt-out", async () => {
+    for (const [i, category] of (["not_interested", "complaint"] as const).entries()) {
+      const email = `p${i}@example.com`;
+      const prospectId = seed(email);
+      triageEmailsMock.mockImplementationOnce(
+        async (emails: Array<{ id: string }>) =>
+          emails.map((e) => ({
+            id: e.id,
+            from: "x",
+            subject: "x",
+            category,
+            reasoning: "",
+          })) as never,
+      );
+      inboxEmails = [
+        {
+          id: `m-${category}`,
+          from: email,
+          subject: "Re: hi",
+          body: "no thanks",
+          received_at: "2026-08-20T09:00:00.000Z",
+        },
+      ];
+      await pollInboxReplies();
+      expect(ledger.getCadence(prospectId, "stack-consolidation")?.status).toBe("replied");
+      expect(ledger.listInboxReplyIntents([`m-${category}`]).get(`m-${category}`)?.intent).toBe(
+        category,
+      );
+    }
+  });
+});
+
+describe("retryUntriagedReplies", () => {
+  it("labels stale untriaged replies, applies the opt-out stop, and leaves recent ones to the poll", async () => {
+    const { retryUntriagedReplies } = await import("../src/_cadence.ts");
+    const prospectId = ledger.upsertProspect({
+      name: "S",
+      email: STORED_EMAIL,
+      source: "stack-consolidation",
+    });
+    ledger.enrollCadence({
+      prospectId,
+      playName: "stack-consolidation",
+      nextDueAt: "2026-01-01T00:00:00Z",
+    });
+    const now = Date.parse("2026-09-30T12:00:00.000Z");
+    for (const [id, receivedAt] of [
+      ["old", "2026-09-29T08:00:00.000Z"],
+      ["recent", "2026-09-30T11:30:00.000Z"],
+    ] as const) {
+      ledger.recordInboxReply({
+        id,
+        threadKey: `t-${id}`,
+        prospectId,
+        fromEmail: STORED_EMAIL,
+        subject: "Re: x",
+        body: "please stop",
+        receivedAt,
+        kind: "human",
+      });
+    }
+
+    const out = await retryUntriagedReplies({ now });
+
+    expect(out).toMatchObject({ checked: 1, labelled: 1, failed: 0, cadencesStopped: 1 });
+    const intents = ledger.listInboxReplyIntents(["old", "recent"]);
+    expect(intents.get("old")?.intent).toBe("unsubscribe");
+    expect(intents.get("recent")?.intent).toBeNull();
+    expect(ledger.getCadence(prospectId, "stack-consolidation")?.status).toBe("unsubscribed");
+  });
+
+  it("releases the claim on a failure so a later sweep retries", async () => {
+    const { retryUntriagedReplies } = await import("../src/_cadence.ts");
+    const prospectId = ledger.upsertProspect({ name: "S", email: STORED_EMAIL });
+    ledger.recordInboxReply({
+      id: "old",
+      threadKey: "t-old",
+      prospectId,
+      fromEmail: STORED_EMAIL,
+      subject: "Re: x",
+      body: "hm",
+      receivedAt: "2026-09-29T08:00:00.000Z",
+      kind: "human",
+    });
+    triageEmailsMock.mockImplementationOnce(async () => {
+      throw new Error("provider down");
+    });
+
+    const out = await retryUntriagedReplies({ now: Date.parse("2026-09-30T12:00:00.000Z") });
+
+    expect(out).toMatchObject({ checked: 1, labelled: 0, failed: 1 });
+    expect(ledger.listUntriagedHumanReplies().map((r) => r.id)).toEqual(["old"]);
   });
 });

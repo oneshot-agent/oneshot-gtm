@@ -11,6 +11,7 @@ import { api } from "../api/client.ts";
 import { Button } from "./primitives/Button.tsx";
 import { Input } from "./primitives/Field.tsx";
 import { Badge } from "./primitives/Badge.tsx";
+import { IntentBadge } from "./IntentBadge.tsx";
 import { timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
 import { IS_DEMO } from "../api/demo.ts";
@@ -218,7 +219,11 @@ export function MailboxThreadRow({
                   : "automatic reply"}
             </Badge>
           ) : (
-            t.reply.intent && <Badge tone="neutral">{t.reply.intent}</Badge>
+            <IntentBadge
+              intent={t.reply.intent}
+              review={t.reply.intentReview}
+              confidence={t.reply.intentConfidence}
+            />
           )}
           {!t.prospectId && <Badge tone="neutral">no match</Badge>}
         </button>

@@ -186,6 +186,7 @@ import type {
   ChannelEventRecord,
   DealOutcomeRecord,
   GmailPlacement,
+  InboxReplyIntentDetails,
   InboxReplyRecord,
   IcpDecisionExample,
   InterviewRecord,
@@ -804,8 +805,13 @@ export class Ledger {
    * somehow isn't there (e.g. a race), which is the correct behaviour: never
    * throw out of a best-effort classification path.
    */
-  setInboxReplyIntent(id: string, intent: string | null, intentReason: string | null): void {
-    this.inbox.setInboxReplyIntent(id, intent, intentReason);
+  setInboxReplyIntent(
+    id: string,
+    intent: string | null,
+    intentReason: string | null,
+    details?: InboxReplyIntentDetails,
+  ): void {
+    this.inbox.setInboxReplyIntent(id, intent, intentReason, details);
   }
 
   /**
@@ -876,9 +882,7 @@ export class Ledger {
    * without an N+1 query. Empty input short-circuits (SQLite's `IN ()` is
    * invalid syntax, not just slow).
    */
-  listInboxReplyIntents(
-    ids: string[],
-  ): Map<string, { intent: string | null; intentReason: string | null }> {
+  listInboxReplyIntents(ids: string[]): ReturnType<InboxStore["listInboxReplyIntents"]> {
     return this.inbox.listInboxReplyIntents(ids);
   }
 
@@ -901,6 +905,18 @@ export class Ledger {
    */
   listUntriagedHumanReplies(limit = 200): InboxReplyRecord[] {
     return this.inbox.listUntriagedHumanReplies(limit);
+  }
+
+  /** Untriaged human replies older than the live poll window: the retry sweep's target. */
+  listStaleUntriagedHumanReplies(beforeIso: string, limit = 25): InboxReplyRecord[] {
+    return this.inbox.listStaleUntriagedHumanReplies(beforeIso, limit);
+  }
+
+  /** Every human reply not mid-triage, oldest first: `backfill-intent --reclassify`'s target. */
+  listHumanRepliesForReclassify(
+    opts: { sinceIso?: string; limit?: number } = {},
+  ): InboxReplyRecord[] {
+    return this.inbox.listHumanRepliesForReclassify(opts);
   }
 
   /** Prospects that have at least one persisted reply, most recent activity first. */

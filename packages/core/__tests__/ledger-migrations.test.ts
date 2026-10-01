@@ -78,6 +78,42 @@ describe("runLedgerMigrations", () => {
     expect(withRaw(userVersion)).toBe(LEDGER_SCHEMA_VERSION);
   });
 
+  it("v9 adds the reply-intent detail columns to a v8 ledger and keeps existing labels", () => {
+    const v9 = [
+      "intent_confidence",
+      "intent_probs",
+      "intent_classifier",
+      "intent_cost_micros",
+      "intent_classified_at",
+      "intent_review",
+    ];
+    new Ledger(dbPath).close();
+    withRaw((db) => {
+      for (const col of v9) db.exec(`ALTER TABLE inbox_replies DROP COLUMN ${col}`);
+      db.exec(
+        `INSERT INTO inbox_replies (id, thread_key, prospect_id, from_email, body, received_at, intent)
+         VALUES ('r1', 't1', 1, 'a@b.c', 'hi', '2026-09-30T00:00:00.000Z', 'objection')`,
+      );
+      db.exec("PRAGMA user_version = 8");
+    });
+    new Ledger(dbPath).close();
+    withRaw((db) => {
+      expect(columns(db, "inbox_replies")).toEqual(expect.arrayContaining(v9));
+      expect(userVersion(db)).toBe(LEDGER_SCHEMA_VERSION);
+      const row = db.query("SELECT intent, intent_review FROM inbox_replies WHERE id = 'r1'").get();
+      expect(row).toEqual({ intent: "objection", intent_review: 0 });
+    });
+  });
+
+  it("v9's step is idempotent (re-running it on a migrated file is a no-op)", () => {
+    new Ledger(dbPath).close();
+    const step = LEDGER_MIGRATIONS.find((m) => m.name === "inbox-reply-intent-details")!;
+    withRaw((db) => {
+      expect(() => step.up(db)).not.toThrow();
+      expect(() => step.up(db)).not.toThrow();
+    });
+  });
+
   it("migrates a pre-versioning ledger (user_version 0)", () => {
     new Ledger(dbPath).close();
     withRaw((db) => {

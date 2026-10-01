@@ -85,6 +85,8 @@ export function mailboxInboxView(): Pick<InboxResult, "mailboxes" | "mailboxThre
         kind: latest.kind,
         intent: (intent?.intent as MailboxThreadView["reply"]["intent"]) ?? null,
         intentReason: intent?.intentReason ?? null,
+        intentConfidence: intent?.intentConfidence ?? null,
+        intentReview: intent?.intentReview ?? false,
         // Removed identities retain history but cannot send.
         sourceIdentityId: identities.has(latest.identityId) ? latest.identityId : null,
         sourceProvider: "smartlead",

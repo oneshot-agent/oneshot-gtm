@@ -242,6 +242,8 @@ export async function listInboxRoute(req: Request): Promise<Response> {
       kind: classifyReply({ subject: e.subject, body: e.body, autoSubmitted: e.auto_submitted }),
       intent: (intent?.intent as ReplyIntent | null | undefined) ?? null,
       intentReason: intent?.intentReason ?? null,
+      intentConfidence: intent?.intentConfidence ?? null,
+      intentReview: intent?.intentReview ?? false,
       sourceIdentityId: e.source_identity_id ?? null,
       sourceProvider: e.source_identity_id
         ? (providerById.get(e.source_identity_id) ?? null)

@@ -503,6 +503,15 @@ export function mergeSetupConfig(
       body.queueReviewOrder === "ranked" || body.queueReviewOrder === "newest"
         ? body.queueReviewOrder
         : current.queueReviewOrder,
+    // Optional field: absent on both sides stays absent.
+    ...(body.replyClassifier !== undefined || current.replyClassifier !== undefined
+      ? {
+          replyClassifier:
+            body.replyClassifier === undefined
+              ? current.replyClassifier
+              : validateReplyClassifier(body.replyClassifier),
+        }
+      : {}),
     timezone: mergeTimeZone(body.timezone, current.timezone),
     dailySpendCeilingUsd:
       body.dailySpendCeilingUsd === undefined
@@ -553,6 +562,42 @@ function mergeString(incoming: string | undefined, current: string | null): stri
  * silently halting every scheduled finder, run-now, and automatic drain
  * install-wide, the opposite of the unlimited default this feature ships.
  */
+/**
+ * Reply-classifier merge: null clears back to the default (`llm`, stored as
+ * absent). `decisions` without a model would silently fall back on every
+ * reply, so it's a 400, as is a confidence threshold outside 0–1.
+ */
+export function validateReplyClassifier(
+  value: SetupRequest["replyClassifier"],
+): OneShotConfig["replyClassifier"] {
+  if (value === null || value === undefined) return undefined;
+  if (value.engine !== "llm" && value.engine !== "decisions") {
+    throw new SetupValidationError(
+      `invalid replyClassifier.engine '${String(value.engine)}' — must be "llm" or "decisions"`,
+    );
+  }
+  const model = typeof value.model === "string" ? value.model.trim() : "";
+  if (value.engine === "decisions" && !model) {
+    throw new SetupValidationError(`replyClassifier.engine "decisions" needs a model`);
+  }
+  if (
+    value.minConfidence !== undefined &&
+    (typeof value.minConfidence !== "number" ||
+      !Number.isFinite(value.minConfidence) ||
+      value.minConfidence < 0 ||
+      value.minConfidence > 1)
+  ) {
+    throw new SetupValidationError(
+      `invalid replyClassifier.minConfidence '${String(value.minConfidence)}' — must be a number from 0 to 1`,
+    );
+  }
+  return {
+    engine: value.engine,
+    ...(model ? { model } : {}),
+    ...(value.minConfidence !== undefined ? { minConfidence: value.minConfidence } : {}),
+  };
+}
+
 function validateSpendCeiling(value: number | null): number | null {
   if (value === null) return null;
   if (!Number.isFinite(value) || value <= 0) {

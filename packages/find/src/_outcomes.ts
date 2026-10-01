@@ -1,5 +1,6 @@
 import type { ProspectPriorityComponents, SentOutcomeRawRow } from "@oneshot-gtm/core";
 import { parseProspectPriority, sqliteToIso } from "@oneshot-gtm/core";
+import { POSITIVE_OUTCOME_INTENTS } from "@oneshot-gtm/shared-types";
 import { mannWhitneyAuc, meanOf, wilson95 } from "./_gauge.ts";
 import { SCORE_BUCKETS, bucketOf } from "./_buckets.ts";
 
@@ -69,22 +70,19 @@ export function maxOutcomeRank(a: OutcomeRank, b: OutcomeRank): OutcomeRank {
 }
 
 /**
- * Reply intents that are NEVER positive evidence, even though they are real
- * human replies (`kind: 'human'`). A classified decline or an explicit
- * unsubscribe on a `human`-kind row (e.g. "not interested, please stop":
- * `classifyReply` never promotes that to `kind: 'unsubscribe'`, see
- * reply-classify.ts) must not inflate the positive count `find calibrate`
- * trains on. Everything else: `interested`, `question`, `objection` (a live
- * back-and-forth, not a ghost), and `other`: counts as positive, same as
- * NULL (untriaged, or the triage call failed): the reply itself is real
- * signal, and only a classified decline demotes it.
+ * Reply intents that count as positive evidence for `find calibrate`, from the
+ * shared REPLY_INTENTS table. A classified decline, complaint, pitch-back or
+ * unsubscribe on a `human`-kind row must not inflate the positive count.
+ * NULL (untriaged, or the triage call failed) still counts: the reply itself
+ * is real signal. An unknown string (a label this build doesn't know, or the
+ * in-flight triage sentinel) is neutral, never positive.
  */
-const NEGATIVE_REPLY_INTENTS = new Set(["not_now", "wrong_person", "unsubscribe", "auto_reply"]);
+const POSITIVE_REPLY_INTENTS_FOR_OUTCOMES = new Set<string>(POSITIVE_OUTCOME_INTENTS);
 
 /** Whether a first human email reply counts as positive evidence, given its triaged intent. */
-function replyIntentIsPositive(intent: string | null): boolean {
+export function replyIntentIsPositive(intent: string | null): boolean {
   if (intent == null) return true;
-  return !NEGATIVE_REPLY_INTENTS.has(intent);
+  return POSITIVE_REPLY_INTENTS_FOR_OUTCOMES.has(intent);
 }
 
 /**

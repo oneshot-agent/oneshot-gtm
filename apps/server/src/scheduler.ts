@@ -27,6 +27,7 @@ import {
   pollCalendarMeetings,
   pollInboxBounces,
   pollInboxReplies,
+  retryUntriagedReplies,
 } from "@oneshot-gtm/plays";
 import { reportServerExecution } from "./telemetry.ts";
 
@@ -76,6 +77,8 @@ const NEWSFEED_SWEEP_DEADLINE_MS = 15 * 60_000;
 /** Sent-folder delivery checks: every few minutes, a bounded batch of read-only mailbox searches. */
 const DELIVERY_SWEEP_INTERVAL_MS = 5 * 60_000;
 const DELIVERY_SWEEP_DEADLINE_MS = 2 * 60_000;
+/** Untriaged-reply retry: a bounded batch every 15 min, so a reply that keeps failing can't cost a paid call per tick. */
+const REPLY_INTENT_RETRY_INTERVAL_MS = 15 * 60_000;
 
 export function startScheduler(): SchedulerHandle {
   // Demo mode idles: firing triggers would hit placeholder credentials and
@@ -92,6 +95,7 @@ export function startScheduler(): SchedulerHandle {
   let timer: ReturnType<typeof setTimeout> | null = null;
   // 0 = never polled, so the first tick always sweeps.
   let lastBouncePollAt = 0;
+  let lastIntentRetryAt = 0;
   let mailBackfillRunning = false;
   // Preserve the last sweep result across throttled ticks. Resetting it to true
   // could watermark a day whose bounce sweep is still incomplete.
@@ -142,6 +146,23 @@ export function startScheduler(): SchedulerHandle {
           { message_120: ((err as Error).message ?? "").slice(0, 120) },
           "warn",
         );
+      }
+      // Replies the live poll can no longer reach (a failed label released
+      // after its poll window, or history older than the classifier). Isolated
+      // like the poll; bounded per tick; never sends.
+      // Throttled: a reply that keeps failing must not cost a paid call per tick.
+      if (Date.now() - lastIntentRetryAt >= REPLY_INTENT_RETRY_INTERVAL_MS) {
+        lastIntentRetryAt = Date.now();
+        try {
+          const retried = await retryUntriagedReplies({ limit: 25 });
+          if (retried.checked > 0) logEvent("scheduler.reply_intent_retry", retried);
+        } catch (err) {
+          logEvent(
+            "scheduler.reply_intent_retry.failed",
+            { message_120: ((err as Error).message ?? "").slice(0, 120) },
+            "warn",
+          );
+        }
       }
       let mailRefreshed = 0,
         mailRefreshFailed = 0;

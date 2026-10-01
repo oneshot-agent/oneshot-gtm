@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { ReplyKind } from "./reply-classify.ts";
-import type { InboxReplyRecord } from "./types.ts";
+import type { InboxReplyIntentDetails, InboxReplyRecord } from "./types.ts";
 
 /**
  * Ledger-native inbox storage: mutable drafts, append-only sent replies, archive
@@ -307,10 +307,43 @@ export class InboxStore {
    * somehow isn't there (e.g. a race), which is the correct behaviour: never
    * throw out of a best-effort classification path.
    */
-  setInboxReplyIntent(id: string, intent: string | null, intentReason: string | null): void {
+  setInboxReplyIntent(
+    id: string,
+    intent: string | null,
+    intentReason: string | null,
+    details?: InboxReplyIntentDetails,
+  ): void {
+    if (!details || intent == null) {
+      // A release (intent NULL) or a legacy caller: clear the details too so a
+      // stale confidence never outlives the label it described.
+      this.db
+        .prepare(
+          `UPDATE inbox_replies SET intent = ?, intent_reason = ?, intent_confidence = NULL,
+             intent_probs = NULL, intent_classifier = NULL, intent_cost_micros = NULL,
+             intent_classified_at = ?, intent_review = 0
+           WHERE id = ?`,
+        )
+        .run(intent, intentReason, intent == null ? null : new Date().toISOString(), id);
+      return;
+    }
     this.db
-      .prepare(`UPDATE inbox_replies SET intent = ?, intent_reason = ? WHERE id = ?`)
-      .run(intent, intentReason, id);
+      .prepare(
+        `UPDATE inbox_replies SET intent = ?, intent_reason = ?, intent_confidence = ?,
+           intent_probs = ?, intent_classifier = ?, intent_cost_micros = ?,
+           intent_classified_at = ?, intent_review = ?
+         WHERE id = ?`,
+      )
+      .run(
+        intent,
+        intentReason,
+        details.confidence ?? null,
+        details.probabilities ? JSON.stringify(details.probabilities) : null,
+        details.classifier ?? null,
+        details.costMicros ?? null,
+        new Date().toISOString(),
+        details.review ? 1 : 0,
+        id,
+      );
   }
 
   /**
@@ -403,19 +436,44 @@ export class InboxStore {
    * without an N+1 query. Empty input short-circuits (SQLite's `IN ()` is
    * invalid syntax, not just slow).
    */
-  listInboxReplyIntents(
-    ids: string[],
-  ): Map<string, { intent: string | null; intentReason: string | null }> {
+  listInboxReplyIntents(ids: string[]): Map<
+    string,
+    {
+      intent: string | null;
+      intentReason: string | null;
+      intentConfidence: number | null;
+      intentReview: boolean;
+      intentClassifier: string | null;
+    }
+  > {
     if (ids.length === 0) return new Map();
     const placeholders = ids.map(() => "?").join(",");
     const rows = this.db
       .query(
-        `SELECT id, intent, intent_reason AS intentReason FROM inbox_replies
+        `SELECT id, intent, intent_reason AS intentReason, intent_confidence AS intentConfidence,
+                intent_review AS intentReview, intent_classifier AS intentClassifier
+         FROM inbox_replies
          WHERE id IN (${placeholders})`,
       )
-      .all(...ids) as Array<{ id: string; intent: string | null; intentReason: string | null }>;
+      .all(...ids) as Array<{
+      id: string;
+      intent: string | null;
+      intentReason: string | null;
+      intentConfidence: number | null;
+      intentReview: number | null;
+      intentClassifier: string | null;
+    }>;
     return new Map(
-      rows.map((r) => [r.id, { intent: publicIntent(r.intent), intentReason: r.intentReason }]),
+      rows.map((r) => [
+        r.id,
+        {
+          intent: publicIntent(r.intent),
+          intentReason: r.intentReason,
+          intentConfidence: r.intentConfidence ?? null,
+          intentReview: r.intentReview === 1,
+          intentClassifier: r.intentClassifier ?? null,
+        },
+      ]),
     );
   }
 
@@ -450,6 +508,43 @@ export class InboxStore {
          LIMIT ?`,
       )
       .all(limit) as InboxReplyRecord[];
+  }
+
+  /**
+   * Untriaged human replies the live poll can no longer reach: received
+   * before `beforeIso` (the poll window's lower edge), still NULL because
+   * the classify call failed or the row predates the classifier. Oldest
+   * first, bounded, for the scheduler's retry sweep.
+   */
+  listStaleUntriagedHumanReplies(beforeIso: string, limit = 25): InboxReplyRecord[] {
+    return this.db
+      .query(
+        `SELECT * FROM inbox_replies
+         WHERE COALESCE(kind, 'human') = 'human' AND intent IS NULL AND received_at < ?
+         ORDER BY received_at ASC
+         LIMIT ?`,
+      )
+      .all(beforeIso, limit) as InboxReplyRecord[];
+  }
+
+  /**
+   * Every human reply (labelled or not, never one mid-triage), oldest first,
+   * optionally since `sinceIso`. The target of `intel backfill-intent
+   * --reclassify`.
+   */
+  listHumanRepliesForReclassify(
+    opts: { sinceIso?: string; limit?: number } = {},
+  ): InboxReplyRecord[] {
+    const args: unknown[] = [INBOX_REPLY_TRIAGE_PENDING];
+    let where = `COALESCE(kind, 'human') = 'human' AND (intent IS NULL OR intent != ?)`;
+    if (opts.sinceIso) {
+      where += ` AND received_at >= ?`;
+      args.push(opts.sinceIso);
+    }
+    args.push(opts.limit ?? 1000);
+    return this.db
+      .query(`SELECT * FROM inbox_replies WHERE ${where} ORDER BY received_at ASC LIMIT ?`)
+      .all(...(args as string[])) as InboxReplyRecord[];
   }
 
   /** Prospects that have at least one persisted reply, most recent activity first. */

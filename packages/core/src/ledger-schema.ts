@@ -162,6 +162,22 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    // How each reply's intent was decided: the classifier's confidence and
+    // per-label probabilities (the decisions engine returns both), which
+    // engine/model produced it, its cost in micro-dollars, when, and whether
+    // the confidence was under the workspace's review threshold.
+    version: 9,
+    name: "inbox-reply-intent-details",
+    up: (db) => {
+      addColumnIfMissing(db, "inbox_replies", "intent_confidence", "REAL");
+      addColumnIfMissing(db, "inbox_replies", "intent_probs", "TEXT");
+      addColumnIfMissing(db, "inbox_replies", "intent_classifier", "TEXT");
+      addColumnIfMissing(db, "inbox_replies", "intent_cost_micros", "INTEGER");
+      addColumnIfMissing(db, "inbox_replies", "intent_classified_at", "TEXT");
+      addColumnIfMissing(db, "inbox_replies", "intent_review", "INTEGER NOT NULL DEFAULT 0");
+    },
+  },
 ];
 
 export const LEDGER_SCHEMA_VERSION = LEDGER_MIGRATIONS[LEDGER_MIGRATIONS.length - 1]!.version;

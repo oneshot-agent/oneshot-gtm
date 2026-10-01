@@ -345,6 +345,11 @@ export const api = {
         // Optional: older servers / the demo fixture may omit them; the
         // server has always returned them (publicCfg spreads the whole cfg).
         queueReviewOrder?: "ranked" | "newest";
+        replyClassifier?: {
+          engine: "llm" | "decisions";
+          model?: string;
+          minConfidence?: number;
+        };
         timezone?: string | null;
         calendarIdentityId?: string | null;
         calendarId?: string;

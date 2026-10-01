@@ -1,7 +1,7 @@
 import {
   adviseOnce,
+  classifyReplyIntent,
   generateFirstLine,
-  triageEmails,
   triageInbox,
   weeklyReview,
   type LlmMessage,
@@ -119,71 +119,119 @@ export async function commandIntelTriage(opts: {
   ok(`${triaged.length} replies triaged.`);
 }
 
+export interface BackfillIntentOptions {
+  limit?: number;
+  /** Re-label every human reply, not only untriaged ones. */
+  reclassify?: boolean;
+  /** Only replies received in the last N days. */
+  sinceDays?: number;
+  /** Classify and print old → new; write nothing. (Each classify call is still paid.) */
+  dryRun?: boolean;
+  /** Let a re-label replace an existing `unsubscribe`. Off by default: an opt-out is never silently undone. */
+  allowUnsubscribeDowngrade?: boolean;
+}
+
 /**
- * Backfill sentiment intent onto persisted human replies that predate the
- * classifier (issue #480). The ten replies the workspace had before this
- * shipped, and anyone else's pre-existing history. Best-effort per row: a
- * triage failure on one batch is logged and skipped, never aborts the run.
+ * Label persisted human replies with the workspace's reply classifier (issue
+ * #480): by default the ones with no intent yet (history that predates the
+ * classifier, or a failed call); with `reclassify`, every human reply, so a
+ * new label set or engine can re-label history.
+ *
+ * Labels only. It never stops a cadence, records a reply, or opts anyone in
+ * or out retroactively. A row already labelled `unsubscribe` keeps it unless
+ * `allowUnsubscribeDowngrade` is set; the would-be change is printed instead.
+ * Best-effort per row: one failure is logged and skipped, never aborts the run.
  */
-export async function commandIntelBackfillIntent(opts: { limit?: number } = {}): Promise<void> {
-  header("intel backfill-intent");
+export async function commandIntelBackfillIntent(opts: BackfillIntentOptions = {}): Promise<void> {
+  header(
+    `intel backfill-intent${opts.reclassify ? " --reclassify" : ""}${opts.dryRun ? " (dry run)" : ""}`,
+  );
   const ledger = getLedger();
-  const rows = ledger.listUntriagedHumanReplies(opts.limit ?? 200);
+  const sinceIso =
+    opts.sinceDays != null
+      ? new Date(Date.now() - opts.sinceDays * 24 * 3600 * 1000).toISOString()
+      : undefined;
+  const limit = opts.limit ?? 200;
+  const rows = opts.reclassify
+    ? ledger.listHumanRepliesForReclassify({ ...(sinceIso ? { sinceIso } : {}), limit })
+    : ledger.listUntriagedHumanReplies(limit).filter((r) => !sinceIso || r.received_at >= sinceIso);
   if (rows.length === 0) {
-    note("Nothing to backfill — every human reply already has an intent.");
+    note(
+      opts.reclassify
+        ? "No human replies in range."
+        : "Nothing to backfill — every human reply already has an intent.",
+    );
     return;
   }
-  note(`${rows.length} untriaged human repl${rows.length === 1 ? "y" : "ies"} found.`);
+  note(`${rows.length} human repl${rows.length === 1 ? "y" : "ies"} to label.`);
 
-  const BATCH = 25;
-  let done = 0;
+  let written = 0;
+  let unchanged = 0;
   let failed = 0;
   let skipped = 0;
-  for (let i = 0; i < rows.length; i += BATCH) {
-    // Same atomic claim the background poll takes (#558/#559): this command
-    // runs while the server's scheduler is live, and a row both of them see
-    // untriaged must be paid for once. A lost claim means the poll has it.
-    const batch = rows.slice(i, i + BATCH).filter((r) => {
-      if (ledger.claimInboxReplyForTriage(r.id)) return true;
+  let keptUnsubscribe = 0;
+  let costMicros = 0;
+  for (const r of rows) {
+    const old = r.intent;
+    // An untriaged row takes the same atomic claim the background poll takes
+    // (#558/#559), so a row both of them see is paid for once. A row that
+    // already has a label is never touched by the poll, so no claim is needed.
+    const claimed = !opts.dryRun && old == null;
+    if (claimed && !ledger.claimInboxReplyForTriage(r.id)) {
       skipped++;
-      return false;
-    });
-    if (batch.length === 0) continue;
-    // Only the paid call is inside the try: a failure there releases every
-    // claim in the batch. The write-back below runs outside it, so a partial
-    // write-back can never be "undone" by releasing rows already classified.
-    let triaged: Awaited<ReturnType<typeof triageEmails>>;
-    try {
-      triaged = await triageEmails(
-        batch.map((r) => ({
-          id: r.id,
-          from: r.from_email,
-          subject: r.subject ?? "",
-          received_at: r.received_at,
-          body: r.body,
-        })),
-      );
-    } catch (err) {
-      for (const r of batch) ledger.setInboxReplyIntent(r.id, null, null);
-      failed += batch.length;
-      warn(`batch starting at row ${i} failed: ${(err as Error)?.message ?? "unknown error"}`);
       continue;
     }
-    const byId = new Map(triaged.map((t) => [t.id, t]));
-    for (const r of batch) {
-      const t = byId.get(r.id);
-      if (!t) {
-        // Release the claim so a later poll (or re-run) can retry.
-        ledger.setInboxReplyIntent(r.id, null, null);
-        failed++;
-        continue;
-      }
-      ledger.setInboxReplyIntent(r.id, t.category, t.reasoning || null);
-      done++;
+    let labelled: Awaited<ReturnType<typeof classifyReplyIntent>>;
+    try {
+      labelled = await classifyReplyIntent({
+        id: r.id,
+        from: r.from_email,
+        subject: r.subject ?? "",
+        received_at: r.received_at,
+        body: r.body,
+      });
+    } catch (err) {
+      if (claimed) ledger.setInboxReplyIntent(r.id, null, null);
+      failed++;
+      warn(`…${r.id.slice(-8)} failed: ${(err as Error)?.message ?? "unknown error"}`);
+      continue;
     }
+    costMicros += labelled.costMicros ?? 0;
+    const conf = labelled.confidence == null ? "" : ` ${labelled.confidence.toFixed(2)}`;
+    const flag = labelled.review ? c.yellow(" check") : "";
+    const blocked =
+      old === "unsubscribe" && labelled.intent !== "unsubscribe" && !opts.allowUnsubscribeDowngrade;
+    process.stdout.write(
+      `  …${r.id.slice(-8)}  ${old ?? "(none)"} → ${labelled.intent}${conf}${flag}${
+        blocked ? c.yellow("  (kept unsubscribe)") : ""
+      }\n`,
+    );
+    if (blocked) {
+      keptUnsubscribe++;
+      continue;
+    }
+    if (old === labelled.intent && opts.reclassify) unchanged++;
+    if (opts.dryRun) continue;
+    ledger.setInboxReplyIntent(r.id, labelled.intent, labelled.reason || null, {
+      confidence: labelled.confidence,
+      probabilities: labelled.probabilities,
+      classifier: labelled.classifier,
+      costMicros: labelled.costMicros,
+      review: labelled.review,
+    });
+    written++;
   }
+  const cost = costMicros > 0 ? `, $${(costMicros / 1_000_000).toFixed(4)} classifier cost` : "";
   ok(
-    `backfilled ${done} repl${done === 1 ? "y" : "ies"}${failed > 0 ? `, ${failed} failed` : ""}${skipped > 0 ? `, ${skipped} already being triaged` : ""}.`,
+    `${opts.dryRun ? "would label" : "labelled"} ${opts.dryRun ? rows.length - failed - skipped - keptUnsubscribe : written} repl${written === 1 ? "y" : "ies"}` +
+      (opts.reclassify ? ` (${unchanged} unchanged)` : "") +
+      (failed > 0 ? `, ${failed} failed` : "") +
+      (skipped > 0 ? `, ${skipped} already being triaged` : "") +
+      (keptUnsubscribe > 0
+        ? `, ${keptUnsubscribe} kept as unsubscribe (pass --allow-unsubscribe-downgrade to replace)`
+        : "") +
+      cost +
+      ".",
   );
 }
 

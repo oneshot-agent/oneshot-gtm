@@ -1,6 +1,8 @@
 import type { DraftAngleChoice } from "@oneshot-gtm/shared-types";
+import { replyIntentMeta } from "@oneshot-gtm/shared-types";
 import {
   classifyReply,
+  type InboxEmail,
   motionMailPolicy,
   automaticMailEligible,
   mailFollowupDueAt,
@@ -41,7 +43,7 @@ import {
   isWithdrawnStatus,
   type LinkedInOperation,
 } from "@oneshot-gtm/core";
-import { complete, loadPrompt, tryParseJsonObject, triageEmails } from "@oneshot-gtm/intel";
+import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
 import {
   firstNameFrom,
@@ -493,6 +495,94 @@ interface WalkResult {
  * (`before:`/`until` are exclusive at second granularity); `seen` de-dupes by
  * id across pages.
  */
+/**
+ * Stop a prospect's live cadences after an opt-out reply label (REPLY_INTENTS
+ * `optOut`, i.e. `unsubscribe`). Idempotent; returns the number stopped.
+ */
+function stopCadencesForOptOut(prospectId: number): number {
+  const ledger = getLedger();
+  let stopped = 0;
+  for (const cad of ledger.listCadencesForProspect(prospectId)) {
+    if (cad.status !== "active" && cad.status !== "paused") continue;
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: cad.play_name,
+      stepIndex: cad.current_step,
+      channel: "email",
+      status: "unsubscribed",
+      metadata: { reason: "unsubscribe" },
+    });
+    ledger.setCadenceStatus({ prospectId, playName: cad.play_name, status: "unsubscribed" });
+    stopped++;
+  }
+  // A pending or approved breakup-revive row would still go out to a prospect
+  // who just asked to be removed: setCadenceStatus touches cadence_state only,
+  // so expire the queue rows here, as stopCadence and the reply paths do.
+  ledger.expireBreakupReviveQueue(prospectId, "prospect unsubscribed");
+  return stopped;
+}
+
+/** Replies older than this are out of the live poll's reach (watermark minus its 1h overlap). */
+const UNTRIAGED_RETRY_MIN_AGE_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * Label human replies the live poll can no longer reach: a classify call that
+ * failed (the claim was released, intent NULL) once the reply fell out of the
+ * poll window, or rows older than the classifier. The poll already did the
+ * ordinary reply bookkeeping for these (a failed triage still counts as a
+ * reply), so the only action here beyond the label is the opt-out stop the
+ * poll could not apply. Bounded; claims each row like the poll does.
+ */
+export async function retryUntriagedReplies(
+  opts: { limit?: number; now?: number } = {},
+): Promise<{ checked: number; labelled: number; failed: number; cadencesStopped: number }> {
+  const ledger = getLedger();
+  const before = new Date((opts.now ?? Date.now()) - UNTRIAGED_RETRY_MIN_AGE_MS).toISOString();
+  const rows = ledger.listStaleUntriagedHumanReplies(before, opts.limit ?? 25);
+  const out = { checked: rows.length, labelled: 0, failed: 0, cadencesStopped: 0 };
+  for (const row of rows) {
+    if (!ledger.claimInboxReplyForTriage(row.id)) continue;
+    try {
+      const labelled = await classifyReplyIntent({
+        id: row.id,
+        from: row.from_email,
+        subject: row.subject ?? "",
+        body: row.body,
+        received_at: row.received_at,
+      } satisfies InboxEmail);
+      ledger.setInboxReplyIntent(row.id, labelled.intent, labelled.reason || null, {
+        confidence: labelled.confidence,
+        probabilities: labelled.probabilities,
+        classifier: labelled.classifier,
+        costMicros: labelled.costMicros,
+        review: labelled.review,
+      });
+      out.labelled++;
+      logEvent("reply.intent.classified", {
+        intent: labelled.intent,
+        classifier: labelled.classifier,
+        confidence: labelled.confidence,
+        review: labelled.review,
+        cost_micros: labelled.costMicros,
+        fell_back: labelled.fellBack,
+        retry: true,
+      });
+      if (replyIntentMeta(labelled.intent)?.optOut === true) {
+        out.cadencesStopped += stopCadencesForOptOut(row.prospect_id);
+      }
+    } catch (err) {
+      ledger.setInboxReplyIntent(row.id, null, null);
+      out.failed++;
+      logEvent(
+        "inbox.reply.triage_failed",
+        { message_120: ((err as Error)?.message ?? "").slice(0, 120), retry: true },
+        "warn",
+      );
+    }
+  }
+  return out;
+}
+
 async function walkInboxWindow(
   ledger: ReturnType<typeof getLedger>,
   out: ReplyPollResult,
@@ -631,13 +721,23 @@ async function walkInboxWindow(
       let claimPending = false;
       if (ledger.claimInboxReplyForTriage(e.id)) {
         try {
-          const [triaged] = await triageEmails([e]);
-          if (triaged) {
-            triagedIntent = triaged.category;
-            ledger.setInboxReplyIntent(e.id, triaged.category, triaged.reasoning || null);
-          } else {
-            ledger.setInboxReplyIntent(e.id, null, null);
-          }
+          const labelled = await classifyReplyIntent(e);
+          triagedIntent = labelled.intent;
+          ledger.setInboxReplyIntent(e.id, labelled.intent, labelled.reason || null, {
+            confidence: labelled.confidence,
+            probabilities: labelled.probabilities,
+            classifier: labelled.classifier,
+            costMicros: labelled.costMicros,
+            review: labelled.review,
+          });
+          logEvent("reply.intent.classified", {
+            intent: labelled.intent,
+            classifier: labelled.classifier,
+            confidence: labelled.confidence,
+            review: labelled.review,
+            cost_micros: labelled.costMicros,
+            fell_back: labelled.fellBack,
+          });
         } catch (err) {
           ledger.setInboxReplyIntent(e.id, null, null);
           logEvent(
@@ -655,29 +755,8 @@ async function walkInboxWindow(
       // classification missed. Stop live cadences before reply bookkeeping, using
       // either this poll's verdict or a stored verdict. The stop is idempotent, and
       // contactAllowedClause also blocks re-enrollment on this intent.
-      if (triagedIntent === "unsubscribe") {
-        for (const cad of ledger.listCadencesForProspect(prospect.id)) {
-          if (cad.status !== "active" && cad.status !== "paused") continue;
-          ledger.recordSequenceEvent({
-            prospectId: prospect.id,
-            playName: cad.play_name,
-            stepIndex: cad.current_step,
-            channel: "email",
-            status: "unsubscribed",
-            metadata: { reason: "unsubscribe" },
-          });
-          ledger.setCadenceStatus({
-            prospectId: prospect.id,
-            playName: cad.play_name,
-            status: "unsubscribed",
-          });
-          out.cadencesStopped++;
-        }
-        // A pending or approved breakup-revive row would still go out to a
-        // prospect who just asked to be removed: setCadenceStatus touches
-        // cadence_state only, so expire the queue rows here, as stopCadence
-        // and the reply paths do.
-        ledger.expireBreakupReviveQueue(prospect.id, "prospect unsubscribed");
+      if (replyIntentMeta(triagedIntent)?.optOut === true) {
+        out.cadencesStopped += stopCadencesForOptOut(prospect.id);
         // Do not count or bill an unsubscribe as engagement after stopping cadences.
       } else if (!claimPending) {
         for (const r of ledger.recordProspectReply(prospect.id, {

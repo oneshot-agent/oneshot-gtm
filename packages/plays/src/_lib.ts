@@ -822,6 +822,36 @@ export function intentDirectiveBlock(intent: string | null | undefined): string 
         "INTENT DIRECTIVE (classified: question — follow this, do not re-derive intent from prose):",
         "Answer directly, then stop. Do not pivot into a pitch or introduce a new ask.",
       ].join("\n");
+    case "partnership":
+      return [
+        "INTENT DIRECTIVE (classified: partnership — follow this, do not re-derive intent from prose):",
+        "Engage with their proposal concretely: what it would actually involve on both sides. Do not accept, reject, or negotiate terms (revenue share, exclusivity, placement); say the founder will take the specifics directly, and ask for the one next step that makes it real.",
+      ].join("\n");
+    case "meeting":
+      return [
+        "INTENT DIRECTIVE (classified: meeting — follow this, do not re-derive intent from prose):",
+        "Handle the logistics only: confirm, pick a time, or answer the scheduling question. No pitch, no new topics, no agenda beyond what they set.",
+      ].join("\n");
+    case "intro":
+      return [
+        "INTENT DIRECTIVE (classified: intro — follow this, do not re-derive intent from prose):",
+        "Thank whoever made the introduction in one line, then speak to the person introduced: one specific reason the two of you should talk and one easy next step. Do not re-pitch to the connector.",
+      ].join("\n");
+    case "complaint":
+      return [
+        "INTENT DIRECTIVE (classified: complaint — follow this, do not re-derive intent from prose):",
+        "Own it plainly: acknowledge exactly what went wrong and say what changes. No excuses, no pitch, no ask, no link. Short.",
+      ].join("\n");
+    case "not_interested":
+      return [
+        "INTENT DIRECTIVE (classified: not_interested — follow this, do not re-derive intent from prose):",
+        "Close gracefully in one or two sentences. No counter-pitch, no follow-up ask, no door-open line that reads as a sales tactic.",
+      ].join("\n");
+    case "pitch_back":
+      return [
+        "INTENT DIRECTIVE (classified: pitch_back — follow this, do not re-derive intent from prose):",
+        "They pitched you their own product. Decline politely and briefly unless the PRODUCT BRIEF shows a real reason to explore it; never agree to a demo or a purchase on the founder's behalf.",
+      ].join("\n");
     default:
       return null;
   }

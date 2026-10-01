@@ -8,9 +8,16 @@ import type {
 } from "@oneshot-gtm/core";
 import {
   describeDecision,
+  replyIntentMeta,
   type ProspectTimelineEvent,
   type SendDeliveryView,
 } from "@oneshot-gtm/shared-types";
+
+/** "reply · not now", from the shared label table; unknown labels pass through raw. */
+function replyLabel(intent: string, review: boolean): string {
+  const title = replyIntentMeta(intent)?.title.toLowerCase() ?? intent;
+  return `reply · ${title}${review ? " (check label)" : ""}`;
+}
 
 /**
  * The history behind one /prospects row, newest first: the queue row's own
@@ -106,7 +113,7 @@ export function buildProspectTimeline(input: {
     const label =
       kind === "human"
         ? r.intent
-          ? `reply · ${r.intent}`
+          ? replyLabel(r.intent, r.intent_review === 1)
           : "reply"
         : kind === "unsubscribe"
           ? "unsubscribed"
