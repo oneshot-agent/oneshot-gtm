@@ -103,3 +103,25 @@ it("distinguishes a restored account from a conversation still tied to the previ
     linkedinConnectionState: "connected",
   });
 });
+
+it("drafts an unassigned one-to-one conversation as this workspace, with a warning", () => {
+  store.saveConversation(
+    "account",
+    {
+      id: "chat",
+      attendees: [
+        { is_self: false, provider_id: "internal", profile_url: "https://linkedin.com/in/ada" },
+      ],
+      attendees_synced: true,
+      type: 0,
+    } as never,
+    [],
+  );
+  const [unassigned] = linkedInThreads();
+  expect(unassigned).toMatchObject({ canGenerate: true, canSend: true, workspace: null });
+  expect(unassigned?.unavailableReason).toBeUndefined();
+  expect(unassigned?.draftingWarning).toContain("the test workspace's product");
+
+  store.assign("linkedin:account:chat", { workspace: "test", prospectId: 1 });
+  expect(linkedInThreads()[0]?.draftingWarning).toBeUndefined();
+});

@@ -59,6 +59,8 @@ export interface ReplyThread {
   canSend: boolean;
   canGenerate: boolean;
   unavailableReason?: string;
+  /** Drafting works but without the usual context (an unassigned LinkedIn conversation): shown above the drafts. */
+  draftingWarning?: string;
   contextVersion: string;
   drafts: ReplyDraftSet | null;
   send: ReplySendState | null;

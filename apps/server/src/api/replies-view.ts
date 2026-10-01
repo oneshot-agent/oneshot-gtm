@@ -79,15 +79,13 @@ export function linkedInThreads(): ReplyThread[] {
           ? "LinkedIn is connected. This saved conversation is waiting to be restored through the new connection before you can send. Check the history import under Connections."
           : c.read_only
             ? "This conversation is read-only on LinkedIn."
-            : !t.owner
-              ? "Assign a workspace and prospect to generate replies."
-              : !oneToOne
-                ? c.attendees_synced
-                  ? "Review this group conversation and write a reply manually."
-                  : "Participant details are incomplete. Review the conversation and write a reply manually."
-                : !latest.body.trim()
-                  ? "This message has no text. Review it on LinkedIn before replying."
-                  : undefined;
+            : !oneToOne
+              ? c.attendees_synced
+                ? "Review this group conversation and write a reply manually."
+                : "Participant details are incomplete. Review the conversation and write a reply manually."
+              : !latest.body.trim()
+                ? "This message has no text. Review it on LinkedIn before replying."
+                : undefined;
       return [
         {
           key: t.key,
@@ -106,12 +104,15 @@ export function linkedInThreads(): ReplyThread[] {
           canSend,
           linkedinConnectionState,
           canGenerate:
-            !a.removedAt &&
-            currentConnection &&
-            !!t.owner &&
-            oneToOne &&
-            !!latest.body.trim() &&
-            latest.human,
+            !a.removedAt && currentConnection && oneToOne && !!latest.body.trim() && latest.human,
+          // The LinkedIn account is shared by every workspace: an unassigned
+          // conversation drafts as the workspace it is opened in, with no
+          // prospect research behind it. Say so wherever its drafts show.
+          ...(t.owner
+            ? {}
+            : {
+                draftingWarning: `Not assigned to a prospect. Drafts use the ${workspace} workspace's product, brief and voice, with no prospect research. If this person is a prospect, assign them under "Contact details & assignment".`,
+              }),
           unavailableReason: reason,
           contextVersion: "",
           drafts: null,
@@ -155,7 +156,9 @@ export async function collectReplies(req: Request): Promise<RepliesResult> {
         : null;
     t.contextVersion = replyContextVersion({
       messages: t.messages.map((m) => [m.id, m.direction, m.body, m.deleted]),
-      workspace: t.workspace,
+      // Unassigned LinkedIn drafts as the viewing workspace: a draft made in
+      // another workspace is for another product, so it must read as stale here.
+      workspace: t.workspace ?? (t.channel === "linkedin" ? workspace : null),
       prospect: t.prospectId,
       brief: cfg.productBrief,
       voice: cfg.founderVoice,
