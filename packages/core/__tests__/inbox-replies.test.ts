@@ -248,8 +248,12 @@ describe("inbox_replies.intent (issue #480)", () => {
     record({ id: "msg-2", kind: "human" });
     ledger.setInboxReplyIntent("msg-1", "interested", "r1");
     const out = ledger.listInboxReplyIntents(["msg-1", "msg-2", "msg-nonexistent"]);
-    expect(out.get("msg-1")).toEqual({ intent: "interested", intentReason: "r1" });
-    expect(out.get("msg-2")).toEqual({ intent: null, intentReason: null });
+    expect(out.get("msg-1")).toMatchObject({ intent: "interested", intentReason: "r1" });
+    expect(out.get("msg-2")).toMatchObject({
+      intent: null,
+      intentReason: null,
+      intentReview: false,
+    });
     expect(out.has("msg-nonexistent")).toBe(false);
   });
 

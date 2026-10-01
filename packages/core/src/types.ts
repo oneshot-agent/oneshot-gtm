@@ -69,7 +69,26 @@ export interface InboxReplyRecord {
   intent: string | null;
   /** One-sentence justification for `intent`, from the triage LLM call. */
   intent_reason: string | null;
+  /** Classifier confidence in `intent` (0–1); NULL when the engine gives none. */
+  intent_confidence?: number | null;
+  /** JSON object of per-label probabilities (decisions engine only). */
+  intent_probs?: string | null;
+  /** Engine and model that produced `intent`, e.g. `decisions:<model>`. */
+  intent_classifier?: string | null;
+  intent_cost_micros?: number | null;
+  intent_classified_at?: string | null;
+  /** 1 when the confidence was under the workspace's review threshold. */
+  intent_review?: number | null;
   created_at: string;
+}
+
+/** How a reply's intent was decided (ledger migration v9). */
+export interface InboxReplyIntentDetails {
+  confidence?: number | null;
+  probabilities?: Record<string, number> | null;
+  classifier?: string | null;
+  costMicros?: number | null;
+  review?: boolean;
 }
 
 /** Provider-neutral inbound engagement event. V1 records LinkedIn replies only. */
@@ -306,6 +325,14 @@ export interface MeetingRecord {
   attendees_fingerprint: string | null;
 }
 
+export interface ReplyClassifierConfig {
+  engine: "llm" | "decisions";
+  /** Decisions-engine model id (config data only; required for `decisions`). */
+  model?: string;
+  /** 0–1. Labels below it are stored with a review flag. Default 0.5. */
+  minConfidence?: number;
+}
+
 export interface OneShotConfig {
   walletMode: "cdp" | "private-key";
   llmProvider: "openrouter" | "openai" | "anthropic";
@@ -366,6 +393,15 @@ export interface OneShotConfig {
    * config files stay valid; readers treat absent as "newest".
    */
   queueReviewOrder?: "ranked" | "newest";
+  /**
+   * How inbound human replies get their intent label (see REPLY_INTENTS in
+   * shared-types). `llm` is the triage prompt on `llmModel`; `decisions` is a
+   * typed decisions model on OpenRouter's decisions API (`model` names it), with
+   * the `llm` engine as fallback on any failure. Replies whose label confidence
+   * is under `minConfidence` (default 0.5) are stored with a review flag and
+   * never drive a positive action. Optional: absent means `{ engine: "llm" }`.
+   */
+  replyClassifier?: ReplyClassifierConfig;
   /** Founder's résumé / credentials. The founder-trust social-proof beat. */
   founderCredentials: string | null;
   /** Products you've shipped. The peer-founder social-proof beat. */

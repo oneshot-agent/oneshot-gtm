@@ -265,7 +265,23 @@ const triageEmailsMock = vi.fn(async (emails: Array<{ id: string }>) =>
 );
 vi.mock("@oneshot-gtm/intel", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/intel")>("@oneshot-gtm/intel");
-  return { ...actual, triageEmails: triageEmailsMock };
+  // The poll labels through classifyReplyIntent (llm engine by default): route
+  // it to the same stub so these tests keep driving the label one place.
+  const classifyReplyIntent = async (email: { id: string }) => {
+    const [r] = await triageEmailsMock([email]);
+    if (!r) throw new Error("triage returned no label");
+    return {
+      intent: r.category,
+      reason: r.reasoning ?? "",
+      confidence: null,
+      probabilities: null,
+      classifier: "llm:test",
+      costMicros: null,
+      review: false,
+      fellBack: false,
+    };
+  };
+  return { ...actual, triageEmails: triageEmailsMock, classifyReplyIntent };
 });
 
 const { advanceCadence, pollInboxReplies } = await import("../src/_cadence.ts");

@@ -1246,10 +1246,37 @@ intel
       return limit;
     },
   )
-  .description("Classify sentiment intent onto persisted human replies that predate the classifier")
+  .option("--reclassify", "re-label every human reply, not only untriaged ones")
+  .option("--since <days>", "only replies from the last N days (e.g. 30 or 30d)", (v: string) => {
+    const days = Number(v.replace(/d$/i, ""));
+    if (!Number.isFinite(days) || days <= 0)
+      throw new Error("--since must be a positive number of days");
+    return days;
+  })
+  .option("--dry-run", "print old → new labels without writing (classify calls are still paid)")
+  .option(
+    "--allow-unsubscribe-downgrade",
+    "let a re-label replace an existing unsubscribe (off by default)",
+  )
+  .description(
+    "Label persisted human replies with the configured reply classifier (labels only; never triggers cadence or opt-out actions)",
+  )
   .action(
-    runOrFail(async (opts: { limit?: number }) =>
-      commandIntelBackfillIntent(opts.limit != null ? { limit: opts.limit } : {}),
+    runOrFail(
+      async (opts: {
+        limit?: number;
+        reclassify?: boolean;
+        since?: number;
+        dryRun?: boolean;
+        allowUnsubscribeDowngrade?: boolean;
+      }) =>
+        commandIntelBackfillIntent({
+          ...(opts.limit != null ? { limit: opts.limit } : {}),
+          ...(opts.reclassify ? { reclassify: true } : {}),
+          ...(opts.since != null ? { sinceDays: opts.since } : {}),
+          ...(opts.dryRun ? { dryRun: true } : {}),
+          ...(opts.allowUnsubscribeDowngrade ? { allowUnsubscribeDowngrade: true } : {}),
+        }),
     ),
   );
 intel

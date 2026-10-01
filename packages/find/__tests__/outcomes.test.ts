@@ -128,6 +128,40 @@ describe("labelSentRow — intent-based positive evidence (issue #480)", () => {
     }
   });
 
+  it("the expanded labels: complaint / not_interested / pitch_back are NOT positive; partnership / meeting / intro ARE", () => {
+    const outcomeFor = (intent: string) =>
+      labelSentRow(
+        raw({
+          sent_at: NOW.toISOString(),
+          first_email_reply_at: "x",
+          first_email_reply_intent: intent,
+        }),
+        "none",
+        NOW,
+      ).outcome;
+    for (const intent of ["complaint", "not_interested", "pitch_back"]) {
+      expect(outcomeFor(intent)).toBe("none");
+    }
+    for (const intent of ["partnership", "meeting", "intro"]) {
+      expect(outcomeFor(intent)).toBe("reply");
+    }
+  });
+
+  it("an unknown label (or the in-flight triage sentinel) is neutral, never positive", () => {
+    for (const intent of ["some_future_label", "__triage_pending__"]) {
+      const row = labelSentRow(
+        raw({
+          sent_at: NOW.toISOString(),
+          first_email_reply_at: "x",
+          first_email_reply_intent: intent,
+        }),
+        "none",
+        NOW,
+      );
+      expect(row.outcome).toBe("none");
+    }
+  });
+
   it("untriaged (NULL intent) still counts positive — a triage outage never manufactures a negative", () => {
     const row = labelSentRow(
       raw({

@@ -391,6 +391,16 @@ export interface SetupRequest {
    */
   queueReviewOrder?: "ranked" | "newest";
   /**
+   * How reply intents are labelled. `undefined` = leave unchanged; `null` =
+   * back to the default (`llm`). `decisions` needs a `model`; `minConfidence`
+   * must be within 0–1. Anything else is a 400.
+   */
+  replyClassifier?: {
+    engine: "llm" | "decisions";
+    model?: string;
+    minConfidence?: number;
+  } | null;
+  /**
    * Install-wide IANA time zone (issue #451 surfaced it: no other writer
    * exists). `undefined` = leave unchanged; `null` or blank = clear back to the
    * runtime zone; otherwise must be a valid IANA name or the request is 400.
@@ -1059,27 +1069,204 @@ export function withXEngine(
 export type InboundReplyKind = "human" | "auto" | "auto_permanent" | "unsubscribe";
 
 /**
- * Sentiment/intent classification of a HUMAN reply (issue #480), mirrors
- * intel/triage.ts's `TriageCategory`: independent of `InboundReplyKind`
- * above (that's deliverability triage; this is sentiment). NULL/absent on a
- * reply means it hasn't been triaged yet, or the triage call failed.
+ * Sentiment/intent classification of a HUMAN reply (issue #480). The single
+ * source of truth for the label set: both classifiers (the LLM triage prompt
+ * and the typed decisions engine) and every consumer derive from this table.
+ * Independent of `InboundReplyKind` above (that's deliverability triage; this
+ * is sentiment). NULL/absent on a reply means it hasn't been triaged yet, or
+ * the triage call failed.
+ *
+ * Existing label strings never change: stored rows and the opt-out checks
+ * (`intent = 'unsubscribe'`) depend on them.
  */
-export type ReplyIntent =
-  | "interested"
-  | "not_now"
-  | "wrong_person"
-  | "objection"
-  | "question"
-  | "unsubscribe"
-  | "auto_reply"
-  | "other";
+export interface ReplyIntentMeta {
+  label: string;
+  /** Definition sent to both classifiers. */
+  description: string;
+  /** Short human label for the dashboard. */
+  title: string;
+  polarity: "positive" | "neutral" | "negative";
+  /** Shows as waiting for the founder's answer on /inbox. */
+  needsReply: boolean;
+  /**
+   * What the label means for the cadence. Today any human reply already stops
+   * the cadence whatever its label; this records that per label.
+   */
+  stopsCadence: boolean;
+  /** Contact is vetoed everywhere (contact-optout.ts). Only `unsubscribe`. */
+  optOut: boolean;
+}
 
-/** Positive-signal intents that surface the intent badge + needs-decision state on /inbox. */
-export const POSITIVE_REPLY_INTENTS: readonly ReplyIntent[] = [
-  "interested",
-  "question",
-  "objection",
-];
+export const REPLY_INTENTS = [
+  {
+    label: "interested",
+    title: "Interested",
+    description:
+      "They want to talk or see a demo, ask a buying question, or describe their own use case.",
+    polarity: "positive",
+    needsReply: true,
+    stopsCadence: true,
+    optOut: false,
+  },
+  {
+    label: "question",
+    title: "Question",
+    description: "They ask a clarifying question that doesn't yet show buying intent.",
+    polarity: "positive",
+    needsReply: true,
+    stopsCadence: true,
+    optOut: false,
+  },
+  {
+    label: "partnership",
+    title: "Partnership",
+    description: "They propose an integration, a partnership, or co-marketing.",
+    polarity: "positive",
+    needsReply: true,
+    stopsCadence: true,
+    optOut: false,
+  },
+  {
+    label: "meeting",
+    title: "Meeting",
+    description:
+      "They book, accept, reschedule, or confirm a meeting, including calendar invites and scheduling logistics.",
+    polarity: "positive",
+    needsReply: true,
+    stopsCadence: true,
+    optOut: false,
+  },
+  {
+    label: "intro",
+    title: "Intro",
+    description:
+      "They introduce you to someone else, or a connector writes to introduce two people to each other.",
+    polarity: "positive",
+    needsReply: true,
+    stopsCadence: true,
+    optOut: false,
+  },
+  {
+    label: "not_now",
+    title: "Not now",
+    description: "Interested, but the timing is off (circle back next quarter, after our launch).",
+    polarity: "neutral",
+    needsReply: true,
+    stopsCadence: true,
+    optOut: false,
+  },
+  {
+    label: "objection",
+    title: "Objection",
+    description:
+      "Concrete pushback on the product or offer: price, fit, integration, security, competing tools.",
+    polarity: "neutral",
+    needsReply: true,
+    stopsCadence: true,
+    optOut: false,
+  },
+  {
+    label: "complaint",
+    title: "Complaint",
+    description:
+      "They complain about the outreach itself: duplicate emails, wrong details about them, too many messages.",
+    polarity: "negative",
+    needsReply: true,
+    stopsCadence: true,
+    optOut: false,
+  },
+  {
+    label: "not_interested",
+    title: "Not interested",
+    description:
+      "A polite no or 'not relevant', without hostility and without asking to stop being emailed.",
+    polarity: "negative",
+    needsReply: false,
+    stopsCadence: true,
+    optOut: false,
+  },
+  {
+    label: "wrong_person",
+    title: "Wrong person",
+    description: "Not their area: they point you to someone else or say they're the wrong contact.",
+    polarity: "neutral",
+    needsReply: true,
+    stopsCadence: true,
+    optOut: false,
+  },
+  {
+    label: "unsubscribe",
+    title: "Unsubscribe",
+    description: "An explicit request to stop emailing them, or a hostile reply.",
+    polarity: "negative",
+    needsReply: false,
+    stopsCadence: true,
+    optOut: true,
+  },
+  {
+    label: "pitch_back",
+    title: "Pitch back",
+    description: "They pitch their own product or service to you instead of responding to yours.",
+    polarity: "neutral",
+    needsReply: false,
+    stopsCadence: true,
+    optOut: false,
+  },
+  {
+    label: "auto_reply",
+    title: "Auto-reply",
+    description: "An out-of-office, vacation notice, or other autoresponder.",
+    polarity: "neutral",
+    needsReply: false,
+    stopsCadence: false,
+    optOut: false,
+  },
+  {
+    label: "other",
+    title: "Other",
+    description: "Anything that doesn't fit the other labels cleanly.",
+    polarity: "neutral",
+    needsReply: true,
+    stopsCadence: true,
+    optOut: false,
+  },
+] as const satisfies readonly ReplyIntentMeta[];
+
+export type ReplyIntent = (typeof REPLY_INTENTS)[number]["label"];
+
+/** Every label, in table order. */
+export const REPLY_INTENT_LABELS: readonly ReplyIntent[] = REPLY_INTENTS.map((i) => i.label);
+
+const REPLY_INTENT_BY_LABEL: ReadonlyMap<string, ReplyIntentMeta> = new Map(
+  REPLY_INTENTS.map((i): [string, ReplyIntentMeta] => [i.label, i]),
+);
+
+export function isReplyIntent(value: unknown): value is ReplyIntent {
+  return typeof value === "string" && REPLY_INTENT_BY_LABEL.has(value);
+}
+
+/** The table entry for a label, or null for an unknown/legacy string. */
+export function replyIntentMeta(label: string | null | undefined): ReplyIntentMeta | null {
+  return label ? (REPLY_INTENT_BY_LABEL.get(label) ?? null) : null;
+}
+
+/**
+ * Intents that surface the intent badge + needs-decision state on /inbox:
+ * the replies waiting for the founder's answer.
+ */
+export const POSITIVE_REPLY_INTENTS: readonly ReplyIntent[] = REPLY_INTENTS.filter(
+  (i) => i.needsReply,
+).map((i) => i.label);
+
+/**
+ * Labels `find calibrate` reads as positive reply evidence: positive polarity,
+ * plus `objection` (a live back-and-forth, not a ghost) and `other` (unchanged
+ * from before the table). Every other known label, and any unknown string,
+ * is not positive evidence.
+ */
+export const POSITIVE_OUTCOME_INTENTS: readonly ReplyIntent[] = REPLY_INTENTS.filter(
+  (i) => i.polarity === "positive" || i.label === "objection" || i.label === "other",
+).map((i) => i.label);
 
 /** A single inbox email (reply to outreach), with prospect/play context when matched. */
 export interface InboxReplyView {
@@ -1090,6 +1277,10 @@ export interface InboxReplyView {
   /** Sentiment classification (issue #480); null = not yet triaged (or triage failed). */
   intent: ReplyIntent | null;
   intentReason: string | null;
+  /** Classifier confidence in `intent` (0–1), when the engine gives one. */
+  intentConfidence?: number | null;
+  /** The label's confidence was under the workspace threshold: check it before acting. */
+  intentReview?: boolean;
   /** Normalized sender address (lowercased, display-name stripped). */
   fromEmail: string;
   /** Raw From header as received (may include a display name). */

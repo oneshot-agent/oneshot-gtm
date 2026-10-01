@@ -117,6 +117,23 @@ describe("draftInboxReply context assembly", () => {
     expect(block).toContain("interested");
   });
 
+  it("injects a directive for each expanded label", async () => {
+    const cues: Record<string, string> = {
+      partnership: "next step",
+      meeting: "logistics",
+      intro: "introduction",
+      complaint: "Own it",
+      not_interested: "Close gracefully",
+      pitch_back: "Decline politely",
+    };
+    for (const [intent, cue] of Object.entries(cues)) {
+      await draftInboxReply({ ...BASE, intent });
+      const block = lastUserBlock();
+      expect(block).toContain(`INTENT DIRECTIVE (classified: ${intent}`);
+      expect(block).toContain(cue);
+    }
+  });
+
   it("omits the intent directive when intent is null or unhandled", async () => {
     await draftInboxReply({ ...BASE, intent: null });
     expect(lastUserBlock()).not.toContain("INTENT DIRECTIVE");

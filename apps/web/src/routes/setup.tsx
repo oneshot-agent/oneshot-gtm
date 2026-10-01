@@ -16,6 +16,7 @@ import { NotificationsSection } from "../components/setup/NotificationsSection.t
 import { ProductBriefSection } from "../components/setup/ProductBriefSection.tsx";
 import { VoiceSection } from "../components/setup/VoiceSection.tsx";
 import { ReviewQueueSection } from "../components/setup/ReviewQueueSection.tsx";
+import { ReplyClassifierSection } from "../components/setup/ReplyClassifierSection.tsx";
 import { SectionNav, jumpToSection } from "../components/setup/SectionNav.tsx";
 import { SocialProofSection } from "../components/setup/SocialProofSection.tsx";
 import { TelemetrySection } from "../components/setup/TelemetrySection.tsx";
@@ -233,6 +234,7 @@ function Sections({
       <ProductBriefSection {...common} />
       <VoiceSection {...common} />
       <LlmSection {...common} />
+      <ReplyClassifierSection {...common} />
       <WalletSection {...common} homeDir={homeDir} />
       <NotificationsSection {...common} />
       <XSection sources={sources} xTrigger={xTrigger} onDirtyChange={onDirtyChange} />
