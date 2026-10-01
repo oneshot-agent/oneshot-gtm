@@ -127,6 +127,35 @@ export function linkedInThreads(): ReplyThread[] {
     });
 }
 
+/**
+ * What a thread's drafts were written against, for the workspace handling the
+ * request. Unassigned LinkedIn conversations are listed by every workspace
+ * and saved to one shared store, so the stored value is whichever workspace
+ * listed last: always recompute it here instead of trusting the store.
+ */
+export function threadContextVersion(
+  t: ReplyThread,
+  workspace: string = currentWorkspaceName(),
+): string {
+  const cfg = loadConfig();
+  const prospect =
+    t.prospectId != null && t.workspace === workspace
+      ? getLedger().getProspectById(t.prospectId)
+      : null;
+  return replyContextVersion({
+    messages: t.messages.map((m) => [m.id, m.direction, m.body, m.deleted]),
+    // Unassigned LinkedIn drafts as the viewing workspace: a draft made in
+    // another workspace is for another product, so it must read as stale here.
+    workspace: t.workspace ?? (t.channel === "linkedin" ? workspace : null),
+    prospect: t.prospectId,
+    brief: cfg.productBrief,
+    voice: cfg.founderVoice,
+    dossier: prospect?.dossier_json,
+    angle: prospect?.angle_json,
+    prompt: 1,
+  });
+}
+
 export async function collectReplies(req: Request): Promise<RepliesResult> {
   const inbox = (await (await listInboxRoute(req)).json()) as InboxResult;
   const workspace = currentWorkspaceName();
@@ -145,28 +174,12 @@ export async function collectReplies(req: Request): Promise<RepliesResult> {
     };
   }
   const review = getReplyReviewStore();
-  const cfg = loadConfig();
   const incoming = [
     ...emailThreads(inbox, workspace, (email) => getLedger().getProspectByEmail(email)?.id ?? null),
     ...linkedInThreads(),
   ];
   for (const t of incoming) {
-    const prospect =
-      t.prospectId != null && t.workspace === workspace
-        ? getLedger().getProspectById(t.prospectId)
-        : null;
-    t.contextVersion = replyContextVersion({
-      messages: t.messages.map((m) => [m.id, m.direction, m.body, m.deleted]),
-      // Unassigned LinkedIn drafts as the viewing workspace: a draft made in
-      // another workspace is for another product, so it must read as stale here.
-      workspace: t.workspace ?? (t.channel === "linkedin" ? workspace : null),
-      prospect: t.prospectId,
-      brief: cfg.productBrief,
-      voice: cfg.founderVoice,
-      dossier: prospect?.dossier_json,
-      angle: prospect?.angle_json,
-      prompt: 1,
-    });
+    t.contextVersion = threadContextVersion(t, workspace);
     review.upsert(t.channel === "email" ? `email:${workspace}` : "linkedin", t);
   }
   // Retain older unmatched email threads even after they leave the live provider window.

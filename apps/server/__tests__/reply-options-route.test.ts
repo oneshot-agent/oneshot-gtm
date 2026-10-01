@@ -6,7 +6,10 @@ const sdk = vi.fn();
 const emailSend = vi.fn();
 vi.mock("../src/linkedin-client.ts", () => ({ callLinkedIn: (...a: unknown[]) => sdk(...a) }));
 vi.mock("../src/linkedin-sync.ts", () => ({ refreshLinkedInInbox: async () => {} }));
-vi.mock("../src/api/replies-view.ts", () => ({ collectReplies: async () => ({ threads: [] }) }));
+vi.mock("../src/api/replies-view.ts", () => ({
+  collectReplies: async () => ({ threads: [] }),
+  threadContextVersion: (t: { contextVersion: string }) => t.contextVersion,
+}));
 vi.mock("../src/api/inbox.ts", () => ({
   listInboxRoute: vi.fn(),
   draftReplyRoute: vi.fn(),
