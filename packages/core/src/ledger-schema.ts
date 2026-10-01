@@ -128,6 +128,40 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    // Delivery checks for email sends on transports with no idempotency key
+    // (Smartlead mailboxes, Gmail): how many copies the sending mailbox's
+    // Sent folder actually holds for one recorded send. One row per checked
+    // receipt; a provider-side retry shows up as observed > expected.
+    version: 8,
+    name: "send-delivery-checks",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS send_delivery_checks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          receipt_id INTEGER NOT NULL UNIQUE,
+          sequence_event_id INTEGER,
+          queue_id INTEGER,
+          prospect_id INTEGER,
+          transport TEXT NOT NULL,
+          identity TEXT NOT NULL,
+          recipient TEXT NOT NULL,
+          subject TEXT NOT NULL,
+          sent_at TEXT NOT NULL,
+          status TEXT NOT NULL,
+          expected INTEGER NOT NULL DEFAULT 1,
+          observed INTEGER,
+          message_ids TEXT NOT NULL DEFAULT '[]',
+          delivered_at TEXT NOT NULL DEFAULT '[]',
+          checked_at TEXT NOT NULL,
+          error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_send_delivery_status ON send_delivery_checks(status, checked_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_send_delivery_queue ON send_delivery_checks(queue_id);
+        CREATE INDEX IF NOT EXISTS idx_send_delivery_event ON send_delivery_checks(sequence_event_id);
+      `);
+    },
+  },
 ];
 
 export const LEDGER_SCHEMA_VERSION = LEDGER_MIGRATIONS[LEDGER_MIGRATIONS.length - 1]!.version;

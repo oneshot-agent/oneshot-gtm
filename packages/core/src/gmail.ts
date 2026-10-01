@@ -514,6 +514,49 @@ export async function listGmailReplies(
   return { emails, count: emails.length, has_more: !!list.nextPageToken, agent_id: "gmail" };
 }
 
+/** One Sent-folder copy, as the delivery check reads it. */
+export interface SentCopy {
+  /** RFC 2822 Message-ID, or the provider's own id when the header is absent. */
+  messageId: string;
+  /** ISO time the mailbox recorded the message. */
+  date: string;
+  subject: string;
+}
+
+/**
+ * Sent mail to one recipient in [afterIso, beforeIso], metadata only (no
+ * bodies). Read-only (`gmail.readonly`, already granted for replies). Used by
+ * the delivery check to count how many copies one recorded send produced.
+ */
+export async function listGmailSentTo(
+  opts: { to: string; afterIso: string; beforeIso: string },
+  account?: GmailAccount,
+): Promise<SentCopy[]> {
+  const after = Math.floor(new Date(opts.afterIso).getTime() / 1000);
+  const before = Math.ceil(new Date(opts.beforeIso).getTime() / 1000);
+  const params = new URLSearchParams({
+    q: `in:sent to:${opts.to} after:${after} before:${before}`,
+    maxResults: "20",
+  });
+  const list = await gmailJson<{ messages?: Array<{ id: string }> }>(
+    `/messages?${params}`,
+    undefined,
+    account,
+  );
+  const ids = (list.messages ?? []).map((m) => m.id);
+  return parallelMap(ids, 4, async (id): Promise<SentCopy> => {
+    const meta = new URLSearchParams({ format: "metadata" });
+    meta.append("metadataHeaders", "Subject");
+    meta.append("metadataHeaders", "Message-ID");
+    const msg = await gmailJson<GmailMessageMeta>(`/messages/${id}?${meta}`, undefined, account);
+    return {
+      messageId: header(msg, "Message-ID") || msg.id,
+      date: new Date(Number(msg.internalDate)).toISOString(),
+      subject: header(msg, "Subject"),
+    };
+  });
+}
+
 /* ── Bounce (DSN) harvesting ─────────────────────────────────────────────────
  * DSNs are the only first-party deliverability signal without a second
  * mailbox. Fetched separately from the reply path so they don't compete for

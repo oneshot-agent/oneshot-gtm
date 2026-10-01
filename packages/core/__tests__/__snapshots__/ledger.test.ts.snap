@@ -257,6 +257,24 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_send_delivery_event",
+      "sql": "CREATE INDEX idx_send_delivery_event ON send_delivery_checks(sequence_event_id)",
+      "tbl_name": "send_delivery_checks",
+      "type": "index",
+    },
+    {
+      "name": "idx_send_delivery_queue",
+      "sql": "CREATE INDEX idx_send_delivery_queue ON send_delivery_checks(queue_id)",
+      "tbl_name": "send_delivery_checks",
+      "type": "index",
+    },
+    {
+      "name": "idx_send_delivery_status",
+      "sql": "CREATE INDEX idx_send_delivery_status ON send_delivery_checks(status, checked_at DESC)",
+      "tbl_name": "send_delivery_checks",
+      "type": "index",
+    },
+    {
       "name": "idx_sequence_events_prospect_created",
       "sql": "CREATE INDEX idx_sequence_events_prospect_created ON sequence_events(prospect_id, created_at)",
       "tbl_name": "sequence_events",
@@ -764,6 +782,30 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         version INTEGER PRIMARY KEY
       )",
       "tbl_name": "schema_version",
+      "type": "table",
+    },
+    {
+      "name": "send_delivery_checks",
+      "sql": "CREATE TABLE send_delivery_checks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          receipt_id INTEGER NOT NULL UNIQUE,
+          sequence_event_id INTEGER,
+          queue_id INTEGER,
+          prospect_id INTEGER,
+          transport TEXT NOT NULL,
+          identity TEXT NOT NULL,
+          recipient TEXT NOT NULL,
+          subject TEXT NOT NULL,
+          sent_at TEXT NOT NULL,
+          status TEXT NOT NULL,
+          expected INTEGER NOT NULL DEFAULT 1,
+          observed INTEGER,
+          message_ids TEXT NOT NULL DEFAULT '[]',
+          delivered_at TEXT NOT NULL DEFAULT '[]',
+          checked_at TEXT NOT NULL,
+          error TEXT
+        )",
+      "tbl_name": "send_delivery_checks",
       "type": "table",
     },
     {

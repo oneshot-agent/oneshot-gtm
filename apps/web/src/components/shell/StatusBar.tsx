@@ -33,13 +33,39 @@ export function StatusBar() {
   const checks = doctor.data?.checks ?? [];
   const llm = pickCheck(checks, (c) => c.name.startsWith("llm "));
   const ledger = pickCheck(checks, (c) => c.name === "ledger");
+  const delivery = pickCheck(checks, (c) => c.name === "send delivery");
 
   return (
     <div className="flex items-center gap-1.5">
       <WalletPill checks={checks} loading={doctor.isLoading} />
       <HealthPill label="llm" check={llm} loading={doctor.isLoading} />
       <HealthPill label="ledger" check={ledger} loading={doctor.isLoading} />
+      {delivery && delivery.severity !== "ok" && <DeliveryPill check={delivery} />}
     </div>
+  );
+}
+
+/**
+ * Shown only when a recent send reached its recipient more (or fewer) times
+ * than it was sent: the mail provider retried underneath us. Opens the sent
+ * rows, where each affected row carries the same warning.
+ */
+function DeliveryPill({ check }: { check: DoctorCheck }) {
+  const count = /(\d+) send/.exec(check.message)?.[1];
+  return (
+    <Link
+      to="/prospects"
+      search={{ status: "sent" }}
+      aria-label="send delivery warning — open sent rows"
+      className="inline-flex"
+    >
+      <StatusPill
+        label="sends"
+        value={count ? `${count} duplicated` : "check"}
+        tone="spend"
+        title={check.message}
+      />
+    </Link>
   );
 }
 

@@ -4,7 +4,9 @@ import { resumeLinkedInBackfills } from "./linkedin-backfill.ts";
 import { refreshLinkedInInbox } from "./linkedin-sync.ts";
 import {
   demoMode,
+  getLedger,
   loadConfig,
+  runDeliveryChecks,
   resolveIdentities,
   logEvent,
   type TelemetryOutcome,
@@ -71,6 +73,9 @@ const LIVE_PROFILE_SWEEP_INTERVAL_MS = 4 * 60 * 60_000;
 const LIVE_PROFILE_SWEEP_DEADLINE_MS = 60 * 60_000;
 /** The in-flight newsfeed sweep rides the live-profile interval; 25 calls at ~5-12 s fit easily. */
 const NEWSFEED_SWEEP_DEADLINE_MS = 15 * 60_000;
+/** Sent-folder delivery checks: every few minutes, a bounded batch of read-only mailbox searches. */
+const DELIVERY_SWEEP_INTERVAL_MS = 5 * 60_000;
+const DELIVERY_SWEEP_DEADLINE_MS = 2 * 60_000;
 
 export function startScheduler(): SchedulerHandle {
   // Demo mode idles: firing triggers would hit placeholder credentials and
@@ -100,6 +105,8 @@ export function startScheduler(): SchedulerHandle {
   // Calendar failures must not block the daily send summary: they do not affect
   // send-side event completeness. Keep their poll state separate.
   let calendarPollClean = true;
+  // 0 = never swept, so the first tick checks recent sends right away.
+  let lastDeliverySweepAt = 0;
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
@@ -255,6 +262,28 @@ export function startScheduler(): SchedulerHandle {
           calendarPollClean = false;
           logEvent(
             "scheduler.calendar_poll.failed",
+            { message_120: ((err as Error).message ?? "").slice(0, 120) },
+            "warn",
+          );
+        }
+      }
+      // Delivery check: count Sent-folder copies of recent Smartlead/Gmail
+      // sends (no idempotency key on either), bounded per tick. Read-only;
+      // isolated so a mailbox outage cannot skip the daily summary.
+      if (Date.now() - lastDeliverySweepAt >= DELIVERY_SWEEP_INTERVAL_MS) {
+        lastDeliverySweepAt = Date.now();
+        try {
+          await withDeadline(
+            runDeliveryChecks({
+              store: getLedger().sendDelivery,
+              deadlineAt: Date.now() + DELIVERY_SWEEP_DEADLINE_MS,
+            }),
+            DELIVERY_SWEEP_DEADLINE_MS + 60_000,
+            "delivery check sweep",
+          );
+        } catch (err) {
+          logEvent(
+            "scheduler.delivery_sweep.failed",
             { message_120: ((err as Error).message ?? "").slice(0, 120) },
             "warn",
           );

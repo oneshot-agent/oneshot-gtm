@@ -72,6 +72,7 @@ import {
   type QueueRowDetail,
   type QueueRowView,
   type RunPlayRequest,
+  type SendDeliveryView,
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 import { callLinkedIn } from "../linkedin-client.ts";
@@ -178,7 +179,23 @@ export function toView(row: QueueRow): QueueRowView {
     decision: row.decision ?? null,
     decidedBy: row.decided_by ?? null,
     decidedAt: row.decided_at ?? null,
+    delivery: deliveryFor(row.status, lastDraft),
   };
+}
+
+/**
+ * The Sent-folder delivery check of a sent row's first touch, when one ran.
+ * Best-effort: a ledger without the table (or a test fake) reads as none.
+ */
+function deliveryFor(status: string, lastDraft: LastDraft | null): SendDeliveryView | null {
+  if (status !== "sent" || !lastDraft?.receiptIds?.length) return null;
+  try {
+    return getLedger().sendDelivery.forReceipts(
+      lastDraft.receiptIds.filter((n): n is number => typeof n === "number"),
+    );
+  } catch {
+    return null;
+  }
 }
 
 function toBrowseRow(row: QueueSearchRow): ProspectBrowseRow {
@@ -344,12 +361,23 @@ export function queueRowDetailRoute(req: Request, params: Record<string, string>
   });
 
   const cadences = prospect ? viewsForRows(ledger.listCadencesForProspect(prospect.id)) : [];
+  const sequenceEvents = prospect ? ledger.listAllSequenceEventsForProspect(prospect.id) : [];
+  const deliveries = new Map<number, SendDeliveryView>();
+  for (const ev of sequenceEvents) {
+    try {
+      const d = ledger.sendDelivery.forSequenceEvent(ev.id);
+      if (d) deliveries.set(ev.id, d);
+    } catch {
+      // A ledger without the delivery table reads as no checks.
+    }
+  }
   const timeline = buildProspectTimeline({
     row,
-    sequenceEvents: prospect ? ledger.listAllSequenceEventsForProspect(prospect.id) : [],
+    sequenceEvents,
     replies: prospect ? ledger.listInboxRepliesForProspect(prospect.id) : [],
     channelEvents: prospect ? ledger.listChannelEventsForProspect(prospect.id) : [],
     outcomes: prospect ? ledger.listDealOutcomesForProspect(prospect.id) : [],
+    deliveries,
   });
   const flagEmail = prospect?.email ?? email;
   const contactSuppressed = flagEmail ? ledger.contactSuppressionFor(flagEmail) : null;

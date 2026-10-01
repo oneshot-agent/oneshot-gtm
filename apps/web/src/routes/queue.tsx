@@ -1,4 +1,9 @@
 import { FitHold } from "../components/queue/FitHold.tsx";
+import {
+  DeliveryBadge,
+  DeliveryWarning,
+  deliveryWarningText,
+} from "../components/queue/DeliveryWarning.tsx";
 import { PersonDossier } from "../components/queue/PersonDossier.tsx";
 import { ProductResearch } from "../components/queue/ProductResearch.tsx";
 import { Explain } from "../components/primitives/Explain.tsx";
@@ -1116,6 +1121,7 @@ export function QueueRow({
           <div className="flex items-center gap-1.5">
             <Badge tone={statusTone(row.status)}>{row.status}</Badge>
             {row.sendHold && <Badge tone="blocked">held · fit review</Badge>}
+            <DeliveryBadge delivery={row.delivery} />
             {!expanded &&
               row.status !== "sent" &&
               row.lastDraft &&
@@ -1261,6 +1267,7 @@ export function QueueRow({
               payload={row.payload}
               status={row.status}
               sendHold={row.sendHold}
+              delivery={row.delivery ?? null}
               draft={row.lastDraft}
               draftedAt={row.lastDraftedAt}
               generating={generating}
@@ -1291,6 +1298,7 @@ function DraftSection({
   isSending,
   prospectId,
   sendHold,
+  delivery,
 }: {
   id: number;
   channel: QueueRowView["channel"];
@@ -1298,6 +1306,8 @@ function DraftSection({
   payload: unknown;
   status: QueueStatusView;
   sendHold?: QueueRowView["sendHold"];
+  /** Sent-folder delivery check of this row's send, when one ran. */
+  delivery?: QueueRowView["delivery"];
   draft: QueueRowView["lastDraft"];
   draftedAt: string | null;
   generating: boolean;
@@ -1670,8 +1680,10 @@ function DraftSection({
   // The total line: green under a letter the founder can send right now.
   const sendable = showSend && cleanDraft && !sending;
   const researchWarning = researchBadge !== "researched" ? researchBadge : null;
+  const deliveryNote = deliveryWarningText(delivery);
   const hasDraftDetails =
     sendHold ||
+    deliveryNote ||
     (!draft.sent && draft.flags.length > 0) ||
     draft.receiptIds.length > 0 ||
     isStalePostSend ||
@@ -1691,6 +1703,7 @@ function DraftSection({
         hasDraftDetails ? (
           <>
             {sendHold && <FitHold hold={sendHold} />}
+            {deliveryNote && <DeliveryWarning delivery={delivery} />}
             {!draft.sent && draft.flags.length > 0 && (
               <DraftStateLine sent={false} flags={draft.flags} />
             )}

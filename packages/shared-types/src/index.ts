@@ -40,6 +40,8 @@ export interface CadenceSentStep {
   sentAt: string;
   /** Absent on older servers; `skipped` is a direct-mail step the founder skipped (#610). */
   status?: "sent" | "delivered" | "replied" | "skipped";
+  /** Sent-folder delivery check of this step's email, when one ran. */
+  delivery?: SendDeliveryView | null;
 }
 export type StepChannel = "email" | "sms" | "voice" | "linkedin" | "x" | "direct_mail";
 
@@ -558,9 +560,31 @@ export interface ProspectPriorityView {
   scoredAt: string;
 }
 
+/**
+ * What the sending mailbox's Sent folder held for one recorded email send
+ * (Smartlead / Gmail only: OneShot sends carry an idempotency key). `duplicate`
+ * = the provider delivered it more than once; `not_found` = no copy after the
+ * check window (possible silent drop); `skipped` = the mailbox could not be
+ * read for good (e.g. the identity was removed).
+ */
+export interface SendDeliveryView {
+  status: "ok" | "duplicate" | "not_found" | "skipped";
+  expected: number;
+  observed: number | null;
+  /** ISO times of each copy found, oldest first. */
+  deliveredAt: string[];
+  sentAt: string;
+  checkedAt: string;
+  transport: "smartlead" | "gmail";
+  identity: string;
+  error: string | null;
+}
+
 export interface QueueRowView {
   /** Known email fit hold; absent in older API responses. Approval status is independent. */
   sendHold?: { code: "off-icp"; reason: string } | null;
+  /** Delivery check of the first-touch send, when one ran (sent rows only). */
+  delivery?: SendDeliveryView | null;
   id: number;
   playName: string;
   /** Outreach channel of the first touch: email, linkedin or x. */

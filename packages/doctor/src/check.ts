@@ -349,6 +349,58 @@ function placementCheck(): CheckResult {
   }
 }
 
+/** How far back the doctor looks for delivery mismatches. */
+const DELIVERY_WINDOW_DAYS = 7;
+
+/**
+ * Sent-folder delivery checks (send-delivery.ts): a Smartlead or Gmail send
+ * whose mailbox holds more than one copy (the provider retried underneath
+ * us), or none at all, in the last week. The CLI lists every row.
+ */
+export function deliveryCheck(): CheckResult {
+  try {
+    const since = new Date(Date.now() - DELIVERY_WINDOW_DAYS * 86_400_000).toISOString();
+    const mismatches = getLedger().sendDelivery.recentMismatches(since);
+    const dupes = mismatches.filter((m) => m.status === "duplicate");
+    const missing = mismatches.filter((m) => m.status === "not_found");
+    if (mismatches.length === 0) {
+      return {
+        name: "send delivery",
+        group: "deliverability",
+        severity: "ok",
+        message: `every checked send delivered once (last ${DELIVERY_WINDOW_DAYS}d)`,
+      };
+    }
+    const parts: string[] = [];
+    if (dupes.length > 0) {
+      const rows = dupes
+        .map((d) => (d.queueId != null ? `#${d.queueId}` : `receipt ${d.receiptId}`))
+        .slice(0, 5)
+        .join(", ");
+      parts.push(
+        `${dupes.length} send${dupes.length === 1 ? "" : "s"} delivered more than once (${rows})`,
+      );
+    }
+    if (missing.length > 0) {
+      parts.push(`${missing.length} not found in Sent`);
+    }
+    return {
+      name: "send delivery",
+      group: "deliverability",
+      severity: "warn",
+      message: `${parts.join(" · ")} in the last ${DELIVERY_WINDOW_DAYS}d`,
+      hint: "details: bun run cli -- sends check --since 7d",
+    };
+  } catch (err) {
+    return {
+      name: "send delivery",
+      group: "deliverability",
+      severity: "warn",
+      message: `could not evaluate: ${(err as Error).message}`,
+    };
+  }
+}
+
 /**
  * Workspace identity + cross-workspace guardrails. Other workspaces' homes are
  * read by PATH (config.json / gmail-tokens.json): core's config is bound to
@@ -1067,6 +1119,7 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
   // the "never tested" prompt.
   results.push(...deliverabilityChecks());
   results.push(placementCheck());
+  results.push(deliveryCheck());
   try {
     results.push(...finderApprovalChecks());
   } catch (err) {
