@@ -8,6 +8,7 @@ import {
   listSendingDomains,
   loadConfig,
   loadGmailTokens,
+  parseSendVia,
   registerOneShotIdentity,
   registerSmartleadIdentity,
   resolveIdentities,
@@ -15,7 +16,9 @@ import {
   saveSecrets,
   secretSource,
   secretsPath,
+  validateSendVia,
   withDeadline,
+  withSendVia,
   type DomainPoolEntry,
   type EmailIdentity,
   type OneShotConfig,
@@ -62,6 +65,7 @@ function identityViews(cfg: OneShotConfig): SenderIdentityView[] {
       mailbox: i.mailbox ?? null,
       maxPerDay: i.maxPerDay,
       warmup: i.warmup,
+      sendVia: i.provider === "smartlead" ? (i.sendVia ?? "provider") : null,
       sentToday: cap?.identitySentToday ?? 0,
       domainSentToday: cap?.domainSentToday ?? 0,
       capToday: cap && Number.isFinite(cap.capToday) ? cap.capToday : null,
@@ -341,6 +345,7 @@ export function validateIdentityCap(value: unknown, where: string): number | nul
 export async function setup(req: Request): Promise<Response> {
   const body = (await req.json()) as SetupRequest;
   try {
+    await validateSendViaUpdates(body);
     applySetup(body);
   } catch (err) {
     if (err instanceof SetupValidationError) {
@@ -349,6 +354,21 @@ export async function setup(req: Request): Promise<Response> {
     throw err;
   }
   return jsonResponse({ ok: true }, 200, req);
+}
+
+/**
+ * `sendVia` edits need a network check (the mailbox's SMTP + IMAP credentials
+ * must resolve), so they are validated here, before the synchronous apply.
+ */
+async function validateSendViaUpdates(body: SetupRequest): Promise<void> {
+  for (const upd of body.identityUpdates ?? []) {
+    if (upd.sendVia === undefined) continue;
+    try {
+      await validateSendVia(upd.id, parseSendVia(upd.sendVia));
+    } catch (err) {
+      throw new SetupValidationError(`${upd.id}: ${(err as Error).message}`);
+    }
+  }
 }
 
 /**
@@ -394,8 +414,14 @@ function applySetup(body: SetupRequest): void {
   if (hasIdentityEdits) {
     let pool: EmailIdentity[] = current.emailIdentities ?? resolveIdentities(current);
     for (const upd of body.identityUpdates ?? []) {
-      const cap = validateIdentityCap(upd.maxPerDay, upd.id);
-      pool = pool.map((i) => (i.id === upd.id ? { ...i, maxPerDay: cap } : i));
+      if (upd.maxPerDay !== undefined) {
+        const cap = validateIdentityCap(upd.maxPerDay, upd.id);
+        pool = pool.map((i) => (i.id === upd.id ? { ...i, maxPerDay: cap } : i));
+      }
+      if (upd.sendVia !== undefined) {
+        const sendVia = parseSendVia(upd.sendVia);
+        pool = pool.map((i) => (i.id === upd.id ? withSendVia(i, sendVia) : i));
+      }
     }
     if (remove.size > 0) pool = pool.filter((i) => !remove.has(i.id));
     emailIdentities = pool;

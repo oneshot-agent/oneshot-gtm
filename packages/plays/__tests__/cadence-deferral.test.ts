@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const calls = { sendEmail: 0, llm: 0 };
 let capacityAvailable = true;
 let sendEmailDefers = false;
+let sendEmailUncertain = false;
 let cadenceClaimable = true;
 
 let cadenceRows: Array<{
@@ -55,6 +56,11 @@ vi.mock("@oneshot-gtm/core", async () => {
       calls.sendEmail++;
       if (sendEmailDefers) {
         throw new actual.SendDeferredError("all sender identities have reached their daily cap");
+      }
+      if (sendEmailUncertain) {
+        throw new actual.UncertainSendError(
+          "the send to p@x.dev may have gone out — checking Sent before any retry",
+        );
       }
       return { receiptId: 7 };
     },
@@ -174,6 +180,7 @@ beforeEach(() => {
   calls.llm = 0;
   capacityAvailable = true;
   sendEmailDefers = false;
+  sendEmailUncertain = false;
   cadenceClaimable = true;
   advanceCalls.length = 0;
   seedOverdueCadence();
@@ -205,6 +212,16 @@ describe("advanceCadence — daily-cap deferral", () => {
     const detail = result.details.find((d) => d.playName === "stack-consolidation");
     expect(detail?.action).toBe("skipped");
     expect(detail?.note).toMatch(/deferred: daily send caps reached/);
+  });
+
+  it("an unknown send outcome leaves the step due, with the reason in the note", async () => {
+    sendEmailUncertain = true;
+    const result = await advanceCadence({ dryRun: false });
+    expect(calls.sendEmail).toBe(1);
+    expect(advanceCalls).toEqual([]);
+    const detail = result.details.find((d) => d.playName === "stack-consolidation");
+    expect(detail?.action).toBe("skipped");
+    expect(detail?.note).toMatch(/deferred: .*checking Sent before any retry/);
   });
 
   it("dry-run ignores the capacity gate (no sends happen anyway)", async () => {

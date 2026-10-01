@@ -63,6 +63,8 @@ import {
   commandIdentitiesAdd,
   commandIdentitiesList,
   commandIdentitiesRemove,
+  commandIdentitiesSendVia,
+  commandIdentitiesTestSend,
 } from "./commands/identities.ts";
 import { commandUi } from "./commands/ui.ts";
 import {
@@ -374,6 +376,25 @@ identities
   .command("remove <id>")
   .description("Remove an identity from the pool (e.g. oneshot:sales@acme.com)")
   .action(runOrFail(commandIdentitiesRemove));
+identities
+  .command("send-via <id> <transport>")
+  .description(
+    "How a Smartlead mailbox sends: provider (Smartlead API, default) or smtp (its own SMTP, one fixed Message-ID per email)",
+  )
+  .action(runOrFail(commandIdentitiesSendVia));
+identities
+  .command("test-send <id>")
+  .description(
+    "Send one test email through a Smartlead mailbox's own SMTP (keyed, confirmed in Sent)",
+  )
+  .requiredOption("--to <email>", "recipient (your own test address)")
+  .option("--step <label>", "key label; defaults to today, so a second run that day replays")
+  .option("--dry-run", "resolve credentials and print the Message-ID without sending", false)
+  .action(
+    runOrFail((id: string, opts: { to: string; step?: string; dryRun: boolean }) =>
+      commandIdentitiesTestSend(id, opts),
+    ),
+  );
 
 // Domains: manage the wallet's provisioned OneShot sending-domain pool. A domain
 // gets paused (by reputation, or account/platform-level) → no sends from it

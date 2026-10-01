@@ -103,11 +103,15 @@ export interface PendingSmartleadAdd {
   providerMessagePerDay: number | null;
 }
 
+export type SendVia = "provider" | "smtp";
+
 export interface IdentityPoolStaging {
-  /** Live identity ids + their stored cap, so stale edits can be dropped. */
-  identities: Array<{ id: string; maxPerDay: number | null }>;
+  /** Live identity ids + their stored cap and transport, so stale edits can be dropped. */
+  identities: Array<{ id: string; maxPerDay: number | null; sendVia?: SendVia | null }>;
   /** Raw cap text per identity id, only for rows the founder touched. */
   capEdits: Record<string, string>;
+  /** Smartlead mailbox transport per identity id, only for rows the founder touched. */
+  sendViaEdits?: Record<string, SendVia>;
   removedIds: string[];
   pendingAdds: PendingOneShotAdd[];
   pendingSmartleadAdds: PendingSmartleadAdd[];
@@ -146,6 +150,15 @@ export function buildIdentityPoolRequest(s: IdentityPoolStaging): IdentityPoolBu
       continue;
     }
     identityUpdates.push({ id, maxPerDay: parsed.value ?? null });
+  }
+  const sendVia = new Map(s.identities.map((i) => [i.id, i.sendVia ?? null]));
+  for (const [id, via] of Object.entries(s.sendViaEdits ?? {})) {
+    const stored = sendVia.get(id);
+    // Only Smartlead mailboxes carry a transport (null = other providers).
+    if (!live.has(id) || removed.has(id) || stored == null || stored === via) continue;
+    const existing = identityUpdates.find((u) => u.id === id);
+    if (existing) existing.sendVia = via;
+    else identityUpdates.push({ id, sendVia: via });
   }
 
   const addIdentities: NonNullable<SetupRequest["addIdentities"]> = [];

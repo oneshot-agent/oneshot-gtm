@@ -178,6 +178,46 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       addColumnIfMissing(db, "inbox_replies", "intent_review", "INTEGER NOT NULL DEFAULT 0");
     },
   },
+  {
+    // One row per INTENDED outbound email, keyed by a semantic idempotency key
+    // the caller derives from what the email is (workspace, play, recipient or
+    // prospect, step), never from its text. The key is the claim: a second
+    // attempt for the same key is refused or replayed instead of sent, and a
+    // retry after a definite failure reuses the same Message-ID. The confirm
+    // sweep moves submitted/uncertain rows to confirmed, failed or not_found
+    // by finding the send in the mailbox's Sent folder.
+    version: 10,
+    name: "outbound-sends",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS outbound_sends (
+          key TEXT PRIMARY KEY,
+          identity_id TEXT NOT NULL,
+          transport TEXT NOT NULL,
+          recipient TEXT NOT NULL,
+          subject TEXT NOT NULL,
+          body TEXT NOT NULL DEFAULT '',
+          message_id TEXT,
+          status TEXT NOT NULL,
+          sent_evidence INTEGER NOT NULL DEFAULT 0,
+          exact_resend INTEGER NOT NULL DEFAULT 0,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          first_attempt_at TEXT NOT NULL,
+          last_attempt_at TEXT NOT NULL,
+          submitted_at TEXT,
+          confirmed_at TEXT,
+          checked_at TEXT,
+          observed INTEGER,
+          receipt_id INTEGER,
+          queue_id INTEGER,
+          prospect_id INTEGER,
+          error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_outbound_sends_status ON outbound_sends(status, last_attempt_at);
+        CREATE INDEX IF NOT EXISTS idx_outbound_sends_receipt ON outbound_sends(receipt_id);
+      `);
+    },
+  },
 ];
 
 export const LEDGER_SCHEMA_VERSION = LEDGER_MIGRATIONS[LEDGER_MIGRATIONS.length - 1]!.version;

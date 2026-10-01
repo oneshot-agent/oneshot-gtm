@@ -7,8 +7,11 @@ import {
   pauseSendingDomain,
   registerOneShotIdentity,
   removeIdentity,
+  parseSendVia,
   resolveIdentities,
   resumeSendingDomain,
+  sendTestEmail,
+  setIdentitySendVia,
   WARMUP_DEFAULTS,
   type DomainPoolEntry,
 } from "@oneshot-gtm/core";
@@ -241,4 +244,53 @@ export async function commandIdentitiesRemove(identityId: string): Promise<void>
   }
   ok(`Removed ${c.cyan(identityId)} from the rotation pool.`);
   note("Prospects pinned to it will refuse to send until it's restored.");
+}
+
+/**
+ * `identities send-via <id> <provider|smtp>`: how a Smartlead mailbox sends.
+ * `smtp` is refused unless the mailbox's SMTP + IMAP credentials resolve.
+ */
+export async function commandIdentitiesSendVia(identityId: string, raw: string): Promise<void> {
+  const sendVia = parseSendVia(raw);
+  const { changed, smtpHost } = await setIdentitySendVia(identityId, sendVia);
+  const how = sendVia === "smtp" ? `direct SMTP (${smtpHost})` : "the Smartlead API";
+  if (!changed) {
+    note(`${c.cyan(identityId)} already sends via ${how}.`);
+    return;
+  }
+  ok(`${c.cyan(identityId)} now sends via ${how}.`);
+  if (sendVia === "smtp") {
+    note(
+      "Each email goes out under one fixed Message-ID and is confirmed in Sent by `sends check`.",
+    );
+  }
+}
+
+/** `identities test-send <id> --to <addr> [--step <label>] [--dry-run]`. */
+export async function commandIdentitiesTestSend(
+  identityId: string,
+  opts: { to: string; step?: string; dryRun: boolean },
+): Promise<void> {
+  const { plan, result, receiptId } = await sendTestEmail({
+    identityId,
+    to: opts.to,
+    ...(opts.step ? { step: opts.step } : {}),
+    dryRun: opts.dryRun,
+  });
+  header(`SMTP test send${opts.dryRun ? " · dry run (nothing sent)" : ""}`);
+  note(`identity    ${plan.identityId}`);
+  note(`smtp host   ${plan.smtpHost ?? "?"}`);
+  note(`from        ${plan.from}`);
+  note(`to          ${plan.to}`);
+  note(`subject     ${plan.subject}`);
+  note(`message-id  ${plan.messageId}`);
+  note(`key         ${plan.key}`);
+  if (plan.existing) {
+    warn(
+      `an earlier attempt under this key is ${plan.existing}${plan.existing === "failed" ? " (a send retries under the same Message-ID)" : " (a send replays it, nothing new goes out)"}; pass --step to send a new one`,
+    );
+  }
+  if (opts.dryRun) return;
+  ok(`submitted · receipt ${receiptId ?? "?"} · ${result?.request_id ?? plan.messageId}`);
+  note("`oneshot-gtm sends check` confirms it in Sent after ~3 minutes.");
 }

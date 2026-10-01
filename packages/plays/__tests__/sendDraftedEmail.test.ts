@@ -96,6 +96,16 @@ describe("sendDraftedEmail pre-send cadence check", () => {
     expect(opts.flags).toEqual([]);
   });
 
+  it("keys the first touch on (play, recipient), not the draft text", async () => {
+    await sendDraftedEmail(baseOpts());
+    await sendDraftedEmail(baseOpts({ draft: { subject: "rewritten", body: "other" } }));
+    const keys = sendEmailMock.mock.calls.map(
+      (c) => (c[0] as { idempotencyKey?: string }).idempotencyKey,
+    );
+    expect(keys[0]).toMatch(/^gtm:[^:]+:email:stack-consolidation:sam@acme\.dev:0$/);
+    expect(keys[1]).toBe(keys[0]);
+  });
+
   it("B: prospect found + prior step-0 send — guard fires, sendEmail NOT called", async () => {
     findProspectByEmailMock.mockReturnValue({ id: 7 });
     listSequenceEventsForProspectPlayMock.mockReturnValue([{ step_index: 0 }]);

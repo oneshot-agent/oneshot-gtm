@@ -20,7 +20,13 @@ export class SendDeferredError extends Error {
 }
 
 export function isSendDeferred(err: unknown): boolean {
-  return err instanceof Error && err.name === "SendDeferredError";
+  // An unknown send outcome (UncertainSendError, oneshot.ts) defers too: the
+  // work stays queued with its draft intact until the confirm sweep settles
+  // the key. The next attempt then replays the send or retries it under the
+  // same Message-ID. Name-based for the same cross-module reason.
+  return (
+    err instanceof Error && (err.name === "SendDeferredError" || err.name === "UncertainSendError")
+  );
 }
 
 /**

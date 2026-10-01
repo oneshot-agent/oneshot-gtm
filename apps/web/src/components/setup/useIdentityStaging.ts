@@ -1,20 +1,24 @@
 import { useCallback, useState } from "react";
-import type { PendingOneShotAdd, PendingSmartleadAdd } from "../../lib/setupValidation.ts";
+import type { PendingOneShotAdd, PendingSmartleadAdd, SendVia } from "../../lib/setupValidation.ts";
 
 /**
- * The Email-transport section's pending operations: cap edits, removals and
+ * The Email-transport section's pending operations: cap and transport edits, removals and
  * new senders: held until its Save commits them in ONE request. Unlike the
  * draft overlay these are operations, not field values, so they get their
  * own store; `clear()` runs after the post-save refetch has landed.
  */
 export function useIdentityStaging() {
   const [capEdits, setCapEdits] = useState<Record<string, string>>({});
+  const [sendViaEdits, setSendViaEdits] = useState<Record<string, SendVia>>({});
   const [removedIds, setRemovedIds] = useState<string[]>([]);
   const [pendingAdds, setPendingAdds] = useState<PendingOneShotAdd[]>([]);
   const [pendingSmartleadAdds, setPendingSmartleadAdds] = useState<PendingSmartleadAdd[]>([]);
 
   const setCap = useCallback((id: string, raw: string) => {
     setCapEdits((m) => ({ ...m, [id]: raw }));
+  }, []);
+  const setSendVia = useCallback((id: string, via: SendVia) => {
+    setSendViaEdits((m) => ({ ...m, [id]: via }));
   }, []);
   const remove = useCallback((id: string) => {
     setRemovedIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
@@ -34,6 +38,7 @@ export function useIdentityStaging() {
   const clearSmartlead = useCallback(() => setPendingSmartleadAdds([]), []);
   const clear = useCallback(() => {
     setCapEdits({});
+    setSendViaEdits({});
     setRemovedIds([]);
     setPendingAdds([]);
     setPendingSmartleadAdds([]);
@@ -42,6 +47,8 @@ export function useIdentityStaging() {
   return {
     capEdits,
     setCap,
+    sendViaEdits,
+    setSendVia,
     removedIds,
     remove,
     pendingAdds,

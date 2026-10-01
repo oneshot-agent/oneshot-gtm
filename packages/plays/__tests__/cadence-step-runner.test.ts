@@ -337,6 +337,8 @@ describe("sendCadenceStep", () => {
       to: "p@x.dev",
       subject: "fresh subject",
       body: "fresh body",
+      // Keyed on (play, prospect, step), never the draft text: a re-draft keeps it.
+      idempotencyKey: expect.stringMatching(/^gtm:[^:]+:email:stack-consolidation:prospect:1:\d+$/),
     });
     expect(result.action).toBe("step-sent");
     expect(advanceCalls).toHaveLength(1);

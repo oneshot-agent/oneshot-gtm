@@ -7,6 +7,7 @@ import {
   getLedger,
   loadConfig,
   runDeliveryChecks,
+  runOutboundConfirmations,
   resolveIdentities,
   logEvent,
   type TelemetryOutcome,
@@ -288,11 +289,29 @@ export function startScheduler(): SchedulerHandle {
           );
         }
       }
-      // Delivery check: count Sent-folder copies of recent Smartlead/Gmail
-      // sends (no idempotency key on either), bounded per tick. Read-only;
-      // isolated so a mailbox outage cannot skip the daily summary.
+      // Delivery checks, read-only and bounded per tick; isolated so a mailbox
+      // outage cannot skip the daily summary. Keyed sends (outbound_sends) are
+      // confirmed or settled against Sent first; the copy count then audits
+      // the unkeyed Smartlead/Gmail receipts that remain.
       if (Date.now() - lastDeliverySweepAt >= DELIVERY_SWEEP_INTERVAL_MS) {
         lastDeliverySweepAt = Date.now();
+        try {
+          await withDeadline(
+            runOutboundConfirmations({
+              outbound: getLedger().outboundSends,
+              delivery: getLedger().sendDelivery,
+              deadlineAt: Date.now() + DELIVERY_SWEEP_DEADLINE_MS,
+            }),
+            DELIVERY_SWEEP_DEADLINE_MS + 60_000,
+            "outbound confirm sweep",
+          );
+        } catch (err) {
+          logEvent(
+            "scheduler.outbound_confirm.failed",
+            { message_120: ((err as Error).message ?? "").slice(0, 120) },
+            "warn",
+          );
+        }
         try {
           await withDeadline(
             runDeliveryChecks({

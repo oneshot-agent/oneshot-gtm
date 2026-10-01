@@ -5,6 +5,7 @@ import {
   sendEmail,
   voiceCall,
   type VoiceCallResult,
+  outboundSendKey,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { humanizeDraft, lintEmail, repairWritingLints } from "./_lib.ts";
@@ -70,7 +71,16 @@ export async function runConcierge(opts: ConciergeRunOptions): Promise<Concierge
       let sent = false;
       if (!opts.dryRun && flags.length === 0) {
         const send = await sendEmail(
-          { to: t.email, subject: draft.subject, body: draft.body },
+          {
+            to: t.email,
+            subject: draft.subject,
+            body: draft.body,
+            idempotencyKey: outboundSendKey({
+              play: PLAY_NAME,
+              who: t.email,
+              step: `prep:${new Date().toISOString().slice(0, 10)}`,
+            }),
+          },
           { playName: PLAY_NAME },
         );
         receiptIds.push(send.receiptId);
@@ -156,7 +166,16 @@ export async function runConcierge(opts: ConciergeRunOptions): Promise<Concierge
       let sent = false;
       if (!opts.dryRun && flags.length === 0) {
         const send = await sendEmail(
-          { to: t.email, subject: draft.subject, body: draft.body },
+          {
+            to: t.email,
+            subject: draft.subject,
+            body: draft.body,
+            idempotencyKey: outboundSendKey({
+              play: PLAY_NAME,
+              who: t.email,
+              step: `summary:${new Date().toISOString().slice(0, 10)}`,
+            }),
+          },
           { playName: PLAY_NAME },
         );
         receiptIds.push(send.receiptId);

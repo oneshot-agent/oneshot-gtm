@@ -1,11 +1,12 @@
-import { getLedger, runDeliveryChecks } from "@oneshot-gtm/core";
+import { getLedger, runDeliveryChecks, runOutboundConfirmations } from "@oneshot-gtm/core";
 import { header, note, ok, warn } from "../output.ts";
 
 /**
- * `sends check`: count each recent Smartlead/Gmail send's copies in its
- * mailbox's Sent folder (read-only) and report expected vs observed. The
- * scheduler runs the same check every few minutes over the last 48 h; this
- * backfills further back and re-checks sends that already have a result.
+ * `sends check`: keyed sends (one fixed Message-ID each, `outbound_sends`) are
+ * looked up in Sent and settled first, then listed by state. Unkeyed
+ * Smartlead/Gmail sends get the copy count: expected vs observed in the
+ * mailbox's Sent folder (read-only). The scheduler runs both every few minutes;
+ * this backfills further back and re-checks sends that already have a result.
  */
 
 export interface SendsCheckOpts {
@@ -36,8 +37,42 @@ export async function commandSendsCheck(opts: SendsCheckOpts): Promise<void> {
   header(
     `delivery check · sends since ${sinceIso.slice(0, 16).replace("T", " ")} UTC${opts.dryRun ? " · dry run (nothing recorded)" : ""}`,
   );
+  const ledger = getLedger();
+  const confirmed = await runOutboundConfirmations({
+    outbound: ledger.outboundSends,
+    delivery: ledger.sendDelivery,
+    nowMs: now,
+    limit: opts.limit ?? 500,
+    dryRun: opts.dryRun,
+  });
+  const settled = new Map(confirmed.map((r) => [r.key, r]));
+  const keyed = ledger.outboundSends.listSince(sinceIso, opts.limit ?? 500);
+  if (keyed.length > 0) note(`keyed sends (${keyed.length}), one Message-ID each:`);
+  const tallyKeyed = new Map<string, number>();
+  for (const k of keyed) {
+    const r = settled.get(k.key);
+    const status = r && r.after !== "unchanged" ? r.after : k.status;
+    tallyKeyed.set(status, (tallyKeyed.get(status) ?? 0) + 1);
+    const when = k.firstAttemptAt.slice(0, 16).replace("T", " ");
+    const seen = r?.observed ?? k.observed;
+    const line = `${when}  ${k.transport.padEnd(9)} ${k.identityId}  → ${k.recipient}  ${status}${seen == null ? "" : `, observed ${seen}`}${k.attempts > 1 ? `, ${k.attempts} attempts` : ""}`;
+    const error = r?.error ?? k.error;
+    if (status === "uncertain" || status === "not_found" || (seen ?? 0) > 1 || r?.error) {
+      warn(`${line}${error ? `  — ${error}` : ""}`);
+    } else {
+      note(line);
+    }
+  }
+  if (keyed.length > 0) {
+    note(
+      [...tallyKeyed.entries()]
+        .toSorted(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k} ${v}`)
+        .join("  "),
+    );
+  }
   const summary = await runDeliveryChecks({
-    store: getLedger().sendDelivery,
+    store: ledger.sendDelivery,
     nowMs: now,
     sinceIso,
     untilIso: new Date(now - 60_000).toISOString(),

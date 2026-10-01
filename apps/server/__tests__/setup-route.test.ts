@@ -12,6 +12,7 @@ const saveSecretsMock = vi.fn();
 const deleteGmailTokenMock = vi.fn();
 const registerSmartleadMock = vi.fn().mockReturnValue({ identityId: "smartlead:x", created: true });
 const registerOneShotMock = vi.fn().mockReturnValue({ identityId: "oneshot:x", created: true });
+const validateSendViaMock = vi.fn().mockResolvedValue({ smtpHost: "smtp.example.com" });
 let current: OneShotConfig;
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -24,6 +25,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     deleteGmailToken: deleteGmailTokenMock,
     registerSmartleadIdentity: registerSmartleadMock,
     registerOneShotIdentity: registerOneShotMock,
+    validateSendVia: validateSendViaMock,
   };
 });
 
@@ -142,6 +144,43 @@ describe("POST /api/setup — section-scoped bodies", () => {
     const saveOrder = saveConfigMock.mock.invocationCallOrder[0]!;
     const addOrder = registerOneShotMock.mock.invocationCallOrder[0]!;
     expect(saveOrder).toBeLessThan(addOrder);
+  });
+
+  it("a sendVia edit is validated, then saved on the same identity id", async () => {
+    current.emailIdentities = [
+      ...current.emailIdentities!,
+      {
+        id: "smartlead:jane@mail.example.com",
+        provider: "smartlead",
+        address: "jane@mail.example.com",
+        maxPerDay: 30,
+        warmup: null,
+      },
+    ];
+    const res = await post({
+      identityUpdates: [{ id: "smartlead:jane@mail.example.com", sendVia: "smtp" }],
+    });
+    expect(res).toEqual({ status: 200 });
+    expect(validateSendViaMock).toHaveBeenCalledWith("smartlead:jane@mail.example.com", "smtp");
+    const saved = savedCfg().emailIdentities!.find(
+      (i) => i.id === "smartlead:jane@mail.example.com",
+    );
+    // Cap untouched: the edit carried no maxPerDay.
+    expect(saved).toMatchObject({ sendVia: "smtp", maxPerDay: 30 });
+  });
+
+  it("a sendVia edit that fails validation is a 400 and changes nothing", async () => {
+    validateSendViaMock.mockRejectedValueOnce(
+      new Error("Direct mailbox credentials are unavailable."),
+    );
+    const res = await post({
+      identityUpdates: [{ id: "oneshot:jane@mail.acme.dev", sendVia: "smtp" }],
+      secrets: { OPENROUTER_API_KEY: "sk-new" },
+    });
+    expect(res.status).toBe(400);
+    expect(res.error).toMatch(/oneshot:jane@mail\.acme\.dev: Direct mailbox credentials/);
+    expect(saveConfigMock).not.toHaveBeenCalled();
+    expect(saveSecretsMock).not.toHaveBeenCalled();
   });
 
   it("queueReviewOrder and timezone are writable (they had no writer before #451)", async () => {
