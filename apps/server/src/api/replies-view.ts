@@ -65,12 +65,14 @@ export function linkedInThreads(): ReplyThread[] {
         a.sync?.sync_state !== "reconnect_required" &&
         a.account.allowed_actions.includes("reply");
       const canSend = connectionAvailable && currentConnection && !c.read_only;
+      const oneToOne = c.attendees_synced && c.type === 0 && peers.length === 1;
+      const canGenerate =
+        !a.removedAt && currentConnection && oneToOne && !!latest.body.trim() && latest.human;
       const linkedinConnectionState = !connectionAvailable
         ? ("unavailable" as const)
         : !currentConnection
           ? ("restoring" as const)
           : ("connected" as const);
-      const oneToOne = c.attendees_synced && c.type === 0 && peers.length === 1;
       const reason = !connectionAvailable
         ? a.removedAt
           ? "This connection was removed. Imported messages remain saved."
@@ -103,12 +105,11 @@ export function linkedInThreads(): ReplyThread[] {
           needsReply: history.findLast((m) => m.human && !m.deleted)?.direction === "inbound",
           canSend,
           linkedinConnectionState,
-          canGenerate:
-            !a.removedAt && currentConnection && oneToOne && !!latest.body.trim() && latest.human,
+          canGenerate,
           // The LinkedIn account is shared by every workspace: an unassigned
           // conversation drafts as the workspace it is opened in, with no
           // prospect research behind it. Say so wherever its drafts show.
-          ...(t.owner
+          ...(t.owner || !canGenerate
             ? {}
             : {
                 draftingWarning: `Not assigned to a prospect. Drafts use the ${workspace} workspace's product, brief and voice, with no prospect research. If this person is a prospect, assign them under "Contact details & assignment".`,
