@@ -57,7 +57,9 @@ import {
   MailboxSubmitError,
   sendMailboxInitial,
   sendMailboxReply,
+  serverKeepsSentCopy,
 } from "./mailbox.ts";
+import { mailboxConnection } from "./mailbox-config.ts";
 import { sendViaSmartlead, smartleadApiKey } from "./smartlead.ts";
 import { parallelMap, withDeadline } from "./parallel.ts";
 import {
@@ -351,7 +353,22 @@ function gmailFailureIsDefinite(err: unknown): boolean {
   );
 }
 
+/**
+ * A OneShot failure the platform answered before dispatch: a validation
+ * error, an explicit 4xx, or the payment rail refusing the call (billing runs
+ * before dispatch). Timeouts, worker crashes and network errors are unknown:
+ * the platform may have sent (the 2026-06 hang-but-sends incident).
+ */
+function oneshotFailureIsDefinite(err: unknown): boolean {
+  if (err instanceof ValidationError) return true;
+  const msg = (err as Error)?.message ?? "";
+  if (/payment rejected|insufficient (funds|balance)/i.test(msg)) return true;
+  return !isTransientToolError(err) && /\b4\d\d\b/.test(msg);
+}
+
 type SendOut = { result: EmailResult; receiptId: number };
+/** What a keyed attempt sends: the stored content after an unknown outcome, else the caller's. */
+type SendContent = { subject: string; body: string };
 
 /**
  * Run one transport send under an `outbound_sends` claim. `send` performs the
@@ -369,9 +386,14 @@ async function keyedSend(args: {
   input: SendEmailInput;
   ctx: CallContext;
   messageId: string | null;
+  /** See `OutboundSend.sentEvidence`. */
+  sentEvidence: boolean;
   isDefinite: (err: unknown) => boolean;
   settledStatus: "submitted" | "confirmed";
-  send: (messageId: string | null) => Promise<SendOut & { messageId: string | null }>;
+  send: (
+    messageId: string | null,
+    content: SendContent,
+  ) => Promise<SendOut & { messageId: string | null }>;
 }): Promise<SendOut> {
   const store = getLedger().outboundSends;
   const claim = store.claim({
@@ -380,7 +402,9 @@ async function keyedSend(args: {
     transport: args.transport,
     recipient: args.input.to.trim().toLowerCase(),
     subject: args.input.subject,
+    body: args.input.body,
     messageId: args.messageId,
+    sentEvidence: args.sentEvidence,
   });
   if (claim.verdict === "already_sent") {
     const prior = claim.send;
@@ -397,7 +421,7 @@ async function keyedSend(args: {
           transport: args.transport,
           message_id: id,
           to: args.input.to,
-          subject: args.input.subject,
+          subject: prior.subject,
           replayed: true,
         },
         costUsd: 0,
@@ -425,7 +449,12 @@ async function keyedSend(args: {
     );
   }
   try {
-    const out = await args.send(claim.send.messageId);
+    // The row holds this attempt's content: the caller's draft, or after an
+    // unknown outcome the first attempt's, resent unchanged.
+    const out = await args.send(claim.send.messageId, {
+      subject: claim.send.subject,
+      body: claim.send.body,
+    });
     store.mark(args.key, args.settledStatus, {
       messageId: out.messageId,
       receiptId: out.receiptId,
@@ -467,6 +496,9 @@ async function sendEmailViaMailboxSmtp(
   if (!fromEmail) {
     throw new Error(`no address on sender identity '${identity.id}' — re-add it`);
   }
+  // Resolved before the claim: no credentials means nothing is attempted, and
+  // the server decides whether Sent can prove an interrupted send went out.
+  const connection = await mailboxConnection(identity.id);
   // Once the server has accepted the message, nothing after it (the receipt
   // write) can make the failure definite: a retry would be a second email.
   let accepted = false;
@@ -477,15 +509,17 @@ async function sendEmailViaMailboxSmtp(
     input,
     ctx,
     messageId: outboundMessageId(key, fromEmail),
+    sentEvidence: serverKeepsSentCopy(connection),
     isDefinite: (err) => !accepted && (err instanceof MailboxSubmitError ? err.definite : true),
     settledStatus: "submitted",
-    send: async (messageId) => {
+    send: async (messageId, content) => {
       const sent = await sendMailboxInitial({
         identityId: identity.id,
+        connection,
         to: input.to,
-        subject: input.subject,
-        text: input.body,
-        html: toHtmlBody(input.body),
+        subject: content.subject,
+        text: content.body,
+        html: toHtmlBody(content.body),
         fromName: cfg.founderName,
         messageId: messageId ?? outboundMessageId(key, fromEmail),
       });
@@ -505,7 +539,7 @@ async function sendEmailViaMailboxSmtp(
           message_id: sent.messageId,
           from: sent.from,
           to: input.to,
-          subject: input.subject,
+          subject: content.subject,
           memo: ctx.memo ?? `${ctx.playName} email.send`,
         },
         costUsd: 0,
@@ -549,7 +583,10 @@ export async function sendTestEmail(
   input: TestSendInput,
 ): Promise<{ plan: TestSendPlan; result: EmailResult | null; receiptId: number | null }> {
   const to = input.to.trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new Error(`not an email address: ${input.to}`);
+  const [local, domain, ...rest] = to.split("@");
+  if (!local || !domain?.includes(".") || rest.length > 0 || /\s/.test(to)) {
+    throw new Error(`not an email address: ${input.to}`);
+  }
   const identity = resolveIdentities(loadConfig()).find((i) => i.id === input.identityId);
   if (!identity) throw new Error(`No identity '${input.identityId}' in the pool.`);
   const { smtpHost } = await validateSendVia(identity.id, "smtp");
@@ -606,10 +643,12 @@ async function sendEmailViaGmail(
     input,
     ctx,
     messageId: null,
+    // Gmail files every API send in Sent, so a missing copy proves "not sent".
+    sentEvidence: true,
     isDefinite: gmailFailureIsDefinite,
     settledStatus: "submitted",
-    send: async () => {
-      const out = await sendEmailViaGmailOnce(input, ctx, identity);
+    send: async (_messageId, content) => {
+      const out = await sendEmailViaGmailOnce({ ...input, ...content }, ctx, identity);
       return { ...out, messageId: out.result.request_id ?? null };
     },
   });
@@ -805,11 +844,19 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
     input,
     ctx,
     messageId: null,
-    // The SDK call is idempotent on its key: a retry after any failure is safe.
-    isDefinite: () => true,
+    // No Sent folder to read. An unknown outcome is settled by the sweep and
+    // retried with the first attempt's content, so the SDK key below matches
+    // and the platform replays that send rather than making a second one.
+    sentEvidence: false,
+    isDefinite: oneshotFailureIsDefinite,
     settledStatus: "confirmed",
-    send: async () => {
-      const result = await agent.email(opts);
+    send: async (_messageId, content) => {
+      const result = await agent.email({
+        ...opts,
+        subject: content.subject,
+        body: toHtmlBody(content.body),
+        idempotencyKey: emailIdempotencyKey([identity.id, input.to, content.subject, content.body]),
+      });
       const receiptId = recordCallReceipt({
         ctx,
         callType: "email.send",
@@ -896,7 +943,9 @@ function noteReplyAttempt(
         transport: "smtp",
         recipient: to.trim().toLowerCase(),
         subject,
+        body: "",
         messageId,
+        sentEvidence: false,
       });
     }
     if (err == null) {

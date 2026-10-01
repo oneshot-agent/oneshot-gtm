@@ -16,7 +16,9 @@ const input = (over: Partial<Parameters<Ledger["outboundSends"]["claim"]>[0]> = 
   transport: "smtp",
   recipient: "a@example.org",
   subject: "Hello",
+  body: "Hi there",
   messageId: "<abc@example.com>",
+  sentEvidence: true,
   now: t0,
   ...over,
 });
@@ -74,6 +76,23 @@ describe("OutboundSendStore.claim", () => {
       messageId: "<abc@example.com>",
       error: null,
     });
+  });
+
+  it("after an unknown outcome a retry keeps the first attempt's content", () => {
+    const store = ledger.outboundSends;
+    store.claim(input());
+    store.mark(input().key, "uncertain", { now: t0 });
+    store.mark(input().key, "failed", { now: at(10 * 60_000) });
+    const retry = store.claim(input({ subject: "Rewritten", body: "new", now: at(11 * 60_000) }));
+    expect(retry.send).toMatchObject({ subject: "Hello", body: "Hi there", exactResend: true });
+  });
+
+  it("after a definite failure a retry takes the new draft", () => {
+    const store = ledger.outboundSends;
+    store.claim(input());
+    store.mark(input().key, "failed", { now: t0 });
+    const retry = store.claim(input({ subject: "Rewritten", body: "new", now: at(60_000) }));
+    expect(retry.send).toMatchObject({ subject: "Rewritten", body: "new", exactResend: false });
   });
 
   it("stamps submitted / confirmed / checked times by status", () => {

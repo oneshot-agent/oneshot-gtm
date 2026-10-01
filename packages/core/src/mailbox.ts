@@ -600,13 +600,22 @@ async function submitMailboxMail(
  * twice. Returns false when the copy could not be saved. That never turns
  * into a resend: the message itself already went out.
  */
+/**
+ * Whether the SMTP server files its own Sent copy of what it accepts (Gmail
+ * does). Elsewhere the IMAP append after submission is the only copy, so an
+ * interrupted submission leaves nothing in Sent to prove either way.
+ */
+export function serverKeepsSentCopy(connection: Pick<MailboxConnection, "smtp">): boolean {
+  return /gmail\.com$/i.test(connection.smtp.host);
+}
+
 async function saveSentCopy(
   connection: MailboxConnection,
   mime: Buffer,
   messageId: string,
   date: Date,
 ): Promise<boolean> {
-  if (/gmail\.com$/i.test(connection.smtp.host)) return true;
+  if (serverKeepsSentCopy(connection)) return true;
   const client = mailboxClient(connection);
   try {
     await client.connect();
@@ -714,6 +723,8 @@ export interface MailboxInitialInput {
   fromName?: string | null;
   /** Deterministic per intended email (see `outboundMessageId`). */
   messageId: string;
+  /** Already resolved by the caller; looked up from `identityId` otherwise. */
+  connection?: MailboxConnection;
 }
 
 /**
@@ -725,7 +736,7 @@ export interface MailboxInitialInput {
 export async function sendMailboxInitial(
   input: MailboxInitialInput,
 ): Promise<{ messageId: string; from: string; sentCopySaved: boolean }> {
-  const connection = await mailboxConnection(input.identityId);
+  const connection = input.connection ?? (await mailboxConnection(input.identityId));
   const date = new Date();
   const name = input.fromName?.trim();
   const mime = await submitMailboxMail(connection, {

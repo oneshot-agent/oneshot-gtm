@@ -110,7 +110,8 @@ export async function deployPmfSurvey(input: PmfSurveyDeployInput): Promise<PmfS
           idempotencyKey: outboundSendKey({
             play: PLAY_NAME,
             who: userEmail,
-            step: `invite:${surveyUrl}`,
+            // One invite per user per survey round (a fixed form link repeats).
+            step: `invite:${new Date().toISOString().slice(0, 10)}:${surveyUrl ?? "inline"}`,
           }),
         },
         {

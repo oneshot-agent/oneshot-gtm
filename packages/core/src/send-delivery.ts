@@ -12,7 +12,7 @@ import type {
   DeliveryStatus,
   SendDeliveryStore,
 } from "./ledger-delivery.ts";
-import type { OutboundSendStore, OutboundStatus } from "./ledger-outbound.ts";
+import type { OutboundSend, OutboundSendStore, OutboundStatus } from "./ledger-outbound.ts";
 
 /**
  * Delivery check: for email sends on transports with no idempotency key
@@ -393,6 +393,12 @@ export const CONFIRM_MIN_AGE_MS = 3 * 60_000;
 export const UNCERTAIN_SETTLE_MS = 10 * 60_000;
 /** A submitted send still missing from Sent after this is flagged not_found (never resent). */
 export const SUBMITTED_NOT_FOUND_MS = 30 * 60_000;
+/**
+ * Unknown-outcome retries a OneShot send gets (each resends the first
+ * attempt's content, which the platform dedupes) before it is left for the
+ * founder as not_found.
+ */
+export const ONESHOT_UNCERTAIN_RETRIES = 3;
 
 /** Reads the Sent copies carrying one exact Message-ID, for one identity. */
 export type MessageIdReader = (input: {
@@ -447,6 +453,30 @@ export interface ConfirmResult {
  * Settled sends with a receipt also get a `send_delivery_checks` row, so the
  * dashboard warnings read keyed and legacy sends the same way. Read-only.
  */
+/**
+ * OneShot sends have no Sent folder to read. An uncertain one is settled as
+ * failed once the settle window has passed, so the next attempt resends its
+ * first content (the SDK's content key makes the platform replay it), up to
+ * ONESHOT_UNCERTAIN_RETRIES; after that it is left as not_found.
+ */
+function settleOneShot(
+  row: OutboundSend,
+  nowMs: number,
+): { status: OutboundStatus; error: string } | null {
+  if (row.status !== "uncertain") return null;
+  if (nowMs - Date.parse(row.lastAttemptAt) < UNCERTAIN_SETTLE_MS) return null;
+  return row.attempts < ONESHOT_UNCERTAIN_RETRIES
+    ? {
+        status: "failed",
+        error:
+          "OneShot outcome unknown; the next attempt resends the same content, which the platform dedupes",
+      }
+    : {
+        status: "not_found",
+        error: `OneShot outcome still unknown after ${row.attempts} attempts; not resent`,
+      };
+}
+
 export async function runOutboundConfirmations(opts: {
   outbound: Pick<OutboundSendStore, "listUnconfirmed" | "mark">;
   delivery: Pick<SendDeliveryStore, "candidateFor" | "record">;
@@ -472,6 +502,21 @@ export async function runOutboundConfirmations(opts: {
   let reads = 0;
   for (const row of rows) {
     if (opts.deadlineAt != null && Date.now() > opts.deadlineAt) break;
+    if (row.transport === "oneshot") {
+      const settled = settleOneShot(row, nowMs);
+      if (!settled) continue;
+      results.push({
+        key: row.key,
+        transport: row.transport,
+        identity: row.identityId,
+        before: row.status,
+        after: settled.status,
+        observed: null,
+        error: settled.error,
+      });
+      if (!opts.dryRun) opts.outbound.mark(row.key, settled.status, { now, error: settled.error });
+      continue;
+    }
     if (row.transport !== "smtp" && row.transport !== "gmail") continue;
     if (unreadable.has(row.identityId)) continue;
     if (reads >= limit) break;
@@ -532,21 +577,27 @@ export async function runOutboundConfirmations(opts: {
     const observed = new Set(copies.map((c) => c.messageId.trim().toLowerCase())).size;
     const ageMs = nowMs - attemptMs;
     let after: OutboundStatus | "unchanged" = "unchanged";
+    let error: string | null = null;
     if (observed >= 1) after = "confirmed";
-    else if (row.status === "uncertain" && ageMs >= UNCERTAIN_SETTLE_MS) after = "failed";
-    else if (row.status === "submitted" && ageMs >= SUBMITTED_NOT_FOUND_MS) after = "not_found";
-    results.push({ ...base, after, observed, error: null });
+    else if (row.status === "uncertain" && ageMs >= UNCERTAIN_SETTLE_MS) {
+      // Missing from Sent proves "not sent" only where the server files its
+      // own copy. Elsewhere nothing could have reached Sent, so never resend.
+      if (row.sentEvidence) {
+        after = "failed";
+        error =
+          "not found in Sent after the send was interrupted; a retry reuses the same Message-ID";
+      } else {
+        after = "not_found";
+        error =
+          "send interrupted and this mailbox's server keeps no Sent copy, so it was not resent; check the recipient's thread before sending again";
+      }
+    } else if (row.status === "submitted" && ageMs >= SUBMITTED_NOT_FOUND_MS) {
+      after = "not_found";
+      error = "accepted by the mail server but not found in Sent";
+    }
+    results.push({ ...base, after, observed, error });
     if (after === "unchanged" || opts.dryRun) continue;
-    opts.outbound.mark(row.key, after, {
-      observed,
-      now,
-      error:
-        after === "failed"
-          ? "not found in Sent after the send was interrupted; a retry reuses the same Message-ID"
-          : after === "not_found"
-            ? "accepted by the mail server but not found in Sent"
-            : null,
-    });
+    opts.outbound.mark(row.key, after, { observed, now, error });
     if (after !== "failed" && row.receiptId != null) {
       const candidate = opts.delivery.candidateFor(row.receiptId);
       if (candidate) {

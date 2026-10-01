@@ -32,8 +32,22 @@ export interface OutboundSend {
   transport: string;
   recipient: string;
   subject: string;
+  /** The body of the attempt on record (see `exactResend`). */
+  body: string;
   messageId: string | null;
   status: OutboundStatus;
+  /**
+   * Missing from the mailbox's Sent folder proves "not sent": true for Gmail
+   * and for SMTP servers that file their own Sent copy. Where it is false, an
+   * unknown outcome is never retried automatically.
+   */
+  sentEvidence: boolean;
+  /**
+   * Set once an attempt's outcome was unknown: any retry resends the stored
+   * subject and body, never a re-draft, so a transport that dedupes on content
+   * (the OneShot SDK key) replays the first send instead of sending another.
+   */
+  exactResend: boolean;
   attempts: number;
   firstAttemptAt: string;
   lastAttemptAt: string;
@@ -53,8 +67,11 @@ interface Row {
   transport: string;
   recipient: string;
   subject: string;
+  body: string;
   message_id: string | null;
   status: string;
+  sent_evidence: number;
+  exact_resend: number;
   attempts: number;
   first_attempt_at: string;
   last_attempt_at: string;
@@ -75,8 +92,11 @@ function toSend(row: Row): OutboundSend {
     transport: row.transport,
     recipient: row.recipient,
     subject: row.subject,
+    body: row.body,
     messageId: row.message_id,
     status: row.status as OutboundStatus,
+    sentEvidence: row.sent_evidence === 1,
+    exactResend: row.exact_resend === 1,
     attempts: row.attempts,
     firstAttemptAt: row.first_attempt_at,
     lastAttemptAt: row.last_attempt_at,
@@ -108,8 +128,11 @@ export interface ClaimInput {
   transport: string;
   recipient: string;
   subject: string;
+  body: string;
   /** Message-ID to send under. Kept from the first attempt on a retry. */
   messageId: string | null;
+  /** See `OutboundSend.sentEvidence`. */
+  sentEvidence: boolean;
   queueId?: number | null;
   prospectId?: number | null;
   /** Injected clock for tests. */
@@ -150,9 +173,9 @@ export class OutboundSendStore {
         this.db
           .query(
             `INSERT INTO outbound_sends
-               (key, identity_id, transport, recipient, subject, message_id, status, attempts,
-                first_attempt_at, last_attempt_at, queue_id, prospect_id)
-             VALUES (?, ?, ?, ?, ?, ?, 'pending', 1, ?, ?, ?, ?)`,
+               (key, identity_id, transport, recipient, subject, body, message_id, status,
+                sent_evidence, attempts, first_attempt_at, last_attempt_at, queue_id, prospect_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?, ?, ?, ?)`,
           )
           .run(
             input.key,
@@ -160,7 +183,9 @@ export class OutboundSendStore {
             input.transport,
             input.recipient,
             input.subject,
+            input.body,
             input.messageId,
+            input.sentEvidence ? 1 : 0,
             nowIso,
             nowIso,
             input.queueId ?? null,
@@ -172,11 +197,14 @@ export class OutboundSendStore {
         case "failed": {
           // A definite failure never reached the server: retry under the same
           // Message-ID, so even a misjudged "definite" is still one message.
+          // After an unknown outcome the stored content is resent as is.
           this.db
             .query(
               `UPDATE outbound_sends
                   SET status = 'pending', attempts = attempts + 1, last_attempt_at = ?,
-                      identity_id = ?, transport = ?, subject = ?, error = NULL,
+                      identity_id = ?, transport = ?, error = NULL, sent_evidence = ?,
+                      subject = CASE WHEN exact_resend = 1 THEN subject ELSE ? END,
+                      body = CASE WHEN exact_resend = 1 THEN body ELSE ? END,
                       message_id = COALESCE(message_id, ?)
                 WHERE key = ?`,
             )
@@ -184,7 +212,9 @@ export class OutboundSendStore {
               nowIso,
               input.identityId,
               input.transport,
+              input.sentEvidence ? 1 : 0,
               input.subject,
+              input.body,
               input.messageId,
               input.key,
             );
@@ -231,6 +261,7 @@ export class OutboundSendStore {
                 observed = COALESCE(?, observed),
                 submitted_at = CASE WHEN ? = 'submitted' THEN ? ELSE submitted_at END,
                 confirmed_at = CASE WHEN ? = 'confirmed' THEN ? ELSE confirmed_at END,
+                exact_resend = CASE WHEN ? = 'uncertain' THEN 1 ELSE exact_resend END,
                 checked_at = CASE WHEN ? = 1 THEN ? ELSE checked_at END
           WHERE key = ?`,
       )
@@ -244,6 +275,7 @@ export class OutboundSendStore {
         nowIso,
         status,
         nowIso,
+        status,
         // The confirm sweep passes `observed`; that is what "checked" means.
         extra.observed === undefined ? 0 : 1,
         nowIso,

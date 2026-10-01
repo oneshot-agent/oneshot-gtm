@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import { Ledger } from "../src/ledger.ts";
 import {
   CONFIRM_MIN_AGE_MS,
+  ONESHOT_UNCERTAIN_RETRIES,
   PermanentDeliveryError,
   SUBMITTED_NOT_FOUND_MS,
   TransientDeliveryError,
@@ -70,6 +71,7 @@ function keyed(
   status: "submitted" | "uncertain",
   identity: EmailIdentity = smtpId,
   withReceipt = status === "submitted",
+  sentEvidence = true,
 ): { key: string; receiptId: number | null; messageId: string } {
   const to = `${key}@example.org`;
   const messageId = `<${key}@mail.example>`;
@@ -79,7 +81,9 @@ function keyed(
     transport: identity.provider === "gmail" ? "gmail" : "smtp",
     recipient: to,
     subject: "Hello there",
+    body: "Body",
     messageId: identity.provider === "gmail" ? null : messageId,
+    sentEvidence,
     now: new Date(T0),
   });
   const receiptId = withReceipt ? addReceipt(identity, to, "Hello there") : null;
@@ -173,6 +177,52 @@ describe("runOutboundConfirmations", () => {
     });
     expect(retry).toMatchObject({ verdict: "send", retry: true });
     expect(retry.send.messageId).toBe(s.messageId);
+  });
+
+  it("never resends an uncertain SMTP send whose server keeps no Sent copy", async () => {
+    const s = keyed("nocopy", "uncertain", smtpId, false, false);
+    await sweep(T0 + UNCERTAIN_SETTLE_MS, readers({}));
+    const row = ledger.outboundSends.get(s.key)!;
+    expect(row.status).toBe("not_found");
+    expect(row.error).toMatch(/keeps no Sent copy/);
+    expect(
+      ledger.outboundSends.claim({ ...claimOf(s.key), now: new Date(T0 + 20 * 60_000) }).verdict,
+    ).toBe("already_sent");
+  });
+
+  it("settles an uncertain OneShot send without reading, then gives up after the retries", async () => {
+    const os: EmailIdentity = {
+      id: "oneshot:jn@os.example",
+      provider: "oneshot",
+      sendingDomain: "os.example",
+      maxPerDay: null,
+      warmup: null,
+    };
+    ledger.outboundSends.claim({
+      ...claimOf2("os1", os),
+      now: new Date(T0),
+    });
+    ledger.outboundSends.mark("os1", "uncertain", { now: new Date(T0) });
+    const r = readers({});
+    await sweep(T0 + UNCERTAIN_SETTLE_MS - 1_000, r);
+    expect(ledger.outboundSends.get("os1")?.status).toBe("uncertain");
+    await sweep(T0 + UNCERTAIN_SETTLE_MS, r);
+    expect(ledger.outboundSends.get("os1")?.status).toBe("failed");
+    expect(r.smtp).not.toHaveBeenCalled();
+    expect(r.gmail).not.toHaveBeenCalled();
+    // Each retry that ends unknown again counts; the last one is left alone.
+    for (let i = 1; i < ONESHOT_UNCERTAIN_RETRIES; i++) {
+      if (ledger.outboundSends.get("os1")?.status === "uncertain") {
+        ledger.outboundSends.mark("os1", "failed", { now: new Date(T0) });
+      }
+      ledger.outboundSends.claim({ ...claimOf2("os1", os), now: new Date(T0) });
+      ledger.outboundSends.mark("os1", "uncertain", { now: new Date(T0) });
+    }
+    await sweep(T0 + UNCERTAIN_SETTLE_MS, r);
+    expect(ledger.outboundSends.get("os1")).toMatchObject({
+      status: "not_found",
+      attempts: ONESHOT_UNCERTAIN_RETRIES,
+    });
   });
 
   it("flags a submitted send missing after 30 minutes as not_found and never resends it", async () => {
@@ -282,6 +332,21 @@ function claimOf(key: string) {
     transport: row.transport,
     recipient: row.recipient,
     subject: row.subject,
+    body: row.body,
     messageId: "<fresh@mail.example>",
+    sentEvidence: row.sentEvidence,
+  };
+}
+
+function claimOf2(key: string, identity: EmailIdentity) {
+  return {
+    key,
+    identityId: identity.id,
+    transport: "oneshot",
+    recipient: `${key}@example.org`,
+    subject: "Hello there",
+    body: "Body",
+    messageId: null,
+    sentEvidence: false,
   };
 }

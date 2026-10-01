@@ -23,6 +23,7 @@ vi.mock("@oneshot-agent/sdk", () => ({
   OneShot: class {
     email = emailMock;
   },
+  ValidationError: class extends Error {},
 }));
 
 vi.mock("../src/config.ts", async () => {
@@ -308,5 +309,47 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
     expect(opts.idempotencyKey).toMatch(/^[0-9a-f]{40}$/);
     // A normal send is not a reply.
     expect(opts.reply_to_email_id).toBeUndefined();
+  });
+
+  it("after an unknown outcome, a re-drafted retry resends the first content under its SDK key", async () => {
+    const { UncertainSendError } = await import("../src/oneshot.ts");
+    const key = "gtm:test:email:show-hn:pat@acme.com:0";
+    emailMock.mockRejectedValueOnce(new Error("Job timed out after 120s"));
+    await expect(
+      sendEmail(
+        { to: "pat@acme.com", subject: "first", body: "first body", idempotencyKey: key },
+        { playName: "show-hn" },
+      ),
+    ).rejects.toBeInstanceOf(UncertainSendError);
+    expect(scratch.outboundSends.get(key)?.status).toBe("uncertain");
+    // The sweep settles it once the window has passed.
+    scratch.outboundSends.mark(key, "failed");
+    await sendEmail(
+      { to: "pat@acme.com", subject: "rewritten", body: "new body", idempotencyKey: key },
+      { playName: "show-hn" },
+    );
+    const [first, retry] = emailMock.mock.calls.map(
+      (c) => c[0] as { subject: string; idempotencyKey: string },
+    );
+    expect(retry!.subject).toBe("first");
+    expect(retry!.idempotencyKey).toBe(first!.idempotencyKey);
+    expect(scratch.outboundSends.get(key)?.status).toBe("confirmed");
+  });
+
+  it("an explicit platform rejection is definite: the retry may send the new draft", async () => {
+    const key = "gtm:test:email:show-hn:sam@acme.com:0";
+    emailMock.mockRejectedValueOnce(new Error("Request failed (422): invalid recipient"));
+    await expect(
+      sendEmail(
+        { to: "sam@acme.com", subject: "first", body: "b", idempotencyKey: key },
+        { playName: "show-hn" },
+      ),
+    ).rejects.toThrow(/422/);
+    expect(scratch.outboundSends.get(key)?.status).toBe("failed");
+    await sendEmail(
+      { to: "sam@acme.com", subject: "fixed", body: "b2", idempotencyKey: key },
+      { playName: "show-hn" },
+    );
+    expect((emailMock.mock.calls[1]![0] as { subject: string }).subject).toBe("fixed");
   });
 });

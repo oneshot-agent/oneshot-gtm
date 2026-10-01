@@ -153,6 +153,8 @@ describe("sendVia smtp", () => {
       messageId: expected,
       receiptId: out.receiptId,
       attempts: 1,
+      // smtp.gmail.com files its own Sent copy.
+      sentEvidence: true,
     });
     expect(getSharedDb().touchesFor(to)[0]?.status).toBe("sent");
   });
@@ -225,7 +227,13 @@ describe("sendVia smtp", () => {
     ).rejects.toThrow(/credentials are unavailable/);
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(mocks.smtp.sendMail).not.toHaveBeenCalled();
-    expect(ledger.outboundSends.get(key)?.status).toBe("failed");
+    // Nothing was attempted, so nothing was claimed, and the touch is released.
+    expect(ledger.outboundSends.get(key)).toBeNull();
+    expect(
+      getSharedDb()
+        .touchesFor(to)
+        .filter((t) => t.status === "sent"),
+    ).toHaveLength(0);
   });
 
   it("falls back to a content key when the caller passes none", async () => {
