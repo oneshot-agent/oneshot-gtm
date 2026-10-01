@@ -88,7 +88,7 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-75 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+76 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -98,6 +98,7 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 | `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                                                                                                                                                                                                                                        |
 | `gmail`                  | `auth` (OAuth a sending account) · `placement` (inbox-placement canary)                                                                                                                                                                                                                                                                                                                 |
 | `smartlead`              | `connect` — API key + pick Smartlead mailboxes into the pool (send-only)                                                                                                                                                                                                                                                                                                                |
+| `sends`                  | `check [--since 7d] [--dry-run]` — count each Smartlead/Gmail send's copies in its mailbox's Sent folder (read-only)                                                                                                                                                                                                                                                                    |
 | `domains`                | `list` · `pause <domain>` · `resume <domain>` — provisioned OneShot domains                                                                                                                                                                                                                                                                                                             |
 | `find`                   | `watch` · `drain <play>` · `import --csv <file> --play <name>` · `enrich-linkedin` · `research-prospects` · `research-queue` · `rejudge-github` · `research-products` · `synthesize-angles` · `score-prospects` · `backfill-fit-reason` · `calibrate` — `--fail-on-empty` makes `watch --once` and `drain` [exit 2 on a run that produced nothing](#background-monitoring-as-a-service) |
 | `motion`                 | `post-funding` `concierge` `demo-no-show` `competitor-switch` `hiring-signal` `podcast-guest` `discovery-interview` `free-pilot` — each takes `--target <file>`; `breakup-revive` reads the ledger                                                                                                                                                                                      |
@@ -236,7 +237,7 @@ Workspaces share one thing: `~/.oneshot-gtm-shared/shared.sqlite`, holding share
 
 ```
 apps/
-  cli/        the 75-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        the 76-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/

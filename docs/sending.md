@@ -14,7 +14,7 @@ Outbound ships through a **sender identity pool** — any mix of OneShot wallet-
 - **Warm-up caps, per domain.** A new identity ramps 10/day, +10/week, to a 50 ceiling — editable per identity on `/setup`. OneShot reputation is per-domain, so every mailbox on a domain shares one ramp and budget. Gmail accounts ramp per account.
 - **Defer, never exceed.** When every identity is at cap, cadence steps stay due and queue rows stay approved until midnight. Nothing sends over cap.
 - **One founder, one inbox, however many products.** A [workspace](./workspaces.md) never first-touches someone another workspace emailed in the last 7 days: the draft is held with a `contacted-elsewhere` flag that you can override on a manual send, and auto paths (drain, cadence steps) wait the window out. Touches and the paid lookup caches live in one shared SQLite (`~/.oneshot-gtm-shared/`), so the same person is never researched twice.
-- **Idempotent sends.** Sends carry an idempotency key, so a retry after a timeout can't double-send.
+- **Idempotent sends.** OneShot sends carry an idempotency key, so a retry after a timeout can't double-send. Smartlead and Gmail have no such key, so every send on them gets a **delivery check**: a few minutes later the sending mailbox's Sent folder is searched (read-only) and the copies counted. A send the provider delivered more than once, or not at all, is flagged on its queue row, its cadence history and the `sends` status pill; `sends check --since 7d` lists every check.
 
 ## Replies
 

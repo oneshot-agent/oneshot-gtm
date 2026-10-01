@@ -116,6 +116,7 @@ import {
   recordOutcome as outRecordOutcome,
 } from "./ledger-outcomes.ts";
 import { IcpProposalStore } from "./icp-proposal-store.ts";
+import { SendDeliveryStore } from "./ledger-delivery.ts";
 import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.ts";
 import { QueueStore } from "./ledger-queue.ts";
 import {
@@ -255,6 +256,8 @@ export class Ledger {
   private inbox: InboxStore;
   private queue: QueueStore;
   readonly icpProposals: IcpProposalStore;
+  /** Sent-folder delivery checks for sends with no idempotency key (ledger-delivery.ts). */
+  readonly sendDelivery: SendDeliveryStore;
   /**
    * Draft versions for cadence follow-ups (ledger-drafts.ts). Intro drafts
    * are versioned by `QueueStore` through its own instance. The table is the
@@ -312,6 +315,7 @@ export class Ledger {
     this.queue = new QueueStore(this.db);
     this.drafts = new DraftVersionStore(this.db);
     this.icpProposals = new IcpProposalStore(this.db);
+    this.sendDelivery = new SendDeliveryStore(this.db);
   }
 
   getDirectMail(id: string): DirectMailDraft | null {

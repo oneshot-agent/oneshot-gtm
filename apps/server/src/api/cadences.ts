@@ -19,6 +19,7 @@ import type {
   CadenceView,
   CadencesResult,
   DraftAngleChoice,
+  SendDeliveryView,
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 import { callLinkedIn } from "../linkedin-client.ts";
@@ -62,6 +63,12 @@ function toView(
   }
   const next = nextStepInfo(row.play_name, row.current_step, row.prospect_id);
   const followupCount = playFollowupCount(row.play_name, row.prospect_id);
+  let deliveries: Map<string, SendDeliveryView>;
+  try {
+    deliveries = getLedger().sendDelivery.forProspectSteps(row.prospect_id);
+  } catch {
+    deliveries = new Map();
+  }
   const priorSteps = (priorByKey.get(`${row.prospect_id}|${row.play_name}`) ?? []).map((s) => ({
     stepIndex: s.stepIndex,
     label: s.label,
@@ -69,6 +76,7 @@ function toView(
     body: s.body,
     sentAt: s.sentAt,
     status: s.status,
+    delivery: deliveries.get(`${row.play_name}|${s.stepIndex}`) ?? null,
   }));
   const mailDraft = getLedger().findDirectMail(
     row.prospect_id,

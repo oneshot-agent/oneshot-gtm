@@ -1,4 +1,5 @@
 import { DirectMailPanel, DirectMailHistory } from "../components/DirectMailPanel.tsx";
+import { DeliveryBadge, DeliveryWarning } from "../components/queue/DeliveryWarning.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import {
@@ -1281,8 +1282,10 @@ function CadencesPage() {
                                             <span className="min-w-0 truncate text-ink-muted">
                                               {st.subject}
                                             </span>
+                                            <DeliveryBadge delivery={st.delivery} />
                                           </div>
                                           <div className="pl-[104px]">
+                                            <DeliveryWarning delivery={st.delivery} />
                                             {st.body ? (
                                               <Disclosure label="body">
                                                 <pre className="ln-prose mt-2 whitespace-pre-wrap text-[12px] text-ink-cream-2">

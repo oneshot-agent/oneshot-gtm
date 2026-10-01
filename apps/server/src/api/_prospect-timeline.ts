@@ -6,7 +6,11 @@ import type {
   QueueRow,
   SequenceEventRecord,
 } from "@oneshot-gtm/core";
-import { describeDecision, type ProspectTimelineEvent } from "@oneshot-gtm/shared-types";
+import {
+  describeDecision,
+  type ProspectTimelineEvent,
+  type SendDeliveryView,
+} from "@oneshot-gtm/shared-types";
 
 /**
  * The history behind one /prospects row, newest first: the queue row's own
@@ -26,6 +30,8 @@ export function buildProspectTimeline(input: {
   replies: ReadonlyArray<InboxReplyRecord>;
   channelEvents: ReadonlyArray<ChannelEventRecord>;
   outcomes: ReadonlyArray<DealOutcomeRecord>;
+  /** Sent-folder delivery checks keyed by sequence event id; mismatches become their own entry. */
+  deliveries?: ReadonlyMap<number, SendDeliveryView>;
 }): ProspectTimelineEvent[] {
   const { row } = input;
   const events: ProspectTimelineEvent[] = [];
@@ -78,6 +84,20 @@ export function buildProspectTimeline(input: {
       detail: typeof meta["subject"] === "string" ? meta["subject"] : null,
       playName: ev.play_name,
     });
+    const delivery = input.deliveries?.get(ev.id);
+    const note = delivery ? deliveryNote(delivery) : null;
+    if (delivery && note) {
+      events.push({
+        at: delivery.deliveredAt[delivery.deliveredAt.length - 1] ?? sqliteToIso(ev.created_at),
+        kind: "sequence",
+        label: note,
+        detail:
+          delivery.deliveredAt.length > 0
+            ? delivery.deliveredAt.map((t) => t.slice(11, 19)).join(", ") + " UTC"
+            : null,
+        playName: ev.play_name,
+      });
+    }
   }
 
   for (const r of input.replies) {
@@ -133,6 +153,13 @@ export function buildProspectTimeline(input: {
     .map((e, i) => ({ e, i, t: instant(e) }))
     .toSorted((a, b) => b.t - a.t || b.i - a.i)
     .map(({ e }) => e);
+}
+
+/** Timeline label for a delivery mismatch; null when the check found exactly the one copy. */
+export function deliveryNote(d: SendDeliveryView): string | null {
+  if (d.status === "duplicate") return `delivered ${d.observed ?? "?"}× by the mail provider`;
+  if (d.status === "not_found") return "not found in Sent";
+  return null;
 }
 
 function parseMeta(raw: string | null): Record<string, unknown> {

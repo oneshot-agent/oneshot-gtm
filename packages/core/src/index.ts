@@ -41,6 +41,8 @@ export * from "./daily-spend.ts";
 export * from "./reply-review-store.ts";
 export * from "./reply-learning-store.ts";
 export * from "./icp-proposal-store.ts";
+export * from "./ledger-delivery.ts";
+export * from "./send-delivery.ts";
 export * from "./linkedin-sdk.ts";
 export * from "./linkedin-error.ts";
 export * from "./linkedin-inbox.ts";

@@ -55,6 +55,7 @@ import {
 import { commandCadenceAdvance } from "./commands/cadence.ts";
 import { commandGmailAuth, commandGmailPlacement } from "./commands/gmail.ts";
 import { commandSmartleadConnect } from "./commands/smartlead.ts";
+import { commandSendsCheck } from "./commands/sends.ts";
 import {
   commandDomainsList,
   commandDomainsPause,
@@ -332,6 +333,28 @@ smartlead
   .command("connect")
   .description("Store the Smartlead API key and add its mailboxes to the rotation pool")
   .action(runOrFail(commandSmartleadConnect));
+
+// Sends: read-only delivery check against each mailbox's Sent folder.
+const sends = program
+  .command("sends")
+  .description("Check recent sends against their mailbox's Sent folder (read-only)");
+sends
+  .command("check")
+  .description(
+    "Count each Smartlead/Gmail send's copies in Sent: expected 1, observed N (duplicates = provider retries)",
+  )
+  .option("--since <window>", "how far back: 7d, 48h, 90m or a date", "7d")
+  .option("--limit <n>", "check at most N sends", (v) => Number.parseInt(v, 10))
+  .option("--dry-run", "report only; record nothing")
+  .action(
+    runOrFail((opts: { since?: string; limit?: number; dryRun?: boolean }) =>
+      commandSendsCheck({
+        ...(opts.since ? { since: opts.since } : {}),
+        ...(opts.limit ? { limit: opts.limit } : {}),
+        dryRun: opts.dryRun === true,
+      }),
+    ),
+  );
 
 // Identities: manage the OneShot sender rotation pool (multiple wallet-owned
 // domains + multiple mailboxes per domain). Gmail accounts join via `gmail auth`.
