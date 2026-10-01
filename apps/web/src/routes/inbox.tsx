@@ -23,6 +23,7 @@ import type {
 } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { IS_DEMO } from "../api/demo.ts";
+import { IntentBadge } from "../components/IntentBadge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Input } from "../components/primitives/Field.tsx";
 import { Pii } from "../components/primitives/Pii.tsx";
@@ -927,6 +928,16 @@ function ThreadRow({
             <p className="replies-subject">
               <span>{t.combinedEmailHistory ? "Latest subject:" : "Subject:"}</span>{" "}
               {t.subject || "(No subject)"}
+            </p>
+          )}
+          {t.channel === "email" && t.email?.intent && (
+            <p className="replies-intent">
+              <span>Reply label:</span>{" "}
+              <IntentBadge
+                intent={t.email.intent}
+                review={t.email.intentReview}
+                confidence={t.email.intentConfidence}
+              />
             </p>
           )}
           {t.snoozedUntil && (

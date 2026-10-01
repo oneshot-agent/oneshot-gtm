@@ -655,6 +655,15 @@
   font-size: 12px;
   color: var(--ink-muted);
 }
+.replies-intent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
 .replies-contact-fields {
   display: grid;
   grid-template-columns: minmax(90px, auto) minmax(0, 1fr);
