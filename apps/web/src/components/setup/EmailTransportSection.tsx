@@ -16,6 +16,7 @@ import {
   capText,
   parseCap,
   type PendingOneShotAdd,
+  type SendVia,
 } from "../../lib/setupValidation.ts";
 import { Badge } from "../primitives/Badge.tsx";
 import { Button } from "../primitives/Button.tsx";
@@ -73,8 +74,13 @@ export function EmailTransportSection({
   const staging = useIdentityStaging();
 
   const build = buildIdentityPoolRequest({
-    identities: identities.map((i) => ({ id: i.id, maxPerDay: i.maxPerDay })),
+    identities: identities.map((i) => ({
+      id: i.id,
+      maxPerDay: i.maxPerDay,
+      sendVia: i.sendVia ?? null,
+    })),
     capEdits: staging.capEdits,
+    sendViaEdits: staging.sendViaEdits,
     removedIds: staging.removedIds,
     pendingAdds: staging.pendingAdds,
     pendingSmartleadAdds: staging.pendingSmartleadAdds,
@@ -91,8 +97,16 @@ export function EmailTransportSection({
       staging.capEdits[i.id] !== undefined &&
       staging.capEdits[i.id] !== capText(i.maxPerDay),
   ).length;
+  const sendViaDirty = identities.filter(
+    (i) =>
+      !removed.includes(i.id) &&
+      i.sendVia != null &&
+      staging.sendViaEdits[i.id] !== undefined &&
+      staging.sendViaEdits[i.id] !== i.sendVia,
+  ).length;
   const dirtyCount =
     capDirty +
+    sendViaDirty +
     removed.length +
     staging.pendingAdds.length +
     staging.pendingSmartleadAdds.length +
@@ -153,7 +167,7 @@ export function EmailTransportSection({
         if (build.ok && !build.empty) save.run(build.request);
       }}
       saveLabel="Save pool changes"
-      footerNote="cap, removal and sender changes apply together on save"
+      footerNote="cap, transport, removal and sender changes apply together on save"
     >
       {identities.length > 0 && (
         <div className="flex flex-col gap-2">
@@ -167,6 +181,8 @@ export function EmailTransportSection({
                 capValue={staging.capEdits[i.id] ?? capText(i.maxPerDay)}
                 capError={capErrors[i.id]}
                 onCap={(raw) => staging.setCap(i.id, raw)}
+                sendVia={staging.sendViaEdits[i.id] ?? i.sendVia ?? null}
+                onSendVia={(via) => staging.setSendVia(i.id, via)}
                 onRemove={() => staging.remove(i.id)}
               />
             ))}
@@ -331,12 +347,17 @@ function IdentityRow({
   capValue,
   capError,
   onCap,
+  sendVia,
+  onSendVia,
   onRemove,
 }: {
   identity: SenderIdentityView;
   capValue: string;
   capError: string | undefined;
   onCap: (raw: string) => void;
+  /** Smartlead mailboxes only; null hides the transport picker. */
+  sendVia: SendVia | null;
+  onSendVia: (via: SendVia) => void;
   onRemove: () => void;
 }) {
   return (
@@ -372,6 +393,19 @@ function IdentityRow({
         )}
       </div>
       <div className="ml-auto flex items-start gap-2">
+        {sendVia != null && (
+          <Field label="send via" className="w-32 gap-0.5">
+            <Select
+              className="h-7 text-[12px]"
+              value={sendVia}
+              onChange={(e) => onSendVia(e.target.value === "smtp" ? "smtp" : "provider")}
+              aria-label={`send transport for ${i.id}`}
+            >
+              <option value="provider">Smartlead</option>
+              <option value="smtp">Mailbox SMTP</option>
+            </Select>
+          </Field>
+        )}
         <Field
           label="max/day"
           explain={i.warmup ? "warmup" : undefined}

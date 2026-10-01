@@ -4,6 +4,7 @@ import { gmailAccountFor, resolveIdentities } from "./identities.ts";
 import { listGmailSentTo, type SentCopy } from "./gmail.ts";
 import { mailboxConnection } from "./mailbox-config.ts";
 import { mailboxClient } from "./mailbox.ts";
+import type { SearchObject } from "imapflow";
 import { logEvent } from "./events.ts";
 import type {
   DeliveryCandidate,
@@ -11,6 +12,7 @@ import type {
   DeliveryStatus,
   SendDeliveryStore,
 } from "./ledger-delivery.ts";
+import type { OutboundSendStore, OutboundStatus } from "./ledger-outbound.ts";
 
 /**
  * Delivery check: for email sends on transports with no idempotency key
@@ -100,13 +102,16 @@ export function evaluateDelivery(
   };
 }
 
-/** Smartlead mailbox: IMAP Sent folder, opened read-only. */
-export const imapSentReader: SentFolderReader = async ({
-  identity,
-  recipient,
-  afterIso,
-  beforeIso,
-}) => {
+/**
+ * Open the identity's Sent folder read-only, run one IMAP search and return
+ * the matching copies that `keep` accepts. Shared by the window count and the
+ * Message-ID lookup.
+ */
+async function searchSentFolder(
+  identity: EmailIdentity,
+  query: SearchObject,
+  keep: (iso: string) => boolean,
+): Promise<SentCopy[]> {
   let connection;
   try {
     connection = await mailboxConnection(identity.id);
@@ -126,8 +131,7 @@ export const imapSentReader: SentFolderReader = async ({
       boxes.find((b) => /(^|\/)sent/i.test(b.path) && !b.flags.has("\\Noselect"));
     if (!sent) throw new PermanentDeliveryError("no Sent folder in this mailbox");
     await client.mailboxOpen(sent.path, { readOnly: true });
-    const since = new Date(Date.parse(afterIso) - 24 * 60 * 60_000);
-    const uids = await client.search({ to: recipient, since }, { uid: true });
+    const uids = await client.search(query, { uid: true });
     const copies: SentCopy[] = [];
     if (uids && uids.length > 0) {
       for await (const m of client.fetch(
@@ -138,7 +142,7 @@ export const imapSentReader: SentFolderReader = async ({
         const date = m.internalDate instanceof Date ? m.internalDate : m.envelope?.date;
         if (!date) continue;
         const iso = new Date(date).toISOString();
-        if (iso < afterIso || iso > beforeIso) continue;
+        if (!keep(iso)) continue;
         copies.push({
           messageId: m.envelope?.messageId ?? String(m.uid),
           date: iso,
@@ -157,7 +161,15 @@ export const imapSentReader: SentFolderReader = async ({
       client.close();
     }
   }
-};
+}
+
+/** Smartlead mailbox: IMAP Sent folder, opened read-only. */
+export const imapSentReader: SentFolderReader = ({ identity, recipient, afterIso, beforeIso }) =>
+  searchSentFolder(
+    identity,
+    { to: recipient, since: new Date(Date.parse(afterIso) - 24 * 60 * 60_000) },
+    (iso) => iso >= afterIso && iso <= beforeIso,
+  );
 
 /** Gmail identity: the API's Sent search, metadata only. */
 export const gmailSentReader: SentFolderReader = async ({
@@ -369,4 +381,205 @@ export async function runDeliveryChecks(opts: {
     }
   }
   return summary;
+}
+
+// ---------------------------------------------------------------------------
+// Keyed sends (`outbound_sends`): confirm and reconcile against Sent.
+// ---------------------------------------------------------------------------
+
+/** A keyed send younger than this is not looked up yet. */
+export const CONFIRM_MIN_AGE_MS = 3 * 60_000;
+/** An uncertain send still missing from Sent after this is settled as failed (safe to retry). */
+export const UNCERTAIN_SETTLE_MS = 10 * 60_000;
+/** A submitted send still missing from Sent after this is flagged not_found (never resent). */
+export const SUBMITTED_NOT_FOUND_MS = 30 * 60_000;
+
+/** Reads the Sent copies carrying one exact Message-ID, for one identity. */
+export type MessageIdReader = (input: {
+  identity: EmailIdentity;
+  messageId: string;
+  afterIso: string;
+}) => Promise<SentCopy[]>;
+
+export interface ConfirmReaders {
+  /** Mailbox SMTP sends: exact lookup by our Message-ID. */
+  smtp: MessageIdReader;
+  /** Gmail API sends: the API rewrites Message-IDs, so recipient + subject + window. */
+  gmail: SentFolderReader;
+}
+
+/** Smartlead mailbox: IMAP Sent folder searched by Message-ID header, read-only. */
+export const imapMessageIdReader: MessageIdReader = ({ identity, messageId, afterIso }) =>
+  searchSentFolder(
+    identity,
+    {
+      header: { "message-id": messageId },
+      since: new Date(Date.parse(afterIso) - 24 * 60 * 60_000),
+    },
+    () => true,
+  );
+
+export const DEFAULT_CONFIRM_READERS: ConfirmReaders = {
+  smtp: imapMessageIdReader,
+  gmail: gmailSentReader,
+};
+
+export interface ConfirmResult {
+  key: string;
+  transport: string;
+  identity: string;
+  before: OutboundStatus;
+  after: OutboundStatus | "unchanged";
+  observed: number | null;
+  error: string | null;
+}
+
+/**
+ * The confirm sweep for keyed sends. For each submitted or uncertain send at
+ * least CONFIRM_MIN_AGE_MS old, look for it in the sending mailbox's Sent
+ * folder (by Message-ID for SMTP sends, by recipient + subject + window for
+ * Gmail API sends):
+ * - found once → confirmed; found more than once → confirmed, flagged duplicate;
+ * - uncertain and still missing after UNCERTAIN_SETTLE_MS → failed (the next
+ *   attempt may retry under the same Message-ID);
+ * - submitted and still missing after SUBMITTED_NOT_FOUND_MS → not_found
+ *   (never resent: the server accepted it).
+ * Settled sends with a receipt also get a `send_delivery_checks` row, so the
+ * dashboard warnings read keyed and legacy sends the same way. Read-only.
+ */
+export async function runOutboundConfirmations(opts: {
+  outbound: Pick<OutboundSendStore, "listUnconfirmed" | "mark">;
+  delivery: Pick<SendDeliveryStore, "candidateFor" | "record">;
+  nowMs?: number;
+  limit?: number;
+  deadlineAt?: number;
+  readers?: ConfirmReaders;
+  identities?: EmailIdentity[];
+  dryRun?: boolean;
+}): Promise<ConfirmResult[]> {
+  const nowMs = opts.nowMs ?? Date.now();
+  const now = new Date(nowMs);
+  const readers = opts.readers ?? DEFAULT_CONFIRM_READERS;
+  const identities = opts.identities ?? resolveIdentities(loadConfig());
+  const limit = opts.limit ?? DELIVERY_SWEEP_LIMIT;
+  const rows = opts.outbound.listUnconfirmed({
+    minAgeMs: CONFIRM_MIN_AGE_MS,
+    limit: limit * 4,
+    now,
+  });
+  const unreadable = new Set<string>();
+  const results: ConfirmResult[] = [];
+  let reads = 0;
+  for (const row of rows) {
+    if (opts.deadlineAt != null && Date.now() > opts.deadlineAt) break;
+    if (row.transport !== "smtp" && row.transport !== "gmail") continue;
+    if (unreadable.has(row.identityId)) continue;
+    if (reads >= limit) break;
+    reads++;
+    const base = {
+      key: row.key,
+      transport: row.transport,
+      identity: row.identityId,
+      before: row.status,
+    };
+    const identity = identities.find((i) => i.id === row.identityId);
+    const attemptMs = Date.parse(row.lastAttemptAt);
+    const afterIso = new Date(
+      Date.parse(row.firstAttemptAt) - DELIVERY_WINDOW_BEFORE_MS,
+    ).toISOString();
+    let copies: SentCopy[];
+    try {
+      if (!identity) throw new PermanentDeliveryError("sender identity no longer configured");
+      if (row.transport === "smtp") {
+        if (!row.messageId)
+          throw new PermanentDeliveryError("no Message-ID recorded for this send");
+        copies = await readers.smtp({ identity, messageId: row.messageId, afterIso });
+      } else {
+        const beforeIso = new Date(attemptMs + DELIVERY_WINDOW_AFTER_MS).toISOString();
+        const subject = normSubject(row.subject);
+        copies = (
+          await readers.gmail({ identity, recipient: row.recipient, afterIso, beforeIso })
+        ).filter((c) => !subject || normSubject(c.subject) === subject);
+      }
+    } catch (err) {
+      const message = ((err as Error).message ?? "").slice(0, 200);
+      if (!(err instanceof PermanentDeliveryError)) {
+        // Retried next sweep; one failed read per mailbox per run.
+        unreadable.add(row.identityId);
+        results.push({ ...base, after: "unchanged", observed: null, error: message });
+        continue;
+      }
+      // The mailbox can never be read for this send: settle it as not_found,
+      // which never resends, and show it as skipped like the legacy sweep.
+      results.push({ ...base, after: "not_found", observed: null, error: message });
+      if (opts.dryRun) continue;
+      opts.outbound.mark(row.key, "not_found", { now, error: message, observed: null });
+      const candidate = row.receiptId != null ? opts.delivery.candidateFor(row.receiptId) : null;
+      if (candidate) {
+        opts.delivery.record({
+          candidate,
+          status: "skipped",
+          expected: 1,
+          observed: null,
+          messageIds: [],
+          deliveredAt: [],
+          checkedAt: now.toISOString(),
+          error: message,
+        });
+      }
+      continue;
+    }
+    const observed = new Set(copies.map((c) => c.messageId.trim().toLowerCase())).size;
+    const ageMs = nowMs - attemptMs;
+    let after: OutboundStatus | "unchanged" = "unchanged";
+    if (observed >= 1) after = "confirmed";
+    else if (row.status === "uncertain" && ageMs >= UNCERTAIN_SETTLE_MS) after = "failed";
+    else if (row.status === "submitted" && ageMs >= SUBMITTED_NOT_FOUND_MS) after = "not_found";
+    results.push({ ...base, after, observed, error: null });
+    if (after === "unchanged" || opts.dryRun) continue;
+    opts.outbound.mark(row.key, after, {
+      observed,
+      now,
+      error:
+        after === "failed"
+          ? "not found in Sent after the send was interrupted; a retry reuses the same Message-ID"
+          : after === "not_found"
+            ? "accepted by the mail server but not found in Sent"
+            : null,
+    });
+    if (after !== "failed" && row.receiptId != null) {
+      const candidate = opts.delivery.candidateFor(row.receiptId);
+      if (candidate) {
+        const status: DeliveryStatus =
+          after === "not_found" ? "not_found" : observed > 1 ? "duplicate" : "ok";
+        const ordered = copies.toSorted((a, b) => a.date.localeCompare(b.date));
+        opts.delivery.record({
+          candidate,
+          status,
+          expected: 1,
+          observed,
+          messageIds: ordered.map((c) => c.messageId),
+          deliveredAt: ordered.map((c) => c.date),
+          checkedAt: now.toISOString(),
+          error: null,
+        });
+        if (status !== "ok") {
+          logEvent(
+            "send.delivery_mismatch",
+            {
+              receipt_id: row.receiptId,
+              transport: row.transport,
+              identity: row.identityId,
+              status,
+              expected: 1,
+              observed,
+              keyed: true,
+            },
+            "warn",
+          );
+        }
+      }
+    }
+  }
+  return results;
 }

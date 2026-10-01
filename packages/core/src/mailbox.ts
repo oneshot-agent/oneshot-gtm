@@ -509,6 +509,121 @@ export function mailboxReplyMessage(
   };
 }
 
+/**
+ * An SMTP submission that did not complete. `definite` = the server never
+ * received the message (connect/auth failure, or an explicit 4xx/5xx), so a
+ * retry is safe. Otherwise the outcome is unknown: the connection dropped
+ * after DATA was handed over, and the message may already be out.
+ */
+export class MailboxSubmitError extends Error {
+  readonly definite: boolean;
+  constructor(message: string, definite: boolean) {
+    super(message);
+    this.name = "MailboxSubmitError";
+    this.definite = definite;
+  }
+}
+
+/** One message to submit over a mailbox's SMTP connection. */
+export interface MailboxMail {
+  from: string | { name: string; address: string };
+  to: string[];
+  subject: string;
+  text: string;
+  html?: string;
+  /** Pre-set Message-ID, so the same email keeps one id on every attempt. */
+  messageId: string;
+  inReplyTo?: string;
+  references?: string[];
+  date: Date;
+}
+
+/**
+ * Build the MIME once and submit it over SMTP once. Shared by threaded
+ * replies and new sends. Never retries: the caller decides, from
+ * `MailboxSubmitError.definite`, whether a retry is safe. Transport errors
+ * can carry credentials, so none are attached as causes.
+ */
+async function submitMailboxMail(
+  connection: MailboxConnection,
+  mail: MailboxMail,
+): Promise<Buffer> {
+  const smtp = smtpTransport(connection);
+  let submitted = false;
+  try {
+    // Authentication/connect failures are definitive: no DATA was submitted.
+    await smtp.verify();
+    const mime = await nodemailer
+      .createTransport({ streamTransport: true, buffer: true, newline: "windows" })
+      .sendMail({
+        from: mail.from,
+        to: mail.to,
+        subject: mail.subject,
+        text: mail.text,
+        ...(mail.html ? { html: mail.html } : {}),
+        messageId: mail.messageId,
+        ...(mail.inReplyTo ? { inReplyTo: mail.inReplyTo } : {}),
+        ...(mail.references?.length ? { references: mail.references } : {}),
+        date: mail.date,
+        disableFileAccess: true,
+        disableUrlAccess: true,
+      });
+    submitted = true;
+    const envelopeFrom = typeof mail.from === "string" ? mail.from : mail.from.address;
+    const accepted = await smtp.sendMail({
+      envelope: { from: envelopeFrom, to: mail.to },
+      raw: mime.message,
+    });
+    if (!accepted.accepted?.length) {
+      // SMTP explicitly accepted no recipients; retry is safe.
+      throw new MailboxSubmitError("SMTP did not accept the message.", true);
+    }
+    return mime.message as Buffer;
+  } catch (err) {
+    if (err instanceof MailboxSubmitError) throw err;
+    // An explicit SMTP rejection is definitive; a disconnect after DATA is not.
+    const code = (err as { responseCode?: number }).responseCode;
+    const definite = !submitted || (code != null && code >= 400 && code < 600);
+    // Transport exceptions can contain authentication details; do not attach them as causes.
+    throw new MailboxSubmitError(
+      definite ? "SMTP rejected the message." : "SMTP outcome unknown.",
+      definite,
+    );
+  } finally {
+    smtp.close();
+  }
+}
+
+/**
+ * Gmail stores SMTP submissions in Sent by itself; other IMAP providers need
+ * an explicit copy. Checks by Message-ID first so a re-run never appends
+ * twice. Returns false when the copy could not be saved. That never turns
+ * into a resend: the message itself already went out.
+ */
+async function saveSentCopy(
+  connection: MailboxConnection,
+  mime: Buffer,
+  messageId: string,
+  date: Date,
+): Promise<boolean> {
+  if (/gmail\.com$/i.test(connection.smtp.host)) return true;
+  const client = mailboxClient(connection);
+  try {
+    await client.connect();
+    const sent = (await client.list()).find((f) => f.specialUse === "\\Sent");
+    if (sent) {
+      await client.mailboxOpen(sent.path, { readOnly: true });
+      const existing = await client.search({ header: { "message-id": messageId } }, { uid: true });
+      if (!existing || !existing.length) await client.append(sent.path, mime, ["\\Seen"], date);
+    }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    client.close();
+  }
+}
+
 /** Uses only stored routing metadata, never client-supplied From/To/thread headers. */
 export async function sendMailboxReply(
   inboundId: string,
@@ -546,72 +661,31 @@ export async function sendMailboxReply(
   if (claimed !== fresh)
     throw new Error("This reply is already being sent. Refresh before retrying.");
   liveSends.add(requestId);
-  const smtp = smtpTransport(connection);
-  let submitted = false;
   try {
-    // Authentication/connect failures are definitive: no DATA was submitted.
-    await smtp.verify();
-    const mime = await nodemailer
-      .createTransport({ streamTransport: true, buffer: true, newline: "windows" })
-      .sendMail({
-        from: connection.address,
-        to: message.to,
-        subject: message.subject,
-        text: body,
-        messageId: message.messageId!,
-        inReplyTo: inbound.messageId!,
-        references: message.references,
-        date: new Date(message.at),
-        disableFileAccess: true,
-        disableUrlAccess: true,
-      });
-    submitted = true;
-    const accepted = await smtp.sendMail({
-      envelope: { from: connection.address, to: message.to },
-      raw: mime.message,
+    const date = new Date(message.at);
+    const mime = await submitMailboxMail(connection, {
+      from: connection.address,
+      to: message.to,
+      subject: message.subject,
+      text: body,
+      messageId: message.messageId!,
+      inReplyTo: inbound.messageId!,
+      references: message.references,
+      date,
     });
-    if (!accepted.accepted?.length) {
-      submitted = false; // SMTP explicitly accepted no recipients; retry is safe.
-      throw new Error("SMTP did not accept the reply.");
-    }
     store.put(message);
     store.saveAttempt({ ...fresh, status: "sent" });
     ledger.clearInboxDraft(message.threadKey);
-    // Gmail stores SMTP sends automatically. Other IMAP providers need an explicit Sent copy.
-    if (!/gmail\.com$/i.test(connection.smtp.host)) {
-      const client = mailboxClient(connection);
-      try {
-        await client.connect();
-        const sent = (await client.list()).find((f) => f.specialUse === "\\Sent");
-        if (sent) {
-          await client.mailboxOpen(sent.path, { readOnly: true });
-          const existing = await client.search(
-            { header: { "message-id": message.messageId! } },
-            { uid: true },
-          );
-          if (!existing || !existing.length)
-            await client.append(
-              sent.path,
-              mime.message as Buffer,
-              ["\\Seen"],
-              new Date(message.at),
-            );
-        }
-      } catch {
-        // Submission succeeded. A Sent-copy failure must never turn into a retry of DATA.
-        store.setState(`sent-copy:${requestId}`, {
-          messageId: message.messageId,
-          error: "Reply sent; mailbox Sent copy could not be saved.",
-        });
-      } finally {
-        client.close();
-      }
+    if (!(await saveSentCopy(connection, mime, message.messageId!, date))) {
+      // Submission succeeded. A Sent-copy failure must never turn into a retry of DATA.
+      store.setState(`sent-copy:${requestId}`, {
+        messageId: message.messageId,
+        error: "Reply sent; mailbox Sent copy could not be saved.",
+      });
     }
     return message;
   } catch (err) {
-    // An explicit SMTP rejection is definitive; a disconnect after DATA is not.
-    const code = (err as { responseCode?: number }).responseCode;
-    const definite = !submitted || (code != null && code >= 400 && code < 600);
+    const definite = err instanceof MailboxSubmitError ? err.definite : true;
     store.saveAttempt({
       ...fresh,
       status: definite ? "failed" : "uncertain",
@@ -619,7 +693,6 @@ export async function sendMailboxReply(
         ? "SMTP rejected the reply. Check your connection and retry."
         : "Send outcome unknown; checking Sent mail before retry.",
     });
-    // Transport exceptions can contain authentication details; do not attach them as causes.
     // oxlint-disable-next-line preserve-caught-error
     throw new Error(
       definite
@@ -628,6 +701,42 @@ export async function sendMailboxReply(
     );
   } finally {
     liveSends.delete(requestId);
-    smtp.close();
   }
+}
+
+/** A new (non-reply) email sent straight through a mailbox's own SMTP. */
+export interface MailboxInitialInput {
+  identityId: string;
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  fromName?: string | null;
+  /** Deterministic per intended email (see `outboundMessageId`). */
+  messageId: string;
+}
+
+/**
+ * Send one new email through a mailbox identity's SMTP. The caller owns
+ * idempotency: it claims the semantic key in `outbound_sends` first and
+ * passes the same Message-ID on every attempt. Throws `MailboxSubmitError`
+ * (definite vs uncertain) on failure.
+ */
+export async function sendMailboxInitial(
+  input: MailboxInitialInput,
+): Promise<{ messageId: string; from: string; sentCopySaved: boolean }> {
+  const connection = await mailboxConnection(input.identityId);
+  const date = new Date();
+  const name = input.fromName?.trim();
+  const mime = await submitMailboxMail(connection, {
+    from: name ? { name, address: connection.address } : connection.address,
+    to: [input.to],
+    subject: input.subject,
+    text: input.text,
+    html: input.html,
+    messageId: input.messageId,
+    date,
+  });
+  const sentCopySaved = await saveSentCopy(connection, mime, input.messageId, date);
+  return { messageId: input.messageId, from: connection.address, sentCopySaved };
 }

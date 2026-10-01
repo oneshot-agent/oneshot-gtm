@@ -131,6 +131,38 @@ describe("buildIdentityPoolRequest", () => {
     expect(buildIdentityPoolRequest(base)).toEqual({ ok: true, request: {}, empty: true });
   });
 
+  it("a transport edit on a Smartlead mailbox rides with its cap edit, once per id", () => {
+    const sl = "smartlead:jane@mail.example.com";
+    const staged: IdentityPoolStaging = {
+      ...base,
+      identities: [...base.identities, { id: sl, maxPerDay: 30, sendVia: "provider" }],
+    };
+    expect(buildIdentityPoolRequest({ ...staged, sendViaEdits: { [sl]: "provider" } })).toEqual({
+      ok: true,
+      request: {},
+      empty: true,
+    });
+    expect(buildIdentityPoolRequest({ ...staged, sendViaEdits: { [sl]: "smtp" } })).toEqual({
+      ok: true,
+      request: { identityUpdates: [{ id: sl, sendVia: "smtp" }] },
+      empty: false,
+    });
+    expect(
+      buildIdentityPoolRequest({
+        ...staged,
+        capEdits: { [sl]: "20" },
+        sendViaEdits: { [sl]: "smtp" },
+      }),
+    ).toMatchObject({ request: { identityUpdates: [{ id: sl, maxPerDay: 20, sendVia: "smtp" }] } });
+    // Non-Smartlead identities carry no transport; a stray edit is dropped.
+    expect(
+      buildIdentityPoolRequest({
+        ...staged,
+        sendViaEdits: { "oneshot:jane@mail.acme.dev": "smtp" },
+      }),
+    ).toEqual({ ok: true, request: {}, empty: true });
+  });
+
   it("a cap edit equal to the stored cap is not an update", () => {
     const r = buildIdentityPoolRequest({
       ...base,

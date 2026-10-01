@@ -70,6 +70,39 @@ interface CheckRow {
   delivered_at: string;
   checked_at: string;
   error: string | null;
+  /** 1 when the receipt belongs to a keyed send (`outbound_sends`). */
+  keyed: number;
+}
+
+/** Check columns plus whether the send was keyed (one Message-ID, confirmed by the outbound sweep). */
+const CHECK_COLS =
+  "c.*, EXISTS (SELECT 1 FROM outbound_sends o WHERE o.receipt_id = c.receipt_id) AS keyed";
+
+const CANDIDATE_SELECT = `SELECT r.id AS receipt_id,
+                (SELECT se.id FROM sequence_events se WHERE se.receipt_id = r.id ORDER BY se.id LIMIT 1) AS sequence_event_id,
+                (SELECT se.prospect_id FROM sequence_events se WHERE se.receipt_id = r.id ORDER BY se.id LIMIT 1) AS prospect_id,
+                (SELECT q.id FROM target_queue q, json_each(q.last_draft_json, '$.receiptIds') j
+                   WHERE q.last_draft_json IS NOT NULL AND json_valid(q.last_draft_json) AND j.value = r.id LIMIT 1) AS queue_id,
+                json_extract(r.signed_receipt, '$.provider') AS transport,
+                r.sender_identity AS identity,
+                json_extract(r.signed_receipt, '$.to') AS recipient,
+                json_extract(r.signed_receipt, '$.subject') AS subject,
+                r.created_at
+           FROM receipts r`;
+
+function toCandidate(row: CandidateRow): DeliveryCandidate | null {
+  if (!row.recipient || typeof row.recipient !== "string") return null;
+  return {
+    receiptId: row.receipt_id,
+    sequenceEventId: row.sequence_event_id,
+    queueId: row.queue_id,
+    prospectId: row.prospect_id,
+    transport: row.transport as DeliveryTransport,
+    identity: row.identity,
+    recipient: row.recipient.trim().toLowerCase(),
+    subject: (row.subject ?? "").trim(),
+    sentAt: sqliteToIso(row.created_at),
+  };
 }
 
 function parseList(raw: string): string[] {
@@ -92,6 +125,7 @@ function toView(row: CheckRow): SendDeliveryView {
     transport: row.transport as DeliveryTransport,
     identity: row.identity,
     error: row.error,
+    keyed: row.keyed === 1,
   };
 }
 
@@ -121,43 +155,44 @@ export class SendDeliveryStore {
   }): DeliveryCandidate[] {
     const rows = this.db
       .query<CandidateRow, [string, string, string, string, number]>(
-        `SELECT r.id AS receipt_id,
-                (SELECT se.id FROM sequence_events se WHERE se.receipt_id = r.id ORDER BY se.id LIMIT 1) AS sequence_event_id,
-                (SELECT se.prospect_id FROM sequence_events se WHERE se.receipt_id = r.id ORDER BY se.id LIMIT 1) AS prospect_id,
-                (SELECT q.id FROM target_queue q, json_each(q.last_draft_json, '$.receiptIds') j
-                   WHERE q.last_draft_json IS NOT NULL AND json_valid(q.last_draft_json) AND j.value = r.id LIMIT 1) AS queue_id,
-                json_extract(r.signed_receipt, '$.provider') AS transport,
-                r.sender_identity AS identity,
-                json_extract(r.signed_receipt, '$.to') AS recipient,
-                json_extract(r.signed_receipt, '$.subject') AS subject,
-                r.created_at
-           FROM receipts r
+        `${CANDIDATE_SELECT}
           WHERE r.call_type = 'email.send'
             AND json_valid(r.signed_receipt)
             AND json_extract(r.signed_receipt, '$.provider') IN (?, ?)
             AND r.sender_identity IS NOT NULL
             AND julianday(r.created_at) BETWEEN julianday(?) AND julianday(?)
             ${opts.includeChecked ? "" : "AND NOT EXISTS (SELECT 1 FROM send_delivery_checks c WHERE c.receipt_id = r.id)"}
+            -- Keyed sends are confirmed by the outbound_sends sweep instead.
+            AND NOT EXISTS (SELECT 1 FROM outbound_sends o WHERE o.receipt_id = r.id)
           ORDER BY r.id
           LIMIT ?`,
       )
       .all(...DELIVERY_CHECKED_TRANSPORTS, opts.sinceIso, opts.untilIso, opts.limit);
     const out: DeliveryCandidate[] = [];
     for (const row of rows) {
-      if (!row.recipient || typeof row.recipient !== "string") continue;
-      out.push({
-        receiptId: row.receipt_id,
-        sequenceEventId: row.sequence_event_id,
-        queueId: row.queue_id,
-        prospectId: row.prospect_id,
-        transport: row.transport as DeliveryTransport,
-        identity: row.identity,
-        recipient: row.recipient.trim().toLowerCase(),
-        subject: (row.subject ?? "").trim(),
-        sentAt: sqliteToIso(row.created_at),
-      });
+      const c = toCandidate(row);
+      if (c) out.push(c);
     }
     return out;
+  }
+
+  /**
+   * The candidate for one receipt whatever its check state, for the keyed-send
+   * sweep to record its verdict against. Replies count too. Null when the
+   * receipt is not an email on a checked transport.
+   */
+  candidateFor(receiptId: number): DeliveryCandidate | null {
+    const row = this.db
+      .query<CandidateRow, [number, string, string]>(
+        `${CANDIDATE_SELECT}
+          WHERE r.id = ?
+            AND r.call_type IN ('email.send', 'email.reply')
+            AND json_valid(r.signed_receipt)
+            AND json_extract(r.signed_receipt, '$.provider') IN (?, ?)
+            AND r.sender_identity IS NOT NULL`,
+      )
+      .get(receiptId, ...DELIVERY_CHECKED_TRANSPORTS);
+    return row ? toCandidate(row) : null;
   }
 
   /** Insert or replace the result for one receipt. */
@@ -199,7 +234,9 @@ export class SendDeliveryStore {
   /** The check for one receipt, if any. */
   forReceipt(receiptId: number): SendDeliveryView | null {
     const row = this.db
-      .query<CheckRow, [number]>("SELECT * FROM send_delivery_checks WHERE receipt_id = ?")
+      .query<CheckRow, [number]>(
+        `SELECT ${CHECK_COLS} FROM send_delivery_checks c WHERE receipt_id = ?`,
+      )
       .get(receiptId);
     return row ? toView(row) : null;
   }
@@ -213,7 +250,7 @@ export class SendDeliveryStore {
     if (ids.length === 0) return null;
     const rows = this.db
       .query<CheckRow, number[]>(
-        `SELECT * FROM send_delivery_checks WHERE receipt_id IN (${ids.map(() => "?").join(",")})`,
+        `SELECT ${CHECK_COLS} FROM send_delivery_checks c WHERE receipt_id IN (${ids.map(() => "?").join(",")})`,
       )
       .all(...ids);
     const best = rows.toSorted(
@@ -227,7 +264,7 @@ export class SendDeliveryStore {
   forSequenceEvent(sequenceEventId: number): SendDeliveryView | null {
     const row = this.db
       .query<CheckRow, [number]>(
-        "SELECT * FROM send_delivery_checks WHERE sequence_event_id = ? ORDER BY checked_at DESC LIMIT 1",
+        `SELECT ${CHECK_COLS} FROM send_delivery_checks c WHERE sequence_event_id = ? ORDER BY checked_at DESC LIMIT 1`,
       )
       .get(sequenceEventId);
     return row ? toView(row) : null;
@@ -237,7 +274,7 @@ export class SendDeliveryStore {
   forProspectSteps(prospectId: number): Map<string, SendDeliveryView> {
     const rows = this.db
       .query<CheckRow & { play_name: string; step_index: number }, [number]>(
-        `SELECT c.*, se.play_name, se.step_index
+        `SELECT ${CHECK_COLS}, se.play_name, se.step_index
            FROM send_delivery_checks c
            JOIN sequence_events se ON se.id = c.sequence_event_id
           WHERE se.prospect_id = ?
@@ -253,7 +290,7 @@ export class SendDeliveryStore {
   recentMismatches(sinceIso: string): DeliveryMismatch[] {
     const rows = this.db
       .query<CheckRow, [string]>(
-        `SELECT * FROM send_delivery_checks
+        `SELECT ${CHECK_COLS} FROM send_delivery_checks c
           WHERE status IN ('duplicate', 'not_found') AND julianday(sent_at) >= julianday(?)
           ORDER BY sent_at DESC`,
       )

@@ -16,6 +16,7 @@ import {
   trackSend,
   verifyEmail,
   withDeadline,
+  outboundSendKey,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { createHash } from "node:crypto";
@@ -1323,6 +1324,8 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
           ...(opts.allowContactedElsewhere ? { allowContactedElsewhere: true } : {}),
           subject: opts.draft.subject,
           body: opts.draft.body,
+          // One first touch per (play, recipient): a re-draft keeps the key.
+          idempotencyKey: outboundSendKey({ play: opts.playName, who: opts.to, step: 0 }),
         },
         {
           playName: opts.playName,

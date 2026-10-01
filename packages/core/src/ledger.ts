@@ -117,6 +117,7 @@ import {
 } from "./ledger-outcomes.ts";
 import { IcpProposalStore } from "./icp-proposal-store.ts";
 import { SendDeliveryStore } from "./ledger-delivery.ts";
+import { OutboundSendStore } from "./ledger-outbound.ts";
 import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.ts";
 import { QueueStore } from "./ledger-queue.ts";
 import {
@@ -259,6 +260,8 @@ export class Ledger {
   readonly icpProposals: IcpProposalStore;
   /** Sent-folder delivery checks for sends with no idempotency key (ledger-delivery.ts). */
   readonly sendDelivery: SendDeliveryStore;
+  /** One row per intended outbound email, keyed by a semantic idempotency key (ledger-outbound.ts). */
+  readonly outboundSends: OutboundSendStore;
   /**
    * Draft versions for cadence follow-ups (ledger-drafts.ts). Intro drafts
    * are versioned by `QueueStore` through its own instance. The table is the
@@ -317,6 +320,7 @@ export class Ledger {
     this.drafts = new DraftVersionStore(this.db);
     this.icpProposals = new IcpProposalStore(this.db);
     this.sendDelivery = new SendDeliveryStore(this.db);
+    this.outboundSends = new OutboundSendStore(this.db);
   }
 
   getDirectMail(id: string): DirectMailDraft | null {

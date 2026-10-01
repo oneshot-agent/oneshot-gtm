@@ -5,12 +5,15 @@ import { Badge } from "../primitives/Badge.tsx";
  * What the sending mailbox's Sent folder held for this send, when it is not
  * exactly one copy: the mail provider retried underneath us (`duplicate`), or
  * no copy turned up in the check window (`not_found`, a possible silent drop).
- * Null for a clean check or none at all.
+ * A keyed send went out under one fixed Message-ID and is never resent, so
+ * its `not_found` means "accepted, not seen in Sent". Null for a clean check
+ * or none at all.
  */
 export function deliveryWarningText(d: SendDeliveryView | null | undefined): string | null {
   if (!d) return null;
   if (d.status === "duplicate") return `Delivered ${d.observed ?? "?"}× by the mail provider`;
-  if (d.status === "not_found") return "Not found in Sent";
+  if (d.status === "not_found")
+    return d.keyed ? "Accepted, but not found in Sent" : "Not found in Sent";
   return null;
 }
 
@@ -51,7 +54,15 @@ export function DeliveryWarning({ delivery }: { delivery: SendDeliveryView | nul
             {delivery.deliveredAt.length > 0 && (
               <> ({delivery.deliveredAt.map(clock).join(", ")})</>
             )}
-            . The provider retried underneath the send; the recipient likely got every copy.
+            .{" "}
+            {delivery.keyed
+              ? "Every copy carries the same Message-ID, so most mail clients show one email."
+              : "The provider retried underneath the send; the recipient likely got every copy."}
+          </p>
+        ) : delivery.keyed ? (
+          <p>
+            The {delivery.transport} mailbox's server accepted this email, but no copy turned up in
+            its Sent folder within 30 minutes. It was not resent.
           </p>
         ) : (
           <p>

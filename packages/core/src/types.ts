@@ -46,6 +46,14 @@ export interface EmailIdentity {
   maxPerDay: number | null;
   /** Auto ramp from first send: cap(day) = start + floor(weeks)*increment, clamped to maxPerDay. Null = no ramp. */
   warmup: { startPerDay: number; incrementPerWeek: number } | null;
+  /**
+   * Smartlead identities only: how a NEW (non-reply) email leaves. "provider"
+   * (default) = the provider's send API. "smtp" = straight through the
+   * mailbox's own SMTP with a deterministic Message-ID and an idempotency key,
+   * so a retry can never become a second copy. The provider still does warmup.
+   * The identity id is unchanged either way, so pins, caps and warmup carry on.
+   */
+  sendVia?: "provider" | "smtp";
 }
 
 /** One persisted inbound reply (inbox_replies, v21): column-shaped row. */

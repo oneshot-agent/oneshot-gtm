@@ -42,6 +42,7 @@ import {
   linkedInOutreachAccount,
   isWithdrawnStatus,
   type LinkedInOperation,
+  outboundSendKey,
 } from "@oneshot-gtm/core";
 import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
@@ -1154,7 +1155,10 @@ export async function advanceCadence(
           action: "skipped",
           payload: null,
           receiptIds: [],
-          note: "deferred: daily send caps reached",
+          note:
+            (err as Error).name === "UncertainSendError"
+              ? `deferred: ${(err as Error).message}`
+              : "deferred: daily send caps reached",
         };
       }
       throw err;
@@ -1990,7 +1994,17 @@ async function dispatchStepImpl(input: {
   if (input.payload.kind === "email") {
     if (!input.prospectEmail) return { receiptIds, skipReason: "prospect has no email" };
     const send = await sendEmail(
-      { to: input.prospectEmail, subject: input.payload.subject, body: input.payload.body },
+      {
+        to: input.prospectEmail,
+        subject: input.payload.subject,
+        body: input.payload.body,
+        // One email per (play, prospect, step): a re-drafted follow-up keeps the key.
+        idempotencyKey: outboundSendKey({
+          play: input.playName,
+          who: `prospect:${input.prospectId}`,
+          step: input.stepIndex,
+        }),
+      },
       {
         playName: input.playName,
         memo: `${input.playName} step ${input.stepIndex}${labelTail} → ${input.prospectEmail}`,

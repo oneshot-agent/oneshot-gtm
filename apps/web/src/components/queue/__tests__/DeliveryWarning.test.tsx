@@ -30,6 +30,23 @@ describe("DeliveryWarning", () => {
     expect(renderToStaticMarkup(<DeliveryBadge delivery={missing} />)).toContain("not in Sent");
   });
 
+  it("words a keyed send's verdicts by its one Message-ID", () => {
+    const missing = {
+      ...base,
+      status: "not_found" as const,
+      observed: 0,
+      deliveredAt: [],
+      keyed: true,
+    };
+    expect(deliveryWarningText(missing)).toBe("Accepted, but not found in Sent");
+    expect(renderToStaticMarkup(<DeliveryWarning delivery={missing} />)).toContain(
+      "It was not resent.",
+    );
+    const dup = renderToStaticMarkup(<DeliveryWarning delivery={{ ...base, keyed: true }} />);
+    expect(dup).toContain("same Message-ID");
+    expect(dup).not.toContain("got every copy");
+  });
+
   it("renders nothing for a clean or missing check", () => {
     const clean = { ...base, status: "ok" as const, observed: 1 };
     expect(deliveryWarningText(clean)).toBeNull();

@@ -48,6 +48,8 @@ vi.mock("../src/ledger.ts", async () => {
       suppressionFor: () => null,
       contactSuppressionFor: () => null,
       recordReceipt,
+      // A real keyed-send ledger, fresh per test (see beforeEach).
+      outboundSends: scratch.outboundSends,
       // Rotation dependencies for the sendEmail() path: fresh prospect, no pins.
       getSenderAssignment: () => null,
       hasPriorEmailSend: () => false,
@@ -60,6 +62,8 @@ vi.mock("../src/ledger.ts", async () => {
 
 const { replyEmail, replySubject, sendEmail } = await import("../src/oneshot.ts");
 const { _resetGmailCache } = await import("../src/gmail.ts");
+const { Ledger } = await import("../src/ledger.ts");
+let scratch: InstanceType<typeof Ledger>;
 
 const GMAIL_KEYS = ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"] as const;
 let envSnapshot: Record<string, string | undefined> = {};
@@ -72,6 +76,7 @@ beforeEach(() => {
   }
   _resetGmailCache();
   recordReceipt.mockClear();
+  scratch = new Ledger(":memory:");
   cfgOverride = {
     emailIdentities: [
       { id: "gmail:jane@gmail.com", provider: "gmail", maxPerDay: 50, warmup: null },

@@ -35,6 +35,8 @@ vi.mock("../src/ledger.ts", async () => {
       suppressionFor: () => null,
       contactSuppressionFor: () => null,
       recordReceipt,
+      // A real keyed-send ledger, fresh per test (see beforeEach).
+      outboundSends: scratch.outboundSends,
       // Rotation routing dependencies: fresh prospect, no pins, no history.
       getSenderAssignment: () => null,
       hasPriorEmailSend: () => false,
@@ -47,6 +49,8 @@ vi.mock("../src/ledger.ts", async () => {
 
 const { sendEmail, listInbox } = await import("../src/oneshot.ts");
 const { _resetGmailCache } = await import("../src/gmail.ts");
+const { Ledger } = await import("../src/ledger.ts");
+let scratch: InstanceType<typeof Ledger>;
 
 const GMAIL_KEYS = ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"] as const;
 let envSnapshot: Record<string, string | undefined> = {};
@@ -59,6 +63,7 @@ beforeEach(() => {
   }
   _resetGmailCache();
   recordReceipt.mockClear();
+  scratch = new Ledger(":memory:");
   cfgOverride = {};
   tokenStoreOverride = {};
 });
@@ -278,6 +283,56 @@ describe("listInbox — multi-identity merge", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+const sends = (m: ReturnType<typeof vi.fn>) =>
+  m.mock.calls.filter(([u]) => String(u).endsWith("/messages/send")).length;
+
+describe("sendEmail — gmail keyed sends", () => {
+  it("replays a second send under the same key instead of calling Gmail again", async () => {
+    const fetchMock = stubGmailFetch();
+    const key = "gtm:test:email:show-hn:keyed@acme.com:0";
+    const first = await sendEmail(
+      { to: "keyed@acme.com", subject: "hi", body: "v1", idempotencyKey: key },
+      { playName: "show-hn" },
+    );
+    const again = await sendEmail(
+      { to: "keyed@acme.com", subject: "hi again", body: "v2", idempotencyKey: key },
+      { playName: "show-hn" },
+    );
+    expect(sends(fetchMock)).toBe(1);
+    expect(again.result.request_id).toBe(first.result.request_id);
+    expect(scratch.outboundSends.get(key)).toMatchObject({
+      status: "submitted",
+      transport: "gmail",
+      messageId: "gm-123",
+    });
+  });
+
+  it("a dropped connection is uncertain: the next attempt waits for the Sent check", async () => {
+    const fetchMock = stubGmailFetch();
+    const base = fetchMock.getMockImplementation() as (u: string | URL) => Promise<Response>;
+    fetchMock.mockImplementation(async (url: string | URL) => {
+      if (String(url).endsWith("/messages/send")) throw new TypeError("fetch failed");
+      return base(url);
+    });
+    const key = "gtm:test:email:show-hn:dropped@acme.com:0";
+    const { UncertainSendError } = await import("../src/oneshot.ts");
+    await expect(
+      sendEmail(
+        { to: "dropped@acme.com", subject: "hi", body: "b", idempotencyKey: key },
+        { playName: "show-hn" },
+      ),
+    ).rejects.toBeInstanceOf(UncertainSendError);
+    await expect(
+      sendEmail(
+        { to: "dropped@acme.com", subject: "hi", body: "b", idempotencyKey: key },
+        { playName: "show-hn" },
+      ),
+    ).rejects.toBeInstanceOf(UncertainSendError);
+    expect(sends(fetchMock)).toBe(1);
+    expect(scratch.outboundSends.get(key)?.status).toBe("uncertain");
   });
 });
 

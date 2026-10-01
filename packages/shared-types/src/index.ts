@@ -321,8 +321,17 @@ export interface SetupRequest {
   sendingDomain?: string;
   /** Email transport: OneShot SDK (wallet-owned domain) or the founder's own Gmail/Workspace account. Legacy: ignored once the identities pool exists. */
   emailProvider?: "oneshot" | "gmail";
-  /** Per-identity daily-cap edits ({ id, maxPerDay }). Null maxPerDay = uncapped. */
-  identityUpdates?: Array<{ id: string; maxPerDay: number | null }>;
+  /**
+   * Per-identity edits. `maxPerDay`: daily cap, null = uncapped, absent = unchanged.
+   * `sendVia` (Smartlead mailboxes): "smtp" sends straight through the
+   * mailbox's own SMTP under one fixed Message-ID per email; refused unless its
+   * SMTP + IMAP credentials resolve. "provider" (the default) uses Smartlead.
+   */
+  identityUpdates?: Array<{
+    id: string;
+    maxPerDay?: number | null;
+    sendVia?: "provider" | "smtp";
+  }>;
   /**
    * New sending identities to add to the pool. OneShot: a wallet-owned domain
    * (must be one returned by the provisioned-domain pool) + a mailbox
@@ -486,6 +495,12 @@ export interface SenderIdentityView {
   mailbox: string | null;
   maxPerDay: number | null;
   warmup: { startPerDay: number; incrementPerWeek: number } | null;
+  /**
+   * Smartlead mailboxes only: "smtp" sends through the mailbox's own SMTP
+   * under one fixed Message-ID per email; "provider" goes through Smartlead.
+   * Null for other providers. Absent in older API responses.
+   */
+  sendVia?: "provider" | "smtp" | null;
   /** This mailbox's own sends today. */
   sentToday: number;
   /**
@@ -588,6 +603,12 @@ export interface SendDeliveryView {
   transport: "smartlead" | "gmail";
   identity: string;
   error: string | null;
+  /**
+   * The send carried an idempotency key and one fixed Message-ID: the outbound
+   * sweep confirmed it by that id, and it is never resent. Absent in older API
+   * responses.
+   */
+  keyed?: boolean;
 }
 
 export interface QueueRowView {

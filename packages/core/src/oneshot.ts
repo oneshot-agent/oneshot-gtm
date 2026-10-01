@@ -33,7 +33,12 @@ import { getLedger } from "./ledger.ts";
 import { triggerAngleRefresh } from "./angle.ts";
 import { loadConfig, oneshotEnvReady } from "./config.ts";
 import { demoFixture, demoMode } from "./demo.ts";
-import { claimContactTouch, describeTouch, recordContactTouch } from "./shared-db.ts";
+import {
+  claimContactTouch,
+  currentWorkspaceName,
+  describeTouch,
+  recordContactTouch,
+} from "./shared-db.ts";
 import { htmlToText } from "./html-text.ts";
 import { logEvent } from "./events.ts";
 import {
@@ -44,7 +49,15 @@ import {
   sendGmailMessage,
 } from "./gmail.ts";
 import { gmailAccountFor, resolveIdentities } from "./identities.ts";
-import { listMailboxInbox, listMailboxBounces, sendMailboxReply } from "./mailbox.ts";
+import { validateSendVia } from "./identity-send-via.ts";
+import type { OutboundStatus } from "./ledger-outbound.ts";
+import {
+  listMailboxInbox,
+  listMailboxBounces,
+  MailboxSubmitError,
+  sendMailboxInitial,
+  sendMailboxReply,
+} from "./mailbox.ts";
 import { sendViaSmartlead, smartleadApiKey } from "./smartlead.ts";
 import { parallelMap, withDeadline } from "./parallel.ts";
 import {
@@ -79,6 +92,14 @@ export interface SendEmailInput {
    * `contacted-elsewhere` flag and is choosing to send anyway.
    */
   allowContactedElsewhere?: boolean;
+  /**
+   * One key per INTENDED email, derived from what the email is (workspace,
+   * play, recipient or prospect, step), never from its text, so a re-draft of
+   * the same email keeps the same key. Claimed in `outbound_sends` before any
+   * transport is called: a key that was already sent is replayed, not resent.
+   * Omitted: falls back to a content hash (`contentSendKey`).
+   */
+  idempotencyKey?: string;
 }
 
 export interface ResearchInput {
@@ -276,12 +297,329 @@ export function toHtmlBody(text: string): string {
 }
 
 /**
+ * The email's outcome is unknown: it may already be out. Never resend on this
+ * error. The confirm sweep looks for the email's Message-ID in the mailbox's
+ * Sent folder and settles the key as confirmed (it went out) or failed (a
+ * retry under the same Message-ID is safe).
+ */
+export class UncertainSendError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UncertainSendError";
+  }
+}
+
+/**
+ * The semantic idempotency key for one intended email: what it is, never what
+ * it says. `who` is the recipient email or a stable prospect handle; `step` is
+ * the cadence step index or a short label for one-off sends. Scoped to the
+ * active workspace, so two workspaces' sends never share a key.
+ */
+export function outboundSendKey(parts: {
+  play: string;
+  who: string | number;
+  step: string | number;
+}): string {
+  const who = String(parts.who).trim().toLowerCase();
+  return `gtm:${currentWorkspaceName()}:email:${parts.play}:${who}:${parts.step}`;
+}
+
+/**
+ * Fallback key when a caller passes none: today's content hash, namespaced so
+ * it can never collide with a semantic key. Keyed callers never use it.
+ */
+export function contentSendKey(identityId: string, input: SendEmailInput): string {
+  return `content:${emailIdempotencyKey([identityId, input.to, input.subject, input.body])}`;
+}
+
+/**
+ * Deterministic Message-ID for one intended email: the same key always yields
+ * the same id, so a retry after a definite failure, or a second attempt that
+ * slipped past every other guard, is one message to the recipient, and the
+ * confirm sweep can find it in Sent by header.
+ */
+export function outboundMessageId(key: string, fromAddress: string): string {
+  const domain = fromAddress.split("@")[1]?.trim().toLowerCase() || "localhost";
+  return `<${createHash("sha256").update(key).digest("hex").slice(0, 32)}@${domain}>`;
+}
+
+/** A Gmail API failure the server answered (or auth/config) never sent anything. */
+function gmailFailureIsDefinite(err: unknown): boolean {
+  const msg = (err as Error)?.message ?? "";
+  return /Gmail (API failed|auth rejected|credentials missing|token (exchange|refresh) failed)|no Gmail refresh token/i.test(
+    msg,
+  );
+}
+
+type SendOut = { result: EmailResult; receiptId: number };
+
+/**
+ * Run one transport send under an `outbound_sends` claim. `send` performs the
+ * actual submission and records the receipt. Verdicts:
+ * - `send`: submit; on success mark submitted (or confirmed, for a transport
+ *   that owns delivery); on a definite failure mark failed and rethrow; on an
+ *   unknown outcome mark uncertain and throw `UncertainSendError`.
+ * - `already_sent`: replay the earlier outcome instead of sending again.
+ * - `in_flight` / `uncertain`: refuse with `UncertainSendError`.
+ */
+async function keyedSend(args: {
+  key: string;
+  identity: EmailIdentity;
+  transport: string;
+  input: SendEmailInput;
+  ctx: CallContext;
+  messageId: string | null;
+  isDefinite: (err: unknown) => boolean;
+  settledStatus: "submitted" | "confirmed";
+  send: (messageId: string | null) => Promise<SendOut & { messageId: string | null }>;
+}): Promise<SendOut> {
+  const store = getLedger().outboundSends;
+  const claim = store.claim({
+    key: args.key,
+    identityId: args.identity.id,
+    transport: args.transport,
+    recipient: args.input.to.trim().toLowerCase(),
+    subject: args.input.subject,
+    messageId: args.messageId,
+  });
+  if (claim.verdict === "already_sent") {
+    const prior = claim.send;
+    logEvent("send.keyed.replayed", { key_hash: hashKey(args.key), status: prior.status });
+    const id = prior.messageId ?? args.key;
+    let receiptId = prior.receiptId;
+    if (receiptId == null) {
+      // Sent, but the process died before the receipt: record it now, once.
+      receiptId = recordCallReceipt({
+        ctx: args.ctx,
+        callType: "email.send",
+        signedReceipt: {
+          provider: args.identity.provider,
+          transport: args.transport,
+          message_id: id,
+          to: args.input.to,
+          subject: args.input.subject,
+          replayed: true,
+        },
+        costUsd: 0,
+        oneshotRequestId: id,
+        senderIdentity: args.identity.id,
+      });
+      store.mark(args.key, prior.status, { receiptId });
+    }
+    return {
+      result: {
+        status: "sent",
+        request_id: id,
+        cost: 0,
+        email: { id, provider_message_id: id, status: "sent" },
+      } as EmailResult,
+      receiptId,
+    };
+  }
+  if (claim.verdict !== "send") {
+    logEvent("send.keyed.blocked", { key_hash: hashKey(args.key), verdict: claim.verdict });
+    throw new UncertainSendError(
+      claim.verdict === "in_flight"
+        ? `an earlier attempt of this email to ${args.input.to} is still in flight — not sending again`
+        : `an earlier attempt of this email to ${args.input.to} has an unknown outcome — checking Sent before any retry`,
+    );
+  }
+  try {
+    const out = await args.send(claim.send.messageId);
+    store.mark(args.key, args.settledStatus, {
+      messageId: out.messageId,
+      receiptId: out.receiptId,
+    });
+    return { result: out.result, receiptId: out.receiptId };
+  } catch (err) {
+    if (args.isDefinite(err)) {
+      store.mark(args.key, "failed", { error: ((err as Error).message ?? "").slice(0, 200) });
+      throw err;
+    }
+    store.mark(args.key, "uncertain", {
+      error: "send outcome unknown; checking Sent before any retry",
+    });
+    logEvent("send.keyed.uncertain", { key_hash: hashKey(args.key), transport: args.transport });
+    throw new UncertainSendError(
+      `the send to ${args.input.to} may have gone out — checking Sent before any retry`,
+    );
+  }
+}
+
+function hashKey(key: string): string {
+  return createHash("sha256").update(key).digest("hex").slice(0, 12);
+}
+
+/**
+ * Direct-SMTP send through a Smartlead mailbox (`sendVia: "smtp"`): the
+ * mailbox's own SMTP, a deterministic Message-ID, and the `outbound_sends`
+ * claim, so a provider-side retry can no longer turn one send into several.
+ * Same receipt contract as the other mailbox transports (cost 0).
+ */
+async function sendEmailViaMailboxSmtp(
+  input: SendEmailInput,
+  ctx: CallContext,
+  identity: EmailIdentity,
+  key: string,
+) {
+  const cfg = loadConfig();
+  const fromEmail = identity.address?.trim().toLowerCase();
+  if (!fromEmail) {
+    throw new Error(`no address on sender identity '${identity.id}' — re-add it`);
+  }
+  // Once the server has accepted the message, nothing after it (the receipt
+  // write) can make the failure definite: a retry would be a second email.
+  let accepted = false;
+  return keyedSend({
+    key,
+    identity,
+    transport: "smtp",
+    input,
+    ctx,
+    messageId: outboundMessageId(key, fromEmail),
+    isDefinite: (err) => !accepted && (err instanceof MailboxSubmitError ? err.definite : true),
+    settledStatus: "submitted",
+    send: async (messageId) => {
+      const sent = await sendMailboxInitial({
+        identityId: identity.id,
+        to: input.to,
+        subject: input.subject,
+        text: input.body,
+        html: toHtmlBody(input.body),
+        fromName: cfg.founderName,
+        messageId: messageId ?? outboundMessageId(key, fromEmail),
+      });
+      accepted = true;
+      const result: EmailResult = {
+        status: "sent",
+        request_id: sent.messageId,
+        cost: 0,
+        email: { id: sent.messageId, provider_message_id: sent.messageId, status: "sent" },
+      };
+      const receiptId = recordCallReceipt({
+        ctx,
+        callType: "email.send",
+        signedReceipt: {
+          provider: "smartlead",
+          transport: "smtp",
+          message_id: sent.messageId,
+          from: sent.from,
+          to: input.to,
+          subject: input.subject,
+          memo: ctx.memo ?? `${ctx.playName} email.send`,
+        },
+        costUsd: 0,
+        oneshotRequestId: sent.messageId,
+        senderIdentity: identity.id,
+      });
+      return { result, receiptId, messageId: sent.messageId };
+    },
+  });
+}
+
+export interface TestSendInput {
+  /** A Smartlead mailbox identity; its direct SMTP is used whatever its `sendVia`. */
+  identityId: string;
+  to: string;
+  /** Key step label. Defaults to today (`test:YYYY-MM-DD`): a second run that day replays. */
+  step?: string;
+  dryRun?: boolean;
+}
+
+export interface TestSendPlan {
+  key: string;
+  messageId: string;
+  identityId: string;
+  from: string;
+  to: string;
+  subject: string;
+  smtpHost: string | null;
+  /** Status of an earlier attempt under this key, if any (sent ones replay). */
+  existing: OutboundStatus | null;
+}
+
+/**
+ * One test email through a Smartlead mailbox's own SMTP, on the same keyed
+ * path real sends take (claim, fixed Message-ID, receipt, confirm sweep).
+ * `dryRun` resolves the credentials and prints the plan without sending.
+ * No contact hold and no cadence: the recipient is the founder's own test
+ * address. The receipt counts as one send for the identity's cap.
+ */
+export async function sendTestEmail(
+  input: TestSendInput,
+): Promise<{ plan: TestSendPlan; result: EmailResult | null; receiptId: number | null }> {
+  const to = input.to.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new Error(`not an email address: ${input.to}`);
+  const identity = resolveIdentities(loadConfig()).find((i) => i.id === input.identityId);
+  if (!identity) throw new Error(`No identity '${input.identityId}' in the pool.`);
+  const { smtpHost } = await validateSendVia(identity.id, "smtp");
+  const from = (identity.address ?? "").trim().toLowerCase();
+  const key = outboundSendKey({
+    play: "smtp-test",
+    who: to,
+    step: input.step?.trim() || `test:${new Date().toISOString().slice(0, 10)}`,
+  });
+  const prior = getLedger().outboundSends.get(key);
+  const plan: TestSendPlan = {
+    key,
+    messageId: prior?.messageId ?? outboundMessageId(key, from),
+    identityId: identity.id,
+    from,
+    to,
+    subject: `SMTP test from ${from}`,
+    smtpHost,
+    existing: prior?.status ?? null,
+  };
+  if (input.dryRun) return { plan, result: null, receiptId: null };
+  const out = await sendEmailViaMailboxSmtp(
+    {
+      to,
+      subject: plan.subject,
+      body: `A test of direct SMTP sending from ${from}.\n\nMessage-ID: ${plan.messageId}\n\nNo reply needed.`,
+      idempotencyKey: key,
+    },
+    { playName: "smtp-test", memo: "smtp-test email.send" },
+    identity,
+    key,
+  );
+  return { plan, result: out.result, receiptId: out.receiptId };
+}
+
+/**
  * Gmail-path send. Same return contract as the OneShot path: callers consume
  * `receiptId` plus `result.cost` / `result.request_id`. Receipts are recorded
  * with cost 0 (Gmail sends are free) and the Gmail message id as request id,
  * so /receipts and spend rollups stay truthful.
  */
-async function sendEmailViaGmail(input: SendEmailInput, ctx: CallContext, identity: EmailIdentity) {
+async function sendEmailViaGmail(
+  input: SendEmailInput,
+  ctx: CallContext,
+  identity: EmailIdentity,
+  key: string,
+) {
+  // The Gmail API rewrites a supplied Message-ID, so the key is the guard and
+  // the API's own message id is what the confirm sweep looks up.
+  return keyedSend({
+    key,
+    identity,
+    transport: "gmail",
+    input,
+    ctx,
+    messageId: null,
+    isDefinite: gmailFailureIsDefinite,
+    settledStatus: "submitted",
+    send: async () => {
+      const out = await sendEmailViaGmailOnce(input, ctx, identity);
+      return { ...out, messageId: out.result.request_id ?? null };
+    },
+  });
+}
+
+async function sendEmailViaGmailOnce(
+  input: SendEmailInput,
+  ctx: CallContext,
+  identity: EmailIdentity,
+) {
   const cfg = loadConfig();
   const account = gmailAccountFor(identity);
   // Hard stop, never fall through to the legacy env token: that token may
@@ -414,10 +752,12 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
   // network call. Throws SendDeferredError when every identity is at its
   // daily cap: callers leave the work queued for tomorrow.
   const identity = resolveSenderIdentity(input.to);
+  const key = input.idempotencyKey ?? contentSendKey(identity.id, input);
   if (identity.provider === "gmail") {
-    return sendEmailViaGmail(input, ctx, identity);
+    return sendEmailViaGmail(input, ctx, identity, key);
   }
   if (identity.provider === "smartlead") {
+    if (identity.sendVia === "smtp") return sendEmailViaMailboxSmtp(input, ctx, identity, key);
     return sendEmailViaSmartlead(input, ctx, identity);
   }
   // Explicit guard: a provider this branch doesn't know must NEVER fall
@@ -455,17 +795,32 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
     const name = (cfg.founderName ?? "").trim();
     if (name) opts.from_name = name;
   }
-  const result = await agent.email(opts);
-
-  const receiptId = recordCallReceipt({
+  // The SDK key above stays content-derived: the platform rejects a reused key
+  // with a different body, and replays pre-dispatch failures under it. The
+  // semantic key is our own claim on top, so a re-draft can't send twice.
+  return keyedSend({
+    key,
+    identity,
+    transport: "oneshot",
+    input,
     ctx,
-    callType: "email.send",
-    signedReceipt: result,
-    costUsd: result.cost,
-    oneshotRequestId: result.request_id,
-    senderIdentity: identity.id,
+    messageId: null,
+    // The SDK call is idempotent on its key: a retry after any failure is safe.
+    isDefinite: () => true,
+    settledStatus: "confirmed",
+    send: async () => {
+      const result = await agent.email(opts);
+      const receiptId = recordCallReceipt({
+        ctx,
+        callType: "email.send",
+        signedReceipt: result,
+        costUsd: result.cost,
+        oneshotRequestId: result.request_id,
+        senderIdentity: identity.id,
+      });
+      return { result, receiptId, messageId: result.request_id ?? null };
+    },
   });
-  return { result, receiptId };
 }
 
 /**
@@ -489,7 +844,9 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
     claim.finish(true);
     return out;
   } catch (err) {
-    claim.finish(false);
+    // An unknown outcome may already have reached the recipient: keep the
+    // touch so no other path re-contacts them while it is reconciled.
+    claim.finish(err instanceof UncertainSendError);
     throw err;
   }
 }
@@ -514,6 +871,53 @@ export interface ReplyEmailInput {
    * to/subject from it (SDK 0.19+).
    */
   replyToEmailId?: string;
+}
+
+/**
+ * Mirror a mailbox reply attempt into `outbound_sends`, so replies share the
+ * one send ledger and confirm sweep. The reply path keeps its own attempt
+ * store (mailbox_attempts) as the claim; this row only records the outcome.
+ */
+function noteReplyAttempt(
+  key: string,
+  identity: EmailIdentity,
+  to: string,
+  subject: string,
+  messageId: string | null,
+  receiptId: number | null,
+  err: unknown,
+): void {
+  try {
+    const store = getLedger().outboundSends;
+    if (!store.get(key)) {
+      store.claim({
+        key,
+        identityId: identity.id,
+        transport: "smtp",
+        recipient: to.trim().toLowerCase(),
+        subject,
+        messageId,
+      });
+    }
+    if (err == null) {
+      store.mark(key, "submitted", { messageId, receiptId });
+      return;
+    }
+    // A refused re-click must never downgrade a reply that already went out.
+    const status = store.get(key)?.status;
+    if (status !== "pending" && status !== "uncertain" && status !== "failed") return;
+    const unknown = /unknown/i.test((err as Error).message ?? "");
+    store.mark(key, unknown ? "uncertain" : "failed", {
+      messageId,
+      error: ((err as Error).message ?? "").slice(0, 200),
+    });
+  } catch (e) {
+    logEvent(
+      "send.keyed.note_failed",
+      { message_120: ((e as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+  }
 }
 
 /** "Re: " prefix, idempotent and case-insensitive ("RE: x" passes through). */
@@ -594,7 +998,24 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
     const inbound = getLedger().mailboxes.get(input.inboundEmailId);
     if (inbound?.identityId !== identity.id)
       throw new Error("Inbound message does not belong to this sender identity.");
-    const sent = await sendMailboxReply(input.inboundEmailId, input.body, input.sendRequestId);
+    const replyKey = `gtm:${currentWorkspaceName()}:reply:${input.sendRequestId}`;
+    let sent: Awaited<ReturnType<typeof sendMailboxReply>>;
+    try {
+      sent = await sendMailboxReply(input.inboundEmailId, input.body, input.sendRequestId);
+    } catch (err) {
+      // The attempt store holds the Message-ID it submitted under, if it got that far.
+      const attempted = getLedger().mailboxes.attempt(input.sendRequestId);
+      noteReplyAttempt(
+        replyKey,
+        identity,
+        input.to,
+        subject,
+        attempted?.message.messageId ?? null,
+        null,
+        err,
+      );
+      throw err;
+    }
     const result: EmailResult = {
       status: "sent",
       request_id: sent.messageId!,
@@ -617,6 +1038,15 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
       oneshotRequestId: sent.messageId!,
       senderIdentity: identity.id,
     });
+    noteReplyAttempt(
+      replyKey,
+      identity,
+      sent.to[0]!,
+      sent.subject,
+      sent.messageId ?? null,
+      receiptId,
+      null,
+    );
     recordContactTouch(sent.to[0]!, ctx.playName);
     return { result, receiptId };
   }

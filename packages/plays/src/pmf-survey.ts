@@ -5,6 +5,7 @@ import {
   listInbox,
   loadConfig,
   sendEmail,
+  outboundSendKey,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import { draftEmailFromPrompt, lintEmail } from "./_lib.ts";
@@ -101,7 +102,17 @@ export async function deployPmfSurvey(input: PmfSurveyDeployInput): Promise<PmfS
 
     if (!input.dryRun && flags.length === 0) {
       const send = await sendEmail(
-        { to: userEmail, subject: draft.subject, body },
+        {
+          to: userEmail,
+          subject: draft.subject,
+          body,
+          // One invite per (user, survey).
+          idempotencyKey: outboundSendKey({
+            play: PLAY_NAME,
+            who: userEmail,
+            step: `invite:${surveyUrl}`,
+          }),
+        },
         {
           playName: PLAY_NAME,
           memo: `${PLAY_NAME} survey invite → ${userEmail}`,
