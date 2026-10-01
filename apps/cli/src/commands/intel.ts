@@ -154,7 +154,7 @@ export async function commandIntelBackfillIntent(opts: BackfillIntentOptions = {
   const limit = opts.limit ?? 200;
   const rows = opts.reclassify
     ? ledger.listHumanRepliesForReclassify({ ...(sinceIso ? { sinceIso } : {}), limit })
-    : ledger.listUntriagedHumanReplies(limit).filter((r) => !sinceIso || r.received_at >= sinceIso);
+    : ledger.listUntriagedHumanReplies(limit, sinceIso);
   if (rows.length === 0) {
     note(
       opts.reclassify

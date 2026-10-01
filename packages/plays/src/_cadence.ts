@@ -524,11 +524,15 @@ function stopCadencesForOptOut(prospectId: number): number {
 
 /** Replies older than this are out of the live poll's reach (watermark minus its 1h overlap). */
 const UNTRIAGED_RETRY_MIN_AGE_MS = 2 * 60 * 60 * 1000;
+/** The sweep covers replies the poll missed, not history: older rows are `backfill-intent`'s. */
+const UNTRIAGED_RETRY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** A reply whose classify call failed waits this long before the sweep pays for it again. */
+const UNTRIAGED_RETRY_BACKOFF_MS = 6 * 60 * 60 * 1000;
 
 /**
  * Label human replies the live poll can no longer reach: a classify call that
  * failed (the claim was released, intent NULL) once the reply fell out of the
- * poll window, or rows older than the classifier. The poll already did the
+ * poll window, up to a week back. The poll already did the
  * ordinary reply bookkeeping for these (a failed triage still counts as a
  * reply), so the only action here beyond the label is the opt-out stop the
  * poll could not apply. Bounded; claims each row like the poll does.
@@ -537,8 +541,14 @@ export async function retryUntriagedReplies(
   opts: { limit?: number; now?: number } = {},
 ): Promise<{ checked: number; labelled: number; failed: number; cadencesStopped: number }> {
   const ledger = getLedger();
-  const before = new Date((opts.now ?? Date.now()) - UNTRIAGED_RETRY_MIN_AGE_MS).toISOString();
-  const rows = ledger.listStaleUntriagedHumanReplies(before, opts.limit ?? 25);
+  const now = opts.now ?? Date.now();
+  const iso = (ms: number) => new Date(now - ms).toISOString();
+  const rows = ledger.listStaleUntriagedHumanReplies({
+    beforeIso: iso(UNTRIAGED_RETRY_MIN_AGE_MS),
+    sinceIso: iso(UNTRIAGED_RETRY_MAX_AGE_MS),
+    retryBeforeIso: iso(UNTRIAGED_RETRY_BACKOFF_MS),
+    limit: opts.limit ?? 25,
+  });
   const out = { checked: rows.length, labelled: 0, failed: 0, cadencesStopped: 0 };
   for (const row of rows) {
     if (!ledger.claimInboxReplyForTriage(row.id)) continue;

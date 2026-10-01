@@ -315,7 +315,9 @@ export class InboxStore {
   ): void {
     if (!details || intent == null) {
       // A release (intent NULL) or a legacy caller: clear the details too so a
-      // stale confidence never outlives the label it described.
+      // stale confidence never outlives the label it described. On a release,
+      // intent_classified_at keeps the attempt time so the retry sweep can
+      // back off a reply that keeps failing.
       this.db
         .prepare(
           `UPDATE inbox_replies SET intent = ?, intent_reason = ?, intent_confidence = NULL,
@@ -323,7 +325,7 @@ export class InboxStore {
              intent_classified_at = ?, intent_review = 0
            WHERE id = ?`,
         )
-        .run(intent, intentReason, intent == null ? null : new Date().toISOString(), id);
+        .run(intent, intentReason, new Date().toISOString(), id);
       return;
     }
     this.db
@@ -499,32 +501,47 @@ export class InboxStore {
    * mirrors the same predicate `listSentOutcomeRows` uses: pre-v23 rows with
    * a NULL kind read as human everywhere.
    */
-  listUntriagedHumanReplies(limit = 200): InboxReplyRecord[] {
+  listUntriagedHumanReplies(limit = 200, sinceIso?: string): InboxReplyRecord[] {
     return this.db
       .query(
         `SELECT * FROM inbox_replies
-         WHERE COALESCE(kind, 'human') = 'human' AND intent IS NULL
+         WHERE COALESCE(kind, 'human') = 'human' AND intent IS NULL AND received_at >= ?
          ORDER BY received_at ASC
          LIMIT ?`,
       )
-      .all(limit) as InboxReplyRecord[];
+      .all(sinceIso ?? "", limit) as InboxReplyRecord[];
   }
 
   /**
    * Untriaged human replies the live poll can no longer reach: received
-   * before `beforeIso` (the poll window's lower edge), still NULL because
-   * the classify call failed or the row predates the classifier. Oldest
-   * first, bounded, for the scheduler's retry sweep.
+   * between `sinceIso` and `beforeIso` (the poll window's lower edge), still
+   * NULL because the classify call failed. Older history is left to the
+   * operator's `backfill-intent`. A failed attempt stamps
+   * `intent_classified_at` on release, so rows attempted after `retryBeforeIso`
+   * wait, and never-tried rows go first: a reply that always fails cannot hold
+   * the batch. Bounded, for the scheduler's retry sweep.
    */
-  listStaleUntriagedHumanReplies(beforeIso: string, limit = 25): InboxReplyRecord[] {
+  listStaleUntriagedHumanReplies(opts: {
+    beforeIso: string;
+    sinceIso: string;
+    retryBeforeIso: string;
+    limit?: number;
+  }): InboxReplyRecord[] {
     return this.db
       .query(
         `SELECT * FROM inbox_replies
-         WHERE COALESCE(kind, 'human') = 'human' AND intent IS NULL AND received_at < ?
-         ORDER BY received_at ASC
+         WHERE COALESCE(kind, 'human') = 'human' AND intent IS NULL
+           AND received_at < ? AND received_at >= ?
+           AND (intent_classified_at IS NULL OR intent_classified_at < ?)
+         ORDER BY COALESCE(intent_classified_at, '') ASC, received_at ASC
          LIMIT ?`,
       )
-      .all(beforeIso, limit) as InboxReplyRecord[];
+      .all(
+        opts.beforeIso,
+        opts.sinceIso,
+        opts.retryBeforeIso,
+        opts.limit ?? 25,
+      ) as InboxReplyRecord[];
   }
 
   /**

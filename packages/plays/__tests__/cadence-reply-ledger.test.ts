@@ -447,5 +447,44 @@ describe("retryUntriagedReplies", () => {
 
     expect(out).toMatchObject({ checked: 1, labelled: 0, failed: 1 });
     expect(ledger.listUntriagedHumanReplies().map((r) => r.id)).toEqual(["old"]);
+    // The failed attempt is stamped, so the next sweep backs off this row
+    // instead of paying for it again every tick.
+    const again = await retryUntriagedReplies({ now: Date.now() });
+    expect(again.checked).toBe(0);
+  });
+
+  it("leaves history older than a week to backfill-intent, and puts never-tried rows first", async () => {
+    const { retryUntriagedReplies } = await import("../src/_cadence.ts");
+    const prospectId = ledger.upsertProspect({ name: "S", email: STORED_EMAIL });
+    const now = Date.parse("2026-09-30T12:00:00.000Z");
+    for (const [id, receivedAt] of [
+      ["ancient", "2026-09-01T08:00:00.000Z"],
+      ["tried", "2026-09-28T08:00:00.000Z"],
+      ["fresh-miss", "2026-09-29T08:00:00.000Z"],
+    ] as const) {
+      ledger.recordInboxReply({
+        id,
+        threadKey: `t-${id}`,
+        prospectId,
+        fromEmail: STORED_EMAIL,
+        subject: "Re: x",
+        body: "hm",
+        receivedAt,
+        kind: "human",
+      });
+    }
+    // An attempt long enough ago to be past the backoff: eligible, but behind the never-tried row.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-29T00:00:00.000Z"));
+    ledger.setInboxReplyIntent("tried", null, null);
+    vi.useRealTimers();
+
+    const out = await retryUntriagedReplies({ now, limit: 1 });
+
+    expect(out.checked).toBe(1);
+    const intents = ledger.listInboxReplyIntents(["ancient", "tried", "fresh-miss"]);
+    expect(intents.get("fresh-miss")?.intent).toBe("unsubscribe");
+    expect(intents.get("tried")?.intent).toBeNull();
+    expect(intents.get("ancient")?.intent).toBeNull();
   });
 });

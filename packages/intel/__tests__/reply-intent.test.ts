@@ -131,6 +131,17 @@ describe("classifyReplyIntent: decisions engine", () => {
     expect(r.intent).toBe("question");
   });
 
+  it("falls back at once on a 429 whose Retry-After is longer than the cap, never sleeping through it", async () => {
+    const fetchImpl = vi.fn(
+      async () => new Response("slow down", { status: 429, headers: { "retry-after": "3600" } }),
+    );
+    const started = Date.now();
+    const r = await classifyReplyIntent(email, { cfg: DECISIONS, fetchImpl: fetchImpl as never });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(r.fellBack).toBe(true);
+  });
+
   it("does not retry a 4xx, and falls back", async () => {
     const fetchImpl = vi.fn(async () => new Response("bad", { status: 400 }));
     const r = await classifyReplyIntent(email, { cfg: DECISIONS, fetchImpl: fetchImpl as never });

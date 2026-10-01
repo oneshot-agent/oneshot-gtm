@@ -903,13 +903,15 @@ export class Ledger {
    * mirrors the same predicate `listSentOutcomeRows` uses: pre-v23 rows with
    * a NULL kind read as human everywhere.
    */
-  listUntriagedHumanReplies(limit = 200): InboxReplyRecord[] {
-    return this.inbox.listUntriagedHumanReplies(limit);
+  listUntriagedHumanReplies(limit = 200, sinceIso?: string): InboxReplyRecord[] {
+    return this.inbox.listUntriagedHumanReplies(limit, sinceIso);
   }
 
-  /** Untriaged human replies older than the live poll window: the retry sweep's target. */
-  listStaleUntriagedHumanReplies(beforeIso: string, limit = 25): InboxReplyRecord[] {
-    return this.inbox.listStaleUntriagedHumanReplies(beforeIso, limit);
+  /** Untriaged human replies the live poll missed, with failure backoff: the retry sweep's target. */
+  listStaleUntriagedHumanReplies(
+    opts: Parameters<InboxStore["listStaleUntriagedHumanReplies"]>[0],
+  ): InboxReplyRecord[] {
+    return this.inbox.listStaleUntriagedHumanReplies(opts);
   }
 
   /** Every human reply not mid-triage, oldest first: `backfill-intent --reclassify`'s target. */

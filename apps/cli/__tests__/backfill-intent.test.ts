@@ -178,4 +178,16 @@ describe("commandIntelBackfillIntent (issue #480)", () => {
     const ids = classifyMock.mock.calls.map((c) => (c[0] as { id: string }).id);
     expect(ids).toEqual(["new"]);
   });
+
+  it("--since applies before --limit on untriaged rows, so older rows never eat the batch", async () => {
+    record("old1", "human", "2020-01-01T00:00:00.000Z");
+    record("old2", "human", "2020-01-02T00:00:00.000Z");
+    record("new", "human", new Date().toISOString());
+    classifyMock.mockResolvedValue(label("question"));
+
+    await commandIntelBackfillIntent({ sinceDays: 7, limit: 1 });
+
+    const ids = classifyMock.mock.calls.map((c) => (c[0] as { id: string }).id);
+    expect(ids).toEqual(["new"]);
+  });
 });

@@ -33,6 +33,8 @@ export class ReplyIntentError extends Error {
 const DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions";
 const DECISIONS_TIMEOUT_MS = 10_000;
 const DECISIONS_MAX_ATTEMPTS = 2;
+/** A Retry-After hint longer than this falls back to the llm engine instead of sleeping. */
+const DECISIONS_MAX_RETRY_AFTER_MS = 5_000;
 const DEFAULT_MIN_CONFIDENCE = 0.5;
 const BODY_CHARS = 2000;
 
@@ -106,17 +108,24 @@ async function callDecisions(
       }
       throw e;
     }
-    clearTimeout(timer);
     if (!res.ok) {
+      clearTimeout(timer);
       const retryAfterMs = parseRetryAfter(res.headers.get("retry-after"), Date.now());
       const e = new LlmError(`decisions HTTP ${res.status}`, res.status, retryAfterMs);
-      if (attempt < DECISIONS_MAX_ATTEMPTS && isRetryableLlmError(e)) {
+      // A long Retry-After would stall the caller (the inbox poll, the
+      // scheduler tick): fall back now rather than sleep through it.
+      const waitOk = retryAfterMs === undefined || retryAfterMs <= DECISIONS_MAX_RETRY_AFTER_MS;
+      if (attempt < DECISIONS_MAX_ATTEMPTS && isRetryableLlmError(e) && waitOk) {
         await new Promise((r) => setTimeout(r, backoffDelayMs(attempt, retryAfterMs)));
         continue;
       }
       throw e;
     }
-    const body = (await res.json().catch(() => null)) as {
+    // The timeout covers the body read too: a stalled body aborts like a stalled request.
+    const body = (await res
+      .json()
+      .catch(() => null)
+      .finally(() => clearTimeout(timer))) as {
       model?: string;
       answers?: { intent?: { choice?: unknown; confidence?: unknown; probabilities?: unknown } };
       usage?: { cost?: unknown };
