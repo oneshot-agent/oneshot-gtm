@@ -13,7 +13,7 @@ vi.mock("@oneshot-gtm/core", async () => ({
   currentWorkspaceName: () => "test",
 }));
 const { getLinkedInInboxStore } = await import("@oneshot-gtm/core");
-const { linkedInThreads } = await import("../src/api/replies-view.ts");
+const { linkedInThreads, threadContextVersion } = await import("../src/api/replies-view.ts");
 const store = getLinkedInInboxStore();
 beforeEach(() => {
   store.db.exec(
@@ -135,4 +135,27 @@ it("shows no drafting warning on an unassigned conversation that cannot be draft
   const [group] = linkedInThreads();
   expect(group).toMatchObject({ canGenerate: false });
   expect(group?.draftingWarning).toBeUndefined();
+});
+
+it("versions an unassigned conversation's drafts per workspace, an assigned one's once", () => {
+  store.saveConversation(
+    "account",
+    {
+      id: "chat",
+      attendees: [
+        { is_self: false, provider_id: "internal", profile_url: "https://linkedin.com/in/ada" },
+      ],
+      attendees_synced: true,
+      type: 0,
+    } as never,
+    [],
+  );
+  const [unassigned] = linkedInThreads();
+  expect(threadContextVersion(unassigned!, "gtm")).not.toBe(
+    threadContextVersion(unassigned!, "sdk"),
+  );
+
+  store.assign("linkedin:account:chat", { workspace: "test", prospectId: 1 });
+  const [assigned] = linkedInThreads();
+  expect(threadContextVersion(assigned!, "gtm")).toBe(threadContextVersion(assigned!, "sdk"));
 });

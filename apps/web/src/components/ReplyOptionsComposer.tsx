@@ -146,11 +146,17 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
     },
     onSuccess: ({ result, version, force }) => {
       if (!mounted.current) return;
+      // Suggestions wait behind "Use new suggestions" only when there are edits
+      // to protect; an empty editor just takes them.
+      const nothingToKeep =
+        version === editVersion.current &&
+        !Object.values(latest.current.edits).some((text) => text.trim());
       if (
-        force ||
-        latest.current.generated ||
-        version !== editVersion.current ||
-        result.contextVersion !== t.contextVersion
+        !nothingToKeep &&
+        (force ||
+          latest.current.generated ||
+          version !== editVersion.current ||
+          result.contextVersion !== t.contextVersion)
       ) {
         setCandidate(result);
         return;

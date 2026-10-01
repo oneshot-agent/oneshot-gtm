@@ -38,7 +38,7 @@ import {
   resumeLinkedInBackfills,
 } from "../linkedin-backfill.ts";
 import { refreshLinkedInInbox } from "../linkedin-sync.ts";
-import { collectReplies } from "./replies-view.ts";
+import { collectReplies, threadContextVersion } from "./replies-view.ts";
 import { sendReplyRoute, archiveInboxConversationRoute } from "./inbox.ts";
 import { mailboxStateRoute } from "./mailboxes.ts";
 
@@ -54,7 +54,8 @@ function thread(key: unknown): ReplyThread {
     if ((owner?.prospectId ?? null) !== t.prospectId)
       throw new Error("Conversation assignment changed. Refresh before continuing.");
   }
-  return t;
+  // The stored version may be another workspace's (unassigned LinkedIn is shared).
+  return { ...t, contextVersion: threadContextVersion(t) };
 }
 function internalRequest(req: Request, body: unknown) {
   return new Request(req.url, { method: "POST", headers: req.headers, body: JSON.stringify(body) });
