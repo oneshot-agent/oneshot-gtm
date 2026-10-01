@@ -125,3 +125,14 @@ it("drafts an unassigned one-to-one conversation as this workspace, with a warni
   store.assign("linkedin:account:chat", { workspace: "test", prospectId: 1 });
   expect(linkedInThreads()[0]?.draftingWarning).toBeUndefined();
 });
+
+it("shows no drafting warning on an unassigned conversation that cannot be drafted", () => {
+  store.saveConversation(
+    "account",
+    { id: "chat", attendees: [], attendees_synced: false, type: 1 } as never,
+    [],
+  );
+  const [group] = linkedInThreads();
+  expect(group).toMatchObject({ canGenerate: false });
+  expect(group?.draftingWarning).toBeUndefined();
+});
