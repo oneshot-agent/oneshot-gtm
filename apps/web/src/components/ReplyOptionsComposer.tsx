@@ -247,6 +247,14 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
         </span>
       </div>
       {t.unavailableReason && <p className="text-[12px] text-ink-muted">{t.unavailableReason}</p>}
+      {t.draftingWarning && (
+        <p
+          role="note"
+          className="rounded-sm border border-[color:var(--ink-spend-2)] px-3 py-2 text-[12px] text-ink-spend-2"
+        >
+          {t.draftingWarning}
+        </p>
+      )}
       {draft.contextVersion !== t.contextVersion && draft.generated && (
         <p role="status" className="text-[12px] text-ink-spend-2">
           The conversation or its context changed. Your edits are preserved; review new suggestions
@@ -324,12 +332,7 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
             <Button
               size="sm"
               variant="ghost"
-              disabled={
-                !draft.edits[v].trim() ||
-                busy ||
-                !!improving ||
-                (t.channel === "linkedin" && !t.workspace)
-              }
+              disabled={!draft.edits[v].trim() || busy || !!improving}
               onClick={() => void improve(v)}
               {...readOnly}
             >

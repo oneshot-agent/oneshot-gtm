@@ -188,8 +188,9 @@ export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsCon
     secondaryProducts: [],
     founderVoice: cfg.founderVoice ?? "",
     learnedPreferences:
-      t.channel === "linkedin" && t.workspace
-        ? getReplyReviewStore().learning.guidance(t.workspace).instructions
+      t.channel === "linkedin"
+        ? getReplyReviewStore().learning.guidance(t.workspace ?? currentWorkspaceName())
+            .instructions
         : [],
     steer,
     prospect: {
@@ -289,8 +290,8 @@ export async function replyGenerateRoute(req: Request) {
     const steer = typeof b.steer === "string" ? b.steer.slice(0, 4000) : (t.drafts?.steer ?? "");
     const context = replyOptionsContext(t, steer);
     const learningVersion =
-      t.channel === "linkedin" && t.workspace
-        ? getReplyReviewStore().learning.guidance(t.workspace).version
+      t.channel === "linkedin"
+        ? getReplyReviewStore().learning.guidance(t.workspace ?? currentWorkspaceName()).version
         : undefined;
     const generated = await generateReplyOptions(context);
     const next: ReplyDraftSet = {
@@ -320,8 +321,6 @@ export async function replyImproveRoute(req: Request) {
   try {
     const b = await payload(req);
     const t = thread(b.key);
-    if (t.channel === "linkedin" && !t.workspace)
-      throw new Error("Assign a workspace before improving a reply");
     if (
       !REPLY_VARIANTS.includes(b.variant as never) ||
       typeof b.text !== "string" ||
