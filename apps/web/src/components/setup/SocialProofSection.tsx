@@ -12,6 +12,7 @@ export function SocialProofSection({ cfg, onDirtyChange }: SectionProps) {
       partners: cfg.partners ?? "",
       founderCohort: cfg.founderCohort ?? "",
       founderAdmission: cfg.founderAdmission ?? "",
+      pilotOffer: cfg.pilotOffer ?? "",
       mobileSignature: cfg.mobileSignature,
     }),
     [cfg],
@@ -79,6 +80,17 @@ export function SocialProofSection({ cfg, onDirtyChange }: SectionProps) {
             value={s.values.founderAdmission}
             onChange={(e) => s.set("founderAdmission", e.target.value)}
             placeholder="e.g. two people, no enterprise logos yet"
+            rows={2}
+          />
+        </Field>
+        <Field
+          label="Pilot offer"
+          hint="What you offer someone who hasn't adopted on their own, in plain terms and without a price. When set, the last follow-up of the builder plays offers it and closes the thread instead of a plain breakup. Blank = the breakup, unchanged."
+        >
+          <Textarea
+            value={s.values.pilotOffer}
+            onChange={(e) => s.set("pilotOffer", e.target.value)}
+            placeholder="e.g. four weeks building one workflow you pick, together, with a named technical contact"
             rows={2}
           />
         </Field>

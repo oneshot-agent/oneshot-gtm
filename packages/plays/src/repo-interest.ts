@@ -1,7 +1,7 @@
 import { emailDomain } from "./_lib.ts";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
 import { repoInterestMetadata } from "./_metadata.ts";
-import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
+import { buildFollowUpEmail, pilotOrBreakup, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "repo-interest";
 
@@ -132,8 +132,9 @@ export function runRepoInterest(
   return runEmailPlay(repoInterestDef, opts);
 }
 
-// Two-touch cadence: one soft day-3 ping, no breakup. Mirrors
-// stack-consolidation's structure minus the final breakup step.
+// One soft day-3 ping. With a pilot offer configured, a final step offers it
+// and closes the thread; without one that step returns nothing and the
+// cadence completes after the ping, as before.
 registerSequence({
   playName: PLAY_NAME,
   steps: [
@@ -149,6 +150,22 @@ registerSequence({
         contextLines: [
           `PLAY: repo-interest. Day-3 soft nudge after the peer-to-peer intro about a repo they starred.`,
         ],
+      }),
+    },
+    {
+      dayOffset: 7,
+      channel: "email",
+      breakOnReply: true,
+      label: "pilot + close (breakup)",
+      // Only in plans made while a pilot offer is set: without one the
+      // sequence stays the single ping it always was.
+      when: (cfg) => !!cfg.pilotOffer?.trim(),
+      builder: pilotOrBreakup({
+        playName: PLAY_NAME,
+        contextLines: [
+          `PLAY: repo-interest. Final note after the peer-to-peer intro about a repo they starred and a day-3 nudge.`,
+        ],
+        fallback: "none",
       }),
     },
   ],

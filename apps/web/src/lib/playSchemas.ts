@@ -176,7 +176,7 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
   },
   "post-funding": {
     description:
-      "Triggered by a recent funding announcement. Day-0 here; cadence engine fires the day-9 follow-up and day-18 breakup automatically.",
+      "Triggered by a recent funding announcement. Day-0 here; cadence engine fires the day-9 follow-up and day-18 breakup automatically (the breakup offers your pilot instead when a pilot offer is set).",
     fields: [
       { key: "name", label: "Founder name", type: "text", required: true },
       { key: "email", label: "Founder email", type: "email", required: true },
@@ -361,7 +361,7 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
   },
   "repo-interest": {
     description:
-      "Complementary intro to someone who starred a repo in your space (an adjacent tool, not a competitor). References the repo + one fact about how your product helps. One touch, no follow-up.",
+      "Complementary intro to someone who starred a repo in your space (an adjacent tool, not a competitor). References the repo + one fact about how your product helps. One day-3 follow-up; with a pilot offer set, a final note offers it.",
     fields: [
       { key: "name", label: "Prospect name", type: "text", required: true },
       { key: "email", label: "Prospect email", type: "email", required: true },

@@ -369,6 +369,8 @@ export interface SetupRequest {
   founderCohort?: string;
   /** One true concession ("two people, no enterprise logos yet") for the optional damaging-admission beat. */
   founderAdmission?: string;
+  /** What you offer someone who has not adopted on their own; the builder plays' last follow-up offers it instead of a plain breakup. */
+  pilotOffer?: string;
   /** Product facts + canonical links replies may cite. Links absent from this brief are never sent. */
   productBrief?: string;
   founderVoice?: string;

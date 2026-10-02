@@ -333,6 +333,7 @@ export const api = {
         partners: string | null;
         founderCohort: string | null;
         founderAdmission: string | null;
+        pilotOffer?: string | null;
         productBrief: string | null;
         founderVoice?: string | null;
         mobileSignature: boolean;

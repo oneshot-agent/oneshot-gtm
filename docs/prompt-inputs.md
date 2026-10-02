@@ -25,6 +25,7 @@ On top of that:
 | `yourEdge` / `yourClaim` (current trigger config for queued drafts)   | yes                      | no                                        | no                                           |
 | Social proof — `founderCredentials` / `productPortfolio` / `partners` | yes                      | yes                                       | no                                           |
 | `founderAdmission`                                                    | yes (~1 in 3)            | no                                        | no                                           |
+| `pilotOffer`                                                          | no                       | the builder plays' last step, when set    | no                                           |
 | `icpOneLiner`                                                         | no [^icp]                | no                                        | yes                                          |
 | `productBrief`                                                        | no                       | no                                        | yes — and the only permitted source of links |
 | `founderVoice` — the [voice card](./voice.md)                         | yes                      | yes (breakup: one flat line, no aphorism) | yes (none in logistics mode)                 |
@@ -81,7 +82,10 @@ gets cut. A positioning line placed at the end of a long one-liner will not
 survive into the email. Everything else has a field with better placement:
 credentials, portfolio and partners for proof, `founderAdmission` for the
 concession, `yourEdge` for the argument, `productBrief` for facts and links,
-`icpOneLiner` for who it is for.
+`icpOneLiner` for who it is for. `pilotOffer` is what the last follow-up of
+the builder plays (repo-interest, stack-consolidation, competitor-switch,
+hiring-signal, post-funding, accelerator-batch) offers in place of the plain
+breakup: the only source for what the pilot includes, and never a price.
 
 ## Multiple angles
 
