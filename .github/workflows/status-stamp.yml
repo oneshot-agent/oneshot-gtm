@@ -1,27 +1,20 @@
 name: status-stamp
 
-# Keeps STATUS.md's "Last verified" line honest without hand-editing (#582).
-# `scripts/status-stamp.ts` measures the real test/file counts, Bun version
-# and OneShot SDK version and rewrites exactly that one line. Runs only on
-# push to main — branches leave the line alone and inherit whatever main
-# has, so two branches that each add tests never collide on this line
-# again. If the line is already current (the common case — most pushes to
-# main don't change test counts), the script no-ops and this job commits
-# nothing.
+# Publish verified status counts through a PR so main can reject direct pushes.
 
 on:
   push:
     branches: ["main"]
+  workflow_dispatch:
 
-# GITHUB_TOKEN-authored commits don't trigger new workflow runs, so this
-# can't recurse; the concurrency group still avoids two stamp commits
-# racing on rapid consecutive pushes.
+# GITHUB_TOKEN merges do not trigger another push workflow run.
 concurrency:
   group: status-stamp-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   stamp:
@@ -39,15 +32,32 @@ jobs:
       - name: Stamp STATUS.md
         run: bun run status:stamp
 
-      - name: Commit stamp if changed
+      - name: Publish stamp through a pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if git diff --quiet -- STATUS.md; then
-            echo "STATUS.md unchanged — nothing to commit."
+            echo "STATUS.md unchanged."
+            exit 0
+          fi
+          git fetch origin main
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+            echo "Main advanced during verification; a newer run will stamp it."
             exit 0
           fi
           COUNTS=$(grep -oE '[0-9,]+ tests / [0-9,]+ files' STATUS.md | head -1)
+          STAMP_BRANCH="automation/status-stamp-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git switch -c "$STAMP_BRANCH"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add STATUS.md
           git commit -m "chore(status): ${COUNTS}"
-          git push
+          git push origin "HEAD:refs/heads/${STAMP_BRANCH}"
+          printf '%s\n' \
+            'Update STATUS.md with versions and counts from a successful test run.' \
+            > "${RUNNER_TEMP}/status-stamp-pr.md"
+          STAMP_PR=$(gh pr create --base main --head "$STAMP_BRANCH" \
+            --title "chore(status): ${COUNTS}" \
+            --body-file "${RUNNER_TEMP}/status-stamp-pr.md")
+          gh pr merge "$STAMP_PR" --squash --delete-branch \
+            --match-head-commit "$(git rev-parse HEAD)"
