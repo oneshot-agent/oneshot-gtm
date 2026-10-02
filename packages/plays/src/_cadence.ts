@@ -48,6 +48,7 @@ import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@
 import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
 import {
   firstNameFrom,
+  hardBanFlags,
   humanizeDraft,
   lintEmail,
   repairWritingLints,
@@ -75,6 +76,8 @@ export type StepPayload =
       angle?: DraftAngleChoice;
       /** Hash of the founder's voice card in the prompt; absent when none was set. */
       voiceKey?: string | null;
+      /** Hold a price or a link before it sends (a pilot offer must carry neither). */
+      hardBans?: boolean;
     }
   | { kind: "sms"; message: string; toPhone?: string }
   /** A LinkedIn message into the conversation opened by an accepted invite. */
@@ -103,6 +106,13 @@ interface SequenceStep {
    * Defaults to 100 when unset; keep it consistent with the step prompt.
    */
   maxBodyWords?: number;
+  /**
+   * Include this step in new cadence plans only when it holds for the live
+   * config (e.g. a pilot step that exists only once a pilot offer is set).
+   * Plans already saved still resolve it by id, so turning the setting off
+   * never strands a cadence in flight; its builder decides what that does.
+   */
+  when?: (cfg: ReturnType<typeof loadConfig>) => boolean;
 }
 
 export interface Sequence {
@@ -227,9 +237,17 @@ export function effectiveSequence(
   const cfg = loadConfig();
   const override = cfg.cadenceOverrides?.[playName];
   const mail = motionMailPolicy(cfg, playName).settings;
-  if (prospectId === undefined && !mail && (!override || override.length !== base.steps.length))
+  const conditional = base.steps.some((step) => step.when);
+  if (
+    prospectId === undefined &&
+    !mail &&
+    !conditional &&
+    (!override || override.length !== base.steps.length)
+  )
     return base;
-  const steps: SequenceStep[] = base.steps.map((step, i) => ({
+  // Every registered step keeps its positional id (`base:N`) whether or not
+  // it is in force, so a saved plan resolves the same builders either way.
+  const registered: SequenceStep[] = base.steps.map((step, i) => ({
     id: `base:${i + 1}`,
     channel: step.channel,
     label: step.label,
@@ -237,6 +255,7 @@ export function effectiveSequence(
     breakOnReply: step.breakOnReply,
     dayOffset: override?.length === base.steps.length ? override[i]! : step.dayOffset,
   }));
+  const steps = registered.filter((_, i) => base.steps[i]!.when?.(cfg) !== false);
   if (prospectId !== undefined) {
     const ledger = getLedger();
     const cadence = ledger.getCadence(prospectId, playName);
@@ -246,7 +265,7 @@ export function effectiveSequence(
         playName,
         steps: saved.map((entry) => {
           if (entry.channel === "direct_mail") return mailStep(entry.dayOffset);
-          const step = steps.find((s) => s.id === entry.id);
+          const step = registered.find((s) => s.id === entry.id);
           if (!step) throw new Error(`Saved cadence step ${entry.id} is no longer registered`);
           return {
             id: entry.id,
@@ -1516,6 +1535,14 @@ export async function runCadenceStepForProspect(
     };
   }
 
+  // A pilot offer with a price or a link never sends, on any path (the
+  // dashboard already refuses a flagged preview; the unattended runner does
+  // not preview). Left due, so the next run drafts it again.
+  const held = hardBanHold(built);
+  if (held.length > 0) {
+    return { action: "skipped", payload: null, receiptIds: [], note: `held: ${held.join(", ")}` };
+  }
+
   const receiptIds: number[] = [];
   if (!opts.dryRun) {
     // Single send convergence point for every path. A hard send failure is
@@ -1717,6 +1744,7 @@ export async function previewCadenceStep(input: {
             ...(input.extraRecentBodies ?? []),
             ...ledger.recentSentEmailBodies({ playName: input.playName, stepIndex: nextIndex }),
           ]),
+          ...hardBanHold(built),
         ]
       : built.kind === "linkedin_message" && body.length > LINKEDIN_MESSAGE_MAX_CHARS
         ? [`too-long: ${body.length}/${LINKEDIN_MESSAGE_MAX_CHARS} characters`]
@@ -2230,6 +2258,14 @@ export function buildFollowUpEmail(opts: {
    * prompt decides how it lands, so it is never withheld.
    */
   admission?: boolean;
+  /** Add `PILOT OFFER` from `cfg.pilotOffer` (the pilot + close step). */
+  pilotOffer?: boolean;
+  /**
+   * Hold the draft when it carries a price or a link (`hardBanFlags`): the
+   * preview flags it, so the dashboard cannot send it, and the unattended
+   * runner refuses it. Off by default: other follow-ups keep today's lint.
+   */
+  hardBans?: boolean;
 }): SequenceStep["builder"] {
   return async (ctx: CadenceContext) => {
     const system = loadPrompt(opts.promptName, { humanizer: "followup" }) + signatureDirective();
@@ -2278,6 +2314,9 @@ export function buildFollowUpEmail(opts: {
       ...(opts.admission && ctx.cfg.founderAdmission?.trim()
         ? [`ADMISSION (true, about the sender): ${ctx.cfg.founderAdmission.trim()}`]
         : []),
+      ...(opts.pilotOffer && ctx.cfg.pilotOffer?.trim()
+        ? [`PILOT OFFER: ${ctx.cfg.pilotOffer.trim()}`]
+        : []),
       ...(demoDayText ? [demoDayText] : []),
       ...(priorBlock ? ["", priorBlock] : []),
       ...(angleBlock ? ["", angleBlock] : []),
@@ -2315,6 +2354,7 @@ export function buildFollowUpEmail(opts: {
       // The voice card in the prompt, so the persisted preview's draft
       // version can be split voice on/off like an intro draft's.
       ...(voice ? { voiceKey: voice.key } : {}),
+      ...(opts.hardBans ? { hardBans: true } : {}),
       // Carried on the payload so the persisted preview, and its draft
       // version: records the angle the way an intro draft does.
       ...(edgeSelection
@@ -2330,6 +2370,47 @@ export function buildFollowUpEmail(opts: {
           }
         : {}),
     };
+  };
+}
+
+/** A price or a link in a draft that must carry neither (`hardBans`); empty otherwise. */
+export function hardBanHold(payload: StepPayload): string[] {
+  return payload.kind === "email" && payload.hardBans ? hardBanFlags(payload.body) : [];
+}
+
+/**
+ * The last follow-up of a builder play. With `cfg.pilotOffer` set it offers
+ * the founder's pilot and closes the thread (`pilot-close-followup`, with the
+ * prospect's company facts and the price/link hold); without it, the play's
+ * plain breakup (`fallback: "breakup"`), or nothing at all, so a step that
+ * exists only for the offer completes the cadence (`fallback: "none"`).
+ * Decided per send from the live config, so cadences already in flight pick
+ * up a newly set offer at their last step.
+ */
+export function pilotOrBreakup(opts: {
+  playName: string;
+  contextLines: string[];
+  fallback: "breakup" | "none";
+}): SequenceStep["builder"] {
+  const pilot = buildFollowUpEmail({
+    playName: opts.playName,
+    promptName: "pilot-close-followup",
+    contextLines: opts.contextLines,
+    prospectContext: true,
+    pilotOffer: true,
+    hardBans: true,
+  });
+  const breakup =
+    opts.fallback === "breakup"
+      ? buildFollowUpEmail({
+          playName: opts.playName,
+          promptName: "breakup-email",
+          contextLines: opts.contextLines,
+        })
+      : null;
+  return async (ctx: CadenceContext) => {
+    if (ctx.cfg.pilotOffer?.trim()) return pilot(ctx);
+    return breakup ? breakup(ctx) : null;
   };
 }
 

@@ -436,6 +436,14 @@ export interface OneShotConfig {
    */
   founderAdmission: string | null;
   /**
+   * What the founder offers a prospect who has not adopted on their own, in
+   * plain terms (e.g. "four weeks building one workflow they pick, together").
+   * Set: the final follow-up of the builder plays offers it and closes the
+   * thread instead of the plain breakup. Optional like `founderCohort`;
+   * absent or null keeps the breakup, unchanged.
+   */
+  pilotOffer?: string | null;
+  /**
    * Product knowledge the reply drafter may cite: concrete facts, architecture,
    * pricing model, and canonical links (docs pages, repo). Free text, founder-
    * edited on /setup (with a derive-from-sources helper). The reply prompt is

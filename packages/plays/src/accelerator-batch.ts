@@ -2,7 +2,7 @@ import type { DraftAngle } from "@oneshot-gtm/shared-types";
 import { loadConfig } from "@oneshot-gtm/core";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
 import { acceleratorBatchMetadata } from "./_metadata.ts";
-import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
+import { pilotOrBreakup, registerSequence } from "./_cadence.ts";
 
 export interface AcceleratorBatchTarget {
   name: string;
@@ -141,12 +141,12 @@ registerSequence({
       channel: "email",
       breakOnReply: true,
       label: "single follow-up + breakup",
-      builder: buildFollowUpEmail({
+      builder: pilotOrBreakup({
         playName: PLAY_NAME,
-        promptName: "breakup-email",
         contextLines: [
           `PLAY: accelerator-batch. The accelerator-batch motion is one-touch + one breakup; this is the final note. Lean very short.`,
         ],
+        fallback: "breakup",
       }),
     },
   ],

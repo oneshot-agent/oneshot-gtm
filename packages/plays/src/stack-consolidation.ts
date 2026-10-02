@@ -1,7 +1,7 @@
 import { emailDomain } from "./_lib.ts";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
 import { stackConsolidationMetadata } from "./_metadata.ts";
-import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
+import { buildFollowUpEmail, pilotOrBreakup, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "stack-consolidation";
 
@@ -113,12 +113,12 @@ registerSequence({
       channel: "email",
       breakOnReply: true,
       label: "breakup",
-      builder: buildFollowUpEmail({
+      builder: pilotOrBreakup({
         playName: PLAY_NAME,
-        promptName: "breakup-email",
         contextLines: [
           `PLAY: stack-consolidation. Final breakup after the consolidation-honesty pitch.`,
         ],
+        fallback: "breakup",
       }),
     },
   ],

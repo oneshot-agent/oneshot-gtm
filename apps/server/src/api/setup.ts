@@ -517,6 +517,10 @@ export function mergeSetupConfig(
     partners: mergeString(body.partners, current.partners),
     founderCohort: mergeString(body.founderCohort, current.founderCohort ?? null),
     founderAdmission: mergeString(body.founderAdmission, current.founderAdmission),
+    // Optional field: absent on both sides stays absent (byte-identical re-save).
+    ...(body.pilotOffer !== undefined || current.pilotOffer !== undefined
+      ? { pilotOffer: mergeString(body.pilotOffer, current.pilotOffer ?? null) }
+      : {}),
     productBrief: mergeString(body.productBrief, current.productBrief),
     // Optional field: absent on both sides stays absent, so a body that does
     // not touch it re-saves the config byte-identical.

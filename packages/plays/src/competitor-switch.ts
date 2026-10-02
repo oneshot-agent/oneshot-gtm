@@ -2,7 +2,7 @@ import { browserTask, throwIfCancelled } from "@oneshot-gtm/core";
 import { emailDomain, safeEnrich } from "./_lib.ts";
 import { type EmailPlayDef, runEmailPlay } from "./_run-play.ts";
 import { competitorSwitchMetadata } from "./_metadata.ts";
-import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
+import { buildFollowUpEmail, pilotOrBreakup, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "competitor-switch";
 
@@ -178,10 +178,10 @@ registerSequence({
       channel: "email",
       breakOnReply: true,
       label: "breakup",
-      builder: buildFollowUpEmail({
+      builder: pilotOrBreakup({
         playName: PLAY_NAME,
-        promptName: "breakup-email",
         contextLines: [`PLAY: competitor-switch. Final breakup after the migration-honesty pitch.`],
+        fallback: "breakup",
       }),
     },
   ],
