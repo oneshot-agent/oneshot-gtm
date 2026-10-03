@@ -123,8 +123,20 @@ export async function commandSmartleadConnect(): Promise<void> {
     return;
   }
 
+  const retry: string[] = [];
   for (const a of selection) {
     const { sendVia, reason, lookupFailed } = await defaultSendViaForSmartlead(a.fromEmail);
+    // A failed lookup (Smartlead unreachable or a malformed account list) says
+    // nothing about the mailbox's credentials. Registering it now would put a
+    // new mailbox on the unkeyed Smartlead API path because of an outage, so
+    // skip it and ask for a retry, as /setup does.
+    if (lookupFailed) {
+      warn(
+        `  ${a.fromEmail} not added: could not check its SMTP credentials (${reason ?? "unknown"}). Re-run \`smartlead connect\` once Smartlead is reachable.`,
+      );
+      retry.push(a.fromEmail);
+      continue;
+    }
     const { identityId, created } = registerSmartleadIdentity({
       address: a.fromEmail,
       label: a.fromName,
@@ -135,14 +147,16 @@ export async function commandSmartleadConnect(): Promise<void> {
       const cap = Math.min(50, a.messagePerDay && a.messagePerDay > 0 ? a.messagePerDay : 50);
       ok(`+ ${c.cyan(identityId)} (cap ${cap}/day, warm-up 10 +10/wk)`);
       if (sendVia === "smtp") note("  sends via direct SMTP (duplicate-protected)");
-      else if (lookupFailed)
-        warn(
-          `  sends via the Smartlead API for now (could not check SMTP credentials: ${reason ?? "unknown"}); switch later with: bun run cli -- identities send-via ${identityId} smtp`,
-        );
       else warn(`  sends via the Smartlead API (no SMTP credentials: ${reason ?? "unknown"})`);
     } else {
       note(`= ${identityId} already in the pool (caps unchanged)`);
     }
+  }
+  if (retry.length > 0) {
+    warn(
+      `${retry.length} mailbox${retry.length === 1 ? "" : "es"} not added (lookup failed): ${retry.join(", ")}`,
+    );
+    process.exitCode = 1;
   }
   note(
     "Incoming mail and threaded replies connect automatically in /inbox while this workspace's server runs. Check mailbox connection status there.",

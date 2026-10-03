@@ -70,16 +70,24 @@ it("registers each new mailbox on the send path its credentials allow", async ()
   );
 });
 
-it("names a failed credentials lookup as such, with the command that switches later", async () => {
+it("does not register a mailbox when the credentials lookup failed, and asks for a retry", async () => {
   mocks.defaultSendVia.mockResolvedValue({
     sendVia: "provider",
     reason: "Could not reach Smartlead to resolve mailbox connections.",
     lookupFailed: true,
   });
-  await commandSmartleadConnect();
-  expect(mocks.lines).toContain(
-    "WARN   sends via the Smartlead API for now (could not check SMTP credentials: Could not reach Smartlead to resolve mailbox connections.); switch later with: bun run cli -- identities send-via smartlead:direct@mail.example.com smtp",
-  );
+  try {
+    await commandSmartleadConnect();
+    // An outage says nothing about the mailbox: it must not land on the unkeyed API path.
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.lines).toContain(
+      "WARN   direct@mail.example.com not added: could not check its SMTP credentials (Could not reach Smartlead to resolve mailbox connections.). Re-run `smartlead connect` once Smartlead is reachable.",
+    );
+    expect(mocks.lines.some((l) => l.includes("not added (lookup failed)"))).toBe(true);
+    expect(process.exitCode).toBe(1);
+  } finally {
+    process.exitCode = 0;
+  }
 });
 
 it("prints no send-path line for a mailbox already in the pool", async () => {
