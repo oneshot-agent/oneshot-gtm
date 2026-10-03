@@ -398,6 +398,13 @@ async function resolveNewSmartleadSendVia(body: SetupRequest): Promise<SendViaNo
     if (add.sendVia === "smtp" && decided.sendVia !== "smtp") {
       throw new SetupValidationError(`${address}: ${decided.reason ?? "no SMTP credentials"}`);
     }
+    // An outage is not "no credentials": never park the mailbox on the
+    // unprotected API path because Smartlead was briefly unreachable.
+    if (decided.lookupFailed) {
+      throw new SetupValidationError(
+        `${address}: could not check its SMTP credentials (${decided.reason}). Retry in a moment.`,
+      );
+    }
     add.sendVia = decided.sendVia;
     notices.push({ address, sendVia: decided.sendVia, reason: decided.reason });
   }

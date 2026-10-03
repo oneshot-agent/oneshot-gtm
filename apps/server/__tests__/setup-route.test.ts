@@ -256,6 +256,20 @@ describe("POST /api/setup — section-scoped bodies", () => {
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
 
+  it("a Smartlead outage during the credentials check is a 400 asking for a retry", async () => {
+    defaultSendViaMock.mockResolvedValueOnce({
+      sendVia: "provider",
+      reason: "Could not reach Smartlead to resolve mailbox connections.",
+      lookupFailed: true,
+    });
+    const res = await post({
+      addIdentities: [{ provider: "smartlead", address: "x@mail.example.com" }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.error).toMatch(/could not check its SMTP credentials .*Retry/);
+    expect(registerSmartleadMock).not.toHaveBeenCalled();
+  });
+
   it("an unknown sendVia on an add is a 400", async () => {
     const res = await post({
       addIdentities: [{ provider: "smartlead", address: "x@mail.example.com", sendVia: "api" }],

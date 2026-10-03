@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   pool: [] as EmailIdentity[],
   saved: [] as OneShotConfig[],
   creds: true,
+  lookupDown: false,
+  LookupError: class extends Error {},
   smtp: { verify: vi.fn(), sendMail: vi.fn(), close: vi.fn() },
 }));
 let ledger: Ledger;
@@ -30,6 +32,7 @@ vi.mock("../src/ledger.ts", async (original) => ({
   getLedger: () => ledger,
 }));
 vi.mock("../src/mailbox-config.ts", () => ({
+  MailboxLookupError: mocks.LookupError,
   smartleadMailboxIdentities: () => mocks.pool.filter((i) => i.provider === "smartlead"),
   resetMailboxConnections: vi.fn(),
   mailboxConnection: async (id: string) => {
@@ -44,6 +47,8 @@ vi.mock("../src/mailbox-config.ts", () => ({
     };
   },
   mailboxConnectionForAddress: async (address: string) => {
+    if (mocks.lookupDown)
+      throw new mocks.LookupError("Could not reach Smartlead to resolve mailbox connections.");
     if (!mocks.creds) throw new Error("Connect IMAP and SMTP for this Smartlead mailbox.");
     const box = { user: address, pass: "x", secure: true };
     return {
@@ -122,13 +127,28 @@ describe("sendVia", () => {
     expect(await defaultSendViaForSmartlead("new@mail.example")).toEqual({
       sendVia: "smtp",
       reason: null,
+      lookupFailed: false,
     });
     mocks.creds = false;
     expect(await defaultSendViaForSmartlead("new@mail.example")).toEqual({
       sendVia: "provider",
       reason: "Connect IMAP and SMTP for this Smartlead mailbox.",
+      lookupFailed: false,
     });
     expect(mocks.saved).toEqual([]);
+  });
+
+  it("flags a Smartlead outage as a failed lookup, not missing credentials", async () => {
+    mocks.lookupDown = true;
+    try {
+      expect(await defaultSendViaForSmartlead("new@mail.example")).toEqual({
+        sendVia: "provider",
+        reason: "Could not reach Smartlead to resolve mailbox connections.",
+        lookupFailed: true,
+      });
+    } finally {
+      mocks.lookupDown = false;
+    }
   });
 
   it("parses only the two transports", () => {

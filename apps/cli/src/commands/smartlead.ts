@@ -124,7 +124,7 @@ export async function commandSmartleadConnect(): Promise<void> {
   }
 
   for (const a of selection) {
-    const { sendVia, reason } = await defaultSendViaForSmartlead(a.fromEmail);
+    const { sendVia, reason, lookupFailed } = await defaultSendViaForSmartlead(a.fromEmail);
     const { identityId, created } = registerSmartleadIdentity({
       address: a.fromEmail,
       label: a.fromName,
@@ -135,6 +135,10 @@ export async function commandSmartleadConnect(): Promise<void> {
       const cap = Math.min(50, a.messagePerDay && a.messagePerDay > 0 ? a.messagePerDay : 50);
       ok(`+ ${c.cyan(identityId)} (cap ${cap}/day, warm-up 10 +10/wk)`);
       if (sendVia === "smtp") note("  sends via direct SMTP (duplicate-protected)");
+      else if (lookupFailed)
+        warn(
+          `  sends via the Smartlead API for now (could not check SMTP credentials: ${reason ?? "unknown"}); switch later with: bun run cli -- identities send-via ${identityId} smtp`,
+        );
       else warn(`  sends via the Smartlead API (no SMTP credentials: ${reason ?? "unknown"})`);
     } else {
       note(`= ${identityId} already in the pool (caps unchanged)`);
