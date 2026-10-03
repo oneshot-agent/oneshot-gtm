@@ -97,6 +97,26 @@ it("resolves credentials by address before the mailbox is registered", async () 
   await expect(mailboxConnectionForAddress("  ")).rejects.toThrow(/address is required/);
 });
 
+it("classifies an unreadable or malformed account list as a failed lookup", async () => {
+  const { MailboxLookupError } = await import("../src/mailbox-config.ts");
+  fetchMock.mockResolvedValueOnce(new Response("<html>bad gateway</html>"));
+  await expect(mailboxConnectionForAddress("a@example.com")).rejects.toBeInstanceOf(
+    MailboxLookupError,
+  );
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify([null])));
+  await expect(mailboxConnectionForAddress("a@example.com")).rejects.toBeInstanceOf(
+    MailboxLookupError,
+  );
+  fetchMock.mockResolvedValueOnce(new Response("{}", { status: 503 }));
+  await expect(mailboxConnectionForAddress("a@example.com")).rejects.toBeInstanceOf(
+    MailboxLookupError,
+  );
+  fetchMock.mockRejectedValueOnce(new Error("ECONNRESET"));
+  await expect(mailboxConnectionForAddress("a@example.com")).rejects.toBeInstanceOf(
+    MailboxLookupError,
+  );
+});
+
 it("does not expose an upstream error body or API key", async () => {
   fetchMock.mockResolvedValue(
     new Response("password=secret api_key=workspace-a-key", { status: 401 }),

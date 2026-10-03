@@ -63,8 +63,16 @@ async function accounts(): Promise<Record<string, unknown>[]> {
       throw new MailboxLookupError(
         `Smartlead connection lookup failed (HTTP ${response.status}). Reconnect in Setup.`,
       );
-    const data: unknown = await response.json();
-    if (!Array.isArray(data))
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      throw new MailboxLookupError("Smartlead returned an invalid mailbox list.");
+    }
+    if (
+      !Array.isArray(data) ||
+      !data.every((row) => row !== null && typeof row === "object" && !Array.isArray(row))
+    )
       throw new MailboxLookupError("Smartlead returned an invalid mailbox list.");
     rows.push(...data);
     if (data.length < 100) {
