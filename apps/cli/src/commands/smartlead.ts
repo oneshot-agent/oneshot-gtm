@@ -1,4 +1,5 @@
 import {
+  defaultSendViaForSmartlead,
   listSmartleadAccounts,
   loadConfig,
   registerSmartleadIdentity,
@@ -13,10 +14,11 @@ import { c, header, note, ok, warn } from "../output.ts";
 
 /**
  * `smartlead connect`: store the workspace API key and add Smartlead-hosted
- * mailboxes to the sender rotation pool. Send-only: Smartlead does the warmup
- * and hosts the inboxes; replies to Smartlead-sent mail are read in
- * Smartlead's own UI. The key is validated against the accounts API BEFORE it
- * is saved, so a typo never lands in .env.
+ * mailboxes to the sender rotation pool. Smartlead does the warm-up; each new
+ * mailbox sends via direct SMTP (keyed, duplicate-protected) when its IMAP +
+ * SMTP credentials resolve, else via the Smartlead API (shown with the
+ * reason). The key is validated against the accounts API BEFORE it is saved,
+ * so a typo never lands in .env.
  */
 export async function commandSmartleadConnect(): Promise<void> {
   header("Connect Smartlead");
@@ -122,14 +124,22 @@ export async function commandSmartleadConnect(): Promise<void> {
   }
 
   for (const a of selection) {
+    const { sendVia, reason, lookupFailed } = await defaultSendViaForSmartlead(a.fromEmail);
     const { identityId, created } = registerSmartleadIdentity({
       address: a.fromEmail,
       label: a.fromName,
       providerMessagePerDay: a.messagePerDay,
+      sendVia,
     });
     if (created) {
       const cap = Math.min(50, a.messagePerDay && a.messagePerDay > 0 ? a.messagePerDay : 50);
       ok(`+ ${c.cyan(identityId)} (cap ${cap}/day, warm-up 10 +10/wk)`);
+      if (sendVia === "smtp") note("  sends via direct SMTP (duplicate-protected)");
+      else if (lookupFailed)
+        warn(
+          `  sends via the Smartlead API for now (could not check SMTP credentials: ${reason ?? "unknown"}); switch later with: bun run cli -- identities send-via ${identityId} smtp`,
+        );
+      else warn(`  sends via the Smartlead API (no SMTP credentials: ${reason ?? "unknown"})`);
     } else {
       note(`= ${identityId} already in the pool (caps unchanged)`);
     }

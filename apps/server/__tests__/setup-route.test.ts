@@ -13,6 +13,7 @@ const deleteGmailTokenMock = vi.fn();
 const registerSmartleadMock = vi.fn().mockReturnValue({ identityId: "smartlead:x", created: true });
 const registerOneShotMock = vi.fn().mockReturnValue({ identityId: "oneshot:x", created: true });
 const validateSendViaMock = vi.fn().mockResolvedValue({ smtpHost: "smtp.example.com" });
+const defaultSendViaMock = vi.fn();
 let current: OneShotConfig;
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -26,6 +27,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     registerSmartleadIdentity: registerSmartleadMock,
     registerOneShotIdentity: registerOneShotMock,
     validateSendVia: validateSendViaMock,
+    defaultSendViaForSmartlead: defaultSendViaMock,
   };
 });
 
@@ -167,6 +169,114 @@ describe("POST /api/setup — section-scoped bodies", () => {
     );
     // Cap untouched: the edit carried no maxPerDay.
     expect(saved).toMatchObject({ sendVia: "smtp", maxPerDay: 30 });
+  });
+
+  it("a new Smartlead mailbox with credentials is added on direct SMTP, with a notice", async () => {
+    defaultSendViaMock.mockResolvedValueOnce({ sendVia: "smtp", reason: null });
+    const res = await setup(
+      req({ addIdentities: [{ provider: "smartlead", address: "New@mail.example.com" }] }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      sendViaNotices: [{ address: "new@mail.example.com", sendVia: "smtp", reason: null }],
+    });
+    expect(defaultSendViaMock).toHaveBeenCalledWith("new@mail.example.com");
+    expect(registerSmartleadMock).toHaveBeenCalledWith(
+      expect.objectContaining({ address: "New@mail.example.com", sendVia: "smtp" }),
+    );
+  });
+
+  it("a new Smartlead mailbox without credentials is added on the API, with the reason", async () => {
+    defaultSendViaMock.mockResolvedValueOnce({
+      sendVia: "provider",
+      reason: "Connect IMAP and SMTP for this Smartlead mailbox.",
+    });
+    const res = await setup(
+      req({ addIdentities: [{ provider: "smartlead", address: "oauth@mail.example.com" }] }),
+    );
+    expect(await res.json()).toEqual({
+      ok: true,
+      sendViaNotices: [
+        {
+          address: "oauth@mail.example.com",
+          sendVia: "provider",
+          reason: "Connect IMAP and SMTP for this Smartlead mailbox.",
+        },
+      ],
+    });
+    expect(registerSmartleadMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sendVia: "provider" }),
+    );
+  });
+
+  it("an explicit provider choice is kept without a credentials lookup", async () => {
+    const res = await setup(
+      req({
+        addIdentities: [
+          { provider: "smartlead", address: "api@mail.example.com", sendVia: "provider" },
+        ],
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(defaultSendViaMock).not.toHaveBeenCalled();
+    expect(registerSmartleadMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sendVia: "provider" }),
+    );
+  });
+
+  it("re-adding a mailbox already in the pool does no lookup and changes nothing", async () => {
+    current.emailIdentities = [
+      ...current.emailIdentities!,
+      {
+        id: "smartlead:old@mail.example.com",
+        provider: "smartlead",
+        address: "old@mail.example.com",
+        maxPerDay: 30,
+        warmup: null,
+      },
+    ];
+    const res = await setup(
+      req({ addIdentities: [{ provider: "smartlead", address: "old@mail.example.com" }] }),
+    );
+    expect(await res.json()).toEqual({ ok: true });
+    expect(defaultSendViaMock).not.toHaveBeenCalled();
+    expect(registerSmartleadMock).toHaveBeenCalledWith(
+      expect.not.objectContaining({ sendVia: expect.anything() }),
+    );
+  });
+
+  it("an explicit smtp add without credentials is a 400 and registers nothing", async () => {
+    defaultSendViaMock.mockResolvedValueOnce({ sendVia: "provider", reason: "no credentials" });
+    const res = await post({
+      addIdentities: [{ provider: "smartlead", address: "x@mail.example.com", sendVia: "smtp" }],
+    });
+    expect(res).toEqual({ status: 400, error: "x@mail.example.com: no credentials" });
+    expect(registerSmartleadMock).not.toHaveBeenCalled();
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("a Smartlead outage during the credentials check is a 400 asking for a retry", async () => {
+    defaultSendViaMock.mockResolvedValueOnce({
+      sendVia: "provider",
+      reason: "Could not reach Smartlead to resolve mailbox connections.",
+      lookupFailed: true,
+    });
+    const res = await post({
+      addIdentities: [{ provider: "smartlead", address: "x@mail.example.com" }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.error).toMatch(/could not check its SMTP credentials .*Retry/);
+    expect(registerSmartleadMock).not.toHaveBeenCalled();
+  });
+
+  it("an unknown sendVia on an add is a 400", async () => {
+    const res = await post({
+      addIdentities: [{ provider: "smartlead", address: "x@mail.example.com", sendVia: "api" }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.error).toMatch(/sendVia must be/);
+    expect(registerSmartleadMock).not.toHaveBeenCalled();
   });
 
   it("a sendVia edit that fails validation is a 400 and changes nothing", async () => {

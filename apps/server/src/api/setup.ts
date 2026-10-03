@@ -1,6 +1,7 @@
 import { normalizeWebsite } from "@oneshot-gtm/shared-types";
 import { aiFingerprint, invalidateOnboardingAI } from "./onboarding.ts";
 import {
+  defaultSendViaForSmartlead,
   deleteGmailToken,
   hasCalendarScope,
   identityCapacities,
@@ -344,8 +345,10 @@ export function validateIdentityCap(value: unknown, where: string): number | nul
 
 export async function setup(req: Request): Promise<Response> {
   const body = (await req.json()) as SetupRequest;
+  let sendViaNotices: SendViaNotice[] = [];
   try {
     await validateSendViaUpdates(body);
+    sendViaNotices = await resolveNewSmartleadSendVia(body);
     applySetup(body);
   } catch (err) {
     if (err instanceof SetupValidationError) {
@@ -353,7 +356,59 @@ export async function setup(req: Request): Promise<Response> {
     }
     throw err;
   }
-  return jsonResponse({ ok: true }, 200, req);
+  return jsonResponse(
+    sendViaNotices.length > 0 ? { ok: true, sendViaNotices } : { ok: true },
+    200,
+    req,
+  );
+}
+
+interface SendViaNotice {
+  address: string;
+  sendVia: "provider" | "smtp";
+  reason: string | null;
+}
+
+/**
+ * Decide the send path of each NEW Smartlead mailbox before the synchronous
+ * apply (it needs a network lookup): direct SMTP when the mailbox's SMTP +
+ * IMAP credentials resolve, else the Smartlead API with the reason. An
+ * explicit `sendVia: "smtp"` without credentials is a 400; an explicit
+ * "provider" is respected. The decision is written back onto the add.
+ */
+async function resolveNewSmartleadSendVia(body: SetupRequest): Promise<SendViaNotice[]> {
+  const notices: SendViaNotice[] = [];
+  const existing = new Set(resolveIdentities(loadConfig()).map((i) => i.id));
+  for (const add of body.addIdentities ?? []) {
+    if (add.provider !== "smartlead" || !add.address?.trim()) continue;
+    const address = add.address.trim().toLowerCase();
+    if (existing.has(`smartlead:${address}`)) continue; // re-add: a no-op
+    if (add.sendVia !== undefined) {
+      try {
+        parseSendVia(add.sendVia);
+      } catch (err) {
+        throw new SetupValidationError(`${address}: ${(err as Error).message}`);
+      }
+    }
+    if (add.sendVia === "provider") {
+      notices.push({ address, sendVia: "provider", reason: "chosen" });
+      continue;
+    }
+    const decided = await defaultSendViaForSmartlead(address);
+    if (add.sendVia === "smtp" && decided.sendVia !== "smtp") {
+      throw new SetupValidationError(`${address}: ${decided.reason ?? "no SMTP credentials"}`);
+    }
+    // An outage is not "no credentials": never park the mailbox on the
+    // unprotected API path because Smartlead was briefly unreachable.
+    if (decided.lookupFailed) {
+      throw new SetupValidationError(
+        `${address}: could not check its SMTP credentials (${decided.reason}). Retry in a moment.`,
+      );
+    }
+    add.sendVia = decided.sendVia;
+    notices.push({ address, sendVia: decided.sendVia, reason: decided.reason });
+  }
+  return notices;
 }
 
 /**
@@ -470,6 +525,7 @@ function applySetup(body: SetupRequest): void {
         label: add.label,
         ...("maxPerDay" in add ? { maxPerDay: add.maxPerDay ?? null } : {}),
         providerMessagePerDay: add.providerMessagePerDay ?? null,
+        ...(add.sendVia ? { sendVia: add.sendVia } : {}),
       });
       continue;
     }

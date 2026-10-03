@@ -15,6 +15,12 @@ export function smartleadMailboxIdentities() {
   return resolveIdentities(loadConfig()).filter((i) => i.provider === "smartlead");
 }
 
+/**
+ * The Smartlead account listing itself could not be read (network, an
+ * HTTP error, a malformed reply). Says nothing about the mailbox's credentials.
+ */
+export class MailboxLookupError extends Error {}
+
 let cached: {
   workspace: string;
   apiKey: string;
@@ -51,21 +57,30 @@ async function accounts(): Promise<Record<string, unknown>[]> {
         signal: AbortSignal.timeout(15_000),
       });
     } catch {
-      throw new Error("Could not reach Smartlead to resolve mailbox connections.");
+      throw new MailboxLookupError("Could not reach Smartlead to resolve mailbox connections.");
     }
     if (!response.ok)
-      throw new Error(
+      throw new MailboxLookupError(
         `Smartlead connection lookup failed (HTTP ${response.status}). Reconnect in Setup.`,
       );
-    const data: unknown = await response.json();
-    if (!Array.isArray(data)) throw new Error("Smartlead returned an invalid mailbox list.");
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      throw new MailboxLookupError("Smartlead returned an invalid mailbox list.");
+    }
+    if (
+      !Array.isArray(data) ||
+      !data.every((row) => row !== null && typeof row === "object" && !Array.isArray(row))
+    )
+      throw new MailboxLookupError("Smartlead returned an invalid mailbox list.");
     rows.push(...data);
     if (data.length < 100) {
       cached = { workspace, apiKey, at: Date.now(), rows };
       return rows;
     }
   }
-  throw new Error("Smartlead mailbox listing is incomplete.");
+  throw new MailboxLookupError("Smartlead mailbox listing is incomplete.");
 }
 
 /** Clear the workspace-scoped Smartlead account cache. */
@@ -118,7 +133,20 @@ export async function mailboxConnection(identityId: string): Promise<MailboxConn
   const identity = smartleadMailboxIdentities().find((i) => i.id === identityId);
   if (!identity?.address)
     throw new Error("This mailbox identity is no longer connected to this workspace.");
-  const address = identity.address.toLowerCase();
+  return mailboxConnectionForAddress(identity.address, identityId);
+}
+
+/**
+ * Resolve the direct IMAP/SMTP connection for a Smartlead mailbox address,
+ * whether or not it is in the identity pool yet. Registration uses it to
+ * decide whether a new mailbox can start on direct SMTP.
+ */
+export async function mailboxConnectionForAddress(
+  rawAddress: string,
+  identityId = `smartlead:${rawAddress.trim().toLowerCase()}`,
+): Promise<MailboxConnection> {
+  const address = rawAddress.trim().toLowerCase();
+  if (!address) throw new Error("Mailbox address is required.");
   const override = overrides()[identityId];
   if (override && override.address.toLowerCase() === address)
     return validateMailboxConnection(override);

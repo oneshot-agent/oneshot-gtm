@@ -12,8 +12,12 @@ vi.mock("../src/config.ts", () => ({
 vi.mock("../src/identities.ts", () => ({
   resolveIdentities: (cfg: { emailIdentities: unknown[] }) => cfg.emailIdentities,
 }));
-const { mailboxConnection, saveMailboxConnection, resetMailboxConnections } =
-  await import("../src/mailbox-config.ts");
+const {
+  mailboxConnection,
+  mailboxConnectionForAddress,
+  saveMailboxConnection,
+  resetMailboxConnections,
+} = await import("../src/mailbox-config.ts");
 const fetchMock = vi.fn();
 const row = (address: string) => ({
   from_email: address,
@@ -79,6 +83,37 @@ it("stores explicit connection credentials privately and never accepts another w
   expect(fetchMock).not.toHaveBeenCalled();
   expect(() => saveMailboxConnection("smartlead:other@example.com", connection)).toThrow(
     /does not belong/,
+  );
+});
+
+it("resolves credentials by address before the mailbox is registered", async () => {
+  fetchMock.mockResolvedValue(new Response(JSON.stringify([row("new@example.com")])));
+  const connection = await mailboxConnectionForAddress(" New@Example.com ");
+  expect(connection.address).toBe("new@example.com");
+  expect(connection.smtp.host).toBe("smtp.example.com");
+  await expect(mailboxConnectionForAddress("gone@example.com")).rejects.toThrow(
+    /missing from this workspace's Smartlead account/,
+  );
+  await expect(mailboxConnectionForAddress("  ")).rejects.toThrow(/address is required/);
+});
+
+it("classifies an unreadable or malformed account list as a failed lookup", async () => {
+  const { MailboxLookupError } = await import("../src/mailbox-config.ts");
+  fetchMock.mockResolvedValueOnce(new Response("<html>bad gateway</html>"));
+  await expect(mailboxConnectionForAddress("a@example.com")).rejects.toBeInstanceOf(
+    MailboxLookupError,
+  );
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify([null])));
+  await expect(mailboxConnectionForAddress("a@example.com")).rejects.toBeInstanceOf(
+    MailboxLookupError,
+  );
+  fetchMock.mockResolvedValueOnce(new Response("{}", { status: 503 }));
+  await expect(mailboxConnectionForAddress("a@example.com")).rejects.toBeInstanceOf(
+    MailboxLookupError,
+  );
+  fetchMock.mockRejectedValueOnce(new Error("ECONNRESET"));
+  await expect(mailboxConnectionForAddress("a@example.com")).rejects.toBeInstanceOf(
+    MailboxLookupError,
   );
 });
 
