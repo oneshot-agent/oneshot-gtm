@@ -43,6 +43,15 @@ vi.mock("../src/mailbox-config.ts", () => ({
       smtp: { ...box, host: "smtp.gmail.com" },
     };
   },
+  mailboxConnectionForAddress: async (address: string) => {
+    if (!mocks.creds) throw new Error("Connect IMAP and SMTP for this Smartlead mailbox.");
+    const box = { user: address, pass: "x", secure: true };
+    return {
+      address,
+      imap: { ...box, host: "imap.gmail.com", port: 993 },
+      smtp: { ...box, host: "smtp.gmail.com", port: 465 },
+    };
+  },
 }));
 vi.mock("nodemailer", async (original) => {
   const actual = await original<typeof import("nodemailer")>();
@@ -54,7 +63,7 @@ vi.mock("nodemailer", async (original) => {
   };
 });
 
-const { setIdentitySendVia, validateSendVia, parseSendVia } =
+const { setIdentitySendVia, validateSendVia, parseSendVia, defaultSendViaForSmartlead } =
   await import("../src/identity-send-via.ts");
 const { sendTestEmail, outboundMessageId } = await import("../src/oneshot.ts");
 
@@ -107,6 +116,19 @@ describe("sendVia", () => {
       /No identity/,
     );
     expect(await validateSendVia(OS.id, "provider")).toEqual({ smtpHost: null });
+  });
+
+  it("a new mailbox defaults to smtp when its credentials resolve, else provider with the reason", async () => {
+    expect(await defaultSendViaForSmartlead("new@mail.example")).toEqual({
+      sendVia: "smtp",
+      reason: null,
+    });
+    mocks.creds = false;
+    expect(await defaultSendViaForSmartlead("new@mail.example")).toEqual({
+      sendVia: "provider",
+      reason: "Connect IMAP and SMTP for this Smartlead mailbox.",
+    });
+    expect(mocks.saved).toEqual([]);
   });
 
   it("parses only the two transports", () => {

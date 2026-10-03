@@ -19,6 +19,7 @@ import {
   listSmartleadAccounts,
   llmApiKey,
   loadConfig,
+  mailboxHealth,
   smartleadApiKey,
   type SmartleadAccount,
   missingGmailSecrets,
@@ -351,6 +352,27 @@ function placementCheck(): CheckResult {
 
 /** How far back the doctor looks for delivery mismatches. */
 const DELIVERY_WINDOW_DAYS = 7;
+
+/**
+ * A Smartlead mailbox still on the Smartlead send API (`sendVia` absent or
+ * "provider") has no idempotency key: the API queues and can retry, so one
+ * send can reach the recipient more than once. Null when it already sends
+ * via keyed direct SMTP. `connected` = the inbox sync reaches this mailbox
+ * directly, so it can flip right away.
+ */
+export function smartleadApiPathNote(
+  identity: { id: string; sendVia?: "provider" | "smtp" },
+  connected: ReadonlySet<string>,
+): { message: string; hint: string } | null {
+  if (identity.sendVia === "smtp") return null;
+  const flip = `bun run cli -- identities send-via ${identity.id} smtp`;
+  return {
+    message: " · sends via Smartlead's API, with no duplicate protection",
+    hint: connected.has(identity.id)
+      ? `Switch to keyed direct SMTP: ${flip}`
+      : `Connect this mailbox's IMAP/SMTP (the inbox's mailbox settings), then: ${flip}`,
+  };
+}
 
 /**
  * Sent-folder delivery checks (send-delivery.ts): a Smartlead or Gmail send
@@ -969,6 +991,17 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
         });
       }
     }
+    // Which Smartlead mailboxes the inbox sync reaches directly (local state,
+    // no network call): the hint for an API-path sender says whether it can
+    // flip to keyed SMTP right away or needs its IMAP/SMTP connected first.
+    const mailboxConnected = new Set<string>();
+    try {
+      for (const h of mailboxHealth()) {
+        if (h.status === "connected" || h.status === "syncing") mailboxConnected.add(h.identityId);
+      }
+    } catch {
+      // no ledger yet: every hint falls back to "connect first"
+    }
 
     for (const identity of identities) {
       const c = caps.get(identity.id);
@@ -1038,20 +1071,24 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
             message: `${address} SMTP connection broken in Smartlead — reconnect it there · ${usage}`,
           });
         } else if (account && account.warmupStatus && account.warmupStatus !== "ACTIVE") {
+          const api = smartleadApiPathNote(identity, mailboxConnected);
           results.push({
             name,
             group: "senders",
             severity: "warn",
-            message: `sending as ${address} · warmup ${account.warmupStatus.toLowerCase()} in Smartlead · ${usage}`,
+            message: `sending as ${address} · warmup ${account.warmupStatus.toLowerCase()} in Smartlead${api?.message ?? ""} · ${usage}`,
+            ...(api ? { hint: api.hint } : {}),
           });
         } else if (account) {
           const rep = account.warmupReputation ? ` (${account.warmupReputation})` : "";
           const warm = account.warmupStatus ? ` · warmup active${rep}` : "";
+          const api = smartleadApiPathNote(identity, mailboxConnected);
           results.push({
             name,
             group: "senders",
-            severity: "ok",
-            message: `sending as ${address}${warm} · ${usage}`,
+            severity: api ? "warn" : "ok",
+            message: `sending as ${address}${warm}${api?.message ?? ""} · ${usage}`,
+            ...(api ? { hint: api.hint } : {}),
           });
         } else {
           results.push({

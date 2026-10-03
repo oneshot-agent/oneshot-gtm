@@ -118,7 +118,20 @@ export async function mailboxConnection(identityId: string): Promise<MailboxConn
   const identity = smartleadMailboxIdentities().find((i) => i.id === identityId);
   if (!identity?.address)
     throw new Error("This mailbox identity is no longer connected to this workspace.");
-  const address = identity.address.toLowerCase();
+  return mailboxConnectionForAddress(identity.address, identityId);
+}
+
+/**
+ * Resolve the direct IMAP/SMTP connection for a Smartlead mailbox address,
+ * whether or not it is in the identity pool yet. Registration uses it to
+ * decide whether a new mailbox can start on direct SMTP.
+ */
+export async function mailboxConnectionForAddress(
+  rawAddress: string,
+  identityId = `smartlead:${rawAddress.trim().toLowerCase()}`,
+): Promise<MailboxConnection> {
+  const address = rawAddress.trim().toLowerCase();
+  if (!address) throw new Error("Mailbox address is required.");
   const override = overrides()[identityId];
   if (override && override.address.toLowerCase() === address)
     return validateMailboxConnection(override);

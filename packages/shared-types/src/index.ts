@@ -338,7 +338,10 @@ export interface SetupRequest {
    * local-part. Smartlead: a connected account's address (from the accounts
    * listing), with `providerMessagePerDay` carrying Smartlead's own cap so the
    * default ceiling clamps to it. Omit `maxPerDay` to take the cold-start
-   * warm-up ramp; pass `null` to add uncapped.
+   * warm-up ramp; pass `null` to add uncapped. Smartlead `sendVia`: omit to
+   * get direct SMTP when the mailbox's SMTP + IMAP credentials resolve (else
+   * the Smartlead API, reported in the response's `sendViaNotices`); "smtp"
+   * is refused (400) without credentials; "provider" forces the Smartlead API.
    */
   addIdentities?: Array<
     | {
@@ -354,6 +357,7 @@ export interface SetupRequest {
         label?: string;
         maxPerDay?: number | null;
         providerMessagePerDay?: number | null;
+        sendVia?: "provider" | "smtp";
       }
   >;
   /** Identities to drop from the rotation pool. Existing prospect pins to a removed id will refuse to send until restored. */

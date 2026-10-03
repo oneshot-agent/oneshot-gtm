@@ -23,12 +23,19 @@ let ledgerMock: {
   listTriggers?: () => Array<{ name: string; enabled: number; config_json?: string }>;
   listReceipts?: () => unknown[];
 } = {};
+let smartleadAccounts: unknown[] | null = null;
+let mailboxHealthRows: { identityId: string; status: string }[] = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
     loadConfig: () => ({ ...actual.loadConfig(), ...cfgOverride }),
+    listSmartleadAccounts: async () => {
+      if (!smartleadAccounts) throw new Error("Smartlead unreachable in tests");
+      return smartleadAccounts;
+    },
+    mailboxHealth: () => mailboxHealthRows,
     oneshotEnvReady: () => walletReady,
     getBalance: async () => ({ balance: balanceValue, raw: balanceValue }),
     getLedger: () => ({
@@ -54,6 +61,8 @@ beforeEach(() => {
   walletReady = false;
   balanceValue = "1 USDC";
   ledgerMock = {};
+  smartleadAccounts = null;
+  mailboxHealthRows = [];
 });
 afterEach(() => {
   delete process.env["ONESHOT_GTM_WORKSPACES"];
@@ -280,6 +289,54 @@ describe("smartlead identities in doctor", () => {
     } finally {
       if (prev !== undefined) process.env["SMARTLEAD_API_KEY"] = prev;
     }
+  });
+
+  describe("send path", () => {
+    const account = {
+      fromEmail: "jane@acme.com",
+      isSmtpSuccess: true,
+      warmupStatus: "ACTIVE",
+      warmupReputation: "100%",
+    };
+    let prevKey: string | undefined;
+    beforeEach(() => {
+      prevKey = process.env["SMARTLEAD_API_KEY"];
+      process.env["SMARTLEAD_API_KEY"] = "test-key";
+      smartleadAccounts = [account];
+    });
+    afterEach(() => {
+      if (prevKey === undefined) delete process.env["SMARTLEAD_API_KEY"];
+      else process.env["SMARTLEAD_API_KEY"] = prevKey;
+    });
+    const sender = async () =>
+      (await runDoctor()).find((c) => c.name === "sender smartlead:jane@acme.com");
+
+    it("warns on an API-path mailbox whose IMAP/SMTP is connected, with the flip command", async () => {
+      cfgOverride = { emailIdentities: [SL] };
+      mailboxHealthRows = [{ identityId: SL.id, status: "connected" }];
+      const line = await sender();
+      expect(line?.severity).toBe("warn");
+      expect(line?.message).toContain("sends via Smartlead's API, with no duplicate protection");
+      expect(line?.hint).toBe(
+        "Switch to keyed direct SMTP: bun run cli -- identities send-via smartlead:jane@acme.com smtp",
+      );
+    });
+
+    it("tells an unconnected API-path mailbox to connect IMAP/SMTP first", async () => {
+      cfgOverride = { emailIdentities: [SL] };
+      mailboxHealthRows = [{ identityId: SL.id, status: "error" }];
+      const line = await sender();
+      expect(line?.severity).toBe("warn");
+      expect(line?.hint).toMatch(/^Connect this mailbox's IMAP\/SMTP/);
+    });
+
+    it("a direct-SMTP mailbox is ok, with no API note", async () => {
+      cfgOverride = { emailIdentities: [{ ...SL, sendVia: "smtp" }] };
+      const line = await sender();
+      expect(line?.severity).toBe("ok");
+      expect(line?.message).not.toContain("Smartlead's API");
+      expect(line?.hint).toBeUndefined();
+    });
   });
 });
 

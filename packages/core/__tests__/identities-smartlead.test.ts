@@ -104,6 +104,24 @@ describe("registerSmartleadIdentity", () => {
     expect(dupes[0]!.maxPerDay).toBe(12);
   });
 
+  it("persists sendVia smtp on a new mailbox, and only smtp", () => {
+    registerSmartleadIdentity({ address: "direct@x.com", sendVia: "smtp" });
+    registerSmartleadIdentity({ address: "api@x.com", sendVia: "provider" });
+    registerSmartleadIdentity({ address: "plain@x.com" });
+    const by = (id: string) => cfg.emailIdentities!.find((i) => i.id === id)!;
+    expect(by("smartlead:direct@x.com").sendVia).toBe("smtp");
+    expect("sendVia" in by("smartlead:api@x.com")).toBe(false);
+    expect("sendVia" in by("smartlead:plain@x.com")).toBe(false);
+  });
+
+  it("a re-add never changes an existing mailbox's send path", () => {
+    registerSmartleadIdentity({ address: "keep@x.com" });
+    const { created } = registerSmartleadIdentity({ address: "keep@x.com", sendVia: "smtp" });
+    expect(created).toBe(false);
+    const kept = cfg.emailIdentities!.find((i) => i.id === "smartlead:keep@x.com")!;
+    expect(kept.sendVia).toBeUndefined();
+  });
+
   it("rejects a blank address", () => {
     expect(() => registerSmartleadIdentity({ address: "  " })).toThrow(/needs an address/);
   });

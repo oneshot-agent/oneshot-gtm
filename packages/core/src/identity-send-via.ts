@@ -1,6 +1,6 @@
 import { loadConfig, saveConfig } from "./config.ts";
 import { resolveIdentities } from "./identities.ts";
-import { mailboxConnection } from "./mailbox-config.ts";
+import { mailboxConnection, mailboxConnectionForAddress } from "./mailbox-config.ts";
 import type { EmailIdentity } from "./types.ts";
 
 export type SendVia = NonNullable<EmailIdentity["sendVia"]>;
@@ -53,6 +53,23 @@ export async function setIdentitySendVia(
     emailIdentities: pool.map((i) => (i.id === identityId ? withSendVia(i, sendVia) : i)),
   });
   return { changed: true, smtpHost };
+}
+
+/**
+ * The send path a NEW Smartlead mailbox starts on: direct SMTP (keyed,
+ * duplicate-protected) when its IMAP + SMTP credentials resolve now, else
+ * the Smartlead API, with the reason to show. Only registration calls this;
+ * an existing identity's send path is never changed by it.
+ */
+export async function defaultSendViaForSmartlead(
+  address: string,
+): Promise<{ sendVia: SendVia; reason: string | null }> {
+  try {
+    await mailboxConnectionForAddress(address);
+    return { sendVia: "smtp", reason: null };
+  } catch (err) {
+    return { sendVia: "provider", reason: (err as Error).message };
+  }
 }
 
 export function withSendVia(identity: EmailIdentity, sendVia: SendVia): EmailIdentity {

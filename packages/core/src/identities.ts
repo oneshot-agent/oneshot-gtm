@@ -115,6 +115,12 @@ export function registerSmartleadIdentity(input: {
   maxPerDay?: number | null;
   /** Smartlead's per-mailbox message_per_day, from the accounts listing. */
   providerMessagePerDay?: number | null;
+  /**
+   * Send path for a NEW identity: "smtp" = direct mailbox SMTP with an
+   * idempotency key; absent or "provider" = the Smartlead API. Ignored on a
+   * re-add, so an existing identity's send path never changes here.
+   */
+  sendVia?: "provider" | "smtp";
 }): { identityId: string; created: boolean } {
   const address = input.address.trim().toLowerCase();
   if (!address) throw new Error("smartlead identity needs an address");
@@ -145,6 +151,7 @@ export function registerSmartleadIdentity(input: {
     label: input.label?.trim() || address,
     address,
     ...caps,
+    ...(input.sendVia === "smtp" ? { sendVia: "smtp" as const } : {}),
   });
   saveConfig({ ...cfg, emailIdentities: pool });
   return { identityId, created: true };
