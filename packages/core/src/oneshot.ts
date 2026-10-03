@@ -50,11 +50,12 @@ import {
 } from "./gmail.ts";
 import { gmailAccountFor, resolveIdentities } from "./identities.ts";
 import { validateSendVia } from "./identity-send-via.ts";
-import type { OutboundStatus } from "./ledger-outbound.ts";
+import { outboundMessageId, type OutboundStatus } from "./ledger-outbound.ts";
 import {
   listMailboxInbox,
   listMailboxBounces,
   MailboxSubmitError,
+  replySendKey,
   sendMailboxInitial,
   sendMailboxReply,
   serverKeepsSentCopy,
@@ -332,17 +333,6 @@ export function outboundSendKey(parts: {
  */
 export function contentSendKey(identityId: string, input: SendEmailInput): string {
   return `content:${emailIdempotencyKey([identityId, input.to, input.subject, input.body])}`;
-}
-
-/**
- * Deterministic Message-ID for one intended email: the same key always yields
- * the same id, so a retry after a definite failure, or a second attempt that
- * slipped past every other guard, is one message to the recipient, and the
- * confirm sweep can find it in Sent by header.
- */
-export function outboundMessageId(key: string, fromAddress: string): string {
-  const domain = fromAddress.split("@")[1]?.trim().toLowerCase() || "localhost";
-  return `<${createHash("sha256").update(key).digest("hex").slice(0, 32)}@${domain}>`;
 }
 
 /** A Gmail API failure the server answered (or auth/config) never sent anything. */
@@ -920,55 +910,6 @@ export interface ReplyEmailInput {
   replyToEmailId?: string;
 }
 
-/**
- * Mirror a mailbox reply attempt into `outbound_sends`, so replies share the
- * one send ledger and confirm sweep. The reply path keeps its own attempt
- * store (mailbox_attempts) as the claim; this row only records the outcome.
- */
-function noteReplyAttempt(
-  key: string,
-  identity: EmailIdentity,
-  to: string,
-  subject: string,
-  messageId: string | null,
-  receiptId: number | null,
-  err: unknown,
-): void {
-  try {
-    const store = getLedger().outboundSends;
-    if (!store.get(key)) {
-      store.claim({
-        key,
-        identityId: identity.id,
-        transport: "smtp",
-        recipient: to.trim().toLowerCase(),
-        subject,
-        body: "",
-        messageId,
-        sentEvidence: false,
-      });
-    }
-    if (err == null) {
-      store.mark(key, "submitted", { messageId, receiptId });
-      return;
-    }
-    // A refused re-click must never downgrade a reply that already went out.
-    const status = store.get(key)?.status;
-    if (status !== "pending" && status !== "uncertain" && status !== "failed") return;
-    const unknown = /unknown/i.test((err as Error).message ?? "");
-    store.mark(key, unknown ? "uncertain" : "failed", {
-      messageId,
-      error: ((err as Error).message ?? "").slice(0, 200),
-    });
-  } catch (e) {
-    logEvent(
-      "send.keyed.note_failed",
-      { message_120: ((e as Error).message ?? "").slice(0, 120) },
-      "warn",
-    );
-  }
-}
-
 /** "Re: " prefix, idempotent and case-insensitive ("RE: x" passes through). */
 export function replySubject(subject: string): string {
   const s = subject.trim();
@@ -1047,24 +988,8 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
     const inbound = getLedger().mailboxes.get(input.inboundEmailId);
     if (inbound?.identityId !== identity.id)
       throw new Error("Inbound message does not belong to this sender identity.");
-    const replyKey = `gtm:${currentWorkspaceName()}:reply:${input.sendRequestId}`;
-    let sent: Awaited<ReturnType<typeof sendMailboxReply>>;
-    try {
-      sent = await sendMailboxReply(input.inboundEmailId, input.body, input.sendRequestId);
-    } catch (err) {
-      // The attempt store holds the Message-ID it submitted under, if it got that far.
-      const attempted = getLedger().mailboxes.attempt(input.sendRequestId);
-      noteReplyAttempt(
-        replyKey,
-        identity,
-        input.to,
-        subject,
-        attempted?.message.messageId ?? null,
-        null,
-        err,
-      );
-      throw err;
-    }
+    // sendMailboxReply claims and records the send in outbound_sends itself.
+    const sent = await sendMailboxReply(input.inboundEmailId, input.body, input.sendRequestId);
     const result: EmailResult = {
       status: "sent",
       request_id: sent.messageId!,
@@ -1087,15 +1012,7 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
       oneshotRequestId: sent.messageId!,
       senderIdentity: identity.id,
     });
-    noteReplyAttempt(
-      replyKey,
-      identity,
-      sent.to[0]!,
-      sent.subject,
-      sent.messageId ?? null,
-      receiptId,
-      null,
-    );
+    getLedger().outboundSends.attachReceipt(replySendKey(input.sendRequestId), receiptId);
     recordContactTouch(sent.to[0]!, ctx.playName);
     return { result, receiptId };
   }

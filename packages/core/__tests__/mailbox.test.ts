@@ -84,7 +84,9 @@ const {
   mailboxHealth,
   listMailboxInbox,
   listMailboxBounces,
+  replySendKey,
 } = await import("../src/mailbox.ts");
+const { outboundMessageId } = await import("../src/ledger-outbound.ts");
 const identityId = "smartlead:me@example.com";
 const source = (id: string, headers = "", from = "prospect@example.org") =>
   Buffer.from(
@@ -137,10 +139,10 @@ describe("durable mailbox threads", () => {
     await expect(sendMailboxReply(inbound.id, "answer", "rejected-all")).rejects.toThrow(
       /not sent/,
     );
-    expect(ledger.mailboxes.attempt("rejected-all")?.status).toBe("failed");
+    expect(ledger.outboundSends.get(replySendKey("rejected-all"))?.status).toBe("failed");
     await sendMailboxReply(inbound.id, "answer", "retry-rejected-all");
     expect(mocks.smtp.sendMail).toHaveBeenCalledTimes(2);
-    expect(ledger.mailboxes.attempt("retry-rejected-all")?.status).toBe("sent");
+    expect(ledger.outboundSends.get(replySendKey("retry-rejected-all"))?.status).toBe("submitted");
   });
 
   it("keeps identical messages and organization isolated across workspaces", async () => {
@@ -364,7 +366,7 @@ describe("threaded replies", () => {
     const inbound = await put();
     mocks.smtp.sendMail.mockRejectedValue(new Error("connection lost after DATA"));
     await expect(sendMailboxReply(inbound.id, "answer", "send-unknown")).rejects.toThrow(/unknown/);
-    expect(ledger.mailboxes.attempt("send-unknown")?.status).toBe("uncertain");
+    expect(ledger.outboundSends.get(replySendKey("send-unknown"))?.status).toBe("uncertain");
     await expect(sendMailboxReply(inbound.id, "answer edited", "send-another")).rejects.toThrow(
       /reconciled/,
     );
@@ -374,12 +376,95 @@ describe("threaded replies", () => {
     const inbound = await put();
     mocks.smtp.sendMail.mockRejectedValue(new Error("lost response"));
     await expect(sendMailboxReply(inbound.id, "answer", "send-reconcile")).rejects.toThrow();
-    const attempt = ledger.mailboxes.attempt("send-reconcile")!;
-    ledger.mailboxes.put(attempt.message);
+    const key = replySendKey("send-reconcile");
+    const row = ledger.outboundSends.get(key)!;
+    expect(row).toMatchObject({ kind: "reply", inboundId: inbound.id, body: "answer" });
+    // The Sent copy, as the mailbox sync would import it.
+    ledger.mailboxes.put(
+      mailboxReplyMessage(inbound, "me@example.com", "answer", { messageId: row.messageId! }),
+    );
     await syncSmartleadMailboxes(true);
-    expect(ledger.mailboxes.attempt(attempt.id)?.status).toBe("sent");
-    await sendMailboxReply(inbound.id, "answer", attempt.id);
+    expect(ledger.outboundSends.get(key)?.status).toBe("confirmed");
+    const replay = await sendMailboxReply(inbound.id, "answer", "send-reconcile");
+    expect(replay.messageId).toBe(row.messageId);
     expect(mocks.smtp.sendMail).toHaveBeenCalledTimes(1);
+  });
+  it("derives the Message-ID from the request key and stores the full reply at claim", async () => {
+    const inbound = await put();
+    const message = await sendMailboxReply(inbound.id, "Full answer.", "request-mid");
+    const key = replySendKey("request-mid");
+    expect(message.messageId).toBe(outboundMessageId(key, "me@example.com"));
+    const wire = await simpleParser(mocks.smtp.sendMail.mock.calls[0]![0].raw as Buffer);
+    expect(wire.messageId).toBe(message.messageId);
+    expect(ledger.outboundSends.get(key)).toMatchObject({
+      kind: "reply",
+      status: "submitted",
+      transport: "smtp",
+      recipient: "prospect@example.org",
+      subject: "Re: Hello",
+      body: "Full answer.",
+      inboundId: inbound.id,
+      threadKey: inbound.threadKey,
+      inReplyTo: inbound.messageId,
+      references: [inbound.messageId],
+      dateHeader: message.at,
+      sentEvidence: true, // smtp.gmail.com files its own Sent copy
+    });
+  });
+  it("refuses the same request id with another body, writing nothing", async () => {
+    const inbound = await put();
+    await sendMailboxReply(inbound.id, "first", "request-body");
+    await expect(sendMailboxReply(inbound.id, "second", "request-body")).rejects.toThrow(
+      /does not match/,
+    );
+    expect(ledger.outboundSends.get(replySendKey("request-body"))?.body).toBe("first");
+    expect(mocks.smtp.sendMail).toHaveBeenCalledTimes(1);
+  });
+  it("a refused click (another reply still unconfirmed) writes no row", async () => {
+    const inbound = await put();
+    mocks.smtp.sendMail.mockRejectedValueOnce(new Error("connection lost after DATA"));
+    await expect(sendMailboxReply(inbound.id, "answer", "request-a")).rejects.toThrow(/unknown/);
+    await expect(sendMailboxReply(inbound.id, "answer", "request-b")).rejects.toThrow(
+      /still being reconciled/,
+    );
+    expect(ledger.outboundSends.get(replySendKey("request-b"))).toBeNull();
+  });
+  it("a definite failure frees the inbound for a new request", async () => {
+    const inbound = await put();
+    mocks.smtp.verify.mockRejectedValueOnce(new Error("bad password"));
+    await expect(sendMailboxReply(inbound.id, "answer", "request-fail")).rejects.toThrow(
+      /not sent/,
+    );
+    await expect(sendMailboxReply(inbound.id, "answer", "request-fail")).rejects.toThrow(
+      /Previous send failed/,
+    );
+    await sendMailboxReply(inbound.id, "answer", "request-next");
+    expect(ledger.outboundSends.get(replySendKey("request-next"))?.status).toBe("submitted");
+  });
+  it("settles a reply whose process died mid-send, then refuses until it is reconciled", async () => {
+    const inbound = await put();
+    const key = replySendKey("request-dead");
+    ledger.outboundSends.claimReply({
+      key,
+      identityId,
+      transport: "smtp",
+      recipient: "prospect@example.org",
+      subject: "Re: Hello",
+      body: "answer",
+      messageId: outboundMessageId(key, "me@example.com"),
+      sentEvidence: true,
+      inboundId: inbound.id,
+      threadKey: inbound.threadKey,
+      inReplyTo: inbound.messageId!,
+      references: [inbound.messageId!],
+      dateHeader: "2026-09-30T10:00:00.000Z",
+      now: new Date(Date.now() - 10 * 60_000),
+    });
+    await expect(sendMailboxReply(inbound.id, "answer", "request-live")).rejects.toThrow(
+      /still being reconciled/,
+    );
+    expect(ledger.outboundSends.get(key)?.status).toBe("uncertain");
+    expect(mocks.smtp.sendMail).not.toHaveBeenCalled();
   });
   it("keeps failed sends out of sent history and rejects removed identities", async () => {
     const inbound = await put();
@@ -387,7 +472,7 @@ describe("threaded replies", () => {
     await expect(sendMailboxReply(inbound.id, "answer", "failed-request")).rejects.toThrow(
       /not sent/,
     );
-    expect(ledger.mailboxes.attempt("failed-request")?.status).toBe("failed");
+    expect(ledger.outboundSends.get(replySendKey("failed-request"))?.status).toBe("failed");
     expect(ledger.mailboxes.thread(inbound.threadKey)).toHaveLength(1);
     mocks.identities = [];
     await expect(sendMailboxReply(inbound.id, "answer", "removed-request")).rejects.toThrow(

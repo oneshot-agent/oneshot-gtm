@@ -17,14 +17,14 @@ import {
   type MailboxMessage,
   type MailboxHealth,
   type MailboxCheckpoint,
-  type MailboxAttempt,
 } from "./mailbox-store.ts";
+import { outboundMessageId, type OutboundSend } from "./ledger-outbound.ts";
+import { currentWorkspaceName } from "./shared-db.ts";
 import type { AnnotatedInboxListResult, BounceListResult } from "./oneshot.ts";
 
 export type { MailboxMessage, MailboxHealth } from "./mailbox-store.ts";
 const DAY = 86_400_000;
 const syncs = new Map<string, { started: number; pending: Promise<void> | null }>();
-const liveSends = new Set<string>();
 const reclassifiedStores = new WeakSet<object>();
 
 /** Adapt a parsed mailbox message to the shared delivery-failure parser. */
@@ -317,15 +317,11 @@ async function syncIdentity(identityId: string, address: string, ledger: Ledger)
       store.setState(key, cp);
       health.backfillRemaining ||= !cp.complete;
     }
-    // Sent copies are authoritative evidence for a crashed/timed-out send.
-    for (const attempt of store.attempts().filter((a) => a.message.identityId === identityId)) {
-      if (
-        !liveSends.has(attempt.id) &&
-        attempt.message.messageId &&
-        store.byMessageId(identityId, attempt.message.messageId)
-      ) {
-        store.saveAttempt({ ...attempt, status: "sent", error: null });
-        ledger.clearInboxDraft(attempt.message.threadKey);
+    // Sent copies are authoritative evidence for a crashed/timed-out reply.
+    for (const send of ledger.outboundSends.unconfirmedReplies(identityId)) {
+      if (send.messageId && store.byMessageId(identityId, send.messageId)) {
+        ledger.outboundSends.mark(send.key, "confirmed", { observed: 1 });
+        if (send.threadKey) ledger.clearInboxDraft(send.threadKey);
       }
     }
     health.status = "connected";
@@ -488,21 +484,23 @@ export function mailboxReplyMessage(
   inbound: MailboxMessage,
   address: string,
   body: string,
+  opts: { messageId?: string; at?: string; subject?: string; references?: string[] } = {},
 ): MailboxMessage {
   if (!inbound.messageId)
     throw new Error("This message has no Message-ID; a threaded reply cannot be sent safely.");
-  const messageId = `<${randomUUID()}@${address.split("@")[1]}>`;
+  const messageId = opts.messageId ?? `<${randomUUID()}@${address.split("@")[1]}>`;
   return {
     ...inbound,
     id: `mailbox:${inbound.identityId}:${mailboxHash(messageId)}`,
     messageId,
-    references: [...new Set([...inbound.references, inbound.messageId])],
+    references: opts.references ?? [...new Set([...inbound.references, inbound.messageId])],
     from: address,
     to: [inbound.replyTo || inbound.from],
     replyTo: null,
-    subject: /^re:/i.test(inbound.subject) ? inbound.subject : `Re: ${inbound.subject}`,
+    subject:
+      opts.subject ?? (/^re:/i.test(inbound.subject) ? inbound.subject : `Re: ${inbound.subject}`),
     body,
-    at: new Date().toISOString(),
+    at: opts.at ?? new Date().toISOString(),
     direction: "outbound",
     kind: "human",
     autoSubmitted: null,
@@ -633,7 +631,37 @@ async function saveSentCopy(
   }
 }
 
-/** Uses only stored routing metadata, never client-supplied From/To/thread headers. */
+/** The outbound_sends key of one mailbox reply: one per client send request. */
+export function replySendKey(requestId: string): string {
+  return `gtm:${currentWorkspaceName()}:reply:${requestId}`;
+}
+
+/** The outbound record a stored reply send went out as (for a replay). */
+function replyFromSend(
+  inbound: MailboxMessage,
+  address: string,
+  send: OutboundSend,
+): MailboxMessage {
+  return mailboxReplyMessage(inbound, address, send.body, {
+    ...(send.messageId ? { messageId: send.messageId } : {}),
+    at: send.dateHeader ?? send.firstAttemptAt,
+    subject: send.subject,
+    references: send.references,
+  });
+}
+
+/**
+ * Send a threaded reply to a stored inbound message. Uses only stored routing
+ * metadata, never client-supplied From/To/thread headers. The reply is
+ * claimed in `outbound_sends` under `replySendKey(requestId)` before SMTP
+ * runs, with a Message-ID derived from that key and its full content, so:
+ * - the same request id with another body is refused;
+ * - the same request id after a send replays it (nothing is sent again);
+ * - a pending or unconfirmed reply to the same inbound blocks a new one until
+ *   it is reconciled against Sent (mailbox sync or the confirm sweep);
+ * - only a definite failure frees the inbound for a new request.
+ * A refused click writes no row.
+ */
 export async function sendMailboxReply(
   inboundId: string,
   body: string,
@@ -641,35 +669,55 @@ export async function sendMailboxReply(
 ): Promise<MailboxMessage> {
   const ledger = getLedger();
   const store = ledger.mailboxes;
+  const sends = ledger.outboundSends;
   const inbound = store.get(inboundId);
   if (!inbound || inbound.direction !== "inbound")
     throw new Error("Inbound message not found in this workspace.");
   const connection = await mailboxConnection(inbound.identityId);
-  const prior = store.attempt(requestId);
-  if (prior && (prior.inboundId !== inboundId || prior.message.body !== body))
-    throw new Error("Send request does not match the saved attempt.");
-  if (prior?.status === "sent") return prior.message;
-  if (prior && prior.status !== "failed") {
+  const key = replySendKey(requestId);
+  const settled = async (prior: OutboundSend): Promise<MailboxMessage> => {
+    if (prior.inboundId !== inboundId || prior.body !== body)
+      throw new Error("Send request does not match the saved attempt.");
+    if (prior.status === "submitted" || prior.status === "confirmed")
+      return replyFromSend(inbound, connection.address, prior);
+    if (prior.status === "failed")
+      throw new Error("Previous send failed. Start a new send attempt.");
+    if (prior.status === "not_found")
+      throw new Error(
+        "Delivery is not confirmed. Check the recipient's thread before sending again.",
+      );
     await syncSmartleadMailboxes(true);
-    if (store.attempt(requestId)?.status === "sent") return prior.message;
+    const latest = sends.get(key);
+    if (latest?.status === "confirmed" || latest?.status === "submitted")
+      return replyFromSend(inbound, connection.address, latest);
     throw new Error(
       "Previous send has an unknown outcome. It will be reconciled against Sent mail; do not resend it yet.",
     );
-  }
-  if (prior?.status === "failed")
-    throw new Error("Previous send failed. Start a new send attempt.");
-  const message = mailboxReplyMessage(inbound, connection.address, body);
-  const fresh: MailboxAttempt = {
-    id: requestId,
-    inboundId,
-    message,
-    status: "sending",
-    error: null,
   };
-  const claimed = store.claimAttempt(fresh);
-  if (claimed !== fresh)
-    throw new Error("This reply is already being sent. Refresh before retrying.");
-  liveSends.add(requestId);
+  const prior = sends.get(key);
+  if (prior) return settled(prior);
+  const messageId = outboundMessageId(key, connection.address);
+  const message = mailboxReplyMessage(inbound, connection.address, body, { messageId });
+  const claim = sends.claimReply({
+    key,
+    identityId: inbound.identityId,
+    transport: "smtp",
+    recipient: (message.to[0] ?? "").trim().toLowerCase(),
+    subject: message.subject,
+    body,
+    messageId,
+    sentEvidence: serverKeepsSentCopy(connection),
+    inboundId,
+    threadKey: message.threadKey,
+    inReplyTo: inbound.messageId!,
+    references: message.references,
+    dateHeader: message.at,
+  });
+  if (claim.verdict === "exists") return settled(claim.send);
+  if (claim.verdict === "busy")
+    throw new Error(
+      "A previous send is still being reconciled. Refresh the thread before retrying.",
+    );
   try {
     const date = new Date(message.at);
     const mime = await submitMailboxMail(connection, {
@@ -677,27 +725,25 @@ export async function sendMailboxReply(
       to: message.to,
       subject: message.subject,
       text: body,
-      messageId: message.messageId!,
+      messageId,
       inReplyTo: inbound.messageId!,
       references: message.references,
       date,
     });
     store.put(message);
-    store.saveAttempt({ ...fresh, status: "sent" });
+    sends.mark(key, "submitted", { messageId });
     ledger.clearInboxDraft(message.threadKey);
-    if (!(await saveSentCopy(connection, mime, message.messageId!, date))) {
+    if (!(await saveSentCopy(connection, mime, messageId, date))) {
       // Submission succeeded. A Sent-copy failure must never turn into a retry of DATA.
       store.setState(`sent-copy:${requestId}`, {
-        messageId: message.messageId,
+        messageId,
         error: "Reply sent; mailbox Sent copy could not be saved.",
       });
     }
     return message;
   } catch (err) {
     const definite = err instanceof MailboxSubmitError ? err.definite : true;
-    store.saveAttempt({
-      ...fresh,
-      status: definite ? "failed" : "uncertain",
+    sends.mark(key, definite ? "failed" : "uncertain", {
       error: definite
         ? "SMTP rejected the reply. Check your connection and retry."
         : "Send outcome unknown; checking Sent mail before retry.",
@@ -708,8 +754,6 @@ export async function sendMailboxReply(
         ? "Reply was not sent. Check mailbox settings and retry."
         : "Send outcome unknown. Refresh to reconcile Sent mail before retrying.",
     );
-  } finally {
-    liveSends.delete(requestId);
   }
 }
 

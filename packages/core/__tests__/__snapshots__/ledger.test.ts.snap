@@ -312,12 +312,6 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
-      "name": "mailbox_attempts_inbound",
-      "sql": "CREATE INDEX mailbox_attempts_inbound ON mailbox_attempts(inbound_id, status)",
-      "tbl_name": "mailbox_attempts",
-      "type": "index",
-    },
-    {
       "name": "mailbox_messages_rfc",
       "sql": "CREATE INDEX mailbox_messages_rfc ON mailbox_messages(identity_id, message_id)",
       "tbl_name": "mailbox_messages",
@@ -327,6 +321,13 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "name": "mailbox_messages_thread",
       "sql": "CREATE INDEX mailbox_messages_thread ON mailbox_messages(thread_key, at)",
       "tbl_name": "mailbox_messages",
+      "type": "index",
+    },
+    {
+      "name": "outbound_reply_inflight",
+      "sql": "CREATE UNIQUE INDEX outbound_reply_inflight ON outbound_sends(inbound_id)
+      WHERE kind = 'reply' AND status IN ('pending', 'uncertain')",
+      "tbl_name": "outbound_sends",
       "type": "index",
     },
     {
@@ -604,14 +605,6 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "table",
     },
     {
-      "name": "mailbox_attempts",
-      "sql": "CREATE TABLE mailbox_attempts (
-        id TEXT PRIMARY KEY, inbound_id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL
-      )",
-      "tbl_name": "mailbox_attempts",
-      "type": "table",
-    },
-    {
       "name": "mailbox_messages",
       "sql": "CREATE TABLE mailbox_messages (
         id TEXT PRIMARY KEY, identity_id TEXT NOT NULL, thread_key TEXT NOT NULL,
@@ -726,7 +719,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
           queue_id INTEGER,
           prospect_id INTEGER,
           error TEXT
-        )",
+        , kind TEXT NOT NULL DEFAULT 'initial', inbound_id TEXT, thread_key TEXT, in_reply_to TEXT, references_json TEXT, date_header TEXT)",
       "tbl_name": "outbound_sends",
       "type": "table",
     },

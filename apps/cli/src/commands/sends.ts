@@ -55,7 +55,8 @@ export async function commandSendsCheck(opts: SendsCheckOpts): Promise<void> {
     tallyKeyed.set(status, (tallyKeyed.get(status) ?? 0) + 1);
     const when = k.firstAttemptAt.slice(0, 16).replace("T", " ");
     const seen = r?.observed ?? k.observed;
-    const line = `${when}  ${k.transport.padEnd(9)} ${k.identityId}  → ${k.recipient}  ${status}${seen == null ? "" : `, observed ${seen}`}${k.attempts > 1 ? `, ${k.attempts} attempts` : ""}`;
+    const kind = k.kind === "reply" ? "reply" : "send";
+    const line = `${when}  ${k.transport.padEnd(9)} ${kind.padEnd(5)} ${k.identityId}  → ${k.recipient}  ${status}${seen == null ? "" : `, observed ${seen}`}${k.attempts > 1 ? `, ${k.attempts} attempts` : ""}`;
     const error = r?.error ?? k.error;
     if (status === "uncertain" || status === "not_found" || (seen ?? 0) > 1 || r?.error) {
       warn(`${line}${error ? `  — ${error}` : ""}`);

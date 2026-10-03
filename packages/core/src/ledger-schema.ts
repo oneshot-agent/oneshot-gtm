@@ -218,7 +218,147 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    // Mailbox replies move onto outbound_sends: the reply's threading (inbound
+    // message, thread, In-Reply-To, References, MIME Date) is stored with the
+    // claim, and a partial unique index allows one reply in flight per inbound
+    // message. Rows of the old mailbox_attempts table are copied in under the
+    // key the reply path already used; the table itself is left, unread.
+    version: 11,
+    name: "replies-on-outbound-sends",
+    up: (db) => migrateRepliesOntoOutboundSends(db),
+  },
 ];
+
+/** Legacy attempt status → outbound_sends status (see migration 11). */
+const ATTEMPT_STATUS: Record<string, string> = {
+  sending: "uncertain",
+  uncertain: "uncertain",
+  sent: "confirmed",
+  failed: "failed",
+};
+
+/**
+ * Migration 11. Idempotent: the columns and index are added only when
+ * missing, and the copy upserts by key, so a second run leaves the same rows.
+ * A copied row overwrites the outcome-only mirror row #765 wrote for the same
+ * key (it had no body), keeping that row's receipt.
+ */
+export function migrateRepliesOntoOutboundSends(db: Database): void {
+  const has = new Set(
+    (db.query("PRAGMA table_info(outbound_sends)").all() as { name: string }[]).map((c) => c.name),
+  );
+  const columns: [string, string][] = [
+    ["kind", "TEXT NOT NULL DEFAULT 'initial'"],
+    ["inbound_id", "TEXT"],
+    ["thread_key", "TEXT"],
+    ["in_reply_to", "TEXT"],
+    ["references_json", "TEXT"],
+    ["date_header", "TEXT"],
+  ];
+  for (const [name, type] of columns) {
+    if (!has.has(name)) db.exec(`ALTER TABLE outbound_sends ADD COLUMN ${name} ${type}`);
+  }
+  const tableExists = (name: string) =>
+    db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name) != null;
+  // Rebuilt below, after the copy has settled any duplicate in-flight rows.
+  db.exec("DROP INDEX IF EXISTS outbound_reply_inflight");
+  if (tableExists("mailbox_attempts")) {
+    // Same rule as currentWorkspaceName() (shared-db.ts), inlined to keep the
+    // schema module free of imports: the key the reply path has always used.
+    const workspace = process.env["ONESHOT_GTM_WORKSPACE"]?.trim() || "default";
+    const inboundMessageId = tableExists("mailbox_messages")
+      ? db.query<{ message_id: string | null }, [string]>(
+          "SELECT message_id FROM mailbox_messages WHERE id=?",
+        )
+      : null;
+    const upsert = db.query(
+      `INSERT INTO outbound_sends
+         (key, identity_id, transport, recipient, subject, body, message_id, status,
+          sent_evidence, exact_resend, attempts, first_attempt_at, last_attempt_at,
+          submitted_at, confirmed_at, error, kind, inbound_id, thread_key, in_reply_to,
+          references_json, date_header)
+       VALUES (?, ?, 'smtp', ?, ?, ?, ?, ?, 0, ?, 1, ?, ?, ?, ?, ?, 'reply', ?, ?, ?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         identity_id = excluded.identity_id, transport = excluded.transport,
+         recipient = excluded.recipient, subject = excluded.subject, body = excluded.body,
+         message_id = excluded.message_id, status = excluded.status,
+         sent_evidence = excluded.sent_evidence, exact_resend = excluded.exact_resend,
+         attempts = excluded.attempts, first_attempt_at = excluded.first_attempt_at,
+         last_attempt_at = excluded.last_attempt_at, submitted_at = excluded.submitted_at,
+         confirmed_at = excluded.confirmed_at, error = excluded.error, kind = excluded.kind,
+         inbound_id = excluded.inbound_id, thread_key = excluded.thread_key,
+         in_reply_to = excluded.in_reply_to, references_json = excluded.references_json,
+         date_header = excluded.date_header`,
+    );
+    const rows = db
+      .query("SELECT id, inbound_id, status, data FROM mailbox_attempts ORDER BY rowid")
+      .all() as { id: string; inbound_id: string; status: string; data: string }[];
+    for (const row of rows) {
+      let attempt: {
+        error?: string | null;
+        message?: {
+          identityId?: string;
+          to?: string[];
+          subject?: string;
+          body?: string;
+          messageId?: string | null;
+          references?: string[];
+          threadKey?: string;
+          at?: string;
+        };
+      };
+      try {
+        attempt = JSON.parse(row.data);
+      } catch {
+        continue;
+      }
+      const m = attempt.message;
+      if (!m?.identityId || !m.at) continue;
+      const status = ATTEMPT_STATUS[row.status] ?? "uncertain";
+      const references = m.references ?? [];
+      const inReplyTo =
+        inboundMessageId?.get(row.inbound_id)?.message_id ?? references.at(-1) ?? null;
+      const settledAt = status === "confirmed" ? m.at : null;
+      upsert.run(
+        `gtm:${workspace}:reply:${row.id}`,
+        m.identityId,
+        (m.to?.[0] ?? "").trim().toLowerCase(),
+        m.subject ?? "",
+        m.body ?? "",
+        m.messageId ?? null,
+        status,
+        status === "uncertain" ? 1 : 0,
+        m.at,
+        m.at,
+        settledAt,
+        settledAt,
+        attempt.error ?? null,
+        row.inbound_id,
+        m.threadKey ?? null,
+        inReplyTo,
+        JSON.stringify(references),
+        m.at,
+      );
+    }
+  }
+  // The old store allowed one in-flight attempt per inbound message, so this
+  // only guards an impossible state: keep the newest, settle the rest.
+  db.exec(`
+    UPDATE outbound_sends SET status = 'not_found',
+           error = 'superseded by a later reply attempt to the same message'
+     WHERE kind = 'reply' AND status IN ('pending', 'uncertain')
+       AND EXISTS (
+         SELECT 1 FROM outbound_sends o
+          WHERE o.kind = 'reply' AND o.status IN ('pending', 'uncertain')
+            AND o.inbound_id = outbound_sends.inbound_id
+            AND (o.last_attempt_at > outbound_sends.last_attempt_at
+                 OR (o.last_attempt_at = outbound_sends.last_attempt_at AND o.key > outbound_sends.key))
+       );
+    CREATE UNIQUE INDEX IF NOT EXISTS outbound_reply_inflight ON outbound_sends(inbound_id)
+      WHERE kind = 'reply' AND status IN ('pending', 'uncertain');
+  `);
+}
 
 export const LEDGER_SCHEMA_VERSION = LEDGER_MIGRATIONS[LEDGER_MIGRATIONS.length - 1]!.version;
 

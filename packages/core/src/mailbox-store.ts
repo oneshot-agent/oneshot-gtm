@@ -42,14 +42,6 @@ export interface MailboxCheckpoint {
   complete: boolean;
 }
 
-export interface MailboxAttempt {
-  id: string;
-  inboundId: string;
-  message: MailboxMessage;
-  status: "sending" | "uncertain" | "sent" | "failed";
-  error: string | null;
-}
-
 /** Produce the stable, non-reversible key used in workspace mailbox IDs. */
 export const mailboxHash = (value: string): string =>
   createHash("sha256").update(value).digest("hex").slice(0, 32);
@@ -74,10 +66,6 @@ export class MailboxStore {
         thread_key TEXT PRIMARY KEY, archived_at TEXT, history_complete INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS mailbox_state (key TEXT PRIMARY KEY, data TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS mailbox_attempts (
-        id TEXT PRIMARY KEY, inbound_id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS mailbox_attempts_inbound ON mailbox_attempts(inbound_id, status);
     `);
     addColumnIfMissing(db, "mailbox_threads", "last_read_at", "TEXT");
     addColumnIfMissing(db, "mailbox_messages", "needs_processing", "INTEGER NOT NULL DEFAULT 1");
@@ -358,52 +346,5 @@ export class MailboxStore {
     return row.at
       ? new Date(row.at.replace(" ", "T") + (row.at.endsWith("Z") ? "" : "Z")).toISOString()
       : null;
-  }
-
-  /** Look up a persisted SMTP send attempt by request ID. */
-  attempt(id: string): MailboxAttempt | null {
-    const row = this.db.query("SELECT data FROM mailbox_attempts WHERE id=?").get(id) as {
-      data: string;
-    } | null;
-    return row ? JSON.parse(row.data) : null;
-  }
-
-  /** Return send attempts that still need Sent-folder reconciliation. */
-  attempts(): MailboxAttempt[] {
-    return (
-      this.db
-        .query("SELECT data FROM mailbox_attempts WHERE status IN ('sending','uncertain')")
-        .all() as { data: string }[]
-    ).map((r) => JSON.parse(r.data));
-  }
-
-  /** Atomically claim an idempotent send attempt or return its prior result. */
-  claimAttempt(attempt: MailboxAttempt): MailboxAttempt {
-    return this.db
-      .transaction(() => {
-        const existing = this.attempt(attempt.id);
-        if (existing) return existing;
-        const pending = this.db
-          .query(
-            "SELECT data FROM mailbox_attempts WHERE inbound_id=? AND status IN ('sending','uncertain') LIMIT 1",
-          )
-          .get(attempt.inboundId) as { data: string } | null;
-        if (pending)
-          throw new Error(
-            "A previous send is still being reconciled. Refresh the thread before retrying.",
-          );
-        this.saveAttempt(attempt);
-        return attempt;
-      })
-      .immediate();
-  }
-
-  /** Persist the latest status and payload for an SMTP send attempt. */
-  saveAttempt(attempt: MailboxAttempt): void {
-    this.db
-      .query(
-        "INSERT INTO mailbox_attempts(id,inbound_id,status,data) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,data=excluded.data",
-      )
-      .run(attempt.id, attempt.inboundId, attempt.status, JSON.stringify(attempt));
   }
 }
