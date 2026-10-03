@@ -60,14 +60,9 @@ vi.mock("nodemailer", async (original) => {
   };
 });
 
-const {
-  sendEmail,
-  replyEmail,
-  outboundSendKey,
-  outboundMessageId,
-  contentSendKey,
-  UncertainSendError,
-} = await import("../src/oneshot.ts");
+const { sendEmail, replyEmail, outboundSendKey, contentSendKey, UncertainSendError } =
+  await import("../src/oneshot.ts");
+const { outboundMessageId } = await import("../src/ledger-outbound.ts");
 const { parseMailboxMessage } = await import("../src/mailbox.ts");
 const { currentWorkspaceName } = await import("../src/shared-db.ts");
 const { isSendDeferred } = await import("../src/send-routing.ts");

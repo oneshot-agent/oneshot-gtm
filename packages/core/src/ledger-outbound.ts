@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 
 /**
  * Outbound send ledger (ledger v10, `outbound_sends`): one row per INTENDED
@@ -6,6 +7,7 @@ import type { Database } from "bun:sqlite";
  * prospect, step). The key is the claim that stops a second send of the same
  * email, whatever transport carries it and however often the draft is
  * rewritten. Shares the Ledger's database handle, like `SendDeliveryStore`.
+ * Since v11 mailbox replies live here too (`kind = 'reply'`, see `claimReply`).
  *
  * Status lifecycle:
  *   pending   → claimed, the send is in flight
@@ -25,6 +27,30 @@ export type OutboundStatus =
 
 /** A pending claim older than this belonged to a process that died mid-send. */
 export const STALE_PENDING_MS = 5 * 60_000;
+
+/**
+ * Deterministic Message-ID for one intended email: the same key always yields
+ * the same id, so a retry after a definite failure, or a second attempt that
+ * slipped past every other guard, is one message to the recipient, and the
+ * confirm sweep can find it in Sent by header.
+ */
+export function outboundMessageId(key: string, fromAddress: string): string {
+  const domain = fromAddress.split("@")[1]?.trim().toLowerCase() || "localhost";
+  return `<${createHash("sha256").update(key).digest("hex").slice(0, 32)}@${domain}>`;
+}
+
+/** `initial` = a new email; `reply` = a threaded mailbox reply to a stored inbound message. */
+export type OutboundKind = "initial" | "reply";
+
+/** Threading a reply carries, stored at claim time so a resend is byte-identical. */
+export interface ReplyThreading {
+  inboundId: string;
+  threadKey: string;
+  inReplyTo: string;
+  references: string[];
+  /** The MIME Date header (ISO). */
+  dateHeader: string;
+}
 
 export interface OutboundSend {
   key: string;
@@ -59,6 +85,13 @@ export interface OutboundSend {
   queueId: number | null;
   prospectId: number | null;
   error: string | null;
+  kind: OutboundKind;
+  /** Replies only (null on initial sends). */
+  inboundId: string | null;
+  threadKey: string | null;
+  inReplyTo: string | null;
+  references: string[];
+  dateHeader: string | null;
 }
 
 interface Row {
@@ -83,6 +116,22 @@ interface Row {
   queue_id: number | null;
   prospect_id: number | null;
   error: string | null;
+  kind: string | null;
+  inbound_id: string | null;
+  thread_key: string | null;
+  in_reply_to: string | null;
+  references_json: string | null;
+  date_header: string | null;
+}
+
+function parseReferences(json: string | null): string[] {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((r): r is string => typeof r === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 function toSend(row: Row): OutboundSend {
@@ -108,7 +157,23 @@ function toSend(row: Row): OutboundSend {
     queueId: row.queue_id,
     prospectId: row.prospect_id,
     error: row.error,
+    kind: row.kind === "reply" ? "reply" : "initial",
+    inboundId: row.inbound_id,
+    threadKey: row.thread_key,
+    inReplyTo: row.in_reply_to,
+    references: parseReferences(row.references_json),
+    dateHeader: row.date_header,
   };
+}
+
+/**
+ * What `claimReply` decided. `claimed`: this caller owns the send. `exists`:
+ * a row under this key already (`send` is it). `busy`: another reply to the
+ * same inbound message is still pending or uncertain (`send` is that one).
+ */
+export interface ReplyClaim {
+  verdict: "claimed" | "exists" | "busy";
+  send: OutboundSend;
 }
 
 /**
@@ -152,6 +217,96 @@ export class OutboundSendStore {
       .query<Row, [number]>("SELECT * FROM outbound_sends WHERE receipt_id = ? LIMIT 1")
       .get(receiptId);
     return row ? toSend(row) : null;
+  }
+
+  /**
+   * Claim a mailbox reply, in one IMMEDIATE transaction. A row under `key`
+   * already → `exists` (the caller replays or refuses). Another reply to the
+   * same inbound message still pending or uncertain → `busy`; a pending one
+   * older than STALE_PENDING_MS is settled to uncertain on the way (its
+   * process died mid-send). Neither writes a new row. The partial unique
+   * index `outbound_reply_inflight` holds the same rule in the database.
+   */
+  claimReply(
+    input: Omit<ClaimInput, "queueId" | "prospectId"> & ReplyThreading & { messageId: string },
+  ): ReplyClaim {
+    const now = input.now ?? new Date();
+    const nowIso = now.toISOString();
+    const run = this.db.transaction((): ReplyClaim => {
+      const existing = this.get(input.key);
+      if (existing) return { verdict: "exists", send: existing };
+      const busy = this.db
+        .query<Row, [string]>(
+          `SELECT * FROM outbound_sends
+            WHERE kind = 'reply' AND inbound_id = ? AND status IN ('pending', 'uncertain')
+            LIMIT 1`,
+        )
+        .get(input.inboundId);
+      if (busy) {
+        if (
+          busy.status === "pending" &&
+          now.getTime() - Date.parse(busy.last_attempt_at) >= STALE_PENDING_MS
+        ) {
+          this.mark(busy.key, "uncertain", {
+            error: "send interrupted mid-flight; checking Sent before any retry",
+            now,
+          });
+        }
+        return { verdict: "busy", send: this.get(busy.key)! };
+      }
+      this.db
+        .query(
+          `INSERT INTO outbound_sends
+             (key, identity_id, transport, recipient, subject, body, message_id, status,
+              sent_evidence, attempts, first_attempt_at, last_attempt_at, kind, inbound_id,
+              thread_key, in_reply_to, references_json, date_header)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?, ?, 'reply', ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.key,
+          input.identityId,
+          input.transport,
+          input.recipient,
+          input.subject,
+          input.body,
+          input.messageId,
+          input.sentEvidence ? 1 : 0,
+          nowIso,
+          nowIso,
+          input.inboundId,
+          input.threadKey,
+          input.inReplyTo,
+          JSON.stringify(input.references),
+          input.dateHeader,
+        );
+      return { verdict: "claimed", send: this.get(input.key)! };
+    });
+    return run.immediate();
+  }
+
+  /** Link a receipt to a send without touching its status (a replay never downgrades it). */
+  attachReceipt(key: string, receiptId: number): void {
+    this.db
+      .query("UPDATE outbound_sends SET receipt_id = COALESCE(receipt_id, ?) WHERE key = ?")
+      .run(receiptId, key);
+  }
+
+  /**
+   * One mailbox's replies whose Sent copy has not been seen yet: submitted,
+   * uncertain, or pending past STALE_PENDING_MS (a fresh pending one is still
+   * being sent by a live process).
+   */
+  unconfirmedReplies(identityId: string, now: Date = new Date()): OutboundSend[] {
+    const stale = new Date(now.getTime() - STALE_PENDING_MS).toISOString();
+    return this.db
+      .query<Row, [string, string]>(
+        `SELECT * FROM outbound_sends
+          WHERE kind = 'reply' AND identity_id = ? AND message_id IS NOT NULL
+            AND (status IN ('submitted', 'uncertain')
+                 OR (status = 'pending' AND last_attempt_at <= ?))`,
+      )
+      .all(identityId, stale)
+      .map(toSend);
   }
 
   /**

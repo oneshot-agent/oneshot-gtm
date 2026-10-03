@@ -190,6 +190,36 @@ describe("runOutboundConfirmations", () => {
     ).toBe("already_sent");
   });
 
+  it("settles an unconfirmed reply on a server with no Sent copy to not_found, freeing its inbound", async () => {
+    const reply = (key: string) => ({
+      key,
+      identityId: smtpId.id,
+      transport: "smtp",
+      recipient: "prospect@example.org",
+      subject: "Re: Hello",
+      body: "answer",
+      messageId: `<${key}@mail.example>`,
+      sentEvidence: false,
+      inboundId: "inbound-1",
+      threadKey: "thread-1",
+      inReplyTo: "<in@example.org>",
+      references: ["<in@example.org>"],
+      dateHeader: new Date(T0).toISOString(),
+      now: new Date(T0),
+    });
+    ledger.outboundSends.claimReply(reply("reply-a"));
+    ledger.outboundSends.mark("reply-a", "uncertain", { now: new Date(T0) });
+    expect(ledger.outboundSends.claimReply(reply("reply-b")).verdict).toBe("busy");
+    await sweep(T0 + UNCERTAIN_SETTLE_MS - 1, readers({}));
+    expect(ledger.outboundSends.get("reply-a")?.status).toBe("uncertain");
+    await sweep(T0 + UNCERTAIN_SETTLE_MS, readers({}));
+    expect(ledger.outboundSends.get("reply-a")).toMatchObject({
+      status: "not_found",
+      error: expect.stringMatching(/keeps no Sent copy/),
+    });
+    expect(ledger.outboundSends.claimReply(reply("reply-b")).verdict).toBe("claimed");
+  });
+
   it("settles an uncertain OneShot send without reading, then gives up after the retries", async () => {
     const os: EmailIdentity = {
       id: "oneshot:jn@os.example",

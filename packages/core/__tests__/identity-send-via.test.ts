@@ -70,7 +70,8 @@ vi.mock("nodemailer", async (original) => {
 
 const { setIdentitySendVia, validateSendVia, parseSendVia, defaultSendViaForSmartlead } =
   await import("../src/identity-send-via.ts");
-const { sendTestEmail, outboundMessageId } = await import("../src/oneshot.ts");
+const { sendTestEmail } = await import("../src/oneshot.ts");
+const { outboundMessageId } = await import("../src/ledger-outbound.ts");
 
 const SL: EmailIdentity = {
   id: "smartlead:jn@mail.example",

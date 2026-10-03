@@ -268,12 +268,13 @@ describe("reply options API", () => {
         await replySendRoute(req({ key: t.key, sendId: "2222222222222222", revision: 1 }))
       ).json(),
     ).toMatchObject({ status: "uncertain" });
-    const attempt = vi.spyOn(getLedger().mailboxes, "attempt").mockReturnValue({
-      id: "2222222222222222",
-      status: "sent",
-      error: null,
-      message: { at: "2026-09-17T13:00:00Z" },
-    } as never);
+    const attempt = vi
+      .spyOn(getLedger().outboundSends, "get")
+      .mockImplementation((key) =>
+        key.endsWith(":reply:2222222222222222")
+          ? ({ status: "confirmed", submittedAt: "2026-09-17T13:00:00Z" } as never)
+          : null,
+      );
     try {
       expect(await (await replySendRoute(req({ key: t.key, check: true }))).json()).toMatchObject({
         status: "sent",

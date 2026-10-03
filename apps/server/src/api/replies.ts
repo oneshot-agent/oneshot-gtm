@@ -13,8 +13,10 @@ import {
   loadConfig,
   logEvent,
   openLedgerDatabase,
+  replySendKey,
   replyWorkspaces,
   trackSend,
+  type OutboundSend,
 } from "@oneshot-gtm/core";
 import {
   generateReplyOptions,
@@ -402,6 +404,31 @@ async function sendLinkedIn(t: ReplyThread, send: ReplySendState): Promise<Reply
     return next;
   }
 }
+/**
+ * A mailbox reply's composer state, read from its outbound_sends row: pending
+ * → pending; submitted or confirmed → sent; uncertain or not_found →
+ * uncertain ("not confirmed yet", never resent); failed → failed.
+ */
+export function mailboxReplyOutcome(
+  row: OutboundSend | null,
+): Pick<ReplySendState, "status" | "error" | "sentAt"> | null {
+  if (!row) return null;
+  switch (row.status) {
+    case "pending":
+      return { status: "pending" };
+    case "submitted":
+    case "confirmed":
+      return {
+        status: "sent",
+        sentAt: row.submittedAt ?? row.confirmedAt ?? row.dateHeader ?? row.firstAttemptAt,
+      };
+    case "failed":
+      return { status: "failed", error: row.error ?? "Reply was not sent." };
+    default:
+      return { status: "uncertain", error: "Delivery is not confirmed yet." };
+  }
+}
+
 export async function replySendRoute(req: Request) {
   try {
     if (isDraining()) throw new Error("Server restarting — retry in a moment");
@@ -420,14 +447,18 @@ export async function replySendRoute(req: Request) {
         }
       }
       if (t.channel === "email" && ["pending", "uncertain"].includes(t.send.status)) {
-        // The existing mailbox poll reconciles ambiguous SMTP sends against Sent.
-        const attempt = getLedger().mailboxes.attempt(t.send.id);
-        if (attempt && ["sent", "failed"].includes(attempt.status)) {
+        // The mailbox poll and the confirm sweep reconcile ambiguous SMTP sends against Sent.
+        const outcome = mailboxReplyOutcome(getLedger().outboundSends.get(replySendKey(t.send.id)));
+        if (
+          outcome &&
+          outcome.status !== "pending" &&
+          (outcome.status !== t.send.status || outcome.error !== t.send.error)
+        ) {
           const next: ReplySendState = {
             ...t.send,
-            status: attempt.status as "sent" | "failed",
-            error: attempt.error ?? undefined,
-            sentAt: attempt.status === "sent" ? attempt.message.at : undefined,
+            error: undefined,
+            sentAt: undefined,
+            ...outcome,
           };
           review.updateSend(t.key, next);
           return jsonResponse(next, 200, req);
@@ -482,11 +513,13 @@ export async function replySendRoute(req: Request) {
     };
     const response = await sendReplyRoute(internalRequest(req, request));
     const result = (await response.json()) as { sent?: boolean; error?: string };
-    const attempt =
-      r.sourceProvider === "smartlead" ? getLedger().mailboxes.attempt(send.id) : null;
+    const outcome =
+      r.sourceProvider === "smartlead"
+        ? mailboxReplyOutcome(getLedger().outboundSends.get(replySendKey(send.id)))
+        : null;
     const confirmed = response.ok && result.sent;
     const failed =
-      attempt?.status === "failed" ||
+      outcome?.status === "failed" ||
       /was not sent|cannot be sent|required|does not match/.test(result.error ?? "");
     const next: ReplySendState = {
       ...send,
