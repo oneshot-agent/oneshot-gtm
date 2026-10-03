@@ -406,8 +406,11 @@ async function sendLinkedIn(t: ReplyThread, send: ReplySendState): Promise<Reply
 }
 /**
  * A mailbox reply's composer state, read from its outbound_sends row: pending
- * → pending; submitted or confirmed → sent; uncertain or not_found →
- * uncertain ("not confirmed yet", never resent); failed → failed.
+ * → pending; submitted or confirmed → sent; uncertain → uncertain (the
+ * composer keeps checking, Send stays blocked); failed → failed. not_found
+ * (settled: never seen in Sent, never resent) → failed with that said, so
+ * the composer offers Send again under a new request id, which the ledger
+ * now allows since the inbound is no longer in flight.
  */
 export function mailboxReplyOutcome(
   row: OutboundSend | null,
@@ -424,6 +427,12 @@ export function mailboxReplyOutcome(
       };
     case "failed":
       return { status: "failed", error: row.error ?? "Reply was not sent." };
+    case "not_found":
+      return {
+        status: "failed",
+        error:
+          "Delivery was never confirmed in Sent, so it was not resent. Check the recipient's thread before sending again.",
+      };
     default:
       return { status: "uncertain", error: "Delivery is not confirmed yet." };
   }

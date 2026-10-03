@@ -25,10 +25,13 @@ it("maps every outbound status to a composer state", () => {
   expect(mailboxReplyOutcome(row({ status: "failed", error: "SMTP rejected the reply." }))).toEqual(
     { status: "failed", error: "SMTP rejected the reply." },
   );
-  for (const status of ["uncertain", "not_found"] as const) {
-    expect(mailboxReplyOutcome(row({ status }))).toEqual({
-      status: "uncertain",
-      error: "Delivery is not confirmed yet.",
-    });
-  }
+  expect(mailboxReplyOutcome(row({ status: "uncertain" }))).toEqual({
+    status: "uncertain",
+    error: "Delivery is not confirmed yet.",
+  });
+  // Settled and never resent: the composer must offer Send again (new request id).
+  expect(mailboxReplyOutcome(row({ status: "not_found" }))).toEqual({
+    status: "failed",
+    error: expect.stringMatching(/never confirmed in Sent, so it was not resent/),
+  });
 });
