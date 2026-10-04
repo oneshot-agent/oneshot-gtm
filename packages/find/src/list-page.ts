@@ -9,6 +9,7 @@ import { buildDesignPartnerLoiPayload, dedupePlayNames, resolvePlayRoute } from 
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection } from "./_qualify.ts";
 import { safeCompanySearch, safePeopleSearch } from "./_sdk-safe.ts";
+import { type SignalVerifyConfig, verifySignal } from "./_signal-verify.ts";
 import type { FinderResult, ListPageCompany, RunOpts } from "./_types.ts";
 
 /**
@@ -41,6 +42,13 @@ export interface ListPageSource {
   url: string;
   /** What being on this list means, in a few words ("runs Backstage"). */
   signal: string;
+  /**
+   * Check each company's own evidence before the paid contact step: for a
+   * list someone else compiled. Unset for a list companies add themselves
+   * to (an ADOPTERS file). A clear miss is dropped; no evidence either way
+   * is kept and labelled unconfirmed.
+   */
+  verify?: SignalVerifyConfig;
 }
 
 export interface ListPageOpts extends RunOpts {
@@ -388,6 +396,31 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
         continue;
       }
 
+      let verified: { status: "confirmed" | "unconfirmed"; url?: string } | null = null;
+      if (source.verify) {
+        const check = await verifySignal({ company: company.name, domain, verify: source.verify });
+        result.costUsd += check.costUsd;
+        if (check.verdict === "absent") {
+          // The company's own subprocessor list leaves the vendor out: a
+          // verdict on the company, recorded once like a role miss.
+          result.droppedLowSignal = (result.droppedLowSignal ?? 0) + 1;
+          persistRoleRejection({
+            playName: PLAY_NAME,
+            dedupeKey,
+            payload: { company: company.name, signal: source.signal },
+            source: rowSource,
+            kind: "signal",
+            reason: `${check.url} lists subprocessors without ${source.verify.names.join(" / ")}`,
+            dryRun: opts.dryRun,
+          });
+          continue;
+        }
+        verified =
+          check.verdict === "confirmed"
+            ? { status: "confirmed", ...(check.url ? { url: check.url } : {}) }
+            : { status: "unconfirmed" };
+      }
+
       const evidence = company.context ? `${source.signal}: ${company.context}` : source.signal;
       const found = await findOwner({
         opts,
@@ -439,6 +472,8 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
         }),
         signal: source.signal,
         ...(company.context ? { signalContext: company.context } : {}),
+        ...(verified ? { signalVerified: verified.status } : {}),
+        ...(verified?.url ? { signalEvidenceUrl: verified.url } : {}),
         ...(listContact ? { listContact: listContact.slice(0, CONTEXT_CHARS) } : {}),
         companyDomain: domain,
         launchUrl: `https://${domain}`,

@@ -172,7 +172,12 @@ export function queueEvidence(playName: string, payload: unknown): string | null
         const who = company ? `${buyerType} buyer at ${company}` : `${buyerType} buyer`;
         // list-page rows carry what the list they came from means ("runs Backstage").
         const signal = str(p, "signal");
-        return signal ? `${signal} · ${who}` : who;
+        if (!signal) return who;
+        // A source that checks its list stamps each row confirmed / unconfirmed.
+        const verified = str(p, "signalVerified");
+        const mark =
+          verified === "confirmed" ? " ✓" : verified === "unconfirmed" ? " (unconfirmed)" : "";
+        return `${signal}${mark} · ${who}`;
       }
       const title = str(p, "title");
       if (!title) return null;

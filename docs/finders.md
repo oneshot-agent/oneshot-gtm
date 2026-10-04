@@ -74,6 +74,18 @@ Set `play: "design-partner-loi"` and `buyerType` (`enterprise`, `government` or 
 - Every row carries the signal and the page's own line about that company. An angle in `yourEdge` can open on it (_For a company that runs Backstage —_), and the design-partner email may use it as its hook, stated as the public fact it is.
 - For now it routes only to `design-partner-loi`, so it needs `play`, `buyerType` and `yourEdge` to be ready.
 
+### Checking a list someone else compiled
+
+An `ADOPTERS` file is a company vouching for itself. A blog roundup, an aggregator or a vendor's marketing page is someone else saying so. Give a source like that `verify: {names, via}`, and each company's own evidence is checked before any paid contact step. `names` is the vendor or tool plus its aliases. Names match as whole words, ignoring case.
+
+- `via: ["subprocessors"]` (the default) is for hosted vendors that touch customer data, such as an LLM API or a browser cloud.
+  1. Free: the company's subprocessor list is fetched from the usual paths (`/subprocessors`, `/legal/sub-processors`, `trust.<domain>` and similar).
+  2. Paid: when none of those works, one web search finds the page, and one web read renders it if it is built by script.
+  3. A list that names the vendor confirms it. A real list that leaves the vendor out drops the company, recorded once so later runs skip it. A page only counts as a list when it also names the processors such lists always carry (AWS, Datadog and the like), so a trust centre that loads its list by script is never read as "absent".
+- `via: ["mentions"]` is for self-hosted tools. Backstage never appears on a subprocessor list, so never use `subprocessors` for one. The company's own site and its job posts are searched for the tool. A hit on its own site must also carry engineering context, because tool names are often ordinary words. This check can only confirm.
+- No evidence either way keeps the row, marked unconfirmed. The queue shows `uses X (unconfirmed)` or `uses X ✓`, and the email writer is told not to state an unconfirmed signal as fact about the company.
+- A result is cached per domain for 30 days, except one left by a failed call, which is checked again on the next run.
+
 ## Expired queue rows
 
 Expired is a queue status, not deletion. Queue and Prospects allow a human to approve an expired row again; approval makes it eligible for drafting and a later send. Review whether its original signal is still relevant. A prospect who has already replied cannot be re-approved for cold outreach, and sent rows cannot be approved again.

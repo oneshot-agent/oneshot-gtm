@@ -5,6 +5,7 @@ import {
   evaluateFinderApprovalHealth,
   effectiveIntervalMs,
   freshRunningStartedAtMs,
+  listPageSources,
   MAX_RUN_AGE_MS,
   nextSleepMs,
   storedTriggerConfig,
@@ -147,6 +148,28 @@ describe("list-page readiness", () => {
     expect(checkReadiness(spec, { ...ready, play: "" }).ready).toBe(false);
     expect(checkReadiness(spec, { ...ready, buyerType: "" }).ready).toBe(false);
     expect(checkReadiness(spec, { ...ready, yourEdge: "" }).ready).toBe(false);
+  });
+});
+
+describe("list-page verify parsing", () => {
+  const src = (verify: unknown) =>
+    listPageSources({ sources: [{ url: "https://x.example/list", signal: "uses Y", verify }] })[0];
+
+  it("keeps trimmed names and known via kinds, defaulting to subprocessors", () => {
+    expect(src({ names: [" Browserbase ", ""] })?.verify).toEqual({
+      names: ["Browserbase"],
+      via: ["subprocessors"],
+    });
+    expect(src({ names: ["Backstage"], via: ["mentions", "dns", "mentions"] })?.verify).toEqual({
+      names: ["Backstage"],
+      via: ["mentions"],
+    });
+  });
+
+  it("no usable names means no check", () => {
+    expect(src(undefined)).not.toHaveProperty("verify");
+    expect(src({ names: [" "] })).not.toHaveProperty("verify");
+    expect(src("Browserbase")).not.toHaveProperty("verify");
   });
 });
 

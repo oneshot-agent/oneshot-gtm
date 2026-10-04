@@ -26,6 +26,7 @@ import type { SocrataPortalConfig } from "./_registry-sources.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
 import { runPostFundingFinder } from "./post-funding.ts";
 import { runListPageFinder, type ListPageSource } from "./list-page.ts";
+import type { SignalVerifyConfig, VerifyVia } from "./_signal-verify.ts";
 import { runShowHnFinder } from "./show-hn.ts";
 import { runXRepostersFinder } from "./x-reposters.ts";
 import type { XSeed } from "./_x-types.ts";
@@ -220,6 +221,24 @@ export const DEFAULT_ACCELERATORS: Array<{ id: string; recent?: number }> = [
   { id: "a16z-speedrun" },
 ];
 
+/**
+ * A source's `verify`: names trimmed (none → no check), `via` limited to
+ * the two known kinds, default `subprocessors`.
+ */
+export function listPageVerify(raw: unknown): SignalVerifyConfig | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const names = (Array.isArray(r["names"]) ? r["names"] : [])
+    .filter((n): n is string => typeof n === "string")
+    .map((n) => n.trim())
+    .filter(Boolean);
+  if (names.length === 0) return null;
+  const via = (Array.isArray(r["via"]) ? r["via"] : []).filter(
+    (v): v is VerifyVia => v === "subprocessors" || v === "mentions",
+  );
+  return { names, via: via.length > 0 ? [...new Set(via)] : ["subprocessors"] };
+}
+
 /** `list-page` sources that can run: an http(s) URL and a non-empty signal each. */
 export function listPageSources(cfg: Record<string, unknown>): ListPageSource[] {
   const raw = Array.isArray(cfg["sources"]) ? (cfg["sources"] as unknown[]) : [];
@@ -230,8 +249,9 @@ export function listPageSources(cfg: Record<string, unknown>): ListPageSource[] 
     const url = typeof r["url"] === "string" ? r["url"].trim() : "";
     const signal = typeof r["signal"] === "string" ? r["signal"].trim() : "";
     if (!signal || !/^https?:\/\//i.test(url)) continue;
+    const verify = listPageVerify(r["verify"]);
     try {
-      out.push({ url: new URL(url).toString(), signal });
+      out.push({ url: new URL(url).toString(), signal, ...(verify ? { verify } : {}) });
     } catch {
       // not a URL: skipped, readiness reports none usable
     }
@@ -893,7 +913,7 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Turns any public page that lists companies into a source: an open-source project's ADOPTERS file, a conference sponsor page, a vendor's customers page. `sources` is a list of `{url, signal}`: `signal` says in a few words what being on the list means (e.g. `runs Backstage`), and every row carries it plus the page's own line about that company, so an angle can open with who it fits on that fact. A GitHub file URL (`/blob/`) is read raw for free; any other page costs one webRead. Companies are extracted once per page version and cached, then worked `limit` per run in page order: the company's decision owner is found from its domain (people search → ICP gate → email); people the page names are kept as context, never emailed. `jobTitles` (recommended for large companies: the roles you sell to, most wanted first, e.g. `Head of AI Platform`, `VP Platform Engineering`) makes that one title-scoped people search per company and tries up to three matches in that order; a company with no one matching is recorded once and skipped on later runs. Without it the pick is any senior title at the domain, which at a big company can land on PR or recruiting. Enterprise only for now: `play` must be `design-partner-loi` with `buyerType` (`enterprise` | `government` | `hardware`) and `yourEdge` (REQUIRED: `//`-separated angles, each opening with who it fits; an angle can key on the signal, e.g. *For a company that runs Backstage —*). `limit` (companies per run, default 25), `maxCostUsd`.",
+      "Turns any public page that lists companies into a source: an open-source project's ADOPTERS file, a conference sponsor page, a vendor's customers page. `sources` is a list of `{url, signal}`: `signal` says in a few words what being on the list means (e.g. `runs Backstage`), and every row carries it plus the page's own line about that company, so an angle can open with who it fits on that fact. A GitHub file URL (`/blob/`) is read raw for free; any other page costs one webRead. Companies are extracted once per page version and cached, then worked `limit` per run in page order: the company's decision owner is found from its domain (people search → ICP gate → email); people the page names are kept as context, never emailed. `jobTitles` (recommended for large companies: the roles you sell to, most wanted first, e.g. `Head of AI Platform`, `VP Platform Engineering`) makes that one title-scoped people search per company and tries up to three matches in that order; a company with no one matching is recorded once and skipped on later runs. Without it the pick is any senior title at the domain, which at a big company can land on PR or recruiting. Enterprise only for now: `play` must be `design-partner-loi` with `buyerType` (`enterprise` | `government` | `hardware`) and `yourEdge` (REQUIRED: `//`-separated angles, each opening with who it fits; an angle can key on the signal, e.g. *For a company that runs Backstage —*). `limit` (companies per run, default 25), `maxCostUsd`. A list someone else compiled (a blog roundup, an aggregator, a vendor's marketing page) should carry `verify: {names, via}` on its source: before the paid contact step each company's own evidence is checked. `names` is the vendor or tool and its aliases. `via: [\"subprocessors\"]` (the default) is for hosted vendors that touch customer data (an LLM API, a browser cloud): the company's subprocessor list is fetched from its usual paths, else searched for and read; naming the vendor confirms it, a real list without it drops the company (recorded once). `via: [\"mentions\"]` is for self-hosted tools (Backstage never appears on a subprocessor list, so never use `subprocessors` for one): the company's own site and job posts are searched; it can only confirm. No evidence either way keeps the row, labelled unconfirmed, and the draft is told not to state the signal as fact. A list companies add themselves to (an ADOPTERS file) needs no `verify`.",
     readiness: (cfg) => {
       const sources = listPageSources(cfg);
       if (sources.length === 0) {

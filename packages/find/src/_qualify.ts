@@ -232,6 +232,8 @@ export function persistRoleRejection(args: {
   source: string;
   reason: string;
   dryRun?: boolean;
+  /** What the verdict is about, in the notes' `auto:` marker. Default `role`. */
+  kind?: "role" | "signal";
 }): void {
   if (args.dryRun) return;
   try {
@@ -241,7 +243,7 @@ export function persistRoleRejection(args: {
       payload: args.payload,
       source: args.source,
       initialStatus: "rejected",
-      notes: `auto: role — ${args.reason}`.slice(0, 300),
+      notes: `auto: ${args.kind ?? "role"} — ${args.reason}`.slice(0, 300),
     });
   } catch {
     // Audit row is best-effort.

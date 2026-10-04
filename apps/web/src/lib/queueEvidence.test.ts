@@ -14,4 +14,14 @@ describe("queueEvidence for design-partner-loi", () => {
       "enterprise buyer at Acme",
     );
   });
+
+  it("marks a checked signal confirmed or unconfirmed", () => {
+    const row = { buyerType: "enterprise", company: "Acme", signal: "uses Browserbase" };
+    expect(queueEvidence("design-partner-loi", { ...row, signalVerified: "confirmed" })).toBe(
+      "uses Browserbase ✓ · enterprise buyer at Acme",
+    );
+    expect(queueEvidence("design-partner-loi", { ...row, signalVerified: "unconfirmed" })).toBe(
+      "uses Browserbase (unconfirmed) · enterprise buyer at Acme",
+    );
+  });
 });

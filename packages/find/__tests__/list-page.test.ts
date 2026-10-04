@@ -98,6 +98,15 @@ vi.mock("../src/_contact.ts", () => ({
   icpFields: () => ({ icpVerdict: "pass", icpVerdictReason: "owns AI platform" }),
 }));
 
+let verifyCalls: Array<Record<string, unknown>> = [];
+let verifyResult: Record<string, unknown> = { verdict: "unknown", costUsd: 0 };
+vi.mock("../src/_signal-verify.ts", () => ({
+  verifySignal: async (args: Record<string, unknown>) => {
+    verifyCalls.push(args);
+    return verifyResult;
+  },
+}));
+
 const ADOPTERS = [
   "# Adopters",
   "",
@@ -141,6 +150,8 @@ beforeEach(() => {
   peopleSearchCalls = [];
   peopleSearchResult = { results: [] };
   contactByName = {};
+  verifyCalls = [];
+  verifyResult = { verdict: "unknown", costUsd: 0 };
   contactResult = {
     ok: true,
     channel: "email",
@@ -388,5 +399,63 @@ describe("jobTitles targeting", () => {
     const failed = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
     expect(roleRejections).toHaveLength(0);
     expect(failed.droppedEnrichment).toBe(1);
+  });
+});
+
+describe("verify: a third-party list checked against the company's own evidence", () => {
+  const verify = { names: ["Browserbase"], via: ["subprocessors" as const] };
+  const checked = { ...base, sources: [{ ...SOURCE, verify }], limit: 1 };
+
+  it("a source without verify never checks and stamps nothing", async () => {
+    await runListPageFinder({ ...base, limit: 1 });
+    expect(verifyCalls).toHaveLength(0);
+    expect(enqueued[0]?.payload).not.toHaveProperty("signalVerified");
+    expect(enqueued[0]?.payload).not.toHaveProperty("signalEvidenceUrl");
+  });
+
+  it("checks before the paid contact step and stamps a confirmed row with its evidence", async () => {
+    verifyResult = {
+      verdict: "confirmed",
+      url: "https://acme.example/legal/subprocessors",
+      costUsd: 0,
+    };
+    await runListPageFinder(checked);
+    expect(verifyCalls[0]).toEqual({ company: "Acme", domain: "acme.example", verify });
+    expect(enqueued[0]?.payload).toMatchObject({
+      signalVerified: "confirmed",
+      signalEvidenceUrl: "https://acme.example/legal/subprocessors",
+    });
+  });
+
+  it("keeps a company with no evidence either way, labelled unconfirmed", async () => {
+    verifyResult = { verdict: "unknown", costUsd: 0.004 };
+    const out = await runListPageFinder(checked);
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]?.payload["signalVerified"]).toBe("unconfirmed");
+    expect(enqueued[0]?.payload).not.toHaveProperty("signalEvidenceUrl");
+    expect(out.costUsd).toBeCloseTo(0.054);
+  });
+
+  it("drops a company whose own subprocessor list leaves the vendor out, recorded once, before any contact spend", async () => {
+    verifyResult = {
+      verdict: "absent",
+      url: "https://acme.example/legal/subprocessors",
+      costUsd: 0,
+    };
+    const out = await runListPageFinder({ ...checked, jobTitles: ["CTO"] });
+    expect(out.enqueued).toBe(0);
+    expect(out.droppedLowSignal).toBe(1);
+    expect(peopleSearchCalls).toHaveLength(0);
+    expect(contactCalls).toHaveLength(0);
+    expect(roleRejections[0]).toMatchObject({
+      dedupeKey: "list-page:acme.example",
+      kind: "signal",
+      reason: "https://acme.example/legal/subprocessors lists subprocessors without Browserbase",
+    });
+  });
+
+  it("a dry run never checks", async () => {
+    await runListPageFinder({ ...checked, dryRun: true });
+    expect(verifyCalls).toHaveLength(0);
   });
 });
