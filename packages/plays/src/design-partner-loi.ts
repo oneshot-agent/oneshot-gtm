@@ -77,6 +77,29 @@ export interface DesignPartnerLoiTarget {
   signal?: string;
   /** The list's own line about this company. */
   signalContext?: string;
+  /**
+   * Set when the source checks its list against the company's own evidence:
+   * `confirmed` (its own site or subprocessor list says so) or `unconfirmed`
+   * (only the third-party list says so). Unset for self-declared lists.
+   */
+  signalVerified?: "confirmed" | "unconfirmed";
+  /** The page that confirmed the signal. */
+  signalEvidenceUrl?: string;
+}
+
+/**
+ * The SIGNAL input line. An unconfirmed signal came from a list someone
+ * else compiled, so the writer is told not to assert it about the company.
+ */
+export function signalLine(t: DesignPartnerLoiTarget): string {
+  const said = t.signalContext ? ` (the list says: ${t.signalContext})` : "";
+  const check =
+    t.signalVerified === "confirmed"
+      ? ` (confirmed on their own site${t.signalEvidenceUrl ? `: ${t.signalEvidenceUrl}` : ""})`
+      : t.signalVerified === "unconfirmed"
+        ? " (unconfirmed: from a third-party list. Do not state it as fact about them; at most say you saw them listed)"
+        : "";
+  return `SIGNAL: ${t.signal}${said}${check}`;
 }
 
 export interface DesignPartnerLoiRunOptions {
@@ -131,9 +154,7 @@ const designPartnerLoiDef: EmailPlayDef<DesignPartnerLoiTarget> = {
       ...(t.title ? [`ROLE: ${t.title}`] : []),
       `BUYER TYPE: ${t.buyerType}`,
       `YOUR EDGE: ${t.yourEdge}`,
-      ...(t.signal
-        ? [`SIGNAL: ${t.signal}${t.signalContext ? ` (the list says: ${t.signalContext})` : ""}`]
-        : []),
+      ...(t.signal ? [signalLine(t)] : []),
       `DOSSIER:\n${prep.dossier || "(dry-run)"}`,
       ...(posts ? ["", posts] : []),
     ].join("\n");

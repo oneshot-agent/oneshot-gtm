@@ -138,6 +138,26 @@ describe("runDesignPartnerLoi", () => {
     );
   });
 
+  it("tells the writer whether a third-party list's signal was confirmed", async () => {
+    await runDesignPartnerLoi({
+      dryRun: true,
+      targets: [
+        {
+          ...base,
+          signal: "uses Browserbase",
+          signalVerified: "confirmed",
+          signalEvidenceUrl: "https://enterprise.example/legal/subprocessors",
+        },
+        { ...base, signal: "uses Browserbase", signalVerified: "unconfirmed" },
+      ],
+    });
+    expect(calls.llmInputBlocks[0]).toContain(
+      "SIGNAL: uses Browserbase (confirmed on their own site: https://enterprise.example/legal/subprocessors)",
+    );
+    expect(calls.llmInputBlocks[1]).toContain("SIGNAL: uses Browserbase (unconfirmed:");
+    expect(calls.llmInputBlocks[1]).toContain("Do not state it as fact about them");
+  });
+
   it("enrolls the ask-ladder cadence on a real send", async () => {
     const out = await runDesignPartnerLoi({ dryRun: false, targets: [{ ...base }] });
     expect(out.drafted).toHaveLength(1);
