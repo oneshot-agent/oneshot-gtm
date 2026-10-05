@@ -21,7 +21,12 @@ vi.mock("@oneshot-gtm/intel", () => ({
     }
   },
 }));
-vi.mock("@oneshot-gtm/plays", () => ({
+vi.mock("@oneshot-gtm/plays", async () => ({
+  // The real generator (packages/plays/_angles.ts): it calls the mocked
+  // `complete` above, so its validation is what these tests exercise.
+  generateAlternativeAngles: (
+    await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays")
+  ).generateAlternativeAngles,
   selectAngle,
   angleAssignmentOf: (t: Record<string, unknown>) => (t.angleAssignment === "arm" ? "arm" : "fit"),
   // The ledger's angle key and the positioning fingerprint, mirrored so the

@@ -18,6 +18,7 @@ import {
   resolveTriggerOverlay,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import { slopFlags } from "./_lib.ts";
 
 /** Re-exported so play/server code keys angles the way the ledger does (ledger-drafts.ts). */
 export { angleTextKey };
@@ -522,4 +523,81 @@ export function followUpEdgeBlock(
     "",
     'This angle was NOT raised in PRIOR EMAILS, and it overrides any instruction to re-ask the first email\'s question: make this angle\'s point in a sentence, then ask one short question about it. Do not open as if it had been raised before — no "still curious", "did that turn out", "any luck with", "what did you end up doing", or any wording that treats it as a question already asked.',
   ].join("\n");
+}
+
+export interface AnglePositioning {
+  product?: string | null | undefined;
+  brief?: string | null | undefined;
+  icp?: string | null | undefined;
+  edge: string;
+}
+
+/**
+ * Write `count` new angles for one prospect from the workspace's positioning,
+ * none matching `excluded`. Shared by draft rotation (when there is no other
+ * angle to rotate to) and by a row moved in from another workspace that has no
+ * edge here (queue-rederive.ts). Throws with a founder-readable message when
+ * the model returns the wrong number of angles, a duplicate, an over-long or
+ * `//`-joined one, or one using a banned negation contrast: a generated angle
+ * is copied into the draft almost verbatim, so the humanizer's bans apply.
+ */
+export async function generateAlternativeAngles(input: {
+  playName: string;
+  positioning: AnglePositioning;
+  prospect: string;
+  count: number;
+  excluded: readonly string[];
+  previousDraftToAvoid?: string;
+}): Promise<string[]> {
+  const response = await complete({
+    messages: [
+      { role: "system", content: loadPrompt("angle-alternative") },
+      {
+        role: "user",
+        content: JSON.stringify({
+          play: input.playName,
+          positioning: input.positioning,
+          prospect: input.prospect,
+          count: input.count,
+          excludedAngles: input.excluded,
+          previousDraftToAvoid: input.previousDraftToAvoid ?? "",
+        }),
+      },
+    ],
+    temperature: 0.7,
+    // Leave room for reasoning as well as the new argument.
+    maxTokens: 4000,
+  });
+  const parsed = tryParseJsonObject<{ angles?: unknown }>(response.content, {});
+  const additions = Array.isArray(parsed.angles) ? parsed.angles : [];
+  if (additions.length !== input.count) {
+    throw new Error(
+      "Could not create a distinct alternative angle. Your draft is unchanged; try again.",
+    );
+  }
+  const seen = input.excluded.map(angleTextKey);
+  const out: string[] = [];
+  for (const value of additions) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (
+      !text ||
+      text.length > 2000 ||
+      text.includes(ANGLE_SEPARATOR) ||
+      seen.includes(angleTextKey(text))
+    ) {
+      throw new Error(
+        "Could not create a distinct alternative angle. Your draft is unchanged; try again.",
+      );
+    }
+    // "the hard part isn't the engineering, it's finding the first ten
+    // teams" reached a ready draft this way with no flags.
+    if (slopFlags(text).includes("negative-parallelism")) {
+      throw new Error(
+        "A generated angle used a negation contrast (\"isn't X, it's Y\"). Your draft is unchanged; try again.",
+      );
+    }
+    seen.push(angleTextKey(text));
+    out.push(text);
+  }
+  return out;
 }

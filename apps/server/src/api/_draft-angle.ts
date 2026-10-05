@@ -1,14 +1,13 @@
 import { isPersonResearchDossier, loadConfig, personRecordFromResearch } from "@oneshot-gtm/core";
-import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import {
   angleAssignmentOf,
   angleTextKey,
   describeTargetForAngle,
   edgeFieldOf,
+  generateAlternativeAngles,
   positioningFingerprint,
   selectAngle,
   splitEdgeAngles,
-  slopFlags,
 } from "@oneshot-gtm/plays";
 import type { DraftAngle } from "@oneshot-gtm/shared-types";
 
@@ -123,54 +122,15 @@ export async function draftAngleFor(input: {
     if (!cfg.productOneLiner?.trim() && !cfg.productBrief?.trim() && !edge.trim()) {
       throw new Error("Add product positioning before generating alternative angles.");
     }
-    const response = await complete({
-      messages: [
-        { role: "system", content: loadPrompt("angle-alternative") },
-        {
-          role: "user",
-          content: JSON.stringify({
-            play: input.playName,
-            positioning,
-            prospect: description,
-            count: missing,
-            excludedAngles: pool.map((a) => a.text),
-            previousDraftToAvoid: input.previousBody ?? "",
-          }),
-        },
-      ],
-      temperature: 0.7,
-      // Leave room for reasoning as well as the new argument.
-      maxTokens: 4000,
+    const additions = await generateAlternativeAngles({
+      playName: input.playName,
+      positioning,
+      prospect: description,
+      count: missing,
+      excluded: pool.map((a) => a.text),
+      ...(input.previousBody ? { previousDraftToAvoid: input.previousBody } : {}),
     });
-    const parsed = tryParseJsonObject<{ angles?: unknown }>(response.content, {});
-    const additions = Array.isArray(parsed.angles) ? parsed.angles : [];
-    if (additions.length !== missing)
-      throw new Error(
-        "Could not create a distinct alternative angle. Your draft is unchanged; try again.",
-      );
-    for (const value of additions) {
-      const text = typeof value === "string" ? value.trim() : "";
-      if (
-        !text ||
-        text.length > 2000 ||
-        text.includes("//") ||
-        pool.some((a) => normalize(a.text) === normalize(text))
-      ) {
-        throw new Error(
-          "Could not create a distinct alternative angle. Your draft is unchanged; try again.",
-        );
-      }
-      // A generated angle is copied into the draft almost verbatim, so the
-      // humanizer's phrase bans apply to it too. "the hard part isn't the
-      // engineering, it's finding the first ten teams" reached a ready draft
-      // this way with no flags.
-      if (slopFlags(text).includes("negative-parallelism")) {
-        throw new Error(
-          "A generated angle used a negation contrast (\"isn't X, it's Y\"). Your draft is unchanged; try again.",
-        );
-      }
-      pool.push({ text, origin: "generated" });
-    }
+    for (const text of additions) pool.push({ text, origin: "generated" });
   }
   let previousIndex = previous ? pool.findIndex((a) => a.text === previous.text) : -1;
   if (!previous && angles.length) {
