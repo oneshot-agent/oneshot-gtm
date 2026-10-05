@@ -27,6 +27,7 @@ import {
   configLlm,
   configSlackWebhook,
   configSpendCeiling,
+  configLinkedInInvites,
   configTelemetry,
   configXEngine,
   configLinkedInSession,
@@ -307,6 +308,12 @@ config
     "Show or set the install-wide daily USD spend ceiling (halts automated finder/drain runs once reached; 'off' clears it)",
   )
   .action(runOrFail((amount?: string) => configSpendCeiling(amount)));
+config
+  .command("linkedin-invites [count]")
+  .description(
+    "Show or set this workspace's share of the LinkedIn account's daily invite cap (positive integer per UTC day; 'off' clears it)",
+  )
+  .action(runOrFail((count?: string) => configLinkedInInvites(count)));
 
 const gmail = program
   .command("gmail")

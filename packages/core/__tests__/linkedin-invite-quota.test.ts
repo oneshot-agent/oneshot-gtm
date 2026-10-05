@@ -18,7 +18,10 @@ const account = (remaining: number | null) => async () => ({
 
 function setShare(n: number | undefined): void {
   const cfg = loadConfig();
-  saveConfig({ ...cfg, ...(n === undefined ? { linkedin: undefined } : { linkedin: { invitesPerDay: n } }) });
+  saveConfig({
+    ...cfg,
+    ...(n === undefined ? { linkedin: undefined } : { linkedin: { invitesPerDay: n } }),
+  });
 }
 
 function freshDb(): SharedDb {
@@ -61,7 +64,8 @@ describe("SharedDb invite slots", () => {
 
   it("holds two workspaces sharing one account to their own shares", () => {
     const db = freshDb();
-    for (let i = 0; i < 3; i++) db.reserveInviteSlot({ accountId: "acct", workspace: "w1", limit: 3 });
+    for (let i = 0; i < 3; i++)
+      db.reserveInviteSlot({ accountId: "acct", workspace: "w1", limit: 3 });
     expect("full" in db.reserveInviteSlot({ accountId: "acct", workspace: "w1", limit: 3 })).toBe(
       true,
     );
@@ -82,12 +86,12 @@ describe("SharedDb invite slots", () => {
   it("starts each UTC day from zero and stops counting an orphaned reservation", () => {
     const db = freshDb();
     const t0 = new Date("2026-10-05T12:00:00Z");
-    expect("id" in db.reserveInviteSlot({ accountId: "a", workspace: "w", limit: 1, now: t0 })).toBe(
-      true,
-    );
-    expect("full" in db.reserveInviteSlot({ accountId: "a", workspace: "w", limit: 1, now: t0 })).toBe(
-      true,
-    );
+    expect(
+      "id" in db.reserveInviteSlot({ accountId: "a", workspace: "w", limit: 1, now: t0 }),
+    ).toBe(true);
+    expect(
+      "full" in db.reserveInviteSlot({ accountId: "a", workspace: "w", limit: 1, now: t0 }),
+    ).toBe(true);
     // Crash between reserve and confirm: the slot frees after the TTL.
     const later = new Date(t0.getTime() + RESERVATION_TTL_MS + 1000);
     expect(
@@ -123,14 +127,20 @@ describe("reserveLinkedInInvite", () => {
 
   it("defers when the workspace share is used, and a released slot frees it", async () => {
     setShare(1);
-    const first = await reserveLinkedInInvite({ accountId: "acct-share", fetchAccount: account(9) });
+    const first = await reserveLinkedInInvite({
+      accountId: "acct-share",
+      fetchAccount: account(9),
+    });
     const err = await reserveLinkedInInvite({
       accountId: "acct-share",
       fetchAccount: account(9),
     }).catch((e: unknown) => e);
     expect(isSendDeferred(err)).toBe(true);
     first.release();
-    const again = await reserveLinkedInInvite({ accountId: "acct-share", fetchAccount: account(9) });
+    const again = await reserveLinkedInInvite({
+      accountId: "acct-share",
+      fetchAccount: account(9),
+    });
     again.confirm();
     const afterConfirm = await reserveLinkedInInvite({
       accountId: "acct-share",

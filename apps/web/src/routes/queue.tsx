@@ -1,4 +1,5 @@
 import { FitHold } from "../components/queue/FitHold.tsx";
+import { InviteQuotaLine } from "../components/InviteQuotaLine.tsx";
 import {
   DeliveryBadge,
   DeliveryWarning,
@@ -535,6 +536,7 @@ function QueuePage() {
           Queue
         </h1>
         <div className="flex items-center gap-4">
+          <InviteQuotaLine />
           {queueQuery.data?.sendsToday && (
             <span className="font-mono text-[11px] text-ink-muted">
               Sent today {formatSendsToday(queueQuery.data.sendsToday)}

@@ -333,7 +333,12 @@ export class SharedDb {
   private static readonly LIVE_SLOT_SQL = `(status = 'confirmed' OR (status = 'reserved' AND reserved_at >= ?))`;
 
   /** Invite slots this workspace holds on the account for the UTC day: confirmed, plus unexpired reservations. */
-  inviteSlotsUsed(accountId: string, workspace: string, day: string, now: Date = new Date()): number {
+  inviteSlotsUsed(
+    accountId: string,
+    workspace: string,
+    day: string,
+    now: Date = new Date(),
+  ): number {
     const cutoff = new Date(now.getTime() - RESERVATION_TTL_MS).toISOString();
     const row = this.db
       .query(

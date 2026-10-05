@@ -116,6 +116,7 @@ import {
 import { addProspectRoute } from "./api/prospects.ts";
 import { calNoShowWebhookRoute, signupWebhookRoute } from "./api/webhook-triggers.ts";
 import { markLinkedInReplyRoute } from "./api/linkedin-replies.ts";
+import { linkedInInviteQuotaRoute } from "./api/linkedin-invites.ts";
 
 interface ServerOptions {
   port: number;
@@ -211,6 +212,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/setup/linkedin-login/finish", linkedinLoginFinishRoute),
   route("POST", "/api/setup/linkedin-login/cancel", linkedinLoginCancelRoute),
   route("GET", "/api/setup/linkedin-login/state", linkedinLoginStateRoute),
+  route("GET", "/api/linkedin/invites", linkedInInviteQuotaRoute),
   route("POST", "/api/strategist/stream", strategistRoute),
   route("GET", "/api/doctor", doctor),
   route("GET", "/api/workspace", workspaceInfo),

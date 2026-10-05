@@ -164,7 +164,11 @@ export function noteAccountInviteCapReached(accountId: string): void {
   const hit = limitsCache.get(accountId);
   limitsCache.set(accountId, {
     at: Date.now(),
-    limits: { limit: hit?.limits.limit ?? null, remaining: 0, resetsAt: hit?.limits.resetsAt ?? null },
+    limits: {
+      limit: hit?.limits.limit ?? null,
+      remaining: 0,
+      resetsAt: hit?.limits.resetsAt ?? null,
+    },
   });
 }
 
