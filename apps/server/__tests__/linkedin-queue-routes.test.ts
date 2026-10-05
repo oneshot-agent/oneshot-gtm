@@ -39,7 +39,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       claimQueueSendingMarker: () => true,
       clearQueueSendingMarker: () => {},
       upsertProspect: () => 42,
-      recordSequenceEvent: (input: Record<string, unknown>) => {
+      recordLinkedInInviteEvent: (input: Record<string, unknown>) => {
         recorded.push(input);
         return 1;
       },
@@ -118,7 +118,7 @@ describe("send-draft on a LinkedIn row", () => {
       accountId: "acct-1",
       note: "reviewed",
     });
-    expect(recorded[0]).toMatchObject({ channel: "linkedin", stepIndex: 0, status: "sent" });
+    expect(recorded[0]).toMatchObject({ stepIndex: 0, status: "sent" });
     expect(statusCalls[0]).toMatchObject({ status: "sent", decidedBy: "human" });
   });
 
@@ -158,7 +158,7 @@ describe("withdraw-invite", () => {
     expect(res.status).toBe(200);
     expect(linkedInCalls[0]).toMatchObject({ kind: "withdraw", invitationId: "inv-1" });
     expect(recorded[0]).toMatchObject({
-      channel: "linkedin",
+      stepIndex: 0,
       status: "withdrawn",
       metadata: { invitationId: "inv-1", withdrawStatus: "withdrawn" },
     });
@@ -188,6 +188,25 @@ describe("withdraw-invite", () => {
     const res = await withdrawInviteRoute(post(), { id: "1" });
     expect(res.status).toBe(200);
     expect(linkedInCalls[0]).toMatchObject({ kind: "withdraw", invitationId: "inv-2" });
+  });
+
+  it("withdraws a step-N invite and records the withdrawal on that step", async () => {
+    seqEvents = [
+      {
+        channel: "linkedin",
+        step_index: 2,
+        status: "sent",
+        metadata_json: JSON.stringify({ kind: "linkedin_invite", invitationId: "inv-n" }),
+      },
+    ];
+    const res = await withdrawInviteRoute(post(), { id: "1" });
+    expect(res.status).toBe(200);
+    expect(linkedInCalls[0]).toMatchObject({ kind: "withdraw", invitationId: "inv-n" });
+    expect(recorded[0]).toMatchObject({
+      status: "withdrawn",
+      stepIndex: 2,
+      metadata: { invitationId: "inv-n" },
+    });
   });
 
   it("records nothing when the invite was no longer pending", async () => {

@@ -44,6 +44,7 @@ import {
   listSequenceEventsForProspect as cadListSequenceEventsForProspect,
   postponeCadence as cadPostponeCadence,
   listLinkedInInviteEvents as cadListLinkedInInviteEvents,
+  recordLinkedInInviteEvent as cadRecordLinkedInInviteEvent,
   getCadence as cadGetCadence,
   getCadenceDraft as cadGetCadenceDraft,
   getCadencePlan as cadGetCadencePlan,
@@ -448,9 +449,23 @@ export class Ledger {
     cadEnrollCadence(this.db, input);
   }
 
-  /** Step-0 LinkedIn events (invite, withdrawal) for a prospect and play, any status. */
+  /**
+   * LinkedIn invite events (send, withdrawal) for a prospect and play, any
+   * status: marked `kind: "linkedin_invite"` at any step, or legacy step-0 rows.
+   */
   listLinkedInInviteEvents(prospectId: number, playName: string): SequenceEventRecord[] {
     return cadListLinkedInInviteEvents(this.db, prospectId, playName);
+  }
+
+  /** Record a marked LinkedIn invite send/withdrawal: see recordLinkedInInviteEvent. */
+  recordLinkedInInviteEvent(input: {
+    prospectId: number;
+    playName: string;
+    stepIndex: number;
+    status: "sent" | "withdrawn";
+    metadata?: Record<string, unknown>;
+  }): number {
+    return cadRecordLinkedInInviteEvent(this.db, input);
   }
 
   /** Push an active cadence's due time out without advancing it: see postponeCadence. */

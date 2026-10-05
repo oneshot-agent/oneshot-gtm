@@ -17,8 +17,9 @@ vi.mock("@oneshot-gtm/core", async () => {
         upserts.push(input);
         return 42;
       },
-      recordSequenceEvent: (input: Record<string, unknown>) => {
+      recordLinkedInInviteEvent: (input: Record<string, unknown>) => {
         events.push(input);
+        return 1;
       },
       enrollCadence: (input: Record<string, unknown>) => {
         enrollments.push(input);
@@ -119,7 +120,6 @@ describe("sendLinkedInInvite", () => {
     expect(events[0]).toMatchObject({
       prospectId: 42,
       stepIndex: 0,
-      channel: "linkedin",
       status: "sent",
       metadata: {
         note: "hi",

@@ -905,10 +905,16 @@ export function recordSequenceEvent(
  * went out. The conversation view (`listSequenceEventsForProspect`) stays
  * sends-only; so does every counter.
  */
+/** `metadata_json.kind` on every LinkedIn invite event (the send and its withdrawal). */
+export const LINKEDIN_INVITE_KIND = "linkedin_invite";
+
 /**
- * Every step-0 LinkedIn event for a prospect and play, oldest first, whatever
- * its status: the invite send and any `withdrawn` event after it. The
- * general listing below leaves `withdrawn` out.
+ * Every LinkedIn invite event for a prospect and play, oldest first, whatever
+ * its status: the invite send and any `withdrawn` event after it. An invite is
+ * found by its `kind: "linkedin_invite"` marker at any step_index (a LinkedIn
+ * step that continues an email cadence is not step 0), or, for rows that
+ * predate the marker, as any step-0 LinkedIn row. The general listing below
+ * leaves `withdrawn` out.
  */
 export function listLinkedInInviteEvents(
   db: Database,
@@ -918,10 +924,60 @@ export function listLinkedInInviteEvents(
   return db
     .query(
       `SELECT * FROM sequence_events
-       WHERE prospect_id = ? AND play_name = ? AND channel = 'linkedin' AND step_index = 0
+       WHERE prospect_id = ? AND play_name = ? AND channel = 'linkedin'
+         AND (
+           step_index = 0
+           OR CASE WHEN json_valid(metadata_json)
+                   THEN json_extract(metadata_json, '$.kind') END = ?
+         )
        ORDER BY id ASC`,
     )
-    .all(prospectId, playName) as SequenceEventRecord[];
+    .all(prospectId, playName, LINKEDIN_INVITE_KIND) as SequenceEventRecord[];
+}
+
+/**
+ * Record a LinkedIn invite send (or its withdrawal) with the invite marker, so
+ * `listLinkedInInviteEvents` finds it at any step. A first-touch invite is
+ * step 0; a continuation invite takes the step after the cadence's current one
+ * and must never claim step 0, which the cadence's own first touch owns:
+ * refused when this prospect and play already have a non-LinkedIn step-0 send.
+ */
+export function recordLinkedInInviteEvent(
+  db: Database,
+  input: {
+    prospectId: number;
+    playName: string;
+    stepIndex: number;
+    status: "sent" | "withdrawn";
+    metadata?: Record<string, unknown>;
+  },
+): number {
+  if (!Number.isInteger(input.stepIndex) || input.stepIndex < 0) {
+    throw new Error(`invalid LinkedIn invite step_index: ${input.stepIndex}`);
+  }
+  if (input.stepIndex === 0) {
+    const owner = db
+      .query(
+        `SELECT 1 FROM sequence_events
+         WHERE prospect_id = ? AND play_name = ? AND step_index = 0
+           AND channel != 'linkedin' AND status IN ('sent','delivered','replied')
+         LIMIT 1`,
+      )
+      .get(input.prospectId, input.playName);
+    if (owner) {
+      throw new Error(
+        "a LinkedIn invite that continues a cadence can't be recorded at step 0: another channel owns the first touch",
+      );
+    }
+  }
+  return recordSequenceEvent(db, {
+    prospectId: input.prospectId,
+    playName: input.playName,
+    stepIndex: input.stepIndex,
+    channel: "linkedin",
+    status: input.status,
+    metadata: { ...input.metadata, kind: LINKEDIN_INVITE_KIND },
+  });
 }
 
 export function listSequenceEventsForProspectPlay(

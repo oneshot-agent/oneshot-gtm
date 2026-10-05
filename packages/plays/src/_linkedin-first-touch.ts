@@ -223,11 +223,10 @@ export async function sendLinkedInInvite(input: {
     source: input.row.playName,
     source_profile_url: str(p, "sourceProfileUrl") ?? profile,
   });
-  ledger.recordSequenceEvent({
+  ledger.recordLinkedInInviteEvent({
     prospectId,
     playName: input.row.playName,
     stepIndex: 0,
-    channel: "linkedin",
     status: "sent",
     metadata: {
       // subject/body/label: what the cadence timeline and follow-up prompts read.
