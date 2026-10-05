@@ -228,6 +228,23 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
     name: "replies-on-outbound-sends",
     up: (db) => migrateRepliesOntoOutboundSends(db),
   },
+  {
+    // Capacity held by a sender pick until its email.send receipt lands, so
+    // concurrent sends (any process) can't all read the same remaining cap.
+    version: 12,
+    name: "send-reservations",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS send_reservations (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          group_key   TEXT NOT NULL,
+          identity_id TEXT NOT NULL,
+          created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_send_reservations_created ON send_reservations(created_at);
+      `);
+    },
+  },
 ];
 
 /** Legacy attempt status → outbound_sends status (see migration 11). */

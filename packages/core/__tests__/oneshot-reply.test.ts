@@ -57,6 +57,10 @@ vi.mock("../src/ledger.ts", async () => {
       assignSender: (_email: string, id: string) => id,
       countEmailSendsSince: () => 0,
       firstEmailSendAt: () => null,
+      withSendCapacityLock: <T>(fn: () => T) => fn(),
+      reserveSendSlot: () => 1,
+      releaseSendReservation: () => {},
+      liveSendReservations: () => ({ byGroup: new Map(), byIdentity: new Map() }),
     }),
   };
 });

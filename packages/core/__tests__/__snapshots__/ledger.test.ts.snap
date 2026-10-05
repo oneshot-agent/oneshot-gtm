@@ -287,6 +287,12 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_send_reservations_created",
+      "sql": "CREATE INDEX idx_send_reservations_created ON send_reservations(created_at)",
+      "tbl_name": "send_reservations",
+      "type": "index",
+    },
+    {
       "name": "idx_sequence_events_prospect_created",
       "sql": "CREATE INDEX idx_sequence_events_prospect_created ON sequence_events(prospect_id, created_at)",
       "tbl_name": "sequence_events",
@@ -839,6 +845,17 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
           error TEXT
         )",
       "tbl_name": "send_delivery_checks",
+      "type": "table",
+    },
+    {
+      "name": "send_reservations",
+      "sql": "CREATE TABLE send_reservations (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          group_key   TEXT NOT NULL,
+          identity_id TEXT NOT NULL,
+          created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+      "tbl_name": "send_reservations",
       "type": "table",
     },
     {
