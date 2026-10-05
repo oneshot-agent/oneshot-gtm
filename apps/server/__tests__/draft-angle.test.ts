@@ -81,25 +81,58 @@ it("cycles all twelve configured angles and wraps without generating alternative
   expect(complete).not.toHaveBeenCalled();
   expect(await draftAngleFor({ ...base, previous })).toEqual(previous);
 });
-it.each([0, 1, 2, 3, 5, 6, 11])(
-  "fills %i configured angles to twelve once, then reuses the pool",
+it.each([2, 3, 5, 6, 11])(
+  "cycles all %i existing angles without generating alternatives",
   async (count) => {
     const input = {
       ...base,
       target: { yourEdge: twelve.split(" // ").slice(0, count).join(" // ") },
-      rotate: true,
     };
-    const first = (await draftAngleFor(input))!;
-    expect(first.pool).toHaveLength(POOL);
-    expect(first.pool?.filter((a) => a.origin === "configured")).toHaveLength(count);
-    expect(complete).toHaveBeenCalledTimes(1);
-    const second = (await draftAngleFor({ ...input, previous: first }))!;
-    expect(second.index).toBe((first.index! + 1) % POOL);
-    expect(second.pool).toEqual(first.pool);
-    expect(complete).toHaveBeenCalledTimes(1);
-    expect(await draftAngleFor({ ...input, rotate: false, previous: second })).toEqual(second);
+    complete.mockRejectedValue(new Error("angle generation unavailable"));
+    let previous = (await draftAngleFor(input))!;
+    for (let i = 1; i <= count; i++) {
+      previous = (await draftAngleFor({ ...input, rotate: true, previous }))!;
+      expect(previous.index).toBe(i % count);
+      expect(previous.text).toBe(input.target.yourEdge.split(" // ")[i % count]);
+      expect(previous.count).toBe(count);
+    }
+    expect(complete).not.toHaveBeenCalled();
   },
 );
+it("reuses a saved smaller pool containing generated alternatives", async () => {
+  const input = { ...base, target: { yourEdge: "first" } };
+  const initial = (await draftAngleFor(input))!;
+  const previous = {
+    ...initial,
+    pool: [
+      { text: "first", origin: "configured" as const },
+      { text: "saved alternative", origin: "generated" as const },
+    ],
+  };
+  const next = (await draftAngleFor({ ...input, rotate: true, previous }))!;
+  expect(next.text).toBe("saved alternative");
+  expect(next.count).toBe(2);
+  expect((await draftAngleFor({ ...input, rotate: true, previous: next }))?.text).toBe("first");
+  expect(complete).not.toHaveBeenCalled();
+});
+it.each([1])("adds one alternative to %i configured angle, then reuses the pool", async (count) => {
+  const input = {
+    ...base,
+    target: { yourEdge: twelve.split(" // ").slice(0, count).join(" // ") },
+    rotate: true,
+  };
+  const first = (await draftAngleFor(input))!;
+  expect(first.pool).toHaveLength(2);
+  expect(first.text).toBe("Distinct argument 1");
+  expect(JSON.parse(complete.mock.calls[0]![0].messages[1].content).count).toBe(1);
+  expect(first.pool?.filter((a) => a.origin === "configured")).toHaveLength(count);
+  expect(complete).toHaveBeenCalledTimes(1);
+  const second = (await draftAngleFor({ ...input, previous: first }))!;
+  expect(second.index).toBe((first.index! + 1) % 2);
+  expect(second.pool).toEqual(first.pool);
+  expect(complete).toHaveBeenCalledTimes(1);
+  expect(await draftAngleFor({ ...input, rotate: false, previous: second })).toEqual(second);
+});
 it("keeps more than twelve configured angles", async () => {
   expect(
     (
@@ -153,13 +186,13 @@ it.each([
   "{}",
   "not json",
   '{"angles":[]}',
-  // the right count, but two of them are the same argument
-  JSON.stringify({ angles: ["same", "same", ...Array.from({ length: 10 }, (_, i) => `arg ${i}`)] }),
+  JSON.stringify({ angles: ["same", "same"] }),
+  JSON.stringify({ angles: ["FIRST!"] }),
 ])("rejects incomplete or duplicate alternatives (%s)", async (content) => {
   complete.mockResolvedValue({ content });
-  await expect(draftAngleFor({ ...base, target: {}, rotate: true })).rejects.toThrow(
-    /12 distinct angles/,
-  );
+  await expect(
+    draftAngleFor({ ...base, target: { yourEdge: "first" }, rotate: true }),
+  ).rejects.toThrow(/distinct alternative angle/);
 });
 it("propagates provider errors without a random fallback", async () => {
   complete.mockRejectedValue(new Error("unavailable"));
@@ -170,12 +203,12 @@ it("rejects a generated angle built on a negation contrast and leaves the draft 
   complete.mockImplementation(async (input) => {
     const count = JSON.parse(input.messages[1].content).count;
     const angles = Array.from({ length: count }, (_, i) => `Distinct argument ${i + 1}`);
-    angles[2] =
+    angles[0] =
       "The hard part isn't the engineering, it's finding the first ten teams patient enough to switch.";
     return { content: JSON.stringify({ angles }) };
   });
   await expect(
-    draftAngleFor({ ...base, target: { yourEdge: "first // second" }, rotate: true }),
+    draftAngleFor({ ...base, target: { yourEdge: "first" }, rotate: true }),
   ).rejects.toThrow(/negation contrast/);
 });
 

@@ -39,15 +39,6 @@ export function parseDraftAngle(value: unknown): DraftAngle | undefined {
   return a;
 }
 
-/**
- * How many distinct angles a row's rotation pool holds. The configured
- * `yourEdge` angles seed it; the `angle-alternative` prompt generates the rest
- * on the first rotate, so every click cycles through this many arguments
- * before repeating. Twelve because a three-angle edge plus three generated
- * ones was cycling back to the same argument by the fourth click.
- */
-export const ANGLE_POOL_SIZE = 12;
-
 // The ledger's angle key (ledger-drafts.ts): one identity for an angle's text everywhere.
 const normalize = angleTextKey;
 
@@ -124,7 +115,10 @@ export async function draftAngleFor(input: {
     if (!pool.some((a) => normalize(a.text) === normalize(text)))
       pool.push({ text, origin: "generated" });
   }
-  const missing = Math.max(0, ANGLE_POOL_SIZE - pool.length);
+  // Rotation uses the angles already available, even for older, smaller pools.
+  // Only ask for alternatives when there is no different angle to rotate to.
+  const distinct = new Set(pool.map((a) => normalize(a.text)));
+  const missing = distinct.size < 2 ? 1 : 0;
   if (missing) {
     if (!cfg.productOneLiner?.trim() && !cfg.productBrief?.trim() && !edge.trim()) {
       throw new Error("Add product positioning before generating alternative angles.");
@@ -145,15 +139,14 @@ export async function draftAngleFor(input: {
         },
       ],
       temperature: 0.7,
-      // Up to eleven ~60-word angles in one reply, on a model whose reasoning
-      // shares this budget (see #586): 2000 truncated at six.
+      // Leave room for reasoning as well as the new argument.
       maxTokens: 4000,
     });
     const parsed = tryParseJsonObject<{ angles?: unknown }>(response.content, {});
     const additions = Array.isArray(parsed.angles) ? parsed.angles : [];
     if (additions.length !== missing)
       throw new Error(
-        `Could not create ${ANGLE_POOL_SIZE} distinct angles. Your draft is unchanged; try again.`,
+        "Could not create a distinct alternative angle. Your draft is unchanged; try again.",
       );
     for (const value of additions) {
       const text = typeof value === "string" ? value.trim() : "";
@@ -164,7 +157,7 @@ export async function draftAngleFor(input: {
         pool.some((a) => normalize(a.text) === normalize(text))
       ) {
         throw new Error(
-          `Could not create ${ANGLE_POOL_SIZE} distinct angles. Your draft is unchanged; try again.`,
+          "Could not create a distinct alternative angle. Your draft is unchanged; try again.",
         );
       }
       // A generated angle is copied into the draft almost verbatim, so the
