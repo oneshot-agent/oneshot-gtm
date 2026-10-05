@@ -113,7 +113,7 @@ describe("send-draft on a LinkedIn row", () => {
     const res = await sendDraftRoute(post(), { id: "1" });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, invitationId: "inv-1", status: "sent" });
-    expect(linkedInCalls[0]).toMatchObject({
+    expect(linkedInCalls.find((c) => c["kind"] === "invite")).toMatchObject({
       kind: "invite",
       accountId: "acct-1",
       note: "reviewed",

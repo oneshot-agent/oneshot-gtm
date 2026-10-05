@@ -544,6 +544,12 @@ export interface OneShotConfig {
   /** Reads per local day before the tier skips with a reason (account safety). Default 80. */
   linkedinReadsPerDay?: number;
   /**
+   * LinkedIn outreach settings. `invitesPerDay`: this workspace's share of the
+   * LinkedIn account's daily invite cap (positive integer, UTC day). Unset =
+   * no share; only OneShot's account cap applies.
+   */
+  linkedin?: { invitesPerDay?: number };
+  /**
    * Outreach channels finders may queue people on, in order of preference
    * ("email", "linkedin", "x"). A trigger's own `channels` overrides it.
    * Unset = email only.
