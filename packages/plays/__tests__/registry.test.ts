@@ -5,6 +5,7 @@ import { isSupportedPlay, PLAYS } from "../src/registry.ts";
 // both consume. If a play is added/removed, this list must move with it, which
 // is the whole point of collapsing the two old switch statements into one table.
 const EXPECTED = [
+  "community-reply",
   "show-hn",
   "job-change",
   "post-funding",

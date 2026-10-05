@@ -43,7 +43,15 @@ export interface CadenceSentStep {
   /** Sent-folder delivery check of this step's email, when one ran. */
   delivery?: SendDeliveryView | null;
 }
-export type StepChannel = "email" | "sms" | "voice" | "linkedin" | "x" | "direct_mail";
+export type StepChannel =
+  | "email"
+  | "sms"
+  | "voice"
+  | "linkedin"
+  | "x"
+  | "direct_mail"
+  | "reddit"
+  | "hacker-news";
 
 export interface BusinessMailAddress {
   name: string;
@@ -264,7 +272,16 @@ export interface HomeMetrics {
   currentRuns: RunSummary[];
 }
 
+export interface PlayDescription {
+  whenToUse: string;
+  actions: string;
+  requires: string;
+  produces: string;
+}
+
 export interface PlayDescriptor {
+  /** Optional for older dashboard fixtures and servers. Current API includes every play. */
+  description?: PlayDescription;
   directMail?: { position: number; delayDays: number; mode?: "automatic" | "always" } | null;
   mailRecommendation?: string;
   mailAutomaticSupported?: boolean;
@@ -625,7 +642,7 @@ export interface QueueRowView {
   id: number;
   playName: string;
   /** Outreach channel of the first touch: email, linkedin or x. */
-  channel: "email" | "linkedin" | "x";
+  channel: "email" | "linkedin" | "x" | "reddit" | "hacker-news";
   /**
    * Who sends it: `api` (Send / drain), `manual` (copy, send by hand, Mark
    * sent) or `unavailable` (nothing can send on this channel yet).
