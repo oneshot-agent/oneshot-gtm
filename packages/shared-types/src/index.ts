@@ -1977,3 +1977,17 @@ export function isQueueImportInProgress(row: {
 }
 
 export * from "./onboarding.ts";
+
+/** GET /api/linkedin/invites: LinkedIn invites left today (workspace share and account). */
+export interface LinkedInInviteQuotaView {
+  connected: boolean;
+  /** Workspace share per UTC day; null = no share configured. */
+  perDay: number | null;
+  /** Slots this workspace used today (sent + in flight). */
+  used: number;
+  left: number | null;
+  /** Invites left on the LinkedIn account today; null when unknown. */
+  accountLeft: number | null;
+  /** Display line, e.g. "LinkedIn invites today: 4 of 12 left · account 9 left"; null when nothing is known. */
+  text: string | null;
+}

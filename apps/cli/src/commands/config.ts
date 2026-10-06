@@ -225,6 +225,44 @@ export async function configSpendCeiling(amountArg?: string): Promise<void> {
   ok(`daily spend ceiling set to $${amount.toFixed(2)}`);
 }
 
+/**
+ * Show or set `linkedin.invitesPerDay`: this workspace's share of the LinkedIn
+ * account's daily invite cap. `off` clears it (only the account cap applies).
+ * Must be a positive integer; anything else is refused rather than saved.
+ */
+export async function configLinkedInInvites(valueArg?: string): Promise<void> {
+  header("LinkedIn invites per day");
+  const cfg = loadConfig();
+  const current = cfg.linkedin?.invitesPerDay;
+
+  if (valueArg === undefined) {
+    note(
+      current === undefined
+        ? "no workspace share (only the LinkedIn account's daily cap applies)"
+        : `${current} per UTC day for this workspace, within the account's daily cap`,
+    );
+    note(c.dim("set with: oneshot-gtm config linkedin-invites <count|off>"));
+    return;
+  }
+
+  if (valueArg === "off") {
+    const { invitesPerDay: _removed, ...rest } = cfg.linkedin ?? {};
+    saveConfig({ ...cfg, linkedin: rest });
+    ok("workspace invite share cleared — only the account cap applies");
+    return;
+  }
+
+  // Number(), not parseInt: "12abc" must not save as 12.
+  const count = Number(valueArg);
+  if (!Number.isInteger(count) || count <= 0) {
+    throw new Error(`invalid count '${valueArg}' — pass a positive whole number, or 'off'`);
+  }
+  saveConfig({ ...cfg, linkedin: { ...cfg.linkedin, invitesPerDay: count } });
+  ok(
+    `this workspace may send ${count} LinkedIn invites per UTC day (the account cap still applies)`,
+  );
+}
+
 const X_TRIGGER = "x-reposters";
 const set = (k: string) => (process.env[k] ? c.green("set") : c.red("missing"));
 

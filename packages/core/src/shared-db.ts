@@ -87,6 +87,16 @@ export class SharedDb {
         status    TEXT NOT NULL DEFAULT 'sent'
       );
       CREATE INDEX IF NOT EXISTS idx_touches_email_sent ON contact_touches(email, sent_at);
+      -- LinkedIn invite slots per account + workspace + UTC day (workspace share of the account cap).
+      CREATE TABLE IF NOT EXISTS linkedin_invite_slots (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id  TEXT NOT NULL,
+        workspace   TEXT NOT NULL,
+        day         TEXT NOT NULL,
+        status      TEXT NOT NULL,
+        reserved_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_invite_slots_key ON linkedin_invite_slots(account_id, workspace, day);
       -- Which per-workspace ledgers have had their legacy cache rows copied in.
       CREATE TABLE IF NOT EXISTS legacy_imports (
         ledger_path TEXT PRIMARY KEY,
@@ -318,6 +328,78 @@ export class SharedDb {
   /** Dispatch failed before the provider accepted anything: nobody was touched. */
   releaseTouch(id: number): void {
     this.db.prepare(`DELETE FROM contact_touches WHERE id = ? AND status = 'reserved'`).run(id);
+  }
+
+  private static readonly LIVE_SLOT_SQL = `(status = 'confirmed' OR (status = 'reserved' AND reserved_at >= ?))`;
+
+  /** Invite slots this workspace holds on the account for the UTC day: confirmed, plus unexpired reservations. */
+  inviteSlotsUsed(
+    accountId: string,
+    workspace: string,
+    day: string,
+    now: Date = new Date(),
+  ): number {
+    const cutoff = new Date(now.getTime() - RESERVATION_TTL_MS).toISOString();
+    const row = this.db
+      .query(
+        `SELECT COUNT(*) AS n FROM linkedin_invite_slots
+         WHERE account_id = ? AND workspace = ? AND day = ? AND ${SharedDb.LIVE_SLOT_SQL}`,
+      )
+      .get(accountId, workspace, day, cutoff) as { n: number };
+    return Number(row?.n ?? 0);
+  }
+
+  /**
+   * Atomic check-and-reserve of one invite slot. Under BEGIN IMMEDIATE the
+   * count and the insert happen together, so concurrent senders (any process
+   * on this machine) cannot both take the last slot. `limit` null = count
+   * only. A reservation never confirmed (crash) stops counting after
+   * RESERVATION_TTL_MS; a new UTC day starts from zero.
+   */
+  reserveInviteSlot(input: {
+    accountId: string;
+    workspace: string;
+    limit: number | null;
+    now?: Date;
+  }): { id: number; used: number } | { full: true; used: number } {
+    const now = input.now ?? new Date();
+    const day = now.toISOString().slice(0, 10);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const used = this.inviteSlotsUsed(input.accountId, input.workspace, day, now);
+      if (input.limit !== null && used >= input.limit) {
+        this.db.exec("ROLLBACK");
+        return { full: true, used };
+      }
+      // Past days are never read again.
+      this.db.prepare(`DELETE FROM linkedin_invite_slots WHERE day < ?`).run(day);
+      const res = this.db
+        .prepare(
+          `INSERT INTO linkedin_invite_slots(account_id, workspace, day, status, reserved_at) VALUES(?, ?, ?, 'reserved', ?)`,
+        )
+        .run(input.accountId, input.workspace, day, now.toISOString());
+      this.db.exec("COMMIT");
+      return { id: Number(res.lastInsertRowid), used: used + 1 };
+    } catch (err) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // already rolled back
+      }
+      throw err;
+    }
+  }
+
+  /** The invite was accepted by the API: the slot is spent for the day. */
+  confirmInviteSlot(id: number): void {
+    this.db.prepare(`UPDATE linkedin_invite_slots SET status = 'confirmed' WHERE id = ?`).run(id);
+  }
+
+  /** The invite did not go out: give the slot back. */
+  releaseInviteSlot(id: number): void {
+    this.db
+      .prepare(`DELETE FROM linkedin_invite_slots WHERE id = ? AND status = 'reserved'`)
+      .run(id);
   }
 
   /** All live touches of an email across workspaces, newest first (doctor / UI detail). */

@@ -1,4 +1,5 @@
 import { DirectMailPanel, DirectMailHistory } from "../components/DirectMailPanel.tsx";
+import { InviteQuotaLine } from "../components/InviteQuotaLine.tsx";
 import { DeliveryBadge, DeliveryWarning } from "../components/queue/DeliveryWarning.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
@@ -446,21 +447,24 @@ function CadencesPage() {
             Prospects, in flight.
           </h1>
         </div>
-        <div className="flex items-center gap-1.5">
-          <Button
-            variant={showAll ? "secondary" : "primary"}
-            size="sm"
-            onClick={() => setShowAll(false)}
-          >
-            Active
-          </Button>
-          <Button
-            variant={showAll ? "primary" : "secondary"}
-            size="sm"
-            onClick={() => setShowAll(true)}
-          >
-            All
-          </Button>
+        <div className="flex items-center gap-3">
+          <InviteQuotaLine />
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant={showAll ? "secondary" : "primary"}
+              size="sm"
+              onClick={() => setShowAll(false)}
+            >
+              Active
+            </Button>
+            <Button
+              variant={showAll ? "primary" : "secondary"}
+              size="sm"
+              onClick={() => setShowAll(true)}
+            >
+              All
+            </Button>
+          </div>
         </div>
       </section>
 

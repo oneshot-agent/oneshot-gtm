@@ -38,7 +38,7 @@ vi.mock("@oneshot-gtm/intel", () => ({
 }));
 
 const { draftLinkedInNote, sendLinkedInInvite } = await import("../src/_linkedin-first-touch.ts");
-const { isSendDeferred } = await import("@oneshot-gtm/core");
+const { isSendDeferred, _resetInviteLimitsCacheForTests } = await import("@oneshot-gtm/core");
 
 function row(payload: Record<string, unknown> = {}) {
   return {
@@ -73,6 +73,7 @@ function sender(result: unknown) {
 }
 
 beforeEach(() => {
+  _resetInviteLimitsCacheForTests();
   modelNote = "Saw you hosted GTM in git — how are you handling review?";
   completeInputs.length = 0;
   upserts.length = 0;
@@ -105,7 +106,7 @@ describe("sendLinkedInInvite", () => {
     const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
     const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
     expect(out).toEqual({ sent: true, status: "sent", invitationId: "inv-1", prospectId: 42 });
-    expect(calls[0]).toMatchObject({
+    expect(calls.find((c) => (c as { kind: string }).kind === "invite")).toMatchObject({
       kind: "invite",
       accountId: "acct-1",
       profile: "https://www.linkedin.com/in/dana-lee",
