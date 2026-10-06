@@ -62,6 +62,31 @@ export function isRecentlyContacted(err: unknown): boolean {
   return err instanceof Error && err.name === "RecentlyContactedError";
 }
 
+const MAX_RETRY_AFTER_S = 120;
+
+/**
+ * `retry_after` seconds from a OneShot 429 (`rate_limit_exceeded`, limited
+ * per wallet), capped at two minutes; null when the error is not a rate limit.
+ */
+export function rateLimitRetryAfterS(err: unknown): number | null {
+  const e = err as { statusCode?: unknown; responseBody?: unknown; message?: unknown };
+  const status = typeof e?.statusCode === "number" ? e.statusCode : null;
+  const body = typeof e?.responseBody === "string" ? e.responseBody : "";
+  const message = typeof e?.message === "string" ? e.message : "";
+  const limited =
+    status === 429 || /rate_limit_exceeded/.test(body) || /\b429\b|rate limit/i.test(message);
+  if (!limited) return null;
+  try {
+    const parsed = JSON.parse(body) as { retry_after?: unknown };
+    if (typeof parsed.retry_after === "number" && parsed.retry_after > 0) {
+      return Math.min(parsed.retry_after, MAX_RETRY_AFTER_S);
+    }
+  } catch {
+    // no body: fall back to the limiter's window
+  }
+  return 60;
+}
+
 /**
  * True when an error is a TRANSIENT platform/transport failure rather than a
  * genuine negative ("not found", "undeliverable" → false). Callers must NOT
