@@ -1,3 +1,4 @@
+import { recordManualQueueSend, type ManualQueueSend } from "./ledger-manual.ts";
 import { extractBusinessAddress } from "./mail-address.ts";
 import type { DirectMailDraft, PostalAddress } from "./direct-mail.ts";
 import { Database } from "bun:sqlite";
@@ -251,6 +252,10 @@ export function openLedgerDatabase(path: string, opts: { readonly?: boolean } = 
 
 export class Ledger {
   readonly mailboxes: MailboxStore;
+  recordManualQueueSend(input: ManualQueueSend): { prospectId: number } {
+    return recordManualQueueSend(this.db, this, input);
+  }
+
   private db: Database;
   private path: string;
   private receipts: ReceiptStore;

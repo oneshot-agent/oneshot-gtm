@@ -13,8 +13,11 @@ export function summarizeRun(summary: unknown): string {
   if (!summary || typeof summary !== "object") return "—";
   const s = summary as Record<string, unknown>;
   if (typeof s["error"] === "string") return `error: ${(s["error"] as string).slice(0, 60)}`;
+  const sources = formatPerSource(s["perSource"]);
   if (typeof s["halted"] === "string" && s["halted"]) {
-    return `halted · ${(s["halted"] as string).slice(0, 80)}`;
+    return [`halted · ${(s["halted"] as string).slice(0, 80)}`, sources]
+      .filter(Boolean)
+      .join(" · ");
   }
   const parts: string[] = [];
   if (typeof s["candidates"] === "number") parts.push(`cand=${s["candidates"]}`);
@@ -37,6 +40,7 @@ export function summarizeRun(summary: unknown): string {
     const cohortLine = formatPerCohort(perCohort as unknown[]);
     if (cohortLine.length > 0) parts.push(cohortLine);
   }
+  if (sources) parts.push(sources);
   return parts.length > 0 ? parts.join(" · ") : "—";
 }
 
@@ -74,4 +78,20 @@ function formatPerCohort(perCohort: unknown[]): string {
   }
   const joined = segs.join(", ");
   return joined.length > 200 ? `${joined.slice(0, 197)}…` : joined;
+}
+
+function formatPerSource(raw: unknown): string {
+  if (!Array.isArray(raw)) return "";
+  return raw
+    .flatMap((value) => {
+      if (!value || typeof value !== "object") return [];
+      const entry = value as Record<string, unknown>;
+      if (typeof entry.label !== "string") return [];
+      const label = entry.label;
+      if (entry.status === "skipped") return [`${label}: not searched`];
+      if (typeof entry.error === "string")
+        return [`${label}: ${entry.records ?? 0} records, error: ${entry.error.slice(0, 90)}`];
+      return [`${label}: ${entry.records === 0 ? "no matches" : `${entry.records} records`}`];
+    })
+    .join(" · ");
 }

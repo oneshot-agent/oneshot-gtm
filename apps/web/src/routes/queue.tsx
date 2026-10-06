@@ -1049,7 +1049,31 @@ export function QueueRow({
   const researchRows = masked ? [] : personResearchRows(row.payload);
   const profileHistory = researchRows.filter((r) => r.key === "listed as" || r.key === "formerly");
   const scoreReasons = !masked && row.priority ? caseRows(row.priority.reasons) : [];
+  const thread =
+    row.playName === "community-reply" && row.payload && typeof row.payload === "object"
+      ? (row.payload as Record<string, unknown>)
+      : null;
+  const classification =
+    thread?.classification && typeof thread.classification === "object"
+      ? (thread.classification as Record<string, unknown>)
+      : null;
   const sheetRows: CaseListRow[] = [
+    ...(thread && !masked
+      ? [
+          {
+            key: "thread",
+            value: String(thread.postTitle ?? ""),
+            href: String(thread.postUrl ?? ""),
+          },
+          { key: "posted", value: String(thread.publishedAt ?? "") },
+          { key: "evidence", value: String(thread.supportingText ?? "") },
+          {
+            key: "intent",
+            value: `${String(classification?.relevance ?? "uncertain")} · ${String(classification?.intent ?? "uncertain")}`,
+          },
+          { key: "reason", value: String(classification?.reason ?? "Needs review") },
+        ]
+      : []),
     ...researchRows.filter((r) => r.key !== "listed as" && r.key !== "formerly"),
     ...(eventTitle
       ? [{ key: "event", value: eventRole ? `${eventTitle} · ${eventRole}` : eventTitle }]
@@ -1385,7 +1409,7 @@ function DraftSection({
         {isGenerating ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
         {isGenerating ? pendingVerb : verb}
       </Button>
-      {draft && (
+      {draft && channel !== "reddit" && channel !== "hacker-news" && (
         <Button
           variant="ghost"
           size="sm"
@@ -1400,7 +1424,7 @@ function DraftSection({
     </div>
   ) : null;
 
-  // Hand-sent channel (X DMs today): there is no transport. The founder
+  // Hand-sent channels have no transport. The founder
   // copies the text, sends it by hand, then records it here. "Mark sent"
   // writes the step-0 event on the row's channel server-side.
   const isManualPlay = sender === "manual";
@@ -1488,7 +1512,8 @@ function DraftSection({
     onError: (err) => toast.error(`couldn't record · ${err.message}`),
   });
   // Keep the trigger with row actions and give the textarea the full body width.
-  const canMarkLinkedIn = status === "sent" && prospectId != null;
+  const canMarkLinkedIn =
+    status === "sent" && prospectId != null && channel !== "reddit" && channel !== "hacker-news";
   const linkedinReplyButton =
     canMarkLinkedIn && !linkedinOpen ? (
       <Button
@@ -1535,29 +1560,34 @@ function DraftSection({
 
   const p = (payload ?? {}) as Record<string, unknown>;
   const pstr = (k: string): string | null => (typeof p[k] === "string" ? (p[k] as string) : null);
+  const community = channel === "reddit" || channel === "hacker-news";
   const dmOpen = p["dmOpen"] === true;
   const xHandle = xHandleFrom(pstr("handle")) ?? xHandleFrom(pstr("twitterUrl"));
   const xUserId = pstr("xUserId");
-  const openOnXUrl = dmOpen
-    ? xUserId
-      ? `https://x.com/messages/compose?recipient_id=${xUserId}`
-      : (pstr("twitterUrl") ?? "")
-    : (pstr("tweetUrl") ?? pstr("twitterUrl") ?? "");
+  const openOnXUrl = community
+    ? (pstr("postUrl") ?? "")
+    : dmOpen
+      ? xUserId
+        ? `https://x.com/messages/compose?recipient_id=${xUserId}`
+        : (pstr("twitterUrl") ?? "")
+      : (pstr("tweetUrl") ?? pstr("twitterUrl") ?? "");
   // Same review gate as the send button: a rejected (or still-pending) row
   // must not offer Mark sent. The server refuses non-approved rows too.
   const manualButtons =
-    isManualPlay && draft != null && status === "approved" && !draft.sent ? (
+    isManualPlay && draft != null && draft.body.trim() && status === "approved" && !draft.sent ? (
       <>
         <Button
           variant="ghost"
           size="sm"
           onClick={() => {
             void navigator.clipboard.writeText(draft.body);
-            toast.success("copied — paste it into X");
+            toast.success(
+              community ? "copied — paste your reply into the thread" : "copied — paste it into X",
+            );
           }}
-          title="Copy the draft text to paste into X"
+          title={community ? "Copy your public reply" : "Copy the draft text to paste into X"}
         >
-          <Copy size={11} /> Copy text
+          <Copy size={11} /> {community ? "Copy reply" : "Copy text"}
         </Button>
         {openOnXUrl && (
           <a
@@ -1566,19 +1596,23 @@ function DraftSection({
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 font-mono text-[11px] text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream"
             title={
-              dmOpen
-                ? `DM @${xHandle ?? ""} — their DMs are open`
-                : pstr("tweetUrl")
-                  ? "Their DMs are closed — reply under the repost instead"
-                  : "Open their X profile to send the DM"
+              community
+                ? "Open the original discussion"
+                : dmOpen
+                  ? `DM @${xHandle ?? ""} — their DMs are open`
+                  : pstr("tweetUrl")
+                    ? "Their DMs are closed — reply under the repost instead"
+                    : "Open their X profile to send the DM"
             }
           >
             <ExternalLink size={11} />{" "}
-            {dmOpen
-              ? `DM @${xHandle ?? ""}`
-              : pstr("tweetUrl")
-                ? "reply on their repost"
-                : `open @${xHandle ?? "profile"}`}
+            {community
+              ? "Open thread"
+              : dmOpen
+                ? `DM @${xHandle ?? ""}`
+                : pstr("tweetUrl")
+                  ? "reply on their repost"
+                  : `open @${xHandle ?? "profile"}`}
           </a>
         )}
         <Button
@@ -1587,14 +1621,18 @@ function DraftSection({
           disabled={markSent.isPending || isGenerating}
           onClick={() => markSent.mutate()}
           {...readOnly}
-          title="Record that you sent this by hand from the X app"
+          title={
+            community
+              ? "Record that you posted this reply yourself"
+              : "Record that you sent this by hand from the X app"
+          }
         >
           {markSent.isPending ? (
             <Loader2 size={11} className="animate-spin" />
           ) : (
             <Check size={11} />
           )}
-          {markSent.isPending ? "Recording…" : "Mark sent"}
+          {markSent.isPending ? "Recording…" : community ? "Mark posted" : "Mark sent"}
         </Button>
       </>
     ) : null;
@@ -1672,7 +1710,7 @@ function DraftSection({
   // Row was sent but lastDraft.sent is false → a post-send regenerate landed
   // before the server-side guard was added. The card body is NOT the email
   // that went out (the original is only in the prospect's inbox now).
-  const isStalePostSend = status === "sent" && !draft.sent;
+  const isStalePostSend = status === "sent" && !draft.sent && !isManualPlay;
   // Research landed after this draft was written (or the draft was written
   // while enrichment had failed): say so, in place of the "no enrichment" badge.
   const researchBadge = personResearchBadge(payload, {
@@ -1695,7 +1733,13 @@ function DraftSection({
     <LetterCard
       meta={
         <span title={draftedAt ? `Drafted ${timeAgo(draftedAt)}` : undefined}>
-          {draft.sent ? "Sent" : "Draft"}
+          {isManualPlay && status === "sent"
+            ? community
+              ? "Posted manually"
+              : "Sent manually"
+            : draft.sent
+              ? "Sent"
+              : "Draft"}
           {CHANNEL_MAX_CHARS[channel] != null &&
             ` · ${draft.body.length}/${CHANNEL_MAX_CHARS[channel]} characters`}
         </span>

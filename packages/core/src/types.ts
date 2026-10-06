@@ -181,7 +181,7 @@ export interface SequenceEventRecord {
   prospect_id: number;
   play_name: string;
   step_index: number;
-  channel: "email" | "sms" | "voice" | "linkedin" | "x" | "direct_mail";
+  channel: "email" | "sms" | "voice" | "linkedin" | "x" | "direct_mail" | "reddit" | "hacker-news";
   status:
     | "queued"
     | "sent"
