@@ -73,8 +73,12 @@ export function rateLimitRetryAfterS(err: unknown): number | null {
   const status = typeof e?.statusCode === "number" ? e.statusCode : null;
   const body = typeof e?.responseBody === "string" ? e.responseBody : "";
   const message = typeof e?.message === "string" ? e.message : "";
+  // An explicit status decides: a 403 whose message mentions a rate limit is
+  // still a 403. Body and message are read only when no status came back.
   const limited =
-    status === 429 || /rate_limit_exceeded/.test(body) || /\b429\b|rate limit/i.test(message);
+    status !== null
+      ? status === 429
+      : /rate_limit_exceeded/.test(body) || /\b429\b|rate limit/i.test(message);
   if (!limited) return null;
   try {
     const parsed = JSON.parse(body) as { retry_after?: unknown };

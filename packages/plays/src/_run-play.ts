@@ -522,10 +522,22 @@ const RESEARCH_RATE_LIMIT_RETRIES = 2;
 /** Spread so the rows a drain runs in parallel do not all retry in the same second. */
 const RESEARCH_RETRY_JITTER_MS = 5_000;
 
-let researchSleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+/** Resolves after `ms`, or as soon as `signal` aborts, so a cancel never waits out the limit. */
+export function cancellableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(done, ms);
+    function done(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+let researchSleep = cancellableSleep;
 /** Test-only: replace the rate-limit back-off sleep. */
-export function _setResearchSleep(fn: (ms: number) => Promise<void>): void {
+export function _setResearchSleep(fn: (ms: number, signal?: AbortSignal) => Promise<void>): void {
   researchSleep = fn;
 }
 
@@ -554,6 +566,7 @@ async function researchWaitingOutRateLimit(
       });
       await researchSleep(
         retryAfterS * 1000 + Math.floor(Math.random() * RESEARCH_RETRY_JITTER_MS),
+        signal,
       );
       throwIfCancelled(signal, `${ctx.playName} research`);
     }

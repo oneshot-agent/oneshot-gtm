@@ -44,7 +44,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
-const { standardEnrich, _setResearchSleep } = await import("../src/_run-play.ts");
+const { cancellableSleep, standardEnrich, _setResearchSleep } = await import("../src/_run-play.ts");
 const { rateLimitRetryAfterS } = await import("@oneshot-gtm/core");
 
 const sleeps: number[] = [];
@@ -71,6 +71,12 @@ describe("rateLimitRetryAfterS", () => {
     expect(rateLimitRetryAfterS(rateLimited())).toBe(60);
     expect(rateLimitRetryAfterS(new Error("Tool request failed"))).toBeNull();
     expect(rateLimitRetryAfterS(Object.assign(new Error("x"), { statusCode: 429 }))).toBe(60);
+  });
+
+  it("an explicit non-429 status is never a rate limit, whatever the message says", () => {
+    const denied = Object.assign(new Error("rate limit policy denied"), { statusCode: 403 });
+    expect(rateLimitRetryAfterS(denied)).toBeNull();
+    expect(rateLimitRetryAfterS(new Error("429 Too Many Requests"))).toBe(60);
   });
 });
 
@@ -111,5 +117,25 @@ describe("standardEnrich research under a rate limit", () => {
     researchOutcomes = [rateLimited()];
     await expect(run(ctl.signal)).rejects.toThrow();
     expect(researchCalls).toBe(1);
+  });
+});
+
+describe("cancellableSleep", () => {
+  it("ends at once when the signal aborts, long before the delay", async () => {
+    const ctl = new AbortController();
+    const started = Date.now();
+    const wait = cancellableSleep(60_000, ctl.signal);
+    ctl.abort();
+    await wait;
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it("an already-aborted signal does not wait at all; no signal waits the delay", async () => {
+    const ctl = new AbortController();
+    ctl.abort();
+    await cancellableSleep(60_000, ctl.signal);
+    const started = Date.now();
+    await cancellableSleep(20);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(15);
   });
 });
