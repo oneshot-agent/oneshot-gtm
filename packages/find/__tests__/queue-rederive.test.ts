@@ -316,6 +316,19 @@ describe("rederiveQueueRow", () => {
     expect(state.payloads[0]).toMatchObject({ email: "new@example.com", yourEdge: "edge" });
   });
 
+  it("keeps a patched field someone edited while the model calls ran", async () => {
+    const { ledger, state } = makeLedger({ ...baseRow });
+    const derive = async () => {
+      state.row = {
+        ...state.row!,
+        payload_json: JSON.stringify({ ...movedPayload, yourEdge: "typed by hand" }),
+      };
+      return patch;
+    };
+    await rederiveQueueRow(ledger, 10, { derive });
+    expect(state.payloads[0]).toMatchObject({ yourEdge: "typed by hand", fitReason: "fit" });
+  });
+
   it("writes nothing on a dry run", async () => {
     const { ledger, state } = makeLedger({ ...baseRow });
     const out = await rederiveQueueRow(ledger, 10, { derive: async () => patch, dryRun: true });

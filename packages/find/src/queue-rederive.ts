@@ -288,7 +288,13 @@ export async function rederiveQueueRow(
   } catch {
     /* keep the payload read before the model calls */
   }
-  ledger.updateQueuePayload({ id, payload: { ...latest, ...patch } });
+  const merged: JsonRecord = { ...latest };
+  for (const [key, value] of Object.entries(patch)) {
+    // A field someone edited while the model calls ran keeps their edit.
+    if (JSON.stringify(latest[key]) !== JSON.stringify(payload[key])) continue;
+    merged[key] = value;
+  }
+  ledger.updateQueuePayload({ id, payload: merged });
   if (current.last_draft_json) ledger.clearQueueDraft(id);
   // A manual run after an earlier timeout: drop the "run rederive" note.
   const stale = rederiveFailedNote(id);
