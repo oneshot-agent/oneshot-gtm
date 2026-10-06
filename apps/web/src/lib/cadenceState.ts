@@ -5,7 +5,11 @@
  * clock is injected so the cases are testable, and the label uppercases in
  * the row, so the text here is plain case.
  */
-import type { CadenceStopReason, CadenceView } from "@oneshot-gtm/shared-types";
+import type {
+  CadenceHeldElsewhere,
+  CadenceStopReason,
+  CadenceView,
+} from "@oneshot-gtm/shared-types";
 import { timeAgo } from "./cn.ts";
 
 export const STOP_REASON_LABELS: Record<CadenceStopReason, string> = {
@@ -85,11 +89,31 @@ export function cadenceStateLabel(c: CadenceView, now: Date): CadenceState {
         parts.push("send failed");
         tone = "blocked";
       }
+      // The runner skips a held step whatever is clicked, so say so instead
+      // of leaving it reading as overdue.
+      if (c.heldElsewhere && new Date(c.heldElsewhere.until).getTime() > nowMs) {
+        parts.push(heldLabel(c.heldElsewhere, nowMs));
+        tone = "muted";
+      }
       return { text: parts.join(" · "), tone };
     }
     default:
       return { text: c.status, tone: "muted" };
   }
+}
+
+/** "held · emailed from sdk 1d ago · sends after Oct 12". */
+export function heldLabel(h: CadenceHeldElsewhere, nowMs: number): string {
+  return `held · emailed from ${h.workspace} ${timeAgo(h.sentAt, nowMs)} · sends after ${shortDate(h.until)}`;
+}
+
+/** True while another workspace's touch holds this cadence's next send. */
+export function isHeldElsewhere(c: CadenceView, nowMs: number = Date.now()): boolean {
+  return c.heldElsewhere != null && new Date(c.heldElsewhere.until).getTime() > nowMs;
+}
+
+function shortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 /**
