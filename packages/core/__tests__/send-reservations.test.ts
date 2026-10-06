@@ -70,7 +70,7 @@ function stubGmail() {
     "fetch",
     vi.fn(async (url: string | URL) => {
       const u = String(url);
-      if (u.includes("oauth2.googleapis.com")) {
+      if (new URL(u).hostname === "oauth2.googleapis.com") {
         return new Response(JSON.stringify({ access_token: "at", expires_in: 3600 }), {
           status: 200,
         });
