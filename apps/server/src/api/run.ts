@@ -140,7 +140,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         });
         fromQueue = queueIndexes.size > 0;
 
-        if (manualTargets.length > 0) {
+        if (manualTargets.length > 0 && playName !== "community-reply") {
           send({ kind: "stage", stage: "verifying" });
           const manualVerify = await verifyAndFilterTargets(
             manualTargets as Array<{ email?: string; founderEmail?: string }>,

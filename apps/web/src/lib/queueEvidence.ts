@@ -46,6 +46,7 @@ export function queueEvidence(playName: string, payload: unknown): string | null
   const p = payload as Record<string, unknown>;
 
   switch (playName) {
+    case "community-reply":
     case "show-hn":
       return str(p, "postTitle");
 

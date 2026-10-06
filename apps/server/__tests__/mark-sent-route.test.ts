@@ -31,6 +31,32 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     getLedger: () => ({
       getQueueRow: () => ({ ...row }),
+      recordManualQueueSend: (input: {
+        id: number;
+        profileUrl: string;
+        name: string | null;
+        metadata: Record<string, unknown>;
+      }) => {
+        upserts.push({
+          name: input.name,
+          email: null,
+          linkedin_url: input.profileUrl,
+          source_profile_url: input.profileUrl,
+        });
+        events.push({
+          prospectId: 42,
+          playName: row.play_name,
+          stepIndex: 0,
+          channel: row.channel,
+          status: "sent",
+          metadata: input.metadata,
+        });
+        statusCalls.push({ id: input.id, status: "sent", decidedBy: "human" } as {
+          id: number;
+          status: string;
+        });
+        return { prospectId: 42 };
+      },
       upsertProspect: (input: Record<string, unknown>) => {
         upserts.push(input);
         return 42;
@@ -123,10 +149,10 @@ describe("markSentRoute", () => {
     expect(events).toHaveLength(0);
   });
 
-  it("refuses a row already marked sent", async () => {
+  it("returns success without recording an already sent row", async () => {
     row.status = "sent";
     const res = await markSentRoute(req, { id: "1" });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
     expect(events).toHaveLength(0);
   });
 

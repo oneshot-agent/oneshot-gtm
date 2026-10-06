@@ -1,3 +1,4 @@
+import { runCommunityReply } from "./community-reply.ts";
 import type { DraftAngle } from "@oneshot-gtm/shared-types";
 import { type AcceleratorBatchTarget, runAcceleratorBatch } from "./accelerator-batch.ts";
 import { type BreakupReviveTarget, runBreakupRevive } from "./breakup-revive.ts";
@@ -44,6 +45,8 @@ export interface DraftedRow {
 
 /** Run-level options a play may consume. `targets` is play-specific JSON. */
 export interface PlayRunInput {
+  /** Caller already holds the daily spend reservation (queue drain). */
+  spendReserved?: boolean;
   dryRun: boolean;
   targets: unknown[];
   /**
@@ -93,6 +96,7 @@ const signalOpt = (o: PlayRunInput): { signal?: AbortSignal; draftAngle?: string
 });
 
 export const PLAYS: Record<string, PlayDispatch> = {
+  "community-reply": { run: runCommunityReply },
   "show-hn": {
     run: (o) =>
       runShowHn({
