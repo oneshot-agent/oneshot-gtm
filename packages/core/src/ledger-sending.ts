@@ -89,3 +89,60 @@ export function firstEmailSendAt(db: Database, identityId: string): string | nul
     .get(identityId) as { first: string | null };
   return row.first;
 }
+
+/**
+ * How long an unconfirmed send reservation holds capacity. A process killed
+ * between picking a sender and writing the receipt must not hold a cap group's
+ * budget for the rest of the day (issue #794).
+ */
+export const SEND_RESERVATION_TTL_MS = 10 * 60 * 1000;
+
+function sqliteUtc(d: Date): string {
+  return d.toISOString().slice(0, 19).replace("T", " ");
+}
+
+/** Hold one send of `groupKey`'s daily budget for `identityId` until it is confirmed (receipt written) or released. */
+export function reserveSendSlot(
+  db: Database,
+  groupKey: string,
+  identityId: string,
+  now = new Date(),
+): number {
+  // Reclaim crashed pickers' rows as we go; they no longer count anyway.
+  db.prepare("DELETE FROM send_reservations WHERE created_at < ?").run(
+    sqliteUtc(new Date(now.getTime() - SEND_RESERVATION_TTL_MS)),
+  );
+  const res = db
+    .prepare("INSERT INTO send_reservations(group_key, identity_id, created_at) VALUES(?, ?, ?)")
+    .run(groupKey, identityId, sqliteUtc(now));
+  return Number(res.lastInsertRowid);
+}
+
+/** Free a reservation (idempotent: a no-op once confirmed, released or swept). */
+export function releaseSendReservation(db: Database, id: number): void {
+  db.prepare("DELETE FROM send_reservations WHERE id = ?").run(id);
+}
+
+/** Live (unexpired) reservations, per cap group and per identity. */
+export function liveSendReservations(
+  db: Database,
+  now = new Date(),
+): { byGroup: Map<string, number>; byIdentity: Map<string, number> } {
+  const rows = db
+    .query(
+      `SELECT group_key, identity_id, COUNT(*) AS n FROM send_reservations
+       WHERE created_at >= ? GROUP BY group_key, identity_id`,
+    )
+    .all(sqliteUtc(new Date(now.getTime() - SEND_RESERVATION_TTL_MS))) as {
+    group_key: string;
+    identity_id: string;
+    n: number;
+  }[];
+  const byGroup = new Map<string, number>();
+  const byIdentity = new Map<string, number>();
+  for (const r of rows) {
+    byGroup.set(r.group_key, (byGroup.get(r.group_key) ?? 0) + r.n);
+    byIdentity.set(r.identity_id, (byIdentity.get(r.identity_id) ?? 0) + r.n);
+  }
+  return { byGroup, byIdentity };
+}

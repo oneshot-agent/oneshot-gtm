@@ -107,6 +107,8 @@ export class ReceiptStore {
     memo?: string;
     /** Call-time decisionContext blob; JSON-stringified into the column. */
     decisionContext?: unknown;
+    /** Send-capacity reservation this receipt consumes, dropped in the same transaction (#794). */
+    reservationId?: number;
   }): number {
     // Idempotent on the job id: the SDK's idempotency replay returns the
     // ORIGINAL request_id when a timed-out/double-fired send is retried, and a
@@ -119,7 +121,10 @@ export class ReceiptStore {
       const existing = this.db
         .query("SELECT id FROM receipts WHERE oneshot_request_id = ?")
         .get(input.oneshotRequestId) as { id: number } | undefined;
-      if (existing) return existing.id;
+      if (existing) {
+        this.dropReservation(input.reservationId);
+        return existing.id;
+      }
     }
     // Number.isFinite guard rejects undefined / Infinity / NaN. Those land
     // as NULL in the column, NOT silently distorted into a number.
@@ -142,20 +147,30 @@ export class ReceiptStore {
       INSERT INTO receipts(play_name, call_type, cost_usd, signed_receipt, oneshot_request_id, sender_identity, memo, decision_context, goal_id)
       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const result = stmt.run(
-      input.playName,
-      input.callType,
-      costUsd,
-      input.signedReceipt
-        ? JSON.stringify(slimReceiptPayload(input.callType, input.signedReceipt))
-        : null,
-      input.oneshotRequestId ?? null,
-      input.senderIdentity ?? null,
-      memo,
-      JSON.stringify(decisionContext),
-      goalId,
-    );
-    return Number(result.lastInsertRowid);
+    // The receipt and the reservation it consumes change together, so a
+    // concurrent reader sees the send once (as a receipt), never twice (#794).
+    const insert = this.db.transaction(() => {
+      const result = stmt.run(
+        input.playName,
+        input.callType,
+        costUsd,
+        input.signedReceipt
+          ? JSON.stringify(slimReceiptPayload(input.callType, input.signedReceipt))
+          : null,
+        input.oneshotRequestId ?? null,
+        input.senderIdentity ?? null,
+        memo,
+        JSON.stringify(decisionContext),
+        goalId,
+      );
+      this.dropReservation(input.reservationId);
+      return Number(result.lastInsertRowid);
+    });
+    return insert();
+  }
+
+  private dropReservation(id: number | undefined): void {
+    if (id != null) this.db.prepare("DELETE FROM send_reservations WHERE id = ?").run(id);
   }
 
   /**

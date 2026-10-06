@@ -227,6 +227,7 @@ function computeCapacities(
   const byGroup = new Map<string, GroupCapacity>();
   const identitySent = new Map<string, number>();
   const todayStart = todayStartSqliteUtc(now);
+  const reserved = getLedger().liveSendReservations(now);
   for (const [key, group] of members) {
     const uncapped = group.some((i) => i.maxPerDay == null && i.warmup == null);
     if (uncapped && !opts.countUncapped) {
@@ -236,14 +237,17 @@ function computeCapacities(
     }
     const ledger = getLedger();
     let firstSendAt: string | null = null;
-    let sent = 0;
+    // Used = confirmed receipts + live reservations (picked, receipt not yet
+    // written). A confirmed send drops its reservation in the receipt's own
+    // transaction, so one send is never counted twice (#794).
+    let sent = reserved.byGroup.get(key) ?? 0;
     for (const i of group) {
       // SQLite "YYYY-MM-DD HH:MM:SS" UTC strings sort lexicographically.
       const first = ledger.firstEmailSendAt(i.id);
       if (first && (firstSendAt == null || first < firstSendAt)) firstSendAt = first;
-      const own = ledger.countEmailSendsSince(i.id, todayStart);
-      identitySent.set(i.id, own);
-      sent += own;
+      const confirmed = ledger.countEmailSendsSince(i.id, todayStart);
+      identitySent.set(i.id, confirmed + (reserved.byIdentity.get(i.id) ?? 0));
+      sent += confirmed;
     }
     const cap = uncapped ? Infinity : Math.max(...group.map((i) => warmupCap(i, firstSendAt, now)));
     byGroup.set(key, {
@@ -341,11 +345,31 @@ export function poolSendCapacity(now = new Date()): { sentToday: number; capToda
  *  4. Nothing has capacity → SendDeferredError (callers leave work queued).
  */
 export function resolveSenderIdentity(to: string, now = new Date()): EmailIdentity {
+  return resolveSenderSlot(to, now).identity;
+}
+
+/**
+ * `resolveSenderIdentity` plus the capacity reservation the pick took. The
+ * pick reads used-today (confirmed receipts + live reservations) and records
+ * its own reservation under one BEGIN IMMEDIATE, so concurrent pickers, in
+ * this process or another, can't all see the same remaining cap (#794).
+ * `reservationId` is null when nothing was reserved (pinned sender, uncapped
+ * group). The caller consumes it by passing it to the receipt write and frees
+ * it with `releaseSendReservation` on a failed or deferred send.
+ */
+export function resolveSenderSlot(
+  to: string,
+  now = new Date(),
+): { identity: EmailIdentity; reservationId: number | null } {
   const cfg = loadConfig();
   const identities = resolveIdentities(cfg);
   const ledger = getLedger();
   const byId = new Map(identities.map((i) => [i.id, i]));
 
+  // Pinned senders (sender_assignments: the follow-up / same-thread path)
+  // bypass the capacity picker BY DESIGN: a live thread must keep its From
+  // address, so no cap check or reservation happens here. That is not the
+  // concurrent-overshoot bug the picker below guards against.
   const assigned = ledger.getSenderAssignment(to);
   if (assigned) {
     const identity = byId.get(assigned);
@@ -354,7 +378,7 @@ export function resolveSenderIdentity(to: string, now = new Date()): EmailIdenti
         `prospect ${to} is pinned to sender identity '${assigned}' which is no longer configured — restore it in emailIdentities or reassign explicitly`,
       );
     }
-    return identity;
+    return { identity, reservationId: null };
   }
 
   if (ledger.hasPriorEmailSend(to)) {
@@ -364,7 +388,7 @@ export function resolveSenderIdentity(to: string, now = new Date()): EmailIdenti
       identities.find((i) => i.provider === (cfg.emailProvider === "gmail" ? "gmail" : "oneshot"));
     if (legacy) {
       const winner = ledger.assignSender(to, legacy.id);
-      return byId.get(winner) ?? legacy;
+      return { identity: byId.get(winner) ?? legacy, reservationId: null };
     }
     // No identity of the legacy provider left in the pool: fall through to
     // the capacity picker rather than stranding the prospect forever. This
@@ -373,26 +397,43 @@ export function resolveSenderIdentity(to: string, now = new Date()): EmailIdenti
     logEvent("send.legacy_identity_missing", { email_domain: to.split("@")[1] ?? "" }, "warn");
   }
 
-  const pool = computeCapacities(identities, now);
-  let best: { identity: EmailIdentity; remaining: number; sent: number } | null = null;
-  let overflow: EmailIdentity | null = null;
-  for (const identity of identities) {
-    const { remaining, sent } = capacityFor(pool, identity);
-    if (remaining <= 0) continue;
-    if (remaining === Infinity) {
-      overflow ??= identity;
-      continue;
+  return ledger.withSendCapacityLock(() => {
+    const pool = computeCapacities(identities, now);
+    let best: { identity: EmailIdentity; remaining: number; sent: number } | null = null;
+    let overflow: EmailIdentity | null = null;
+    for (const identity of identities) {
+      const { remaining, sent } = capacityFor(pool, identity);
+      if (remaining <= 0) continue;
+      if (remaining === Infinity) {
+        overflow ??= identity;
+        continue;
+      }
+      if (
+        !best ||
+        remaining > best.remaining ||
+        (remaining === best.remaining && sent < best.sent)
+      ) {
+        best = { identity, remaining, sent };
+      }
     }
-    if (!best || remaining > best.remaining || (remaining === best.remaining && sent < best.sent)) {
-      best = { identity, remaining, sent };
+    const picked = best?.identity ?? overflow;
+    if (!picked) {
+      throw new SendDeferredError(
+        "all sender identities have reached their daily cap — send deferred until tomorrow",
+      );
     }
-  }
-  const picked = best?.identity ?? overflow;
-  if (!picked) {
-    throw new SendDeferredError(
-      "all sender identities have reached their daily cap — send deferred until tomorrow",
-    );
-  }
-  const winner = ledger.assignSender(to, picked.id);
-  return byId.get(winner) ?? picked;
+    const winner = ledger.assignSender(to, picked.id);
+    // Uncapped groups have no budget to hold; a lost first-touch race means
+    // the winner's own pick already holds its slot.
+    const reservationId =
+      best && winner === picked.id
+        ? ledger.reserveSendSlot(capGroupKey(picked), picked.id, now)
+        : null;
+    return { identity: byId.get(winner) ?? picked, reservationId };
+  });
+}
+
+/** Free a send reservation (no-op for null / already consumed). */
+export function releaseSendReservation(reservationId: number | null | undefined): void {
+  if (reservationId != null) getLedger().releaseSendReservation(reservationId);
 }
