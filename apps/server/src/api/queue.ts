@@ -21,6 +21,7 @@ import {
   getLedger,
   isDraining,
   loadConfig,
+  logEvent,
   isRecentlyContacted,
   isSendDeferred,
   parseProspectPriority,
@@ -36,6 +37,7 @@ import {
   isDudDomain,
   portableQueuePayload,
   rankPendingRows,
+  rederiveQueueRow,
   resolveQueueTarget,
   safeEnrichCompany,
   scheduleNewsfeedOnApproval,
@@ -551,6 +553,46 @@ function isImportRequest(body: unknown): body is ImportQueueRowRequest {
 }
 
 /**
+ * The re-derivation an import started, so tests (and nothing else) can wait
+ * for it. The import answers before it finishes: the move route gives the
+ * import 10 s, and a slower import would read as a failed hand-over and
+ * restore the row at the source while it already exists here.
+ */
+let importRederive: Promise<unknown> = Promise.resolve();
+export function importRederiveSettled(): Promise<unknown> {
+  return importRederive;
+}
+
+/**
+ * Fill in, for this workspace, the edge and verdicts a move stripped
+ * (packages/find/src/queue-rederive.ts). Runs in the background; a failure or
+ * timeout leaves a note on the row naming the manual command.
+ */
+function startImportRederive(queueId: number): void {
+  importRederive = rederiveQueueRow(getLedger(), queueId).then(
+    (outcome) => {
+      logEvent("queue.import_rederive", {
+        queue_id: queueId,
+        ok: outcome.ok,
+        ...(outcome.ok
+          ? {
+              edge_source: outcome.patch.yourEdgeSource,
+              verdict: String(outcome.patch["icpVerdict"] ?? ""),
+            }
+          : { reason: outcome.reason }),
+      });
+    },
+    (err: unknown) => {
+      logEvent(
+        "error.swallowed",
+        { kind: "import-rederive", message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+        "warn",
+      );
+    },
+  );
+}
+
+/**
  * POST /api/queue/import. The destination side of a move. Another workspace's
  * server on this machine hands over a row; only loopback callers get here
  * (the Host and Origin gates in server.ts). The row lands `pending` for
@@ -603,6 +645,7 @@ export async function importQueueRowRoute(req: Request): Promise<Response> {
     notes,
   });
   if (inserted != null) {
+    startImportRederive(inserted);
     const out: ImportQueueRowResult = { queueId: inserted, reused: false };
     return jsonResponse(out, 201, req);
   }
@@ -624,6 +667,7 @@ export async function importQueueRowRoute(req: Request): Promise<Response> {
   ledger.clearQueueDraft(existing.id);
   ledger.updateQueuePayload({ id: existing.id, payload });
   ledger.setQueueStatus({ id: existing.id, status: "pending", notes });
+  startImportRederive(existing.id);
   const out: ImportQueueRowResult = { queueId: existing.id, reused: true };
   return jsonResponse(out, 200, req);
 }

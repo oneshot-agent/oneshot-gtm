@@ -73,7 +73,7 @@ import {
 } from "../lib/queue-helpers.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
 import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
-import { fitReasonFor } from "../lib/queueRationale.ts";
+import { fitReasonFor, movedProvenance, movedRejectReason } from "../lib/queueRationale.ts";
 import {
   appendReason,
   REJECT_REASON_CHIPS,
@@ -1036,6 +1036,8 @@ export function QueueRow({
   // Event dates stay on the signal label to make timing visible.
   const signal = queueEvidence(row.playName, row.payload);
   const fitReason = fitReasonFor(row.payload);
+  const moved = movedProvenance(row.payload);
+  const movedReject = movedRejectReason(row.payload);
   const emptyResearch = !fitReason ? researchEmptyState(row.payload) : null;
   const when = eventDate
     ? `${humanizeEventDate(eventDate)}${eventPassed ? " · passed" : ""}`
@@ -1234,6 +1236,15 @@ export function QueueRow({
                   {fitReason}
                 </p>
               )}
+              {!masked && movedReject && (
+                <p className="m-0 text-[12.5px] leading-5 text-ink-muted [text-wrap:pretty]">
+                  Doesn't fit this workspace's ICP: {movedReject}. Kept pending because you moved it
+                  here.
+                </p>
+              )}
+              {!masked && moved && (
+                <div className="text-[11.5px] leading-4 text-ink-faint">{moved}</div>
+              )}
               {sheetRows.length > 0 && (
                 <>
                   <Rule />
@@ -1249,9 +1260,12 @@ export function QueueRow({
               )}
               {/* `notes` is the pre-#592 rationale; once a row has its fit
                   line the note only repeats it (or a diagnostic). */}
-              {!masked && !fitReason && row.notes && (
-                <div className="text-[11.5px] leading-4 text-ink-faint">{row.notes}</div>
-              )}
+              {!masked &&
+                !fitReason &&
+                row.notes &&
+                !(moved && /^moved from \S+$/.test(row.notes)) && (
+                  <div className="text-[11.5px] leading-4 text-ink-faint">{row.notes}</div>
+                )}
               {row.priority && prio && (
                 <>
                   <Rule />
