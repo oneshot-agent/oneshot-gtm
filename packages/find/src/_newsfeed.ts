@@ -10,6 +10,7 @@ import {
   NEWSFEED_CACHE_TTL_MS,
   NEWSFEED_DEADLINE_MS,
   personNewsfeed,
+  rateLimitRetryAfterS,
   readPersonHalf,
   withDeadline,
   newsfeedCacheKey,
@@ -135,28 +136,9 @@ export function _setNewsfeedSleep(fn: (ms: number) => Promise<void>): void {
 }
 
 const MAX_RATE_LIMIT_RETRIES = 2;
-const MAX_RETRY_AFTER_S = 120;
 
-/** `retry_after` seconds from a 429, or null when the error is not a rate limit. */
-export function rateLimitRetryAfterS(err: unknown): number | null {
-  const e = err as { statusCode?: unknown; responseBody?: unknown; message?: unknown };
-  const status = typeof e?.statusCode === "number" ? e.statusCode : null;
-  const body = typeof e?.responseBody === "string" ? e.responseBody : "";
-  const message = typeof e?.message === "string" ? e.message : "";
-  const limited =
-    status === 429 || /rate_limit_exceeded/.test(body) || /\b429\b|rate limit/i.test(message);
-  if (!limited) return null;
-  try {
-    const parsed = JSON.parse(body) as { retry_after?: unknown };
-    if (typeof parsed.retry_after === "number" && parsed.retry_after > 0) {
-      return Math.min(parsed.retry_after, MAX_RETRY_AFTER_S);
-    }
-  } catch {
-    // no body: fall back to the limiter's window
-  }
-  return 60;
-}
-
+// Moved to core so plays share it; re-exported for existing importers.
+export { rateLimitRetryAfterS };
 const BREAKER_THRESHOLD = 3;
 const BREAKER_COOLDOWN_MS = 5 * 60_000;
 let consecutiveTransient = 0;

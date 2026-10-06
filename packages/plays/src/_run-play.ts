@@ -10,7 +10,9 @@ import {
   isRunCancelled,
   isSendDeferred,
   loadConfig,
+  logEvent,
   parallelMap,
+  rateLimitRetryAfterS,
   throwIfCancelled,
   CONTACTED_ELSEWHERE_FLAG,
   recentTouchElsewhere,
@@ -515,6 +517,62 @@ export async function runEmailPlay<T, X = Record<string, never>>(
  * paid calls sit back to back, so a run cancelled during the enrich must not go
  * on to buy the dossier.
  */
+/** A 429 is retried at most this many times before the row's draft errors. */
+const RESEARCH_RATE_LIMIT_RETRIES = 2;
+/** Spread so the rows a drain runs in parallel do not all retry in the same second. */
+const RESEARCH_RETRY_JITTER_MS = 5_000;
+
+/** Resolves after `ms`, or as soon as `signal` aborts, so a cancel never waits out the limit. */
+export function cancellableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(done, ms);
+    function done(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+let researchSleep = cancellableSleep;
+/** Test-only: replace the rate-limit back-off sleep. */
+export function _setResearchSleep(fn: (ms: number, signal?: AbortSignal) => Promise<void>): void {
+  researchSleep = fn;
+}
+
+/**
+ * deepResearch that waits out a rate limit. OneShot limits per wallet, so a
+ * drain's parallel rows plus a scheduler sweep on the same wallet can draw a
+ * 429 `retry_after: 60`; failing the row then turns a minute's wait into an
+ * error draft. Waits `retry_after` (plus jitter) and retries at most twice,
+ * as the newsfeed client does. Any other error still throws.
+ */
+async function researchWaitingOutRateLimit(
+  input: Parameters<typeof deepResearch>[0],
+  ctx: Parameters<typeof deepResearch>[1],
+  signal?: AbortSignal,
+): ReturnType<typeof deepResearch> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await deepResearch(input, ctx);
+    } catch (err) {
+      const retryAfterS = rateLimitRetryAfterS(err);
+      if (retryAfterS === null || attempt >= RESEARCH_RATE_LIMIT_RETRIES) throw err;
+      logEvent("research.rate_limited", {
+        play: ctx.playName,
+        retry_after_s: retryAfterS,
+        attempt,
+      });
+      await researchSleep(
+        retryAfterS * 1000 + Math.floor(Math.random() * RESEARCH_RETRY_JITTER_MS),
+        signal,
+      );
+      throwIfCancelled(signal, `${ctx.playName} research`);
+    }
+  }
+}
+
 export async function standardEnrich(opts: {
   playName: string;
   enrichInput: Parameters<typeof safeEnrich>[0];
@@ -532,9 +590,10 @@ export async function standardEnrich(opts: {
 
   if (opts.research) {
     throwIfCancelled(opts.signal, `${opts.playName} research`);
-    const research = await deepResearch(
+    const research = await researchWaitingOutRateLimit(
       { topic: opts.research.topic, depth: "quick" },
       { playName: opts.playName },
+      opts.signal,
     );
     receiptIds.push(research.receiptId);
     dossier +=

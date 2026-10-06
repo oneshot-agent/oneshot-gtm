@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getTrigger = vi.fn();
 vi.mock("@oneshot-gtm/core", async () => {
@@ -120,4 +120,37 @@ it("drops format settings copied onto the payload once the trigger no longer set
   const split = resolveQueueTarget({ source: "find:luma-events", payload_json: stale });
   expect(split).toHaveProperty("firstTouchFormat", "split");
   expect(split).not.toHaveProperty("firstTouchSplit");
+});
+
+describe("a row moved in from another workspace", () => {
+  const moved_json = JSON.stringify({
+    email: "a@example.com",
+    yourEdge: "edge derived here on import",
+    movedFrom: { workspace: "other", queueId: 7, at: "2026-10-05T00:00:00Z" },
+  });
+
+  it.each(["", null, "   "])(
+    "keeps its own edge when this trigger's edge is empty (%j)",
+    (yourEdge) => {
+      getTrigger.mockReturnValue({ config_json: JSON.stringify({ yourEdge }) });
+      expect(
+        resolveQueueTarget({ source: "find:list-page:runs-x", payload_json: moved_json }),
+      ).toHaveProperty("yourEdge", "edge derived here on import");
+    },
+  );
+
+  it("still takes a non-empty edge from this workspace's trigger", () => {
+    getTrigger.mockReturnValue({ config_json: JSON.stringify({ yourEdge: "configured here" }) });
+    expect(
+      resolveQueueTarget({ source: "find:list-page:runs-x", payload_json: moved_json }),
+    ).toHaveProperty("yourEdge", "configured here");
+  });
+
+  it("leaves a normal row's cleared-edge behaviour alone", () => {
+    getTrigger.mockReturnValue({ config_json: JSON.stringify({ yourEdge: "" }) });
+    expect(resolveQueueTarget({ source: "find:list-page:runs-x", payload_json })).toHaveProperty(
+      "yourEdge",
+      "",
+    );
+  });
 });

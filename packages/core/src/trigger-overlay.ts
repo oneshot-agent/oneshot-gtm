@@ -65,12 +65,18 @@ export function resolveTriggerOverlay(
     );
   }
   const resolved = { ...target } as Record<string, unknown>;
+  // A row moved in from another workspace carries an edge derived for THIS
+  // workspace on import (queue-rederive.ts). Its source still names the
+  // trigger that found it elsewhere, so an empty edge on the same-named
+  // trigger here must not blank it; a non-empty one still wins, as for any row.
+  const moved = target["movedFrom"] != null;
   for (const key of ["yourEdge", "yourClaim"] as const) {
     if (!Object.hasOwn(config, key)) continue;
     const value = config[key];
     if (value !== null && typeof value !== "string") {
       throw new Error(`Invalid ${key} for trigger '${name}'; use text or clear the field.`);
     }
+    if (moved && !(value ?? "").trim()) continue;
     resolved[key] = value ?? "";
   }
   // First-touch format experiment settings, read at generation time like the

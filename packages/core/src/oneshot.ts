@@ -66,9 +66,11 @@ import { parallelMap, withDeadline } from "./parallel.ts";
 import {
   isTransientToolError,
   RecentlyContactedError,
-  resolveSenderIdentity,
+  releaseSendReservation,
+  resolveSenderSlot,
   SuppressedRecipientError,
 } from "./send-routing.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { EmailIdentity } from "./types.ts";
 
 /** Re-exported so callers don't reach into the SDK for the domain-pool shape. */
@@ -150,6 +152,9 @@ export function buildAuditOpts(
   };
 }
 
+/** The send-capacity reservation of the email send in progress, consumed by its email.send receipt (#794). */
+const sendReservation = new AsyncLocalStorage<{ id: number | null }>();
+
 /**
  * Record a receipt for a billable call, persisting the SAME memo/decisionContext
  * we send to OneShot (buildAuditOpts) so the local row matches the platform
@@ -165,7 +170,10 @@ function recordCallReceipt(args: {
   senderIdentity?: string;
 }): number {
   const audit = buildAuditOpts(args.ctx, args.callType);
+  const reservationId =
+    args.callType === "email.send" ? (sendReservation.getStore()?.id ?? undefined) : undefined;
   return getLedger().recordReceipt({
+    reservationId,
     playName: args.ctx.playName,
     callType: args.callType,
     signedReceipt: args.signedReceipt,
@@ -780,7 +788,28 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
   // Sender rotation: resolve the sticky per-prospect identity BEFORE any
   // network call. Throws SendDeferredError when every identity is at its
   // daily cap: callers leave the work queued for tomorrow.
-  const identity = resolveSenderIdentity(input.to);
+  const { identity, reservationId } = resolveSenderSlot(input.to);
+  // The reservation rides in async-local storage to the email.send receipt
+  // write (recordCallReceipt), which consumes it atomically. Anything else
+  // that ends the attempt frees it here. An UncertainSendError keeps it: the
+  // email may be out, so it holds its slot until the TTL or the sweep settles.
+  try {
+    const out = await sendReservation.run({ id: reservationId }, () =>
+      dispatchViaIdentity(input, ctx, identity),
+    );
+    releaseSendReservation(reservationId);
+    return out;
+  } catch (err) {
+    if (!(err instanceof UncertainSendError)) releaseSendReservation(reservationId);
+    throw err;
+  }
+}
+
+async function dispatchViaIdentity(
+  input: SendEmailInput,
+  ctx: CallContext,
+  identity: EmailIdentity,
+) {
   const key = input.idempotencyKey ?? contentSendKey(identity.id, input);
   if (identity.provider === "gmail") {
     return sendEmailViaGmail(input, ctx, identity, key);
