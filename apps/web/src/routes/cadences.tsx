@@ -28,7 +28,12 @@ import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { StepProgress } from "../components/primitives/StepProgress.tsx";
 import { cn, formatSendsToday, timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
-import { STOP_REASON_LABELS, mailWaitingRows } from "../lib/cadenceState.ts";
+import {
+  STOP_REASON_LABELS,
+  heldLabel,
+  isHeldElsewhere,
+  mailWaitingRows,
+} from "../lib/cadenceState.ts";
 import { appendReason, REJECT_REASON_CHIPS } from "../lib/rejectReason.ts";
 import {
   cadenceKey as rowKey,
@@ -704,24 +709,28 @@ function CadencesPage() {
                           c.status === "stopped"
                         ? "blocked"
                         : "receipt";
+                const held = c.status === "active" && isHeldElsewhere(c, now.getTime());
                 const rowNote = c.isSending
                   ? { text: "sending…", cls: "text-[color:var(--ink-receipt-2)]" }
-                  : isOverdue && c.nextDueAt
-                    ? {
-                        text: `${timeAgo(c.nextDueAt).replace(/ ago$/, "")} overdue`,
-                        cls: "text-ink-spend-2",
-                      }
-                    : c.status === "active" && c.lastSendError
-                      ? { text: "send failed", cls: "text-ink-blocked-2" }
-                      : c.status === "active" && c.nextDueAt
-                        ? { text: `Due ${timeAgo(c.nextDueAt)}`, cls: "text-ink-muted" }
-                        : null;
+                  : held && c.heldElsewhere
+                    ? { text: heldLabel(c.heldElsewhere, now.getTime()), cls: "text-ink-muted" }
+                    : isOverdue && c.nextDueAt
+                      ? {
+                          text: `${timeAgo(c.nextDueAt).replace(/ ago$/, "")} overdue`,
+                          cls: "text-ink-spend-2",
+                        }
+                      : c.status === "active" && c.lastSendError
+                        ? { text: "send failed", cls: "text-ink-blocked-2" }
+                        : c.status === "active" && c.nextDueAt
+                          ? { text: `Due ${timeAgo(c.nextDueAt)}`, cls: "text-ink-muted" }
+                          : null;
                 const open = expandedKeys.has(key);
                 const draft = c.nextStepDraft;
                 const previewPending = pendingPreviewKey === key;
                 const sendPending = c.isSending || pendingSendKey === key;
                 const sendDisabled =
                   !draft ||
+                  held ||
                   draft.flags.length > 0 ||
                   pendingSendKey != null ||
                   pendingPreviewKey != null ||
@@ -732,13 +741,20 @@ function CadencesPage() {
                   c.nextDueAt != null && c.nextDueAt > nowIso
                     ? ` · ${earlyByCopy(c.nextDueAt)} ahead of schedule — remaining steps recompute from today`
                     : "";
-                const sendTitle = !draft
-                  ? "generate a draft first"
-                  : draft.flags.length > 0
-                    ? `draft held by lint (${draft.flags.length} flag(s)) — regenerate`
-                    : c.nextStepIsBreakup
-                      ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
-                      : `send next step — sends now${earlyNote}`;
+                // Sending a held step only logs a skip, so the button says why it is off.
+                const heldTitle =
+                  held && c.heldElsewhere
+                    ? `held — ${c.heldElsewhere.workspace} emailed this person ${timeAgo(c.heldElsewhere.sentAt)}; the shared 7-day contact window ends ${new Date(c.heldElsewhere.until).toLocaleString()}`
+                    : null;
+                const sendTitle = heldTitle
+                  ? heldTitle
+                  : !draft
+                    ? "generate a draft first"
+                    : draft.flags.length > 0
+                      ? `draft held by lint (${draft.flags.length} flag(s)) — regenerate`
+                      : c.nextStepIsBreakup
+                        ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
+                        : `send next step — sends now${earlyNote}`;
                 // The reminder: why this person was written to in the first
                 // place. The intro's signal and fit sentence, off the sent
                 // queue row (#599). Freeform, so it drops under privacy mode.
@@ -1125,13 +1141,15 @@ function CadencesPage() {
                                         variant={!sendDisabled ? "primary" : "ghost"}
                                         size="sm"
                                         title={
-                                          !draft
-                                            ? "click Preview first"
-                                            : draft.flags.length > 0
-                                              ? `draft held by lint (${draft.flags.length} flag(s)) — re-preview`
-                                              : c.nextStepIsBreakup
-                                                ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
-                                                : `send next step — sends now${earlyNote}`
+                                          heldTitle
+                                            ? heldTitle
+                                            : !draft
+                                              ? "click Preview first"
+                                              : draft.flags.length > 0
+                                                ? `draft held by lint (${draft.flags.length} flag(s)) — re-preview`
+                                                : c.nextStepIsBreakup
+                                                  ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
+                                                  : `send next step — sends now${earlyNote}`
                                         }
                                         disabled={sendDisabled}
                                         onClick={() => {

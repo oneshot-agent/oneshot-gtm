@@ -1,4 +1,11 @@
-import { canonicalLinkedInProfileKey, getLedger, isDraining, logEvent } from "@oneshot-gtm/core";
+import {
+  canonicalLinkedInProfileKey,
+  CONTACT_TOUCH_WINDOW_MS,
+  getLedger,
+  isDraining,
+  logEvent,
+  recentTouchElsewhere,
+} from "@oneshot-gtm/core";
 import {
   getPriorStepsBulk,
   nextStepInfo,
@@ -12,6 +19,7 @@ import {
   type PriorStepRow,
 } from "@oneshot-gtm/plays";
 import type {
+  CadenceHeldElsewhere,
   CadenceCounts,
   CadenceNextStepDraft,
   CadenceStatus,
@@ -116,7 +124,27 @@ function toView(
     isSending: row.sending_started_at != null,
     lastSendError: row.last_send_error,
     lastSendErrorAt: row.last_send_error_at,
+    heldElsewhere: row.status === "active" ? heldElsewhereFor(row.prospect_email) : null,
     queuePayload: payloadByKey.get(payloadKey(row.play_name, row.prospect_email)) ?? null,
+  };
+}
+
+/**
+ * The same cross-workspace check the cadence runner makes before a step
+ * (`recentTouchElsewhere`), surfaced on the row so a held step reads as held
+ * instead of overdue. Fails open (null) like the runner's read.
+ */
+function heldElsewhereFor(email: string | null): CadenceHeldElsewhere | null {
+  if (!email) return null;
+  const touch = recentTouchElsewhere(email);
+  if (!touch) return null;
+  const sentMs = new Date(touch.sent_at).getTime();
+  if (!Number.isFinite(sentMs)) return null;
+  return {
+    workspace: touch.workspace,
+    playName: touch.play_name,
+    sentAt: touch.sent_at,
+    until: new Date(sentMs + CONTACT_TOUCH_WINDOW_MS).toISOString(),
   };
 }
 
