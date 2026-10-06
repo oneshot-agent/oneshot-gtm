@@ -521,3 +521,33 @@ describe("drainQueue X rows", () => {
     expect(saved.draft.body).toBe("dm");
   });
 });
+
+it("public reply drains only draft and later drains preserve a clean draft", async () => {
+  const { PLAYS } = await import("@oneshot-gtm/plays");
+  const draft = {
+    subject: "Public reply",
+    body: "A helpful answer",
+    flags: [],
+    sent: false,
+    receiptIds: [],
+  };
+  const run = vi.fn().mockResolvedValue({ drafted: [draft] });
+  PLAYS["community-reply"] = { run };
+  try {
+    const item = { ...row(90), play_name: "community-reply", channel: "reddit" };
+    ledgerStub.dequeueApproved.mockReturnValueOnce([item]);
+    const out = await drainQueue({ playName: "community-reply", dryRun: false });
+    expect(out.sent).toBe(0);
+    expect(run).toHaveBeenCalledOnce();
+    expect(ledgerStub.setQueueDraft).toHaveBeenCalled();
+    expect(ledgerStub.setQueueStatus).not.toHaveBeenCalled();
+    run.mockClear();
+    ledgerStub.dequeueApproved.mockReturnValueOnce([
+      { ...item, last_draft_json: JSON.stringify(draft) },
+    ]);
+    await drainQueue({ playName: "community-reply", dryRun: false });
+    expect(run).not.toHaveBeenCalled();
+  } finally {
+    delete PLAYS["community-reply"];
+  }
+});

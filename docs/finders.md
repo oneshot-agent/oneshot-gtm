@@ -8,9 +8,11 @@ All finders start disabled in a new workspace. Enable relevant sources from `/qu
 
 ## Prescreen, before any spend
 
-Before any paid `findEmail`, a prescreen skips dud domains (`*.vercel.app`, social hosts, link aggregators, personal email providers) and inputs whose "name" is obviously a username. LinkedIn URLs are captured on every finder path and verified to belong to the person before they're stored.
+Before any paid `findEmail`, a prescreen skips dud domains (`*.vercel.app`, social hosts, link aggregators, personal email providers) and inputs whose "name" is obviously a username. When contact lookup captures a LinkedIn URL, it verifies that the profile belongs to the person before storing it.
 
-## Two ICP gates per candidate
+## Contact qualification
+
+Contact-based finders use topic and person gates. Community threads use the relevance and buying-intent checks [below](#community-buying-requests).
 
 The **topic gate** judges the source — the repo, event, or announcement — and keeps whole categories of noise out before any spend.
 
@@ -18,13 +20,15 @@ The **person gate** judges the human's role, staged by cost: free role text the 
 
 ## Channels
 
-A finder queues each person on an outreach channel: `email`, `linkedin` or `x`. The `channels` setting lists the ones you want, in order of preference. The first channel a person has an address on wins:
+Contact-based finders queue people on `email`, `linkedin` or `x`. The `channels` setting lists the ones you want, in order of preference. The first channel a person has an address on wins:
 
 - `["email"]` (the default): today's behaviour. Anyone without a deliverable email is dropped.
 - `["email", "linkedin"]`: email when one is found. Otherwise the person is queued on LinkedIn, using the profile the finder already has or one search by name and company, instead of being dropped.
 - `["linkedin"]` or `["linkedin", "email"]`: LinkedIn first. No email lookup is paid for when a profile is found.
 
 Set it for the whole workspace in `config.json` (`"channels": [...]`) or per trigger in its config. The trigger's setting wins. The person gate applies on every channel. A LinkedIn row goes out as a connection request with a note; see [LinkedIn](./linkedin.md#connection-requests-as-a-first-touch). X is sent by hand: an X row gets a DM (280 characters at most) drafted from its signal. Copy it, send it from X, then **Mark sent**, because OneShot has no X action API yet. The contact step never searches X; a person is queued on X only when the finder already has their handle (Luma lists attendees' X profiles).
+
+Community replies stay on their source platform (`reddit` or `hacker-news`) and are posted manually.
 
 ## Product research
 
@@ -119,3 +123,23 @@ retains the README source URL and resolution timestamp. Completed README extract
 results are cached in memory for 24 hours; temporary errors are not cached as misses.
 Requests are bounded to 10 seconds and 64 KiB. The existing approved-row recovery
 action gains this fallback; deployment does not retry historical rows or send messages.
+
+## Community buying requests
+
+Enable `community-buyer-threads` in Queue's finder controls. It uses the normal Run now, schedule, review and draft flow; new workspaces start with it disabled.
+
+Set `keywords` (category phrases) and/or `competitors` (product names), up to 20 terms total. Defaults:
+
+- `platforms`: `["reddit", "hacker-news"]`
+- `sinceDays`: `7`; `limit`: `25`; `maxCostUsd`: `5`
+- Polling: every six hours
+
+HN search needs no Algolia key. Reddit uses existing OneShot search/read credentials. Coverage depends on indexing. Source failures appear separately from empty results and can be retried.
+
+Rows retain the opening post's URL, author, date, text and classification evidence. Relevant and uncertain matches await review; unrelated posts are saved as rejected. Repeated discoveries of a thread are deduplicated. Product and person research default off; no email lookup is required.
+
+Approve a row, then generate its draft or run `oneshot-gtm find drain community-reply`. Setup must contain your founder name, product description and verified product brief. Drafts use that brief and disclose your affiliation; review claims before posting.
+
+Use **Open thread**, **Copy reply**, then **Mark posted** after posting yourself. Confirmation records the action once. Nothing posts automatically or starts an email cadence; later drains retain clean drafts.
+
+Finder caps and daily reservations apply. OneShot calls retain their receipts. LLM calls record provider costs when available, otherwise a labeled $0.05-per-call estimate, including attempted calls with uncertain failure costs. Caps check estimates before calls and reported costs afterward, so actual charges can exceed an estimate. Manual posting creates no paid receipt.

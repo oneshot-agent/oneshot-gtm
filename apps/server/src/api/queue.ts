@@ -6,6 +6,9 @@ import {
   isPersonResearchDossier,
   personRecordFromResearch,
   channelOf,
+  communityThread,
+  communityProfile,
+  isCommunityPlatform,
   isWithdrawnStatus,
   xHandleFrom,
   firstTouchSender,
@@ -585,6 +588,9 @@ export async function importQueueRowRoute(req: Request): Promise<Response> {
     at: new Date().toISOString(),
   };
   const payload = { ...portable, movedFrom };
+  const thread = communityThread(payload);
+  if (playName === "community-reply" && !thread)
+    return jsonResponse({ error: "valid community thread required" }, 400, req);
   const notes = `moved from ${movedFrom.workspace}`;
   const ledger = getLedger();
   const dedupeKey = body.dedupeKey.trim();
@@ -593,6 +599,7 @@ export async function importQueueRowRoute(req: Request): Promise<Response> {
     payload,
     dedupeKey,
     source: body.source,
+    ...(thread ? { channel: thread.platform } : {}),
     notes,
   });
   if (inserted != null) {
@@ -1008,6 +1015,8 @@ async function regenerateDraftInner(
     return jsonResponse({ error: "send in flight, can't regenerate" }, 409, req);
   }
 
+  if (isCommunityPlatform(row.channel) && row.play_name !== "community-reply")
+    return jsonResponse({ error: "Public replies require the community-reply play" }, 400, req);
   let target: unknown;
   try {
     target = resolveQueueTarget(row);
@@ -1039,14 +1048,19 @@ async function regenerateDraftInner(
   try {
     const research =
       row.prospect_id != null ? ledger.getProspectById(row.prospect_id)?.dossier_json : null;
-    angle = await draftAngleFor({
-      ...(research ? { research } : {}),
-      target,
-      playName: row.play_name,
-      ...(parseDraftAngle(previous?.angle) ? { previous: parseDraftAngle(previous.angle)! } : {}),
-      ...(typeof previous?.body === "string" ? { previousBody: previous.body } : {}),
-      rotate,
-    });
+    angle =
+      row.play_name === "community-reply"
+        ? undefined
+        : await draftAngleFor({
+            ...(research ? { research } : {}),
+            target,
+            playName: row.play_name,
+            ...(parseDraftAngle(previous?.angle)
+              ? { previous: parseDraftAngle(previous.angle)! }
+              : {}),
+            ...(typeof previous?.body === "string" ? { previousBody: previous.body } : {}),
+            rotate,
+          });
   } catch (err) {
     return jsonResponse({ error: (err as Error).message }, 400, req);
   }
@@ -1176,7 +1190,8 @@ export async function markSentRoute(
       req,
     );
   }
-  if (row.status === "sent") return jsonResponse({ error: "row already marked sent" }, 400, req);
+  if (row.status === "sent")
+    return jsonResponse({ ok: true, prospectId: row.prospect_id }, 200, req);
   // Same review gate as the send path: only an approved row may be recorded
   // as sent: marking a rejected (or never-reviewed) row would silently
   // un-reject it and log outreach to a person the founder killed.
@@ -1217,35 +1232,30 @@ export async function markSentRoute(
   }
   const profileUrl = channel === "linkedin" ? pstr("linkedinUrl") : `https://x.com/${xHandle}`;
 
-  const prospectId = ledger.upsertProspect({
-    name: pstr("name"),
-    email: null,
-    linkedin_url: profileUrl,
-    source: row.play_name,
-    source_profile_url: profileUrl,
-  });
-  ledger.recordSequenceEvent({
-    prospectId,
-    playName: row.play_name,
-    stepIndex: 0,
-    channel,
-    status: "sent",
-    metadata: { body, ...playMetadata(row.play_name, payload) },
-  });
+  const thread = communityThread(payload);
+  const community = isCommunityPlatform(channel);
+  if (community && (!thread || thread.platform !== channel || row.play_name !== "community-reply"))
+    return jsonResponse({ error: "invalid community thread" }, 400, req);
+  const destination =
+    community && thread ? communityProfile(thread.platform, thread.handle)! : profileUrl;
   try {
-    ledger.setQueueProspectId(row.id, prospectId);
-  } catch {
-    // best-effort backfill. The marked send is already recorded
+    const result = ledger.recordManualQueueSend({
+      id: row.id,
+      profileUrl: destination!,
+      name: community && thread ? thread.handle : pstr("name"),
+      draftJson: row.last_draft_json,
+      metadata: {
+        body,
+        ...playMetadata(row.play_name, payload),
+        ...(thread
+          ? { postUrl: thread.postUrl, threadId: thread.threadId, platform: thread.platform }
+          : {}),
+      },
+    });
+    return jsonResponse({ ok: true, ...result }, 200, req);
+  } catch (err) {
+    return jsonResponse({ error: (err as Error).message }, 409, req);
   }
-  // A per-row human action (manually sent via another channel).
-  ledger.setQueueStatus({ id: row.id, status: "sent", decidedBy: "human" });
-  // No draft write on this path: close the reviewed draft's version by hand.
-  try {
-    ledger.closeQueueDraftVersion(row.id, "sent");
-  } catch {
-    // older ledgers / test doubles without draft versions. The send is recorded regardless
-  }
-  return jsonResponse({ ok: true, prospectId }, 200, req);
 }
 
 /**
@@ -1280,6 +1290,13 @@ export async function sendDraftRoute(
   const ledger = getLedger();
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
+  if (firstTouchSender(channelOf(row.channel)) !== "api" || row.play_name === "community-reply") {
+    return jsonResponse(
+      { error: "This channel is posted by hand; use Open thread, Copy reply and Mark posted." },
+      400,
+      req,
+    );
+  }
   if (row.status === "sent") return jsonResponse({ error: "row already sent" }, 400, req);
   if (row.status !== "approved") {
     return jsonResponse({ error: `row is ${row.status}; approve it before sending` }, 409, req);
@@ -1649,6 +1666,13 @@ export async function setQueueChannelRoute(
   } catch {
     // no addresses → refused below
   }
+  if (
+    row.play_name === "community-reply" &&
+    (!communityThread(payload) || body.channel !== payload.platform)
+  )
+    return jsonResponse({ error: "Community replies stay on their source platform" }, 400, req);
+  if (isCommunityPlatform(body.channel) && row.play_name !== "community-reply")
+    return jsonResponse({ error: "Public replies require the community-reply play" }, 400, req);
   if (!channelAddresses(payload).includes(body.channel)) {
     return jsonResponse({ error: `this person has no ${body.channel} address` }, 400, req);
   }

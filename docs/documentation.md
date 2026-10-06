@@ -40,3 +40,9 @@ Before a docs release, run generation check against the chosen GTM revision,
 build the docs site, and verify navigation and internal links. Deploy new pages
 before shipping README links to their URLs. Telemetry's authoritative spec stays
 in TELEMETRY.md; link to it instead of duplicating its field whitelist.
+
+## Play descriptions
+
+The dashboard and [play guide](./plays.md) share `packages/plays/src/descriptions.ts`.
+After changing copy, run `bun run scripts/generate-play-guide.ts`; use `--check` to verify parity.
+For the community finder release, the hosted finders and plays pages should mirror this repository's `docs/finders.md` community section and generated play guide using the cross-repo process above.

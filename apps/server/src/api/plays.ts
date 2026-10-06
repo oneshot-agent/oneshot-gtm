@@ -6,6 +6,7 @@ import {
 } from "@oneshot-gtm/core";
 import {
   defaultSequence,
+  PLAY_DESCRIPTIONS,
   captureCadencePlans,
   applyCadencePlans,
   getSequence,
@@ -22,6 +23,10 @@ interface PlayMeta {
 }
 
 const PLAY_CATALOG: PlayMeta[] = [
+  {
+    name: "community-reply",
+    cli: "oneshot-gtm find drain community-reply  # draft approved threads; post by hand from /queue",
+  },
   {
     name: "show-hn",
     cli: "oneshot-gtm motion show-hn --target ./examples/show-hn.json",
@@ -126,11 +131,24 @@ function cumulativeDays(seq: Sequence | undefined): number[] {
 export function listPlays(req: Request): Response {
   const plays: PlayDescriptor[] = PLAY_CATALOG.map((p) => {
     const seq = getSequence(p.name);
+    const initialChannels: StepChannel[] =
+      p.name === "community-reply"
+        ? ["reddit", "hacker-news"]
+        : p.name === "x-amplify-dm"
+          ? ["x"]
+          : p.name === "concierge"
+            ? ["email", "voice"]
+            : p.name === "demo-no-show"
+              ? ["email", "sms"]
+              : ["email"];
     const channels: StepChannel[] = seq
       ? Array.from(
-          new Set<StepChannel>(["email", ...seq.steps.map((s) => s.channel as StepChannel)]),
+          new Set<StepChannel>([
+            ...initialChannels,
+            ...seq.steps.map((s) => s.channel as StepChannel),
+          ]),
         )
-      : ["email"];
+      : initialChannels;
     const followupCount = seq?.steps.length ?? 0;
     // hasBreakup uses the same step-position rule as the cadence runtime so
     // accelerator-batch (which uses the breakup PROMPT as its only follow-up
@@ -151,6 +169,7 @@ export function listPlays(req: Request): Response {
     }));
     return {
       name: p.name,
+      description: PLAY_DESCRIPTIONS[p.name]!,
       channels,
       followupCount,
       hasBreakup,
