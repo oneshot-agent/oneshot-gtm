@@ -413,7 +413,6 @@ export async function sendCadenceStepRoute(
   void (async () => {
     try {
       await sendCadenceStep({ ...parsed, linkedIn: callLinkedIn });
-      // advanceCadence already cleared sending_started_at in its UPDATE.
       void reportServerExecution("server.cadence.send", {
         outcome: "ok",
         durationMs: performance.now() - sendStartedAt,
@@ -432,7 +431,12 @@ export async function sendCadenceStepRoute(
         },
         "error",
       );
-      // advanceCadence never ran: release the stuck marker for a re-Send.
+    } finally {
+      // A sent step clears the marker in advanceCadence. A skip (the
+      // cross-workspace hold, a stop that won the race) and a failure never
+      // reach it, and a marker left set shows "sending…" until the sweep.
+      // The scheduler pass clears in `finally` for the same reason; clearing
+      // twice is harmless.
       try {
         ledger.clearCadenceSendingMarker(parsed);
       } catch {
