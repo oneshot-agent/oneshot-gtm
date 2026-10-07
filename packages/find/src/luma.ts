@@ -83,6 +83,8 @@ interface SearchHit {
 
 interface CitySearchHit extends SearchHit {
   discoveryCity: string;
+  /** The city the discovery listing gave for the event; the fallback when its page omits one. */
+  listedCity?: string | null;
 }
 
 interface AttendeeWithEvent {
@@ -281,7 +283,13 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   const backfill = windowStart < defaultWindowStart;
   const windowEnd = Date.now() + sinceDays * 24 * 3600 * 1000;
 
-  const pushHit = (city: string, url: string, title: string, description: string): boolean => {
+  const pushHit = (
+    city: string,
+    url: string,
+    title: string,
+    description: string,
+    listedCity: string | null = null,
+  ): boolean => {
     const canonical = url.split("?")[0]!.replace(/\/$/, "");
     if (seenUrls.has(canonical)) return false;
     if (topics.length > 0 && !eventNameMatchesTopics(title, topics)) {
@@ -289,7 +297,9 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       return false;
     }
     seenUrls.add(canonical);
-    cityHits.get(city)!.push({ url: canonical, title, description, discoveryCity: city });
+    cityHits
+      .get(city)!
+      .push({ url: canonical, title, description, discoveryCity: city, listedCity });
     return true;
   };
 
@@ -345,7 +355,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     stats.inWindow += calendar.events.length;
     let eligible = 0;
     for (const ev of calendar.events) {
-      if (pushHit(key, `https://luma.com/${ev.slug}`, ev.name, "")) eligible++;
+      if (pushHit(key, `https://luma.com/${ev.slug}`, ev.name, "", ev.city)) eligible++;
     }
     logEvent(
       "luma-events.calendar_ok",
@@ -378,7 +388,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
         const ms = new Date(ev.startAtIso).getTime();
         if (!Number.isFinite(ms) || ms < windowStart || ms > windowEnd) continue;
         stats.inWindow++;
-        if (pushHit(city, `https://luma.com/${ev.slug}`, ev.name, "")) eligible++;
+        if (pushHit(city, `https://luma.com/${ev.slug}`, ev.name, "", ev.city)) eligible++;
       }
       logEvent(
         "luma-events.discover_ok",
@@ -664,7 +674,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       title: extract.eventTitle ?? hit.title,
       dateIso: extract.eventDateIso ?? "",
       timezone: extract.eventTimezone ?? null,
-      city: extract.eventCity ?? "",
+      city: extract.eventCity || hit.listedCity || "",
       description: extract.eventDescription ?? "",
     };
     const eventAttendees: AttendeeWithEvent[] = [];
