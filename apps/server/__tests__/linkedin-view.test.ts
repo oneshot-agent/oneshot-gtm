@@ -65,6 +65,15 @@ it.each([
     type: 0,
     expected: true,
   },
+  {
+    // A direct chat that synced without a type: one other attendee, so it drafts.
+    attendees: [
+      { is_self: false, provider_id: "internal", profile_url: "https://linkedin.com/in/ada" },
+    ],
+    attendees_synced: true,
+    type: null,
+    expected: true,
+  },
 ])("keeps sender resolution separate from generation eligibility: %j", ({ expected, ...c }) => {
   store.saveConversation("account", { id: "chat", ...c } as never, []);
   store.assign("linkedin:account:chat", { workspace: "test", prospectId: 1 });
