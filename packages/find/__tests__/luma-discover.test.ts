@@ -434,8 +434,10 @@ describe("fetchCalendarEvents", () => {
       },
     });
 
+    // A window that starts ahead of now never reads `period=past` (a bare
+    // Date.now() can fall a millisecond behind the fetcher's own clock read).
     const out = await fetchCalendarEvents("sftw", {
-      fromMs: Date.now(),
+      fromMs: Date.now() + 3_600_000,
       toMs: Date.now() + 14 * DAY,
     });
 
