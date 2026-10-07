@@ -605,6 +605,22 @@ describe("runLumaFinder — calendars", () => {
     expect(out.enqueued).toBe(0);
   });
 
+  it("falls back to the listing's city when the event page names none", async () => {
+    calendarEventsByRef = {
+      sftw: [
+        { slug: "no-city", name: "AI Agent Day", startAtIso: futureIso(1), city: "San Francisco" },
+      ],
+    };
+    eventDetailsBySlug = {
+      "no-city": { ...calendarEventDetails("AI Agent Day", "nc"), eventCity: null },
+    };
+
+    await runLumaFinder({ ...baseConfig, cities: [], calendars: ["sftw"] });
+
+    expect(enqueued.length).toBeGreaterThan(0);
+    expect(enqueued.every((row) => row.payload["eventCity"] === "San Francisco")).toBe(true);
+  });
+
   it("carries on with the cities when a calendar can't be read", async () => {
     calendarEventsByRef = { nope: null };
     discoveredEvents = [

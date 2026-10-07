@@ -10,6 +10,7 @@ const {
   fetchPlaceEvents,
   fetchCalendarEvents,
   parseCalendarRef,
+  cityFromGeo,
 } = await import("../src/_luma-discover.ts");
 
 function htmlWithNextData(data: unknown): string {
@@ -535,5 +536,90 @@ describe("fetchPlaceEvents", () => {
   it("returns null when the city page itself fails", async () => {
     fakeLuma({});
     expect(await fetchPlaceEvents("sf", { toMs: Date.now() + DAY })).toBeNull();
+  });
+});
+
+describe("cityFromGeo", () => {
+  it("prefers `city`, then `city_state`, then a US-style manual address", () => {
+    expect(cityFromGeo({ city: "San Francisco", address: "x" })).toBe("San Francisco");
+    expect(cityFromGeo({ city_state: "San Francisco, CA" })).toBe("San Francisco");
+    expect(cityFromGeo({ type: "manual", address: "639 Howard St, San Francisco, CA" })).toBe(
+      "San Francisco",
+    );
+    expect(cityFromGeo({ full_address: "1 Main St, Austin, TX 78701, USA" })).toBe("Austin");
+  });
+
+  it("returns null when nothing names a city", () => {
+    expect(cityFromGeo(null)).toBeNull();
+    expect(cityFromGeo({ mode: "obfuscated" })).toBeNull();
+    expect(cityFromGeo({ address: "The Warehouse" })).toBeNull();
+    expect(cityFromGeo({ city: "  " })).toBeNull();
+  });
+});
+
+describe("fetchEventDetails — the page's own event", () => {
+  it("ignores an event card embedded in the description", async () => {
+    // Real shape (luma.com/seamate-tdd8): the page's event sits under
+    // data.event; the description links ANOTHER event as a full evt- node.
+    const payload = {
+      data: {
+        api_id: "evt-own",
+        start_at: "2026-10-09T00:00:00.000Z",
+        event: {
+          api_id: "evt-own",
+          name: "Your Agent Thinks Too Much",
+          start_at: "2026-10-09T00:00:00.000Z",
+          timezone: "America/Los_Angeles",
+          geo_address_info: { mode: "obfuscated", city: "San Francisco" },
+        },
+        description_mirror: {
+          type: "doc",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "Also join us at:" }] },
+            {
+              type: "luma-event",
+              attrs: {
+                event: {
+                  api_id: "evt-other",
+                  name: "IDA AI Summit 2026",
+                  start_at: "2026-10-18T20:00:00.000Z",
+                },
+              },
+            },
+          ],
+        },
+        hosts: [{ name: "Host Person", linkedin_handle: "/in/host" }],
+      },
+    };
+    stubFetch(async () => ({ ok: true, status: 200, json: async () => payload }));
+
+    const details = await fetchEventDetails("seamate-tdd8");
+
+    expect(details?.eventTitle).toBe("Your Agent Thinks Too Much");
+    expect(details?.eventDateIso).toBe("2026-10-09T00:00:00.000Z");
+    expect(details?.eventCity).toBe("San Francisco");
+    // The description text still comes through.
+    expect(details?.eventDescription).toContain("Also join us at:");
+  });
+
+  it("reads the city off a manual address", async () => {
+    const payload = {
+      data: {
+        event: {
+          api_id: "evt-manual",
+          name: "Cursed Agents and Beer",
+          start_at: "2026-10-09T02:30:00.000Z",
+          geo_address_info: {
+            type: "manual",
+            address: "639 Howard St, San Francisco, CA",
+            mode: "shown",
+          },
+        },
+        hosts: [{ name: "Host Person", linkedin_handle: "/in/host" }],
+      },
+    };
+    stubFetch(async () => ({ ok: true, status: 200, json: async () => payload }));
+
+    expect((await fetchEventDetails("freestyle-5ouz"))?.eventCity).toBe("San Francisco");
   });
 });

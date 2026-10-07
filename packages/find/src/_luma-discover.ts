@@ -125,6 +125,37 @@ function parseNextData(html: string): unknown | null {
 }
 
 /**
+ * The city an event's `geo_address_info` names. Luma fills `city` for most
+ * venues, but an organizer-typed ("manual") address carries only the
+ * `address` string ("639 Howard St, San Francisco, CA"), and some payloads
+ * carry `city_state` alone. Null when none of those yields a city.
+ */
+export function cityFromGeo(geo: unknown): string | null {
+  if (!geo || typeof geo !== "object") return null;
+  const g = geo as Record<string, unknown>;
+  const field = (key: string): string | null => {
+    const v = g[key];
+    return typeof v === "string" && v.trim() ? v.trim() : null;
+  };
+  const city = field("city");
+  if (city) return city;
+  const cityState = field("city_state")?.split(",")[0]?.trim();
+  if (cityState) return cityState;
+  const address = field("full_address") ?? field("address");
+  if (!address) return null;
+  // "<street>, <city>, <ST>[ <zip>][, USA]": the city sits before the state.
+  const parts = address
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  while (parts.length > 0 && /^(usa|us|united states)$/i.test(parts.at(-1)!)) parts.pop();
+  if (parts.length >= 3 && /^[A-Z]{2}(\s+\d{5}(-\d{4})?)?$/.test(parts.at(-1)!)) {
+    return parts.at(-2)!;
+  }
+  return null;
+}
+
+/**
  * Recursively collect event-shaped objects from the parsed tree. Matching on
  * the event's own fields (api_id `evt-`, plus a slug `url`, `name`, `start_at`)
  * rather than a fixed nesting path keeps this resilient to Next.js shape drift.
@@ -164,14 +195,12 @@ function collectEvents(root: unknown): LumaDiscoveredEvent[] {
       !seen.has(apiId)
     ) {
       seen.add(apiId);
-      const geo = o["geo_address_info"];
-      const city =
-        geo &&
-        typeof geo === "object" &&
-        typeof (geo as Record<string, unknown>)["city"] === "string"
-          ? ((geo as Record<string, unknown>)["city"] as string)
-          : null;
-      out.push({ slug: url, name: name.trim(), startAtIso: startAt, city });
+      out.push({
+        slug: url,
+        name: name.trim(),
+        startAtIso: startAt,
+        city: cityFromGeo(o["geo_address_info"]),
+      });
     }
 
     for (const v of Object.values(o)) stack.push(v);
@@ -635,11 +664,7 @@ export async function fetchEventDetails(slug: string): Promise<LumaEventDetails 
       // would be back to converting 7:30pm Wednesday in SF into Thursday.
       const tz = o["timezone"];
       if (typeof tz === "string" && tz.trim().length > 0) eventTimezone = tz.trim();
-      const geo = o["geo_address_info"];
-      if (geo && typeof geo === "object") {
-        const c = (geo as Record<string, unknown>)["city"];
-        if (typeof c === "string") eventCity = c;
-      }
+      eventCity = cityFromGeo(o["geo_address_info"]);
     }
     // The event blurb is NOT on the event node. It sits on the wrapping
     // `data` object as `description_mirror` (a ProseMirror doc). Capture the
@@ -668,7 +693,12 @@ export async function fetchEventDetails(slug: string): Promise<LumaEventDetails 
     if (guests == null && Array.isArray(o["featured_guests"]) && o["featured_guests"].length > 0) {
       guests = o["featured_guests"] as RawUrlPerson[];
     }
-    for (const v of Object.values(o)) stack.push(v);
+    // Never descend into the description: an organizer can embed a card for
+    // ANOTHER event in it, a full `evt-` node with its own name and date, and
+    // the walk would take that event for this one.
+    for (const [key, v] of Object.entries(o)) {
+      if (key !== "description_mirror") stack.push(v);
+    }
   }
 
   // Hosts first (canonical name casing + the better targets), then guests;
