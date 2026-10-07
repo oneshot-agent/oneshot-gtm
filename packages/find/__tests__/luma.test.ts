@@ -73,6 +73,9 @@ type EventDetailsFixture = {
 };
 let eventDetails: EventDetailsFixture | null = null;
 let eventDetailsBySlug: Record<string, EventDetailsFixture> = {};
+// Calendar discovery (api.lu.ma/calendar/get-items), keyed by the configured ref.
+let calendarEventsByRef: Record<string, DiscoveredEventFixture[] | null> = {};
+const calendarWindows: Array<{ ref: string; fromMs: number; toMs: number }> = [];
 const fetchedCitySlugs: string[] = [];
 const fetchedDetailSlugs: string[] = [];
 const personGateCalls: Array<Record<string, unknown>> = [];
@@ -90,9 +93,14 @@ vi.mock("../src/_luma-discover.ts", () => ({
   cityToSlug: (city: string) =>
     ({ "san francisco": "sf", "new york": "nyc", london: "london" })[city.trim().toLowerCase()] ??
     null,
-  fetchCityEvents: async (slug: string) => {
+  fetchPlaceEvents: async (slug: string) => {
     fetchedCitySlugs.push(slug);
     return discoveredEventsBySlug[slug] ?? discoveredEvents;
+  },
+  fetchCalendarEvents: async (ref: string, window: { fromMs: number; toMs: number }) => {
+    calendarWindows.push({ ref, ...window });
+    const events = calendarEventsByRef[ref];
+    return events ? { calendarApiId: `cal-${ref}`, calendarName: ref, events } : null;
   },
   fetchEventDetails: async (slug: string) => {
     fetchedDetailSlugs.push(slug);
@@ -250,6 +258,8 @@ beforeEach(() => {
   eventDetailsBySlug = {};
   fetchedCitySlugs.length = 0;
   fetchedDetailSlugs.length = 0;
+  calendarEventsByRef = {};
+  calendarWindows.length = 0;
   for (const k of Object.keys(sdkCalls)) {
     (sdkCalls as Record<string, number>)[k] = 0;
   }
@@ -495,6 +505,116 @@ describe("runLumaFinder — city-page discovery", () => {
 
     expect(enqueued.filter((row) => row.payload["eventTitle"] === "Large")).toHaveLength(2);
     expect(enqueued.filter((row) => row.payload["eventTitle"] === "Small")).toHaveLength(2);
+  });
+});
+
+const calendarEventDetails = (
+  title: string,
+  prefix: string,
+  dateIso = futureIso(2),
+): EventDetailsFixture => ({
+  eventTitle: title,
+  eventDateIso: dateIso,
+  eventCity: "San Francisco",
+  attendees: [
+    { name: `${prefix} One`, websiteUrl: `https://${prefix}1.dev`, role: "Host" },
+    { name: `${prefix} Two`, websiteUrl: `https://${prefix}2.dev`, role: "Guest" },
+  ],
+});
+
+describe("runLumaFinder — calendars", () => {
+  it("reads calendar events ahead of city events, for both the event reads and the enqueue order", async () => {
+    calendarEventsByRef = {
+      sftw: [
+        { slug: "tw-1", name: "AI Agent Day", startAtIso: futureIso(1), city: "San Francisco" },
+        { slug: "tw-2", name: "AI Infra Night", startAtIso: futureIso(2), city: "San Francisco" },
+      ],
+    };
+    discoveredEventsBySlug = {
+      sf: [{ slug: "city-1", name: "AI Meetup", startAtIso: futureIso(1), city: "San Francisco" }],
+    };
+    eventDetailsBySlug = {
+      "tw-1": calendarEventDetails("AI Agent Day", "tw1"),
+      "tw-2": calendarEventDetails("AI Infra Night", "tw2"),
+      "city-1": calendarEventDetails("AI Meetup", "city"),
+    };
+
+    const out = await runLumaFinder({ ...baseConfig, calendars: ["sftw"], limit: 4 });
+
+    expect(out.candidates).toBe(3);
+    expect(fetchedDetailSlugs.slice(0, 2).toSorted()).toEqual(["tw-1", "tw-2"]);
+    // limit 4 is spent on the calendar's four attendees before the city's.
+    expect(enqueued).toHaveLength(4);
+    expect(new Set(enqueued.map((row) => row.payload["eventTitle"]))).toEqual(
+      new Set(["AI Agent Day", "AI Infra Night"]),
+    );
+  });
+
+  it("runs on calendars alone, and an event on both a calendar and the city feed is read once", async () => {
+    calendarEventsByRef = {
+      sftw: [{ slug: "both", name: "AI Agent Day", startAtIso: futureIso(1), city: null }],
+    };
+    discoveredEventsBySlug = {
+      sf: [{ slug: "both", name: "AI Agent Day", startAtIso: futureIso(1), city: null }],
+    };
+    eventDetailsBySlug = { both: calendarEventDetails("AI Agent Day", "both") };
+
+    const calendarOnly = await runLumaFinder({ ...baseConfig, cities: [], calendars: ["sftw"] });
+    expect(calendarOnly.enqueued).toBe(2);
+    expect(fetchedCitySlugs).toEqual([]);
+    expect(sdkCalls.webSearch).toBe(0);
+
+    enqueued.length = 0;
+    fetchedDetailSlugs.length = 0;
+    const out = await runLumaFinder({ ...baseConfig, calendars: ["sftw"] });
+    expect(out.candidates).toBe(1);
+    expect(fetchedDetailSlugs).toEqual(["both"]);
+  });
+
+  it("fromDate backfills calendar events that already happened; the default run drops them", async () => {
+    calendarEventsByRef = {
+      sftw: [{ slug: "monday", name: "AI Agent Day", startAtIso: pastIso(2), city: null }],
+    };
+    eventDetailsBySlug = { monday: calendarEventDetails("AI Agent Day", "mon", pastIso(2)) };
+
+    const fromDate = pastIso(3).slice(0, 10);
+    const out = await runLumaFinder({ ...baseConfig, cities: [], calendars: ["sftw"], fromDate });
+    expect(out.enqueued).toBe(2);
+    // The calendar is asked for the widened window, not just from yesterday.
+    expect(calendarWindows[0]!.fromMs).toBe(new Date(fromDate).getTime());
+
+    enqueued.length = 0;
+    const defaultRun = await runLumaFinder({ ...baseConfig, cities: [], calendars: ["sftw"] });
+    expect(defaultRun.enqueued).toBe(0);
+    expect(calendarWindows[1]!.fromMs).toBeGreaterThan(Date.now() - 25 * 3600 * 1000);
+  });
+
+  it("ignores an unparseable fromDate and keeps the default window", async () => {
+    calendarEventsByRef = {
+      sftw: [{ slug: "monday", name: "AI Agent Day", startAtIso: pastIso(2), city: null }],
+    };
+    eventDetailsBySlug = { monday: calendarEventDetails("AI Agent Day", "mon", pastIso(2)) };
+
+    const out = await runLumaFinder({
+      ...baseConfig,
+      cities: [],
+      calendars: ["sftw"],
+      fromDate: "last monday",
+    });
+
+    expect(out.enqueued).toBe(0);
+  });
+
+  it("carries on with the cities when a calendar can't be read", async () => {
+    calendarEventsByRef = { nope: null };
+    discoveredEvents = [
+      { slug: "city-1", name: "AI Meetup", startAtIso: futureIso(1), city: "San Francisco" },
+    ];
+    eventDetails = calendarEventDetails("AI Meetup", "city");
+
+    const out = await runLumaFinder({ ...baseConfig, calendars: ["nope"] });
+
+    expect(out.enqueued).toBe(2);
   });
 });
 
