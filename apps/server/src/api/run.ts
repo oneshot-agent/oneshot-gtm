@@ -213,10 +213,12 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
             drafted[index] = d;
             draftedCount++;
             send({ kind: "draft", index, subject: d.subject, body: d.body, flags: d.flags });
-            if (d.receiptIds.length > 0) {
-              send({ kind: "send", index, receiptIds: d.receiptIds });
-            }
+            // `send` means the email left: the page badges the row "sent",
+            // prunes it from the form, and the run's sent_count counts it.
+            // Key it on `d.sent`, never on receipts: drafting alone bills
+            // (profile enrichment, research), so a dry run carries receipts too.
             if (d.sent) {
+              send({ kind: "send", index, receiptIds: d.receiptIds });
               sentCount++;
               // Recover the email for the /cadences?sinceRun resolution.
               const t = verify.verified[index] as

@@ -251,27 +251,46 @@ describe("runPlay — verify-then-dispatch", () => {
     expect(frames.filter((f) => f.kind === "draft")).toHaveLength(0);
   });
 
-  it("emits one draft + one send SSE frame per target as onProgress fires", async () => {
-    // Two verified targets → fakeRun fires onProgress(0,...) then onProgress(1,...).
-    // The SSE handler's callback should turn each into a `draft` event AND
-    // (since receiptIds is non-empty) a `send` event, both with the right index.
+  it("emits a draft frame per target and a send frame only for drafts that actually sent", async () => {
+    // Drafting alone bills (profile enrichment, research), so an unsent draft
+    // can carry receipts. Only `sent` makes it a send: the page badges, prunes
+    // and counts on `send` frames, and a dry run must show none.
     const targets = [
       { founderEmail: "a@x.dev", postTitle: "T0" },
       { founderEmail: "b@x.dev", postTitle: "T1" },
     ];
     nextVerify = { verified: targets, dropped: [], receiptIds: [], costUsd: 0 };
+    runOverride = (input) => {
+      const drafted = [
+        { ...draft(0), sent: true, receiptIds: [100, 900] },
+        { ...draft(1), sent: false, receiptIds: [101] }, // enrichment receipt only
+      ];
+      drafted.forEach((d, i) => input.onProgress?.(i, d));
+      return Promise.resolve({ drafted });
+    };
     const res = await runPlay(makeRequest("show-hn", { targets, dryRun: false }), {
       playName: "show-hn",
     });
     const frames = await readSseFrames(res.body);
     const drafts = frames.filter((f) => f.kind === "draft");
     const sends = frames.filter((f) => f.kind === "send");
-    expect(drafts).toHaveLength(2);
-    expect(sends).toHaveLength(2);
     expect(drafts.map((f) => (f as { index: number }).index)).toEqual([0, 1]);
-    expect(sends.map((f) => (f as { index: number }).index)).toEqual([0, 1]);
+    expect(sends).toEqual([{ kind: "send", index: 0, receiptIds: [100, 900] }]);
     const done = frames.find((f) => f.kind === "done");
-    expect(done).toMatchObject({ kind: "done", total: 2 });
+    expect(done).toMatchObject({ kind: "done", total: 2, sent: 1 });
+  });
+
+  it("a dry run whose drafts billed enrichment emits no send frames", async () => {
+    const targets = [{ founderEmail: "a@x.dev" }, { founderEmail: "b@x.dev" }];
+    nextVerify = { verified: targets, dropped: [], receiptIds: [], costUsd: 0 };
+    // The default show-hn fake: every draft unsent, each with one receipt.
+    const res = await runPlay(makeRequest("show-hn", { targets, dryRun: true }), {
+      playName: "show-hn",
+    });
+    const frames = await readSseFrames(res.body);
+    expect(frames.filter((f) => f.kind === "draft")).toHaveLength(2);
+    expect(frames.filter((f) => f.kind === "send")).toHaveLength(0);
+    expect(frames.find((f) => f.kind === "done")).toMatchObject({ sent: 0 });
   });
 
   it("records a send reported after the cancel already wrote the row", async () => {
