@@ -9,6 +9,10 @@ import type { LumaPublicAttendee } from "./_types.ts";
  * City slugs work independently of caller IP, unlike `api.lu.ma/discover`.
  * The webSearch fallback tends to return older indexed events.
  *
+ * The city page only renders ~20 events, so `fetchPlaceEvents` pages the
+ * city's whole feed through api.lu.ma, and `fetchCalendarEvents` reads a named
+ * calendar in full (a city's Tech Week lives on its own calendar).
+ *
  * This undocumented surface uses recursive, shape-tolerant parsing, a spoofed
  * user agent, and a short timeout. Failures return null for webSearch fallback.
  */
@@ -176,16 +180,14 @@ function collectEvents(root: unknown): LumaDiscoveredEvent[] {
 }
 
 /**
- * Fetch a Luma city page and return its embedded events (all of them. The
- * caller applies the date window). Returns null on any failure (unknown slug,
- * non-2xx, no `__NEXT_DATA__`, parse error, network blip) so the caller falls
- * back to webSearch.
+ * Fetch `luma.com/<slug>` (a city page or a calendar page) and return its
+ * parsed `__NEXT_DATA__`. Null on any failure (unknown slug, non-2xx, no
+ * `__NEXT_DATA__`, parse error, network blip).
  */
-export async function fetchCityEvents(citySlug: string): Promise<LumaDiscoveredEvent[] | null> {
-  if (!citySlug) return null;
+async function fetchPageData(slug: string): Promise<unknown | null> {
   let res: Response;
   try {
-    res = await fetch(`https://luma.com/${encodeURIComponent(citySlug)}`, {
+    res = await fetch(`https://luma.com/${encodeURIComponent(slug)}`, {
       method: "GET",
       headers: { Accept: "text/html", "User-Agent": USER_AGENT },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -195,7 +197,7 @@ export async function fetchCityEvents(citySlug: string): Promise<LumaDiscoveredE
       "error.swallowed",
       {
         kind: "luma-events.discover_fetch",
-        slug: citySlug,
+        slug,
         message_120: ((err as Error).message ?? "").slice(0, 120),
       },
       "warn",
@@ -205,7 +207,7 @@ export async function fetchCityEvents(citySlug: string): Promise<LumaDiscoveredE
   if (!res.ok) {
     logEvent(
       "error.swallowed",
-      { kind: "luma-events.discover_status", slug: citySlug, status: res.status },
+      { kind: "luma-events.discover_status", slug, status: res.status },
       "warn",
     );
     return null;
@@ -218,14 +220,263 @@ export async function fetchCityEvents(citySlug: string): Promise<LumaDiscoveredE
   }
   const data = parseNextData(html);
   if (data == null) {
+    logEvent("error.swallowed", { kind: "luma-events.discover_no_nextdata", slug }, "warn");
+    return null;
+  }
+  return data;
+}
+
+/**
+ * Fetch a Luma city page and return its embedded events (all of them. The
+ * caller applies the date window). Returns null on any failure (unknown slug,
+ * non-2xx, no `__NEXT_DATA__`, parse error, network blip) so the caller falls
+ * back to webSearch.
+ */
+export async function fetchCityEvents(citySlug: string): Promise<LumaDiscoveredEvent[] | null> {
+  if (!citySlug) return null;
+  const data = await fetchPageData(citySlug);
+  if (data == null) return null;
+  return collectEvents(data).slice(0, MAX_EVENTS);
+}
+
+// Paged discovery: a city's whole feed, and named calendars
+
+const API_BASE = "https://api.lu.ma";
+const PAGE_LIMIT = 50;
+const MAX_PLACE_PAGES = 10;
+const MAX_CALENDAR_PAGES = 20;
+
+/**
+ * Find the object in a parsed page whose `api_id` carries `prefix` and whose
+ * `slug` is `slug`: the city's own `discplace-` record on a city page, the
+ * calendar's own `cal-` record on a calendar page. Pages embed other calendars
+ * and places too (featured, nearby), so the slug match is what picks the right
+ * one.
+ */
+function findOwnRecord(
+  root: unknown,
+  prefix: "discplace-" | "cal-",
+  slug: string,
+): { apiId: string; name: string | null } | null {
+  const want = slug.toLowerCase();
+  const stack: unknown[] = [root];
+  let visited = 0;
+  while (stack.length > 0 && visited < MAX_NODES) {
+    const node = stack.pop();
+    visited++;
+    if (Array.isArray(node)) {
+      for (const v of node) stack.push(v);
+      continue;
+    }
+    if (!node || typeof node !== "object") continue;
+    const o = node as Record<string, unknown>;
+    const apiId = o["api_id"];
+    const ownSlug = o["slug"];
+    if (
+      typeof apiId === "string" &&
+      apiId.startsWith(prefix) &&
+      typeof ownSlug === "string" &&
+      ownSlug.toLowerCase() === want
+    ) {
+      return { apiId, name: typeof o["name"] === "string" ? o["name"] : null };
+    }
+    for (const v of Object.values(o)) stack.push(v);
+  }
+  return null;
+}
+
+/** GET a JSON page from api.lu.ma. Null on any failure, logged under `kind`. */
+async function fetchApiPage(
+  path: string,
+  params: Record<string, string>,
+  kind: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const res = await fetch(`${API_BASE}${path}?${new URLSearchParams(params).toString()}`, {
+      method: "GET",
+      headers: { Accept: "application/json", "User-Agent": USER_AGENT },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      logEvent("error.swallowed", { kind, status: res.status }, "warn");
+      return null;
+    }
+    const json = (await res.json()) as unknown;
+    return json && typeof json === "object" ? (json as Record<string, unknown>) : null;
+  } catch (err) {
     logEvent(
       "error.swallowed",
-      { kind: "luma-events.discover_no_nextdata", slug: citySlug },
+      { kind, message_120: ((err as Error).message ?? "").slice(0, 120) },
       "warn",
     );
     return null;
   }
-  return collectEvents(data).slice(0, MAX_EVENTS);
+}
+
+/**
+ * Walk a cursor-paged api.lu.ma listing. `stop` sees each page's events and
+ * returns true once the listing has moved past the window (listings are sorted
+ * by start, so the rest of it is out of the window too). Returns the events
+ * collected so far, or null when the FIRST page fails.
+ */
+async function pageEvents(
+  path: string,
+  params: Record<string, string>,
+  maxPages: number,
+  kind: string,
+  stop: (page: LumaDiscoveredEvent[]) => boolean,
+): Promise<LumaDiscoveredEvent[] | null> {
+  const out: LumaDiscoveredEvent[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < maxPages; page++) {
+    const json = await fetchApiPage(
+      path,
+      {
+        ...params,
+        pagination_limit: String(PAGE_LIMIT),
+        ...(cursor ? { pagination_cursor: cursor } : {}),
+      },
+      kind,
+    );
+    if (!json) return page === 0 ? null : out;
+    const events = collectEvents(json["entries"] ?? []);
+    out.push(...events);
+    const next = json["next_cursor"];
+    if (stop(events) || json["has_more"] !== true || typeof next !== "string" || !next) break;
+    cursor = next;
+  }
+  return out;
+}
+
+function dedupeBySlug(events: LumaDiscoveredEvent[]): LumaDiscoveredEvent[] {
+  const seen = new Set<string>();
+  return events.filter((ev) => (seen.has(ev.slug) ? false : (seen.add(ev.slug), true)));
+}
+
+const startMs = (ev: LumaDiscoveredEvent): number => new Date(ev.startAtIso).getTime();
+
+/**
+ * A city's upcoming events through `toMs`, past the city page's ~20-event cap.
+ * The city page carries the city's own `discplace-` id, and
+ * `api.lu.ma/discover/get-paginated-events?discover_place_api_id=` pages that
+ * city's feed sorted by start. (`place_api_id` without the `discover_` prefix
+ * is ignored and geolocates by caller IP; this one is honoured.) Anything that
+ * goes wrong past the city page falls back to the city page's own events, so
+ * this is never worse than `fetchCityEvents`. Null only when the city page
+ * itself fails.
+ */
+export async function fetchPlaceEvents(
+  citySlug: string,
+  window: { toMs: number },
+): Promise<LumaDiscoveredEvent[] | null> {
+  if (!citySlug) return null;
+  const data = await fetchPageData(citySlug);
+  if (data == null) return null;
+  const pageEventsOnCityPage = collectEvents(data).slice(0, MAX_EVENTS);
+  const place = findOwnRecord(data, "discplace-", citySlug);
+  if (!place) return pageEventsOnCityPage;
+  const paged = await pageEvents(
+    "/discover/get-paginated-events",
+    { discover_place_api_id: place.apiId },
+    MAX_PLACE_PAGES,
+    "luma-events.discover_place",
+    (page) => page.some((ev) => startMs(ev) > window.toMs),
+  );
+  if (!paged || paged.length === 0) return pageEventsOnCityPage;
+  return dedupeBySlug([...paged, ...pageEventsOnCityPage]);
+}
+
+/**
+ * Parse a founder-supplied calendar reference: a `cal-` id, a bare slug
+ * (`sftw`), or a `luma.com/<slug>` / `lu.ma/<slug>` URL. Null when blank or
+ * unparseable.
+ */
+export function parseCalendarRef(ref: string): { apiId: string } | { slug: string } | null {
+  const raw = ref.trim();
+  if (!raw) return null;
+  if (/^cal-[A-Za-z0-9]+$/.test(raw)) return { apiId: raw };
+  let candidate = raw;
+  if (/^(https?:\/\/)?(www\.)?(luma\.com|lu\.ma)\//i.test(raw)) {
+    try {
+      const u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+      const segments = u.pathname.split("/").filter((s) => s.length > 0);
+      if (segments.length !== 1) return null;
+      candidate = segments[0]!;
+    } catch {
+      return null;
+    }
+  }
+  if (/^cal-[A-Za-z0-9]+$/.test(candidate)) return { apiId: candidate };
+  return /^[A-Za-z0-9_-]+$/.test(candidate) ? { slug: candidate } : null;
+}
+
+export interface LumaCalendarEvents {
+  calendarApiId: string;
+  calendarName: string | null;
+  events: LumaDiscoveredEvent[];
+}
+
+/**
+ * Every event on a Luma calendar that starts in [fromMs, toMs]. Themed weeks
+ * (a city's Tech Week) live on their own calendar with hundreds of events, few
+ * of which ever reach the city page. `api.lu.ma/calendar/get-items` pages the
+ * calendar: `period=future` soonest first (it includes events in progress),
+ * `period=past` newest first, read only when `fromMs` is in the past. Null
+ * when the calendar can't be resolved or its first future page fails.
+ */
+export async function fetchCalendarEvents(
+  ref: string,
+  window: { fromMs: number; toMs: number },
+): Promise<LumaCalendarEvents | null> {
+  const parsed = parseCalendarRef(ref);
+  if (!parsed) return null;
+  let calendarApiId: string;
+  let calendarName: string | null = null;
+  if ("apiId" in parsed) {
+    calendarApiId = parsed.apiId;
+  } else {
+    const data = await fetchPageData(parsed.slug);
+    if (data == null) return null;
+    const own = findOwnRecord(data, "cal-", parsed.slug);
+    if (!own) {
+      logEvent(
+        "error.swallowed",
+        { kind: "luma-events.calendar_unresolved", slug: parsed.slug },
+        "warn",
+      );
+      return null;
+    }
+    calendarApiId = own.apiId;
+    calendarName = own.name;
+  }
+
+  const future = await pageEvents(
+    "/calendar/get-items",
+    { calendar_api_id: calendarApiId, period: "future" },
+    MAX_CALENDAR_PAGES,
+    "luma-events.calendar_items",
+    (page) => page.some((ev) => startMs(ev) > window.toMs),
+  );
+  if (!future) return null;
+  const past =
+    window.fromMs < Date.now()
+      ? ((await pageEvents(
+          "/calendar/get-items",
+          { calendar_api_id: calendarApiId, period: "past" },
+          MAX_CALENDAR_PAGES,
+          "luma-events.calendar_items",
+          (page) => page.some((ev) => startMs(ev) < window.fromMs),
+        )) ?? [])
+      : [];
+
+  // In start order: the walk that collects them is unordered.
+  const events = dedupeBySlug([...past, ...future])
+    .filter((ev) => {
+      const ms = startMs(ev);
+      return Number.isFinite(ms) && ms >= window.fromMs && ms <= window.toMs;
+    })
+    .toSorted((a, b) => startMs(a) - startMs(b));
+  return { calendarApiId, calendarName, events };
 }
 
 // Per-event structured details (api.lu.ma/url)

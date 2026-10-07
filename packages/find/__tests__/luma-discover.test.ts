@@ -2,8 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@oneshot-gtm/core", () => ({ logEvent: () => {} }));
 
-const { cityToSlug, fetchCityEvents, eventNameMatchesTopics, fetchEventDetails } =
-  await import("../src/_luma-discover.ts");
+const {
+  cityToSlug,
+  fetchCityEvents,
+  eventNameMatchesTopics,
+  fetchEventDetails,
+  fetchPlaceEvents,
+  fetchCalendarEvents,
+  parseCalendarRef,
+} = await import("../src/_luma-discover.ts");
 
 function htmlWithNextData(data: unknown): string {
   return `<!doctype html><html><body><script id="__NEXT_DATA__" type="application/json">${JSON.stringify(
@@ -331,5 +338,202 @@ describe("fetchEventDetails", () => {
   it("returns null when the payload has neither an event node nor people", async () => {
     stubJsonFetch(async () => ({ ok: true, status: 200, json: async () => ({ data: {} }) }));
     expect(await fetchEventDetails("empty")).toBeNull();
+  });
+});
+
+// Paged discovery: city feeds and calendars
+
+const DAY = 24 * 3600 * 1000;
+const iso = (offsetDays: number): string => new Date(Date.now() + offsetDays * DAY).toISOString();
+
+/** One api.lu.ma listing entry, in the shape `calendar/get-items` and the discover feed return. */
+function entry(slug: string, offsetDays: number): Record<string, unknown> {
+  return {
+    api_id: `calev-${slug}`,
+    event: { api_id: `evt-${slug}`, name: `Event ${slug}`, start_at: iso(offsetDays), url: slug },
+  };
+}
+
+/**
+ * Route fetches by URL: Luma pages (`luma.com/<slug>`) serve `__NEXT_DATA__`,
+ * api.lu.ma listings serve pages keyed by `period` (calendar) or `place`
+ * (feed) and the cursor. Records every URL requested.
+ */
+function fakeLuma(opts: {
+  pages?: Record<string, unknown>;
+  listings?: Record<string, Array<{ entries: unknown[]; has_more: boolean }>>;
+  failListings?: boolean;
+}): string[] {
+  const requested: string[] = [];
+  stubFetch(async () => ({ ok: false, status: 500 }));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string) => {
+      requested.push(input);
+      const url = new URL(input);
+      if (url.hostname === "luma.com") {
+        const data = opts.pages?.[url.pathname.slice(1)];
+        return data === undefined
+          ? { ok: false, status: 404 }
+          : { ok: true, status: 200, text: async () => htmlWithNextData(data) };
+      }
+      if (opts.failListings) return { ok: false, status: 500 };
+      const key =
+        url.searchParams.get("period") ?? url.searchParams.get("discover_place_api_id") ?? "";
+      const pages = opts.listings?.[key] ?? [];
+      const index = Number(url.searchParams.get("pagination_cursor") ?? "0");
+      const page = pages[index] ?? { entries: [], has_more: false };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ...page,
+          next_cursor: page.has_more ? String(index + 1) : null,
+        }),
+      };
+    }),
+  );
+  return requested;
+}
+
+describe("parseCalendarRef", () => {
+  it("accepts a cal- id, a bare slug, and luma.com / lu.ma URLs", () => {
+    expect(parseCalendarRef("cal-bR2dxhC1V6wCtK8")).toEqual({ apiId: "cal-bR2dxhC1V6wCtK8" });
+    expect(parseCalendarRef(" sftw ")).toEqual({ slug: "sftw" });
+    expect(parseCalendarRef("https://luma.com/sftw")).toEqual({ slug: "sftw" });
+    expect(parseCalendarRef("lu.ma/latw")).toEqual({ slug: "latw" });
+  });
+
+  it("rejects blanks, nested paths and other hosts", () => {
+    expect(parseCalendarRef("  ")).toBeNull();
+    expect(parseCalendarRef("https://luma.com/sftw/events")).toBeNull();
+    expect(parseCalendarRef("tech week")).toBeNull();
+  });
+});
+
+describe("fetchCalendarEvents", () => {
+  const calendarPage = {
+    props: {
+      pageProps: {
+        // Calendar pages embed other calendars too; the slug picks the right one.
+        featured: [{ api_id: "cal-other", name: "Someone Else", slug: "other" }],
+        calendar: { api_id: "cal-tw", name: "San Francisco Tech Week", slug: "sftw" },
+      },
+    },
+  };
+
+  it("resolves the slug, pages future events, and stops once past the window", async () => {
+    const requested = fakeLuma({
+      pages: { sftw: calendarPage },
+      listings: {
+        future: [
+          { entries: [entry("a", 1), entry("b", 2)], has_more: true },
+          { entries: [entry("c", 3), entry("far", 30)], has_more: true },
+          { entries: [entry("never", 40)], has_more: false },
+        ],
+      },
+    });
+
+    // A window that starts ahead of now never reads `period=past` (a bare
+    // Date.now() can fall a millisecond behind the fetcher's own clock read).
+    const out = await fetchCalendarEvents("sftw", {
+      fromMs: Date.now() + 3_600_000,
+      toMs: Date.now() + 14 * DAY,
+    });
+
+    expect(out?.calendarApiId).toBe("cal-tw");
+    expect(out?.calendarName).toBe("San Francisco Tech Week");
+    expect(out?.events.map((ev) => ev.slug)).toEqual(["a", "b", "c"]);
+    // Page 2 crossed the window end, so page 3 was never requested; no past read.
+    expect(requested.filter((u) => u.includes("get-items"))).toHaveLength(2);
+    expect(requested.some((u) => u.includes("period=past"))).toBe(false);
+    expect(requested.some((u) => u.includes("calendar_api_id=cal-tw"))).toBe(true);
+  });
+
+  it("reads past events back to fromMs when the window starts in the past", async () => {
+    fakeLuma({
+      listings: {
+        future: [{ entries: [entry("today", 0.1), entry("tomorrow", 1)], has_more: false }],
+        // Newest first; the page that reaches before fromMs ends the walk.
+        past: [
+          { entries: [entry("yesterday", -1), entry("monday", -2)], has_more: true },
+          { entries: [entry("too-old", -9)], has_more: true },
+          { entries: [entry("never", -20)], has_more: false },
+        ],
+      },
+    });
+
+    const out = await fetchCalendarEvents("cal-tw", {
+      fromMs: Date.now() - 3 * DAY,
+      toMs: Date.now() + 14 * DAY,
+    });
+
+    expect(out?.events.map((ev) => ev.slug).toSorted()).toEqual(
+      ["monday", "today", "tomorrow", "yesterday"].toSorted(),
+    );
+  });
+
+  it("returns null when the calendar slug can't be resolved or the listing fails", async () => {
+    fakeLuma({ pages: { sftw: { props: { pageProps: {} } } } });
+    expect(await fetchCalendarEvents("sftw", { fromMs: 0, toMs: Date.now() + DAY })).toBeNull();
+
+    fakeLuma({ failListings: true });
+    expect(
+      await fetchCalendarEvents("cal-tw", { fromMs: Date.now(), toMs: Date.now() + DAY }),
+    ).toBeNull();
+
+    expect(await fetchCalendarEvents("", { fromMs: 0, toMs: 1 })).toBeNull();
+  });
+});
+
+describe("fetchPlaceEvents", () => {
+  const cityPage = {
+    props: {
+      pageProps: {
+        place: { api_id: "discplace-sf", name: "San Francisco", slug: "sf" },
+        nearby: [{ api_id: "discplace-oak", name: "Oakland", slug: "oakland" }],
+        entries: [entry("on-page", 1)],
+      },
+    },
+  };
+
+  it("pages the city's feed by its discplace id, keeping the city page's own events", async () => {
+    const requested = fakeLuma({
+      pages: { sf: cityPage },
+      listings: {
+        "discplace-sf": [
+          { entries: [entry("on-page", 1), entry("f1", 2)], has_more: true },
+          { entries: [entry("f2", 3), entry("far", 30)], has_more: true },
+          { entries: [entry("never", 40)], has_more: false },
+        ],
+      },
+    });
+
+    const events = await fetchPlaceEvents("sf", { toMs: Date.now() + 14 * DAY });
+
+    expect(events?.map((ev) => ev.slug).toSorted()).toEqual(
+      ["f1", "f2", "far", "on-page"].toSorted(),
+    );
+    expect(requested.filter((u) => u.includes("get-paginated-events"))).toHaveLength(2);
+    expect(requested.every((u) => !u.includes("discplace-oak"))).toBe(true);
+  });
+
+  it("falls back to the city page's events when the feed fails or the page has no place id", async () => {
+    fakeLuma({ pages: { sf: cityPage }, failListings: true });
+    expect(
+      (await fetchPlaceEvents("sf", { toMs: Date.now() + DAY }))?.map((ev) => ev.slug),
+    ).toEqual(["on-page"]);
+
+    const noPlace = { props: { pageProps: { entries: [entry("on-page", 1)] } } };
+    const requested = fakeLuma({ pages: { sf: noPlace } });
+    expect(
+      (await fetchPlaceEvents("sf", { toMs: Date.now() + DAY }))?.map((ev) => ev.slug),
+    ).toEqual(["on-page"]);
+    expect(requested.some((u) => u.includes("api.lu.ma"))).toBe(false);
+  });
+
+  it("returns null when the city page itself fails", async () => {
+    fakeLuma({});
+    expect(await fetchPlaceEvents("sf", { toMs: Date.now() + DAY })).toBeNull();
   });
 });

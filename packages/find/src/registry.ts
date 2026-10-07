@@ -595,15 +595,22 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Discovers upcoming Luma events from Luma's per-city pages, gates each event on the founder's topics + ICP (a free keyword pre-filter, then one LLM relevance call on the event name) BEFORE any paid read, then pitches the event's hosts + featured guests — Luma's public event JSON carries their LinkedIn/website, so contact resolution lands. Coverage per event: the hosts (always public) + up to ~10 featured guests when the organizer shows 'Who's Coming'. Each row is tagged Host or Guest and the email is drafted role-aware. Config: `topics` (phrases whose words must appear in / relate to the event name — e.g. ['AI agents', 'MCP']; they gate events, not search queries), `cities` (major hubs work best — San Francisco, New York, LA, London, etc. map to Luma city pages; other cities fall back to webSearch), `yourEdge` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then either a lesson (a named failure and what was learned) or an opportunity (what this reader could do that their peers cannot yet, resting on one concrete capability or number, never an unbacked outcome). Optional `firstTouchFormat` (`standard` default, `brief`, or `split` with `firstTouchSplit` 0 to 1) tests a 3-sentence first email against the standard one; results show per arm in the trigger editor. Optional `angleAssignment` (`fit` default, or `arm`) gives each prospect one angle by an even, stable split instead of by fit, and keeps it through the follow-ups, so the angles can be compared like for like; arm results show in the same editor. The tool picks ONE per prospect in code; the email never sees the others; route on the attendee company and role, and the email tells it in the event's setting), `sinceDays` (forward-looking window in days — events further out than this are dropped), `limit`, `maxCostUsd`, optional `personGate` (`role` default; `affinity` when the topics ARE what the founder sells, so attending counts as fit and practitioners pass whatever their title). STRATEGIST DUTY: align topics to your ICP's actual gathering spots (AI hackers ≠ growth marketers) and include the vocabulary event names actually use (e.g. 'agents', 'hackathon', 'MCP').",
+      "Discovers upcoming Luma events from Luma's per-city pages, gates each event on the founder's topics + ICP (a free keyword pre-filter, then one LLM relevance call on the event name) BEFORE any paid read, then pitches the event's hosts + featured guests — Luma's public event JSON carries their LinkedIn/website, so contact resolution lands. Coverage per event: the hosts (always public) + up to ~10 featured guests when the organizer shows 'Who's Coming'. Each row is tagged Host or Guest and the email is drafted role-aware. Config: `topics` (phrases whose words must appear in / relate to the event name — e.g. ['AI agents', 'MCP']; they gate events, not search queries), `cities` (major hubs work best — San Francisco, New York, LA, London, etc. map to Luma city feeds, paged past the city page's ~20 events; other cities fall back to webSearch), optional `calendars` (Luma calendar slugs, `cal-` ids or calendar URLs, read in full and ahead of the cities: a themed week such as a city's Tech Week lives on its own calendar with hundreds of events the city feed never lists; `cities` or `calendars` must be set), optional `fromDate` (ISO date, for a one-off backfill: accepts calendar events that started on or after it, including ones that already happened, which draft with a past-tense hook; remove it after the run), `yourEdge` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then either a lesson (a named failure and what was learned) or an opportunity (what this reader could do that their peers cannot yet, resting on one concrete capability or number, never an unbacked outcome). Optional `firstTouchFormat` (`standard` default, `brief`, or `split` with `firstTouchSplit` 0 to 1) tests a 3-sentence first email against the standard one; results show per arm in the trigger editor. Optional `angleAssignment` (`fit` default, or `arm`) gives each prospect one angle by an even, stable split instead of by fit, and keeps it through the follow-ups, so the angles can be compared like for like; arm results show in the same editor. The tool picks ONE per prospect in code; the email never sees the others; route on the attendee company and role, and the email tells it in the event's setting), `sinceDays` (forward-looking window in days — events further out than this are dropped), `limit`, `maxCostUsd`, optional `personGate` (`role` default; `affinity` when the topics ARE what the founder sells, so attending counts as fit and practitioners pass whatever their title). STRATEGIST DUTY: align topics to your ICP's actual gathering spots (AI hackers ≠ growth marketers) and include the vocabulary event names actually use (e.g. 'agents', 'hackathon', 'MCP').",
     readiness: (cfg) => {
       const topics = Array.isArray(cfg["topics"]) ? cfg["topics"] : null;
       if (!topics || topics.filter((t) => typeof t === "string" && t.trim()).length === 0) {
         return { ready: false, reason: "set `topics` (e.g. ['AI','founders'])" };
       }
-      const cities = Array.isArray(cfg["cities"]) ? cfg["cities"] : null;
-      if (!cities || cities.filter((c) => typeof c === "string" && c.trim()).length === 0) {
-        return { ready: false, reason: "set `cities` (e.g. ['San Francisco'])" };
+      const named = (key: string) =>
+        Array.isArray(cfg[key])
+          ? (cfg[key] as unknown[]).filter((v) => typeof v === "string" && v.trim()).length
+          : 0;
+      if (named("cities") === 0 && named("calendars") === 0) {
+        return {
+          ready: false,
+          reason:
+            "set `cities` (e.g. ['San Francisco']) or `calendars` (e.g. a Luma calendar slug)",
+        };
       }
       const edge = cfg["yourEdge"];
       if (typeof edge !== "string" || edge.trim().length === 0) {
@@ -627,6 +634,16 @@ export const TRIGGERS: TriggerSpec[] = [
                 (c): c is string => typeof c === "string",
               ),
             }
+          : {}),
+        ...(Array.isArray(cfg["calendars"])
+          ? {
+              calendars: (cfg["calendars"] as unknown[]).filter(
+                (c): c is string => typeof c === "string",
+              ),
+            }
+          : {}),
+        ...(typeof cfg["fromDate"] === "string" && cfg["fromDate"].trim()
+          ? { fromDate: cfg["fromDate"].trim() }
           : {}),
         ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
         sinceDays: (cfg["sinceDays"] as number) ?? 14,
