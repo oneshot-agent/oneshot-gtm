@@ -357,8 +357,10 @@ function QueuePage() {
   };
 
   const approve = useMutation({
-    // A deliberate single-row approve is a fit judgment; bulk passes are not.
-    mutationFn: (id: number) => api.approveQueue(id, "fit"),
+    // A plain approve records no fit judgment; "approve as fit" is the
+    // explicit choice that makes the decision ICP evidence (#813).
+    mutationFn: (vars: { id: number; fit?: boolean }) =>
+      api.approveQueue(vars.id, vars.fit ? "fit" : undefined),
     onSuccess: invalidate,
     onError: (err) => toast.error(`couldn't approve · ${err.message}`),
   });
@@ -711,7 +713,7 @@ function QueuePage() {
                   }}
                   onToggle={() => setExpanded(expanded === row.id ? null : row.id)}
                   generating={generating.has(row.id)}
-                  onApprove={() => approve.mutate(row.id)}
+                  onApprove={(fit) => approve.mutate({ id: row.id, fit })}
                   onMove={(workspace) => move.mutate({ id: row.id, workspace })}
                   moveTargets={targets}
                   onReject={() => {
@@ -1051,7 +1053,8 @@ export function QueueRow({
   onToggleSelect: () => void;
   onToggle: () => void;
   generating: boolean;
-  onApprove: () => void;
+  /** `fit` = also record an explicit fit judgment for the ICP (#813). */
+  onApprove: (fit?: boolean) => void;
   onReject: () => void;
   /** Hand the row to another workspace (components/queue/MoveToWorkspace.tsx). */
   onMove: (workspace: string) => void;
@@ -1227,7 +1230,7 @@ export function QueueRow({
                 variant="primary"
                 size="sm"
                 disabled={busy}
-                onClick={onApprove}
+                onClick={() => onApprove()}
                 title={
                   canApproveFit
                     ? "Override the saved fit rejection and approve this prospect for sending"
@@ -1237,6 +1240,18 @@ export function QueueRow({
               >
                 <Check size={12} />
                 {canApproveFit ? "Approve fit" : "approve"}
+              </Button>
+            )}
+            {row.status === "pending" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={() => onApprove(true)}
+                title="Approve and record an explicit fit judgment: this is who you sell to (teaches the ICP)"
+                {...readOnly}
+              >
+                as fit
               </Button>
             )}
             {(row.status === "pending" || row.status === "approved") && (

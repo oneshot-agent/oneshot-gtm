@@ -524,6 +524,8 @@ export async function approveQueueRoute(
   }
   const parsedReason = parseDecisionReason(body, "reason");
   if ("error" in parsedReason) return jsonResponse({ error: parsedReason.error }, 400, req);
+  if (parsedReason.decisionReason && parsedReason.decisionReason !== "fit")
+    return jsonResponse({ error: "an approval can only carry the reason 'fit'" }, 400, req);
   ledger.setQueueStatus({
     id,
     status: "approved",

@@ -796,13 +796,15 @@ export class QueueStore {
   qualifiedOutcomeExamples(limit = 20): QualifiedOutcomeExample[] {
     const rows = this.db
       .query(
-        `SELECT o.outcome, o.recorded_at,
-                (SELECT q.payload_json FROM target_queue q
-                  WHERE q.prospect_id = o.prospect_id AND json_valid(q.payload_json)
-                  ORDER BY q.sent_at DESC, q.id DESC LIMIT 1) AS payload_json
-           FROM deal_outcomes o
-          WHERE o.outcome IN ('meeting_booked', 'sql_qualified', 'deal_won')
-          ORDER BY o.recorded_at DESC, o.id DESC
+        `SELECT outcome, recorded_at, payload_json FROM (
+           SELECT o.outcome, o.recorded_at, o.id,
+                  (SELECT q.payload_json FROM target_queue q
+                    WHERE q.prospect_id = o.prospect_id AND json_valid(q.payload_json)
+                    ORDER BY q.sent_at DESC, q.id DESC LIMIT 1) AS payload_json
+             FROM deal_outcomes o
+            WHERE o.outcome IN ('meeting_booked', 'sql_qualified', 'deal_won'))
+          WHERE payload_json IS NOT NULL
+          ORDER BY recorded_at DESC, id DESC
           LIMIT ?`,
       )
       .all(Math.max(1, Math.floor(limit))) as Array<{

@@ -491,8 +491,9 @@ function DetailPanel({ id }: { id: number }) {
     void qc.invalidateQueries({ queryKey: ["home"] });
   };
   const approve = useMutation({
-    // A deliberate single-row approve is a fit judgment (#813).
-    mutationFn: (rowId: number) => api.approveQueue(rowId, "fit"),
+    // A plain approve records no fit judgment; "as fit" is the explicit choice (#813).
+    mutationFn: (vars: { rowId: number; fit?: boolean }) =>
+      api.approveQueue(vars.rowId, vars.fit ? "fit" : undefined),
     onSuccess: () => {
       toast.success("approved — it will go out on the next drain");
       invalidate();
@@ -617,10 +618,22 @@ function DetailPanel({ id }: { id: number }) {
             variant="secondary"
             size="sm"
             disabled={approve.isPending}
-            onClick={() => approve.mutate(row.id)}
+            onClick={() => approve.mutate({ rowId: row.id })}
             {...readOnly}
           >
             <Check size={12} /> {row.status === "rejected" ? "Approve anyway" : "Approve"}
+          </Button>
+        )}
+        {!rejecting && canApprove && row.status === "pending" && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={approve.isPending}
+            onClick={() => approve.mutate({ rowId: row.id, fit: true })}
+            title="Approve and record an explicit fit judgment: this is who you sell to (teaches the ICP)"
+            {...readOnly}
+          >
+            as fit
           </Button>
         )}
         {!rejecting && row.prospectId != null && (

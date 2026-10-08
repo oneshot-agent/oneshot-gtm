@@ -317,6 +317,10 @@ describe("Ledger.countHumanIcpDecisions / recentIcpDecisions", () => {
       outcome: "meeting_booked",
       candidate: { title: "Ada ships agents" },
     });
+    // Newer outcomes with no review context never consume the limit.
+    for (let i = 0; i < 25; i++)
+      ledger.recordOutcome({ prospectId: orphan, outcome: "meeting_booked" });
+    expect(ledger.qualifiedOutcomeExamples(20)).toHaveLength(1);
   });
 
   it("counts stay in sync with recentIcpDecisions as more human decisions accrue", () => {
