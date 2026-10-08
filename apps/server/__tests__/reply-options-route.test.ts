@@ -345,7 +345,7 @@ it("applies approved guidance to generation and improvement without changing sto
     .run("default", "legacy", "Legacy v1 preference", "explicit", 1, "[]");
   const result = (await (await replyGenerateRoute(req({ key: t.key }))).json()) as ReplyDraftSet;
   expect(result.learningVersion).toBe(learning.guidanceVersion());
-  expect(result.learningKey).toMatch(/^[0-9a-f]{12}$/);
+  expect(result.learningKey).toMatch(/^[0-9a-f]{64}$/);
   expect(generate.mock.calls[0]![0].learnedPreferences).toEqual(["Keep language plain."]);
   expect(review.get(t.key)!.drafts).toBeNull();
   const saved = (await (

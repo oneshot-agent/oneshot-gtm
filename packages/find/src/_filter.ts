@@ -48,7 +48,7 @@ export async function icpFilter(input: {
     // Keep this boundary defensive even if a custom/older core returns full
     // queue payloads: those may contain contact details added by enrichment.
     examples = getLedger()
-      .recentIcpDecisions(20)
+      .recentIcpDecisions(20, { reasoned: true })
       .map((example) => ({
         candidate: publicCandidateContext(example.candidate),
         decision: example.decision,

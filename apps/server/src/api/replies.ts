@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import {
   currentWorkspaceName,
+  draftLearningContext,
   demoMode,
   isDraining,
   getLedger,
@@ -153,8 +154,11 @@ export async function replyStateRoute(req: Request) {
 export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsContext {
   const cfg = loadConfig();
   const ledger = getLedger();
-  const guidance = ledger.learning.guidance({ channel: t.channel, stage: "reply" });
-  const p = t.prospectId == null ? null : ledger.getProspectById(t.prospectId);
+
+  const p =
+    t.prospectId == null || t.workspace !== currentWorkspaceName()
+      ? null
+      : ledger.getProspectById(t.prospectId);
   const outreach = p
     ? ledger
         .listSequenceEventsForProspect(p.id)
@@ -182,7 +186,15 @@ export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsCon
       /* Older queue rows lack a structured edge. */
     }
   }
-  return {
+  const guidance = draftLearningContext(ledger, {
+    channel: t.channel,
+    stage: "reply",
+    cfg,
+    prospectId: t.workspace === currentWorkspaceName() ? t.prospectId : null,
+    history: { outreach, messages: t.messages.filter((m) => !m.deleted) },
+    playName: firstTouch?.play,
+  });
+  const context: ReplyOptionsContext = {
     channel: t.channel,
     founder: cfg.founderName ?? "",
     founderCalendarUrl:
@@ -195,6 +207,7 @@ export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsCon
     // Approved writing preferences for replies on this channel (#813): the
     // ledger's guidance rows, never anything still waiting for review.
     learnedPreferences: guidance.instructions.map((i) => i.instruction),
+    learningContext: guidance.text,
     learningKey: guidance.key,
     steer,
     prospect: {
@@ -213,6 +226,11 @@ export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsCon
     firstTouch,
     angleJson: p?.angle_json,
   };
+  context.learningKey = ledger.learning.captureContext({
+    context: guidance.context,
+    input: context,
+  });
+  return context;
 }
 
 export function emptyReplyDraft(t: ReplyThread): ReplyDraftSet {

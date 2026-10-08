@@ -614,6 +614,23 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "table",
     },
     {
+      "name": "learning_applications",
+      "sql": "CREATE TABLE learning_applications (
+        id TEXT PRIMARY KEY, action TEXT NOT NULL, value_json TEXT NOT NULL,
+        previous_json TEXT NOT NULL, created_at TEXT NOT NULL
+      )",
+      "tbl_name": "learning_applications",
+      "type": "table",
+    },
+    {
+      "name": "learning_contexts",
+      "sql": "CREATE TABLE learning_contexts (
+        key TEXT PRIMARY KEY, context_json TEXT NOT NULL, created_at TEXT NOT NULL
+      )",
+      "tbl_name": "learning_contexts",
+      "type": "table",
+    },
+    {
       "name": "learning_guidance",
       "sql": "CREATE TABLE learning_guidance (
           id TEXT PRIMARY KEY,
@@ -665,7 +682,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
           decided_json TEXT,
           applied_at TEXT,
           rolled_back_at TEXT
-        )",
+        , applied_key TEXT)",
       "tbl_name": "learning_proposals",
       "type": "table",
     },

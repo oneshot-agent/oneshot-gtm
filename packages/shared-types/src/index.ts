@@ -1494,6 +1494,7 @@ export interface InboxDraftReplyRequest {
 }
 
 export interface InboxDraftReplyResult {
+  learningKey?: string | null;
   body: string;
   /** Paid research spend this draft incurred (0 on cache hits / known prospects). */
   costUsd: number;

@@ -56,6 +56,7 @@ import {
   overusedOpeners,
   signatureDirective,
   learningBlock,
+  stampLearningInput,
   voiceBlock,
 } from "./_lib.ts";
 
@@ -2308,7 +2309,15 @@ export function buildFollowUpEmail(opts: {
     // gets the no-aphorism budget; every other follow-up the default one.
     const voice = voiceBlock(opts.promptName === "breakup-email" ? "breakup" : "followup");
     // LEARNED: approved writing preferences for email follow-ups (#813).
-    const learned = learningBlock({ channel: "email", stage: "follow_up" });
+    const learned = learningBlock({
+      channel: "email",
+      stage: "follow_up",
+      cfg: ctx.cfg,
+      prospectId: ctx.prospect.id,
+      playName: opts.playName,
+      campaignAngle: edgeSelection?.angle,
+      history: priorBlock,
+    });
     // Judged now, not at the intro: a demo day that was ahead of them then
     // may be behind them by the time this step sends.
     const demoDay = prospectDemoDay(ctx.prospect, opts.playName);
@@ -2340,6 +2349,7 @@ export function buildFollowUpEmail(opts: {
       { role: "system", content: system },
       { role: "user", content: user },
     ];
+    stampLearningInput(learned, messages);
     const res = await complete({ messages, temperature: 0.6, maxTokens: 500 });
     const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(res.content, {});
     if (!parsed.subject || !parsed.body) return null;
@@ -2818,7 +2828,14 @@ async function buildLinkedInMessage(
     })
     .filter((line): line is string => line !== null);
   const voice = voiceBlock(which === "first" ? "followup" : "breakup");
-  const learned = learningBlock({ channel: "linkedin", stage: "follow_up" });
+  const learned = learningBlock({
+    channel: "linkedin",
+    stage: "follow_up",
+    cfg: ctx.cfg,
+    prospectId: ctx.prospect.id,
+    playName,
+    history: prior,
+  });
   const input = [
     `FOUNDER: ${ctx.cfg.founderName ?? ""}`,
     `PRODUCT: ${ctx.cfg.productOneLiner ?? ""}`,
@@ -2832,6 +2849,7 @@ async function buildLinkedInMessage(
     ...(learned ? [learned.text] : []),
     `MAX_CHARS: ${LINKEDIN_MESSAGE_MAX_CHARS}`,
   ].join("\n");
+  stampLearningInput(learned, input);
   const res = await complete({
     messages: [
       { role: "system", content: loadPrompt("linkedin-message") },

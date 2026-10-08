@@ -558,7 +558,13 @@ export async function suggestAnglesRoute(
         add,
       },
       evidence: {
-        refs: objections.map((r) => ({ type: "inbox_reply", id: r.id })),
+        refs: [
+          {
+            type: "evidence_snapshot",
+            id: ledger.learning.captureContext({ counts, method, objections }),
+          },
+          ...objections.map((r) => ({ type: "inbox_reply" as const, id: r.id })),
+        ],
         samples: objections.slice(0, 5).map((r) => ({
           at: r.received_at,
           label: `Reply · ${r.intent ?? "objection"}`,

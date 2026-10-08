@@ -28,6 +28,7 @@ export interface LearningScope {
 
 export interface LearningEvidenceRef {
   type:
+    | "evidence_snapshot"
     | "reply_send"
     | "draft_version"
     | "queue_decision"

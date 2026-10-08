@@ -420,3 +420,26 @@ it("renews the persisted lease through slow provider retries and prevents a seco
     await running;
   }
 });
+
+it("separates mixed-stage evidence and never grants reply guidance from outbound drafts", async () => {
+  const first = seedDrafts(5);
+  const follow = seedDrafts(5);
+  for (const id of follow)
+    ledger.learning.db.query("UPDATE draft_versions SET step_index=1 WHERE id=?").run(id);
+  modelSays([
+    {
+      key: "brief",
+      instruction: "Keep it brief",
+      source: "style",
+      evidenceIds: [...first, ...follow].map((id) => `draft:${id}`),
+    },
+  ]);
+  await refreshReplyLearning();
+  expect(
+    pending()
+      .map((p) => p.scope.stage)
+      .toSorted(),
+  ).toEqual(["first_touch", "follow_up"]);
+  expect(pending().every((p) => p.scope.channel === "email")).toBe(true);
+  expect(ledger.learning.guidance({ channel: "email", stage: "reply" }).instructions).toEqual([]);
+});

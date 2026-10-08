@@ -169,6 +169,25 @@ function toGuidanceView(row: GuidanceRow): LearningGuidanceView {
 export class LearningStore {
   constructor(readonly db: Database) {}
 
+  /** Immutable context for the draft that consumed it; old drafts are never backfilled. */
+  captureContext(context: unknown): string {
+    const json = JSON.stringify(context);
+    const key = createHash("sha256").update(json).digest("hex");
+    this.db
+      .query("INSERT OR IGNORE INTO learning_contexts VALUES(?,?,?)")
+      .run(key, json, new Date().toISOString());
+    return key;
+  }
+
+  context(key: string): unknown | null {
+    const row = this.db
+      .query<{ context_json: string }, [string]>(
+        "SELECT context_json FROM learning_contexts WHERE key=?",
+      )
+      .get(key);
+    return row ? JSON.parse(row.context_json) : null;
+  }
+
   // ---- proposals --------------------------------------------------------
 
   /**
@@ -191,6 +210,25 @@ export class LearningStore {
   }): LearningProposalView | null {
     const id = randomUUID();
     const scope = input.scope ?? {};
+    if (input.evidence.refs.length) {
+      const refs = new Set(input.evidence.refs.map((r) => JSON.stringify(r)));
+      const rejected = this.db
+        .query<{ evidence_json: string }, [string, string]>(
+          "SELECT evidence_json FROM learning_proposals WHERE kind=? AND scope_key=? AND status IN ('dismissed','rolled_back')",
+        )
+        .all(input.kind, learningScopeKey(input.kind, scope));
+      if (
+        rejected.some((r) => {
+          const previous = new Set(
+            parse<LearningEvidence>(r.evidence_json, { refs: [] }).refs.map((ref) =>
+              JSON.stringify(ref),
+            ),
+          );
+          return [...refs].every((ref) => previous.has(ref));
+        })
+      )
+        return null;
+    }
     try {
       this.db
         .query(

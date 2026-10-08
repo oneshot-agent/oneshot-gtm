@@ -129,7 +129,9 @@ export async function refreshIcpProposal(): Promise<void> {
       evidenceSummary,
       createdAt: new Date().toISOString(),
       evidence: {
-        refs: [],
+        refs: [
+          { type: "evidence_snapshot", id: ledger.learning.captureContext({ examples, outcomes }) },
+        ],
         counts: {
           fit_decisions: decisionCount,
           qualified_outcomes: outcomes.length,

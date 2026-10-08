@@ -154,7 +154,10 @@ describe("suggestAnglesRoute", () => {
       angle2_offered: 5,
       angle1_sent: 1,
     });
-    expect(evidence.refs).toEqual([{ type: "inbox_reply", id: "r1" }]);
+    expect(evidence.refs).toEqual([
+      { type: "evidence_snapshot", id: expect.any(String) },
+      { type: "inbox_reply", id: "r1" },
+    ]);
     expect(evidence.samples[0]).toMatchObject({ label: "Reply · objection" });
     expect(proposal["evidenceSummary"]).toContain("Hypothesis from observational counts");
     expect(proposal["evidenceSummary"]).toContain("even split");

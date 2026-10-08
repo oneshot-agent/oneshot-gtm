@@ -11,7 +11,7 @@ import {
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import { enrollInCadence } from "./_cadence.ts";
-import { learningBlock, voiceBlock } from "./_lib.ts";
+import { learningBlock, stampLearningInput, voiceBlock } from "./_lib.ts";
 
 /**
  * First touch on the LinkedIn channel: a connection request with a note, sent
@@ -120,7 +120,15 @@ export async function draftLinkedInNote(
   const maxChars = CHANNEL_SPECS.linkedin.firstTouchMaxChars ?? 200;
   const name = str(row.payload, "name") ?? "them";
   const voice = voiceBlock("intro");
-  const learned = learningBlock({ channel: "linkedin", stage: "first_touch" });
+  const learned = learningBlock({
+    channel: "linkedin",
+    stage: "first_touch",
+    cfg,
+    email: str(row.payload, "email"),
+    playName: row.playName,
+    campaignAngle: opts.draftAngle,
+    replaceProspectAngle: !!opts.draftAngle,
+  });
   const person = [
     `NAME: ${name}`,
     ...(str(row.payload, "title", "currentRole")
@@ -140,6 +148,7 @@ export async function draftLinkedInNote(
     ...(learned ? [learned.text] : []),
     `MAX_CHARS: ${maxChars}`,
   ].join("\n");
+  stampLearningInput(learned, input);
   const res = await complete({
     messages: [
       { role: "system", content: loadPrompt("linkedin-invite-note") },

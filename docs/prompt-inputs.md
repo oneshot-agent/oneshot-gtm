@@ -244,9 +244,7 @@ invite note and message, breakup revive, and both reply composers — appends a
 founder approved applies to that channel and stage. The block lists the
 enabled instructions and tells the model that VOICE, the explicit inputs and
 every factual, audience and channel constraint outrank them, and that they
-are never a source of product facts, links, numbers or promises. An install
-that has approved nothing sends a byte-identical prompt to before. The exact
-set a draft was written with is fingerprinted on its version as
+are never a source of product facts, links, numbers or promises. The common context also carries active product facts, ICP, research and prospect angle, plus up to six matched replies from the other channel. The exact generation input and learning context are saved under
 `learning_key`, the way `voice_key` records the voice card. Pending,
 dismissed, disabled and rolled-back guidance never reaches a prompt; the
 prospect's angle reaches it only as the active `angle_json`, which a
