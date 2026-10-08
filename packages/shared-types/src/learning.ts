@@ -115,6 +115,14 @@ export interface LearningDecisionResult {
   proposal: LearningProposalView;
 }
 
+/** `POST /api/triggers/:name/suggest-angles`: a proposal, or why none was made. */
+export interface AngleSuggestionResult {
+  ok: true;
+  proposal: LearningProposalView | null;
+  /** Present when no proposal was created: the model kept the set, or an identical one is pending. */
+  reason?: string;
+}
+
 /**
  * Optional structured reason on a queue decision. Only `fit`, `wrong_audience`
  * and `wrong_person` are judgments about customer fit; the rest are about the

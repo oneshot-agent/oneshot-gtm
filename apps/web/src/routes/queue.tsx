@@ -2039,6 +2039,7 @@ function PackPicker() {
 
 function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const triggersQuery = useQuery({
     queryKey: ["triggers"],
     queryFn: () => api.triggers(),
@@ -2079,6 +2080,24 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
       void qc.invalidateQueries({ queryKey: ["triggers"] });
     },
     onError: (err) => toast.error(err.message),
+  });
+  const suggestAngles = useMutation({
+    mutationFn: (name: string) => api.suggestAngles(name),
+    onSuccess: (data, name) => {
+      void qc.invalidateQueries({ queryKey: ["learning-proposals"] });
+      if (!data.proposal) {
+        toast.message(`${name} · no change suggested`, { description: data.reason });
+        return;
+      }
+      toast.success(`${name} · angle changes proposed`, {
+        description: "Review them in the Learning card at the top of this page.",
+        action: {
+          label: "review",
+          onClick: () => void navigate({ to: "/queue", search: { learning: "campaign_angle" } }),
+        },
+      });
+    },
+    onError: (err: Error) => toast.error(`couldn't suggest · ${err.message}`),
   });
   const runTrigger = useMutation({
     mutationFn: (name: string) => {
@@ -2199,6 +2218,8 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
         editError={isEditing ? editError : null}
         onToggleEnabled={(next) => setEnabled.mutate({ name: t.name, enabled: next })}
         onRun={() => runTrigger.mutate(t.name)}
+        onSuggestAngles={() => suggestAngles.mutate(t.name)}
+        suggestingAngles={suggestAngles.isPending && suggestAngles.variables === t.name}
         onSetInterval={(ms) =>
           setConfig.mutate({
             name: t.name,
@@ -2394,6 +2415,9 @@ interface TriggerRowProps {
   onChangeEditText: (text: string) => void;
   onResetDefaults: () => void;
   onSaveEdit: () => void;
+  /** Ask for a reviewed angle-set proposal (#813). */
+  onSuggestAngles: () => void;
+  suggestingAngles: boolean;
   setEnabledPending: boolean;
   setConfigPending: boolean;
 }
@@ -2609,6 +2633,8 @@ function TriggerRowFragment(props: TriggerRowProps) {
                   voiceUsage={t.voiceUsage ?? null}
                   formatUsage={t.formatUsage ?? null}
                   disabled={props.setConfigPending || READ_ONLY}
+                  onSuggest={props.onSuggestAngles}
+                  suggesting={props.suggestingAngles}
                   onRetire={(angleText) => {
                     const next = removeAngleFromConfigText(props.editing?.text ?? "", angleText);
                     if (next == null) {

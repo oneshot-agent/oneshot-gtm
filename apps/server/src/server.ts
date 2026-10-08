@@ -106,6 +106,7 @@ import {
   runTriggerRoute,
   setTriggerConfigRoute,
   setTriggerEnabledRoute,
+  suggestAnglesRoute,
 } from "./api/triggers.ts";
 import { applyPackRoute, listPacksRoute } from "./api/packs.ts";
 import {
@@ -258,6 +259,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/triggers/:name/enabled", setTriggerEnabledRoute),
   route("POST", "/api/triggers/:name/config", setTriggerConfigRoute),
   route("POST", "/api/triggers/:name/run", runTriggerRoute),
+  route("POST", "/api/triggers/:name/suggest-angles", suggestAnglesRoute),
   route("GET", "/api/packs", listPacksRoute),
   route("POST", "/api/packs/:id/apply", applyPackRoute),
   route("GET", "/api/icp-proposals", listIcpProposalsRoute),
