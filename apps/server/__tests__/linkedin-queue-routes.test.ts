@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { _resetInviteLimitsCacheForTests, loadConfig, saveConfig } from "@oneshot-gtm/core";
 
@@ -84,6 +87,8 @@ const post = (body?: unknown) =>
   });
 
 beforeEach(() => {
+  // A fresh shared DB per test: the guard refuses a profile that was already invited.
+  process.env["ONESHOT_GTM_SHARED"] = mkdtempSync(join(tmpdir(), "linkedin-queue-routes-"));
   row = {
     id: 1,
     play_name: "luma-events",
@@ -121,6 +126,12 @@ describe("send-draft on a LinkedIn row", () => {
     const first = await sendDraftRoute(post(), { id: "1" });
     expect(first.status).toBe(200);
     expect(statusCalls).toHaveLength(1);
+    // A different person: the same profile is refused earlier, as already invited (#787).
+    row.payload_json = JSON.stringify({
+      name: "Sam Park",
+      linkedinUrl: "https://www.linkedin.com/in/sam-park",
+      email: "sam@acme.com",
+    });
     const second = await sendDraftRoute(post(), { id: "1" });
     expect(second.status).toBe(429);
     expect(await second.json()).toMatchObject({ error: expect.stringMatching(/share of 1 used/) });

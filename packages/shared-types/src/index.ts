@@ -1630,6 +1630,8 @@ export interface DrainResult {
   drained: number;
   sent: number;
   errors: Array<{ id: number; message: string }>;
+  /** Rows the LinkedIn invite guard refused, by reason: never sent, back to pending with the reason as a flag. */
+  skipped?: Record<string, number>;
   /** Named reason the daily spend ceiling (issue #481) blocked this drain, if it did. */
   haltedReason?: string;
 }

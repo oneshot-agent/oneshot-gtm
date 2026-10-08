@@ -1,7 +1,12 @@
 import {
   CHANNEL_SPECS,
+  canInviteOnLinkedInNow,
   canonicalLinkedInProfileKey,
+  claimLinkedInProfile,
   getLedger,
+  guardFlag,
+  normalizeLinkedInProfile,
+  type LinkedInGuardReason,
   loadConfig,
   logEvent,
   noteAccountInviteCapReached,
@@ -49,7 +54,12 @@ export type LinkedInInviteOutcome =
       invitationId: string;
       prospectId: number;
     }
-  | { sent: false; flags: string[] };
+  | {
+      sent: false;
+      flags: string[];
+      /** Set when the invite guard refused: counted per reason in drain output. */
+      guard?: LinkedInGuardReason;
+    };
 
 function str(payload: Record<string, unknown>, ...keys: string[]): string | null {
   for (const key of keys) {
@@ -188,19 +198,47 @@ export async function sendLinkedInInvite(input: {
       flags: [`note-too-long: ${note.length}/${LINKEDIN_NOTE_HARD_LIMIT} characters`],
     };
   }
+  // The guard every invite passes: a personal profile, a person's name, no
+  // opt-out or engagement elsewhere, a passing ICP verdict, and a profile
+  // nobody has invited. A refusal is recoverable; a sent invite is not.
+  const p0 = input.row.payload;
+  const target = normalizeLinkedInProfile(profile);
+  const verdict = canInviteOnLinkedInNow({
+    name: str(p0, "name"),
+    company: str(p0, "company"),
+    email: str(p0, "email", "founderEmail"),
+    linkedinUrl: profile,
+    icpVerdict: str(p0, "icpVerdict"),
+  });
+  if (!verdict.ok || !target) {
+    return verdict.ok
+      ? { sent: false, flags: ["invalid-profile: the LinkedIn URL is not a personal profile"] }
+      : { sent: false, flags: [guardFlag(verdict)], guard: verdict.reason };
+  }
+  // Reserve the profile in the shared DB before any await, so a second
+  // workspace on the same account can't invite it while this one is in flight.
+  const claimed = claimLinkedInProfile({ profile: target, workspace: input.workspace });
+  if (!claimed.ok) return { sent: false, flags: [guardFlag(claimed)], guard: claimed.reason };
+  const claim = claimed.claim;
   // Take a slot of the workspace share (and check the account has invites
   // left) before the API call. Deferred when either is used up.
-  const slot = await reserveLinkedInInvite({
-    accountId: input.sender.accountId,
-    fetchAccount: () => input.sender.call({ kind: "account", accountId: input.sender.accountId }),
-    workspace: input.workspace,
-  });
+  let slot: Awaited<ReturnType<typeof reserveLinkedInInvite>>;
+  try {
+    slot = await reserveLinkedInInvite({
+      accountId: input.sender.accountId,
+      fetchAccount: () => input.sender.call({ kind: "account", accountId: input.sender.accountId }),
+      workspace: input.workspace,
+    });
+  } catch (err) {
+    claim.release();
+    throw err;
+  }
   let result: { invitation_id?: string; status?: string };
   try {
     result = (await input.sender.call({
       kind: "invite",
       accountId: input.sender.accountId,
-      profile,
+      profile: target.url,
       note,
       // Stable per row: a retried drain returns the original invitation.
       idempotencyKey: `gtm:${input.workspace}:queue:${input.row.id}:invite`,
@@ -208,6 +246,7 @@ export async function sendLinkedInInvite(input: {
     })) as { invitation_id?: string; status?: string };
   } catch (err) {
     slot.release();
+    claim.release();
     const code = inviteErrorCode(err);
     if (code === "rate_limited" || code === "account_send_limit") {
       noteAccountInviteCapReached(input.sender.accountId);
@@ -222,9 +261,11 @@ export async function sendLinkedInInvite(input: {
     (status !== "sent" && status !== "pending" && status !== "already_connected")
   ) {
     slot.release();
+    claim.release();
     throw new Error(`unexpected LinkedIn invite result: ${JSON.stringify(result).slice(0, 160)}`);
   }
   slot.confirm();
+  claim.confirm();
   const ledger = getLedger();
   const p = input.row.payload;
   const prospectId = ledger.upsertProspect({

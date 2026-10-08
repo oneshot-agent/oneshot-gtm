@@ -3,6 +3,7 @@ import {
   getLedger,
   isSendDeferred,
   tryReserveDailySpend,
+  type LinkedInGuardReason,
   type ProspectRecord,
   type QueueRow,
   channelOf,
@@ -37,6 +38,8 @@ type DrainDraft = DraftedRow & {
   prospectId?: number;
   /** The row could not go out as is: back to pending with its flags, for the founder. */
   needsReview?: boolean;
+  /** The LinkedIn invite guard refused this row: counted per reason in `DrainOutcome.skipped`. */
+  guard?: LinkedInGuardReason;
 };
 
 export interface DrainOutcome {
@@ -45,6 +48,12 @@ export interface DrainOutcome {
   /** Rows left approved because every sender identity hit its daily cap. */
   deferred: number;
   errors: Array<{ id: number; message: string }>;
+  /**
+   * Rows the LinkedIn invite guard refused, by reason (`not-a-person`,
+   * `already-invited`, ...). They go back to pending with the reason as a
+   * flag: never sent, never dropped. Absent when none were refused.
+   */
+  skipped?: Record<string, number>;
   /**
    * Set when the install-wide daily spend ceiling (issue #481) was already
    * reached before this drain could claim any rows. The named reason
@@ -202,6 +211,12 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
             }
           }
           outcome.sent++;
+        }
+        if (draft.guard && !opts.dryRun) {
+          outcome.skipped = {
+            ...outcome.skipped,
+            [draft.guard]: (outcome.skipped?.[draft.guard] ?? 0) + 1,
+          };
         }
       } catch (err) {
         outcome.errors.push({
@@ -373,6 +388,13 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
     sender: opts.linkedIn,
     workspace: currentWorkspaceName(),
   });
-  if (!sent.sent) return { ...base, flags: sent.flags, needsReview: true };
+  if (!sent.sent) {
+    return {
+      ...base,
+      flags: sent.flags,
+      needsReview: true,
+      ...(sent.guard ? { guard: sent.guard } : {}),
+    };
+  }
   return { ...base, sent: true, prospectId: sent.prospectId };
 }

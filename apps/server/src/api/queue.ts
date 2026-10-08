@@ -1001,6 +1001,7 @@ export async function drainQueueRoute(req: Request): Promise<Response> {
       drained: result.drained,
       sent: result.sent,
       errors: result.errors,
+      ...(result.skipped ? { skipped: result.skipped } : {}),
       ...(result.haltedReason ? { haltedReason: result.haltedReason } : {}),
     };
     return jsonResponse(view, 200, req);

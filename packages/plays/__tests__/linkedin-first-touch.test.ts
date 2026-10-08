@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 let modelNote = "Saw you hosted GTM in git — how are you handling review?";
@@ -74,6 +77,8 @@ function sender(result: unknown) {
 }
 
 beforeEach(() => {
+  // A fresh shared DB per test: the guard refuses a profile that was already invited.
+  process.env["ONESHOT_GTM_SHARED"] = mkdtempSync(join(tmpdir(), "linkedin-first-touch-"));
   _resetInviteLimitsCacheForTests();
   modelNote = "Saw you hosted GTM in git — how are you handling review?";
   completeInputs.length = 0;

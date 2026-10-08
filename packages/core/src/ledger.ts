@@ -182,6 +182,8 @@ import {
   upsertPendingResolution as sysUpsertPendingResolution,
 } from "./ledger-system.ts";
 import { sharedDbPath } from "./shared-db.ts";
+import { linkedInGuardFacts } from "./ledger-linkedin-guard.ts";
+import type { LinkedInGuardFacts } from "./linkedin-guard.ts";
 import { SharedPeople } from "./shared-people.ts";
 import type { ReplyKind } from "./reply-classify.ts";
 import type {
@@ -745,6 +747,11 @@ export class Ledger {
   }): { status: "matched"; prospectId: number } | { status: "unmatched" } | { status: "conflict" } {
     const emailId = input.email ? (this.findProspectByEmail(input.email)?.id ?? null) : null;
     return this.prospects.resolveProspectForLinkedInReply(input, emailId);
+  }
+
+  /** Ledger facts the LinkedIn invite guard reads (linkedin-guard.ts). */
+  linkedInGuardFacts(prospectId: number): LinkedInGuardFacts | null {
+    return linkedInGuardFacts(this.db, prospectId);
   }
 
   suppressCadencesForReply(prospectId: number, accountKey?: string) {
