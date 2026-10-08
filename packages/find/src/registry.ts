@@ -23,6 +23,7 @@ import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
 import { runLocalBusinessFinder } from "./local-business.ts";
 import { runLumaFinder } from "./luma.ts";
+import { parseCalendarRef } from "./_luma-discover.ts";
 import { runLocalRegistryFinder } from "./local-registry.ts";
 import type { SocrataPortalConfig } from "./_registry-sources.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
@@ -601,11 +602,22 @@ export const TRIGGERS: TriggerSpec[] = [
       if (!topics || topics.filter((t) => typeof t === "string" && t.trim()).length === 0) {
         return { ready: false, reason: "set `topics` (e.g. ['AI','founders'])" };
       }
-      const named = (key: string) =>
+      const named = (key: string): string[] =>
         Array.isArray(cfg[key])
-          ? (cfg[key] as unknown[]).filter((v) => typeof v === "string" && v.trim()).length
-          : 0;
-      if (named("cities") === 0 && named("calendars") === 0) {
+          ? (cfg[key] as unknown[]).filter(
+              (v): v is string => typeof v === "string" && v.trim().length > 0,
+            )
+          : [];
+      // A calendar the finder can't parse would only log `calendar_failed`
+      // on every run; refuse it here, where the founder sees the reason.
+      const badCalendars = named("calendars").filter((ref) => parseCalendarRef(ref) == null);
+      if (badCalendars.length > 0) {
+        return {
+          ready: false,
+          reason: `fix \`calendars\`: ${badCalendars.map((ref) => `'${ref}'`).join(", ")} is not a Luma calendar slug, cal- id or luma.com URL`,
+        };
+      }
+      if (named("cities").length === 0 && named("calendars").length === 0) {
         return {
           ready: false,
           reason:
