@@ -70,7 +70,7 @@ esac
 
 ## Learning jobs
 
-The dashboard's scheduler also runs the two learning jobs ([learning](./learning.md)): writing-preference synthesis, at most once every five minutes when there is new reply or draft evidence, and the ICP rewrite, at most once a day once thirty fit-tagged decisions exist. Each takes a persisted lease, reserves against the spend ceiling before calling the model, and writes only proposals; approval on `/queue` is the only thing that changes a draft. Neither runs in demo mode, and no send or draft path waits on them.
+The dashboard's scheduler also runs the two learning jobs ([learning](./learning.md)): writing-preference synthesis, at most once every five minutes when there is new reply or draft evidence, and the ICP rewrite, at most once a day once the configured minimum of fit-tagged decisions exists (`icpProposalMinDecisions` in `config.json`, thirty by default). Each takes a persisted lease, reserves against the spend ceiling before calling the model, and writes only proposals; approval on `/queue` is the only thing that changes a draft. Neither runs in demo mode, and no send or draft path waits on them.
 
 ## Spend ceiling
 

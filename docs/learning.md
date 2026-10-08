@@ -29,11 +29,11 @@ The **Learning** card at the top of `/queue` lists everything waiting, by kind. 
 - **Roll back** restores what was active before an approval.
 - A writing preference can also be **disabled** and re-enabled; twelve can be active at once.
 
-Approval is refused when the value it would change has moved since the proposal was made (you edited the ICP or the edge by hand, or approved another proposal for the same scope); dismiss it and a fresh one follows. Approving one proposal marks the others for the same scope stale. An approval never rewrites or sends an existing draft.
+Approval is refused when the value it would change has moved since the proposal was made (you edited the ICP or the edge by hand, or approved another proposal for the same scope); dismiss it and a fresh one follows. Approving an angle or ICP proposal marks the other pending proposals for the same scope stale, since they were computed against the value just replaced; writing preferences accumulate, so approving one leaves the rest pending. An approval never rewrites or sends an existing draft.
 
 ## Queue decisions and the ICP
 
-Approving or rejecting a queue row can carry a reason: _fit_, _not our audience_, _right company, wrong person_, _bad timing_, _draft problem_ or _other_. Only the first three are fit judgments and only they teach the ICP; a rejection for timing or a weak draft says nothing about who your customer is. A single-row Approve records _fit_; bulk approvals record no reason. Recorded outcomes (meeting booked, qualified, won) are passed to the ICP job separately, as commercial evidence distinct from approval; lost deals, ghosting, polite replies and unsubscribes are never read as success. The ICP job still needs thirty tagged decisions and runs at most once a day.
+Approving or rejecting a queue row can carry a reason: _fit_, _not our audience_, _right company, wrong person_, _bad timing_, _draft problem_ or _other_. Only the first three are fit judgments and only they teach the ICP; a rejection for timing or a weak draft says nothing about who your customer is. A single-row Approve records _fit_; bulk approvals record no reason. Recorded outcomes (meeting booked, qualified, won) are passed to the ICP job separately, as commercial evidence distinct from approval; lost deals, ghosting, polite replies and unsubscribes are never read as success. The ICP job still needs the configured minimum of tagged decisions (thirty by default, `icpProposalMinDecisions`) and runs at most once a day.
 
 ## Campaign angle suggestions
 
