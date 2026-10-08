@@ -79,6 +79,7 @@ import {
   type RunPlayRequest,
   type SendDeliveryView,
 } from "@oneshot-gtm/shared-types";
+import { DECISION_REASONS, isDecisionReason, type DecisionReason } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 import { callLinkedIn } from "../linkedin-client.ts";
 import { sendsToday } from "./_capacity.ts";
@@ -186,6 +187,7 @@ export function toView(row: QueueRow): QueueRowView {
     // `?? null`: pre-v26 rows and test fakes may not carry the columns.
     decision: row.decision ?? null,
     decidedBy: row.decided_by ?? null,
+    decisionReason: isDecisionReason(row.decision_reason) ? row.decision_reason : null,
     decidedAt: row.decided_at ?? null,
     delivery: deliveryFor(row.status, lastDraft),
   };
@@ -512,7 +514,22 @@ export async function approveQueueRoute(
       );
     }
   }
-  ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });
+  // An optional structured reason (#813). `fit` is the only one an approval
+  // can honestly carry; it is what makes the decision ICP evidence.
+  let body: unknown = {};
+  try {
+    body = await req.json();
+  } catch {
+    // no body: a plain approval, no fit judgment recorded
+  }
+  const parsedReason = parseDecisionReason(body, "reason");
+  if ("error" in parsedReason) return jsonResponse({ error: parsedReason.error }, 400, req);
+  ledger.setQueueStatus({
+    id,
+    status: "approved",
+    decidedBy: "human",
+    ...(parsedReason.decisionReason ? { decisionReason: parsedReason.decisionReason } : {}),
+  });
   // Recent posts are bought on approval, in the background: the response
   // never waits on them, and a failed capture never fails the approval.
   scheduleNewsfeedOnApproval([id]);
@@ -731,7 +748,14 @@ export async function moveQueueRowRoute(
   // imports. Restored verbatim if the hand-over fails.
   const previous = { status: row.status, notes: row.notes };
   const note = moveNote(row.notes, workspace);
-  ledger.setQueueStatus({ id, status: "rejected", decidedBy: "human", notes: note });
+  // A move is a routing decision, never a fit judgment about the person.
+  ledger.setQueueStatus({
+    id,
+    status: "rejected",
+    decidedBy: "human",
+    decisionReason: "other",
+    notes: note,
+  });
   const restore = (): void => {
     ledger.setQueueStatus({
       id,
@@ -822,6 +846,23 @@ const MACHINE_PREFIX = /^auto:/i;
  * Body → the note to write, or an error. `undefined` means the key was absent
  * (leave the note alone); `""` means the founder emptied the box (clear it).
  */
+/**
+ * Body → the structured decision reason under `key`, or an error. Absent or
+ * null means none was given (the decision is a review verdict, not a fit
+ * judgment, and never feeds ICP evidence).
+ */
+export function parseDecisionReason(
+  body: unknown,
+  key: string,
+): { decisionReason?: DecisionReason } | { error: string } {
+  if (!body || typeof body !== "object" || !(key in body)) return {};
+  const raw = (body as Record<string, unknown>)[key];
+  if (raw === undefined || raw === null || raw === "") return {};
+  if (!isDecisionReason(raw))
+    return { error: `${key} must be one of ${DECISION_REASONS.join(", ")}` };
+  return { decisionReason: raw };
+}
+
 export function parseRejectReason(body: unknown): { reason?: string } | { error: string } {
   if (!body || typeof body !== "object" || !("reason" in body)) return {};
   const raw = (body as { reason: unknown }).reason;
@@ -848,6 +889,8 @@ export async function rejectQueueRoute(
   }
   const parsed = parseRejectReason(body);
   if ("error" in parsed) return jsonResponse({ error: parsed.error }, 400, req);
+  const parsedReason = parseDecisionReason(body, "decisionReason");
+  if ("error" in parsedReason) return jsonResponse({ error: parsedReason.error }, 400, req);
   const ledger = getLedger();
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
@@ -855,6 +898,7 @@ export async function rejectQueueRoute(
     id,
     status: "rejected",
     decidedBy: "human",
+    ...(parsedReason.decisionReason ? { decisionReason: parsedReason.decisionReason } : {}),
     ...(parsed.reason !== undefined ? { notes: parsed.reason } : {}),
   });
   return jsonResponse({ ok: true }, 200, req);

@@ -1,3 +1,4 @@
+import type { DecisionReason } from "./learning.ts";
 export * from "./reply-email-view.ts";
 /**
  * Wire types shared between apps/cli, apps/server, and apps/web.
@@ -702,6 +703,8 @@ export interface QueueRowView {
   decision: "approve" | "reject" | "auto_reject" | null;
   decidedBy: "human" | "human_bulk" | "machine" | null;
   decidedAt: string | null;
+  /** The structured reason the founder picked (#813); null on legacy, bulk and machine decisions. */
+  decisionReason?: DecisionReason | null;
 }
 
 /** Who decided a queue row, as a /prospects filter. `human` groups per-row and bulk clicks. */

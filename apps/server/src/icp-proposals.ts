@@ -23,6 +23,8 @@ const EVALUATION_COOLDOWN_MS = 24 * 60 * 60_000;
 const EVALUATION_LEASE_MS = 5 * 60_000;
 /** Few-shot example cap, matching `_filter.ts`'s own `recentIcpDecisions(20)` call, doubled for the coarser rewrite task. */
 const EVIDENCE_LIMIT = 40;
+/** Commercial outcomes are rarer than decisions; the newest twenty are plenty of signal. */
+const OUTCOME_LIMIT = 20;
 
 export async function refreshIcpProposal(): Promise<void> {
   if (demoMode()) return;
@@ -39,8 +41,11 @@ export async function refreshIcpProposal(): Promise<void> {
   );
   // Evidence check FIRST, before taking the lease: an install with too few
   // decisions must never spend the cooldown window (or a model call) on a
-  // check that was always going to come back empty.
-  const decisionCount = ledger.countHumanIcpDecisions();
+  // check that was always going to come back empty. Only decisions the
+  // founder tagged with a fit reason count (#813): a generic approve or
+  // reject may be about the draft or the moment, never a fit judgment.
+  const decisionCount = ledger.countHumanIcpDecisions({ reasoned: true });
+  const legacyExcluded = ledger.countHumanIcpDecisions() - decisionCount;
   if (decisionCount < minDecisions) return;
 
   const token = ledger.icpProposals.beginEvaluation(
@@ -58,7 +63,10 @@ export async function refreshIcpProposal(): Promise<void> {
       logEvent("icp_proposal.spend_capped", {}, "warn");
       return;
     }
-    const examples = ledger.recentIcpDecisions(EVIDENCE_LIMIT);
+    const examples = ledger.recentIcpDecisions(EVIDENCE_LIMIT, { reasoned: true });
+    // Commercial outcomes are evidence of a different kind from an approval:
+    // passed under their own key, counted separately, never conflated.
+    const outcomes = ledger.qualifiedOutcomeExamples(OUTCOME_LIMIT);
     const system = loadPrompt("icp-propose-rewrite");
     const response = await complete({
       messages: [
@@ -70,8 +78,10 @@ export async function refreshIcpProposal(): Promise<void> {
             decisions: examples.map((e) => ({
               candidate: e.candidate,
               decision: e.decision,
+              decisionReason: e.decisionReason,
               reason: e.reason,
             })),
+            outcomes: outcomes.map((o) => ({ candidate: o.candidate, outcome: o.outcome })),
           }),
         },
       ],
@@ -118,9 +128,18 @@ export async function refreshIcpProposal(): Promise<void> {
       proposedIcp,
       evidenceSummary,
       createdAt: new Date().toISOString(),
+      evidence: {
+        refs: [],
+        counts: {
+          fit_decisions: decisionCount,
+          qualified_outcomes: outcomes.length,
+          unreasoned_decisions_excluded: legacyExcluded,
+        },
+        method: "reasoned-decisions",
+      },
     });
     ledger.icpProposals.finish(token);
-    logEvent("icp_proposal.generated", { decisionCount });
+    logEvent("icp_proposal.generated", { decisionCount, outcomes: outcomes.length });
   } catch {
     // Model/provider errors can contain response text; keep it out of logs and UI.
     ledger.icpProposals.fail(token, "Could not evaluate an ICP rewrite; will retry.");

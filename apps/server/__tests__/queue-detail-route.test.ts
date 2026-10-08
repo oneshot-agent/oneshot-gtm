@@ -204,6 +204,33 @@ describe("approveQueueRoute status transitions", () => {
   beforeEach(() => {
     statusCalls.length = 0;
   });
+  it("records a fit judgment when the body carries one, none otherwise, and refuses an unknown reason (#813)", async () => {
+    queueRows.set(21, row({ id: 21, status: "pending", sent_at: null, decision: null }));
+    let res = await approveQueueRoute(
+      new Request("http://x/api/queue/21/approve", {
+        method: "POST",
+        body: JSON.stringify({ reason: "fit" }),
+      }),
+      { id: "21" },
+    );
+    expect(res.status).toBe(200);
+    expect(statusCalls.at(-1)).toMatchObject({ status: "approved", decisionReason: "fit" });
+    res = await approveQueueRoute(
+      new Request("http://x/api/queue/21/approve", { method: "POST" }),
+      { id: "21" },
+    );
+    expect(res.status).toBe(200);
+    expect(statusCalls.at(-1)).toMatchObject({ status: "approved" });
+    expect(statusCalls.at(-1)).not.toHaveProperty("decisionReason");
+    res = await approveQueueRoute(
+      new Request("http://x/api/queue/21/approve", {
+        method: "POST",
+        body: JSON.stringify({ reason: "bogus" }),
+      }),
+      { id: "21" },
+    );
+    expect(res.status).toBe(400);
+  });
   it("refuses with 409 so drain cannot re-send", async () => {
     queueRows.set(9, row({ status: "sent" }));
     const res = await approveQueueRoute(

@@ -32,6 +32,7 @@ import {
   isQueueImportInProgress,
   isRunnablePlay,
   type PackApplyResult,
+  type DecisionReason,
   type QueueRowView,
   type QueueStatusView,
   type TriggerView,
@@ -50,6 +51,7 @@ import { moveTargets, movedRowUrl, type MoveTarget } from "../lib/moveTargets.ts
 import { DraftHistory } from "../components/ledger/DraftHistory.tsx";
 import { neverSentAngles, removeAngleFromConfigText } from "../lib/angleRetire.ts";
 import { useMask, usePrivacy } from "../lib/privacy.tsx";
+import { decisionReasonForChip, REJECT_DECISION_REASONS } from "../lib/rejectReason.ts";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
 import {
@@ -260,6 +262,11 @@ function QueuePage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [rejectModal, setRejectModal] = useState<RejectModalState | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  // The structured why (#813), reset whenever the box opens on another row.
+  const [rejectDecisionReason, setRejectDecisionReason] = useState<DecisionReason | "">("");
+  useEffect(() => {
+    setRejectDecisionReason("");
+  }, [rejectModal]);
   // True while the LLM fallback is drafting a sentence for a row that had
   // nothing to prefill from. The box is editable throughout; a reply only
   // lands if the founder hasn't typed yet.
@@ -350,7 +357,8 @@ function QueuePage() {
   };
 
   const approve = useMutation({
-    mutationFn: (id: number) => api.approveQueue(id),
+    // A deliberate single-row approve is a fit judgment; bulk passes are not.
+    mutationFn: (id: number) => api.approveQueue(id, "fit"),
     onSuccess: invalidate,
     onError: (err) => toast.error(`couldn't approve · ${err.message}`),
   });
@@ -388,7 +396,8 @@ function QueuePage() {
     onError: (err) => toast.error(`couldn't move · ${err.message}`),
   });
   const reject = useMutation({
-    mutationFn: (vars: { id: number; reason: string }) => api.rejectQueue(vars.id, vars.reason),
+    mutationFn: (vars: { id: number; reason: string; decisionReason?: DecisionReason }) =>
+      api.rejectQueue(vars.id, vars.reason, vars.decisionReason),
     onSuccess: () => {
       setRejectModal(null);
       invalidate();
@@ -425,12 +434,17 @@ function QueuePage() {
     },
   });
   const bulkReject = useMutation({
-    mutationFn: async (vars: { ids: number[]; reason: string }) => {
+    mutationFn: async (vars: {
+      ids: number[];
+      reason: string;
+      decisionReason?: DecisionReason;
+    }) => {
       let ok = 0;
       for (const id of vars.ids) {
         try {
           // The one reason lands on every row; "" leaves each row's own note.
-          await api.rejectQueue(id, vars.reason || undefined);
+          // A structured reason chosen for the batch is explicit for each row too.
+          await api.rejectQueue(id, vars.reason || undefined, vars.decisionReason);
           ok++;
         } catch {
           /* ignore */
@@ -833,10 +847,11 @@ function QueuePage() {
               onClick={() => {
                 if (!rejectModal) return;
                 const reason = rejectReason.trim();
+                const decisionReason = rejectDecisionReason || undefined;
                 if (rejectModal.ids.length === 1) {
-                  reject.mutate({ id: rejectModal.ids[0]!, reason });
+                  reject.mutate({ id: rejectModal.ids[0]!, reason, decisionReason });
                 } else {
-                  bulkReject.mutate({ ids: rejectModal.ids, reason });
+                  bulkReject.mutate({ ids: rejectModal.ids, reason, decisionReason });
                 }
               }}
               disabled={reject.isPending || bulkReject.isPending}
@@ -923,12 +938,33 @@ function QueuePage() {
               key={chip}
               variant="ghost"
               size="sm"
-              onClick={() => setRejectReason((cur) => appendReason(cur, chip))}
+              onClick={() => {
+                setRejectReason((cur) => appendReason(cur, chip));
+                setRejectDecisionReason(decisionReasonForChip(chip));
+              }}
             >
               {chip}
             </Button>
           ))}
         </div>
+        <Field
+          label="Why (optional)"
+          hint="Only a fit judgment teaches the ICP; timing and draft problems never do."
+          className="mt-3"
+        >
+          <Select
+            value={rejectDecisionReason}
+            onChange={(e) => setRejectDecisionReason(e.target.value as DecisionReason | "")}
+            aria-label="Decision reason"
+          >
+            <option value="">No reason</option>
+            {REJECT_DECISION_REASONS.map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
       </Modal>
 
       <Modal

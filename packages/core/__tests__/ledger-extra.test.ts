@@ -80,19 +80,26 @@ describe("recentIcpDecisions", () => {
     });
 
     expect(ledger.recentIcpDecisions(2)).toEqual([
-      { candidate: { title: "Agent SDK" }, decision: true, reason: "founder approved" },
+      {
+        candidate: { title: "Agent SDK" },
+        decision: true,
+        decisionReason: null,
+        reason: "founder approved",
+      },
       {
         candidate: {
           title: "Agent builders",
           url: "https://example.com/agent-builders",
         },
         decision: true,
+        decisionReason: null,
         reason: "right topic",
       },
     ]);
     expect(ledger.recentIcpDecisions()).toContainEqual({
       candidate: { title: "Wine meetup" },
       decision: false,
+      decisionReason: null,
       reason: "wrong industry",
     });
     expect(rejected).not.toBeNull();

@@ -17,7 +17,7 @@ const ledger = getLedger();
 const now = 2_000_000_000_000;
 
 /** Seeds `n` human-decided rows on an ICP-eligible play so the evidence floor is met. */
-function seedDecisions(n: number): void {
+function seedDecisions(n: number, decisionReason: "fit" | "bad_timing" | null = "fit"): void {
   for (let i = 0; i < n; i++) {
     const id = ledger.enqueueTarget({
       playName: "show-hn",
@@ -25,13 +25,20 @@ function seedDecisions(n: number): void {
       dedupeKey: `icp-proposal-seed-${i}-${Math.random().toString(36).slice(2)}`,
       source: "find:show-hn",
     });
-    if (id != null) ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });
+    if (id != null)
+      ledger.setQueueStatus({ id, status: "approved", decidedBy: "human", decisionReason });
   }
 }
 
 beforeEach(() => {
   vi.spyOn(Date, "now").mockReturnValue(now);
-  for (const table of ["learning_jobs", "learning_proposals", "target_queue"]) {
+  for (const table of [
+    "learning_jobs",
+    "learning_proposals",
+    "target_queue",
+    "deal_outcomes",
+    "prospects",
+  ]) {
     (ledger as unknown as { db: { exec: (sql: string) => void } }).db.exec(`DELETE FROM ${table}`);
   }
   saveConfig({ ...loadConfig(), icpOneLiner: "B2B fintech founders", icpProposalMinDecisions: 3 });
@@ -131,4 +138,50 @@ it("does nothing when there is no active ICP configured yet", async () => {
   await refreshIcpProposal();
   expect(complete).not.toHaveBeenCalled();
   expect(ledger.icpProposals.list()).toEqual([]);
+});
+
+it("does not count decisions made without a fit reason, however many there are (#813)", async () => {
+  seedDecisions(3, null);
+  seedDecisions(3, "bad_timing");
+  await refreshIcpProposal();
+  expect(complete).not.toHaveBeenCalled();
+  seedDecisions(3, "fit");
+  await refreshIcpProposal();
+  expect(complete).toHaveBeenCalledTimes(1);
+  const data = JSON.parse(complete.mock.calls[0]![0].messages[1].content);
+  expect(data.decisions).toHaveLength(3);
+  expect(data.decisions.every((d: { decisionReason: string }) => d.decisionReason === "fit")).toBe(
+    true,
+  );
+  const proposal = ledger.learning.list({ kind: "icp", status: "pending" })[0]!;
+  expect(proposal.evidence.counts).toEqual({
+    fit_decisions: 3,
+    qualified_outcomes: 0,
+    unreasoned_decisions_excluded: 6,
+  });
+});
+
+it("passes qualified outcomes under their own key, separate from approvals", async () => {
+  seedDecisions(3);
+  const pid = ledger.upsertProspect({ email: "won@example.com", name: "Won", company: "Won Co" });
+  const q = ledger.enqueueTarget({
+    playName: "show-hn",
+    payload: { title: "Won ships", email: "won@example.com" },
+    dedupeKey: `won-${Math.random().toString(36).slice(2)}`,
+    source: "find:show-hn",
+  })!;
+  (ledger as unknown as { db: { exec: (sql: string) => void } }).db.exec(
+    `UPDATE target_queue SET prospect_id = ${pid} WHERE id = ${q}`,
+  );
+  ledger.recordOutcome({ prospectId: pid, outcome: "deal_won" });
+  ledger.recordOutcome({ prospectId: pid, outcome: "ghosted" });
+  await refreshIcpProposal();
+  const data = JSON.parse(complete.mock.calls[0]![0].messages[1].content);
+  expect(data.outcomes).toEqual([{ candidate: { title: "Won ships" }, outcome: "deal_won" }]);
+  expect(data.decisions).toHaveLength(3);
+  expect(
+    ledger.learning.list({ kind: "icp", status: "pending" })[0]!.evidence.counts,
+  ).toMatchObject({
+    qualified_outcomes: 1,
+  });
 });
