@@ -4,6 +4,8 @@ import {
   getLedger,
   loadConfig,
   logEvent,
+  noteAccountInviteCapReached,
+  reserveLinkedInInvite,
   SendDeferredError,
   type LinkedInOperation,
 } from "@oneshot-gtm/core";
@@ -186,6 +188,13 @@ export async function sendLinkedInInvite(input: {
       flags: [`note-too-long: ${note.length}/${LINKEDIN_NOTE_HARD_LIMIT} characters`],
     };
   }
+  // Take a slot of the workspace share (and check the account has invites
+  // left) before the API call. Deferred when either is used up.
+  const slot = await reserveLinkedInInvite({
+    accountId: input.sender.accountId,
+    fetchAccount: () => input.sender.call({ kind: "account", accountId: input.sender.accountId }),
+    workspace: input.workspace,
+  });
   let result: { invitation_id?: string; status?: string };
   try {
     result = (await input.sender.call({
@@ -198,8 +207,10 @@ export async function sendLinkedInInvite(input: {
       playName: input.row.playName,
     })) as { invitation_id?: string; status?: string };
   } catch (err) {
+    slot.release();
     const code = inviteErrorCode(err);
     if (code === "rate_limited" || code === "account_send_limit") {
+      noteAccountInviteCapReached(input.sender.accountId);
       throw new SendDeferredError(`LinkedIn invites paused for today (${code})`);
     }
     if (code) return { sent: false, flags: [`linkedin-${code.replace(/_/g, "-")}`] };
@@ -210,8 +221,10 @@ export async function sendLinkedInInvite(input: {
     !result.invitation_id ||
     (status !== "sent" && status !== "pending" && status !== "already_connected")
   ) {
+    slot.release();
     throw new Error(`unexpected LinkedIn invite result: ${JSON.stringify(result).slice(0, 160)}`);
   }
+  slot.confirm();
   const ledger = getLedger();
   const p = input.row.payload;
   const prospectId = ledger.upsertProspect({

@@ -8,9 +8,11 @@ All finders start disabled in a new workspace. Enable relevant sources from `/qu
 
 ## Prescreen, before any spend
 
-Before any paid `findEmail`, a prescreen skips dud domains (`*.vercel.app`, social hosts, link aggregators, personal email providers) and inputs whose "name" is obviously a username. LinkedIn URLs are captured on every finder path and verified to belong to the person before they're stored.
+Before any paid `findEmail`, a prescreen skips dud domains (`*.vercel.app`, social hosts, link aggregators, personal email providers) and inputs whose "name" is obviously a username. When contact lookup captures a LinkedIn URL, it verifies that the profile belongs to the person before storing it.
 
-## Two ICP gates per candidate
+## Contact qualification
+
+Contact-based finders use topic and person gates. Community threads use the relevance and buying-intent checks [below](#community-buying-requests).
 
 The **topic gate** judges the source — the repo, event, or announcement — and keeps whole categories of noise out before any spend.
 
@@ -18,13 +20,15 @@ The **person gate** judges the human's role, staged by cost: free role text the 
 
 ## Channels
 
-A finder queues each person on an outreach channel: `email`, `linkedin` or `x`. The `channels` setting lists the ones you want, in order of preference. The first channel a person has an address on wins:
+Contact-based finders queue people on `email`, `linkedin` or `x`. The `channels` setting lists the ones you want, in order of preference. The first channel a person has an address on wins:
 
 - `["email"]` (the default): today's behaviour. Anyone without a deliverable email is dropped.
 - `["email", "linkedin"]`: email when one is found. Otherwise the person is queued on LinkedIn, using the profile the finder already has or one search by name and company, instead of being dropped.
 - `["linkedin"]` or `["linkedin", "email"]`: LinkedIn first. No email lookup is paid for when a profile is found.
 
 Set it for the whole workspace in `config.json` (`"channels": [...]`) or per trigger in its config. The trigger's setting wins. The person gate applies on every channel. A LinkedIn row goes out as a connection request with a note; see [LinkedIn](./linkedin.md#connection-requests-as-a-first-touch). X is sent by hand: an X row gets a DM (280 characters at most) drafted from its signal. Copy it, send it from X, then **Mark sent**, because OneShot has no X action API yet. The contact step never searches X; a person is queued on X only when the finder already has their handle (Luma lists attendees' X profiles).
+
+Community replies stay on their source platform (`reddit` or `hacker-news`) and are posted manually.
 
 ## Product research
 
@@ -43,6 +47,8 @@ The person gate is re-judged on the researched role when its verdict was missing
 Backfill, in this order per workspace: `find research-queue --status live` (pending and approved rows), `find research-prospects --scope all --refresh` (every prospect with a profile URL: sent, in cadence, completed, replied), then `find synthesize-angles --refresh --scope active` so follow-ups and reply drafts pick up the new dossier. None of the three has a cost cap by default (`--max-cost-usd` bounds a rehearsal); each run considers up to 100,000 rows per status and researched rows are skipped, so re-running continues where the last run stopped. `--dry-run` shows counts and an estimate; `--no-rejudge` and `--no-company` narrow what is bought. `--cache-only --refresh` re-derives every row from research already bought (the 90-day shared cache) and bills nothing; rows with nothing cached are left alone. Research also keeps the provider's LinkedIn profile URL and fills it onto a row or prospect that has none — never over one a finder set. Recent posts are captured when a row is approved (in the background; approving never waits) and, every few hours, for prospects in a running cadence whose cached posts are missing or older than 14 days — never for the pending rows a finder creates, since most are rejected. Each capture is about $0.07 from a LinkedIn or X profile, one call at a time, cached 14 days across workspaces, under the daily spend ceiling; the dossier keeps only a pointer and nothing drafts from the posts yet. Set `personNewsfeed: false` on a trigger to skip it for that trigger's rows, or pass `--no-newsfeed` on a research run; `--newsfeed-only` captures posts for rows that already carry research, with `--dry-run` showing the count and estimate, and `--cache-only` never buys one.
 
 **GitHub-only people.** For someone whose whole public footprint is GitHub, the github-stars gate judges on what GitHub publishes, since person research usually comes back `unavailable`: bio, company, site, location, account age, their own recent repos, and a profile-README excerpt on a bare profile (one extra API call per candidate, up to three on bare profiles). The block is stored on the row as `githubEvidence`. `find rejudge-github` re-runs that decision on live github-stars rows with no paid research: pending rejects move to rejected, approved rows only with `--reject-approved`, and a GitHub or classifier failure skips a row rather than rejecting it. `--dry-run` writes nothing.
+
+**Rows moved from another workspace.** A move (the row's **move →** menu) carries the person and their research across, but not the sending workspace's edge, ICP verdict or fit line: those were written for the other product. On arrival the receiving workspace re-derives them for itself. The edge comes from its own trigger for that play (the trigger the row's source names, else one routed to the same play). If none has an edge, it writes one from the workspace's product positioning and the row's research, marked as generated. The verdict comes from re-judging the carried research against this ICP. A row that doesn't fit stays pending with the reason shown, because you moved it on purpose. This runs in the background and costs at most two small model calls. `find rederive --id <n>` or `find rederive --moved` does the same for rows moved before this existed, or whose background run timed out. `--dry-run` prints without writing, and status never changes.
 
 ## Review order
 
@@ -119,3 +125,23 @@ retains the README source URL and resolution timestamp. Completed README extract
 results are cached in memory for 24 hours; temporary errors are not cached as misses.
 Requests are bounded to 10 seconds and 64 KiB. The existing approved-row recovery
 action gains this fallback; deployment does not retry historical rows or send messages.
+
+## Community buying requests
+
+Enable `community-buyer-threads` in Queue's finder controls. It uses the normal Run now, schedule, review and draft flow; new workspaces start with it disabled.
+
+Set `keywords` (category phrases) and/or `competitors` (product names), up to 20 terms total. Defaults:
+
+- `platforms`: `["reddit", "hacker-news"]`
+- `sinceDays`: `7`; `limit`: `25`; `maxCostUsd`: `5`
+- Polling: every six hours
+
+HN search needs no Algolia key. Reddit uses existing OneShot search/read credentials. Coverage depends on indexing. Source failures appear separately from empty results and can be retried.
+
+Rows retain the opening post's URL, author, date, text and classification evidence. Relevant and uncertain matches await review; unrelated posts are saved as rejected. Repeated discoveries of a thread are deduplicated. Product and person research default off; no email lookup is required.
+
+Approve a row, then generate its draft or run `oneshot-gtm find drain community-reply`. Setup must contain your founder name, product description and verified product brief. Drafts use that brief and disclose your affiliation; review claims before posting.
+
+Use **Open thread**, **Copy reply**, then **Mark posted** after posting yourself. Confirmation records the action once. Nothing posts automatically or starts an email cadence; later drains retain clean drafts.
+
+Finder caps and daily reservations apply. OneShot calls retain their receipts. LLM calls record provider costs when available, otherwise a labeled $0.05-per-call estimate, including attempted calls with uncertain failure costs. Caps check estimates before calls and reported costs afterward, so actual charges can exceed an estimate. Manual posting creates no paid receipt.

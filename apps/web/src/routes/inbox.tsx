@@ -800,8 +800,9 @@ function ThreadRow({
       api.replyState({
         key: t.key,
         action,
+        // Email archive guards compare every inbound message, including bounces and auto-replies.
         observedReplyIds: t.messages
-          .filter((m) => m.direction === "inbound" && m.human && !m.deleted)
+          .filter((m) => m.direction === "inbound" && !m.deleted)
           .map((m) => m.id),
       }),
     onSuccess: invalidate,

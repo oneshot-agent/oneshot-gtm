@@ -126,6 +126,12 @@ vi.mock("../src/x-repost-intro.ts", () => ({
     return { drafted: [] };
   },
 }));
+vi.mock("../src/community-reply.ts", () => ({
+  runCommunityReply: async (opts: { draftAngle?: string; dryRun: boolean }) => {
+    calls.set("runCommunityReply", opts);
+    return { drafted: [] };
+  },
+}));
 const { PLAYS } = await import("../src/registry.ts");
 it.each(Object.keys(PLAYS))("forwards the selected argument to %s", async (name) => {
   calls.clear();

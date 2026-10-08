@@ -27,6 +27,7 @@ import {
   configLlm,
   configSlackWebhook,
   configSpendCeiling,
+  configLinkedInInvites,
   configTelemetry,
   configXEngine,
   configLinkedInSession,
@@ -86,6 +87,7 @@ import { commandResearchProspects } from "./commands/research-prospects.ts";
 import { commandResearchProducts } from "./commands/research-products.ts";
 import { commandResearchQueue } from "./commands/research-queue.ts";
 import { commandRejudgeGitHub } from "./commands/rejudge-github.ts";
+import { commandRederive } from "./commands/rederive.ts";
 import { commandSynthesizeAngles } from "./commands/synthesize-angles.ts";
 import { commandScoreProspects } from "./commands/score-prospects.ts";
 import { commandBackfillFitReason } from "./commands/backfill-fit-reason.ts";
@@ -307,6 +309,12 @@ config
     "Show or set the install-wide daily USD spend ceiling (halts automated finder/drain runs once reached; 'off' clears it)",
   )
   .action(runOrFail((amount?: string) => configSpendCeiling(amount)));
+config
+  .command("linkedin-invites [count]")
+  .description(
+    "Show or set this workspace's share of the LinkedIn account's daily invite cap (positive integer per UTC day; 'off' clears it)",
+  )
+  .action(runOrFail((count?: string) => configLinkedInInvites(count)));
 
 const gmail = program
   .command("gmail")
@@ -720,6 +728,24 @@ find
         });
       },
     ),
+  );
+
+find
+  .command("rederive")
+  .option("--id <n>", "re-derive one queue row by id", positiveInt("--id"))
+  .option("--moved", "every open row moved in from another workspace", false)
+  .option("--dry-run", "derive and print; write nothing", false)
+  .description(
+    "Re-derive this workspace's edge, ICP verdict and fit reason for rows moved in from another workspace (at most two small model calls per row; never changes status)",
+  )
+  .action(
+    runOrFail(async (opts: { id?: number; moved: boolean; dryRun: boolean }) => {
+      await commandRederive({
+        moved: opts.moved,
+        dryRun: opts.dryRun,
+        ...(opts.id !== undefined ? { id: opts.id } : {}),
+      });
+    }),
   );
 
 find

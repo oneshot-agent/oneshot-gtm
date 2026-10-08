@@ -465,6 +465,23 @@ describe("drainQueue LinkedIn rows", () => {
     expect(sendLinkedInInviteMock.mock.calls[0]![0]).toMatchObject({ note: "fresh note" });
   });
 
+  it("a deferred invite (workspace share or account cap) leaves the row approved with its draft intact", async () => {
+    const deferred = new Error("LinkedIn invites paused for today (workspace share of 3 used)");
+    deferred.name = "SendDeferredError";
+    sendLinkedInInviteMock.mockRejectedValue(deferred);
+    ledgerStub.dequeueApproved.mockReturnValue([linkedInRow()]);
+    const out = await drainQueue({
+      playName: "stack-consolidation",
+      dryRun: false,
+      linkedIn: sender,
+    });
+    expect(out.sent).toBe(0);
+    expect(out.deferred).toBe(1);
+    expect(out.errors).toEqual([]);
+    expect(ledgerStub.setQueueStatus).not.toHaveBeenCalled();
+    expect(ledgerStub.setQueueDraft).not.toHaveBeenCalled();
+  });
+
   it("a refused invite goes back to pending with its flag, not round the drain again", async () => {
     sendLinkedInInviteMock.mockResolvedValue({ sent: false, flags: ["linkedin-email-required"] });
     ledgerStub.dequeueApproved.mockReturnValue([linkedInRow()]);
@@ -520,4 +537,34 @@ describe("drainQueue X rows", () => {
     const saved = ledgerStub.setQueueDraft.mock.calls.at(-1)![0] as { draft: { body: string } };
     expect(saved.draft.body).toBe("dm");
   });
+});
+
+it("public reply drains only draft and later drains preserve a clean draft", async () => {
+  const { PLAYS } = await import("@oneshot-gtm/plays");
+  const draft = {
+    subject: "Public reply",
+    body: "A helpful answer",
+    flags: [],
+    sent: false,
+    receiptIds: [],
+  };
+  const run = vi.fn().mockResolvedValue({ drafted: [draft] });
+  PLAYS["community-reply"] = { run };
+  try {
+    const item = { ...row(90), play_name: "community-reply", channel: "reddit" };
+    ledgerStub.dequeueApproved.mockReturnValueOnce([item]);
+    const out = await drainQueue({ playName: "community-reply", dryRun: false });
+    expect(out.sent).toBe(0);
+    expect(run).toHaveBeenCalledOnce();
+    expect(ledgerStub.setQueueDraft).toHaveBeenCalled();
+    expect(ledgerStub.setQueueStatus).not.toHaveBeenCalled();
+    run.mockClear();
+    ledgerStub.dequeueApproved.mockReturnValueOnce([
+      { ...item, last_draft_json: JSON.stringify(draft) },
+    ]);
+    await drainQueue({ playName: "community-reply", dryRun: false });
+    expect(run).not.toHaveBeenCalled();
+  } finally {
+    delete PLAYS["community-reply"];
+  }
 });

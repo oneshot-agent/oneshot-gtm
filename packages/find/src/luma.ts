@@ -22,8 +22,9 @@ import { fetchAuthedGuestList, mergeAttendees } from "./_luma-auth.ts";
 import {
   cityToSlug,
   eventNameMatchesTopics,
-  fetchCityEvents,
+  fetchCalendarEvents,
   fetchEventDetails,
+  fetchPlaceEvents,
 } from "./_luma-discover.ts";
 import type { LumaEventExtract, LumaPublicAttendee, RunOpts } from "./_types.ts";
 
@@ -54,6 +55,19 @@ export interface LumaFinderOpts extends RunOpts {
    */
   sinceDays?: number;
   /**
+   * Luma calendars to read in full: slugs (`luma.com/<slug>`), `cal-` ids or
+   * calendar URLs. A themed week's calendar holds hundreds of events the city
+   * page never shows. Calendar events are read before city events.
+   */
+  calendars?: string[];
+  /**
+   * Earliest event start to accept (ISO date or datetime), for a one-off
+   * backfill of events that already happened. Only moves the lower bound back:
+   * the default is 24 hours ago. City pages only list upcoming events, so this
+   * reaches past events through `calendars`.
+   */
+  fromDate?: string;
+  /**
    * `"affinity"`: attending an event this trigger found counts as evidence of
    * fit, so the person gate passes practitioners whatever their title.
    * Default `"role"` judges the role alone.
@@ -69,6 +83,8 @@ interface SearchHit {
 
 interface CitySearchHit extends SearchHit {
   discoveryCity: string;
+  /** The city the discovery listing gave for the event; the fallback when its page omits one. */
+  listedCity?: string | null;
 }
 
 interface AttendeeWithEvent {
@@ -172,6 +188,11 @@ function upcomingMonths(sinceDays: number): string {
   return months.join(" ");
 }
 
+/** The buckets named by `keys`, in that order (a missing key is an empty bucket). */
+function bucketsFor<T>(all: ReadonlyMap<string, T[]>, keys: readonly string[]): Map<string, T[]> {
+  return new Map(keys.map((key) => [key, all.get(key) ?? []] as const));
+}
+
 export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   source: string;
   candidates: number;
@@ -195,6 +216,20 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       seenCities.add(key);
       return true;
     });
+  // Calendars get their own discovery buckets, keyed apart from city names.
+  const seenCalendars = new Set<string>();
+  const calendars = (opts.calendars ?? [])
+    .map((raw) => raw.trim())
+    .filter((ref) => {
+      const key = ref.toLowerCase();
+      if (!ref || seenCalendars.has(key)) return false;
+      seenCalendars.add(key);
+      return true;
+    });
+  const calendarKeys = calendars.map((ref) => `calendar:${ref}`);
+  // Every discovery bucket, calendars first: a calendar is a time-boxed source
+  // the founder named, the cities are the background feed.
+  const sources = [...calendarKeys, ...cities];
   const yourEdge = (opts.yourEdge ?? "").trim();
   const icp = resolveIcp(opts.icpOverride);
   const affinity = opts.personGate === "affinity";
@@ -232,13 +267,29 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   // after extract still enforces the exact window.
   const windowMonths = upcomingMonths(sinceDays);
   const seenUrls = new Set<string>();
-  const cityHits = new Map<string, CitySearchHit[]>(cities.map((city) => [city, []]));
-  const discoveryStats = new Map(cities.map((city) => [city, { discovered: 0, inWindow: 0 }]));
+  const cityHits = new Map<string, CitySearchHit[]>(sources.map((source) => [source, []]));
+  const discoveryStats = new Map(sources.map((source) => [source, { discovered: 0, inWindow: 0 }]));
   const cap = limit * 3;
-  const windowStart = Date.now() - 24 * 3600 * 1000;
+  // `fromDate` only ever widens the window backwards (a one-off backfill of
+  // events that already happened); without it, yesterday is the floor.
+  const defaultWindowStart = Date.now() - 24 * 3600 * 1000;
+  const fromMs = opts.fromDate ? new Date(opts.fromDate).getTime() : Number.NaN;
+  if (opts.fromDate && !Number.isFinite(fromMs)) {
+    logEvent("luma-events.from_date_invalid", { name: PLAY_NAME, fromDate: opts.fromDate }, "warn");
+  }
+  const windowStart = Number.isFinite(fromMs)
+    ? Math.min(defaultWindowStart, fromMs)
+    : defaultWindowStart;
+  const backfill = windowStart < defaultWindowStart;
   const windowEnd = Date.now() + sinceDays * 24 * 3600 * 1000;
 
-  const pushHit = (city: string, url: string, title: string, description: string): boolean => {
+  const pushHit = (
+    city: string,
+    url: string,
+    title: string,
+    description: string,
+    listedCity: string | null = null,
+  ): boolean => {
     const canonical = url.split("?")[0]!.replace(/\/$/, "");
     if (seenUrls.has(canonical)) return false;
     if (topics.length > 0 && !eventNameMatchesTopics(title, topics)) {
@@ -246,7 +297,9 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       return false;
     }
     seenUrls.add(canonical);
-    cityHits.get(city)!.push({ url: canonical, title, description, discoveryCity: city });
+    cityHits
+      .get(city)!
+      .push({ url: canonical, title, description, discoveryCity: city, listedCity });
     return true;
   };
 
@@ -287,14 +340,46 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     }
   };
 
-  // Discovery-first: Luma's per-city page (`luma.com/<slug>`) lists UPCOMING
-  // events directly with real start_at timestamps: geo-robust and free (a
-  // plain fetch, no SDK spend). Window-filter here so Phase 2 only pays to read
-  // genuinely-upcoming events. Fall back to webSearch per city when the city
-  // isn't a mapped hub, the page won't parse, or nothing lands in the window.
+  // Calendars first, read in full: a themed week's calendar (a city's Tech
+  // Week) holds hundreds of events, few of which reach the city feed. Read
+  // before the cities so an event on both lands in the calendar's bucket.
+  for (const [i, ref] of calendars.entries()) {
+    const key = calendarKeys[i]!;
+    const calendar = await fetchCalendarEvents(ref, { fromMs: windowStart, toMs: windowEnd });
+    if (!calendar) {
+      logEvent("luma-events.calendar_failed", { name: PLAY_NAME, calendar: ref }, "warn");
+      continue;
+    }
+    const stats = discoveryStats.get(key)!;
+    stats.discovered += calendar.events.length;
+    stats.inWindow += calendar.events.length;
+    let eligible = 0;
+    for (const ev of calendar.events) {
+      if (pushHit(key, `https://luma.com/${ev.slug}`, ev.name, "", ev.city)) eligible++;
+    }
+    logEvent(
+      "luma-events.calendar_ok",
+      {
+        name: PLAY_NAME,
+        calendar: ref,
+        calendar_api_id: calendar.calendarApiId,
+        calendar_name: calendar.calendarName,
+        in_window: calendar.events.length,
+        eligible,
+      },
+      "info",
+    );
+  }
+
+  // Discovery-first: Luma's per-city feed lists UPCOMING events directly with
+  // real start_at timestamps: geo-robust and free (plain fetches, no SDK
+  // spend). `fetchPlaceEvents` pages the feed past the city page's ~20-event
+  // cap. Window-filter here so Phase 2 only pays to read genuinely-upcoming
+  // events. Fall back to webSearch per city when the city isn't a mapped hub,
+  // the page won't parse, or nothing lands in the window.
   for (const city of cities) {
     const slug = cityToSlug(city);
-    const discovered = slug ? await fetchCityEvents(slug) : null;
+    const discovered = slug ? await fetchPlaceEvents(slug, { toMs: windowEnd }) : null;
     if (discovered && discovered.length > 0) {
       const stats = discoveryStats.get(city)!;
       stats.discovered += discovered.length;
@@ -303,7 +388,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
         const ms = new Date(ev.startAtIso).getTime();
         if (!Number.isFinite(ms) || ms < windowStart || ms > windowEnd) continue;
         stats.inWindow++;
-        if (pushHit(city, `https://luma.com/${ev.slug}`, ev.name, "")) eligible++;
+        if (pushHit(city, `https://luma.com/${ev.slug}`, ev.name, "", ev.city)) eligible++;
       }
       logEvent(
         "luma-events.discover_ok",
@@ -321,7 +406,11 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     }
     await webSearchCity(city);
   }
-  const hits = roundRobin(cityHits, cap);
+  const calendarHits = roundRobin(bucketsFor(cityHits, calendarKeys), cap);
+  const hits = [
+    ...calendarHits,
+    ...roundRobin(bucketsFor(cityHits, cities), cap - calendarHits.length),
+  ];
   result.candidates = hits.length;
 
   logEvent(
@@ -331,13 +420,13 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       cap,
       total_selected: hits.length,
       by_city: Object.fromEntries(
-        cities.map((city) => [
-          city,
+        sources.map((source) => [
+          source,
           {
-            discovered: discoveryStats.get(city)?.discovered ?? 0,
-            in_window: discoveryStats.get(city)?.inWindow ?? 0,
-            eligible: cityHits.get(city)?.length ?? 0,
-            selected: hits.filter((hit) => hit.discoveryCity === city).length,
+            discovered: discoveryStats.get(source)?.discovered ?? 0,
+            in_window: discoveryStats.get(source)?.inWindow ?? 0,
+            eligible: cityHits.get(source)?.length ?? 0,
+            selected: hits.filter((hit) => hit.discoveryCity === source).length,
           },
         ]),
       ),
@@ -471,7 +560,9 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
           logEvent("finder.skipped_non_event", { name: PLAY_NAME, url: hit.url }, "info");
           return null;
         }
-        if (extract.eventHasPassed) {
+        // A backfill asks for passed events on purpose; the date defense
+        // below still holds them to `fromDate`.
+        if (extract.eventHasPassed && !backfill) {
           logEvent(
             "finder.skipped_past_event",
             { name: PLAY_NAME, url: hit.url, eventTitle: extract.eventTitle },
@@ -491,7 +582,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
           return null;
         }
         const eventMs = new Date(extract.eventDateIso).getTime();
-        if (!Number.isFinite(eventMs) || eventMs < Date.now() - 24 * 3600 * 1000) {
+        if (!Number.isFinite(eventMs) || eventMs < windowStart) {
           logEvent(
             "finder.skipped_past_event",
             {
@@ -573,7 +664,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     });
 
   const attendeeEventBuckets = new Map(
-    cities.map((city) => [city, new Map<string, AttendeeWithEvent[]>()]),
+    sources.map((source) => [source, new Map<string, AttendeeWithEvent[]>()]),
   );
   for (const item of eventExtracts) {
     if (!item) continue;
@@ -583,7 +674,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       title: extract.eventTitle ?? hit.title,
       dateIso: extract.eventDateIso ?? "",
       timezone: extract.eventTimezone ?? null,
-      city: extract.eventCity ?? "",
+      city: extract.eventCity || hit.listedCity || "",
       description: extract.eventDescription ?? "",
     };
     const eventAttendees: AttendeeWithEvent[] = [];
@@ -598,24 +689,28 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     attendeeEventBuckets.get(hit.discoveryCity)!.set(hit.url, eventAttendees);
   }
   const attendeeBuckets = new Map(
-    cities.map((city) => {
-      const eventBuckets = attendeeEventBuckets.get(city)!;
+    sources.map((source) => {
+      const eventBuckets = attendeeEventBuckets.get(source)!;
       const count = [...eventBuckets.values()].reduce((sum, bucket) => sum + bucket.length, 0);
-      return [city, roundRobin(eventBuckets, count)] as const;
+      return [source, roundRobin(eventBuckets, count)] as const;
     }),
   );
   const attendeeCount = [...attendeeBuckets.values()].reduce(
     (sum, bucket) => sum + bucket.length,
     0,
   );
-  const attendeesWork = roundRobin(attendeeBuckets, attendeeCount);
+  // Calendar attendees first, then the cities' round-robin, mirroring Phase 1.
+  const attendeesWork = [
+    ...roundRobin(bucketsFor(attendeeBuckets, calendarKeys), attendeeCount),
+    ...roundRobin(bucketsFor(attendeeBuckets, cities), attendeeCount),
+  ];
   logEvent(
     "luma-events.attendees_sampled",
     {
       name: PLAY_NAME,
       total: attendeesWork.length,
       by_city: Object.fromEntries(
-        cities.map((city) => [city, attendeeBuckets.get(city)?.length ?? 0]),
+        sources.map((source) => [source, attendeeBuckets.get(source)?.length ?? 0]),
       ),
     },
     "info",
@@ -628,7 +723,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   // The enqueue count itself stays exact via the synchronous re-check right
   // before enqueueTarget below.
   const phase3Halted = { value: false };
-  const attemptsByCity = new Map(cities.map((city) => [city, 0]));
+  const attemptsByCity = new Map(sources.map((source) => [source, 0]));
   await parallelMap(attendeesWork, 3, async (work) => {
     if (phase3Halted.value) return;
     if (result.enqueued >= limit) {

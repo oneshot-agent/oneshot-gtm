@@ -90,6 +90,7 @@ describe("TRIGGERS registry", () => {
       "accelerator-batch",
       "breakup-revive",
       "civic-agenda",
+      "community-buyer-threads",
       "github-stars",
       "github-topics",
       "gov-solicitation",
@@ -306,6 +307,17 @@ describe("checkReadiness", () => {
     if (!out.ready) expect(out.reason).toMatch(/cities/);
   });
 
+  it("luma-events is ready with calendars and no cities", () => {
+    const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      cities: [],
+      calendars: ["sftw"],
+      yourEdge: "a teardown",
+    });
+    expect(out).toEqual({ ready: true });
+  });
+
   it("luma-events becomes ready with topics + cities + yourEdge", () => {
     const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
     const out = checkReadiness(spec, {
@@ -398,6 +410,7 @@ describe("checkReadiness", () => {
       "x-reposters",
       "gov-solicitation",
       "civic-agenda",
+      "community-buyer-threads",
       "local-registry",
       "gov-solicitation",
       "civic-agenda",

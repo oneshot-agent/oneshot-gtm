@@ -1,4 +1,5 @@
 import type { CadenceStopReason, CadenceView } from "@oneshot-gtm/shared-types";
+import { isHeldElsewhere } from "./cadenceState.ts";
 
 export type CadenceStopTarget = Pick<CadenceView, "prospectId" | "prospectName" | "playName">;
 export type CadenceStopInput = { reason: CadenceStopReason; note?: string };
@@ -8,7 +9,11 @@ export type CadenceStopFailure = { target: CadenceStopTarget; message: string };
 export const cadenceKey = (c: Pick<CadenceView, "prospectId" | "playName">): string =>
   `${c.prospectId}|${c.playName}`;
 
-export function cadenceSelection(rows: readonly CadenceView[], selected: ReadonlySet<string>) {
+export function cadenceSelection(
+  rows: readonly CadenceView[],
+  selected: ReadonlySet<string>,
+  nowMs: number = Date.now(),
+) {
   const selectable = rows.filter((c) => c.status === "active" && !c.isSending);
   const chosen = rows.filter((c) => c.status === "active" && selected.has(cadenceKey(c)));
   const stoppable = chosen.filter((c) => !c.isSending);
@@ -16,7 +21,8 @@ export function cadenceSelection(rows: readonly CadenceView[], selected: Readonl
     (c) => c.nextStepChannel !== "direct_mail" && c.nextStepLabel != null,
   );
   const sendable = previewable.filter(
-    (c) => c.nextStepDraft != null && c.nextStepDraft.flags.length === 0,
+    (c) =>
+      c.nextStepDraft != null && c.nextStepDraft.flags.length === 0 && !isHeldElsewhere(c, nowMs),
   );
   return { selectable, chosen, stoppable, previewable, sendable };
 }

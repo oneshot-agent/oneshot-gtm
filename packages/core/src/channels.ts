@@ -1,3 +1,4 @@
+import { communityThread } from "./community.ts";
 /**
  * Outreach channels a queue row or cadence step can use. Email is the default;
  * LinkedIn and X are first-class choices, not fallbacks. A workspace or
@@ -10,20 +11,22 @@
  * them; nothing else about the row changes.
  */
 
-export const OUTREACH_CHANNELS = ["email", "linkedin", "x"] as const;
+export const OUTREACH_CHANNELS = ["email", "linkedin", "x", "reddit", "hacker-news"] as const;
 export type OutreachChannel = (typeof OUTREACH_CHANNELS)[number];
 
 export type ChannelSender = "api" | "manual" | "unavailable";
 
 export interface ChannelSpec {
   /** What identifies the person on this channel. */
-  address: "email" | "linkedin_profile" | "x_handle";
+  address: "email" | "linkedin_profile" | "x_handle" | "thread";
   /** First-touch draft limit in characters; null when the prompt's word budget governs (email). */
   firstTouchMaxChars: number | null;
   label: string;
 }
 
 export const CHANNEL_SPECS: Record<OutreachChannel, ChannelSpec> = {
+  reddit: { address: "thread", firstTouchMaxChars: null, label: "Reddit" },
+  "hacker-news": { address: "thread", firstTouchMaxChars: null, label: "Hacker News" },
   email: { address: "email", firstTouchMaxChars: null, label: "Email" },
   // LinkedIn accepts 300 characters on a connection note; accounts without
   // Premium are held to 200, so the draft target is the lower one.
@@ -50,6 +53,8 @@ export function firstTouchSender(channel: OutreachChannel): ChannelSender {
     case "email":
     case "linkedin":
       return "api";
+    case "reddit":
+    case "hacker-news":
     case "x":
       return "manual";
   }
@@ -60,6 +65,8 @@ export function firstTouchSender(channel: OutreachChannel): ChannelSender {
  * carries: an email, a LinkedIn profile URL, an X handle or profile.
  */
 export function channelAddresses(payload: Record<string, unknown>): OutreachChannel[] {
+  const thread = communityThread(payload);
+  if (thread) return [thread.platform];
   const has = (key: string) =>
     typeof payload[key] === "string" && (payload[key] as string).trim() !== "";
   const out: OutreachChannel[] = [];

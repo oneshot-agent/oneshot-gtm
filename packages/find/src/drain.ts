@@ -214,7 +214,8 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
     reservation.release();
   }
 
-  if (opts.dryRun) outcome.sent = rows.length; // would-be-sent (no actual send in dryRun)
+  if (opts.dryRun)
+    outcome.sent = rows.filter((row) => firstTouchSender(channelOf(row.channel)) === "api").length; // would-be-sent (no actual send in dryRun)
 
   return outcome;
 }
@@ -238,12 +239,18 @@ async function dispatchOneTarget(opts: DrainOpts, row: QueueRow): Promise<DrainD
       ...(dm.voiceKey ? { voiceKey: dm.voiceKey } : {}),
     };
   }
+  if (
+    (row.channel === "reddit" || row.channel === "hacker-news") &&
+    row.play_name !== "community-reply"
+  )
+    throw new Error("Public replies require the community-reply play");
   const play = PLAYS[opts.playName];
   if (!play) throw new Error(`drain: unsupported play '${opts.playName}'`);
   const target = resolveQueueTarget(row);
   const result = await play.run({
     dryRun: opts.dryRun,
     targets: [target],
+    ...(row.play_name === "community-reply" ? { spendReserved: true } : {}),
   });
   return firstDraft(result.drafted);
 }

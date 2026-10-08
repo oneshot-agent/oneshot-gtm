@@ -65,7 +65,10 @@ export function linkedInThreads(): ReplyThread[] {
         a.sync?.sync_state !== "reconnect_required" &&
         a.account.allowed_actions.includes("reply");
       const canSend = connectionAvailable && currentConnection && !c.read_only;
-      const oneToOne = c.attendees_synced && c.type === 0 && peers.length === 1;
+      // LinkedIn marks a group chat `type: 1` (even when only one other member
+      // is left). Some direct chats sync with no type at all; with exactly one
+      // other attendee those are one-to-one too, not groups.
+      const oneToOne = c.attendees_synced && (c.type === 0 || c.type == null) && peers.length === 1;
       const canGenerate =
         !a.removedAt && currentConnection && oneToOne && !!latest.body.trim() && latest.human;
       const linkedinConnectionState = !connectionAvailable

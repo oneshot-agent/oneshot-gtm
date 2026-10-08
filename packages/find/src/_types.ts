@@ -38,7 +38,13 @@ export interface FinderResult {
    * `perCohort`: a dead portal logs and continues, the run only halts when
    * every source returns 0. Only set by `local-registry`.
    */
-  perSource?: Array<{ source: string; label: string; records: number; error?: string }>;
+  perSource?: Array<{
+    source: string;
+    label: string;
+    records: number;
+    error?: string;
+    status?: "skipped";
+  }>;
 }
 
 export interface ShowHnHit {

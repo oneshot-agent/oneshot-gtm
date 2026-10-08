@@ -6,6 +6,8 @@ export const CHANNEL_LABELS: Record<Channel, string> = {
   email: "Email",
   linkedin: "LinkedIn",
   x: "X",
+  reddit: "Reddit",
+  "hacker-news": "Hacker News",
 };
 
 /** First-touch length limit per channel, in characters; null when words govern (email). */
@@ -13,6 +15,8 @@ export const CHANNEL_MAX_CHARS: Record<Channel, number | null> = {
   email: null,
   linkedin: 200,
   x: 280,
+  reddit: null,
+  "hacker-news": null,
 };
 
 /**
@@ -21,6 +25,8 @@ export const CHANNEL_MAX_CHARS: Record<Channel, number | null> = {
  */
 export function reachableChannels(payload: unknown): Channel[] {
   const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+  if ((p.platform === "reddit" || p.platform === "hacker-news") && typeof p.postUrl === "string")
+    return [p.platform];
   const has = (key: string) => typeof p[key] === "string" && (p[key] as string).trim() !== "";
   const out: Channel[] = [];
   if (has("email")) out.push("email");

@@ -6,9 +6,10 @@
     "target": "ES2022",
     "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "types": ["vite/client"],
+    "types": ["vite/client", "bun"],
     "paths": {
       "@/*": ["./src/*"],
+      "@oneshot-gtm/core": ["../../packages/core/src/index.ts"],
       "@oneshot-gtm/shared-types": ["../../packages/shared-types/src/index.ts"]
     }
   },

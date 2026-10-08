@@ -181,7 +181,7 @@ export interface SequenceEventRecord {
   prospect_id: number;
   play_name: string;
   step_index: number;
-  channel: "email" | "sms" | "voice" | "linkedin" | "x" | "direct_mail";
+  channel: "email" | "sms" | "voice" | "linkedin" | "x" | "direct_mail" | "reddit" | "hacker-news";
   status:
     | "queued"
     | "sent"
@@ -543,6 +543,12 @@ export interface OneShotConfig {
   linkedinSessionInvalidAt?: string | null;
   /** Reads per local day before the tier skips with a reason (account safety). Default 80. */
   linkedinReadsPerDay?: number;
+  /**
+   * LinkedIn outreach settings. `invitesPerDay`: this workspace's share of the
+   * LinkedIn account's daily invite cap (positive integer, UTC day). Unset =
+   * no share; only OneShot's account cap applies.
+   */
+  linkedin?: { invitesPerDay?: number };
   /**
    * Outreach channels finders may queue people on, in order of preference
    * ("email", "linkedin", "x"). A trigger's own `channels` overrides it.

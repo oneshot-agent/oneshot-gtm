@@ -1,4 +1,5 @@
 import type { OnboardingStatus } from "@oneshot-gtm/shared-types";
+import type { LinkedInInviteQuotaView } from "@oneshot-gtm/shared-types";
 import type {
   RepliesResult,
   ReplyLearningStatus,
@@ -423,6 +424,7 @@ export const api = {
       ...(email ? { email } : {}),
       ...(businessAddress ? { businessAddress } : {}),
     }),
+  linkedInInvites: () => getJson<LinkedInInviteQuotaView>("/linkedin/invites"),
   queue: (opts?: {
     forRun?: boolean;
     play?: string;
@@ -488,7 +490,7 @@ export const api = {
   withdrawInvite: (id: number) =>
     postJson<{ ok: boolean; status: string | null }>(`/queue/${id}/withdraw-invite`, {}),
   // Move an unsent row to another channel; its draft is dropped for a redraft.
-  setQueueChannel: (id: number, channel: "email" | "linkedin" | "x") =>
+  setQueueChannel: (id: number, channel: "email" | "linkedin" | "x" | "reddit" | "hacker-news") =>
     postJson<{ ok: boolean; channel: string }>(`/queue/${id}/channel`, { channel }),
   // Hand the row to another workspace's queue (started if needed); the row
   // here is rejected with a "moved to" note once the destination holds it.

@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // POST /api/queue/import. The destination side of a cross-workspace move.
 // The row must land pending with the sender's positioning and verdicts
 // stripped, and a rejected row this workspace already holds for the same
-// play + dedupe key must be re-opened, not refused.
+// play + dedupe key must be re-opened, not refused. Either way the import
+// starts re-deriving this workspace's edge and verdicts in the background and
+// answers without waiting for it (the move route allows it 10 s).
 
 type Row = {
   id: number;
@@ -46,7 +48,21 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
-const { importQueueRowRoute } = await import("../src/api/queue.ts");
+const rederived: number[] = [];
+let rederiveGate: Promise<void> = Promise.resolve();
+vi.mock("@oneshot-gtm/find", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/find")>("@oneshot-gtm/find");
+  return {
+    ...actual,
+    rederiveQueueRow: async (_ledger: unknown, id: number) => {
+      await rederiveGate;
+      rederived.push(id);
+      return { ok: true, patch: { yourEdgeSource: "none" } };
+    },
+  };
+});
+
+const { importQueueRowRoute, importRederiveSettled } = await import("../src/api/queue.ts");
 
 const req = (body: unknown) =>
   new Request("http://127.0.0.1:3031/api/queue/import", {
@@ -76,9 +92,54 @@ beforeEach(() => {
   calls.status.length = 0;
   calls.payload.length = 0;
   calls.cleared.length = 0;
+  rederived.length = 0;
+  rederiveGate = Promise.resolve();
 });
 
 describe("POST /api/queue/import", () => {
+  it("starts re-deriving the new row and answers before it finishes", async () => {
+    let release!: () => void;
+    rederiveGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const res = await importQueueRowRoute(req(good));
+    expect(res.status).toBe(201);
+    expect(rederived).toEqual([]);
+    release();
+    await importRederiveSettled();
+    expect(rederived).toEqual([51]);
+  });
+
+  it("re-derives a re-opened row too", async () => {
+    enqueueResult = null;
+    existing = {
+      id: 9,
+      play_name: "luma-events",
+      dedupe_key: "luma:ada@example.com",
+      status: "rejected",
+      sent_at: null,
+      send_started_at: null,
+    };
+    await importQueueRowRoute(req(good));
+    await importRederiveSettled();
+    expect(rederived).toEqual([9]);
+  });
+
+  it("does not re-derive a refused import", async () => {
+    enqueueResult = null;
+    existing = {
+      id: 9,
+      play_name: "luma-events",
+      dedupe_key: "luma:ada@example.com",
+      status: "sent",
+      sent_at: "2026-09-01T00:00:00Z",
+      send_started_at: null,
+    };
+    await importQueueRowRoute(req(good));
+    await importRederiveSettled();
+    expect(rederived).toEqual([]);
+  });
+
   it("enqueues a pending row with the portable payload, provenance and a 'moved from' note", async () => {
     const res = await importQueueRowRoute(req(good));
     expect(res.status).toBe(201);

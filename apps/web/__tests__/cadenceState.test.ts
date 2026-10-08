@@ -1,6 +1,7 @@
 import type { CadenceView } from "@oneshot-gtm/shared-types";
 import { describe, expect, it } from "vitest";
-import { cadenceStateLabel, mailWaitingRows } from "../src/lib/cadenceState.ts";
+import { cadenceStateLabel, isHeldElsewhere, mailWaitingRows } from "../src/lib/cadenceState.ts";
+import { cadenceKey, cadenceSelection } from "../src/lib/cadenceStop.ts";
 
 // Issue #602: the /cadences row's second line is the sequence state, in one
 // mono label. Every branch, against a fixed clock.
@@ -36,6 +37,7 @@ function cadence(over: Partial<CadenceView> = {}): CadenceView {
     isSending: false,
     lastSendError: null,
     lastSendErrorAt: null,
+    heldElsewhere: null,
     queuePayload: null,
     ...over,
   };
@@ -146,5 +148,43 @@ describe("mailWaitingRows", () => {
       cadence({ prospectId: 5 }),
     ];
     expect(mailWaitingRows(rows).map((c) => c.prospectId)).toEqual([1]);
+  });
+});
+
+describe("held by another workspace's touch", () => {
+  const held = {
+    workspace: "sdk",
+    playName: "accelerator-batch",
+    sentAt: daysAgo(1),
+    until: daysAhead(6),
+  };
+  const draft = { subject: "s", body: "b", flags: [], payload: {}, draftedAt: daysAgo(0) };
+
+  it("an overdue step reads as held, with who emailed and when it can send", () => {
+    const out = cadenceStateLabel(cadence({ nextDueAt: daysAgo(5), heldElsewhere: held }), now);
+    expect(out.text).toMatch(
+      /^step 2 of 4 · sent 3d ago · overdue · due 5d ago · held · emailed from sdk 1d ago · sends after /,
+    );
+    expect(out.text).toContain(
+      new Date(held.until).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    );
+    expect(out.tone).toBe("muted");
+  });
+
+  it("an expired hold is ignored", () => {
+    const expired = { ...held, until: daysAgo(1) };
+    expect(isHeldElsewhere(cadence({ heldElsewhere: expired }), now.getTime())).toBe(false);
+    expect(cadenceStateLabel(cadence({ heldElsewhere: expired }), now).text).not.toContain("held");
+  });
+
+  it("a held row is never in the batch's sendable set, though it can still be stopped", () => {
+    const rows = [
+      cadence({ prospectId: 1, nextStepDraft: draft, heldElsewhere: held }),
+      cadence({ prospectId: 2, nextStepDraft: draft }),
+    ];
+    const keys = new Set(rows.map(cadenceKey));
+    const out = cadenceSelection(rows, keys, now.getTime());
+    expect(out.sendable.map((r) => r.prospectId)).toEqual([2]);
+    expect(out.stoppable.map((r) => r.prospectId)).toEqual([1, 2]);
   });
 });

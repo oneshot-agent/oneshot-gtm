@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { _resetInviteLimitsCacheForTests, loadConfig, saveConfig } from "@oneshot-gtm/core";
 
 // The LinkedIn channel's per-row routes: send a reviewed note as an invite,
 // withdraw a sent invite, and move an unsent row between channels.
@@ -22,6 +23,8 @@ const channelCalls: Array<[number, string]> = [];
 let channelBusy = false;
 const linkedInCalls: Array<Record<string, unknown>> = [];
 let linkedInResult: unknown = { invitation_id: "inv-1", status: "sent" };
+let accountResult: unknown = {};
+let accountSeq = 0;
 let account: { workspace: string; accountId: string } | null = {
   workspace: "gtm",
   accountId: "acct-1",
@@ -63,6 +66,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 vi.mock("../src/linkedin-client.ts", () => ({
   callLinkedIn: async (_workspace: string, op: Record<string, unknown>) => {
     linkedInCalls.push(op);
+    if (op["kind"] === "account") return accountResult;
     if (linkedInResult instanceof Error) throw linkedInResult;
     return linkedInResult;
   },
@@ -105,17 +109,51 @@ beforeEach(() => {
   channelBusy = false;
   linkedInCalls.length = 0;
   linkedInResult = { invitation_id: "inv-1", status: "sent" };
-  account = { workspace: "gtm", accountId: "acct-1" };
+  accountResult = {};
+  _resetInviteLimitsCacheForTests();
+  saveConfig({ ...loadConfig(), linkedin: undefined });
+  account = { workspace: "gtm", accountId: `acct-${++accountSeq}` };
 });
 
 describe("send-draft on a LinkedIn row", () => {
+  it("defers (429) and leaves the row approved once the workspace share is used", async () => {
+    saveConfig({ ...loadConfig(), linkedin: { invitesPerDay: 1 } });
+    const first = await sendDraftRoute(post(), { id: "1" });
+    expect(first.status).toBe(200);
+    expect(statusCalls).toHaveLength(1);
+    const second = await sendDraftRoute(post(), { id: "1" });
+    expect(second.status).toBe(429);
+    expect(await second.json()).toMatchObject({ error: expect.stringMatching(/share of 1 used/) });
+    // Only the first send reached OneShot, and the row was not marked sent again.
+    expect(linkedInCalls.filter((c) => c["kind"] === "invite")).toHaveLength(1);
+    expect(statusCalls).toHaveLength(1);
+  });
+
+  it("defers (429) without calling the invite route when the account has none left", async () => {
+    accountResult = { limits: { invites: { limit: 25, used: 25, pending: 0, remaining: 0 } } };
+    const res = await sendDraftRoute(post(), { id: "1" });
+    expect(res.status).toBe(429);
+    expect(linkedInCalls.filter((c) => c["kind"] === "invite")).toHaveLength(0);
+    expect(statusCalls).toHaveLength(0);
+  });
+
+  it("releases the slot when OneShot refuses the invite", async () => {
+    saveConfig({ ...loadConfig(), linkedin: { invitesPerDay: 1 } });
+    linkedInResult = Object.assign(new Error("job failed"), { code: "email_required" });
+    const refused = await sendDraftRoute(post(), { id: "1" });
+    expect(refused.status).toBe(409);
+    linkedInResult = { invitation_id: "inv-1", status: "sent" };
+    const retry = await sendDraftRoute(post(), { id: "1" });
+    expect(retry.status).toBe(200);
+  });
+
   it("sends the reviewed note as an invite and marks the row sent", async () => {
     const res = await sendDraftRoute(post(), { id: "1" });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, invitationId: "inv-1", status: "sent" });
-    expect(linkedInCalls[0]).toMatchObject({
+    expect(linkedInCalls.find((c) => c["kind"] === "invite")).toMatchObject({
       kind: "invite",
-      accountId: "acct-1",
+      accountId: account?.accountId,
       note: "reviewed",
     });
     expect(recorded[0]).toMatchObject({ stepIndex: 0, status: "sent" });

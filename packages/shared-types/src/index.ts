@@ -43,7 +43,15 @@ export interface CadenceSentStep {
   /** Sent-folder delivery check of this step's email, when one ran. */
   delivery?: SendDeliveryView | null;
 }
-export type StepChannel = "email" | "sms" | "voice" | "linkedin" | "x" | "direct_mail";
+export type StepChannel =
+  | "email"
+  | "sms"
+  | "voice"
+  | "linkedin"
+  | "x"
+  | "direct_mail"
+  | "reddit"
+  | "hacker-news";
 
 export interface BusinessMailAddress {
   name: string;
@@ -53,6 +61,16 @@ export interface BusinessMailAddress {
   address_state: string;
   address_zip: string;
   address_country?: "US";
+}
+
+/** The other workspace's touch that holds a cadence's next send. */
+export interface CadenceHeldElsewhere {
+  workspace: string;
+  playName: string;
+  /** When the other workspace emailed this person. */
+  sentAt: string;
+  /** When the 7-day window ends and this cadence can send. */
+  until: string;
 }
 
 export interface CadenceView {
@@ -100,6 +118,13 @@ export interface CadenceView {
   lastSendError: string | null;
   /** ISO timestamp of `lastSendError`. */
   lastSendErrorAt: string | null;
+  /**
+   * Another workspace emailed this person inside the shared 7-day contact
+   * window, so a send from here is held until `until`. Null when nothing
+   * holds it (or the cadence is not active). Advisory: the send-time claim
+   * is still the gate.
+   */
+  heldElsewhere: CadenceHeldElsewhere | null;
   /**
    * The payload of the latest SENT queue row for this play + email. The
    * signal the finder matched on and the `fitReason` the intro was drawn from
@@ -264,7 +289,16 @@ export interface HomeMetrics {
   currentRuns: RunSummary[];
 }
 
+export interface PlayDescription {
+  whenToUse: string;
+  actions: string;
+  requires: string;
+  produces: string;
+}
+
 export interface PlayDescriptor {
+  /** Optional for older dashboard fixtures and servers. Current API includes every play. */
+  description?: PlayDescription;
   directMail?: { position: number; delayDays: number; mode?: "automatic" | "always" } | null;
   mailRecommendation?: string;
   mailAutomaticSupported?: boolean;
@@ -625,7 +659,7 @@ export interface QueueRowView {
   id: number;
   playName: string;
   /** Outreach channel of the first touch: email, linkedin or x. */
-  channel: "email" | "linkedin" | "x";
+  channel: "email" | "linkedin" | "x" | "reddit" | "hacker-news";
   /**
    * Who sends it: `api` (Send / drain), `manual` (copy, send by hand, Mark
    * sent) or `unavailable` (nothing can send on this channel yet).
@@ -1943,3 +1977,17 @@ export function isQueueImportInProgress(row: {
 }
 
 export * from "./onboarding.ts";
+
+/** GET /api/linkedin/invites: LinkedIn invites left today (workspace share and account). */
+export interface LinkedInInviteQuotaView {
+  connected: boolean;
+  /** Workspace share per UTC day; null = no share configured. */
+  perDay: number | null;
+  /** Slots this workspace used today (sent + in flight). */
+  used: number;
+  left: number | null;
+  /** Invites left on the LinkedIn account today; null when unknown. */
+  accountLeft: number | null;
+  /** Display line, e.g. "LinkedIn invites today: 4 of 12 left · account 9 left"; null when nothing is known. */
+  text: string | null;
+}

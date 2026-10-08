@@ -1,3 +1,4 @@
+import { recordManualQueueSend, type ManualQueueSend } from "./ledger-manual.ts";
 import { extractBusinessAddress } from "./mail-address.ts";
 import type { DirectMailDraft, PostalAddress } from "./direct-mail.ts";
 import { Database } from "bun:sqlite";
@@ -150,6 +151,9 @@ import {
   firstEmailSendAt as sendFirstEmailSendAt,
   getSenderAssignment as sendGetSenderAssignment,
   hasPriorEmailSend as sendHasPriorEmailSend,
+  liveSendReservations as sendLiveSendReservations,
+  releaseSendReservation as sendReleaseSendReservation,
+  reserveSendSlot as sendReserveSendSlot,
 } from "./ledger-sending.ts";
 import {
   releaseSpendReservation as spendReleaseSpendReservation,
@@ -252,6 +256,10 @@ export function openLedgerDatabase(path: string, opts: { readonly?: boolean } = 
 
 export class Ledger {
   readonly mailboxes: MailboxStore;
+  recordManualQueueSend(input: ManualQueueSend): { prospectId: number } {
+    return recordManualQueueSend(this.db, this, input);
+  }
+
   private db: Database;
   private path: string;
   private receipts: ReceiptStore;
@@ -1000,8 +1008,30 @@ export class Ledger {
     memo?: string;
     /** Call-time decisionContext blob; JSON-stringified into the column. */
     decisionContext?: unknown;
+    /** Send-capacity reservation this email.send receipt consumes (issue #794). */
+    reservationId?: number;
   }): number {
     return this.receipts.recordReceipt(input);
+  }
+
+  /**
+   * Run `fn` under SQLite's write lock (BEGIN IMMEDIATE) so a sender pick's
+   * capacity read and its reservation are one step across processes (#794).
+   */
+  withSendCapacityLock<T>(fn: () => T): T {
+    return this.db.transaction(fn).immediate();
+  }
+
+  reserveSendSlot(groupKey: string, identityId: string, now = new Date()): number {
+    return sendReserveSendSlot(this.db, groupKey, identityId, now);
+  }
+
+  releaseSendReservation(id: number): void {
+    sendReleaseSendReservation(this.db, id);
+  }
+
+  liveSendReservations(now = new Date()) {
+    return sendLiveSendReservations(this.db, now);
   }
 
   getSenderAssignment(email: string): string | null {

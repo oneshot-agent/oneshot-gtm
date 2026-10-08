@@ -7,6 +7,8 @@ export interface LlmMessage {
 }
 
 export interface LlmCompleteInput {
+  /** Accounting hook after local preflight, immediately before each provider attempt. */
+  onAttempt?: () => void;
   messages: LlmMessage[];
   temperature?: number;
   maxTokens?: number;
@@ -42,6 +44,8 @@ const MAX_RETRY_AFTER_MS = 60_000;
 const MIN_TIMEOUT_MS = 1_000;
 
 export interface LlmCompleteOutput {
+  /** Provider-reported USD, when available. */
+  costUsd?: number;
   content: string;
   provider: string;
   model: string;
@@ -218,6 +222,7 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
 
   for (let attempt = 1; ; attempt++) {
     try {
+      input.onAttempt?.();
       result = await dispatch(cfg.llmProvider, cfg.llmModel, key, expanded, timeoutMs);
       attempts = attempt;
       break;
@@ -488,6 +493,7 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
     choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;
     error?: { message?: string; code?: number };
     usage?: {
+      cost?: number;
       prompt_tokens?: number;
       completion_tokens?: number;
       completion_tokens_details?: { reasoning_tokens?: number };
@@ -540,6 +546,11 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
     content,
     provider: args.provider,
     model: args.model,
+    ...(typeof data.usage?.cost === "number" &&
+    Number.isFinite(data.usage.cost) &&
+    data.usage.cost >= 0
+      ? { costUsd: data.usage.cost }
+      : {}),
     inputTokens: data.usage?.prompt_tokens,
     outputTokens: data.usage?.completion_tokens,
   };

@@ -1,3 +1,5 @@
+import { runCommunityBuyerThreadsFinder } from "./community-buyer-threads.ts";
+import { isCommunityPlatform } from "@oneshot-gtm/core";
 import {
   DEFAULT_SPEND_RESERVATION_USD,
   dailySpendStatus,
@@ -261,6 +263,77 @@ export function listPageSources(cfg: Record<string, unknown>): ListPageSource[] 
 
 export const TRIGGERS: TriggerSpec[] = [
   {
+    name: "community-buyer-threads",
+    enabledByDefault: false,
+    defaultIntervalMs: 6 * ONE_HOUR,
+    defaultConfig: {
+      keywords: [],
+      competitors: [],
+      platforms: ["hacker-news", "reddit"],
+      sinceDays: 7,
+      limit: 25,
+      maxCostUsd: 5,
+      productResearch: false,
+      personResearch: false,
+      linkedinProfileRead: false,
+      personNewsfeed: false,
+    },
+    configBrief:
+      "Find public Reddit and Hacker News requests for recommendations, comparisons and replacements. Configure keywords (category phrases), competitors (names), platforms (reddit/hacker-news), sinceDays (7), limit (25), maxCostUsd (5). Requires keywords or competitors. Queues thread evidence for review; approve and drain community-reply to draft a helpful public reply. Open thread, Copy reply, then Mark posted after posting yourself. No email needed, automatic comments or email cadence. Reddit uses OneShot search/read; HN search is public and needs no key. Product/person research and newsfeed default off. Drafting needs founder name, product description and verified product brief in Setup.",
+    readiness: (cfg) => {
+      const terms = [cfg["keywords"], cfg["competitors"]]
+        .flatMap((v) => (Array.isArray(v) ? v : []))
+        .filter((v) => typeof v === "string" && v.trim());
+      if (!terms.length || terms.length > 20)
+        return { ready: false, reason: "set 1–20 keywords or competitors" };
+      const platforms = cfg["platforms"];
+      if (
+        platforms !== undefined &&
+        (!Array.isArray(platforms) || !platforms.length || !platforms.every(isCommunityPlatform))
+      )
+        return { ready: false, reason: "platforms must contain reddit or hacker-news" };
+      for (const [key, max] of [
+        ["sinceDays", 365],
+        ["limit", 200],
+      ] as const) {
+        const value = cfg[key];
+        if (
+          value !== undefined &&
+          (typeof value !== "number" ||
+            !Number.isFinite(value) ||
+            value <= 0 ||
+            value > max ||
+            (key === "limit" && !Number.isInteger(value)))
+        )
+          return { ready: false, reason: `invalid ${key}` };
+      }
+      if (
+        cfg["maxCostUsd"] !== undefined &&
+        (typeof cfg["maxCostUsd"] !== "number" ||
+          !Number.isFinite(cfg["maxCostUsd"]) ||
+          cfg["maxCostUsd"] < 0)
+      )
+        return { ready: false, reason: "invalid maxCostUsd" };
+      return { ready: true };
+    },
+    run: (cfg) =>
+      runCommunityBuyerThreadsFinder({
+        dryRun: false,
+        keywords: Array.isArray(cfg["keywords"])
+          ? cfg["keywords"].filter((v): v is string => typeof v === "string")
+          : [],
+        competitors: Array.isArray(cfg["competitors"])
+          ? cfg["competitors"].filter((v): v is string => typeof v === "string")
+          : [],
+        platforms: Array.isArray(cfg["platforms"])
+          ? cfg["platforms"].filter(isCommunityPlatform)
+          : ["hacker-news", "reddit"],
+        sinceDays: (cfg["sinceDays"] as number) ?? 7,
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      }),
+  },
+  {
     name: "show-hn",
     enabledByDefault: false,
     defaultIntervalMs: 6 * ONE_HOUR,
@@ -522,15 +595,22 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Discovers upcoming Luma events from Luma's per-city pages, gates each event on the founder's topics + ICP (a free keyword pre-filter, then one LLM relevance call on the event name) BEFORE any paid read, then pitches the event's hosts + featured guests — Luma's public event JSON carries their LinkedIn/website, so contact resolution lands. Coverage per event: the hosts (always public) + up to ~10 featured guests when the organizer shows 'Who's Coming'. Each row is tagged Host or Guest and the email is drafted role-aware. Config: `topics` (phrases whose words must appear in / relate to the event name — e.g. ['AI agents', 'MCP']; they gate events, not search queries), `cities` (major hubs work best — San Francisco, New York, LA, London, etc. map to Luma city pages; other cities fall back to webSearch), `yourEdge` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then either a lesson (a named failure and what was learned) or an opportunity (what this reader could do that their peers cannot yet, resting on one concrete capability or number, never an unbacked outcome). Optional `firstTouchFormat` (`standard` default, `brief`, or `split` with `firstTouchSplit` 0 to 1) tests a 3-sentence first email against the standard one; results show per arm in the trigger editor. Optional `angleAssignment` (`fit` default, or `arm`) gives each prospect one angle by an even, stable split instead of by fit, and keeps it through the follow-ups, so the angles can be compared like for like; arm results show in the same editor. The tool picks ONE per prospect in code; the email never sees the others; route on the attendee company and role, and the email tells it in the event's setting), `sinceDays` (forward-looking window in days — events further out than this are dropped), `limit`, `maxCostUsd`, optional `personGate` (`role` default; `affinity` when the topics ARE what the founder sells, so attending counts as fit and practitioners pass whatever their title). STRATEGIST DUTY: align topics to your ICP's actual gathering spots (AI hackers ≠ growth marketers) and include the vocabulary event names actually use (e.g. 'agents', 'hackathon', 'MCP').",
+      "Discovers upcoming Luma events from Luma's per-city pages, gates each event on the founder's topics + ICP (a free keyword pre-filter, then one LLM relevance call on the event name) BEFORE any paid read, then pitches the event's hosts + featured guests — Luma's public event JSON carries their LinkedIn/website, so contact resolution lands. Coverage per event: the hosts (always public) + up to ~10 featured guests when the organizer shows 'Who's Coming'. Each row is tagged Host or Guest and the email is drafted role-aware. Config: `topics` (phrases whose words must appear in / relate to the event name — e.g. ['AI agents', 'MCP']; they gate events, not search queries), `cities` (major hubs work best — San Francisco, New York, LA, London, etc. map to Luma city feeds, paged past the city page's ~20 events; other cities fall back to webSearch), optional `calendars` (Luma calendar slugs, `cal-` ids or calendar URLs, read in full and ahead of the cities: a themed week such as a city's Tech Week lives on its own calendar with hundreds of events the city feed never lists; `cities` or `calendars` must be set), optional `fromDate` (ISO date, for a one-off backfill: accepts calendar events that started on or after it, including ones that already happened, which draft with a past-tense hook; remove it after the run), `yourEdge` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then either a lesson (a named failure and what was learned) or an opportunity (what this reader could do that their peers cannot yet, resting on one concrete capability or number, never an unbacked outcome). Optional `firstTouchFormat` (`standard` default, `brief`, or `split` with `firstTouchSplit` 0 to 1) tests a 3-sentence first email against the standard one; results show per arm in the trigger editor. Optional `angleAssignment` (`fit` default, or `arm`) gives each prospect one angle by an even, stable split instead of by fit, and keeps it through the follow-ups, so the angles can be compared like for like; arm results show in the same editor. The tool picks ONE per prospect in code; the email never sees the others; route on the attendee company and role, and the email tells it in the event's setting), `sinceDays` (forward-looking window in days — events further out than this are dropped), `limit`, `maxCostUsd`, optional `personGate` (`role` default; `affinity` when the topics ARE what the founder sells, so attending counts as fit and practitioners pass whatever their title). STRATEGIST DUTY: align topics to your ICP's actual gathering spots (AI hackers ≠ growth marketers) and include the vocabulary event names actually use (e.g. 'agents', 'hackathon', 'MCP').",
     readiness: (cfg) => {
       const topics = Array.isArray(cfg["topics"]) ? cfg["topics"] : null;
       if (!topics || topics.filter((t) => typeof t === "string" && t.trim()).length === 0) {
         return { ready: false, reason: "set `topics` (e.g. ['AI','founders'])" };
       }
-      const cities = Array.isArray(cfg["cities"]) ? cfg["cities"] : null;
-      if (!cities || cities.filter((c) => typeof c === "string" && c.trim()).length === 0) {
-        return { ready: false, reason: "set `cities` (e.g. ['San Francisco'])" };
+      const named = (key: string) =>
+        Array.isArray(cfg[key])
+          ? (cfg[key] as unknown[]).filter((v) => typeof v === "string" && v.trim()).length
+          : 0;
+      if (named("cities") === 0 && named("calendars") === 0) {
+        return {
+          ready: false,
+          reason:
+            "set `cities` (e.g. ['San Francisco']) or `calendars` (e.g. a Luma calendar slug)",
+        };
       }
       const edge = cfg["yourEdge"];
       if (typeof edge !== "string" || edge.trim().length === 0) {
@@ -554,6 +634,16 @@ export const TRIGGERS: TriggerSpec[] = [
                 (c): c is string => typeof c === "string",
               ),
             }
+          : {}),
+        ...(Array.isArray(cfg["calendars"])
+          ? {
+              calendars: (cfg["calendars"] as unknown[]).filter(
+                (c): c is string => typeof c === "string",
+              ),
+            }
+          : {}),
+        ...(typeof cfg["fromDate"] === "string" && cfg["fromDate"].trim()
+          ? { fromDate: cfg["fromDate"].trim() }
           : {}),
         ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
         sinceDays: (cfg["sinceDays"] as number) ?? 14,
@@ -1178,7 +1268,7 @@ const LINKEDIN_READ_BRIEF =
   "linkedinProfileRead (default true): when a LinkedIn session cookie is connected on /setup, person research also reads the live profile's Experience section in a OneShot browser profile (~$0.02/row, serialized, capped per day) and lets it win over the provider's history; reads show as profile views from your account.";
 const NEWSFEED_BRIEF =
   "personNewsfeed (default true): when one of this trigger's rows is approved, and while its prospect is in a running cadence, the person's recent posts are captured from their LinkedIn or X profile (~$0.07/person, one at a time, kept 14 days) for later use; pending and rejected rows never pay for it, and nothing drafts from the posts yet.";
-for (const spec of TRIGGERS)
+for (const spec of TRIGGERS.filter((spec) => spec.defaultConfig["personResearch"] !== false))
   spec.configBrief = `${spec.configBrief}\n${PERSON_RESEARCH_BRIEF}\n${LINKEDIN_READ_BRIEF}\n${NEWSFEED_BRIEF}`;
 
 /**
