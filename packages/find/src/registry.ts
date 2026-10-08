@@ -610,7 +610,10 @@ export const TRIGGERS: TriggerSpec[] = [
           : [];
       // A calendar the finder can't parse would only log `calendar_failed`
       // on every run; refuse it here, where the founder sees the reason.
-      const badCalendars = named("calendars").filter((ref) => parseCalendarRef(ref) == null);
+      // Every entry, blanks included: a blank is a config typo worth naming too.
+      const badCalendars = (Array.isArray(cfg["calendars"]) ? (cfg["calendars"] as unknown[]) : [])
+        .filter((ref) => typeof ref !== "string" || parseCalendarRef(ref) == null)
+        .map((ref) => String(ref));
       if (badCalendars.length > 0) {
         return {
           ready: false,

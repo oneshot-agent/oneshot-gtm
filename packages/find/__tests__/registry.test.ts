@@ -329,6 +329,17 @@ describe("checkReadiness", () => {
     if (!out.ready) expect(out.reason).toContain("'tech week'");
   });
 
+  it("luma-events is not ready when a calendar entry is blank, even beside valid sources", () => {
+    const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      calendars: ["sftw", " "],
+      yourEdge: "a teardown",
+    });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toContain("calendars");
+  });
+
   it("luma-events becomes ready with topics + cities + yourEdge", () => {
     const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
     const out = checkReadiness(spec, {
