@@ -69,6 +69,7 @@ import type {
   TriggerView,
   IcpProposalDecisionResult,
   IcpProposalsResult,
+  AngleSuggestionResult,
   DecisionReason,
   LearningDecisionResult,
   LearningGuidanceResult,
@@ -528,6 +529,10 @@ export const api = {
     }),
   runTrigger: (name: string) =>
     postJson<RunTriggerResult>(`/triggers/${encodeURIComponent(name)}/run`, {}),
+  // Explicit founder action (#813): ask for keep/retire/add on the play's
+  // angles; the answer lands as a pending proposal on /queue, never applied here.
+  suggestAngles: (name: string) =>
+    postJson<AngleSuggestionResult>(`/triggers/${encodeURIComponent(name)}/suggest-angles`, {}),
   packs: () => getJson<{ packs: PackView[] }>("/packs"),
   applyPack: (id: string) =>
     postJson<PackApplyResult>(`/packs/${encodeURIComponent(id)}/apply`, {}),

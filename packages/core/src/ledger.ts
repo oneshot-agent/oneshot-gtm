@@ -925,6 +925,15 @@ export class Ledger {
     return this.inbox.listInboxRepliesForProspect(prospectId);
   }
 
+  /** Recent human replies on a play with one of the given intents (#813). */
+  listRepliesByIntentForPlay(
+    playName: string,
+    intents: readonly string[],
+    limit = 20,
+  ): InboxReplyRecord[] {
+    return this.inbox.listRepliesByIntentForPlay(playName, intents, limit);
+  }
+
   /** Provider ids of every persisted reply: dedupe set for capture passes. */
   listInboxReplyIds(): Set<string> {
     return this.inbox.listInboxReplyIds();

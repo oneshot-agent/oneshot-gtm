@@ -1,4 +1,14 @@
-import { getLedger, loadConfig, type TriggerRow } from "@oneshot-gtm/core";
+import {
+  demoMode,
+  getLedger,
+  learningKeyOf,
+  learningScopeKey,
+  loadConfig,
+  logEvent,
+  tryReserveDailySpend,
+  type TriggerRow,
+} from "@oneshot-gtm/core";
+import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import {
   checkReadiness,
   DEFAULT_APPROVAL_RATE_MIN_SAMPLES,
@@ -14,6 +24,7 @@ import {
   type TriggerSpec,
 } from "@oneshot-gtm/find";
 import {
+  edgeFieldOf,
   describeEdgeWarning,
   factTermsFrom,
   isAllowedDesignPartnerLoiBuyerType,
@@ -21,7 +32,11 @@ import {
   splitEdgeAngles,
   type EdgeLintContext,
 } from "@oneshot-gtm/plays";
-import type { RunTriggerResult, TriggerView } from "@oneshot-gtm/shared-types";
+import type {
+  AngleSuggestionResult,
+  RunTriggerResult,
+  TriggerView,
+} from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 import {
   angleUsageForEdge,
@@ -311,4 +326,272 @@ export function runTriggerRoute(req: Request, params: Record<string, string>): R
     error: null,
   };
   return jsonResponse(view, 202, req);
+}
+
+/** Reply intents that read as the pitch running into something (#813). */
+const OBJECTION_INTENTS = ["objection", "not_interested", "wrong_person", "not_now"] as const;
+const OBJECTION_LIMIT = 20;
+/** The prompt's own rules, enforced here too: never retire on a thin sample, keep the set reviewable. */
+const MIN_OFFERS_TO_RETIRE = 5;
+const MIN_ANGLES = 2;
+const MAX_ANGLES = 5;
+/** Angles are `//`-joined in the edge field; the same separator `splitEdgeAngles` reads. */
+const ANGLE_JOIN = " // ";
+
+const normalizeAngle = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+/** The model's string lists, with anything that is not a non-empty string dropped. */
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
+
+/**
+ * POST /api/triggers/:name/suggest-angles (#813). An explicit founder
+ * action: read what happened to each configured angle (`angleUsageByPlay`)
+ * and the objections replies raised, ask the model for keep / retire / add,
+ * and record the result as a PENDING `campaign_angle` proposal labelled a
+ * hypothesis. Nothing changes here: approval on /queue writes the edge
+ * field, and the arm split and fit classifier keep running as configured.
+ * Never a winner claim: the counts are observational.
+ */
+export async function suggestAnglesRoute(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  if (demoMode()) return jsonResponse({ error: "The demo is read-only." }, 403, req);
+  const name = params["name"] ?? "";
+  const spec = TRIGGERS.find((t) => t.name === name);
+  const ledger = getLedger();
+  const stored = ledger.getTrigger(name);
+  if (!spec && !stored) return jsonResponse({ error: `unknown trigger '${name}'` }, 404, req);
+  let config: Record<string, unknown> | null = null;
+  try {
+    config = stored?.config_json
+      ? (JSON.parse(stored.config_json) as Record<string, unknown>)
+      : ((spec?.defaultConfig as Record<string, unknown> | undefined) ?? null);
+  } catch {
+    config = null;
+  }
+  const field = config ? edgeFieldOf(config) : null;
+  const edge = field && config ? String(config[field]) : "";
+  const angles = splitEdgeAngles(edge);
+  if (!field || angles.length === 0)
+    return jsonResponse(
+      { error: "this trigger has no yourEdge / yourClaim angles to suggest changes to" },
+      400,
+      req,
+    );
+  const usage = angleUsageForEdge(config, playUsageLoader(ledger)(name).angles);
+  const method = config?.["angleAssignment"] === "arm" ? "arm" : "fit";
+  // The aggregate counts span every selection method the play ever ran
+  // under. Under an even split only the arm-assigned counters compare
+  // angles fairly; any excess over them is fit-selected history and is
+  // labelled as such rather than passed off as the split's evidence.
+  const angleRows = usage?.angles ?? [];
+  const mixedHistory = method === "arm" && angleRows.some((a) => a.offered > (a.armOffered ?? 0));
+  const countsOf = (a: (typeof angleRows)[number]) =>
+    method === "arm"
+      ? {
+          offered: a.armOffered ?? 0,
+          rotatedAway: a.rotatedAway,
+          redrafted: a.redrafted,
+          sent: a.sent,
+          autoSent: a.autoSent,
+          reached: a.armReached ?? 0,
+          replied: a.armReplied ?? 0,
+          allOffered: a.offered,
+        }
+      : {
+          offered: a.offered,
+          rotatedAway: a.rotatedAway,
+          redrafted: a.redrafted,
+          sent: a.sent,
+          autoSent: a.autoSent,
+          reached: a.reached,
+          replied: a.replied,
+          allOffered: a.offered,
+        };
+  const objections = ledger.listRepliesByIntentForPlay(name, OBJECTION_INTENTS, OBJECTION_LIMIT);
+  const baselineKey = learningKeyOf(edge);
+  const scopeKey = learningScopeKey("campaign_angle", { playName: name });
+
+  const reservation = tryReserveDailySpend(1);
+  if (!reservation.granted)
+    return jsonResponse(
+      { error: `paused by the daily spend limit: ${reservation.reason}` },
+      429,
+      req,
+    );
+  const cfg = loadConfig();
+  try {
+    const response = await complete({
+      messages: [
+        { role: "system", content: loadPrompt("angle-campaign-suggest") },
+        {
+          role: "user",
+          content: JSON.stringify({
+            play: name,
+            positioning: {
+              product: cfg.productOneLiner,
+              brief: cfg.productBrief,
+              icp: cfg.icpOneLiner,
+              edge,
+            },
+            method,
+            countsBasis:
+              method === "arm"
+                ? "offered/reached/replied count arm-assigned prospects only; rotatedAway/redrafted/sent span all history"
+                : "all reviewed drafts",
+            mixedHistory,
+            angles: angles.map((text) => {
+              const row = angleRows.find((a) => a.text === text);
+              return row
+                ? { text, ...countsOf(row) }
+                : {
+                    text,
+                    offered: 0,
+                    rotatedAway: 0,
+                    redrafted: 0,
+                    sent: 0,
+                    autoSent: 0,
+                    reached: 0,
+                    replied: 0,
+                    allOffered: 0,
+                  };
+            }),
+            generated: usage?.generated ?? null,
+            objections: objections.map((r) => ({ intent: r.intent, body: r.body.slice(0, 400) })),
+          }),
+        },
+      ],
+      temperature: 0.2,
+      maxTokens: 900,
+      timeoutMs: 60_000,
+    });
+    const parsed = tryParseJsonObject<{
+      keep?: unknown;
+      retire?: unknown;
+      add?: unknown;
+      rationale?: unknown;
+    }>(response.content, {});
+    const current = new Map(angles.map((a) => [normalizeAngle(a), a]));
+    const keep = strings(parsed.keep)
+      .map((a) => current.get(normalizeAngle(a)))
+      .filter((a): a is string => !!a);
+    const retire = strings(parsed.retire)
+      .map((a) => current.get(normalizeAngle(a)))
+      .filter((a): a is string => !!a);
+    // An addition carrying the separator would silently become several
+    // angles once the edge is split; it is not one argument.
+    const add = strings(parsed.add)
+      .map((a) => a.trim())
+      .filter((a) => !a.includes("//") && !current.has(normalizeAngle(a)))
+      .slice(0, 2);
+    const rationale = typeof parsed.rationale === "string" ? parsed.rationale.trim() : "";
+    // Angles the model forgot to classify stay: a silent drop is not a
+    // suggestion. Nor is retiring an angle on a thin sample: fewer than
+    // MIN_OFFERS_TO_RETIRE offers keeps it, whatever the model said.
+    const offeredOf = (text: string) => {
+      const row = angleRows.find((a) => a.text === text);
+      return row ? countsOf(row).offered : 0;
+    };
+    const retired = new Set(retire.filter((a) => offeredOf(a) >= MIN_OFFERS_TO_RETIRE));
+    const keptSet = new Set(keep);
+    const kept = angles.filter((a) => !retired.has(a) || keptSet.has(a));
+    const keptNow = new Set(kept);
+    const proposedAngles = [...kept, ...add];
+    const proposedEdge = proposedAngles.join(ANGLE_JOIN);
+    const unchanged =
+      proposedAngles.length === angles.length &&
+      proposedAngles.every((a, i) => normalizeAngle(a) === normalizeAngle(angles[i]!));
+    const outOfBounds =
+      proposedAngles.length < MIN_ANGLES ||
+      proposedAngles.length > MAX_ANGLES ||
+      // A one-angle set may grow; it never shrinks below two by suggestion.
+      (proposedAngles.length < angles.length && proposedAngles.length < MIN_ANGLES);
+    if (unchanged || proposedAngles.length === 0 || !rationale || outOfBounds) {
+      logEvent("angle.suggest.unchanged", { play: name });
+      const out: AngleSuggestionResult = {
+        ok: true,
+        proposal: null,
+        reason: "the counts do not justify a change yet",
+      };
+      return jsonResponse(out, 200, req);
+    }
+    const dedupeKey = `${name}:${learningKeyOf(normalizeAngle(proposedEdge))}`;
+    if (
+      ledger.learning.hasPendingDuplicate("campaign_angle", dedupeKey) ||
+      ledger.learning.wasJustDismissed("campaign_angle", dedupeKey, scopeKey)
+    ) {
+      const out: AngleSuggestionResult = {
+        ok: true,
+        proposal: null,
+        reason: "the same change is already pending, or you just dismissed it",
+      };
+      return jsonResponse(out, 200, req);
+    }
+    const counts: Record<string, number> = {
+      angles: angles.length,
+      retire: angles.length - kept.length,
+      add: add.length,
+      objections: objections.length,
+    };
+    for (const a of angleRows) {
+      const i = angles.indexOf(a.text) + 1;
+      const c = countsOf(a);
+      counts[`angle${i}_offered`] = c.offered;
+      counts[`angle${i}_sent`] = c.sent + c.autoSent;
+      counts[`angle${i}_replied`] = c.replied;
+    }
+    if (mixedHistory) counts["mixed_history"] = 1;
+    const view = ledger.learning.insert({
+      kind: "campaign_angle",
+      scope: { playName: name },
+      current: { field, edge },
+      proposed: {
+        field,
+        edge: proposedEdge,
+        keep: kept,
+        retire: angles.filter((a) => !keptNow.has(a)),
+        add,
+      },
+      evidence: {
+        refs: objections.map((r) => ({ type: "inbox_reply", id: r.id })),
+        samples: objections.slice(0, 5).map((r) => ({
+          at: r.received_at,
+          label: `Reply · ${r.intent ?? "objection"}`,
+          text: r.body.slice(0, 300),
+        })),
+        counts,
+        method,
+      },
+      evidenceSummary: `${rationale} Hypothesis from observational counts under ${
+        method === "arm"
+          ? mixedHistory
+            ? "an even split (offered/reached/replied count arm-assigned prospects only; the play also ran under fit selection before)"
+            : "an even split"
+          : "fit selection"
+      }; no causal claim.`,
+      baselineKey,
+      dedupeKey,
+    });
+    logEvent("angle.suggest.proposed", {
+      play: name,
+      retire: counts["retire"],
+      add: counts["add"],
+    });
+    const out: AngleSuggestionResult = { ok: true, proposal: view };
+    return jsonResponse(out, 200, req);
+  } catch (err) {
+    logEvent(
+      "angle.suggest.failed",
+      { play: name, message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+    return jsonResponse({ error: "could not suggest angle changes; try again" }, 500, req);
+  } finally {
+    reservation.release();
+  }
 }

@@ -41,6 +41,8 @@ export function AngleUsagePanel({
   voiceUsage,
   formatUsage,
   onRetire,
+  onSuggest,
+  suggesting,
   disabled,
 }: {
   angleUsage: TriggerView["angleUsage"];
@@ -51,6 +53,9 @@ export function AngleUsagePanel({
   formatUsage?: TriggerView["formatUsage"];
   /** Remove an angle from the editor text. Absent = read-only. */
   onRetire?: (angleText: string) => void;
+  /** Ask for keep/retire/add as a reviewed proposal (#813). Absent = not offered. */
+  onSuggest?: () => void;
+  suggesting?: boolean;
   disabled?: boolean;
 }): React.ReactElement | null {
   if (!angleUsage) return null;
@@ -94,6 +99,22 @@ export function AngleUsagePanel({
       {!hasAny && (
         <div className="text-ink-faint">
           No angle has been put in front of you yet — counts appear once drafts are reviewed.
+        </div>
+      )}
+      {onSuggest && (
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={disabled || suggesting || !hasAny}
+            title="Reads these counts and recent objections; the suggestion waits for your approval on /queue"
+            onClick={onSuggest}
+          >
+            {suggesting ? "Suggesting…" : "Suggest angle changes"}
+          </Button>
+          <span className="text-[11px] text-ink-faint">
+            a hypothesis from these counts · reviewed before anything changes
+          </span>
         </div>
       )}
       <ol className="flex flex-col gap-1">
