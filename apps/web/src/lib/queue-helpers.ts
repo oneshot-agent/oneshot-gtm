@@ -114,7 +114,7 @@ export function drainButtonState(input: {
     playName: playFilter,
     approvedCount,
     enabled: true,
-    label: `drain ${playFilter} · ${approvedCount}`,
+    label: `batch send ${playFilter} · ${approvedCount} approved, choose how many next`,
   };
 }
 

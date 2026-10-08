@@ -21,7 +21,7 @@ describe("drainButtonState", () => {
       playName: "luma-events",
       approvedCount: 145,
       enabled: true,
-      label: "drain luma-events · 145",
+      label: "batch send luma-events · 145 approved, choose how many next",
     });
   });
 
