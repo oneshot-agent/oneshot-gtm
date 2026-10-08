@@ -93,6 +93,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
 
 const { getSequence, hardBanHold, pilotOrBreakup } = await import("../src/_cadence.ts");
 await import("../src/repo-interest.ts");
+await import("../src/accelerator-batch.ts");
 await import("../src/stack-consolidation.ts");
 
 function ctx() {
@@ -170,6 +171,16 @@ describe("sequences", () => {
     expect(seq.steps.map((s) => s.label)).toEqual(["value follow-up", "pilot + close (breakup)"]);
     // With no offer its builder sends nothing, so the cadence completes.
     expect(await seq.steps[1]!.builder(ctx())).toBeNull();
+  });
+
+  it("accelerator-batch ends on the plain breakup even with an offer set", async () => {
+    pilotOffer = OFFER;
+    const steps = getSequence("accelerator-batch")!.steps;
+    expect(steps.map((s) => s.label)).toEqual(["single follow-up + breakup"]);
+    const out = await steps[0]!.builder(ctx());
+    expect(llmCalls[0]!.system).toContain("system:breakup-email");
+    expect(llmCalls[0]!.user).not.toContain("PILOT OFFER");
+    expect(out).not.toHaveProperty("hardBans");
   });
 
   it("stack-consolidation keeps two steps, the last still a breakup", () => {
