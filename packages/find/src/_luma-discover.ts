@@ -373,6 +373,15 @@ async function pageEvents(
     const next = json["next_cursor"];
     if (stop(events) || json["has_more"] !== true || typeof next !== "string" || !next) break;
     cursor = next;
+    // The cap is a guard, not a window: say so when it, and not the window
+    // edge or the end of the listing, is what stopped the walk.
+    if (page === maxPages - 1) {
+      logEvent(
+        "luma-events.page_cap",
+        { kind, pages: maxPages, events: out.length, ...params },
+        "warn",
+      );
+    }
   }
   return out;
 }

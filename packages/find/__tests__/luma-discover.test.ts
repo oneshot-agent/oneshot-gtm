@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@oneshot-gtm/core", () => ({ logEvent: () => {} }));
+const { logged } = vi.hoisted(() => ({ logged: [] as Array<{ kind: string; ctx: unknown }> }));
+vi.mock("@oneshot-gtm/core", () => ({
+  logEvent: (kind: string, ctx: unknown) => logged.push({ kind, ctx }),
+}));
 
 const {
   cityToSlug,
@@ -621,5 +624,44 @@ describe("fetchEventDetails — the page's own event", () => {
     stubFetch(async () => ({ ok: true, status: 200, json: async () => payload }));
 
     expect((await fetchEventDetails("freestyle-5ouz"))?.eventCity).toBe("San Francisco");
+  });
+});
+
+describe("page cap", () => {
+  it("warns when the cap, not the window or the listing's end, stops a calendar walk", async () => {
+    logged.length = 0;
+    // 25 full pages, every event inside the window: only the cap can stop it.
+    const pages = Array.from({ length: 25 }, (_, i) => ({
+      entries: [entry(`e${i}`, 1)],
+      has_more: true,
+    }));
+    fakeLuma({ listings: { future: pages } });
+
+    const out = await fetchCalendarEvents("cal-tw", {
+      fromMs: Date.now() + 3_600_000,
+      toMs: Date.now() + 14 * DAY,
+    });
+
+    expect(out?.events).toHaveLength(20);
+    expect(logged.filter((e) => e.kind === "luma-events.page_cap")).toHaveLength(1);
+  });
+
+  it("stays quiet when the window edge ends the walk", async () => {
+    logged.length = 0;
+    fakeLuma({
+      listings: {
+        future: [
+          { entries: [entry("a", 1)], has_more: true },
+          { entries: [entry("far", 30)], has_more: true },
+        ],
+      },
+    });
+
+    await fetchCalendarEvents("cal-tw", {
+      fromMs: Date.now() + 3_600_000,
+      toMs: Date.now() + 14 * DAY,
+    });
+
+    expect(logged.some((e) => e.kind === "luma-events.page_cap")).toBe(false);
   });
 });
