@@ -29,7 +29,7 @@ A plain copy of `ledger.sqlite` alone can miss every write since the last checkp
 
 ## Schema versions
 
-A ledger records its schema version in SQLite's `user_version`. On open, a ledger that is behind runs the missing migrations and stamps the new version in one transaction, so a crash leaves it on the old version rather than half-migrated. A ledger written by a newer build is never downgraded. Migrations live in `LEDGER_MIGRATIONS` (`packages/core/src/ledger-schema.ts`); a new one is appended, and shipped ones are never edited. The newest, v13, adds the `learning_*` tables that hold proposals, approved guidance and the learning jobs' leases, copies the earlier ICP proposals into them, and adds `draft_versions.learning_key`, `target_queue.decision_reason`, and the prospect angle's approval and proposal stamps ([learning](./learning.md)).
+A ledger records its schema version in SQLite's `user_version`. On open, a ledger that is behind runs the missing migrations and stamps the new version in one transaction, so a crash leaves it on the old version rather than half-migrated. A ledger written by a newer build is never downgraded. Migrations live in `LEDGER_MIGRATIONS` (`packages/core/src/ledger-schema.ts`); a new one is appended, and shipped ones are never edited. v13 adds the `learning_*` tables that hold proposals, approved guidance and the learning jobs' leases, copies the earlier ICP proposals into them, and adds `draft_versions.learning_key`, `target_queue.decision_reason`, and the prospect angle's approval and proposal stamps; v14 keeps one pending angle revision per prospect and per play ([learning](./learning.md)).
 
 ## Conventions
 
