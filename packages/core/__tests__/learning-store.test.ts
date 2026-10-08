@@ -347,6 +347,24 @@ describe("draftObservationsSince", () => {
       body: "v3",
       rejected: [{ body: "v1" }],
     });
+    expect(obs[0]!.isNew).toBe(true);
     expect(ledger.learning.draftObservationsSince(obs[0]!.id)).toEqual([]);
+    // A later send brings the earlier one along as context, flagged old.
+    ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { title: "Later" },
+      dedupeKey: "c",
+      source: "find:show-hn",
+    });
+    ledger.setQueueDraft({ id: 3, draft: draft("l1") });
+    ledger.setQueueDraft({ id: 3, draft: draft("l1", true), sentBy: "human" });
+    const window = ledger.learning.draftObservationsSince(obs[0]!.id);
+    expect(window.map((o) => [o.body, o.isNew])).toEqual([
+      ["v3", false],
+      ["l1", true],
+    ]);
+    expect(ledger.learning.draftObservationsSince(obs[0]!.id, 100, 0).map((o) => o.body)).toEqual([
+      "l1",
+    ]);
   });
 });

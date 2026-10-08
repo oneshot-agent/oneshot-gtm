@@ -85,6 +85,8 @@ export interface DraftObservation {
   /** Earlier versions of the same slot discarded with reason `regenerate` (text rejected, angle kept). */
   rejected: Array<{ id: number; subject: string; body: string }>;
   closedAt: string | null;
+  /** True for a send past the watermark; false for the older context the window carries along. */
+  isNew: boolean;
 }
 
 /** Active guidance per workspace, mirroring v1's twelve-preference ceiling. */
@@ -608,32 +610,44 @@ export class LearningStore {
 
   /**
    * Human-reviewed sends after `watermark` (a `draft_versions.id`), each with
-   * the machine drafts the founder regenerated away from in the same slot.
+   * the machine drafts the founder regenerated away from in the same slot,
+   * plus the newest `contextLimit` sends at or before the watermark. The
+   * older rows ride along as context (`isNew: false`) so a pattern that
+   * needs five prospects can still be seen when the fifth arrives in a
+   * later batch; the caller advances its watermark over the new rows only.
    * Only `sent` counts: a drain send (`auto_sent`) was never judged, and a
    * `rotate` sibling rejected the angle rather than the text, so neither is
-   * writing-style evidence.
+   * writing-style evidence. Empty when nothing is new.
    */
-  draftObservationsSince(watermark: number, limit = 100): DraftObservation[] {
-    const sent = this.db
-      .query<
-        {
-          id: number;
-          play_name: string;
-          prospect_key: string;
-          prospect_id: number | null;
-          step_index: number;
-          queue_id: number | null;
-          channel: string;
-          subject: string;
-          body: string;
-          closed_at: string | null;
-        },
-        [number, number]
-      >(
+  draftObservationsSince(watermark: number, limit = 100, contextLimit = 100): DraftObservation[] {
+    type SentRow = {
+      id: number;
+      play_name: string;
+      prospect_key: string;
+      prospect_id: number | null;
+      step_index: number;
+      queue_id: number | null;
+      channel: string;
+      subject: string;
+      body: string;
+      closed_at: string | null;
+    };
+    const fresh = this.db
+      .query<SentRow, [number, number]>(
         `SELECT id, play_name, prospect_key, prospect_id, step_index, queue_id, channel, subject, body, closed_at
            FROM draft_versions WHERE outcome='sent' AND id>? ORDER BY id LIMIT ?`,
       )
       .all(watermark, Math.max(1, Math.floor(limit)));
+    if (fresh.length === 0) return [];
+    const context = this.db
+      .query<SentRow, [number, number]>(
+        `SELECT id, play_name, prospect_key, prospect_id, step_index, queue_id, channel, subject, body, closed_at
+           FROM draft_versions WHERE outcome='sent' AND id<=? ORDER BY id DESC LIMIT ?`,
+      )
+      .all(watermark, Math.max(0, Math.floor(contextLimit)))
+      .toReversed();
+    const newIds = new Set(fresh.map((r) => r.id));
+    const sent = [...context, ...fresh];
     const byQueue = this.db.query<{ id: number; subject: string; body: string }, [number, number]>(
       `SELECT id, subject, body FROM draft_versions
         WHERE queue_id=? AND id<? AND outcome='discarded' AND discard_reason='regenerate' ORDER BY id`,
@@ -661,6 +675,7 @@ export class LearningStore {
           ? byQueue.all(row.queue_id, row.id)
           : bySlot.all(row.prospect_key, row.play_name, row.step_index, row.id),
       closedAt: row.closed_at,
+      isNew: newIds.has(row.id),
     }));
   }
 }

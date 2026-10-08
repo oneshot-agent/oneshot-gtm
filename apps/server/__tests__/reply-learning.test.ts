@@ -284,6 +284,52 @@ it("a paused workspace never spends on draft evidence either", async () => {
   expect(complete).toHaveBeenCalledTimes(1);
 });
 
+it("keeps older sends in the window so the five-prospect rule can be met across batches", async () => {
+  const first = seedDrafts(4);
+  modelSays([]);
+  await refreshReplyLearning();
+  expect(ledger.learning.jobState("preference").watermark).toBe(Math.max(...first));
+  vi.mocked(Date.now).mockReturnValue(now + 300_000);
+  const fifth = seedDrafts(1);
+  const all = [...first, ...fifth];
+  modelSays([
+    {
+      key: "no-greeting",
+      instruction: "Open with the point, not a greeting.",
+      source: "style",
+      evidenceIds: all.map((id) => `draft:${id}`),
+    },
+  ]);
+  await refreshReplyLearning();
+  // modelSays reset the call list: this run's call is the first recorded.
+  const sent = JSON.parse(complete.mock.calls[0]![0].messages[1].content);
+  expect(sent.observations).toHaveLength(5);
+  expect(pending()).toHaveLength(1);
+  expect(ledger.learning.jobState("preference").watermark).toBe(Math.max(...fifth));
+});
+
+it("a pause that lands while the model call is in flight stops draft proposals and leaves the watermark", async () => {
+  const ids = seedDrafts(5);
+  complete.mockReset().mockImplementation(async () => {
+    store.learning.setEnabled("default", false);
+    return {
+      content: JSON.stringify({
+        preferences: [
+          {
+            key: "k",
+            instruction: "Open with the point.",
+            source: "style",
+            evidenceIds: ids.map((id) => `draft:${id}`),
+          },
+        ],
+      }),
+    };
+  });
+  await refreshReplyLearning();
+  expect(pending()).toEqual([]);
+  expect(ledger.learning.jobState("preference")).toMatchObject({ watermark: 0, token: null });
+});
+
 it("needs five distinct prospects for a style preference from drafts", async () => {
   const ids = seedDrafts(4);
   modelSays([

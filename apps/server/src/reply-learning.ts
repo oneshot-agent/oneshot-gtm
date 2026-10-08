@@ -404,7 +404,17 @@ export async function refreshReplyLearning(): Promise<void> {
         }
       }
     }
-    for (const c of acceptDraftCandidates(candidates, drafts)) {
+    // The pause may have landed while the model call was in flight: the reply
+    // path's `accept` sees that through its lease; the draft path checks here,
+    // before anything is inserted or its watermark moves.
+    const draftAccepted =
+      draftLease && !learning.status(workspace).enabled
+        ? []
+        : acceptDraftCandidates(candidates, drafts);
+    if (draftLease && !learning.status(workspace).enabled) {
+      ledger.learning.failJob(DRAFT_JOB, draftLease, "Learning paused mid-run; will retry.");
+    }
+    for (const c of draftAccepted) {
       const prospects = new Set(c.evidence.map((o) => o.prospectKey)).size;
       const result = propose(
         ledger,
@@ -434,9 +444,10 @@ export async function refreshReplyLearning(): Promise<void> {
     const committed = job
       ? replyAccepted !== null && learning.finish(workspace, job.token, job.through)
       : true;
-    if (draftLease)
+    if (draftLease && learning.status(workspace).enabled)
       ledger.learning.finishJob(DRAFT_JOB, draftLease, {
-        watermark: Math.max(...drafts.map((o) => o.id)),
+        // Only the new rows move the watermark; the older context rode along.
+        watermark: Math.max(...drafts.filter((o) => o.isNew).map((o) => o.id)),
       });
     logEvent("reply.learning.refreshed", {
       workspace,
