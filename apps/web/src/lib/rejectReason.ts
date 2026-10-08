@@ -20,7 +20,36 @@
  * survives into the box, and the server refuses it on the way back.
  */
 
+import type { DecisionReason } from "@oneshot-gtm/shared-types";
+
 export type RejectReasonSource = "person-gate" | "notes" | null;
+
+/**
+ * The structured why behind a rejection (#813). Only the first two are fit
+ * judgments and teach the ICP; the rest say the person was fine and the
+ * draft or the moment was not.
+ */
+export const REJECT_DECISION_REASONS: ReadonlyArray<{ value: DecisionReason; label: string }> = [
+  { value: "wrong_audience", label: "Not our audience" },
+  { value: "wrong_person", label: "Right company, wrong person" },
+  { value: "bad_timing", label: "Bad timing" },
+  { value: "draft_problem", label: "Draft problem, not the person" },
+  { value: "other", label: "Other" },
+];
+
+/** A chip is shorthand for one structured reason; picking it fills the select too. */
+export function decisionReasonForChip(chip: string): DecisionReason {
+  switch (chip) {
+    case "wrong stage":
+    case "wrong industry":
+    case "no real product yet":
+      return "wrong_audience";
+    case "not the buyer":
+      return "wrong_person";
+    default:
+      return "other";
+  }
+}
 
 export interface RejectReasonSuggestion {
   text: string;

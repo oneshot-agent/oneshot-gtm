@@ -236,6 +236,93 @@ describe("Ledger.countHumanIcpDecisions / recentIcpDecisions", () => {
     expect(ledger.recentIcpDecisions(20)).toHaveLength(1);
   });
 
+  it("reasoned evidence keeps only explicit fit judgments, never timing, draft or bulk decisions", () => {
+    const seed = (dedupeKey: string, title: string) =>
+      ledger.enqueueTarget({
+        playName: "show-hn",
+        payload: { title },
+        dedupeKey,
+        source: "find:show-hn",
+      })!;
+    const fit = seed("a", "Ada raises Seed");
+    ledger.setQueueStatus({
+      id: fit,
+      status: "approved",
+      decidedBy: "human",
+      decisionReason: "fit",
+    });
+    const audience = seed("b", "Consumer app");
+    ledger.setQueueStatus({
+      id: audience,
+      status: "rejected",
+      decidedBy: "human",
+      decisionReason: "wrong_audience",
+    });
+    const timing = seed("c", "Good fit, bad week");
+    ledger.setQueueStatus({
+      id: timing,
+      status: "rejected",
+      decidedBy: "human",
+      decisionReason: "bad_timing",
+    });
+    const plain = seed("d", "No reason given");
+    ledger.setQueueStatus({ id: plain, status: "approved", decidedBy: "human" });
+    seed("e", "Bulk");
+    ledger.approveAllPending();
+    expect(ledger.countHumanIcpDecisions()).toBe(5);
+    expect(ledger.countHumanIcpDecisions({ reasoned: true })).toBe(2);
+    const reasoned = ledger.recentIcpDecisions(20, { reasoned: true });
+    expect(reasoned.map((e) => [e.decision, e.decisionReason])).toEqual([
+      [false, "wrong_audience"],
+      [true, "fit"],
+    ]);
+    expect(
+      ledger.recentIcpDecisions(20).find((e) => e.decisionReason === "bad_timing"),
+    ).toBeTruthy();
+    // A later human decision without a reason clears the stale one.
+    ledger.setQueueStatus({ id: fit, status: "rejected", decidedBy: "human" });
+    expect(ledger.countHumanIcpDecisions({ reasoned: true })).toBe(1);
+    // Machine decisions never write a reason.
+    ledger.setQueueStatus({
+      id: timing,
+      status: "rejected",
+      decidedBy: "machine",
+      decisionReason: "fit",
+    });
+    expect(ledger.countHumanIcpDecisions({ reasoned: true })).toBe(1);
+  });
+
+  it("qualifiedOutcomeExamples returns meeting/SQL/won outcomes with the review context, never lost or ghosted", () => {
+    const pid = ledger.upsertProspect({ email: "ada@example.com", name: "Ada", company: "Ada Co" });
+    const q = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { title: "Ada ships agents", email: "ada@example.com" },
+      dedupeKey: "ada",
+      source: "find:show-hn",
+    })!;
+    (ledger as unknown as { db: { exec: (sql: string) => void } }).db.exec(
+      `UPDATE target_queue SET prospect_id = ${pid} WHERE id = ${q}`,
+    );
+    ledger.recordOutcome({ prospectId: pid, playName: "show-hn", outcome: "meeting_booked" });
+    ledger.recordOutcome({ prospectId: pid, playName: "show-hn", outcome: "deal_lost" });
+    const orphan = ledger.upsertProspect({
+      email: "no-row@example.com",
+      name: "Nobody",
+      company: null,
+    });
+    ledger.recordOutcome({ prospectId: orphan, outcome: "deal_won" });
+    const examples = ledger.qualifiedOutcomeExamples(20);
+    expect(examples).toHaveLength(1);
+    expect(examples[0]).toMatchObject({
+      outcome: "meeting_booked",
+      candidate: { title: "Ada ships agents" },
+    });
+    // Newer outcomes with no review context never consume the limit.
+    for (let i = 0; i < 25; i++)
+      ledger.recordOutcome({ prospectId: orphan, outcome: "meeting_booked" });
+    expect(ledger.qualifiedOutcomeExamples(20)).toHaveLength(1);
+  });
+
   it("counts stay in sync with recentIcpDecisions as more human decisions accrue", () => {
     for (let i = 0; i < 5; i++) {
       ledger.enqueueTarget({

@@ -69,6 +69,7 @@ import type {
   TriggerView,
   IcpProposalDecisionResult,
   IcpProposalsResult,
+  DecisionReason,
   LearningDecisionResult,
   LearningGuidanceResult,
   LearningKind,
@@ -468,11 +469,18 @@ export const api = {
   queueDossier: (id: number) => getJson<QueueDossierView>(`/queue/${id}/dossier`),
   resolveQueueContact: (id: number) =>
     postJson<{ ok: boolean; payload: Record<string, unknown> }>(`/queue/${id}/resolve-contact`, {}),
-  approveQueue: (id: number) => postJson<{ ok: boolean }>(`/queue/${id}/approve`, {}),
+  // `reason` is the structured fit judgment (#813): `fit` on a deliberate
+  // single-row approve; absent on a bulk pass, which judges nothing.
+  approveQueue: (id: number, reason?: DecisionReason) =>
+    postJson<{ ok: boolean }>(`/queue/${id}/approve`, reason ? { reason } : {}),
   // `reason` undefined → the row's note is left alone; a string: including
   // "": is written, so a founder can clear a prefilled reason.
-  rejectQueue: (id: number, reason?: string) =>
-    postJson<{ ok: boolean }>(`/queue/${id}/reject`, reason === undefined ? {} : { reason }),
+  // `decisionReason` is the structured why; only fit-kind ones teach the ICP.
+  rejectQueue: (id: number, reason?: string, decisionReason?: DecisionReason) =>
+    postJson<{ ok: boolean }>(`/queue/${id}/reject`, {
+      ...(reason === undefined ? {} : { reason }),
+      ...(decisionReason ? { decisionReason } : {}),
+    }),
   // The reject box's LLM fallback: one sentence on why this row might not
   // fit, or null when the model sees no mismatch. Never sends, never decides.
   suggestRejectReason: (id: number) =>

@@ -1,3 +1,4 @@
+import { isDecisionReason, type DecisionReason } from "@oneshot-gtm/shared-types";
 import type { Database } from "bun:sqlite";
 import { DraftVersionStore, draftVersionAngle, type DraftDiscardReason } from "./ledger-drafts.ts";
 import { extractBusinessAddress } from "./mail-address.ts";
@@ -13,6 +14,7 @@ import type {
   QueueSearchRow,
   QueueStatus,
   SentOutcomeRawRow,
+  QualifiedOutcomeExample,
 } from "./types.ts";
 
 /**
@@ -54,6 +56,9 @@ const ICP_EXAMPLE_FIELDS = [
 ] as const;
 
 /** Keep classifier examples useful without returning enriched contact data. */
+/** Only explicit fit judgments teach the ICP; `FIT_DECISION_REASONS` in shared-types. */
+const FIT_REASON_SQL = "AND decision_reason IN ('fit','wrong_audience','wrong_person')";
+
 function icpExampleCandidate(payload: unknown): Record<string, unknown> {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
   const source = payload as Record<string, unknown>;
@@ -139,11 +144,16 @@ export class QueueStore {
     this.drafts = new DraftVersionStore(db);
   }
 
-  /** Recent reviewed rows for few-shot ICP classification. */
-  recentIcpDecisions(limit = 20): IcpDecisionExample[] {
+  /**
+   * Recent reviewed rows for few-shot ICP classification. `reasoned` keeps
+   * only decisions the founder tagged with a fit judgment (#813): a generic
+   * approve or reject may be about the draft or the moment, and must not
+   * teach the ICP; legacy and bulk rows carry no reason and are excluded.
+   */
+  recentIcpDecisions(limit = 20, opts: { reasoned?: boolean } = {}): IcpDecisionExample[] {
     const rows = this.db
       .query(
-        `SELECT payload_json, status, notes
+        `SELECT payload_json, status, notes, decision_reason
          FROM target_queue
          WHERE ${humanDecisionWhereSql()}
            AND play_name IN (
@@ -152,6 +162,7 @@ export class QueueStore {
              'competitor-switch', 'stack-consolidation', 'repo-interest', 'luma-events'
            )
            AND json_valid(payload_json)
+           ${opts.reasoned ? FIT_REASON_SQL : ""}
          ORDER BY reviewed_at DESC, id DESC
          LIMIT ?`,
       )
@@ -159,6 +170,7 @@ export class QueueStore {
       payload_json: string;
       status: "approved" | "rejected" | "sent";
       notes: string | null;
+      decision_reason: string | null;
     }>;
 
     return rows.flatMap((row) => {
@@ -172,6 +184,7 @@ export class QueueStore {
             candidate: icpExampleCandidate(payload),
             decision: row.status !== "rejected",
             reason: row.notes,
+            decisionReason: isDecisionReason(row.decision_reason) ? row.decision_reason : null,
           },
         ];
       } catch {
@@ -186,7 +199,7 @@ export class QueueStore {
    * (issue #750) gates a model call behind, so "enough evidence" always means
    * "enough of the evidence the classifier can actually see".
    */
-  countHumanIcpDecisions(): number {
+  countHumanIcpDecisions(opts: { reasoned?: boolean } = {}): number {
     const row = this.db
       .query(
         `SELECT COUNT(*) AS n
@@ -197,7 +210,8 @@ export class QueueStore {
              'hiring-signal', 'podcast-guest', 'github-topics', 'github-stars',
              'competitor-switch', 'stack-consolidation', 'repo-interest', 'luma-events'
            )
-           AND json_valid(payload_json)`,
+           AND json_valid(payload_json)
+           ${opts.reasoned ? FIT_REASON_SQL : ""}`,
       )
       .get() as { n: number };
     return row.n;
@@ -562,9 +576,18 @@ export class QueueStore {
      *   the per-row UI routes pass "human" explicitly.
      */
     decidedBy?: "human" | "machine";
+    /**
+     * The founder's structured reason (#813): written on a human approve or
+     * reject when given, cleared on a human decision made without one so a
+     * re-decide never inherits a stale reason. Machine decisions never set it.
+     */
+    decisionReason?: DecisionReason | null;
   }): void {
     const now = new Date().toISOString();
     const decidedBy = input.decidedBy ?? (input.status === "approved" ? "human" : "machine");
+    const reasonSql = decidedBy === "human" ? ", decision_reason = $decisionReason" : "";
+    const reasonArg: Record<string, string | null> =
+      decidedBy === "human" ? { $decisionReason: input.decisionReason ?? null } : {};
     // Every status transition clears `send_started_at`. A deliberate status
     // change means the previous "sending" attempt (if any) is settled. Terminal
     // states (sent/rejected/expired) clear naturally. Approved → approved
@@ -619,7 +642,7 @@ export class QueueStore {
         input.status === "approved"
           ? this.db
               .prepare(
-                `UPDATE target_queue SET status = $status, reviewed_at = $now, decision = $decision, decided_at = $now, decided_by = $decidedBy, send_started_at = NULL${input.notes ? ", notes = $notes" : ""}${overrideSql} WHERE id = $id AND status != 'sent' AND sent_at IS NULL`,
+                `UPDATE target_queue SET status = $status, reviewed_at = $now, decision = $decision, decided_at = $now, decided_by = $decidedBy, send_started_at = NULL${reasonSql}${input.notes ? ", notes = $notes" : ""}${overrideSql} WHERE id = $id AND status != 'sent' AND sent_at IS NULL`,
               )
               .run({
                 $status: input.status,
@@ -627,6 +650,7 @@ export class QueueStore {
                 $decision: decision,
                 $decidedBy: decidedBy,
                 $id: input.id,
+                ...reasonArg,
                 ...(decidedBy === "human"
                   ? { $storedFitReason: input.storedFitReason ?? null }
                   : {}),
@@ -651,13 +675,17 @@ export class QueueStore {
       const decision = decidedBy === "human" ? "reject" : "auto_reject";
       this.db
         .prepare(
-          `UPDATE target_queue SET status = ?, reviewed_at = ?, decision = ?, decided_at = ?, decided_by = ?, send_started_at = NULL ${input.notes !== undefined ? ", notes = ?" : ""} WHERE id = ?`,
+          `UPDATE target_queue SET status = $status, reviewed_at = $now, decision = $decision, decided_at = $now, decided_by = $decidedBy, send_started_at = NULL${reasonSql}${input.notes !== undefined ? ", notes = $notes" : ""} WHERE id = $id`,
         )
-        .run(
-          ...(input.notes !== undefined
-            ? [input.status, now, decision, now, decidedBy, input.notes, input.id]
-            : [input.status, now, decision, now, decidedBy, input.id]),
-        );
+        .run({
+          $status: input.status,
+          $now: now,
+          $decision: decision,
+          $decidedBy: decidedBy,
+          $id: input.id,
+          ...reasonArg,
+          ...(input.notes !== undefined ? { $notes: input.notes } : {}),
+        });
     } else {
       this.db
         .prepare(`UPDATE target_queue SET status = ?, send_started_at = NULL WHERE id = ?`)
@@ -756,6 +784,48 @@ export class QueueStore {
       });
     }
     return swept;
+  }
+
+  /**
+   * Founder-recorded commercial outcomes (meeting booked, SQL, deal won)
+   * with the public context the prospect was reviewed against (#813):
+   * ICP evidence of a different kind from an approval, passed to the
+   * rewrite job under its own key. Lost deals, ghosting, polite replies and
+   * unsubscribes are never here.
+   */
+  qualifiedOutcomeExamples(limit = 20): QualifiedOutcomeExample[] {
+    const rows = this.db
+      .query(
+        `SELECT outcome, recorded_at, payload_json FROM (
+           SELECT o.outcome, o.recorded_at, o.id,
+                  (SELECT q.payload_json FROM target_queue q
+                    WHERE q.prospect_id = o.prospect_id AND json_valid(q.payload_json)
+                    ORDER BY q.sent_at DESC, q.id DESC LIMIT 1) AS payload_json
+             FROM deal_outcomes o
+            WHERE o.outcome IN ('meeting_booked', 'sql_qualified', 'deal_won'))
+          WHERE payload_json IS NOT NULL
+          ORDER BY recorded_at DESC, id DESC
+          LIMIT ?`,
+      )
+      .all(Math.max(1, Math.floor(limit))) as Array<{
+      outcome: QualifiedOutcomeExample["outcome"];
+      recorded_at: string;
+      payload_json: string | null;
+    }>;
+    return rows.flatMap((row) => {
+      if (!row.payload_json) return [];
+      try {
+        return [
+          {
+            candidate: icpExampleCandidate(JSON.parse(row.payload_json) as unknown),
+            outcome: row.outcome,
+            recordedAt: row.recorded_at,
+          },
+        ];
+      } catch {
+        return [];
+      }
+    });
   }
 
   approveAllPending(opts: { playName?: string } = {}): number {

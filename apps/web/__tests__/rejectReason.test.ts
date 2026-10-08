@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   appendReason,
+  decisionReasonForChip,
   reasonFromNotes,
+  REJECT_DECISION_REASONS,
   REJECT_REASON_CHIPS,
   suggestRejectReason,
 } from "../src/lib/rejectReason.ts";
@@ -110,5 +112,28 @@ describe("appendReason", () => {
       expect(c).toBe(c.toLowerCase());
       expect(c.startsWith("auto:")).toBe(false);
     }
+  });
+});
+
+describe("structured decision reasons (#813)", () => {
+  it("maps every chip to a reason: audience chips to wrong_audience, the buyer chip to wrong_person, the rest to other", () => {
+    expect(REJECT_REASON_CHIPS.map(decisionReasonForChip)).toEqual([
+      "wrong_audience",
+      "wrong_audience",
+      "wrong_person",
+      "other",
+      "other",
+      "wrong_audience",
+    ]);
+  });
+
+  it("offers every reject reason but fit, with fit judgments first", () => {
+    expect(REJECT_DECISION_REASONS.map((r) => r.value)).toEqual([
+      "wrong_audience",
+      "wrong_person",
+      "bad_timing",
+      "draft_problem",
+      "other",
+    ]);
   });
 });

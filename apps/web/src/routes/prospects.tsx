@@ -10,6 +10,7 @@ import {
   type ProspectBrowseRow,
   type ProspectSortKey,
   type QueueStatusView,
+  type DecisionReason,
 } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
@@ -36,7 +37,13 @@ import {
   type ProspectsSearch,
 } from "../lib/prospects-helpers.ts";
 import { fitReasonFor } from "../lib/queueRationale.ts";
-import { appendReason, REJECT_REASON_CHIPS, suggestRejectReason } from "../lib/rejectReason.ts";
+import {
+  appendReason,
+  decisionReasonForChip,
+  REJECT_DECISION_REASONS,
+  REJECT_REASON_CHIPS,
+  suggestRejectReason,
+} from "../lib/rejectReason.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
 import { CaseSection, Rule, Sheet } from "../components/ledger/Sheet.tsx";
@@ -471,6 +478,7 @@ function DetailPanel({ id }: { id: number }) {
   const { masked } = usePrivacy();
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
+  const [decisionReason, setDecisionReason] = useState<DecisionReason | "">("");
   const detail = useQuery({
     queryKey: ["prospects", "detail", id],
     queryFn: () => api.queueRowDetail(id),
@@ -483,7 +491,9 @@ function DetailPanel({ id }: { id: number }) {
     void qc.invalidateQueries({ queryKey: ["home"] });
   };
   const approve = useMutation({
-    mutationFn: (rowId: number) => api.approveQueue(rowId),
+    // A plain approve records no fit judgment; "as fit" is the explicit choice (#813).
+    mutationFn: (vars: { rowId: number; fit?: boolean }) =>
+      api.approveQueue(vars.rowId, vars.fit ? "fit" : undefined),
     onSuccess: () => {
       toast.success("approved — it will go out on the next drain");
       invalidate();
@@ -491,8 +501,8 @@ function DetailPanel({ id }: { id: number }) {
     onError: (err) => toast.error(`couldn't approve · ${err.message}`),
   });
   const reject = useMutation({
-    mutationFn: (vars: { rowId: number; reason?: string }) =>
-      api.rejectQueue(vars.rowId, vars.reason),
+    mutationFn: (vars: { rowId: number; reason?: string; decisionReason?: DecisionReason }) =>
+      api.rejectQueue(vars.rowId, vars.reason, vars.decisionReason),
     onSuccess: () => {
       toast.success("rejected");
       setRejecting(false);
@@ -590,7 +600,13 @@ function DetailPanel({ id }: { id: number }) {
               variant="danger"
               size="sm"
               disabled={reject.isPending}
-              onClick={() => reject.mutate({ rowId: row.id, reason: reason.trim() || undefined })}
+              onClick={() =>
+                reject.mutate({
+                  rowId: row.id,
+                  reason: reason.trim() || undefined,
+                  decisionReason: decisionReason || undefined,
+                })
+              }
               {...readOnly}
             >
               {reject.isPending ? "Rejecting…" : "Reject"}
@@ -602,10 +618,22 @@ function DetailPanel({ id }: { id: number }) {
             variant="secondary"
             size="sm"
             disabled={approve.isPending}
-            onClick={() => approve.mutate(row.id)}
+            onClick={() => approve.mutate({ rowId: row.id })}
             {...readOnly}
           >
             <Check size={12} /> {row.status === "rejected" ? "Approve anyway" : "Approve"}
+          </Button>
+        )}
+        {!rejecting && canApprove && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={approve.isPending}
+            onClick={() => approve.mutate({ rowId: row.id, fit: true })}
+            title="Approve and record an explicit fit judgment: this is who you sell to (teaches the ICP)"
+            {...readOnly}
+          >
+            as fit
           </Button>
         )}
         {!rejecting && row.prospectId != null && (
@@ -636,12 +664,33 @@ function DetailPanel({ id }: { id: number }) {
             key={chip}
             variant="ghost"
             size="sm"
-            onClick={() => setReason((cur) => appendReason(cur, chip))}
+            onClick={() => {
+              setReason((cur) => appendReason(cur, chip));
+              setDecisionReason(decisionReasonForChip(chip));
+            }}
           >
             {chip}
           </Button>
         ))}
       </div>
+      <Field
+        label="Why (optional)"
+        hint="Only a fit judgment teaches the ICP; timing and draft problems never do."
+        className="mt-3"
+      >
+        <Select
+          value={decisionReason}
+          onChange={(e) => setDecisionReason(e.target.value as DecisionReason | "")}
+          aria-label="Decision reason"
+        >
+          <option value="">No reason</option>
+          {REJECT_DECISION_REASONS.map((r) => (
+            <option key={r.value} value={r.value}>
+              {r.label}
+            </option>
+          ))}
+        </Select>
+      </Field>
     </div>
   ) : null;
 

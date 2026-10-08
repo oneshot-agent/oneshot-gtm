@@ -1,3 +1,4 @@
+import type { DecisionReason } from "@oneshot-gtm/shared-types";
 import { recordManualQueueSend, type ManualQueueSend } from "./ledger-manual.ts";
 import { extractBusinessAddress } from "./mail-address.ts";
 import type { DirectMailDraft, PostalAddress } from "./direct-mail.ts";
@@ -211,6 +212,7 @@ import type {
   ReceiptRecord,
   SequenceEventRecord,
   TriggerRow,
+  QualifiedOutcomeExample,
 } from "./types.ts";
 
 const DEFAULT_DB_PATH = join(configDir(), "ledger.sqlite");
@@ -1850,13 +1852,18 @@ export class Ledger {
   }
 
   /** Recent reviewed rows for few-shot ICP classification. */
-  recentIcpDecisions(limit = 20): IcpDecisionExample[] {
-    return this.queue.recentIcpDecisions(limit);
+  recentIcpDecisions(limit = 20, opts: { reasoned?: boolean } = {}): IcpDecisionExample[] {
+    return this.queue.recentIcpDecisions(limit, opts);
   }
 
   /** Count of human approve/reject decisions available to the ICP classifiers (learning-loop v2, #750). */
-  countHumanIcpDecisions(): number {
-    return this.queue.countHumanIcpDecisions();
+  countHumanIcpDecisions(opts: { reasoned?: boolean } = {}): number {
+    return this.queue.countHumanIcpDecisions(opts);
+  }
+
+  /** Founder-recorded meeting/SQL/won outcomes with review context (#813). */
+  qualifiedOutcomeExamples(limit = 20): QualifiedOutcomeExample[] {
+    return this.queue.qualifiedOutcomeExamples(limit);
   }
 
   /**
@@ -2090,6 +2097,8 @@ export class Ledger {
      *   the per-row UI routes pass "human" explicitly.
      */
     decidedBy?: "human" | "machine";
+    /** The founder's structured reason (#813); see QueueStore.setQueueStatus. */
+    decisionReason?: DecisionReason | null;
   }): void {
     let storedFitReason: string | null = null;
     if (input.status === "approved" && input.decidedBy !== "machine") {

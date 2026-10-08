@@ -39,6 +39,7 @@ vi.mock("@oneshot-gtm/plays", async () => {
 });
 
 const {
+  parseDecisionReason,
   parseRejectReason,
   rejectLookupDomain,
   rejectQueueRoute,
@@ -254,5 +255,39 @@ describe("suggestRejectReasonRoute", () => {
     const res = await ask("7");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ reason: null, source: null, researched: false });
+  });
+});
+
+describe("structured decision reasons (#813)", () => {
+  it("parses a known reason, treats absent/empty as none, and refuses an unknown one", () => {
+    expect(parseDecisionReason({}, "decisionReason")).toEqual({});
+    expect(parseDecisionReason({ decisionReason: "" }, "decisionReason")).toEqual({});
+    expect(parseDecisionReason({ decisionReason: null }, "decisionReason")).toEqual({});
+    expect(parseDecisionReason({ decisionReason: "bad_timing" }, "decisionReason")).toEqual({
+      decisionReason: "bad_timing",
+    });
+    expect(parseDecisionReason({ reason: "fit" }, "reason")).toEqual({ decisionReason: "fit" });
+    expect(parseDecisionReason({ decisionReason: "meh" }, "decisionReason")).toHaveProperty(
+      "error",
+    );
+  });
+
+  it("writes the structured reason next to the note, null when none was given", async () => {
+    let res = await rejectQueueRoute(
+      post("7", { reason: "not the buyer", decisionReason: "wrong_person" }),
+      { id: "7" },
+    );
+    expect(res.status).toBe(200);
+    expect(statusCalls.at(-1)).toMatchObject({
+      status: "rejected",
+      decidedBy: "human",
+      decisionReason: "wrong_person",
+      notes: "not the buyer",
+    });
+    res = await rejectQueueRoute(post("7", {}), { id: "7" });
+    expect(res.status).toBe(200);
+    expect(statusCalls.at(-1)).not.toHaveProperty("decisionReason");
+    res = await rejectQueueRoute(post("7", { decisionReason: "nope" }), { id: "7" });
+    expect(res.status).toBe(400);
   });
 });

@@ -56,6 +56,7 @@ export async function icpFilter(input: {
         // job changes, and other identifying context. The decision itself is
         // sufficient few-shot feedback; never forward those notes to the LLM.
         reason: null,
+        decisionReason: example.decisionReason,
       }));
   } catch (err) {
     // Learning context is optional: a damaged/locked ledger must not turn a
