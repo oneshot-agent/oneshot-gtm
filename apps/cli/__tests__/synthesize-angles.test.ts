@@ -19,6 +19,7 @@ let rows: Row[] = [];
 const setAngleCalls: Array<{ id: number; angle: string | null }> = [];
 // Since #813 the default path proposes a revision for review; --apply writes directly.
 const proposeCalls: Array<{ id: number; hook: string }> = [];
+let proposeReturnsNull = false;
 let circuitOpen = false;
 let gatherCostUsd = 0.02;
 let nextAngle: { hook: string } | null = { hook: "shipped v2" };
@@ -64,7 +65,7 @@ vi.mock("@oneshot-gtm/find", () => ({
   },
   proposeProspectAngle: (input: { prospect: { id: number }; angle: { hook: string } }) => {
     proposeCalls.push({ id: input.prospect.id, hook: input.angle.hook });
-    return { id: `p${proposeCalls.length}` };
+    return proposeReturnsNull ? null : { id: `p${proposeCalls.length}` };
   },
 }));
 
@@ -89,6 +90,7 @@ beforeEach(() => {
   rows = [row(1), row(2), row(3)];
   setAngleCalls.length = 0;
   proposeCalls.length = 0;
+  proposeReturnsNull = false;
   gatherCalls.length = 0;
   synthesizeCalls.length = 0;
   circuitOpen = false;
@@ -123,6 +125,15 @@ describe("commandSynthesizeAngles", () => {
     expect(proposeCalls).toHaveLength(3);
     expect(proposeCalls[0]!.hook).toBe("shipped v2");
     expect(stdout.join("")).toContain("proposed for review 3");
+  });
+
+  it("reports a pending or dismissed hook as skipped, not as no signal", async () => {
+    proposeReturnsNull = true;
+    await commandSynthesizeAngles({ dryRun: false, refresh: false });
+    expect(proposeCalls).toHaveLength(3);
+    const out = stdout.join("");
+    expect(out).toContain("already pending or dismissed: 3");
+    expect(out).toContain("no signal: 0");
   });
 
   it("--apply writes the active angle directly, as before", async () => {

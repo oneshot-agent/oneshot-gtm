@@ -83,6 +83,8 @@ export async function commandSynthesizeAngles(opts: SynthesizeAnglesOpts): Promi
   let costUsd = 0;
   let written = 0;
   let empty = 0;
+  /** Synthesized, but an identical hook is already pending or was just dismissed. */
+  let skipped = 0;
   let failed = 0;
   let haltedAt: number | null = null;
   let cappedAt: number | null = null;
@@ -113,8 +115,12 @@ export async function commandSynthesizeAngles(opts: SynthesizeAnglesOpts): Promi
     if (opts.apply) ledger.setProspectAngle(row.id, JSON.stringify(angle));
     else {
       const prospect = ledger.getProspectById(row.id);
-      if (!prospect || !proposeProspectAngle({ prospect, angle, evidence })) {
-        empty++;
+      if (!prospect) {
+        failed++;
+        return;
+      }
+      if (!proposeProspectAngle({ prospect, angle, evidence })) {
+        skipped++;
         return;
       }
     }
@@ -140,7 +146,9 @@ export async function commandSynthesizeAngles(opts: SynthesizeAnglesOpts): Promi
     );
   }
   ok(
-    `${opts.apply ? "synthesized" : "proposed for review"} ${written}  ${c.dim("no signal:")} ${empty}  ${c.dim("failed:")} ${failed}  ` +
+    `${opts.apply ? "synthesized" : "proposed for review"} ${written}  ${c.dim("no signal:")} ${empty}  ` +
+      (skipped > 0 ? `${c.dim("already pending or dismissed:")} ${skipped}  ` : "") +
+      `${c.dim("failed:")} ${failed}  ` +
       `${c.dim("spent:")} $${costUsd.toFixed(2)}`,
   );
 }

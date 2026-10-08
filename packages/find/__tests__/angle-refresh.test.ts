@@ -63,6 +63,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       setProspectAngleProposedAt: (id: number, at: string | null) => {
         proposedAtCalls.push({ id, at });
       },
+      transaction: <T>(fn: () => T): T => fn(),
       learning: {
         wasJustDismissed: () => justDismissed,
         insert: (input: Record<string, unknown>) => {

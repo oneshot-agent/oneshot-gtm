@@ -892,11 +892,13 @@ find
         cheap: boolean;
         maxCostUsd?: number;
         dryRun: boolean;
+        apply: boolean;
       }) => {
         await commandSynthesizeAngles({
           dryRun: opts.dryRun,
           refresh: opts.refresh,
           cheap: opts.cheap,
+          apply: opts.apply,
           // Always forward the limit, including 0 and NaN. resolveCap validates
           // them; omitting falsy values would remove the paid run's cap.
           limit: opts.limit,

@@ -470,32 +470,37 @@ export function proposeProspectAngle(input: {
     : evidence.replies.length > 0
       ? "after a reply"
       : "from fresh research";
-  const view = ledger.learning.insert({
-    kind: "prospect_angle",
-    scope: { prospectId: prospect.id },
-    current: {
-      angleJson: prospect.angle_json ?? null,
-      approvedAt: prospect.angle_approved_at ?? null,
-    },
-    proposed: angle,
-    evidence: {
-      refs: [],
-      samples: evidence.replies.slice(0, 3).map((r) => ({
-        at: r.receivedAt,
-        label: r.subject ? `Reply · ${r.subject}` : "Reply",
-        text: r.body.slice(0, 400),
-      })),
-      counts: {
-        replies: evidence.replies.length,
-        evidence_items: angle.evidence.length,
+  // One transaction: a proposal without its debounce stamp would let the
+  // next reply re-buy a synthesis while this one is still waiting.
+  const view = ledger.transaction(() => {
+    const proposal = ledger.learning.insert({
+      kind: "prospect_angle",
+      scope: { prospectId: prospect.id },
+      current: {
+        angleJson: prospect.angle_json ?? null,
+        approvedAt: prospect.angle_approved_at ?? null,
       },
-      method: context?.outcome ? "outcome" : evidence.replies.length > 0 ? "reply" : "research",
-    },
-    evidenceSummary: `Re-synthesized ${trigger} from ${evidence.sources.join(", ") || "existing research"}.`,
-    baselineKey: learningKeyOf(prospect.angle_json ?? ""),
-    dedupeKey,
+      proposed: angle,
+      evidence: {
+        refs: [],
+        samples: evidence.replies.slice(0, 3).map((r) => ({
+          at: r.receivedAt,
+          label: r.subject ? `Reply · ${r.subject}` : "Reply",
+          text: r.body.slice(0, 400),
+        })),
+        counts: {
+          replies: evidence.replies.length,
+          evidence_items: angle.evidence.length,
+        },
+        method: context?.outcome ? "outcome" : evidence.replies.length > 0 ? "reply" : "research",
+      },
+      evidenceSummary: `Re-synthesized ${trigger} from ${evidence.sources.join(", ") || "existing research"}.`,
+      baselineKey: learningKeyOf(prospect.angle_json ?? ""),
+      dedupeKey,
+    });
+    if (proposal) ledger.setProspectAngleProposedAt(prospect.id, new Date().toISOString());
+    return proposal;
   });
-  if (view) ledger.setProspectAngleProposedAt(prospect.id, new Date().toISOString());
   return view;
 }
 
