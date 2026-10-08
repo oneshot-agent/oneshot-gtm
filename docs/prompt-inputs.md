@@ -84,8 +84,9 @@ credentials, portfolio and partners for proof, `founderAdmission` for the
 concession, `yourEdge` for the argument, `productBrief` for facts and links,
 `icpOneLiner` for who it is for. `pilotOffer` is what the last follow-up of
 the builder plays (repo-interest, stack-consolidation, competitor-switch,
-hiring-signal, post-funding, accelerator-batch) offers in place of the plain
-breakup: the only source for what the pilot includes, and never a price.
+hiring-signal, post-funding) offers in place of the plain breakup: the only
+source for what the pilot includes, and never a price. accelerator-batch
+always ends on the plain breakup, with or without an offer.
 
 ## Multiple angles
 
