@@ -114,6 +114,11 @@ export class IcpProposalStore {
     return p && p.kind === "icp" ? toView(p) : null;
   }
 
+  /** This surface only ever reaches ICP rows: an id of another kind reads as missing. */
+  private isIcp(id: string): boolean {
+    return this.learning.get(id)?.kind === "icp";
+  }
+
   /**
    * Flip a PENDING proposal to `approved` or `dismissed`, guarded against a
    * concurrent double-decision (the UPDATE's own `WHERE status='pending'`
@@ -124,6 +129,7 @@ export class IcpProposalStore {
     status: "approved" | "dismissed",
     now: string,
   ): { view: IcpProposalView } | { error: string } {
+    if (!this.isIcp(id)) return { error: `proposal '${id}' not found` };
     const result = this.learning.decide(id, status, now);
     return "error" in result ? result : { view: toView(result.view) };
   }
@@ -134,12 +140,12 @@ export class IcpProposalStore {
    * pending rather than leave a recorded "approval" that never took effect.
    */
   revertToPending(id: string): void {
-    this.learning.revertToPending(id);
+    if (this.isIcp(id)) this.learning.revertToPending(id);
   }
 
   /** The approval took effect on config.json. */
   markApplied(id: string, now: string): void {
-    this.learning.markApplied(id, now);
+    if (this.isIcp(id)) this.learning.markApplied(id, now);
   }
 
   /**

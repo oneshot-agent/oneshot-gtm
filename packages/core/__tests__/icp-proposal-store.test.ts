@@ -176,6 +176,27 @@ describe("IcpProposalStore proposal lifecycle", () => {
   });
 });
 
+describe("IcpProposalStore only reaches icp rows", () => {
+  it("decide / revertToPending / markApplied refuse a proposal of another kind", () => {
+    const other = ledger.learning.insert({
+      kind: "preference",
+      scope: { channel: "email" },
+      current: null,
+      proposed: { instruction: "Be brief", source: "edits" },
+      evidence: { refs: [] },
+      evidenceSummary: "x",
+      baselineKey: "",
+      dedupeKey: "be brief",
+    })!;
+    expect(ledger.icpProposals.get(other.id)).toBeNull();
+    const decided = ledger.icpProposals.decide(other.id, "dismissed", "2026-09-29T01:00:00Z");
+    expect("error" in decided && decided.error).toContain("not found");
+    ledger.icpProposals.markApplied(other.id, "2026-09-29T01:00:00Z");
+    ledger.icpProposals.revertToPending(other.id);
+    expect(ledger.learning.get(other.id)).toMatchObject({ status: "pending", appliedAt: null });
+  });
+});
+
 describe("normalizeIcpText", () => {
   it("collapses case and punctuation differences to the same key", () => {
     expect(normalizeIcpText("B2B, Fintech CTOs!")).toBe(normalizeIcpText("b2b fintech ctos"));
