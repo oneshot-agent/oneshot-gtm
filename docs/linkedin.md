@@ -37,15 +37,9 @@ LinkedIn is an outreach channel, like email. A queue row on the LinkedIn channel
 
 In any cadence, a step on a channel the person has no address for (an email step for someone with no email, for example) is skipped, and the cadence moves on to the next step.
 
-## Reply preferences
+## Writing preferences
 
-Replies learns writing preferences across LinkedIn conversations in the same workspace. New suggestions and Improve use the active preferences alongside your configured founder voice, conversation instructions, prospect angle, and product brief. Current instructions and founder voice take priority; learned preferences never establish product facts or promises. Existing drafts stay intact when learning changes.
-
-Learning uses confirmed sends, not keystrokes or unused suggestions. Explicit general feedback on an accepted improvement can establish a preference after sending. Inferred editing patterns need three distinct conversations; historical or unchanged style examples need five. Feedback that applies only to one conversation stays local. The first background pass imports up to 100 recent app-confirmed sends with reliable workspace attribution. Synchronized outbound messages alone are not treated as reviewed examples, and missing originals are not reconstructed.
-
-Open **Reply preferences · LinkedIn** on Replies to inspect the guidance and its supporting replies, disable a preference, or pause learning. Pausing stops synthesis and use of learned guidance; evidence and settings remain saved. Disabled guidance remains excluded from future synthesis until re-enabled. Email and other workspaces are separate.
-
-The background scheduler refreshes pending evidence at most once every five minutes, subject to the daily spend limit. Failed refreshes retry and retain the last good preferences. Prospect responses and business outcomes continue feeding prospect angles; this feature learns your writing preferences, not which wording caused an outcome.
+Replies learns writing preferences from the replies you send on LinkedIn and email: your explicit feedback on an improvement, the same edit made across several conversations, a consistent pattern across more. What it learns is a proposal; nothing applies to a draft until you approve it on `/queue`. **Writing preferences** on Replies shows what is active, lets you disable or re-enable a line, pause learning for the workspace, and links to the proposals waiting for review. [Learning and approval](./learning.md) covers every kind of learned change, what drafts see, and how approval, rollback and the queue's decision reasons work.
 
 ## Historical backfill and identity matching
 
