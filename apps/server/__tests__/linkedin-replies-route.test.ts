@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const record = vi.fn();
 const getProspectById = vi.fn();
+const triggerAngleRefresh = vi.fn();
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
+    triggerAngleRefresh: (...args: unknown[]) => triggerAngleRefresh(...args),
     getLedger: () => ({
       recordLinkedInReply: record,
       getProspectById,
@@ -26,9 +28,10 @@ describe("LinkedIn reply routes", () => {
       inFlightSends: 0,
     });
     getProspectById.mockReset().mockReturnValue({ id: 7 });
+    triggerAngleRefresh.mockReset();
   });
 
-  it("supports the dashboard's prospect-id action", async () => {
+  it("supports the dashboard's prospect-id action and proposes an angle revision (#813)", async () => {
     const response = await markLinkedInReplyRoute(
       new Request("http://localhost/api/prospects/7/linkedin-reply", { method: "POST" }),
       { id: "7" },
@@ -37,6 +40,21 @@ describe("LinkedIn reply routes", () => {
     expect(record).toHaveBeenCalledWith(
       expect.objectContaining({ prospectId: 7, source: "manual" }),
     );
+    expect(triggerAngleRefresh).toHaveBeenCalledWith(7);
+  });
+
+  it("does not re-propose on a duplicate submission", async () => {
+    record.mockReturnValue({
+      duplicate: true,
+      prospectId: 7,
+      cadencesStopped: 0,
+      inFlightSends: 0,
+    });
+    await markLinkedInReplyRoute(
+      new Request("http://localhost/api/prospects/7/linkedin-reply", { method: "POST" }),
+      { id: "7" },
+    );
+    expect(triggerAngleRefresh).not.toHaveBeenCalled();
   });
 
   it("rejects a cross-origin dashboard mutation", async () => {

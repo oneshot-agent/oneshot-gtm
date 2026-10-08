@@ -654,6 +654,11 @@ export class ProspectStore {
       .run(angle, synthesizedAt, id);
   }
 
+  /** A revision of the angle was proposed for review (#813); the debounce reads this like a synthesis. */
+  setProspectAngleProposedAt(id: number, at: string | null): void {
+    this.db.prepare("UPDATE prospects SET angle_proposed_at = ? WHERE id = ?").run(at, id);
+  }
+
   /**
    * Write ONE half of a prospect's dossier without clobbering the other.
    *
@@ -896,7 +901,14 @@ export class ProspectStore {
     }
     if (any.length === 0) return [];
 
-    const where = [`(${any.join(" OR ")})`];
+    const where = [
+      `(${any.join(" OR ")})`,
+      // A revision already waiting for review (#813): synthesizing again
+      // would only queue a second proposal behind the first.
+      `NOT EXISTS(SELECT 1 FROM learning_proposals lp
+                   WHERE lp.kind = 'prospect_angle' AND lp.status = 'pending'
+                     AND json_extract(lp.scope_json, '$.prospectId') = p.id)`,
+    ];
     const rows = this.db
       .query(
         `SELECT p.id, p.name, p.company, p.email, p.source, p.source_profile_url, p.linkedin_url,

@@ -20,7 +20,14 @@ interface ProspectStub {
 
 let prospect: ProspectStub | null = null;
 let setAngleCalls: Array<{ id: number; angle: string | null }> = [];
-let registeredTrigger: ((prospectId: number) => void) | null = null;
+// Since #813 a refresh never writes the active angle: it inserts a PENDING
+// proposal and stamps angle_proposed_at. Captured here.
+let proposals: Array<Record<string, unknown>> = [];
+let proposedAtCalls: Array<{ id: number; at: string | null }> = [];
+let justDismissed = false;
+let registeredTrigger:
+  | ((prospectId: number, context?: { outcome?: { type: string; label?: string } }) => void)
+  | null = null;
 let demoModeValue = false;
 // Round-2 correction, issue #357: refreshProspectAngle must gate its paid
 // gather behind the install-wide daily spend ceiling, same as every other
@@ -52,6 +59,17 @@ vi.mock("@oneshot-gtm/core", async () => {
       listChannelEventsForProspect: () => [],
       setProspectAngle: (id: number, angle: string | null) => {
         setAngleCalls.push({ id, angle });
+      },
+      setProspectAngleProposedAt: (id: number, at: string | null) => {
+        proposedAtCalls.push({ id, at });
+      },
+      transaction: <T>(fn: () => T): T => fn(),
+      learning: {
+        wasJustDismissed: () => justDismissed,
+        insert: (input: Record<string, unknown>) => {
+          proposals.push(input);
+          return { id: `p${proposals.length}`, ...input };
+        },
       },
     }),
     webRead: async () => ({ result: { markdown: "", cost: 0 } }),
@@ -123,6 +141,9 @@ beforeEach(() => {
     angle_json: null,
   };
   setAngleCalls = [];
+  proposals = [];
+  proposedAtCalls = [];
+  justDismissed = false;
   demoModeValue = false;
   isCircuitOpenValue = false;
   llmResponse = "{}";
@@ -139,7 +160,8 @@ describe("registerAngleRefreshTrigger wiring (issue #357)", () => {
     expect(registeredTrigger).not.toBeNull();
   });
 
-  it("persists a re-synthesized angle when the LLM returns one", async () => {
+  it("proposes a re-synthesized angle for review instead of writing it (#813)", async () => {
+    prospect!.angle_json = JSON.stringify({ hook: "old hook" });
     llmResponse = JSON.stringify({
       brief: "Builds agent infra.",
       hook: "Just corrected the record on their role.",
@@ -151,11 +173,38 @@ describe("registerAngleRefreshTrigger wiring (issue #357)", () => {
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(setAngleCalls).toHaveLength(1);
-    expect(setAngleCalls[0]?.id).toBe(1);
-    expect(JSON.parse(setAngleCalls[0]?.angle ?? "{}").hook).toBe(
+    expect(setAngleCalls).toHaveLength(0);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]).toMatchObject({
+      kind: "prospect_angle",
+      scope: { prospectId: 1 },
+      current: { angleJson: JSON.stringify({ hook: "old hook" }), approvedAt: null },
+      baselineKey: expect.any(String),
+      dedupeKey: expect.stringMatching(/^1:/),
+    });
+    expect((proposals[0]!["proposed"] as { hook: string }).hook).toBe(
       "Just corrected the record on their role.",
     );
+    expect((proposals[0]!["evidence"] as { method: string }).method).toBe("research");
+    expect(proposedAtCalls).toEqual([{ id: 1, at: expect.any(String) }]);
+  });
+
+  it("carries the outcome as the method and skips a hook the founder just dismissed", async () => {
+    llmResponse = JSON.stringify({ brief: "x", hook: "Deal-sized hook" });
+    registeredTrigger!(1, { outcome: { type: "meeting", label: "booked" } });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect((proposals[0]!["evidence"] as { method: string }).method).toBe("outcome");
+    expect(proposals[0]!["evidenceSummary"]).toContain("after booked");
+
+    proposals = [];
+    proposedAtCalls = [];
+    justDismissed = true;
+    registeredTrigger!(1);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(proposals).toEqual([]);
+    expect(proposedAtCalls).toEqual([]);
   });
 
   it("does not synthesize in demo mode", async () => {
@@ -178,7 +227,7 @@ describe("registerAngleRefreshTrigger wiring (issue #357)", () => {
     expect(setAngleCalls).toHaveLength(0);
   });
 
-  it("does not persist when the LLM returns nothing usable (no brief/hook)", async () => {
+  it("does not propose when the LLM returns nothing usable (no brief/hook)", async () => {
     llmResponse = JSON.stringify({ relationship: "builder" });
 
     registeredTrigger!(1);
@@ -186,6 +235,7 @@ describe("registerAngleRefreshTrigger wiring (issue #357)", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(setAngleCalls).toHaveLength(0);
+    expect(proposals).toHaveLength(0);
   });
 
   it("no-ops for a prospect id that no longer exists", async () => {

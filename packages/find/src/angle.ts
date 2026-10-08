@@ -11,8 +11,12 @@ import {
   type ProspectAngle,
   tryReserveDailySpend,
   webRead,
+  learningKeyOf,
+  learningScopeKey,
+  type ProspectRecord,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import type { LearningProposalView } from "@oneshot-gtm/shared-types";
 import {
   fetchFollowNetwork,
   fetchGitHubOrgProfile,
@@ -442,7 +446,67 @@ export async function synthesizePersonAngle(
 }
 
 /**
- * Re-synthesize and persist one prospect's angle (issue #357). The same
+ * Record a synthesized angle as a PENDING revision for the founder to
+ * review (#813). The proposal keeps the active angle (and whether it was
+ * ever approved) for rollback, the evidence the synthesis stood on, and a
+ * baseline fingerprint so an approval against an angle that has since
+ * moved is refused. Null when an identical hook is already pending or was
+ * just dismissed. Stamps `angle_proposed_at` so the refresh debounce
+ * treats the proposal as a synthesis.
+ */
+export function proposeProspectAngle(input: {
+  prospect: Pick<ProspectRecord, "id" | "angle_json" | "angle_approved_at">;
+  angle: ProspectAngle;
+  evidence: AngleEvidenceBundle;
+  context?: AngleRefreshContext;
+}): LearningProposalView | null {
+  const ledger = getLedger();
+  const { prospect, angle, evidence, context } = input;
+  const dedupeKey = `${prospect.id}:${learningKeyOf(angle.hook)}`;
+  const scopeKey = learningScopeKey("prospect_angle", { prospectId: prospect.id });
+  if (ledger.learning.wasJustDismissed("prospect_angle", dedupeKey, scopeKey)) return null;
+  const trigger = context?.outcome
+    ? `after ${context.outcome.label ?? context.outcome.type}`
+    : evidence.replies.length > 0
+      ? "after a reply"
+      : "from fresh research";
+  // One transaction: a proposal without its debounce stamp would let the
+  // next reply re-buy a synthesis while this one is still waiting.
+  const view = ledger.transaction(() => {
+    const proposal = ledger.learning.insert({
+      kind: "prospect_angle",
+      scope: { prospectId: prospect.id },
+      current: {
+        angleJson: prospect.angle_json ?? null,
+        approvedAt: prospect.angle_approved_at ?? null,
+      },
+      proposed: angle,
+      evidence: {
+        refs: [],
+        samples: evidence.replies.slice(0, 3).map((r) => ({
+          at: r.receivedAt,
+          label: r.subject ? `Reply · ${r.subject}` : "Reply",
+          text: r.body.slice(0, 400),
+        })),
+        counts: {
+          replies: evidence.replies.length,
+          evidence_items: angle.evidence.length,
+        },
+        method: context?.outcome ? "outcome" : evidence.replies.length > 0 ? "reply" : "research",
+      },
+      evidenceSummary: `Re-synthesized ${trigger} from ${evidence.sources.join(", ") || "existing research"}.`,
+      baselineKey: learningKeyOf(prospect.angle_json ?? ""),
+      dedupeKey,
+    });
+    if (proposal) ledger.setProspectAngleProposedAt(prospect.id, new Date().toISOString());
+    return proposal;
+  });
+  return view;
+}
+
+/**
+ * Re-synthesize and propose one prospect's angle (issue #357, reviewed
+ * since #813). The same
  * gather → synthesize → `setProspectAngle` pipeline `synthesize-angles`
  * drives, invoked from `triggerAngleRefresh`'s fire-and-forget hook instead
  * of a CLI backfill row. Never throws: every failure mode (demo mode, an
@@ -498,8 +562,13 @@ async function refreshProspectAngle(
       evidence,
     });
     if (!angle) return;
-    ledger.setProspectAngle(prospectId, JSON.stringify(angle));
-    logEvent("angle.refresh.done", { prospectId, hook: angle.hook.slice(0, 60) });
+    // Never written to the active angle here (#813): the founder approves
+    // the revision on /queue, and only that approval reaches a draft.
+    const proposal = proposeProspectAngle({ prospect, angle, evidence, context });
+    logEvent(proposal ? "angle.refresh.proposed" : "angle.refresh.skipped", {
+      prospectId,
+      hook: angle.hook.slice(0, 60),
+    });
   } catch (err) {
     logEvent(
       "angle.refresh.failed",

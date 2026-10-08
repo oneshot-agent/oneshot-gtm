@@ -17,6 +17,9 @@ interface Row {
 
 let rows: Row[] = [];
 const setAngleCalls: Array<{ id: number; angle: string | null }> = [];
+// Since #813 the default path proposes a revision for review; --apply writes directly.
+const proposeCalls: Array<{ id: number; hook: string }> = [];
+let proposeReturnsNull = false;
 let circuitOpen = false;
 let gatherCostUsd = 0.02;
 let nextAngle: { hook: string } | null = { hook: "shipped v2" };
@@ -29,6 +32,10 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     getLedger: () => ({
       listProspectsForAngle: () => rows,
+      getProspectById: (id: number) => {
+        const r = rows.find((x) => x.id === id);
+        return r ? { ...r, angle_json: null, angle_approved_at: null } : null;
+      },
       setProspectAngle: (id: number, angle: string | null) => setAngleCalls.push({ id, angle }),
     }),
   };
@@ -56,6 +63,10 @@ vi.mock("@oneshot-gtm/find", () => ({
     synthesizeCalls.push(input.prospect.id);
     return { angle: nextAngle, costUsd: 0 };
   },
+  proposeProspectAngle: (input: { prospect: { id: number }; angle: { hook: string } }) => {
+    proposeCalls.push({ id: input.prospect.id, hook: input.angle.hook });
+    return proposeReturnsNull ? null : { id: `p${proposeCalls.length}` };
+  },
 }));
 
 const { commandSynthesizeAngles } = await import("../src/commands/synthesize-angles.ts");
@@ -78,6 +89,8 @@ const originalWrite = process.stdout.write.bind(process.stdout);
 beforeEach(() => {
   rows = [row(1), row(2), row(3)];
   setAngleCalls.length = 0;
+  proposeCalls.length = 0;
+  proposeReturnsNull = false;
   gatherCalls.length = 0;
   synthesizeCalls.length = 0;
   circuitOpen = false;
@@ -104,12 +117,31 @@ describe("commandSynthesizeAngles", () => {
     expect(stdout.join("")).toContain("dry run");
   });
 
-  it("gathers, synthesizes, and persists an angle for every candidate", async () => {
+  it("gathers, synthesizes, and proposes an angle for review for every candidate (#813)", async () => {
     await commandSynthesizeAngles({ dryRun: false, refresh: false });
     expect(gatherCalls).toHaveLength(3);
     expect(synthesizeCalls).toHaveLength(3);
+    expect(setAngleCalls).toHaveLength(0);
+    expect(proposeCalls).toHaveLength(3);
+    expect(proposeCalls[0]!.hook).toBe("shipped v2");
+    expect(stdout.join("")).toContain("proposed for review 3");
+  });
+
+  it("reports a pending or dismissed hook as skipped, not as no signal", async () => {
+    proposeReturnsNull = true;
+    await commandSynthesizeAngles({ dryRun: false, refresh: false });
+    expect(proposeCalls).toHaveLength(3);
+    const out = stdout.join("");
+    expect(out).toContain("already pending or dismissed: 3");
+    expect(out).toContain("no signal: 0");
+  });
+
+  it("--apply writes the active angle directly, as before", async () => {
+    await commandSynthesizeAngles({ dryRun: false, refresh: false, apply: true });
+    expect(proposeCalls).toHaveLength(0);
     expect(setAngleCalls).toHaveLength(3);
     expect(setAngleCalls[0]!.angle).toBe(JSON.stringify(nextAngle));
+    expect(stdout.join("")).toContain("synthesized 3");
   });
 
   it("passes allowPaidResearch=false through to gatherAngleEvidence under --cheap", async () => {
@@ -121,6 +153,7 @@ describe("commandSynthesizeAngles", () => {
     nextAngle = null;
     await commandSynthesizeAngles({ dryRun: false, refresh: false });
     expect(setAngleCalls).toHaveLength(0);
+    expect(proposeCalls).toHaveLength(0);
     expect(stdout.join("")).toContain("no signal: 3");
   });
 

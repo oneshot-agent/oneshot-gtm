@@ -870,6 +870,11 @@ find
     "free evidence tiers only; skips a fresh deepResearchPerson/webRead call",
     false,
   )
+  .option(
+    "--apply",
+    "write each angle as the active one instead of proposing it for review on /queue",
+    false,
+  )
   .option("--max-cost-usd <n>", "stop once this much has been billed this run", (v) =>
     Number.parseFloat(v),
   )
@@ -887,11 +892,13 @@ find
         cheap: boolean;
         maxCostUsd?: number;
         dryRun: boolean;
+        apply: boolean;
       }) => {
         await commandSynthesizeAngles({
           dryRun: opts.dryRun,
           refresh: opts.refresh,
           cheap: opts.cheap,
+          apply: opts.apply,
           // Always forward the limit, including 0 and NaN. resolveCap validates
           // them; omitting falsy values would remove the paid run's cap.
           limit: opts.limit,
