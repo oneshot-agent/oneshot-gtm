@@ -639,7 +639,9 @@ function QueuePage() {
               }}
               {...readOnly}
             >
-              <Send size={12} /> Send approved{drain.enabled ? ` (${drain.approvedCount})` : ""}
+              {/* How many go is picked in the drain modal, so no count here:
+                  "(41)" read as "sends 41". The approved count is in the title. */}
+              <Send size={12} /> Batch send…
             </Button>
           </div>
         </div>
@@ -930,8 +932,8 @@ function QueuePage() {
         onClose={() => setDrainModal(null)}
         title={
           drainModal?.ids
-            ? `Drain ${drainModal.playName} (${drainModal.ids.length} selected)`
-            : `Drain ${drainModal?.playName ?? ""} (${drainModal?.approvedCount ?? 0} approved)`
+            ? `Batch send ${drainModal.playName} (${drainModal.ids.length} selected)`
+            : `Batch send ${drainModal?.playName ?? ""} (${drainModal?.approvedCount ?? 0} approved)`
         }
         footer={
           <>
