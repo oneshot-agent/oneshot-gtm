@@ -31,6 +31,7 @@ import {
   type ReplyThread,
   type ReplyStateRequest,
   type InboxSendReplyRequest,
+  type ReplyLearningStatus,
 } from "@oneshot-gtm/shared-types";
 import { isLoopbackOrigin, jsonResponse } from "../server.ts";
 import { callLinkedIn } from "../linkedin-client.ts";
@@ -152,6 +153,7 @@ export async function replyStateRoute(req: Request) {
 export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsContext {
   const cfg = loadConfig();
   const ledger = getLedger();
+  const guidance = ledger.learning.guidance({ channel: t.channel, stage: "reply" });
   const p = t.prospectId == null ? null : ledger.getProspectById(t.prospectId);
   const outreach = p
     ? ledger
@@ -190,11 +192,10 @@ export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsCon
     primaryBrief: cfg.productBrief ?? "",
     secondaryProducts: [],
     founderVoice: cfg.founderVoice ?? "",
-    learnedPreferences:
-      t.channel === "linkedin"
-        ? getReplyReviewStore().learning.guidance(t.workspace ?? currentWorkspaceName())
-            .instructions
-        : [],
+    // Approved writing preferences for replies on this channel (#813): the
+    // ledger's guidance rows, never anything still waiting for review.
+    learnedPreferences: guidance.instructions.map((i) => i.instruction),
+    learningKey: guidance.key,
     steer,
     prospect: {
       name: p?.name ?? t.name,
@@ -292,10 +293,7 @@ export async function replyGenerateRoute(req: Request) {
     if (!lease) throw new Error("Reply generation is already pending");
     const steer = typeof b.steer === "string" ? b.steer.slice(0, 4000) : (t.drafts?.steer ?? "");
     const context = replyOptionsContext(t, steer);
-    const learningVersion =
-      t.channel === "linkedin"
-        ? getReplyReviewStore().learning.guidance(t.workspace ?? currentWorkspaceName()).version
-        : undefined;
+    const learningVersion = getLedger().learning.guidanceVersion();
     const generated = await generateReplyOptions(context);
     const next: ReplyDraftSet = {
       ...emptyReplyDraft(t),
@@ -310,6 +308,7 @@ export async function replyGenerateRoute(req: Request) {
       steer,
       generated: true,
       learningVersion,
+      learningKey: context.learningKey ?? null,
     };
     getReplyReviewStore().learning.recordGeneration(t, next, context);
     // The browser explicitly accepts a replacement; a generation never mutates existing edits.
@@ -685,6 +684,7 @@ export async function replyLearningRoute(req: Request) {
         req,
       );
     const learning = getReplyReviewStore().learning;
+    const ledger = getLedger();
     const workspace = currentWorkspaceName();
     if (req.method === "POST") {
       const b = await payload(req);
@@ -693,9 +693,37 @@ export async function replyLearningRoute(req: Request) {
         (b.preferenceId !== undefined && (typeof b.preferenceId !== "string" || !b.preferenceId))
       )
         throw new Error("A learning setting is required");
-      learning.setEnabled(workspace, b.enabled, b.preferenceId as string | undefined);
+      // A preference toggle is a guidance toggle in the ledger (#813); the
+      // workspace switch still pauses evidence collection and synthesis.
+      if (typeof b.preferenceId === "string")
+        ledger.learning.setGuidanceEnabled(b.preferenceId, b.enabled);
+      else learning.setEnabled(workspace, b.enabled);
     }
-    return jsonResponse(learning.status(workspace), 200, req);
+    const status: ReplyLearningStatus = {
+      ...learning.status(workspace),
+      version: ledger.learning.guidanceVersion(),
+      preferences: ledger.learning
+        .listGuidance(true)
+        .filter((g) => g.status !== "rolled_back")
+        .map((g) => ({
+          id: g.id,
+          instruction: g.instruction,
+          source: g.source,
+          enabled: g.status === "enabled",
+          evidence: (g.evidence.samples ?? []).map((s, i) => ({
+            id: `${g.id}:${i}`,
+            threadKey: "",
+            name: s.name ?? "",
+            body: s.sent ?? "",
+            original: s.original ?? null,
+            feedback: s.feedback ?? [],
+            historical: false,
+            at: s.at ?? g.approvedAt,
+          })),
+        })),
+      pendingProposals: ledger.learning.list({ kind: "preference", status: "pending" }).length,
+    };
+    return jsonResponse(status, 200, req);
   } catch (e) {
     return failure(req, e);
   }

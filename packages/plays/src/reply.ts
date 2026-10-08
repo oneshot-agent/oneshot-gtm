@@ -10,6 +10,7 @@ import {
   lintEmail,
   meetingBlock,
   signatureDirective,
+  learningBlock,
   voiceBlock,
 } from "./_lib.ts";
 
@@ -478,6 +479,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
   // register, not credentials, and its reply budget drops the aphorism in
   // logistics mode.
   const voice = voiceBlock("reply");
+  const learned = learningBlock({ channel: "email", stage: "reply" });
   const firstName = firstNameFrom(input.matched?.name ?? null);
   const angleBlock = angleBlockFromJson(input.angleJson);
   // ICP GATE. A free ledger fact, rendered with its caveat inline so the
@@ -509,6 +511,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
     ...(intentBlock ? ["", intentBlock] : []),
     ...(steerBlock ? ["", steerBlock] : []),
     ...(voice ? ["", voice.text] : []),
+    ...(learned ? [learned.text] : []),
     "",
     "INBOUND EMAIL (the message you are answering):",
     `Subject: ${input.subject}`,

@@ -25,6 +25,7 @@ vi.mock("@oneshot-gtm/plays", async () => ({
 }));
 const { getReplyReviewStore, getLinkedInInboxStore, getLedger, loadConfig, saveConfig } =
   await import("@oneshot-gtm/core");
+const ledgerForTests = (await import("@oneshot-gtm/core")).getLedger();
 const {
   replyGenerateRoute,
   replyDraftSaveRoute,
@@ -119,6 +120,10 @@ beforeEach(() => {
   ])
     review.db.exec(`DELETE FROM ${table}`);
   review.db.exec("DELETE FROM review_threads; DELETE FROM review_sends; DELETE FROM review_leases");
+  for (const table of ["learning_guidance", "learning_state", "learning_proposals"])
+    (ledgerForTests as unknown as { db: { exec: (sql: string) => void } }).db.exec(
+      `DELETE FROM ${table}`,
+    );
   linkedin.db.exec("DELETE FROM accounts; DELETE FROM conversations");
   linkedin.db.query("INSERT INTO accounts VALUES(?,?)").run(
     "wallet:account",
@@ -322,17 +327,25 @@ describe("reply options API", () => {
   });
 });
 
-it("applies workspace learning to generation and improvement without changing stored drafts", async () => {
+it("applies approved guidance to generation and improvement without changing stored drafts", async () => {
   const t = seed("linkedin");
   review.learning.status("default");
+  // Approved guidance lives in the workspace ledger (#813): one row for
+  // LinkedIn replies, one for email replies. A v1 preference row is never read.
+  const learning = (await import("@oneshot-gtm/core")).getLedger().learning;
+  const plain = learning.addGuidance({
+    instruction: "Keep language plain.",
+    source: "explicit",
+    channel: "linkedin",
+    stage: "reply",
+  });
+  learning.addGuidance({ instruction: "Email only.", source: "edits", channel: "email" });
   review.db
     .query("INSERT INTO reply_learning_preferences VALUES(?,?,?,?,?,?)")
-    .run("default", "plain", "Keep language plain.", "explicit", 1, "[]");
-  review.db
-    .query("INSERT INTO reply_learning_preferences VALUES(?,?,?,?,?,?)")
-    .run("other", "secret", "Other product preference", "explicit", 1, "[]");
+    .run("default", "legacy", "Legacy v1 preference", "explicit", 1, "[]");
   const result = (await (await replyGenerateRoute(req({ key: t.key }))).json()) as ReplyDraftSet;
-  expect(result.learningVersion).toBe(0);
+  expect(result.learningVersion).toBe(learning.guidanceVersion());
+  expect(result.learningKey).toMatch(/^[0-9a-f]{12}$/);
   expect(generate.mock.calls[0]![0].learnedPreferences).toEqual(["Keep language plain."]);
   expect(review.get(t.key)!.drafts).toBeNull();
   const saved = (await (
@@ -350,8 +363,14 @@ it("applies workspace learning to generation and improvement without changing st
   ).json()) as { text: string; improvementId: string };
   expect(improved.improvementId).toBeTruthy();
   expect(improve.mock.calls[0]![0].learnedPreferences).toEqual(["Keep language plain."]);
-  expect(replyOptionsContext({ ...t, channel: "email" }).learnedPreferences).toEqual([]);
+  expect(replyOptionsContext({ ...t, channel: "email" }).learnedPreferences).toEqual([
+    "Email only.",
+  ]);
+  // Disabling the guidance row through the status route stops it applying;
+  // pausing collection does not touch approved guidance.
   await replyLearningRoute(req({ enabled: false }));
+  expect(replyOptionsContext(t).learnedPreferences).toEqual(["Keep language plain."]);
+  await replyLearningRoute(req({ enabled: false, preferenceId: plain.id }));
   expect(replyOptionsContext(t).learnedPreferences).toEqual([]);
   expect(review.get(t.key)!.drafts).toEqual(saved);
 });
@@ -365,5 +384,8 @@ it("keeps preference controls workspace scoped and blocks foreign-origin mutatio
   expect(foreign.status).toBe(403);
   const other = await replyLearningRoute(req({ enabled: false, preferenceId: "private" }));
   expect(other.status).toBe(400);
-  expect(review.learning.guidance("other").instructions).toEqual(["Private guidance"]);
+  // The v1 row is legacy evidence now, never a live control: untouched.
+  expect(
+    review.db.query("SELECT enabled FROM reply_learning_preferences WHERE id='private'").get(),
+  ).toEqual({ enabled: 1 });
 });

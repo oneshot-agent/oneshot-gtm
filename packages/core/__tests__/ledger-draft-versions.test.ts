@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Ledger } from "../src/ledger.ts";
-import { angleTextKey, draftVersionAngle } from "../src/ledger-drafts.ts";
+import { angleTextKey, draftVersionAngle, storedDraftEnvelope } from "../src/ledger-drafts.ts";
 
 /**
  * Draft versions (ledger-drafts.ts): every draft put in front of the founder
@@ -787,6 +787,33 @@ describe("draft version writer reservations", () => {
       }
     });
   }
+});
+
+describe("learning_key on versions (#813)", () => {
+  it("carries the draft's learningKey through the queue path and the stored envelope", () => {
+    const play = "luma-events";
+    const q1 = enqueue("l1@x.dev", play);
+    ledger.setQueueDraft({ id: q1, draft: draft({ learningKey: "0123456789ab" } as never) });
+    ledger.setQueueDraft({
+      id: q1,
+      draft: draft({ body: "b2", sent: true, dryRun: false, learningKey: "0123456789ab" } as never),
+      sentBy: "human",
+    });
+    expect(ledger.draftVersionsFor({ queueId: q1 }).map((v) => v.learning_key)).toEqual([
+      "0123456789ab",
+      "0123456789ab",
+    ]);
+    expect(
+      storedDraftEnvelope(
+        JSON.stringify({ subject: "s", body: "b", flags: [], learningKey: "abc" }),
+      )?.learningKey,
+    ).toBe("abc");
+    expect(
+      storedDraftEnvelope(
+        JSON.stringify({ subject: "s", body: "b", flags: [], payload: { learningKey: "def" } }),
+      )?.learningKey,
+    ).toBe("def");
+  });
 });
 
 describe("voice_key on versions", () => {

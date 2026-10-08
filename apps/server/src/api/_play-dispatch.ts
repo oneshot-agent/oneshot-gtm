@@ -13,6 +13,8 @@ export interface DraftedView {
   angle?: DraftAngle;
   /** Hash of the founder's voice card in the prompt (see `PlayDraft.voiceKey`). */
   voiceKey?: string | null;
+  /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
+  learningKey?: string | null;
   /** First-touch format arm (see `PlayDraft.formatKey`). */
   formatKey?: string | null;
 }
@@ -27,6 +29,8 @@ export function toDraftedView(d: {
   originalTargetIndex?: number;
   angle?: DraftAngle;
   voiceKey?: string | null;
+  /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
+  learningKey?: string | null;
   formatKey?: string | null;
 }): DraftedView {
   return {
@@ -39,6 +43,7 @@ export function toDraftedView(d: {
     ...(d.originalTargetIndex !== undefined ? { originalTargetIndex: d.originalTargetIndex } : {}),
     ...(d.angle ? { angle: d.angle } : {}),
     ...(d.voiceKey ? { voiceKey: d.voiceKey } : {}),
+    ...(d.learningKey ? { learningKey: d.learningKey } : {}),
     ...(d.formatKey ? { formatKey: d.formatKey } : {}),
   };
 }

@@ -43,6 +43,8 @@ export interface DraftVersionRow {
   voice_key: string | null;
   /** First-touch format arm (`standard` / `brief`) when the trigger set one; NULL otherwise. */
   format_key: string | null;
+  /** Fingerprint of the approved learned-guidance set in the prompt (#813); NULL when none applied. */
+  learning_key: string | null;
   created_at: string;
   closed_at: string | null;
 }
@@ -122,6 +124,7 @@ export function storedDraftEnvelope(raw: unknown): {
   draftedAt: string | null;
   voiceKey: string | null;
   formatKey: string | null;
+  learningKey: string | null;
 } | null {
   let value: unknown = raw;
   if (typeof raw === "string") {
@@ -149,6 +152,11 @@ export function storedDraftEnvelope(raw: unknown): {
       ? (payload as { voiceKey?: unknown }).voiceKey
       : undefined;
   const voice = v["voiceKey"] ?? payloadVoice;
+  const payloadLearning =
+    payload && typeof payload === "object"
+      ? (payload as { learningKey?: unknown }).learningKey
+      : undefined;
+  const learning = v["learningKey"] ?? payloadLearning;
   return {
     subject,
     body: v["body"],
@@ -157,6 +165,7 @@ export function storedDraftEnvelope(raw: unknown): {
     draftedAt: typeof v["draftedAt"] === "string" ? v["draftedAt"] : null,
     voiceKey: typeof voice === "string" && voice ? voice : null,
     formatKey: typeof v["formatKey"] === "string" && v["formatKey"] ? v["formatKey"] : null,
+    learningKey: typeof learning === "string" && learning ? learning : null,
   };
 }
 
@@ -222,6 +231,7 @@ export class DraftVersionStore {
     angle?: DraftVersionAngle | null;
     voiceKey?: string | null;
     formatKey?: string | null;
+    learningKey?: string | null;
     /** Outreach channel the draft is for (channels.ts); email when unset. */
     channel?: string;
     discardReason?: DraftDiscardReason;
@@ -271,6 +281,7 @@ export class DraftVersionStore {
       angle: env.angle,
       voiceKey: env.voiceKey,
       formatKey: env.formatKey,
+      learningKey: env.learningKey,
       ...(input.channel ? { channel: input.channel } : {}),
       ...(env.draftedAt ? { createdAt: env.draftedAt } : {}),
     });
@@ -366,6 +377,7 @@ export class DraftVersionStore {
     angle?: DraftVersionAngle | null;
     voiceKey?: string | null;
     formatKey?: string | null;
+    learningKey?: string | null;
     channel?: string;
     outcome: "sent" | "auto_sent";
   }): void {
@@ -384,6 +396,7 @@ export class DraftVersionStore {
     angle?: DraftVersionAngle | null;
     voiceKey?: string | null;
     formatKey?: string | null;
+    learningKey?: string | null;
     channel?: string;
     outcome: DraftVersionOutcome;
     createdAt?: string;
@@ -395,8 +408,8 @@ export class DraftVersionStore {
         `INSERT INTO draft_versions(
            play_name, prospect_key, step_index, queue_id, prospect_id,
            subject, body, flags_json, angle_key, angle_text, angle_origin, angle_assignment,
-           outcome, discard_reason, voice_key, format_key, channel, created_at, closed_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?)`,
+           outcome, discard_reason, voice_key, format_key, learning_key, channel, created_at, closed_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)`,
       )
       .run(
         input.playName,
@@ -414,6 +427,7 @@ export class DraftVersionStore {
         input.outcome,
         input.voiceKey ?? null,
         input.formatKey ?? null,
+        input.learningKey ?? null,
         input.channel ?? "email",
         input.createdAt ?? now,
         input.outcome === "open" ? null : now,

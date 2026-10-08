@@ -42,6 +42,7 @@ export function toDraftVersionView(row: DraftVersionRow): DraftVersionView {
         : null,
     outcome: row.outcome,
     discardReason: row.discard_reason,
+    learningKey: row.learning_key ?? null,
     createdAt: row.created_at,
     closedAt: row.closed_at,
   };

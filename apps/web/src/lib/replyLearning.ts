@@ -26,7 +26,7 @@ export function replyLearningSummary(status: ReplyLearningStatus): string {
     return "Learning from confirmed replies. New preferences will appear after the next refresh.";
   if (!status.preferences.some((p) => p.enabled))
     return "No active preferences yet. Repeated edits and general feedback on sent replies help establish your style.";
-  return "Applied to new LinkedIn suggestions in this workspace. Your current instructions always take priority.";
+  return "Applied to new email and LinkedIn drafts in this workspace. Your current instructions always take priority.";
 }
 
 /** Server normalization must not turn an unchanged draft into another autosave. */

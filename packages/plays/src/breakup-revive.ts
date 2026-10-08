@@ -11,6 +11,7 @@ import {
   lintEmail,
   logTargetError,
   sendDraftedEmail,
+  learningBlock,
   voiceBlock,
 } from "./_lib.ts";
 
@@ -60,6 +61,8 @@ export interface BreakupReviveDraft {
   sent: boolean;
   flags: string[];
   originalTargetIndex?: number;
+  /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
+  learningKey?: string | null;
 }
 
 export async function runBreakupRevive(
@@ -74,6 +77,7 @@ export async function runBreakupRevive(
   const drafted: BreakupReviveDraft[] = [];
   // A revive is a breakup-class touch: the voice card's no-aphorism budget.
   const voice = voiceBlock("breakup");
+  const learned = learningBlock({ channel: "email", stage: "follow_up" });
 
   for (const [index, t] of targets.entries()) {
     if (!t.email) continue;
@@ -98,6 +102,7 @@ export async function runBreakupRevive(
           `DAYS SINCE LAST ACTIVITY: ${t.daysCold}`,
           `OPTIONAL VALUE DROP: ${opts.valueDrop ?? "(none — go with a probe question instead)"}`,
           ...(voice ? ["", voice.text] : []),
+          ...(learned ? ["", learned.text] : []),
         ].join("\n"),
       });
 
@@ -134,6 +139,7 @@ export async function runBreakupRevive(
         sent: send.sent,
         flags,
         originalTargetIndex: index,
+        ...(learned ? { learningKey: learned.key } : {}),
       };
     } catch (err) {
       // Daily-cap deferral is not a per-target failure: abort the run so the

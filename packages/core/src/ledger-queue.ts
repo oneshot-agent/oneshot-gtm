@@ -960,6 +960,8 @@ export class QueueStore {
       angle?: unknown;
       /** Voice card hash and first-touch format arm the draft was written with, when set. */
       voiceKey?: string | null;
+      /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
+      learningKey?: string | null;
       formatKey?: string | null;
     };
     /** Why the draft being replaced was discarded; default `redraft` (a machine re-draft, no judgment). */
@@ -1007,6 +1009,8 @@ export class QueueStore {
       sent: boolean;
       angle?: unknown;
       voiceKey?: string | null;
+      /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
+      learningKey?: string | null;
       formatKey?: string | null;
     },
     discardReason: DraftDiscardReason | undefined,
@@ -1024,6 +1028,8 @@ export class QueueStore {
       flags: draft.flags,
       angle: draftVersionAngle(draft.angle),
       voiceKey: typeof draft.voiceKey === "string" && draft.voiceKey ? draft.voiceKey : null,
+      learningKey:
+        typeof draft.learningKey === "string" && draft.learningKey ? draft.learningKey : null,
       formatKey: typeof draft.formatKey === "string" && draft.formatKey ? draft.formatKey : null,
     };
     if (!draft.sent) {

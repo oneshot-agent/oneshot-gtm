@@ -14,6 +14,8 @@ export interface ReplyMessage {
 }
 export interface ReplyDraftSet {
   learningVersion?: number;
+  /** Fingerprint of the approved learned-guidance set the options were written with (#813). */
+  learningKey?: string | null;
   /** Server-issued improvement IDs explicitly adopted by the reviewer. */
   improvementIds?: Partial<Record<ReplyVariant, string[]>>;
   id: string;
@@ -144,6 +146,9 @@ export interface ReplyLearningStatus {
   imported: boolean;
   lastRefreshedAt: string | null;
   error: string | null;
+  /** Approved writing preferences (the ledger's guidance rows), enabled or paused. */
   preferences: ReplyPreference[];
+  /** Preference proposals waiting for review on /queue. */
+  pendingProposals?: number;
 }
 export type ReplyLearningUpdate = { enabled: boolean } | { preferenceId: string; enabled: boolean };

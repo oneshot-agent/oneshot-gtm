@@ -180,6 +180,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
             ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
             ...(draft.angle ? { angle: draft.angle } : {}),
             ...(draft.voiceKey ? { voiceKey: draft.voiceKey } : {}),
+            ...(draft.learningKey ? { learningKey: draft.learningKey } : {}),
             ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
           },
           // Drain sends are unattended: the founder approved the row, never
@@ -357,6 +358,7 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
     sent: false,
     receiptIds: [],
     ...(note.voiceKey ? { voiceKey: note.voiceKey } : {}),
+    ...(note.learningKey ? { learningKey: note.learningKey } : {}),
   };
   if (opts.dryRun) return base;
   if (note.flags.length > 0) return { ...base, needsReview: true };
