@@ -356,6 +356,67 @@ describe("a LinkedIn invite that continues an email cadence (step N)", () => {
   });
 });
 
+describe("a marked LinkedIn invite at step 0 (first touch)", () => {
+  function markedInviteDaysAgo(days: number): void {
+    ledger.recordLinkedInInviteEvent({
+      prospectId,
+      playName: "luma-events",
+      stepIndex: 0,
+      status: "sent",
+      metadata: { note: "n", invitationId: "inv-0" },
+    });
+    const db = new Database(dbPath);
+    db.exec(
+      `UPDATE sequence_events SET created_at = datetime('now', '-${days} days')
+       WHERE prospect_id = ${prospectId} AND channel = 'linkedin'`,
+    );
+    db.close();
+  }
+
+  it("waits while inside its own 21-day window, withdrawing nothing", async () => {
+    markedInviteDaysAgo(3);
+    enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
+    dueNow("luma-events");
+    const calls: Array<Record<string, unknown>> = [];
+    const out = await runCadenceStepForProspect({
+      prospectId,
+      playName: "luma-events",
+      dryRun: false,
+      linkedIn: async (_w, op) => {
+        calls.push(op as Record<string, unknown>);
+        return { status: "withdrawn" };
+      },
+    });
+    expect(out.action).toBe("waiting");
+    expect(calls).toEqual([]);
+    expect(ledger.getCadence(prospectId, "luma-events")!.current_step).toBe(0);
+  });
+
+  it("withdraws after the timeout, records it at step 0, and stops the cadence", async () => {
+    markedInviteDaysAgo(25);
+    enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
+    dueNow("luma-events");
+    const calls: Array<Record<string, unknown>> = [];
+    const out = await runCadenceStepForProspect({
+      prospectId,
+      playName: "luma-events",
+      dryRun: false,
+      linkedIn: async (_w, op) => {
+        calls.push(op as Record<string, unknown>);
+        return { status: "withdrawn" };
+      },
+    });
+    expect(calls[0]).toMatchObject({ kind: "withdraw", invitationId: "inv-0" });
+    expect(out.action).toBe("completed");
+    const events = ledger.listLinkedInInviteEvents(prospectId, "luma-events");
+    expect(events.map((e) => [e.step_index, e.status])).toEqual([
+      [0, "sent"],
+      [0, "withdrawn"],
+    ]);
+    expect(ledger.getCadence(prospectId, "luma-events")!.status).toBe("stopped");
+  });
+});
+
 describe("a step on a channel the person has no address for", () => {
   it("is skipped and the cadence moves on instead of staying due", async () => {
     // An email sequence for a prospect with no email.
