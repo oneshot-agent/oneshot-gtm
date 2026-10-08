@@ -108,6 +108,72 @@ describe("draftLinkedInNote", () => {
 });
 
 describe("sendLinkedInInvite", () => {
+  it("refuses a person the guard rejects, sends nothing and leaves the profile free (#787)", async () => {
+    const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
+    const out = await sendLinkedInInvite({
+      row: row({ name: "SWE-agent" }),
+      note: "hi",
+      sender: s,
+      workspace: "gtm",
+    });
+    expect(out).toMatchObject({ sent: false, guard: "not-a-person" });
+    expect((out as { flags: string[] }).flags[0]).toMatch(/^not-a-person:/);
+    expect(calls).toHaveLength(0);
+    expect(events).toHaveLength(0);
+    // Fixing the row and resending works: the refusal reserved nothing.
+    const fixed = await sendLinkedInInvite({
+      row: row({ name: "Dana Lee" }),
+      note: "hi",
+      sender: s,
+      workspace: "gtm",
+    });
+    expect(fixed).toMatchObject({ sent: true });
+  });
+
+  it("invites one profile once, across workspaces sharing the shared DB", async () => {
+    const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
+    const first = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "one" });
+    expect(first).toMatchObject({ sent: true });
+    const second = await sendLinkedInInvite({
+      row: row({ linkedinUrl: "https://de.linkedin.com/in/Dana-Lee/en" }),
+      note: "hi",
+      sender: s,
+      workspace: "two",
+    });
+    expect(second).toMatchObject({ sent: false, guard: "already-invited" });
+    expect(calls.filter((c) => (c as { kind: string }).kind === "invite")).toHaveLength(1);
+  });
+
+  it("refuses a profile on the suppression list", async () => {
+    const { getSharedDb } = await import("@oneshot-gtm/core");
+    getSharedDb().markLinkedInTouched({ slug: "dana-lee", source: "import:previous-tool" });
+    const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
+    const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+    expect(out).toMatchObject({ sent: false, guard: "already-touched" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("frees the profile when the invite is deferred by the account cap", async () => {
+    const capped = sender({});
+    capped.sender.call = async (op: unknown) => {
+      if ((op as { kind: string }).kind === "account") {
+        return { limits: { invites: { limit: 25, remaining: 0, resets_at: null } } };
+      }
+      return {};
+    };
+    const err = await sendLinkedInInvite({
+      row: row(),
+      note: "hi",
+      sender: capped.sender,
+      workspace: "gtm",
+    }).catch((e: unknown) => e);
+    expect(isSendDeferred(err)).toBe(true);
+    _resetInviteLimitsCacheForTests();
+    const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
+    const retry = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+    expect(retry).toMatchObject({ sent: true });
+  });
+
   it("sends the note, records the prospect and a step-0 LinkedIn event", async () => {
     const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
     const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });

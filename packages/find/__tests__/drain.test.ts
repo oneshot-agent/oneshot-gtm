@@ -387,6 +387,12 @@ it("drains with current source edges without rewriting the queue payload", async
   expect(queued.payload_json).toBe(original);
 });
 
+const refusal = (reason: string) => ({
+  sent: false,
+  flags: [`${reason}: why`],
+  guard: reason,
+});
+
 describe("drainQueue LinkedIn rows", () => {
   const linkedInRow = (over: Partial<QueueRow> = {}): QueueRow => ({
     ...row(30, { email: undefined, linkedinUrl: "https://www.linkedin.com/in/dana" }),
@@ -498,6 +504,52 @@ describe("drainQueue LinkedIn rows", () => {
     });
     const saved = ledgerStub.setQueueDraft.mock.calls.at(-1)![0] as { draft: { flags: string[] } };
     expect(saved.draft.flags).toEqual(["linkedin-email-required"]);
+  });
+
+  it("counts rows the invite guard refused, per reason, and sends none of them (#787)", async () => {
+    sendLinkedInInviteMock
+      .mockResolvedValueOnce(refusal("not-a-person"))
+      .mockResolvedValueOnce(refusal("not-a-person"))
+      .mockResolvedValueOnce(refusal("already-invited"))
+      .mockResolvedValueOnce({ sent: false, flags: ["linkedin-email-required"] });
+    ledgerStub.dequeueApproved.mockReturnValue([
+      linkedInRow({ id: 31 }),
+      linkedInRow({ id: 32 }),
+      linkedInRow({ id: 33 }),
+      linkedInRow({ id: 34 }),
+    ]);
+    const out = await drainQueue({
+      playName: "stack-consolidation",
+      dryRun: false,
+      linkedIn: sender,
+    });
+    expect(out.sent).toBe(0);
+    // A provider refusal is not a guard refusal: it is not counted here.
+    expect(out.skipped).toEqual({ "not-a-person": 2, "already-invited": 1 });
+    // Each refused row is back in front of the founder with its reason, not dropped.
+    for (const id of [31, 32, 33, 34]) {
+      expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({
+        id,
+        status: "pending",
+        decidedBy: "machine",
+      });
+    }
+    const flags = ledgerStub.setQueueDraft.mock.calls.map(
+      (c) => (c[0] as { draft: { flags: string[] } }).draft.flags[0],
+    );
+    expect(flags).toContain("not-a-person: why");
+    expect(flags).toContain("already-invited: why");
+  });
+
+  it("reports no skipped counts on a drain the guard never refused", async () => {
+    ledgerStub.dequeueApproved.mockReturnValue([linkedInRow()]);
+    const out = await drainQueue({
+      playName: "stack-consolidation",
+      dryRun: false,
+      linkedIn: sender,
+    });
+    expect(out.sent).toBe(1);
+    expect(out.skipped).toBeUndefined();
   });
 
   it("keeps a flagged note as a draft instead of sending it", async () => {

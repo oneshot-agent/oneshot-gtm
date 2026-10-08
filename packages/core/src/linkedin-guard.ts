@@ -273,7 +273,7 @@ export function guardFlag(v: Extract<LinkedInGuardVerdict, { ok: false }>): stri
   return `${v.reason}: ${v.detail}`;
 }
 
-const GUARD_REASONS: readonly string[] = [
+const GUARD_REASONS: ReadonlySet<string> = new Set([
   "invalid-profile",
   "not-a-person",
   "opted-out",
@@ -283,19 +283,19 @@ const GUARD_REASONS: readonly string[] = [
   "already-invited",
   "already-touched",
   "guard-unavailable",
-];
+]);
 
 /** The guard reason a flag carries, or null for any other flag. */
 export function guardReasonOfFlag(flag: string): LinkedInGuardReason | null {
   const code = flag.split(":")[0]!.trim();
-  return GUARD_REASONS.includes(code) ? (code as LinkedInGuardReason) : null;
+  return GUARD_REASONS.has(code) ? (code as LinkedInGuardReason) : null;
 }
 
 /** `not-a-person 3 · already-invited 2` */
 export function describeGuardCounts(counts: Record<string, number>): string {
   return Object.entries(counts)
     .filter(([, n]) => n > 0)
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([reason, n]) => `${reason} ${n}`)
     .join(" · ");
 }
