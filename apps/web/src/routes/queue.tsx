@@ -44,6 +44,7 @@ import { Field, Input, Select, Textarea } from "../components/primitives/Field.t
 import { Modal } from "../components/primitives/Modal.tsx";
 import { AddProspectForm } from "../components/queue/AddProspectForm.tsx";
 import { AngleUsagePanel } from "../components/queue/AngleUsagePanel.tsx";
+import { LearningProposalsCard } from "../components/queue/LearningProposalsCard.tsx";
 import { MoveToWorkspace } from "../components/queue/MoveToWorkspace.tsx";
 import { moveTargets, movedRowUrl, type MoveTarget } from "../lib/moveTargets.ts";
 import { DraftHistory } from "../components/ledger/DraftHistory.tsx";
@@ -244,7 +245,10 @@ function QueuePage() {
       setSettled(true);
       return;
     }
-    void queueNavigate({ search: stored, replace: true }).finally(() => setSettled(true));
+    void queueNavigate({
+      search: { ...stored, learning: search.learning, prospectId: search.prospectId },
+      replace: true,
+    }).finally(() => setSettled(true));
     // Mount-only: later filter changes save below instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -549,7 +553,7 @@ function QueuePage() {
       </section>
 
       <IcpBanner />
-      <IcpProposalsCard />
+      <LearningProposalsCard kind={search.learning} prospectId={search.prospectId} />
       <TriggersCard queueEmpty={queueQuery.isLoading ? null : rows.length === 0} />
 
       <section>
@@ -2647,83 +2651,6 @@ function IcpBanner() {
       >
         Edit ICP
       </Link>
-    </section>
-  );
-}
-
-/**
- * Learning-loop v2 (issue #750): the background job (`icp-proposals.ts`)
- * periodically proposes a tighter ICP one-liner from accumulated approve/
- * reject decisions, but the active ICP never changes without this explicit
- * approval — dismiss leaves it untouched. Nothing to show when there is no
- * pending proposal (the common case).
- */
-export function IcpProposalsCard() {
-  const qc = useQueryClient();
-  const query = useQuery({
-    queryKey: ["icp-proposals"],
-    queryFn: () => api.icpProposals(),
-    refetchInterval: 60_000,
-  });
-  const invalidate = (): void => {
-    void qc.invalidateQueries({ queryKey: ["icp-proposals"] });
-    void qc.invalidateQueries({ queryKey: ["setup"] });
-  };
-  const approve = useMutation({
-    mutationFn: (id: string) => api.approveIcpProposal(id),
-    onSuccess: () => {
-      toast.success("ICP updated");
-      invalidate();
-    },
-    onError: (err: Error) => toast.error(`couldn't approve · ${err.message}`),
-  });
-  const dismiss = useMutation({
-    mutationFn: (id: string) => api.dismissIcpProposal(id),
-    onSuccess: invalidate,
-    onError: (err: Error) => toast.error(`couldn't dismiss · ${err.message}`),
-  });
-  const proposals = query.data?.proposals ?? [];
-  if (proposals.length === 0) return null;
-  return (
-    <section className="space-y-3 border-b border-ink-rule px-6 py-4">
-      {proposals.map((p) => (
-        <div
-          key={p.id}
-          className="rounded-sm border border-[color:var(--ink-receipt)]/50 bg-[color:var(--ink-receipt)]/6 p-3"
-        >
-          <div className="ln-eyebrow" style={{ color: "var(--ink-receipt-2)" }}>
-            Proposed ICP rewrite
-          </div>
-          <div className="mt-1 grid gap-1 text-[13px] leading-5">
-            <div className="text-ink-muted">
-              Current: <span className="text-ink-cream-2">{p.currentIcp}</span>
-            </div>
-            <div className="text-ink-cream">
-              Proposed: <span className="font-medium">{p.proposedIcp}</span>
-            </div>
-          </div>
-          <p className="mt-1.5 text-[12px] leading-5 text-ink-muted">{p.evidenceSummary}</p>
-          <div className="mt-2 flex items-center gap-2">
-            <Button
-              size="sm"
-              disabled={approve.isPending || dismiss.isPending || READ_ONLY}
-              onClick={() => approve.mutate(p.id)}
-              {...readOnly}
-            >
-              Approve
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={approve.isPending || dismiss.isPending || READ_ONLY}
-              onClick={() => dismiss.mutate(p.id)}
-              {...readOnly}
-            >
-              Dismiss
-            </Button>
-          </div>
-        </div>
-      ))}
     </section>
   );
 }

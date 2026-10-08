@@ -635,10 +635,23 @@ export class ProspectStore {
    * every backfill call. Pass null to clear both columns together, so
    * `angle_synthesized_at` can never point at a row with no `angle_json`.
    */
-  setProspectAngle(id: number, angle: string | null): void {
+  setProspectAngle(
+    id: number,
+    angle: string | null,
+    opts: { approvedAt?: string | null } = {},
+  ): void {
+    const synthesizedAt = angle == null ? null : new Date().toISOString();
+    if (opts.approvedAt !== undefined) {
+      this.db
+        .prepare(
+          "UPDATE prospects SET angle_json = ?, angle_synthesized_at = ?, angle_approved_at = ? WHERE id = ?",
+        )
+        .run(angle, synthesizedAt, angle == null ? null : opts.approvedAt, id);
+      return;
+    }
     this.db
       .prepare("UPDATE prospects SET angle_json = ?, angle_synthesized_at = ? WHERE id = ?")
-      .run(angle, angle == null ? null : new Date().toISOString(), id);
+      .run(angle, synthesizedAt, id);
   }
 
   /**

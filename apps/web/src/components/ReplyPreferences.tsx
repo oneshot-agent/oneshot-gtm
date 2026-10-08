@@ -43,6 +43,9 @@ export function ReplyPreferences({ workspace }: { workspace: string }) {
           <>
             <div className="flex flex-wrap items-center gap-3">
               <p>{replyLearningSummary(status)}</p>
+              <a href="/queue?learning=preference" className="underline hover:text-ink-cream">
+                Review proposed preferences
+              </a>
               <Button
                 size="sm"
                 variant="ghost"

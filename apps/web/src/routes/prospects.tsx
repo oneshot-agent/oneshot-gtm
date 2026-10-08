@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -607,6 +607,15 @@ function DetailPanel({ id }: { id: number }) {
           >
             <Check size={12} /> {row.status === "rejected" ? "Approve anyway" : "Approve"}
           </Button>
+        )}
+        {!rejecting && row.prospectId != null && (
+          <Link
+            to="/queue"
+            search={{ learning: "prospect_angle", prospectId: row.prospectId }}
+            className="text-[12px] text-ink-muted underline hover:text-ink-cream"
+          >
+            Angle proposals
+          </Link>
         )}
       </>
     ) : null;

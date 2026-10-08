@@ -69,6 +69,10 @@ import type {
   TriggerView,
   IcpProposalDecisionResult,
   IcpProposalsResult,
+  LearningDecisionResult,
+  LearningGuidanceResult,
+  LearningKind,
+  LearningProposalsResult,
 } from "@oneshot-gtm/shared-types";
 import { demoGet, demoWrite, IS_DEMO } from "./demo.ts";
 import {
@@ -524,4 +528,37 @@ export const api = {
     postJson<IcpProposalDecisionResult>(`/icp-proposals/${encodeURIComponent(id)}/approve`, {}),
   dismissIcpProposal: (id: string) =>
     postJson<IcpProposalDecisionResult>(`/icp-proposals/${encodeURIComponent(id)}/dismiss`, {}),
+  // Unified learning review (#813): every learned change waits here for approval.
+  learningProposals: async (
+    filter: { kind?: LearningKind; prospectId?: number; status?: string } = {},
+  ) => {
+    const q = new URLSearchParams();
+    if (filter.kind) q.set("kind", filter.kind);
+    // The demo serves captured documents only, one per kind; a prospect deep
+    // link filters that document here instead of asking for one that was
+    // never captured.
+    if (filter.prospectId != null && !IS_DEMO) q.set("prospectId", String(filter.prospectId));
+    q.set("status", filter.status ?? "all");
+    const result = await getJson<LearningProposalsResult>(`/learning/proposals?${q.toString()}`);
+    if (filter.prospectId != null && IS_DEMO)
+      return {
+        ...result,
+        proposals: result.proposals.filter((p) => p.scope.prospectId === filter.prospectId),
+      };
+    return result;
+  },
+  approveLearningProposal: (id: string, value?: unknown) =>
+    postJson<LearningDecisionResult>(
+      `/learning/proposals/${encodeURIComponent(id)}/approve`,
+      value === undefined ? {} : { value },
+    ),
+  dismissLearningProposal: (id: string) =>
+    postJson<LearningDecisionResult>(`/learning/proposals/${encodeURIComponent(id)}/dismiss`, {}),
+  rollbackLearningProposal: (id: string) =>
+    postJson<LearningDecisionResult>(`/learning/proposals/${encodeURIComponent(id)}/rollback`, {}),
+  learningGuidance: () => getJson<LearningGuidanceResult>("/learning/guidance"),
+  setLearningGuidance: (id: string, enabled: boolean) =>
+    postJson<{ ok: true }>(`/learning/guidance/${encodeURIComponent(id)}`, { enabled }),
+  rollbackLearningGuidance: (id: string) =>
+    postJson<{ ok: true }>(`/learning/guidance/${encodeURIComponent(id)}/rollback`, {}),
 };

@@ -113,6 +113,15 @@ import {
   dismissIcpProposalRoute,
   listIcpProposalsRoute,
 } from "./api/icp-proposals.ts";
+import {
+  approveLearningProposalRoute,
+  dismissLearningProposalRoute,
+  listLearningGuidanceRoute,
+  listLearningProposalsRoute,
+  rollbackLearningGuidanceRoute,
+  rollbackLearningProposalRoute,
+  setLearningGuidanceRoute,
+} from "./api/learning.ts";
 import { addProspectRoute } from "./api/prospects.ts";
 import { calNoShowWebhookRoute, signupWebhookRoute } from "./api/webhook-triggers.ts";
 import { markLinkedInReplyRoute } from "./api/linkedin-replies.ts";
@@ -254,6 +263,15 @@ const routes: RouteEntry[] = [
   route("GET", "/api/icp-proposals", listIcpProposalsRoute),
   route("POST", "/api/icp-proposals/:id/approve", approveIcpProposalRoute),
   route("POST", "/api/icp-proposals/:id/dismiss", dismissIcpProposalRoute),
+  // Unified learning review (#813). Literal paths carry no params, so the
+  // `:id` routes (three or four segments) cannot swallow them.
+  route("GET", "/api/learning/proposals", listLearningProposalsRoute),
+  route("POST", "/api/learning/proposals/:id/approve", approveLearningProposalRoute),
+  route("POST", "/api/learning/proposals/:id/dismiss", dismissLearningProposalRoute),
+  route("POST", "/api/learning/proposals/:id/rollback", rollbackLearningProposalRoute),
+  route("GET", "/api/learning/guidance", listLearningGuidanceRoute),
+  route("POST", "/api/learning/guidance/:id", setLearningGuidanceRoute),
+  route("POST", "/api/learning/guidance/:id/rollback", rollbackLearningGuidanceRoute),
 ];
 
 function findRoute(req: Request): { handler: RouteHandler; params: Record<string, string> } | null {
