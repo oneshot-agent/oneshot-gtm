@@ -150,7 +150,9 @@ const HANDLERS: Record<LearningKind, KindHandler> = {
     apply: (ledger, p, value) => {
       const t = triggerEdge(ledger, p.scope.playName!);
       if (!t) throw new Error(`trigger '${p.scope.playName}' not found`);
-      const edge = asText(asRecord(value)?.["edge"]) ?? "";
+      const edge = asText(asRecord(value)?.["edge"]);
+      // An empty edge would un-ready the trigger: refuse, so the decision reverts.
+      if (!edge) throw new Error("approved angle set has no edge");
       ledger.setTriggerConfig(p.scope.playName!, JSON.stringify({ ...t.config, [t.field]: edge }));
     },
     revert: (ledger, p) => {
@@ -321,9 +323,16 @@ export function rollbackLearningProposalRoute(
   const ledger = getLedger();
   const existing = ledger.learning.get(id);
   if (!existing) return jsonResponse({ error: `proposal '${id}' not found` }, 409, req);
+  if (existing.status !== "approved")
+    return jsonResponse(
+      { error: `proposal '${id}' is ${existing.status}, not approved` },
+      409,
+      req,
+    );
   const now = new Date().toISOString();
-  const result = ledger.learning.rollback(id, now);
-  if ("error" in result) return jsonResponse({ error: result.error }, 409, req);
+  // Restore the previous value FIRST: a failed revert leaves the proposal
+  // approved (and still rollback-able), never marked rolled back while the
+  // approved value is still active.
   try {
     HANDLERS[existing.kind].revert(ledger, existing, now);
   } catch (err) {
@@ -332,12 +341,10 @@ export function rollbackLearningProposalRoute(
       { kind: existing.kind, message_120: ((err as Error).message ?? "").slice(0, 120) },
       "error",
     );
-    return jsonResponse(
-      { error: "the proposal is marked rolled back but the previous value could not be restored" },
-      500,
-      req,
-    );
+    return jsonResponse({ error: "could not restore the previous value; try again" }, 500, req);
   }
+  const result = ledger.learning.rollback(id, now);
+  if ("error" in result) return jsonResponse({ error: result.error }, 409, req);
   logEvent("learning.rolled_back", { kind: existing.kind });
   const out: LearningDecisionResult = { ok: true, proposal: result.view };
   return jsonResponse(out, 200, req);

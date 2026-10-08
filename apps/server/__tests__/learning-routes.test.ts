@@ -290,6 +290,39 @@ describe("approve", () => {
     spy.mockRestore();
   });
 
+  it("campaign_angle: refuses to apply an empty edge and reverts the decision", async () => {
+    seedTrigger();
+    const c = insertCampaign();
+    const res = await approveLearningProposalRoute(
+      post(`proposals/${c.id}/approve`, { value: { edge: "   " } }),
+      { id: c.id },
+    );
+    expect(res.status).toBe(400);
+    expect(ledger.learning.get(c.id)?.status).toBe("pending");
+    expect(JSON.parse(ledger.getTrigger("show-hn")!.config_json!)).toEqual({
+      yourEdge: "fast // cheap",
+    });
+  });
+
+  it("a failed revert leaves the proposal approved and still rollback-able", async () => {
+    seedTrigger();
+    const c = insertCampaign();
+    await approveLearningProposalRoute(post(`proposals/${c.id}/approve`), { id: c.id });
+    const spy = vi.spyOn(ledger, "setTriggerConfig").mockImplementation(() => {
+      throw new Error("disk full");
+    });
+    const res = rollbackLearningProposalRoute(post(`proposals/${c.id}/rollback`), { id: c.id });
+    expect(res.status).toBe(500);
+    expect(ledger.learning.get(c.id)?.status).toBe("approved");
+    spy.mockRestore();
+    expect(
+      rollbackLearningProposalRoute(post(`proposals/${c.id}/rollback`), { id: c.id }).status,
+    ).toBe(200);
+    expect(JSON.parse(ledger.getTrigger("show-hn")!.config_json!)).toEqual({
+      yourEdge: "fast // cheap",
+    });
+  });
+
   it("refuses in demo mode", async () => {
     demo = true;
     const a = insertIcp();
