@@ -402,11 +402,26 @@ export function setCadenceDraft(
        WHERE prospect_id = ? AND play_name = ?`,
     ).run(json, draftedAtIso, input.prospectId, input.playName);
     if (!key) return;
-    const payload = input.draft.payload as { angle?: unknown; voiceKey?: unknown } | null;
+    const payload = input.draft.payload as {
+      kind?: unknown;
+      angle?: unknown;
+      voiceKey?: unknown;
+      learningKey?: unknown;
+    } | null;
     const voiceKey =
       payload && typeof payload === "object" && typeof payload.voiceKey === "string"
         ? payload.voiceKey
         : null;
+    const learningKey =
+      payload && typeof payload === "object" && typeof payload.learningKey === "string"
+        ? payload.learningKey
+        : null;
+    // A LinkedIn message step is the one non-email cadence draft that is
+    // previewed; its version must not read as an email draft.
+    const channel =
+      payload && typeof payload === "object" && payload.kind === "linkedin_message"
+        ? "linkedin"
+        : undefined;
     drafts.open({
       ...key,
       subject: input.draft.subject,
@@ -414,6 +429,8 @@ export function setCadenceDraft(
       flags: input.draft.flags,
       angle: draftVersionAngle(payload && typeof payload === "object" ? payload.angle : null),
       voiceKey,
+      learningKey,
+      ...(channel ? { channel } : {}),
       ...(input.discardReason ? { discardReason: input.discardReason } : {}),
     });
     // IMMEDIATE: the seed reads the stored preview before the UPDATE.

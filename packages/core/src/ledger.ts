@@ -2472,6 +2472,8 @@ export class Ledger {
       angle?: unknown;
       /** Voice card hash and first-touch format arm the draft was written with, when set. */
       voiceKey?: string | null;
+      /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
+      learningKey?: string | null;
       formatKey?: string | null;
     };
     discardReason?: DraftDiscardReason;

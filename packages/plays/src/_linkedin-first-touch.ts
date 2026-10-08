@@ -11,7 +11,7 @@ import {
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import { enrollInCadence } from "./_cadence.ts";
-import { voiceBlock } from "./_lib.ts";
+import { learningBlock, voiceBlock } from "./_lib.ts";
 
 /**
  * First touch on the LinkedIn channel: a connection request with a note, sent
@@ -40,6 +40,8 @@ export interface LinkedInNoteDraft {
   body: string;
   flags: string[];
   voiceKey: string | null;
+  /** Fingerprint of the approved learned-guidance set in the prompt (#813). */
+  learningKey?: string | null;
 }
 
 export type LinkedInInviteOutcome =
@@ -118,6 +120,7 @@ export async function draftLinkedInNote(
   const maxChars = CHANNEL_SPECS.linkedin.firstTouchMaxChars ?? 200;
   const name = str(row.payload, "name") ?? "them";
   const voice = voiceBlock("intro");
+  const learned = learningBlock({ channel: "linkedin", stage: "first_touch" });
   const person = [
     `NAME: ${name}`,
     ...(str(row.payload, "title", "currentRole")
@@ -134,6 +137,7 @@ export async function draftLinkedInNote(
     ...signalLines(row).map((l) => `  ${l}`),
     ...(opts.draftAngle ? [`ANGLE: ${opts.draftAngle}`] : []),
     ...(voice ? [`VOICE:\n${voice.text}`] : []),
+    ...(learned ? [learned.text] : []),
     `MAX_CHARS: ${maxChars}`,
   ].join("\n");
   const res = await complete({
@@ -150,7 +154,13 @@ export async function draftLinkedInNote(
   if (body.length > maxChars) flags.push(`note-too-long: ${body.length}/${maxChars} characters`);
   if (!linkedInProfileOf(row.payload))
     flags.push("no-linkedin: this row has no LinkedIn profile URL");
-  return { subject: `LinkedIn invite → ${name}`, body, flags, voiceKey: voice?.key ?? null };
+  return {
+    subject: `LinkedIn invite → ${name}`,
+    body,
+    flags,
+    voiceKey: voice?.key ?? null,
+    learningKey: learned?.key ?? null,
+  };
 }
 
 /** Codes OneShot's invite route reports as a failed job (docs: api-reference/linkedin/invite). */

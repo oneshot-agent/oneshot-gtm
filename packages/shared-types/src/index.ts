@@ -911,6 +911,8 @@ export interface DraftVersionView {
   angle: { text: string; origin: "configured" | "generated" } | null;
   outcome: "open" | "discarded" | "sent" | "auto_sent";
   discardReason: "regenerate" | "rotate" | "redraft" | "abandoned" | null;
+  /** Fingerprint of the approved learned-guidance set the draft was written with (#813). */
+  learningKey?: string | null;
   createdAt: string;
   closedAt: string | null;
 }
@@ -984,6 +986,8 @@ export interface LastDraft {
   enrichmentFailed?: boolean;
   /** Hash of the founder's voice card the draft was written with; absent when none was set. */
   voiceKey?: string | null;
+  /** Fingerprint of the approved learned-guidance set the draft was written with (#813). */
+  learningKey?: string | null;
   /** First-touch format arm the draft was written in (`standard` / `brief`); absent when the trigger set none. */
   formatKey?: string | null;
 }

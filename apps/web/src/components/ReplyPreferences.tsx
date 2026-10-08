@@ -26,8 +26,9 @@ export function ReplyPreferences({ workspace }: { workspace: string }) {
   return (
     <details className="border-b border-ink-rule/60 px-6 py-3">
       <summary className="cursor-pointer text-[12px] text-ink-muted">
-        Reply preferences · LinkedIn
+        Writing preferences
         {status ? ` (${status.preferences.filter((p) => p.enabled).length} active)` : ""}
+        {status?.pendingProposals ? ` · ${status.pendingProposals} to review` : ""}
       </summary>
       <div className="mt-3 space-y-3 text-[12px] text-ink-muted">
         {query.error && (

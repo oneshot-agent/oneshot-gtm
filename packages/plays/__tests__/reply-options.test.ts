@@ -67,8 +67,10 @@ it("improves intentional edits without applying the humanizer or reverting to th
 it("passes learned guidance to both reply prompts with explicit directions taking priority", async () => {
   const context = { ...input, learnedPreferences: ["Use plain wording."] };
   expect(buildDraftUserPrompt(context)).toContain("Use plain wording.");
-  expect(buildDraftUserPrompt({ ...context, channel: "email" })).not.toContain(
-    "Use plain wording.",
+  // Since #813 approved guidance applies on email too; the caller scopes it by channel.
+  expect(buildDraftUserPrompt({ ...context, channel: "email" })).toContain("Use plain wording.");
+  expect(buildDraftUserPrompt({ ...context, learnedPreferences: [] })).not.toContain(
+    "LEARNED WRITING PREFERENCES",
   );
   expect(buildDraftSystemPrompt("linkedin")).toContain("take priority over learned preferences");
   complete.mockResolvedValue({ content: JSON.stringify({ text: "My revision" }) });

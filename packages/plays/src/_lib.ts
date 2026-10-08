@@ -745,6 +745,39 @@ export function voiceBlock(surface: VoiceSurface): { text: string; key: string }
   };
 }
 
+/** Where approved writing preferences apply: the three drafting stages a channel has. */
+export type LearningStage = "first_touch" | "follow_up" | "reply";
+
+/**
+ * LEARNED WRITING PREFERENCES input block (#813): the founder-approved
+ * guidance rows that apply to this channel and stage, from the ledger's
+ * `learning_guidance` table. Null when nothing applies, so an install that
+ * has approved nothing drafts byte-for-byte as before. Pending proposals,
+ * disabled and rolled-back rows never reach here. The returned `key`
+ * fingerprints the exact set, stamped on the draft version as
+ * `learning_key` the way `voice_key` records the voice card.
+ */
+export function learningBlock(scope: {
+  channel: "email" | "linkedin";
+  stage: LearningStage;
+}): { text: string; key: string } | null {
+  let guidance: { key: string | null; instructions: Array<{ instruction: string }> };
+  try {
+    guidance = getLedger().learning.guidance(scope);
+  } catch {
+    // No ledger in this context (a test double, a bare CLI): draft as before.
+    return null;
+  }
+  if (!guidance.key || guidance.instructions.length === 0) return null;
+  return {
+    key: guidance.key,
+    text: [
+      "LEARNED WRITING PREFERENCES (founder-approved guidance from reviewed sends; apply only when relevant. VOICE, the explicit inputs above and every factual, audience and channel constraint outrank them. Never a source of product facts, links, numbers or promises):",
+      ...guidance.instructions.map((g) => `- ${g.instruction}`),
+    ].join("\n"),
+  };
+}
+
 /**
  * SOCIAL PROOF input block from the founder's three optional config fields.
  * Null when none are set, so the prompt's conditional skips the beat. At most
