@@ -46,6 +46,10 @@ vi.mock("@oneshot-gtm/core", async () => {
             row["decidedAt"] = null;
           }
         },
+        markApplied: (id: string, now: string) => {
+          const row = proposals.get(id);
+          if (row) row["appliedAt"] = now;
+        },
         dismissStalePending: (now: string) => {
           dismissStaleCalls.push(now);
           for (const row of proposals.values()) {

@@ -1962,6 +1962,7 @@ export interface CalendarPickerEntry {
 }
 export * from "./replies.ts";
 export * from "./icp-proposals.ts";
+export * from "./learning.ts";
 
 /** CSV classification reserves a queue row before it is ready for review. */
 export function isQueueImportInProgress(row: {

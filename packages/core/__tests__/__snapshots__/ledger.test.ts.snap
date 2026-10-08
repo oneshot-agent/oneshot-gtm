@@ -114,6 +114,27 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_learning_proposals_pending_dedupe",
+      "sql": "CREATE UNIQUE INDEX idx_learning_proposals_pending_dedupe
+          ON learning_proposals(kind, dedupe_key) WHERE status='pending'",
+      "tbl_name": "learning_proposals",
+      "type": "index",
+    },
+    {
+      "name": "idx_learning_proposals_scope",
+      "sql": "CREATE INDEX idx_learning_proposals_scope
+          ON learning_proposals(kind, scope_key, status)",
+      "tbl_name": "learning_proposals",
+      "type": "index",
+    },
+    {
+      "name": "idx_learning_proposals_status",
+      "sql": "CREATE INDEX idx_learning_proposals_status
+          ON learning_proposals(status, kind, created_at DESC)",
+      "tbl_name": "learning_proposals",
+      "type": "index",
+    },
+    {
       "name": "idx_meetings_ical_uid",
       "sql": "CREATE INDEX idx_meetings_ical_uid
         ON meetings(ical_uid) WHERE ical_uid IS NOT NULL",
@@ -474,7 +495,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         discard_reason TEXT,           -- 'regenerate' | 'rotate' | 'redraft' | 'abandoned'
         created_at     TEXT NOT NULL DEFAULT (datetime('now')),
         closed_at      TEXT
-      , voice_key TEXT, format_key TEXT, channel TEXT NOT NULL DEFAULT 'email', angle_assignment TEXT)",
+      , voice_key TEXT, format_key TEXT, channel TEXT NOT NULL DEFAULT 'email', angle_assignment TEXT, learning_key TEXT)",
       "tbl_name": "draft_versions",
       "type": "table",
     },
@@ -582,6 +603,71 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       )",
       "tbl_name": "interviews",
+      "type": "table",
+    },
+    {
+      "name": "learning_guidance",
+      "sql": "CREATE TABLE learning_guidance (
+          id TEXT PRIMARY KEY,
+          instruction TEXT NOT NULL,
+          source TEXT NOT NULL,
+          channel TEXT,
+          stage TEXT,
+          proposal_id TEXT,
+          evidence_json TEXT NOT NULL DEFAULT '{"refs":[]}',
+          status TEXT NOT NULL DEFAULT 'enabled',
+          approved_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )",
+      "tbl_name": "learning_guidance",
+      "type": "table",
+    },
+    {
+      "name": "learning_jobs",
+      "sql": "CREATE TABLE learning_jobs (
+          kind TEXT PRIMARY KEY,
+          attempted_ms INTEGER NOT NULL DEFAULT 0,
+          token TEXT,
+          until_ms INTEGER NOT NULL DEFAULT 0,
+          watermark INTEGER NOT NULL DEFAULT 0,
+          refreshed_at TEXT,
+          error TEXT
+        )",
+      "tbl_name": "learning_jobs",
+      "type": "table",
+    },
+    {
+      "name": "learning_proposals",
+      "sql": "CREATE TABLE learning_proposals (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          scope_json TEXT NOT NULL DEFAULT '{}',
+          scope_key TEXT NOT NULL DEFAULT '',
+          current_json TEXT,
+          proposed_json TEXT NOT NULL,
+          evidence_json TEXT NOT NULL DEFAULT '{"refs":[]}',
+          evidence_summary TEXT NOT NULL DEFAULT '',
+          baseline_key TEXT NOT NULL DEFAULT '',
+          dedupe_key TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'pending',
+          legacy INTEGER NOT NULL DEFAULT 0,
+          source_version INTEGER,
+          created_at TEXT NOT NULL,
+          decided_at TEXT,
+          decided_json TEXT,
+          applied_at TEXT,
+          rolled_back_at TEXT
+        )",
+      "tbl_name": "learning_proposals",
+      "type": "table",
+    },
+    {
+      "name": "learning_state",
+      "sql": "CREATE TABLE learning_state (
+          id INTEGER PRIMARY KEY CHECK(id = 1),
+          guidance_version INTEGER NOT NULL DEFAULT 0
+        )",
+      "tbl_name": "learning_state",
       "type": "table",
     },
     {
@@ -776,7 +862,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         dossier_json TEXT,
         source TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      , source_profile_url TEXT, title TEXT, icp_verdict TEXT, icp_verdict_reason TEXT, angle_json TEXT, angle_synthesized_at TEXT)",
+      , source_profile_url TEXT, title TEXT, icp_verdict TEXT, icp_verdict_reason TEXT, angle_json TEXT, angle_synthesized_at TEXT, angle_approved_at TEXT, angle_proposed_at TEXT)",
       "tbl_name": "prospects",
       "type": "table",
     },
@@ -909,7 +995,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         notes TEXT,
         prospect_id INTEGER,
         last_draft_json TEXT,
-        last_drafted_at TEXT, drain_claimed_at TEXT, send_started_at TEXT, priority_json TEXT, decision TEXT, decided_at TEXT, decided_by TEXT, channel TEXT NOT NULL DEFAULT 'email',
+        last_drafted_at TEXT, drain_claimed_at TEXT, send_started_at TEXT, priority_json TEXT, decision TEXT, decided_at TEXT, decided_by TEXT, channel TEXT NOT NULL DEFAULT 'email', decision_reason TEXT,
         FOREIGN KEY(prospect_id) REFERENCES prospects(id)
       )",
       "tbl_name": "target_queue",

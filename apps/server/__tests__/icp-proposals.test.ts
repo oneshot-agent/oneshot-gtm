@@ -31,7 +31,7 @@ function seedDecisions(n: number): void {
 
 beforeEach(() => {
   vi.spyOn(Date, "now").mockReturnValue(now);
-  for (const table of ["icp_proposal_state", "icp_proposals", "target_queue"]) {
+  for (const table of ["learning_jobs", "learning_proposals", "target_queue"]) {
     (ledger as unknown as { db: { exec: (sql: string) => void } }).db.exec(`DELETE FROM ${table}`);
   }
   saveConfig({ ...loadConfig(), icpOneLiner: "B2B fintech founders", icpProposalMinDecisions: 3 });
