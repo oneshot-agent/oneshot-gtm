@@ -245,7 +245,130 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    // Unified learning proposals (issue #813): every learned change —
+    // writing preference, prospect angle, campaign angle set, ICP rewrite —
+    // waits for founder approval in `learning_proposals`; approved
+    // preferences become `learning_guidance` rows; `learning_jobs` holds
+    // one lease/cooldown row per generating job. The #750 ICP proposals are
+    // copied in as kind `icp` (their old tables stay, unread). Drafts
+    // record the guidance set they were written with (`learning_key`),
+    // queue decisions may carry a structured reason, and prospects record
+    // when their angle was approved or last proposed.
+    version: 13,
+    name: "learning-proposals",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS learning_proposals (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          scope_json TEXT NOT NULL DEFAULT '{}',
+          scope_key TEXT NOT NULL DEFAULT '',
+          current_json TEXT,
+          proposed_json TEXT NOT NULL,
+          evidence_json TEXT NOT NULL DEFAULT '{"refs":[]}',
+          evidence_summary TEXT NOT NULL DEFAULT '',
+          baseline_key TEXT NOT NULL DEFAULT '',
+          dedupe_key TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'pending',
+          legacy INTEGER NOT NULL DEFAULT 0,
+          source_version INTEGER,
+          created_at TEXT NOT NULL,
+          decided_at TEXT,
+          decided_json TEXT,
+          applied_at TEXT,
+          rolled_back_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_learning_proposals_status
+          ON learning_proposals(status, kind, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_learning_proposals_scope
+          ON learning_proposals(kind, scope_key, status);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_learning_proposals_pending_dedupe
+          ON learning_proposals(kind, dedupe_key) WHERE status='pending';
+        CREATE TABLE IF NOT EXISTS learning_guidance (
+          id TEXT PRIMARY KEY,
+          instruction TEXT NOT NULL,
+          source TEXT NOT NULL,
+          channel TEXT,
+          stage TEXT,
+          proposal_id TEXT,
+          evidence_json TEXT NOT NULL DEFAULT '{"refs":[]}',
+          status TEXT NOT NULL DEFAULT 'enabled',
+          approved_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS learning_jobs (
+          kind TEXT PRIMARY KEY,
+          attempted_ms INTEGER NOT NULL DEFAULT 0,
+          token TEXT,
+          until_ms INTEGER NOT NULL DEFAULT 0,
+          watermark INTEGER NOT NULL DEFAULT 0,
+          refreshed_at TEXT,
+          error TEXT
+        );
+        CREATE TABLE IF NOT EXISTS learning_state (
+          id INTEGER PRIMARY KEY CHECK(id = 1),
+          guidance_version INTEGER NOT NULL DEFAULT 0
+        );
+      `);
+      addColumnIfMissing(db, "draft_versions", "learning_key", "TEXT");
+      addColumnIfMissing(db, "target_queue", "decision_reason", "TEXT");
+      addColumnIfMissing(db, "prospects", "angle_approved_at", "TEXT");
+      addColumnIfMissing(db, "prospects", "angle_proposed_at", "TEXT");
+      copyIcpProposals(db);
+    },
+  },
 ];
+
+/**
+ * Migration 13: carry the #750 ICP proposals into the unified store so the
+ * founder's pending and decided rows survive the move. Idempotent by id.
+ * The text normalization matches `normalizeIcpText` (icp-proposal-store.ts),
+ * which is the baseline/dedupe identity the `icp` kind keeps using.
+ */
+const normalizeLearnedTextForMigration = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+
+function copyIcpProposals(db: Database): void {
+  const normalize = normalizeLearnedTextForMigration;
+  const rows = db
+    .query<
+      {
+        id: string;
+        current_icp: string;
+        proposed_icp: string;
+        evidence_summary: string;
+        created_at: string;
+        status: string;
+        decided_at: string | null;
+      },
+      []
+    >("SELECT * FROM icp_proposals ORDER BY created_at, rowid")
+    .all();
+  const insert = db.query(
+    `INSERT OR IGNORE INTO learning_proposals(
+       id, kind, scope_json, scope_key, current_json, proposed_json, evidence_json,
+       evidence_summary, baseline_key, dedupe_key, status, legacy, source_version, created_at, decided_at, applied_at)
+     VALUES (?, 'icp', '{}', '', ?, ?, '{"refs":[]}', ?, ?, ?, ?, 0, NULL, ?, ?, ?)`,
+  );
+  for (const r of rows) {
+    insert.run(
+      r.id,
+      JSON.stringify(r.current_icp),
+      JSON.stringify(r.proposed_icp),
+      r.evidence_summary,
+      normalize(r.current_icp),
+      normalize(r.proposed_icp),
+      r.status,
+      r.created_at,
+      r.decided_at,
+      r.status === "approved" ? r.decided_at : null,
+    );
+  }
+}
 
 /** Legacy attempt status → outbound_sends status (see migration 11). */
 const ATTEMPT_STATUS: Record<string, string> = {

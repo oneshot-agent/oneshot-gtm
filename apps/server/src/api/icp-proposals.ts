@@ -76,6 +76,7 @@ export function approveIcpProposalRoute(req: Request, params: Record<string, str
     );
     return jsonResponse({ error: "could not update the active ICP; try again" }, 500, req);
   }
+  ledger.icpProposals.markApplied(id, now);
   ledger.icpProposals.dismissStalePending(now);
   const body: IcpProposalDecisionResult = { ok: true, icpOneLiner: decided.view.proposedIcp };
   return jsonResponse(body, 200, req);

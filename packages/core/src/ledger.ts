@@ -118,6 +118,7 @@ import {
   recordOutcome as outRecordOutcome,
 } from "./ledger-outcomes.ts";
 import { IcpProposalStore } from "./icp-proposal-store.ts";
+import { LearningStore } from "./learning-store.ts";
 import { SendDeliveryStore } from "./ledger-delivery.ts";
 import { OutboundSendStore } from "./ledger-outbound.ts";
 import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.ts";
@@ -266,6 +267,9 @@ export class Ledger {
   private cache: LedgerCache;
   private inbox: InboxStore;
   private queue: QueueStore;
+  /** Unified learning proposals, approved guidance and job leases (learning-store.ts, #813). */
+  readonly learning: LearningStore;
+  /** Compatibility surface over `learning` for the #750 ICP proposal job and routes. */
   readonly icpProposals: IcpProposalStore;
   /** Sent-folder delivery checks for sends with no idempotency key (ledger-delivery.ts). */
   readonly sendDelivery: SendDeliveryStore;
@@ -327,7 +331,8 @@ export class Ledger {
     this.mailboxes = new MailboxStore(this.db);
     this.queue = new QueueStore(this.db);
     this.drafts = new DraftVersionStore(this.db);
-    this.icpProposals = new IcpProposalStore(this.db);
+    this.learning = new LearningStore(this.db);
+    this.icpProposals = new IcpProposalStore(this.learning);
     this.sendDelivery = new SendDeliveryStore(this.db);
     this.outboundSends = new OutboundSendStore(this.db);
   }

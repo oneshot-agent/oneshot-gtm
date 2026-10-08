@@ -114,6 +114,65 @@ describe("runLedgerMigrations", () => {
     });
   });
 
+  it("v13 copies the #750 ICP proposals into learning_proposals as kind icp, idempotently", () => {
+    new Ledger(dbPath).close();
+    withRaw((db) => {
+      db.exec("DROP TABLE learning_proposals");
+      db.exec(
+        `INSERT INTO icp_proposals (id, current_icp, proposed_icp, evidence_summary, created_at, status, decided_at)
+         VALUES ('p1', 'B2B fintech founders', 'B2B fintech CTOs!', 'skews technical', '2026-09-29T00:00:00Z', 'approved', '2026-09-30T00:00:00Z'),
+                ('p2', 'B2B fintech CTOs!', 'Series A CTOs', 'later', '2026-10-01T00:00:00Z', 'pending', NULL)`,
+      );
+      db.exec("PRAGMA user_version = 12");
+    });
+    new Ledger(dbPath).close();
+    withRaw((db) => {
+      expect(userVersion(db)).toBe(LEDGER_SCHEMA_VERSION);
+      const rows = db
+        .query(
+          "SELECT id, kind, current_json, proposed_json, baseline_key, dedupe_key, status, decided_at, applied_at FROM learning_proposals ORDER BY created_at",
+        )
+        .all();
+      expect(rows).toEqual([
+        {
+          id: "p1",
+          kind: "icp",
+          current_json: JSON.stringify("B2B fintech founders"),
+          proposed_json: JSON.stringify("B2B fintech CTOs!"),
+          baseline_key: "b2b fintech founders",
+          dedupe_key: "b2b fintech ctos",
+          status: "approved",
+          decided_at: "2026-09-30T00:00:00Z",
+          applied_at: "2026-09-30T00:00:00Z",
+        },
+        {
+          id: "p2",
+          kind: "icp",
+          current_json: JSON.stringify("B2B fintech CTOs!"),
+          proposed_json: JSON.stringify("Series A CTOs"),
+          baseline_key: "b2b fintech ctos",
+          dedupe_key: "series a ctos",
+          status: "pending",
+          decided_at: null,
+          applied_at: null,
+        },
+      ]);
+      expect(columns(db, "draft_versions")).toContain("learning_key");
+      expect(columns(db, "target_queue")).toContain("decision_reason");
+      expect(columns(db, "prospects")).toEqual(
+        expect.arrayContaining(["angle_approved_at", "angle_proposed_at"]),
+      );
+      const step = LEDGER_MIGRATIONS.find((m) => m.name === "learning-proposals")!;
+      expect(() => step.up(db)).not.toThrow();
+      expect(db.query("SELECT COUNT(*) AS n FROM learning_proposals").get()).toEqual({ n: 2 });
+    });
+    // The copied pending row is live on the compatibility surface.
+    const ledger = new Ledger(dbPath);
+    expect(ledger.icpProposals.list("pending").map((p) => p.id)).toEqual(["p2"]);
+    expect(ledger.icpProposals.hasPendingDuplicate("series a ctos")).toBe(true);
+    ledger.close();
+  });
+
   it("migrates a pre-versioning ledger (user_version 0)", () => {
     new Ledger(dbPath).close();
     withRaw((db) => {
