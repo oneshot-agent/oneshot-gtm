@@ -80,9 +80,14 @@ const SEEDS = [
   // Queue: the table (limit 200), the Today strip (16), and the nav's alert dot.
   "/queue?limit=16",
 
-  // The queue page's IcpProposalsCard: client.ts's icpProposals() calls this
-  // with no query params.
-  "/icp-proposals",
+  // The queue page's LearningProposalsCard (#813): the unfiltered history
+  // plus one document per kind filter, and the approved-guidance list.
+  "/learning/proposals?status=all",
+  "/learning/proposals?kind=preference&status=all",
+  "/learning/proposals?kind=prospect_angle&status=all",
+  "/learning/proposals?kind=campaign_angle&status=all",
+  "/learning/proposals?kind=icp&status=all",
+  "/learning/guidance",
 
   // Prospects: one document (the whole seeded ledger) and the page
   // searches, sorts and pages it client-side (client.ts `prospectSearch`).

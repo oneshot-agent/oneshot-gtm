@@ -1377,8 +1377,8 @@ export class Ledger {
    * every backfill call. Pass null to clear both columns together, so
    * `angle_synthesized_at` can never point at a row with no `angle_json`.
    */
-  setProspectAngle(id: number, angle: string | null): void {
-    this.prospects.setProspectAngle(id, angle);
+  setProspectAngle(id: number, angle: string | null, opts?: { approvedAt?: string | null }): void {
+    this.prospects.setProspectAngle(id, angle, opts);
   }
 
   /**
