@@ -624,7 +624,7 @@ function DetailPanel({ id }: { id: number }) {
             <Check size={12} /> {row.status === "rejected" ? "Approve anyway" : "Approve"}
           </Button>
         )}
-        {!rejecting && canApprove && row.status === "pending" && (
+        {!rejecting && canApprove && (
           <Button
             variant="ghost"
             size="sm"

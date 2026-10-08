@@ -1230,10 +1230,11 @@ export function QueueRow({
                 variant="primary"
                 size="sm"
                 disabled={busy}
-                onClick={() => onApprove()}
+                // Overriding the gate's fit rejection IS an explicit fit judgment.
+                onClick={() => onApprove(canApproveFit)}
                 title={
                   canApproveFit
-                    ? "Override the saved fit rejection and approve this prospect for sending"
+                    ? "Override the saved fit rejection and approve this prospect for sending (records an explicit fit judgment)"
                     : undefined
                 }
                 {...readOnly}
@@ -1242,18 +1243,21 @@ export function QueueRow({
                 {canApproveFit ? "Approve fit" : "approve"}
               </Button>
             )}
-            {row.status === "pending" && (
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={busy}
-                onClick={() => onApprove(true)}
-                title="Approve and record an explicit fit judgment: this is who you sell to (teaches the ICP)"
-                {...readOnly}
-              >
-                as fit
-              </Button>
-            )}
+            {!canApproveFit &&
+              (row.status === "pending" ||
+                row.status === "rejected" ||
+                (row.status === "expired" && !isQueueImportInProgress(row))) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => onApprove(true)}
+                  title="Approve and record an explicit fit judgment: this is who you sell to (teaches the ICP)"
+                  {...readOnly}
+                >
+                  as fit
+                </Button>
+              )}
             {(row.status === "pending" || row.status === "approved") && (
               <Button
                 variant="ghost"

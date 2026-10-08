@@ -240,6 +240,14 @@ describe("approveQueueRoute status transitions", () => {
     );
     expect(res.status).toBe(400);
     expect(statusCalls.filter((c) => c["decisionReason"] === "wrong_audience")).toEqual([]);
+    // A body that cannot be read is refused rather than treated as reasonless.
+    const before = statusCalls.length;
+    res = await approveQueueRoute(
+      new Request("http://x/api/queue/21/approve", { method: "POST", body: "{not json" }),
+      { id: "21" },
+    );
+    expect(res.status).toBe(400);
+    expect(statusCalls.length).toBe(before);
   });
   it("refuses with 409 so drain cannot re-send", async () => {
     queueRows.set(9, row({ status: "sent" }));

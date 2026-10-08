@@ -516,11 +516,16 @@ export async function approveQueueRoute(
   }
   // An optional structured reason (#813). `fit` is the only one an approval
   // can honestly carry; it is what makes the decision ICP evidence.
+  // An empty body is a plain approval; a body that cannot be read must not
+  // silently become one, since the reason it carried is lost.
   let body: unknown = {};
-  try {
-    body = await req.json();
-  } catch {
-    // no body: a plain approval, no fit judgment recorded
+  const raw = (await req.text()).trim();
+  if (raw) {
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      return jsonResponse({ error: "invalid JSON body" }, 400, req);
+    }
   }
   const parsedReason = parseDecisionReason(body, "reason");
   if ("error" in parsedReason) return jsonResponse({ error: parsedReason.error }, 400, req);
