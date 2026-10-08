@@ -191,7 +191,7 @@ export interface SequenceEventRecord {
     | "failed"
     | "unsubscribed"
     | "skipped"
-    /** A LinkedIn invite withdrawn after it was sent (its own step-0 event). */
+    /** A LinkedIn invite withdrawn after it was sent (recorded on the invite's own step, 0 or N). */
     | "withdrawn";
   metadata_json: string | null;
   created_at: string;

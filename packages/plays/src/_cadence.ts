@@ -2710,11 +2710,11 @@ async function awaitLinkedInAcceptance(
       withdrawStatus = res.status ?? null;
       // not_pending: accepted or gone some other way: nothing was withdrawn.
       if (isWithdrawnStatus(withdrawStatus)) {
-        ledger.recordSequenceEvent({
+        // On the invite's own step: a continuation invite is not step 0.
+        ledger.recordLinkedInInviteEvent({
           prospectId: opts.prospectId,
           playName: opts.playName,
-          stepIndex: 0,
-          channel: "linkedin",
+          stepIndex: invite?.step_index ?? 0,
           status: "withdrawn",
           metadata: { invitationId, withdrawStatus },
         });

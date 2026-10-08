@@ -1599,7 +1599,7 @@ export async function sendDraftRoute(
 
 /**
  * Withdraw the LinkedIn invite a sent row went out with, through OneShot's
- * withdraw route. Recorded as its own step-0 `withdrawn` event; the original
+ * withdraw route. Recorded as its own `withdrawn` event on the invite's step; the original
  * send stays in the history. Never disconnects an accepted connection:
  * OneShot answers `not_pending` for those.
  */
@@ -1667,11 +1667,10 @@ export async function withdrawInviteRoute(
         req,
       );
     }
-    ledger.recordSequenceEvent({
+    ledger.recordLinkedInInviteEvent({
       prospectId: row.prospect_id,
       playName: row.play_name,
-      stepIndex: 0,
-      channel: "linkedin",
+      stepIndex: sent?.step_index ?? 0,
       status: "withdrawn",
       metadata: { invitationId, withdrawStatus: result.status ?? null },
     });

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { mdxText, referenceMatches, renderCliReference } from "../src/docs-reference.ts";
 
 const revision = "a".repeat(40);
+// Importing the live CLI tree loads every command module; under a parallel full-suite run this can exceed the 5s default.
+const LIVE_TREE_TIMEOUT_MS = 30_000;
 describe("CLI documentation", () => {
   it("renders nested arguments, inherited flags, choices, defaults and MDX safely without actions", () => {
     let invoked = false;
@@ -34,24 +36,32 @@ describe("CLI documentation", () => {
     expect(referenceMatches(text, text.replace("Disable browser", "Changed"))).toBe(false);
   });
 
-  it("renders the live tree without em dashes", async () => {
-    process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
-    const { program } = await import("../src/index.ts");
-    expect(renderCliReference(program, revision)).not.toContain("—");
-  });
+  it(
+    "renders the live tree without em dashes",
+    async () => {
+      process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
+      const { program } = await import("../src/index.ts");
+      expect(renderCliReference(program, revision)).not.toContain("—");
+    },
+    LIVE_TREE_TIMEOUT_MS,
+  );
 
-  it("covers every command and flag in the live tree", async () => {
-    process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
-    const { program } = await import("../src/index.ts");
-    const text = renderCliReference(program, revision);
-    function check(cmd: Command, parent = "") {
-      const path = parent ? `${parent} ${cmd.name()}` : cmd.name();
-      expect(text).toContain(`## ${path}\n`);
-      for (const option of cmd.options) {
-        if (!option.hidden) expect(text).toContain(mdxText(option.flags));
+  it(
+    "covers every command and flag in the live tree",
+    async () => {
+      process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
+      const { program } = await import("../src/index.ts");
+      const text = renderCliReference(program, revision);
+      function check(cmd: Command, parent = "") {
+        const path = parent ? `${parent} ${cmd.name()}` : cmd.name();
+        expect(text).toContain(`## ${path}\n`);
+        for (const option of cmd.options) {
+          if (!option.hidden) expect(text).toContain(mdxText(option.flags));
+        }
+        for (const child of cmd.commands) check(child, path);
       }
-      for (const child of cmd.commands) check(child, path);
-    }
-    check(program);
-  });
+      check(program);
+    },
+    LIVE_TREE_TIMEOUT_MS,
+  );
 });

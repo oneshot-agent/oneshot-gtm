@@ -281,6 +281,94 @@ describe("prospectHasFirstTouch (cross-play first-touch guard)", () => {
   });
 });
 
+describe("LinkedIn invite events (any step, legacy step 0)", () => {
+  const invite = (pid: number, step: number, marked: boolean, id: string) => {
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "p",
+      stepIndex: step,
+      channel: "linkedin",
+      status: "sent",
+      metadata: { invitationId: id, ...(marked ? { kind: "linkedin_invite" } : {}) },
+    });
+  };
+  const ids = (pid: number) =>
+    ledger
+      .listLinkedInInviteEvents(pid, "p")
+      .map((e) => JSON.parse(e.metadata_json ?? "{}").invitationId);
+
+  it("finds a legacy step-0 row, a marked step-0 row and a marked step-N row", () => {
+    const legacy = ledger.upsertProspect({ name: "A", email: null, source: "t" });
+    const marked0 = ledger.upsertProspect({ name: "B", email: null, source: "t" });
+    const markedN = ledger.upsertProspect({ name: "C", email: null, source: "t" });
+    invite(legacy, 0, false, "legacy");
+    invite(marked0, 0, true, "marked0");
+    invite(markedN, 2, true, "markedN");
+    expect(ids(legacy)).toEqual(["legacy"]);
+    expect(ids(marked0)).toEqual(["marked0"]);
+    expect(ids(markedN)).toEqual(["markedN"]);
+  });
+
+  it("ignores unmarked LinkedIn rows past step 0 and non-LinkedIn rows", () => {
+    const pid = ledger.upsertProspect({ name: "D", email: null, source: "t" });
+    invite(pid, 1, false, "message");
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "p",
+      stepIndex: 2,
+      channel: "email",
+      status: "sent",
+      metadata: { kind: "linkedin_invite" },
+    });
+    expect(ids(pid)).toEqual([]);
+  });
+
+  it("only step-0 invites count as the first touch", () => {
+    const legacy = ledger.upsertProspect({ name: "A", email: null, source: "t" });
+    const marked0 = ledger.upsertProspect({ name: "B", email: null, source: "t" });
+    const markedN = ledger.upsertProspect({ name: "C", email: null, source: "t" });
+    invite(legacy, 0, false, "legacy");
+    invite(marked0, 0, true, "marked0");
+    invite(markedN, 2, true, "markedN");
+    expect(ledger.prospectHasFirstTouch(legacy)).toBe(true);
+    expect(ledger.prospectHasFirstTouch(marked0)).toBe(true);
+    expect(ledger.prospectHasFirstTouch(markedN)).toBe(false);
+  });
+
+  it("recordLinkedInInviteEvent marks the row and refuses a step-0 claim over another channel's first touch", () => {
+    const pid = ledger.upsertProspect({ name: "E", email: "e@x.com", source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "p",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    expect(() =>
+      ledger.recordLinkedInInviteEvent({
+        prospectId: pid,
+        playName: "p",
+        stepIndex: 0,
+        status: "sent",
+      }),
+    ).toThrow(/step 0/);
+    ledger.recordLinkedInInviteEvent({
+      prospectId: pid,
+      playName: "p",
+      stepIndex: 1,
+      status: "sent",
+      metadata: { invitationId: "inv" },
+    });
+    const [ev] = ledger.listLinkedInInviteEvents(pid, "p");
+    expect(ev).toMatchObject({ step_index: 1, channel: "linkedin" });
+    expect(JSON.parse(ev!.metadata_json!)).toEqual({
+      invitationId: "inv",
+      kind: "linkedin_invite",
+    });
+    expect(ledger.prospectHasFirstTouch(pid)).toBe(true); // the email intro, not the invite
+  });
+});
+
 describe("isEmailPendingInQueue (cross-play pending dedup)", () => {
   it("matches pending/approved rows by email or founderEmail; ignores terminal rows + non-matches", () => {
     const pendingId = ledger.enqueueTarget({
