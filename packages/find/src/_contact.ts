@@ -252,8 +252,21 @@ const DECISION_OWNER_TITLE =
   /\b(founder|co-?founder|ceo|cto|coo|cfo|cro|cmo|chief|president|owner|managing (director|partner)|general manager|head of|vp|vice president|director)\b/i;
 
 /**
+ * Placeholders a people index hands back in the name fields ("None None",
+ * "null", "N/A"). Not a person: picking one puts "Hey None" in a draft.
+ */
+const PLACEHOLDER_NAME =
+  /^(none|null|undefined|unknown|n\/?a)(\s+(none|null|undefined|unknown|n\/?a))*$/i;
+
+/** A real name out of a name field, or "" for a blank or a placeholder. */
+function usableName(value: unknown): string {
+  const name = typeof value === "string" ? value.trim() : "";
+  return name && !PLACEHOLDER_NAME.test(name) ? name : "";
+}
+
+/**
  * The person to write to out of a domain-scoped peopleSearch: needs a usable
- * name; prefers a decision owner (founder, chief, head, VP: see
+ * name (never a provider placeholder such as "None None"); prefers a decision owner (founder, chief, head, VP: see
  * `DECISION_OWNER_TITLE`), among those one with a work email on file (skips
  * a paid findEmail); then anyone with a work email, then anyone with a title
  * (feeds the role gate). Exported for the unit test.
@@ -265,11 +278,8 @@ export function pickNamedPerson(
   const named = results.flatMap((p) => {
     if (!p || typeof p !== "object") return [];
     const full =
-      (typeof p.full_name === "string" && p.full_name.trim()) ||
-      [p.first_name, p.last_name]
-        .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-        .join(" ")
-        .trim();
+      usableName(p.full_name) ||
+      usableName([p.first_name, p.last_name].map(usableName).filter(Boolean).join(" "));
     if (!full) return [];
     return [
       {
