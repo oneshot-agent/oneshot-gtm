@@ -1383,6 +1383,11 @@ export class Ledger {
     this.prospects.setProspectAngle(id, angle, opts);
   }
 
+  /** A revision of the angle was proposed for review (#813). */
+  setProspectAngleProposedAt(id: number, at: string | null): void {
+    this.prospects.setProspectAngleProposedAt(id, at);
+  }
+
   /**
    * Write ONE half of a prospect's dossier without clobbering the other.
    *

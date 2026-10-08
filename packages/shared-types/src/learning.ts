@@ -47,6 +47,9 @@ export interface LearningEvidenceSample {
   name?: string;
   channel?: LearningChannel;
   stage?: LearningStage;
+  /** A free-form excerpt (a reply, a signal) with its own label, for evidence that is not a draft. */
+  label?: string;
+  text?: string;
 }
 
 export interface LearningEvidence {

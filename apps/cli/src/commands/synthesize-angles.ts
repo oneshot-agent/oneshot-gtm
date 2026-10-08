@@ -1,5 +1,10 @@
 import { getLedger, parallelMap } from "@oneshot-gtm/core";
-import { gatherAngleEvidence, isCircuitOpen, synthesizePersonAngle } from "@oneshot-gtm/find";
+import {
+  gatherAngleEvidence,
+  isCircuitOpen,
+  proposeProspectAngle,
+  synthesizePersonAngle,
+} from "@oneshot-gtm/find";
 import { c, header, note, ok, warn } from "../output.ts";
 import { parseScopes, resolveCap, type ResearchScope } from "./research-prospects.ts";
 
@@ -29,6 +34,8 @@ export interface SynthesizeAnglesOpts {
   /** Skip paid evidence-gathering (deepResearchPerson / webRead); free tiers only. */
   cheap?: boolean;
   maxCostUsd?: number;
+  /** Write the active angle directly instead of proposing it for review on /queue (#813). */
+  apply?: boolean;
 }
 
 export async function commandSynthesizeAngles(opts: SynthesizeAnglesOpts): Promise<void> {
@@ -103,7 +110,14 @@ export async function commandSynthesizeAngles(opts: SynthesizeAnglesOpts): Promi
       empty++;
       return;
     }
-    ledger.setProspectAngle(row.id, JSON.stringify(angle));
+    if (opts.apply) ledger.setProspectAngle(row.id, JSON.stringify(angle));
+    else {
+      const prospect = ledger.getProspectById(row.id);
+      if (!prospect || !proposeProspectAngle({ prospect, angle, evidence })) {
+        empty++;
+        return;
+      }
+    }
     written++;
     process.stdout.write(
       `  ${c.green("→")} ${(row.name ?? "").slice(0, 26).padEnd(28)} ${c.dim(angle.hook.slice(0, 60))}\n`,
@@ -126,7 +140,7 @@ export async function commandSynthesizeAngles(opts: SynthesizeAnglesOpts): Promi
     );
   }
   ok(
-    `synthesized ${written}  ${c.dim("no signal:")} ${empty}  ${c.dim("failed:")} ${failed}  ` +
+    `${opts.apply ? "synthesized" : "proposed for review"} ${written}  ${c.dim("no signal:")} ${empty}  ${c.dim("failed:")} ${failed}  ` +
       `${c.dim("spent:")} $${costUsd.toFixed(2)}`,
   );
 }

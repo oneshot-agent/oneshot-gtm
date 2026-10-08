@@ -174,6 +174,10 @@ export interface ProspectRecord {
   angle_json: string | null;
   /** ISO timestamp of the last `angle_json` write. NULL alongside it. */
   angle_synthesized_at: string | null;
+  /** When the founder approved the active angle (#813); NULL on angles synthesized before review existed. */
+  angle_approved_at?: string | null;
+  /** When an angle revision was last proposed for review (#813); debounces re-synthesis like `angle_synthesized_at`. */
+  angle_proposed_at?: string | null;
   created_at: string;
 }
 

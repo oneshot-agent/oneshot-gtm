@@ -280,7 +280,7 @@ function ProposalRow({
           <div className="mt-2 space-y-3">
             {samples.map((s) => (
               <div
-                key={`${s.at ?? ""}|${s.name ?? ""}|${(s.sent ?? s.original ?? "").slice(0, 60)}`}
+                key={`${s.at ?? ""}|${s.name ?? ""}|${(s.sent ?? s.original ?? s.text ?? "").slice(0, 60)}`}
                 className="border-l border-ink-rule pl-3"
               >
                 {(s.name || s.at) && (
@@ -294,6 +294,12 @@ function ProposalRow({
                     Feedback: {f}
                   </p>
                 ))}
+                {s.text && (
+                  <p className="mt-1 whitespace-pre-wrap">
+                    {s.label ? `${s.label}: ` : ""}
+                    {s.text}
+                  </p>
+                )}
                 {s.original && <p className="mt-1 whitespace-pre-wrap">Suggested: {s.original}</p>}
                 {s.sent && (
                   <p className="mt-1 whitespace-pre-wrap text-ink-cream">Sent: {s.sent}</p>

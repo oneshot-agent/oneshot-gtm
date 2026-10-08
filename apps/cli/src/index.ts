@@ -870,6 +870,11 @@ find
     "free evidence tiers only; skips a fresh deepResearchPerson/webRead call",
     false,
   )
+  .option(
+    "--apply",
+    "write each angle as the active one instead of proposing it for review on /queue",
+    false,
+  )
   .option("--max-cost-usd <n>", "stop once this much has been billed this run", (v) =>
     Number.parseFloat(v),
   )
