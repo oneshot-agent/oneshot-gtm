@@ -193,6 +193,41 @@ describe("pickNamedPerson", () => {
     expect(pickNamedPerson([{ title: "Nameless" }, null] as never)).toBeNull();
   });
 
+  it("never picks a provider placeholder such as 'None None' as a person", async () => {
+    const { pickNamedPerson } = await import("../src/_contact.ts");
+    // Real shape from a live domain search: the placeholder row comes first and
+    // carries a work email, which used to win it the pick.
+    expect(
+      pickNamedPerson([
+        { full_name: "None None", first_name: null, last_name: null, best_work_email: "x@y.z" },
+        { full_name: "Daniel Stepanenko", best_work_email: "d@y.z" },
+      ] as never),
+    ).toEqual({ fullName: "Daniel Stepanenko", title: null, bestWorkEmail: "d@y.z" });
+    // A placeholder full_name falls back to real first/last parts.
+    expect(
+      pickNamedPerson([{ full_name: "null", first_name: "Ada", last_name: "Lovelace" }] as never)
+        ?.fullName,
+    ).toBe("Ada Lovelace");
+    // Nothing but placeholders is nobody.
+    expect(
+      pickNamedPerson([
+        { full_name: "undefined" },
+        { first_name: "None", last_name: "None" },
+        { full_name: "N/A", title: "CEO" },
+      ] as never),
+    ).toBeNull();
+    // A full_name that is only partly a placeholder is not a name either:
+    // real first/last parts win, and with none to fall back on it is nobody.
+    expect(
+      pickNamedPerson([{ full_name: "None Smith", first_name: "Ada", last_name: "Smith" }] as never)
+        ?.fullName,
+    ).toBe("Ada Smith");
+    expect(pickNamedPerson([{ full_name: "None Smith" }] as never)).toBeNull();
+    // Real names that merely resemble a placeholder are kept.
+    expect(pickNamedPerson([{ full_name: "Nona Nonez" }] as never)?.fullName).toBe("Nona Nonez");
+    expect(pickNamedPerson([{ full_name: "Na Li" }] as never)?.fullName).toBe("Na Li");
+  });
+
   it("puts a decision owner ahead of an employee who happens to have a work email", async () => {
     const { pickNamedPerson } = await import("../src/_contact.ts");
     const results = [
