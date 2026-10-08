@@ -121,6 +121,14 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_learning_proposals_pending_scope",
+      "sql": "CREATE UNIQUE INDEX idx_learning_proposals_pending_scope
+          ON learning_proposals(kind, scope_key)
+          WHERE status = 'pending' AND kind IN ('prospect_angle', 'campaign_angle')",
+      "tbl_name": "learning_proposals",
+      "type": "index",
+    },
+    {
       "name": "idx_learning_proposals_scope",
       "sql": "CREATE INDEX idx_learning_proposals_scope
           ON learning_proposals(kind, scope_key, status)",

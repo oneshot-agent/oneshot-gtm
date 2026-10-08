@@ -153,22 +153,29 @@ describe("proposals", () => {
 
   it("markStale only touches pending rows in the same kind and scope", () => {
     const a = insertAngle(1, "hook A")!;
-    const b = insertAngle(1, "hook B")!;
     const other = insertAngle(2, "hook C")!;
     const pref = insertPreference("Say hey")!;
-    ledger.learning.decide(b.id, "approved", T1);
     expect(
       ledger.learning.markStale(
         "prospect_angle",
         learningScopeKey("prospect_angle", { prospectId: 1 }),
         T1,
-        b.id,
       ),
     ).toBe(1);
     expect(ledger.learning.get(a.id)).toMatchObject({ status: "stale", decidedAt: T1 });
-    expect(ledger.learning.get(b.id)?.status).toBe("approved");
     expect(ledger.learning.get(other.id)?.status).toBe("pending");
     expect(ledger.learning.get(pref.id)?.status).toBe("pending");
+  });
+
+  it("allows one pending angle revision per prospect (and per play), whatever the hook", () => {
+    const a = insertAngle(1, "hook A")!;
+    expect(insertAngle(1, "hook B")).toBeNull();
+    expect(insertAngle(2, "hook B")).not.toBeNull();
+    ledger.learning.decide(a.id, "dismissed", T1);
+    expect(insertAngle(1, "hook B")).not.toBeNull();
+    // Preferences are not scoped that way: several may wait at once.
+    expect(insertPreference("One")).not.toBeNull();
+    expect(insertPreference("Two")).not.toBeNull();
   });
 
   it("wasJustDismissed is true only while the latest decision in scope was a dismissal of that key", () => {

@@ -318,6 +318,21 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       copyIcpProposals(db);
     },
   },
+  {
+    // One pending angle revision per prospect, one per play (#813): the
+    // pre-synthesis check in `listProspectsForAngle` runs outside the insert,
+    // so two concurrent refreshes could both pass it. `LearningStore.insert`
+    // already reads a unique-constraint failure as "already pending".
+    version: 14,
+    name: "learning-one-pending-angle-per-scope",
+    up: (db) => {
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_learning_proposals_pending_scope
+          ON learning_proposals(kind, scope_key)
+          WHERE status = 'pending' AND kind IN ('prospect_angle', 'campaign_angle');
+      `);
+    },
+  },
 ];
 
 /**
