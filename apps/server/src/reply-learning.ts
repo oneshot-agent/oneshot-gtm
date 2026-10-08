@@ -100,16 +100,15 @@ export function acceptDraftCandidates(
     if (!ids.length || ids.length !== new Set(c.evidenceIds).size) continue;
     const cited = ids.map((id) => byId.get(id)!).filter((o) => asChannel(o.channel));
     if (new Set(cited.map((o) => o.prospectKey)).size < 5) continue;
-    const channels = new Set(cited.map((o) => o.channel));
-    const stages = new Set(cited.map((o) => o.stage));
     seen.add(c.key);
-    out.push({
-      key: c.key,
-      instruction: c.instruction.trim(),
-      channel: channels.size === 1 ? asChannel([...channels][0]!) : null,
-      stage: stages.size === 1 ? [...stages][0]! : null,
-      evidence: cited,
-    });
+    // Mixed evidence never grants permission to an unobserved drafting stage.
+    for (const channel of ["email", "linkedin"] as const) {
+      for (const stage of ["first_touch", "follow_up"] as const) {
+        const evidence = cited.filter((o) => o.channel === channel && o.stage === stage);
+        if (new Set(evidence.map((o) => o.prospectKey)).size < 5) continue;
+        out.push({ key: c.key, instruction: c.instruction.trim(), channel, stage, evidence });
+      }
+    }
   }
   return out;
 }
@@ -151,13 +150,20 @@ function propose(
   },
   excluded: ReadonlySet<string>,
 ): "inserted" | "skipped" {
-  const dedupeKey = normalizeLearnedText(input.instruction);
-  if (!dedupeKey || excluded.has(dedupeKey)) return "skipped";
+  const normalized = normalizeLearnedText(input.instruction);
+  if (!normalized || excluded.has(normalized)) return "skipped";
+  const dedupeKey = `${input.channel ?? "any"}:${input.stage ?? "any"}:${normalized}`;
   if (ledger.learning.hasPendingDuplicate("preference", dedupeKey)) return "skipped";
   if (
     ledger.learning
       .listGuidance(true)
-      .some((g) => g.status !== "rolled_back" && normalizeLearnedText(g.instruction) === dedupeKey)
+      .some(
+        (g) =>
+          g.status !== "rolled_back" &&
+          g.channel === input.channel &&
+          g.stage === input.stage &&
+          normalizeLearnedText(g.instruction) === normalized,
+      )
   )
     return "skipped";
   const scope = {

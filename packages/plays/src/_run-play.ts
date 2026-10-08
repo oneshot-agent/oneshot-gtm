@@ -31,6 +31,7 @@ import {
   socialProofBlock,
   type SendDraftedOpts,
   learningBlock,
+  stampLearningInput,
   voiceBlock,
 } from "./_lib.ts";
 import { enrollInCadence, getSequence } from "./_cadence.ts";
@@ -330,7 +331,15 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // LEARNED: founder-approved writing preferences for email first
         // touches (#813). Null until something is approved, so the prompt is
         // byte-identical to before on an install that has approved nothing.
-        const learned = learningBlock({ channel: "email", stage: "first_touch" });
+        const learned = learningBlock({
+          channel: "email",
+          stage: "first_touch",
+          cfg,
+          email: def.toEmail(target),
+          playName: def.playName,
+          campaignAngle: opts.draftAngle,
+          replaceProspectAngle: !!opts.draftAngle,
+        });
         if (learned) inputBlock = `${inputBlock}\n\n${learned.text}`;
         // FORMAT: only when the trigger opted into a first-touch format. The
         // arm is a stable per-prospect hash (see _first-touch.ts), so an
@@ -378,6 +387,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           inputBlock += `\n\nSELECTED ANGLE: ${opts.draftAngle}\nBuild this draft around this argument. Preserve the play’s channel, tone, and factual constraints. Do not blend in other arguments.`;
         // Guard #2. The LLM draft, the paid call `prepare` was feeding.
         throwIfCancelled(opts.signal, `${def.playName} draft`);
+        stampLearningInput(learned, inputBlock);
         const draft = await draftEmailFromPrompt({
           promptName: def.promptName,
           inputBlock,

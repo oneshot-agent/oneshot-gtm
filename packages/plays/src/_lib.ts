@@ -1,5 +1,7 @@
 import {
   cadenceGoalId,
+  draftLearningContext,
+  type DraftLearningInput,
   type DemoDay,
   ENRICH_CACHE_TTL_MS,
   ENRICH_DEADLINE_MS,
@@ -748,34 +750,17 @@ export function voiceBlock(surface: VoiceSurface): { text: string; key: string }
 /** Where approved writing preferences apply: the three drafting stages a channel has. */
 export type LearningStage = "first_touch" | "follow_up" | "reply";
 
-/**
- * LEARNED WRITING PREFERENCES input block (#813): the founder-approved
- * guidance rows that apply to this channel and stage, from the ledger's
- * `learning_guidance` table. Null when nothing applies, so an install that
- * has approved nothing drafts byte-for-byte as before. Pending proposals,
- * disabled and rolled-back rows never reach here. The returned `key`
- * fingerprints the exact set, stamped on the draft version as
- * `learning_key` the way `voice_key` records the voice card.
- */
-export function learningBlock(scope: {
-  channel: "email" | "linkedin";
-  stage: LearningStage;
-}): { text: string; key: string } | null {
-  let guidance: { key: string | null; instructions: Array<{ instruction: string }> };
+/** Approved context shared by every channel and drafting stage. Existing prospect angles remain active. */
+export function learningBlock(scope: DraftLearningInput): { text: string; key: string } | null {
+  const ledger = getLedger();
+  // Lightweight test doubles and bare drafting callers may not have a learning store.
+  if (!ledger.learning) return null;
   try {
-    guidance = getLedger().learning.guidance(scope);
-  } catch {
-    // No ledger in this context (a test double, a bare CLI): draft as before.
+    return draftLearningContext(ledger, scope);
+  } catch (error) {
+    logEvent("learning.context_failed", { message: (error as Error).message }, "warn");
     return null;
   }
-  if (!guidance.key || guidance.instructions.length === 0) return null;
-  return {
-    key: guidance.key,
-    text: [
-      "LEARNED WRITING PREFERENCES (founder-approved guidance from reviewed sends; apply only when relevant. VOICE, the explicit inputs above and every factual, audience and channel constraint outrank them. Never a source of product facts, links, numbers or promises):",
-      ...guidance.instructions.map((g) => `- ${g.instruction}`),
-    ].join("\n"),
-  };
 }
 
 /**
@@ -1652,4 +1637,16 @@ export async function verifyAndFilterTargets<T>(
   }
 
   return { verified, dropped, receiptIds, costUsd };
+}
+
+/** Freeze the exact prompt alongside its approved inputs before the paid generation. */
+export function stampLearningInput(learned: { key: string } | null, input: unknown): void {
+  if (!learned) return;
+  try {
+    const learning = getLedger().learning;
+    const context = learning.context(learned.key);
+    learned.key = learning.captureContext({ context, input });
+  } catch (error) {
+    logEvent("learning.snapshot_failed", { message: (error as Error).message }, "warn");
+  }
 }

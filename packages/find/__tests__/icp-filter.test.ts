@@ -39,7 +39,12 @@ vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
-    getLedger: () => ({ recentIcpDecisions: () => examples }),
+    getLedger: () => ({
+      recentIcpDecisions: (_limit: number, options: { reasoned?: boolean }) => {
+        expect(options).toEqual({ reasoned: true });
+        return examples;
+      },
+    }),
     logEvent: () => {},
   };
 });

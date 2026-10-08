@@ -345,6 +345,22 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    version: 15,
+    name: "learning-context-and-applications",
+    up: (db) => {
+      db.exec(`
+      CREATE TABLE IF NOT EXISTS learning_contexts (
+        key TEXT PRIMARY KEY, context_json TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS learning_applications (
+        id TEXT PRIMARY KEY, action TEXT NOT NULL, value_json TEXT NOT NULL,
+        previous_json TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+    `);
+      addColumnIfMissing(db, "learning_proposals", "applied_key", "TEXT");
+    },
+  },
 ];
 
 /**

@@ -40,6 +40,10 @@ export interface SynthesizeAnglesOpts {
 
 export async function commandSynthesizeAngles(opts: SynthesizeAnglesOpts): Promise<void> {
   header(`synthesize-angles ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
+  if (opts.apply)
+    throw new Error(
+      "--apply is no longer supported. Generate proposals without --apply, then review them in Queue → Learning.",
+    );
   const ledger = getLedger();
   const scopes = parseScopes(opts.scope) as ResearchScope[];
 
@@ -112,8 +116,7 @@ export async function commandSynthesizeAngles(opts: SynthesizeAnglesOpts): Promi
       empty++;
       return;
     }
-    if (opts.apply) ledger.setProspectAngle(row.id, JSON.stringify(angle));
-    else {
+    {
       const prospect = ledger.getProspectById(row.id);
       if (!prospect) {
         failed++;
@@ -146,7 +149,7 @@ export async function commandSynthesizeAngles(opts: SynthesizeAnglesOpts): Promi
     );
   }
   ok(
-    `${opts.apply ? "synthesized" : "proposed for review"} ${written}  ${c.dim("no signal:")} ${empty}  ` +
+    `${"proposed for review"} ${written}  ${c.dim("no signal:")} ${empty}  ` +
       (skipped > 0 ? `${c.dim("already pending or dismissed:")} ${skipped}  ` : "") +
       `${c.dim("failed:")} ${failed}  ` +
       `${c.dim("spent:")} $${costUsd.toFixed(2)}`,

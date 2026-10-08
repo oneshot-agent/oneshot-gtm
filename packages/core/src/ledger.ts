@@ -1,3 +1,4 @@
+import { recoverLearningApplications } from "./learning-decisions.ts";
 import type { DecisionReason } from "@oneshot-gtm/shared-types";
 import { recordManualQueueSend, type ManualQueueSend } from "./ledger-manual.ts";
 import { extractBusinessAddress } from "./mail-address.ts";
@@ -2858,7 +2859,15 @@ export class Ledger {
 let singleton: Ledger | null = null;
 
 export function getLedger(): Ledger {
-  if (!singleton) singleton = new Ledger();
+  if (!singleton) {
+    singleton = new Ledger();
+    try {
+      recoverLearningApplications(singleton);
+    } catch (error) {
+      singleton = null;
+      throw error;
+    }
+  }
   singleton.refreshSharedPeople();
   return singleton;
 }

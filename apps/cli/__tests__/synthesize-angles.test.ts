@@ -136,12 +136,13 @@ describe("commandSynthesizeAngles", () => {
     expect(out).toContain("no signal: 0");
   });
 
-  it("--apply writes the active angle directly, as before", async () => {
-    await commandSynthesizeAngles({ dryRun: false, refresh: false, apply: true });
-    expect(proposeCalls).toHaveLength(0);
-    expect(setAngleCalls).toHaveLength(3);
-    expect(setAngleCalls[0]!.angle).toBe(JSON.stringify(nextAngle));
-    expect(stdout.join("")).toContain("synthesized 3");
+  it("rejects --apply before reading evidence or spending", async () => {
+    await expect(
+      commandSynthesizeAngles({ dryRun: false, refresh: false, apply: true }),
+    ).rejects.toThrow("--apply is no longer supported");
+    expect(gatherCalls).toHaveLength(0);
+    expect(synthesizeCalls).toHaveLength(0);
+    expect(setAngleCalls).toHaveLength(0);
   });
 
   it("passes allowPaidResearch=false through to gatherAngleEvidence under --cheap", async () => {

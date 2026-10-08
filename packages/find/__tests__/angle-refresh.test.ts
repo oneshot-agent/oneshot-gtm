@@ -65,6 +65,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       },
       transaction: <T>(fn: () => T): T => fn(),
       learning: {
+        captureContext: () => "evidence-snapshot",
         wasJustDismissed: () => justDismissed,
         insert: (input: Record<string, unknown>) => {
           proposals.push(input);

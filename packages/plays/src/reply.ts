@@ -11,6 +11,7 @@ import {
   meetingBlock,
   signatureDirective,
   learningBlock,
+  stampLearningInput,
   voiceBlock,
 } from "./_lib.ts";
 
@@ -386,6 +387,7 @@ export interface DraftInboxReplyInput {
 }
 
 export interface DraftInboxReplyResult {
+  learningKey?: string | null;
   body: string;
   /** Lint flags that survived the repair pass. Currently the only one the send gate cares about is `commits-terms`. */
   flags: string[];
@@ -479,7 +481,14 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
   // register, not credentials, and its reply budget drops the aphorism in
   // logistics mode.
   const voice = voiceBlock("reply");
-  const learned = learningBlock({ channel: "email", stage: "reply" });
+  const learned = learningBlock({
+    channel: "email",
+    stage: "reply",
+    cfg,
+    email: input.fromEmail,
+    angleJson: input.angleJson,
+    research: input.dossier,
+  });
   const firstName = firstNameFrom(input.matched?.name ?? null);
   const angleBlock = angleBlockFromJson(input.angleJson);
   // ICP GATE. A free ledger fact, rendered with its caveat inline so the
@@ -519,6 +528,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
     ...(firstName ? ["", `PROSPECT_FIRST_NAME: ${firstName}`] : []),
   ].join("\n");
 
+  stampLearningInput(learned, user);
   const messages: LlmMessage[] = [
     { role: "system", content: system },
     { role: "user", content: user },
@@ -551,7 +561,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
       flags = lintReply(body, budget, priorTexts, allowedUrls);
     }
   }
-  return { body, flags };
+  return { body, flags, learningKey: learned?.key ?? null };
 }
 
 /** One corrective turn, naming the flags the draft tripped. Returns "" when the

@@ -15,7 +15,7 @@ Each kind answers a different question and is kept apart: a preference is about 
 
 ## What drafts see
 
-A draft reads only guidance that was approved: enabled writing preferences for its channel (email or LinkedIn) and stage (first touch, follow-up, reply), the prospect's active angle, and the active ICP. Pending, dismissed, disabled and rolled-back proposals are invisible to it. Each draft version records the guidance set it was written with (`learning_key`), so outcomes can be read per guidance the way they are read per voice card. Configured product facts, the voice card and your instructions in the moment always outrank learned guidance, and a preference is never a source of product facts, links or promises.
+A draft reads only guidance that was approved: enabled writing preferences for its channel (email or LinkedIn) and stage (first touch, follow-up, reply), the prospect's active angle, and the active ICP. Pending, dismissed, disabled and rolled-back proposals are invisible to it. Each new draft records an immutable snapshot of its active learning context and generation input (`learning_key`), so outcomes can be read per guidance the way they are read per voice card. Configured product facts, the voice card and your instructions in the moment always outrank learned guidance, and a preference is never a source of product facts, links or promises.
 
 A preference learned from LinkedIn replies applies to LinkedIn replies unless the evidence also came from email; nothing is generalised across channels or stages without evidence from both.
 
@@ -25,15 +25,15 @@ The **Learning** card at the top of `/queue` lists everything waiting, by kind. 
 
 - **Approve** applies it to drafts from now on.
 - **Edit & approve** applies your wording instead.
-- **Dismiss** keeps the same text from coming straight back.
+- **Dismiss** prevents unchanged evidence from producing the same guidance under different wording. New evidence may support another proposal.
 - **Roll back** restores what was active before an approval.
 - A writing preference can also be **disabled** and re-enabled; twelve can be active at once.
 
-Approval is refused when the value it would change has moved since the proposal was made (you edited the ICP or the edge by hand, or approved another proposal for the same scope); dismiss it and a fresh one follows. Approving an angle or ICP proposal marks the other pending proposals for the same scope stale, since they were computed against the value just replaced; writing preferences accumulate, so approving one leaves the rest pending. An approval never rewrites or sends an existing draft.
+Approval is refused when the value it would change has moved since the proposal was made (you edited the ICP or the edge by hand, or approved another proposal for the same scope); dismiss it and a fresh one follows. Approving an angle or ICP proposal marks the other pending proposals for the same scope stale, since they were computed against the value just replaced; writing preferences accumulate, so approving one leaves the rest pending. Rollback is also refused when it would overwrite a newer approval or manual edit. An approval never rewrites or sends an existing draft.
 
 ## Queue decisions and the ICP
 
-Approving or rejecting a queue row can carry a reason: _fit_, _not our audience_, _right company, wrong person_, _bad timing_, _draft problem_ or _other_. Only the first three are fit judgments and only they teach the ICP; a rejection for timing or a weak draft says nothing about who your customer is. A single-row Approve records _fit_; bulk approvals record no reason. Recorded outcomes (meeting booked, qualified, won) are passed to the ICP job separately, as commercial evidence distinct from approval; lost deals, ghosting, polite replies and unsubscribes are never read as success. The ICP job still needs the configured minimum of tagged decisions (thirty by default, `icpProposalMinDecisions`) and runs at most once a day.
+Approving or rejecting a queue row can carry a reason: _fit_, _not our audience_, _right company, wrong person_, _bad timing_, _draft problem_ or _other_. Only the first three are fit judgments and only they teach the ICP; a rejection for timing or a weak draft says nothing about who your customer is. Ordinary and bulk approvals record no fit judgment. Choose **as fit** to explicitly teach the ICP; overriding a saved fit rejection is also an explicit fit decision. The finder’s examples and ICP rewrite proposals both use only explicit fit reasons. Recorded outcomes (meeting booked, qualified, won) are passed to the ICP job separately, as commercial evidence distinct from approval; lost deals, ghosting, polite replies and unsubscribes are never read as success. The ICP job still needs the configured minimum of tagged decisions (thirty by default, `icpProposalMinDecisions`) and runs at most once a day.
 
 ## Campaign angle suggestions
 
@@ -41,7 +41,7 @@ Under a trigger's edge editor, **Suggest angle changes** reads the counts shown 
 
 ## Before approval existed
 
-Preferences learned by the earlier LinkedIn reply learning are moved into the review list once, marked as learned before review existed, with their evidence; they stop applying until approved, and ones you had disabled arrive dismissed. Prospect angles synthesized before this release stay active; only new revisions wait for review. `synthesize-angles` proposes by default and keeps a direct write behind `--apply`.
+Preferences learned by the earlier LinkedIn reply learning are moved into the review list once, marked as learned before review existed, with their evidence; they stop applying until approved, and ones you had disabled arrive dismissed. Prospect angles synthesized before this release stay active; only new revisions wait for review. `synthesize-angles` generates proposals for review. The old `--apply` flag is rejected before research or synthesis spends anything.
 
 ## Limits and spend
 

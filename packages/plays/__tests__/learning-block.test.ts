@@ -16,7 +16,7 @@ beforeEach(() => {
 
 describe("learningBlock", () => {
   it("is null when nothing is approved", () => {
-    expect(learningBlock({ channel: "email", stage: "first_touch" })).toBeNull();
+    expect(learningBlock({ channel: "email", stage: "first_touch" })).toMatchObject({ text: "" });
   });
 
   it("renders only the guidance that matches channel and stage, with a stable key", () => {
@@ -37,7 +37,7 @@ describe("learningBlock", () => {
     expect(note.text).toContain("- Lead with the point.");
     expect(note.text).toContain("- No greeting in a LinkedIn note.");
     expect(note.text).not.toContain("Answer the question");
-    expect(note.key).toMatch(/^[0-9a-f]{12}$/);
+    expect(note.key).toMatch(/^[0-9a-f]{64}$/);
     const email = learningBlock({ channel: "email", stage: "reply" })!;
     expect(email.text).toContain("- Answer the question before anything else.");
     expect(email.text).not.toContain("LinkedIn note");
@@ -49,11 +49,11 @@ describe("learningBlock", () => {
     const g = ledger.learning.addGuidance({ instruction: "Lead with the point.", source: "style" });
     const before = learningBlock({ channel: "email", stage: "follow_up" })!.key;
     ledger.learning.setGuidanceEnabled(g.id, false);
-    expect(learningBlock({ channel: "email", stage: "follow_up" })).toBeNull();
+    expect(learningBlock({ channel: "email", stage: "follow_up" })).toMatchObject({ text: "" });
     ledger.learning.setGuidanceEnabled(g.id, true);
-    expect(learningBlock({ channel: "email", stage: "follow_up" })!.key).not.toBe(before);
+    expect(learningBlock({ channel: "email", stage: "follow_up" })!.key).toBe(before);
     ledger.learning.rollbackGuidance(g.id);
-    expect(learningBlock({ channel: "email", stage: "follow_up" })).toBeNull();
+    expect(learningBlock({ channel: "email", stage: "follow_up" })).toMatchObject({ text: "" });
   });
 
   it("never reads a pending proposal", () => {
@@ -67,6 +67,6 @@ describe("learningBlock", () => {
       baselineKey: "",
       dedupeKey: "pending only",
     });
-    expect(learningBlock({ channel: "email", stage: "first_touch" })).toBeNull();
+    expect(learningBlock({ channel: "email", stage: "first_touch" })).toMatchObject({ text: "" });
   });
 });

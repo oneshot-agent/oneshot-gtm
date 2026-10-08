@@ -48,6 +48,7 @@ export interface DraftInput {
   channel?: "email" | "linkedin";
   founderVoice?: string;
   learnedPreferences?: string[];
+  learningContext?: string;
   /** Fingerprint of the approved guidance set behind `learnedPreferences` (#813). */
   learningKey?: string | null;
   steer?: string;
@@ -231,7 +232,8 @@ export function buildDraftUserPrompt(i: DraftInput): string {
     `YOUR REGISTER IN THIS THREAD: ${registerDirective(founderRegister(i.thread))}`,
     `CASUAL TEXTURE: ${i.casualTexture ? "enabled" : "disabled"}`,
     `FOUNDER VOICE: ${i.founderVoice || "Use the founder register below."}`,
-    i.learnedPreferences?.length
+    i.learningContext ?? "",
+    !i.learningContext && i.learnedPreferences?.length
       ? `LEARNED WRITING PREFERENCES (founder-approved; apply only when relevant):\n${i.learnedPreferences.join("\n")}`
       : "",
     `FOUNDER INSTRUCTION: ${i.steer || "(none)"}`,

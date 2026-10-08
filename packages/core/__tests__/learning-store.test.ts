@@ -53,13 +53,13 @@ const insertPreference = (instruction: string, scope = { channel: "email" as con
     createdAt: T0,
   });
 
-const insertAngle = (prospectId: number, hook: string, createdAt = T0) =>
+const insertAngle = (prospectId: number, hook: string, createdAt = T0, evidenceId = "r1") =>
   ledger.learning.insert({
     kind: "prospect_angle",
     scope: { prospectId },
     current: { hook: "old hook" },
     proposed: { hook },
-    evidence: { refs: [{ type: "inbox_reply", id: "r1" }], method: "reply" },
+    evidence: { refs: [{ type: "inbox_reply", id: evidenceId }], method: "reply" },
     evidenceSummary: "They replied asking about pricing.",
     baselineKey: learningKeyOf({ hook: "old hook" }),
     dedupeKey: `${prospectId}:${learningKeyOf({ hook })}`,
@@ -84,14 +84,15 @@ describe("proposals", () => {
     expect(ledger.learning.list({ kind: "icp" })).toEqual([]);
   });
 
-  it("refuses a second pending proposal with the same kind and dedupe key, but allows it once decided", () => {
+  it("refuses a second pending proposal with the same kind and dedupe key, and preserves dismissals against unchanged evidence", () => {
     const first = insertPreference("Keep it under eighty words")!;
     expect(insertPreference("Keep it under eighty words!")).toBeNull();
     expect(ledger.learning.hasPendingDuplicate("preference", "keep it under eighty words")).toBe(
       true,
     );
     ledger.learning.decide(first.id, "dismissed", T1);
-    expect(insertPreference("Keep it under eighty words")).not.toBeNull();
+    expect(insertPreference("Keep it under eighty words")).toBeNull();
+    expect(insertPreference("Use fewer than eighty words")).toBeNull();
   });
 
   it("filters by prospect and play through the scope", () => {
@@ -172,7 +173,8 @@ describe("proposals", () => {
     expect(insertAngle(1, "hook B")).toBeNull();
     expect(insertAngle(2, "hook B")).not.toBeNull();
     ledger.learning.decide(a.id, "dismissed", T1);
-    expect(insertAngle(1, "hook B")).not.toBeNull();
+    expect(insertAngle(1, "hook B")).toBeNull();
+    expect(insertAngle(1, "hook B", T1, "r2")).not.toBeNull();
     // Preferences are not scoped that way: several may wait at once.
     expect(insertPreference("One")).not.toBeNull();
     expect(insertPreference("Two")).not.toBeNull();
@@ -185,7 +187,7 @@ describe("proposals", () => {
     expect(ledger.learning.wasJustDismissed("prospect_angle", key, "prospect:1")).toBe(true);
     expect(ledger.learning.wasJustDismissed("prospect_angle", key, "prospect:2")).toBe(false);
     expect(ledger.learning.wasJustDismissed("prospect_angle", "other", "prospect:1")).toBe(false);
-    const b = insertAngle(1, "hook B");
+    const b = insertAngle(1, "hook B", T1, "r2");
     ledger.learning.decide(b!.id, "approved", T2);
     expect(ledger.learning.wasJustDismissed("prospect_angle", key, "prospect:1")).toBe(false);
   });

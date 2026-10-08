@@ -25,12 +25,6 @@ The verify gate has holes an agent can close without touching product behaviour.
 
 ## Reliability
 
-## Learning loop
-
-The ICP filter currently judges each candidate cold — `icpFilter` in `packages/find/src/_filter.ts` sends the model nothing but `{ icp, candidate }`.
-
-- [ ] **v2** — periodic job proposes a tighter ICP one-liner from accumulated decisions; founder approves the rewrite in `/queue`.
-
 ## Operations
 
 - [ ] **BYO sending domain** — send from a domain you already own over OneShot's transport, instead of one OneShot provisions. Connecting a Gmail/Workspace account is today's workaround.

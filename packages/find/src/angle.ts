@@ -482,7 +482,16 @@ export function proposeProspectAngle(input: {
       },
       proposed: angle,
       evidence: {
-        refs: [],
+        refs: [
+          {
+            type: "evidence_snapshot",
+            id: ledger.learning.captureContext({
+              prospectId: prospect.id,
+              evidence: { ...evidence, costUsd: undefined },
+              outcome: context?.outcome ?? null,
+            }),
+          },
+        ],
         samples: evidence.replies.slice(0, 3).map((r) => ({
           at: r.receivedAt,
           label: r.subject ? `Reply · ${r.subject}` : "Reply",

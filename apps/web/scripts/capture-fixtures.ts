@@ -66,6 +66,7 @@ const SEEDS = [
   "/meetings",
   "/setup",
   "/setup/domains",
+  "/linkedin/invites",
 
   // Cadences: the "show all" toggle. `sinceRun` is only reachable from a link a
   // finished run writes, and no run can finish here.

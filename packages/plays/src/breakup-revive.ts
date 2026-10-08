@@ -12,6 +12,7 @@ import {
   logTargetError,
   sendDraftedEmail,
   learningBlock,
+  stampLearningInput,
   voiceBlock,
 } from "./_lib.ts";
 
@@ -77,10 +78,18 @@ export async function runBreakupRevive(
   const drafted: BreakupReviveDraft[] = [];
   // A revive is a breakup-class touch: the voice card's no-aphorism budget.
   const voice = voiceBlock("breakup");
-  const learned = learningBlock({ channel: "email", stage: "follow_up" });
 
   for (const [index, t] of targets.entries()) {
     if (!t.email) continue;
+    const learned = learningBlock({
+      channel: "email",
+      stage: "follow_up",
+      cfg,
+      email: t.email,
+      playName: PLAY_NAME,
+      campaignAngle: opts.draftAngle,
+      replaceProspectAngle: !!opts.draftAngle,
+    });
     let result: BreakupReviveDraft;
     try {
       // Custom serial loop, so it repeats runEmailPlay's guards itself.
@@ -89,21 +98,26 @@ export async function runBreakupRevive(
         promptName: "breakup-revive-email",
         maxBodyWords: 80,
         followUp: true,
-        inputBlock: [
-          ...(opts.draftAngle
-            ? [
-                `SELECTED ANGLE: ${opts.draftAngle}`,
-                "Build the draft around this argument while preserving the play’s channel, tone, and factual constraints.",
-              ]
-            : []),
-          `FOUNDER: ${cfg.founderName}`,
-          `PRODUCT: ${cfg.productOneLiner}`,
-          `PROSPECT: ${t.name ?? "(unknown)"} at ${t.company ?? "(unknown)"}`,
-          `DAYS SINCE LAST ACTIVITY: ${t.daysCold}`,
-          `OPTIONAL VALUE DROP: ${opts.valueDrop ?? "(none — go with a probe question instead)"}`,
-          ...(voice ? ["", voice.text] : []),
-          ...(learned ? ["", learned.text] : []),
-        ].join("\n"),
+        inputBlock: ((input: string) => {
+          stampLearningInput(learned, input);
+          return input;
+        })(
+          [
+            ...(opts.draftAngle
+              ? [
+                  `SELECTED ANGLE: ${opts.draftAngle}`,
+                  "Build the draft around this argument while preserving the play’s channel, tone, and factual constraints.",
+                ]
+              : []),
+            `FOUNDER: ${cfg.founderName}`,
+            `PRODUCT: ${cfg.productOneLiner}`,
+            `PROSPECT: ${t.name ?? "(unknown)"} at ${t.company ?? "(unknown)"}`,
+            `DAYS SINCE LAST ACTIVITY: ${t.daysCold}`,
+            `OPTIONAL VALUE DROP: ${opts.valueDrop ?? "(none — go with a probe question instead)"}`,
+            ...(voice ? ["", voice.text] : []),
+            ...(learned ? ["", learned.text] : []),
+          ].join("\n"),
+        ),
       });
 
       const flags = lintEmail(draft.subject, draft.body, 80, undefined, { followUp: true });
