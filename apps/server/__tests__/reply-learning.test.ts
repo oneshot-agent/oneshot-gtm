@@ -270,6 +270,20 @@ it("proposes style guidance from reviewed first touches next to their regenerate
   expect(complete).toHaveBeenCalledTimes(1);
 });
 
+it("a paused workspace never spends on draft evidence either", async () => {
+  seedDrafts(5);
+  store.learning.setEnabled("default", false);
+  await refreshReplyLearning();
+  expect(reserve).not.toHaveBeenCalled();
+  expect(complete).not.toHaveBeenCalled();
+  expect(ledger.learning.jobState("preference").watermark).toBe(0);
+  store.learning.setEnabled("default", true);
+  vi.mocked(Date.now).mockReturnValue(now + 300_000);
+  modelSays([]);
+  await refreshReplyLearning();
+  expect(complete).toHaveBeenCalledTimes(1);
+});
+
 it("needs five distinct prospects for a style preference from drafts", async () => {
   const ids = seedDrafts(4);
   modelSays([

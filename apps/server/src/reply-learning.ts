@@ -265,6 +265,9 @@ export async function refreshReplyLearning(): Promise<void> {
 
   const now = Date.now();
   const job = learning.claim(workspace, now);
+  // The workspace pause gates every kind of evidence, draft-side included:
+  // a paused workspace must not spend or fill /queue from reviewed drafts.
+  if (!learning.status(workspace).enabled) return;
   // Draft evidence has its own lease and watermark in the ledger; a run with
   // nothing new on either side releases immediately (the cooldown is spent,
   // which is the point of a cooldown).

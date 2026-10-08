@@ -61,6 +61,8 @@ export interface BreakupReviveDraft {
   sent: boolean;
   flags: string[];
   originalTargetIndex?: number;
+  /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
+  learningKey?: string | null;
 }
 
 export async function runBreakupRevive(
@@ -137,6 +139,7 @@ export async function runBreakupRevive(
         sent: send.sent,
         flags,
         originalTargetIndex: index,
+        ...(learned ? { learningKey: learned.key } : {}),
       };
     } catch (err) {
       // Daily-cap deferral is not a per-target failure: abort the run so the
