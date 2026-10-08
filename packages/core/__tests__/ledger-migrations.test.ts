@@ -173,6 +173,36 @@ describe("runLedgerMigrations", () => {
     ledger.close();
   });
 
+  it("v14 settles duplicate pending angle revisions (newest kept) before building the unique index", () => {
+    new Ledger(dbPath).close();
+    withRaw((db) => {
+      db.exec("DROP INDEX idx_learning_proposals_pending_scope");
+      const insert = db.prepare(
+        `INSERT INTO learning_proposals(id, kind, scope_json, scope_key, proposed_json, evidence_json, evidence_summary, baseline_key, dedupe_key, status, created_at)
+         VALUES (?, 'prospect_angle', '{"prospectId":7}', 'prospect:7', ?, '{"refs":[]}', '', '', ?, 'pending', ?)`,
+      );
+      insert.run("older", JSON.stringify({ hook: "a" }), "7:a", "2026-10-01T00:00:00Z");
+      insert.run("newer", JSON.stringify({ hook: "b" }), "7:b", "2026-10-02T00:00:00Z");
+      db.exec("PRAGMA user_version = 13");
+    });
+    new Ledger(dbPath).close();
+    withRaw((db) => {
+      expect(userVersion(db)).toBe(LEDGER_SCHEMA_VERSION);
+      const rows = db
+        .query("SELECT id, status FROM learning_proposals ORDER BY id")
+        .all() as Array<{ id: string; status: string }>;
+      expect(rows).toEqual([
+        { id: "newer", status: "pending" },
+        { id: "older", status: "stale" },
+      ]);
+      expect(
+        db
+          .query("SELECT name FROM sqlite_master WHERE name='idx_learning_proposals_pending_scope'")
+          .get(),
+      ).toBeTruthy();
+    });
+  });
+
   it("migrates a pre-versioning ledger (user_version 0)", () => {
     new Ledger(dbPath).close();
     withRaw((db) => {
