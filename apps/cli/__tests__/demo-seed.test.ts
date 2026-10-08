@@ -137,6 +137,8 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
       "runs",
       "bounces",
       "canary_results",
+      "learning_proposals",
+      "learning_guidance",
     ]) {
       expect(counts[table], `${table} should be seeded`).toBeGreaterThan(0);
     }
