@@ -216,8 +216,16 @@ describe("pickNamedPerson", () => {
         { full_name: "N/A", title: "CEO" },
       ] as never),
     ).toBeNull();
-    // A real surname that merely contains the word is kept.
+    // A full_name that is only partly a placeholder is not a name either:
+    // real first/last parts win, and with none to fall back on it is nobody.
+    expect(
+      pickNamedPerson([{ full_name: "None Smith", first_name: "Ada", last_name: "Smith" }] as never)
+        ?.fullName,
+    ).toBe("Ada Smith");
+    expect(pickNamedPerson([{ full_name: "None Smith" }] as never)).toBeNull();
+    // Real names that merely resemble a placeholder are kept.
     expect(pickNamedPerson([{ full_name: "Nona Nonez" }] as never)?.fullName).toBe("Nona Nonez");
+    expect(pickNamedPerson([{ full_name: "Na Li" }] as never)?.fullName).toBe("Na Li");
   });
 
   it("puts a decision owner ahead of an employee who happens to have a work email", async () => {

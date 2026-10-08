@@ -255,13 +255,17 @@ const DECISION_OWNER_TITLE =
  * Placeholders a people index hands back in the name fields ("None None",
  * "null", "N/A"). Not a person: picking one puts "Hey None" in a draft.
  */
-const PLACEHOLDER_NAME =
-  /^(none|null|undefined|unknown|n\/?a)(\s+(none|null|undefined|unknown|n\/?a))*$/i;
+const PLACEHOLDER_TOKEN = /^(none|null|undefined|unknown|n\/a)$/i;
 
-/** A real name out of a name field, or "" for a blank or a placeholder. */
+/**
+ * A real name out of a name field, or "" for a blank or one carrying a
+ * placeholder word. Any placeholder word spoils the field ("None Smith" is not
+ * a name either), so the caller falls back to the other name fields.
+ */
 function usableName(value: unknown): string {
   const name = typeof value === "string" ? value.trim() : "";
-  return name && !PLACEHOLDER_NAME.test(name) ? name : "";
+  if (!name) return "";
+  return name.split(/\s+/).some((word) => PLACEHOLDER_TOKEN.test(word)) ? "" : name;
 }
 
 /**
@@ -583,7 +587,9 @@ async function qualifyViaEmail(
 
   const gate = await qualifyPostEnrich({
     icp: args.icp,
-    person: args.person,
+    // A name the contact step found at the domain (the caller had none) is
+    // the person being judged: the gate must see it.
+    person: { ...args.person, name: contact.fullName ?? args.person.name },
     enrichedTitle: args.titleHint ?? contact.title ?? enr.title,
     enrichedSummary: enr.summary,
     linkedinUrl: enr.linkedinUrl ?? args.linkedinUrlHint ?? null,
