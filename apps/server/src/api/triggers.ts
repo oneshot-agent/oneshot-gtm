@@ -331,6 +331,10 @@ export function runTriggerRoute(req: Request, params: Record<string, string>): R
 /** Reply intents that read as the pitch running into something (#813). */
 const OBJECTION_INTENTS = ["objection", "not_interested", "wrong_person", "not_now"] as const;
 const OBJECTION_LIMIT = 20;
+/** The prompt's own rules, enforced here too: never retire on a thin sample, keep the set reviewable. */
+const MIN_OFFERS_TO_RETIRE = 5;
+const MIN_ANGLES = 2;
+const MAX_ANGLES = 5;
 /** Angles are `//`-joined in the edge field; the same separator `splitEdgeAngles` reads. */
 const ANGLE_JOIN = " // ";
 
@@ -381,6 +385,34 @@ export async function suggestAnglesRoute(
     );
   const usage = angleUsageForEdge(config, playUsageLoader(ledger)(name).angles);
   const method = config?.["angleAssignment"] === "arm" ? "arm" : "fit";
+  // The aggregate counts span every selection method the play ever ran
+  // under. Under an even split only the arm-assigned counters compare
+  // angles fairly; any excess over them is fit-selected history and is
+  // labelled as such rather than passed off as the split's evidence.
+  const angleRows = usage?.angles ?? [];
+  const mixedHistory = method === "arm" && angleRows.some((a) => a.offered > (a.armOffered ?? 0));
+  const countsOf = (a: (typeof angleRows)[number]) =>
+    method === "arm"
+      ? {
+          offered: a.armOffered ?? 0,
+          rotatedAway: a.rotatedAway,
+          redrafted: a.redrafted,
+          sent: a.sent,
+          autoSent: a.autoSent,
+          reached: a.armReached ?? 0,
+          replied: a.armReplied ?? 0,
+          allOffered: a.offered,
+        }
+      : {
+          offered: a.offered,
+          rotatedAway: a.rotatedAway,
+          redrafted: a.redrafted,
+          sent: a.sent,
+          autoSent: a.autoSent,
+          reached: a.reached,
+          replied: a.replied,
+          allOffered: a.offered,
+        };
   const objections = ledger.listRepliesByIntentForPlay(name, OBJECTION_INTENTS, OBJECTION_LIMIT);
   const baselineKey = learningKeyOf(edge);
   const scopeKey = learningScopeKey("campaign_angle", { playName: name });
@@ -408,16 +440,27 @@ export async function suggestAnglesRoute(
               edge,
             },
             method,
-            angles: (usage?.angles ?? angles.map((text) => ({ text }))).map((a) => ({
-              text: a.text,
-              offered: "offered" in a ? a.offered : 0,
-              rotatedAway: "rotatedAway" in a ? a.rotatedAway : 0,
-              redrafted: "redrafted" in a ? a.redrafted : 0,
-              sent: "sent" in a ? a.sent : 0,
-              autoSent: "autoSent" in a ? a.autoSent : 0,
-              reached: "reached" in a ? a.reached : 0,
-              replied: "replied" in a ? a.replied : 0,
-            })),
+            countsBasis:
+              method === "arm"
+                ? "offered/reached/replied count arm-assigned prospects only; rotatedAway/redrafted/sent span all history"
+                : "all reviewed drafts",
+            mixedHistory,
+            angles: angles.map((text) => {
+              const row = angleRows.find((a) => a.text === text);
+              return row
+                ? { text, ...countsOf(row) }
+                : {
+                    text,
+                    offered: 0,
+                    rotatedAway: 0,
+                    redrafted: 0,
+                    sent: 0,
+                    autoSent: 0,
+                    reached: 0,
+                    replied: 0,
+                    allOffered: 0,
+                  };
+            }),
             generated: usage?.generated ?? null,
             objections: objections.map((r) => ({ intent: r.intent, body: r.body.slice(0, 400) })),
           }),
@@ -440,13 +483,21 @@ export async function suggestAnglesRoute(
     const retire = strings(parsed.retire)
       .map((a) => current.get(normalizeAngle(a)))
       .filter((a): a is string => !!a);
+    // An addition carrying the separator would silently become several
+    // angles once the edge is split; it is not one argument.
     const add = strings(parsed.add)
       .map((a) => a.trim())
-      .filter((a) => !current.has(normalizeAngle(a)))
+      .filter((a) => !a.includes("//") && !current.has(normalizeAngle(a)))
       .slice(0, 2);
     const rationale = typeof parsed.rationale === "string" ? parsed.rationale.trim() : "";
-    // Angles the model forgot to classify stay: a silent drop is not a suggestion.
-    const retired = new Set(retire);
+    // Angles the model forgot to classify stay: a silent drop is not a
+    // suggestion. Nor is retiring an angle on a thin sample: fewer than
+    // MIN_OFFERS_TO_RETIRE offers keeps it, whatever the model said.
+    const offeredOf = (text: string) => {
+      const row = angleRows.find((a) => a.text === text);
+      return row ? countsOf(row).offered : 0;
+    };
+    const retired = new Set(retire.filter((a) => offeredOf(a) >= MIN_OFFERS_TO_RETIRE));
     const keptSet = new Set(keep);
     const kept = angles.filter((a) => !retired.has(a) || keptSet.has(a));
     const keptNow = new Set(kept);
@@ -455,7 +506,12 @@ export async function suggestAnglesRoute(
     const unchanged =
       proposedAngles.length === angles.length &&
       proposedAngles.every((a, i) => normalizeAngle(a) === normalizeAngle(angles[i]!));
-    if (unchanged || proposedAngles.length === 0 || !rationale) {
+    const outOfBounds =
+      proposedAngles.length < MIN_ANGLES ||
+      proposedAngles.length > MAX_ANGLES ||
+      // A one-angle set may grow; it never shrinks below two by suggestion.
+      (proposedAngles.length < angles.length && proposedAngles.length < MIN_ANGLES);
+    if (unchanged || proposedAngles.length === 0 || !rationale || outOfBounds) {
       logEvent("angle.suggest.unchanged", { play: name });
       const out: AngleSuggestionResult = {
         ok: true,
@@ -482,12 +538,14 @@ export async function suggestAnglesRoute(
       add: add.length,
       objections: objections.length,
     };
-    for (const a of usage?.angles ?? []) {
+    for (const a of angleRows) {
       const i = angles.indexOf(a.text) + 1;
-      counts[`angle${i}_offered`] = a.offered;
-      counts[`angle${i}_sent`] = a.sent + a.autoSent;
-      counts[`angle${i}_replied`] = a.replied;
+      const c = countsOf(a);
+      counts[`angle${i}_offered`] = c.offered;
+      counts[`angle${i}_sent`] = c.sent + c.autoSent;
+      counts[`angle${i}_replied`] = c.replied;
     }
+    if (mixedHistory) counts["mixed_history"] = 1;
     const view = ledger.learning.insert({
       kind: "campaign_angle",
       scope: { playName: name },
@@ -509,7 +567,13 @@ export async function suggestAnglesRoute(
         counts,
         method,
       },
-      evidenceSummary: `${rationale} Hypothesis from observational counts under ${method === "arm" ? "an even split" : "fit selection"}; no causal claim.`,
+      evidenceSummary: `${rationale} Hypothesis from observational counts under ${
+        method === "arm"
+          ? mixedHistory
+            ? "an even split (offered/reached/replied count arm-assigned prospects only; the play also ran under fit selection before)"
+            : "an even split"
+          : "fit selection"
+      }; no causal claim.`,
       baselineKey,
       dedupeKey,
     });

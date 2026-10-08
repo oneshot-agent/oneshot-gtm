@@ -43,8 +43,8 @@ function seedTrigger(edge = EDGE, assignment?: "arm") {
   });
 }
 
-/** One reviewed draft on `angle` for a fresh prospect, optionally rotated away or sent. */
-function seedUsage(angle: string, outcome: "rotate" | "sent") {
+/** One reviewed draft on `angle` for a fresh prospect, optionally rotated away or sent; `arm` marks it arm-assigned. */
+function seedUsage(angle: string, outcome: "rotate" | "sent", arm = false) {
   const key = Math.random().toString(36).slice(2);
   const id = ledger.enqueueTarget({
     playName: "show-hn",
@@ -53,20 +53,22 @@ function seedUsage(angle: string, outcome: "rotate" | "sent") {
     source: "find:show-hn",
   })!;
   const base = { subject: "s", flags: [], sent: false, receiptIds: [], dryRun: false };
-  ledger.setQueueDraft({
-    id,
-    draft: { ...base, body: "b1", angle: { text: angle, origin: "configured" } },
+  const angleOf = (text: string) => ({
+    text,
+    origin: "configured" as const,
+    ...(arm ? { assignment: "arm" as const } : {}),
   });
+  ledger.setQueueDraft({ id, draft: { ...base, body: "b1", angle: angleOf(angle) } });
   if (outcome === "rotate")
     ledger.setQueueDraft({
       id,
-      draft: { ...base, body: "b2", angle: { text: EDGE.split(" // ")[0]!, origin: "configured" } },
+      draft: { ...base, body: "b2", angle: angleOf(EDGE.split(" // ")[0]!) },
       discardReason: "rotate",
     });
   else
     ledger.setQueueDraft({
       id,
-      draft: { ...base, body: "b1", sent: true, angle: { text: angle, origin: "configured" } },
+      draft: { ...base, body: "b1", sent: true, angle: angleOf(angle) },
       sentBy: "human",
     });
 }
@@ -106,8 +108,8 @@ afterEach(() => vi.restoreAllMocks());
 describe("suggestAnglesRoute", () => {
   it("records a pending campaign_angle proposal with counts, method, objections and a hypothesis label", async () => {
     seedTrigger(EDGE, "arm");
-    for (let i = 0; i < 5; i++) seedUsage("long goals, not tasks", "rotate");
-    seedUsage("deflation beats discounts", "sent");
+    for (let i = 0; i < 5; i++) seedUsage("long goals, not tasks", "rotate", true);
+    seedUsage("deflation beats discounts", "sent", true);
     const pid = ledger.upsertProspect({ email: "obj@x.dev", name: "Obi", company: "Obi Co" });
     ledger.recordInboxReply({
       id: "r1",
@@ -172,6 +174,58 @@ describe("suggestAnglesRoute", () => {
     expect(JSON.parse(ledger.getTrigger("show-hn")!.config_json!).yourEdge).toBe(EDGE);
   });
 
+  it("never retires an angle offered fewer than five times, drops additions carrying the separator, and keeps the set within 2-5", async () => {
+    seedTrigger();
+    for (let i = 0; i < 2; i++) seedUsage("long goals, not tasks", "rotate");
+    modelSays({
+      keep: ["deflation beats discounts", "anything can be oneshotted"],
+      retire: ["long goals, not tasks"],
+      add: ["one // two"],
+      rationale: "#2 rotated twice; hypothesis.",
+    });
+    // The retire is refused (2 offers) and the addition dropped: unchanged → no proposal.
+    expect((await json(await post("show-hn")))["proposal"]).toBeNull();
+    for (let i = 0; i < 3; i++) seedUsage("long goals, not tasks", "rotate");
+    modelSays({
+      keep: ["deflation beats discounts"],
+      retire: ["long goals, not tasks", "anything can be oneshotted"],
+      add: [],
+      rationale: "#2 rotated five times; hypothesis.",
+    });
+    // Only #2 qualifies for retirement; #3 stays, so the set stays at two.
+    const body = await json(await post("show-hn"));
+    expect((body["proposal"] as { proposed: { edge: string } }).proposed.edge).toBe(
+      "deflation beats discounts // anything can be oneshotted",
+    );
+  });
+
+  it("under an even split the counts are the arm-assigned ones and mixed history is labelled", async () => {
+    seedTrigger(EDGE, "arm");
+    // Fit-selected history (no arm assignment) before the split was switched on.
+    for (let i = 0; i < 5; i++) seedUsage("long goals, not tasks", "rotate");
+    modelSays({
+      keep: ["deflation beats discounts", "anything can be oneshotted"],
+      retire: ["long goals, not tasks"],
+      add: ["a goal you can hand off whole"],
+      rationale: "x; hypothesis.",
+    });
+    const body = await json(await post("show-hn"));
+    const sent = JSON.parse(complete.mock.calls[0]![0].messages[1].content);
+    expect(sent.mixedHistory).toBe(true);
+    expect(sent.angles[1]).toMatchObject({ offered: 0, allOffered: 5, rotatedAway: 5 });
+    // Those five offers were not arm-assigned: not enough arm evidence to retire.
+    expect((body["proposal"] as { proposed: { retire: string[] } }).proposed.retire).toEqual([]);
+    expect(
+      (body["proposal"] as { evidence: { counts: Record<string, number> } }).evidence.counts,
+    ).toMatchObject({
+      mixed_history: 1,
+      angle2_offered: 0,
+    });
+    expect(body["proposal"]).toMatchObject({
+      evidenceSummary: expect.stringContaining("ran under fit selection before"),
+    });
+  });
+
   it("makes no proposal when the model keeps the set, and never drops an angle the model forgot", async () => {
     seedTrigger();
     seedUsage("deflation beats discounts", "sent");
@@ -219,6 +273,7 @@ describe("suggestAnglesRoute", () => {
     const { approveLearningProposalRoute } = await import("../src/api/learning.ts");
     seedTrigger();
     seedUsage("deflation beats discounts", "sent");
+    for (let i = 0; i < 5; i++) seedUsage("long goals, not tasks", "rotate");
     const proposal = (await json(await post("show-hn")))["proposal"] as { id: string };
     // The founder edits the edge by hand first: the baseline moved.
     ledger.setTriggerConfig("show-hn", JSON.stringify({ yourEdge: "something else" }));
