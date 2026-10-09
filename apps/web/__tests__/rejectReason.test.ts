@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   appendReason,
+  categoryForTypedNote,
   decisionReasonEffect,
   decisionReasonForText,
   mergeRejectSuggestion,
@@ -183,6 +184,20 @@ describe("the reject box's one question", () => {
     expect(decisionReasonForText(null)).toBeNull();
     // The flat list still has entries the keyword rules cover.
     expect(REJECT_REASON_CHIPS.map(decisionReasonForText)).not.toContain(null);
+  });
+});
+
+describe("categoryForTypedNote — an automatic category never outlives its note", () => {
+  it("follows the founder's words", () => {
+    expect(categoryForTypedNote("already contacted")).toBe("already_contacted");
+    expect(categoryForTypedNote("too big")).toBe("wrong_audience");
+  });
+
+  it("clears the category for words it can't place, so a stale prefill is not saved", () => {
+    // The box opened on a gate verdict ("wrong_person"); the founder rewrote
+    // the note into something the keyword rules don't know.
+    expect(categoryForTypedNote("met at the offsite, will ping in person")).toBe("");
+    expect(categoryForTypedNote("")).toBe("");
   });
 });
 

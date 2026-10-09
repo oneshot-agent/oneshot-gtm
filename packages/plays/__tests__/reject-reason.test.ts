@@ -127,14 +127,38 @@ describe("generateRejectReason — category and founder hint", () => {
     expect(completeMock.mock.calls[0]![0].messages[1].content).not.toContain("FOUNDER HINT");
   });
 
-  it("the founder's tapped category is final, whatever the model answers", async () => {
+  it("the founder's tapped category is final, and a sentence written for another one is dropped", async () => {
+    // The model ignored the hint: its sentence argues a reason the founder
+    // did not give, so it must not appear under their category.
     reply({ rejectReason: "Recruiter, not the buyer.", decisionReason: "wrong_person" });
-    const out = await generateRejectReason({
-      playName: "show-hn",
-      payload,
-      hint: { decisionReason: "bad_timing" },
-    });
-    expect(out.decisionReason).toBe("bad_timing");
+    expect(
+      await generateRejectReason({
+        playName: "show-hn",
+        payload,
+        hint: { decisionReason: "bad_timing" },
+      }),
+    ).toEqual({ reason: null, decisionReason: "bad_timing" });
+  });
+
+  it("keeps the sentence when the model agrees with the tapped category or names none", async () => {
+    reply({ rejectReason: "Mid-raise; worth another look later.", decisionReason: "bad_timing" });
+    expect(
+      await generateRejectReason({
+        playName: "show-hn",
+        payload,
+        hint: { decisionReason: "bad_timing" },
+      }),
+    ).toEqual({ reason: "Mid-raise; worth another look later.", decisionReason: "bad_timing" });
+    reply({ rejectReason: "Mid-raise; worth another look later." });
+    expect(
+      (
+        await generateRejectReason({
+          playName: "show-hn",
+          payload,
+          hint: { decisionReason: "bad_timing" },
+        })
+      ).reason,
+    ).toBe("Mid-raise; worth another look later.");
   });
 
   it("returns a category on its own when the model writes no sentence", async () => {

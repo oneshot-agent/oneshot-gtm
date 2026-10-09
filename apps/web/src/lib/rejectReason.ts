@@ -215,6 +215,17 @@ export function appendReason(current: string, chip: string): string {
   return `${base.replace(/[.;\s]+$/, "")}; ${chip}`;
 }
 
+/**
+ * The category for a note the founder is typing, while they have not tapped a
+ * chip: their words decide it, and words that name no category clear it. An
+ * automatic category (from a prefill or the model) must never outlive the note
+ * it was chosen for, or a rejection is saved under a reason the founder never
+ * gave, and a fit category would teach the ICP from it.
+ */
+export function categoryForTypedNote(text: string): DecisionReason | "" {
+  return decisionReasonForText(text) ?? "";
+}
+
 /** What the founder has done by hand in the box so far. */
 export interface RejectBoxTouched {
   /** They typed in the note or tapped a detail chip. */

@@ -198,11 +198,17 @@ export async function generateRejectReason(
       {},
     );
     const sentence = normalizeFitReason(parsed.rejectReason);
+    const modelCategory = rejectCategory(parsed.decisionReason);
+    // The founder tapped a category and the model wrote for another one: its
+    // sentence argues a reason they did not give. Their category stands alone
+    // rather than above a note that contradicts it.
+    const conflict =
+      hintCategory !== null && modelCategory !== null && modelCategory !== hintCategory;
     // The prefix is the machine-decision marker downstream; a model that
     // ignored the prompt must not be able to mint one through a human.
-    const reason = sentence && !/^auto:/i.test(sentence) ? sentence : null;
+    const reason = sentence && !/^auto:/i.test(sentence) && !conflict ? sentence : null;
     // The founder's tapped category is theirs: the model never overrides it.
-    const decisionReason = hintCategory ?? rejectCategory(parsed.decisionReason);
+    const decisionReason = hintCategory ?? modelCategory;
     if (!reason && !decisionReason) return NOTHING;
     logEvent("reject_reason.generated", {
       play: input.playName,

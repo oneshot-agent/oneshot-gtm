@@ -4,6 +4,7 @@ import type { DecisionReason } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
 import {
   appendReason,
+  categoryForTypedNote,
   decisionReasonEffect,
   decisionReasonForText,
   mergeRejectSuggestion,
@@ -140,12 +141,11 @@ export function RejectReasonFields({
   const typeNote = (text: string) => {
     touched.current.note = true;
     const patch: Partial<RejectReasonValue> = { reason: text };
-    // Until they tap a chip, the category follows their words.
-    if (!touched.current.category) {
-      const local = decisionReasonForText(text);
-      if (local) patch.decisionReason = local;
-      else if (!text.trim()) patch.decisionReason = "";
-    }
+    // Until they tap a chip, the category follows their words. Words the
+    // keyword match can't place clear an automatic category (a prefill's or
+    // the model's) instead of leaving a stale one to be saved; the hint effect
+    // then asks the model to place the new words.
+    if (!touched.current.category) patch.decisionReason = categoryForTypedNote(text);
     onChange(patch);
   };
 
