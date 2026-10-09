@@ -236,6 +236,28 @@ describe("Ledger.countHumanIcpDecisions / recentIcpDecisions", () => {
     expect(ledger.recentIcpDecisions(20)).toHaveLength(1);
   });
 
+  it("an 'already in touch' rejection is stored but is never ICP evidence", () => {
+    const id = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { title: "Good fit, emailed in spring" },
+      dedupeKey: "known",
+      source: "find:show-hn",
+    })!;
+    ledger.setQueueStatus({
+      id,
+      status: "rejected",
+      decidedBy: "human",
+      decisionReason: "already_contacted",
+    });
+    // Kept on the decision…
+    expect(ledger.recentIcpDecisions(20).map((e) => e.decisionReason)).toEqual([
+      "already_contacted",
+    ]);
+    // …but it says nothing about fit, so the ICP learns nothing from it.
+    expect(ledger.countHumanIcpDecisions({ reasoned: true })).toBe(0);
+    expect(ledger.recentIcpDecisions(20, { reasoned: true })).toEqual([]);
+  });
+
   it("reasoned evidence keeps only explicit fit judgments, never timing, draft or bulk decisions", () => {
     const seed = (dedupeKey: string, title: string) =>
       ledger.enqueueTarget({

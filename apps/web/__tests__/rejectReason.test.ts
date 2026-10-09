@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   appendReason,
-  decisionReasonForChip,
+  categoryForTypedNote,
+  decisionReasonEffect,
+  decisionReasonForText,
+  mergeRejectSuggestion,
   reasonFromNotes,
   REJECT_DECISION_REASONS,
+  REJECT_DETAIL_CHIPS,
   REJECT_REASON_CHIPS,
   suggestRejectReason,
 } from "../src/lib/rejectReason.ts";
@@ -18,7 +22,12 @@ describe("suggestRejectReason", () => {
         },
         notes: "auto: role — something else",
       }),
-    ).toEqual({ text: "Title is Chief of Staff, not an owner.", source: "person-gate" });
+    ).toEqual({
+      text: "Title is Chief of Staff, not an owner.",
+      source: "person-gate",
+      // The person gate judges the role: its "no" is about the person.
+      decisionReason: "wrong_person",
+    });
     expect(
       suggestRejectReason({
         payload: { icpVerdict: "reject", icpVerdictReason: "Sells to consumers." },
@@ -32,7 +41,7 @@ describe("suggestRejectReason", () => {
       payload: { icpVerdict: "pass", icpVerdictReason: "Founder selling B2B." },
       notes: null,
     });
-    expect(s).toEqual({ text: "", source: null });
+    expect(s).toEqual({ text: "", source: null, decisionReason: null });
   });
 
   it("takes the detail row's verdict reason when the payload has none", () => {
@@ -51,7 +60,21 @@ describe("suggestRejectReason", () => {
     ).toEqual({
       text: "Recruiter, not a founder.",
       source: "notes",
+      decisionReason: "wrong_person",
     });
+    // The gate named in the machine note decides the category.
+    expect(
+      suggestRejectReason({ payload: {}, notes: "auto: ICP — YC W26 — Consumer app, no buyer." })
+        .decisionReason,
+    ).toBe("wrong_audience");
+    expect(
+      suggestRejectReason({ payload: {}, notes: "auto: dedup — sent from another play" })
+        .decisionReason,
+    ).toBe("already_contacted");
+    expect(
+      suggestRejectReason({ payload: {}, notes: "auto: something else entirely here" })
+        .decisionReason,
+    ).toBeNull();
     expect(reasonFromNotes("auto: ICP — YC W26 — Consumer app, no business buyer.")).toBe(
       "Consumer app, no business buyer.",
     );
@@ -71,7 +94,7 @@ describe("suggestRejectReason", () => {
         payload: { icpVerdict: "pass", icpVerdictReason: "Co-founder, owns acquisition" },
         notes: "Bruno Faviero going to Corgi Founders Breakfast Club with Rho",
       }),
-    ).toEqual({ text: "", source: null });
+    ).toEqual({ text: "", source: null, decisionReason: null });
   });
 
   it("never surfaces the gates' pass-throughs, CSV status strings, or a bare token", () => {
@@ -83,6 +106,7 @@ describe("suggestRejectReason", () => {
     expect(suggestRejectReason({ payload: null, notes: undefined })).toEqual({
       text: "",
       source: null,
+      decisionReason: null,
     });
   });
 
@@ -115,25 +139,152 @@ describe("appendReason", () => {
   });
 });
 
-describe("structured decision reasons (#813)", () => {
-  it("maps every chip to a reason: audience chips to wrong_audience, the buyer chip to wrong_person, the rest to other", () => {
-    expect(REJECT_REASON_CHIPS.map(decisionReasonForChip)).toEqual([
-      "wrong_audience",
-      "wrong_audience",
-      "wrong_person",
-      "other",
-      "other",
-      "wrong_audience",
+describe("the reject box's one question", () => {
+  it("offers every reject reason but fit, fit judgments first, and marks which teach the ICP", () => {
+    expect(REJECT_DECISION_REASONS.map((r) => [r.value, r.teachesIcp])).toEqual([
+      ["wrong_audience", true],
+      ["wrong_person", true],
+      ["bad_timing", false],
+      ["already_contacted", false],
+      ["draft_problem", false],
+      ["other", false],
     ]);
   });
 
-  it("offers every reject reason but fit, with fit judgments first", () => {
-    expect(REJECT_DECISION_REASONS.map((r) => r.value)).toEqual([
-      "wrong_audience",
-      "wrong_person",
-      "bad_timing",
-      "draft_problem",
-      "other",
-    ]);
+  it("says what picking a category does", () => {
+    expect(decisionReasonEffect("wrong_audience")).toMatch(/Counts as ICP evidence/);
+    expect(decisionReasonEffect("already_contacted")).toBe("Doesn't affect the ICP.");
+    expect(decisionReasonEffect("")).toMatch(/Pick one/);
+  });
+
+  it("places every detail chip in the category it sits under", () => {
+    for (const [category, chips] of Object.entries(REJECT_DETAIL_CHIPS)) {
+      for (const chip of chips ?? []) {
+        expect([chip, decisionReasonForText(chip)]).toEqual([chip, category]);
+      }
+    }
+  });
+
+  it("names the category of the words founders actually type", () => {
+    expect(decisionReasonForText("already contacted")).toBe("already_contacted");
+    expect(decisionReasonForText("emailed before, no reply")).toBe("already_contacted");
+    expect(decisionReasonForText("existing customer")).toBe("already_contacted");
+    expect(decisionReasonForText("too big")).toBe("wrong_audience");
+    expect(decisionReasonForText("B2C app")).toBe("wrong_audience");
+    expect(decisionReasonForText("recruiter")).toBe("wrong_person");
+    expect(decisionReasonForText("not now, mid-raise")).toBe("bad_timing");
+    expect(decisionReasonForText("the draft is off")).toBe("draft_problem");
+    // A relationship beats a fit word in the same sentence.
+    expect(decisionReasonForText("wrong stage but already a customer")).toBe("already_contacted");
+  });
+
+  it("skips a category the founder is ruling out", () => {
+    // "duplicate" is negated; the reason given is the stage.
+    expect(decisionReasonForText("Not a duplicate; wrong stage")).toBe("wrong_audience");
+    expect(decisionReasonForText("isn't too big, just bad timing")).toBe("bad_timing");
+    expect(decisionReasonForText("never emailed before but not the buyer")).toBe("wrong_person");
+    // Ruled out and nothing else named: left to the model.
+    expect(decisionReasonForText("not a competitor")).toBeNull();
+    expect(decisionReasonForText("we haven't emailed before")).toBeNull();
+    // Phrases that are negative in themselves still count.
+    expect(decisionReasonForText("not the buyer")).toBe("wrong_person");
+    expect(decisionReasonForText("not now")).toBe("bad_timing");
+    expect(decisionReasonForText("no real product yet")).toBe("wrong_audience");
+    expect(decisionReasonForText("not our audience")).toBe("wrong_audience");
+  });
+
+  it("leaves words it can't place to the model instead of guessing", () => {
+    expect(decisionReasonForText("hmm")).toBeNull();
+    expect(decisionReasonForText("")).toBeNull();
+    expect(decisionReasonForText(null)).toBeNull();
+    // The flat list still has entries the keyword rules cover.
+    expect(REJECT_REASON_CHIPS.map(decisionReasonForText)).not.toContain(null);
+  });
+});
+
+describe("categoryForTypedNote — an automatic category never outlives its note", () => {
+  it("follows the founder's words", () => {
+    expect(categoryForTypedNote("already contacted")).toBe("already_contacted");
+    expect(categoryForTypedNote("too big")).toBe("wrong_audience");
+  });
+
+  it("clears the category for words it can't place, so a stale prefill is not saved", () => {
+    // The box opened on a gate verdict ("wrong_person"); the founder rewrote
+    // the note into something the keyword rules don't know.
+    expect(categoryForTypedNote("met at the offsite, will ping in person")).toBe("");
+    expect(categoryForTypedNote("")).toBe("");
+  });
+});
+
+describe("mergeRejectSuggestion — the founder's input always wins", () => {
+  const untouched = { note: false, category: false };
+  const reply = {
+    reason: "Around 80 employees, Series B.",
+    decisionReason: "wrong_audience",
+  } as const;
+
+  it("fills an untouched box with both answers", () => {
+    expect(
+      mergeRejectSuggestion({
+        current: { reason: "", decisionReason: "" },
+        touched: untouched,
+        reply,
+      }),
+    ).toEqual({ reason: "Around 80 employees, Series B.", decisionReason: "wrong_audience" });
+  });
+
+  it("never replaces a note the founder wrote, but still names its category", () => {
+    expect(
+      mergeRejectSuggestion({
+        current: { reason: "too big", decisionReason: "" },
+        touched: { note: true, category: false },
+        reply,
+      }),
+    ).toEqual({ decisionReason: "wrong_audience" });
+  });
+
+  it("never moves a category the founder tapped, and rewrites the note for it", () => {
+    expect(
+      mergeRejectSuggestion({
+        current: { reason: "", decisionReason: "bad_timing" },
+        touched: { note: false, category: true },
+        reply: {
+          reason: "Mid-raise; worth another look next quarter.",
+          decisionReason: "bad_timing",
+        },
+        askedFor: "bad_timing",
+      }),
+    ).toEqual({ reason: "Mid-raise; worth another look next quarter." });
+  });
+
+  it("drops a reply written for a category the founder has since left", () => {
+    expect(
+      mergeRejectSuggestion({
+        current: { reason: "", decisionReason: "wrong_person" },
+        touched: { note: false, category: true },
+        reply: { reason: "Mid-raise.", decisionReason: "bad_timing" },
+        askedFor: "bad_timing",
+      }),
+    ).toEqual({});
+  });
+
+  it("keeps a category already on screen when the model suggests another", () => {
+    expect(
+      mergeRejectSuggestion({
+        current: { reason: "", decisionReason: "wrong_person" },
+        touched: untouched,
+        reply,
+      }),
+    ).toEqual({ reason: "Around 80 employees, Series B." });
+  });
+
+  it("an empty reply changes nothing", () => {
+    expect(
+      mergeRejectSuggestion({
+        current: { reason: "", decisionReason: "" },
+        touched: untouched,
+        reply: { reason: null, decisionReason: null },
+      }),
+    ).toEqual({});
   });
 });
