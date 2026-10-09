@@ -178,6 +178,21 @@ describe("the reject box's one question", () => {
     expect(decisionReasonForText("wrong stage but already a customer")).toBe("already_contacted");
   });
 
+  it("skips a category the founder is ruling out", () => {
+    // "duplicate" is negated; the reason given is the stage.
+    expect(decisionReasonForText("Not a duplicate; wrong stage")).toBe("wrong_audience");
+    expect(decisionReasonForText("isn't too big, just bad timing")).toBe("bad_timing");
+    expect(decisionReasonForText("never emailed before but not the buyer")).toBe("wrong_person");
+    // Ruled out and nothing else named: left to the model.
+    expect(decisionReasonForText("not a competitor")).toBeNull();
+    expect(decisionReasonForText("we haven't emailed before")).toBeNull();
+    // Phrases that are negative in themselves still count.
+    expect(decisionReasonForText("not the buyer")).toBe("wrong_person");
+    expect(decisionReasonForText("not now")).toBe("bad_timing");
+    expect(decisionReasonForText("no real product yet")).toBe("wrong_audience");
+    expect(decisionReasonForText("not our audience")).toBe("wrong_audience");
+  });
+
   it("leaves words it can't place to the model instead of guessing", () => {
     expect(decisionReasonForText("hmm")).toBeNull();
     expect(decisionReasonForText("")).toBeNull();

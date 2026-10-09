@@ -95,10 +95,36 @@ const TEXT_RULES: ReadonlyArray<readonly [RegExp, DecisionReason]> = [
   ],
 ];
 
+/**
+ * A negator sitting right before a match, in the same clause: "not a
+ * duplicate", "isn't too big", "never emailed before". The phrase that follows
+ * is being ruled OUT, so it is not the reason. Phrases that are themselves
+ * negative ("not the buyer", "no real product", "not now") carry their "not"
+ * inside the match and are unaffected.
+ */
+const NEGATED_BEFORE =
+  /(?:\b(?:not|never|no longer|isn'?t|aren'?t|wasn'?t|weren'?t|don'?t|doesn'?t|didn'?t|is not|are not)|n't)\s+(?:(?:a|an|the|our|really|actually|just|even|necessarily)\s+){0,2}$/i;
+
+function isNegated(text: string, matchIndex: number): boolean {
+  // Only the current clause counts: "not a duplicate; wrong stage" negates
+  // "duplicate" and leaves "wrong stage" standing.
+  const clauseStart = Math.max(
+    text.lastIndexOf(";", matchIndex - 1),
+    text.lastIndexOf(",", matchIndex - 1),
+    text.lastIndexOf(".", matchIndex - 1),
+    text.lastIndexOf(" but ", matchIndex - 1),
+  );
+  return NEGATED_BEFORE.test(text.slice(clauseStart + 1, matchIndex));
+}
+
 export function decisionReasonForText(text: string | null | undefined): DecisionReason | null {
   const t = str(text);
   if (!t) return null;
-  for (const [pattern, reason] of TEXT_RULES) if (pattern.test(t)) return reason;
+  for (const [pattern, reason] of TEXT_RULES) {
+    for (const match of t.matchAll(new RegExp(pattern.source, "gi"))) {
+      if (!isNegated(t, match.index)) return reason;
+    }
+  }
   return null;
 }
 
