@@ -20,43 +20,96 @@
  * survives into the box, and the server refuses it on the way back.
  */
 
-import type { DecisionReason } from "@oneshot-gtm/shared-types";
+import { FIT_DECISION_REASONS, type DecisionReason } from "@oneshot-gtm/shared-types";
 
 export type RejectReasonSource = "person-gate" | "notes" | null;
 
 /**
- * The structured why behind a rejection (#813). Only the first two are fit
- * judgments and teach the ICP; the rest say the person was fine and the
- * draft or the moment was not.
+ * The one question the reject box asks: why. Each answer is a structured
+ * reason (#813). Only the fit judgments teach the ICP; the rest say the person
+ * was fine and the moment, the draft, or an existing relationship was not.
  */
-export const REJECT_DECISION_REASONS: ReadonlyArray<{ value: DecisionReason; label: string }> = [
-  { value: "wrong_audience", label: "Not our audience" },
-  { value: "wrong_person", label: "Right company, wrong person" },
-  { value: "bad_timing", label: "Bad timing" },
-  { value: "draft_problem", label: "Draft problem, not the person" },
-  { value: "other", label: "Other" },
+const teaches = (value: DecisionReason): boolean => FIT_DECISION_REASONS.includes(value);
+export const REJECT_DECISION_REASONS: ReadonlyArray<{
+  value: DecisionReason;
+  label: string;
+  teachesIcp: boolean;
+}> = [
+  { value: "wrong_audience", label: "Not our audience", teachesIcp: teaches("wrong_audience") },
+  { value: "wrong_person", label: "Wrong person", teachesIcp: teaches("wrong_person") },
+  { value: "bad_timing", label: "Bad timing", teachesIcp: teaches("bad_timing") },
+  {
+    value: "already_contacted",
+    label: "Already in touch",
+    teachesIcp: teaches("already_contacted"),
+  },
+  { value: "draft_problem", label: "Draft problem", teachesIcp: teaches("draft_problem") },
+  { value: "other", label: "Other", teachesIcp: teaches("other") },
 ];
 
-/** A chip is shorthand for one structured reason; picking it fills the select too. */
-export function decisionReasonForChip(chip: string): DecisionReason {
-  switch (chip) {
-    case "wrong stage":
-    case "wrong industry":
-    case "no real product yet":
-      return "wrong_audience";
-    case "not the buyer":
-      return "wrong_person";
-    default:
-      return "other";
-  }
+/** What picking a category does, in the founder's terms. */
+export function decisionReasonEffect(reason: DecisionReason | "" | null | undefined): string {
+  if (!reason) return "Pick one, or reject without a reason.";
+  return REJECT_DECISION_REASONS.find((r) => r.value === reason)?.teachesIcp
+    ? "Counts as ICP evidence: the tool learns who you don't sell to."
+    : "Doesn't affect the ICP.";
+}
+
+/**
+ * One-tap detail under each category: appended to the note, so the common
+ * specifics never need typing.
+ */
+export const REJECT_DETAIL_CHIPS: Partial<Record<DecisionReason, readonly string[]>> = {
+  wrong_audience: ["wrong stage", "wrong industry", "no real product yet", "competitor"],
+  wrong_person: ["not the buyer", "too junior", "left the company"],
+  bad_timing: ["too early", "revisit next quarter"],
+  already_contacted: ["emailed before", "already a customer", "talking elsewhere"],
+};
+
+/**
+ * The category a few typed words belong to, or null when they name none.
+ * Covers every detail chip and the phrases founders actually type; anything
+ * else is left to the model, never guessed here. Order matters: a relationship
+ * or a timing phrase wins over a fit word that happens to share the sentence.
+ */
+const TEXT_RULES: ReadonlyArray<readonly [RegExp, DecisionReason]> = [
+  [
+    /\b(already|previously)\s+(contacted|emailed|messaged|pitched|reached|in touch|a customer|talking|spoke|spoken)\b|\b(emailed|contacted|messaged|reached out)\s+(before|already|earlier)\b|\bexisting customer\b|\balready (a |our )?(customer|client|user)\b|\btalking elsewhere\b|\bduplicate\b|\bknow (him|her|them)\b/i,
+    "already_contacted",
+  ],
+  [
+    /\bdraft\b|\bcopy\b|\b(bad|wrong|weak) (email|angle|hook|subject)\b|\brewrite\b|\btypo\b/i,
+    "draft_problem",
+  ],
+  [
+    /\btoo early\b|\bbad timing\b|\bnot (right )?now\b|\blater\b|\bnext (quarter|month|year)\b|\brevisit\b|\bjust raised\b|\bmid[- ]raise\b/i,
+    "bad_timing",
+  ],
+  [
+    /\bnot the (buyer|decision[- ]maker|right person)\b|\bwrong (person|role|contact)\b|\btoo junior\b|\bleft the company\b|\b(recruiter|investor|intern|student|assistant|event host|consultant)\b/i,
+    "wrong_person",
+  ],
+  [
+    /\bwrong (stage|industry|audience|market|segment|size)\b|\bno (real )?product\b|\bcompetitor\b|\btoo (big|large|small|late[- ]stage|mature)\b|\bnot (our|the) (audience|icp|customer|market)\b|\b(b2c|consumer)\b/i,
+    "wrong_audience",
+  ],
+];
+
+export function decisionReasonForText(text: string | null | undefined): DecisionReason | null {
+  const t = str(text);
+  if (!t) return null;
+  for (const [pattern, reason] of TEXT_RULES) if (pattern.test(t)) return reason;
+  return null;
 }
 
 export interface RejectReasonSuggestion {
   text: string;
   source: RejectReasonSource;
+  /** The category the prefill implies, when its source names one. */
+  decisionReason: DecisionReason | null;
 }
 
-/** One-tap reasons; each appends to whatever is already in the box. */
+/** The flat one-tap list, for surfaces that record a note without a category. */
 export const REJECT_REASON_CHIPS = [
   "wrong stage",
   "wrong industry",
@@ -122,12 +175,31 @@ export function suggestRejectReason(input: {
   if (verdict === "reject" || verdict === "unclear") {
     const reason = str(p["icpVerdictReason"]) || str(input.icpVerdictReason);
     if (reason.length >= MIN_REASON_CHARS && !DIAGNOSTIC.test(reason)) {
-      return { text: reason, source: "person-gate" };
+      // The person gate judges the role, so its "no" is about the person.
+      return { text: reason, source: "person-gate", decisionReason: "wrong_person" };
     }
   }
   const fromNotes = reasonFromNotes(input.notes);
-  if (fromNotes) return { text: fromNotes, source: "notes" };
-  return { text: "", source: null };
+  if (fromNotes) {
+    return {
+      text: fromNotes,
+      source: "notes",
+      decisionReason: decisionReasonFromGate(input.notes),
+    };
+  }
+  return { text: "", source: null, decisionReason: null };
+}
+
+/**
+ * The category a machine note's gate implies: `auto: ICP — …` is the company
+ * check, `auto: role — …` the person check, `auto: dedup — …` a known contact.
+ */
+function decisionReasonFromGate(notes: string | null | undefined): DecisionReason | null {
+  const gate = /^auto:\s*([a-z][\w-]{0,14})\s*[—-]/i.exec(str(notes))?.[1]?.toLowerCase();
+  if (gate === "icp") return "wrong_audience";
+  if (gate === "role") return "wrong_person";
+  if (gate === "dedup" || gate === "dedupe") return "already_contacted";
+  return null;
 }
 
 /**
@@ -141,4 +213,36 @@ export function appendReason(current: string, chip: string): string {
   const parts = base.split(/;\s*/).map((s) => s.trim().replace(/\.$/, "").toLowerCase());
   if (parts.includes(chip.toLowerCase())) return base;
   return `${base.replace(/[.;\s]+$/, "")}; ${chip}`;
+}
+
+/** What the founder has done by hand in the box so far. */
+export interface RejectBoxTouched {
+  /** They typed in the note or tapped a detail chip. */
+  note: boolean;
+  /** They tapped a category chip. */
+  category: boolean;
+}
+
+/**
+ * What a model reply may change in the reject box. The founder's own input
+ * always wins: a hand-edited note is never replaced, and a category they
+ * tapped is never moved. A reply to "write the note for the category I
+ * picked" (`askedFor`) only applies while that category is still the one
+ * selected.
+ */
+export function mergeRejectSuggestion(input: {
+  current: { reason: string; decisionReason: DecisionReason | "" };
+  touched: RejectBoxTouched;
+  reply: { reason: string | null; decisionReason: DecisionReason | null };
+  /** The category the request was made for, when it was a category tap. */
+  askedFor?: DecisionReason | null;
+}): { reason?: string; decisionReason?: DecisionReason } {
+  const { current, touched, reply, askedFor } = input;
+  if (askedFor && current.decisionReason !== askedFor) return {};
+  const patch: { reason?: string; decisionReason?: DecisionReason } = {};
+  if (reply.reason && !touched.note) patch.reason = reply.reason;
+  if (reply.decisionReason && !touched.category && !current.decisionReason) {
+    patch.decisionReason = reply.decisionReason;
+  }
+  return patch;
 }

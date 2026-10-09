@@ -129,9 +129,12 @@ describe("rejectQueueRoute", () => {
 });
 
 describe("suggestRejectReasonRoute", () => {
-  const ask = (id: string) =>
+  const ask = (id: string, body: unknown = {}) =>
     suggestRejectReasonRoute(
-      new Request(`http://x/api/queue/${id}/reject-reason`, { method: "POST", body: "{}" }),
+      new Request(`http://x/api/queue/${id}/reject-reason`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
       { id },
     );
 
@@ -141,14 +144,20 @@ describe("suggestRejectReasonRoute", () => {
   });
 
   it("passes the row's play, payload and dossier to the generator and returns its sentence", async () => {
-    generateMock.mockResolvedValue("Recruiter, not the person who buys.");
+    generateMock.mockResolvedValue({
+      reason: "Recruiter, not the person who buys.",
+      decisionReason: "wrong_person",
+    });
     const res = await ask("7");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       reason: "Recruiter, not the person who buys.",
+      decisionReason: "wrong_person",
       source: "llm",
       researched: false,
     });
+    // No hint in the body → none handed to the generator.
+    expect(generateMock.mock.calls[0]![0]).not.toHaveProperty("hint");
     expect(generateMock).toHaveBeenCalledWith(
       expect.objectContaining({
         playName: "luma-events",
@@ -184,12 +193,14 @@ describe("suggestRejectReasonRoute", () => {
       },
       receiptId: 1,
     });
-    generateMock.mockResolvedValue(
-      "Founded 2014, ~80 employees, Series B: past founder-led sales.",
-    );
+    generateMock.mockResolvedValue({
+      reason: "Founded 2014, ~80 employees, Series B: past founder-led sales.",
+      decisionReason: "wrong_audience",
+    });
     const res = await ask("8");
     expect(await res.json()).toEqual({
       reason: "Founded 2014, ~80 employees, Series B: past founder-led sales.",
+      decisionReason: "wrong_audience",
       source: "llm",
       researched: true,
     });
@@ -214,9 +225,10 @@ describe("suggestRejectReasonRoute", () => {
       prospect_id: null,
       notes: null,
     });
-    generateMock.mockResolvedValue(null);
+    generateMock.mockResolvedValue({ reason: null, decisionReason: null });
     expect(await (await ask("9")).json()).toEqual({
       reason: null,
+      decisionReason: null,
       source: null,
       researched: false,
     });
@@ -236,6 +248,7 @@ describe("suggestRejectReasonRoute", () => {
     });
     expect(await (await ask("10")).json()).toEqual({
       reason: null,
+      decisionReason: null,
       source: null,
       researched: false,
     });
@@ -251,10 +264,63 @@ describe("suggestRejectReasonRoute", () => {
   });
 
   it("a null from the generator is a null to the box, not an error", async () => {
-    generateMock.mockResolvedValue(null);
+    generateMock.mockResolvedValue({ reason: null, decisionReason: null });
     const res = await ask("7");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ reason: null, source: null, researched: false });
+    expect(await res.json()).toEqual({
+      reason: null,
+      decisionReason: null,
+      source: null,
+      researched: false,
+    });
+  });
+
+  it("hands the founder's tapped category and typed words to the generator as a hint", async () => {
+    generateMock.mockResolvedValue({
+      reason: "Already in conversation from an earlier email.",
+      decisionReason: "already_contacted",
+    });
+    const res = await ask("7", {
+      decisionReason: "already_contacted",
+      hint: "  already   contacted ",
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      reason: "Already in conversation from an earlier email.",
+      decisionReason: "already_contacted",
+      source: "llm",
+    });
+    expect(generateMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        hint: { text: "already contacted", decisionReason: "already_contacted" },
+      }),
+    );
+  });
+
+  it("a category with no sentence still comes back as a suggestion", async () => {
+    generateMock.mockResolvedValue({ reason: null, decisionReason: "bad_timing" });
+    expect(await (await ask("7", { hint: "too early" })).json()).toMatchObject({
+      reason: null,
+      decisionReason: "bad_timing",
+      source: "llm",
+    });
+    expect(generateMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ hint: { text: "too early", decisionReason: null } }),
+    );
+  });
+
+  it("refuses an unknown category, 'fit', and a non-string hint without calling the generator", async () => {
+    expect((await ask("7", { decisionReason: "meh" })).status).toBe(400);
+    expect((await ask("7", { decisionReason: "fit" })).status).toBe(400);
+    expect((await ask("7", { hint: ["x"] })).status).toBe(400);
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
+  it("caps a long hint", async () => {
+    generateMock.mockResolvedValue({ reason: null, decisionReason: null });
+    await ask("7", { hint: "x".repeat(2000) });
+    const hint = generateMock.mock.calls.at(-1)![0].hint as { text: string };
+    expect(hint.text).toHaveLength(REJECT_REASON_MAX_CHARS);
   });
 });
 
@@ -289,5 +355,18 @@ describe("structured decision reasons (#813)", () => {
     expect(statusCalls.at(-1)).not.toHaveProperty("decisionReason");
     res = await rejectQueueRoute(post("7", { decisionReason: "nope" }), { id: "7" });
     expect(res.status).toBe(400);
+  });
+
+  it("accepts 'already_contacted' on a reject and stores it", async () => {
+    const res = await rejectQueueRoute(
+      post("7", { reason: "emailed before", decisionReason: "already_contacted" }),
+      { id: "7" },
+    );
+    expect(res.status).toBe(200);
+    expect(statusCalls.at(-1)).toMatchObject({
+      status: "rejected",
+      decisionReason: "already_contacted",
+      notes: "emailed before",
+    });
   });
 });

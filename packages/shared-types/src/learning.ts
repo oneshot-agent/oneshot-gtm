@@ -127,13 +127,15 @@ export interface AngleSuggestionResult {
 /**
  * Optional structured reason on a queue decision. Only `fit`, `wrong_audience`
  * and `wrong_person` are judgments about customer fit; the rest are about the
- * draft or the moment and never feed ICP evidence.
+ * draft, the moment, or a relationship that already exists, and never feed
+ * ICP evidence.
  */
 export const DECISION_REASONS = [
   "fit",
   "wrong_audience",
   "wrong_person",
   "bad_timing",
+  "already_contacted",
   "draft_problem",
   "other",
 ] as const;

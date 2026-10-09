@@ -678,7 +678,7 @@ export interface QueueRow {
   decided_at: string | null;
   /** 'human' (per-row click) | 'human_bulk' (approve-all batch) | 'machine'. */
   decided_by: "human" | "human_bulk" | "machine" | null;
-  /** Structured decision reason (#813, v13): fit | wrong_audience | wrong_person | bad_timing | draft_problem | other. */
+  /** Structured decision reason (#813, v13): fit | wrong_audience | wrong_person | bad_timing | already_contacted | draft_problem | other. */
   decision_reason?: DecisionReason | null;
 }
 

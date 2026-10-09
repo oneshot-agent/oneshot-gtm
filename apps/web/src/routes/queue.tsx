@@ -25,7 +25,7 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   blockingFlags,
@@ -51,7 +51,7 @@ import { moveTargets, movedRowUrl, type MoveTarget } from "../lib/moveTargets.ts
 import { DraftHistory } from "../components/ledger/DraftHistory.tsx";
 import { neverSentAngles, removeAngleFromConfigText } from "../lib/angleRetire.ts";
 import { useMask, usePrivacy } from "../lib/privacy.tsx";
-import { decisionReasonForChip, REJECT_DECISION_REASONS } from "../lib/rejectReason.ts";
+import { RejectReasonFields } from "../components/queue/RejectReasonFields.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
 import {
@@ -78,12 +78,7 @@ import {
 import { humanInterval } from "../lib/humanInterval.ts";
 import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
 import { fitReasonFor, movedProvenance, movedRejectReason } from "../lib/queueRationale.ts";
-import {
-  appendReason,
-  REJECT_REASON_CHIPS,
-  suggestRejectReason,
-  type RejectReasonSource,
-} from "../lib/rejectReason.ts";
+import { suggestRejectReason, type RejectReasonSource } from "../lib/rejectReason.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import {
   CHANNEL_LABELS,
@@ -195,6 +190,8 @@ interface RejectModalState {
   ids: number[];
   email: string | null;
   suggested: string;
+  /** The category the prefill implies (a machine note names its gate). */
+  suggestedDecision: DecisionReason | null;
   source: RejectReasonSource;
   /**
    * Opened under privacy mode: nothing is prefilled and the LLM fallback is
@@ -262,50 +259,26 @@ function QueuePage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [rejectModal, setRejectModal] = useState<RejectModalState | null>(null);
   const [rejectReason, setRejectReason] = useState("");
-  // The structured why (#813), reset whenever the box opens on another row.
+  // The structured why (#813). Both answers open on the row's own prefill;
+  // `RejectReasonFields` (keyed per open) fills the rest from the model.
   const [rejectDecisionReason, setRejectDecisionReason] = useState<DecisionReason | "">("");
-  useEffect(() => {
-    setRejectDecisionReason("");
-  }, [rejectModal]);
-  // True while the LLM fallback is drafting a sentence for a row that had
-  // nothing to prefill from. The box is editable throughout; a reply only
-  // lands if the founder hasn't typed yet.
-  const [rejectDrafting, setRejectDrafting] = useState(false);
-  const [rejectDraftOutcome, setRejectDraftOutcome] = useState<"idle" | "empty" | "error">("idle");
-  const [rejectDraftAttempt, setRejectDraftAttempt] = useState(0);
-  useEffect(() => {
-    setRejectDraftOutcome("idle");
-    if (!rejectModal) {
-      setRejectReason("");
-      setRejectDrafting(false);
-      return;
-    }
-    setRejectReason(rejectModal.suggested);
-    const single = rejectModal.ids.length === 1 ? rejectModal.ids[0] : undefined;
-    if (single === undefined || rejectModal.suggested || rejectModal.privacy) {
-      setRejectDrafting(false);
-      return;
-    }
-    let live = true;
-    setRejectDrafting(true);
-    api
-      .suggestRejectReason(single)
-      .then((r) => {
-        if (!live) return;
-        setRejectDrafting(false);
-        if (r.reason) setRejectReason((cur) => (cur.trim() ? cur : r.reason!));
-        else setRejectDraftOutcome("empty");
-      })
-      .catch(() => {
-        if (live) {
-          setRejectDrafting(false);
-          setRejectDraftOutcome("error");
-        }
-      });
-    return () => {
-      live = false;
-    };
-  }, [rejectModal, rejectDraftAttempt]);
+  const [rejectOpenSeq, setRejectOpenSeq] = useState(0);
+  // Set in the SAME step that opens the box: the fields mount once, already
+  // holding the prefill. Done in an effect instead, they would mount empty
+  // first and ask the model for a row that needed no asking.
+  const openReject = (next: RejectModalState) => {
+    setRejectReason(next.suggested);
+    setRejectDecisionReason(next.suggestedDecision ?? "");
+    setRejectOpenSeq((n) => n + 1);
+    setRejectModal(next);
+  };
+  const onRejectFieldsChange = useCallback(
+    (patch: { reason?: string; decisionReason?: DecisionReason | "" }) => {
+      if (patch.reason !== undefined) setRejectReason(patch.reason);
+      if (patch.decisionReason !== undefined) setRejectDecisionReason(patch.decisionReason);
+    },
+    [],
+  );
   const [drainModal, setDrainModal] = useState<DrainModalState | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [drainLimit, setDrainLimit] = useState(10);
@@ -718,12 +691,13 @@ function QueuePage() {
                   moveTargets={targets}
                   onReject={() => {
                     const s = masked
-                      ? { text: "", source: null }
+                      ? { text: "", source: null, decisionReason: null }
                       : suggestRejectReason({ payload: row.payload, notes: row.notes });
-                    setRejectModal({
+                    openReject({
                       ids: [row.id],
                       email: emailFor(row.payload),
                       suggested: s.text,
+                      suggestedDecision: s.decisionReason,
                       source: s.source,
                       privacy: masked,
                     });
@@ -791,10 +765,11 @@ function QueuePage() {
               size="sm"
               disabled={bulkReject.isPending || selected.size === 0}
               onClick={() =>
-                setRejectModal({
+                openReject({
                   ids: [...selected],
                   email: null,
                   suggested: "",
+                  suggestedDecision: null,
                   source: null,
                   privacy: masked,
                 })
@@ -868,105 +843,17 @@ function QueuePage() {
           </>
         }
       >
-        <div role="status" aria-live="polite" aria-atomic="true">
-          {rejectDrafting ? (
-            <div className="mb-3 flex items-start gap-3 rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3">
-              <Loader2
-                size={18}
-                aria-hidden="true"
-                className="mt-0.5 shrink-0 animate-spin text-ink-cream-2 motion-reduce:animate-none"
-              />
-              <div>
-                <p className="m-0 text-[13px] font-medium text-ink-cream">
-                  Drafting rejection reason…
-                </p>
-                <p className="mt-1 text-[12px] leading-5 text-ink-muted">
-                  Checking the available prospect evidence. You can write your own reason while this
-                  runs.
-                </p>
-              </div>
-            </div>
-          ) : !rejectReason.trim() && rejectDraftOutcome !== "idle" ? (
-            <div className="mb-3 rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3">
-              <p className="m-0 text-[13px] text-ink-cream-2">
-                {rejectDraftOutcome === "error"
-                  ? "Couldn’t generate a suggestion."
-                  : "No suggestion returned."}
-              </p>
-              <p className="mt-1 text-[12px] leading-5 text-ink-muted">
-                Write your own reason or choose one below.
-              </p>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="mt-2"
-                onClick={() => setRejectDraftAttempt((n) => n + 1)}
-                {...readOnly}
-              >
-                <RotateCw size={12} aria-hidden="true" /> Try again
-              </Button>
-            </div>
-          ) : null}
-        </div>
-        <Field label="Reason (optional — kept on the prospect's timeline)">
-          <Textarea
-            rows={3}
-            autoFocus
-            value={rejectReason}
-            onChange={(e) => setRejectReason(e.target.value)}
-            placeholder={
-              rejectDrafting
-                ? "drafting a reason from the row's evidence…"
-                : "e.g. wrong stage, wrong industry, already a customer"
-            }
+        {rejectModal && (
+          <RejectReasonFields
+            key={rejectOpenSeq}
+            rowId={rejectModal.ids.length === 1 ? rejectModal.ids[0]! : null}
+            value={{ reason: rejectReason, decisionReason: rejectDecisionReason }}
+            onChange={onRejectFieldsChange}
+            source={rejectModal.source}
+            privacy={rejectModal.privacy}
+            disabled={reject.isPending || bulkReject.isPending}
           />
-        </Field>
-        {rejectModal?.source === "person-gate" && (
-          <p className="mt-1 text-xs text-ink-muted">
-            Prefilled from the ICP gate's verdict — edit freely, or clear it.
-          </p>
         )}
-        {rejectModal?.source === "notes" && (
-          <p className="mt-1 text-xs text-ink-muted">
-            Prefilled from the finder's note — edit freely, or clear it.
-          </p>
-        )}
-        {rejectModal?.privacy && (
-          <p className="mt-1 text-xs text-ink-faint">Privacy mode — nothing prefilled.</p>
-        )}
-        <div className="mt-2 flex flex-wrap gap-1">
-          {REJECT_REASON_CHIPS.map((chip) => (
-            <Button
-              key={chip}
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setRejectReason((cur) => appendReason(cur, chip));
-                setRejectDecisionReason(decisionReasonForChip(chip));
-              }}
-            >
-              {chip}
-            </Button>
-          ))}
-        </div>
-        <Field
-          label="Why (optional)"
-          hint="Only a fit judgment teaches the ICP; timing and draft problems never do."
-          className="mt-3"
-        >
-          <Select
-            value={rejectDecisionReason}
-            onChange={(e) => setRejectDecisionReason(e.target.value as DecisionReason | "")}
-            aria-label="Decision reason"
-          >
-            <option value="">No reason</option>
-            {REJECT_DECISION_REASONS.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </Select>
-        </Field>
       </Modal>
 
       <Modal

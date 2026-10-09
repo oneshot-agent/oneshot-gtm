@@ -1,7 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   describeDecision,
@@ -16,7 +16,7 @@ import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
-import { Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
+import { Input, Select } from "../components/primitives/Field.tsx";
 import { Skeleton, SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { cn, formatCount, timeAgo } from "../lib/cn.ts";
 import { maskDeep } from "../lib/mask.ts";
@@ -37,13 +37,8 @@ import {
   type ProspectsSearch,
 } from "../lib/prospects-helpers.ts";
 import { fitReasonFor } from "../lib/queueRationale.ts";
-import {
-  appendReason,
-  decisionReasonForChip,
-  REJECT_DECISION_REASONS,
-  REJECT_REASON_CHIPS,
-  suggestRejectReason,
-} from "../lib/rejectReason.ts";
+import { suggestRejectReason, type RejectReasonSource } from "../lib/rejectReason.ts";
+import { RejectReasonFields } from "../components/queue/RejectReasonFields.tsx";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
 import { CaseSection, Rule, Sheet } from "../components/ledger/Sheet.tsx";
@@ -479,6 +474,14 @@ function DetailPanel({ id }: { id: number }) {
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
   const [decisionReason, setDecisionReason] = useState<DecisionReason | "">("");
+  const [reasonSource, setReasonSource] = useState<RejectReasonSource>(null);
+  const onRejectFieldsChange = useCallback(
+    (patch: { reason?: string; decisionReason?: DecisionReason | "" }) => {
+      if (patch.reason !== undefined) setReason(patch.reason);
+      if (patch.decisionReason !== undefined) setDecisionReason(patch.decisionReason);
+    },
+    [],
+  );
   const detail = useQuery({
     queryKey: ["prospects", "detail", id],
     queryFn: () => api.queueRowDetail(id),
@@ -575,15 +578,16 @@ function DetailPanel({ id }: { id: number }) {
               // the raw `auto:` string. A human re-saving that would label
               // their own decision as the machine's. Nothing under privacy
               // mode: the same text the sheet withholds there.
-              setReason(
-                masked
-                  ? ""
-                  : suggestRejectReason({
-                      payload: row.payload,
-                      notes: row.notes,
-                      icpVerdictReason: row.prospect?.icpVerdictReason ?? null,
-                    }).text,
-              );
+              const prefill = masked
+                ? { text: "", source: null, decisionReason: null }
+                : suggestRejectReason({
+                    payload: row.payload,
+                    notes: row.notes,
+                    icpVerdictReason: row.prospect?.icpVerdictReason ?? null,
+                  });
+              setReason(prefill.text);
+              setDecisionReason(prefill.decisionReason ?? "");
+              setReasonSource(prefill.source);
               setRejecting(true);
             }}
             {...readOnly}
@@ -649,48 +653,15 @@ function DetailPanel({ id }: { id: number }) {
     ) : null;
   const rejectEditor = rejecting ? (
     <div className="mt-3 border-t border-ink-rule pt-3">
-      <Field label="Reason (optional — kept on the prospect's timeline)">
-        <Textarea
-          rows={3}
-          autoFocus
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          placeholder="e.g. wrong stage, wrong industry, already a customer"
-        />
-      </Field>
-      <div className="mt-2 flex flex-wrap gap-1">
-        {REJECT_REASON_CHIPS.map((chip) => (
-          <Button
-            key={chip}
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setReason((cur) => appendReason(cur, chip));
-              setDecisionReason(decisionReasonForChip(chip));
-            }}
-          >
-            {chip}
-          </Button>
-        ))}
-      </div>
-      <Field
-        label="Why (optional)"
-        hint="Only a fit judgment teaches the ICP; timing and draft problems never do."
-        className="mt-3"
-      >
-        <Select
-          value={decisionReason}
-          onChange={(e) => setDecisionReason(e.target.value as DecisionReason | "")}
-          aria-label="Decision reason"
-        >
-          <option value="">No reason</option>
-          {REJECT_DECISION_REASONS.map((r) => (
-            <option key={r.value} value={r.value}>
-              {r.label}
-            </option>
-          ))}
-        </Select>
-      </Field>
+      <RejectReasonFields
+        key={row?.id ?? "none"}
+        rowId={row?.id ?? null}
+        value={{ reason, decisionReason }}
+        onChange={onRejectFieldsChange}
+        source={reasonSource}
+        privacy={masked}
+        disabled={reject.isPending}
+      />
     </div>
   ) : null;
 

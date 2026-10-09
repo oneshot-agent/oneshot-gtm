@@ -14,6 +14,7 @@
  */
 import { loadConfig, logEvent } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import { isDecisionReason, type DecisionReason } from "@oneshot-gtm/shared-types";
 import { describeTargetForAngle } from "./_angles.ts";
 import { normalizeFitReason } from "./_fit-reason.ts";
 
@@ -29,6 +30,35 @@ export interface GenerateRejectReasonInput {
   dossier?: string | null;
   /** A company record (SDK `enrichCompany`) the route fetched when the row had no dossier. */
   company?: Record<string, unknown> | null;
+  /**
+   * What the founder has already said: a category they tapped, a few words
+   * they typed, or both. The sentence then states THEIR reason from the
+   * evidence and the category follows it, instead of the model picking its own.
+   */
+  hint?: { text?: string | null; decisionReason?: DecisionReason | null } | null;
+}
+
+/** The sentence and the structured category it belongs to; either may be null. */
+export interface RejectReasonResult {
+  reason: string | null;
+  decisionReason: DecisionReason | null;
+}
+
+const NOTHING: RejectReasonResult = { reason: null, decisionReason: null };
+
+/** Founder-facing wording for each category, as the prompt names them. */
+const CATEGORY_HINT: Partial<Record<DecisionReason, string>> = {
+  wrong_audience: "not our audience (wrong stage, industry or kind of company)",
+  wrong_person: "right company, wrong person (not the buyer or decision-maker)",
+  bad_timing: "bad timing (fine prospect, wrong moment)",
+  already_contacted: "already in touch (contacted before, a customer, or talking elsewhere)",
+  draft_problem: "the draft is the problem, not the person",
+  other: "another reason",
+};
+
+/** A rejection is never a `fit`; anything else off the list is not a category. */
+function rejectCategory(value: unknown): DecisionReason | null {
+  return isDecisionReason(value) && value !== "fit" ? value : null;
 }
 
 /** How much of a dossier the model sees. The 600-char `describeTargetForAngle` slice was written for angle selection; a stage judgment needs the experience history. */
@@ -116,15 +146,18 @@ export function describeDossierForReject(dossier: string | null | undefined): st
 }
 
 /**
- * The ICP, the play, the prospect's own evidence → a sentence, or null when
- * the model finds no mismatch or the call fails. No ICP configured → null
+ * The ICP, the play, the prospect's own evidence (and what the founder already
+ * said, when they said anything) → a sentence and its category. Both null when
+ * the model finds no mismatch or the call fails. No ICP configured → nothing,
  * without a call: there is nothing to judge against.
  */
 export async function generateRejectReason(
   input: GenerateRejectReasonInput,
-): Promise<string | null> {
+): Promise<RejectReasonResult> {
   const icp = input.icp?.trim() ?? loadConfig().icpOneLiner?.trim() ?? "";
-  if (!icp) return null;
+  if (!icp) return NOTHING;
+  const hintText = s(input.hint?.text).slice(0, 300);
+  const hintCategory = rejectCategory(input.hint?.decisionReason);
   // Payload fields via the angle describer (it already knows which keys are
   // evidence); the dossier and company are rendered here, in full enough
   // form that "this business is ten years old" is visible.
@@ -143,6 +176,14 @@ export async function generateRejectReason(
       evidence.trim() || "(nothing known beyond name and email)",
       ...(company ? ["", "COMPANY:", company] : []),
       ...(dossier ? ["", "DOSSIER:", dossier] : []),
+      ...(hintText || hintCategory
+        ? [
+            "",
+            "FOUNDER HINT:",
+            ...(hintCategory ? [`category: ${hintCategory} — ${CATEGORY_HINT[hintCategory]}`] : []),
+            ...(hintText ? [`words: ${hintText}`] : []),
+          ]
+        : []),
     ].join("\n");
     const res = await complete({
       messages: [
@@ -150,15 +191,26 @@ export async function generateRejectReason(
         { role: "user", content: user },
       ],
       temperature: 0.1,
-      maxTokens: 160,
+      maxTokens: 200,
     });
-    const parsed = tryParseJsonObject<{ rejectReason?: unknown }>(res.content, {});
-    const reason = normalizeFitReason(parsed.rejectReason);
+    const parsed = tryParseJsonObject<{ rejectReason?: unknown; decisionReason?: unknown }>(
+      res.content,
+      {},
+    );
+    const sentence = normalizeFitReason(parsed.rejectReason);
     // The prefix is the machine-decision marker downstream; a model that
     // ignored the prompt must not be able to mint one through a human.
-    if (!reason || /^auto:/i.test(reason)) return null;
-    logEvent("reject_reason.generated", { play: input.playName, reason_120: reason.slice(0, 120) });
-    return reason;
+    const reason = sentence && !/^auto:/i.test(sentence) ? sentence : null;
+    // The founder's tapped category is theirs: the model never overrides it.
+    const decisionReason = hintCategory ?? rejectCategory(parsed.decisionReason);
+    if (!reason && !decisionReason) return NOTHING;
+    logEvent("reject_reason.generated", {
+      play: input.playName,
+      reason_120: (reason ?? "").slice(0, 120),
+      decision_reason: decisionReason,
+      hinted: Boolean(hintText || hintCategory),
+    });
+    return { reason, decisionReason };
   } catch (err) {
     logEvent(
       "error.swallowed",
@@ -169,6 +221,6 @@ export async function generateRejectReason(
       },
       "warn",
     );
-    return null;
+    return NOTHING;
   }
 }

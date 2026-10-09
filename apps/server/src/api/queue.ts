@@ -952,6 +952,32 @@ export async function suggestRejectReasonRoute(
 ): Promise<Response> {
   const id = Number.parseInt(params["id"] ?? "", 10);
   if (!Number.isFinite(id)) return jsonResponse({ error: "bad id" }, 400, req);
+  // What the founder already said, when anything: a category they tapped
+  // (`decisionReason`) and/or a few words they typed (`hint`). The model then
+  // states their reason instead of choosing its own.
+  let body: unknown = {};
+  try {
+    body = await req.json();
+  } catch {
+    // empty body is fine: no hint
+  }
+  const hinted = parseDecisionReason(body, "decisionReason");
+  if ("error" in hinted) return jsonResponse({ error: hinted.error }, 400, req);
+  if (hinted.decisionReason === "fit") {
+    return jsonResponse({ error: "decisionReason 'fit' is not a rejection reason" }, 400, req);
+  }
+  const rawHint = body && typeof body === "object" ? (body as { hint?: unknown }).hint : undefined;
+  if (rawHint !== undefined && rawHint !== null && typeof rawHint !== "string") {
+    return jsonResponse({ error: "hint must be a string" }, 400, req);
+  }
+  const hintText =
+    typeof rawHint === "string"
+      ? rawHint.replace(/\s+/g, " ").trim().slice(0, REJECT_REASON_MAX_CHARS)
+      : "";
+  const hint =
+    hintText || hinted.decisionReason
+      ? { text: hintText || null, decisionReason: hinted.decisionReason ?? null }
+      : null;
   const ledger = getLedger();
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
@@ -998,11 +1024,20 @@ export async function suggestRejectReasonRoute(
     const record = enriched && enriched.result.status !== "error" ? enriched.result.company : null;
     if (record && Object.keys(record).length > 0) company = record as Record<string, unknown>;
   }
-  const reason = await generateRejectReason({ playName: row.play_name, payload, dossier, company });
+  const suggested = await generateRejectReason({
+    playName: row.play_name,
+    payload,
+    dossier,
+    company,
+    ...(hint ? { hint } : {}),
+  });
   return jsonResponse(
-    reason
-      ? { reason, source: "llm", researched: company !== null }
-      : { reason: null, source: null, researched: company !== null },
+    {
+      reason: suggested.reason,
+      decisionReason: suggested.decisionReason,
+      source: suggested.reason || suggested.decisionReason ? "llm" : null,
+      researched: company !== null,
+    },
     200,
     req,
   );

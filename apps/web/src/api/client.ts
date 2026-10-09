@@ -484,8 +484,17 @@ export const api = {
     }),
   // The reject box's LLM fallback: one sentence on why this row might not
   // fit, or null when the model sees no mismatch. Never sends, never decides.
-  suggestRejectReason: (id: number) =>
-    postJson<{ reason: string | null; source: "llm" | null }>(`/queue/${id}/reject-reason`, {}),
+  // `hint` is what the founder already said (a tapped category, a few typed
+  // words): the model then states their reason and picks its category.
+  suggestRejectReason: (id: number, hint?: { hint?: string; decisionReason?: DecisionReason }) =>
+    postJson<{
+      reason: string | null;
+      decisionReason: DecisionReason | null;
+      source: "llm" | null;
+    }>(`/queue/${id}/reject-reason`, {
+      ...(hint?.hint ? { hint: hint.hint } : {}),
+      ...(hint?.decisionReason ? { decisionReason: hint.decisionReason } : {}),
+    }),
   approveAllQueue: (play?: string) =>
     postJson<{ approved: number }>("/queue/approve-all", play ? { play } : {}),
   // Re-draft a row in preview (dry-run, never sends); overwrites the persisted last_draft_json.
