@@ -173,19 +173,46 @@ function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
-/** A list's own tag on an entry: its membership tier, or a footnote mark. */
-const LIST_LABEL =
-  /\s*(?:\((?:member|supporter|contributor|adopter|end[ -]user|sponsor|partner|user)s?\)|\*+)\s*$/i;
+/** A list's own tag on an entry: its membership tier, in parentheses after the name. */
+const LIST_TAGS = new Set(
+  [
+    "member",
+    "supporter",
+    "contributor",
+    "adopter",
+    "end user",
+    "sponsor",
+    "partner",
+    "user",
+  ].flatMap((tag) => [tag, `${tag}s`]),
+);
 
 /**
  * The company's name without the list's tag on it. A members file writes
  * "Adobe (member)" and an adopters table "Bloomberg*"; the tag would
- * otherwise be the company name the email is written with.
+ * otherwise be the company name the email is written with. Trimmed by index,
+ * not by an end-anchored pattern, which backtracks on a long run of marks.
  */
 export function listedName(name: string): string {
   let out = name.trim();
-  while (LIST_LABEL.test(out)) out = out.replace(LIST_LABEL, "").trim();
-  return out;
+  for (;;) {
+    let end = out.length;
+    while (end > 0 && out[end - 1] === "*") end--;
+    let next = out.slice(0, end).trimEnd();
+    if (next.endsWith(")")) {
+      const open = next.lastIndexOf("(");
+      const tag =
+        open === -1
+          ? ""
+          : next
+              .slice(open + 1, -1)
+              .trim()
+              .toLowerCase();
+      if (LIST_TAGS.has(tag.replaceAll("-", " "))) next = next.slice(0, open).trimEnd();
+    }
+    if (next === out) return out;
+    out = next;
+  }
 }
 
 /** The companies one extraction call returned, coerced; nameless rows dropped. */

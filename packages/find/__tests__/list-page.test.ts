@@ -253,6 +253,9 @@ describe("list-page helpers", () => {
     expect(listedName("Federal Pensions Service (SFPD)")).toBe("Federal Pensions Service (SFPD)");
     expect(listedName("Alphabet (Google)")).toBe("Alphabet (Google)");
     expect(listedName("(member)")).toBe("");
+    expect(listedName("Acme (End-Users) **")).toBe("Acme");
+    // A long run of marks is trimmed in one pass, not by a backtracking pattern.
+    expect(listedName(`Acme${"*".repeat(50_000)}x`)).toHaveLength(50_005);
 
     const out = parseListPageExtract(
       JSON.stringify({
