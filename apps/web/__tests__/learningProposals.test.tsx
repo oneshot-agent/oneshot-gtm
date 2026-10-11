@@ -8,7 +8,16 @@ import type {
   LearningProposalView,
 } from "@oneshot-gtm/shared-types";
 import { LearningProposalsCard } from "../src/components/queue/LearningProposalsCard.tsx";
-import { editableText, editedValue, proposalTitle, valueLines } from "../src/lib/learning.ts";
+import {
+  angleDiff,
+  changedLines,
+  editableText,
+  editedValue,
+  kindTag,
+  proposalTitle,
+  valueLines,
+  whyLine,
+} from "../src/lib/learning.ts";
 import { saveQueueFilters, validateQueueSearch } from "../src/lib/queueSearch.ts";
 
 // Unified learning review (#813): `/queue` shows every pending learned change
@@ -119,34 +128,58 @@ describe("LearningProposalsCard", () => {
     expect(render([])).toBe("");
   });
 
-  it("shows an empty note when a kind was asked for explicitly", () => {
+  it("shows an empty note when a kind was asked for explicitly, with a way back to all", () => {
     const html = render([], { kind: "prospect_angle", prospectId: 42 });
-    expect(html).toContain("Nothing learned is waiting for review");
-    expect(html).toContain("prospect #42");
+    expect(html).toContain("Nothing is waiting for review here");
+    expect(html).toContain("angle for #42");
+    expect(html).toContain("show all");
+    expect(html).toContain('href="/queue"');
   });
 
-  it("renders every kind with current, proposed, scope, evidence and the three actions", () => {
-    const html = render([ICP, PREF, ANGLE, CAMPAIGN]);
+  it("renders each pending row as a tag, the changed lines, one reason and approve / dismiss", () => {
+    const html = render([ICP, PREF, { ...ANGLE, scopeLabel: "Ada Lovelace" }, CAMPAIGN]);
     expect(html).toContain("4 to review");
-    expect(html).toContain("Proposed ICP rewrite");
-    expect(html).toContain("B2B fintech founders");
+    // No kind tabs: the tag on each row says what it is.
+    expect(html).not.toContain(">All<");
+    expect(html).not.toContain(">Prospect angle<");
+    expect(html).not.toContain(">Campaign angles<");
+    expect(html).toContain(">ICP<");
     expect(html).toContain("B2B fintech CTOs at Series A startups");
-    expect(html).toContain("Proposed writing preference · email replies");
+    expect(html).toContain(">Writing</span>");
+    expect(html).toContain("email replies");
     expect(html).toContain("learned before review existed");
-    expect(html).toContain("Suggested: Hi Ada, hope");
-    expect(html).toContain("Proposed angle revision · prospect #42");
+    expect(html).toContain(">Angle</span>");
+    expect(html).toContain("Ada Lovelace");
+    expect(html).not.toContain("#42");
+    // Only the lines that differ from the active angle make the headline.
     expect(html).toContain("Hook: They asked about pricing");
-    expect(html).toContain("Do not say: guarantee");
-    expect(html).toContain("Proposed angle changes · show-hn");
-    expect(html).toContain("hypothesis · observational");
-    expect(html).toContain("offered 12");
-    expect(html).toContain("method fit");
-    expect(html).toContain("Approve");
-    expect(html).toContain("Edit &amp; approve");
-    expect(html).toContain("Dismiss");
+    expect(html).toContain("Next step: send the pilot terms");
+    expect(html).toContain(">Campaign</span>");
+    expect(html).toContain("show-hn");
+    expect(html).toContain("+ guaranteed");
+    expect(html).toContain("− cheap");
+    expect(html).toContain("hypothesis");
+    // The jargon chips are gone; the reason sentence carries the evidence.
+    expect(html).not.toContain("method fit");
+    expect(html).not.toContain("offered 12");
+    expect(html).not.toContain("source");
+    expect(html).toContain("cheap was rotated away 4 times and never sent.");
+    expect(html).toContain("approve");
+    expect(html).toContain("dismiss");
+    expect(html).not.toContain("Edit &amp; approve");
   });
 
-  it("lists applied proposals with rollback, and approved guidance with its controls", () => {
+  it("keeps what it was, the evidence excerpts and the edit box behind the row's details", () => {
+    const html = render([ANGLE, PREF]);
+    expect(html).toContain("was · edit");
+    expect(html).toContain("Hook: old hook");
+    expect(html).toContain("evidence · edit");
+    expect(html).toContain("Suggested: Hi Ada, hope");
+    expect(html).toContain("Sent: Quick one:");
+    expect(html).toContain("edit before approving");
+  });
+
+  it("folds applied proposals and approved guidance into one collapsed history line", () => {
     const applied = {
       ...ICP,
       id: "icp2",
@@ -155,19 +188,15 @@ describe("LearningProposalsCard", () => {
       decided: "Edited ICP",
     };
     const html = render([applied], { guidance: [GUIDANCE] });
-    expect(html).toContain("Applied (1)");
+    expect(html).toContain("1 applied · 1 preference active");
+    expect(html).toContain("0 to review");
     expect(html).toContain("Edited ICP");
+    expect(html).toContain("edited");
     expect(html).toContain("Roll back");
-    expect(html).toContain("Approved writing preferences (1 active)");
     expect(html).toContain("Keep replies under eighty words");
     expect(html).toContain("all channels · all stages");
     expect(html).toContain("Disable");
-  });
-
-  it("hides the kind filter and guidance when locked to a non-preference kind", () => {
-    const html = render([ANGLE], { kind: "prospect_angle", guidance: [GUIDANCE] });
-    expect(html).not.toContain("Keep replies under eighty words");
-    expect(html).not.toContain(">All<");
+    expect((html.match(/<details/g) ?? []).length).toBe(1);
   });
 });
 
@@ -182,6 +211,41 @@ describe("learning helpers", () => {
     expect(editedValue(CAMPAIGN, "a // b")).toEqual({ edge: "a // b" });
     expect(valueLines("campaign_angle", CAMPAIGN.proposed)).toEqual(["fast", "guaranteed"]);
     expect(valueLines("prospect_angle", ANGLE.current)).toEqual(["Hook: old hook"]);
+  });
+
+  it("headline, tag and reason helpers show only what changes, by kind", () => {
+    expect(changedLines(ANGLE)).toEqual([
+      "Hook: They asked about pricing",
+      "Next step: send the pilot terms",
+      "Do not say: guarantee",
+    ]);
+    expect(
+      changedLines({
+        ...ANGLE,
+        current: { angleJson: JSON.stringify({ hook: "They asked about pricing" }) },
+      }),
+    ).toEqual(["Next step: send the pilot terms", "Do not say: guarantee"]);
+    expect(changedLines({ ...ANGLE, current: null })).toEqual([
+      "Hook: They asked about pricing",
+      "Next step: send the pilot terms",
+      "Do not say: guarantee",
+    ]);
+    expect(changedLines(CAMPAIGN)).toEqual(["+ guaranteed", "− cheap"]);
+    expect(changedLines({ ...ICP, decided: "Edited" })).toEqual(["Edited"]);
+    expect(angleDiff("fast // cheap", "fast // guaranteed")).toEqual({
+      added: ["guaranteed"],
+      removed: ["cheap"],
+      kept: ["fast"],
+    });
+    expect(kindTag(ICP)).toEqual({ kind: "ICP", scope: null });
+    expect(kindTag(PREF)).toEqual({ kind: "Writing", scope: "email replies" });
+    expect(kindTag(ANGLE)).toEqual({ kind: "Angle", scope: "#42" });
+    expect(kindTag({ ...ANGLE, scopeLabel: "Ada" })).toEqual({ kind: "Angle", scope: "Ada" });
+    expect(kindTag(CAMPAIGN)).toEqual({ kind: "Campaign", scope: "show-hn" });
+    expect(whyLine(PREF)).toBe(
+      "Three edited replies dropped the greeting. · learned before review existed",
+    );
+    expect(whyLine(CAMPAIGN)).toBe("cheap was rotated away 4 times and never sent. · hypothesis");
   });
 
   it("queue search accepts the learning deep link and never remembers it", () => {
