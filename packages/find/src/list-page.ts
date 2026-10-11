@@ -173,6 +173,48 @@ function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
+/** A list's own tag on an entry: its membership tier, in parentheses after the name. */
+const LIST_TAGS = new Set(
+  [
+    "member",
+    "supporter",
+    "contributor",
+    "adopter",
+    "end user",
+    "sponsor",
+    "partner",
+    "user",
+  ].flatMap((tag) => [tag, `${tag}s`]),
+);
+
+/**
+ * The company's name without the list's tag on it. A members file writes
+ * "Adobe (member)" and an adopters table "Bloomberg*"; the tag would
+ * otherwise be the company name the email is written with. Trimmed by index,
+ * not by an end-anchored pattern, which backtracks on a long run of marks.
+ */
+export function listedName(name: string): string {
+  let out = name.trim();
+  for (;;) {
+    let end = out.length;
+    while (end > 0 && out[end - 1] === "*") end--;
+    let next = out.slice(0, end).trimEnd();
+    if (next.endsWith(")")) {
+      const open = next.lastIndexOf("(");
+      const tag =
+        open === -1
+          ? ""
+          : next
+              .slice(open + 1, -1)
+              .trim()
+              .toLowerCase();
+      if (LIST_TAGS.has(tag.replaceAll("-", " "))) next = next.slice(0, open).trimEnd();
+    }
+    if (next === out) return out;
+    out = next;
+  }
+}
+
 /** The companies one extraction call returned, coerced; nameless rows dropped. */
 export function parseListPageExtract(raw: string): ListPageCompany[] {
   const parsed = tryParseJsonObject<{ companies?: unknown }>(raw, { companies: [] });
@@ -181,7 +223,7 @@ export function parseListPageExtract(raw: string): ListPageCompany[] {
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
     const r = item as Record<string, unknown>;
-    const name = str(r["name"]);
+    const name = listedName(str(r["name"]) ?? "");
     if (!name) continue;
     const contacts: ListPageCompany["contacts"] = [];
     for (const c of Array.isArray(r["contacts"]) ? r["contacts"] : []) {
@@ -321,7 +363,12 @@ export async function extractListPage(
   const cached = ledger.getProductResearchCache(cacheKey, EXTRACT_CACHE_TTL_MS);
   if (cached) {
     try {
-      return JSON.parse(cached) as ListPageCompany[];
+      // Names cleaned on the way out too: a page extracted before the tag
+      // was stripped is still cached with it.
+      const companies = JSON.parse(cached) as ListPageCompany[];
+      for (const company of companies) company.name = listedName(company.name);
+      // Same rules as a fresh extraction: no nameless rows, one per company.
+      return dedupeCompanies(companies.filter((company) => company.name));
     } catch {
       // corrupt entry: re-extract and overwrite
     }

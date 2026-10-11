@@ -135,6 +135,7 @@ const {
   chunkLines,
   directTextUrl,
   jsonAsLines,
+  listedName,
   parseListPageExtract,
   rankByTitles,
   rawGitHubUrl,
@@ -189,6 +190,9 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/** A cached extraction row with only a name. */
+const cachedRow = (name: string) => ({ name, domain: null, context: null, contacts: [] });
+
 describe("list-page helpers", () => {
   it("reads a GitHub file page raw, and leaves other URLs alone", () => {
     expect(rawGitHubUrl(SOURCE.url)).toBe(
@@ -240,6 +244,59 @@ describe("list-page helpers", () => {
     const chunks = chunkLines(list.join("\n"));
     expect(chunks.map((c) => c.split("\n").length)).toEqual([60, 60, 10]);
     expect(chunks.join("\n")).toBe(list.join("\n"));
+  });
+
+  it("takes the list's own tag off a company's name", () => {
+    expect(listedName("Adobe (member)")).toBe("Adobe");
+    expect(listedName("Adidas (supporter)")).toBe("Adidas");
+    expect(listedName("BMW Group (Adopter)")).toBe("BMW Group");
+    expect(listedName("Bloomberg*")).toBe("Bloomberg");
+    expect(listedName("Box * (End User)")).toBe("Box");
+    // Parentheses that are part of the name stay.
+    expect(listedName("Federal Pensions Service (SFPD)")).toBe("Federal Pensions Service (SFPD)");
+    expect(listedName("Alphabet (Google)")).toBe("Alphabet (Google)");
+    expect(listedName("(member)")).toBe("");
+    expect(listedName("Acme (End-Users) **")).toBe("Acme");
+    // A long run of marks is trimmed in one pass, not by a backtracking pattern.
+    expect(listedName(`Acme${"*".repeat(50_000)}x`)).toHaveLength(50_005);
+
+    const out = parseListPageExtract(
+      JSON.stringify({
+        companies: [
+          { name: "Adobe (member)", website: "https://adobe.example" },
+          { name: "(supporter)", website: "https://x.example" },
+        ],
+      }),
+    );
+    expect(out.map((c) => c.name)).toEqual(["Adobe"]);
+  });
+
+  it("cleans names a page cached before the tag was stripped", async () => {
+    await runListPageFinder({ ...base, dryRun: true });
+    const key = [...cache.keys()].find((k) => k.startsWith("list-page:"))!;
+    const stored = JSON.parse(cache.get(key)!) as Array<{ name: string }>;
+    stored[0]!.name = "Acme (member)";
+    cache.set(key, JSON.stringify(stored));
+    await runListPageFinder({ ...base, limit: 1 });
+    expect(enqueued[0]?.payload["company"]).toBe("Acme");
+  });
+
+  it("drops cached rows that clean to nothing or to a company already listed", async () => {
+    const source = { url: "https://example.com/members", signal: "member" };
+    const { extractListPage } = await import("../src/list-page.ts");
+    await extractListPage(source, "page text");
+    const key = [...cache.keys()].find((k) => k.startsWith("list-page:"))!;
+    cache.set(
+      key,
+      JSON.stringify([
+        cachedRow("Acme (member)"),
+        cachedRow("(member)"),
+        cachedRow("Acme"),
+        cachedRow("Beta"),
+      ]),
+    );
+    const out = await extractListPage(source, "page text");
+    expect(out.map((c) => c.name)).toEqual(["Acme", "Beta"]);
   });
 
   it("coerces the extraction and drops nameless rows", () => {
