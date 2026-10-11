@@ -291,12 +291,17 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
 
   const fallbackBusinessType = industries.length > 0 ? industries.join(" / ") : "local business";
 
-  /** One new person through the gates and into the queue. */
+  /**
+   * One new person through the gates and into the queue. Resolves to
+   * "retry" when a passing failure (the classifier or the platform was
+   * unavailable) left the person undecided, so the search's saved progress
+   * must not move past them; "settled" for every other outcome.
+   */
   const workCandidate = async (
     person: PersonResult,
     fullName: string,
     dedupeKey: string,
-  ): Promise<void> => {
+  ): Promise<"settled" | "retry"> => {
     const company = person.company?.trim() || "(unknown)";
     const title = person.title?.trim() || null;
     const businessType =
@@ -319,7 +324,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       // rationale as every other finder: a persisted rejection would burn
       // the dedupeKey for every future watch tick).
       result.droppedEnrichment++;
-      return;
+      return "retry";
     }
     if (!filter.match) {
       result.droppedIcp++;
@@ -333,12 +338,12 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
           notes: `auto: ICP — ${filter.reason}`,
         });
       }
-      return;
+      return "settled";
     }
 
     if (opts.dryRun) {
       result.enqueued++;
-      return;
+      return "settled";
     }
 
     const bestWorkEmail = person.best_work_email?.trim() || null;
@@ -379,15 +384,15 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
           reason: gate.reason,
           dryRun: opts.dryRun,
         });
-        return;
+        return "settled";
       }
       if (gate.action === "defer") {
         result.droppedEnrichment++;
-        return;
+        return "retry";
       }
       if (isDuplicate({ playName: dedupeScope, dedupeKey, prospectEmail: bestWorkEmail })) {
         result.droppedDuplicate++;
-        return;
+        return "settled";
       }
       email = bestWorkEmail;
       phone = readPhone(person);
@@ -430,7 +435,8 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
             dryRun: opts.dryRun,
           });
         } else result.droppedEnrichment++;
-        return;
+        // No address found is an answer; a platform failure is not.
+        return contact.reason === "platform-error" ? "retry" : "settled";
       }
       // "" on a LinkedIn-channel contact: the row's channel decides how it is sent.
       email = contact.email ?? "";
@@ -479,6 +485,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     });
     if (id != null) result.enqueued++;
     else result.droppedDuplicate++;
+    return "settled";
   };
 
   const queries = peopleQueries({
@@ -515,6 +522,8 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     let known = 0;
     let ended = false;
     let capped = false;
+    /** Offset of the first page holding someone left undecided by a passing failure. */
+    let retryOffset: number | null = null;
     let previousFirstKey: string | null = null;
     for (let page = 0; !stop && !ended; page++) {
       if (page >= MAX_PAGES_PER_QUERY) {
@@ -591,7 +600,8 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
         // on its first page.
         worked++;
         fresh++;
-        await workCandidate(person, personFullName(person), dedupeKey);
+        const outcome = await workCandidate(person, personFullName(person), dedupeKey);
+        if (outcome === "retry") retryOffset ??= offset;
       }
       // Stopped part-way through the page: the search is not walked.
       if (stop) break;
@@ -613,8 +623,15 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     } else if (capped) {
       // Everyone before `offset` has been looked at: the next run starts
       // there instead of re-reading the same pages and never getting past
-      // them.
-      ledger.setProductResearchCache(progressKey, JSON.stringify({ done: false, offset }));
+      // them. Someone a passing failure left undecided holds the mark at
+      // their page, so the next run meets them again.
+      const resumeAt = Math.min(offset, retryOffset ?? offset);
+      if (resumeAt > 0) {
+        ledger.setProductResearchCache(
+          progressKey,
+          JSON.stringify({ done: false, offset: resumeAt }),
+        );
+      }
     }
   }
 

@@ -505,6 +505,11 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
   const bySource = new Map<string, Pending[]>();
   const claimed = new Set<string>();
   for (const [index, source] of opts.sources.entries()) {
+    // A page that needs rendering is a paid read: the cap holds here too.
+    if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+      result.halted = `max-cost cap (${opts.maxCostUsd})`;
+      break;
+    }
     const rowSource = `${SOURCE}:${slugify(source.signal)}`;
     let companies: ListPageCompany[];
     try {

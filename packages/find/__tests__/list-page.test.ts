@@ -488,6 +488,22 @@ describe("runListPageFinder", () => {
     }
   });
 
+  it("stops reading paid pages once the cost cap is reached", async () => {
+    const out = await runListPageFinder({
+      ...base,
+      dryRun: true,
+      maxCostUsd: 0.002,
+      sources: [
+        { url: "https://example.com/customers", signal: "customer of Example" },
+        { url: "https://example.org/customers", signal: "customer of Other" },
+      ],
+    });
+    // One web read costs the whole cap: the second page is never read.
+    expect(webReads).toBe(1);
+    expect(out.perSource).toHaveLength(1);
+    expect(out.halted).toBe("max-cost cap (0.002)");
+  });
+
   it("reads any other page through webRead", async () => {
     const out = await runListPageFinder({
       ...base,

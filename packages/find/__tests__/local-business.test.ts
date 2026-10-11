@@ -359,6 +359,57 @@ describe("runLocalBusinessFinder — paging past people it already has", () => {
     expect(second.enqueued).toBe(20);
   });
 
+  it("holds its place at someone a passing failure left undecided, so the next run meets them again", async () => {
+    // 280 people, all known but one on the third page. The classifier is
+    // down when the first run reaches that person.
+    peopleSearchHandler = (input) => {
+      const offset = (input["offset"] as number | undefined) ?? 0;
+      return people(offset, Math.max(0, Math.min(40, 280 - offset)));
+    };
+    for (let i = 0; i < 280; i++) if (i !== 100) knownKeys.add(keyOf(i));
+    const run = () =>
+      runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+
+    icpMatch = null;
+    const first = await run();
+    expect(peopleSearchCalls).toHaveLength(6);
+    expect(first.enqueued).toBe(0);
+    expect(enqueued).toHaveLength(0);
+
+    // Resumes at that person's page, not past the six pages it read.
+    icpMatch = true;
+    peopleSearchCalls.length = 0;
+    const second = await run();
+    expect(peopleSearchCalls[0]?.["offset"]).toBe(80);
+    expect(second.enqueued).toBe(1);
+    expect(enqueued[0]?.payload["name"]).toBe("Person 100");
+  });
+
+  it("a person the role gate could not judge holds the place too", async () => {
+    peopleSearchHandler = (input) => {
+      const offset = (input["offset"] as number | undefined) ?? 0;
+      return people(offset, Math.max(0, Math.min(40, 280 - offset)));
+    };
+    for (let i = 0; i < 280; i++) if (i !== 45) knownKeys.add(keyOf(i));
+    personVerdict = "transient";
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+    expect(parseSearchProgress([...researchCache.values()][0] ?? null)).toEqual({
+      done: false,
+      offset: 40,
+    });
+  });
+
+  it("saves no progress when the undecided person is on the first page", async () => {
+    peopleSearchHandler = (input) => {
+      const offset = (input["offset"] as number | undefined) ?? 0;
+      return people(offset, Math.max(0, Math.min(40, 280 - offset)));
+    };
+    for (let i = 1; i < 280; i++) knownKeys.add(keyOf(i));
+    icpMatch = null;
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+    expect(researchCache.size).toBe(0);
+  });
+
   it("reads stored progress, and starts from the top on anything unreadable", () => {
     expect(parseSearchProgress(JSON.stringify({ done: true }))).toEqual({ done: true });
     expect(parseSearchProgress(JSON.stringify({ done: false, offset: 240 }))).toEqual({
