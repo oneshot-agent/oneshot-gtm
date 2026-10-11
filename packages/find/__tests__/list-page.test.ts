@@ -18,6 +18,7 @@ const cache = new Map<string, string>();
 let queued = new Set<string>();
 let webReads = 0;
 let llmCalls = 0;
+let llmInputs: string[] = [];
 let contactCalls: Array<Record<string, unknown>> = [];
 let contactResult: Record<string, unknown> = {};
 let contactByName: Record<string, Record<string, unknown>> = {};
@@ -55,6 +56,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
     complete: async (args: { messages: Array<{ content: string }> }) => {
       llmCalls++;
       const input = JSON.parse(args.messages[1]!.content) as { markdown: string };
+      llmInputs.push(input.markdown);
       // One company per table row that names one, like the real extraction.
       const companies = [
         ...input.markdown.matchAll(/\| \[([^\]]+)\]\(([^)]+)\) \| ([^|]*)\| ([^|]*)\|/g),
@@ -117,14 +119,23 @@ const ADOPTERS = [
   "| [Gamma](https://gamma.example/about) |  | Service catalog |",
 ].join("\n");
 
-const fetchMock = vi.fn(async (url: string) => ({
+const defaultFetch = async (url: string) => ({
   ok: true,
   status: 200,
   text: async () => (url.startsWith("https://raw.githubusercontent.com/") ? ADOPTERS : ""),
-}));
+});
+const fetchMock = vi.fn(defaultFetch);
 
-const { chunkLines, parseListPageExtract, rankByTitles, rawGitHubUrl, runListPageFinder } =
-  await import("../src/list-page.ts");
+const {
+  chunkLines,
+  directTextUrl,
+  jsonAsLines,
+  parseListPageExtract,
+  rankByTitles,
+  rawGitHubUrl,
+  runListPageFinder,
+  titleMatches,
+} = await import("../src/list-page.ts");
 
 const SOURCE = {
   url: "https://github.com/backstage/backstage/blob/master/ADOPTERS.md",
@@ -145,6 +156,7 @@ beforeEach(() => {
   queued = new Set();
   webReads = 0;
   llmCalls = 0;
+  llmInputs = [];
   contactCalls = [];
   companySearchDomain = "beta.example";
   peopleSearchCalls = [];
@@ -178,6 +190,38 @@ describe("list-page helpers", () => {
     );
     expect(rawGitHubUrl("https://github.com/backstage/backstage")).toBeNull();
     expect(rawGitHubUrl("https://example.com/customers")).toBeNull();
+  });
+
+  it("fetches plain-text sources directly and leaves web pages to the page reader", () => {
+    expect(directTextUrl(SOURCE.url)).toBe(
+      "https://raw.githubusercontent.com/backstage/backstage/master/ADOPTERS.md",
+    );
+    expect(
+      directTextUrl("https://raw.githubusercontent.com/argoproj/argo-cd/master/USERS.md"),
+    ).toBe("https://raw.githubusercontent.com/argoproj/argo-cd/master/USERS.md");
+    expect(directTextUrl("https://landscape.example/api/members/end-users.json")).toBe(
+      "https://landscape.example/api/members/end-users.json",
+    );
+    expect(directTextUrl("https://example.com/data/adopters.yaml")).toBe(
+      "https://example.com/data/adopters.yaml",
+    );
+    expect(directTextUrl("https://example.com/customers")).toBeNull();
+    expect(directTextUrl("https://example.com/customers.html")).toBeNull();
+    expect(directTextUrl("not a url")).toBeNull();
+  });
+
+  it("puts each item of a one-line JSON array on its own line, so no chunk cuts it off", () => {
+    const members = [
+      { name: "Acme (member)", homepage_url: "https://acme.example" },
+      { name: "Gamma", homepage_url: "https://gamma.example" },
+    ];
+    const lines = jsonAsLines(JSON.stringify(members)).split("\n");
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[1]!)).toEqual(members[1]);
+    // An object is pretty-printed; anything that is not JSON is left alone.
+    expect(jsonAsLines('{"members":[{"name":"Acme"}]}').split("\n").length).toBeGreaterThan(3);
+    expect(jsonAsLines("# Adopters\n| a | b |")).toBe("# Adopters\n| a | b |");
+    expect(jsonAsLines("[not json")).toBe("[not json");
   });
 
   it("chunks on line boundaries under the size limit", () => {
@@ -294,6 +338,116 @@ describe("runListPageFinder", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("reads a JSON members file with one free fetch, every member reaching the extractor", async () => {
+    // One line of JSON, longer than a chunk: cut at the chunk size it would
+    // lose every member after the first few.
+    const members = Array.from({ length: 120 }, (_, i) => ({
+      name: `Member ${i}`,
+      homepage_url: `https://member${i}.example`,
+      description: "x".repeat(60),
+    }));
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(members),
+    }));
+    const out = await runListPageFinder({
+      ...base,
+      dryRun: true,
+      sources: [{ url: "https://landscape.example/api/end-users.json", signal: "member" }],
+    });
+    expect(fetchMock.mock.calls[0]![0]).toBe("https://landscape.example/api/end-users.json");
+    expect(webReads).toBe(0);
+    expect(out.perSource?.[0]?.error).toBeUndefined();
+    expect(llmInputs.length).toBeGreaterThan(1);
+    const sent = llmInputs.join("\n").split("\n");
+    expect(sent).toHaveLength(120);
+    expect(JSON.parse(sent[119]!)).toMatchObject({ name: "Member 119" });
+  });
+
+  it("tries a failed read again before giving the source up", async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockImplementationOnce(async () => {
+        throw new Error("Unable to connect. Is the computer able to access the url?");
+      });
+      fetchMock.mockImplementationOnce(async () => ({
+        ok: false,
+        status: 503,
+        text: async () => "",
+      }));
+      const run = runListPageFinder({ ...base, dryRun: true });
+      await vi.runAllTimersAsync();
+      const out = await run;
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(out.candidates).toBe(3);
+      expect(out.perSource?.[0]?.error).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives up after three failed reads, and does not retry a missing file", async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockImplementation(async () => {
+        throw new Error("Unable to connect");
+      });
+      const run = runListPageFinder({ ...base, dryRun: true });
+      await vi.runAllTimersAsync();
+      const out = await run;
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(out.perSource?.[0]).toMatchObject({ records: 0, error: "Unable to connect" });
+
+      fetchMock.mockClear();
+      fetchMock.mockImplementation(async () => ({ ok: false, status: 404, text: async () => "" }));
+      const missing = runListPageFinder({ ...base, dryRun: true });
+      await vi.runAllTimersAsync();
+      expect((await missing).perSource?.[0]?.error).toMatch(/HTTP 404/);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchMock.mockImplementation(defaultFetch);
+      vi.useRealTimers();
+    }
+  });
+
+  it("draws from every list in turn, and works a company two lists name once", async () => {
+    const second = [
+      "| [Delta](https://delta.example) |  | Pipelines |",
+      "| [Acme](https://www.acme.example) |  | Also here |",
+      "| [Echo](https://echo.example) |  | Pipelines |",
+    ].join("\n");
+    fetchMock.mockImplementation(async (url: string) => ({
+      ok: true,
+      status: 200,
+      text: async () => (url.includes("/apache/airflow/") ? second : ADOPTERS),
+    }));
+    try {
+      const out = await runListPageFinder({
+        ...base,
+        limit: 4,
+        sources: [
+          SOURCE,
+          {
+            url: "https://github.com/apache/airflow/blob/main/INTHEWILD.md",
+            signal: "runs Airflow",
+          },
+        ],
+      });
+      expect(enqueued.map((r) => [r.payload["company"], r.payload["signal"]])).toEqual([
+        ["Acme", "runs Backstage"],
+        ["Delta", "runs Airflow"],
+        ["Beta Corp", "runs Backstage"],
+        ["Echo", "runs Airflow"],
+      ]);
+      // Acme's second listing is a duplicate, skipped free.
+      expect(out.droppedDuplicate).toBe(1);
+      expect(out.halted).toBe("limit (4)");
+    } finally {
+      fetchMock.mockImplementation(defaultFetch);
+    }
+  });
+
   it("reads any other page through webRead", async () => {
     const out = await runListPageFinder({
       ...base,
@@ -333,6 +487,41 @@ describe("jobTitles targeting", () => {
       "Cam CTO",
       "Pat PR",
     ]);
+  });
+
+  it("matches a title on whole words, with the long forms people write", () => {
+    // Substrings: dire-cto-r, ret-ai-l, tr-ai-ning.
+    expect(titleMatches("Senior Director, Thought Leader Engagement", "CTO")).toBe(false);
+    expect(titleMatches("Head of Retail", "Head of AI")).toBe(false);
+    expect(titleMatches("Director of Training", "Director of AI")).toBe(false);
+    expect(titleMatches("Head of Airfreight & Air Operations", "Head of AI")).toBe(false);
+
+    expect(titleMatches("Vice President, Artificial Intelligence", "VP of AI")).toBe(true);
+    expect(titleMatches("Group SVP of AI", "VP of AI")).toBe(true);
+    expect(titleMatches("Chief Technology Officer", "CTO")).toBe(true);
+    expect(titleMatches("Chief Data Analytics & AI Officer", "Chief AI Officer")).toBe(true);
+    expect(titleMatches("Sr. Director of Engineering, Applied AI", "Director of AI")).toBe(true);
+    expect(titleMatches("VP of Engineering, Head of AI/ML", "Head of AI")).toBe(true);
+    expect(titleMatches("Head of Machine Learning Platform", "Head of ML")).toBe(true);
+
+    expect(titleMatches(null, "CTO")).toBe(false);
+    expect(titleMatches("CTO", "of the")).toBe(false);
+  });
+
+  it("tries only people whose title matches a wanted one", async () => {
+    // The search's own title filter is loose: at a large company it returns
+    // senior people of every function.
+    peopleSearchResult = {
+      results: [
+        person("Pat PR", "Head of Communications"),
+        person("Dee Docs", "Head of Documentation"),
+        person("Reg Retail", "Senior Director of Retail"),
+      ],
+    };
+    const out = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(contactCalls).toHaveLength(0);
+    expect(out.droppedRole).toBe(1);
+    expect(out.costUsd).toBeCloseTo(0.01, 5);
   });
 
   it("searches the domain for the titles and hands the best match to the contact spine", async () => {
@@ -388,17 +577,40 @@ describe("jobTitles targeting", () => {
     expect(second.enqueued).toBe(1);
   });
 
-  it("records a company with no matching person, but not a failed search", async () => {
+  it("remembers a company with no matching person for a while, without rejecting it", async () => {
     const none = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
     expect(contactCalls).toHaveLength(0);
-    expect(roleRejections[0]?.["reason"]).toBe("no one matching jobTitles at acme.example");
     expect(none.droppedRole).toBe(1);
+    // No rejected row: that would keep the company out for good.
+    expect(roleRejections).toHaveLength(0);
+    expect(enqueued).toHaveLength(0);
 
-    roleRejections.length = 0;
+    // The next run skips Acme free and moves on to the next company.
+    peopleSearchCalls = [];
+    const next = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(next.droppedDuplicate).toBe(1);
+    expect(peopleSearchCalls.map((c) => c["companyDomains"])).toEqual([["beta.example"]]);
+  });
+
+  it("looks at a missed company again when the wanted titles change, not when they are reordered", async () => {
+    await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+
+    peopleSearchCalls = [];
+    await runListPageFinder({ ...base, jobTitles: titles.toReversed(), limit: 1 });
+    expect(peopleSearchCalls.map((c) => c["companyDomains"])).toEqual([["beta.example"]]);
+
+    peopleSearchCalls = [];
+    await runListPageFinder({ ...base, jobTitles: [...titles, "Head of AI"], limit: 1 });
+    expect(peopleSearchCalls.map((c) => c["companyDomains"])).toEqual([["acme.example"]]);
+  });
+
+  it("a dry run and a failed search remember nothing", async () => {
+    await runListPageFinder({ ...base, jobTitles: titles, limit: 1, dryRun: true });
     peopleSearchResult = { status: "error", results: [] };
     const failed = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
-    expect(roleRejections).toHaveLength(0);
     expect(failed.droppedEnrichment).toBe(1);
+    expect(roleRejections).toHaveLength(0);
+    expect([...cache.keys()].filter((k) => k.startsWith("list-page-miss:"))).toEqual([]);
   });
 });
 

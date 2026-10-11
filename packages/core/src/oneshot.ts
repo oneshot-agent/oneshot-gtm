@@ -1255,6 +1255,8 @@ export interface PeopleSearchInput {
   companySize?: string;
   /** SDK default is 100; server caps at 500. */
   limit?: number;
+  /** Row offset into the result set, 0-indexed: `{ limit: 50, offset: 50 }` is the second page of 50. */
+  offset?: number;
 }
 
 /**
@@ -1281,6 +1283,10 @@ export async function peopleSearch(input: PeopleSearchInput, ctx: CallContext) {
   if (input.industry) opts.industry = input.industry;
   if (input.companySize) opts.company_size = input.companySize;
   if (input.limit) opts.limit = input.limit;
+  // The API takes `offset`; the pinned SDK's types don't declare it yet, but
+  // it sends every option through as given (measured 2026-10-11: offset 40
+  // returned rows 41 onward).
+  if (input.offset) (opts as typeof opts & { offset?: number }).offset = input.offset;
 
   const result: PeopleSearchResult = await agent.peopleSearch(opts);
   const receiptId = recordCallReceipt({
