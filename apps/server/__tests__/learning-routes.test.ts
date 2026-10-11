@@ -133,6 +133,15 @@ describe("listLearningProposalsRoute", () => {
       ),
     );
     expect(byProspect["proposals"]).toHaveLength(1);
+    // The scope is shown as the founder knows it: the prospect's name, not its id.
+    expect((byProspect["proposals"] as Array<{ scopeLabel: string | null }>)[0]!.scopeLabel).toBe(
+      "Ada · Ada Co",
+    );
+    expect(
+      (all["proposals"] as Array<{ kind: string; scopeLabel: string | null }>).find(
+        (p) => p.kind === "icp",
+      )!.scopeLabel,
+    ).toBeNull();
     const other = await json(
       listLearningProposalsRoute(
         new Request(`http://x/api/learning/proposals?prospectId=${pid + 1}`),

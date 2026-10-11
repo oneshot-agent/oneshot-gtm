@@ -77,6 +77,8 @@ export interface LearningProposalView {
   status: LearningProposalStatus;
   /** Learned before approval existed and migrated into review, never applied since. */
   legacy: boolean;
+  /** Display name for the scope, resolved at read time: the prospect's name for a prospect angle, the play for campaign angles. */
+  scopeLabel?: string | null;
   sourceVersion: number | null;
   createdAt: string;
   decidedAt: string | null;
