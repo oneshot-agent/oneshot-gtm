@@ -65,6 +65,18 @@ export class LlmError extends Error {
   }
 }
 
+/**
+ * The completion was cut off at the token limit. Terminal for the same
+ * request, but a caller that can ask for less (a smaller slice of its input)
+ * can tell this apart from every other failure and do so.
+ */
+export class LlmTruncatedError extends LlmError {
+  constructor(message: string) {
+    super(message);
+    this.name = "LlmTruncatedError";
+  }
+}
+
 /** A per-request timeout that aborted the fetch. Always retryable. */
 class LlmTimeoutError extends LlmError {
   constructor(message: string) {
@@ -521,7 +533,7 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
   // of it, and truncated JSON silently degrades to an empty object four layers
   // up (empty subject/body on a draft). Fail loudly at the source instead.
   if (choice.finish_reason === "length" && !args.input.allowTruncation) {
-    throw new LlmError(
+    throw new LlmTruncatedError(
       truncationMessage({
         provider: args.provider,
         model: args.model,
@@ -588,7 +600,7 @@ async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput
   };
 
   if (data.stop_reason === "max_tokens" && !args.input.allowTruncation) {
-    throw new LlmError(
+    throw new LlmTruncatedError(
       truncationMessage({
         provider: "anthropic",
         model: args.model,

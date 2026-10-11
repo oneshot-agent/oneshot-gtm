@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { getLedger, logEvent, type PersonResult, webRead } from "@oneshot-gtm/core";
-import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import { complete, LlmTruncatedError, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { sanitizeCompanyDomain } from "./_accelerator-search-adapter.ts";
 import { icpFields, type QualifiedContact, resolveVerifyEnrichQualify } from "./_contact.ts";
 import { isDuplicate } from "./_dedupe.ts";
@@ -33,6 +33,12 @@ const FETCH_TIMEOUT_MS = 30_000;
 const UA = "Mozilla/5.0 (compatible; oneshot-gtm list-page)";
 /** Characters per extraction call: small enough that a dense table's JSON fits the output budget. */
 const CHUNK_CHARS = 6_000;
+/**
+ * Lines per extraction call. A bare `1. [Name](url)` list fits 130 companies
+ * in 6,000 characters, and their JSON overran the output budget (measured
+ * 2026-10-10 on two such lists: the whole source was lost).
+ */
+const CHUNK_LINES = 60;
 /** A page longer than this is cut: a list that long is not a list of buyers. */
 const MAX_PAGE_CHARS = 400_000;
 /** Re-extract an unchanged page at most this often (the cache key also carries a content hash). */
@@ -140,17 +146,24 @@ export function jsonAsLines(text: string): string {
   return JSON.stringify(parsed, null, 1);
 }
 
-/** Split a page into chunks on line boundaries, each at most `max` characters. */
-export function chunkLines(text: string, max: number = CHUNK_CHARS): string[] {
+/** Split a page into chunks on line boundaries, each at most `max` characters and `maxLines` lines. */
+export function chunkLines(
+  text: string,
+  max: number = CHUNK_CHARS,
+  maxLines: number = CHUNK_LINES,
+): string[] {
   const chunks: string[] = [];
   let cur = "";
+  let lines = 0;
   for (const line of text.split("\n")) {
     const piece = line.length > max ? line.slice(0, max) : line;
-    if (cur.length + piece.length + 1 > max && cur) {
+    if (cur && (cur.length + piece.length + 1 > max || lines >= maxLines)) {
       chunks.push(cur);
       cur = "";
+      lines = 0;
     }
     cur = cur ? `${cur}\n${piece}` : piece;
+    lines++;
   }
   if (cur.trim()) chunks.push(cur);
   return chunks;
@@ -246,6 +259,53 @@ async function readPage(url: string): Promise<{ text: string; costUsd: number }>
   return { text: read.result.markdown ?? "", costUsd: read.result.cost ?? 0 };
 }
 
+/** How many times one chunk is halved before a cut-off reply fails the source. */
+const MAX_CHUNK_SPLITS = 3;
+
+/**
+ * The companies in one chunk. A reply cut off at the token limit means the
+ * chunk named more companies than fit: halve it and ask for each half.
+ */
+async function extractChunk(
+  source: ListPageSource,
+  system: string,
+  chunk: string,
+  part: string,
+  depth: number,
+): Promise<ListPageCompany[]> {
+  try {
+    const llm = await complete({
+      messages: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content: JSON.stringify({
+            url: source.url,
+            signal: source.signal,
+            part,
+            markdown: chunk,
+          }),
+        },
+      ],
+      temperature: 0.1,
+      maxTokens: 4000,
+    });
+    return parseListPageExtract(llm.content);
+  } catch (err) {
+    const lines = chunk.split("\n");
+    if (!(err instanceof LlmTruncatedError) || depth >= MAX_CHUNK_SPLITS || lines.length < 2) {
+      throw err;
+    }
+    const mid = Math.ceil(lines.length / 2);
+    const halves = [lines.slice(0, mid).join("\n"), lines.slice(mid).join("\n")];
+    const out: ListPageCompany[] = [];
+    for (const half of halves) {
+      out.push(...(await extractChunk(source, system, half, part, depth + 1)));
+    }
+    return out;
+  }
+}
+
 /**
  * Every company on the page. Cached by URL and content hash, so an
  * unchanged list costs no extraction calls on the next run.
@@ -270,23 +330,9 @@ export async function extractListPage(
   const chunks = chunkLines(page);
   const companies: ListPageCompany[] = [];
   for (const [i, chunk] of chunks.entries()) {
-    const llm = await complete({
-      messages: [
-        { role: "system", content: system },
-        {
-          role: "user",
-          content: JSON.stringify({
-            url: source.url,
-            signal: source.signal,
-            part: `${i + 1} of ${chunks.length}`,
-            markdown: chunk,
-          }),
-        },
-      ],
-      temperature: 0.1,
-      maxTokens: 4000,
-    });
-    companies.push(...parseListPageExtract(llm.content));
+    companies.push(
+      ...(await extractChunk(source, system, chunk, `${i + 1} of ${chunks.length}`, 0)),
+    );
   }
   const unique = dedupeCompanies(companies);
   ledger.setProductResearchCache(cacheKey, JSON.stringify(unique));

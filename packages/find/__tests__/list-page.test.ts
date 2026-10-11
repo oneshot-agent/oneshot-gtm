@@ -19,6 +19,8 @@ let queued = new Set<string>();
 let webReads = 0;
 let llmCalls = 0;
 let llmInputs: string[] = [];
+/** The mock model's reply is cut off when a chunk has more lines than this. */
+let llmMaxLines: number | null = null;
 let contactCalls: Array<Record<string, unknown>> = [];
 let contactResult: Record<string, unknown> = {};
 let contactByName: Record<string, Record<string, unknown>> = {};
@@ -57,6 +59,9 @@ vi.mock("@oneshot-gtm/intel", async () => {
       llmCalls++;
       const input = JSON.parse(args.messages[1]!.content) as { markdown: string };
       llmInputs.push(input.markdown);
+      if (llmMaxLines !== null && input.markdown.split("\n").length > llmMaxLines) {
+        throw new actual.LlmTruncatedError("truncated at max_tokens=4000 (raise maxTokens) — t t.");
+      }
       // One company per table row that names one, like the real extraction.
       const companies = [
         ...input.markdown.matchAll(/\| \[([^\]]+)\]\(([^)]+)\) \| ([^|]*)\| ([^|]*)\|/g),
@@ -157,6 +162,7 @@ beforeEach(() => {
   webReads = 0;
   llmCalls = 0;
   llmInputs = [];
+  llmMaxLines = null;
   contactCalls = [];
   companySearchDomain = "beta.example";
   peopleSearchCalls = [];
@@ -227,6 +233,13 @@ describe("list-page helpers", () => {
   it("chunks on line boundaries under the size limit", () => {
     const chunks = chunkLines(["a".repeat(40), "b".repeat(40), "c".repeat(40)].join("\n"), 90);
     expect(chunks).toEqual([`${"a".repeat(40)}\n${"b".repeat(40)}`, "c".repeat(40)]);
+  });
+
+  it("caps a chunk's lines as well as its size: a bare list is short lines, many companies", () => {
+    const list = Array.from({ length: 130 }, (_, i) => `1. [Co ${i}](https://co${i}.example)`);
+    const chunks = chunkLines(list.join("\n"));
+    expect(chunks.map((c) => c.split("\n").length)).toEqual([60, 60, 10]);
+    expect(chunks.join("\n")).toBe(list.join("\n"));
   });
 
   it("coerces the extraction and drops nameless rows", () => {
@@ -363,6 +376,33 @@ describe("runListPageFinder", () => {
     const sent = llmInputs.join("\n").split("\n");
     expect(sent).toHaveLength(120);
     expect(JSON.parse(sent[119]!)).toMatchObject({ name: "Member 119" });
+  });
+
+  it("halves a chunk whose reply was cut off, and keeps every company", async () => {
+    const rows = Array.from(
+      { length: 9 },
+      (_, i) => `| [Co ${i}](https://co${i}.example) |  | Uses it |`,
+    );
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => rows.join("\n"),
+    }));
+    llmMaxLines = 3;
+    const out = await runListPageFinder({ ...base, dryRun: true });
+    expect(out.perSource?.[0]).toMatchObject({ records: 9 });
+    expect(out.perSource?.[0]?.error).toBeUndefined();
+    // 9 lines → 5 + 4 → (3 + 2) + (2 + 2): seven calls, three of them cut off.
+    expect(llmInputs.map((m) => m.split("\n").length)).toEqual([9, 5, 3, 2, 4, 2, 2]);
+  });
+
+  it("gives the source up when halving cannot make the reply fit", async () => {
+    llmMaxLines = 0;
+    const out = await runListPageFinder({ ...base, dryRun: true });
+    expect(out.perSource?.[0]?.records).toBe(0);
+    expect(out.perSource?.[0]?.error).toMatch(/truncated at max_tokens/);
+    // Nothing half-extracted is cached as the page's companies.
+    expect([...cache.keys()].filter((k) => k.startsWith("list-page:"))).toEqual([]);
   });
 
   it("tries a failed read again before giving the source up", async () => {
