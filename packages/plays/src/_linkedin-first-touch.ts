@@ -163,13 +163,26 @@ export async function draftLinkedInNote(
   return { subject: `LinkedIn invite → ${name}`, body, flags, voiceKey: voice?.key ?? null };
 }
 
-/** Codes OneShot's invite route reports as a failed job (docs: api-reference/linkedin/invite). */
+/**
+ * Codes OneShot's invite route reports for a job that failed without sending
+ * (docs: api-reference/linkedin/invite). Only these prove non-delivery.
+ * `send_unverified` is deliberately absent (the invite may have gone out), as
+ * is every transport or local code (ECONNRESET, a database error, ...).
+ */
+const NOT_DELIVERED_CODES = new Set([
+  "email_required",
+  "note_limit_reached",
+  "note_too_long",
+  "rate_limited",
+  "account_send_limit",
+]);
+
 function inviteErrorCode(err: unknown): string | null {
   const e = err as { code?: unknown; jobError?: unknown; message?: unknown };
-  if (typeof e.code === "string") return e.code;
+  if (typeof e.code === "string") return NOT_DELIVERED_CODES.has(e.code) ? e.code : null;
   const text = `${typeof e.jobError === "string" ? e.jobError : ""} ${typeof e.message === "string" ? e.message : ""}`;
   const m = text.match(
-    /\b(email_required|note_limit_reached|note_too_long|rate_limited|account_send_limit|send_unverified)\b/,
+    /\b(email_required|note_limit_reached|note_too_long|rate_limited|account_send_limit)\b/,
   );
   return m ? m[1]! : null;
 }

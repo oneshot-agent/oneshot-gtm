@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Ledger } from "../src/ledger.ts";
@@ -307,6 +307,50 @@ describe("canInviteOnLinkedIn", () => {
     expect(shared.importLinkedInInvites("again", () => [])).toBe(0);
   });
 
+  it("7. an invite in another workspace's ledger that never ran the guard still excludes the profile", () => {
+    const prevWs = process.env["ONESHOT_GTM_WORKSPACES"];
+    const wsRoot = join(dir, "ws");
+    const alphaHome = join(wsRoot, "alpha");
+    mkdirSync(alphaHome, { recursive: true });
+    writeFileSync(
+      join(wsRoot, "registry.json"),
+      JSON.stringify({
+        default: "default",
+        workspaces: { alpha: { home: alphaHome, port: 3031, createdAt: "" } },
+      }),
+    );
+    process.env["ONESHOT_GTM_WORKSPACES"] = wsRoot;
+    const alpha = new Ledger(join(alphaHome, "ledger.sqlite"));
+    try {
+      const old = alpha.upsertProspect({
+        name: "Dana Lee",
+        email: "dana@acme.com",
+        company: "Acme",
+        linkedin_url: "https://www.linkedin.com/in/dana-lee",
+        source: "test",
+      });
+      alpha.recordLinkedInInviteEvent({
+        prospectId: old,
+        playName: "luma-events",
+        stepIndex: 0,
+        status: "sent",
+        metadata: { invitationId: "old-alpha" },
+      });
+      // This workspace's own ledger is empty and shared.sqlite has no record.
+      expect(shared.linkedInTouch("dana-lee")).toBeNull();
+      const v = canInviteOnLinkedIn(person({ email: null }), { ledger, shared });
+      expect(reasonOf(v)).toBe("already-invited");
+      expect(shared.linkedInTouch("dana-lee")).toMatchObject({
+        source: "invite:alpha",
+        status: "confirmed",
+      });
+    } finally {
+      alpha.close();
+      if (prevWs === undefined) delete process.env["ONESHOT_GTM_WORKSPACES"];
+      else process.env["ONESHOT_GTM_WORKSPACES"] = prevWs;
+    }
+  });
+
   it("7. a withdrawn-only history, or another person's invite, imports nothing for this profile", () => {
     seed();
     expect(check()).toEqual({ ok: true });
@@ -435,11 +479,16 @@ describe("one profile, one invite (shared DB)", () => {
   it("a dispatched claim never expires; only an explicit release frees it", () => {
     const db = new SharedDb(join(dir, "shared.sqlite"));
     try {
-      const t0 = new Date("2026-01-01T00:00:00Z");
+      // Real clock: dispatch stamps the actual time, so "later" must be past
+      // that stamp plus the reservation TTL for this to prove non-expiry.
+      const t0 = new Date();
       const r = db.claimLinkedInProfile({ slug: "mid-flight", source: "invite:x", now: t0 }) as {
         id: number;
       };
       db.dispatchLinkedInProfile(r.id);
+      expect(
+        db.linkedInTouch("mid-flight", new Date(t0.getTime() + RESERVATION_TTL_MS + 5000)),
+      ).not.toBeNull();
       const later = new Date(t0.getTime() + 30 * 86_400_000);
       expect(db.linkedInTouch("mid-flight", later)).not.toBeNull();
       expect(

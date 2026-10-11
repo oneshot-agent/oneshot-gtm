@@ -3,11 +3,12 @@ import { extractBusinessAddress } from "./mail-address.ts";
 import type { DirectMailDraft, PostalAddress } from "./direct-mail.ts";
 import { Database } from "bun:sqlite";
 
+import { existsSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { demoMode } from "./demo.ts";
 import { openStateDatabase } from "./sqlite-open.ts";
 import type { OutreachChannel } from "./channels.ts";
-import { workspacesDir } from "./workspaces.ts";
+import { listWorkspaces, workspacesDir } from "./workspaces.ts";
 import { configDir } from "./config.ts";
 import {
   applyReadonlyBusyTimeout,
@@ -755,18 +756,34 @@ export class Ledger {
   }
 
   /**
-   * Copy the invites this ledger already recorded into the shared
-   * `linkedin_touched` table, once per ledger file, so profiles invited before
-   * the guard existed still exclude other plays and workspaces.
+   * Copy the invites already recorded into the shared `linkedin_touched`
+   * table, once per ledger file, so profiles invited before the guard existed
+   * still exclude other plays and workspaces. Reads this ledger and every
+   * other registered workspace's ledger, so a workspace that never ran the
+   * guard has its history imported by whichever workspace runs it first.
    */
   backfillLinkedInTouched(shared: SharedDb): void {
-    shared.importLinkedInInvites(`linkedin-invites:${this.path}`, () =>
-      linkedInInviteHistory(this.db).map((h) => ({
-        slug: h.slug,
-        source: `invite:${currentWorkspaceName()}`,
-        touchedAt: h.touchedAt,
-      })),
-    );
+    const importFrom = (path: string, workspace: string, db: Database, owned: boolean) =>
+      shared.importLinkedInInvites(`linkedin-invites:${path}`, () => {
+        try {
+          return linkedInInviteHistory(db).map((h) => ({
+            slug: h.slug,
+            source: `invite:${workspace}`,
+            touchedAt: h.touchedAt,
+          }));
+        } finally {
+          if (owned) db.close();
+        }
+      });
+    importFrom(this.path, currentWorkspaceName(), this.db, false);
+    const seen = new Set([resolve(this.path)]);
+    for (const [name, entry] of listWorkspaces()) {
+      const path = join(entry.home, "ledger.sqlite");
+      if (seen.has(resolve(path)) || !existsSync(path)) continue;
+      seen.add(resolve(path));
+      // An unreadable ledger throws: the guard then refuses (fail closed).
+      importFrom(path, name, openLedgerDatabase(path, { readonly: true }), true);
+    }
   }
 
   suppressCadencesForReply(prospectId: number, accountKey?: string) {

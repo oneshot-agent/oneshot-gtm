@@ -333,6 +333,30 @@ describe("sendLinkedInInvite", () => {
       expect(invites).toHaveLength(0);
     });
 
+    it.each(["ECONNRESET", "ETIMEDOUT", "SQLITE_BUSY", "send_unverified", "unknown_code"])(
+      "a coded error %s that does not prove non-delivery keeps the profile held",
+      async (code) => {
+        const { sender: s } = sender(Object.assign(new Error("failed"), { code }));
+        await expect(
+          sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+        ).rejects.toThrow(/failed/);
+        const { out, invites } = await again();
+        expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+        expect(invites).toHaveLength(0);
+      },
+    );
+
+    it("a coded failure while recording the receipt after provider success keeps the profile held", async () => {
+      failReceipt = true;
+      const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
+      await expect(
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+      ).rejects.toThrow();
+      failReceipt = false;
+      const { out } = await again();
+      expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+    });
+
     it("a provider-reported failure (job failed, no invite sent) frees the profile", async () => {
       const { sender: s } = sender(Object.assign(new Error("failed"), { code: "email_required" }));
       const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
