@@ -173,6 +173,21 @@ function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
+/** A list's own tag on an entry: its membership tier, or a footnote mark. */
+const LIST_LABEL =
+  /\s*(?:\((?:member|supporter|contributor|adopter|end[ -]user|sponsor|partner|user)s?\)|\*+)\s*$/i;
+
+/**
+ * The company's name without the list's tag on it. A members file writes
+ * "Adobe (member)" and an adopters table "Bloomberg*"; the tag would
+ * otherwise be the company name the email is written with.
+ */
+export function listedName(name: string): string {
+  let out = name.trim();
+  while (LIST_LABEL.test(out)) out = out.replace(LIST_LABEL, "").trim();
+  return out;
+}
+
 /** The companies one extraction call returned, coerced; nameless rows dropped. */
 export function parseListPageExtract(raw: string): ListPageCompany[] {
   const parsed = tryParseJsonObject<{ companies?: unknown }>(raw, { companies: [] });
@@ -181,7 +196,7 @@ export function parseListPageExtract(raw: string): ListPageCompany[] {
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
     const r = item as Record<string, unknown>;
-    const name = str(r["name"]);
+    const name = listedName(str(r["name"]) ?? "");
     if (!name) continue;
     const contacts: ListPageCompany["contacts"] = [];
     for (const c of Array.isArray(r["contacts"]) ? r["contacts"] : []) {
@@ -321,7 +336,11 @@ export async function extractListPage(
   const cached = ledger.getProductResearchCache(cacheKey, EXTRACT_CACHE_TTL_MS);
   if (cached) {
     try {
-      return JSON.parse(cached) as ListPageCompany[];
+      // Names cleaned on the way out too: a page extracted before the tag
+      // was stripped is still cached with it.
+      const companies = JSON.parse(cached) as ListPageCompany[];
+      for (const company of companies) company.name = listedName(company.name);
+      return companies;
     } catch {
       // corrupt entry: re-extract and overwrite
     }

@@ -135,6 +135,7 @@ const {
   chunkLines,
   directTextUrl,
   jsonAsLines,
+  listedName,
   parseListPageExtract,
   rankByTitles,
   rawGitHubUrl,
@@ -240,6 +241,38 @@ describe("list-page helpers", () => {
     const chunks = chunkLines(list.join("\n"));
     expect(chunks.map((c) => c.split("\n").length)).toEqual([60, 60, 10]);
     expect(chunks.join("\n")).toBe(list.join("\n"));
+  });
+
+  it("takes the list's own tag off a company's name", () => {
+    expect(listedName("Adobe (member)")).toBe("Adobe");
+    expect(listedName("Adidas (supporter)")).toBe("Adidas");
+    expect(listedName("BMW Group (Adopter)")).toBe("BMW Group");
+    expect(listedName("Bloomberg*")).toBe("Bloomberg");
+    expect(listedName("Box * (End User)")).toBe("Box");
+    // Parentheses that are part of the name stay.
+    expect(listedName("Federal Pensions Service (SFPD)")).toBe("Federal Pensions Service (SFPD)");
+    expect(listedName("Alphabet (Google)")).toBe("Alphabet (Google)");
+    expect(listedName("(member)")).toBe("");
+
+    const out = parseListPageExtract(
+      JSON.stringify({
+        companies: [
+          { name: "Adobe (member)", website: "https://adobe.example" },
+          { name: "(supporter)", website: "https://x.example" },
+        ],
+      }),
+    );
+    expect(out.map((c) => c.name)).toEqual(["Adobe"]);
+  });
+
+  it("cleans names a page cached before the tag was stripped", async () => {
+    await runListPageFinder({ ...base, dryRun: true });
+    const key = [...cache.keys()].find((k) => k.startsWith("list-page:"))!;
+    const stored = JSON.parse(cache.get(key)!) as Array<{ name: string }>;
+    stored[0]!.name = "Acme (member)";
+    cache.set(key, JSON.stringify(stored));
+    await runListPageFinder({ ...base, limit: 1 });
+    expect(enqueued[0]?.payload["company"]).toBe("Acme");
   });
 
   it("coerces the extraction and drops nameless rows", () => {
