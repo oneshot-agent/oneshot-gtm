@@ -151,6 +151,7 @@ describe("toDraftVersionView", () => {
     discard_reason: "rotate",
     voice_key: null,
     format_key: null,
+    learning_key: null,
     created_at: "2026-09-15T00:00:00.000Z",
     closed_at: "2026-09-15T00:01:00.000Z",
   };
@@ -164,6 +165,7 @@ describe("toDraftVersionView", () => {
       angle: { text: "A", origin: "configured" },
       outcome: "discarded",
       discardReason: "rotate",
+      learningKey: null,
       createdAt: "2026-09-15T00:00:00.000Z",
       closedAt: "2026-09-15T00:01:00.000Z",
     });

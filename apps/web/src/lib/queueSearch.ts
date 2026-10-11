@@ -1,5 +1,6 @@
-import type { QueueStatusView } from "@oneshot-gtm/shared-types";
+import type { LearningKind, QueueStatusView } from "@oneshot-gtm/shared-types";
 import type { QueueStatusFilter } from "./queue-helpers.ts";
+import { isLearningKind } from "./learning.ts";
 
 /**
  * /queue filters live in the URL (`?status=&play=&order=`) so back/forward and
@@ -11,6 +12,9 @@ export interface QueueSearch {
   status?: QueueStatusFilter;
   play?: string;
   order?: "ranked" | "newest";
+  /** Deep link into the learning review card (#813): one kind, optionally one prospect. Never remembered. */
+  learning?: LearningKind;
+  prospectId?: number;
 }
 
 const STATUS_VALUES: ReadonlySet<string> = new Set<QueueStatusView | "all">([
@@ -32,6 +36,10 @@ export function validateQueueSearch(search: Record<string, unknown>): QueueSearc
   if (typeof play === "string" && play.length > 0) out.play = play;
   const order = search["order"];
   if (order === "ranked" || order === "newest") out.order = order;
+  const learning = search["learning"];
+  if (isLearningKind(learning)) out.learning = learning;
+  const prospectId = Number(search["prospectId"]);
+  if (Number.isInteger(prospectId) && prospectId > 0) out.prospectId = prospectId;
   return out;
 }
 
@@ -68,7 +76,8 @@ export function saveQueueFilters(
   storage: StorageLike | null = defaultStorage(),
 ): void {
   try {
-    storage?.setItem(STORAGE_KEY, JSON.stringify(validateQueueSearch({ ...filters })));
+    const { learning: _learning, prospectId: _prospectId, ...remembered } = filters;
+    storage?.setItem(STORAGE_KEY, JSON.stringify(validateQueueSearch({ ...remembered })));
   } catch {
     // private mode / quota: filters just won't be remembered
   }

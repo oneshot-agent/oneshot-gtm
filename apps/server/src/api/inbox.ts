@@ -636,6 +636,7 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
     });
     const out: InboxDraftReplyResult = {
       body: draft.body,
+      learningKey: draft.learningKey ?? null,
       costUsd: context.costUsd,
       researched: context.researched,
       flags: draft.flags,
@@ -840,6 +841,7 @@ export async function steerRoute(req: Request): Promise<Response> {
     ledger.setInboxDraftBody(threadKey, draft.body, needsDecision ? "needs_decision" : null);
     const out: InboxSteerResult = {
       body: draft.body,
+      learningKey: draft.learningKey ?? null,
       costUsd: context.costUsd,
       researched: context.researched,
       flags: draft.flags,

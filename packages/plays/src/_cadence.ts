@@ -55,6 +55,8 @@ import {
   lintOpenerFrequency,
   overusedOpeners,
   signatureDirective,
+  learningBlock,
+  stampLearningInput,
   voiceBlock,
 } from "./_lib.ts";
 
@@ -76,12 +78,19 @@ export type StepPayload =
       angle?: DraftAngleChoice;
       /** Hash of the founder's voice card in the prompt; absent when none was set. */
       voiceKey?: string | null;
+      /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
+      learningKey?: string | null;
       /** Hold a price or a link before it sends (a pilot offer must carry neither). */
       hardBans?: boolean;
     }
   | { kind: "sms"; message: string; toPhone?: string }
   /** A LinkedIn message into the conversation opened by an accepted invite. */
-  | { kind: "linkedin_message"; text: string }
+  | {
+      kind: "linkedin_message";
+      text: string;
+      voiceKey?: string | null;
+      learningKey?: string | null;
+    }
   | {
       kind: "voice";
       objective: string;
@@ -2299,6 +2308,16 @@ export function buildFollowUpEmail(opts: {
     // VOICE: the founder's register, when a card is set. The breakup step
     // gets the no-aphorism budget; every other follow-up the default one.
     const voice = voiceBlock(opts.promptName === "breakup-email" ? "breakup" : "followup");
+    // LEARNED: approved writing preferences for email follow-ups (#813).
+    const learned = learningBlock({
+      channel: "email",
+      stage: "follow_up",
+      cfg: ctx.cfg,
+      prospectId: ctx.prospect.id,
+      playName: opts.playName,
+      campaignAngle: edgeSelection?.angle,
+      history: priorBlock,
+    });
     // Judged now, not at the intro: a demo day that was ahead of them then
     // may be behind them by the time this step sends.
     const demoDay = prospectDemoDay(ctx.prospect, opts.playName);
@@ -2322,6 +2341,7 @@ export function buildFollowUpEmail(opts: {
       ...(angleBlock ? ["", angleBlock] : []),
       ...(edgeBlock ? ["", edgeBlock] : []),
       ...(voice ? ["", voice.text] : []),
+      ...(learned ? [learned.text] : []),
       ...(firstName ? ["", `PROSPECT_FIRST_NAME: ${firstName}`] : []),
       ...(avoidBlock ? ["", avoidBlock] : []),
     ].join("\n");
@@ -2329,6 +2349,7 @@ export function buildFollowUpEmail(opts: {
       { role: "system", content: system },
       { role: "user", content: user },
     ];
+    stampLearningInput(learned, messages);
     const res = await complete({ messages, temperature: 0.6, maxTokens: 500 });
     const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(res.content, {});
     if (!parsed.subject || !parsed.body) return null;
@@ -2354,6 +2375,7 @@ export function buildFollowUpEmail(opts: {
       // The voice card in the prompt, so the persisted preview's draft
       // version can be split voice on/off like an intro draft's.
       ...(voice ? { voiceKey: voice.key } : {}),
+      ...(learned ? { learningKey: learned.key } : {}),
       ...(opts.hardBans ? { hardBans: true } : {}),
       // Carried on the payload so the persisted preview, and its draft
       // version: records the angle the way an intro draft does.
@@ -2806,6 +2828,14 @@ async function buildLinkedInMessage(
     })
     .filter((line): line is string => line !== null);
   const voice = voiceBlock(which === "first" ? "followup" : "breakup");
+  const learned = learningBlock({
+    channel: "linkedin",
+    stage: "follow_up",
+    cfg: ctx.cfg,
+    prospectId: ctx.prospect.id,
+    playName,
+    history: prior,
+  });
   const input = [
     `FOUNDER: ${ctx.cfg.founderName ?? ""}`,
     `PRODUCT: ${ctx.cfg.productOneLiner ?? ""}`,
@@ -2816,8 +2846,10 @@ async function buildLinkedInMessage(
     "PRIOR TOUCHES:",
     ...(prior.length > 0 ? prior.map((l) => `  ${l}`) : ["  (none recorded)"]),
     ...(voice ? [`VOICE:\n${voice.text}`] : []),
+    ...(learned ? [learned.text] : []),
     `MAX_CHARS: ${LINKEDIN_MESSAGE_MAX_CHARS}`,
   ].join("\n");
+  stampLearningInput(learned, input);
   const res = await complete({
     messages: [
       { role: "system", content: loadPrompt("linkedin-message") },
@@ -2827,5 +2859,12 @@ async function buildLinkedInMessage(
     maxTokens: 700,
   });
   const text = res.content.trim().replace(/^"|"$/g, "");
-  return text ? { kind: "linkedin_message", text } : null;
+  return text
+    ? {
+        kind: "linkedin_message",
+        text,
+        ...(voice ? { voiceKey: voice.key } : {}),
+        ...(learned ? { learningKey: learned.key } : {}),
+      }
+    : null;
 }

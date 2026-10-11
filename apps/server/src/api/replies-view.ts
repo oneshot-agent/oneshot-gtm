@@ -155,8 +155,19 @@ export function threadContextVersion(
     voice: cfg.founderVoice,
     dossier: prospect?.dossier_json,
     angle: prospect?.angle_json,
+    // Approved guidance moved: a cached generation no longer reflects it (#813).
+    learning: guidanceVersionOrZero(),
     prompt: 1,
   });
+}
+
+/** The ledger's guidance version; 0 when a ledger double has no learning store. */
+function guidanceVersionOrZero(): number {
+  try {
+    return getLedger().learning.guidanceVersion();
+  } catch {
+    return 0;
+  }
 }
 
 export async function collectReplies(req: Request): Promise<RepliesResult> {

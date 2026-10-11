@@ -39,6 +39,8 @@ export interface DraftedRow {
   angle?: DraftAngle;
   /** Hash of the founder's voice card the draft was written with (see `PlayDraft.voiceKey`). */
   voiceKey?: string | null;
+  /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
+  learningKey?: string | null;
   /** First-touch format arm (see `PlayDraft.formatKey`). */
   formatKey?: string | null;
 }

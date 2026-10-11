@@ -16,7 +16,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
-const { complete } = await import("../src/client.ts");
+const { complete, LlmError, LlmTruncatedError } = await import("../src/client.ts");
 
 const realFetch = global.fetch;
 
@@ -77,6 +77,10 @@ describe("complete() truncation — openrouter", () => {
     expect(err.message).toBe(
       "truncated at max_tokens=512 (raise maxTokens) — openrouter test-model.",
     );
+    // Its own class, so a caller that can ask for less tells it apart from
+    // every other failure; still an LlmError for everyone else.
+    expect(err).toBeInstanceOf(LlmTruncatedError);
+    expect(err).toBeInstanceOf(LlmError);
     // Truncation is terminal. A resend reproduces it exactly.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(requestOf(fetchMock).url).toBe("https://openrouter.ai/api/v1/chat/completions");

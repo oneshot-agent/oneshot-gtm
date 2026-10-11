@@ -635,10 +635,28 @@ export class ProspectStore {
    * every backfill call. Pass null to clear both columns together, so
    * `angle_synthesized_at` can never point at a row with no `angle_json`.
    */
-  setProspectAngle(id: number, angle: string | null): void {
+  setProspectAngle(
+    id: number,
+    angle: string | null,
+    opts: { approvedAt?: string | null } = {},
+  ): void {
+    const synthesizedAt = angle == null ? null : new Date().toISOString();
+    if (opts.approvedAt !== undefined) {
+      this.db
+        .prepare(
+          "UPDATE prospects SET angle_json = ?, angle_synthesized_at = ?, angle_approved_at = ? WHERE id = ?",
+        )
+        .run(angle, synthesizedAt, angle == null ? null : opts.approvedAt, id);
+      return;
+    }
     this.db
       .prepare("UPDATE prospects SET angle_json = ?, angle_synthesized_at = ? WHERE id = ?")
-      .run(angle, angle == null ? null : new Date().toISOString(), id);
+      .run(angle, synthesizedAt, id);
+  }
+
+  /** A revision of the angle was proposed for review (#813); the debounce reads this like a synthesis. */
+  setProspectAngleProposedAt(id: number, at: string | null): void {
+    this.db.prepare("UPDATE prospects SET angle_proposed_at = ? WHERE id = ?").run(at, id);
   }
 
   /**
@@ -883,7 +901,14 @@ export class ProspectStore {
     }
     if (any.length === 0) return [];
 
-    const where = [`(${any.join(" OR ")})`];
+    const where = [
+      `(${any.join(" OR ")})`,
+      // A revision already waiting for review (#813): synthesizing again
+      // would only queue a second proposal behind the first.
+      `NOT EXISTS(SELECT 1 FROM learning_proposals lp
+                   WHERE lp.kind = 'prospect_angle' AND lp.status = 'pending'
+                     AND json_extract(lp.scope_json, '$.prospectId') = p.id)`,
+    ];
     const rows = this.db
       .query(
         `SELECT p.id, p.name, p.company, p.email, p.source, p.source_profile_url, p.linkedin_url,

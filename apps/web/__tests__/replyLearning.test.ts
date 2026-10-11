@@ -38,7 +38,7 @@ const status: ReplyLearningStatus = {
     },
   ],
 };
-it("renders inspectable preferences, historical evidence, and pause/disable controls", () => {
+it("renders one line: active count, the review link and the pause switch, never the list", () => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
@@ -50,12 +50,26 @@ it("renders inspectable preferences, historical evidence, and pause/disable cont
       createElement(ReplyPreferences, { workspace: "default" }),
     ),
   );
-  expect(html).toContain("Keep language plain.");
-  expect(html).toContain("Repeated edits");
-  expect(html).toContain("Historical example");
-  expect(html).toContain("How are you approaching this?");
+  expect(html).toContain("Writing preferences · 1 active");
+  client.setQueryData(["reply-learning", "default"], { ...status, enabled: false });
+  const paused = renderToStaticMarkup(
+    createElement(
+      QueryClientProvider,
+      { client },
+      createElement(ReplyPreferences, { workspace: "default" }),
+    ),
+  );
+  expect(paused).toContain("Writing preferences · 1 paused");
+  expect(paused).toContain("Resume learning");
+  expect(html).toContain("Manage on queue");
+  expect(html).toContain("/queue?learning=preference");
   expect(html).toContain("Pause learning");
-  expect(html).toContain("Disable");
+  // The preferences and their evidence live in the Learning strip on /queue.
+  expect(html).not.toContain("Keep language plain.");
+  expect(html).not.toContain("How are you approaching this?");
+  expect(html).not.toContain("Disable");
+  // The plain state carries no explanatory sentence.
+  expect(html).not.toContain("Applied to new email");
   client.clear();
 });
 it("explains paused, pending, empty, and failed states", () => {

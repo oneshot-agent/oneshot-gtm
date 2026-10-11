@@ -21,7 +21,7 @@ Return ONLY a JSON object:
 
 Rules:
 - `companies`: every organization the page lists as a member of the list, in page order. Skip the table header, the page's own project, and any company named only in passing (a footnote, a link in the intro).
-- `name`: the organization's name as written.
+- `name`: the organization's name as written, without the list's own tag on it: "Adobe (member)" is "Adobe", "Bloomberg*" is "Bloomberg".
 - `website`: the organization's own site when the page links or states it (e.g. "https://www.example.com"). Never a GitHub, LinkedIn or X link, never the list's own site, never a guess. null otherwise.
 - `context`: the page's own words about this organization (e.g. its description of use), under 30 words. null when the page says nothing about it.
 - `contacts`: people the page names for this organization. `github` is the handle without "@" when the page gives a GitHub profile; `linkedin` is the profile URL when given; `name` only when the page writes a real name. An empty list when none.

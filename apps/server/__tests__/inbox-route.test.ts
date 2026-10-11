@@ -618,6 +618,7 @@ describe("inbox route — research-grounded drafting", () => {
     };
     expect(out).toEqual({
       body: "the draft",
+      learningKey: null,
       costUsd: 0.06,
       researched: true,
       flags: [],

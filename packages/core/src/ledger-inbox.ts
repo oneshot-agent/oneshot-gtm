@@ -480,6 +480,27 @@ export class InboxStore {
   }
 
   /** All persisted inbound replies for one prospect, oldest first. */
+  /**
+   * Recent human replies on one play carrying one of the given intents
+   * (#813): the objections a campaign-angle suggestion reads. Automated and
+   * opt-out replies never qualify, whatever their label.
+   */
+  listRepliesByIntentForPlay(
+    playName: string,
+    intents: readonly string[],
+    limit = 20,
+  ): InboxReplyRecord[] {
+    if (intents.length === 0) return [];
+    return this.db
+      .query(
+        `SELECT * FROM inbox_replies
+          WHERE play_name = ? AND COALESCE(kind, 'human') = 'human'
+            AND intent IN (${intents.map(() => "?").join(",")})
+          ORDER BY received_at DESC LIMIT ?`,
+      )
+      .all(playName, ...intents, Math.max(1, Math.floor(limit))) as InboxReplyRecord[];
+  }
+
   listInboxRepliesForProspect(prospectId: number): InboxReplyRecord[] {
     const rows = this.db
       .query(`SELECT * FROM inbox_replies WHERE prospect_id = ? ORDER BY received_at ASC, id ASC`)

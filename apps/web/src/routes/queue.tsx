@@ -25,13 +25,14 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   blockingFlags,
   isQueueImportInProgress,
   isRunnablePlay,
   type PackApplyResult,
+  type DecisionReason,
   type QueueRowView,
   type QueueStatusView,
   type TriggerView,
@@ -44,11 +45,13 @@ import { Field, Input, Select, Textarea } from "../components/primitives/Field.t
 import { Modal } from "../components/primitives/Modal.tsx";
 import { AddProspectForm } from "../components/queue/AddProspectForm.tsx";
 import { AngleUsagePanel } from "../components/queue/AngleUsagePanel.tsx";
+import { LearningProposalsCard } from "../components/queue/LearningProposalsCard.tsx";
 import { MoveToWorkspace } from "../components/queue/MoveToWorkspace.tsx";
 import { moveTargets, movedRowUrl, type MoveTarget } from "../lib/moveTargets.ts";
 import { DraftHistory } from "../components/ledger/DraftHistory.tsx";
 import { neverSentAngles, removeAngleFromConfigText } from "../lib/angleRetire.ts";
 import { useMask, usePrivacy } from "../lib/privacy.tsx";
+import { RejectReasonFields } from "../components/queue/RejectReasonFields.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
 import {
@@ -75,12 +78,7 @@ import {
 import { humanInterval } from "../lib/humanInterval.ts";
 import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
 import { fitReasonFor, movedProvenance, movedRejectReason } from "../lib/queueRationale.ts";
-import {
-  appendReason,
-  REJECT_REASON_CHIPS,
-  suggestRejectReason,
-  type RejectReasonSource,
-} from "../lib/rejectReason.ts";
+import { suggestRejectReason, type RejectReasonSource } from "../lib/rejectReason.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import {
   CHANNEL_LABELS,
@@ -192,6 +190,8 @@ interface RejectModalState {
   ids: number[];
   email: string | null;
   suggested: string;
+  /** The category the prefill implies (a machine note names its gate). */
+  suggestedDecision: DecisionReason | null;
   source: RejectReasonSource;
   /**
    * Opened under privacy mode: nothing is prefilled and the LLM fallback is
@@ -244,7 +244,10 @@ function QueuePage() {
       setSettled(true);
       return;
     }
-    void queueNavigate({ search: stored, replace: true }).finally(() => setSettled(true));
+    void queueNavigate({
+      search: { ...stored, learning: search.learning, prospectId: search.prospectId },
+      replace: true,
+    }).finally(() => setSettled(true));
     // Mount-only: later filter changes save below instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -256,45 +259,26 @@ function QueuePage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [rejectModal, setRejectModal] = useState<RejectModalState | null>(null);
   const [rejectReason, setRejectReason] = useState("");
-  // True while the LLM fallback is drafting a sentence for a row that had
-  // nothing to prefill from. The box is editable throughout; a reply only
-  // lands if the founder hasn't typed yet.
-  const [rejectDrafting, setRejectDrafting] = useState(false);
-  const [rejectDraftOutcome, setRejectDraftOutcome] = useState<"idle" | "empty" | "error">("idle");
-  const [rejectDraftAttempt, setRejectDraftAttempt] = useState(0);
-  useEffect(() => {
-    setRejectDraftOutcome("idle");
-    if (!rejectModal) {
-      setRejectReason("");
-      setRejectDrafting(false);
-      return;
-    }
-    setRejectReason(rejectModal.suggested);
-    const single = rejectModal.ids.length === 1 ? rejectModal.ids[0] : undefined;
-    if (single === undefined || rejectModal.suggested || rejectModal.privacy) {
-      setRejectDrafting(false);
-      return;
-    }
-    let live = true;
-    setRejectDrafting(true);
-    api
-      .suggestRejectReason(single)
-      .then((r) => {
-        if (!live) return;
-        setRejectDrafting(false);
-        if (r.reason) setRejectReason((cur) => (cur.trim() ? cur : r.reason!));
-        else setRejectDraftOutcome("empty");
-      })
-      .catch(() => {
-        if (live) {
-          setRejectDrafting(false);
-          setRejectDraftOutcome("error");
-        }
-      });
-    return () => {
-      live = false;
-    };
-  }, [rejectModal, rejectDraftAttempt]);
+  // The structured why (#813). Both answers open on the row's own prefill;
+  // `RejectReasonFields` (keyed per open) fills the rest from the model.
+  const [rejectDecisionReason, setRejectDecisionReason] = useState<DecisionReason | "">("");
+  const [rejectOpenSeq, setRejectOpenSeq] = useState(0);
+  // Set in the SAME step that opens the box: the fields mount once, already
+  // holding the prefill. Done in an effect instead, they would mount empty
+  // first and ask the model for a row that needed no asking.
+  const openReject = (next: RejectModalState) => {
+    setRejectReason(next.suggested);
+    setRejectDecisionReason(next.suggestedDecision ?? "");
+    setRejectOpenSeq((n) => n + 1);
+    setRejectModal(next);
+  };
+  const onRejectFieldsChange = useCallback(
+    (patch: { reason?: string; decisionReason?: DecisionReason | "" }) => {
+      if (patch.reason !== undefined) setRejectReason(patch.reason);
+      if (patch.decisionReason !== undefined) setRejectDecisionReason(patch.decisionReason);
+    },
+    [],
+  );
   const [drainModal, setDrainModal] = useState<DrainModalState | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [drainLimit, setDrainLimit] = useState(10);
@@ -346,7 +330,10 @@ function QueuePage() {
   };
 
   const approve = useMutation({
-    mutationFn: (id: number) => api.approveQueue(id),
+    // A plain approve records no fit judgment; "approve as fit" is the
+    // explicit choice that makes the decision ICP evidence (#813).
+    mutationFn: (vars: { id: number; fit?: boolean }) =>
+      api.approveQueue(vars.id, vars.fit ? "fit" : undefined),
     onSuccess: invalidate,
     onError: (err) => toast.error(`couldn't approve · ${err.message}`),
   });
@@ -384,7 +371,8 @@ function QueuePage() {
     onError: (err) => toast.error(`couldn't move · ${err.message}`),
   });
   const reject = useMutation({
-    mutationFn: (vars: { id: number; reason: string }) => api.rejectQueue(vars.id, vars.reason),
+    mutationFn: (vars: { id: number; reason: string; decisionReason?: DecisionReason }) =>
+      api.rejectQueue(vars.id, vars.reason, vars.decisionReason),
     onSuccess: () => {
       setRejectModal(null);
       invalidate();
@@ -421,12 +409,17 @@ function QueuePage() {
     },
   });
   const bulkReject = useMutation({
-    mutationFn: async (vars: { ids: number[]; reason: string }) => {
+    mutationFn: async (vars: {
+      ids: number[];
+      reason: string;
+      decisionReason?: DecisionReason;
+    }) => {
       let ok = 0;
       for (const id of vars.ids) {
         try {
           // The one reason lands on every row; "" leaves each row's own note.
-          await api.rejectQueue(id, vars.reason || undefined);
+          // A structured reason chosen for the batch is explicit for each row too.
+          await api.rejectQueue(id, vars.reason || undefined, vars.decisionReason);
           ok++;
         } catch {
           /* ignore */
@@ -549,7 +542,7 @@ function QueuePage() {
       </section>
 
       <IcpBanner />
-      <IcpProposalsCard />
+      <LearningProposalsCard kind={search.learning} prospectId={search.prospectId} />
       <TriggersCard queueEmpty={queueQuery.isLoading ? null : rows.length === 0} />
 
       <section>
@@ -693,17 +686,18 @@ function QueuePage() {
                   }}
                   onToggle={() => setExpanded(expanded === row.id ? null : row.id)}
                   generating={generating.has(row.id)}
-                  onApprove={() => approve.mutate(row.id)}
+                  onApprove={(fit) => approve.mutate({ id: row.id, fit })}
                   onMove={(workspace) => move.mutate({ id: row.id, workspace })}
                   moveTargets={targets}
                   onReject={() => {
                     const s = masked
-                      ? { text: "", source: null }
+                      ? { text: "", source: null, decisionReason: null }
                       : suggestRejectReason({ payload: row.payload, notes: row.notes });
-                    setRejectModal({
+                    openReject({
                       ids: [row.id],
                       email: emailFor(row.payload),
                       suggested: s.text,
+                      suggestedDecision: s.decisionReason,
                       source: s.source,
                       privacy: masked,
                     });
@@ -771,10 +765,11 @@ function QueuePage() {
               size="sm"
               disabled={bulkReject.isPending || selected.size === 0}
               onClick={() =>
-                setRejectModal({
+                openReject({
                   ids: [...selected],
                   email: null,
                   suggested: "",
+                  suggestedDecision: null,
                   source: null,
                   privacy: masked,
                 })
@@ -829,10 +824,11 @@ function QueuePage() {
               onClick={() => {
                 if (!rejectModal) return;
                 const reason = rejectReason.trim();
+                const decisionReason = rejectDecisionReason || undefined;
                 if (rejectModal.ids.length === 1) {
-                  reject.mutate({ id: rejectModal.ids[0]!, reason });
+                  reject.mutate({ id: rejectModal.ids[0]!, reason, decisionReason });
                 } else {
-                  bulkReject.mutate({ ids: rejectModal.ids, reason });
+                  bulkReject.mutate({ ids: rejectModal.ids, reason, decisionReason });
                 }
               }}
               disabled={reject.isPending || bulkReject.isPending}
@@ -847,84 +843,17 @@ function QueuePage() {
           </>
         }
       >
-        <div role="status" aria-live="polite" aria-atomic="true">
-          {rejectDrafting ? (
-            <div className="mb-3 flex items-start gap-3 rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3">
-              <Loader2
-                size={18}
-                aria-hidden="true"
-                className="mt-0.5 shrink-0 animate-spin text-ink-cream-2 motion-reduce:animate-none"
-              />
-              <div>
-                <p className="m-0 text-[13px] font-medium text-ink-cream">
-                  Drafting rejection reason…
-                </p>
-                <p className="mt-1 text-[12px] leading-5 text-ink-muted">
-                  Checking the available prospect evidence. You can write your own reason while this
-                  runs.
-                </p>
-              </div>
-            </div>
-          ) : !rejectReason.trim() && rejectDraftOutcome !== "idle" ? (
-            <div className="mb-3 rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3">
-              <p className="m-0 text-[13px] text-ink-cream-2">
-                {rejectDraftOutcome === "error"
-                  ? "Couldn’t generate a suggestion."
-                  : "No suggestion returned."}
-              </p>
-              <p className="mt-1 text-[12px] leading-5 text-ink-muted">
-                Write your own reason or choose one below.
-              </p>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="mt-2"
-                onClick={() => setRejectDraftAttempt((n) => n + 1)}
-                {...readOnly}
-              >
-                <RotateCw size={12} aria-hidden="true" /> Try again
-              </Button>
-            </div>
-          ) : null}
-        </div>
-        <Field label="Reason (optional — kept on the prospect's timeline)">
-          <Textarea
-            rows={3}
-            autoFocus
-            value={rejectReason}
-            onChange={(e) => setRejectReason(e.target.value)}
-            placeholder={
-              rejectDrafting
-                ? "drafting a reason from the row's evidence…"
-                : "e.g. wrong stage, wrong industry, already a customer"
-            }
+        {rejectModal && (
+          <RejectReasonFields
+            key={rejectOpenSeq}
+            rowId={rejectModal.ids.length === 1 ? rejectModal.ids[0]! : null}
+            value={{ reason: rejectReason, decisionReason: rejectDecisionReason }}
+            onChange={onRejectFieldsChange}
+            source={rejectModal.source}
+            privacy={rejectModal.privacy}
+            disabled={reject.isPending || bulkReject.isPending}
           />
-        </Field>
-        {rejectModal?.source === "person-gate" && (
-          <p className="mt-1 text-xs text-ink-muted">
-            Prefilled from the ICP gate's verdict — edit freely, or clear it.
-          </p>
         )}
-        {rejectModal?.source === "notes" && (
-          <p className="mt-1 text-xs text-ink-muted">
-            Prefilled from the finder's note — edit freely, or clear it.
-          </p>
-        )}
-        {rejectModal?.privacy && (
-          <p className="mt-1 text-xs text-ink-faint">Privacy mode — nothing prefilled.</p>
-        )}
-        <div className="mt-2 flex flex-wrap gap-1">
-          {REJECT_REASON_CHIPS.map((chip) => (
-            <Button
-              key={chip}
-              variant="ghost"
-              size="sm"
-              onClick={() => setRejectReason((cur) => appendReason(cur, chip))}
-            >
-              {chip}
-            </Button>
-          ))}
-        </div>
       </Modal>
 
       <Modal
@@ -1011,7 +940,8 @@ export function QueueRow({
   onToggleSelect: () => void;
   onToggle: () => void;
   generating: boolean;
-  onApprove: () => void;
+  /** `fit` = also record an explicit fit judgment for the ICP (#813). */
+  onApprove: (fit?: boolean) => void;
   onReject: () => void;
   /** Hand the row to another workspace (components/queue/MoveToWorkspace.tsx). */
   onMove: (workspace: string) => void;
@@ -1187,10 +1117,11 @@ export function QueueRow({
                 variant="primary"
                 size="sm"
                 disabled={busy}
-                onClick={onApprove}
+                // Overriding the gate's fit rejection IS an explicit fit judgment.
+                onClick={() => onApprove(canApproveFit)}
                 title={
                   canApproveFit
-                    ? "Override the saved fit rejection and approve this prospect for sending"
+                    ? "Override the saved fit rejection and approve this prospect for sending (records an explicit fit judgment)"
                     : undefined
                 }
                 {...readOnly}
@@ -1199,6 +1130,22 @@ export function QueueRow({
                 {canApproveFit ? "Approve fit" : "approve"}
               </Button>
             )}
+            {!canApproveFit &&
+              (row.status === "pending" ||
+                row.status === "rejected" ||
+                (row.status === "expired" && !isQueueImportInProgress(row))) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => onApprove(true)}
+                  title="Approve and record an explicit fit judgment: this is who you sell to (teaches the ICP)"
+                  className="whitespace-nowrap"
+                  {...readOnly}
+                >
+                  as fit
+                </Button>
+              )}
             {(row.status === "pending" || row.status === "approved") && (
               <Button
                 variant="ghost"
@@ -1980,6 +1927,7 @@ function PackPicker() {
 
 function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const triggersQuery = useQuery({
     queryKey: ["triggers"],
     queryFn: () => api.triggers(),
@@ -2020,6 +1968,24 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
       void qc.invalidateQueries({ queryKey: ["triggers"] });
     },
     onError: (err) => toast.error(err.message),
+  });
+  const suggestAngles = useMutation({
+    mutationFn: (name: string) => api.suggestAngles(name),
+    onSuccess: (data, name) => {
+      void qc.invalidateQueries({ queryKey: ["learning-proposals"] });
+      if (!data.proposal) {
+        toast.message(`${name} · no change suggested`, { description: data.reason });
+        return;
+      }
+      toast.success(`${name} · angle changes proposed`, {
+        description: "Review them in the Learning card at the top of this page.",
+        action: {
+          label: "review",
+          onClick: () => void navigate({ to: "/queue", search: { learning: "campaign_angle" } }),
+        },
+      });
+    },
+    onError: (err: Error) => toast.error(`couldn't suggest · ${err.message}`),
   });
   const runTrigger = useMutation({
     mutationFn: (name: string) => {
@@ -2140,6 +2106,8 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
         editError={isEditing ? editError : null}
         onToggleEnabled={(next) => setEnabled.mutate({ name: t.name, enabled: next })}
         onRun={() => runTrigger.mutate(t.name)}
+        onSuggestAngles={() => suggestAngles.mutate(t.name)}
+        suggestingAngles={suggestAngles.isPending && suggestAngles.variables === t.name}
         onSetInterval={(ms) =>
           setConfig.mutate({
             name: t.name,
@@ -2335,6 +2303,9 @@ interface TriggerRowProps {
   onChangeEditText: (text: string) => void;
   onResetDefaults: () => void;
   onSaveEdit: () => void;
+  /** Ask for a reviewed angle-set proposal (#813). */
+  onSuggestAngles: () => void;
+  suggestingAngles: boolean;
   setEnabledPending: boolean;
   setConfigPending: boolean;
 }
@@ -2550,6 +2521,8 @@ function TriggerRowFragment(props: TriggerRowProps) {
                   voiceUsage={t.voiceUsage ?? null}
                   formatUsage={t.formatUsage ?? null}
                   disabled={props.setConfigPending || READ_ONLY}
+                  onSuggest={props.onSuggestAngles}
+                  suggesting={props.suggestingAngles}
                   onRetire={(angleText) => {
                     const next = removeAngleFromConfigText(props.editing?.text ?? "", angleText);
                     if (next == null) {
@@ -2647,83 +2620,6 @@ function IcpBanner() {
       >
         Edit ICP
       </Link>
-    </section>
-  );
-}
-
-/**
- * Learning-loop v2 (issue #750): the background job (`icp-proposals.ts`)
- * periodically proposes a tighter ICP one-liner from accumulated approve/
- * reject decisions, but the active ICP never changes without this explicit
- * approval — dismiss leaves it untouched. Nothing to show when there is no
- * pending proposal (the common case).
- */
-export function IcpProposalsCard() {
-  const qc = useQueryClient();
-  const query = useQuery({
-    queryKey: ["icp-proposals"],
-    queryFn: () => api.icpProposals(),
-    refetchInterval: 60_000,
-  });
-  const invalidate = (): void => {
-    void qc.invalidateQueries({ queryKey: ["icp-proposals"] });
-    void qc.invalidateQueries({ queryKey: ["setup"] });
-  };
-  const approve = useMutation({
-    mutationFn: (id: string) => api.approveIcpProposal(id),
-    onSuccess: () => {
-      toast.success("ICP updated");
-      invalidate();
-    },
-    onError: (err: Error) => toast.error(`couldn't approve · ${err.message}`),
-  });
-  const dismiss = useMutation({
-    mutationFn: (id: string) => api.dismissIcpProposal(id),
-    onSuccess: invalidate,
-    onError: (err: Error) => toast.error(`couldn't dismiss · ${err.message}`),
-  });
-  const proposals = query.data?.proposals ?? [];
-  if (proposals.length === 0) return null;
-  return (
-    <section className="space-y-3 border-b border-ink-rule px-6 py-4">
-      {proposals.map((p) => (
-        <div
-          key={p.id}
-          className="rounded-sm border border-[color:var(--ink-receipt)]/50 bg-[color:var(--ink-receipt)]/6 p-3"
-        >
-          <div className="ln-eyebrow" style={{ color: "var(--ink-receipt-2)" }}>
-            Proposed ICP rewrite
-          </div>
-          <div className="mt-1 grid gap-1 text-[13px] leading-5">
-            <div className="text-ink-muted">
-              Current: <span className="text-ink-cream-2">{p.currentIcp}</span>
-            </div>
-            <div className="text-ink-cream">
-              Proposed: <span className="font-medium">{p.proposedIcp}</span>
-            </div>
-          </div>
-          <p className="mt-1.5 text-[12px] leading-5 text-ink-muted">{p.evidenceSummary}</p>
-          <div className="mt-2 flex items-center gap-2">
-            <Button
-              size="sm"
-              disabled={approve.isPending || dismiss.isPending || READ_ONLY}
-              onClick={() => approve.mutate(p.id)}
-              {...readOnly}
-            >
-              Approve
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={approve.isPending || dismiss.isPending || READ_ONLY}
-              onClick={() => dismiss.mutate(p.id)}
-              {...readOnly}
-            >
-              Dismiss
-            </Button>
-          </div>
-        </div>
-      ))}
     </section>
   );
 }

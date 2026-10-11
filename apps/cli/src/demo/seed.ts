@@ -50,6 +50,9 @@ export class DemoSeedError extends Error {}
  * enrichment or a pending candidate from an earlier run surface on screen.
  */
 const SEEDED_TABLES = [
+  "learning_proposals",
+  "learning_guidance",
+  "learning_state",
   "receipts",
   "prospects",
   "sequence_events",
@@ -405,6 +408,61 @@ function writeLedger(dbPath: string, data: DemoDataset): Record<string, number> 
       insertInterview.run(iv.person, iv.transcriptPath, iv.jtbd, iv.painQuotesJson, iv.createdAt);
     }
     counts["interviews"] = data.interviews.length;
+
+    // Learning proposals and approved guidance (#813): the /queue card reads
+    // these; the demo refuses every decision on them.
+    const insertProposal = db.prepare(
+      `INSERT INTO learning_proposals(id, kind, scope_json, scope_key, current_json, proposed_json, evidence_json,
+         evidence_summary, baseline_key, dedupe_key, status, legacy, created_at, decided_at, applied_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const p of data.learning.proposals) {
+      const scopeKey =
+        p.kind === "prospect_angle"
+          ? `prospect:${String(p.scope["prospectId"])}`
+          : p.kind === "campaign_angle"
+            ? `play:${String(p.scope["playName"])}`
+            : p.kind === "preference"
+              ? `pref:${String(p.scope["channel"] ?? "any")}:${String(p.scope["stage"] ?? "any")}`
+              : "";
+      insertProposal.run(
+        p.id,
+        p.kind,
+        JSON.stringify(p.scope),
+        scopeKey,
+        p.current === null || p.current === undefined ? null : JSON.stringify(p.current),
+        JSON.stringify(p.proposed),
+        JSON.stringify(p.evidence),
+        p.evidenceSummary,
+        p.baselineKey,
+        p.dedupeKey,
+        p.status,
+        p.legacy ? 1 : 0,
+        p.createdAt,
+        p.decidedAt,
+        p.status === "approved" ? p.decidedAt : null,
+      );
+    }
+    counts["learning_proposals"] = data.learning.proposals.length;
+    const insertGuidance = db.prepare(
+      `INSERT INTO learning_guidance(id, instruction, source, channel, stage, proposal_id, evidence_json, status, approved_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, '{"refs":[]}', 'enabled', ?, ?)`,
+    );
+    for (const g of data.learning.guidance)
+      insertGuidance.run(
+        g.id,
+        g.instruction,
+        g.source,
+        g.channel,
+        g.stage,
+        g.proposalId,
+        g.approvedAt,
+        g.approvedAt,
+      );
+    db.prepare("INSERT OR REPLACE INTO learning_state(id, guidance_version) VALUES (1, ?)").run(
+      data.learning.guidance.length,
+    );
+    counts["learning_guidance"] = data.learning.guidance.length;
 
     // The dataset's decided queue rows carry status + reviewed_at but not the
     // decision columns; derive them the way the ledger does for legacy rows.

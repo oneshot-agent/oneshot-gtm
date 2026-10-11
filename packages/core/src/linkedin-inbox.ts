@@ -1,3 +1,4 @@
+import { triggerAngleRefresh } from "./angle.ts";
 import { Database } from "bun:sqlite";
 import { openStateDatabase } from "./sqlite-open.ts";
 import { existsSync } from "node:fs";
@@ -724,7 +725,7 @@ export class LinkedInInboxStore {
           )
           .get(eventId) as { prospect_id: number } | null;
         if (isOwner && !legacy && (!existing || existing.prospect_id === match.prospectId)) {
-          ledger.recordLinkedInReply({
+          const recorded = ledger.recordLinkedInReply({
             prospectId: match.prospectId,
             accountKey: t.accountKey,
             source: "oneshot-linkedin",
@@ -732,6 +733,9 @@ export class LinkedInInboxStore {
             occurredAt: m.sent_at,
             body: m.text,
           });
+          // A human LinkedIn reply is new evidence for the prospect's angle
+          // (#813), exactly as a human email reply is: proposes a revision.
+          if (!recorded.duplicate) triggerAngleRefresh(match.prospectId);
         } else {
           ledger.suppressCadencesForReply(match.prospectId, t.accountKey);
         }

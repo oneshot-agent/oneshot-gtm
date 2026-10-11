@@ -152,7 +152,13 @@ describe("POST /api/queue/:id/move", () => {
     const payload = sent["payload"] as Record<string, unknown>;
     expect(payload).toEqual({ name: "Ada", email: "ada@example.com", cohort: "yc-w26" });
     expect(statusCalls).toEqual([
-      { id: 746, status: "rejected", decidedBy: "human", notes: "moved to gtm" },
+      {
+        id: 746,
+        status: "rejected",
+        decidedBy: "human",
+        decisionReason: "other",
+        notes: "moved to gtm",
+      },
     ]);
   });
 

@@ -23,6 +23,8 @@ let personVerdict: "pass" | "reject" | "unclear" | "transient" = "pass";
 
 interface StubPerson {
   full_name?: string;
+  first_name?: string;
+  last_name?: string | null;
   title?: string;
   company?: string;
   company_domain?: string;
@@ -48,6 +50,13 @@ interface StubLocal {
 }
 
 let nextPeopleSearchResults: StubPerson[] = [];
+/** Set to answer each people search by its input (paging, per-title searches). */
+let peopleSearchHandler: ((input: Record<string, unknown>) => StubPerson[]) | null = null;
+/** Dedupe keys the queue already holds. */
+const knownKeys = new Set<string>();
+/** The ledger's small key-value cache. */
+const researchCache = new Map<string, string>();
+let icpCalls = 0;
 let nextCompanySearchResults: StubCompany[] = [];
 let nextLocalSearchResults: StubLocal[] = [];
 let localSearchStatus: "ok" | "error" = "ok";
@@ -60,13 +69,9 @@ const verifyEmailCalls: string[] = [];
 vi.mock("../src/_sdk-safe.ts", () => ({
   safePeopleSearch: async (input: Record<string, unknown>) => {
     peopleSearchCalls.push(input);
+    const results = peopleSearchHandler ? peopleSearchHandler(input) : nextPeopleSearchResults;
     return {
-      result: {
-        status: "ok",
-        results: nextPeopleSearchResults,
-        total_found: nextPeopleSearchResults.length,
-        cost: 0.01,
-      },
+      result: { status: "ok", results, total_found: results.length, cost: 0.01 },
       receiptId: 1,
     };
   },
@@ -108,10 +113,13 @@ vi.mock("../src/_sdk-safe.ts", () => ({
 
 vi.mock("../src/_filter.ts", () => ({
   resolveIcp: () => "icp",
-  icpFilter: async () => ({
-    match: icpMatch,
-    reason: icpMatch === null ? "icp classifier unavailable" : icpMatch ? "fits" : "nope",
-  }),
+  icpFilter: async () => {
+    icpCalls++;
+    return {
+      match: icpMatch,
+      reason: icpMatch === null ? "icp classifier unavailable" : icpMatch ? "fits" : "nope",
+    };
+  },
   hasRoleText: (p: { roleText?: string | null }) => (p.roleText ?? "").trim().length > 0,
   qualifyPerson: async () => ({ verdict: personVerdict, reason: "stub" }),
 }));
@@ -135,7 +143,11 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     logEvent: () => {},
     getLedger: () => ({
-      isQueueDuplicate: () => false,
+      isQueueDuplicate: (_play: string, dedupeKey: string) => knownKeys.has(dedupeKey),
+      getProductResearchCache: (key: string) => researchCache.get(key) ?? null,
+      setProductResearchCache: (key: string, value: string) => {
+        researchCache.set(key, value);
+      },
       isLinkedInProfileKnown: () => false,
       enqueueTarget: (row: EnqueuedRow) => {
         enqueued.push(row);
@@ -145,7 +157,8 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
-const { runLocalBusinessFinder } = await import("../src/local-business.ts");
+const { runLocalBusinessFinder, isContactable, parseSearchProgress, peopleQueries } =
+  await import("../src/local-business.ts");
 const { withFinderChannels } = await import("../src/_channels-context.ts");
 
 const basePerson: StubPerson = {
@@ -161,6 +174,10 @@ beforeEach(() => {
   icpMatch = true;
   personVerdict = "pass";
   nextPeopleSearchResults = [];
+  peopleSearchHandler = null;
+  knownKeys.clear();
+  researchCache.clear();
+  icpCalls = 0;
   nextCompanySearchResults = [];
   nextLocalSearchResults = [];
   localSearchStatus = "ok";
@@ -243,6 +260,383 @@ describe("runLocalBusinessFinder — people search size", () => {
     // ~2.2s per row measured 2026-09-27: 50 rows took 107s, 100 timed out.
     expect(limit).toBeGreaterThan(0);
     expect(limit).toBeLessThanOrEqual(40);
+  });
+});
+
+/** `n` complete people starting at index `from`, each with a work email (the cheap lane). */
+function people(from: number, n: number): StubPerson[] {
+  return Array.from({ length: n }, (_, i) => ({
+    full_name: `Person ${from + i}`,
+    title: "Head of AI",
+    company: `Company ${from + i}`,
+    company_domain: `company${from + i}.com`,
+    linkedin_url: `https://www.linkedin.com/in/person-${from + i}`,
+    best_work_email: `p${from + i}@company${from + i}.com`,
+  }));
+}
+const keyOf = (i: number) => `free-pilot:li:https://www.linkedin.com/in/person-${i}`;
+/** A row the people database returns with a first name and nothing else. */
+const nameOnly = (first: string): StubPerson => ({
+  full_name: first,
+  first_name: first,
+  last_name: null,
+  title: "Chief AI Officer",
+  company: "A Bank",
+});
+
+describe("runLocalBusinessFinder — paging past people it already has", () => {
+  it("people already in the queue do not use up the limit", async () => {
+    // The first 30 of the page are known. Counting them against the limit is
+    // what stalled the finder on its first page every day.
+    nextPeopleSearchResults = people(0, 35);
+    for (let i = 0; i < 30; i++) knownKeys.add(keyOf(i));
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["Head of AI"],
+      limit: 5,
+      yourEdge: "x",
+    });
+    expect(out.droppedDuplicate).toBe(30);
+    expect(out.enqueued).toBe(5);
+  });
+
+  it("asks for the next page by offset when a full page leaves room under the limit", async () => {
+    peopleSearchHandler = (input) => {
+      const offset = (input["offset"] as number | undefined) ?? 0;
+      return offset === 0 ? people(0, 40) : offset === 40 ? people(40, 12) : [];
+    };
+    for (let i = 0; i < 40; i++) knownKeys.add(keyOf(i));
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["Head of AI"],
+      limit: 25,
+      yourEdge: "x",
+    });
+    // Page 2 is short, so it is the last: no third call.
+    expect(peopleSearchCalls.map((c) => c["offset"] ?? 0)).toEqual([0, 40]);
+    expect(out.candidates).toBe(52);
+    expect(out.enqueued).toBe(12);
+    expect(out.costUsd).toBeCloseTo(0.02, 5);
+  });
+
+  it("stops asking once the limit is reached", async () => {
+    peopleSearchHandler = (input) => people((input["offset"] as number | undefined) ?? 0, 40);
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["Head of AI"],
+      limit: 3,
+      yourEdge: "x",
+    });
+    expect(peopleSearchCalls).toHaveLength(1);
+    expect(out.enqueued).toBe(3);
+  });
+
+  it("stops when the server ignores the offset and returns the same page again", async () => {
+    nextPeopleSearchResults = people(0, 40);
+    for (let i = 0; i < 40; i++) knownKeys.add(keyOf(i));
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+    expect(peopleSearchCalls).toHaveLength(2);
+  });
+
+  it("stops at the page cap, and the next run carries on from there", async () => {
+    // 300 people, the first 280 known: six pages a run never reaches the new
+    // ones unless the second run starts where the first stopped.
+    peopleSearchHandler = (input) => {
+      const offset = (input["offset"] as number | undefined) ?? 0;
+      return people(offset, Math.max(0, Math.min(40, 300 - offset)));
+    };
+    for (let i = 0; i < 280; i++) knownKeys.add(keyOf(i));
+    const run = () =>
+      runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+
+    const first = await run();
+    expect(peopleSearchCalls.map((c) => c["offset"] ?? 0)).toEqual([0, 40, 80, 120, 160, 200]);
+    expect(first.enqueued).toBe(0);
+
+    peopleSearchCalls.length = 0;
+    const second = await run();
+    expect(peopleSearchCalls.map((c) => c["offset"] ?? 0)).toEqual([240, 280]);
+    expect(second.enqueued).toBe(20);
+  });
+
+  it("holds its place at someone a passing failure left undecided, so the next run meets them again", async () => {
+    // 280 people, all known but one on the third page. The classifier is
+    // down when the first run reaches that person.
+    peopleSearchHandler = (input) => {
+      const offset = (input["offset"] as number | undefined) ?? 0;
+      return people(offset, Math.max(0, Math.min(40, 280 - offset)));
+    };
+    for (let i = 0; i < 280; i++) if (i !== 100) knownKeys.add(keyOf(i));
+    const run = () =>
+      runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+
+    icpMatch = null;
+    const first = await run();
+    expect(peopleSearchCalls).toHaveLength(6);
+    expect(first.enqueued).toBe(0);
+    expect(enqueued).toHaveLength(0);
+
+    // Resumes at that person's page, not past the six pages it read.
+    icpMatch = true;
+    peopleSearchCalls.length = 0;
+    const second = await run();
+    expect(peopleSearchCalls[0]?.["offset"]).toBe(80);
+    expect(second.enqueued).toBe(1);
+    expect(enqueued[0]?.payload["name"]).toBe("Person 100");
+  });
+
+  it("a person the role gate could not judge holds the place too", async () => {
+    peopleSearchHandler = (input) => {
+      const offset = (input["offset"] as number | undefined) ?? 0;
+      return people(offset, Math.max(0, Math.min(40, 280 - offset)));
+    };
+    for (let i = 0; i < 280; i++) if (i !== 45) knownKeys.add(keyOf(i));
+    personVerdict = "transient";
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+    expect(parseSearchProgress([...researchCache.values()][0] ?? null)).toEqual({
+      done: false,
+      offset: 40,
+    });
+  });
+
+  it("saves no progress when the undecided person is on the first page", async () => {
+    peopleSearchHandler = (input) => {
+      const offset = (input["offset"] as number | undefined) ?? 0;
+      return people(offset, Math.max(0, Math.min(40, 280 - offset)));
+    };
+    for (let i = 1; i < 280; i++) knownKeys.add(keyOf(i));
+    icpMatch = null;
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+    expect(researchCache.size).toBe(0);
+  });
+
+  it("reads stored progress, and starts from the top on anything unreadable", () => {
+    expect(parseSearchProgress(JSON.stringify({ done: true }))).toEqual({ done: true });
+    expect(parseSearchProgress(JSON.stringify({ done: false, offset: 240 }))).toEqual({
+      done: false,
+      offset: 240,
+    });
+    expect(parseSearchProgress(null)).toBeNull();
+    expect(parseSearchProgress("2026-10-10T00:00:00.000Z")).toBeNull();
+    expect(parseSearchProgress(JSON.stringify({ offset: -40 }))).toBeNull();
+    expect(parseSearchProgress(JSON.stringify({ offset: "240" }))).toBeNull();
+  });
+
+  it("a search resumed past its last person is then left alone", async () => {
+    peopleSearchHandler = (input) => {
+      const offset = (input["offset"] as number | undefined) ?? 0;
+      return people(offset, Math.max(0, Math.min(40, 240 - offset)));
+    };
+    for (let i = 0; i < 240; i++) knownKeys.add(keyOf(i));
+    const run = () =>
+      runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+    await run(); // six full pages, stopped at the cap
+    peopleSearchCalls.length = 0;
+    const second = await run(); // resumes at 240: empty, so the search is finished
+    expect(peopleSearchCalls.map((c) => c["offset"])).toEqual([240]);
+    // Not "no matches, widen your targeting": the search has people, all known.
+    expect(second.halted).toMatch(/walked to its end/);
+    peopleSearchCalls.length = 0;
+    const third = await run();
+    expect(peopleSearchCalls).toHaveLength(0);
+    expect(third.halted).toMatch(/walked to its end/);
+  });
+});
+
+describe("runLocalBusinessFinder — name-only rows", () => {
+  it("tells a complete row from a name-only one", () => {
+    expect(isContactable({ full_name: "Dana Rivera", company_domain: "riverahvac.com" })).toBe(
+      true,
+    );
+    expect(
+      isContactable({ first_name: "Dana", last_name: "Rivera", linkedin_url: "https://x/in/d" }),
+    ).toBe(true);
+    // A first name is not a person to look up.
+    expect(
+      isContactable({ full_name: "David", first_name: "David", last_name: null } as never),
+    ).toBe(false);
+    expect(isContactable({ full_name: "David", company_domain: "hsbc.com" })).toBe(false);
+    // A full name with nothing that places the person.
+    expect(isContactable({ full_name: "Dana Rivera" })).toBe(false);
+    expect(isContactable({})).toBe(false);
+  });
+
+  it("skips them before the ICP call and any paid step, and says why nothing was queued", async () => {
+    nextPeopleSearchResults = [nameOnly("David"), nameOnly("Pedro"), nameOnly("Sachin")];
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["Chief AI Officer"],
+      yourEdge: "x",
+    });
+    expect(icpCalls).toBe(0);
+    expect(findEmailCalls).toHaveLength(0);
+    expect(enqueued).toHaveLength(0);
+    expect(out.droppedEnrichment).toBe(3);
+    expect(out.halted).toMatch(/3 of 3 search results had no last name/);
+    // A page with no one to contact ends the search: one call, not six.
+    expect(peopleSearchCalls).toHaveLength(1);
+  });
+
+  it("works the complete rows of a mixed page", async () => {
+    nextPeopleSearchResults = [nameOnly("David"), ...people(0, 2), nameOnly("Pedro")];
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["Head of AI"],
+      yourEdge: "x",
+    });
+    expect(out.enqueued).toBe(2);
+    expect(out.droppedEnrichment).toBe(2);
+    expect(icpCalls).toBe(2);
+    expect(out.halted).toBeUndefined();
+  });
+});
+
+describe("runLocalBusinessFinder — several titles", () => {
+  it("runs the combined search, then one per title", () => {
+    const shared = { keywords: ["agents"] };
+    expect(
+      peopleQueries({
+        businessShaped: false,
+        companyDomains: [],
+        jobTitles: ["Head of AI", "VP of AI"],
+        industries: [],
+        shared,
+      }),
+    ).toEqual([
+      { jobTitles: ["Head of AI", "VP of AI"], keywords: ["agents"] },
+      { jobTitles: ["Head of AI"], keywords: ["agents"] },
+      { jobTitles: ["VP of AI"], keywords: ["agents"] },
+    ]);
+    // One title, or business-shaped targeting: one search, as before.
+    expect(
+      peopleQueries({
+        businessShaped: false,
+        companyDomains: [],
+        jobTitles: ["Owner"],
+        industries: ["HVAC"],
+        shared: {},
+      }),
+    ).toEqual([{ jobTitles: ["Owner"], industry: ["HVAC"] }]);
+    expect(
+      peopleQueries({
+        businessShaped: true,
+        companyDomains: ["a.com"],
+        jobTitles: [],
+        industries: ["Dental"],
+        shared: { location: ["Austin"] },
+      }),
+    ).toEqual([{ companyDomains: ["a.com"], location: ["Austin"] }]);
+  });
+
+  it("reaches people only a single-title search returns, and works each person once", async () => {
+    peopleSearchHandler = (input) => {
+      const titles = input["jobTitles"] as string[];
+      if (titles.length === 2) return people(0, 3);
+      // The per-title search repeats one person and adds one.
+      return titles[0] === "Head of AI" ? [...people(2, 1), ...people(10, 1)] : [];
+    };
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["Head of AI", "VP of AI"],
+      yourEdge: "x",
+    });
+    expect(peopleSearchCalls.map((c) => c["jobTitles"])).toEqual([
+      ["Head of AI", "VP of AI"],
+      ["Head of AI"],
+      ["VP of AI"],
+    ]);
+    expect(out.enqueued).toBe(4);
+    expect(icpCalls).toBe(4);
+  });
+
+  it("does not start another search once the limit is reached", async () => {
+    nextPeopleSearchResults = people(0, 3);
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["Head of AI", "VP of AI"],
+      limit: 3,
+      yourEdge: "x",
+    });
+    expect(out.enqueued).toBe(3);
+    expect(peopleSearchCalls).toHaveLength(1);
+  });
+
+  it("does not park a search it stopped reading part-way through", async () => {
+    // One known person, then the limit is reached on the next: the rest of
+    // the page was never looked at.
+    nextPeopleSearchResults = people(0, 5);
+    knownKeys.add(keyOf(0));
+    await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["Head of AI"],
+      limit: 1,
+      yourEdge: "x",
+    });
+    expect(researchCache.size).toBe(0);
+  });
+
+  it("makes at most twelve searches in one run", async () => {
+    const titles = Array.from({ length: 20 }, (_, i) => `Title ${i}`);
+    peopleSearchHandler = () => [];
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, yourEdge: "x" });
+    expect(peopleSearchCalls).toHaveLength(12);
+  });
+});
+
+describe("runLocalBusinessFinder — a search with no one new", () => {
+  it("is left alone on the next run instead of being paid for again", async () => {
+    nextPeopleSearchResults = people(0, 10);
+    for (let i = 0; i < 10; i++) knownKeys.add(keyOf(i));
+    const first = await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["Head of AI"],
+      yourEdge: "x",
+    });
+    expect(peopleSearchCalls).toHaveLength(1);
+    expect(first.droppedDuplicate).toBe(10);
+
+    const second = await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["Head of AI"],
+      yourEdge: "x",
+    });
+    expect(peopleSearchCalls).toHaveLength(1);
+    expect(second.costUsd).toBe(0);
+    expect(second.halted).toMatch(/walked to its end/);
+  });
+
+  it("is searched again while it still returns someone new", async () => {
+    nextPeopleSearchResults = people(0, 10);
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+    expect(peopleSearchCalls).toHaveLength(2);
+  });
+
+  it("a dry run never marks a search as walked", async () => {
+    nextPeopleSearchResults = people(0, 10);
+    for (let i = 0; i < 10; i++) knownKeys.add(keyOf(i));
+    await runLocalBusinessFinder({ dryRun: true, jobTitles: ["Head of AI"], yourEdge: "x" });
+    expect(researchCache.size).toBe(0);
+  });
+
+  it("an empty search says to widen the targeting, and is tried again the next run", async () => {
+    // Zero rows is also what a platform outage returns: never park it.
+    nextPeopleSearchResults = [];
+    const run = () =>
+      runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+    expect((await run()).halted).toMatch(/returned no matches/);
+    expect((await run()).halted).toMatch(/returned no matches/);
+    expect(peopleSearchCalls).toHaveLength(2);
+    expect(researchCache.size).toBe(0);
+  });
+
+  it("a search that returned only name-only rows is tried again the next run", async () => {
+    nextPeopleSearchResults = [nameOnly("David"), nameOnly("Pedro")];
+    const run = () =>
+      runLocalBusinessFinder({ dryRun: false, jobTitles: ["Chief AI Officer"], yourEdge: "x" });
+    await run();
+    await run();
+    expect(peopleSearchCalls).toHaveLength(2);
   });
 });
 

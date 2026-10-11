@@ -171,6 +171,36 @@ describe("channel order in the contact step", () => {
   });
 });
 
+describe("a name found at the domain", () => {
+  it("is the name the person gate judges, when the finder had none", async () => {
+    const sdk = await import("../src/_sdk-safe.ts");
+    vi.mocked(sdk.safePeopleSearch).mockResolvedValue({
+      result: {
+        status: "completed",
+        results: [{ full_name: "Dana Founder", title: "Co-founder & CEO" }],
+        cost: 0.01,
+      },
+      receiptId: 3,
+    } as never);
+
+    const out = await resolveVerifyEnrichQualify({
+      ...base,
+      fullName: null,
+      allowMissingFullName: true,
+      person: { name: null, company: "Acme", evidence: "cohort company" },
+    });
+
+    expect(out).toMatchObject({ ok: true, fullName: "Dana Founder" });
+    expect(gate).toHaveBeenCalledTimes(1);
+    expect(gate.mock.calls[0]![0].person).toMatchObject({ name: "Dana Founder", company: "Acme" });
+  });
+
+  it("leaves a finder-supplied name as it was", async () => {
+    await resolveVerifyEnrichQualify(base);
+    expect(gate.mock.calls[0]![0].person).toMatchObject({ name: "Dana Lee" });
+  });
+});
+
 describe("parseChannels", () => {
   it("keeps known channels in order, once", () => {
     expect(parseChannels(["linkedin", "email", "linkedin", "fax"])).toEqual(["linkedin", "email"]);

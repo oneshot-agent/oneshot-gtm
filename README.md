@@ -133,7 +133,7 @@ Ten pages plus a run form:
 - **Setup** — founder profile, ICP, product brief, LLM provider, wallet keys, sender identities, telemetry toggle
 - **Run a play** (`/run/$playName`) — editable target rows, dry-run toggle, drafts streamed back over SSE with lint flags and receipt links
 
-A floating strategist dock on every page reads your ICP and product one-liner and proposes trigger configs as confirmation chips. Next to it, a privacy toggle masks names, emails, companies and phone numbers for screenshots. [Demo mode](./docs/demo-mode.md) seeds a fictional, fully-populated install for the same purpose.
+A floating strategist dock on every page reads your ICP and product one-liner and proposes trigger configs as confirmation chips. What the tool learns from your replies, edits and decisions arrives the same way: as proposals on `/queue` you approve, edit or dismiss before a draft sees them ([learning and approval](./docs/learning.md)). Next to it, a privacy toggle masks names, emails, companies and phone numbers for screenshots. [Demo mode](./docs/demo-mode.md) seeds a fictional, fully-populated install for the same purpose.
 
 ---
 
@@ -251,7 +251,7 @@ packages/
   prompts/    Markdown prompts — humanizer canon, per-play, per-extract
   doctor/     Wallet, ledger, key and deliverability health checks
   shared-types/  Wire types shared across CLI / server / web
-docs/         Guides: workspaces, data storage, finders, sending, direct mail, background monitoring, webhooks, demo mode, prompt inputs, voice
+docs/         Guides: workspaces, data storage, finders, sending, direct mail, background monitoring, webhooks, demo mode, prompt inputs, voice, learning
 examples/     Sample target files for nine plays
 ```
 

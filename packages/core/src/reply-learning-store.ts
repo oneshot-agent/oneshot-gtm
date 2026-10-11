@@ -10,9 +10,23 @@ import type {
   ReplyPreference,
 } from "@oneshot-gtm/shared-types";
 
+/**
+ * Reply-send evidence for writing-preference learning (v1: issue #669's
+ * LinkedIn composer; both channels since #813). This store keeps the
+ * immutable evidence — the machine original, the founder's edits and
+ * explicit feedback, the confirmed send — and the per-workspace watermark
+ * and lease of the job that reads it. It no longer holds the preferences
+ * themselves: a candidate the job accepts becomes a PENDING proposal in the
+ * ledger's `LearningStore`, and only a founder-approved proposal becomes
+ * guidance a draft can read. The v1 `reply_learning_preferences` table
+ * survives, read once by the job's legacy import.
+ */
+
+export type ReplyLearningChannel = "linkedin" | "email";
+
 export interface LearningObservation extends ReplyLearningEvidence {
   seq: number;
-  channel: "linkedin";
+  channel: ReplyLearningChannel;
   workspace: string;
   move: string | null;
   learningVersion: number;
@@ -23,6 +37,20 @@ export interface PreferenceCandidate {
   instruction: string;
   source: ReplyPreference["source"];
   evidenceIds: string[];
+}
+/** A candidate that passed citation and threshold checks, with the evidence it stands on. */
+export interface AcceptedCandidate extends PreferenceCandidate {
+  /** The one channel every cited send was on; null when the evidence spans both. */
+  channel: ReplyLearningChannel | null;
+  evidence: LearningObservation[];
+}
+/** A v1 preference row, for the one-time import into review. */
+export interface LegacyPreference {
+  id: string;
+  instruction: string;
+  source: ReplyPreference["source"];
+  enabled: boolean;
+  evidence: LearningObservation[];
 }
 interface State {
   enabled: number;
@@ -53,12 +81,8 @@ interface Improvement {
   text: string;
   feedback: string;
 }
-const normalize = (s: string) =>
-  s
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
-const eligible = (t: ReplyThread) => t.channel === "linkedin" && !!t.workspace;
+const CHANNELS: ReadonlySet<string> = new Set(["linkedin", "email"]);
+const eligible = (t: ReplyThread) => CHANNELS.has(t.channel) && !!t.workspace;
 const conversationContext = (t: ReplyThread, before = Infinity) =>
   t.messages
     .filter((m) => m.human && !m.deleted && Date.parse(m.at) < before)
@@ -106,7 +130,7 @@ export class ReplyLearningStore {
     if (!eligible(t)) return;
     this.db
       .query("INSERT OR IGNORE INTO reply_learning_artifacts VALUES(?,?,?,?,?)")
-      .run(id, t.workspace!, t.key, kind, JSON.stringify({ ...data, channel: "linkedin" }));
+      .run(id, t.workspace!, t.key, kind, JSON.stringify({ ...data, channel: t.channel }));
   }
   recordGeneration(t: ReplyThread, drafts: ReplyDraftSet, context: unknown) {
     this.put(`generation:${drafts.id}`, t, "generation", { drafts, context });
@@ -162,6 +186,7 @@ export class ReplyLearningStore {
       ...next,
       improvementIds,
       learningVersion: generation?.drafts.learningVersion ?? 0,
+      learningKey: generation?.drafts.learningKey ?? null,
       ...(generation
         ? { originals: generation.drafts.originals, moves: generation.drafts.moves }
         : {}),
@@ -210,7 +235,10 @@ export class ReplyLearningStore {
       .run(o.id, o.workspace, JSON.stringify(o));
     this.state(o.workspace);
   }
-  /** Import only app-confirmed sends; attribution must also be verified against the inbox owner. */
+  /**
+   * Import only app-confirmed sends, on either channel; `owns` must verify
+   * attribution (the inbox owner for LinkedIn, the workspace for email).
+   */
   importHistory(workspace: string, owns: (t: ReplyThread) => boolean): number {
     if (this.state(workspace).imported) return 0;
     return this.db
@@ -219,7 +247,7 @@ export class ReplyLearningStore {
         const rows = this.db
           .query<{ data: string; thread: string; drafts: string | null }, [string]>(`
         SELECT s.data, t.data AS thread, t.drafts FROM review_sends s JOIN review_threads t ON t.key=s.thread_key
-        WHERE json_extract(s.data,'$.status')='sent' AND json_extract(t.data,'$.channel')='linkedin'
+        WHERE json_extract(s.data,'$.status')='sent' AND json_extract(t.data,'$.channel') IN ('linkedin','email')
           AND json_extract(t.data,'$.workspace')=?
         ORDER BY json_extract(s.data,'$.sentAt') DESC LIMIT 100`)
           .all(workspace);
@@ -241,7 +269,7 @@ export class ReplyLearningStore {
           if (result) continue;
           this.insertObservation({
             id: send.id,
-            channel: "linkedin",
+            channel: t.channel === "email" ? "email" : "linkedin",
             workspace,
             threadKey: t.key,
             name: t.name,
@@ -264,13 +292,6 @@ export class ReplyLearningStore {
       })
       .immediate();
   }
-  private preferences(workspace: string): PreferenceRow[] {
-    return this.db
-      .query<PreferenceRow, [string]>(
-        "SELECT * FROM reply_learning_preferences WHERE workspace=? ORDER BY id",
-      )
-      .all(workspace);
-  }
   private observation(id: string, workspace: string): LearningObservation | null {
     const row = this.db
       .query<{ seq: number; data: string }, [string, string]>(
@@ -279,6 +300,28 @@ export class ReplyLearningStore {
       .get(id, workspace);
     return row ? { ...JSON.parse(row.data), seq: row.seq } : null;
   }
+  /**
+   * The v1 preference rows this workspace learned before approval existed,
+   * with their evidence, for the job's one-time import into review.
+   */
+  legacyPreferences(workspace: string): LegacyPreference[] {
+    return this.db
+      .query<PreferenceRow, [string]>(
+        "SELECT * FROM reply_learning_preferences WHERE workspace=? ORDER BY id",
+      )
+      .all(workspace)
+      .map((p) => ({
+        id: p.id,
+        instruction: p.instruction,
+        source: p.source,
+        enabled: !!p.enabled,
+        evidence: (JSON.parse(p.evidence_ids) as string[]).flatMap((id) => {
+          const o = this.observation(id, workspace);
+          return o ? [o] : [];
+        }),
+      }));
+  }
+  /** Collection and synthesis state. `preferences` are the ledger's business now; the route fills them in. */
   status(workspace: string): ReplyLearningStatus {
     const s = this.state(workspace);
     const pending = !!this.db
@@ -291,68 +334,19 @@ export class ReplyLearningStore {
       pending,
       lastRefreshedAt: s.refreshed_at,
       error: s.error,
-      preferences: this.preferences(workspace).map((p) => ({
-        id: p.id,
-        instruction: p.instruction,
-        source: p.source,
-        enabled: !!p.enabled,
-        evidence: (JSON.parse(p.evidence_ids) as string[]).flatMap((id) => {
-          const o = this.observation(id, workspace);
-          return o
-            ? [
-                {
-                  id: o.id,
-                  threadKey: o.threadKey,
-                  name: o.name,
-                  body: o.body,
-                  original: o.original,
-                  feedback: o.feedback,
-                  historical: o.historical,
-                  at: o.at,
-                },
-              ]
-            : [];
-        }),
-      })),
+      preferences: [],
     };
   }
-  guidance(workspace: string): { version: number; instructions: string[] } {
-    const s = this.state(workspace);
-    return {
-      version: s.version,
-      instructions: s.enabled
-        ? this.preferences(workspace)
-            .filter((p) => p.enabled)
-            .slice(0, 12)
-            .map((p) => p.instruction)
-        : [],
-    };
-  }
-  setEnabled(workspace: string, enabled: boolean, preferenceId?: string) {
+  /** Pause or resume evidence synthesis for a workspace; a live lease is dropped. */
+  setEnabled(workspace: string, enabled: boolean) {
     this.db
       .transaction(() => {
         this.state(workspace);
-        if (preferenceId) {
-          const p = this.preferences(workspace).find((p) => p.id === preferenceId);
-          if (!p) throw new Error("Reply preference not found");
-          if (
-            enabled &&
-            !p.enabled &&
-            this.preferences(workspace).filter((p) => p.enabled).length >= 12
-          )
-            throw new Error("Disable another preference first (12 active maximum)");
-          this.db
-            .query("UPDATE reply_learning_preferences SET enabled=? WHERE workspace=? AND id=?")
-            .run(+enabled, workspace, preferenceId);
-        } else
-          this.db
-            .query("UPDATE reply_learning_state SET enabled=? WHERE workspace=?")
-            .run(+enabled, workspace);
         this.db
           .query(
-            "UPDATE reply_learning_state SET version=version+1,token=NULL,until_ms=0 WHERE workspace=?",
+            "UPDATE reply_learning_state SET enabled=?,version=version+1,token=NULL,until_ms=0 WHERE workspace=?",
           )
-          .run(workspace);
+          .run(+enabled, workspace);
       })
       .immediate();
   }
@@ -360,12 +354,7 @@ export class ReplyLearningStore {
   claim(
     workspace: string,
     now = Date.now(),
-  ): {
-    token: string;
-    through: number;
-    observations: LearningObservation[];
-    preferences: ReplyPreference[];
-  } | null {
+  ): { token: string; through: number; observations: LearningObservation[] } | null {
     return this.db
       .transaction(() => {
         const s = this.state(workspace);
@@ -395,7 +384,6 @@ export class ReplyLearningStore {
           observations: rows
             .toReversed()
             .map((r) => Object.assign(JSON.parse(r.data), { seq: r.seq })),
-          preferences: this.status(workspace).preferences,
         };
       })
       .immediate();
@@ -410,92 +398,82 @@ export class ReplyLearningStore {
         .run(now + 240_000, workspace, token, now).changes > 0
     );
   }
-  finish(
+  /**
+   * Check the model's candidates against the evidence they cite. Returns
+   * the ones that qualify, or null when the lease is no longer live (the
+   * founder changed a control mid-run, or another process took over).
+   * Writes nothing: the caller turns accepted candidates into proposals,
+   * then calls `finish` to advance the watermark.
+   *
+   * Explicit: one thread with feedback, non-historical. Edits: three
+   * distinct non-historical threads where the original differs from the
+   * sent body. Style: five distinct threads. A fabricated citation
+   * invalidates the candidate, not just that citation.
+   */
+  accept(
     workspace: string,
     token: string,
     through: number,
     candidates: PreferenceCandidate[],
     evidence: LearningObservation[],
     now = Date.now(),
-  ): boolean {
-    return this.db
-      .transaction(() => {
-        const s = this.state(workspace);
-        if (!s.enabled || s.token !== token || s.until_ms <= now) return false;
-        const existing = this.preferences(workspace);
-        let active = existing.filter((p) => p.enabled).length;
-        let changed = false;
-        for (const c of candidates.slice(0, 24)) {
-          if (
-            !c ||
-            typeof c.key !== "string" ||
-            !/^[a-z0-9][a-z0-9-]{0,79}$/.test(c.key) ||
-            typeof c.instruction !== "string" ||
-            !c.instruction.trim() ||
-            c.instruction.length > 500 ||
-            !["explicit", "edits", "style"].includes(c.source) ||
-            !Array.isArray(c.evidenceIds)
-          )
-            continue;
-          const cited = [...new Set(c.evidenceIds)].flatMap((id) => {
-            const o = evidence.find(
-              (o) => o.id === id && o.workspace === workspace && o.seq <= through,
-            );
-            return o ? [o] : [];
-          });
-          // A fabricated citation invalidates the candidate, not just that citation.
-          if (!cited.length || cited.length !== new Set(c.evidenceIds).size) continue;
-          const qualifying = cited.filter((o) =>
-            c.source === "explicit"
-              ? !o.historical && o.feedback.length > 0
-              : c.source === "edits"
-                ? !o.historical && !!o.original && o.original.trim() !== o.body.trim()
-                : true,
-          );
-          const threshold = c.source === "explicit" ? 1 : c.source === "edits" ? 3 : 5;
-          if (new Set(qualifying.map((o) => o.threadKey)).size < threshold) continue;
-          const old = existing.find(
-            (p) => p.id === c.key || normalize(p.instruction) === normalize(c.instruction),
-          );
-          if (old && (!old.enabled || normalize(old.instruction) !== normalize(c.instruction)))
-            continue;
-          if (!old && active >= 12) continue;
-          const ids = [
-            ...new Set([
-              ...(old ? (JSON.parse(old.evidence_ids) as string[]) : []),
-              ...qualifying.map((o) => o.id),
-            ]),
-          ].slice(-20);
-          this.db
-            .query(`INSERT INTO reply_learning_preferences(workspace,id,instruction,source,evidence_ids) VALUES(?,?,?,?,?)
-          ON CONFLICT(workspace,id) DO UPDATE SET evidence_ids=excluded.evidence_ids`)
-            .run(
-              workspace,
-              old?.id ?? c.key,
-              c.instruction.trim(),
-              old?.source ?? c.source,
-              JSON.stringify(ids),
-            );
-          if (!old) {
-            active++;
-            existing.push({
-              id: c.key,
-              instruction: c.instruction.trim(),
-              source: c.source,
-              enabled: 1,
-              evidence_ids: JSON.stringify(ids),
-            });
-          }
-          changed = true;
-        }
-        this.db
-          .query(
-            `UPDATE reply_learning_state SET watermark=?,version=version+?,refreshed_at=?,error=NULL,token=NULL,until_ms=0 WHERE workspace=?`,
-          )
-          .run(through, +changed, new Date(now).toISOString(), workspace);
-        return true;
-      })
-      .immediate();
+  ): AcceptedCandidate[] | null {
+    const s = this.state(workspace);
+    if (!s.enabled || s.token !== token || s.until_ms <= now) return null;
+    const accepted: AcceptedCandidate[] = [];
+    const seenKeys = new Set<string>();
+    for (const c of candidates.slice(0, 24)) {
+      if (
+        !c ||
+        typeof c.key !== "string" ||
+        !/^[a-z0-9][a-z0-9-]{0,79}$/.test(c.key) ||
+        typeof c.instruction !== "string" ||
+        !c.instruction.trim() ||
+        c.instruction.length > 500 ||
+        !["explicit", "edits", "style"].includes(c.source) ||
+        !Array.isArray(c.evidenceIds) ||
+        seenKeys.has(c.key)
+      )
+        continue;
+      const cited = [...new Set(c.evidenceIds)].flatMap((id) => {
+        const o = evidence.find(
+          (o) => o.id === id && o.workspace === workspace && o.seq <= through,
+        );
+        return o ? [o] : [];
+      });
+      if (!cited.length || cited.length !== new Set(c.evidenceIds).size) continue;
+      const qualifying = cited.filter((o) =>
+        c.source === "explicit"
+          ? !o.historical && o.feedback.length > 0
+          : c.source === "edits"
+            ? !o.historical && !!o.original && o.original.trim() !== o.body.trim()
+            : true,
+      );
+      const threshold = c.source === "explicit" ? 1 : c.source === "edits" ? 3 : 5;
+      if (new Set(qualifying.map((o) => o.threadKey)).size < threshold) continue;
+      const channels = new Set(qualifying.map((o) => o.channel));
+      seenKeys.add(c.key);
+      accepted.push({
+        key: c.key,
+        instruction: c.instruction.trim(),
+        source: c.source,
+        evidenceIds: qualifying.map((o) => o.id),
+        channel: channels.size === 1 ? [...channels][0]! : null,
+        evidence: qualifying,
+      });
+    }
+    return accepted;
+  }
+  /** Advance the watermark and release the lease; false when the lease is no longer this run's. */
+  finish(workspace: string, token: string, through: number, now = Date.now()): boolean {
+    return (
+      this.db
+        .query(
+          `UPDATE reply_learning_state SET watermark=?,refreshed_at=?,error=NULL,token=NULL,until_ms=0
+            WHERE workspace=? AND token=? AND until_ms>? AND enabled=1`,
+        )
+        .run(through, new Date(now).toISOString(), workspace, token, now).changes > 0
+    );
   }
   fail(workspace: string, token: string, reason: string) {
     this.db

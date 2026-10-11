@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { buildLinkedInDemo } from "./linkedin.ts";
 import { cadenceGoalId, type PersonResearchDossier } from "@oneshot-gtm/core";
 import { lintEmail } from "@oneshot-gtm/plays";
@@ -1239,6 +1240,33 @@ export interface DemoDataset {
     lastDraftJson: string | null;
     lastDraftedAt: string | null;
   }>;
+  /** Learning proposals waiting on /queue and the guidance an earlier approval produced (#813). */
+  learning: {
+    proposals: Array<{
+      id: string;
+      kind: "preference" | "prospect_angle" | "campaign_angle" | "icp";
+      scope: Record<string, unknown>;
+      current: unknown;
+      proposed: unknown;
+      evidence: Record<string, unknown>;
+      evidenceSummary: string;
+      baselineKey: string;
+      dedupeKey: string;
+      status: "pending" | "approved";
+      legacy: boolean;
+      createdAt: string;
+      decidedAt: string | null;
+    }>;
+    guidance: Array<{
+      id: string;
+      instruction: string;
+      source: "explicit" | "edits" | "style";
+      channel: string | null;
+      stage: string | null;
+      proposalId: string | null;
+      approvedAt: string;
+    }>;
+  };
   triggers: Array<{
     name: string;
     lastPolledAt: string | null;
@@ -1548,6 +1576,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
     cadences,
     outcomes,
     queue: buildQueue(anchor, prospects),
+    learning: buildLearning(anchor, prospects, buildTriggers(anchor)),
     triggers: buildTriggers(anchor),
     runs: buildRuns(anchor, receipts),
     bounces: buildBounces(anchor, prospects),
@@ -1566,6 +1595,218 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
       // Today page prints both.
       "balance.json": { balance: "997.73 USDC", raw: "997.73 USDC" },
     },
+  };
+}
+
+// Learning proposals (#813): one of each kind waiting for review, plus one
+// approved preference so the card shows guidance in use. Fictional like the
+// rest; the evidence excerpts are the demo cast's own replies.
+
+/** Lower-cased, punctuation collapsed: the dedupe identity the learning store uses. */
+const normalize = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+
+function buildLearning(
+  anchor: Date,
+  prospects: DemoProspectRow[],
+  triggers: Array<{ name: string; configJson: string }>,
+): DemoDataset["learning"] {
+  const at = (minutesAgo: number) => isoMinutesAgo(anchor, minutesAgo);
+  const fingerprint = (s: string) => createHash("sha1").update(s).digest("hex").slice(0, 12);
+  const edgeTrigger = triggers
+    .map((t) => ({ name: t.name, config: JSON.parse(t.configJson) as Record<string, unknown> }))
+    .find(
+      (t) => typeof t.config["yourEdge"] === "string" && (t.config["yourEdge"] as string).trim(),
+    );
+  const edge = edgeTrigger ? (edgeTrigger.config["yourEdge"] as string) : "";
+  const angleProspect = prospects[2] ?? prospects[0]!;
+  const approvedPreference = {
+    id: "demo-learn-pref-approved",
+    kind: "preference" as const,
+    scope: {},
+    current: null,
+    proposed: { instruction: "Open with the point; no greeting line.", source: "edits" },
+    evidence: {
+      refs: [],
+      samples: [
+        {
+          name: "Priya",
+          at: at(60 * 24 * 6),
+          original: "Hi Priya, hope the week is going well — quick one on tracing.",
+          sent: "Quick one on tracing: the worker fleet is where the gaps are.",
+          channel: "email",
+          stage: "reply",
+        },
+      ],
+      counts: { threads: 3 },
+      method: "edits",
+    },
+    evidenceSummary: "The same edit, made in 3 email replies.",
+    baselineKey: "",
+    dedupeKey: normalize("Open with the point; no greeting line."),
+    status: "approved" as const,
+    legacy: false,
+    createdAt: at(60 * 24 * 5),
+    decidedAt: at(60 * 24 * 4),
+  };
+  return {
+    proposals: [
+      approvedPreference,
+      {
+        id: "demo-learn-pref-pending",
+        kind: "preference",
+        scope: { channel: "linkedin", stage: "reply" },
+        current: null,
+        proposed: {
+          instruction: "Answer the question before suggesting a call.",
+          source: "explicit",
+        },
+        evidence: {
+          refs: [],
+          samples: [
+            {
+              name: "Jonas",
+              at: at(60 * 20),
+              original: "Happy to walk you through it on a call this week?",
+              sent: "Sidekiq retries show up as separate spans, linked to the first attempt. A call can wait.",
+              feedback: ["In general, answer first — don't push a call in the first reply."],
+              channel: "linkedin",
+              stage: "reply",
+            },
+          ],
+          counts: { threads: 1 },
+          method: "explicit",
+        },
+        evidenceSummary: "Your explicit feedback on 1 LinkedIn reply.",
+        baselineKey: "",
+        dedupeKey: normalize("Answer the question before suggesting a call."),
+        status: "pending",
+        legacy: false,
+        createdAt: at(60 * 19),
+        decidedAt: null,
+      },
+      {
+        id: "demo-learn-angle",
+        kind: "prospect_angle",
+        scope: { prospectId: angleProspect.id },
+        current: { angleJson: null, approvedAt: null },
+        proposed: {
+          brief: `${angleProspect.company} runs a large background-job fleet and has asked about retry visibility.`,
+          hook: "Their retries are invisible today; show the retry chain as one trace before pricing comes up.",
+          relationship: "builder",
+          evidence: [],
+          doNotSay: ["per-job pricing"],
+          nextStep: "Offer the Sidekiq adapter on their staging queue for a week.",
+          sources: ["replies:1"],
+          valueMode: "speed",
+          buyerStage: "evaluating",
+          qualification: "pass",
+          model: "demo",
+          synthesizedAt: at(90),
+        },
+        evidence: {
+          refs: [],
+          samples: [
+            {
+              at: at(95),
+              label: "Reply",
+              text: "We lose the thread every time a job retries. If that's solved we'd look seriously.",
+            },
+          ],
+          counts: { replies: 1, evidence_items: 1 },
+          method: "reply",
+        },
+        evidenceSummary: "Re-synthesized after a reply from dossier, replies:1.",
+        baselineKey: fingerprint(""),
+        dedupeKey: `${angleProspect.id}:${fingerprint("Their retries are invisible today")}`,
+        status: "pending",
+        legacy: false,
+        createdAt: at(90),
+        decidedAt: null,
+      },
+      ...(edgeTrigger
+        ? [
+            {
+              id: "demo-learn-campaign",
+              kind: "campaign_angle" as const,
+              scope: { playName: edgeTrigger.name },
+              current: { field: "yourEdge", edge },
+              proposed: {
+                field: "yourEdge",
+                edge: `${edge} // Retries show up as one trace, not five`,
+                keep: edge.split("//").map((a) => a.trim()),
+                retire: [],
+                add: ["Retries show up as one trace, not five"],
+              },
+              evidence: {
+                refs: [],
+                samples: [
+                  {
+                    at: at(60 * 30),
+                    label: "Reply · objection",
+                    text: "We already have tracing on the web tier; the jobs are the problem.",
+                  },
+                ],
+                counts: {
+                  angles: 1,
+                  retire: 0,
+                  add: 1,
+                  objections: 2,
+                  angle1_offered: 7,
+                  angle1_sent: 4,
+                  angle1_replied: 1,
+                },
+                method: "fit",
+              },
+              evidenceSummary:
+                "Two objections say the web tier is already traced and the jobs are the gap; #1 was sent 4 of 7 times. Hypothesis from observational counts under fit selection; no causal claim.",
+              baselineKey: fingerprint(edge),
+              dedupeKey: `${edgeTrigger.name}:${fingerprint(normalize(`${edge} // Retries show up as one trace, not five`))}`,
+              status: "pending" as const,
+              legacy: false,
+              createdAt: at(60 * 3),
+              decidedAt: null,
+            },
+          ]
+        : []),
+      {
+        id: "demo-learn-icp",
+        kind: "icp",
+        scope: {},
+        current: DEMO_FOUNDER.icp,
+        proposed:
+          "Platform and backend leads at Series A–B SaaS companies running large background-job fleets (Sidekiq, Celery, BullMQ, Temporal) who lose visibility when jobs retry.",
+        evidence: {
+          refs: [],
+          counts: { fit_decisions: 31, qualified_outcomes: 2, unreasoned_decisions_excluded: 6 },
+          method: "reasoned-decisions",
+        },
+        evidenceSummary:
+          "Approvals tagged fit skew toward platform leads at companies naming a job queue; both qualified outcomes ran Sidekiq or Celery at scale.",
+        baselineKey: normalize(DEMO_FOUNDER.icp),
+        dedupeKey: normalize(
+          "Platform and backend leads at Series A–B SaaS companies running large background-job fleets (Sidekiq, Celery, BullMQ, Temporal) who lose visibility when jobs retry.",
+        ),
+        status: "pending",
+        legacy: false,
+        createdAt: at(60 * 8),
+        decidedAt: null,
+      },
+    ],
+    guidance: [
+      {
+        id: "demo-guidance-1",
+        instruction: "Open with the point; no greeting line.",
+        source: "edits",
+        channel: null,
+        stage: null,
+        proposalId: approvedPreference.id,
+        approvedAt: at(60 * 24 * 4),
+      },
+    ],
   };
 }
 

@@ -20,6 +20,28 @@ describe("reject-reason.md", () => {
     expect(prompt).toContain("is provenance, never a reason");
   });
 
+  it("returns a category alongside the sentence, one per rejection reason", () => {
+    for (const category of [
+      "wrong_audience",
+      "wrong_person",
+      "bad_timing",
+      "already_contacted",
+      "draft_problem",
+      "other",
+    ]) {
+      expect(prompt).toContain(`\`${category}\``);
+    }
+    expect(prompt).toContain('"decisionReason"');
+    // The evidence alone can only establish a fit mismatch.
+    expect(prompt).toContain("use one ONLY when the FOUNDER HINT says so");
+  });
+
+  it("treats a founder hint as the reason to state, never to second-guess", () => {
+    expect(prompt).toContain("FOUNDER HINT (optional)");
+    expect(prompt).toContain("A `category` in the hint is final");
+    expect(prompt).toContain("Never contradict the hint");
+  });
+
   it("asks for the stage fact to be cited", () => {
     expect(prompt).toContain("Stage is the most common mismatch");
     expect(prompt).toContain("cite the fact");

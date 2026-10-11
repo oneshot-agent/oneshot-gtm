@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { getLedger } from "@oneshot-gtm/core";
+import { getLedger, triggerAngleRefresh } from "@oneshot-gtm/core";
 import type { LinkedInReplyResult } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
@@ -31,19 +31,16 @@ export async function markLinkedInReplyRoute(
   }
 
   const occurredAt = new Date().toISOString();
-  return jsonResponse(
-    accepted(
-      ledger.recordLinkedInReply({
-        prospectId,
-        source: "manual",
-        externalEventId: manualEventId(prospectId, body),
-        occurredAt,
-        body,
-      }),
-    ),
-    200,
-    req,
-  );
+  const recorded = ledger.recordLinkedInReply({
+    prospectId,
+    source: "manual",
+    externalEventId: manualEventId(prospectId, body),
+    occurredAt,
+    body,
+  });
+  // A hand-recorded reply is a human one: new evidence for the angle (#813).
+  if (!recorded.duplicate) triggerAngleRefresh(prospectId);
+  return jsonResponse(accepted(recorded), 200, req);
 }
 
 /** Longest message we will store. LinkedIn DMs cap far below this. */

@@ -1,3 +1,4 @@
+import type { DecisionReason } from "./learning.ts";
 export * from "./reply-email-view.ts";
 /**
  * Wire types shared between apps/cli, apps/server, and apps/web.
@@ -702,6 +703,8 @@ export interface QueueRowView {
   decision: "approve" | "reject" | "auto_reject" | null;
   decidedBy: "human" | "human_bulk" | "machine" | null;
   decidedAt: string | null;
+  /** The structured reason the founder picked (#813); null on legacy, bulk and machine decisions. */
+  decisionReason?: DecisionReason | null;
 }
 
 /** Who decided a queue row, as a /prospects filter. `human` groups per-row and bulk clicks. */
@@ -911,6 +914,8 @@ export interface DraftVersionView {
   angle: { text: string; origin: "configured" | "generated" } | null;
   outcome: "open" | "discarded" | "sent" | "auto_sent";
   discardReason: "regenerate" | "rotate" | "redraft" | "abandoned" | null;
+  /** Fingerprint of the approved learned-guidance set the draft was written with (#813). */
+  learningKey?: string | null;
   createdAt: string;
   closedAt: string | null;
 }
@@ -984,6 +989,8 @@ export interface LastDraft {
   enrichmentFailed?: boolean;
   /** Hash of the founder's voice card the draft was written with; absent when none was set. */
   voiceKey?: string | null;
+  /** Fingerprint of the approved learned-guidance set the draft was written with (#813). */
+  learningKey?: string | null;
   /** First-touch format arm the draft was written in (`standard` / `brief`); absent when the trigger set none. */
   formatKey?: string | null;
 }
@@ -1509,6 +1516,7 @@ export interface InboxDraftReplyRequest {
 }
 
 export interface InboxDraftReplyResult {
+  learningKey?: string | null;
   body: string;
   /** Paid research spend this draft incurred (0 on cache hits / known prospects). */
   costUsd: number;
@@ -1986,6 +1994,7 @@ export interface CalendarPickerEntry {
 }
 export * from "./replies.ts";
 export * from "./icp-proposals.ts";
+export * from "./learning.ts";
 
 /** CSV classification reserves a queue row before it is ready for review. */
 export function isQueueImportInProgress(row: {

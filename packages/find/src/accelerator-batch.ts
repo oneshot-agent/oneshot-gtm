@@ -480,11 +480,6 @@ export async function runAcceleratorBatchFinder(
       resolvedLinkedin = resolvedLinkedin ?? resolved.linkedinUrl;
       resolvedPhone = resolvedPhone ?? resolved.phone;
     }
-    if (!founderName) {
-      result.droppedEnrichment++;
-      return;
-    }
-
     const domain = record.website ? urlDomain(record.website) : null;
     if (!domain) {
       result.droppedEnrichment++;
@@ -493,6 +488,11 @@ export async function runAcceleratorBatchFinder(
     const contact = await resolveVerifyEnrichQualify({
       playName: PLAY_NAME,
       fullName: founderName,
+      // A company's own homepage rarely names its founder (a YC profile does),
+      // so no name off the launch page is the norm outside YC, not a reason to
+      // drop: let the spine find a decision owner at the domain. The person
+      // gate still judges whoever it picks.
+      allowMissingFullName: founderName === null,
       companyDomain: domain,
       isDuplicate: (email) => isDuplicate({ playName: PLAY_NAME, dedupeKey, prospectEmail: email }),
       errKindPrefix: "accelerator-batch",
@@ -526,6 +526,10 @@ export async function runAcceleratorBatchFinder(
     // Prefer the SDK's resolved name when available. It's the actual owner of
     // the email, and fall back to the founder name we resolved upstream.
     const fullName = contact.fullName?.trim() || founderName;
+    if (!fullName) {
+      result.droppedEnrichment++;
+      return;
+    }
     const enr = { phone: contact.phone, linkedinUrl: contact.linkedinUrl };
     const phone = resolvedPhone ?? enr.phone;
     let linkedinUrl =

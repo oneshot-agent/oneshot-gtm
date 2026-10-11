@@ -84,8 +84,9 @@ credentials, portfolio and partners for proof, `founderAdmission` for the
 concession, `yourEdge` for the argument, `productBrief` for facts and links,
 `icpOneLiner` for who it is for. `pilotOffer` is what the last follow-up of
 the builder plays (repo-interest, stack-consolidation, competitor-switch,
-hiring-signal, post-funding, accelerator-batch) offers in place of the plain
-breakup: the only source for what the pilot includes, and never a price.
+hiring-signal, post-funding) offers in place of the plain breakup: the only
+source for what the pilot includes, and never a price. accelerator-batch
+always ends on the plain breakup, with or without an offer.
 
 ## Multiple angles
 
@@ -230,3 +231,21 @@ trimmed, capped at 300 characters, refused if it starts with `auto:` (the
 machine-decision marker), and stored on the row as the note the timeline
 shows. An emptied box clears an old note. The text is not forwarded to the
 ICP filter's few-shot examples — only the decision is (see `_filter.ts`).
+Beside the note, a structured reason (_fit_, _not our audience_, _right
+company, wrong person_, _bad timing_, _draft problem_, _other_) says what the
+decision was about; the chips preselect one. Only the fit judgments reach the
+ICP rewrite job ([learning](./learning.md)).
+
+## Learned guidance
+
+Every drafting surface — email first touch, follow-up and breakup, LinkedIn
+invite note and message, breakup revive, and both reply composers — appends a
+`LEARNED WRITING PREFERENCES` block after the voice block when guidance the
+founder approved applies to that channel and stage. The block lists the
+enabled instructions and tells the model that VOICE, the explicit inputs and
+every factual, audience and channel constraint outrank them, and that they
+are never a source of product facts, links, numbers or promises. The common context also carries active product facts, ICP, research and prospect angle, plus up to six matched replies from the other channel. The exact generation input and learning context are saved under
+`learning_key`, the way `voice_key` records the voice card. Pending,
+dismissed, disabled and rolled-back guidance never reaches a prompt; the
+prospect's angle reaches it only as the active `angle_json`, which a
+proposal's approval writes ([learning](./learning.md)).

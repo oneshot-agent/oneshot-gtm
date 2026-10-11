@@ -1,3 +1,4 @@
+import type { DecisionReason } from "@oneshot-gtm/shared-types";
 export interface ReceiptRecord {
   id: number;
   play_name: string;
@@ -173,6 +174,10 @@ export interface ProspectRecord {
   angle_json: string | null;
   /** ISO timestamp of the last `angle_json` write. NULL alongside it. */
   angle_synthesized_at: string | null;
+  /** When the founder approved the active angle (#813); NULL on angles synthesized before review existed. */
+  angle_approved_at?: string | null;
+  /** When an angle revision was last proposed for review (#813); debounces re-synthesis like `angle_synthesized_at`. */
+  angle_proposed_at?: string | null;
   created_at: string;
 }
 
@@ -609,6 +614,15 @@ export interface IcpDecisionExample {
   candidate: unknown;
   decision: boolean;
   reason: string | null;
+  /** The structured reason the founder picked (#813); null on legacy and bulk rows. */
+  decisionReason: DecisionReason | null;
+}
+
+/** A founder-recorded commercial outcome, with the public context the prospect was reviewed against. */
+export interface QualifiedOutcomeExample {
+  candidate: unknown;
+  outcome: "meeting_booked" | "sql_qualified" | "deal_won";
+  recordedAt: string;
 }
 
 export interface QueueRow {
@@ -664,6 +678,8 @@ export interface QueueRow {
   decided_at: string | null;
   /** 'human' (per-row click) | 'human_bulk' (approve-all batch) | 'machine'. */
   decided_by: "human" | "human_bulk" | "machine" | null;
+  /** Structured decision reason (#813, v13): fit | wrong_audience | wrong_person | bad_timing | already_contacted | draft_problem | other. */
+  decision_reason?: DecisionReason | null;
 }
 
 /** Who decided a queue row: `human` groups per-row and bulk clicks; `none` = undecided. */

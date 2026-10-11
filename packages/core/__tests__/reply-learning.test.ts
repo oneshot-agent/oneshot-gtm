@@ -120,12 +120,15 @@ describe("durable reply learning evidence", () => {
         .get(),
     ).toEqual({ n: 1 });
   });
-  it("ignores autosaves, unused improvements, failed sends and email", () => {
+  it("ignores autosaves, unused improvements and failed sends; captures email sends with their channel", () => {
     const t = prepare("one");
     store.learning.recordImprovement(t, "direct", "before", "unused", "Always be concise");
     sent(t, "failed");
-    sent(prepare("email", "default", "email"));
     expect(store.learning.claim("default", now)).toBeNull();
+    sent(prepare("email", "default", "email"));
+    const job = store.learning.claim("default", now)!;
+    expect(job.observations).toHaveLength(1);
+    expect(job.observations[0]).toMatchObject({ channel: "email", threadKey: "email" });
   });
   it("captures only accepted improvements for the selected variant and rejects forged provenance", () => {
     let t = prepare("one");
@@ -216,35 +219,33 @@ describe("durable reply learning evidence", () => {
   });
 });
 
-describe("preference activation and refresh", () => {
+describe("candidate acceptance and watermarks", () => {
+  // Since #813 the store validates candidates and hands them back; the job
+  // turns them into pending proposals in the ledger. Nothing here applies.
+  const accept = (
+    job: NonNullable<ReturnType<typeof store.learning.claim>>,
+    cands: PreferenceCandidate[],
+    at = now,
+  ) => store.learning.accept("default", job.token, job.through, cands, job.observations, at);
+
   it("requires three distinct threads for edits and rejects fabricated or cross-workspace evidence", () => {
     sent(prepare("one"));
     sent(prepare("two"));
     let job = store.learning.claim("default", now)!;
-    store.learning.finish(
-      "default",
-      job.token,
-      job.through,
-      [candidate(job.observations.map((o) => o.id))],
-      job.observations,
-      now,
-    );
-    expect(store.learning.guidance("default").instructions).toEqual([]);
+    expect(accept(job, [candidate(job.observations.map((o) => o.id))])).toEqual([]);
+    expect(store.learning.finish("default", job.token, job.through, now)).toBe(true);
     sent(prepare("three"));
     job = store.learning.claim("default", now + 300_000)!;
     const ids = job.observations.map((o) => o.id);
-    store.learning.finish(
-      "default",
-      job.token,
-      job.through,
+    const accepted = accept(
+      job,
       [candidate([...ids, "invented"], "edits", "forged"), candidate(ids)],
-      job.observations,
       now + 300_000,
-    );
-    expect(store.learning.status("default").preferences.map((p) => p.id)).toEqual([
-      "early-pressure",
-    ]);
-    expect(store.learning.guidance("other").instructions).toEqual([]);
+    )!;
+    expect(accepted.map((c) => c.key)).toEqual(["early-pressure"]);
+    expect(accepted[0]).toMatchObject({ source: "edits", channel: "linkedin" });
+    expect(accepted[0]!.evidence).toHaveLength(3);
+    expect(store.learning.claim("other", now + 300_000)).toBeNull();
   });
   it("accepts general feedback from one accepted, confirmed improvement", () => {
     let t = prepare("one");
@@ -267,20 +268,13 @@ describe("preference activation and refresh", () => {
     t = store.get(t.key)!;
     sent(t);
     const job = store.learning.claim("default", now)!;
-    store.learning.finish(
-      "default",
-      job.token,
-      job.through,
-      [
-        candidate(
-          job.observations.map((o) => o.id),
-          "explicit",
-        ),
-      ],
-      job.observations,
-      now,
-    );
-    expect(store.learning.status("default").preferences[0]!.source).toBe("explicit");
+    const accepted = accept(job, [
+      candidate(
+        job.observations.map((o) => o.id),
+        "explicit",
+      ),
+    ])!;
+    expect(accepted[0]).toMatchObject({ source: "explicit", channel: "linkedin" });
   });
   it("counts repeated sends in the same thread once", () => {
     for (let i = 0; i < 3; i++) {
@@ -292,15 +286,7 @@ describe("preference activation and refresh", () => {
       }
     }
     const job = store.learning.claim("default", now)!;
-    store.learning.finish(
-      "default",
-      job.token,
-      job.through,
-      [candidate(job.observations.map((o) => o.id))],
-      job.observations,
-      now,
-    );
-    expect(store.learning.status("default").preferences).toEqual([]);
+    expect(accept(job, [candidate(job.observations.map((o) => o.id))])).toEqual([]);
   });
   it("requires five threads for historical or unchanged style, never treating history as strong edits", () => {
     for (let i = 0; i < 5; i++) {
@@ -321,54 +307,27 @@ describe("preference activation and refresh", () => {
     store.learning.importHistory("default", () => true);
     const job = store.learning.claim("default", now)!;
     const ids = job.observations.map((o) => o.id);
-    store.learning.finish(
-      "default",
-      job.token,
-      job.through,
-      [
-        candidate(ids, "edits", "not-edits"),
-        candidate(ids.slice(0, 4), "style", "too-few"),
-        candidate(ids, "style"),
-      ],
-      job.observations,
-      now,
-    );
-    expect(store.learning.status("default").preferences.map((p) => p.id)).toEqual([
-      "early-pressure",
-    ]);
+    const accepted = accept(job, [
+      candidate(ids, "edits", "not-edits"),
+      candidate(ids.slice(0, 4), "style", "too-few"),
+      candidate(ids, "style"),
+    ])!;
+    expect(accepted.map((c) => c.key)).toEqual(["early-pressure"]);
   });
-  it("retains disabled exclusions, refuses conflicting replacements, and pauses guidance and synthesis", () => {
-    for (const k of ["a", "b", "c"]) sent(prepare(k));
-    let job = store.learning.claim("default", now)!;
-    store.learning.finish(
-      "default",
-      job.token,
-      job.through,
-      [candidate(job.observations.map((o) => o.id))],
-      job.observations,
-      now,
-    );
-    store.learning.setEnabled("default", false, "early-pressure");
+  it("scopes a candidate to one channel only when every cited send is on it", () => {
+    sent(prepare("a"));
+    sent(prepare("b"));
+    sent(prepare("c", "default", "email"));
+    const job = store.learning.claim("default", now)!;
+    const ids = job.observations.map((o) => o.id);
+    const mixed = accept(job, [candidate(ids)])!;
+    expect(mixed[0]!.channel).toBeNull();
     sent(prepare("d"));
-    job = store.learning.claim("default", now + 300_000)!;
-    const c = candidate(job.observations.map((o) => o.id));
-    store.learning.finish(
-      "default",
-      job.token,
-      job.through,
-      [c, { ...c, key: "duplicate" }, { ...c, instruction: "Always demand a meeting" }],
-      job.observations,
-      now + 300_000,
-    );
-    expect(store.learning.status("default").preferences).toHaveLength(1);
-    expect(store.learning.guidance("default").instructions).toEqual([]);
-    store.learning.setEnabled("default", true, "early-pressure");
-    store.learning.setEnabled("default", false);
-    expect(store.learning.guidance("default").instructions).toEqual([]);
-    sent(prepare("e"));
-    expect(store.learning.claim("default", now + 600_000)).toBeNull();
-    store.learning.setEnabled("default", true);
-    expect(store.learning.guidance("default").instructions).toHaveLength(1);
+    store.learning.finish("default", job.token, job.through, now);
+    const next = store.learning.claim("default", now + 300_000)!;
+    const linkedin = next.observations.filter((o) => o.channel === "linkedin").map((o) => o.id);
+    const only = accept(next, [candidate(linkedin)], now + 300_000)!;
+    expect(only[0]!.channel).toBe("linkedin");
   });
   it("leases across restart, retries failures after cooldown, and keeps arrivals during synthesis dirty", () => {
     sent(prepare("one"));
@@ -380,27 +339,35 @@ describe("preference activation and refresh", () => {
     expect(store.learning.claim("default", now + 299_999)).toBeNull();
     const retry = store.learning.claim("default", now + 300_000)!;
     sent(prepare("two"));
-    store.learning.finish(
-      "default",
-      retry.token,
-      retry.through,
-      [],
-      retry.observations,
-      now + 300_000,
-    );
+    expect(store.learning.finish("default", retry.token, retry.through, now + 300_000)).toBe(true);
     expect(store.learning.status("default").pending).toBe(true);
     expect(store.learning.status("default").error).toBeNull();
     expect(store.learning.claim("default", now + 600_000)!.observations).toHaveLength(2);
   });
-  it("does not commit a stale refresh after the user changes controls", () => {
+  it("does not accept or commit a stale run after the user changes controls, and pausing blocks claims", () => {
     sent(prepare("one"));
     const job = store.learning.claim("default", now)!;
     store.learning.setEnabled("default", false);
+    expect(store.learning.claim("default", now + 300_000)).toBeNull();
     store.learning.setEnabled("default", true);
-    expect(
-      store.learning.finish("default", job.token, job.through, [], job.observations, now),
-    ).toBe(false);
+    expect(accept(job, [])).toBeNull();
+    expect(store.learning.finish("default", job.token, job.through, now)).toBe(false);
     expect(store.learning.status("default").pending).toBe(true);
+    expect(store.learning.status("default").preferences).toEqual([]);
+  });
+  it("hands v1 preference rows back with their evidence for the legacy import", () => {
+    sent(prepare("one"));
+    const o = store.learning.claim("default", now)!.observations[0]!;
+    store.db
+      .query("INSERT INTO reply_learning_preferences VALUES(?,?,?,?,?,?)")
+      .run("default", "plain", "Keep it plain.", "edits", 0, JSON.stringify([o.id, "gone"]));
+    expect(store.learning.legacyPreferences("default")).toEqual([
+      expect.objectContaining({ id: "plain", enabled: false, source: "edits" }),
+    ]);
+    expect(store.learning.legacyPreferences("default")[0]!.evidence.map((e) => e.id)).toEqual([
+      o.id,
+    ]);
+    expect(store.learning.legacyPreferences("other")).toEqual([]);
   });
 });
 

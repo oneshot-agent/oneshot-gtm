@@ -11,6 +11,8 @@ import {
   lintEmail,
   logTargetError,
   sendDraftedEmail,
+  learningBlock,
+  stampLearningInput,
   voiceBlock,
 } from "./_lib.ts";
 
@@ -60,6 +62,8 @@ export interface BreakupReviveDraft {
   sent: boolean;
   flags: string[];
   originalTargetIndex?: number;
+  /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
+  learningKey?: string | null;
 }
 
 export async function runBreakupRevive(
@@ -77,6 +81,15 @@ export async function runBreakupRevive(
 
   for (const [index, t] of targets.entries()) {
     if (!t.email) continue;
+    const learned = learningBlock({
+      channel: "email",
+      stage: "follow_up",
+      cfg,
+      email: t.email,
+      playName: PLAY_NAME,
+      campaignAngle: opts.draftAngle,
+      replaceProspectAngle: !!opts.draftAngle,
+    });
     let result: BreakupReviveDraft;
     try {
       // Custom serial loop, so it repeats runEmailPlay's guards itself.
@@ -85,20 +98,26 @@ export async function runBreakupRevive(
         promptName: "breakup-revive-email",
         maxBodyWords: 80,
         followUp: true,
-        inputBlock: [
-          ...(opts.draftAngle
-            ? [
-                `SELECTED ANGLE: ${opts.draftAngle}`,
-                "Build the draft around this argument while preserving the play’s channel, tone, and factual constraints.",
-              ]
-            : []),
-          `FOUNDER: ${cfg.founderName}`,
-          `PRODUCT: ${cfg.productOneLiner}`,
-          `PROSPECT: ${t.name ?? "(unknown)"} at ${t.company ?? "(unknown)"}`,
-          `DAYS SINCE LAST ACTIVITY: ${t.daysCold}`,
-          `OPTIONAL VALUE DROP: ${opts.valueDrop ?? "(none — go with a probe question instead)"}`,
-          ...(voice ? ["", voice.text] : []),
-        ].join("\n"),
+        inputBlock: ((input: string) => {
+          stampLearningInput(learned, input);
+          return input;
+        })(
+          [
+            ...(opts.draftAngle
+              ? [
+                  `SELECTED ANGLE: ${opts.draftAngle}`,
+                  "Build the draft around this argument while preserving the play’s channel, tone, and factual constraints.",
+                ]
+              : []),
+            `FOUNDER: ${cfg.founderName}`,
+            `PRODUCT: ${cfg.productOneLiner}`,
+            `PROSPECT: ${t.name ?? "(unknown)"} at ${t.company ?? "(unknown)"}`,
+            `DAYS SINCE LAST ACTIVITY: ${t.daysCold}`,
+            `OPTIONAL VALUE DROP: ${opts.valueDrop ?? "(none — go with a probe question instead)"}`,
+            ...(voice ? ["", voice.text] : []),
+            ...(learned ? ["", learned.text] : []),
+          ].join("\n"),
+        ),
       });
 
       const flags = lintEmail(draft.subject, draft.body, 80, undefined, { followUp: true });
@@ -134,6 +153,7 @@ export async function runBreakupRevive(
         sent: send.sent,
         flags,
         originalTargetIndex: index,
+        ...(learned ? { learningKey: learned.key } : {}),
       };
     } catch (err) {
       // Daily-cap deferral is not a per-target failure: abort the run so the

@@ -545,6 +545,7 @@ function persistDraftsToQueue(input: {
           ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
           ...(draft.angle ? { angle: draft.angle } : {}),
           ...(draft.voiceKey ? { voiceKey: draft.voiceKey } : {}),
+          ...(draft.learningKey ? { learningKey: draft.learningKey } : {}),
           ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
         },
         // A run's send is not a per-row review: the founder approved the

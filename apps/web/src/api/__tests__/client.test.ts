@@ -89,10 +89,25 @@ describe("reject body shapes", () => {
   });
 
   it("asks the reject-reason endpoint with an empty body", async () => {
-    okJson({ reason: null, source: null });
-    expect(await api.suggestRejectReason(7)).toEqual({ reason: null, source: null });
+    okJson({ reason: null, decisionReason: null, source: null });
+    expect(await api.suggestRejectReason(7)).toEqual({
+      reason: null,
+      decisionReason: null,
+      source: null,
+    });
     const call = (global.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
     expect(String(call[0])).toMatch(/\/queue\/7\/reject-reason$/);
+    expect(JSON.parse((call[1] as RequestInit).body as string)).toEqual({});
+  });
+
+  it("sends what the founder already said as the reject-reason hint", async () => {
+    okJson({ reason: "x", decisionReason: "bad_timing", source: "llm" });
+    await api.suggestRejectReason(7, { hint: "too early", decisionReason: "bad_timing" });
+    const call = (global.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
+    expect(JSON.parse((call[1] as RequestInit).body as string)).toEqual({
+      hint: "too early",
+      decisionReason: "bad_timing",
+    });
   });
 });
 

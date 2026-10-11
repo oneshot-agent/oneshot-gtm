@@ -1,3 +1,5 @@
+import { recoverLearningApplications } from "./learning-decisions.ts";
+import type { DecisionReason } from "@oneshot-gtm/shared-types";
 import { recordManualQueueSend, type ManualQueueSend } from "./ledger-manual.ts";
 import { extractBusinessAddress } from "./mail-address.ts";
 import type { DirectMailDraft, PostalAddress } from "./direct-mail.ts";
@@ -119,6 +121,7 @@ import {
   recordOutcome as outRecordOutcome,
 } from "./ledger-outcomes.ts";
 import { IcpProposalStore } from "./icp-proposal-store.ts";
+import { LearningStore } from "./learning-store.ts";
 import { SendDeliveryStore } from "./ledger-delivery.ts";
 import { OutboundSendStore } from "./ledger-outbound.ts";
 import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.ts";
@@ -213,6 +216,7 @@ import type {
   ReceiptRecord,
   SequenceEventRecord,
   TriggerRow,
+  QualifiedOutcomeExample,
 } from "./types.ts";
 
 const DEFAULT_DB_PATH = join(configDir(), "ledger.sqlite");
@@ -269,6 +273,9 @@ export class Ledger {
   private cache: LedgerCache;
   private inbox: InboxStore;
   private queue: QueueStore;
+  /** Unified learning proposals, approved guidance and job leases (learning-store.ts, #813). */
+  readonly learning: LearningStore;
+  /** Compatibility surface over `learning` for the #750 ICP proposal job and routes. */
   readonly icpProposals: IcpProposalStore;
   /** Sent-folder delivery checks for sends with no idempotency key (ledger-delivery.ts). */
   readonly sendDelivery: SendDeliveryStore;
@@ -330,7 +337,8 @@ export class Ledger {
     this.mailboxes = new MailboxStore(this.db);
     this.queue = new QueueStore(this.db);
     this.drafts = new DraftVersionStore(this.db);
-    this.icpProposals = new IcpProposalStore(this.db);
+    this.learning = new LearningStore(this.db);
+    this.icpProposals = new IcpProposalStore(this.learning);
     this.sendDelivery = new SendDeliveryStore(this.db);
     this.outboundSends = new OutboundSendStore(this.db);
   }
@@ -957,6 +965,15 @@ export class Ledger {
     return this.inbox.listInboxRepliesForProspect(prospectId);
   }
 
+  /** Recent human replies on a play with one of the given intents (#813). */
+  listRepliesByIntentForPlay(
+    playName: string,
+    intents: readonly string[],
+    limit = 20,
+  ): InboxReplyRecord[] {
+    return this.inbox.listRepliesByIntentForPlay(playName, intents, limit);
+  }
+
   /** Provider ids of every persisted reply: dedupe set for capture passes. */
   listInboxReplyIds(): Set<string> {
     return this.inbox.listInboxReplyIds();
@@ -1411,8 +1428,13 @@ export class Ledger {
    * every backfill call. Pass null to clear both columns together, so
    * `angle_synthesized_at` can never point at a row with no `angle_json`.
    */
-  setProspectAngle(id: number, angle: string | null): void {
-    this.prospects.setProspectAngle(id, angle);
+  setProspectAngle(id: number, angle: string | null, opts?: { approvedAt?: string | null }): void {
+    this.prospects.setProspectAngle(id, angle, opts);
+  }
+
+  /** A revision of the angle was proposed for review (#813). */
+  setProspectAngleProposedAt(id: number, at: string | null): void {
+    this.prospects.setProspectAngleProposedAt(id, at);
   }
 
   /**
@@ -1884,13 +1906,18 @@ export class Ledger {
   }
 
   /** Recent reviewed rows for few-shot ICP classification. */
-  recentIcpDecisions(limit = 20): IcpDecisionExample[] {
-    return this.queue.recentIcpDecisions(limit);
+  recentIcpDecisions(limit = 20, opts: { reasoned?: boolean } = {}): IcpDecisionExample[] {
+    return this.queue.recentIcpDecisions(limit, opts);
   }
 
   /** Count of human approve/reject decisions available to the ICP classifiers (learning-loop v2, #750). */
-  countHumanIcpDecisions(): number {
-    return this.queue.countHumanIcpDecisions();
+  countHumanIcpDecisions(opts: { reasoned?: boolean } = {}): number {
+    return this.queue.countHumanIcpDecisions(opts);
+  }
+
+  /** Founder-recorded meeting/SQL/won outcomes with review context (#813). */
+  qualifiedOutcomeExamples(limit = 20): QualifiedOutcomeExample[] {
+    return this.queue.qualifiedOutcomeExamples(limit);
   }
 
   /**
@@ -2124,6 +2151,8 @@ export class Ledger {
      *   the per-row UI routes pass "human" explicitly.
      */
     decidedBy?: "human" | "machine";
+    /** The founder's structured reason (#813); see QueueStore.setQueueStatus. */
+    decisionReason?: DecisionReason | null;
   }): void {
     let storedFitReason: string | null = null;
     if (input.status === "approved" && input.decidedBy !== "machine") {
@@ -2506,6 +2535,8 @@ export class Ledger {
       angle?: unknown;
       /** Voice card hash and first-touch format arm the draft was written with, when set. */
       voiceKey?: string | null;
+      /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
+      learningKey?: string | null;
       formatKey?: string | null;
     };
     discardReason?: DraftDiscardReason;
@@ -2867,7 +2898,15 @@ export class Ledger {
 let singleton: Ledger | null = null;
 
 export function getLedger(): Ledger {
-  if (!singleton) singleton = new Ledger();
+  if (!singleton) {
+    singleton = new Ledger();
+    try {
+      recoverLearningApplications(singleton);
+    } catch (error) {
+      singleton = null;
+      throw error;
+    }
+  }
   singleton.refreshSharedPeople();
   return singleton;
 }

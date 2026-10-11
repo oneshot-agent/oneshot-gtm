@@ -68,6 +68,10 @@ case $? in
 esac
 ```
 
+## Learning jobs
+
+The dashboard's scheduler also runs the two learning jobs ([learning](./learning.md)): writing-preference synthesis, at most once every five minutes when there is new reply or draft evidence, and the ICP rewrite, at most once a day once the configured minimum of fit-tagged decisions exists (`icpProposalMinDecisions` in `config.json`, thirty by default). Each takes a persisted lease, reserves against the spend ceiling before calling the model, and writes only proposals; approval on `/queue` is the only thing that changes a draft. Neither runs in demo mode, and no send or draft path waits on them.
+
 ## Spend ceiling
 
 Per-run caps (`maxCostUsd` on a finder, `maxSpendPerRun` on x-reposters) bound one call; they don't stop fifteen independently-scheduled finders and automatic drains from collectively overspending across a day. `config spend-ceiling <amount>` (or the Wallet card on `/setup`) sets an install-wide daily USD ceiling, checked before every automated finder run and drain. A reservation held for the call's duration closes the race between two concurrent automated paths, so they can't both slip under the ceiling before either one's spend has posted. Once reached, scheduled and run-now finders and drains halt with a named reason (`daily spend ceiling reached ($X.XX/$Y.YY spent today)`) visible on the trigger cards and in `doctor`. Manual `/queue` sends (approve, reject, mark-sent, send-draft) are never gated by it — a founder reviewing and sending one email by hand is a deliberate decision the ceiling should never block. The counter resets at local midnight, the same boundary the per-identity send caps use. Unset (the default) is unlimited.

@@ -91,6 +91,30 @@ describe("triggerAngleRefresh", () => {
     expect(calls).toEqual([]);
   });
 
+  it("debounces on a pending proposal too — a proposed revision counts as a synthesis (#813)", async () => {
+    const calls: number[] = [];
+    registerAngleRefreshTrigger((id) => {
+      calls.push(id);
+    });
+    const id = h.ledger.upsertProspect({ email: "c3@x.dev" });
+    // The active angle is old (or absent), but a revision was just proposed.
+    h.ledger.setProspectAngleProposedAt(id, new Date().toISOString());
+    triggerAngleRefresh(id);
+    expect(calls).toEqual([]);
+    // An outcome still gets through: it is evidence the proposal cannot contain.
+    triggerAngleRefresh(id, { outcome: { type: "deal", label: "won" } });
+    expect(calls).toEqual([id]);
+    // Let the in-flight slot release before the next trigger.
+    await new Promise((r) => setTimeout(r, 0));
+    // Once the proposal stamp is stale, a plain reply triggers again.
+    h.ledger.setProspectAngleProposedAt(
+      id,
+      new Date(Date.now() - (ANGLE_REFRESH_STALE_HOURS * 3600_000 + 1000)).toISOString(),
+    );
+    triggerAngleRefresh(id);
+    expect(calls).toEqual([id, id]);
+  });
+
   it("lets an OUTCOME trigger through the freshness debounce — it is new evidence (#573)", () => {
     // A reply refreshed the angle minutes ago; a meeting/deal lands next.
     // The stored angle cannot contain that outcome, so the debounce that

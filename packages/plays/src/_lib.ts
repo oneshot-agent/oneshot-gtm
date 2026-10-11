@@ -1,5 +1,7 @@
 import {
   cadenceGoalId,
+  draftLearningContext,
+  type DraftLearningInput,
   type DemoDay,
   ENRICH_CACHE_TTL_MS,
   ENRICH_DEADLINE_MS,
@@ -743,6 +745,22 @@ export function voiceBlock(surface: VoiceSurface): { text: string; key: string }
       VOICE_BUDGET[surface],
     ].join("\n"),
   };
+}
+
+/** Where approved writing preferences apply: the three drafting stages a channel has. */
+export type LearningStage = "first_touch" | "follow_up" | "reply";
+
+/** Approved context shared by every channel and drafting stage. Existing prospect angles remain active. */
+export function learningBlock(scope: DraftLearningInput): { text: string; key: string } | null {
+  const ledger = getLedger();
+  // Lightweight test doubles and bare drafting callers may not have a learning store.
+  if (!ledger.learning) return null;
+  try {
+    return draftLearningContext(ledger, scope);
+  } catch (error) {
+    logEvent("learning.context_failed", { message: (error as Error).message }, "warn");
+    return null;
+  }
 }
 
 /**
@@ -1619,4 +1637,16 @@ export async function verifyAndFilterTargets<T>(
   }
 
   return { verified, dropped, receiptIds, costUsd };
+}
+
+/** Freeze the exact prompt alongside its approved inputs before the paid generation. */
+export function stampLearningInput(learned: { key: string } | null, input: unknown): void {
+  if (!learned) return;
+  try {
+    const learning = getLedger().learning;
+    const context = learning.context(learned.key);
+    learned.key = learning.captureContext({ context, input });
+  } catch (error) {
+    logEvent("learning.snapshot_failed", { message: (error as Error).message }, "warn");
+  }
 }

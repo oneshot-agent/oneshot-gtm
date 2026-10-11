@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { migrateLedgerSchema } from "../src/ledger-schema.ts";
+import { runLedgerMigrations } from "../src/ledger-schema.ts";
 import { ProspectStore, type ProspectMailAddress } from "../src/ledger-prospects.ts";
 import type { PostalAddress } from "../src/direct-mail.ts";
 
@@ -44,7 +44,7 @@ describe("ProspectStore is a pure function of a raw Database handle (issue #643)
 
   beforeEach(() => {
     db = new Database(":memory:");
-    migrateLedgerSchema(db);
+    runLedgerMigrations(db);
     store = new ProspectStore(db, fakeMailAddress());
   });
 
@@ -80,7 +80,7 @@ describe("ProspectStore backlog eligibility (issue #643 parity)", () => {
 
   beforeEach(() => {
     db = new Database(":memory:");
-    migrateLedgerSchema(db);
+    runLedgerMigrations(db);
     store = new ProspectStore(db, fakeMailAddress());
   });
 
@@ -178,7 +178,7 @@ describe("ProspectStore.mergeProspectDossierHalf (issue #643 parity)", () => {
 
   beforeEach(() => {
     db = new Database(":memory:");
-    migrateLedgerSchema(db);
+    runLedgerMigrations(db);
     store = new ProspectStore(db, fakeMailAddress());
   });
 
@@ -275,6 +275,9 @@ describe("ProspectStore.mergeProspectDossierHalf — cross-connection concurrenc
   let dbB: Database;
   let storeA: ProspectStore;
 
+  // Two on-disk WAL connections plus the migrations: under the dev-runner
+  // verify host's load (#785 round 3, load 25-48 on 16 cores) this hook
+  // outran vitest's 10s default while the tests themselves stayed fast.
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "ledger-prospects-lock-"));
     dbPath = join(dir, "ledger.sqlite");
@@ -283,13 +286,13 @@ describe("ProspectStore.mergeProspectDossierHalf — cross-connection concurrenc
     // Short on purpose: the assertions below want a fast, deterministic
     // SQLITE_BUSY rather than waiting out a production-sized timeout.
     dbA.exec("PRAGMA busy_timeout = 200");
-    migrateLedgerSchema(dbA);
+    runLedgerMigrations(dbA);
     storeA = new ProspectStore(dbA, fakeMailAddress());
 
     dbB = new Database(dbPath);
     dbB.exec("PRAGMA journal_mode = WAL");
     dbB.exec("PRAGMA busy_timeout = 200");
-  });
+  }, 30_000);
 
   afterEach(() => {
     dbA.close();

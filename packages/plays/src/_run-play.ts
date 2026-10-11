@@ -30,6 +30,8 @@ import {
   admissionBlock,
   socialProofBlock,
   type SendDraftedOpts,
+  learningBlock,
+  stampLearningInput,
   voiceBlock,
 } from "./_lib.ts";
 import { enrollInCadence, getSequence } from "./_cadence.ts";
@@ -97,6 +99,8 @@ export type PlayDraft<T, X = Record<string, never>> = {
   angle?: DraftAngle;
   /** Hash of the founder's voice card the draft was written with; absent when none was set. */
   voiceKey?: string | null;
+  /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
+  learningKey?: string | null;
   /** The first-touch format arm the draft was written in; absent when the trigger never set one. */
   formatKey?: FirstTouchFormat | null;
 } & X;
@@ -324,6 +328,19 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // shape; the block's own budget line keeps it under the humanizer.
         const voice = voiceBlock("intro");
         if (voice) inputBlock = `${inputBlock}\n\n${voice.text}`;
+        // LEARNED: founder-approved writing preferences for email first
+        // touches (#813). Null until something is approved, so the prompt is
+        // byte-identical to before on an install that has approved nothing.
+        const learned = learningBlock({
+          channel: "email",
+          stage: "first_touch",
+          cfg,
+          email: def.toEmail(target),
+          playName: def.playName,
+          campaignAngle: opts.draftAngle,
+          replaceProspectAngle: !!opts.draftAngle,
+        });
+        if (learned) inputBlock = `${inputBlock}\n\n${learned.text}`;
         // FORMAT: only when the trigger opted into a first-touch format. The
         // arm is a stable per-prospect hash (see _first-touch.ts), so an
         // untouched trigger's prompt is byte-identical to before.
@@ -370,6 +387,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           inputBlock += `\n\nSELECTED ANGLE: ${opts.draftAngle}\nBuild this draft around this argument. Preserve the play’s channel, tone, and factual constraints. Do not blend in other arguments.`;
         // Guard #2. The LLM draft, the paid call `prepare` was feeding.
         throwIfCancelled(opts.signal, `${def.playName} draft`);
+        stampLearningInput(learned, inputBlock);
         const draft = await draftEmailFromPrompt({
           promptName: def.promptName,
           inputBlock,
@@ -462,6 +480,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           flags,
           ...(prep.enrichmentFailed ? { enrichmentFailed: true } : {}),
           ...(voice ? { voiceKey: voice.key } : {}),
+          ...(learned ? { learningKey: learned.key } : {}),
           ...(formatKey ? { formatKey } : {}),
           ...(angleSelection && edgeField
             ? {

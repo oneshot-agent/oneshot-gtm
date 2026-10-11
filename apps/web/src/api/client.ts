@@ -69,6 +69,12 @@ import type {
   TriggerView,
   IcpProposalDecisionResult,
   IcpProposalsResult,
+  AngleSuggestionResult,
+  DecisionReason,
+  LearningDecisionResult,
+  LearningGuidanceResult,
+  LearningKind,
+  LearningProposalsResult,
 } from "@oneshot-gtm/shared-types";
 import { demoGet, demoWrite, IS_DEMO } from "./demo.ts";
 import {
@@ -464,15 +470,31 @@ export const api = {
   queueDossier: (id: number) => getJson<QueueDossierView>(`/queue/${id}/dossier`),
   resolveQueueContact: (id: number) =>
     postJson<{ ok: boolean; payload: Record<string, unknown> }>(`/queue/${id}/resolve-contact`, {}),
-  approveQueue: (id: number) => postJson<{ ok: boolean }>(`/queue/${id}/approve`, {}),
+  // `reason` is the structured fit judgment (#813): `fit` on a deliberate
+  // single-row approve; absent on a bulk pass, which judges nothing.
+  approveQueue: (id: number, reason?: DecisionReason) =>
+    postJson<{ ok: boolean }>(`/queue/${id}/approve`, reason ? { reason } : {}),
   // `reason` undefined → the row's note is left alone; a string: including
   // "": is written, so a founder can clear a prefilled reason.
-  rejectQueue: (id: number, reason?: string) =>
-    postJson<{ ok: boolean }>(`/queue/${id}/reject`, reason === undefined ? {} : { reason }),
+  // `decisionReason` is the structured why; only fit-kind ones teach the ICP.
+  rejectQueue: (id: number, reason?: string, decisionReason?: DecisionReason) =>
+    postJson<{ ok: boolean }>(`/queue/${id}/reject`, {
+      ...(reason === undefined ? {} : { reason }),
+      ...(decisionReason ? { decisionReason } : {}),
+    }),
   // The reject box's LLM fallback: one sentence on why this row might not
   // fit, or null when the model sees no mismatch. Never sends, never decides.
-  suggestRejectReason: (id: number) =>
-    postJson<{ reason: string | null; source: "llm" | null }>(`/queue/${id}/reject-reason`, {}),
+  // `hint` is what the founder already said (a tapped category, a few typed
+  // words): the model then states their reason and picks its category.
+  suggestRejectReason: (id: number, hint?: { hint?: string; decisionReason?: DecisionReason }) =>
+    postJson<{
+      reason: string | null;
+      decisionReason: DecisionReason | null;
+      source: "llm" | null;
+    }>(`/queue/${id}/reject-reason`, {
+      ...(hint?.hint ? { hint: hint.hint } : {}),
+      ...(hint?.decisionReason ? { decisionReason: hint.decisionReason } : {}),
+    }),
   approveAllQueue: (play?: string) =>
     postJson<{ approved: number }>("/queue/approve-all", play ? { play } : {}),
   // Re-draft a row in preview (dry-run, never sends); overwrites the persisted last_draft_json.
@@ -516,6 +538,10 @@ export const api = {
     }),
   runTrigger: (name: string) =>
     postJson<RunTriggerResult>(`/triggers/${encodeURIComponent(name)}/run`, {}),
+  // Explicit founder action (#813): ask for keep/retire/add on the play's
+  // angles; the answer lands as a pending proposal on /queue, never applied here.
+  suggestAngles: (name: string) =>
+    postJson<AngleSuggestionResult>(`/triggers/${encodeURIComponent(name)}/suggest-angles`, {}),
   packs: () => getJson<{ packs: PackView[] }>("/packs"),
   applyPack: (id: string) =>
     postJson<PackApplyResult>(`/packs/${encodeURIComponent(id)}/apply`, {}),
@@ -524,4 +550,37 @@ export const api = {
     postJson<IcpProposalDecisionResult>(`/icp-proposals/${encodeURIComponent(id)}/approve`, {}),
   dismissIcpProposal: (id: string) =>
     postJson<IcpProposalDecisionResult>(`/icp-proposals/${encodeURIComponent(id)}/dismiss`, {}),
+  // Unified learning review (#813): every learned change waits here for approval.
+  learningProposals: async (
+    filter: { kind?: LearningKind; prospectId?: number; status?: string } = {},
+  ) => {
+    const q = new URLSearchParams();
+    if (filter.kind) q.set("kind", filter.kind);
+    // The demo serves captured documents only, one per kind; a prospect deep
+    // link filters that document here instead of asking for one that was
+    // never captured.
+    if (filter.prospectId != null && !IS_DEMO) q.set("prospectId", String(filter.prospectId));
+    q.set("status", filter.status ?? "all");
+    const result = await getJson<LearningProposalsResult>(`/learning/proposals?${q.toString()}`);
+    if (filter.prospectId != null && IS_DEMO)
+      return {
+        ...result,
+        proposals: result.proposals.filter((p) => p.scope.prospectId === filter.prospectId),
+      };
+    return result;
+  },
+  approveLearningProposal: (id: string, value?: unknown) =>
+    postJson<LearningDecisionResult>(
+      `/learning/proposals/${encodeURIComponent(id)}/approve`,
+      value === undefined ? {} : { value },
+    ),
+  dismissLearningProposal: (id: string) =>
+    postJson<LearningDecisionResult>(`/learning/proposals/${encodeURIComponent(id)}/dismiss`, {}),
+  rollbackLearningProposal: (id: string) =>
+    postJson<LearningDecisionResult>(`/learning/proposals/${encodeURIComponent(id)}/rollback`, {}),
+  learningGuidance: () => getJson<LearningGuidanceResult>("/learning/guidance"),
+  setLearningGuidance: (id: string, enabled: boolean) =>
+    postJson<{ ok: true }>(`/learning/guidance/${encodeURIComponent(id)}`, { enabled }),
+  rollbackLearningGuidance: (id: string) =>
+    postJson<{ ok: true }>(`/learning/guidance/${encodeURIComponent(id)}/rollback`, {}),
 };

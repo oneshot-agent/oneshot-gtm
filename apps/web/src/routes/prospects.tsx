@@ -1,7 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   describeDecision,
@@ -10,12 +10,13 @@ import {
   type ProspectBrowseRow,
   type ProspectSortKey,
   type QueueStatusView,
+  type DecisionReason,
 } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
-import { Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
+import { Input, Select } from "../components/primitives/Field.tsx";
 import { Skeleton, SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { cn, formatCount, timeAgo } from "../lib/cn.ts";
 import { maskDeep } from "../lib/mask.ts";
@@ -36,7 +37,8 @@ import {
   type ProspectsSearch,
 } from "../lib/prospects-helpers.ts";
 import { fitReasonFor } from "../lib/queueRationale.ts";
-import { appendReason, REJECT_REASON_CHIPS, suggestRejectReason } from "../lib/rejectReason.ts";
+import { suggestRejectReason, type RejectReasonSource } from "../lib/rejectReason.ts";
+import { RejectReasonFields } from "../components/queue/RejectReasonFields.tsx";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
 import { CaseSection, Rule, Sheet } from "../components/ledger/Sheet.tsx";
@@ -471,6 +473,15 @@ function DetailPanel({ id }: { id: number }) {
   const { masked } = usePrivacy();
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
+  const [decisionReason, setDecisionReason] = useState<DecisionReason | "">("");
+  const [reasonSource, setReasonSource] = useState<RejectReasonSource>(null);
+  const onRejectFieldsChange = useCallback(
+    (patch: { reason?: string; decisionReason?: DecisionReason | "" }) => {
+      if (patch.reason !== undefined) setReason(patch.reason);
+      if (patch.decisionReason !== undefined) setDecisionReason(patch.decisionReason);
+    },
+    [],
+  );
   const detail = useQuery({
     queryKey: ["prospects", "detail", id],
     queryFn: () => api.queueRowDetail(id),
@@ -483,7 +494,9 @@ function DetailPanel({ id }: { id: number }) {
     void qc.invalidateQueries({ queryKey: ["home"] });
   };
   const approve = useMutation({
-    mutationFn: (rowId: number) => api.approveQueue(rowId),
+    // A plain approve records no fit judgment; "as fit" is the explicit choice (#813).
+    mutationFn: (vars: { rowId: number; fit?: boolean }) =>
+      api.approveQueue(vars.rowId, vars.fit ? "fit" : undefined),
     onSuccess: () => {
       toast.success("approved — it will go out on the next drain");
       invalidate();
@@ -491,8 +504,8 @@ function DetailPanel({ id }: { id: number }) {
     onError: (err) => toast.error(`couldn't approve · ${err.message}`),
   });
   const reject = useMutation({
-    mutationFn: (vars: { rowId: number; reason?: string }) =>
-      api.rejectQueue(vars.rowId, vars.reason),
+    mutationFn: (vars: { rowId: number; reason?: string; decisionReason?: DecisionReason }) =>
+      api.rejectQueue(vars.rowId, vars.reason, vars.decisionReason),
     onSuccess: () => {
       toast.success("rejected");
       setRejecting(false);
@@ -565,15 +578,16 @@ function DetailPanel({ id }: { id: number }) {
               // the raw `auto:` string. A human re-saving that would label
               // their own decision as the machine's. Nothing under privacy
               // mode: the same text the sheet withholds there.
-              setReason(
-                masked
-                  ? ""
-                  : suggestRejectReason({
-                      payload: row.payload,
-                      notes: row.notes,
-                      icpVerdictReason: row.prospect?.icpVerdictReason ?? null,
-                    }).text,
-              );
+              const prefill = masked
+                ? { text: "", source: null, decisionReason: null }
+                : suggestRejectReason({
+                    payload: row.payload,
+                    notes: row.notes,
+                    icpVerdictReason: row.prospect?.icpVerdictReason ?? null,
+                  });
+              setReason(prefill.text);
+              setDecisionReason(prefill.decisionReason ?? "");
+              setReasonSource(prefill.source);
               setRejecting(true);
             }}
             {...readOnly}
@@ -590,7 +604,13 @@ function DetailPanel({ id }: { id: number }) {
               variant="danger"
               size="sm"
               disabled={reject.isPending}
-              onClick={() => reject.mutate({ rowId: row.id, reason: reason.trim() || undefined })}
+              onClick={() =>
+                reject.mutate({
+                  rowId: row.id,
+                  reason: reason.trim() || undefined,
+                  decisionReason: decisionReason || undefined,
+                })
+              }
               {...readOnly}
             >
               {reject.isPending ? "Rejecting…" : "Reject"}
@@ -602,37 +622,47 @@ function DetailPanel({ id }: { id: number }) {
             variant="secondary"
             size="sm"
             disabled={approve.isPending}
-            onClick={() => approve.mutate(row.id)}
+            onClick={() => approve.mutate({ rowId: row.id })}
             {...readOnly}
           >
             <Check size={12} /> {row.status === "rejected" ? "Approve anyway" : "Approve"}
           </Button>
         )}
+        {!rejecting && canApprove && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={approve.isPending}
+            onClick={() => approve.mutate({ rowId: row.id, fit: true })}
+            title="Approve and record an explicit fit judgment: this is who you sell to (teaches the ICP)"
+            className="whitespace-nowrap"
+            {...readOnly}
+          >
+            as fit
+          </Button>
+        )}
+        {!rejecting && row.prospectId != null && (
+          <Link
+            to="/queue"
+            search={{ learning: "prospect_angle", prospectId: row.prospectId }}
+            className="text-[12px] text-ink-muted underline hover:text-ink-cream"
+          >
+            Angle proposals
+          </Link>
+        )}
       </>
     ) : null;
   const rejectEditor = rejecting ? (
     <div className="mt-3 border-t border-ink-rule pt-3">
-      <Field label="Reason (optional — kept on the prospect's timeline)">
-        <Textarea
-          rows={3}
-          autoFocus
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          placeholder="e.g. wrong stage, wrong industry, already a customer"
-        />
-      </Field>
-      <div className="mt-2 flex flex-wrap gap-1">
-        {REJECT_REASON_CHIPS.map((chip) => (
-          <Button
-            key={chip}
-            variant="ghost"
-            size="sm"
-            onClick={() => setReason((cur) => appendReason(cur, chip))}
-          >
-            {chip}
-          </Button>
-        ))}
-      </div>
+      <RejectReasonFields
+        key={row?.id ?? "none"}
+        rowId={row?.id ?? null}
+        value={{ reason, decisionReason }}
+        onChange={onRejectFieldsChange}
+        source={reasonSource}
+        privacy={masked}
+        disabled={reject.isPending}
+      />
     </div>
   ) : null;
 

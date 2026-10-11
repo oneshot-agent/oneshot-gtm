@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  renameSync,
+  unlinkSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -131,10 +139,62 @@ function readConfigOrDefault(): OneShotConfig {
   }
 }
 
+let configLockDepth = 0;
+/** Synchronous, process-shared lock. A live owner is never timed out and stolen. */
+export function withConfigLock<T>(fn: () => T): T {
+  if (configLockDepth) return fn();
+  ensureConfigDir();
+  const path = `${CONFIG_PATH}.lock`;
+  const token = `${process.pid}:${randomUUID()}`;
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    try {
+      writeFileSync(path, token, { flag: "wx", mode: 0o600 });
+      break;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    try {
+      const owner = readFileSync(path, "utf8");
+      const pid = Number(owner.split(":")[0]);
+      if (Number.isSafeInteger(pid) && pid > 0) {
+        try {
+          process.kill(pid, 0);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === "ESRCH" && readFileSync(path, "utf8") === owner)
+            unlinkSync(path);
+        }
+      }
+    } catch {
+      /* owner released; retry */
+    }
+    if (Date.now() >= deadline)
+      throw new Error("Workspace configuration is busy; retry the decision.");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  }
+  configLockDepth++;
+  try {
+    return fn();
+  } finally {
+    configLockDepth--;
+    if (readFileSync(path, "utf8") === token) unlinkSync(path);
+  }
+}
+
 export function saveConfig(cfg: OneShotConfig): void {
+  return withConfigLock(() => saveConfigUnlocked(cfg));
+}
+
+function saveConfigUnlocked(cfg: OneShotConfig): void {
   ensureConfigDir();
   if (!existsSync(dirname(CONFIG_PATH))) mkdirSync(dirname(CONFIG_PATH), { recursive: true });
-  writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  const temporary = `${CONFIG_PATH}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+    renameSync(temporary, CONFIG_PATH);
+  } finally {
+    if (existsSync(temporary)) unlinkSync(temporary);
+  }
   // config.json can carry a bearer credential (slackWebhookUrl: whoever
   // holds it can post to the operator's Slack channel), so it gets the same
   // owner-only permissions as SECRETS_PATH/GMAIL_TOKENS_PATH below (issue #71

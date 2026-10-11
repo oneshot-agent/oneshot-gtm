@@ -417,9 +417,15 @@ export function triggerAngleRefresh(prospectId: number, context?: AngleRefreshCo
     // booked), so it bypasses the debounce (#573). Otherwise a reply that
     // refreshed the angle minutes earlier would silently discard the
     // outcome for the rest of the stale window, with no retry.
-    if (prospect.angle_synthesized_at && !context?.outcome) {
-      const ageMs = Date.now() - Date.parse(prospect.angle_synthesized_at);
-      if (Number.isFinite(ageMs) && ageMs < ANGLE_REFRESH_STALE_HOURS * 3600_000) return;
+    // A proposal awaiting review counts as a synthesis for the debounce
+    // (#813): without this every reply would re-buy a synthesis, since the
+    // active angle's own stamp no longer moves until the founder approves.
+    const stamps = [prospect.angle_synthesized_at, prospect.angle_proposed_at]
+      .map((at) => (at ? Date.parse(at) : NaN))
+      .filter((ms) => Number.isFinite(ms));
+    if (stamps.length > 0 && !context?.outcome) {
+      const ageMs = Date.now() - Math.max(...stamps);
+      if (ageMs < ANGLE_REFRESH_STALE_HOURS * 3600_000) return;
     }
     launchAngleRefresh(prospectId, context);
   } catch {
