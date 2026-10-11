@@ -8,6 +8,7 @@ const completeInputs: string[] = [];
 const upserts: Array<Record<string, unknown>> = [];
 const events: Array<Record<string, unknown>> = [];
 const enrollments: Array<Record<string, unknown>> = [];
+let failReceipt = false;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -21,6 +22,7 @@ vi.mock("@oneshot-gtm/core", async () => {
         return 42;
       },
       recordLinkedInInviteEvent: (input: Record<string, unknown>) => {
+        if (failReceipt) throw new Error("receipt store down");
         events.push(input);
         return 1;
       },
@@ -85,6 +87,7 @@ beforeEach(() => {
   upserts.length = 0;
   events.length = 0;
   enrollments.length = 0;
+  failReceipt = false;
 });
 
 describe("draftLinkedInNote", () => {
@@ -260,5 +263,107 @@ describe("sendLinkedInInvite", () => {
     await expect(
       sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
     ).rejects.toThrow(/unexpected LinkedIn invite result/);
+  });
+
+  describe("an invite that may have gone out stays suppressed (#787)", () => {
+    const again = async () => {
+      const { sender: s, calls } = sender({ invitation_id: "inv-2", status: "sent" });
+      const out = await sendLinkedInInvite({
+        row: row(),
+        note: "hi",
+        sender: s,
+        workspace: "two",
+      });
+      return { out, invites: calls.filter((c) => (c as { kind: string }).kind === "invite") };
+    };
+
+    it("an unexpected result keeps the profile held", async () => {
+      const { sender: s } = sender({ status: "weird" });
+      await expect(
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+      ).rejects.toThrow();
+      const { out, invites } = await again();
+      expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+      expect(invites).toHaveLength(0);
+    });
+
+    it("a transport error with no provider code (timeout, lost worker) keeps the profile held", async () => {
+      const { sender: s } = sender(new Error("worker terminated"));
+      await expect(
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+      ).rejects.toThrow(/worker terminated/);
+      const { out, invites } = await again();
+      expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+      expect(invites).toHaveLength(0);
+    });
+
+    it("a receipt-write failure after the provider accepted keeps the profile held", async () => {
+      failReceipt = true;
+      const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
+      await expect(
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+      ).rejects.toThrow(/receipt store down/);
+      failReceipt = false;
+      const { out, invites } = await again();
+      expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+      expect(invites).toHaveLength(0);
+    });
+
+    it("a failed confirmation does not free the profile", async () => {
+      const { getSharedDb } = await import("@oneshot-gtm/core");
+      const db = getSharedDb();
+      const realConfirm = db.confirmLinkedInProfile.bind(db);
+      db.confirmLinkedInProfile = () => {
+        throw new Error("disk full");
+      };
+      try {
+        const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
+        const first = await sendLinkedInInvite({
+          row: row(),
+          note: "hi",
+          sender: s,
+          workspace: "gtm",
+        });
+        expect(first).toMatchObject({ sent: true });
+      } finally {
+        db.confirmLinkedInProfile = realConfirm;
+      }
+      const { out, invites } = await again();
+      expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+      expect(invites).toHaveLength(0);
+    });
+
+    it("a provider-reported failure (job failed, no invite sent) frees the profile", async () => {
+      const { sender: s } = sender(Object.assign(new Error("failed"), { code: "email_required" }));
+      const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+      expect(out).toMatchObject({ sent: false });
+      const retry = await again();
+      expect(retry.out).toMatchObject({ sent: true });
+    });
+  });
+
+  it("an X or GitHub URL is refused with the guard's invalid-profile reason", async () => {
+    const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
+    const out = await sendLinkedInInvite({
+      row: row({ linkedinUrl: "https://github.com/dana-lee" }),
+      note: "hi",
+      sender: s,
+      workspace: "gtm",
+    });
+    expect(out).toMatchObject({ sent: false, guard: "invalid-profile" });
+    expect((out as { flags: string[] }).flags[0]).toMatch(/^invalid-profile:/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("a row without any LinkedIn URL is also an invalid-profile refusal", async () => {
+    const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
+    const out = await sendLinkedInInvite({
+      row: row({ linkedinUrl: undefined }),
+      note: "hi",
+      sender: s,
+      workspace: "gtm",
+    });
+    expect(out).toMatchObject({ sent: false, guard: "invalid-profile" });
+    expect(calls).toHaveLength(0);
   });
 });

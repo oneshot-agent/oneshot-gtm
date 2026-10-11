@@ -181,8 +181,8 @@ import {
   sweepStalePendingResolution as sysSweepStalePendingResolution,
   upsertPendingResolution as sysUpsertPendingResolution,
 } from "./ledger-system.ts";
-import { sharedDbPath } from "./shared-db.ts";
-import { linkedInGuardFacts } from "./ledger-linkedin-guard.ts";
+import { currentWorkspaceName, sharedDbPath, type SharedDb } from "./shared-db.ts";
+import { linkedInGuardFacts, linkedInInviteHistory } from "./ledger-linkedin-guard.ts";
 import type { LinkedInGuardFacts } from "./linkedin-guard.ts";
 import { SharedPeople } from "./shared-people.ts";
 import type { ReplyKind } from "./reply-classify.ts";
@@ -752,6 +752,21 @@ export class Ledger {
   /** Ledger facts the LinkedIn invite guard reads (linkedin-guard.ts). */
   linkedInGuardFacts(prospectId: number): LinkedInGuardFacts | null {
     return linkedInGuardFacts(this.db, prospectId);
+  }
+
+  /**
+   * Copy the invites this ledger already recorded into the shared
+   * `linkedin_touched` table, once per ledger file, so profiles invited before
+   * the guard existed still exclude other plays and workspaces.
+   */
+  backfillLinkedInTouched(shared: SharedDb): void {
+    shared.importLinkedInInvites(`linkedin-invites:${this.path}`, () =>
+      linkedInInviteHistory(this.db).map((h) => ({
+        slug: h.slug,
+        source: `invite:${currentWorkspaceName()}`,
+        touchedAt: h.touchedAt,
+      })),
+    );
   }
 
   suppressCadencesForReply(prospectId: number, accountKey?: string) {

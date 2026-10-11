@@ -1038,7 +1038,29 @@ export const SOFT_REVIEW_FLAGS: readonly string[] = [
  * never disagree on whether a held draft can be force-sent.
  */
 export function blockingFlags(flags: string[]): string[] {
-  return flags.filter((f) => !SOFT_REVIEW_FLAGS.includes(f));
+  return flags.filter((f) => !SOFT_REVIEW_FLAGS.includes(f) && !isInviteGuardFlag(f));
+}
+
+/** Reason codes of the LinkedIn invite guard (core's `LinkedInGuardReason`). */
+const INVITE_GUARD_REASONS: ReadonlySet<string> = new Set([
+  "invalid-profile",
+  "not-a-person",
+  "opted-out",
+  "replied",
+  "cadence-stopped",
+  "icp-rejected",
+  "already-invited",
+  "already-touched",
+  "guard-unavailable",
+]);
+
+/**
+ * A `reason: detail` flag the invite guard left on a refused draft. It records
+ * why the last send was refused and never blocks the next one: the guard
+ * re-checks the row on every send, so fixing the row is enough to resend.
+ */
+export function isInviteGuardFlag(flag: string): boolean {
+  return INVITE_GUARD_REASONS.has(flag.split(":")[0]!.trim());
 }
 
 /**

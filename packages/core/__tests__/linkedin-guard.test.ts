@@ -279,6 +279,39 @@ describe("canInviteOnLinkedIn", () => {
     expect(reasonOf(check({ icpVerdict: "reject" }))).toBe("icp-rejected");
   });
 
+  it("5. a stale or unclear row verdict can't clear a stored reject; a human override can", () => {
+    const id = seed();
+    ledger.setProspectIcpVerdict(id, "reject", "off-ICP title");
+    expect(reasonOf(check({ icpVerdict: "pass" }))).toBe("icp-rejected");
+    expect(reasonOf(check({ icpVerdict: "unclear" }))).toBe("icp-rejected");
+    expect(check({ icpVerdict: "pass", icpOverridden: true })).toEqual({ ok: true });
+    // The row's own reject still wins over an override flag.
+    expect(reasonOf(check({ icpVerdict: "reject", icpOverridden: true }))).toBe("icp-rejected");
+  });
+
+  it("7. an invite recorded before the shared table existed still excludes the profile", () => {
+    const id = seed();
+    ledger.recordLinkedInInviteEvent({
+      prospectId: id,
+      playName: "luma-events",
+      stepIndex: 0,
+      status: "sent",
+      metadata: { invitationId: "old-1" },
+    });
+    // A different row, play and workspace for the same person: nothing in the shared file yet.
+    expect(shared.linkedInTouch("dana-lee")).toBeNull();
+    const v = canInviteOnLinkedIn(person({ email: null }), { ledger, shared });
+    expect(reasonOf(v)).toBe("already-invited");
+    expect(shared.linkedInTouch("dana-lee")?.status).toBe("confirmed");
+    // Once only: a withdrawn-then-forgotten marker isn't re-imported over a release.
+    expect(shared.importLinkedInInvites("again", () => [])).toBe(0);
+  });
+
+  it("7. a withdrawn-only history, or another person's invite, imports nothing for this profile", () => {
+    seed();
+    expect(check()).toEqual({ ok: true });
+  });
+
   it("finds the prospect by profile when the row carries no email", () => {
     const id = seed();
     reply(id, "h2", "human");
@@ -394,6 +427,28 @@ describe("one profile, one invite (shared DB)", () => {
       const c = db.claimLinkedInProfile({ slug: "done", source: "invite:x", now: t0 });
       db.confirmLinkedInProfile((c as { id: number }).id);
       expect(db.linkedInTouch("done", new Date(t0.getTime() + 365 * 86_400_000))).not.toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("a dispatched claim never expires; only an explicit release frees it", () => {
+    const db = new SharedDb(join(dir, "shared.sqlite"));
+    try {
+      const t0 = new Date("2026-01-01T00:00:00Z");
+      const r = db.claimLinkedInProfile({ slug: "mid-flight", source: "invite:x", now: t0 }) as {
+        id: number;
+      };
+      db.dispatchLinkedInProfile(r.id);
+      const later = new Date(t0.getTime() + 30 * 86_400_000);
+      expect(db.linkedInTouch("mid-flight", later)).not.toBeNull();
+      expect(
+        "held" in db.claimLinkedInProfile({ slug: "mid-flight", source: "invite:y", now: later }),
+      ).toBe(true);
+      db.releaseLinkedInProfile(r.id);
+      expect(db.linkedInTouch("mid-flight", later)).toBeNull();
+      // A lost reservation can't be dispatched: the caller must not send.
+      expect(() => db.dispatchLinkedInProfile(r.id)).toThrow(/reservation was lost/);
     } finally {
       db.close();
     }

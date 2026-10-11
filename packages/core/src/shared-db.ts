@@ -31,7 +31,12 @@ export interface LinkedInTouch {
   /** `invite:<workspace>` for a GTM invite, `import:<label>` for a suppression import. */
   source: string;
   touched_at: string;
-  status: "reserved" | "confirmed";
+  /**
+   * `reserved`: claimed, nothing sent yet (expires). `dispatched`: the invite
+   * call is about to be made or its outcome is unknown (never expires; only an
+   * explicit release frees it). `confirmed`: sent, or imported.
+   */
+  status: "reserved" | "dispatched" | "confirmed";
 }
 
 /** The flag a draft carries when the recipient was emailed by another workspace recently. */
@@ -108,6 +113,8 @@ export class SharedDb {
       CREATE INDEX IF NOT EXISTS idx_invite_slots_key ON linkedin_invite_slots(account_id, workspace, day);
       -- LinkedIn profiles already invited (by any workspace) or touched by another tool.
       -- status 'reserved' is the reserve-before-await claim; it expires like a touch reservation.
+      -- 'dispatched' is written just before the invite call and never expires: a crash or an
+      -- unknown outcome after that point must keep the profile suppressed.
       CREATE TABLE IF NOT EXISTS linkedin_touched (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         slug       TEXT NOT NULL UNIQUE,
@@ -427,7 +434,7 @@ export class SharedDb {
       (this.db
         .query(
           `SELECT slug, source, touched_at, status FROM linkedin_touched
-           WHERE slug = ? AND (status = 'confirmed' OR (status = 'reserved' AND touched_at >= ?))`,
+           WHERE slug = ? AND (status IN ('confirmed', 'dispatched') OR (status = 'reserved' AND touched_at >= ?))`,
         )
         .get(slug, cutoff) as LinkedInTouch | null) ?? null
     );
@@ -470,16 +477,71 @@ export class SharedDb {
     }
   }
 
+  /**
+   * The invite call is about to be made: the claim stops expiring. From here a
+   * crash, a timeout or a failed confirmation keeps the profile suppressed;
+   * only `releaseLinkedInProfile` (a provider-reported non-delivery) frees it.
+   * Throws when the reservation is gone, so the caller does not send.
+   */
+  dispatchLinkedInProfile(id: number): void {
+    const res = this.db
+      .prepare(
+        `UPDATE linkedin_touched SET status = 'dispatched', touched_at = ? WHERE id = ? AND status = 'reserved'`,
+      )
+      .run(new Date().toISOString(), id);
+    if (Number(res.changes) !== 1) throw new Error("the LinkedIn profile reservation was lost");
+  }
+
   /** The invite was accepted by the API: the profile stays touched for good. */
   confirmLinkedInProfile(id: number): void {
     this.db
-      .prepare(`UPDATE linkedin_touched SET status = 'confirmed', touched_at = ? WHERE id = ?`)
+      .prepare(
+        `UPDATE linkedin_touched SET status = 'confirmed', touched_at = ? WHERE id = ? AND status IN ('reserved', 'dispatched')`,
+      )
       .run(new Date().toISOString(), id);
   }
 
-  /** The invite did not go out: free the profile. */
+  /** The invite did not go out (the provider said so): free the profile. */
   releaseLinkedInProfile(id: number): void {
-    this.db.prepare(`DELETE FROM linkedin_touched WHERE id = ? AND status = 'reserved'`).run(id);
+    this.db
+      .prepare(`DELETE FROM linkedin_touched WHERE id = ? AND status IN ('reserved', 'dispatched')`)
+      .run(id);
+  }
+
+  /**
+   * One-time copy of a ledger's recorded invites into `linkedin_touched`
+   * (INSERT OR IGNORE: an existing record wins), so profiles invited before the
+   * guard existed keep excluding other plays and workspaces. The marker and the
+   * rows commit together; keyed in `legacy_imports` by `key`.
+   */
+  importLinkedInInvites(
+    key: string,
+    read: () => Array<{ slug: string; source: string; touchedAt: string }>,
+  ): number {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.db.query(`SELECT 1 FROM legacy_imports WHERE ledger_path = ?`).get(key)) {
+        this.db.exec("ROLLBACK");
+        return 0;
+      }
+      const entries = read();
+      const ins = this.db.prepare(
+        `INSERT OR IGNORE INTO linkedin_touched(slug, source, touched_at, status) VALUES(?, ?, ?, 'confirmed')`,
+      );
+      for (const e of entries) ins.run(e.slug, e.source, e.touchedAt);
+      this.db
+        .prepare(`INSERT OR IGNORE INTO legacy_imports(ledger_path, imported_at) VALUES(?, ?)`)
+        .run(key, new Date().toISOString());
+      this.db.exec("COMMIT");
+      return entries.length;
+    } catch (err) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // already rolled back
+      }
+      throw err;
+    }
   }
 
   /** Suppress a profile touched outside GTM (an import). An existing row wins. */

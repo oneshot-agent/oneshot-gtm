@@ -37,6 +37,8 @@ export interface LinkedInInviteProspect {
   linkedinUrl?: string | null;
   /** The ICP verdict the row carries (a human override rewrites it to `pass`). */
   icpVerdict?: string | null;
+  /** The row carries a human ICP override (`icpOverride` on its payload): only then may a pass beat a stored reject. */
+  icpOverridden?: boolean;
 }
 
 /** What the guard needs from the ledger. `Ledger` satisfies it. */
@@ -46,6 +48,8 @@ export interface LinkedInGuardLedger {
     linkedinUrl?: string;
   }): { status: "matched"; prospectId: number } | { status: "unmatched" } | { status: "conflict" };
   linkedInGuardFacts(prospectId: number): LinkedInGuardFacts | null;
+  /** Copies invites recorded before the guard into the shared table, once. Optional for test doubles. */
+  backfillLinkedInTouched?(shared: SharedDb): void;
 }
 
 /** What the guard needs from the shared DB. `SharedDb` satisfies it. */
@@ -205,7 +209,7 @@ export function canInviteOnLinkedIn(
   }
 
   // 3-5. Ledger facts, for a prospect we already know.
-  let icpVerdict = prospect.icpVerdict ?? null;
+  let storedReject = false;
   try {
     let prospectId = prospect.prospectId ?? null;
     if (prospectId == null) {
@@ -227,22 +231,27 @@ export function canInviteOnLinkedIn(
       if (facts.cadenceStopped) {
         return refuse("cadence-stopped", "their cadence was stopped or they unsubscribed");
       }
-      // A human override on the row (verdict rewritten to `pass`) wins over
-      // the stored machine verdict; NULL passes.
-      icpVerdict = icpVerdict ?? facts.icpVerdict;
+      storedReject = facts.icpVerdict === "reject";
     }
   } catch (err) {
     return refuse("guard-unavailable", `could not check the ledger: ${(err as Error).message}`);
   }
 
-  // 5. ICP.
-  if (icpVerdict === "reject") {
+  // 5. ICP. A reject (on the row, or stored for the prospect) refuses. A
+  // stale or unclear row verdict can't clear a stored reject: only an
+  // explicit human override on the row can. NULL passes.
+  if (prospect.icpVerdict === "reject" || (storedReject && !prospect.icpOverridden)) {
     return refuse("icp-rejected", "the ICP gate rejected this person");
   }
 
   // 6-7. One profile, one invite; the suppression list.
   try {
-    const held = (ctx.shared ?? getSharedDb()).linkedInTouch(profile.key);
+    const shared = ctx.shared ?? getSharedDb();
+    // Invites recorded before the guard existed count too.
+    if (ctx.ledger.backfillLinkedInTouched && "importLinkedInInvites" in shared) {
+      ctx.ledger.backfillLinkedInTouched(shared as SharedDb);
+    }
+    const held = shared.linkedInTouch(profile.key);
     if (held) return refuse(...touchedReason(held));
   } catch (err) {
     logEvent(
@@ -301,15 +310,24 @@ export function describeGuardCounts(counts: Record<string, number>): string {
 }
 
 export interface LinkedInProfileClaim {
+  /**
+   * The invite call is about to be made: from here the profile stays
+   * suppressed through a crash, a timeout or a failed confirmation. Throws
+   * when the claim can't be made durable; the caller must then not send.
+   */
+  dispatch: () => void;
   /** The invite was accepted: the profile stays recorded for good. */
   confirm: () => void;
-  /** The invite did not go out: free the profile. */
+  /** The provider reported the invite did not go out: free the profile. */
   release: () => void;
 }
 
 type ProfileClaimStore = Pick<
   SharedDb,
-  "claimLinkedInProfile" | "confirmLinkedInProfile" | "releaseLinkedInProfile"
+  | "claimLinkedInProfile"
+  | "dispatchLinkedInProfile"
+  | "confirmLinkedInProfile"
+  | "releaseLinkedInProfile"
 >;
 
 /**
@@ -324,7 +342,8 @@ export function claimLinkedInProfile(input: {
   workspace: string;
   shared?: ProfileClaimStore;
 }): { ok: true; claim: LinkedInProfileClaim } | Extract<LinkedInGuardVerdict, { ok: false }> {
-  if (demoMode()) return { ok: true, claim: { confirm: () => {}, release: () => {} } };
+  if (demoMode())
+    return { ok: true, claim: { dispatch: () => {}, confirm: () => {}, release: () => {} } };
   const warn = (err: unknown): void =>
     logEvent(
       "shared_db.write_failed",
@@ -351,6 +370,8 @@ export function claimLinkedInProfile(input: {
     return {
       ok: true,
       claim: {
+        // Not swallowed: an invite must not go out unless the claim is durable.
+        dispatch: () => db.dispatchLinkedInProfile(res.id),
         confirm: () => settle(() => db.confirmLinkedInProfile(res.id)),
         release: () => settle(() => db.releaseLinkedInProfile(res.id)),
       },

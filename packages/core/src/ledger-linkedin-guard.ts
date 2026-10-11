@@ -1,9 +1,44 @@
 import type { Database } from "bun:sqlite";
 import { contactAllowedClause } from "./contact-optout.ts";
-import type { LinkedInGuardFacts } from "./linkedin-guard.ts";
+import { LINKEDIN_INVITE_KIND } from "./ledger-cadence.ts";
+import { normalizeLinkedInProfile, type LinkedInGuardFacts } from "./linkedin-guard.ts";
 
 function hasTable(db: Database, name: string): boolean {
   return db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name) != null;
+}
+
+/**
+ * Every LinkedIn invite this ledger has recorded (the send events, found the
+ * way `listLinkedInInviteEvents` finds them), as normalised profile slugs with
+ * the time of the first one. Feeds the one-time backfill of `linkedin_touched`.
+ */
+export function linkedInInviteHistory(db: Database): Array<{ slug: string; touchedAt: string }> {
+  const rows = db
+    .query(
+      `SELECT p.linkedin_url AS url, MIN(se.created_at) AS at
+         FROM sequence_events se
+         JOIN prospects p ON p.id = se.prospect_id
+        WHERE se.channel = 'linkedin' AND se.status IN ('sent', 'delivered', 'replied')
+          AND p.linkedin_url IS NOT NULL
+          AND (
+            se.step_index = 0
+            OR CASE WHEN json_valid(se.metadata_json)
+                    THEN json_extract(se.metadata_json, '$.kind') END = ?
+          )
+        GROUP BY p.id`,
+    )
+    .all(LINKEDIN_INVITE_KIND) as Array<{ url: string; at: string }>;
+  const bySlug = new Map<string, string>();
+  for (const r of rows) {
+    const profile = normalizeLinkedInProfile(r.url);
+    if (!profile) continue;
+    const prev = bySlug.get(profile.key);
+    if (!prev || r.at < prev) bySlug.set(profile.key, r.at);
+  }
+  return [...bySlug].map(([slug, at]) => ({
+    slug,
+    touchedAt: new Date(`${at.replace(" ", "T")}${at.includes("Z") ? "" : "Z"}`).toISOString(),
+  }));
 }
 
 /**

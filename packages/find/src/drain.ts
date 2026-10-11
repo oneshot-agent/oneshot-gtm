@@ -374,7 +374,13 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
     ...(note.voiceKey ? { voiceKey: note.voiceKey } : {}),
   };
   if (opts.dryRun) return base;
-  if (note.flags.length > 0) return { ...base, needsReview: true };
+  if (note.flags.length > 0) {
+    // A row with no usable LinkedIn profile is the guard's `invalid-profile`:
+    // count it per reason like every other refusal (X, GitHub and company
+    // URLs land here before the sender is ever reached).
+    const noProfile = note.flags.some((f) => f.startsWith("no-linkedin"));
+    return { ...base, needsReview: true, ...(noProfile ? { guard: "invalid-profile" } : {}) };
+  }
   if (!opts.linkedIn) {
     return {
       ...base,
