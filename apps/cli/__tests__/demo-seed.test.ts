@@ -38,8 +38,14 @@ const ANCHOR = new Date("2026-08-17T09:00:00.000Z");
  * so the timeout is set for the whole group rather than patched onto the two
  * that happened to cross the line first. These are not five-second unit tests
  * and should not be held to that budget.
+ *
+ * Measured on the dev-runner host 2026-10-11 (#785 round 3): with six agent
+ * workers and two sandboxed verifies sharing 16 cores (load 25-48), the full
+ * suite took 302s instead of 71s and the double-seed test took 9.4s at
+ * moderate load, so 15s/30s expired on a branch that does not touch seeding.
+ * The budget is sized for that host, not for a quiet laptop.
  */
-const SEED_TIMEOUT_MS = 30_000;
+const SEED_TIMEOUT_MS = 60_000;
 
 let home: string;
 
@@ -240,7 +246,8 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
   });
 
   // Both tests below seed two disk-backed ledgers. CI takes ~6s for two seeds,
-  // above Vitest's default 5s; leave room for runner I/O without changing assertions.
+  // above Vitest's default 5s, and the loaded verify host up to 4x that; the
+  // group budget applies, nothing tighter.
   it("is deterministic — the same anchor reproduces the same ledger", () => {
     const a = seedDemoHome({ home, anchor: ANCHOR });
     const db1 = open(home);
@@ -254,7 +261,7 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
 
     expect(after).toBe(before);
     expect(b.counts).toEqual(a.counts);
-  }, 15_000);
+  });
 
   it("re-seeds in place without stacking duplicate rows", () => {
     const first = seedDemoHome({ home, anchor: ANCHOR });

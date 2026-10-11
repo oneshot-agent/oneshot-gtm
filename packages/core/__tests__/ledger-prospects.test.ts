@@ -275,6 +275,9 @@ describe("ProspectStore.mergeProspectDossierHalf — cross-connection concurrenc
   let dbB: Database;
   let storeA: ProspectStore;
 
+  // Two on-disk WAL connections plus the migrations: under the dev-runner
+  // verify host's load (#785 round 3, load 25-48 on 16 cores) this hook
+  // outran vitest's 10s default while the tests themselves stayed fast.
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "ledger-prospects-lock-"));
     dbPath = join(dir, "ledger.sqlite");
@@ -289,7 +292,7 @@ describe("ProspectStore.mergeProspectDossierHalf — cross-connection concurrenc
     dbB = new Database(dbPath);
     dbB.exec("PRAGMA journal_mode = WAL");
     dbB.exec("PRAGMA busy_timeout = 200");
-  });
+  }, 30_000);
 
   afterEach(() => {
     dbA.close();
