@@ -117,8 +117,67 @@ export function splitEdge(edge: string): string[] {
     .filter(Boolean);
 }
 
-/** `counts` as "label n" chips, in insertion order. */
-export function countChips(counts: Record<string, number> | undefined): string[] {
-  if (!counts) return [];
-  return Object.entries(counts).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`);
+/** The row's tag: a short kind word and the scope as the founder knows it. */
+export function kindTag(p: LearningProposalView): { kind: string; scope: string | null } {
+  switch (p.kind) {
+    case "icp":
+      return { kind: "ICP", scope: null };
+    case "preference":
+      return { kind: "Writing", scope: scopeSuffix(p).replace(/^ · /, "") || null };
+    case "prospect_angle":
+      return {
+        kind: "Angle",
+        scope: p.scopeLabel ?? (p.scope.prospectId != null ? `#${p.scope.prospectId}` : null),
+      };
+    case "campaign_angle":
+      return { kind: "Campaign", scope: p.scopeLabel ?? p.scope.playName ?? null };
+  }
+}
+
+/** Angles added, retired and kept between two `//`-separated edges. */
+export function angleDiff(
+  currentEdge: string,
+  proposedEdge: string,
+): { added: string[]; removed: string[]; kept: string[] } {
+  const before = splitEdge(currentEdge);
+  const after = splitEdge(proposedEdge);
+  return {
+    added: after.filter((a) => !before.includes(a)),
+    removed: before.filter((b) => !after.includes(b)),
+    kept: after.filter((a) => before.includes(a)),
+  };
+}
+
+/**
+ * The headline: only what changes. A prospect angle shows the fields that
+ * differ from the active angle; a campaign angle shows additions and
+ * retirements; the ICP one-liner and a writing preference are the value.
+ */
+export function changedLines(p: LearningProposalView): string[] {
+  const value = p.decided ?? p.proposed;
+  switch (p.kind) {
+    case "icp":
+    case "preference":
+      return valueLines(p.kind, value);
+    case "prospect_angle": {
+      const before = new Set(valueLines(p.kind, p.current));
+      const after = valueLines(p.kind, value);
+      const changed = after.filter((line) => !before.has(line));
+      return changed.length ? changed : after;
+    }
+    case "campaign_angle": {
+      const diff = angleDiff(text(asRecord(p.current)?.["edge"]), text(asRecord(value)?.["edge"]));
+      const lines = [...diff.added.map((a) => `+ ${a}`), ...diff.removed.map((r) => `− ${r}`)];
+      // A reorder keeps the set: show it whole rather than an empty headline.
+      return lines.length ? lines : valueLines(p.kind, value);
+    }
+  }
+}
+
+/** What the proposal was learned from, in one line. */
+export function whyLine(p: LearningProposalView): string {
+  const notes = [p.evidenceSummary.trim()];
+  if (p.legacy) notes.push("learned before review existed");
+  if (p.kind === "campaign_angle") notes.push("hypothesis");
+  return notes.filter(Boolean).join(" · ");
 }

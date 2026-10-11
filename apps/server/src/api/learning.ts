@@ -10,6 +10,7 @@ import type {
   LearningGuidanceResult,
   LearningKind,
   LearningProposalStatus,
+  LearningProposalView,
   LearningProposalsResult,
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
@@ -51,6 +52,24 @@ function parseKind(v: string | null): LearningKind | undefined {
   return v && (KINDS as ReadonlyArray<string>).includes(v) ? (v as LearningKind) : undefined;
 }
 
+/**
+ * The scope as the founder knows it — a prospect's name rather than its id,
+ * the play's name for a campaign angle — resolved at read time so rows
+ * proposed before this field existed get it too.
+ */
+function withScopeLabel(
+  ledger: ReturnType<typeof getLedger>,
+  p: LearningProposalView,
+): LearningProposalView {
+  if (p.kind === "prospect_angle" && p.scope.prospectId != null) {
+    const prospect = ledger.getProspectById(p.scope.prospectId);
+    const label = [prospect?.name, prospect?.company].filter(Boolean).join(" · ");
+    return { ...p, scopeLabel: label || null };
+  }
+  if (p.kind === "campaign_angle") return { ...p, scopeLabel: p.scope.playName ?? null };
+  return { ...p, scopeLabel: null };
+}
+
 /** GET /api/learning/proposals?kind&status&prospectId&playName&limit — `status` defaults to pending; `all` for history. */
 export function listLearningProposalsRoute(req: Request): Response {
   recoverLearningApplications(getLedger());
@@ -64,14 +83,19 @@ export function listLearningProposalsRoute(req: Request): Response {
         : "pending";
   const prospectId = Number.parseInt(url.searchParams.get("prospectId") ?? "", 10);
   const limit = Number.parseInt(url.searchParams.get("limit") ?? "", 10);
+  const ledger = getLedger();
   const body: LearningProposalsResult = {
-    proposals: getLedger().learning.list({
-      kind: parseKind(url.searchParams.get("kind")),
-      status,
-      ...(Number.isFinite(prospectId) ? { prospectId } : {}),
-      ...(url.searchParams.get("playName") ? { playName: url.searchParams.get("playName")! } : {}),
-      limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, 500) : 200,
-    }),
+    proposals: ledger.learning
+      .list({
+        kind: parseKind(url.searchParams.get("kind")),
+        status,
+        ...(Number.isFinite(prospectId) ? { prospectId } : {}),
+        ...(url.searchParams.get("playName")
+          ? { playName: url.searchParams.get("playName")! }
+          : {}),
+        limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, 500) : 200,
+      })
+      .map((p) => withScopeLabel(ledger, p)),
   };
   return jsonResponse(body, 200, req);
 }
@@ -103,7 +127,11 @@ function decisionResponse(
 ): Response {
   if (demoMode()) return jsonResponse(READ_ONLY, 403, req);
   try {
-    const proposal = decideLearning(getLedger(), params["id"] ?? "", action, value);
+    const ledger = getLedger();
+    const proposal = withScopeLabel(
+      ledger,
+      decideLearning(ledger, params["id"] ?? "", action, value),
+    );
     return jsonResponse({ ok: true, proposal } satisfies LearningDecisionResult, 200, req);
   } catch (e) {
     return jsonResponse(

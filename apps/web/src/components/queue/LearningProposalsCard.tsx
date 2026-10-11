@@ -4,45 +4,45 @@ import type {
   LearningKind,
   LearningProposalView,
 } from "@oneshot-gtm/shared-types";
+import { Check, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
 import {
-  LEARNING_KINDS,
-  countChips,
+  changedLines,
   editableText,
   editedValue,
+  kindTag,
   learningKindLabel,
-  proposalTitle,
   valueLines,
+  whyLine,
 } from "../../lib/learning.ts";
 import { READ_ONLY, readOnly } from "../../lib/readOnly.ts";
 import { Button } from "../primitives/Button.tsx";
-import { Field, Textarea } from "../primitives/Field.tsx";
+import { Pii } from "../primitives/Pii.tsx";
+import { Textarea } from "../primitives/Field.tsx";
 
 /**
- * Unified learning review (issue #813). Every learned change — a writing
- * preference, a prospect's angle, a play's configured angles, the ICP
- * one-liner — waits here. Approve applies it to drafts written from now on;
- * edit-and-approve applies the founder's wording instead; dismiss keeps the
- * text from coming straight back; rollback restores what was active before.
- * Nothing here touches an existing draft.
+ * Learning review (issue #813), as a strip of flat rows above the queue.
+ * Each pending row is the change in one glance — a kind tag, the lines that
+ * differ from what is active, one line on where it was learned from — and
+ * approve / dismiss in the same words as the queue rows below. What it was,
+ * the evidence excerpts and an edit box are behind the row's details. The
+ * history of applied changes and active writing preferences is one collapsed
+ * line. Nothing here touches an existing draft.
  *
  * `kind` and `prospectId` come from the queue's search params (a link from
- * Replies or a prospect's sheet) and are plain props so the card renders
- * without a router. Nothing renders when there is nothing to review and no
- * filter was asked for — the common case.
+ * Replies or a prospect's sheet) and are plain props so the strip renders
+ * without a router.
  */
 export function LearningProposalsCard({
-  kind: lockedKind,
+  kind,
   prospectId,
 }: {
   kind?: LearningKind;
   prospectId?: number;
 }) {
   const qc = useQueryClient();
-  const [kindFilter, setKindFilter] = useState<LearningKind | "all">(lockedKind ?? "all");
-  const kind = lockedKind ?? (kindFilter === "all" ? undefined : kindFilter);
   const proposalsQuery = useQuery({
     queryKey: ["learning-proposals", kind ?? "all", prospectId ?? null],
     queryFn: () => api.learningProposals({ kind, prospectId, status: "all" }),
@@ -98,44 +98,75 @@ export function LearningProposalsCard({
   const pending = all.filter((p) => p.status === "pending");
   const applied = all.filter((p) => p.status === "approved").slice(0, 10);
   const guidance = (guidanceQuery.data?.guidance ?? []).filter((g) => g.status !== "rolled_back");
-  const showGuidance = !kind || kind === "preference";
+  const active = guidance.filter((g) => g.status === "enabled").length;
+  const narrowed = kind != null;
   const busy = approve.isPending || dismiss.isPending || rollback.isPending || READ_ONLY;
-  const nothing =
-    pending.length === 0 && applied.length === 0 && (!showGuidance || guidance.length === 0);
-  if (nothing && !lockedKind && kindFilter === "all") return null;
+  const historyBusy = rollback.isPending || setGuidance.isPending || rollbackGuidance.isPending;
+  const hasHistory = applied.length > 0 || guidance.length > 0;
+  if (pending.length === 0 && !hasHistory && !narrowed) return null;
+
+  const scope = narrowed ? narrowedLabel(kind, prospectId, pending[0] ?? all[0]) : null;
+  const historyLabel = [
+    applied.length > 0 ? `${applied.length} applied` : null,
+    guidance.length > 0 ? `${active} preference${active === 1 ? "" : "s"} active` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <section
-      className="space-y-3 border-b border-ink-rule px-6 py-4"
-      aria-label="Learning proposals"
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="ln-eyebrow" style={{ color: "var(--ink-receipt-2)" }}>
-          Learning · {pending.length} to review
-        </span>
-        {!lockedKind && (
-          <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Kind">
-            {[{ kind: "all" as const, label: "All" }, ...LEARNING_KINDS].map((k) => (
-              <Button
-                key={k.kind}
-                size="sm"
-                variant={kindFilter === k.kind ? "secondary" : "ghost"}
-                onClick={() => setKindFilter(k.kind)}
-              >
-                {k.label}
-              </Button>
-            ))}
-          </div>
-        )}
-        {prospectId != null && (
-          <span className="font-mono text-[11px] text-ink-muted">prospect #{prospectId}</span>
+    <section className="border-b border-ink-rule" aria-label="Learning proposals">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-6 py-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="ln-eyebrow" style={{ color: "var(--ink-receipt-2)" }}>
+            Learning · {scope ?? `${pending.length} to review`}
+          </span>
+          {narrowed && (
+            <a href="/queue" className="text-[12px] text-ink-muted underline hover:text-ink-cream">
+              show all
+            </a>
+          )}
+        </div>
+        {hasHistory && (
+          <details className="group ml-auto text-[12px] text-ink-muted open:basis-full">
+            <summary className="ml-auto w-fit cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+              {historyLabel}
+              <span className="ml-1 inline-block transition-transform group-open:rotate-90">›</span>
+            </summary>
+            <div className="mt-2 space-y-2 border-l border-ink-rule pl-3">
+              {applied.map((p) => (
+                <HistoryRow
+                  key={p.id}
+                  lines={changedLines(p)}
+                  meta={`${kindTag(p).kind}${p.decidedAt ? ` · ${new Date(p.decidedAt).toLocaleDateString()}` : ""}${p.decided != null ? " · edited" : ""}`}
+                  busy={historyBusy || READ_ONLY}
+                  actions={[{ label: "Roll back", onClick: () => rollback.mutate(p.id) }]}
+                />
+              ))}
+              {guidance.map((g) => (
+                <HistoryRow
+                  key={g.id}
+                  lines={[g.instruction]}
+                  muted={g.status !== "enabled"}
+                  meta={`Writing · ${guidanceScope(g)}${g.status === "enabled" ? "" : " · off"}`}
+                  busy={historyBusy || READ_ONLY}
+                  actions={[
+                    {
+                      label: g.status === "enabled" ? "Disable" : "Enable",
+                      onClick: () =>
+                        setGuidance.mutate({ id: g.id, enabled: g.status !== "enabled" }),
+                    },
+                    { label: "Roll back", onClick: () => rollbackGuidance.mutate(g.id) },
+                  ]}
+                />
+              ))}
+            </div>
+          </details>
         )}
       </div>
-      {nothing && (
-        <p className="text-[12px] text-ink-muted">
-          Nothing learned is waiting for review{kind ? ` for ${learningKindLabel(kind)}` : ""}.
-          Proposals appear as replies, edits and outcomes accumulate; nothing applies until you
-          approve it.
+      {pending.length === 0 && narrowed && (
+        <p className="px-6 pb-3 text-[12px] text-ink-muted">
+          Nothing is waiting for review here. Proposals appear as replies, edits and outcomes
+          accumulate; nothing applies until you approve it.
         </p>
       )}
       {pending.map((p) => (
@@ -147,62 +178,33 @@ export function LearningProposalsCard({
           onDismiss={() => dismiss.mutate(p.id)}
         />
       ))}
-      {applied.length > 0 && (
-        <details className="text-[12px] text-ink-muted">
-          <summary className="cursor-pointer">Applied ({applied.length})</summary>
-          <div className="mt-2 space-y-2">
-            {applied.map((p) => (
-              <div
-                key={p.id}
-                className="flex items-start justify-between gap-3 border-l border-ink-rule pl-3"
-              >
-                <div>
-                  <p className="text-ink-cream-2">{proposalTitle(p)}</p>
-                  {valueLines(p.kind, p.decided ?? p.proposed).map((line) => (
-                    <p key={line} className="mt-0.5">
-                      {line}
-                    </p>
-                  ))}
-                  <p className="mt-0.5">
-                    Approved {p.decidedAt ? new Date(p.decidedAt).toLocaleDateString() : ""}
-                    {p.decided != null ? " · edited" : ""}
-                  </p>
-                </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => rollback.mutate(p.id)}
-                  {...readOnly}
-                >
-                  Roll back
-                </Button>
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
-      {showGuidance && guidance.length > 0 && (
-        <details className="text-[12px] text-ink-muted">
-          <summary className="cursor-pointer">
-            Approved writing preferences ({guidance.filter((g) => g.status === "enabled").length}{" "}
-            active)
-          </summary>
-          <div className="mt-2 space-y-2">
-            {guidance.map((g) => (
-              <GuidanceRow
-                key={g.id}
-                guidance={g}
-                busy={setGuidance.isPending || rollbackGuidance.isPending || READ_ONLY}
-                onToggle={() => setGuidance.mutate({ id: g.id, enabled: g.status !== "enabled" })}
-                onRollback={() => rollbackGuidance.mutate(g.id)}
-              />
-            ))}
-          </div>
-        </details>
-      )}
     </section>
   );
+}
+
+function narrowedLabel(
+  kind: LearningKind | undefined,
+  prospectId: number | undefined,
+  sample: LearningProposalView | undefined,
+): string {
+  if (kind === "prospect_angle" && prospectId != null) {
+    const name = sample?.scopeLabel;
+    return `angle for ${name ?? `#${prospectId}`}`;
+  }
+  return kind ? learningKindLabel(kind).toLowerCase() : "all";
+}
+
+function guidanceScope(g: LearningGuidanceView): string {
+  return [
+    g.channel === "email" ? "email" : g.channel === "linkedin" ? "LinkedIn" : "all channels",
+    g.stage === "first_touch"
+      ? "first touches"
+      : g.stage === "follow_up"
+        ? "follow-ups"
+        : g.stage === "reply"
+          ? "replies"
+          : "all stages",
+  ].join(" · ");
 }
 
 function ProposalRow({
@@ -219,185 +221,174 @@ function ProposalRow({
   const [editing, setEditing] = useState(false);
   const editable = editableText(p);
   const [draft, setDraft] = useState(editable.value);
-  const current = valueLines(p.kind, p.current);
-  const proposed = valueLines(p.kind, p.proposed);
-  const chips = countChips(p.evidence.counts);
+  const tag = kindTag(p);
+  const headline = changedLines(p);
+  const was = valueLines(p.kind, p.current);
   const samples = p.evidence.samples ?? [];
   return (
-    <div className="rounded-sm border border-[color:var(--ink-receipt)]/50 bg-[color:var(--ink-receipt)]/6 p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="ln-eyebrow" style={{ color: "var(--ink-receipt-2)" }}>
-          {proposalTitle(p)}
-        </div>
-        {p.legacy && (
-          <span className="font-mono text-[10px] uppercase text-ink-muted">
-            learned before review existed
-          </span>
-        )}
-        {p.kind === "campaign_angle" && (
-          <span className="font-mono text-[10px] uppercase text-ink-muted">
-            hypothesis · observational
-          </span>
-        )}
-      </div>
-      <div className="mt-1 grid gap-1 text-[13px] leading-5">
-        {current.length > 0 && (
-          <div className="text-ink-muted">
-            Current:{" "}
-            {current.map((line) => (
-              <span key={line} className="block text-ink-cream-2">
-                {line}
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="text-ink-cream">
-          Proposed:{" "}
-          {proposed.map((line) => (
-            <span key={line} className="block font-medium">
-              {line}
+    <div className="flex items-start justify-between gap-6 border-t border-ink-rule/60 px-6 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted">
+          <span style={{ color: "var(--ink-receipt-2)" }}>{tag.kind}</span>
+          {tag.scope && (
+            <span className="normal-case tracking-normal text-ink-cream-2">
+              {p.kind === "prospect_angle" ? <Pii kind="name">{tag.scope}</Pii> : tag.scope}
             </span>
-          ))}
+          )}
         </div>
-      </div>
-      <p className="mt-1.5 text-[12px] leading-5 text-ink-muted">{p.evidenceSummary}</p>
-      {(chips.length > 0 || p.evidence.method) && (
-        <div className="mt-1 flex flex-wrap items-center gap-1 font-mono text-[11px] text-ink-muted">
-          {p.evidence.method && <span>method {p.evidence.method}</span>}
-          {chips.map((c) => (
-            <span key={c} className="rounded border border-ink-rule px-1">
-              {c}
-            </span>
-          ))}
-          <span>
-            {p.evidence.refs.length} source{p.evidence.refs.length === 1 ? "" : "s"}
-          </span>
-        </div>
-      )}
-      {samples.length > 0 && (
-        <details className="mt-2 text-[12px] text-ink-muted">
-          <summary className="cursor-pointer">Evidence ({samples.length})</summary>
-          <div className="mt-2 space-y-3">
-            {samples.map((s) => (
-              <div
-                key={`${s.at ?? ""}|${s.name ?? ""}|${(s.sent ?? s.original ?? s.text ?? "").slice(0, 60)}`}
-                className="border-l border-ink-rule pl-3"
-              >
-                {(s.name || s.at) && (
-                  <p>
-                    {s.name ?? ""}
-                    {s.at ? ` · ${new Date(s.at).toLocaleDateString()}` : ""}
-                  </p>
-                )}
-                {(s.feedback ?? []).map((f) => (
-                  <p key={f} className="mt-1">
-                    Feedback: {f}
-                  </p>
-                ))}
-                {s.text && (
-                  <p className="mt-1 whitespace-pre-wrap">
-                    {s.label ? `${s.label}: ` : ""}
-                    {s.text}
-                  </p>
-                )}
-                {s.original && <p className="mt-1 whitespace-pre-wrap">Suggested: {s.original}</p>}
-                {s.sent && (
-                  <p className="mt-1 whitespace-pre-wrap text-ink-cream">Sent: {s.sent}</p>
-                )}
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
-      {editing && (
-        <div className="mt-2">
-          <Field label={editable.label}>
-            <Textarea rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} />
-          </Field>
-        </div>
-      )}
-      <div className="mt-2 flex flex-wrap items-center gap-2">
         {editing ? (
-          <>
-            <Button
-              size="sm"
-              disabled={busy || !draft.trim()}
-              onClick={() => onApprove(editedValue(p, draft.trim()))}
-              {...readOnly}
-            >
-              Approve edited
-            </Button>
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEditing(false)}>
-              Cancel
-            </Button>
-          </>
+          <div className="mt-1.5 max-w-[90ch]">
+            <Textarea
+              rows={3}
+              value={draft}
+              aria-label={editable.label}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <Button
+                size="sm"
+                disabled={busy || !draft.trim()}
+                onClick={() => onApprove(editedValue(p, draft.trim()))}
+                {...readOnly}
+              >
+                <Check size={12} /> approve edited
+              </Button>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEditing(false)}>
+                cancel
+              </Button>
+            </div>
+          </div>
         ) : (
           <>
-            <Button size="sm" disabled={busy} onClick={() => onApprove()} {...readOnly}>
-              Approve
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => setEditing(true)}
-              {...readOnly}
-            >
-              Edit &amp; approve
-            </Button>
-            <Button size="sm" variant="ghost" disabled={busy} onClick={onDismiss} {...readOnly}>
-              Dismiss
-            </Button>
+            <div className="mt-1 max-w-[90ch] text-[13px] leading-5 text-ink-cream">
+              {headline.map((line) => (
+                <p key={line} className={line.startsWith("− ") ? "text-ink-muted" : ""}>
+                  {line}
+                </p>
+              ))}
+            </div>
+            <p className="mt-1 max-w-[90ch] text-[12px] leading-5 text-ink-muted">{whyLine(p)}</p>
+            <details className="mt-1 text-[12px] text-ink-muted">
+              <summary className="cursor-pointer select-none">
+                {[was.length > 0 ? "was" : null, samples.length > 0 ? "evidence" : null, "edit"]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </summary>
+              <div className="mt-2 max-w-[90ch] space-y-3 border-l border-ink-rule pl-3">
+                {was.length > 0 && (
+                  <div>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.08em]">was</p>
+                    {was.map((line) => (
+                      <p key={line} className="mt-0.5 leading-5">
+                        {line}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                {samples.map((s) => (
+                  <div
+                    key={`${s.at ?? ""}|${s.name ?? ""}|${(s.sent ?? s.original ?? s.text ?? "").slice(0, 60)}`}
+                  >
+                    {(s.name || s.at) && (
+                      <p className="font-mono text-[10px] uppercase tracking-[0.08em]">
+                        {s.name ? <Pii kind="name">{s.name}</Pii> : null}
+                        {s.at ? `${s.name ? " · " : ""}${new Date(s.at).toLocaleDateString()}` : ""}
+                      </p>
+                    )}
+                    {(s.feedback ?? []).map((f) => (
+                      <p key={f} className="mt-0.5 leading-5">
+                        {f}
+                      </p>
+                    ))}
+                    {s.text && (
+                      <p className="mt-0.5 whitespace-pre-wrap leading-5">
+                        {s.label ? `${s.label}: ` : ""}
+                        {s.text}
+                      </p>
+                    )}
+                    {s.original && (
+                      <p className="mt-0.5 whitespace-pre-wrap leading-5">
+                        Suggested: {s.original}
+                      </p>
+                    )}
+                    {s.sent && (
+                      <p className="mt-0.5 whitespace-pre-wrap leading-5 text-ink-cream-2">
+                        Sent: {s.sent}
+                      </p>
+                    )}
+                  </div>
+                ))}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => setEditing(true)}
+                  {...readOnly}
+                >
+                  edit before approving
+                </Button>
+              </div>
+            </details>
           </>
         )}
       </div>
+      {!editing && (
+        <div className="flex shrink-0 items-center gap-1">
+          <Button size="sm" disabled={busy} onClick={() => onApprove()} {...readOnly}>
+            <Check size={12} /> approve
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={onDismiss}
+            className="text-[color:var(--ink-blocked-2)]"
+            {...readOnly}
+          >
+            <X size={12} /> dismiss
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
 
-function GuidanceRow({
-  guidance: g,
+function HistoryRow({
+  lines,
+  meta,
+  muted,
   busy,
-  onToggle,
-  onRollback,
+  actions,
 }: {
-  guidance: LearningGuidanceView;
+  lines: string[];
+  meta: string;
+  muted?: boolean;
   busy: boolean;
-  onToggle: () => void;
-  onRollback: () => void;
+  actions: Array<{ label: string; onClick: () => void }>;
 }) {
-  const scope = [
-    g.channel === "email" ? "email" : g.channel === "linkedin" ? "LinkedIn" : "all channels",
-    g.stage === "first_touch"
-      ? "first touches"
-      : g.stage === "follow_up"
-        ? "follow-ups"
-        : g.stage === "reply"
-          ? "replies"
-          : "all stages",
-  ].join(" · ");
   return (
-    <div className="flex items-start justify-between gap-3 border-l border-ink-rule pl-3">
-      <div>
-        <p className={g.status === "enabled" ? "text-ink-cream" : "text-ink-muted"}>
-          {g.instruction}
-        </p>
-        <p className="mt-0.5">
-          {g.source === "explicit"
-            ? "Explicit feedback"
-            : g.source === "edits"
-              ? "Repeated edits"
-              : "Style examples"}{" "}
-          · {scope} · {g.status === "enabled" ? "Enabled" : "Disabled"}
-        </p>
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        {lines.map((line) => (
+          <p key={line} className={muted ? "text-ink-muted" : "text-ink-cream-2"}>
+            {line}
+          </p>
+        ))}
+        <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em]">{meta}</p>
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        <Button size="sm" variant="ghost" disabled={busy} onClick={onToggle} {...readOnly}>
-          {g.status === "enabled" ? "Disable" : "Enable"}
-        </Button>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={onRollback} {...readOnly}>
-          Roll back
-        </Button>
+        {actions.map((a) => (
+          <Button
+            key={a.label}
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={a.onClick}
+            {...readOnly}
+          >
+            {a.label}
+          </Button>
+        ))}
       </div>
     </div>
   );

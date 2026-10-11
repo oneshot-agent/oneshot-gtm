@@ -112,9 +112,6 @@ export function AngleUsagePanel({
           >
             {suggesting ? "Suggesting…" : "Suggest angle changes"}
           </Button>
-          <span className="text-[11px] text-ink-faint">
-            a hypothesis from these counts · reviewed before anything changes
-          </span>
         </div>
       )}
       <ol className="flex flex-col gap-1">

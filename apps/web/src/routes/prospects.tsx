@@ -635,6 +635,7 @@ function DetailPanel({ id }: { id: number }) {
             disabled={approve.isPending}
             onClick={() => approve.mutate({ rowId: row.id, fit: true })}
             title="Approve and record an explicit fit judgment: this is who you sell to (teaches the ICP)"
+            className="whitespace-nowrap"
             {...readOnly}
           >
             as fit
