@@ -231,6 +231,9 @@ describe("learning helpers", () => {
       "Do not say: guarantee",
     ]);
     expect(changedLines(CAMPAIGN)).toEqual(["+ guaranteed", "− cheap"]);
+    expect(
+      changedLines({ ...CAMPAIGN, proposed: { field: "yourEdge", edge: "cheap // fast" } }),
+    ).toEqual(["cheap", "fast"]);
     expect(changedLines({ ...ICP, decided: "Edited" })).toEqual(["Edited"]);
     expect(angleDiff("fast // cheap", "fast // guaranteed")).toEqual({
       added: ["guaranteed"],

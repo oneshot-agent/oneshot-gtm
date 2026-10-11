@@ -51,6 +51,16 @@ it("renders one line: active count, the review link and the pause switch, never 
     ),
   );
   expect(html).toContain("Writing preferences · 1 active");
+  client.setQueryData(["reply-learning", "default"], { ...status, enabled: false });
+  const paused = renderToStaticMarkup(
+    createElement(
+      QueryClientProvider,
+      { client },
+      createElement(ReplyPreferences, { workspace: "default" }),
+    ),
+  );
+  expect(paused).toContain("Writing preferences · 1 paused");
+  expect(paused).toContain("Resume learning");
   expect(html).toContain("Manage on queue");
   expect(html).toContain("/queue?learning=preference");
   expect(html).toContain("Pause learning");

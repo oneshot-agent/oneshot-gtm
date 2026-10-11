@@ -38,7 +38,7 @@ export function ReplyPreferences({ workspace }: { workspace: string }) {
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ink-rule/60 px-6 py-2 text-[12px] text-ink-muted">
       <span>
         Writing preferences
-        {status ? ` · ${active} active` : ""}
+        {status ? ` · ${active} ${status.enabled ? "active" : "paused"}` : ""}
         {status?.pendingProposals ? ` · ${status.pendingProposals} to review` : ""}
       </span>
       {query.error && (

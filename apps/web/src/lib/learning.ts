@@ -167,7 +167,9 @@ export function changedLines(p: LearningProposalView): string[] {
     }
     case "campaign_angle": {
       const diff = angleDiff(text(asRecord(p.current)?.["edge"]), text(asRecord(value)?.["edge"]));
-      return [...diff.added.map((a) => `+ ${a}`), ...diff.removed.map((r) => `− ${r}`)];
+      const lines = [...diff.added.map((a) => `+ ${a}`), ...diff.removed.map((r) => `− ${r}`)];
+      // A reorder keeps the set: show it whole rather than an empty headline.
+      return lines.length ? lines : valueLines(p.kind, value);
     }
   }
 }
