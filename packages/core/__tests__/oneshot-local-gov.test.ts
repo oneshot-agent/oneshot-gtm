@@ -61,6 +61,15 @@ const localResolveMock = vi.hoisted(() =>
     _opts: opts,
   })),
 );
+const peopleSearchMock = vi.hoisted(() =>
+  vi.fn(async (_opts: Record<string, unknown>) => ({
+    status: "completed",
+    results: [],
+    total_found: 0,
+    request_id: "req_people",
+    cost: 0.01,
+  })),
+);
 const h = vi.hoisted(() => ({ ledger: null as unknown as import("../src/ledger.ts").Ledger }));
 
 vi.mock("@oneshot-agent/sdk", () => ({
@@ -68,6 +77,7 @@ vi.mock("@oneshot-agent/sdk", () => ({
     govSolicitations = govSolicitationsMock;
     localSearch = localSearchMock;
     localResolve = localResolveMock;
+    peopleSearch = peopleSearchMock;
   },
 }));
 
@@ -77,7 +87,7 @@ vi.mock("../src/ledger.ts", async () => {
 });
 
 import { Ledger } from "../src/ledger.ts";
-import { govSolicitations, localResolve, localSearch } from "../src/oneshot.ts";
+import { govSolicitations, localResolve, localSearch, peopleSearch } from "../src/oneshot.ts";
 
 let dbPath: string;
 
@@ -91,6 +101,7 @@ beforeEach(() => {
   govSolicitationsMock.mockClear();
   localSearchMock.mockClear();
   localResolveMock.mockClear();
+  peopleSearchMock.mockClear();
 });
 
 afterEach(() => {
@@ -140,6 +151,25 @@ describe("govSolicitations", () => {
     expect(receipt?.cost_usd).toBe(0.03);
     expect(receipt?.oneshot_request_id).toBe("req_gov");
     expect(receipt?.play_name).toBe("gov-solicitation");
+  });
+});
+
+describe("peopleSearch paging", () => {
+  it("forwards `offset` so a finder can ask for the next page", async () => {
+    await peopleSearch(
+      { jobTitles: ["Head of AI"], limit: 40, offset: 80 },
+      { playName: "local-business" },
+    );
+    expect(peopleSearchMock.mock.calls[0]![0]).toMatchObject({
+      job_titles: ["Head of AI"],
+      limit: 40,
+      offset: 80,
+    });
+  });
+
+  it("sends no `offset` for the first page", async () => {
+    await peopleSearch({ jobTitles: ["Head of AI"], limit: 40 }, { playName: "local-business" });
+    expect(peopleSearchMock.mock.calls[0]![0]).not.toHaveProperty("offset");
   });
 });
 

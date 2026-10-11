@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { getLedger, logEvent, type PersonResult, webRead } from "@oneshot-gtm/core";
-import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import { complete, LlmTruncatedError, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { sanitizeCompanyDomain } from "./_accelerator-search-adapter.ts";
 import { icpFields, type QualifiedContact, resolveVerifyEnrichQualify } from "./_contact.ts";
 import { isDuplicate } from "./_dedupe.ts";
@@ -8,6 +8,7 @@ import { resolveIcp } from "./_filter.ts";
 import { buildDesignPartnerLoiPayload, dedupePlayNames, resolvePlayRoute } from "./_play-route.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection } from "./_qualify.ts";
+import { roundRobin } from "./_rank.ts";
 import { safeCompanySearch, safePeopleSearch } from "./_sdk-safe.ts";
 import { type SignalVerifyConfig, verifySignal } from "./_signal-verify.ts";
 import type { FinderResult, ListPageCompany, RunOpts } from "./_types.ts";
@@ -32,10 +33,24 @@ const FETCH_TIMEOUT_MS = 30_000;
 const UA = "Mozilla/5.0 (compatible; oneshot-gtm list-page)";
 /** Characters per extraction call: small enough that a dense table's JSON fits the output budget. */
 const CHUNK_CHARS = 6_000;
+/**
+ * Lines per extraction call. A bare `1. [Name](url)` list fits 130 companies
+ * in 6,000 characters, and their JSON overran the output budget (measured
+ * 2026-10-10 on two such lists: the whole source was lost).
+ */
+const CHUNK_LINES = 60;
 /** A page longer than this is cut: a list that long is not a list of buyers. */
 const MAX_PAGE_CHARS = 400_000;
 /** Re-extract an unchanged page at most this often (the cache key also carries a content hash). */
 const EXTRACT_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** Waits before the second and third attempt at reading a source. */
+const READ_RETRY_WAITS_MS = [2_000, 8_000];
+/**
+ * How long a company where no one matched `jobTitles` is left alone. A miss
+ * is a fact about that day's search, not about the company: the person may
+ * be added to the database, or the search may have been degraded.
+ */
+const TITLE_MISS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const CONTEXT_CHARS = 240;
 
 export interface ListPageSource {
@@ -93,17 +108,62 @@ export function rawGitHubUrl(url: string): string | null {
   return `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${path.join("/")}`;
 }
 
-/** Split a page into chunks on line boundaries, each at most `max` characters. */
-export function chunkLines(text: string, max: number = CHUNK_CHARS): string[] {
+const PLAIN_TEXT_PATH = /\.(json|ya?ml|md|markdown|txt|csv)$/i;
+
+/**
+ * A source that is already plain text, read with one free fetch: a GitHub
+ * file page (as its raw file), a raw GitHub URL, or a data file (JSON, YAML,
+ * Markdown, text). Null for a web page, which needs rendering.
+ */
+export function directTextUrl(url: string): string | null {
+  const raw = rawGitHubUrl(url);
+  if (raw) return raw;
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (u.hostname === "raw.githubusercontent.com") return u.toString();
+  return PLAIN_TEXT_PATH.test(u.pathname) ? u.toString() : null;
+}
+
+/**
+ * JSON as lines the chunker can cut between: one array item per line. A
+ * members file is often a single line, which would otherwise be cut off at
+ * the first chunk. Anything that is not JSON is returned as it came.
+ */
+export function jsonAsLines(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("[") && !trimmed.startsWith("{")) return text;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return text;
+  }
+  if (Array.isArray(parsed)) return parsed.map((item) => JSON.stringify(item)).join("\n");
+  return JSON.stringify(parsed, null, 1);
+}
+
+/** Split a page into chunks on line boundaries, each at most `max` characters and `maxLines` lines. */
+export function chunkLines(
+  text: string,
+  max: number = CHUNK_CHARS,
+  maxLines: number = CHUNK_LINES,
+): string[] {
   const chunks: string[] = [];
   let cur = "";
+  let lines = 0;
   for (const line of text.split("\n")) {
     const piece = line.length > max ? line.slice(0, max) : line;
-    if (cur.length + piece.length + 1 > max && cur) {
+    if (cur && (cur.length + piece.length + 1 > max || lines >= maxLines)) {
       chunks.push(cur);
       cur = "";
+      lines = 0;
     }
     cur = cur ? `${cur}\n${piece}` : piece;
+    lines++;
   }
   if (cur.trim()) chunks.push(cur);
   return chunks;
@@ -156,21 +216,94 @@ export function dedupeCompanies(companies: ListPageCompany[]): ListPageCompany[]
   });
 }
 
-async function fetchText(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: { "user-agent": UA, accept: "text/plain,text/markdown,text/html" },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res.text();
+/** An HTTP status worth a second try: the server's trouble, not the URL's. */
+function retryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
 }
 
-/** The page's text: a GitHub file straight from raw (free), anything else through webRead. */
+/**
+ * Fetch a text file, trying again after a network failure or a server error.
+ * A run that fires as a laptop wakes finds no network for a few seconds; one
+ * failed read would otherwise cost the source its whole interval.
+ */
+async function fetchText(url: string): Promise<string> {
+  for (let attempt = 0; ; attempt++) {
+    const wait = READ_RETRY_WAITS_MS[attempt];
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: {
+          "user-agent": UA,
+          accept: "text/plain,text/markdown,application/json,text/html,*/*",
+        },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+    } catch (err) {
+      if (wait === undefined) throw err;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      continue;
+    }
+    if (res.ok) return res.text();
+    if (wait === undefined || !retryableStatus(res.status)) {
+      throw new Error(`HTTP ${res.status} for ${url}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, wait));
+  }
+}
+
+/** The page's text: a plain-text source with one free fetch, anything else through webRead. */
 async function readPage(url: string): Promise<{ text: string; costUsd: number }> {
-  const raw = rawGitHubUrl(url);
-  if (raw) return { text: await fetchText(raw), costUsd: 0 };
+  const direct = directTextUrl(url);
+  if (direct) return { text: jsonAsLines(await fetchText(direct)), costUsd: 0 };
   const read = await webRead({ url }, { playName: PLAY_NAME, memo: "list-page source" });
   return { text: read.result.markdown ?? "", costUsd: read.result.cost ?? 0 };
+}
+
+/** How many times one chunk is halved before a cut-off reply fails the source. */
+const MAX_CHUNK_SPLITS = 3;
+
+/**
+ * The companies in one chunk. A reply cut off at the token limit means the
+ * chunk named more companies than fit: halve it and ask for each half.
+ */
+async function extractChunk(
+  source: ListPageSource,
+  system: string,
+  chunk: string,
+  part: string,
+  depth: number,
+): Promise<ListPageCompany[]> {
+  try {
+    const llm = await complete({
+      messages: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content: JSON.stringify({
+            url: source.url,
+            signal: source.signal,
+            part,
+            markdown: chunk,
+          }),
+        },
+      ],
+      temperature: 0.1,
+      maxTokens: 4000,
+    });
+    return parseListPageExtract(llm.content);
+  } catch (err) {
+    const lines = chunk.split("\n");
+    if (!(err instanceof LlmTruncatedError) || depth >= MAX_CHUNK_SPLITS || lines.length < 2) {
+      throw err;
+    }
+    const mid = Math.ceil(lines.length / 2);
+    const halves = [lines.slice(0, mid).join("\n"), lines.slice(mid).join("\n")];
+    const out: ListPageCompany[] = [];
+    for (const half of halves) {
+      out.push(...(await extractChunk(source, system, half, part, depth + 1)));
+    }
+    return out;
+  }
 }
 
 /**
@@ -197,23 +330,9 @@ export async function extractListPage(
   const chunks = chunkLines(page);
   const companies: ListPageCompany[] = [];
   for (const [i, chunk] of chunks.entries()) {
-    const llm = await complete({
-      messages: [
-        { role: "system", content: system },
-        {
-          role: "user",
-          content: JSON.stringify({
-            url: source.url,
-            signal: source.signal,
-            part: `${i + 1} of ${chunks.length}`,
-            markdown: chunk,
-          }),
-        },
-      ],
-      temperature: 0.1,
-      maxTokens: 4000,
-    });
-    companies.push(...parseListPageExtract(llm.content));
+    companies.push(
+      ...(await extractChunk(source, system, chunk, `${i + 1} of ${chunks.length}`, 0)),
+    );
   }
   const unique = dedupeCompanies(companies);
   ledger.setProductResearchCache(cacheKey, JSON.stringify(unique));
@@ -228,19 +347,47 @@ function personName(p: PersonResult): string | null {
   return full || null;
 }
 
+/** Long forms and rank prefixes written as the short word people put in a `jobTitles` entry. */
+const TITLE_ALIASES: Array<[RegExp, string]> = [
+  [/\b(?:senior|executive|assistant|associate) vice president\b/g, "vp"],
+  [/\bvice president\b/g, "vp"],
+  [/\b(?:svp|evp|avp)\b/g, "vp"],
+  [/\bartificial intelligence\b/g, "ai"],
+  [/\bmachine learning\b/g, "ml"],
+  [/\bchief technology officer\b/g, "cto"],
+  [/\bchief information officer\b/g, "cio"],
+  [/\bchief executive officer\b/g, "ceo"],
+];
+const TITLE_FILLER = new Set(["of", "the", "and", "for", "at", "in"]);
+
+/** A title as whole lowercase words, aliases folded in and filler words dropped. */
+export function titleWords(title: string): string[] {
+  let text = title.toLowerCase();
+  for (const [pattern, short] of TITLE_ALIASES) text = text.replace(pattern, short);
+  return text.split(/[^a-z0-9]+/).filter((w) => w && !TITLE_FILLER.has(w));
+}
+
+/**
+ * Does `title` carry every word of the wanted title, as whole words? Whole
+ * words because a substring test calls a Director a CTO (dire-cto-r) and a
+ * Head of Retail a Head of AI (ret-ai-l).
+ */
+export function titleMatches(title: string | null | undefined, wanted: string): boolean {
+  const want = titleWords(wanted);
+  if (want.length === 0) return false;
+  const have = new Set(titleWords(title ?? ""));
+  return want.every((w) => have.has(w));
+}
+
 /**
  * People search results ordered by `jobTitles`: a title matching an earlier
  * entry first (every word of the entry in the title), unmatched last, and a
  * database work email breaking ties. Nameless results are dropped.
  */
 export function rankByTitles(people: PersonResult[], jobTitles: string[]): PersonResult[] {
-  const wanted = jobTitles.map((t) => t.toLowerCase().split(/\s+/).filter(Boolean));
   const rank = (p: PersonResult): number => {
-    const title = (p.title ?? "").toLowerCase();
-    const i = wanted.findIndex(
-      (words) => words.length > 0 && words.every((w) => title.includes(w)),
-    );
-    return i === -1 ? wanted.length : i;
+    const i = jobTitles.findIndex((wanted) => titleMatches(p.title, wanted));
+    return i === -1 ? jobTitles.length : i;
   };
   return people
     .filter((p) => personName(p) !== null)
@@ -253,6 +400,11 @@ export function rankByTitles(people: PersonResult[], jobTitles: string[]): Perso
  * The company's decision owner. With `jobTitles`, one title-scoped people
  * search ($0.01) and up to three candidates through the contact spine until
  * one passes the person gate; without, the spine's own domain-only pick.
+ *
+ * Only people whose title matches a wanted one are tried. The search's own
+ * title filter is loose (measured 2026-10-11: five AI titles at a bank's
+ * domain returned 25 senior people, none in AI), and paying to qualify a
+ * Head of Communications ends in a role rejection every time.
  */
 async function findOwner(args: {
   opts: ListPageOpts;
@@ -287,7 +439,9 @@ async function findOwner(args: {
   );
   let costUsd = search.result.cost ?? 0;
   if (search.result.status === "error") return { contact: null, costUsd, noMatch: false };
-  const ranked = rankByTitles((search.result.results ?? []) as PersonResult[], jobTitles);
+  const ranked = rankByTitles((search.result.results ?? []) as PersonResult[], jobTitles).filter(
+    (p) => jobTitles.some((wanted) => titleMatches(p.title, wanted)),
+  );
   if (ranked.length === 0) return { contact: null, costUsd, noMatch: true };
   let last: QualifiedContact | null = null;
   for (const person of ranked.slice(0, MAX_OWNER_ATTEMPTS)) {
@@ -330,11 +484,33 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
   const ledger = getLedger();
   const dedupeScope = dedupePlayNames(PLAY_NAME);
   const yourEdge = (opts.yourEdge ?? "").trim();
-  let worked = 0;
+  const jobTitles = (opts.jobTitles ?? []).map((t) => t.trim()).filter(Boolean);
+  // Order ranks candidates but does not change who matches: sort for the key.
+  const titlesHash = createHash("sha256")
+    .update(JSON.stringify(jobTitles.map((t) => t.toLowerCase()).toSorted()))
+    .digest("hex");
+  /** Where a company with no one matching these titles is remembered for a while. */
+  const missKey = (dedupeKey: string): string =>
+    `list-page-miss:${dedupeKey}:${titlesHash.slice(0, 12)}`;
 
-  for (const source of opts.sources) {
-    const slug = slugify(source.signal);
-    const rowSource = `${SOURCE}:${slug}`;
+  // Read every list first, keeping the companies still to work: not queued
+  // already, not named by an earlier list, and not a recent title miss. All
+  // of that is free, so none of it counts toward the limit.
+  interface Pending {
+    source: ListPageSource;
+    rowSource: string;
+    company: ListPageCompany;
+    dedupeKey: string;
+  }
+  const bySource = new Map<string, Pending[]>();
+  const claimed = new Set<string>();
+  for (const [index, source] of opts.sources.entries()) {
+    // A page that needs rendering is a paid read: the cap holds here too.
+    if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+      result.halted = `max-cost cap (${opts.maxCostUsd})`;
+      break;
+    }
+    const rowSource = `${SOURCE}:${slugify(source.signal)}`;
     let companies: ListPageCompany[];
     try {
       const page = await readPage(source.url);
@@ -362,134 +538,161 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
     }
     result.candidates += companies.length;
 
+    const pending: Pending[] = [];
     for (const company of companies) {
-      if (worked >= limit) {
-        result.halted = `limit (${limit})`;
-        return result;
-      }
-      if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
-        result.halted = `max-cost cap (${opts.maxCostUsd})`;
-        return result;
-      }
       const dedupeKey = `list-page:${company.domain ?? `name:${slugify(company.name)}`}`;
-      if (dedupeScope.some((p) => ledger.isQueueDuplicate(p, dedupeKey))) {
+      if (
+        claimed.has(dedupeKey) ||
+        dedupeScope.some((p) => ledger.isQueueDuplicate(p, dedupeKey))
+      ) {
         result.droppedDuplicate++;
         continue;
       }
-      worked++;
-      if (opts.dryRun) {
-        result.enqueued++;
+      claimed.add(dedupeKey);
+      if (
+        jobTitles.length > 0 &&
+        ledger.getProductResearchCache(missKey(dedupeKey), TITLE_MISS_TTL_MS)
+      ) {
+        result.droppedDuplicate++;
         continue;
       }
-
-      let domain = company.domain;
-      if (!domain) {
-        const found = await safeCompanySearch(
-          { name: company.name, limit: 1 },
-          { playName: PLAY_NAME },
-        );
-        result.costUsd += found.result.cost ?? 0;
-        domain = sanitizeCompanyDomain(found.result.results?.[0]?.domain ?? null);
-      }
-      if (!domain) {
-        result.droppedEnrichment++;
-        continue;
-      }
-
-      let verified: { status: "confirmed" | "unconfirmed"; url?: string } | null = null;
-      if (source.verify) {
-        const check = await verifySignal({ company: company.name, domain, verify: source.verify });
-        result.costUsd += check.costUsd;
-        if (check.verdict === "absent") {
-          // The company's own subprocessor list leaves the vendor out: a
-          // verdict on the company, recorded once like a role miss.
-          result.droppedLowSignal = (result.droppedLowSignal ?? 0) + 1;
-          persistRoleRejection({
-            playName: PLAY_NAME,
-            dedupeKey,
-            payload: { company: company.name, signal: source.signal },
-            source: rowSource,
-            kind: "signal",
-            reason: `${check.url} lists subprocessors without ${source.verify.names.join(" / ")}`,
-            dryRun: opts.dryRun,
-          });
-          continue;
-        }
-        verified =
-          check.verdict === "confirmed"
-            ? { status: "confirmed", ...(check.url ? { url: check.url } : {}) }
-            : { status: "unconfirmed" };
-      }
-
-      const evidence = company.context ? `${source.signal}: ${company.context}` : source.signal;
-      const found = await findOwner({
-        opts,
-        domain,
-        companyName: company.name,
-        evidence,
-        icp,
-        isDup: (email) => isDuplicate({ playName: dedupeScope, dedupeKey, prospectEmail: email }),
-      });
-      result.costUsd += found.costUsd;
-      const contact = found.contact;
-      if (!contact || !contact.ok) {
-        const reason = contact ? contact.reason : found.noMatch ? "no-match" : "platform-error";
-        if (reason === "duplicate") result.droppedDuplicate++;
-        else if (reason === "role" || reason === "no-match") {
-          // Both are a verdict on the company, not a hiccup: record it once so
-          // later runs move on down the list instead of paying for it again.
-          result.droppedRole = (result.droppedRole ?? 0) + 1;
-          persistRoleRejection({
-            playName: PLAY_NAME,
-            dedupeKey,
-            payload: { company: company.name, signal: source.signal },
-            source: rowSource,
-            reason:
-              reason === "no-match"
-                ? `no one matching jobTitles at ${domain}`
-                : ((contact && !contact.ok ? contact.detail : null) ?? "off-ICP role"),
-            dryRun: opts.dryRun,
-          });
-        } else result.droppedEnrichment++;
-        continue;
-      }
-
-      const listContact = company.contacts
-        .map((c) => c.name ?? (c.github ? `@${c.github}` : null))
-        .filter((c): c is string => c !== null)
-        .join(", ");
-      const payload = {
-        ...buildDesignPartnerLoiPayload({
-          name: contact.fullName ?? company.name,
-          email: contact.email ?? "",
-          company: company.name,
-          buyerType: route.buyerType,
-          yourEdge,
-          title: contact.title,
-          linkedinUrl: contact.linkedinUrl,
-          phone: contact.phone,
-          icp: icpFields(contact),
-        }),
-        signal: source.signal,
-        ...(company.context ? { signalContext: company.context } : {}),
-        ...(verified ? { signalVerified: verified.status } : {}),
-        ...(verified?.url ? { signalEvidenceUrl: verified.url } : {}),
-        ...(listContact ? { listContact: listContact.slice(0, CONTEXT_CHARS) } : {}),
-        companyDomain: domain,
-        launchUrl: `https://${domain}`,
-        sourceUrl: source.url,
-      };
-      const id = enqueueScoredTarget(ledger, {
-        playName: route.playName,
-        payload,
-        dedupeKey,
-        source: rowSource,
-        notes: evidence.slice(0, 300),
-        channel: contact.channel,
-      });
-      if (id != null) result.enqueued++;
-      else result.droppedDuplicate++;
+      pending.push({ source, rowSource, company, dedupeKey });
     }
+    bySource.set(`${index}:${source.url}`, pending);
+  }
+
+  // One company from each list in turn, so a run draws from every list
+  // instead of finishing the first before the second starts.
+  const total = [...bySource.values()].reduce((n, list) => n + list.length, 0);
+  let worked = 0;
+  for (const { source, rowSource, company, dedupeKey } of roundRobin(bySource, total)) {
+    if (worked >= limit) {
+      result.halted = `limit (${limit})`;
+      return result;
+    }
+    if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+      result.halted = `max-cost cap (${opts.maxCostUsd})`;
+      return result;
+    }
+    worked++;
+    if (opts.dryRun) {
+      result.enqueued++;
+      continue;
+    }
+
+    let domain = company.domain;
+    if (!domain) {
+      const found = await safeCompanySearch(
+        { name: company.name, limit: 1 },
+        { playName: PLAY_NAME },
+      );
+      result.costUsd += found.result.cost ?? 0;
+      domain = sanitizeCompanyDomain(found.result.results?.[0]?.domain ?? null);
+    }
+    if (!domain) {
+      result.droppedEnrichment++;
+      continue;
+    }
+
+    let verified: { status: "confirmed" | "unconfirmed"; url?: string } | null = null;
+    if (source.verify) {
+      const check = await verifySignal({ company: company.name, domain, verify: source.verify });
+      result.costUsd += check.costUsd;
+      if (check.verdict === "absent") {
+        // The company's own subprocessor list leaves the vendor out: a
+        // verdict on the company, recorded once like a role miss.
+        result.droppedLowSignal = (result.droppedLowSignal ?? 0) + 1;
+        persistRoleRejection({
+          playName: PLAY_NAME,
+          dedupeKey,
+          payload: { company: company.name, signal: source.signal },
+          source: rowSource,
+          kind: "signal",
+          reason: `${check.url} lists subprocessors without ${source.verify.names.join(" / ")}`,
+          dryRun: opts.dryRun,
+        });
+        continue;
+      }
+      verified =
+        check.verdict === "confirmed"
+          ? { status: "confirmed", ...(check.url ? { url: check.url } : {}) }
+          : { status: "unconfirmed" };
+    }
+
+    const evidence = company.context ? `${source.signal}: ${company.context}` : source.signal;
+    const found = await findOwner({
+      opts,
+      domain,
+      companyName: company.name,
+      evidence,
+      icp,
+      isDup: (email) => isDuplicate({ playName: dedupeScope, dedupeKey, prospectEmail: email }),
+    });
+    result.costUsd += found.costUsd;
+    const contact = found.contact;
+    if (!contact || !contact.ok) {
+      const reason = contact ? contact.reason : found.noMatch ? "no-match" : "platform-error";
+      if (reason === "duplicate") result.droppedDuplicate++;
+      else if (reason === "no-match") {
+        // No one with a wanted title at this company today. Remembered for a
+        // while, not rejected: a rejected row would keep the company out for
+        // good on the strength of one search.
+        result.droppedRole = (result.droppedRole ?? 0) + 1;
+        ledger.setProductResearchCache(
+          missKey(dedupeKey),
+          JSON.stringify({ domain, at: new Date().toISOString() }),
+        );
+      } else if (reason === "role") {
+        // A verdict on the company's best match, not a hiccup: record it once
+        // so later runs move on down the list instead of paying for it again.
+        result.droppedRole = (result.droppedRole ?? 0) + 1;
+        persistRoleRejection({
+          playName: PLAY_NAME,
+          dedupeKey,
+          payload: { company: company.name, signal: source.signal },
+          source: rowSource,
+          reason: (contact && !contact.ok ? contact.detail : null) ?? "off-ICP role",
+          dryRun: opts.dryRun,
+        });
+      } else result.droppedEnrichment++;
+      continue;
+    }
+
+    const listContact = company.contacts
+      .map((c) => c.name ?? (c.github ? `@${c.github}` : null))
+      .filter((c): c is string => c !== null)
+      .join(", ");
+    const payload = {
+      ...buildDesignPartnerLoiPayload({
+        name: contact.fullName ?? company.name,
+        email: contact.email ?? "",
+        company: company.name,
+        buyerType: route.buyerType,
+        yourEdge,
+        title: contact.title,
+        linkedinUrl: contact.linkedinUrl,
+        phone: contact.phone,
+        icp: icpFields(contact),
+      }),
+      signal: source.signal,
+      ...(company.context ? { signalContext: company.context } : {}),
+      ...(verified ? { signalVerified: verified.status } : {}),
+      ...(verified?.url ? { signalEvidenceUrl: verified.url } : {}),
+      ...(listContact ? { listContact: listContact.slice(0, CONTEXT_CHARS) } : {}),
+      companyDomain: domain,
+      launchUrl: `https://${domain}`,
+      sourceUrl: source.url,
+    };
+    const id = enqueueScoredTarget(ledger, {
+      playName: route.playName,
+      payload,
+      dedupeKey,
+      source: rowSource,
+      notes: evidence.slice(0, 300),
+      channel: contact.channel,
+    });
+    if (id != null) result.enqueued++;
+    else result.droppedDuplicate++;
   }
   return result;
 }

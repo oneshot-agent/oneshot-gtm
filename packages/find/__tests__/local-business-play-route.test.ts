@@ -112,6 +112,8 @@ vi.mock("@oneshot-gtm/core", async () => {
         dedupeChecks.push({ playName, dedupeKey });
         return queueDuplicateFor.has(playName);
       },
+      getProductResearchCache: () => null,
+      setProductResearchCache: () => {},
       enqueueTarget: (row: EnqueuedRow) => {
         enqueued.push(row);
         return enqueued.length;
