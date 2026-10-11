@@ -28,12 +28,17 @@ const SOURCE = "find:local-business";
  * more people come from the next page (`offset`), not a bigger one.
  */
 const PEOPLE_SEARCH_LIMIT = 40;
-/** Pages read of one search before it is treated as walked. */
+/** Pages of one search read in one run; a later run carries on from there. */
 const MAX_PAGES_PER_QUERY = 6;
 /** People searches one run may make, across every query and page. */
 const MAX_SEARCHES_PER_RUN = 12;
-/** How long a search that had no one new is left alone before it is read again. */
-const FINISHED_QUERY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * How long a search's progress is kept: a search read to its end is left
+ * alone that long, and one stopped at the page cap resumes from where it
+ * stopped. After that it is read from the top again, which is where the
+ * database puts people it has added since.
+ */
+const SEARCH_PROGRESS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** Server cap on `research/company`. */
 const COMPANY_SEARCH_LIMIT = 100;
 /** Server cap on `local/search`: flat price per search, so always ask for the max. */
@@ -147,9 +152,26 @@ export function peopleQueries(args: {
   return [combined, ...args.jobTitles.map((title) => ({ jobTitles: [title], ...base }))];
 }
 
-function finishedQueryKey(query: PeopleSearchInput): string {
+function searchProgressKey(query: PeopleSearchInput): string {
   const hash = createHash("sha256").update(JSON.stringify(query)).digest("hex").slice(0, 16);
-  return `people-search-finished:${hash}`;
+  return `people-search-progress:${hash}`;
+}
+
+/** Where an earlier run left a search: read to its end, or stopped at an offset. */
+export type SearchProgress = { done: true } | { done: false; offset: number };
+
+export function parseSearchProgress(raw: string | null): SearchProgress | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as { done?: unknown; offset?: unknown };
+    if (v.done === true) return { done: true };
+    if (typeof v.offset === "number" && Number.isInteger(v.offset) && v.offset > 0) {
+      return { done: false, offset: v.offset };
+    }
+  } catch {
+    // unreadable entry: start from the top
+  }
+  return null;
 }
 
 /** `phone` first, else the first `fullphone` entry. Both are optional on `PersonResult`. */
@@ -479,19 +501,24 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
 
   for (const query of queries) {
     if (stop) break;
-    const finishedKey = finishedQueryKey(query);
-    if (ledger.getProductResearchCache(finishedKey, FINISHED_QUERY_TTL_MS)) {
+    const progressKey = searchProgressKey(query);
+    const progress = parseSearchProgress(
+      ledger.getProductResearchCache(progressKey, SEARCH_PROGRESS_TTL_MS),
+    );
+    if (progress?.done) {
       finishedQueries++;
       continue;
     }
-    let offset = 0;
+    const startOffset = progress?.offset ?? 0;
+    let offset = startOffset;
     let fresh = 0;
     let known = 0;
     let ended = false;
+    let capped = false;
     let previousFirstKey: string | null = null;
     for (let page = 0; !stop && !ended; page++) {
       if (page >= MAX_PAGES_PER_QUERY) {
-        ended = true;
+        capped = true;
         break;
       }
       if (worked >= limit || searches >= MAX_SEARCHES_PER_RUN) {
@@ -524,7 +551,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       const firstKey = rows[0] ? candidateDedupeKey(rows[0]) : null;
       // An empty page is the end. So is the same page twice: a server that
       // ignores `offset` would otherwise be walked to the page cap.
-      if (rows.length === 0 || (offset > 0 && firstKey === previousFirstKey)) {
+      if (rows.length === 0 || (page > 0 && firstKey === previousFirstKey)) {
         ended = true;
         break;
       }
@@ -572,12 +599,22 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       if (rows.length < PEOPLE_SEARCH_LIMIT) ended = true;
       offset += rows.length;
     }
-    // Walked to its end and everyone on it is already in the queue: leave it
-    // alone for a while instead of paying to re-read the same people every
-    // run. A search that returned no one usable is not marked: that is what a
-    // platform outage looks like too, and it should be retried the next run.
-    if (ended && fresh === 0 && known > 0 && !opts.dryRun) {
-      ledger.setProductResearchCache(finishedKey, new Date().toISOString());
+    if (opts.dryRun) continue;
+    if (ended && fresh === 0 && (known > 0 || startOffset > 0)) {
+      // Read to its end and everyone on it is already in the queue: leave it
+      // alone for a while instead of paying to re-read the same people every
+      // run. A search that returned no one usable from the top is not
+      // marked: that is what a platform outage looks like too, and it should
+      // be retried the next run.
+      ledger.setProductResearchCache(progressKey, JSON.stringify({ done: true }));
+      // Resumed past its last person: nothing was read, as for a search
+      // already marked finished.
+      if (offset === startOffset) finishedQueries++;
+    } else if (capped) {
+      // Everyone before `offset` has been looked at: the next run starts
+      // there instead of re-reading the same pages and never getting past
+      // them.
+      ledger.setProductResearchCache(progressKey, JSON.stringify({ done: false, offset }));
     }
   }
 

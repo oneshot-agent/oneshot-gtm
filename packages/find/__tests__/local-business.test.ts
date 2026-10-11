@@ -157,7 +157,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
-const { runLocalBusinessFinder, isContactable, peopleQueries } =
+const { runLocalBusinessFinder, isContactable, parseSearchProgress, peopleQueries } =
   await import("../src/local-business.ts");
 const { withFinderChannels } = await import("../src/_channels-context.ts");
 
@@ -338,11 +338,57 @@ describe("runLocalBusinessFinder — paging past people it already has", () => {
     expect(peopleSearchCalls).toHaveLength(2);
   });
 
-  it("stops at the page cap however many full pages there are", async () => {
-    peopleSearchHandler = (input) => people((input["offset"] as number | undefined) ?? 0, 40);
-    for (let i = 0; i < 400; i++) knownKeys.add(keyOf(i));
-    await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
-    expect(peopleSearchCalls).toHaveLength(6);
+  it("stops at the page cap, and the next run carries on from there", async () => {
+    // 300 people, the first 280 known: six pages a run never reaches the new
+    // ones unless the second run starts where the first stopped.
+    peopleSearchHandler = (input) => {
+      const offset = (input["offset"] as number | undefined) ?? 0;
+      return people(offset, Math.max(0, Math.min(40, 300 - offset)));
+    };
+    for (let i = 0; i < 280; i++) knownKeys.add(keyOf(i));
+    const run = () =>
+      runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+
+    const first = await run();
+    expect(peopleSearchCalls.map((c) => c["offset"] ?? 0)).toEqual([0, 40, 80, 120, 160, 200]);
+    expect(first.enqueued).toBe(0);
+
+    peopleSearchCalls.length = 0;
+    const second = await run();
+    expect(peopleSearchCalls.map((c) => c["offset"] ?? 0)).toEqual([240, 280]);
+    expect(second.enqueued).toBe(20);
+  });
+
+  it("reads stored progress, and starts from the top on anything unreadable", () => {
+    expect(parseSearchProgress(JSON.stringify({ done: true }))).toEqual({ done: true });
+    expect(parseSearchProgress(JSON.stringify({ done: false, offset: 240 }))).toEqual({
+      done: false,
+      offset: 240,
+    });
+    expect(parseSearchProgress(null)).toBeNull();
+    expect(parseSearchProgress("2026-10-10T00:00:00.000Z")).toBeNull();
+    expect(parseSearchProgress(JSON.stringify({ offset: -40 }))).toBeNull();
+    expect(parseSearchProgress(JSON.stringify({ offset: "240" }))).toBeNull();
+  });
+
+  it("a search resumed past its last person is then left alone", async () => {
+    peopleSearchHandler = (input) => {
+      const offset = (input["offset"] as number | undefined) ?? 0;
+      return people(offset, Math.max(0, Math.min(40, 240 - offset)));
+    };
+    for (let i = 0; i < 240; i++) knownKeys.add(keyOf(i));
+    const run = () =>
+      runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+    await run(); // six full pages, stopped at the cap
+    peopleSearchCalls.length = 0;
+    const second = await run(); // resumes at 240: empty, so the search is finished
+    expect(peopleSearchCalls.map((c) => c["offset"])).toEqual([240]);
+    // Not "no matches, widen your targeting": the search has people, all known.
+    expect(second.halted).toMatch(/walked to its end/);
+    peopleSearchCalls.length = 0;
+    const third = await run();
+    expect(peopleSearchCalls).toHaveLength(0);
+    expect(third.halted).toMatch(/walked to its end/);
   });
 });
 
