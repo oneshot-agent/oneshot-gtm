@@ -190,6 +190,9 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/** A cached extraction row with only a name. */
+const cachedRow = (name: string) => ({ name, domain: null, context: null, contacts: [] });
+
 describe("list-page helpers", () => {
   it("reads a GitHub file page raw, and leaves other URLs alone", () => {
     expect(rawGitHubUrl(SOURCE.url)).toBe(
@@ -276,6 +279,24 @@ describe("list-page helpers", () => {
     cache.set(key, JSON.stringify(stored));
     await runListPageFinder({ ...base, limit: 1 });
     expect(enqueued[0]?.payload["company"]).toBe("Acme");
+  });
+
+  it("drops cached rows that clean to nothing or to a company already listed", async () => {
+    const source = { url: "https://example.com/members", signal: "member" };
+    const { extractListPage } = await import("../src/list-page.ts");
+    await extractListPage(source, "page text");
+    const key = [...cache.keys()].find((k) => k.startsWith("list-page:"))!;
+    cache.set(
+      key,
+      JSON.stringify([
+        cachedRow("Acme (member)"),
+        cachedRow("(member)"),
+        cachedRow("Acme"),
+        cachedRow("Beta"),
+      ]),
+    );
+    const out = await extractListPage(source, "page text");
+    expect(out.map((c) => c.name)).toEqual(["Acme", "Beta"]);
   });
 
   it("coerces the extraction and drops nameless rows", () => {

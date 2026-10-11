@@ -367,7 +367,8 @@ export async function extractListPage(
       // was stripped is still cached with it.
       const companies = JSON.parse(cached) as ListPageCompany[];
       for (const company of companies) company.name = listedName(company.name);
-      return companies;
+      // Same rules as a fresh extraction: no nameless rows, one per company.
+      return dedupeCompanies(companies.filter((company) => company.name));
     } catch {
       // corrupt entry: re-extract and overwrite
     }
