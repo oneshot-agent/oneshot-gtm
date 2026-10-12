@@ -32,12 +32,14 @@ it("passes rotateAngle through, and a bare request is a plain regenerate", async
     prospectId: 7,
     playName: "luma-events",
     rotateAngle: true,
+    linkedIn: expect.any(Function),
   });
   expect((await previewCadenceStepRoute(req(), { id: "7" })).status).toBe(200);
   expect(previewMock).toHaveBeenLastCalledWith({
     prospectId: 7,
     playName: "luma-events",
     rotateAngle: false,
+    linkedIn: expect.any(Function),
   });
 });
 

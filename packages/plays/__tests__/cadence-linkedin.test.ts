@@ -295,7 +295,7 @@ describe("LinkedIn cadence edge cases", () => {
     inviteSentDaysAgo(3);
     enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
     conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "gtm" };
-    messageText = "x".repeat(401);
+    messageText = `${"x".repeat(400)}?`;
     const preview = await previewCadenceStep({ prospectId, playName: "luma-events" });
     expect(preview).toMatchObject({ flags: ["too-long: 401/400 characters"] });
   });

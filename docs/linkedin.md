@@ -62,6 +62,16 @@ Every LinkedIn step is a draft you review on /cadences; the unattended runner ne
 
 A cadence already running keeps the steps it was enrolled with; changing the setting affects only new cadences.
 
+### What the LinkedIn drafts are told
+
+All of this is prompt context the model may use; no copy is written or wrapped in code.
+
+- **Aged evidence.** The note and messages get one short clause for why the person surfaced (`starred X`, `were at Y`, `running A and B`), aged from the first touch so a stale claim is dropped: a stack after 180 days, an event after 45, a funding round after 180, a job change after 90, a hiring signal after 45. A repo star never ages. A clause over 80 characters is dropped, not cut.
+- **The company they run.** Message 1 and the close are told a company only when the title is a founder's, stored data corroborates it (work-email domain, the dossier's `company_domain`, or a current mention in the title or headline), **and** a live read of the profile names it. The live read is the connected account's silent profile view (`notify: false`), made at most once per person per cadence and reused. With no live read, or one that names another company, no company is passed.
+- **The close.** It is told the product one-liner and brief, the reader's role (founder, engineer, student, growth or operations, investor, unknown) and, when verified, their company. It says what the product is, names one goal it could carry out for that reader from the brief, and ends with an easy out. For an unknown role it names no goal.
+- **Buyer type.** The trigger's `buyerType` goes to all three prompts.
+- **Lint.** The note is held to 300 characters with no pitch phrase or link. Message 1 is held to 400 characters with exactly one question, no meeting ask and no link. The close is held to 400 characters with no link, price, unsupported number or `saw you …` claim beyond the evidence clause. A draft that fails gets one repair turn; whatever it still breaks shows as a flag on /cadences and holds the send.
+
 ## Writing preferences
 
 Replies learns writing preferences from the replies you send on LinkedIn and email: your explicit feedback on an improvement, the same edit made across several conversations, a consistent pattern across more. What it learns is a proposal; nothing applies to a draft until you approve it on `/queue`. **Writing preferences** on Replies shows what is active, lets you disable or re-enable a line, pause learning for the workspace, and links to the proposals waiting for review. [Learning and approval](./learning.md) covers every kind of learned change, what drafts see, and how approval, rollback and the queue's decision reasons work.

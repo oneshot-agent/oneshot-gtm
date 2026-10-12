@@ -403,7 +403,7 @@ export async function previewCadenceStepRoute(
     rotateAngle = value === true;
   }
   try {
-    const preview = await previewCadenceStep({ ...parsed, rotateAngle });
+    const preview = await previewCadenceStep({ ...parsed, rotateAngle, linkedIn: callLinkedIn });
     if ("waiting" in preview) {
       return jsonResponse(
         { waiting: true, since: preview.since, message: preview.message },
