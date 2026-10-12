@@ -620,7 +620,7 @@ export async function repliesLinkedInRoute(req: Request) {
         getLinkedInInboxStore().saveAccount({
           ...a,
           permissionUpgradeError:
-            "OneShot rejected the permission upgrade because this member is already connected. Adding permissions requires replacing the upstream connection or a OneShot grant-upgrade API change. Local history and assignments are preserved.",
+            "OneShot refused the sign-in because this member is already connected (duplicate_member). Nothing changed: the account, its permissions and its imported history are as they were. Try the button again.",
         });
       }
       if (result.status === "completed") await refreshLinkedInInbox(true);
