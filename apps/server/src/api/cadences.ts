@@ -381,6 +381,13 @@ export async function previewCadenceStepRoute(
   }
   try {
     const preview = await previewCadenceStep({ ...parsed, rotateAngle });
+    if ("waiting" in preview) {
+      return jsonResponse(
+        { waiting: true, since: preview.since, message: preview.message },
+        200,
+        req,
+      );
+    }
     return jsonResponse(
       {
         subject: preview.subject,

@@ -301,9 +301,7 @@ describe("previewCadenceStep", () => {
     });
     expect(calls.llm).toBe(1);
     expect(calls.sendEmail).toBe(0);
-    expect(out.subject).toBe("fresh subject");
-    expect(out.body).toBe("fresh body");
-    expect(out.flags).toEqual([]); // clean draft
+    expect(out).toMatchObject({ subject: "fresh subject", body: "fresh body", flags: [] }); // clean draft
     expect(persistedDraft).toMatchObject({ subject: "fresh subject", body: "fresh body" });
     // A preview is the founder asking for a draft: the one it replaces was
     // rejected on its text (the follow-up keeps the classifier's angle).

@@ -116,9 +116,12 @@ describe("LinkedIn cadence", () => {
     const cadence = ledger.getCadence(prospectId, "luma-events")!;
     expect(cadence.current_step).toBe(0);
     expect(Date.parse(cadence.next_due_at!)).toBeGreaterThan(Date.now() + 23 * 3600 * 1000);
-    await expect(previewCadenceStep({ prospectId, playName: "luma-events" })).rejects.toThrow(
-      /waiting for acceptance since/,
-    );
+    await expect(
+      previewCadenceStep({ prospectId, playName: "luma-events" }),
+    ).resolves.toMatchObject({
+      waiting: true,
+      message: expect.stringMatching(/waiting for acceptance since/),
+    });
   });
 
   it("withdraws the invite and stops the cadence after the timeout", async () => {
@@ -182,7 +185,7 @@ describe("LinkedIn cadence", () => {
     conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "gtm" };
     const preview = await previewCadenceStep({ prospectId, playName: "luma-events" });
     expect(preview).toMatchObject({ subject: "LinkedIn message", flags: [] });
-    expect(preview.body).toContain("Thanks for connecting");
+    expect("body" in preview && preview.body).toContain("Thanks for connecting");
   });
 });
 
@@ -291,7 +294,7 @@ describe("LinkedIn cadence edge cases", () => {
     conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "gtm" };
     messageText = "x".repeat(401);
     const preview = await previewCadenceStep({ prospectId, playName: "luma-events" });
-    expect(preview.flags).toEqual(["too-long: 401/400 characters"]);
+    expect(preview).toMatchObject({ flags: ["too-long: 401/400 characters"] });
   });
 });
 

@@ -422,11 +422,18 @@ describe("acceptance from invitation status", () => {
 });
 
 describe("/cadences preview", () => {
-  it("says it is waiting for acceptance since a date, instead of throwing a generic error", async () => {
+  it("says it is waiting for acceptance since a date, instead of throwing", async () => {
     inviteSent({ daysAgo: 3 });
-    await expect(previewCadenceStep({ prospectId, playName: PLAY })).rejects.toThrow(
+    const out = await previewCadenceStep({ prospectId, playName: PLAY });
+    expect(out).toMatchObject({
+      waiting: true,
+      since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    });
+    expect("message" in out && out.message).toMatch(
       /^waiting for acceptance since \d{4}-\d{2}-\d{2}$/,
     );
+    // Nothing was drafted or persisted while waiting.
+    expect(ledger.getCadenceDraft({ prospectId, playName: PLAY })).toBeNull();
   });
 
   it("drafts once the sweep has recorded the accept, with no conversation", async () => {
@@ -445,6 +452,7 @@ describe("/cadences preview", () => {
     await sweepLinkedInInvitations({ linkedIn: li });
     const preview = await previewCadenceStep({ prospectId, playName: PLAY });
     expect(preview).toMatchObject({ subject: "LinkedIn message", flags: [] });
+    expect("waiting" in preview).toBe(false);
   });
 });
 

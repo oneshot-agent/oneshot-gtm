@@ -251,6 +251,10 @@ function CadencesPage() {
     mutationFn: (vars: { prospectId: number; playName: string; rotateAngle?: boolean }) =>
       api.previewCadenceNext(vars.prospectId, vars.playName, vars.rotateAngle === true),
     onSuccess: (data, vars) => {
+      if (data.waiting) {
+        toast.info(data.message);
+        return;
+      }
       void qc.invalidateQueries({ queryKey: ["cadences"] });
       setExpandedKeys((prev) => new Set([...prev, `${vars.prospectId}|${vars.playName}`]));
       toast.success(

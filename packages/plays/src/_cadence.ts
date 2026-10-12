@@ -1665,6 +1665,17 @@ export interface CadenceStepPreview {
 }
 
 /**
+ * A LinkedIn step whose invite has not been accepted yet. Returned by
+ * `previewCadenceStep` in place of a draft: nothing is drafted or persisted.
+ */
+export interface CadenceStepWaiting {
+  waiting: true;
+  /** Date the invite went out (YYYY-MM-DD). */
+  since: string;
+  message: string;
+}
+
+/**
  * Build the next step's draft and persist it via setCadenceDraft. Never
  * sends. Mirrors the /queue regenerate route. The founder reviews on
  * /cadences, then clicks Send next which calls sendCadenceStep.
@@ -1693,7 +1704,7 @@ export async function previewCadenceStep(input: {
    * rejected angle (`rotate`), not a rejected text.
    */
   rotateAngle?: boolean;
-}): Promise<CadenceStepPreview> {
+}): Promise<CadenceStepPreview | CadenceStepWaiting> {
   const ledger = getLedger();
   const cfg = loadConfig();
   const cadence = ledger.getCadence(input.prospectId, input.playName);
@@ -1718,7 +1729,9 @@ export async function previewCadenceStep(input: {
       playName: input.playName,
       prospectLinkedinUrl: cadence.prospect_linkedin_url,
     });
-    if (since !== null) throw new Error(`waiting for acceptance since ${since}`);
+    if (since !== null) {
+      return { waiting: true, since, message: `waiting for acceptance since ${since}` };
+    }
   }
   const prospect = loadProspect(input.prospectId);
   if (!prospect) throw new Error("prospect not found");
@@ -1901,6 +1914,14 @@ export async function previewCadenceStepBatch(items: BatchItem[]): Promise<Batch
         ...item,
         extraRecentBodies: accepted.get(item.playName) ?? [],
       });
+      if ("waiting" in preview) {
+        return {
+          prospectId: item.prospectId,
+          playName: item.playName,
+          ok: false,
+          error: preview.message,
+        };
+      }
       if (preview.flags.length === 0) {
         accepted.set(item.playName, [...(accepted.get(item.playName) ?? []), preview.body]);
       }
