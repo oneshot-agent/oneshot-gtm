@@ -1357,6 +1357,8 @@ export async function runCadenceStepForProspect(
           playName: opts.playName,
           reason: "other",
           note: "meeting held — cadence superseded by a real conversation",
+          // The due runner claims the sending marker before this step runs.
+          holdingSendingMarker: true,
         });
       }
       return {

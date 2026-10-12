@@ -18,6 +18,7 @@ export function linkedInError(error: unknown) {
     reason?: string;
     requestId?: string;
     jobId?: string;
+    jobError?: string;
     statusCode?: number;
   };
   let body: Record<string, unknown> = {};
@@ -38,5 +39,8 @@ export function linkedInError(error: unknown) {
     code: clean(e.code ?? e.reason ?? nested.code ?? body.code),
     requestId: clean(e.requestId ?? e.jobId ?? body.request_id),
     statusCode: e.statusCode,
+    // An async job's failure text; linkedInMessageDeferral reads not_connected /
+    // rate_limited out of it when no code is set, so it must survive transport.
+    ...(clean(e.jobError) !== undefined ? { jobError: clean(e.jobError) } : {}),
   };
 }

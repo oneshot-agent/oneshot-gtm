@@ -560,6 +560,8 @@ export class Ledger {
     playName: string;
     reason: "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
     note?: string;
+    /** The caller is the send worker holding this cadence's sending marker; see ledger-cadence.ts. */
+    holdingSendingMarker?: boolean;
   }): boolean {
     return cadStopCadence(this.db, this.drafts, input);
   }

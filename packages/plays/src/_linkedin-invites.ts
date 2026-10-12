@@ -264,11 +264,14 @@ export async function resolveLinkedInInvite(input: ResolveInviteInput): Promise<
         result: { action: "skipped", payload: null, receiptIds: [], note: `${note} — would stop` },
       };
     }
+    // In cadence mode the caller is the send worker, which claimed the
+    // sending marker before this ran; a plain stop is refused under it.
     ledger.stopCadence({
       prospectId: input.prospectId,
       playName: input.playName,
       reason: "other",
       note,
+      holdingSendingMarker: input.mode === "cadence",
     });
     return {
       state: "result",
@@ -452,6 +455,7 @@ async function waitOrTimeOut(
     playName: input.playName,
     reason: "other",
     note,
+    holdingSendingMarker: input.mode === "cadence",
   });
   return {
     state: "result",

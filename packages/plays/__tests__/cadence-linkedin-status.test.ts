@@ -318,6 +318,40 @@ describe("acceptance from invitation status", () => {
     ]);
   });
 
+  it("a terminal status completes the cadence while the runner holds its sending marker", async () => {
+    // The due runner claims the marker before the step runs (see _cadence.ts);
+    // a plain ledger.stopCadence is refused under it, which used to leave the
+    // cadence active and due again next pass.
+    inviteSent();
+    expect(
+      ledger.claimCadenceSendingMarker({
+        prospectId,
+        playName: PLAY,
+        startedAtIso: new Date().toISOString(),
+      }),
+    ).toBe(true);
+    const out = await run(
+      caller({
+        invitation: () => ({ invitation_id: "i", status: "withdrawn", accepted_at: null }),
+      }),
+    );
+    expect(out.action).toBe("completed");
+    const cadence = ledger.getCadence(prospectId, PLAY)!;
+    expect(cadence.status).toBe("stopped");
+    expect(cadence.sending_started_at).toBeNull();
+  });
+
+  it("a Stop from outside is still refused while a send is in flight", () => {
+    inviteSent();
+    ledger.claimCadenceSendingMarker({
+      prospectId,
+      playName: PLAY,
+      startedAtIso: new Date().toISOString(),
+    });
+    expect(ledger.stopCadence({ prospectId, playName: PLAY, reason: "bad_timing" })).toBe(false);
+    expect(ledger.getCadence(prospectId, PLAY)!.status).toBe("active");
+  });
+
   it("declined_or_unknown waits inside the window", async () => {
     inviteSent({ daysAgo: 5 });
     const out = await run(

@@ -350,6 +350,14 @@ export function stopCadence(
     playName: string;
     reason: "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
     note?: string;
+    /**
+     * The caller is the send worker that holds this cadence's sending marker
+     * (claimCadenceSendingMarker) and has decided the cadence is over: a
+     * terminal invitation, a meeting already held. Without this a stop is
+     * refused while the marker is set, which is right for a Stop click racing
+     * a send and wrong for the worker itself, whose refusal nobody reads.
+     */
+    holdingSendingMarker?: boolean;
   },
 ): boolean {
   let changed = false;
@@ -362,9 +370,15 @@ export function stopCadence(
              next_step_draft_json = NULL, next_step_drafted_at = NULL,
              sending_started_at = NULL, last_send_error = NULL, last_send_error_at = NULL
          WHERE prospect_id = ? AND play_name = ? AND status = 'active'
-           AND sending_started_at IS NULL`,
+           AND (sending_started_at IS NULL OR ? = 1)`,
       )
-      .run(input.reason, input.note?.trim() || null, input.prospectId, input.playName);
+      .run(
+        input.reason,
+        input.note?.trim() || null,
+        input.prospectId,
+        input.playName,
+        input.holdingSendingMarker ? 1 : 0,
+      );
     changed = result.changes > 0;
     if (changed) {
       new QueueStore(db).expireBreakupReviveQueue(input.prospectId, "cadence stopped");
