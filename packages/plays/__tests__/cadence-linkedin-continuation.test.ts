@@ -235,6 +235,34 @@ describe("the sequence", () => {
     enrollInCadence({ prospectId, playName: PLAY });
     expect(effectiveSequence(PLAY, prospectId)!.steps).toHaveLength(1);
   });
+
+  it("uses the trigger of the row that sent, not a newer row from another trigger", () => {
+    ledger.upsertTrigger({
+      name: "repo-stars",
+      configJson: JSON.stringify({ linkedinContinuation: false }),
+    });
+    ledger.upsertTrigger({
+      name: "repo-forks",
+      configJson: JSON.stringify({ linkedinContinuation: true }),
+    });
+    ledger.enqueueTarget({
+      playName: PLAY,
+      payload: { email: "dana@example.com", name: "Dana Lee" },
+      dedupeKey: "dana-stars",
+      source: "find:repo-stars",
+    });
+    ledger.enqueueTarget({
+      playName: PLAY,
+      payload: { email: "dana@example.com", name: "Dana Lee" },
+      dedupeKey: "dana-forks",
+      source: "find:repo-forks",
+    });
+    // The newest row says on; the row that sent said off.
+    expect(triggerLinkedInContinuation(PLAY, prospectId)).toBe(true);
+    expect(triggerLinkedInContinuation(PLAY, prospectId, "find:repo-stars")).toBe(false);
+    enrollInCadence({ prospectId, playName: PLAY, queueSource: "find:repo-stars" });
+    expect(effectiveSequence(PLAY, prospectId)!.steps).toHaveLength(1);
+  });
 });
 
 describe("the connection request", () => {

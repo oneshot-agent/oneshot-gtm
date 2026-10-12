@@ -1696,7 +1696,8 @@ export async function sendDraftRoute(
   }
 
   const prospect = ledger.findProspectByEmail(email);
-  if (prospect) enrollInCadence({ prospectId: prospect.id, playName: row.play_name });
+  if (prospect)
+    enrollInCadence({ prospectId: prospect.id, playName: row.play_name, queueSource: row.source });
   // The human read this draft and clicked Send. A per-row judgment.
   ledger.setQueueStatus({ id, status: "sent", decidedBy: "human" });
   ledger.setQueueDraft({

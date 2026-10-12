@@ -473,13 +473,19 @@ export function enrollInCadence(input: {
   channel?: "email" | "linkedin";
   /** The trigger's `linkedinContinuation`, when it sets one: it beats the workspace's. */
   linkedinContinuation?: boolean;
+  /**
+   * `source` of the queue row this send came from. It names the trigger whose
+   * `linkedinContinuation` applies, so a newer row from another trigger for the
+   * same address can't override it. Omitted: the newest queue row decides.
+   */
+  queueSource?: string | null;
 }): void {
   // An email cadence takes its trigger's `linkedinContinuation` over the workspace's.
   const continuation =
     input.linkedinContinuation ??
     (input.channel === "linkedin"
       ? undefined
-      : triggerLinkedInContinuation(input.playName, input.prospectId));
+      : triggerLinkedInContinuation(input.playName, input.prospectId, input.queueSource));
   const seq = effectiveSequence(
     input.playName,
     input.prospectId,
@@ -2945,14 +2951,20 @@ function linkedInContinuationSteps(playName: string): SequenceStep[] {
 export function triggerLinkedInContinuation(
   playName: string,
   prospectId: number,
+  /** The originating queue row's `source`; undefined looks up the newest row. */
+  queueSource?: string | null,
 ): boolean | undefined {
   try {
     const ledger = getLedger();
-    const email = ledger.getProspectById(prospectId)?.email;
-    if (!email) return undefined;
-    const value = triggerConfigForSource(ledger.latestQueueSource(playName, email), (name) =>
-      ledger.getTrigger(name),
-    )?.["linkedinContinuation"];
+    let source = queueSource;
+    if (source === undefined) {
+      const email = ledger.getProspectById(prospectId)?.email;
+      if (!email) return undefined;
+      source = ledger.latestQueueSource(playName, email);
+    }
+    const value = triggerConfigForSource(source, (name) => ledger.getTrigger(name))?.[
+      "linkedinContinuation"
+    ];
     return typeof value === "boolean" ? value : undefined;
   } catch {
     return undefined;

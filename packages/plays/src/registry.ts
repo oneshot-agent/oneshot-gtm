@@ -71,6 +71,8 @@ export interface PlayRunInput {
   signal?: AbortSignal;
   /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
   draftAngle?: string;
+  /** `source` of the queue row being sent (queue drain); see `runEmailPlay`. */
+  queueSource?: string | null;
 }
 
 export interface PlayDispatch {
@@ -92,9 +94,12 @@ const progressOpt = (o: PlayRunInput): { onProgress?: PlayProgressFn } =>
 // Same exactOptionalPropertyTypes dance for the run's cancellation signal:
 // spread it in only when the caller supplied one, so plays keep seeing an
 // absent field rather than an explicit `undefined`.
-const signalOpt = (o: PlayRunInput): { signal?: AbortSignal; draftAngle?: string } => ({
+const signalOpt = (
+  o: PlayRunInput,
+): { signal?: AbortSignal; draftAngle?: string; queueSource?: string | null } => ({
   ...(o.signal ? { signal: o.signal } : {}),
   ...(o.draftAngle ? { draftAngle: o.draftAngle } : {}),
+  ...(o.queueSource !== undefined ? { queueSource: o.queueSource } : {}),
 });
 
 export const PLAYS: Record<string, PlayDispatch> = {

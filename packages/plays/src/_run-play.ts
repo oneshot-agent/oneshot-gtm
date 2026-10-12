@@ -195,6 +195,8 @@ export async function runEmailPlay<T, X = Record<string, never>>(
     signal?: AbortSignal;
     /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
     draftAngle?: string;
+    /** `source` of the queue row being sent, when there is one: picks the trigger whose settings apply. */
+    queueSource?: string | null;
   },
 ): Promise<{ drafted: Array<PlayDraft<T, X>> }> {
   const cfg = loadConfig();
@@ -468,7 +470,12 @@ export async function runEmailPlay<T, X = Record<string, never>>(
             getSequence(def.playName)?.steps.some((s) => s.channel === "direct_mail"))
         ) {
           const prospect = getLedger().findProspectByEmail(def.toEmail(target));
-          if (prospect) enrollInCadence({ prospectId: prospect.id, playName: def.playName });
+          if (prospect)
+            enrollInCadence({
+              prospectId: prospect.id,
+              playName: def.playName,
+              ...(opts.queueSource !== undefined ? { queueSource: opts.queueSource } : {}),
+            });
         }
 
         return {
