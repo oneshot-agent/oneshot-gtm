@@ -77,6 +77,9 @@ export function isWithdrawnStatus(status: string | null | undefined): boolean {
 }
 
 /** All messaging calls go through the SDK. Read operations never trigger a paid history sync. */
+/** Every action GTM uses on a LinkedIn account: what a connection, or a widened one, is asked for. */
+const LINKEDIN_GRANT = ["read", "reply", "view_profile", "invite"] as const;
+
 export async function linkedInSdk(operation: LinkedInOperation): Promise<unknown> {
   if (demoMode()) throw new Error("LinkedIn is unavailable in demo mode");
   const agent = await getAgent();
@@ -91,9 +94,18 @@ export async function linkedInSdk(operation: LinkedInOperation): Promise<unknown
         ...(await agent.listLinkedInAccounts({ includeRevoked: true })),
       };
     case "connect":
-      return operation.accountId && !operation.upgrade
-        ? agent.reconnectLinkedInAccount(operation.accountId)
-        : agent.linkedinConnect({ requestedActions: ["read", "reply", "view_profile", "invite"] });
+      // A new connection asks for every action. An existing account is
+      // reconnected, which keeps the account, its conversations and its sync
+      // progress. With `upgrade` the reconnect asks for the full grant: that
+      // is how OneShot adds an action to a connected account (a second connect
+      // for the same member is refused as `duplicate_member`).
+      if (!operation.accountId) {
+        return agent.linkedinConnect({ requestedActions: [...LINKEDIN_GRANT] });
+      }
+      return agent.reconnectLinkedInAccount(
+        operation.accountId,
+        operation.upgrade ? { requestedActions: [...LINKEDIN_GRANT] } : {},
+      );
     case "revoke":
       return agent.revokeLinkedInAccount(operation.accountId);
     case "connection":

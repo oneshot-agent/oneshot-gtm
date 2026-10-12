@@ -56,12 +56,20 @@ it("submits a bounded history import without the rejected SDK timeout field and 
   );
 });
 
-it("requests additional permissions with a new hosted intent", async () => {
+it("adds permissions by reconnecting the same account with the full grant, never a second connection", async () => {
   await linkedInSdk({ kind: "connect", accountId: "account", upgrade: true });
+  expect(reconnect).toHaveBeenLastCalledWith("account", {
+    requestedActions: ["read", "reply", "view_profile", "invite"],
+  });
+  // A plain reconnect leaves the grant as it is.
+  await linkedInSdk({ kind: "connect", accountId: "account" });
+  expect(reconnect).toHaveBeenLastCalledWith("account", {});
+  expect(connect).not.toHaveBeenCalled();
+  // Only a first connection opens a new one.
+  await linkedInSdk({ kind: "connect" });
   expect(connect).toHaveBeenCalledWith({
     requestedActions: ["read", "reply", "view_profile", "invite"],
   });
-  expect(reconnect).not.toHaveBeenCalled();
 });
 it("resolves profiles silently with a persisted idempotency key and no unsupported timeout", async () => {
   tool.mockResolvedValueOnce({ status: "pending", request_id: "lookup" });
