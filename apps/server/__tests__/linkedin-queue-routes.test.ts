@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { _resetInviteLimitsCacheForTests, loadConfig, saveConfig } from "@oneshot-gtm/core";
 
@@ -84,6 +87,8 @@ const post = (body?: unknown) =>
   });
 
 beforeEach(() => {
+  // A fresh shared DB per test: the guard refuses a profile that was already invited.
+  process.env["ONESHOT_GTM_SHARED"] = mkdtempSync(join(tmpdir(), "linkedin-queue-routes-"));
   row = {
     id: 1,
     play_name: "luma-events",
@@ -121,6 +126,12 @@ describe("send-draft on a LinkedIn row", () => {
     const first = await sendDraftRoute(post(), { id: "1" });
     expect(first.status).toBe(200);
     expect(statusCalls).toHaveLength(1);
+    // A different person: the same profile is refused earlier, as already invited (#787).
+    row.payload_json = JSON.stringify({
+      name: "Sam Park",
+      linkedinUrl: "https://www.linkedin.com/in/sam-park",
+      email: "sam@acme.com",
+    });
     const second = await sendDraftRoute(post(), { id: "1" });
     expect(second.status).toBe(429);
     expect(await second.json()).toMatchObject({ error: expect.stringMatching(/share of 1 used/) });
@@ -165,6 +176,63 @@ describe("send-draft on a LinkedIn row", () => {
     const res = await sendDraftRoute(post(), { id: "1" });
     expect(res.status).toBe(409);
     expect(linkedInCalls).toHaveLength(0);
+  });
+
+  describe("invite guard (#787)", () => {
+    const setPayload = (over: Record<string, unknown>) => {
+      row.payload_json = JSON.stringify({
+        name: "Dana Lee",
+        linkedinUrl: "https://www.linkedin.com/in/dana-lee",
+        email: "dana@acme.com",
+        ...over,
+      });
+    };
+
+    it("refuses a name that is a repo or company, with the reason, and calls nothing", async () => {
+      setPayload({ name: "SWE-agent" });
+      const res = await sendDraftRoute(post(), { id: "1" });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { flags: string[] };
+      expect(body.flags[0]).toMatch(/^not-a-person:/);
+      expect(linkedInCalls).toHaveLength(0);
+      expect(statusCalls).toHaveLength(0);
+    });
+
+    it("refuses an X or GitHub URL stored as the profile", async () => {
+      setPayload({ linkedinUrl: "https://github.com/dana-lee" });
+      const res = await sendDraftRoute(post(), { id: "1" });
+      expect(res.status).toBe(409);
+      expect(linkedInCalls).toHaveLength(0);
+    });
+
+    it("refuses a profile another workspace sharing the account already invited", async () => {
+      const first = await sendDraftRoute(post(), { id: "1" });
+      expect(first.status).toBe(200);
+      // Same person, spelled differently, from the other workspace's row.
+      setPayload({ linkedinUrl: "https://it.linkedin.com/in/Dana-Lee/en?trk=x" });
+      const second = await sendDraftRoute(post(), { id: "1" });
+      expect(second.status).toBe(409);
+      expect(await second.json()).toMatchObject({
+        flags: [expect.stringMatching(/^already-invited:/)],
+      });
+      expect(linkedInCalls.filter((c) => c["kind"] === "invite")).toHaveLength(1);
+    });
+
+    it("sends the normalised profile URL, not the stored spelling", async () => {
+      setPayload({ linkedinUrl: "https://it.linkedin.com/in/dana-lee/en/?utm=1" });
+      const res = await sendDraftRoute(post(), { id: "1" });
+      expect(res.status).toBe(200);
+      expect(linkedInCalls.find((c) => c["kind"] === "invite")).toMatchObject({
+        profile: "https://www.linkedin.com/in/dana-lee",
+      });
+    });
+
+    it("a failed invite frees the profile so the row can be resent", async () => {
+      linkedInResult = Object.assign(new Error("job failed"), { code: "email_required" });
+      expect((await sendDraftRoute(post(), { id: "1" })).status).toBe(409);
+      linkedInResult = { invitation_id: "inv-1", status: "sent" };
+      expect((await sendDraftRoute(post(), { id: "1" })).status).toBe(200);
+    });
   });
 
   it("reports a refusal the founder can fix and leaves the row unsent", async () => {

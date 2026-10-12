@@ -769,6 +769,46 @@ export function linkedInOutreachAccount(): { workspace: string; accountId: strin
 }
 
 /**
+ * The profile key of the one other person in a 1:1 thread (by verified URL or
+ * a resolved identity), or null for a group thread or an unidentified peer.
+ */
+function oneToOnePeerKey(store: LinkedInInboxStore, t: LinkedInThreadRecord): string | null {
+  const peers = t.conversation.attendees.filter((a) => !a.is_self);
+  if (peers.length !== 1) return null;
+  const peer = peers[0]!;
+  const verified = verifiedLinkedInProfileKey(peer.profile_url ?? "", peer.provider_id);
+  if (verified) return verified;
+  const resolved = peer.provider_id ? store.identity(t.accountKey, peer.provider_id) : null;
+  return resolved?.profile ? canonicalLinkedInProfileKey(resolved.profile) : null;
+}
+
+/**
+ * Whether an account already has a 1:1 conversation with this profile that
+ * holds at least one message. The invite guard reads it: someone the account
+ * is already talking to gets no cold connection request, whoever started the
+ * conversation (another tool, another workspace, or the account owner).
+ */
+export function linkedInHasConversationWith(
+  linkedinUrl: string | null | undefined,
+  store: LinkedInInboxStore = getLinkedInInboxStore(),
+): boolean {
+  const key = linkedinUrl ? canonicalLinkedInProfileKey(linkedinUrl) : null;
+  if (!key) return false;
+  const removed = new Set(
+    store
+      .accounts()
+      .filter((a) => a.removedAt)
+      .map((a) => a.key),
+  );
+  for (const t of store.threads()) {
+    if (removed.has(t.accountKey)) continue;
+    if (oneToOnePeerKey(store, t) !== key) continue;
+    if (store.messages(t.accountKey, t.conversation.id).length > 0) return true;
+  }
+  return false;
+}
+
+/**
  * The LinkedIn conversation a prospect has with a connected account, if one
  * has synced: the thread this workspace owns for the prospect, or a 1:1
  * thread whose only other person is the prospect's profile (by verified URL
@@ -786,17 +826,7 @@ export function linkedInConversationFor(input: {
     const account = store.account(t.accountKey);
     if (!account || account.removedAt || account.account.status !== "connected") continue;
     let match = t.owner?.workspace === input.workspace && t.owner.prospectId === input.prospectId;
-    if (!match && key) {
-      const peers = t.conversation.attendees.filter((a) => !a.is_self);
-      if (peers.length === 1) {
-        const peer = peers[0]!;
-        const verified = verifiedLinkedInProfileKey(peer.profile_url ?? "", peer.provider_id);
-        const resolved = peer.provider_id ? store.identity(t.accountKey, peer.provider_id) : null;
-        const peerKey =
-          verified ?? (resolved?.profile ? canonicalLinkedInProfileKey(resolved.profile) : null);
-        match = peerKey === key;
-      }
-    }
+    if (!match && key) match = oneToOnePeerKey(store, t) === key;
     if (match) {
       return {
         conversationId: t.conversation.id,

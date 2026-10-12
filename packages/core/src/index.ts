@@ -50,6 +50,8 @@ export * from "./linkedin-sdk.ts";
 export * from "./linkedin-error.ts";
 export * from "./linkedin-inbox.ts";
 export * from "./linkedin-invite-quota.ts";
+export * from "./linkedin-guard.ts";
+export * from "./linkedin-guard-now.ts";
 export * from "./newsfeed.ts";
 
 export * from "./direct-mail.ts";
