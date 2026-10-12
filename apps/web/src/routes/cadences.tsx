@@ -255,6 +255,12 @@ function CadencesPage() {
         toast.info(data.message);
         return;
       }
+      if (data.skipped) {
+        // The cadence is complete now: the row leaves the active list.
+        void qc.invalidateQueries({ queryKey: ["cadences"] });
+        toast.info(data.message);
+        return;
+      }
       void qc.invalidateQueries({ queryKey: ["cadences"] });
       setExpandedKeys((prev) => new Set([...prev, `${vars.prospectId}|${vars.playName}`]));
       toast.success(
@@ -585,7 +591,7 @@ function CadencesPage() {
             <span className="text-ink-cream">{selectedRows.length}</span> selected
             {sendableRows.length !== selectedRows.length && (
               <span className="ml-2 text-[color:var(--ink-spend-2)]">
-                · {sendableRows.length} ready to send by email
+                · {sendableRows.length} ready to send
               </span>
             )}
           </div>
@@ -1443,7 +1449,15 @@ function CadencesPage() {
                 {sendableRows.map((c) => (
                   <tr key={rowKey(c)} className="border-t border-ink-rule/40">
                     <td className="px-2 py-1 font-mono text-ink-cream-2">
-                      {c.prospectEmail ? <Pii kind="email">{c.prospectEmail}</Pii> : "(no email)"}
+                      {c.nextStepChannel === "linkedin" ? (
+                        <>
+                          <Pii kind="name">{c.prospectName ?? "(no name)"}</Pii> · LinkedIn
+                        </>
+                      ) : c.prospectEmail ? (
+                        <Pii kind="email">{c.prospectEmail}</Pii>
+                      ) : (
+                        "(no email)"
+                      )}
                     </td>
                     <td className="px-2 py-1 text-ink-cream-2">{c.playName}</td>
                     <td className="px-2 py-1 text-ink-cream-2">
@@ -1455,8 +1469,8 @@ function CadencesPage() {
             </table>
           </div>
           <div className="ln-eyebrow text-[10px] text-ink-faint">
-            Server processes serially; ~2 min per email. The UI refreshes every 15s and rows clear
-            their preview as each completes.
+            Server processes serially; an email takes about 2 min. The UI refreshes every 15s and
+            rows clear their preview as each completes.
           </div>
         </div>
       </Modal>

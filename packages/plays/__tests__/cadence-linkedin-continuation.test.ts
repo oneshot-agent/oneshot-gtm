@@ -56,6 +56,7 @@ const {
   effectiveSequence,
   runCadenceStepForProspect,
   previewCadenceStep,
+  previewCadenceStepBatch,
   sendCadenceStepBatch,
   advanceCadence,
   sweepLinkedInInvitations,
@@ -269,7 +270,8 @@ describe("the connection request", () => {
   it("drafts with the invite-note prompt, told they were emailed and did not reply", async () => {
     emailCadenceRunOut();
     const preview = await previewCadenceStep({ prospectId, playName: PLAY });
-    if ("waiting" in preview) throw new Error("the invite step never waits");
+    if ("waiting" in preview || "skipped" in preview)
+      throw new Error("the invite step never waits");
     expect(promptNames).toContain("linkedin-invite-note");
     expect(modelInputs[0]).toContain("PRIOR_CONTACT:");
     expect(modelInputs[0]).toMatch(/emailed 1 time on this and did not reply/);
@@ -364,16 +366,68 @@ describe("guards and quota", () => {
     expect(ledger.listLinkedInInviteEvents(odd, PLAY)).toEqual([]);
   });
 
-  it("previewing the invite shows a guard refusal instead of drafting a note", async () => {
+  it("previewing the invite of a refused person skips the step and completes the cadence, with no note drafted", async () => {
     ledger.close();
     ledger = new Ledger(dbPath);
     const odd = newProspect({ email: "bot2@example.com", name: "SWE-agent" });
     prospectId = odd;
     emailCadenceRunOut(odd);
-    await expect(previewCadenceStep({ prospectId: odd, playName: PLAY })).rejects.toThrow(
-      /not-a-person.*this step will be skipped/,
+    // Nothing but `cadence advance` runs the send path unprompted, and a refused
+    // person can never be sent: the preview takes the same outcome.
+    const shown = await previewCadenceStep({ prospectId: odd, playName: PLAY });
+    expect(shown).toMatchObject({ skipped: true });
+    expect((shown as { message: string }).message).toMatch(
+      /^not-a-person:.* — LinkedIn steps skipped$/,
     );
+    expect(modelInputs).toEqual([]);
     expect(ledger.getCadenceDraft({ prospectId: odd, playName: PLAY })).toBeNull();
+    const skipped = linkedinEvents();
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]).toMatchObject({ step_index: 2, status: "skipped" });
+    expect(JSON.parse(skipped[0]!.metadata_json!).reason).toMatch(/^not-a-person:/);
+    expect(state().status).toBe("completed");
+    expect(ledger.listLinkedInInviteEvents(odd, PLAY)).toEqual([]);
+    // Done is done: a second look does not record a second skip.
+    await expect(previewCadenceStep({ prospectId: odd, playName: PLAY })).rejects.toThrow(
+      /cadence is completed/,
+    );
+    expect(linkedinEvents()).toHaveLength(1);
+  });
+
+  it("previewing the invite of someone with no usable profile completes the cadence too", async () => {
+    ledger.close();
+    ledger = new Ledger(dbPath);
+    const page = newProspect({
+      email: "acme@example.com",
+      linkedin_url: "https://www.linkedin.com/company/acme",
+    });
+    prospectId = page;
+    emailCadenceRunOut(page);
+    const shown = await previewCadenceStep({ prospectId: page, playName: PLAY });
+    expect(shown).toMatchObject({ skipped: true });
+    expect((shown as { message: string }).message).toMatch(/ — LinkedIn steps skipped$/);
+    expect(modelInputs).toEqual([]);
+    expect(linkedinEvents()).toHaveLength(1);
+    expect(linkedinEvents()[0]).toMatchObject({ step_index: 2, status: "skipped" });
+    expect(state().status).toBe("completed");
+  });
+
+  it("a batch preview reports the refused person and still drafts for the others", async () => {
+    ledger.close();
+    ledger = new Ledger(dbPath);
+    const fine = newProspect();
+    emailCadenceRunOut(fine);
+    const odd = newProspect({ email: "bot3@example.com", name: "SWE-agent" });
+    emailCadenceRunOut(odd);
+    const out = await previewCadenceStepBatch([
+      { prospectId: fine, playName: PLAY },
+      { prospectId: odd, playName: PLAY },
+    ]);
+    expect(out[0]).toMatchObject({ prospectId: fine, ok: true });
+    expect(out[1]).toMatchObject({ prospectId: odd, ok: false });
+    expect(out[1]!.error).toMatch(/^not-a-person:.* — LinkedIn steps skipped$/);
+    expect(ledger.getCadence(odd, PLAY)!.status).toBe("completed");
+    expect(ledger.getCadence(fine, PLAY)!.status).toBe("active");
   });
 
   it("an existing conversation: the guard skips the invite step with its reason, before any invite", async () => {
@@ -508,7 +562,8 @@ describe("after the invite", () => {
 
     // Previewed on /cadences, then sent from there.
     const preview = await previewCadenceStep({ prospectId, playName: PLAY });
-    if ("waiting" in preview) throw new Error("accepted: nothing to wait for");
+    if ("waiting" in preview || "skipped" in preview)
+      throw new Error("accepted: nothing to wait for");
     expect(preview.payload.kind).toBe("linkedin_message");
     const sent = await run(li, { persistedPayload: preview.payload });
     expect(sent.action).toBe("step-sent");
@@ -523,7 +578,8 @@ describe("after the invite", () => {
     calls = [];
     const li = caller({ message: () => ({ status: "sent", conversation_id: "conv-9" }) });
     const preview = await previewCadenceStep({ prospectId, playName: PLAY });
-    if ("waiting" in preview) throw new Error("already connected: nothing to wait for");
+    if ("waiting" in preview || "skipped" in preview)
+      throw new Error("already connected: nothing to wait for");
     expect(preview.payload.kind).toBe("linkedin_message");
     const out = await run(li, { persistedPayload: preview.payload });
     expect(out.action).toBe("step-sent");
