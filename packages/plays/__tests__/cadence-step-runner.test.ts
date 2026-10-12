@@ -474,6 +474,8 @@ describe("runCadenceStepForProspect — meeting-outcome gate (issue #578)", () =
         playName: "stack-consolidation",
         reason: "other",
         note: "meeting held — cadence superseded by a real conversation",
+        // The due runner holds the sending marker; the stop must work under it.
+        holdingSendingMarker: true,
       },
     ]);
   });
