@@ -1,6 +1,47 @@
 # Background monitoring
 
-The dashboard server runs an in-process scheduler, so enabling a trigger is enough — no separate daemon. On a cron box or a headless machine, run `find watch` instead.
+The dashboard server runs an in-process scheduler, so enabling a trigger is enough — no separate daemon. On a cron box or a headless machine, run `find watch` instead. Run one or the other for a workspace, not both: each polls the same triggers.
+
+## The dashboard as a service
+
+A dashboard started from a terminal stops when the terminal closes or the machine restarts, and while it is down nothing is polled. `ui --install-service` generates a service file that starts the dashboard at login and restarts it if it crashes — a launchd user agent on macOS, a systemd user unit on Linux. Like the watch daemon's below, it prints to stdout; `--write` puts it at the platform-conventional path.
+
+Nothing is typed in by hand. The workspace's name, home, and registered port are read from the workspace the command runs in, and the paths to bun and the server from the checkout it runs from. The service is named after the workspace, so each workspace gets its own: run the command once per workspace.
+
+```bash
+oneshot-gtm ui --install-service                     # inspect the file for the current workspace
+oneshot-gtm ui --install-service --write             # default workspace
+oneshot-gtm --workspace acme ui --install-service --write
+```
+
+**macOS (launchd).** The label is `com.oneshot-gtm.workspace.<name>` (`default` without named workspaces). Logs go to `<home>/dashboard.log`.
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.oneshot-gtm.workspace.acme.plist
+
+# after pulling new code and rebuilding the web app
+launchctl kickstart -k gui/$(id -u)/com.oneshot-gtm.workspace.acme
+
+# uninstall
+launchctl unload ~/Library/LaunchAgents/com.oneshot-gtm.workspace.acme.plist
+rm ~/Library/LaunchAgents/com.oneshot-gtm.workspace.acme.plist
+```
+
+**Linux (systemd user unit).** The unit is `oneshot-gtm-workspace-<name>.service`. Logs go to the user journal: `journalctl --user -u oneshot-gtm-workspace-acme`.
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now oneshot-gtm-workspace-acme
+
+# after pulling new code and rebuilding the web app
+systemctl --user restart oneshot-gtm-workspace-acme
+
+# uninstall
+systemctl --user disable --now oneshot-gtm-workspace-acme
+rm ~/.config/systemd/user/oneshot-gtm-workspace-acme.service
+```
+
+The service needs the web build (`bun run --cwd apps/web build`) and refuses to generate without it. A stop you ask for (`launchctl unload`, `systemctl --user stop`) is respected; only a crash restarts it. A user service starts at login, not at power-on; on Linux `loginctl enable-linger $USER` changes that. Re-run with `--write` after moving bun or the checkout, or after changing the workspace's port. It runs from a clone; the no-clone `bunx oneshot-gtm-server` has no service file.
 
 ## As a service
 

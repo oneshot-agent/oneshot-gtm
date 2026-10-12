@@ -95,7 +95,10 @@ import { commandBackfillFitReason } from "./commands/backfill-fit-reason.ts";
 import { commandCompactReceipts } from "./commands/compact-receipts.ts";
 import { commandCalibrate } from "./commands/calibrate.ts";
 import { commandFindDrain, commandFindImport, commandFindWatch } from "./commands/find.ts";
-import { commandInstallService } from "./commands/install-service.ts";
+import {
+  commandInstallDashboardService,
+  commandInstallService,
+} from "./commands/install-service.ts";
 import { commandMeasureBenchmark } from "./commands/measure.ts";
 import {
   commandMotionBreakupRevive,
@@ -150,15 +153,42 @@ program
   )
   .option("--no-browser", "do not auto-open the browser")
   .option("--dev", "use vite dev server (5173) + API server", false)
+  .option(
+    "--install-service",
+    "print a launchd plist (macOS) / systemd user unit (Linux) that starts this workspace's dashboard at login; doesn't start it now",
+    false,
+  )
+  .option(
+    "--write",
+    "with --install-service: write the file to the platform-conventional path instead of stdout",
+    false,
+  )
   .description("Open the local dashboard at http://127.0.0.1:<port>")
   .action(
-    runOrFail(async (opts: { port?: number; browser: boolean; dev: boolean }) => {
-      await commandUi({
-        ...(opts.port != null ? { port: opts.port } : {}),
-        noBrowser: !opts.browser,
-        dev: opts.dev,
-      });
-    }),
+    runOrFail(
+      async (opts: {
+        port?: number;
+        browser: boolean;
+        dev: boolean;
+        installService: boolean;
+        write: boolean;
+      }) => {
+        if (opts.installService) {
+          // A service runs the prebuilt dashboard; the vite dev server is a foreground tool.
+          if (opts.dev) bail("--dev cannot be used with --install-service");
+          return commandInstallDashboardService({
+            write: opts.write,
+            ...(opts.port != null ? { port: opts.port } : {}),
+          });
+        }
+        if (opts.write) bail("--write only makes sense with --install-service");
+        await commandUi({
+          ...(opts.port != null ? { port: opts.port } : {}),
+          noBrowser: !opts.browser,
+          dev: opts.dev,
+        });
+      },
+    ),
   );
 
 // Demo: a fictional, deterministic install in its own home, for screenshots and

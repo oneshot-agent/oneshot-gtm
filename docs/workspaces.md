@@ -63,7 +63,7 @@ Removing an identity stops its sync and sending but retains saved conversations.
 Connecting one mailbox in two workspaces gives both access to that mailbox; their
 prospect matches, read states, drafts, and archives remain independent.
 
-`find watch --install-service` embeds the active home, so `--workspace acme find watch --install-service` pins the generated service to that workspace. See [background monitoring](./background-monitoring.md).
+`find watch --install-service` embeds the active home, so `--workspace acme find watch --install-service` pins the generated service to that workspace. `--workspace acme ui --install-service` does the same for the dashboard: a login service named after the workspace, on its registered port, so each workspace's dashboard comes back after a restart. See [background monitoring](./background-monitoring.md).
 
 ### Shared people and workspace memberships
 
