@@ -1545,8 +1545,8 @@ function CadencesPage() {
                 This stops only <code>{stopModal?.items[0]?.playName}</code>.
               </>
             )}{" "}
-            Stopped prospects are excluded from Expandi. Bad timing and Other may return through
-            breakup-revive after 60–90 days; permanent reasons will not.
+            Stopped prospects get no further outreach on any channel. Bad timing and Other may
+            return through breakup-revive after 60–90 days; permanent reasons will not.
           </p>
           {stopModal && stopModal.items.length > 1 && (
             <ul className="max-h-32 overflow-y-auto space-y-1 text-[12px] text-ink-cream-2">

@@ -2025,3 +2025,19 @@ export interface LinkedInInviteQuotaView {
   /** Display line, e.g. "LinkedIn invites today: 4 of 12 left · account 9 left"; null when nothing is known. */
   text: string | null;
 }
+
+/** GET /api/linkedin/touched: profiles on the "already contacted" suppression list. */
+export interface LinkedInTouchedView {
+  count: number;
+}
+
+/** POST /api/linkedin/touched: the outcome of importing a CSV/JSON of already-contacted profiles. */
+export interface LinkedInTouchedImportView {
+  imported: number;
+  present: number;
+  /** Entries that are not a personal LinkedIn profile URL. */
+  rejected: number;
+  rejectedSample: string[];
+  /** The list's size after the import. */
+  count: number;
+}

@@ -1,5 +1,9 @@
 import type { OnboardingStatus } from "@oneshot-gtm/shared-types";
-import type { LinkedInInviteQuotaView } from "@oneshot-gtm/shared-types";
+import type {
+  LinkedInInviteQuotaView,
+  LinkedInTouchedImportView,
+  LinkedInTouchedView,
+} from "@oneshot-gtm/shared-types";
 import type {
   RepliesResult,
   ReplyLearningStatus,
@@ -435,6 +439,9 @@ export const api = {
       ...(businessAddress ? { businessAddress } : {}),
     }),
   linkedInInvites: () => getJson<LinkedInInviteQuotaView>("/linkedin/invites"),
+  linkedInTouched: () => getJson<LinkedInTouchedView>("/linkedin/touched"),
+  importLinkedInTouched: (content: string) =>
+    postJson<LinkedInTouchedImportView>("/linkedin/touched", { content }),
   queue: (opts?: {
     forRun?: boolean;
     play?: string;
