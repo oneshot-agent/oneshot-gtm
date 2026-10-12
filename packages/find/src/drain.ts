@@ -266,6 +266,7 @@ async function dispatchOneTarget(opts: DrainOpts, row: QueueRow): Promise<DrainD
   const result = await play.run({
     dryRun: opts.dryRun,
     targets: [target],
+    queueSource: row.source,
     ...(row.play_name === "community-reply" ? { spendReserved: true } : {}),
   });
   return firstDraft(result.drafted);

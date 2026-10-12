@@ -221,6 +221,12 @@ export async function setTriggerConfigRoute(
       req,
     );
   }
+  // A refusal too: a string "false" is truthy to a careless reader, and a
+  // value that is not a boolean would silently leave the setting off.
+  const continuation = (body.config as Record<string, unknown>)["linkedinContinuation"];
+  if (continuation !== undefined && typeof continuation !== "boolean") {
+    return jsonResponse({ error: "linkedinContinuation must be true or false" }, 400, req);
+  }
   const ledger = getLedger();
   const stored = ledger.getTrigger(name);
   if (!stored) {

@@ -561,6 +561,13 @@ export interface OneShotConfig {
    */
   channels?: string[];
   /**
+   * An email cadence that runs out without a reply carries on onto LinkedIn:
+   * a connection request, then a first message and a close once it is
+   * accepted, all reviewed on /cadences. A trigger's own `linkedinContinuation`
+   * overrides it. Unset = off.
+   */
+  linkedinContinuation?: boolean;
+  /**
    * Learning-loop v2 (issue #750): minimum number of human approve/reject
    * queue decisions required before the background job will spend a model
    * call proposing a tighter ICP one-liner. Optional so pre-existing config

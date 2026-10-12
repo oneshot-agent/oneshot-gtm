@@ -2,6 +2,7 @@ export * from "./_lib.ts";
 export * from "./_cadence.ts";
 export { sweepLinkedInInvitations, type LinkedInInviteSweepResult } from "./_linkedin-sweep.ts";
 export { parseLinkedInInvitations, resolveLinkedInInvite } from "./_linkedin-invites.ts";
+export { linkedInWaitingSince } from "./_linkedin-invites.ts";
 export * from "./_run-play.ts";
 export * from "./_metadata.ts";
 export * from "./_angles.ts";

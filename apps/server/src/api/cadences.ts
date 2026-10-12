@@ -8,6 +8,7 @@ import {
 } from "@oneshot-gtm/core";
 import {
   getPriorStepsBulk,
+  linkedInWaitingSince,
   nextStepInfo,
   playFollowupCount,
   previewCadenceStep,
@@ -44,6 +45,21 @@ import { reportServerExecution } from "../telemetry.ts";
  */
 const MAX_SEND_AGE_MS = 5 * 60 * 1000;
 
+/** The date the invite behind a waiting LinkedIn step went out; null once accepted or on any read failure. */
+function safeWaitingSince(
+  row: ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number],
+): string | null {
+  try {
+    return linkedInWaitingSince({
+      prospectId: row.prospect_id,
+      playName: row.play_name,
+      prospectLinkedinUrl: row.prospect_linkedin_url,
+    });
+  } catch {
+    return null;
+  }
+}
+
 function toView(
   row: ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number],
   priorByKey: Map<string, PriorStepRow[]>,
@@ -70,6 +86,12 @@ function toView(
     }
   }
   const next = nextStepInfo(row.play_name, row.current_step, row.prospect_id);
+  // A LinkedIn message step (not the connection request itself) is waiting
+  // while its invite has not been accepted: say so, with the date it went out.
+  const linkedinWaitingSince =
+    row.status === "active" && next?.channel === "linkedin" && next.stepId !== "linkedin:invite"
+      ? safeWaitingSince(row)
+      : null;
   const followupCount = playFollowupCount(row.play_name, row.prospect_id);
   let deliveries: Map<string, SendDeliveryView>;
   try {
@@ -119,6 +141,7 @@ function toView(
     nextStepDraft,
     nextStepLabel: next?.label ?? null,
     nextStepIsBreakup: next?.isBreakup ?? false,
+    linkedinWaitingSince,
     followupCount,
     priorSteps,
     isSending: row.sending_started_at != null,
