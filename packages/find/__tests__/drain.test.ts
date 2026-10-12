@@ -383,6 +383,8 @@ it("drains with current source edges without rewriting the queue payload", async
   expect(runStackConsolidationMock).toHaveBeenCalledWith({
     dryRun: true,
     targets: [{ ...JSON.parse(original), yourEdge: "the product is the playbook" }],
+    // The drained row's source rides along so cadence enrollment reads its trigger.
+    queueSource: "find:github-topics",
   });
   expect(queued.payload_json).toBe(original);
 });
