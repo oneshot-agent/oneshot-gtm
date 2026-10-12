@@ -29,19 +29,33 @@ function str(meta: Record<string, unknown>, key: string): string | null {
 /** Longest clause that is ever passed on; a longer one is dropped, never cut. */
 export const EVIDENCE_CLAUSE_MAX_CHARS = 80;
 
-const SUBTITLE_RX = /\s+[–—|]\s+.*$|\s+-\s+.*$|:\s+.*$/u;
-const COHOST_RX =
-  /\s+(?:[x×]|co-?hosted by|hosted by|presented by|in partnership with|w\/)\s+.*$|\s*\((?:co-?hosted|hosted|presented)[^)]*\)\s*$/iu;
-const LEADING_ARTICLE_RX = /^(?:the|a|an)\s+/i;
+// These patterns run on text a prospect or an event host wrote. None has an
+// open-ended quantifier next to another one, so each is linear in the input;
+// the cut is taken at the first match and the rest is dropped by slicing.
+const SUBTITLE_RX = /\s[–—|]\s|\s-\s|:\s/u;
+const COHOST_RX = /\s(?:[x×]|co-?hosted by|hosted by|presented by|in partnership with|w\/)\s/iu;
+const COHOST_PAREN_RX = /^\((?:co-?hosted|hosted|presented)[^)]*\)$/iu;
+const LEADING_ARTICLE_RX = /^(?:the|a|an)\s/i;
+
+function cutAt(text: string, rx: RegExp): string {
+  const at = text.search(rx);
+  return at < 0 ? text : text.slice(0, at);
+}
+
+function trimEndChars(text: string, chars: string): string {
+  let end = text.length;
+  while (end > 0 && chars.includes(text[end - 1]!)) end--;
+  return text.slice(0, end);
+}
 
 /** An event title as it reads in a sentence: no subtitle, no co-host credit, no leading article. */
 export function tidyEventTitle(title: string): string {
-  return title
-    .trim()
-    .replace(SUBTITLE_RX, "")
-    .replace(COHOST_RX, "")
-    .replace(LEADING_ARTICLE_RX, "")
-    .trim();
+  let out = cutAt(cutAt(title.trim(), SUBTITLE_RX), COHOST_RX).trim();
+  if (out.endsWith(")")) {
+    const open = out.lastIndexOf("(");
+    if (open >= 0 && COHOST_PAREN_RX.test(out.slice(open))) out = out.slice(0, open).trim();
+  }
+  return out.replace(LEADING_ARTICLE_RX, "").trim();
 }
 
 function parseDate(value: string | null): Date | null {
@@ -52,7 +66,7 @@ function parseDate(value: string | null): Date | null {
 
 function listOf(value: string): string {
   const items = value
-    .split(/\s*(?:,|;|\/|\||\band\b|&)\s*/i)
+    .split(/,|;|\/|\||\band\b|&/i)
     .map((s) => s.trim())
     .filter(Boolean);
   if (items.length <= 1) return items[0] ?? "";
@@ -192,15 +206,15 @@ export function readerRole(title: string | null | undefined): ReaderRole {
 
 const NEVER_A_COMPANY =
   /\b(?:stealth|self[- ]?employed|universit(?:y|ies)|school|program(?:me)?|fund)\b/i;
-const BATCH_TAG_RX = /\s*\(?\s*yc\s*[wspxf]\d{2}\s*\)?/gi;
+const BATCH_TAG_RX = /\s?\(?\s?yc\s?[wspxf]\d{2}\s?\)?/gi;
 const LEGAL_SUFFIX_RX =
-  /[,\s]+(?:llc|l\.l\.c\.?|inc\.?|incorporated|ltd\.?|limited|gmbh|ab|s\.l\.?|sl|corp\.?|corporation|plc|bv|b\.v\.?|sas|ag|oy|pty|co\.?)$/i;
+  /[,\s]{1,4}(?:llc|l\.l\.c\.?|inc\.?|incorporated|ltd\.?|limited|gmbh|ab|s\.l\.?|sl|corp\.?|corporation|plc|bv|b\.v\.?|sas|ag|oy|pty|co\.?)$/i;
 
 /** A company name as it is said: no batch tag, no legal suffix. Empty for a name that never counts. */
 export function tidyCompanyName(name: string | null | undefined): string {
   let out = (name ?? "").replace(BATCH_TAG_RX, "").trim();
   for (let i = 0; i < 3; i++) out = out.replace(LEGAL_SUFFIX_RX, "").trim();
-  out = out.replace(/[,.\s]+$/u, "").trim();
+  out = trimEndChars(out, ",. \t\r\n").trim();
   return !out || NEVER_A_COMPANY.test(out) ? "" : out;
 }
 
@@ -210,13 +224,14 @@ const SECOND_LEVEL = new Set(["co", "com", "org", "net", "ac", "gov", "edu"]);
 
 /** The registrable label of a domain: `usesoren` for `usesoren.com`, `acme` for `acme.co.uk`. */
 function domainLabel(domain: string): string | null {
-  const host = domain
-    .trim()
-    .toLowerCase()
-    .replace(/^[a-z]+:\/\//, "")
-    .replace(/^.*@/, "")
-    .replace(/[/?#].*$/, "")
-    .replace(/^www\./, "");
+  const host = cutAt(
+    domain
+      .trim()
+      .toLowerCase()
+      .replace(/^[a-z]+:\/\//, "")
+      .replace(/^.*@/, ""),
+    /[/?#]/,
+  ).replace(/^www\./, "");
   const labels = host.split(".").filter(Boolean);
   if (labels.length < 2) return null;
   const n = labels.length;
@@ -248,7 +263,7 @@ export function mentionsCompany(text: string | null | undefined, company: string
   if (!text || !name) return false;
   const rx = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRx(name)}(?![\\p{L}\\p{N}])`, "giu");
   for (const m of text.matchAll(rx)) {
-    const before = text.slice(0, m.index).replace(/[\s(@]+$/u, "");
+    const before = trimEndChars(text.slice(0, m.index), " \t\r\n(@");
     if (/(?:\bex|\bformer(?:ly)?|\bprev(?:ious(?:ly)?)?\.?)[-\s]*$/i.test(before)) continue;
     return true;
   }
@@ -526,10 +541,11 @@ function questionCount(text: string): number {
   return (text.match(/\?/g) ?? []).length;
 }
 
-export function lintLinkedInNote(note: string): string[] {
+/** `max` is the note's own limit; it never loosens the hard ceiling. */
+export function lintLinkedInNote(note: string, max = LINKEDIN_NOTE_LINT_MAX): string[] {
   const flags: string[] = [];
-  if (note.length > LINKEDIN_NOTE_LINT_MAX)
-    flags.push(`note-too-long: ${note.length}/${LINKEDIN_NOTE_LINT_MAX} characters`);
+  const limit = Math.min(max, LINKEDIN_NOTE_LINT_MAX);
+  if (note.length > limit) flags.push(`note-too-long: ${note.length}/${limit} characters`);
   if (NOTE_PITCH_RX.test(note)) flags.push("note-pitch: no pitch phrases in a connection note");
   if (LINK_RX.test(note)) flags.push("note-link: no link in a connection note");
   return flags;

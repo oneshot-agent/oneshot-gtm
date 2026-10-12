@@ -351,10 +351,24 @@ describe("reader role", () => {
   });
 });
 
+describe("tidy helpers on hostile input", () => {
+  it("long runs of spaces do not stall them", () => {
+    const t0 = Date.now();
+    tidyEventTitle(` ${" ".repeat(50_000)}x${" ".repeat(50_000)}`);
+    tidyEventTitle(`a${" ".repeat(50_000)}|${" ".repeat(50_000)}`);
+    tidyCompanyName(`a${" ".repeat(50_000)}`);
+    tidyCompanyName(`${" ".repeat(50_000)}yc w`);
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+});
+
 describe("lint", () => {
   it("note: length, pitch phrases, link", () => {
     expect(lintLinkedInNote("Saw you starred acme/widgets. What are you building?")).toEqual([]);
     expect(lintLinkedInNote("x".repeat(301))[0]).toMatch(/^note-too-long/);
+    expect(lintLinkedInNote("x".repeat(250))).toEqual([]);
+    expect(lintLinkedInNote("x".repeat(250), 200)[0]).toMatch(/^note-too-long: 250\/200/);
+    expect(lintLinkedInNote("x".repeat(301), 400)[0]).toMatch(/^note-too-long: 301\/300/);
     expect(lintLinkedInNote("I help companies like yours ship faster")).toContainEqual(
       expect.stringMatching(/^note-pitch/),
     );

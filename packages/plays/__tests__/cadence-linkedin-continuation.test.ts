@@ -289,6 +289,18 @@ describe("the connection request", () => {
     expect(preview).toMatchObject({ flags: ["note-too-long: 301/300 characters"] });
   });
 
+  it("carries a note's remaining lint flags to the preview and holds the send", async () => {
+    noteText = "Saw you at the meetup. More at https://example.com";
+    emailCadenceRunOut();
+    const preview = await previewCadenceStep({ prospectId, playName: PLAY });
+    if ("waiting" in preview) throw new Error("the invite step never waits");
+    expect(preview.flags).toContainEqual(expect.stringMatching(/^note-link/));
+    expect(preview.payload).toMatchObject({ kind: "linkedin_invite" });
+    const out = await run(inviteOk());
+    expect(out.action).toBe("skipped");
+    expect(calls).toEqual([]);
+  });
+
   it("is written at its own step with the marker, and there is no step-0 LinkedIn row", async () => {
     emailCadenceRunOut();
     const out = await sendInvite(inviteOk());

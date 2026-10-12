@@ -180,7 +180,7 @@ export async function draftLinkedInNote(
   const drafted = await draftWithRepair({
     system: loadPrompt("linkedin-invite-note"),
     context: input,
-    lint: lintLinkedInNote,
+    lint: (text) => lintLinkedInNote(text, maxChars),
     maxTokens: 600,
   });
   const body = drafted.text;

@@ -129,6 +129,8 @@ export type StepPayload =
   | {
       kind: "linkedin_invite";
       note: string;
+      /** Lint findings left after the repair turn; a flagged note is held, never sent unseen. */
+      flags?: string[];
       voiceKey?: string | null;
       learningKey?: string | null;
     }
@@ -1941,8 +1943,14 @@ export async function previewCadenceStep(input: {
               : []),
             ...hardBanHold(built).filter((f) => !f.startsWith("too-long")),
           ]
-        : built.kind === "linkedin_invite" && body.length > LINKEDIN_NOTE_HARD_LIMIT
-          ? [`note-too-long: ${body.length}/${LINKEDIN_NOTE_HARD_LIMIT} characters`]
+        : built.kind === "linkedin_invite"
+          ? [
+              ...hardBanHold(built),
+              ...(body.length > LINKEDIN_NOTE_HARD_LIMIT &&
+              !hardBanHold(built).some((f) => f.startsWith("note-too-long"))
+                ? [`note-too-long: ${body.length}/${LINKEDIN_NOTE_HARD_LIMIT} characters`]
+                : []),
+            ]
           : [];
   ledger.setCadenceDraft({
     prospectId: input.prospectId,
@@ -2659,7 +2667,8 @@ export function buildFollowUpEmail(opts: {
 
 /** A price or a link in a draft that must carry neither (`hardBans`); empty otherwise. */
 export function hardBanHold(payload: StepPayload): string[] {
-  if (payload.kind === "linkedin_message") return payload.flags ?? [];
+  if (payload.kind === "linkedin_message" || payload.kind === "linkedin_invite")
+    return payload.flags ?? [];
   return payload.kind === "email" && payload.hardBans ? hardBanFlags(payload.body) : [];
 }
 
@@ -3132,9 +3141,12 @@ async function buildLinkedInInvite(
       buyerType: first.buyerType,
     },
   );
+  // Length is judged against the hard limit in the preview; carry the rest.
+  const held = draft.flags.filter((f) => !f.startsWith("note-too-long"));
   return {
     kind: "linkedin_invite",
     note: draft.body,
+    ...(held.length > 0 ? { flags: held } : {}),
     ...(draft.voiceKey ? { voiceKey: draft.voiceKey } : {}),
     ...(draft.learningKey ? { learningKey: draft.learningKey } : {}),
   };
