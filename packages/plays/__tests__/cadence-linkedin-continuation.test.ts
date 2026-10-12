@@ -394,6 +394,24 @@ describe("guards and quota", () => {
     expect(linkedinEvents()).toHaveLength(1);
   });
 
+  it("previewing the invite of someone with no usable profile completes the cadence too", async () => {
+    ledger.close();
+    ledger = new Ledger(dbPath);
+    const page = newProspect({
+      email: "acme@example.com",
+      linkedin_url: "https://www.linkedin.com/company/acme",
+    });
+    prospectId = page;
+    emailCadenceRunOut(page);
+    const shown = await previewCadenceStep({ prospectId: page, playName: PLAY });
+    expect(shown).toMatchObject({ skipped: true });
+    expect((shown as { message: string }).message).toMatch(/ — LinkedIn steps skipped$/);
+    expect(modelInputs).toEqual([]);
+    expect(linkedinEvents()).toHaveLength(1);
+    expect(linkedinEvents()[0]).toMatchObject({ step_index: 2, status: "skipped" });
+    expect(state().status).toBe("completed");
+  });
+
   it("a batch preview reports the refused person and still drafts for the others", async () => {
     ledger.close();
     ledger = new Ledger(dbPath);

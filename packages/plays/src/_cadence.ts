@@ -1836,29 +1836,31 @@ export async function previewCadenceStep(input: {
   const step = seq.steps[stepEntryIndex];
   if (!step) throw new Error("step undefined");
   const missing = missingAddress(step.channel, cadence);
-  if (missing) throw new Error(`${missing} — this step will be skipped`);
-  if (
+  const continuationInvite =
     step.channel === "linkedin" &&
     step.id === CONTINUATION_INVITE_ID &&
-    cadence.channel !== "linkedin"
-  ) {
+    cadence.channel !== "linkedin";
+  if (missing && !continuationInvite) throw new Error(`${missing} — this step will be skipped`);
+  if (continuationInvite) {
     // The send path's guard check, run before the note is drafted: a refusal
     // shows here instead of after a clean-looking draft has been paid for.
     const verdict = continuationInviteVerdict(input.prospectId);
-    if (!verdict.ok) {
-      if (verdict.reason === "guard-unavailable") {
-        throw new Error(`${verdict.detail} — will retry`);
-      }
-      // A refusal can never be sent, so no reviewed draft will ever reach the
-      // send path that skips it, and only `cadence advance` runs that path
-      // unprompted. Take its outcome here, or the row stays overdue for good
-      // on an install that is run from the dashboard alone.
+    if (!verdict.ok && verdict.reason === "guard-unavailable") {
+      throw new Error(`${verdict.detail} — will retry`);
+    }
+    // A person the guard refuses, or one with no usable profile, can never be
+    // sent, so no reviewed draft will ever reach the send path that skips
+    // them, and only `cadence advance` runs that path unprompted. Take its
+    // outcome here, or the row stays overdue for good on an install that is
+    // run from the dashboard alone.
+    const refusal = verdict.ok ? missing : guardFlag(verdict);
+    if (refusal) {
       const done = skipContinuation(
         { prospectId: input.prospectId, playName: input.playName, dryRun: false },
         seq,
         stepEntryIndex,
         step,
-        guardFlag(verdict),
+        refusal,
       );
       return { skipped: true, message: done.note ?? "LinkedIn steps skipped" };
     }
