@@ -50,6 +50,18 @@ The Setup LinkedIn card has an **Already contacted on LinkedIn** control that ta
 
 In any cadence, a step on a channel the person has no address for (an email step for someone with no email, for example) is skipped, and the cadence moves on to the next step.
 
+## Continuing an email cadence on LinkedIn
+
+Set `linkedinContinuation: true` in the workspace config, or on a single trigger (the trigger's value wins, either way), and an email cadence that runs out without a reply carries on onto LinkedIn. Three steps follow the last email by three days:
+
+- `linkedin:invite`: a connection request with a short note. The note is written knowing the person was already emailed, so it reads as a way to connect, not a sequel.
+- `linkedin:1`: a first message once the invite is accepted. A person who was already connected skips the wait.
+- `linkedin:2`: a close.
+
+Every LinkedIn step is a draft you review on /cadences; the unattended runner never sends one. The invite goes through the same guard and daily quota as any connection request. If the guard refuses (a bot, someone already in a conversation, a profile already invited), the draft is flagged and cannot be sent, and the LinkedIn steps are skipped with the reason. An invite still pending after 21 days is withdrawn. A reply on any channel stops the whole cadence.
+
+A cadence already running keeps the steps it was enrolled with; changing the setting affects only new cadences.
+
 ## Writing preferences
 
 Replies learns writing preferences from the replies you send on LinkedIn and email: your explicit feedback on an improvement, the same edit made across several conversations, a consistent pattern across more. What it learns is a proposal; nothing applies to a draft until you approve it on `/queue`. **Writing preferences** on Replies shows what is active, lets you disable or re-enable a line, pause learning for the workspace, and links to the proposals waiting for review. [Learning and approval](./learning.md) covers every kind of learned change, what drafts see, and how approval, rollback and the queue's decision reasons work.

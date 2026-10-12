@@ -720,18 +720,23 @@ function CadencesPage() {
                 const held = c.status === "active" && isHeldElsewhere(c, now.getTime());
                 const rowNote = c.isSending
                   ? { text: "sending…", cls: "text-[color:var(--ink-receipt-2)]" }
-                  : held && c.heldElsewhere
-                    ? { text: heldLabel(c.heldElsewhere, now.getTime()), cls: "text-ink-muted" }
-                    : isOverdue && c.nextDueAt
-                      ? {
-                          text: `${timeAgo(c.nextDueAt).replace(/ ago$/, "")} overdue`,
-                          cls: "text-ink-spend-2",
-                        }
-                      : c.status === "active" && c.lastSendError
-                        ? { text: "send failed", cls: "text-ink-blocked-2" }
-                        : c.status === "active" && c.nextDueAt
-                          ? { text: `Due ${timeAgo(c.nextDueAt)}`, cls: "text-ink-muted" }
-                          : null;
+                  : c.status === "active" && c.linkedinWaitingSince
+                    ? {
+                        text: `waiting for acceptance · invite sent ${c.linkedinWaitingSince}`,
+                        cls: "text-ink-muted",
+                      }
+                    : held && c.heldElsewhere
+                      ? { text: heldLabel(c.heldElsewhere, now.getTime()), cls: "text-ink-muted" }
+                      : isOverdue && c.nextDueAt
+                        ? {
+                            text: `${timeAgo(c.nextDueAt).replace(/ ago$/, "")} overdue`,
+                            cls: "text-ink-spend-2",
+                          }
+                        : c.status === "active" && c.lastSendError
+                          ? { text: "send failed", cls: "text-ink-blocked-2" }
+                          : c.status === "active" && c.nextDueAt
+                            ? { text: `Due ${timeAgo(c.nextDueAt)}`, cls: "text-ink-muted" }
+                            : null;
                 const open = expandedKeys.has(key);
                 const draft = c.nextStepDraft;
                 const previewPending = pendingPreviewKey === key;
@@ -894,7 +899,13 @@ function CadencesPage() {
                       ) : (
                         <Send size={11} />
                       )}
-                      {sendPending ? "Sending…" : c.nextStepIsBreakup ? "Send breakup" : "Send now"}
+                      {sendPending
+                        ? "Sending…"
+                        : c.nextStepIsBreakup
+                          ? "Send breakup"
+                          : c.nextStepChannel === "linkedin" && c.nextStepLabel?.includes("request")
+                            ? "Send invite"
+                            : "Send now"}
                     </Button>
                   ) : null;
                 const letter =

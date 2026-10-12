@@ -2568,6 +2568,11 @@ export class Ledger {
     return this.queue.latestSentQueuePayload(playName, email);
   }
 
+  /** `source` of the newest queue row for this play and address, whatever its status. */
+  latestQueueSource(playName: string, email: string): string | null {
+    return this.queue.latestQueueSource(playName, email);
+  }
+
   /** `latestSentQueuePayload` plus the row's `source`. */
   latestSentQueueRow(
     playName: string,

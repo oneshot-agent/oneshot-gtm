@@ -124,7 +124,11 @@ export const LINKEDIN_NOTE_HARD_LIMIT = 300;
 /** Draft the connection-request note for one row. */
 export async function draftLinkedInNote(
   row: LinkedInFirstTouchRow,
-  opts: { draftAngle?: string | null } = {},
+  opts: {
+    draftAngle?: string | null;
+    /** Facts about earlier contact (an email cadence that got no reply), as prompt lines. */
+    priorContact?: string[];
+  } = {},
 ): Promise<LinkedInNoteDraft> {
   const cfg = loadConfig();
   const maxChars = CHANNEL_SPECS.linkedin.firstTouchMaxChars ?? 200;
@@ -154,6 +158,9 @@ export async function draftLinkedInNote(
     "SIGNAL:",
     ...signalLines(row).map((l) => `  ${l}`),
     ...(opts.draftAngle ? [`ANGLE: ${opts.draftAngle}`] : []),
+    ...(opts.priorContact?.length
+      ? ["PRIOR_CONTACT:", ...opts.priorContact.map((l) => `  ${l}`)]
+      : []),
     ...(voice ? [`VOICE:\n${voice.text}`] : []),
     ...(learned ? [learned.text] : []),
     `MAX_CHARS: ${maxChars}`,
@@ -219,12 +226,18 @@ function inviteErrorCode(err: unknown): string | null {
  * Send a reviewed note as a connection request, and record it as this row's
  * step-0 touch on the LinkedIn channel. Never enrolls a cadence: an email
  * sequence for someone with no address would re-draft forever.
+ *
+ * With `continuation` the invite is a step of an email cadence that carries on
+ * onto LinkedIn: it is recorded (with the invite marker) at that step, never
+ * at step 0, for the prospect the cadence already has, and it enrolls nothing:
+ * the cadence it belongs to is already running.
  */
 export async function sendLinkedInInvite(input: {
   row: LinkedInFirstTouchRow;
   note: string;
   sender: LinkedInSender;
   workspace: string;
+  continuation?: { prospectId: number; stepIndex: number };
 }): Promise<LinkedInInviteOutcome> {
   const profile = linkedInProfileOf(input.row.payload);
   // A note OneShot would refuse never leaves; the shorter draft target
@@ -247,6 +260,7 @@ export async function sendLinkedInInvite(input: {
   const target = normalizeLinkedInProfile(profile);
   const override = p0["icpOverride"];
   const verdict = canInviteOnLinkedInNow({
+    ...(input.continuation ? { prospectId: input.continuation.prospectId } : {}),
     name: str(p0, "name"),
     company: str(p0, "company"),
     email: str(p0, "email", "founderEmail"),
@@ -299,8 +313,10 @@ export async function sendLinkedInInvite(input: {
       accountId: input.sender.accountId,
       profile: target.url,
       note,
-      // Stable per row: a retried drain returns the original invitation.
-      idempotencyKey: `gtm:${input.workspace}:queue:${input.row.id}:invite`,
+      // Stable per row (or per cadence step): a retry returns the original invitation.
+      idempotencyKey: input.continuation
+        ? `gtm:${input.workspace}:cadence:${input.continuation.prospectId}:${input.row.playName}:${input.continuation.stepIndex}:invite`
+        : `gtm:${input.workspace}:queue:${input.row.id}:invite`,
       playName: input.row.playName,
     })) as { invitation_id?: string; status?: string };
   } catch (err) {
@@ -328,19 +344,21 @@ export async function sendLinkedInInvite(input: {
   claim.confirm();
   const ledger = getLedger();
   const p = input.row.payload;
-  const prospectId = ledger.upsertProspect({
-    name: str(p, "name"),
-    email: null,
-    company: str(p, "company"),
-    title: str(p, "title", "currentRole"),
-    linkedin_url: profile,
-    source: input.row.playName,
-    source_profile_url: str(p, "sourceProfileUrl") ?? profile,
-  });
+  const prospectId =
+    input.continuation?.prospectId ??
+    ledger.upsertProspect({
+      name: str(p, "name"),
+      email: null,
+      company: str(p, "company"),
+      title: str(p, "title", "currentRole"),
+      linkedin_url: profile,
+      source: input.row.playName,
+      source_profile_url: str(p, "sourceProfileUrl") ?? profile,
+    });
   ledger.recordLinkedInInviteEvent({
     prospectId,
     playName: input.row.playName,
-    stepIndex: 0,
+    stepIndex: input.continuation?.stepIndex ?? 0,
     status: "sent",
     metadata: {
       // subject/body/label: what the cadence timeline and follow-up prompts read.
@@ -356,7 +374,10 @@ export async function sendLinkedInInvite(input: {
     },
   });
   // The LinkedIn sequence: a message once the invite is accepted, then a close.
-  enrollInCadence({ prospectId, playName: input.row.playName, channel: "linkedin" });
+  // A continuation invite belongs to the email cadence already running.
+  if (!input.continuation) {
+    enrollInCadence({ prospectId, playName: input.row.playName, channel: "linkedin" });
+  }
   logEvent("linkedin.invite_sent", { play: input.row.playName, status });
   return { sent: true, status, invitationId: result.invitation_id, prospectId };
 }

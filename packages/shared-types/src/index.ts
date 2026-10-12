@@ -105,6 +105,12 @@ export interface CadenceView {
   /** Whether the next step is the final breakup. Derived from the cadence
    *  engine's registered sequence: single source of truth. */
   nextStepIsBreakup: boolean;
+  /**
+   * Set while the next step is a LinkedIn message waiting on an invite that has
+   * not been accepted: the date (YYYY-MM-DD) the invite went out. The cadence
+   * is waiting for acceptance, not due.
+   */
+  linkedinWaitingSince?: string | null;
   /** Total registered follow-up steps for this play (excludes day-0).
    *  The UI uses `followupCount + 1` for the step-progress dot count. */
   followupCount: number;

@@ -1262,6 +1262,23 @@ export class QueueStore {
     }
   }
 
+  /**
+   * `source` of the newest queue row for this play and address, whatever its
+   * status: a cadence is enrolled while the row that started it is still being
+   * marked sent, and the trigger it names carries per-trigger settings.
+   */
+  latestQueueSource(playName: string, email: string): string | null {
+    const row = this.db
+      .query(
+        `SELECT source FROM target_queue
+          WHERE play_name = ?
+            AND lower(trim(json_extract(payload_json, '$.email'))) = lower(trim(?))
+          ORDER BY id DESC LIMIT 1`,
+      )
+      .get(playName, email) as { source: string } | null;
+    return row?.source ?? null;
+  }
+
   latestSentQueuePayload(playName: string, email: string): Record<string, unknown> | null {
     const row = this.db
       .query(
