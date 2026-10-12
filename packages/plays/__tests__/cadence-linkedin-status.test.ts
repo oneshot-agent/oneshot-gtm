@@ -501,6 +501,52 @@ describe("unattended status sweep", () => {
     expect(ledger.getPollWatermark(`linkedin.invitations.since:gtm:acct-1`)).toBeNull();
   });
 
+  const fullPage = () => ({
+    invitations: Array.from({ length: 100 }, (_, n) => ({
+      invitation_id: `other-${n}`,
+      status: "pending",
+      accepted_at: null,
+    })),
+  });
+
+  it("a full page of 100 may hide an accept: the invite is read on its own", async () => {
+    inviteSent({ daysAgo: 2 });
+    const li = caller({
+      invitations: fullPage,
+      invitation: () => ({
+        invitation_id: `inv-${prospectId}`,
+        status: "accepted",
+        accepted_at: "2026-10-10T09:00:00.000Z",
+      }),
+    });
+    const out = await sweepLinkedInInvitations({ linkedIn: li });
+    expect(out).toMatchObject({ accepted: 1 });
+    expect(kinds()).toEqual(["invitations", "invitation"]);
+    expect(inviteMeta().acceptedAt).toBe("2026-10-10T09:00:00.000Z");
+    expect(ledger.getPollWatermark("linkedin.invitations.since:gtm:acct-1")).not.toBeNull();
+  });
+
+  it("a full page whose invite cannot be read leaves the watermark where it was", async () => {
+    inviteSent({ daysAgo: 2 });
+    const li = caller({
+      invitations: fullPage,
+      invitation: () => {
+        throw new Error("down");
+      },
+    });
+    await sweepLinkedInInvitations({ linkedIn: li });
+    expect(kinds()).toEqual(["invitations", "invitation"]);
+    expect(ledger.getPollWatermark("linkedin.invitations.since:gtm:acct-1")).toBeNull();
+  });
+
+  it("a short page is trusted: no per-invite read", async () => {
+    inviteSent({ daysAgo: 2 });
+    const li = caller({ invitations: () => ({ invitations: [] }) });
+    await sweepLinkedInInvitations({ linkedIn: li });
+    expect(kinds()).toEqual(["invitations"]);
+    expect(ledger.getPollWatermark("linkedin.invitations.since:gtm:acct-1")).not.toBeNull();
+  });
+
   it("withdraws a 21-day-old pending invite, and sends no message", async () => {
     inviteSent({ daysAgo: 22 });
     const li = caller({

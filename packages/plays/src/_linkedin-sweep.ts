@@ -76,6 +76,8 @@ export async function sweepLinkedInInvitations(input: {
     const startedAt = new Date(nowMs).toISOString();
     const changed = new Map<string, LinkedInInvitationInfo>();
     let listed = false;
+    let truncated = false;
+    let unread = false;
     try {
       out.calls++;
       const res = await input.linkedIn(account.workspace, {
@@ -85,6 +87,9 @@ export async function sweepLinkedInInvitations(input: {
         limit: INVITATIONS_PAGE,
       });
       for (const i of parseLinkedInInvitations(res)) changed.set(i.invitationId, i);
+      // The API has no cursor: a full page may hide more changes behind it.
+      const rawCount = (res as { invitations?: unknown } | null)?.invitations;
+      truncated = Array.isArray(rawCount) && rawCount.length >= INVITATIONS_PAGE;
       listed = true;
     } catch (err) {
       logEvent(
@@ -98,10 +103,10 @@ export async function sweepLinkedInInvitations(input: {
       const id = item.invite.invitationId!;
       const invitation = changed.get(id);
       const overdue = nowMs - item.invite.invitedAtMs >= LINKEDIN_INVITE_TIMEOUT_DAYS * DAY_MS;
-      if (!invitation && !overdue) continue;
-      // Overdue and absent from the changed list: the resolver asks for that
-      // one invitation before withdrawing anything, so an accept that slipped
-      // past the watermark is kept.
+      if (!invitation && !overdue && !truncated) continue;
+      // Overdue, or the list was a full page: the resolver asks for that one
+      // invitation (before withdrawing anything), so neither an accept past
+      // the page nor one that slipped past the watermark is skipped.
       if (!invitation) out.calls++;
       const resolution = await resolveLinkedInInvite({
         prospectId: item.prospectId,
@@ -112,6 +117,7 @@ export async function sweepLinkedInInvitations(input: {
         mode: "sweep",
         ...(invitation ? { invitation } : {}),
       });
+      if (resolution.state === "unknown") unread = true;
       if (resolution.state === "accepted") out.accepted++;
       else if (resolution.state === "result") {
         const note = resolution.result.note ?? "";
@@ -121,9 +127,9 @@ export async function sweepLinkedInInvitations(input: {
         }
       }
     }
-    // Only a list we actually read moves the watermark, so a failed call is
-    // retried over the same window next time.
-    if (listed) ledger.setPollWatermark(watermarkKey(account), startedAt);
+    // Only a list we actually read, with every invite beyond a full page read
+    // one by one, moves the watermark; otherwise the same window is retried.
+    if (listed && !unread) ledger.setPollWatermark(watermarkKey(account), startedAt);
   }
   if (out.accepted + out.stopped > 0) logEvent("linkedin.invitation_sweep", { ...out });
   return out;
