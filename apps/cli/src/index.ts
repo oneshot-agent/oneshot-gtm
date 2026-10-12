@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { registerDirectMailCommand } from "./commands/direct-mail.ts";
+import { commandLinkedInImportTouched } from "./commands/linkedin.ts";
 import { Command, InvalidArgumentError } from "commander";
 
 /** Option parser for counts that must be at least 1; `0` or `abc` is an error, not the default. */
@@ -315,6 +316,25 @@ config
     "Show or set this workspace's share of the LinkedIn account's daily invite cap (positive integer per UTC day; 'off' clears it)",
   )
   .action(runOrFail((count?: string) => configLinkedInInvites(count)));
+
+const linkedin = program.command("linkedin").description("LinkedIn outreach safety");
+linkedin
+  .command("import-touched [file]")
+  .description(
+    "Record profiles already contacted on LinkedIn (CSV or JSON of profile URLs) so no invite goes to them; --from-ledgers copies the invites every workspace has sent. Sends nothing.",
+  )
+  .option("--source <label>", "label stored with each profile (default: import)")
+  .option("--from-ledgers", "copy the invites recorded in every registered workspace's ledger")
+  .option("--dry-run", "count what would be imported without writing")
+  .option("--verbose", "list the entries that are not LinkedIn profiles")
+  .action(
+    runOrFail(
+      (
+        file: string | undefined,
+        opts: { source?: string; fromLedgers?: boolean; dryRun?: boolean; verbose?: boolean },
+      ) => commandLinkedInImportTouched(file, opts),
+    ),
+  );
 
 const gmail = program
   .command("gmail")

@@ -559,6 +559,66 @@ export class SharedDb {
       .run(input.slug, input.source, input.touchedAt ?? new Date().toISOString());
   }
 
+  /**
+   * Suppress many profiles at once, in one transaction. A slug already in the
+   * table (any status) is left as it is and counted as present. With `dryRun`
+   * nothing is written; the counts are what a real run would give.
+   */
+  importLinkedInTouched(
+    entries: Array<{ slug: string; source: string; touchedAt: string }>,
+    opts: { dryRun?: boolean } = {},
+  ): { imported: number; present: number } {
+    let imported = 0;
+    let present = 0;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      // An expired reservation holds nothing: it is replaced, not counted.
+      const cutoff = new Date(Date.now() - RESERVATION_TTL_MS).toISOString();
+      const has = this.db.prepare(
+        `SELECT 1 FROM linkedin_touched
+         WHERE slug = ? AND (status IN ('confirmed', 'dispatched') OR touched_at >= ?)`,
+      );
+      const clear = this.db.prepare(`DELETE FROM linkedin_touched WHERE slug = ?`);
+      const ins = this.db.prepare(
+        `INSERT INTO linkedin_touched(slug, source, touched_at, status) VALUES(?, ?, ?, 'confirmed')`,
+      );
+      const seen = new Set<string>();
+      for (const e of entries) {
+        if (seen.has(e.slug) || has.get(e.slug, cutoff) != null) {
+          present++;
+          continue;
+        }
+        seen.add(e.slug);
+        imported++;
+        if (!opts.dryRun) {
+          clear.run(e.slug);
+          ins.run(e.slug, e.source, e.touchedAt);
+        }
+      }
+      this.db.exec("COMMIT");
+      return { imported, present };
+    } catch (err) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // already rolled back
+      }
+      throw err;
+    }
+  }
+
+  /** How many profiles the suppression list holds (live reservations and confirmed rows). */
+  countLinkedInTouched(now: Date = new Date()): number {
+    const cutoff = new Date(now.getTime() - RESERVATION_TTL_MS).toISOString();
+    const row = this.db
+      .query(
+        `SELECT COUNT(*) AS n FROM linkedin_touched
+         WHERE status IN ('confirmed', 'dispatched') OR (status = 'reserved' AND touched_at >= ?)`,
+      )
+      .get(cutoff) as { n: number };
+    return row.n;
+  }
+
   /** All live touches of an email across workspaces, newest first (doctor / UI detail). */
   touchesFor(email: string, limit = 20): ContactTouch[] {
     const emails = this.contactEmails(email);

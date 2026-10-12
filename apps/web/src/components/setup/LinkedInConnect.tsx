@@ -15,6 +15,7 @@ import {
 import { doneFailureCopy, type LinkedInCfg } from "../../lib/linkedinConnect.ts";
 import { readOnly } from "../../lib/readOnly.ts";
 import { InviteQuotaLine } from "../InviteQuotaLine.tsx";
+import { LinkedInTouchedImport } from "./LinkedInTouchedImport.tsx";
 import { Button } from "../primitives/Button.tsx";
 
 /**
@@ -316,6 +317,7 @@ export function LinkedInConnect({
         )}
       </StatusLine>
       <InviteQuotaLine className="text-[12px] text-ink-muted" />
+      <LinkedInTouchedImport />
       <div className="flex flex-wrap items-center gap-2">
         {view.primary === "connect" && (
           <Button
