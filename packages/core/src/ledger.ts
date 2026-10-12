@@ -47,6 +47,8 @@ import {
   listSequenceEventsForProspect as cadListSequenceEventsForProspect,
   postponeCadence as cadPostponeCadence,
   listLinkedInInviteEvents as cadListLinkedInInviteEvents,
+  listLinkedInInviteCadences as cadListLinkedInInviteCadences,
+  updateLinkedInInviteEvent as cadUpdateLinkedInInviteEvent,
   recordLinkedInInviteEvent as cadRecordLinkedInInviteEvent,
   getCadence as cadGetCadence,
   getCadenceDraft as cadGetCadenceDraft,
@@ -473,6 +475,20 @@ export class Ledger {
    */
   listLinkedInInviteEvents(prospectId: number, playName: string): SequenceEventRecord[] {
     return cadListLinkedInInviteEvents(this.db, prospectId, playName);
+  }
+
+  /** Active cadences with a sent LinkedIn invite: see listLinkedInInviteCadences. */
+  listLinkedInInviteCadences(): Array<{ prospect_id: number; play_name: string }> {
+    return cadListLinkedInInviteCadences(this.db);
+  }
+
+  /** Merge into an invite event's metadata, optionally marking it failed: see updateLinkedInInviteEvent. */
+  updateLinkedInInviteEvent(input: {
+    id: number;
+    status?: "failed";
+    metadata: Record<string, unknown>;
+  }): boolean {
+    return cadUpdateLinkedInInviteEvent(this.db, input);
   }
 
   /** Record a marked LinkedIn invite send/withdrawal: see recordLinkedInInviteEvent. */

@@ -1,7 +1,11 @@
 import { getAgent, buildAuditOpts } from "./oneshot.ts";
 import { demoMode } from "./demo.ts";
 import { getLedger } from "./ledger.ts";
-import type { LinkedInConversationsOptions, LinkedInMessagesOptions } from "@oneshot-agent/sdk";
+import type {
+  LinkedInConversationsOptions,
+  LinkedInInvitationsOptions,
+  LinkedInMessagesOptions,
+} from "@oneshot-agent/sdk";
 
 export type LinkedInOperation =
   | { kind: "accounts" }
@@ -19,6 +23,24 @@ export type LinkedInOperation =
       conversationId: string;
       text: string;
       idempotencyKey: string;
+    }
+  | {
+      /** First message to a connection that has no conversation yet. */
+      kind: "message";
+      accountId: string;
+      /** linkedin.com/in/<slug> URL, slug or provider id. */
+      profile: string;
+      text: string;
+      idempotencyKey: string;
+    }
+  | { kind: "invitation"; accountId: string; invitationId: string }
+  | {
+      kind: "invitations";
+      accountId: string;
+      status?: LinkedInInvitationsOptions["status"];
+      /** ISO time: only invitations whose status changed after this. */
+      changedSince?: string;
+      limit?: number;
     }
   | { kind: "wait"; requestId: string }
   | { kind: "account"; accountId: string }
@@ -125,6 +147,34 @@ export async function linkedInSdk(operation: LinkedInOperation): Promise<unknown
       record(result, "linkedin.reply");
       return result;
     }
+    case "message": {
+      const account = await agent.getLinkedInAccount(operation.accountId);
+      if (account.status !== "connected" || !account.allowed_actions.includes("reply"))
+        throw new Error("Reconnect this LinkedIn account with permission to reply");
+      if (!operation.text.trim() || operation.text.length > 4000)
+        throw new Error("LinkedIn messages must contain 1–4000 characters");
+      const result = await agent.linkedinMessage({
+        accountId: operation.accountId,
+        profile: operation.profile,
+        text: operation.text,
+        idempotencyKey: operation.idempotencyKey,
+        ...audit,
+      });
+      record(result, "linkedin.message");
+      return result;
+    }
+    case "invitation":
+      return agent.linkedinInvitation({
+        accountId: operation.accountId,
+        invitationId: operation.invitationId,
+      });
+    case "invitations":
+      return agent.linkedinInvitations({
+        accountId: operation.accountId,
+        ...(operation.status ? { status: operation.status } : {}),
+        ...(operation.changedSince ? { changedSince: operation.changedSince } : {}),
+        ...(operation.limit ? { limit: operation.limit } : {}),
+      });
     case "wait":
       return agent.waitForResult(operation.requestId, { timeout: 2 });
     case "account":

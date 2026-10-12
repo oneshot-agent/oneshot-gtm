@@ -39,13 +39,22 @@ import {
   canonicalLinkedInProfileKey,
   currentWorkspaceName,
   linkedInConversationFor,
-  linkedInOutreachAccount,
-  isWithdrawnStatus,
+  normalizeLinkedInProfile,
+  SendDeferredError,
+  linkedInMessageConversationId,
+  linkedInMessageDeferral,
   type LinkedInOperation,
   outboundSendKey,
 } from "@oneshot-gtm/core";
 import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
+import {
+  LINKEDIN_INVITE_TIMEOUT_DAYS,
+  linkedInSenderFor,
+  linkedInWaitingSince,
+  resolveLinkedInInvite,
+  storedLinkedInConversation,
+} from "./_linkedin-invites.ts";
 import {
   firstNameFrom,
   hardBanFlags,
@@ -1132,22 +1141,27 @@ export async function advanceCadence(
   const due = ledger.listActiveCadences({ dueByIso: nowIso });
 
   // Capacity gate BEFORE drafting: when every sender identity is at its daily
-  // cap, a step would burn an LLM draft and then fail the send anyway. Steps
-  // stay due; tomorrow's poll picks them up with fresh capacity.
-  if (!opts.dryRun && due.length > 0 && !hasAnySendCapacity()) {
-    for (const cad of due) {
-      result.details.push({
-        prospectEmail: cad.prospect_email,
-        playName: cad.play_name,
-        action: "skipped",
-        note: "deferred: daily send caps reached",
-        receiptIds: [],
-      });
-    }
-    return result;
+  // cap, an email step would burn an LLM draft and then fail the send anyway.
+  // Steps stay due; tomorrow's poll picks them up with fresh capacity. The
+  // gate knows email identities only, so a LinkedIn step is still considered
+  // (LinkedIn has its own caps, and a step over them defers on its own).
+  const noEmailCapacity = !opts.dryRun && due.length > 0 && !hasAnySendCapacity();
+  const isLinkedInStep = (cad: (typeof due)[number]): boolean =>
+    nextStepInfo(cad.play_name, cad.current_step, cad.prospect_id)?.channel === "linkedin";
+  const heldForCapacity = noEmailCapacity ? due.filter((cad) => !isLinkedInStep(cad)) : [];
+  for (const cad of heldForCapacity) {
+    result.details.push({
+      prospectEmail: cad.prospect_email,
+      playName: cad.play_name,
+      action: "skipped",
+      note: "deferred: daily send caps reached",
+      receiptIds: [],
+    });
   }
+  const runnable = noEmailCapacity ? due.filter(isLinkedInStep) : due;
+  if (runnable.length === 0) return result;
 
-  const outs = await parallelMap(due, 3, async (cad): Promise<RunCadenceStepResult> => {
+  const outs = await parallelMap(runnable, 3, async (cad): Promise<RunCadenceStepResult> => {
     // The claim is the worker's first synchronous operation, before any await.
     // Rows waiting for a concurrency slot remain stoppable; once a worker
     // starts, Stop and dispatch serialize through this marker. If Stop won,
@@ -1202,8 +1216,8 @@ export async function advanceCadence(
     }
   });
 
-  for (let i = 0; i < due.length; i++) {
-    const cad = due[i]!;
+  for (let i = 0; i < runnable.length; i++) {
+    const cad = runnable[i]!;
     const out = outs[i]!;
     result.details.push({
       prospectEmail: cad.prospect_email,
@@ -1459,8 +1473,16 @@ export async function runCadenceStepForProspect(
     return { action: "skipped", payload: null, receiptIds: [], note: `${missing} — step skipped` };
   }
   if (step.channel === "linkedin") {
-    const waiting = await awaitLinkedInAcceptance(opts, cadence);
-    if (waiting) return waiting;
+    // Accepted from OneShot's invitation status; a synced conversation is the fallback.
+    const invite = await resolveLinkedInInvite({
+      prospectId: opts.prospectId,
+      playName: opts.playName,
+      prospectLinkedinUrl: cadence.prospect_linkedin_url,
+      linkedIn: opts.linkedIn,
+      dryRun: opts.dryRun,
+      mode: "cadence",
+    });
+    if (invite.state === "result") return invite.result;
   }
 
   const prospect = loadProspect(opts.prospectId);
@@ -1690,15 +1712,13 @@ export async function previewCadenceStep(input: {
   if (!step) throw new Error("step undefined");
   const missing = missingAddress(step.channel, cadence);
   if (missing) throw new Error(`${missing} — this step will be skipped`);
-  if (
-    step.channel === "linkedin" &&
-    !linkedInConversationFor({
-      workspace: currentWorkspaceName(),
+  if (step.channel === "linkedin") {
+    const since = linkedInWaitingSince({
       prospectId: input.prospectId,
-      linkedinUrl: cadence.prospect_linkedin_url,
-    })
-  ) {
-    throw new Error("the LinkedIn invite hasn't been accepted yet — nothing to draft");
+      playName: input.playName,
+      prospectLinkedinUrl: cadence.prospect_linkedin_url,
+    });
+    if (since !== null) throw new Error(`waiting for acceptance since ${since}`);
   }
   const prospect = loadProspect(input.prospectId);
   if (!prospect) throw new Error("prospect not found");
@@ -1997,23 +2017,53 @@ async function dispatchStepImpl(input: {
     return { receiptIds };
   }
   if (input.payload.kind === "linkedin_message") {
-    const conversation = linkedInConversationFor({
-      workspace: currentWorkspaceName(),
-      prospectId: input.prospectId,
-      linkedinUrl: input.prospectLinkedinUrl ?? null,
-    });
-    if (!conversation) return { receiptIds, skipReason: "no LinkedIn conversation yet" };
     if (!input.linkedIn) {
       return { receiptIds, skipReason: "LinkedIn messages are sent from the dashboard" };
     }
-    await input.linkedIn(conversation.workspace, {
-      kind: "reply",
-      accountId: conversation.accountId,
-      conversationId: conversation.conversationId,
-      text: input.payload.text,
-      // One message per step: a retried send returns the original.
-      idempotencyKey: `gtm:${currentWorkspaceName()}:cadence:${input.prospectId}:${input.playName}:${input.stepIndex}`,
-    });
+    // One message per step: a retried send returns the original.
+    const idempotencyKey = `gtm:${currentWorkspaceName()}:cadence:${input.prospectId}:${input.playName}:${input.stepIndex}`;
+    const conversation =
+      linkedInConversationFor({
+        workspace: currentWorkspaceName(),
+        prospectId: input.prospectId,
+        linkedinUrl: input.prospectLinkedinUrl ?? null,
+      }) ?? storedLinkedInConversation(input.prospectId, input.playName);
+    let sentInto: { conversationId: string; accountId: string; workspace: string } | null =
+      conversation;
+    if (conversation) {
+      await input.linkedIn(conversation.workspace, {
+        kind: "reply",
+        accountId: conversation.accountId,
+        conversationId: conversation.conversationId,
+        text: input.payload.text,
+        idempotencyKey,
+      });
+    } else {
+      // Connected, but no 1:1 conversation yet (accepting an invite does not
+      // create one): `message` opens it.
+      const sender = linkedInSenderFor(input.prospectId, input.playName);
+      if (!sender) return { receiptIds, skipReason: "no LinkedIn account connected" };
+      const profile = normalizeLinkedInProfile(input.prospectLinkedinUrl)?.url;
+      if (!profile) return { receiptIds, skipReason: "prospect has no LinkedIn profile" };
+      let sent: unknown;
+      try {
+        sent = await input.linkedIn(sender.workspace, {
+          kind: "message",
+          accountId: sender.accountId,
+          profile,
+          text: input.payload.text,
+          idempotencyKey,
+        });
+      } catch (err) {
+        // Not connected yet, or over the daily limit: the step stays due.
+        const deferral = linkedInMessageDeferral(err);
+        if (deferral) throw new SendDeferredError(`LinkedIn message deferred (${deferral})`);
+        throw err;
+      }
+      // Missing from the result: the next inbox sync finds the conversation.
+      const conversationId = linkedInMessageConversationId(sent);
+      sentInto = conversationId ? { conversationId, ...sender } : null;
+    }
     ledger.recordSequenceEvent({
       prospectId: input.prospectId,
       playName: input.playName,
@@ -2024,6 +2074,13 @@ async function dispatchStepImpl(input: {
         subject: "LinkedIn message",
         body: input.payload.text,
         label: input.label ?? null,
+        ...(sentInto && !conversation
+          ? {
+              conversationId: sentInto.conversationId,
+              accountId: sentInto.accountId,
+              accountWorkspace: sentInto.workspace,
+            }
+          : {}),
       },
     });
     return { receiptIds };
@@ -2614,8 +2671,7 @@ export function receiptUrlsForCadence(receiptIds: number[]): string[] {
 /** Calls OneShot as a given workspace (the owner of the LinkedIn account). */
 export type LinkedInCaller = (workspace: string, operation: LinkedInOperation) => Promise<unknown>;
 
-/** Days an unaccepted invite is given before it is withdrawn and the cadence stops. */
-export const LINKEDIN_INVITE_TIMEOUT_DAYS = 21;
+export { LINKEDIN_INVITE_TIMEOUT_DAYS };
 /** Most characters a LinkedIn cadence message may run to. */
 export const LINKEDIN_MESSAGE_MAX_CHARS = 400;
 
@@ -2655,127 +2711,6 @@ function advanceOrComplete(
       status: "completed",
     });
   }
-}
-
-/**
- * Before a LinkedIn message: has the invite been accepted? A synced
- * conversation with the prospect says yes (null: go ahead). Otherwise the
- * step waits a day, and after LINKEDIN_INVITE_TIMEOUT_DAYS the invite is
- * withdrawn and the cadence stops.
- */
-async function awaitLinkedInAcceptance(
-  opts: RunCadenceStepOptions,
-  cadence: { prospect_linkedin_url: string | null },
-): Promise<RunCadenceStepResult | null> {
-  const ledger = getLedger();
-  if (
-    linkedInConversationFor({
-      workspace: currentWorkspaceName(),
-      prospectId: opts.prospectId,
-      linkedinUrl: cadence.prospect_linkedin_url,
-    })
-  ) {
-    return null;
-  }
-  // The newest invite is the one pending: an earlier one may have been
-  // withdrawn by hand and the person invited again.
-  const invite = ledger
-    .listLinkedInInviteEvents(opts.prospectId, opts.playName)
-    .findLast((e) => e.status === "sent");
-  const invitedAt = invite ? Date.parse(sqliteToIso(invite.created_at)) : Date.now();
-  const days = (Date.now() - invitedAt) / (24 * 3600 * 1000);
-  if (days < LINKEDIN_INVITE_TIMEOUT_DAYS) {
-    if (!opts.dryRun) {
-      ledger.postponeCadence({
-        prospectId: opts.prospectId,
-        playName: opts.playName,
-        nextDueAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-      });
-    }
-    return {
-      action: "waiting",
-      payload: null,
-      receiptIds: [],
-      note: "waiting for the LinkedIn invite to be accepted",
-    };
-  }
-  const note = `LinkedIn invite not accepted after ${LINKEDIN_INVITE_TIMEOUT_DAYS} days`;
-  if (opts.dryRun)
-    return { action: "skipped", payload: null, receiptIds: [], note: `${note} — would withdraw` };
-  let invitationId: string | null = null;
-  let sentBy: { workspace: string; accountId: string } | null = null;
-  try {
-    const meta = JSON.parse(invite?.metadata_json ?? "{}") as {
-      invitationId?: unknown;
-      accountId?: unknown;
-      accountWorkspace?: unknown;
-    };
-    invitationId = typeof meta.invitationId === "string" ? meta.invitationId : null;
-    if (typeof meta.accountId === "string" && typeof meta.accountWorkspace === "string") {
-      sentBy = { workspace: meta.accountWorkspace, accountId: meta.accountId };
-    }
-  } catch {
-    invitationId = null;
-  }
-  // Withdraw through the account that sent the invite; older events fall back.
-  const account = sentBy ?? linkedInOutreachAccount();
-  let withdrawStatus: string | null = null;
-  if (invitationId && account && opts.linkedIn) {
-    try {
-      const res = (await opts.linkedIn(account.workspace, {
-        kind: "withdraw",
-        accountId: account.accountId,
-        invitationId,
-        idempotencyKey: `gtm:${currentWorkspaceName()}:cadence:${opts.prospectId}:${opts.playName}:withdraw:${invitationId}`,
-        playName: opts.playName,
-      })) as { status?: string };
-      withdrawStatus = res.status ?? null;
-      // not_pending: accepted or gone some other way: nothing was withdrawn.
-      if (isWithdrawnStatus(withdrawStatus)) {
-        // On the invite's own step: a continuation invite is not step 0.
-        ledger.recordLinkedInInviteEvent({
-          prospectId: opts.prospectId,
-          playName: opts.playName,
-          stepIndex: invite?.step_index ?? 0,
-          status: "withdrawn",
-          metadata: { invitationId, withdrawStatus },
-        });
-      }
-    } catch (err) {
-      logEvent(
-        "cadence.linkedin_withdraw_failed",
-        { message_120: ((err as Error).message ?? "").slice(0, 120) },
-        "warn",
-      );
-      // Leave the invite's cadence running and try again tomorrow: stopping
-      // here would strand the invite pending with nothing to retry it.
-      ledger.postponeCadence({
-        prospectId: opts.prospectId,
-        playName: opts.playName,
-        nextDueAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-      });
-      return {
-        action: "waiting",
-        payload: null,
-        receiptIds: [],
-        note: `${note} — withdraw failed, retrying tomorrow`,
-      };
-    }
-  }
-  ledger.stopCadence({
-    prospectId: opts.prospectId,
-    playName: opts.playName,
-    reason: "other",
-    note,
-  });
-  return {
-    action: "completed",
-    payload: null,
-    receiptIds: [],
-    note: withdrawStatus
-      ? `${note} — invite ${withdrawStatus}`
-      : `${note} — withdraw it from /queue`,
-  };
 }
 
 /**
