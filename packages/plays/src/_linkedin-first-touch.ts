@@ -198,8 +198,17 @@ const NOT_DELIVERED_CODES = new Set([
 
 function inviteErrorCode(err: unknown): string | null {
   const e = err as { code?: unknown; jobError?: unknown; message?: unknown };
-  if (typeof e.code === "string") return NOT_DELIVERED_CODES.has(e.code) ? e.code : null;
-  const text = `${typeof e.jobError === "string" ? e.jobError : ""} ${typeof e.message === "string" ? e.message : ""}`;
+  if (typeof e.code === "string" && NOT_DELIVERED_CODES.has(e.code)) return e.code;
+  const jobError = typeof e.jobError === "string" ? e.jobError : "";
+  // A failed job can carry a generic code and name the real one in `jobError`,
+  // which is OneShot's own text. An error with another code and no job error
+  // is a transport or local failure: its message proves nothing.
+  const text =
+    typeof e.code === "string"
+      ? jobError
+      : `${jobError} ${typeof e.message === "string" ? e.message : ""}`;
+  if (/\bsend_unverified\b/.test(`${typeof e.code === "string" ? e.code : ""} ${text}`))
+    return null;
   const m = text.match(
     /\b(email_required|note_limit_reached|note_too_long|rate_limited|account_send_limit)\b/,
   );

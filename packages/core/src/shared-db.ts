@@ -518,9 +518,15 @@ export class SharedDb {
     key: string,
     read: () => Array<{ slug: string; source: string; touchedAt: string }>,
   ): number {
+    const imported = (): boolean =>
+      this.db.query(`SELECT 1 FROM legacy_imports WHERE ledger_path = ?`).get(key) != null;
+    // The guard calls this on every check: once imported, answer from a plain
+    // read instead of taking the shared file's write lock each time.
+    if (imported()) return 0;
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      if (this.db.query(`SELECT 1 FROM legacy_imports WHERE ledger_path = ?`).get(key)) {
+      // Checked again under the lock: another process may have just imported it.
+      if (imported()) {
         this.db.exec("ROLLBACK");
         return 0;
       }

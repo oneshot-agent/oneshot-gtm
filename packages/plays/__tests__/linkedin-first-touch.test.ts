@@ -279,6 +279,28 @@ describe("sendLinkedInInvite", () => {
     expect(isSendDeferred(err)).toBe(true);
   });
 
+  it("reads the provider's code from a failed job that carries a generic code", async () => {
+    // The job failed server-side: `jobError` is OneShot's own text, so it proves non-delivery.
+    const capped = sender(
+      Object.assign(new Error("job failed"), {
+        code: "job_failed",
+        jobError: "account_send_limit",
+      }),
+    );
+    const out = await sendLinkedInInvite({
+      row: row(),
+      note: "hi",
+      sender: capped.sender,
+      workspace: "gtm",
+    }).catch((e) => e);
+    expect(isSendDeferred(out)).toBe(true);
+    // The profile was freed: the next attempt sends.
+    _resetInviteLimitsCacheForTests();
+    const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
+    const retry = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+    expect(retry).toMatchObject({ sent: true });
+  });
+
   it("refuses a row with no LinkedIn profile without calling OneShot", async () => {
     const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
     const out = await sendLinkedInInvite({
@@ -375,6 +397,33 @@ describe("sendLinkedInInvite", () => {
       } finally {
         db.confirmLinkedInProfile = realConfirm;
       }
+      const { out, invites } = await again();
+      expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+      expect(invites).toHaveLength(0);
+    });
+
+    it("a transport code keeps the profile held even when its message names a provider code", async () => {
+      const { sender: s } = sender(
+        Object.assign(new Error("socket closed after rate_limited retry"), { code: "ECONNRESET" }),
+      );
+      await expect(
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+      ).rejects.toThrow(/socket closed/);
+      const { out, invites } = await again();
+      expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+      expect(invites).toHaveLength(0);
+    });
+
+    it("a job error marked send_unverified keeps the profile held whatever else it says", async () => {
+      const { sender: s } = sender(
+        Object.assign(new Error("job failed"), {
+          code: "job_failed",
+          jobError: "send_unverified after rate_limited",
+        }),
+      );
+      await expect(
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+      ).rejects.toThrow(/job failed/);
       const { out, invites } = await again();
       expect(out).toMatchObject({ sent: false, guard: "already-invited" });
       expect(invites).toHaveLength(0);
