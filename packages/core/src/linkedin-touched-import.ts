@@ -6,7 +6,7 @@ import { openLedgerDatabase } from "./ledger.ts";
 import { normalizeLinkedInProfile } from "./linkedin-guard.ts";
 import type { SharedDb } from "./shared-db.ts";
 import { currentWorkspaceName } from "./shared-db.ts";
-import { listWorkspaces, loadRegistry } from "./workspaces.ts";
+import { legacyHome, listWorkspaces, loadRegistry } from "./workspaces.ts";
 
 /**
  * Profiles already contacted on LinkedIn from outside GTM, loaded into the
@@ -176,8 +176,12 @@ export function importLedgerInvites(
   const open = opts.open ?? ((path: string) => openLedgerDatabase(path, { readonly: true }));
   const current = currentWorkspaceName();
   const results: LedgerImportResult[] = [];
+  // The implicit `default` workspace lives at ~/.oneshot-gtm whatever
+  // ONESHOT_GTM_WORKSPACES says, so under an isolated registry it is a real install: skip it.
+  const isolated = Boolean(process.env["ONESHOT_GTM_WORKSPACES"]?.trim());
   for (const [workspace, entry] of listWorkspaces(loadRegistry())) {
     if (workspace === current) continue;
+    if (isolated && entry.home === legacyHome()) continue;
     const path = join(entry.home, "ledger.sqlite");
     if (!existsSync(path)) continue;
     let db: Database | null = null;

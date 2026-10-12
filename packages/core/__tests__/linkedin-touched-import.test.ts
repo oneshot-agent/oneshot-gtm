@@ -257,6 +257,33 @@ describe("importLedgerInvites (--from-ledgers)", () => {
     }
   });
 
+  it("never opens the real install's default ledger under an isolated ONESHOT_GTM_WORKSPACES", () => {
+    const prevHome = process.env["HOME"];
+    const fakeHome = join(dir, "home");
+    mkdirSync(join(fakeHome, ".oneshot-gtm"), { recursive: true });
+    process.env["HOME"] = fakeHome;
+    try {
+      const real = new Ledger(join(fakeHome, ".oneshot-gtm", "ledger.sqlite"));
+      invite(real, "https://www.linkedin.com/in/real-person");
+      real.close();
+
+      const opened: string[] = [];
+      const { open } = tracked();
+      const out = importLedgerInvites(shared, {
+        open: (path) => {
+          opened.push(path);
+          return open(path);
+        },
+      });
+      expect(out.map((r) => r.workspace)).toEqual(["alpha"]);
+      expect(opened).toEqual([join(dir, "ws", "alpha", "ledger.sqlite")]);
+      expect(shared.linkedInTouch("real-person")).toBeNull();
+    } finally {
+      if (prevHome === undefined) delete process.env["HOME"];
+      else process.env["HOME"] = prevHome;
+    }
+  });
+
   it("writes nothing on a dry run, and closes the ledger when its read fails", () => {
     const { state, open } = tracked();
     expect(importLedgerInvites(shared, { open, dryRun: true })).toEqual([
