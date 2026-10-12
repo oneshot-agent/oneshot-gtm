@@ -421,7 +421,12 @@ export function liveProfileFor(
   if (!url) return Promise.resolve(null);
   const memo = liveReads.get(key);
   if (memo) return memo;
-  const read = (async () => {
+  // Only a snapshot is remembered. A missing reader (a batch preview passes
+  // none) or a failed read is not: the next caller with a reader tries again.
+  const forget = () => {
+    if (liveReads.get(key) === read) liveReads.delete(key);
+  };
+  const read: Promise<LiveProfileSnapshot | null> = (async () => {
     const stored = storedLiveProfile(url, now);
     if (stored) return stored;
     if (!reader) return null;
@@ -443,6 +448,9 @@ export function liveProfileFor(
     }
   })();
   liveReads.set(key, read);
+  void read.then((snapshot) => {
+    if (!snapshot) forget();
+  }, forget);
   return read;
 }
 
@@ -525,13 +533,18 @@ export function lintLinkedInNote(note: string): string[] {
   return flags;
 }
 
-export function lintLinkedInFirstMessage(text: string): string[] {
+export function lintLinkedInFirstMessage(
+  text: string,
+  ctx: { clause?: string | undefined } = {},
+): string[] {
   const flags: string[] = [];
   if (text.length > LINKEDIN_MESSAGE_LINT_MAX)
     flags.push(`too-long: ${text.length}/${LINKEDIN_MESSAGE_LINT_MAX} characters`);
   const questions = questionCount(text);
   if (questions !== 1) flags.push(`questions: ${questions} question marks, exactly one wanted`);
-  if (MEETING_ASK_RX.test(text)) flags.push("meeting-ask: no meeting ask in the first message");
+  // The evidence clause is GTM's own words ("were at X Demo Day"), not a meeting ask.
+  const asked = ctx.clause ? text.split(ctx.clause).join(" ") : text;
+  if (MEETING_ASK_RX.test(asked)) flags.push("meeting-ask: no meeting ask in the first message");
   if (LINK_RX.test(text)) flags.push("link: no link in the first message");
   return flags;
 }

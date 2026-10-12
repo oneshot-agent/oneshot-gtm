@@ -3258,7 +3258,7 @@ async function buildLinkedInMessage(
     context: input,
     lint:
       which === "first"
-        ? lintLinkedInFirstMessage
+        ? (text) => lintLinkedInFirstMessage(text, { clause })
         : (text) => lintLinkedInClose(text, { context: input, clause }),
     maxTokens: 700,
   });

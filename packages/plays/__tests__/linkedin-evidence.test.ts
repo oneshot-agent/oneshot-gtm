@@ -293,6 +293,25 @@ describe("live-read rule", () => {
     expect(read).toHaveBeenCalledTimes(1);
   });
 
+  it("a call with no reader (a batch preview) does not stop a later call from reading", async () => {
+    expect(await companyTheyRun({ playName: "p", prospect, now: NOW })).toBeNull();
+    const read = reader({ headline: "CEO @ Soren", experience: [] });
+    expect(await companyTheyRun({ playName: "p", prospect, reader: read, now: NOW })).toBe("Soren");
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed read is not remembered: the next call reads again", async () => {
+    const flaky = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValue({ headline: "CEO @ Soren", experience: [] });
+    expect(await companyTheyRun({ playName: "p", prospect, reader: flaky, now: NOW })).toBeNull();
+    expect(await companyTheyRun({ playName: "p", prospect, reader: flaky, now: NOW })).toBe(
+      "Soren",
+    );
+    expect(flaky).toHaveBeenCalledTimes(2);
+  });
+
   it("a stored live read is used without calling the reader", async () => {
     cache.set("linkedin-profile:https://linkedin.com/in/dana-lee", {
       result_json: JSON.stringify({ headline: "Founder, Soren", experience: [] }),
@@ -354,6 +373,15 @@ describe("lint", () => {
     expect(lintLinkedInFirstMessage("Want to book a time? ")).toContainEqual(
       expect.stringMatching(/^meeting-ask/),
     );
+    const clause = "were at Agents Demo Day";
+    expect(
+      lintLinkedInFirstMessage(`Saw you ${clause}. What are you building right now?`, { clause }),
+    ).toEqual([]);
+    expect(
+      lintLinkedInFirstMessage(`Saw you ${clause}. Free for a demo? What are you building?`, {
+        clause,
+      }),
+    ).toContainEqual(expect.stringMatching(/^meeting-ask/));
     expect(lintLinkedInFirstMessage("What are you building? https://example.com")).toContainEqual(
       expect.stringMatching(/^link/),
     );
