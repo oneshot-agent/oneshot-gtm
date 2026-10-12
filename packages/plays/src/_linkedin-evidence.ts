@@ -321,7 +321,9 @@ const LIVE_CACHE_TTL_MS = 30 * DAY;
 /** Reads a profile live (the connected account's silent profile view). */
 export type LiveProfileReader = (url: string) => Promise<LiveProfileSnapshot | null>;
 
-const liveReads = new Map<string, Promise<LiveProfileSnapshot | null>>();
+/** A remembered read is reused for a day, so a long-lived server does not keep one forever. */
+const LIVE_MEMO_TTL_MS = DAY;
+const liveReads = new Map<string, { read: Promise<LiveProfileSnapshot | null>; at: number }>();
 
 /** Test hook: forget the reads made so far. */
 export function _resetLinkedInLiveReads(): void {
@@ -420,11 +422,11 @@ export function liveProfileFor(
 ): Promise<LiveProfileSnapshot | null> {
   if (!url) return Promise.resolve(null);
   const memo = liveReads.get(key);
-  if (memo) return memo;
+  if (memo && now.getTime() - memo.at < LIVE_MEMO_TTL_MS) return memo.read;
   // Only a snapshot is remembered. A missing reader (a batch preview passes
   // none) or a failed read is not: the next caller with a reader tries again.
   const forget = () => {
-    if (liveReads.get(key) === read) liveReads.delete(key);
+    if (liveReads.get(key)?.read === read) liveReads.delete(key);
   };
   const read: Promise<LiveProfileSnapshot | null> = (async () => {
     const stored = storedLiveProfile(url, now);
@@ -447,7 +449,7 @@ export function liveProfileFor(
       return null;
     }
   })();
-  liveReads.set(key, read);
+  liveReads.set(key, { read, at: now.getTime() });
   void read.then((snapshot) => {
     if (!snapshot) forget();
   }, forget);

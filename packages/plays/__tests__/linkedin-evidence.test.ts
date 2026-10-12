@@ -300,6 +300,19 @@ describe("live-read rule", () => {
     expect(read).toHaveBeenCalledTimes(1);
   });
 
+  it("a remembered read expires after a day, so a long-lived server reads again", async () => {
+    const read = reader({ headline: "CEO @ Soren", experience: [] });
+    await companyTheyRun({ playName: "p", prospect, reader: read, now: NOW });
+    cache.clear();
+    await companyTheyRun({
+      playName: "p",
+      prospect,
+      reader: read,
+      now: new Date(NOW.getTime() + 2 * DAY),
+    });
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
   it("a failed read is not remembered: the next call reads again", async () => {
     const flaky = vi
       .fn()
