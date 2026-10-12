@@ -88,6 +88,8 @@ export interface LinkedInAccountView {
   error: string | null;
   canReply: boolean;
   canResolve?: boolean;
+  /** The grant includes connection requests. False on a connection made before they were asked for. */
+  canInvite?: boolean;
   permissionUpgradeError?: string;
   backfill?: {
     stage: string;

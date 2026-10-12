@@ -22,6 +22,10 @@ launchctl load ~/Library/LaunchAgents/com.oneshot-gtm.workspace.acme.plist
 # after pulling new code and rebuilding the web app
 launchctl kickstart -k gui/$(id -u)/com.oneshot-gtm.workspace.acme
 
+# after re-running --write (a new port, a moved checkout): launchd reads the file only when it loads it
+launchctl unload ~/Library/LaunchAgents/com.oneshot-gtm.workspace.acme.plist
+launchctl load ~/Library/LaunchAgents/com.oneshot-gtm.workspace.acme.plist
+
 # uninstall
 launchctl unload ~/Library/LaunchAgents/com.oneshot-gtm.workspace.acme.plist
 rm ~/Library/LaunchAgents/com.oneshot-gtm.workspace.acme.plist
@@ -36,12 +40,15 @@ systemctl --user enable --now oneshot-gtm-workspace-acme
 # after pulling new code and rebuilding the web app
 systemctl --user restart oneshot-gtm-workspace-acme
 
+# after re-running --write
+systemctl --user daemon-reload && systemctl --user restart oneshot-gtm-workspace-acme
+
 # uninstall
 systemctl --user disable --now oneshot-gtm-workspace-acme
 rm ~/.config/systemd/user/oneshot-gtm-workspace-acme.service
 ```
 
-The service needs the web build (`bun run --cwd apps/web build`) and refuses to generate without it. A stop you ask for (`launchctl unload`, `systemctl --user stop`) is respected; only a crash restarts it. A user service starts at login, not at power-on; on Linux `loginctl enable-linger $USER` changes that. Re-run with `--write` after moving bun or the checkout, or after changing the workspace's port. It runs from a clone; the no-clone `bunx oneshot-gtm-server` has no service file.
+The service needs the web build (`bun run --cwd apps/web build`) and refuses to generate without it. A stop you ask for (`launchctl unload`, `systemctl --user stop`) is respected; only a crash restarts it. A user service starts at login, not at power-on; on Linux `loginctl enable-linger $USER` changes that. Re-run with `--write` after moving bun or the checkout, or after changing the workspace's port, then reload the service as shown above: a restart alone keeps the old file's values. It runs from a clone; the no-clone `bunx oneshot-gtm-server` has no service file.
 
 ## As a service
 

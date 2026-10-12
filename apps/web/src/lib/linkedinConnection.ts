@@ -8,6 +8,9 @@ export function linkedInConnectionView(account: LinkedInAccountView) {
   const running = !!account.backfill && !["blocked", "complete"].includes(account.backfill.stage);
   const paused = account.backfill?.stage === "blocked";
   const needsPermissions = connected && !account.canResolve;
+  // An older connection that was never asked for connection requests. It works
+  // for everything else, so this is an offer, not something needing attention.
+  const needsInvite = connected && !needsPermissions && account.canInvite === false;
   const title = reconnect
     ? "Reconnect LinkedIn"
     : needsPermissions
@@ -25,13 +28,16 @@ export function linkedInConnectionView(account: LinkedInAccountView) {
         ? "The import stopped before finishing. Your progress is saved; resume when you’re ready."
         : !connected
           ? "Check the connection details below before connecting again."
-          : null;
+          : needsInvite
+            ? "Connection requests are not allowed on this connection yet. Allowing them asks you to sign in to LinkedIn again; the account and its imported conversations stay as they are."
+            : null;
   return {
     reconnect,
     connected,
     running,
     paused,
     needsPermissions,
+    needsInvite,
     title,
     description,
     attention:

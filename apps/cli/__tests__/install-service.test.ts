@@ -71,6 +71,34 @@ describe("renderSystemdUnit", () => {
   });
 });
 
+describe("systemd escaping", () => {
+  it("keeps the characters systemd reads inside a quoted field literal", () => {
+    const unit = renderSystemdService(
+      dashboardService({
+        ...DASHBOARD,
+        bunBin: "/home/jo/100%/bun",
+        serverEntry: '/home/jo/a"b/$HOME/c\\d/bin.ts',
+        home: '/home/jo/50% "gtm" $HOME',
+      }),
+    );
+    // ExecStart: % is a specifier, $ expands, backslash and quote are escapes.
+    expect(unit).toContain(
+      'ExecStart="/home/jo/100%%/bun" "/home/jo/a\\"b/$$HOME/c\\\\d/bin.ts"\n',
+    );
+    // Environment values are not expanded, so $ stays as it is.
+    expect(unit).toContain('Environment="ONESHOT_GTM_HOME=/home/jo/50%% \\"gtm\\" $HOME"');
+    expect(unit).toContain('Environment="PATH=/home/jo/100%%:/usr/local/bin:/usr/bin:/bin"');
+  });
+
+  it("refuses a value with a line break, which would start a new directive", () => {
+    expect(() =>
+      renderSystemdService(
+        dashboardService({ ...DASHBOARD, home: "/home/jo/x\nExecStartPre=/bin/true" }),
+      ),
+    ).toThrow();
+  });
+});
+
 describe("serviceWritePath", () => {
   it("targets ~/Library/LaunchAgents on macOS and ~/.config/systemd/user on Linux", () => {
     expect(serviceWritePath("darwin", "/Users/jo")).toBe(
@@ -96,6 +124,33 @@ describe("activationHint", () => {
     );
     expect(linux).toContain("systemctl --user enable --now");
     expect(linux).toContain("systemctl --user disable --now");
+  });
+
+  it("quotes a path with a space so the printed lines can be pasted", () => {
+    const path = "/Users/jo smith/Library/LaunchAgents/x.plist";
+    const mac = activationHint("darwin", path);
+    expect(mac[0]).toBe(`launchctl load '${path}'`);
+    expect(mac.join("\n")).toContain(`rm '${path}'`);
+    expect(mac.join("\n")).not.toContain(`load ${path}`);
+    // A plain path is left bare, and a quote inside the path survives.
+    expect(activationHint("darwin", "/Users/jo/x.plist")[0]).toBe(
+      "launchctl load /Users/jo/x.plist",
+    );
+    expect(activationHint("darwin", "/Users/jo's/x.plist")[0]).toBe(
+      "launchctl load '/Users/jo'\\''s/x.plist'",
+    );
+    expect(activationHint("linux", "/home/jo smith/x.service").join("\n")).toContain(
+      "rm '/home/jo smith/x.service'",
+    );
+  });
+
+  it("says how to apply a rewritten file to a service that is already loaded", () => {
+    const mac = activationHint("darwin", "/Users/jo/x.plist").join("\n");
+    expect(mac).toContain("launchctl unload /Users/jo/x.plist && launchctl load /Users/jo/x.plist");
+    const linux = activationHint("linux", "/home/jo/x.service").join("\n");
+    expect(linux).toContain(
+      `systemctl --user daemon-reload && systemctl --user restart ${SYSTEMD_UNIT}`,
+    );
   });
 });
 

@@ -204,15 +204,20 @@ ${env.join("\n")}
 
 /**
  * systemd user unit. ExecStart paths are double-quoted so a home or checkout
- * path with spaces survives systemd's own word splitting; stdout and stderr go
- * to the user journal (`journalctl --user -u <unit>`).
+ * path with spaces survives systemd's own word splitting, and escaped so the
+ * characters systemd reads inside a quoted field stay literal; stdout and
+ * stderr go to the user journal (`journalctl --user -u <unit>`).
  */
 export function renderSystemdService(s: ServiceSpec): string {
-  const exec = [`"${s.bunBin}"`, `"${s.entry}"`, ...s.args].join(" ");
+  const exec = [
+    `"${systemdQuoted(s.bunBin, "exec")}"`,
+    `"${systemdQuoted(s.entry, "exec")}"`,
+    ...s.args,
+  ].join(" ");
   const env = [
     ...s.env,
     ["PATH", `${dirname(s.bunBin)}:/usr/local/bin:/usr/bin:/bin`] as const,
-  ].map(([name, value]) => `Environment="${name}=${value}"`);
+  ].map(([name, value]) => `Environment="${name}=${systemdQuoted(value, "env")}"`);
   return `[Unit]
 Description=${s.description}
 After=network-online.target
@@ -251,22 +256,30 @@ export function serviceWritePath(
   return null;
 }
 
-/** Post-install commands, shown after `--write` (and in the README). */
+/**
+ * Post-install commands, shown after `--write` (and in the README). The file
+ * path is shell-quoted where it needs it: these lines are meant to be pasted.
+ * A service manager reads the file once, when it loads it, so re-running
+ * `--write` on a service that is already loaded needs the reload line too.
+ */
 export function activationHint(
   platform: NodeJS.Platform,
   writePath: string,
   names: ServiceNames = WATCH_NAMES,
 ): string[] {
+  const file = shellQuoted(writePath);
   if (platform === "darwin") {
     return [
-      `launchctl load ${writePath}`,
-      `# uninstall: launchctl unload ${writePath} && rm ${writePath}`,
+      `launchctl load ${file}`,
+      `# already loaded, file rewritten: launchctl unload ${file} && launchctl load ${file}`,
+      `# uninstall: launchctl unload ${file} && rm ${file}`,
     ];
   }
   return [
     "systemctl --user daemon-reload",
     `systemctl --user enable --now ${names.systemdUnit}`,
-    `# uninstall: systemctl --user disable --now ${names.systemdUnit} && rm ${writePath}`,
+    `# already enabled, file rewritten: systemctl --user daemon-reload && systemctl --user restart ${names.systemdUnit}`,
+    `# uninstall: systemctl --user disable --now ${names.systemdUnit} && rm ${file}`,
   ];
 }
 
@@ -356,6 +369,26 @@ export async function commandInstallDashboardService(opts: {
     closingNote:
       "Paths, workspace and port are embedded — re-run ui --install-service --write after moving bun or the checkout, or changing the port.",
   });
+}
+
+/**
+ * A value inside a double-quoted systemd field. Backslash and the quote are
+ * escapes there, `%` starts a specifier everywhere in a unit file, and
+ * ExecStart also expands `$NAME`. A line break would start a new directive,
+ * which no escape prevents, so such a value is refused.
+ */
+function systemdQuoted(value: string, field: "exec" | "env"): string {
+  if (/[\r\n]/.test(value)) {
+    bail("a path or value with a line break cannot be written into a systemd unit");
+  }
+  const escaped = value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%");
+  return field === "exec" ? escaped.replaceAll("$", "$$$$") : escaped;
+}
+
+/** A path as one shell word: left bare when it is plain, single-quoted otherwise. */
+function shellQuoted(path: string): string {
+  if (/^[A-Za-z0-9_/.:@%+=,-]+$/.test(path)) return path;
+  return `'${path.replaceAll("'", "'\\''")}'`;
 }
 
 function xml(s: string): string {

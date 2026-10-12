@@ -195,6 +195,7 @@ export const api = {
     postJson<
       | {
           waiting?: undefined;
+          skipped?: undefined;
           subject: string;
           body: string;
           flags: string[];
@@ -202,7 +203,8 @@ export const api = {
           stepLabel: string | null;
           isBreakup: boolean;
         }
-      | { waiting: true; since: string; message: string }
+      | { waiting: true; skipped?: undefined; since: string; message: string }
+      | { skipped: true; waiting?: undefined; message: string }
     >(
       `/cadences/${id}/preview-next?play=${encodeURIComponent(playName)}`,
       rotateAngle ? { rotateAngle: true } : {},
