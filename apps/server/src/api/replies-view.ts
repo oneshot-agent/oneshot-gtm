@@ -251,6 +251,7 @@ export async function collectReplies(req: Request): Promise<RepliesResult> {
       error: a.error,
       canReply: a.account.allowed_actions.includes("reply"),
       canResolve: a.account.allowed_actions.includes("view_profile"),
+      canInvite: a.account.allowed_actions.includes("invite"),
       permissionUpgradeError: a.permissionUpgradeError,
       backfill: backfillStatus(a.key),
     }));

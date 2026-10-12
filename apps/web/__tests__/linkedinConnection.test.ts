@@ -15,6 +15,25 @@ const base: LinkedInAccountView = {
   canResolve: true,
 };
 describe("LinkedIn connection presentation", () => {
+  it("offers connection requests on an older connection without calling it broken", () => {
+    const view = linkedInConnectionView({ ...base, canInvite: false });
+    expect(view).toMatchObject({
+      connected: true,
+      needsPermissions: false,
+      needsInvite: true,
+      attention: false,
+      title: "Connected",
+    });
+    expect(view.description).toContain("imported conversations stay as they are");
+    // Granted, or a server that does not report it: nothing to offer.
+    expect(linkedInConnectionView({ ...base, canInvite: true }).needsInvite).toBe(false);
+    expect(linkedInConnectionView(base).needsInvite).toBe(false);
+    // Profile access comes first: one sign-in asks for the full grant anyway.
+    expect(linkedInConnectionView({ ...base, canResolve: false, canInvite: false })).toMatchObject({
+      needsPermissions: true,
+      needsInvite: false,
+    });
+  });
   it("does not turn an import timeout into a reconnect requirement", () => {
     const view = linkedInConnectionView({
       ...base,
