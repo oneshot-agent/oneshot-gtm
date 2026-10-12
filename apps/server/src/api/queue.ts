@@ -1090,6 +1090,7 @@ export async function drainQueueRoute(req: Request): Promise<Response> {
       drained: result.drained,
       sent: result.sent,
       errors: result.errors,
+      ...(result.skipped ? { skipped: result.skipped } : {}),
       ...(result.haltedReason ? { haltedReason: result.haltedReason } : {}),
     };
     return jsonResponse(view, 200, req);
@@ -1513,7 +1514,35 @@ export async function sendDraftRoute(
         workspace: currentWorkspaceName(),
       });
       if (!out.sent) {
-        ledger.clearQueueSendingMarker(id);
+        if (out.guard) {
+          // The guard refused: keep the reason on the draft and move the row
+          // back to pending, so /queue shows why on every later read and the
+          // founder can fix the row and resend. Never silently dropped.
+          try {
+            ledger.setQueueDraft({
+              id,
+              draft: {
+                subject,
+                body,
+                flags: out.flags,
+                sent: false,
+                receiptIds: Array.isArray(parsed.receiptIds) ? parsed.receiptIds : [],
+                dryRun: false,
+                ...(parsed.enrichmentFailed ? { enrichmentFailed: true } : {}),
+                ...(parsed.angle ? { angle: parsed.angle } : {}),
+                ...(parsed.voiceKey ? { voiceKey: parsed.voiceKey } : {}),
+                ...(parsed.formatKey ? { formatKey: parsed.formatKey } : {}),
+              },
+              sentBy: "human",
+            });
+            ledger.setQueueStatus({ id, status: "pending", decidedBy: "human" });
+          } catch {
+            // The refusal itself stands; only its persistence failed.
+            ledger.clearQueueSendingMarker(id);
+          }
+        } else {
+          ledger.clearQueueSendingMarker(id);
+        }
         return jsonResponse({ error: out.flags.join("; "), flags: out.flags }, 409, req);
       }
       try {

@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 let modelNote = "Saw you hosted GTM in git — how are you handling review?";
@@ -5,6 +8,7 @@ const completeInputs: string[] = [];
 const upserts: Array<Record<string, unknown>> = [];
 const events: Array<Record<string, unknown>> = [];
 const enrollments: Array<Record<string, unknown>> = [];
+let failReceipt = false;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -18,6 +22,7 @@ vi.mock("@oneshot-gtm/core", async () => {
         return 42;
       },
       recordLinkedInInviteEvent: (input: Record<string, unknown>) => {
+        if (failReceipt) throw new Error("receipt store down");
         events.push(input);
         return 1;
       },
@@ -74,12 +79,15 @@ function sender(result: unknown) {
 }
 
 beforeEach(() => {
+  // A fresh shared DB per test: the guard refuses a profile that was already invited.
+  process.env["ONESHOT_GTM_SHARED"] = mkdtempSync(join(tmpdir(), "linkedin-first-touch-"));
   _resetInviteLimitsCacheForTests();
   modelNote = "Saw you hosted GTM in git — how are you handling review?";
   completeInputs.length = 0;
   upserts.length = 0;
   events.length = 0;
   enrollments.length = 0;
+  failReceipt = false;
 });
 
 describe("draftLinkedInNote", () => {
@@ -103,6 +111,119 @@ describe("draftLinkedInNote", () => {
 });
 
 describe("sendLinkedInInvite", () => {
+  it("refuses a person the guard rejects, sends nothing and leaves the profile free (#787)", async () => {
+    const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
+    const out = await sendLinkedInInvite({
+      row: row({ name: "SWE-agent" }),
+      note: "hi",
+      sender: s,
+      workspace: "gtm",
+    });
+    expect(out).toMatchObject({ sent: false, guard: "not-a-person" });
+    expect((out as { flags: string[] }).flags[0]).toMatch(/^not-a-person:/);
+    expect(calls).toHaveLength(0);
+    expect(events).toHaveLength(0);
+    // Fixing the row and resending works: the refusal reserved nothing.
+    const fixed = await sendLinkedInInvite({
+      row: row({ name: "Dana Lee" }),
+      note: "hi",
+      sender: s,
+      workspace: "gtm",
+    });
+    expect(fixed).toMatchObject({ sent: true });
+  });
+
+  it("invites one profile once, across workspaces sharing the shared DB", async () => {
+    const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
+    const first = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "one" });
+    expect(first).toMatchObject({ sent: true });
+    const second = await sendLinkedInInvite({
+      row: row({ linkedinUrl: "https://de.linkedin.com/in/Dana-Lee/en" }),
+      note: "hi",
+      sender: s,
+      workspace: "two",
+    });
+    expect(second).toMatchObject({ sent: false, guard: "already-invited" });
+    expect(calls.filter((c) => (c as { kind: string }).kind === "invite")).toHaveLength(1);
+  });
+
+  it("refuses a profile on the suppression list", async () => {
+    const { getSharedDb } = await import("@oneshot-gtm/core");
+    getSharedDb().markLinkedInTouched({ slug: "dana-lee", source: "import:previous-tool" });
+    const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
+    const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+    expect(out).toMatchObject({ sent: false, guard: "already-touched" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("refuses someone the account already has a conversation with, and sends nothing", async () => {
+    const { getLinkedInInboxStore } = await import("@oneshot-gtm/core");
+    // Its own profile: the inbox store is one per process, so this thread
+    // must not match the row the other tests invite.
+    const store = getLinkedInInboxStore();
+    store.saveConversation(
+      "acct-key",
+      {
+        id: "chat-erin",
+        attendees: [
+          { provider_id: "ACo-self", profile_url: null, is_self: true },
+          {
+            provider_id: "ACo-erin",
+            profile_url: "https://www.linkedin.com/in/erin-park",
+            is_self: false,
+          },
+        ],
+        attendees_synced: true,
+      } as never,
+      [],
+    );
+    store.saveMessages("acct-key", [
+      {
+        id: "m1",
+        conversation_id: "chat-erin",
+        direction: "outbound",
+        sender_provider_id: "ACo-self",
+        sender_name: "Me",
+        text: "good to see you last week",
+        sent_at: "2026-01-01T00:00:00Z",
+        deleted: false,
+      } as never,
+    ]);
+    const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
+    const out = await sendLinkedInInvite({
+      row: row({ name: "Erin Park", linkedinUrl: "https://www.linkedin.com/in/erin-park/" }),
+      note: "hi",
+      sender: s,
+      workspace: "gtm",
+    });
+    expect(out).toMatchObject({ sent: false, guard: "already-in-conversation" });
+    expect(calls).toHaveLength(0);
+    // Nothing was claimed: the profile is not marked as invited.
+    const { getSharedDb } = await import("@oneshot-gtm/core");
+    expect(getSharedDb().linkedInTouch("erin-park")).toBeNull();
+  });
+
+  it("frees the profile when the invite is deferred by the account cap", async () => {
+    const capped = sender({});
+    capped.sender.call = async (op: unknown) => {
+      if ((op as { kind: string }).kind === "account") {
+        return { limits: { invites: { limit: 25, remaining: 0, resets_at: null } } };
+      }
+      return {};
+    };
+    const err = await sendLinkedInInvite({
+      row: row(),
+      note: "hi",
+      sender: capped.sender,
+      workspace: "gtm",
+    }).catch((e: unknown) => e);
+    expect(isSendDeferred(err)).toBe(true);
+    _resetInviteLimitsCacheForTests();
+    const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
+    const retry = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+    expect(retry).toMatchObject({ sent: true });
+  });
+
   it("sends the note, records the prospect and a step-0 LinkedIn event", async () => {
     const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
     const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
@@ -189,5 +310,131 @@ describe("sendLinkedInInvite", () => {
     await expect(
       sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
     ).rejects.toThrow(/unexpected LinkedIn invite result/);
+  });
+
+  describe("an invite that may have gone out stays suppressed (#787)", () => {
+    const again = async () => {
+      const { sender: s, calls } = sender({ invitation_id: "inv-2", status: "sent" });
+      const out = await sendLinkedInInvite({
+        row: row(),
+        note: "hi",
+        sender: s,
+        workspace: "two",
+      });
+      return { out, invites: calls.filter((c) => (c as { kind: string }).kind === "invite") };
+    };
+
+    it("an unexpected result keeps the profile held", async () => {
+      const { sender: s } = sender({ status: "weird" });
+      await expect(
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+      ).rejects.toThrow();
+      const { out, invites } = await again();
+      expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+      expect(invites).toHaveLength(0);
+    });
+
+    it("a transport error with no provider code (timeout, lost worker) keeps the profile held", async () => {
+      const { sender: s } = sender(new Error("worker terminated"));
+      await expect(
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+      ).rejects.toThrow(/worker terminated/);
+      const { out, invites } = await again();
+      expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+      expect(invites).toHaveLength(0);
+    });
+
+    it("a receipt-write failure after the provider accepted keeps the profile held", async () => {
+      failReceipt = true;
+      const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
+      await expect(
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+      ).rejects.toThrow(/receipt store down/);
+      failReceipt = false;
+      const { out, invites } = await again();
+      expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+      expect(invites).toHaveLength(0);
+    });
+
+    it("a failed confirmation does not free the profile", async () => {
+      const { getSharedDb } = await import("@oneshot-gtm/core");
+      const db = getSharedDb();
+      const realConfirm = db.confirmLinkedInProfile.bind(db);
+      db.confirmLinkedInProfile = () => {
+        throw new Error("disk full");
+      };
+      try {
+        const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
+        const first = await sendLinkedInInvite({
+          row: row(),
+          note: "hi",
+          sender: s,
+          workspace: "gtm",
+        });
+        expect(first).toMatchObject({ sent: true });
+      } finally {
+        db.confirmLinkedInProfile = realConfirm;
+      }
+      const { out, invites } = await again();
+      expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+      expect(invites).toHaveLength(0);
+    });
+
+    it.each(["ECONNRESET", "ETIMEDOUT", "SQLITE_BUSY", "send_unverified", "unknown_code"])(
+      "a coded error %s that does not prove non-delivery keeps the profile held",
+      async (code) => {
+        const { sender: s } = sender(Object.assign(new Error("failed"), { code }));
+        await expect(
+          sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+        ).rejects.toThrow(/failed/);
+        const { out, invites } = await again();
+        expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+        expect(invites).toHaveLength(0);
+      },
+    );
+
+    it("a coded failure while recording the receipt after provider success keeps the profile held", async () => {
+      failReceipt = true;
+      const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
+      await expect(
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+      ).rejects.toThrow();
+      failReceipt = false;
+      const { out } = await again();
+      expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+    });
+
+    it("a provider-reported failure (job failed, no invite sent) frees the profile", async () => {
+      const { sender: s } = sender(Object.assign(new Error("failed"), { code: "email_required" }));
+      const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+      expect(out).toMatchObject({ sent: false });
+      const retry = await again();
+      expect(retry.out).toMatchObject({ sent: true });
+    });
+  });
+
+  it("an X or GitHub URL is refused with the guard's invalid-profile reason", async () => {
+    const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
+    const out = await sendLinkedInInvite({
+      row: row({ linkedinUrl: "https://github.com/dana-lee" }),
+      note: "hi",
+      sender: s,
+      workspace: "gtm",
+    });
+    expect(out).toMatchObject({ sent: false, guard: "invalid-profile" });
+    expect((out as { flags: string[] }).flags[0]).toMatch(/^invalid-profile:/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("a row without any LinkedIn URL is also an invalid-profile refusal", async () => {
+    const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
+    const out = await sendLinkedInInvite({
+      row: row({ linkedinUrl: undefined }),
+      note: "hi",
+      sender: s,
+      workspace: "gtm",
+    });
+    expect(out).toMatchObject({ sent: false, guard: "invalid-profile" });
+    expect(calls).toHaveLength(0);
   });
 });

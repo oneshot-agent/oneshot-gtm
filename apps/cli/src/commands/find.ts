@@ -7,7 +7,12 @@ import {
   type TriggerRunOutcome,
 } from "@oneshot-gtm/find";
 import { readFile } from "node:fs/promises";
-import { currentWorkspaceName, linkedInOutreachAccount, linkedInSdk } from "@oneshot-gtm/core";
+import {
+  currentWorkspaceName,
+  describeGuardCounts,
+  linkedInOutreachAccount,
+  linkedInSdk,
+} from "@oneshot-gtm/core";
 import {
   bail,
   bailEmpty,
@@ -99,6 +104,7 @@ export async function commandFindDrain(opts: {
       sent: result.sent,
       deferred: result.deferred,
       errors: result.errors.map((e) => ({ id: e.id, message: e.message })),
+      ...(result.skipped ? { skipped: result.skipped } : {}),
       ...(result.haltedReason ? { haltedReason: result.haltedReason } : {}),
     });
   }
@@ -124,6 +130,8 @@ export async function commandFindDrain(opts: {
     return;
   }
   ok(`drained ${result.drained} row(s); ${result.sent} ${opts.dryRun ? "would be sent" : "sent"}.`);
+  if (result.skipped)
+    note(`skipped by the LinkedIn invite guard: ${describeGuardCounts(result.skipped)}`);
 }
 
 export async function commandFindWatch(opts: {

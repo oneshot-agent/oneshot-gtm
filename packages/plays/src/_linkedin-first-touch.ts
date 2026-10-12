@@ -1,7 +1,12 @@
 import {
   CHANNEL_SPECS,
+  canInviteOnLinkedInNow,
   canonicalLinkedInProfileKey,
+  claimLinkedInProfile,
   getLedger,
+  guardFlag,
+  normalizeLinkedInProfile,
+  type LinkedInGuardReason,
   loadConfig,
   logEvent,
   noteAccountInviteCapReached,
@@ -51,7 +56,12 @@ export type LinkedInInviteOutcome =
       invitationId: string;
       prospectId: number;
     }
-  | { sent: false; flags: string[] };
+  | {
+      sent: false;
+      flags: string[];
+      /** Set when the invite guard refused: counted per reason in drain output. */
+      guard?: LinkedInGuardReason;
+    };
 
 function str(payload: Record<string, unknown>, ...keys: string[]): string | null {
   for (const key of keys) {
@@ -172,13 +182,26 @@ export async function draftLinkedInNote(
   };
 }
 
-/** Codes OneShot's invite route reports as a failed job (docs: api-reference/linkedin/invite). */
+/**
+ * Codes OneShot's invite route reports for a job that failed without sending
+ * (docs: api-reference/linkedin/invite). Only these prove non-delivery.
+ * `send_unverified` is deliberately absent (the invite may have gone out), as
+ * is every transport or local code (ECONNRESET, a database error, ...).
+ */
+const NOT_DELIVERED_CODES = new Set([
+  "email_required",
+  "note_limit_reached",
+  "note_too_long",
+  "rate_limited",
+  "account_send_limit",
+]);
+
 function inviteErrorCode(err: unknown): string | null {
   const e = err as { code?: unknown; jobError?: unknown; message?: unknown };
-  if (typeof e.code === "string") return e.code;
+  if (typeof e.code === "string") return NOT_DELIVERED_CODES.has(e.code) ? e.code : null;
   const text = `${typeof e.jobError === "string" ? e.jobError : ""} ${typeof e.message === "string" ? e.message : ""}`;
   const m = text.match(
-    /\b(email_required|note_limit_reached|note_too_long|rate_limited|account_send_limit|send_unverified)\b/,
+    /\b(email_required|note_limit_reached|note_too_long|rate_limited|account_send_limit)\b/,
   );
   return m ? m[1]! : null;
 }
@@ -195,8 +218,6 @@ export async function sendLinkedInInvite(input: {
   workspace: string;
 }): Promise<LinkedInInviteOutcome> {
   const profile = linkedInProfileOf(input.row.payload);
-  if (!profile)
-    return { sent: false, flags: ["no-linkedin: this row has no LinkedIn profile URL"] };
   // A note OneShot would refuse never leaves; the shorter draft target
   // stays a review flag, not a block.
   const note = input.note.trim();
@@ -207,19 +228,67 @@ export async function sendLinkedInInvite(input: {
       flags: [`note-too-long: ${note.length}/${LINKEDIN_NOTE_HARD_LIMIT} characters`],
     };
   }
+  // The guard every invite passes: a personal profile, a person's name, no
+  // opt-out or engagement elsewhere, a passing ICP verdict, and a profile
+  // nobody has invited. A refusal is recoverable; a sent invite is not. It
+  // runs on the stored URL as is, so an X, GitHub or company URL is refused
+  // with a guard reason (counted per reason in drain output) instead of
+  // dropping out as a bare "no profile".
+  const p0 = input.row.payload;
+  const target = normalizeLinkedInProfile(profile);
+  const override = p0["icpOverride"];
+  const verdict = canInviteOnLinkedInNow({
+    name: str(p0, "name"),
+    company: str(p0, "company"),
+    email: str(p0, "email", "founderEmail"),
+    linkedinUrl: str(p0, "linkedinUrl"),
+    icpVerdict: str(p0, "icpVerdict"),
+    icpOverridden: typeof override === "object" && override !== null,
+  });
+  if (!verdict.ok) return { sent: false, flags: [guardFlag(verdict)], guard: verdict.reason };
+  if (!target || !profile) {
+    return {
+      sent: false,
+      flags: ["invalid-profile: the LinkedIn URL is not a personal profile"],
+      guard: "invalid-profile",
+    };
+  }
+  // Reserve the profile in the shared DB before any await, so a second
+  // workspace on the same account can't invite it while this one is in flight.
+  const claimed = claimLinkedInProfile({ profile: target, workspace: input.workspace });
+  if (!claimed.ok) return { sent: false, flags: [guardFlag(claimed)], guard: claimed.reason };
+  const claim = claimed.claim;
   // Take a slot of the workspace share (and check the account has invites
   // left) before the API call. Deferred when either is used up.
-  const slot = await reserveLinkedInInvite({
-    accountId: input.sender.accountId,
-    fetchAccount: () => input.sender.call({ kind: "account", accountId: input.sender.accountId }),
-    workspace: input.workspace,
-  });
+  let slot: Awaited<ReturnType<typeof reserveLinkedInInvite>>;
+  try {
+    slot = await reserveLinkedInInvite({
+      accountId: input.sender.accountId,
+      fetchAccount: () => input.sender.call({ kind: "account", accountId: input.sender.accountId }),
+      workspace: input.workspace,
+    });
+  } catch (err) {
+    claim.release();
+    throw err;
+  }
+  // From here the invite may go out at any moment: make the claim durable
+  // first. Past this point only a failure the provider reports as "not
+  // delivered" frees the profile; a timeout, a lost worker, a bad result or a
+  // local error after the call leaves it suppressed (a retry could invite
+  // twice, and a skipped invite can be sent by hand).
+  try {
+    claim.dispatch();
+  } catch (err) {
+    slot.release();
+    claim.release();
+    throw err;
+  }
   let result: { invitation_id?: string; status?: string };
   try {
     result = (await input.sender.call({
       kind: "invite",
       accountId: input.sender.accountId,
-      profile,
+      profile: target.url,
       note,
       // Stable per row: a retried drain returns the original invitation.
       idempotencyKey: `gtm:${input.workspace}:queue:${input.row.id}:invite`,
@@ -228,6 +297,8 @@ export async function sendLinkedInInvite(input: {
   } catch (err) {
     slot.release();
     const code = inviteErrorCode(err);
+    // Only a code OneShot reports for a failed job proves nothing was sent.
+    if (code) claim.release();
     if (code === "rate_limited" || code === "account_send_limit") {
       noteAccountInviteCapReached(input.sender.accountId);
       throw new SendDeferredError(`LinkedIn invites paused for today (${code})`);
@@ -240,10 +311,12 @@ export async function sendLinkedInInvite(input: {
     !result.invitation_id ||
     (status !== "sent" && status !== "pending" && status !== "already_connected")
   ) {
+    // The call returned, so the invite may have gone out: the claim stays.
     slot.release();
     throw new Error(`unexpected LinkedIn invite result: ${JSON.stringify(result).slice(0, 160)}`);
   }
   slot.confirm();
+  claim.confirm();
   const ledger = getLedger();
   const p = input.row.payload;
   const prospectId = ledger.upsertProspect({

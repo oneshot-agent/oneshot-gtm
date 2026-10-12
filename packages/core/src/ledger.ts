@@ -184,7 +184,9 @@ import {
   sweepStalePendingResolution as sysSweepStalePendingResolution,
   upsertPendingResolution as sysUpsertPendingResolution,
 } from "./ledger-system.ts";
-import { sharedDbPath } from "./shared-db.ts";
+import { currentWorkspaceName, sharedDbPath, type SharedDb } from "./shared-db.ts";
+import { linkedInGuardFacts, linkedInInviteHistory } from "./ledger-linkedin-guard.ts";
+import type { LinkedInGuardFacts } from "./linkedin-guard.ts";
 import { SharedPeople } from "./shared-people.ts";
 import type { ReplyKind } from "./reply-classify.ts";
 import type {
@@ -753,6 +755,29 @@ export class Ledger {
   }): { status: "matched"; prospectId: number } | { status: "unmatched" } | { status: "conflict" } {
     const emailId = input.email ? (this.findProspectByEmail(input.email)?.id ?? null) : null;
     return this.prospects.resolveProspectForLinkedInReply(input, emailId);
+  }
+
+  /** Ledger facts the LinkedIn invite guard reads (linkedin-guard.ts). */
+  linkedInGuardFacts(prospectId: number): LinkedInGuardFacts | null {
+    return linkedInGuardFacts(this.db, prospectId);
+  }
+
+  /**
+   * Copy the invites this ledger already recorded into the shared
+   * `linkedin_touched` table, once per ledger file, so profiles invited before
+   * the guard existed still exclude other plays and workspaces. It reads only
+   * the connection this ledger holds: another workspace's history is loaded by
+   * the explicit import, never from a guard call.
+   */
+  backfillLinkedInTouched(shared: SharedDb): void {
+    const workspace = currentWorkspaceName();
+    shared.importLinkedInInvites(`linkedin-invites:${this.path}`, () =>
+      linkedInInviteHistory(this.db).map((h) => ({
+        slug: h.slug,
+        source: `invite:${workspace}`,
+        touchedAt: h.touchedAt,
+      })),
+    );
   }
 
   suppressCadencesForReply(prospectId: number, accountKey?: string) {
