@@ -390,7 +390,27 @@ async function waitOrTimeOut(
         playName: input.playName,
       })) as { status?: string };
       withdrawStatus = res.status ?? null;
-      // not_pending: accepted or gone some other way: nothing was withdrawn.
+      if (withdrawStatus === "not_pending") {
+        // Accepted, or gone some other way: nothing was withdrawn, and the
+        // status read that led here may have missed an acceptance. Re-read it
+        // before ending anything.
+        if (input.mode === "cadence") {
+          ledger.postponeCadence({
+            prospectId: input.prospectId,
+            playName: input.playName,
+            nextDueAt: new Date(Date.now() + DAY_MS).toISOString(),
+          });
+        }
+        return {
+          state: "result",
+          result: {
+            action: "waiting",
+            payload: null,
+            receiptIds: [],
+            note: `${note} — invite no longer pending, re-checking its status`,
+          },
+        };
+      }
       if (isWithdrawnStatus(withdrawStatus)) {
         // On the invite's own step: a continuation invite is not step 0.
         ledger.recordLinkedInInviteEvent({

@@ -498,6 +498,18 @@ describe("unattended status sweep", () => {
     expect(typeof seen[1]).toBe("string");
   });
 
+  it("the watermark sits an hour behind the sweep, to tolerate clock skew", async () => {
+    inviteSent();
+    const now = new Date("2026-10-12T12:00:00.000Z");
+    await sweepLinkedInInvitations({
+      linkedIn: caller({ invitations: () => ({ invitations: [] }) }),
+      now,
+    });
+    expect(ledger.getPollWatermark("linkedin.invitations.since:gtm:acct-1")).toBe(
+      "2026-10-12T11:00:00.000Z",
+    );
+  });
+
   it("a failed list does not move the watermark", async () => {
     inviteSent();
     const bad = caller({

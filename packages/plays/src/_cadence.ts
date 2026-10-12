@@ -2074,6 +2074,7 @@ async function dispatchStepImpl(input: {
           profile,
           text: input.payload.text,
           idempotencyKey,
+          playName: input.playName,
         });
       } catch (err) {
         // Not connected yet, or over the daily limit: the step stays due.

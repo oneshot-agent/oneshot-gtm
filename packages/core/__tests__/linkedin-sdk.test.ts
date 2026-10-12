@@ -150,6 +150,7 @@ it("opens a conversation with linkedinMessage, keyed for a safe retry", async ()
     profile: "https://www.linkedin.com/in/someone",
     text: "Hello",
     idempotencyKey: "stable-first",
+    playName: "luma-events",
   });
   expect(result).toMatchObject({ conversation_id: "conv-1" });
   expect(message).toHaveBeenLastCalledWith({
@@ -159,7 +160,7 @@ it("opens a conversation with linkedinMessage, keyed for a safe retry", async ()
     idempotencyKey: "stable-first",
   });
   expect(recordReceipt).toHaveBeenLastCalledWith(
-    expect.objectContaining({ callType: "linkedin.message" }),
+    expect.objectContaining({ callType: "linkedin.message", playName: "luma-events" }),
   );
 });
 
@@ -170,6 +171,7 @@ it("refuses a first message without the reply grant, a disconnected account, or 
     accountId: "account",
     profile: "https://www.linkedin.com/in/someone",
     idempotencyKey: "k",
+    playName: "luma-events",
   };
   account.mockResolvedValue({ status: "connected", allowed_actions: ["read"] });
   await expect(linkedInSdk({ ...base, text: "Hello" })).rejects.toThrow("permission to reply");

@@ -32,6 +32,8 @@ export type LinkedInOperation =
       profile: string;
       text: string;
       idempotencyKey: string;
+      /** The play the cadence belongs to, for the receipt. */
+      playName: string;
     }
   | { kind: "invitation"; accountId: string; invitationId: string }
   | {
@@ -158,9 +160,14 @@ export async function linkedInSdk(operation: LinkedInOperation): Promise<unknown
         profile: operation.profile,
         text: operation.text,
         idempotencyKey: operation.idempotencyKey,
-        ...audit,
+        ...buildAuditOpts({ playName: operation.playName }, "linkedin.message"),
       });
-      record(result, "linkedin.message");
+      record(
+        result,
+        "linkedin.message",
+        operation.playName,
+        `${operation.playName} LinkedIn first message`,
+      );
       return result;
     }
     case "invitation":

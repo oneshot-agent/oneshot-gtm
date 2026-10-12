@@ -12,6 +12,8 @@ import {
 /** Most invitations one status call returns (the API's ceiling). */
 const INVITATIONS_PAGE = 100;
 const DAY_MS = 24 * 3600 * 1000;
+/** Re-read a margin before the last good look to tolerate clock skew. */
+const WATERMARK_OVERLAP_MS = 60 * 60_000;
 
 export interface LinkedInInviteSweepResult {
   /** Invites still waiting on an answer when the sweep began. */
@@ -73,7 +75,7 @@ export async function sweepLinkedInInvitations(input: {
   for (const { account, items } of byAccount.values()) {
     // Free read: only what changed since the last good look at this account.
     const since = ledger.getPollWatermark(watermarkKey(account));
-    const startedAt = new Date(nowMs).toISOString();
+    const startedAt = new Date(nowMs - WATERMARK_OVERLAP_MS).toISOString();
     const changed = new Map<string, LinkedInInvitationInfo>();
     let listed = false;
     let truncated = false;
