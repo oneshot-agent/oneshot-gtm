@@ -1,12 +1,25 @@
 import { expect, it, vi } from "vitest";
 
-const { tool, recordReceipt, connect, reconnect, account, revoke } = vi.hoisted(() => ({
+const {
+  tool,
+  recordReceipt,
+  connect,
+  reconnect,
+  account,
+  revoke,
+  message,
+  invitation,
+  invitations,
+} = vi.hoisted(() => ({
   account: vi.fn(),
   revoke: vi.fn(),
   tool: vi.fn(),
   recordReceipt: vi.fn(),
   connect: vi.fn(),
   reconnect: vi.fn(),
+  message: vi.fn(),
+  invitation: vi.fn(),
+  invitations: vi.fn(),
 }));
 vi.mock("../src/oneshot.ts", () => ({
   getAgent: async () => ({
@@ -15,6 +28,9 @@ vi.mock("../src/oneshot.ts", () => ({
     reconnectLinkedInAccount: reconnect,
     getLinkedInAccount: account,
     revokeLinkedInAccount: revoke,
+    linkedinMessage: message,
+    linkedinInvitation: invitation,
+    linkedinInvitations: invitations,
   }),
   buildAuditOpts: () => ({}),
 }));
@@ -123,4 +139,73 @@ it("revokes a connection through the SDK without deleting local messages or invo
   });
   expect(revoke).toHaveBeenCalledWith("account");
   expect(tool.mock.calls).toHaveLength(calls);
+});
+
+it("opens a conversation with linkedinMessage, keyed for a safe retry", async () => {
+  account.mockResolvedValue({ status: "connected", allowed_actions: ["reply"] });
+  message.mockResolvedValueOnce({ status: "sent", conversation_id: "conv-1", cost: 0.02 });
+  const result = await linkedInSdk({
+    kind: "message",
+    accountId: "account",
+    profile: "https://www.linkedin.com/in/someone",
+    text: "Hello",
+    idempotencyKey: "stable-first",
+  });
+  expect(result).toMatchObject({ conversation_id: "conv-1" });
+  expect(message).toHaveBeenLastCalledWith({
+    accountId: "account",
+    profile: "https://www.linkedin.com/in/someone",
+    text: "Hello",
+    idempotencyKey: "stable-first",
+  });
+  expect(recordReceipt).toHaveBeenLastCalledWith(
+    expect.objectContaining({ callType: "linkedin.message" }),
+  );
+});
+
+it("refuses a first message without the reply grant, a disconnected account, or bad text", async () => {
+  message.mockClear();
+  const base = {
+    kind: "message" as const,
+    accountId: "account",
+    profile: "https://www.linkedin.com/in/someone",
+    idempotencyKey: "k",
+  };
+  account.mockResolvedValue({ status: "connected", allowed_actions: ["read"] });
+  await expect(linkedInSdk({ ...base, text: "Hello" })).rejects.toThrow("permission to reply");
+  account.mockResolvedValue({ status: "revoked", allowed_actions: ["reply"] });
+  await expect(linkedInSdk({ ...base, text: "Hello" })).rejects.toThrow("permission to reply");
+  account.mockResolvedValue({ status: "connected", allowed_actions: ["reply"] });
+  await expect(linkedInSdk({ ...base, text: "   " })).rejects.toThrow("1–4000 characters");
+  await expect(linkedInSdk({ ...base, text: "x".repeat(4001) })).rejects.toThrow(
+    "1–4000 characters",
+  );
+  expect(message).not.toHaveBeenCalled();
+});
+
+it("reads one invitation's status through the SDK", async () => {
+  invitation.mockResolvedValueOnce({ invitation_id: "inv", status: "accepted" });
+  expect(
+    await linkedInSdk({ kind: "invitation", accountId: "account", invitationId: "inv" }),
+  ).toEqual({ invitation_id: "inv", status: "accepted" });
+  expect(invitation).toHaveBeenLastCalledWith({ accountId: "account", invitationId: "inv" });
+});
+
+it("lists changed invitations, passing only the filters given", async () => {
+  invitations.mockResolvedValue({ invitations: [] });
+  await linkedInSdk({ kind: "invitations", accountId: "account" });
+  expect(invitations).toHaveBeenLastCalledWith({ accountId: "account" });
+  await linkedInSdk({
+    kind: "invitations",
+    accountId: "account",
+    status: "pending",
+    changedSince: "2026-10-01T00:00:00Z",
+    limit: 100,
+  });
+  expect(invitations).toHaveBeenLastCalledWith({
+    accountId: "account",
+    status: "pending",
+    changedSince: "2026-10-01T00:00:00Z",
+    limit: 100,
+  });
 });

@@ -100,7 +100,10 @@ const str = (v: unknown): string | null => (typeof v === "string" && v ? v : nul
  * The newest sent invite for a prospect and play: an earlier one may have
  * been withdrawn by hand and the person invited again.
  */
-export function liveLinkedInInvite(prospectId: number, playName: string): LiveLinkedInInvite | null {
+export function liveLinkedInInvite(
+  prospectId: number,
+  playName: string,
+): LiveLinkedInInvite | null {
   const events = getLedger().listLinkedInInviteEvents(prospectId, playName);
   const at = events.findLastIndex((e) => e.status === "sent");
   const event = at >= 0 ? events[at] : undefined;
@@ -145,7 +148,7 @@ export function storedLinkedInConversation(
   const sent = getLedger()
     .listSequenceEventsForProspectPlay(prospectId, playName)
     .filter((e) => e.channel === "linkedin" && e.status === "sent");
-  for (const e of sent.reverse()) {
+  for (const e of sent.toReversed()) {
     const meta = parseMeta(e.metadata_json);
     const conversationId = str(meta.conversationId);
     const accountId = str(meta.accountId);

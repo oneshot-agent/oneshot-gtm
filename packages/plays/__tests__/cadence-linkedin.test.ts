@@ -117,7 +117,7 @@ describe("LinkedIn cadence", () => {
     expect(cadence.current_step).toBe(0);
     expect(Date.parse(cadence.next_due_at!)).toBeGreaterThan(Date.now() + 23 * 3600 * 1000);
     await expect(previewCadenceStep({ prospectId, playName: "luma-events" })).rejects.toThrow(
-      /hasn't been accepted/,
+      /waiting for acceptance since/,
     );
   });
 
@@ -131,7 +131,7 @@ describe("LinkedIn cadence", () => {
       playName: "luma-events",
       dryRun: false,
       linkedIn: async (workspace, op) => {
-        calls.push([workspace, op as Record<string, unknown>]);
+        if (op.kind !== "invitation") calls.push([workspace, op as Record<string, unknown>]);
         return { status: "withdrawn" };
       },
     });
@@ -158,7 +158,7 @@ describe("LinkedIn cadence", () => {
       dryRun: false,
       persistedPayload: { kind: "linkedin_message", text: "reviewed message" },
       linkedIn: async (_workspace, op) => {
-        calls.push(op as Record<string, unknown>);
+        if (op.kind !== "invitation") calls.push(op as Record<string, unknown>);
         return { status: "sent" };
       },
     });
@@ -213,7 +213,7 @@ describe("LinkedIn cadence edge cases", () => {
       playName: "luma-events",
       dryRun: false,
       linkedIn: async (_w, op) => {
-        calls.push(op as Record<string, unknown>);
+        if (op.kind !== "invitation") calls.push(op as Record<string, unknown>);
         return { status: "withdrawn" };
       },
     });
@@ -242,7 +242,7 @@ describe("LinkedIn cadence edge cases", () => {
       playName: "luma-events",
       dryRun: false,
       linkedIn: async (workspace, op) => {
-        calls.push([workspace, op as Record<string, unknown>]);
+        if (op.kind !== "invitation") calls.push([workspace, op as Record<string, unknown>]);
         return { status: "withdrawn" };
       },
     });
@@ -341,7 +341,7 @@ describe("a LinkedIn invite that continues an email cadence (step N)", () => {
       playName: "luma-events",
       dryRun: false,
       linkedIn: async (_w, op) => {
-        calls.push(op as Record<string, unknown>);
+        if (op.kind !== "invitation") calls.push(op as Record<string, unknown>);
         return { status: "withdrawn" };
       },
     });
@@ -383,7 +383,7 @@ describe("a marked LinkedIn invite at step 0 (first touch)", () => {
       playName: "luma-events",
       dryRun: false,
       linkedIn: async (_w, op) => {
-        calls.push(op as Record<string, unknown>);
+        if (op.kind !== "invitation") calls.push(op as Record<string, unknown>);
         return { status: "withdrawn" };
       },
     });
@@ -402,7 +402,7 @@ describe("a marked LinkedIn invite at step 0 (first touch)", () => {
       playName: "luma-events",
       dryRun: false,
       linkedIn: async (_w, op) => {
-        calls.push(op as Record<string, unknown>);
+        if (op.kind !== "invitation") calls.push(op as Record<string, unknown>);
         return { status: "withdrawn" };
       },
     });

@@ -29,7 +29,9 @@ import {
   pollInboxBounces,
   pollInboxReplies,
   retryUntriagedReplies,
+  sweepLinkedInInvitations,
 } from "@oneshot-gtm/plays";
+import { callLinkedIn } from "./linkedin-client.ts";
 import { reportServerExecution } from "./telemetry.ts";
 
 /**
@@ -73,6 +75,13 @@ const CALENDAR_POLL_INTERVAL_MS = 10 * 60_000;
  */
 const LIVE_PROFILE_SWEEP_INTERVAL_MS = 4 * 60 * 60_000;
 const LIVE_PROFILE_SWEEP_DEADLINE_MS = 60 * 60_000;
+/**
+ * LinkedIn invitation statuses: a free read per account, so it runs often
+ * enough that an accept shows on /cadences within the hour. It records
+ * acceptances and withdraws timed-out invites; it never sends a message.
+ */
+const LINKEDIN_INVITE_SWEEP_INTERVAL_MS = 30 * 60_000;
+const LINKEDIN_INVITE_SWEEP_DEADLINE_MS = 5 * 60_000;
 /** The in-flight newsfeed sweep rides the live-profile interval; 25 calls at ~5-12 s fit easily. */
 const NEWSFEED_SWEEP_DEADLINE_MS = 15 * 60_000;
 /** Sent-folder delivery checks: every few minutes, a bounded batch of read-only mailbox searches. */
@@ -112,6 +121,8 @@ export function startScheduler(): SchedulerHandle {
   let calendarPollClean = true;
   // 0 = never swept, so the first tick checks recent sends right away.
   let lastDeliverySweepAt = 0;
+  // 0 = never swept, so the first tick reads invitation statuses right away.
+  let lastLinkedInInviteSweepAt = 0;
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
@@ -265,6 +276,26 @@ export function startScheduler(): SchedulerHandle {
         } catch (err) {
           logEvent(
             "scheduler.newsfeed_sweep.failed",
+            { message_120: ((err as Error).message ?? "").slice(0, 120) },
+            "warn",
+          );
+        }
+      }
+      // LinkedIn invitation statuses: record accepts, withdraw invites past
+      // their timeout. Free reads plus a withdrawal; never drafts, never sends
+      // a message (the first message waits on /cadences for review). Isolated
+      // and stamped before the await like the sweeps around it.
+      if (Date.now() - lastLinkedInInviteSweepAt >= LINKEDIN_INVITE_SWEEP_INTERVAL_MS) {
+        lastLinkedInInviteSweepAt = Date.now();
+        try {
+          await withDeadline(
+            sweepLinkedInInvitations({ linkedIn: callLinkedIn }),
+            LINKEDIN_INVITE_SWEEP_DEADLINE_MS,
+            "linkedin invitation sweep",
+          );
+        } catch (err) {
+          logEvent(
+            "scheduler.linkedin_invite_sweep.failed",
             { message_120: ((err as Error).message ?? "").slice(0, 120) },
             "warn",
           );
