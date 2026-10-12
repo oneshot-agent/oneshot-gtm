@@ -188,14 +188,18 @@ export const api = {
       body?.trim() ? { body: body.trim() } : {},
     ),
   previewCadenceNext: (id: number, playName: string, rotateAngle = false) =>
-    postJson<{
-      subject: string;
-      body: string;
-      flags: string[];
-      draftedAt: string;
-      stepLabel: string | null;
-      isBreakup: boolean;
-    }>(
+    postJson<
+      | {
+          waiting?: undefined;
+          subject: string;
+          body: string;
+          flags: string[];
+          draftedAt: string;
+          stepLabel: string | null;
+          isBreakup: boolean;
+        }
+      | { waiting: true; since: string; message: string }
+    >(
       `/cadences/${id}/preview-next?play=${encodeURIComponent(playName)}`,
       rotateAngle ? { rotateAngle: true } : {},
     ),

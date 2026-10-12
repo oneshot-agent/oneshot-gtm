@@ -14,6 +14,7 @@ const calls = {
   eventKinds: [] as string[],
   pollInboxBounces: 0,
   pollInboxReplies: 0,
+  sweepLinkedInInvitations: 0,
   postDailySendSummaryIfDue: 0,
 };
 
@@ -51,7 +52,12 @@ vi.mock("@oneshot-gtm/plays", () => ({
     calls.pollInboxBounces++;
     return { polled: 0, recorded: 0, cadencesStopped: 0, clean: bouncePollCleanValue, details: [] };
   },
+  sweepLinkedInInvitations: async () => {
+    calls.sweepLinkedInInvitations++;
+    return { pending: 0, calls: 0, accepted: 0, withdrawn: 0, stopped: 0 };
+  },
 }));
+vi.mock("../src/linkedin-client.ts", () => ({ callLinkedIn: async () => ({}) }));
 
 vi.mock("@oneshot-gtm/core", () => ({
   loadConfig: () => ({}),
@@ -103,6 +109,19 @@ it("polls Smartlead workspaces at most a minute after a completed tick", async (
   handle.stop();
 });
 
+it("sweeps LinkedIn invitation statuses on the first tick and then at most every half hour", async () => {
+  nextSleepValue = 60_000;
+  const handle = startScheduler();
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(calls.sweepLinkedInInvitations).toBe(1);
+  await vi.advanceTimersByTimeAsync(20 * 60_000);
+  expect(calls.runDueTriggers).toBeGreaterThan(1);
+  expect(calls.sweepLinkedInInvitations).toBe(1);
+  await vi.advanceTimersByTimeAsync(11 * 60_000);
+  expect(calls.sweepLinkedInInvitations).toBe(2);
+  handle.stop();
+});
+
 beforeEach(() => {
   vi.useFakeTimers();
   calls.runDueTriggers = 0;
@@ -111,6 +130,7 @@ beforeEach(() => {
   calls.pollInboxBounces = 0;
   calls.pollInboxReplies = 0;
   calls.sweepLiveProfiles = 0;
+  calls.sweepLinkedInInvitations = 0;
   calls.postDailySendSummaryIfDue = 0;
   nextOutcomes = [];
   nextSleepValue = 60_000;

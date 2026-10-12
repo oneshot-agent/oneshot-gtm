@@ -41,6 +41,21 @@ it("passes rotateAngle through, and a bare request is a plain regenerate", async
   });
 });
 
+it("answers 200 with the waiting message, not a 500, before acceptance", async () => {
+  previewMock.mockResolvedValueOnce({
+    waiting: true,
+    since: "2026-10-01",
+    message: "waiting for acceptance since 2026-10-01",
+  } as never);
+  const res = await previewCadenceStepRoute(req(), { id: "7" });
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({
+    waiting: true,
+    since: "2026-10-01",
+    message: "waiting for acceptance since 2026-10-01",
+  });
+});
+
 it("rejects a non-boolean rotateAngle and a non-JSON body", async () => {
   expect((await previewCadenceStepRoute(req({ rotateAngle: "yes" }), { id: "7" })).status).toBe(
     400,

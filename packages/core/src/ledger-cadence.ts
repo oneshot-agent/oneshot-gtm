@@ -350,6 +350,14 @@ export function stopCadence(
     playName: string;
     reason: "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
     note?: string;
+    /**
+     * The caller is the send worker that holds this cadence's sending marker
+     * (claimCadenceSendingMarker) and has decided the cadence is over: a
+     * terminal invitation, a meeting already held. Without this a stop is
+     * refused while the marker is set, which is right for a Stop click racing
+     * a send and wrong for the worker itself, whose refusal nobody reads.
+     */
+    holdingSendingMarker?: boolean;
   },
 ): boolean {
   let changed = false;
@@ -362,9 +370,15 @@ export function stopCadence(
              next_step_draft_json = NULL, next_step_drafted_at = NULL,
              sending_started_at = NULL, last_send_error = NULL, last_send_error_at = NULL
          WHERE prospect_id = ? AND play_name = ? AND status = 'active'
-           AND sending_started_at IS NULL`,
+           AND (sending_started_at IS NULL OR ? = 1)`,
       )
-      .run(input.reason, input.note?.trim() || null, input.prospectId, input.playName);
+      .run(
+        input.reason,
+        input.note?.trim() || null,
+        input.prospectId,
+        input.playName,
+        input.holdingSendingMarker ? 1 : 0,
+      );
     changed = result.changes > 0;
     if (changed) {
       new QueueStore(db).expireBreakupReviveQueue(input.prospectId, "cadence stopped");
@@ -995,6 +1009,62 @@ export function recordLinkedInInviteEvent(
     status: input.status,
     metadata: { ...input.metadata, kind: LINKEDIN_INVITE_KIND },
   });
+}
+
+/**
+ * Prospect and play of every active cadence that has a sent LinkedIn invite
+ * event: the candidates for the unattended invitation-status sweep. Whether
+ * an invite is still outstanding is read from its events.
+ */
+export function listLinkedInInviteCadences(
+  db: Database,
+): Array<{ prospect_id: number; play_name: string }> {
+  return db
+    .query(
+      `SELECT DISTINCT se.prospect_id, se.play_name
+         FROM sequence_events se
+         JOIN cadence_state c ON c.prospect_id = se.prospect_id AND c.play_name = se.play_name
+        WHERE c.status = 'active' AND se.channel = 'linkedin' AND se.status = 'sent'
+          AND (
+            se.step_index = 0
+            OR CASE WHEN json_valid(se.metadata_json)
+                    THEN json_extract(se.metadata_json, '$.kind') END = ?
+          )
+        ORDER BY se.prospect_id, se.play_name`,
+    )
+    .all(LINKEDIN_INVITE_KIND) as Array<{ prospect_id: number; play_name: string }>;
+}
+
+/**
+ * Merge fields into a LinkedIn invite event's metadata (the acceptance time,
+ * the last invitation status), and optionally mark the event `failed` (an
+ * invite OneShot says was never sent must not count as one).
+ */
+export function updateLinkedInInviteEvent(
+  db: Database,
+  input: { id: number; status?: "failed"; metadata: Record<string, unknown> },
+): boolean {
+  const row = db.query(`SELECT metadata_json FROM sequence_events WHERE id = ?`).get(input.id) as {
+    metadata_json: string | null;
+  } | null;
+  if (!row) return false;
+  let current: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(row.metadata_json ?? "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      current = parsed as Record<string, unknown>;
+    }
+  } catch {
+    current = {};
+  }
+  const merged = JSON.stringify({ ...current, ...input.metadata });
+  return (
+    db
+      .prepare(
+        `UPDATE sequence_events SET metadata_json = ?, status = coalesce(?, status) WHERE id = ?`,
+      )
+      .run(merged, input.status ?? null, input.id).changes > 0
+  );
 }
 
 export function listSequenceEventsForProspectPlay(

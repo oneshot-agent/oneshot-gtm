@@ -47,6 +47,8 @@ import {
   listSequenceEventsForProspect as cadListSequenceEventsForProspect,
   postponeCadence as cadPostponeCadence,
   listLinkedInInviteEvents as cadListLinkedInInviteEvents,
+  listLinkedInInviteCadences as cadListLinkedInInviteCadences,
+  updateLinkedInInviteEvent as cadUpdateLinkedInInviteEvent,
   recordLinkedInInviteEvent as cadRecordLinkedInInviteEvent,
   getCadence as cadGetCadence,
   getCadenceDraft as cadGetCadenceDraft,
@@ -475,6 +477,20 @@ export class Ledger {
     return cadListLinkedInInviteEvents(this.db, prospectId, playName);
   }
 
+  /** Active cadences with a sent LinkedIn invite: see listLinkedInInviteCadences. */
+  listLinkedInInviteCadences(): Array<{ prospect_id: number; play_name: string }> {
+    return cadListLinkedInInviteCadences(this.db);
+  }
+
+  /** Merge into an invite event's metadata, optionally marking it failed: see updateLinkedInInviteEvent. */
+  updateLinkedInInviteEvent(input: {
+    id: number;
+    status?: "failed";
+    metadata: Record<string, unknown>;
+  }): boolean {
+    return cadUpdateLinkedInInviteEvent(this.db, input);
+  }
+
   /** Record a marked LinkedIn invite send/withdrawal: see recordLinkedInInviteEvent. */
   recordLinkedInInviteEvent(input: {
     prospectId: number;
@@ -544,6 +560,8 @@ export class Ledger {
     playName: string;
     reason: "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
     note?: string;
+    /** The caller is the send worker holding this cadence's sending marker; see ledger-cadence.ts. */
+    holdingSendingMarker?: boolean;
   }): boolean {
     return cadStopCadence(this.db, this.drafts, input);
   }

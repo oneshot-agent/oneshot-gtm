@@ -52,6 +52,7 @@ export async function callLinkedIn<T>(workspace: string, operation: LinkedInOper
       statusCode?: number;
       requestId?: string;
       code?: string;
+      jobError?: string;
     };
     try {
       data = JSON.parse(stdout.trim());
@@ -64,6 +65,9 @@ export async function callLinkedIn<T>(workspace: string, operation: LinkedInOper
         statusCode: data.statusCode,
         requestId: data.requestId,
         code: data.code,
+        // An async job's failure text names not_connected / rate_limited when
+        // no code does; linkedInMessageDeferral reads it, so it crosses the worker.
+        ...(typeof data.jobError === "string" ? { jobError: data.jobError } : {}),
       });
     return data.result;
   } finally {
