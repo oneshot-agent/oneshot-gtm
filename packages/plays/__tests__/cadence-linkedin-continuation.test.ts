@@ -336,6 +336,18 @@ describe("guards and quota", () => {
     expect(ledger.listLinkedInInviteEvents(odd, PLAY)).toEqual([]);
   });
 
+  it("previewing the invite shows a guard refusal instead of drafting a note", async () => {
+    ledger.close();
+    ledger = new Ledger(dbPath);
+    const odd = newProspect({ email: "bot2@example.com", name: "SWE-agent" });
+    prospectId = odd;
+    emailCadenceRunOut(odd);
+    await expect(previewCadenceStep({ prospectId: odd, playName: PLAY })).rejects.toThrow(
+      /not-a-person.*this step will be skipped/,
+    );
+    expect(ledger.getCadenceDraft({ prospectId: odd, playName: PLAY })).toBeNull();
+  });
+
   it("an existing conversation: the guard skips the invite step with its reason, before any invite", async () => {
     // Its own person: the inbox store is a process-wide singleton, so the saved thread must not match anyone else.
     prospectId = newProspect({

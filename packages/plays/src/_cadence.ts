@@ -1820,6 +1820,22 @@ export async function previewCadenceStep(input: {
   if (!step) throw new Error("step undefined");
   const missing = missingAddress(step.channel, cadence);
   if (missing) throw new Error(`${missing} — this step will be skipped`);
+  if (
+    step.channel === "linkedin" &&
+    step.id === CONTINUATION_INVITE_ID &&
+    cadence.channel !== "linkedin"
+  ) {
+    // The send path's guard check, run before the note is drafted: a refusal
+    // shows here instead of after a clean-looking draft has been paid for.
+    const verdict = continuationInviteVerdict(input.prospectId);
+    if (!verdict.ok) {
+      throw new Error(
+        verdict.reason === "guard-unavailable"
+          ? `${verdict.detail} — will retry`
+          : `${guardFlag(verdict)} — this step will be skipped`,
+      );
+    }
+  }
   if (step.channel === "linkedin" && step.id !== CONTINUATION_INVITE_ID) {
     const since = linkedInWaitingSince({
       prospectId: input.prospectId,
