@@ -1779,6 +1779,17 @@ export interface CadenceStepWaiting {
 }
 
 /**
+ * The invite guard refused the person an email cadence would carry on to
+ * LinkedIn with. Returned by `previewCadenceStep` in place of a draft: the
+ * step is recorded as skipped with the guard's reason and the cadence is
+ * complete, exactly as the send path leaves it.
+ */
+export interface CadenceStepSkipped {
+  skipped: true;
+  message: string;
+}
+
+/**
  * Build the next step's draft and persist it via setCadenceDraft. Never
  * sends. Mirrors the /queue regenerate route. The founder reviews on
  * /cadences, then clicks Send next which calls sendCadenceStep.
@@ -1807,7 +1818,7 @@ export async function previewCadenceStep(input: {
    * rejected angle (`rotate`), not a rejected text.
    */
   rotateAngle?: boolean;
-}): Promise<CadenceStepPreview | CadenceStepWaiting> {
+}): Promise<CadenceStepPreview | CadenceStepWaiting | CadenceStepSkipped> {
   const ledger = getLedger();
   const cfg = loadConfig();
   const cadence = ledger.getCadence(input.prospectId, input.playName);
@@ -1835,11 +1846,21 @@ export async function previewCadenceStep(input: {
     // shows here instead of after a clean-looking draft has been paid for.
     const verdict = continuationInviteVerdict(input.prospectId);
     if (!verdict.ok) {
-      throw new Error(
-        verdict.reason === "guard-unavailable"
-          ? `${verdict.detail} — will retry`
-          : `${guardFlag(verdict)} — this step will be skipped`,
+      if (verdict.reason === "guard-unavailable") {
+        throw new Error(`${verdict.detail} — will retry`);
+      }
+      // A refusal can never be sent, so no reviewed draft will ever reach the
+      // send path that skips it, and only `cadence advance` runs that path
+      // unprompted. Take its outcome here, or the row stays overdue for good
+      // on an install that is run from the dashboard alone.
+      const done = skipContinuation(
+        { prospectId: input.prospectId, playName: input.playName, dryRun: false },
+        seq,
+        stepEntryIndex,
+        step,
+        guardFlag(verdict),
       );
+      return { skipped: true, message: done.note ?? "LinkedIn steps skipped" };
     }
   }
   if (step.channel === "linkedin" && step.id !== CONTINUATION_INVITE_ID) {
@@ -2039,7 +2060,7 @@ export async function previewCadenceStepBatch(items: BatchItem[]): Promise<Batch
         ...item,
         extraRecentBodies: accepted.get(item.playName) ?? [],
       });
-      if ("waiting" in preview) {
+      if ("waiting" in preview || "skipped" in preview) {
         return {
           prospectId: item.prospectId,
           playName: item.playName,

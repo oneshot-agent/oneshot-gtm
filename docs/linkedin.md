@@ -58,7 +58,7 @@ Set `linkedinContinuation: true` in the workspace config, or on a single trigger
 - `linkedin:1`: a first message once the invite is accepted. A person who was already connected skips the wait.
 - `linkedin:2`: a close.
 
-Every LinkedIn step is a draft you review on /cadences; the unattended runner never sends one. The invite goes through the same guard and daily quota as any connection request. If the guard refuses (a bot, someone already in a conversation, a profile already invited), previewing the invite shows the refusal instead of a draft, and sending skips the LinkedIn steps with that reason. An invite still pending after 21 days is withdrawn. A reply on any channel stops the whole cadence.
+Every LinkedIn step is a draft you review on /cadences; the unattended runner never sends one. The invite goes through the same guard and daily quota as any connection request. If the guard refuses (a bot, someone already in a conversation, a profile already invited), previewing the invite shows the refusal instead of a draft, records the step as skipped with that reason and completes the cadence, so the person leaves the active list without anything being sent. An invite still pending after 21 days is withdrawn. A reply on any channel stops the whole cadence.
 
 A cadence already running keeps the steps it was enrolled with; changing the setting affects only new cadences.
 

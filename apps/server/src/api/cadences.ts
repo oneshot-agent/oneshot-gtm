@@ -411,6 +411,10 @@ export async function previewCadenceStepRoute(
         req,
       );
     }
+    // The invite guard refused the person: the step is skipped and the cadence done.
+    if ("skipped" in preview) {
+      return jsonResponse({ skipped: true, message: preview.message }, 200, req);
+    }
     return jsonResponse(
       {
         subject: preview.subject,
