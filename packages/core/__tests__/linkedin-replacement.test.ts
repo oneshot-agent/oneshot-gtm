@@ -39,14 +39,14 @@ beforeEach(() => {
   store.saveAccount({
     key: "wallet:old",
     wallet: "wallet",
-    workspace: "gtm",
+    workspace: "alpha",
     account: account("old"),
     sync: null,
     checkedAt: null,
     error: null,
   });
   store.saveConversation("wallet:old", conversation("old-chat"), [], "old");
-  store.assign("linkedin:wallet:old:old-chat", { workspace: "sdk", prospectId: 7 });
+  store.assign("linkedin:wallet:old:old-chat", { workspace: "beta", prospectId: 7 });
   store.saveMessages("wallet:old", [message("old-message", "old-chat")]);
   store.saveIdentity("wallet:old", {
     providerId: "person",
@@ -69,7 +69,7 @@ it("keeps local history, identity cache, and manual ownership across a verified 
   });
   expect(store.threads()[0]).toMatchObject({
     key: "linkedin:wallet:old:old-chat",
-    owner: { workspace: "sdk", prospectId: 7, manual: true },
+    owner: { workspace: "beta", prospectId: 7, manual: true },
     sourceAccountId: "old",
   });
   expect(store.allMessages("wallet:old")).toHaveLength(1);
@@ -106,7 +106,7 @@ it("merges a replacement already captured by the other server", () => {
   store.saveAccount({
     key: "wallet:new",
     wallet: "wallet",
-    workspace: "gtm",
+    workspace: "alpha",
     account: account("new"),
     sync: null,
     checkedAt: null,
@@ -118,7 +118,7 @@ it("merges a replacement already captured by the other server", () => {
   expect(store.accounts()).toHaveLength(1);
   expect(store.threads()).toHaveLength(1);
   expect(store.allMessages("wallet:old")).toHaveLength(1);
-  expect(store.threads()[0]?.owner).toMatchObject({ manual: true, workspace: "sdk" });
+  expect(store.threads()[0]?.owner).toMatchObject({ manual: true, workspace: "beta" });
 });
 it("refuses to attach another person's login to the saved history", () => {
   expect(() => store.replaceAccount("wallet:old", account("new", "someone-else"), [])).toThrow(
@@ -159,7 +159,7 @@ it("reconciles regenerated provider chat/message IDs by unique exact cross-conne
   expect(store.threads()).toHaveLength(1);
   expect(store.threads()[0]).toMatchObject({
     key: "linkedin:wallet:old:old-chat",
-    owner: { workspace: "sdk", prospectId: 7, manual: true },
+    owner: { workspace: "beta", prospectId: 7, manual: true },
     conversation: { id: "new-chat" },
   });
   expect(store.allMessages("wallet:old")).toEqual([

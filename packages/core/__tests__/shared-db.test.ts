@@ -48,21 +48,21 @@ describe("SharedDb caches", () => {
 describe("contact touches", () => {
   it("reports a touch by ANOTHER workspace inside the window, never its own", () => {
     const db = new SharedDb(join(dir, "s.sqlite"));
-    db.recordTouch({ email: "Jane@Acme.dev", workspace: "sdk", playName: "show-hn" });
-    expect(db.recentTouchElsewhere("jane@acme.dev", "gtm")).toMatchObject({
-      workspace: "sdk",
+    db.recordTouch({ email: "Jane@Acme.dev", workspace: "beta", playName: "show-hn" });
+    expect(db.recentTouchElsewhere("jane@acme.dev", "alpha")).toMatchObject({
+      workspace: "beta",
       play_name: "show-hn",
     });
     // The same workspace's own touch is not "elsewhere".
-    expect(db.recentTouchElsewhere("jane@acme.dev", "sdk")).toBeNull();
+    expect(db.recentTouchElsewhere("jane@acme.dev", "beta")).toBeNull();
     db.close();
   });
 
   it("ignores touches older than the window", () => {
     const db = new SharedDb(join(dir, "s.sqlite"));
     const old = new Date(Date.now() - CONTACT_TOUCH_WINDOW_MS - 60_000).toISOString();
-    db.recordTouch({ email: "jane@acme.dev", workspace: "sdk", playName: "show-hn", sentAt: old });
-    expect(db.recentTouchElsewhere("jane@acme.dev", "gtm")).toBeNull();
+    db.recordTouch({ email: "jane@acme.dev", workspace: "beta", playName: "show-hn", sentAt: old });
+    expect(db.recentTouchElsewhere("jane@acme.dev", "alpha")).toBeNull();
     db.close();
   });
 
@@ -70,7 +70,7 @@ describe("contact touches", () => {
     const db = new SharedDb(join(dir, "s.sqlite"));
     db.recordTouch({
       email: "jane@acme.dev",
-      workspace: "sdk",
+      workspace: "beta",
       playName: "show-hn",
       sentAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
     });
@@ -80,18 +80,18 @@ describe("contact touches", () => {
       playName: "job-change",
       sentAt: new Date(Date.now() - 1 * 86_400_000).toISOString(),
     });
-    expect(db.recentTouchElsewhere("jane@acme.dev", "gtm")?.workspace).toBe("other");
+    expect(db.recentTouchElsewhere("jane@acme.dev", "alpha")?.workspace).toBe("other");
     expect(db.touchesFor("jane@acme.dev")).toHaveLength(2);
     db.close();
   });
 
   it("module helpers attribute to the current workspace name", () => {
-    process.env["ONESHOT_GTM_WORKSPACE"] = "gtm";
+    process.env["ONESHOT_GTM_WORKSPACE"] = "alpha";
     recordContactTouch("x@y.dev", "show-hn");
     // Same workspace → not elsewhere.
     expect(recentTouchElsewhere("x@y.dev")).toBeNull();
-    process.env["ONESHOT_GTM_WORKSPACE"] = "sdk";
-    expect(recentTouchElsewhere("x@y.dev")).toMatchObject({ workspace: "gtm" });
+    process.env["ONESHOT_GTM_WORKSPACE"] = "beta";
+    expect(recentTouchElsewhere("x@y.dev")).toMatchObject({ workspace: "alpha" });
   });
 });
 
@@ -132,26 +132,26 @@ describe("Ledger cache delegation + legacy import", () => {
 describe("atomic reservations (review findings on #36)", () => {
   it("claimTouch: first claim reserves, a concurrent claim from elsewhere is held", () => {
     const db = new SharedDb(join(dir, "s.sqlite"));
-    const a = db.claimTouch({ email: "x@y.dev", workspace: "sdk", playName: "p1" });
+    const a = db.claimTouch({ email: "x@y.dev", workspace: "beta", playName: "p1" });
     expect("reservationId" in a).toBe(true);
     // Reserved but not yet confirmed: the OTHER workspace must already see it.
-    const b = db.claimTouch({ email: "x@y.dev", workspace: "gtm", playName: "p2" });
-    expect("held" in b && b.held.workspace).toBe("sdk");
+    const b = db.claimTouch({ email: "x@y.dev", workspace: "alpha", playName: "p2" });
+    expect("held" in b && b.held.workspace).toBe("beta");
     expect("held" in b && b.held.status).toBe("reserved");
     db.close();
   });
 
   it("release makes the address claimable again; confirm turns it into a sent touch", () => {
     const db = new SharedDb(join(dir, "s.sqlite"));
-    const a = db.claimTouch({ email: "x@y.dev", workspace: "sdk", playName: "p1" });
+    const a = db.claimTouch({ email: "x@y.dev", workspace: "beta", playName: "p1" });
     db.releaseTouch((a as { reservationId: number }).reservationId);
-    expect(db.recentTouchElsewhere("x@y.dev", "gtm")).toBeNull();
-    const c = db.claimTouch({ email: "x@y.dev", workspace: "sdk", playName: "p1" });
+    expect(db.recentTouchElsewhere("x@y.dev", "alpha")).toBeNull();
+    const c = db.claimTouch({ email: "x@y.dev", workspace: "beta", playName: "p1" });
     db.confirmTouch((c as { reservationId: number }).reservationId);
-    expect(db.recentTouchElsewhere("x@y.dev", "gtm")?.status).toBe("sent");
+    expect(db.recentTouchElsewhere("x@y.dev", "alpha")?.status).toBe("sent");
     // release is a no-op on a confirmed row
     db.releaseTouch((c as { reservationId: number }).reservationId);
-    expect(db.recentTouchElsewhere("x@y.dev", "gtm")?.status).toBe("sent");
+    expect(db.recentTouchElsewhere("x@y.dev", "alpha")?.status).toBe("sent");
     db.close();
   });
 
@@ -162,10 +162,10 @@ describe("atomic reservations (review findings on #36)", () => {
       .prepare(
         "INSERT INTO contact_touches(email, workspace, play_name, sent_at, status) VALUES(?, ?, ?, ?, 'reserved')",
       )
-      .run("x@y.dev", "sdk", "p1", stale);
-    expect(db.recentTouchElsewhere("x@y.dev", "gtm")).toBeNull();
+      .run("x@y.dev", "beta", "p1", stale);
+    expect(db.recentTouchElsewhere("x@y.dev", "alpha")).toBeNull();
     expect(
-      "reservationId" in db.claimTouch({ email: "x@y.dev", workspace: "gtm", playName: "p2" }),
+      "reservationId" in db.claimTouch({ email: "x@y.dev", workspace: "alpha", playName: "p2" }),
     ).toBe(true);
     db.close();
   });
@@ -210,15 +210,15 @@ describe("second-round review findings (#36)", () => {
   });
 
   it("claimContactTouch reports the held row observed inside the claim, never re-queried", () => {
-    process.env["ONESHOT_GTM_WORKSPACE"] = "gtm";
-    getSharedDb().recordTouch({ email: "c@y.dev", workspace: "sdk", playName: "p" });
+    process.env["ONESHOT_GTM_WORKSPACE"] = "alpha";
+    getSharedDb().recordTouch({ email: "c@y.dev", workspace: "beta", playName: "p" });
     const claim = claimContactTouch({ email: "c@y.dev", playName: "q", override: false });
-    expect(claim.held).toMatchObject({ workspace: "sdk", play_name: "p" });
+    expect(claim.held).toMatchObject({ workspace: "beta", play_name: "p" });
     // …and it reserved nothing of its own.
     expect(
       getSharedDb()
         .touchesFor("c@y.dev")
-        .filter((t) => t.workspace === "gtm"),
+        .filter((t) => t.workspace === "alpha"),
     ).toEqual([]);
   });
 });
@@ -236,14 +236,14 @@ describe("schema upgrade of a pre-reservation shared file", () => {
     // fixture's date aged past the window (green 2026-08-26, red 08-27).
     const recentIso = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     raw.exec(
-      `INSERT INTO contact_touches(email, workspace, play_name, sent_at) VALUES('a@b.dev','sdk','p','${recentIso}')`,
+      `INSERT INTO contact_touches(email, workspace, play_name, sent_at) VALUES('a@b.dev','beta','p','${recentIso}')`,
     );
     raw.close();
     const one = new SharedDb(path);
     const two = new SharedDb(path);
     // Legacy rows read as confirmed sends.
     expect(one.touchesFor("a@b.dev")[0]).toMatchObject({ status: "sent" });
-    expect(two.recentTouchElsewhere("a@b.dev", "gtm")?.workspace).toBe("sdk");
+    expect(two.recentTouchElsewhere("a@b.dev", "alpha")?.workspace).toBe("beta");
     one.close();
     two.close();
   });

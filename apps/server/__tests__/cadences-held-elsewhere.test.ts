@@ -75,7 +75,7 @@ beforeEach(() => {
 describe("listCadences heldElsewhere", () => {
   it("carries the other workspace's touch and when the 7-day window ends", async () => {
     touches["held@x.io"] = {
-      workspace: "sdk",
+      workspace: "beta",
       play_name: "accelerator-batch",
       sent_at: "2026-10-05T20:13:44.829Z",
       status: "sent",
@@ -83,7 +83,7 @@ describe("listCadences heldElsewhere", () => {
     const body = await get();
     const byId = new Map(body.cadences.map((c) => [c.prospectId, c.heldElsewhere]));
     expect(byId.get(1)).toEqual({
-      workspace: "sdk",
+      workspace: "beta",
       playName: "accelerator-batch",
       sentAt: "2026-10-05T20:13:44.829Z",
       until: "2026-10-12T20:13:44.829Z",

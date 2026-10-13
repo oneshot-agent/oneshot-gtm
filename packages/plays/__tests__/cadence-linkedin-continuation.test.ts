@@ -21,14 +21,14 @@ vi.mock("@oneshot-gtm/core", async () => {
   return {
     ...actual,
     getLedger: () => ledger,
-    currentWorkspaceName: () => "gtm",
+    currentWorkspaceName: () => "alpha",
     loadConfig: () => ({
       founderName: "Founder",
       productOneLiner: "a GTM workspace",
       linkedinContinuation: continuationOn,
     }),
     linkedInConversationFor: () => null,
-    linkedInOutreachAccount: () => ({ workspace: "gtm", accountId: "acct-1" }),
+    linkedInOutreachAccount: () => ({ workspace: "alpha", accountId: "acct-1" }),
     hasAnySendCapacity: () => true,
     listInbox: async () => ({ emails: [], has_more: false }),
     logEvent: () => {},
@@ -356,7 +356,7 @@ describe("the connection request", () => {
       note: noteText,
       invitationId: "inv-1",
       accountId: "acct-1",
-      accountWorkspace: "gtm",
+      accountWorkspace: "alpha",
     });
     // The email intro is still the only step 0, so first-touch dedupe rests on it.
     const stepZero = ledger
@@ -636,7 +636,7 @@ describe("after the invite", () => {
       kind: "message",
       accountId: "acct-1",
       profile: "https://www.linkedin.com/in/dana-lee",
-      idempotencyKey: `gtm:gtm:cadence:${prospectId}:${PLAY}:3`,
+      idempotencyKey: `gtm:alpha:cadence:${prospectId}:${PLAY}:3`,
     });
     expect(state().current_step).toBe(3);
   });

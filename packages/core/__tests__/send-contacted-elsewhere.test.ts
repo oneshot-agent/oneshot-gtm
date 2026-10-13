@@ -51,7 +51,7 @@ const CTX = { playName: "show-hn", memo: "test" };
 const TO = "founder@startup.example";
 
 beforeEach(() => {
-  process.env["ONESHOT_GTM_WORKSPACE"] = "gtm";
+  process.env["ONESHOT_GTM_WORKSPACE"] = "alpha";
   assignSender.mockClear();
 });
 afterEach(() => {
@@ -60,18 +60,18 @@ afterEach(() => {
 
 describe("sendEmail cross-workspace hold", () => {
   it("refuses when another workspace emailed the recipient this week", async () => {
-    getSharedDb().recordTouch({ email: TO, workspace: "sdk", playName: "post-funding" });
+    getSharedDb().recordTouch({ email: TO, workspace: "beta", playName: "post-funding" });
     const err = await sendEmail({ to: TO, subject: "s", body: "b" }, CTX).catch((e: unknown) => e);
     expect(isRecentlyContacted(err)).toBe(true);
     expect(isSuppressedRecipient(err)).toBe(false);
-    expect((err as Error).message).toContain("workspace 'sdk'");
+    expect((err as Error).message).toContain("workspace 'beta'");
     expect((err as Error).message).toContain("post-funding");
     // Before routing: nothing pinned, nothing billed.
     expect(assignSender).not.toHaveBeenCalled();
   });
 
   it("is not triggered by this workspace's own prior touch", async () => {
-    getSharedDb().recordTouch({ email: "own@startup.example", workspace: "gtm", playName: "x" });
+    getSharedDb().recordTouch({ email: "own@startup.example", workspace: "alpha", playName: "x" });
     const err = await sendEmail({ to: "own@startup.example", subject: "s", body: "b" }, CTX).catch(
       (e: unknown) => e,
     );
@@ -82,7 +82,7 @@ describe("sendEmail cross-workspace hold", () => {
   });
 
   it("the manual override passes the gate", async () => {
-    getSharedDb().recordTouch({ email: TO, workspace: "sdk", playName: "post-funding" });
+    getSharedDb().recordTouch({ email: TO, workspace: "beta", playName: "post-funding" });
     const err = await sendEmail(
       { to: TO, subject: "s", body: "b", allowContactedElsewhere: true },
       CTX,
@@ -100,11 +100,11 @@ describe("reservation lifecycle around dispatch", () => {
   });
 
   it("a held send leaves no reservation of its own behind", async () => {
-    getSharedDb().recordTouch({ email: "h@startup.example", workspace: "sdk", playName: "p" });
+    getSharedDb().recordTouch({ email: "h@startup.example", workspace: "beta", playName: "p" });
     await sendEmail({ to: "h@startup.example", subject: "s", body: "b" }, CTX).catch(() => {});
     const mine = getSharedDb()
       .touchesFor("h@startup.example")
-      .filter((t) => t.workspace === "gtm");
+      .filter((t) => t.workspace === "alpha");
     expect(mine).toEqual([]);
   });
 });

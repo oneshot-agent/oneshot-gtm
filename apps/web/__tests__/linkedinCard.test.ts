@@ -17,7 +17,7 @@ const account = (over: Partial<LinkedInAccountView> = {}): LinkedInAccountView =
   key: "wallet:acc_1",
   id: "acc_1",
   name: "J. Nicolas",
-  workspace: "gtm",
+  workspace: "alpha",
   status: "connected",
   syncState: "partial",
   complete: false,

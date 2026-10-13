@@ -49,7 +49,7 @@ const sendLinkedInInviteMock = vi.fn();
 
 vi.mock("@oneshot-gtm/core", async () => ({
   getLedger: () => ledgerStub,
-  currentWorkspaceName: () => "gtm",
+  currentWorkspaceName: () => "alpha",
   channelOf: (await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core"))
     .channelOf,
   firstTouchSender: (await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core"))
@@ -439,7 +439,7 @@ describe("drainQueue LinkedIn rows", () => {
     expect(runStackConsolidationMock).not.toHaveBeenCalled();
     expect(sendLinkedInInviteMock.mock.calls[0]![0]).toMatchObject({
       note: "reviewed note",
-      workspace: "gtm",
+      workspace: "alpha",
     });
     expect(out.sent).toBe(1);
     expect(ledgerStub.setQueueProspectId).toHaveBeenCalledWith(30, 77);

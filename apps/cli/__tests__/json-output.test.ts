@@ -713,21 +713,21 @@ describe("domains list --json", () => {
 
 describe("workspace list --json", () => {
   const REGISTRY = {
-    default: "gtm",
+    default: "alpha",
     workspaces: {
       default: { home: "/home/default", port: 3030, createdAt: "" },
-      gtm: { home: "/home/gtm", port: 3031, createdAt: "2026-08-01T00:00:00.000Z" },
+      alpha: { home: "/home/alpha", port: 3031, createdAt: "2026-08-01T00:00:00.000Z" },
     },
   };
   const ROWS: Array<[string, WorkspaceEntryLike]> = [
     ["default", { home: "/home/default", port: 3030, createdAt: "" }],
-    ["gtm", { home: "/home/gtm", port: 3031, createdAt: "2026-08-01T00:00:00.000Z" }],
+    ["alpha", { home: "/home/alpha", port: 3031, createdAt: "2026-08-01T00:00:00.000Z" }],
   ];
 
   beforeEach(() => {
     workspaceRegistryFixture = REGISTRY;
     workspaceRowsFixture = ROWS;
-    currentWorkspaceFixture = "gtm";
+    currentWorkspaceFixture = "alpha";
   });
 
   it("emits valid JSON with schemaVersion on stdout", async () => {
@@ -758,7 +758,7 @@ describe("workspace list --json", () => {
 
     // Header + rows should be on stderr
     expect(stderr).toContain("oneshot-gtm workspaces");
-    expect(stderr).toContain("/home/gtm");
+    expect(stderr).toContain("/home/alpha");
   });
 
   it("pins the workspace shape, current and default flags", async () => {
@@ -766,8 +766,8 @@ describe("workspace list --json", () => {
 
     const stdout = stdoutChunks.join("");
     const parsed = JSON.parse(stdout);
-    expect(parsed.current).toBe("gtm");
-    expect(parsed.default).toBe("gtm");
+    expect(parsed.current).toBe("alpha");
+    expect(parsed.default).toBe("alpha");
     expect(parsed.workspaces[0]).toMatchObject({
       name: "default",
       port: 3030,
@@ -776,9 +776,9 @@ describe("workspace list --json", () => {
       isDefault: false,
     });
     expect(parsed.workspaces[1]).toMatchObject({
-      name: "gtm",
+      name: "alpha",
       port: 3031,
-      home: "/home/gtm",
+      home: "/home/alpha",
       isCurrent: true,
       isDefault: true,
     });

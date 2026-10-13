@@ -29,7 +29,7 @@ let linkedInResult: unknown = { invitation_id: "inv-1", status: "sent" };
 let accountResult: unknown = {};
 let accountSeq = 0;
 let account: { workspace: string; accountId: string } | null = {
-  workspace: "gtm",
+  workspace: "alpha",
   accountId: "acct-1",
 };
 
@@ -37,7 +37,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
-    currentWorkspaceName: () => "gtm",
+    currentWorkspaceName: () => "alpha",
     isDraining: () => false,
     linkedInOutreachAccount: () => account,
     getLedger: () => ({
@@ -117,7 +117,7 @@ beforeEach(() => {
   accountResult = {};
   _resetInviteLimitsCacheForTests();
   saveConfig({ ...loadConfig(), linkedin: undefined });
-  account = { workspace: "gtm", accountId: `acct-${++accountSeq}` };
+  account = { workspace: "alpha", accountId: `acct-${++accountSeq}` };
 });
 
 describe("send-draft on a LinkedIn row", () => {
@@ -274,7 +274,7 @@ describe("withdraw-invite", () => {
     seqEvents[0]!.metadata_json = JSON.stringify({
       invitationId: "inv-1",
       accountId: "acct-old",
-      accountWorkspace: "sdk",
+      accountWorkspace: "beta",
     });
     const res = await withdrawInviteRoute(post(), { id: "1" });
     expect(res.status).toBe(200);
