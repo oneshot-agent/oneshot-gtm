@@ -33,7 +33,7 @@ beforeEach(() => {
   );
   ledgers = [];
   matches = [];
-  for (const workspace of ["gtm", "sdk"]) {
+  for (const workspace of ["alpha", "beta"]) {
     const home = join(process.env.ONESHOT_GTM_HOME!, `${workspace}-${crypto.randomUUID()}`);
     mkdirSync(home);
     const ledger = new Ledger(join(home, "ledger.sqlite"));
@@ -143,9 +143,9 @@ it("replaying an existing historical reply stops a later cadence without duplica
 it("preserves manual ownership and old reply events when new matches become ambiguous", () => {
   resolve();
   deliver(conversation(), message(), [matches[0]!]);
-  store.assign("linkedin:account:chat", { workspace: "sdk", prospectId: matches[1]!.prospectId });
+  store.assign("linkedin:account:chat", { workspace: "beta", prospectId: matches[1]!.prospectId });
   deliver();
-  expect(store.threads()[0]!.owner).toMatchObject({ workspace: "sdk", manual: true });
+  expect(store.threads()[0]!.owner).toMatchObject({ workspace: "beta", manual: true });
   expect(ledgers[0]!.listChannelEventsForProspect(matches[0]!.prospectId)).toHaveLength(1);
   expect(ledgers[1]!.listChannelEventsForProspect(matches[1]!.prospectId)).toHaveLength(1);
 });

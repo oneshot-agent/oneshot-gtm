@@ -6,7 +6,7 @@ import { getLedger } from "@oneshot-gtm/core";
 
 const linkedInCalls: Array<Record<string, unknown>> = [];
 let account: { workspace: string; accountId: string; canInvite: boolean } | null = {
-  workspace: "gtm",
+  workspace: "alpha",
   accountId: "acct-1",
   canInvite: true,
 };
@@ -76,7 +76,7 @@ const idParam = (id: number) => ({ id: String(id) });
 
 beforeEach(() => {
   linkedInCalls.length = 0;
-  account = { workspace: "gtm", accountId: "acct-1", canInvite: true };
+  account = { workspace: "alpha", accountId: "acct-1", canInvite: true };
   note = "We traded emails last week. Connecting so the next hello isn't cold.";
 });
 
@@ -107,7 +107,7 @@ describe("GET /api/prospects/:id/linkedin-friend", () => {
   });
 
   it("doesn't offer it when the account lacks the invite grant", async () => {
-    account = { workspace: "gtm", accountId: "acct-1", canInvite: false };
+    account = { workspace: "alpha", accountId: "acct-1", canInvite: false };
     const body = (await linkedInFriendRoute(get("/x"), idParam(replier(["meeting"]))).json()) as {
       canConnect: boolean;
       reason: string;

@@ -3,7 +3,7 @@ import { composeTitle, resolveRouteTitle, SUFFIX } from "../src/lib/documentTitl
 
 describe("composeTitle", () => {
   it("names the page and the workspace", () => {
-    expect(composeTitle("Queue", "sdk")).toBe(`Queue · sdk · ${SUFFIX}`);
+    expect(composeTitle("Queue", "beta")).toBe(`Queue · beta · ${SUFFIX}`);
   });
 
   it("drops the default workspace, the way the sidebar dot does", () => {
@@ -11,7 +11,7 @@ describe("composeTitle", () => {
   });
 
   it("survives a route with no declared title", () => {
-    expect(composeTitle(null, "gtm")).toBe(`gtm · ${SUFFIX}`);
+    expect(composeTitle(null, "alpha")).toBe(`alpha · ${SUFFIX}`);
     expect(composeTitle(null, null)).toBe(SUFFIX);
   });
 

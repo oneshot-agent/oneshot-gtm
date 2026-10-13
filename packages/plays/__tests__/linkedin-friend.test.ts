@@ -33,7 +33,7 @@ function sender(result: unknown = { invitation_id: "inv-1", status: "sent" }) {
     calls,
     sender: {
       accountId: "acct-1",
-      workspace: "gtm",
+      workspace: "alpha",
       call: async (op: unknown) => {
         calls.push(op as never);
         if (result instanceof Error) throw result;
@@ -98,14 +98,14 @@ describe("sendFriendInvite", () => {
       prospectId: id,
       note: "We traded emails. Connecting so the next hello isn't cold.",
       sender: s,
-      workspace: "gtm",
+      workspace: "alpha",
     });
     expect(out).toEqual({ sent: true, status: "sent", invitationId: "inv-1" });
     expect(invites(calls)).toHaveLength(1);
     expect(invites(calls)[0]).toMatchObject({
       note: "We traded emails. Connecting so the next hello isn't cold.",
       playName: LINKEDIN_FRIEND_PLAY,
-      idempotencyKey: `gtm:gtm:cadence:${id}:${LINKEDIN_FRIEND_PLAY}:${LINKEDIN_FRIEND_STEP_INDEX}:invite`,
+      idempotencyKey: `gtm:alpha:cadence:${id}:${LINKEDIN_FRIEND_PLAY}:${LINKEDIN_FRIEND_STEP_INDEX}:invite`,
     });
 
     const events = core.getLedger().listLinkedInInviteEvents(id, LINKEDIN_FRIEND_PLAY);
@@ -124,7 +124,7 @@ describe("sendFriendInvite", () => {
   it("creates no follow-up: no cadence, no later step, nothing due", async () => {
     const id = replier("meeting");
     const { sender: s } = sender();
-    await sendFriendInvite({ prospectId: id, note: "hello", sender: s, workspace: "gtm" });
+    await sendFriendInvite({ prospectId: id, note: "hello", sender: s, workspace: "alpha" });
     const ledger = core.getLedger();
     expect(ledger.getCadence(id, LINKEDIN_FRIEND_PLAY)).toBeNull();
     expect(ledger.listSequenceEventsForProspectPlay(id, LINKEDIN_FRIEND_PLAY)).toHaveLength(1);
@@ -135,7 +135,7 @@ describe("sendFriendInvite", () => {
   it("is never a first touch: no step 0 for the prospect", async () => {
     const id = replier("partnership");
     const { sender: s } = sender();
-    await sendFriendInvite({ prospectId: id, note: "hello", sender: s, workspace: "gtm" });
+    await sendFriendInvite({ prospectId: id, note: "hello", sender: s, workspace: "alpha" });
     const steps = core
       .getLedger()
       .listSequenceEventsForProspectPlay(id, LINKEDIN_FRIEND_PLAY)
@@ -153,7 +153,12 @@ describe("sendFriendInvite", () => {
   ])("never sends to someone with a %s reply, even next to a positive one", async (veto) => {
     const id = replier("interested", { extra: [veto] });
     const { sender: s, calls } = sender();
-    const out = await sendFriendInvite({ prospectId: id, note: "hi", sender: s, workspace: "gtm" });
+    const out = await sendFriendInvite({
+      prospectId: id,
+      note: "hi",
+      sender: s,
+      workspace: "alpha",
+    });
     expect(out.sent).toBe(false);
     expect(calls).toHaveLength(0);
     expect(core.getLedger().listLinkedInInviteEvents(id, LINKEDIN_FRIEND_PLAY)).toHaveLength(0);
@@ -166,7 +171,7 @@ describe("sendFriendInvite", () => {
         prospectId: id,
         note: "hi",
         sender: s,
-        workspace: "gtm",
+        workspace: "alpha",
       });
       expect(out.sent).toBe(false);
     }
@@ -182,7 +187,7 @@ describe("sendFriendInvite", () => {
       "More at https://example.com/me",
     ];
     for (const [i, note] of notes.entries()) {
-      const out = await sendFriendInvite({ prospectId: id, note, sender: s, workspace: "gtm" });
+      const out = await sendFriendInvite({ prospectId: id, note, sender: s, workspace: "alpha" });
       expect(out.sent).toBe(false);
       expect((out as { flags: string[] }).flags[0]).toMatch(
         [/^note-question:/, /^note-pitch:/, /^note-link:/][i]!,
@@ -196,7 +201,12 @@ describe("sendFriendInvite", () => {
     const id = replier("interested");
     core.getSharedDb().markLinkedInTouched({ slug: `person-${seq}`, source: "invite:other" });
     const { sender: s, calls } = sender();
-    const out = await sendFriendInvite({ prospectId: id, note: "hi", sender: s, workspace: "gtm" });
+    const out = await sendFriendInvite({
+      prospectId: id,
+      note: "hi",
+      sender: s,
+      workspace: "alpha",
+    });
     expect(out.sent).toBe(false);
     expect((out as { flags: string[] }).flags[0]).toMatch(/^already-invited:/);
     expect(calls).toHaveLength(0);
@@ -234,7 +244,12 @@ describe("sendFriendInvite", () => {
       } as never,
     ]);
     const { sender: s, calls } = sender();
-    const out = await sendFriendInvite({ prospectId: id, note: "hi", sender: s, workspace: "gtm" });
+    const out = await sendFriendInvite({
+      prospectId: id,
+      note: "hi",
+      sender: s,
+      workspace: "alpha",
+    });
     expect(out.sent).toBe(false);
     expect((out as { flags: string[] }).flags[0]).toMatch(/^already-in-conversation:/);
     expect(invites(calls)).toHaveLength(0);
@@ -248,14 +263,14 @@ describe("sendFriendInvite", () => {
       prospectId: replier("interested"),
       note: "hi",
       sender: s,
-      workspace: "gtm",
+      workspace: "alpha",
     });
     expect(first.sent).toBe(true);
     const second = await sendFriendInvite({
       prospectId: replier("question"),
       note: "hi",
       sender: s,
-      workspace: "gtm",
+      workspace: "alpha",
     }).catch((e: unknown) => e);
     expect(core.isSendDeferred(second)).toBe(true);
     expect(invites(calls)).toHaveLength(1);
@@ -265,7 +280,7 @@ describe("sendFriendInvite", () => {
     const { sender: s, calls } = sender();
     const id = replier("interested");
     expect(
-      await sendFriendInvite({ prospectId: id, note: "  ", sender: s, workspace: "gtm" }),
+      await sendFriendInvite({ prospectId: id, note: "  ", sender: s, workspace: "alpha" }),
     ).toMatchObject({
       sent: false,
     });
@@ -274,7 +289,7 @@ describe("sendFriendInvite", () => {
         prospectId: id,
         note: "x".repeat(FRIEND_NOTE_MAX_CHARS + 1),
         sender: s,
-        workspace: "gtm",
+        workspace: "alpha",
       }),
     ).toMatchObject({ sent: false });
     expect(calls).toHaveLength(0);

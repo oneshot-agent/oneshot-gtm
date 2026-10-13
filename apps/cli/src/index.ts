@@ -7,7 +7,7 @@ import {
   type LinkedInInvitesOptions,
   type MeasureOptions,
 } from "./commands/measure-linkedin.ts";
-import { Command, InvalidArgumentError } from "commander";
+import { Command, InvalidArgumentError, Option } from "commander";
 
 /** Option parser for counts that must be at least 1; `0` or `abc` is an error, not the default. */
 function positiveInt(flag: string): (v: string) => number {
@@ -127,7 +127,7 @@ program
   .name("oneshot-gtm")
   .description(
     "Open-source GTM agent for technical founders. Pay-per-result. Signed receipts.\n" +
-      "The CLI is a thin headless layer; ad-hoc target discovery + review + send happens in the dashboard (oneshot-gtm ui).",
+      "Use the dashboard (oneshot-gtm ui) for ad-hoc discovery, review and sending.",
   )
   .version(CLI_VERSION)
   // main.ts consumes this before core imports. Declare it here for --help
@@ -142,9 +142,9 @@ program
   .action(runOrFail((opts: { json?: boolean }) => commandDoctor(opts)));
 program
   .command("compact-receipts")
-  .description("Trim old receipt payloads (scraped pages etc.) and VACUUM the ledger")
+  .description("Shrink the local data file by trimming old receipt payloads")
   .option("--apply", "write the trim; without it the run is a dry run", false)
-  .option("--no-vacuum", "trim only; skip the VACUUM that shrinks the file")
+  .option("--no-vacuum", "trim only; skip shrinking the data file")
   .action(
     runOrFail((opts: { apply: boolean; vacuum: boolean }) => {
       commandCompactReceipts(opts);
@@ -158,7 +158,9 @@ program
     (v) => Number.parseInt(v, 10),
   )
   .option("--no-browser", "do not auto-open the browser")
-  .option("--dev", "use vite dev server (5173) + API server", false)
+  .addOption(
+    new Option("--dev", "use vite dev server (5173) + API server").default(false).hideHelp(),
+  )
   .option(
     "--install-service",
     "print a launchd plist (macOS) / systemd user unit (Linux) that starts this workspace's dashboard at login; doesn't start it now",
@@ -199,9 +201,7 @@ program
 
 // Demo: a fictional, deterministic install in its own home, for screenshots and
 // video. Never reads or writes the real ledger.
-const demo = program
-  .command("demo")
-  .description("Seed and run a self-contained demo install (for screenshots and video)");
+const demo = program.command("demo").description("Seed and run a self-contained demo install");
 demo
   .command("seed")
   .option("--home <dir>", "where to build the demo install", DEFAULT_DEMO_HOME)
@@ -227,7 +227,9 @@ demo
     3030,
   )
   .option("--no-browser", "do not auto-open the browser")
-  .option("--dev", "use vite dev server (5173) + API server", false)
+  .addOption(
+    new Option("--dev", "use vite dev server (5173) + API server").default(false).hideHelp(),
+  )
   .description("Open the dashboard against the demo install")
   .action(
     runOrFail(async (opts: { home: string; port: number; browser: boolean; dev: boolean }) => {
@@ -299,14 +301,12 @@ config
   .action(runOrFail((state: string) => configTelemetry(state === "on" ? "on" : "off")));
 config
   .command("x-engine [engine]")
-  .description(
-    "Show or switch the x-reposters data provider (xapi = first-party X API, twitterapiio = ~55x cheaper third-party)",
-  )
+  .description("Show or switch the x-reposters data source (xapi or twitterapiio)")
   .action(runOrFail((engine?: string) => configXEngine(engine)));
 config
   .command("linkedin-session")
   .description(
-    "Connect your LinkedIn session to a OneShot browser profile (hosted login, or the stored li_at cookie) so person research can read live profiles",
+    "Connect your LinkedIn session to a OneShot browser profile so person research can read live profiles",
   )
   .option("--login", "log in through a hosted browser even when a cookie is stored")
   .action(runOrFail((opts: { login?: boolean }) => configLinkedInSession(opts)));
@@ -670,7 +670,7 @@ find
   )
   .option("--no-rejudge", "keep the stored ICP verdict; skip the person-gate re-judge")
   .option("--no-company", "skip the company lookup for the current employer")
-  .option("--no-live", "skip the live LinkedIn profile read (provider history only)")
+  .option("--no-live", "skip the live LinkedIn profile read")
   .option(
     "--cache-only",
     "re-derive from cached research only: rows with nothing cached are left alone, nothing is billed",
@@ -741,7 +741,7 @@ find
   .option("--refresh", "re-research rows that already carry person research", false)
   .option("--no-rejudge", "keep the row's ICP verdict; skip the person-gate re-judge")
   .option("--no-company", "skip the company lookup for the current employer")
-  .option("--no-live", "skip the live LinkedIn profile read (provider history only)")
+  .option("--no-live", "skip the live LinkedIn profile read")
   .option(
     "--cache-only",
     "re-derive from cached research only: rows with nothing cached are left alone, nothing is billed",
@@ -930,11 +930,7 @@ find
     Number.parseInt(v, 10),
   )
   .option("--refresh", "re-synthesize prospects that already have an angle", false)
-  .option(
-    "--cheap",
-    "free evidence tiers only; skips a fresh deepResearchPerson/webRead call",
-    false,
-  )
+  .option("--cheap", "use free evidence only; make no paid research calls", false)
   .option(
     "--apply",
     "write each angle as the active one instead of proposing it for review on /queue",
@@ -1035,9 +1031,9 @@ find
     },
   )
   .option("--refresh", "re-derive rows that already carry a fitReason", false)
-  .option("--no-generate", "free rungs only (notes, person gate); never call the model")
+  .option("--no-generate", "free sources only")
   .description(
-    "Backfill the row's ICP-fit sentence onto pending/approved queue rows (free rungs first; generation capped)",
+    "Backfill the row's ICP-fit sentence onto pending/approved queue rows (free sources first; model spend capped)",
   )
   .action(
     runOrFail(
@@ -1063,15 +1059,13 @@ find
 
 find
   .command("calibrate")
-  .option("--fit", "fit finders that meet the floors and write the artifact", false)
+  .option("--fit", "calibrate finders that have enough data and save the result", false)
   .description(
-    "Readiness-gated outcome calibration for priority scores (shadow only; no --force by design)",
+    "Calibrate priority scores against recorded outcomes. Runs only when enough outcomes exist.",
   )
   .action(runOrFail((opts: { fit: boolean }) => commandCalibrate({ fit: opts.fit })));
 
-const cadence = program
-  .command("cadence")
-  .description("Multi-touch sequence engine for in-flight prospects");
+const cadence = program.command("cadence").description("Manage follow-up sequences");
 cadence
   .command("advance")
   .option("--dry-run", "preview which steps would fire without sending", false)
@@ -1130,9 +1124,7 @@ motion
   )
   .option("--skip-sms", "skip the same-day SMS even if phone is present", false)
   .option("--dry-run", "preview without sending", false)
-  .description(
-    "Same-day SMS + email recovery for demo no-shows; cadence engine handles day-3 follow-up",
-  )
+  .description("Same-day SMS + email recovery for demo no-shows; a day-3 follow-up is scheduled")
   .action(
     runOrFail(async (opts: { target: string; skipSms: boolean; dryRun: boolean }) => {
       await commandMotionDemoNoShow({
@@ -1148,10 +1140,10 @@ motion
     "-t, --target <file>",
     "JSON file: { name, email, company, competitor, evidenceUrl?, evidenceText?, yourEdge }[]",
   )
-  .option("--skip-browser", "skip the browser-automation evidence scrape", false)
+  .option("--skip-browser", "skip the browser evidence scrape", false)
   .option("--dry-run", "preview without sending", false)
   .description(
-    "Migration-honesty pitch when prospect uses a known competitor (with optional G2/BuiltWith scrape)",
+    "Migration-honesty pitch when prospect uses a known competitor (optionally collects public evidence)",
   )
   .action(
     runOrFail(async (opts: { target: string; skipBrowser: boolean; dryRun: boolean }) => {
@@ -1312,7 +1304,7 @@ pmf
   .option("--custom-survey-url <url>", "skip the SDK Build step and use this URL instead")
   .option("--primary-color <hex>", "brand primary color (e.g. #FF5733)")
   .option("--dry-run", "draft only; do not build site or send", false)
-  .description("Deploy a Superhuman 5-question PMF survey via SDK Build + Email")
+  .description("Build a 5-question PMF survey page and email it to a cohort (paid).")
   .action(runOrFail(commandPmfSurvey));
 pmf
   .command("survey-collect")
@@ -1335,7 +1327,7 @@ const measure = program
   .action(runOrFail((opts: MeasureOptions) => commandMeasure(opts)));
 measure
   .command("benchmark")
-  .description("Compare this install with the opt-in telemetry cohort")
+  .description("Compare this install with the anonymous telemetry cohort (needs telemetry on)")
   .option("--json", "output as JSON")
   .action(
     runOrFail((_opts: { json?: boolean }, cmd: Command) =>
@@ -1392,7 +1384,7 @@ intel
     "let a re-label replace an existing unsubscribe (off by default)",
   )
   .description(
-    "Label persisted human replies with the configured reply classifier (labels only; never triggers cadence or opt-out actions)",
+    "Classify intent on older replies that have none. Labels only; never triggers follow-ups or opt-outs.",
   )
   .action(
     runOrFail(

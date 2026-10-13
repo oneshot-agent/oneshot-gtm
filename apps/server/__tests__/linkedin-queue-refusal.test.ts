@@ -12,7 +12,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
-    linkedInOutreachAccount: () => ({ workspace: "gtm", accountId: "acct-refusal" }),
+    linkedInOutreachAccount: () => ({ workspace: "alpha", accountId: "acct-refusal" }),
   };
 });
 vi.mock("../src/linkedin-client.ts", () => ({

@@ -105,7 +105,7 @@ const compute = (
 ): ReturnType<typeof computeLinkedInFunnel> =>
   computeLinkedInFunnel({
     source: ledger.readLinkedInFunnelSource(),
-    workspace: "gtm",
+    workspace: "alpha",
     now: NOW,
     filters,
     conversationFor: ({ prospectId }) => conversations.get(prospectId) ?? null,
@@ -293,7 +293,7 @@ describe("LinkedIn funnel", () => {
   it("reads rates over a zero denominator as null, not zero", () => {
     const view = computeLinkedInFunnel({
       source: { events: [], prospects: [], replies: [] },
-      workspace: "gtm",
+      workspace: "alpha",
       now: NOW,
       conversationFor: () => null,
     }).view;

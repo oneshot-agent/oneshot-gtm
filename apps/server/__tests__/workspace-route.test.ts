@@ -9,13 +9,13 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 // temp dir here via ONESHOT_GTM_WORKSPACES so the real registry is never read.
 
 const tmp = mkdtempSync(join(tmpdir(), "oneshot-ws-route-"));
-const gtmHome = join(tmp, "gtm");
-mkdirSync(gtmHome, { recursive: true });
+const alphaHome = join(tmp, "alpha");
+mkdirSync(alphaHome, { recursive: true });
 writeFileSync(
   join(tmp, "registry.json"),
   JSON.stringify({
     default: "default",
-    workspaces: { gtm: { home: gtmHome, port: 3999, createdAt: "2026-08-24T00:00:00Z" } },
+    workspaces: { alpha: { home: alphaHome, port: 3999, createdAt: "2026-08-24T00:00:00Z" } },
   }),
 );
 process.env["ONESHOT_GTM_WORKSPACES"] = tmp;
@@ -51,16 +51,16 @@ describe("GET /api/workspace", () => {
     expect(out.current.port).toBe(3030);
 
     const names = out.workspaces.map((w) => w.name);
-    expect(names).toEqual(["default", "gtm"]);
+    expect(names).toEqual(["default", "alpha"]);
 
     const self = out.workspaces.find((w) => w.name === "default")!;
     // Current is running by definition: no self-probe.
     expect(self.isCurrent).toBe(true);
     expect(self.running).toBe(true);
 
-    const gtm = out.workspaces.find((w) => w.name === "gtm")!;
-    expect(gtm.port).toBe(3999);
-    expect(gtm.running).toBe(false); // probe rejected above
+    const alpha = out.workspaces.find((w) => w.name === "alpha")!;
+    expect(alpha.port).toBe(3999);
+    expect(alpha.running).toBe(false); // probe rejected above
   });
 });
 
@@ -85,15 +85,15 @@ describe("POST /api/workspace/launch", () => {
     const spawns: Array<{ binPath: string; env: Record<string, string | undefined> }> = [];
     _setLaunchSpawn((opts) => spawns.push(opts));
 
-    const res = await workspaceLaunch(req({ name: "gtm" }));
+    const res = await workspaceLaunch(req({ name: "alpha" }));
     const out = (await res.json()) as { status: string; port: number };
     expect(out).toEqual({ status: "starting", port: 3999 });
 
     expect(spawns).toHaveLength(1);
     const { binPath, env } = spawns[0]!;
     expect(binPath).toMatch(/bin\.ts$/);
-    expect(env["ONESHOT_GTM_HOME"]).toBe(gtmHome);
-    expect(env["ONESHOT_GTM_WORKSPACE"]).toBe("gtm");
+    expect(env["ONESHOT_GTM_HOME"]).toBe(alphaHome);
+    expect(env["ONESHOT_GTM_WORKSPACE"]).toBe("alpha");
     expect(env["PORT"]).toBe("3999");
     expect(env["ONESHOT_GTM_NO_BROWSER"]).toBe("1");
     // A dev-mode parent must not leak its vite URL. The child would 302 the
@@ -108,7 +108,7 @@ describe("POST /api/workspace/launch", () => {
     const spawns: unknown[] = [];
     _setLaunchSpawn((opts) => spawns.push(opts));
 
-    const res = await workspaceLaunch(req({ name: "gtm" }));
+    const res = await workspaceLaunch(req({ name: "alpha" }));
     const out = (await res.json()) as { status: string };
     expect(out.status).toBe("already-running");
     expect(spawns).toHaveLength(0);

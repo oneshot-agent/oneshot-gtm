@@ -40,61 +40,61 @@ describe("registry", () => {
   });
 
   it("creates a workspace under the container with the next free port", () => {
-    const a = createWorkspace("gtm");
-    const b = createWorkspace("sdk");
-    expect(a.home).toBe(join(dir, "gtm"));
+    const a = createWorkspace("alpha");
+    const b = createWorkspace("beta");
+    expect(a.home).toBe(join(dir, "alpha"));
     expect(a.port).toBe(3031);
     expect(b.port).toBe(3032);
-    expect(resolveWorkspaceHome("sdk")).toBe(b.home);
+    expect(resolveWorkspaceHome("beta")).toBe(b.home);
   });
 
   it("rejects bad names, duplicates and the reserved default", () => {
     expect(() => createWorkspace("Bad Name")).toThrow(WorkspaceError);
-    createWorkspace("gtm");
-    expect(() => createWorkspace("gtm")).toThrow(/already exists/);
+    createWorkspace("alpha");
+    expect(() => createWorkspace("alpha")).toThrow(/already exists/);
     expect(() => createWorkspace("default")).toThrow(/built-in/);
   });
 
   it("use/remove update the default and never delete files", () => {
-    const e = createWorkspace("gtm");
-    setDefaultWorkspace("gtm");
-    expect(loadRegistry().default).toBe("gtm");
-    const removed = removeWorkspace("gtm");
+    const e = createWorkspace("alpha");
+    setDefaultWorkspace("alpha");
+    expect(loadRegistry().default).toBe("alpha");
+    const removed = removeWorkspace("alpha");
     expect(removed.home).toBe(e.home);
     expect(loadRegistry().default).toBe(DEFAULT_WORKSPACE);
     expect(() => removeWorkspace("default")).toThrow(WorkspaceError);
   });
 
   it("maps a home back to its workspace name, following symlink-free canonical paths", () => {
-    const e = createWorkspace("gtm");
-    expect(workspaceNameForHome(e.home)).toBe("gtm");
-    expect(workspaceNameForHome(`${e.home}/`)).toBe("gtm");
+    const e = createWorkspace("alpha");
+    expect(workspaceNameForHome(e.home)).toBe("alpha");
+    expect(workspaceNameForHome(`${e.home}/`)).toBe("alpha");
     expect(workspaceNameForHome(join(dir, "nope"))).toBeNull();
   });
 });
 
 describe("selection (what the bootstrap shim does)", () => {
   it("flag > env > registry default", () => {
-    createWorkspace("gtm");
-    createWorkspace("sdk");
-    setDefaultWorkspace("sdk");
+    createWorkspace("alpha");
+    createWorkspace("beta");
+    setDefaultWorkspace("beta");
     const reg = loadRegistry();
     expect(
       resolveWorkspaceSelection({
-        flag: "gtm",
-        envWorkspace: "sdk",
+        flag: "alpha",
+        envWorkspace: "beta",
         envHome: undefined,
         registry: reg,
       }).name,
-    ).toBe("gtm");
+    ).toBe("alpha");
     expect(
       resolveWorkspaceSelection({
         flag: null,
-        envWorkspace: "gtm",
+        envWorkspace: "alpha",
         envHome: undefined,
         registry: reg,
       }).name,
-    ).toBe("gtm");
+    ).toBe("alpha");
     expect(
       resolveWorkspaceSelection({
         flag: null,
@@ -102,7 +102,7 @@ describe("selection (what the bootstrap shim does)", () => {
         envHome: undefined,
         registry: reg,
       }).name,
-    ).toBe("sdk");
+    ).toBe("beta");
   });
 
   it("an explicit ONESHOT_GTM_HOME wins, and conflicts with --workspace", () => {
@@ -116,7 +116,7 @@ describe("selection (what the bootstrap shim does)", () => {
     expect(sel.home).toBe(join(dir, "elsewhere"));
     expect(() =>
       resolveWorkspaceSelection({
-        flag: "gtm",
+        flag: "alpha",
         envWorkspace: undefined,
         envHome: join(dir, "elsewhere"),
         registry: reg,
@@ -125,7 +125,7 @@ describe("selection (what the bootstrap shim does)", () => {
   });
 
   it("an unknown name is a legible error listing what exists", () => {
-    createWorkspace("gtm");
+    createWorkspace("alpha");
     expect(() =>
       resolveWorkspaceSelection({
         flag: "nope",
@@ -133,19 +133,22 @@ describe("selection (what the bootstrap shim does)", () => {
         envHome: undefined,
         registry: loadRegistry(),
       }),
-    ).toThrow(/no workspace named 'nope' \(known: default, gtm\)/);
+    ).toThrow(/no workspace named 'nope' \(known: default, alpha\)/);
   });
 });
 
 describe("extractWorkspaceFlag", () => {
   it("strips --workspace in both spellings and leaves the rest of argv intact", () => {
-    expect(extractWorkspaceFlag(["--workspace", "gtm", "ui", "--port", "4"])).toEqual({
-      flag: "gtm",
+    expect(extractWorkspaceFlag(["--workspace", "alpha", "ui", "--port", "4"])).toEqual({
+      flag: "alpha",
       argv: ["ui", "--port", "4"],
     });
-    expect(extractWorkspaceFlag(["ui", "--workspace=sdk"])).toEqual({ flag: "sdk", argv: ["ui"] });
-    expect(extractWorkspaceFlag(["-w", "gtm", "doctor"])).toEqual({
-      flag: "gtm",
+    expect(extractWorkspaceFlag(["ui", "--workspace=beta"])).toEqual({
+      flag: "beta",
+      argv: ["ui"],
+    });
+    expect(extractWorkspaceFlag(["-w", "alpha", "doctor"])).toEqual({
+      flag: "alpha",
       argv: ["doctor"],
     });
     expect(extractWorkspaceFlag(["doctor"])).toEqual({ flag: null, argv: ["doctor"] });
@@ -174,13 +177,13 @@ describe("second-round review findings (#37)", () => {
     const a = resolveWorkspaceSelection({
       flag: null,
       envWorkspace: undefined,
-      envHome: join(dir, "a", "gtm"),
+      envHome: join(dir, "a", "alpha"),
       registry: reg,
     });
     const b = resolveWorkspaceSelection({
       flag: null,
       envWorkspace: undefined,
-      envHome: join(dir, "b", "gtm"),
+      envHome: join(dir, "b", "alpha"),
       registry: reg,
     });
     expect(a.name).not.toBe(b.name);
@@ -190,7 +193,7 @@ describe("second-round review findings (#37)", () => {
   it("a relative ONESHOT_GTM_WORKSPACES is stored absolute", () => {
     process.env["ONESHOT_GTM_WORKSPACES"] = "./rel-ws-" + process.pid;
     try {
-      const e = createWorkspace("gtm");
+      const e = createWorkspace("alpha");
       expect(e.home.startsWith("/")).toBe(true);
     } finally {
       rmSync(resolve("./rel-ws-" + process.pid), { recursive: true, force: true });
@@ -198,9 +201,9 @@ describe("second-round review findings (#37)", () => {
   });
 
   it("portForHome keys on the home, so a same-basename unregistered home gets the fallback", () => {
-    const e = createWorkspace("gtm");
+    const e = createWorkspace("alpha");
     expect(portForHome(e.home)).toBe(e.port);
-    expect(portForHome(join(dir, "elsewhere", "gtm"))).toBe(BASE_PORT);
+    expect(portForHome(join(dir, "elsewhere", "alpha"))).toBe(BASE_PORT);
   });
 });
 
@@ -220,7 +223,7 @@ describe("third-round review findings (#38)", () => {
     writeFileSync(lock, "");
     const old = new Date(Date.now() - 60_000);
     utimesSync(lock, old, old);
-    expect(() => createWorkspace("gtm")).not.toThrow();
+    expect(() => createWorkspace("alpha")).not.toThrow();
     // …and the lock is released afterwards.
     expect(require("node:fs").existsSync(lock)).toBe(false);
   });
@@ -250,11 +253,11 @@ describe("fourth-round review findings (#38)", () => {
   });
 
   it("refuses to recreate a workspace over a removed one's leftover files", () => {
-    const e = createWorkspace("gtm");
+    const e = createWorkspace("alpha");
     const { writeFileSync } = require("node:fs") as typeof import("node:fs");
     writeFileSync(join(e.home, "ledger.sqlite"), "stale");
-    removeWorkspace("gtm");
-    expect(() => createWorkspace("gtm")).toThrow(/already has files/);
+    removeWorkspace("alpha");
+    expect(() => createWorkspace("alpha")).toThrow(/already has files/);
   });
 
   it("a registry whose `workspaces` is an array is treated as empty, and creates persist", () => {
@@ -265,7 +268,7 @@ describe("fourth-round review findings (#38)", () => {
       JSON.stringify({ default: "default", workspaces: [] }),
     );
     expect(loadRegistry().workspaces).toEqual({});
-    createWorkspace("gtm");
-    expect(Object.keys(loadRegistry().workspaces)).toEqual(["gtm"]);
+    createWorkspace("alpha");
+    expect(Object.keys(loadRegistry().workspaces)).toEqual(["alpha"]);
   });
 });

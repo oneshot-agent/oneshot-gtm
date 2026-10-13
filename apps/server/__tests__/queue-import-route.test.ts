@@ -82,7 +82,7 @@ const good = {
     icpVerdict: "reject",
     fitReason: "fits the other product",
   },
-  movedFrom: { workspace: "sdk", queueId: 746 },
+  movedFrom: { workspace: "beta", queueId: 746 },
 };
 
 beforeEach(() => {
@@ -149,14 +149,14 @@ describe("POST /api/queue/import", () => {
     expect(input["playName"]).toBe("luma-events");
     expect(input["dedupeKey"]).toBe("luma:ada@example.com");
     expect(input["source"]).toBe("find:luma-events:ai-builders-sf");
-    expect(input["notes"]).toBe("moved from sdk");
+    expect(input["notes"]).toBe("moved from beta");
     const payload = input["payload"] as Record<string, unknown>;
     expect(payload["name"]).toBe("Ada");
     expect(payload["personResearch"]).toEqual({ status: "ok" });
     expect(payload).not.toHaveProperty("yourEdge");
     expect(payload).not.toHaveProperty("icpVerdict");
     expect(payload).not.toHaveProperty("fitReason");
-    expect(payload["movedFrom"]).toMatchObject({ workspace: "sdk", queueId: 746 });
+    expect(payload["movedFrom"]).toMatchObject({ workspace: "beta", queueId: 746 });
     expect(typeof (payload["movedFrom"] as { at: string }).at).toBe("string");
   });
 
@@ -173,7 +173,7 @@ describe("POST /api/queue/import", () => {
     const res = await importQueueRowRoute(req(good));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ queueId: 9, reused: true });
-    expect(calls.status).toEqual([{ id: 9, status: "pending", notes: "moved from sdk" }]);
+    expect(calls.status).toEqual([{ id: 9, status: "pending", notes: "moved from beta" }]);
     const written = calls.payload[0]!;
     expect(written["id"]).toBe(9);
     expect((written["payload"] as Record<string, unknown>)["movedFrom"]).toBeDefined();

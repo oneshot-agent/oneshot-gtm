@@ -28,7 +28,7 @@ export function renderCliReference(program: Command, revision: string): string {
     "",
     "Run these commands with `bun run cli --` from the GTM checkout, or with `oneshot-gtm` after linking the CLI. The CLI is not published to npm.",
     "",
-    "Options below come from Commander. Runtime-dependent defaults are described in the help text. Use `--help` on any command for local help.",
+    "Runtime-dependent defaults are described in the help text. Use `--help` on any command for local help.",
     "",
   ];
   function visit(cmd: Command, ancestors: Command[]) {

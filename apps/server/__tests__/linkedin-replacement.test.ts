@@ -18,7 +18,7 @@ beforeEach(() => {
   store.saveAccount({
     key: "wallet:old",
     wallet: "wallet",
-    workspace: "gtm",
+    workspace: "alpha",
     account: { id: "old", member_urn: "owner", status: "revoked" } as never,
     sync: null,
     checkedAt: null,
@@ -44,7 +44,7 @@ beforeEach(() => {
 });
 it("adopts only the explicitly saved hosted intent and does not revoke or create connections", async () => {
   await adoptPendingLinkedInReplacements();
-  expect(sdk).toHaveBeenCalledExactlyOnceWith("gtm", { kind: "connection", intentId: "intent" });
+  expect(sdk).toHaveBeenCalledExactlyOnceWith("alpha", { kind: "connection", intentId: "intent" });
   expect(store.account("wallet:old")?.account.id).toBe("new");
   expect(store.progress("replacement:wallet:old")).toMatchObject({
     stage: "complete",

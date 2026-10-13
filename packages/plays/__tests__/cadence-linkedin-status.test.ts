@@ -19,10 +19,10 @@ vi.mock("@oneshot-gtm/core", async () => {
   return {
     ...actual,
     getLedger: () => ledger,
-    currentWorkspaceName: () => "gtm",
+    currentWorkspaceName: () => "alpha",
     loadConfig: () => ({ founderName: "Founder", productOneLiner: "a GTM workspace" }),
     linkedInConversationFor: () => conversation,
-    linkedInOutreachAccount: () => ({ workspace: "gtm", accountId: "acct-1" }),
+    linkedInOutreachAccount: () => ({ workspace: "alpha", accountId: "acct-1" }),
     hasAnySendCapacity: () => emailCapacity,
     listInbox: async () => ({ emails: [], has_more: false }),
     logEvent: () => {},
@@ -77,7 +77,7 @@ function inviteSent(opts: { daysAgo?: number; inviteStatus?: string; prospect?: 
       body: "hello",
       invitationId: `inv-${id}`,
       accountId: "acct-1",
-      accountWorkspace: "gtm",
+      accountWorkspace: "alpha",
       inviteStatus: opts.inviteStatus ?? "sent",
     },
   });
@@ -160,7 +160,7 @@ describe("acceptance from invitation status", () => {
       accountId: "acct-1",
       profile: "https://www.linkedin.com/in/dana-lee",
       text: "reviewed message",
-      idempotencyKey: `gtm:gtm:cadence:${prospectId}:${PLAY}:1`,
+      idempotencyKey: `gtm:alpha:cadence:${prospectId}:${PLAY}:1`,
     });
     expect(inviteMeta()).toMatchObject({ acceptedAt: "2026-10-01T09:00:00Z" });
     const sent = ledger
@@ -169,7 +169,7 @@ describe("acceptance from invitation status", () => {
     expect(JSON.parse(sent.metadata_json!)).toMatchObject({
       conversationId: "conv-new",
       accountId: "acct-1",
-      accountWorkspace: "gtm",
+      accountWorkspace: "alpha",
     });
     expect(ledger.getCadence(prospectId, PLAY)!.current_step).toBe(1);
   });
@@ -223,7 +223,7 @@ describe("acceptance from invitation status", () => {
       kind: "reply",
       conversationId: "conv-new",
       accountId: "acct-1",
-      idempotencyKey: `gtm:gtm:cadence:${prospectId}:${PLAY}:2`,
+      idempotencyKey: `gtm:alpha:cadence:${prospectId}:${PLAY}:2`,
     });
   });
 
@@ -426,7 +426,7 @@ describe("acceptance from invitation status", () => {
 
   it("a status call that errors falls back to the conversation check (found: replies)", async () => {
     inviteSent();
-    conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "gtm" };
+    conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "alpha" };
     const out = await run(
       caller({
         invitation: () => {
@@ -547,7 +547,7 @@ describe("unattended status sweep", () => {
       linkedIn: caller({ invitations: () => ({ invitations: [] }) }),
       now,
     });
-    expect(ledger.getPollWatermark("linkedin.invitations.since:gtm:acct-1")).toBe(
+    expect(ledger.getPollWatermark("linkedin.invitations.since:alpha:acct-1")).toBe(
       "2026-10-12T11:00:00.000Z",
     );
   });
@@ -560,7 +560,7 @@ describe("unattended status sweep", () => {
       },
     });
     await sweepLinkedInInvitations({ linkedIn: bad });
-    expect(ledger.getPollWatermark(`linkedin.invitations.since:gtm:acct-1`)).toBeNull();
+    expect(ledger.getPollWatermark(`linkedin.invitations.since:alpha:acct-1`)).toBeNull();
   });
 
   it("a full page of 100 may hide an accept: the invite is read on its own", async () => {
@@ -577,7 +577,7 @@ describe("unattended status sweep", () => {
     expect(out).toMatchObject({ accepted: 1 });
     expect(kinds()).toEqual(["invitations", "invitation"]);
     expect(inviteMeta().acceptedAt).toBe("2026-10-10T09:00:00.000Z");
-    expect(ledger.getPollWatermark("linkedin.invitations.since:gtm:acct-1")).not.toBeNull();
+    expect(ledger.getPollWatermark("linkedin.invitations.since:alpha:acct-1")).not.toBeNull();
   });
 
   it("a full page whose invite cannot be read leaves the watermark where it was", async () => {
@@ -590,7 +590,7 @@ describe("unattended status sweep", () => {
     });
     await sweepLinkedInInvitations({ linkedIn: li });
     expect(kinds()).toEqual(["invitations", "invitation"]);
-    expect(ledger.getPollWatermark("linkedin.invitations.since:gtm:acct-1")).toBeNull();
+    expect(ledger.getPollWatermark("linkedin.invitations.since:alpha:acct-1")).toBeNull();
   });
 
   it("a short page is trusted: no per-invite read", async () => {
@@ -598,7 +598,7 @@ describe("unattended status sweep", () => {
     const li = caller({ invitations: () => ({ invitations: [] }) });
     await sweepLinkedInInvitations({ linkedIn: li });
     expect(kinds()).toEqual(["invitations"]);
-    expect(ledger.getPollWatermark("linkedin.invitations.since:gtm:acct-1")).not.toBeNull();
+    expect(ledger.getPollWatermark("linkedin.invitations.since:alpha:acct-1")).not.toBeNull();
   });
 
   it("withdraws a 21-day-old pending invite, and sends no message", async () => {
@@ -687,7 +687,7 @@ describe("email capacity", () => {
   it("still processes a due LinkedIn step when no email identity has capacity", async () => {
     emailCapacity = false;
     inviteSent();
-    conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "gtm" };
+    conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "alpha" };
     const li = caller({ reply: () => ({ status: "sent" }) });
     const result = await advanceCadence({ dryRun: false, linkedIn: li });
     expect(result.stepsExecuted).toBe(1);
@@ -704,7 +704,7 @@ describe("email capacity", () => {
     });
     enrollInCadence({ prospectId: emailer, playName: "repo-interest", channel: "email" });
     makeDue(emailer);
-    conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "gtm" };
+    conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "alpha" };
     const li = caller({ reply: () => ({ status: "sent" }) });
     const result = await advanceCadence({ dryRun: false, linkedIn: li });
     const held = result.details.find((d) => d.prospectEmail === "pat@example.com");
@@ -731,7 +731,7 @@ describe("friend invites in the unattended sweep (#791)", () => {
         note: "hello",
         invitationId: `inv-${id}`,
         accountId: "acct-1",
-        accountWorkspace: "gtm",
+        accountWorkspace: "alpha",
         inviteStatus: "sent",
       },
     });

@@ -68,7 +68,7 @@ function sender(result: unknown) {
     calls,
     sender: {
       accountId: "acct-1",
-      workspace: "gtm",
+      workspace: "alpha",
       call: async (op: unknown) => {
         calls.push(op);
         if (result instanceof Error) throw result;
@@ -126,7 +126,7 @@ describe("sendLinkedInInvite", () => {
       row: row({ name: "SWE-agent" }),
       note: "hi",
       sender: s,
-      workspace: "gtm",
+      workspace: "alpha",
     });
     expect(out).toMatchObject({ sent: false, guard: "not-a-person" });
     expect((out as { flags: string[] }).flags[0]).toMatch(/^not-a-person:/);
@@ -137,7 +137,7 @@ describe("sendLinkedInInvite", () => {
       row: row({ name: "Dana Lee" }),
       note: "hi",
       sender: s,
-      workspace: "gtm",
+      workspace: "alpha",
     });
     expect(fixed).toMatchObject({ sent: true });
   });
@@ -160,7 +160,7 @@ describe("sendLinkedInInvite", () => {
     const { getSharedDb } = await import("@oneshot-gtm/core");
     getSharedDb().markLinkedInTouched({ slug: "dana-lee", source: "import:previous-tool" });
     const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
-    const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+    const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "alpha" });
     expect(out).toMatchObject({ sent: false, guard: "already-touched" });
     expect(calls).toHaveLength(0);
   });
@@ -203,7 +203,7 @@ describe("sendLinkedInInvite", () => {
       row: row({ name: "Erin Park", linkedinUrl: "https://www.linkedin.com/in/erin-park/" }),
       note: "hi",
       sender: s,
-      workspace: "gtm",
+      workspace: "alpha",
     });
     expect(out).toMatchObject({ sent: false, guard: "already-in-conversation" });
     expect(calls).toHaveLength(0);
@@ -224,25 +224,30 @@ describe("sendLinkedInInvite", () => {
       row: row(),
       note: "hi",
       sender: capped.sender,
-      workspace: "gtm",
+      workspace: "alpha",
     }).catch((e: unknown) => e);
     expect(isSendDeferred(err)).toBe(true);
     _resetInviteLimitsCacheForTests();
     const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
-    const retry = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+    const retry = await sendLinkedInInvite({
+      row: row(),
+      note: "hi",
+      sender: s,
+      workspace: "alpha",
+    });
     expect(retry).toMatchObject({ sent: true });
   });
 
   it("sends the note, records the prospect and a step-0 LinkedIn event", async () => {
     const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
-    const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+    const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "alpha" });
     expect(out).toEqual({ sent: true, status: "sent", invitationId: "inv-1", prospectId: 42 });
     expect(calls.find((c) => (c as { kind: string }).kind === "invite")).toMatchObject({
       kind: "invite",
       accountId: "acct-1",
       profile: "https://www.linkedin.com/in/dana-lee",
       note: "hi",
-      idempotencyKey: "gtm:gtm:queue:7:invite",
+      idempotencyKey: "gtm:alpha:queue:7:invite",
     });
     expect(upserts[0]).toMatchObject({
       email: null,
@@ -258,7 +263,7 @@ describe("sendLinkedInInvite", () => {
         invitationId: "inv-1",
         inviteStatus: "sent",
         accountId: "acct-1",
-        accountWorkspace: "gtm",
+        accountWorkspace: "alpha",
       },
     });
     // The LinkedIn sequence starts: first message once the invite is accepted.
@@ -275,7 +280,7 @@ describe("sendLinkedInInvite", () => {
       row: row(),
       note: "hi",
       sender: s,
-      workspace: "gtm",
+      workspace: "alpha",
       evidenceClause: true,
     });
     expect(events.at(-1)!["metadata"]).toMatchObject({ evidenceClause: true });
@@ -283,7 +288,7 @@ describe("sendLinkedInInvite", () => {
       row: row({ linkedinUrl: "https://www.linkedin.com/in/other-person", name: "Other Person" }),
       note: "hi",
       sender: s,
-      workspace: "gtm",
+      workspace: "alpha",
       evidenceClause: false,
     });
     expect(events.at(-1)!["metadata"]).toMatchObject({ evidenceClause: false });
@@ -291,14 +296,14 @@ describe("sendLinkedInInvite", () => {
 
   it("records nothing about the clause when the caller does not know (#792)", async () => {
     const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
-    await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+    await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "alpha" });
     expect(events.at(-1)!["metadata"]).not.toHaveProperty("evidenceClause");
   });
 
   it("turns a refusal the founder can fix into a flag, and records nothing", async () => {
     const err = Object.assign(new Error("job failed"), { code: "email_required" });
     const { sender: s } = sender(err);
-    const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+    const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "alpha" });
     expect(out).toEqual({ sent: false, flags: ["linkedin-email-required"] });
     expect(events).toHaveLength(0);
   });
@@ -309,7 +314,7 @@ describe("sendLinkedInInvite", () => {
       row: row(),
       note: "hi",
       sender: s,
-      workspace: "gtm",
+      workspace: "alpha",
     }).catch((e: unknown) => e);
     expect(isSendDeferred(err)).toBe(true);
   });
@@ -326,13 +331,18 @@ describe("sendLinkedInInvite", () => {
       row: row(),
       note: "hi",
       sender: capped.sender,
-      workspace: "gtm",
+      workspace: "alpha",
     }).catch((e) => e);
     expect(isSendDeferred(out)).toBe(true);
     // The profile was freed: the next attempt sends.
     _resetInviteLimitsCacheForTests();
     const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
-    const retry = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+    const retry = await sendLinkedInInvite({
+      row: row(),
+      note: "hi",
+      sender: s,
+      workspace: "alpha",
+    });
     expect(retry).toMatchObject({ sent: true });
   });
 
@@ -342,7 +352,7 @@ describe("sendLinkedInInvite", () => {
       row: row({ linkedinUrl: undefined }),
       note: "hi",
       sender: s,
-      workspace: "gtm",
+      workspace: "alpha",
     });
     expect(out.sent).toBe(false);
     expect(calls).toHaveLength(0);
@@ -350,13 +360,18 @@ describe("sendLinkedInInvite", () => {
 
   it("never sends an empty note or one over LinkedIn's limit", async () => {
     const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
-    const empty = await sendLinkedInInvite({ row: row(), note: "  ", sender: s, workspace: "gtm" });
+    const empty = await sendLinkedInInvite({
+      row: row(),
+      note: "  ",
+      sender: s,
+      workspace: "alpha",
+    });
     expect(empty).toEqual({ sent: false, flags: ["empty-note: write a note before sending"] });
     const long = await sendLinkedInInvite({
       row: row(),
       note: "x".repeat(301),
       sender: s,
-      workspace: "gtm",
+      workspace: "alpha",
     });
     expect(long).toEqual({ sent: false, flags: ["note-too-long: 301/300 characters"] });
     expect(calls).toHaveLength(0);
@@ -365,7 +380,7 @@ describe("sendLinkedInInvite", () => {
   it("throws on a result it doesn't understand", async () => {
     const { sender: s } = sender({ status: "weird" });
     await expect(
-      sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+      sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "alpha" }),
     ).rejects.toThrow(/unexpected LinkedIn invite result/);
   });
 
@@ -384,7 +399,7 @@ describe("sendLinkedInInvite", () => {
     it("an unexpected result keeps the profile held", async () => {
       const { sender: s } = sender({ status: "weird" });
       await expect(
-        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "alpha" }),
       ).rejects.toThrow();
       const { out, invites } = await again();
       expect(out).toMatchObject({ sent: false, guard: "already-invited" });
@@ -394,7 +409,7 @@ describe("sendLinkedInInvite", () => {
     it("a transport error with no provider code (timeout, lost worker) keeps the profile held", async () => {
       const { sender: s } = sender(new Error("worker terminated"));
       await expect(
-        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "alpha" }),
       ).rejects.toThrow(/worker terminated/);
       const { out, invites } = await again();
       expect(out).toMatchObject({ sent: false, guard: "already-invited" });
@@ -405,7 +420,7 @@ describe("sendLinkedInInvite", () => {
       failReceipt = true;
       const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
       await expect(
-        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "alpha" }),
       ).rejects.toThrow(/receipt store down/);
       failReceipt = false;
       const { out, invites } = await again();
@@ -426,7 +441,7 @@ describe("sendLinkedInInvite", () => {
           row: row(),
           note: "hi",
           sender: s,
-          workspace: "gtm",
+          workspace: "alpha",
         });
         expect(first).toMatchObject({ sent: true });
       } finally {
@@ -442,7 +457,7 @@ describe("sendLinkedInInvite", () => {
         Object.assign(new Error("socket closed after rate_limited retry"), { code: "ECONNRESET" }),
       );
       await expect(
-        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "alpha" }),
       ).rejects.toThrow(/socket closed/);
       const { out, invites } = await again();
       expect(out).toMatchObject({ sent: false, guard: "already-invited" });
@@ -457,7 +472,7 @@ describe("sendLinkedInInvite", () => {
         }),
       );
       await expect(
-        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "alpha" }),
       ).rejects.toThrow(/job failed/);
       const { out, invites } = await again();
       expect(out).toMatchObject({ sent: false, guard: "already-invited" });
@@ -469,7 +484,7 @@ describe("sendLinkedInInvite", () => {
       async (code) => {
         const { sender: s } = sender(Object.assign(new Error("failed"), { code }));
         await expect(
-          sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+          sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "alpha" }),
         ).rejects.toThrow(/failed/);
         const { out, invites } = await again();
         expect(out).toMatchObject({ sent: false, guard: "already-invited" });
@@ -481,7 +496,7 @@ describe("sendLinkedInInvite", () => {
       failReceipt = true;
       const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
       await expect(
-        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" }),
+        sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "alpha" }),
       ).rejects.toThrow();
       failReceipt = false;
       const { out } = await again();
@@ -490,7 +505,12 @@ describe("sendLinkedInInvite", () => {
 
     it("a provider-reported failure (job failed, no invite sent) frees the profile", async () => {
       const { sender: s } = sender(Object.assign(new Error("failed"), { code: "email_required" }));
-      const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+      const out = await sendLinkedInInvite({
+        row: row(),
+        note: "hi",
+        sender: s,
+        workspace: "alpha",
+      });
       expect(out).toMatchObject({ sent: false });
       const retry = await again();
       expect(retry.out).toMatchObject({ sent: true });
@@ -503,7 +523,7 @@ describe("sendLinkedInInvite", () => {
       row: row({ linkedinUrl: "https://github.com/dana-lee" }),
       note: "hi",
       sender: s,
-      workspace: "gtm",
+      workspace: "alpha",
     });
     expect(out).toMatchObject({ sent: false, guard: "invalid-profile" });
     expect((out as { flags: string[] }).flags[0]).toMatch(/^invalid-profile:/);
@@ -516,7 +536,7 @@ describe("sendLinkedInInvite", () => {
       row: row({ linkedinUrl: undefined }),
       note: "hi",
       sender: s,
-      workspace: "gtm",
+      workspace: "alpha",
     });
     expect(out).toMatchObject({ sent: false, guard: "invalid-profile" });
     expect(calls).toHaveLength(0);

@@ -8,13 +8,13 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 // the destination's health probe and its /api/queue/import.
 
 const tmp = mkdtempSync(join(tmpdir(), "oneshot-move-route-"));
-const gtmHome = join(tmp, "gtm");
-mkdirSync(gtmHome, { recursive: true });
+const alphaHome = join(tmp, "alpha");
+mkdirSync(alphaHome, { recursive: true });
 writeFileSync(
   join(tmp, "registry.json"),
   JSON.stringify({
     default: "default",
-    workspaces: { gtm: { home: gtmHome, port: 3999, createdAt: "2026-08-24T00:00:00Z" } },
+    workspaces: { alpha: { home: alphaHome, port: 3999, createdAt: "2026-08-24T00:00:00Z" } },
   }),
 );
 process.env["ONESHOT_GTM_WORKSPACES"] = tmp;
@@ -113,7 +113,7 @@ beforeEach(() => {
       name: "Ada",
       email: "ada@example.com",
       cohort: "yc-w26",
-      yourEdge: "the sdk edge",
+      yourEdge: "the beta edge",
       icpVerdict: "pass",
     }),
     dedupe_key: "acc:ada@example.com",
@@ -128,20 +128,20 @@ beforeEach(() => {
 
 describe("moveNote", () => {
   it("writes the destination, appends to a human reason, replaces a machine one", () => {
-    expect(moveNote(null, "gtm")).toBe("moved to gtm");
-    expect(moveNote("wrong stage", "gtm")).toBe("wrong stage · moved to gtm");
-    expect(moveNote("wrong stage · moved to gtm", "gtm")).toBe("wrong stage · moved to gtm");
-    expect(moveNote("auto: batch too old", "gtm")).toBe("moved to gtm");
+    expect(moveNote(null, "alpha")).toBe("moved to alpha");
+    expect(moveNote("wrong stage", "alpha")).toBe("wrong stage · moved to alpha");
+    expect(moveNote("wrong stage · moved to alpha", "alpha")).toBe("wrong stage · moved to alpha");
+    expect(moveNote("auto: batch too old", "alpha")).toBe("moved to alpha");
   });
 });
 
 describe("POST /api/queue/:id/move", () => {
   it("imports the portable payload into the running destination, then rejects the row here", async () => {
-    const res = await moveQueueRowRoute(req({ workspace: "gtm" }), { id: "746" });
+    const res = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       ok: true,
-      destination: { name: "gtm", port: 3999, queueId: 77, reused: false },
+      destination: { name: "alpha", port: 3999, queueId: 77, reused: false },
     });
     expect(importBodies).toHaveLength(1);
     const sent = importBodies[0] as Record<string, unknown>;
@@ -157,7 +157,7 @@ describe("POST /api/queue/:id/move", () => {
         status: "rejected",
         decidedBy: "human",
         decisionReason: "other",
-        notes: "moved to gtm",
+        notes: "moved to alpha",
       },
     ]);
   });
@@ -165,9 +165,9 @@ describe("POST /api/queue/:id/move", () => {
   it("keeps an already-rejected row's reason and appends the destination", async () => {
     row!.status = "rejected";
     row!.notes = "wrong industry";
-    const res = await moveQueueRowRoute(req({ workspace: "gtm" }), { id: "746" });
+    const res = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
     expect(res.status).toBe(200);
-    expect(statusCalls[0]?.["notes"]).toBe("wrong industry · moved to gtm");
+    expect(statusCalls[0]?.["notes"]).toBe("wrong industry · moved to alpha");
   });
 
   it("starts a stopped destination and waits for it before importing", async () => {
@@ -177,9 +177,9 @@ describe("POST /api/queue/:id/move", () => {
       spawned.push(`${env["ONESHOT_GTM_WORKSPACE"]}:${env["PORT"]}`);
       up = true; // the child "comes up" before the next probe
     });
-    const res = await moveQueueRowRoute(req({ workspace: "gtm" }), { id: "746" });
+    const res = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
     expect(res.status).toBe(200);
-    expect(spawned).toEqual(["gtm:3999"]);
+    expect(spawned).toEqual(["alpha:3999"]);
     expect(importBodies).toHaveLength(1);
   });
 
@@ -190,9 +190,9 @@ describe("POST /api/queue/:id/move", () => {
       status: 409,
       body: { error: "already sent to this person from this workspace (row #9)" },
     };
-    const res = await moveQueueRowRoute(req({ workspace: "gtm" }), { id: "746" });
+    const res = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
     expect(res.status).toBe(409);
-    expect(((await res.json()) as { error: string }).error).toContain("gtm: already sent");
+    expect(((await res.json()) as { error: string }).error).toContain("alpha: already sent");
     // Reserved first (nothing can drain it during the awaits), then put back.
     expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "approved"]);
     expect(noteCalls).toEqual([{ id: 746, notes: "looks good" }]);
@@ -204,7 +204,7 @@ describe("POST /api/queue/:id/move", () => {
     _setLaunchSpawn(() => {
       /* never comes up */
     });
-    const res = await moveQueueRowRoute(req({ workspace: "gtm" }), { id: "746" });
+    const res = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
     expect(res.status).toBe(503);
     expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "pending"]);
     expect(noteCalls).toEqual([{ id: 746, notes: "" }]);
@@ -213,7 +213,7 @@ describe("POST /api/queue/:id/move", () => {
   it("refuses a row the drain has leased in the last 15 minutes", async () => {
     row!.status = "approved";
     row!.drain_claimed_at = new Date(Date.now() - 60_000).toISOString();
-    const res = await moveQueueRowRoute(req({ workspace: "gtm" }), { id: "746" });
+    const res = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
     expect(res.status).toBe(409);
     expect(statusCalls).toHaveLength(0);
     expect(importBodies).toHaveLength(0);
@@ -222,7 +222,7 @@ describe("POST /api/queue/:id/move", () => {
   it("reports a send that landed mid-move instead of pretending the row left", async () => {
     // The destination import "takes long enough" for a drain send to stamp `sent`.
     sentDuringImport = true;
-    const res = await moveQueueRowRoute(req({ workspace: "gtm" }), { id: "746" });
+    const res = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: string }).error).toContain(
       "sent from here while moving",
@@ -232,7 +232,7 @@ describe("POST /api/queue/:id/move", () => {
   it("refuses a sent or in-flight row, the current workspace, an unknown one, and a bad body", async () => {
     row!.status = "sent";
     row!.sent_at = "2026-09-01T00:00:00Z";
-    expect((await moveQueueRowRoute(req({ workspace: "gtm" }), { id: "746" })).status).toBe(409);
+    expect((await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" })).status).toBe(409);
     row!.status = "pending";
     row!.sent_at = null;
     expect((await moveQueueRowRoute(req({ workspace: "default" }), { id: "746" })).status).toBe(
@@ -241,7 +241,7 @@ describe("POST /api/queue/:id/move", () => {
     expect((await moveQueueRowRoute(req({ workspace: "nope" }), { id: "746" })).status).toBe(404);
     expect((await moveQueueRowRoute(req({}), { id: "746" })).status).toBe(400);
     row = null;
-    expect((await moveQueueRowRoute(req({ workspace: "gtm" }), { id: "746" })).status).toBe(404);
+    expect((await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" })).status).toBe(404);
     expect(importBodies).toHaveLength(0);
     expect(statusCalls).toHaveLength(0);
   });

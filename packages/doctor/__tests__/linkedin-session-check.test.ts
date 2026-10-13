@@ -34,8 +34,8 @@ let wsDir: string;
 beforeEach(() => {
   wsDir = mkdtempSync(join(tmpdir(), "oneshot-doctor-li-"));
   process.env["ONESHOT_GTM_WORKSPACES"] = wsDir;
-  process.env["ONESHOT_GTM_WORKSPACE"] = "gtm";
-  createWorkspace("gtm");
+  process.env["ONESHOT_GTM_WORKSPACE"] = "alpha";
+  createWorkspace("alpha");
   cfgOverride = {};
   delete process.env["LINKEDIN_SESSION_COOKIE"];
 });
