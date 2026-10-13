@@ -686,7 +686,10 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
   }
   if (!current && organizations.length === 0 && !bio) {
     return {
-      dossier: unavailable(seed, NO_HISTORY_WARNING),
+      // A live read that was skipped is the reason on record: the page may
+      // well hold the history the provider lacks, and a skip for the session
+      // or a cap is not the person's own failure (researchFailedOnItsOwn).
+      dossier: unavailable(seed, liveWarning ?? NO_HISTORY_WARNING),
       costUsd,
       cached: !billed,
       ...(live?.skipped ? { liveSkipped: live.skipped } : {}),

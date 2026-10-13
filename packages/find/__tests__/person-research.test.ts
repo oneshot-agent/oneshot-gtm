@@ -714,6 +714,37 @@ describe("live LinkedIn tier", () => {
     expect(dossier.liveProfile).toBeUndefined();
   });
 
+  it("with no history from the provider, a skipped live read is the reason on record", async () => {
+    const nothingKnown = {
+      ...juliaResearch,
+      result: { enrichment: { organizations: [] } },
+    };
+    const research = async () => {
+      enrichmentCache = {
+        result_json: JSON.stringify(nothingKnown),
+        fetched_at: new Date().toISOString(),
+        status: "ok",
+      };
+      const { dossier } = await researchPerson({
+        seed: personSeedFor(juliaPayload),
+        playName: "luma-events",
+        subject: { queueId: 1 },
+        remainingUsd: 1,
+      });
+      return dossier;
+    };
+    // No session at all: nobody has anything on this person.
+    const unread = await research();
+    expect(unread.status).toBe("unavailable");
+    expect(unread.warning).toBe("person research returned no organisation history");
+    // A session that could not be used: the page was never asked.
+    process.env["LINKEDIN_SESSION_COOKIE"] = "cookie";
+    liveSession = false;
+    const skipped = await research();
+    expect(skipped.status).toBe("unavailable");
+    expect(skipped.warning).toBe("live profile skipped: session-unchecked");
+  });
+
   it("liveProfile: false skips the read even with a session; a non-LinkedIn seed never reads", async () => {
     process.env["LINKEDIN_SESSION_COOKIE"] = "cookie";
     liveSession = true;
