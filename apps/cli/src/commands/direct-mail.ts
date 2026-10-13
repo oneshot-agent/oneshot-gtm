@@ -14,9 +14,11 @@ export function registerDirectMailCommand(program: Command) {
     .description("Review and approve individual physical mailpieces");
   cmd
     .command("list")
+    .description("List direct-mail pieces")
     .action(() => console.log(JSON.stringify(getLedger().listDirectMail(), null, 2)));
   cmd
     .command("upload <file>")
+    .description("Upload artwork for a mailpiece")
     .requiredOption("--mime <type>", "application/pdf, image/png, or image/jpeg")
     .action(async (file, opts) => {
       console.log(
@@ -43,9 +45,11 @@ export function registerDirectMailCommand(program: Command) {
     });
   cmd
     .command("refresh <id>")
+    .description("Refresh a mailpiece quote")
     .action(async (id) => console.log(JSON.stringify(await refreshDirectMail(id), null, 2)));
   cmd
     .command("approve <id>")
+    .description("Approve a reviewed mailpiece and its price")
     .requiredOption("--input-hash <hash>", "Reviewed quote input hash")
     .requiredOption("--total-usdc <amount>", "Reviewed total price")
     .requiredOption("--approve", "Explicitly approve this mailpiece")
@@ -62,13 +66,17 @@ export function registerDirectMailCommand(program: Command) {
         ),
       );
     });
-  cmd.command("send <id>").action(async (id) => {
-    const draft = getLedger().getDirectMail(id);
-    if (!draft) throw new Error("Mailpiece not found");
-    console.log(JSON.stringify(await sendDirectMailCadenceStep(id), null, 2));
-  });
+  cmd
+    .command("send <id>")
+    .description("Send an approved mailpiece (paid)")
+    .action(async (id) => {
+      const draft = getLedger().getDirectMail(id);
+      if (!draft) throw new Error("Mailpiece not found");
+      console.log(JSON.stringify(await sendDirectMailCadenceStep(id), null, 2));
+    });
   cmd
     .command("cancel <id>")
+    .description("Cancel a mailpiece")
     .action(async (id) => console.log(JSON.stringify(await cancelDirectMail(id), null, 2)));
   cmd
     .command("skip <prospect-id> <play>")
