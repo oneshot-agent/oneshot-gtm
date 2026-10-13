@@ -225,6 +225,7 @@ const {
   personPayloadPatch,
   personSeedFor,
   personSeedForProspect,
+  reconcileOrganizations,
   rejudgePerson,
   researchNewQueueRowPeople,
   researchPerson,
@@ -279,6 +280,33 @@ beforeEach(() => {
 const result = (linkedin_url: string) => ({
   status: "completed",
   result: { full_name: "Julia Zabrodska-Akinci", linkedin_url },
+});
+
+describe("reconcileOrganizations", () => {
+  const live = [
+    { name: "New Co", title: "Engineer", startDate: "Jan 2025", current: true },
+    { name: "Old Co", title: "Engineer", startDate: "2021", endDate: "2024", current: false },
+  ];
+
+  it("a provider's current job at a company the page does not list is not current", () => {
+    // The provider's stale job started later than the page's real one, so
+    // kept current it would win as the current role.
+    const merged = reconcileOrganizations(live, [
+      { name: "Left Co", title: "Staff Engineer", startDate: "Jun 2025", current: true },
+      { name: "Old Co", title: "Developer", startDate: "2021", current: true },
+    ]);
+    expect(merged.map((o) => `${o.name}:${o.current}`)).toEqual([
+      "New Co:true",
+      "Old Co:false",
+      "Left Co:false",
+    ]);
+    expect(deriveCurrentRole(merged).current?.name).toBe("New Co");
+  });
+
+  it("no live read leaves the provider's history as it is", () => {
+    const provider = [{ name: "Left Co", startDate: "Jun 2025", current: true }];
+    expect(reconcileOrganizations([], provider)).toEqual(provider);
+  });
 });
 
 describe("deriveCurrentRole", () => {

@@ -460,7 +460,10 @@ export interface ResearchPersonInput {
 /**
  * The live page's Experience list wins on currency: for every company the
  * page lists, the provider's entries for that company are dropped (they are
- * the ones that go stale); provider-only history is kept behind it.
+ * the ones that go stale); provider-only history is kept behind it, and
+ * never as a current job. A provider's "current" role at a company the page
+ * does not list at all is a job the person left or never had; kept current,
+ * it could outrank the page's own current role on start date.
  */
 export function reconcileOrganizations(
   live: PersonResearchOrganization[],
@@ -468,7 +471,12 @@ export function reconcileOrganizations(
 ): PersonResearchOrganization[] {
   if (live.length === 0) return provider;
   const liveCompanies = new Set(live.map((o) => normalizeCompany(o.name)));
-  return [...live, ...provider.filter((o) => !liveCompanies.has(normalizeCompany(o.name)))];
+  const history: PersonResearchOrganization[] = [];
+  for (const o of provider) {
+    if (liveCompanies.has(normalizeCompany(o.name))) continue;
+    history.push(o.current ? { ...o, current: false } : o);
+  }
+  return [...live, ...history];
 }
 
 export async function researchPerson(input: ResearchPersonInput): Promise<{

@@ -35,6 +35,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const DEFAULT_MAX_ROWS = 10;
 /** Spend per sweep, live reads plus any uncached provider call. */
 const DEFAULT_MAX_COST_USD = 2;
+/**
+ * How long a row waits after an attempt that ended without a read for a
+ * reason of its own: the page named someone else, the read failed, or the
+ * provider's record was the wrong person. The read path caches a failure for
+ * about as long, so a sooner retry is answered from that cache and only
+ * takes one of the sweep's few slots from a row that could be read.
+ */
+const RETRY_AFTER_MS = 3 * 24 * 60 * 60 * 1000;
+const OWN_FAILURE_RX = /^live profile skipped: (?:different-person|failed)$/;
 
 export type LiveSweepRow = ResearchableQueueRow & Pick<QueueRow, "sent_at" | "send_started_at">;
 
@@ -63,12 +72,15 @@ export interface LiveProfileSweepResult {
  * payload write would be refused and the read wasted); a row whose seed is
  * not a LinkedIn profile never; a row whose trigger switched the tier off
  * never; a row that already carries a live read not again (the read cache
- * is 30 days and `--refresh` on the CLI is the way to force one). Approved
- * rows first (they are the ones about to send) then pending, newest first.
+ * is 30 days and `--refresh` on the CLI is the way to force one); a row
+ * whose last attempt failed for a reason of its own not for RETRY_AFTER_MS.
+ * Approved rows first (they are the ones about to send) then pending, newest
+ * first.
  */
 export function selectLiveSweepCandidates(
   rows: readonly LiveSweepRow[],
   liveReadOffForPlay: (playName: string) => boolean,
+  now: number = Date.now(),
 ): LiveSweepCandidate[] {
   const out: LiveSweepCandidate[] = [];
   for (const row of rows) {
@@ -89,11 +101,29 @@ export function selectLiveSweepCandidates(
     // dossier the strict guard would not recognise, and it still has its read.
     const research = payload["personResearch"];
     if (isRecord(research) && isRecord(research["liveProfile"])) continue;
+    if (isRecord(research) && triedRecently(research, now)) continue;
     const seed = personSeedFor(payload);
     if (!seed?.url || !isLinkedInProfileUrl(seed.url)) continue;
     out.push({ row, seed });
   }
   return out.toSorted((a, b) => rank(a.row) - rank(b.row) || b.row.id - a.row.id);
+}
+
+/**
+ * The last attempt ended without a read because of this row, not because of
+ * the session, the daily cap or the budget (those say nothing about the row,
+ * and the next sweep should take it again).
+ */
+function triedRecently(research: Record<string, unknown>, now: number): boolean {
+  const warning = research["warning"];
+  const ownFailure =
+    research["status"] === "unavailable" ||
+    (typeof warning === "string" && OWN_FAILURE_RX.test(warning));
+  if (!ownFailure) return false;
+  const at = Date.parse(
+    typeof research["researchedAt"] === "string" ? research["researchedAt"] : "",
+  );
+  return Number.isFinite(at) && now - at < RETRY_AFTER_MS;
 }
 
 /** Approved rows first: they are the ones about to send. */
