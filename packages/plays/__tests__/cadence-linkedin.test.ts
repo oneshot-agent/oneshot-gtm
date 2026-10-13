@@ -19,10 +19,10 @@ vi.mock("@oneshot-gtm/core", async () => {
   return {
     ...actual,
     getLedger: () => ledger,
-    currentWorkspaceName: () => "gtm",
+    currentWorkspaceName: () => "alpha",
     loadConfig: () => ({ founderName: "Founder", productOneLiner: "a GTM workspace" }),
     linkedInConversationFor: () => conversation,
-    linkedInOutreachAccount: () => ({ workspace: "gtm", accountId: "acct-1" }),
+    linkedInOutreachAccount: () => ({ workspace: "alpha", accountId: "acct-1" }),
     logEvent: () => {},
   };
 });
@@ -153,7 +153,7 @@ describe("LinkedIn cadence", () => {
     inviteSentDaysAgo(3);
     enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
     dueNow("luma-events");
-    conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "gtm" };
+    conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "alpha" };
     const calls: Array<Record<string, unknown>> = [];
     const out = await runCadenceStepForProspect({
       prospectId,
@@ -169,7 +169,7 @@ describe("LinkedIn cadence", () => {
       kind: "reply",
       conversationId: "conv-9",
       text: "reviewed message",
-      idempotencyKey: `gtm:gtm:cadence:${prospectId}:luma-events:1`,
+      idempotencyKey: `gtm:alpha:cadence:${prospectId}:luma-events:1`,
     });
     expect(out.action).toBe("step-sent");
     expect(ledger.getCadence(prospectId, "luma-events")!.current_step).toBe(1);
@@ -182,7 +182,7 @@ describe("LinkedIn cadence", () => {
   it("previews a message once accepted", async () => {
     inviteSentDaysAgo(3);
     enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
-    conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "gtm" };
+    conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "alpha" };
     const preview = await previewCadenceStep({ prospectId, playName: "luma-events" });
     expect(preview).toMatchObject({ subject: "LinkedIn message", flags: [] });
     expect("body" in preview && preview.body).toContain("Thanks for connecting");
@@ -232,7 +232,7 @@ describe("LinkedIn cadence edge cases", () => {
       stepIndex: 0,
       channel: "linkedin",
       status: "sent",
-      metadata: { invitationId: "inv-9", accountId: "acct-old", accountWorkspace: "sdk" },
+      metadata: { invitationId: "inv-9", accountId: "acct-old", accountWorkspace: "beta" },
     });
     const db = new Database(dbPath);
     db.exec(`UPDATE sequence_events SET created_at = datetime('now', '-25 days')`);
@@ -250,7 +250,7 @@ describe("LinkedIn cadence edge cases", () => {
       },
     });
     expect(calls[0]).toEqual([
-      "sdk",
+      "beta",
       expect.objectContaining({ accountId: "acct-old", invitationId: "inv-9" }),
     ]);
   });
@@ -294,7 +294,7 @@ describe("LinkedIn cadence edge cases", () => {
   it("flags a message over the LinkedIn limit so it can't be sent as is", async () => {
     inviteSentDaysAgo(3);
     enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
-    conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "gtm" };
+    conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "alpha" };
     messageText = `${"x".repeat(400)}?`;
     const preview = await previewCadenceStep({ prospectId, playName: "luma-events" });
     expect(preview).toMatchObject({ flags: ["too-long: 401/400 characters"] });

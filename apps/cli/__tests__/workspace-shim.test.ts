@@ -41,21 +41,22 @@ function run(args: string[], extraEnv: Record<string, string | undefined> = {}) 
 
 describe("workspace bootstrap shim", () => {
   it("--workspace selects the named home before core loads", () => {
-    const entry = createWorkspace("gtm");
-    const r = run(["--workspace", "gtm", "workspace", "current"]);
+    const entry = createWorkspace("alpha");
+    const r = run(["--workspace", "alpha", "workspace", "current"]);
     expect(r.code).toBe(0);
-    expect(r.stdout.trim()).toBe(`gtm\t${entry.home}`);
+    expect(r.stdout.trim()).toBe(`alpha\t${entry.home}`);
   });
 
   it("ONESHOT_GTM_WORKSPACE selects it too, and the flag wins over the env", () => {
-    createWorkspace("gtm");
-    createWorkspace("sdk");
-    expect(run(["workspace", "current"], { ONESHOT_GTM_WORKSPACE: "sdk" }).stdout).toMatch(
-      /^sdk\t/,
+    createWorkspace("alpha");
+    createWorkspace("beta");
+    expect(run(["workspace", "current"], { ONESHOT_GTM_WORKSPACE: "beta" }).stdout).toMatch(
+      /^beta\t/,
     );
     expect(
-      run(["--workspace", "gtm", "workspace", "current"], { ONESHOT_GTM_WORKSPACE: "sdk" }).stdout,
-    ).toMatch(/^gtm\t/);
+      run(["--workspace", "alpha", "workspace", "current"], { ONESHOT_GTM_WORKSPACE: "beta" })
+        .stdout,
+    ).toMatch(/^alpha\t/);
   });
 
   it("an unknown workspace fails fast with exit 2 and a legible message", () => {
@@ -65,14 +66,14 @@ describe("workspace bootstrap shim", () => {
   });
 
   it("an explicit ONESHOT_GTM_HOME wins, and conflicts with --workspace", () => {
-    createWorkspace("gtm");
+    createWorkspace("alpha");
     const home = join(wsDir, "explicit");
     // Unregistered homes are identified by canonical path (review finding on
     // #37): two installs named the same must not collapse into one workspace.
     const out = run(["workspace", "current"], { ONESHOT_GTM_HOME: home }).stdout.trim();
     expect(out.startsWith("home:")).toBe(true);
     expect(out.endsWith(`\t${home}`)).toBe(true);
-    const r = run(["--workspace", "gtm", "workspace", "current"], { ONESHOT_GTM_HOME: home });
+    const r = run(["--workspace", "alpha", "workspace", "current"], { ONESHOT_GTM_HOME: home });
     expect(r.code).toBe(2);
     expect(r.stderr).toContain("conflicts");
   });

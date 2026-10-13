@@ -55,8 +55,8 @@ let wsDir: string;
 beforeEach(() => {
   wsDir = mkdtempSync(join(tmpdir(), "oneshot-doctor-ws-"));
   process.env["ONESHOT_GTM_WORKSPACES"] = wsDir;
-  process.env["ONESHOT_GTM_WORKSPACE"] = "gtm";
-  createWorkspace("gtm");
+  process.env["ONESHOT_GTM_WORKSPACE"] = "alpha";
+  createWorkspace("alpha");
   cfgOverride = {};
   walletReady = false;
   balanceValue = "1 USDC";
@@ -81,7 +81,7 @@ describe("doctor workspace checks", () => {
   it("names the current workspace first", async () => {
     const checks = await runDoctor();
     expect(checks[0]).toMatchObject({ name: "workspace", severity: "ok" });
-    expect(checks[0]?.message.startsWith("gtm · ")).toBe(true);
+    expect(checks[0]?.message.startsWith("alpha · ")).toBe(true);
   });
 
   it("every check carries a valid group (the dashboard panel keys sections off it)", async () => {
@@ -104,7 +104,7 @@ describe("doctor workspace checks", () => {
         },
       ],
     };
-    otherWorkspace("sdk", {
+    otherWorkspace("beta", {
       emailIdentities: [
         {
           id: "oneshot:hi@acme.email",
@@ -118,7 +118,7 @@ describe("doctor workspace checks", () => {
     const checks = await runDoctor();
     const hit = checks.find((c) => c.name === "sending domain acme.email");
     expect(hit?.severity).toBe("warn");
-    expect(hit?.message).toContain("workspace 'sdk'");
+    expect(hit?.message).toContain("workspace 'beta'");
   });
 
   it("warns when another workspace authorized the same Gmail account (via its token store)", async () => {
@@ -134,7 +134,7 @@ describe("doctor workspace checks", () => {
       ],
     };
     otherWorkspace(
-      "sdk",
+      "beta",
       { emailIdentities: [] },
       { "gmail:me@gmail.com": { refreshToken: "rt", address: "Me@Gmail.com" } },
     );
@@ -148,18 +148,18 @@ describe("doctor workspace checks", () => {
         {
           id: "oneshot:me@gtm.email",
           provider: "oneshot",
-          sendingDomain: "gtm.email",
+          sendingDomain: "alpha.email",
           maxPerDay: 50,
           warmup: null,
         },
       ],
     };
-    otherWorkspace("sdk", {
+    otherWorkspace("beta", {
       emailIdentities: [
         {
           id: "oneshot:me@sdk.email",
           provider: "oneshot",
-          sendingDomain: "sdk.email",
+          sendingDomain: "beta.email",
           maxPerDay: 50,
           warmup: null,
         },
@@ -185,17 +185,17 @@ describe("second-round review findings (#37)", () => {
         },
       ],
     };
-    otherWorkspace("sdk", { sendingDomain: "acme.email", emailIdentities: [] });
+    otherWorkspace("beta", { sendingDomain: "acme.email", emailIdentities: [] });
     const checks = await runDoctor();
     expect(checks.find((c) => c.name === "sending domain acme.email")?.severity).toBe("warn");
   });
 
   it("reports a port collision even when the current workspace is the later entry", async () => {
-    // gtm (current) got :3031 in beforeEach; give sdk the same port by editing the registry.
+    // alpha (current) got :3031 in beforeEach; give beta the same port by editing the registry.
     const { loadRegistry, saveRegistry } = await import("@oneshot-gtm/core");
-    otherWorkspace("sdk", { emailIdentities: [] });
+    otherWorkspace("beta", { emailIdentities: [] });
     const reg = loadRegistry();
-    reg.workspaces["sdk"]!.port = reg.workspaces["gtm"]!.port;
+    reg.workspaces["beta"]!.port = reg.workspaces["alpha"]!.port;
     saveRegistry(reg);
     const checks = await runDoctor();
     expect(checks.some((c) => c.name.startsWith("workspace port"))).toBe(true);
@@ -209,7 +209,7 @@ describe("third-round review findings (#38)", () => {
     cfgOverride = {
       emailIdentities: [{ id: "gmail:legacy", provider: "gmail", maxPerDay: 50, warmup: null }],
     };
-    otherWorkspace("sdk", {
+    otherWorkspace("beta", {
       emailIdentities: [
         {
           id: "gmail:me@gmail.com",
@@ -238,7 +238,7 @@ describe("fourth-round review findings (#38)", () => {
         },
       ],
     };
-    otherWorkspace("sdk", {
+    otherWorkspace("beta", {
       emailProvider: "gmail",
       sendingDomain: "acme.email",
       emailIdentities: null,
@@ -259,16 +259,16 @@ describe("smartlead identities in doctor", () => {
 
   it("warns when another workspace registered the same Smartlead mailbox", async () => {
     cfgOverride = { emailIdentities: [SL] };
-    otherWorkspace("sdk", { emailIdentities: [{ ...SL }] });
+    otherWorkspace("beta", { emailIdentities: [{ ...SL }] });
     const checks = await runDoctor();
     const hit = checks.find((c) => c.name === "smartlead jane@acme.com");
     expect(hit?.severity).toBe("warn");
-    expect(hit?.message).toContain("'sdk'");
+    expect(hit?.message).toContain("'beta'");
   });
 
   it("no warning when only this workspace has the mailbox", async () => {
     cfgOverride = { emailIdentities: [SL] };
-    otherWorkspace("sdk", { emailIdentities: [] });
+    otherWorkspace("beta", { emailIdentities: [] });
     const checks = await runDoctor();
     expect(checks.some((c) => c.name === "smartlead jane@acme.com")).toBe(false);
   });

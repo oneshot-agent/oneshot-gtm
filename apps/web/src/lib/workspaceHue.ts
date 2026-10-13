@@ -1,5 +1,5 @@
 /**
- * Deterministic hue per workspace name, so `gtm` always looks like `gtm`.
+ * Deterministic hue per workspace name, so a workspace always looks like itself.
  *
  * Lives here rather than in WorkspaceSwitcher because two things read it now:
  * the sidebar dot, and the tab icon (see documentTitle.ts / favicon.ts). One

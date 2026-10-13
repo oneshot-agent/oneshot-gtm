@@ -47,9 +47,9 @@ describe("renderLaunchdPlist", () => {
   });
 
   it("XML-escapes paths so a checkout named e.g. `a&b` still yields a valid plist", () => {
-    const plist = renderLaunchdPlist({ ...PATHS, home: "/Users/jo/a&b/<gtm>" });
-    expect(plist).toContain("<string>/Users/jo/a&amp;b/&lt;gtm&gt;</string>");
-    expect(plist).not.toContain("<gtm>");
+    const plist = renderLaunchdPlist({ ...PATHS, home: "/Users/jo/a&b/<alpha>" });
+    expect(plist).toContain("<string>/Users/jo/a&amp;b/&lt;alpha&gt;</string>");
+    expect(plist).not.toContain("<alpha>");
   });
 });
 
@@ -62,12 +62,12 @@ describe("renderSystemdUnit", () => {
     const unit = renderSystemdUnit({
       ...PATHS,
       bunBin: "/home/jo/my tools/bun",
-      home: "/home/jo/gtm home",
+      home: "/home/jo/alpha home",
     });
     expect(unit).toContain(
       'ExecStart="/home/jo/my tools/bun" "/Users/jo/oneshot-gtm/apps/cli/src/main.ts" find watch --quiet',
     );
-    expect(unit).toContain('Environment="ONESHOT_GTM_HOME=/home/jo/gtm home"');
+    expect(unit).toContain('Environment="ONESHOT_GTM_HOME=/home/jo/alpha home"');
   });
 });
 
@@ -78,7 +78,7 @@ describe("systemd escaping", () => {
         ...DASHBOARD,
         bunBin: "/home/jo/100%/bun",
         serverEntry: '/home/jo/a"b/$HOME/c\\d/bin.ts',
-        home: '/home/jo/50% "gtm" $HOME',
+        home: '/home/jo/50% "alpha" $HOME',
       }),
     );
     // ExecStart: % is a specifier, $ expands, backslash and quote are escapes.
@@ -86,7 +86,7 @@ describe("systemd escaping", () => {
       'ExecStart="/home/jo/100%%/bun" "/home/jo/a\\"b/$$HOME/c\\\\d/bin.ts"\n',
     );
     // Environment values are not expanded, so $ stays as it is.
-    expect(unit).toContain('Environment="ONESHOT_GTM_HOME=/home/jo/50%% \\"gtm\\" $HOME"');
+    expect(unit).toContain('Environment="ONESHOT_GTM_HOME=/home/jo/50%% \\"alpha\\" $HOME"');
     expect(unit).toContain('Environment="PATH=/home/jo/100%%:/usr/local/bin:/usr/bin:/bin"');
   });
 
@@ -225,12 +225,12 @@ describe("dashboard service", () => {
 
   it("carries the same binding in the systemd unit, quoted for paths with spaces", () => {
     const unit = renderSystemdService(
-      dashboardService({ ...DASHBOARD, home: "/home/jo/gtm home", port: 4000 }),
+      dashboardService({ ...DASHBOARD, home: "/home/jo/alpha home", port: 4000 }),
     );
     expect(unit).toContain(
       'ExecStart="/opt/homebrew/bin/bun" "/Users/jo/oneshot-gtm/apps/server/src/bin.ts"\n',
     );
-    expect(unit).toContain('Environment="ONESHOT_GTM_HOME=/home/jo/gtm home"');
+    expect(unit).toContain('Environment="ONESHOT_GTM_HOME=/home/jo/alpha home"');
     expect(unit).toContain('Environment="ONESHOT_GTM_WORKSPACE=acme"');
     expect(unit).toContain('Environment="PORT=4000"');
     expect(unit).toContain('Environment="ONESHOT_GTM_NO_BROWSER=1"');
@@ -239,10 +239,10 @@ describe("dashboard service", () => {
 
   it("XML-escapes the home so an odd path still yields a valid plist", () => {
     const plist = renderLaunchdService(
-      dashboardService({ ...DASHBOARD, home: "/Users/jo/a&b/<gtm>" }),
+      dashboardService({ ...DASHBOARD, home: "/Users/jo/a&b/<alpha>" }),
     );
-    expect(plist).toContain("<string>/Users/jo/a&amp;b/&lt;gtm&gt;</string>");
-    expect(plist).not.toContain("<gtm>");
+    expect(plist).toContain("<string>/Users/jo/a&amp;b/&lt;alpha&gt;</string>");
+    expect(plist).not.toContain("<alpha>");
   });
 
   it("is written and activated under its own name, not the watch daemon's", () => {

@@ -9,7 +9,7 @@ import { drainQueue } from "../src/drain.ts";
 const calls: Array<Record<string, unknown>> = [];
 const sender = {
   accountId: "acct-1",
-  workspace: "gtm",
+  workspace: "alpha",
   call: async (op: Record<string, unknown>) => {
     calls.push(op);
     if (op["kind"] === "account") return {};

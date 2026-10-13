@@ -331,12 +331,12 @@ describe("runProspectResearch", () => {
 describe("cross-workspace hold on the drafted intro", () => {
   it("flags the draft contacted-elsewhere when another workspace emailed the address this week", async () => {
     const { getSharedDb } = await import("@oneshot-gtm/core");
-    process.env["ONESHOT_GTM_WORKSPACE"] = "gtm";
+    process.env["ONESHOT_GTM_WORKSPACE"] = "alpha";
     try {
       resetRow({ url: "https://x.com/jane", platform: "twitter" });
       state.enrichment = { displayname: "Jane Doe", best_work_email: "jane@acme.com" };
       state.extract = { name: "Jane Doe", company: "Acme", angle: "x", email: "jane@acme.com" };
-      getSharedDb().recordTouch({ email: "jane@acme.com", workspace: "sdk", playName: "show-hn" });
+      getSharedDb().recordTouch({ email: "jane@acme.com", workspace: "beta", playName: "show-hn" });
 
       await runProspectResearch(7);
 

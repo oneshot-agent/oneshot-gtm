@@ -153,7 +153,7 @@ describe("mailWaitingRows", () => {
 
 describe("held by another workspace's touch", () => {
   const held = {
-    workspace: "sdk",
+    workspace: "beta",
     playName: "accelerator-batch",
     sentAt: daysAgo(1),
     until: daysAhead(6),
@@ -163,7 +163,7 @@ describe("held by another workspace's touch", () => {
   it("an overdue step reads as held, with who emailed and when it can send", () => {
     const out = cadenceStateLabel(cadence({ nextDueAt: daysAgo(5), heldElsewhere: held }), now);
     expect(out.text).toMatch(
-      /^step 2 of 4 · sent 3d ago · overdue · due 5d ago · held · emailed from sdk 1d ago · sends after /,
+      /^step 2 of 4 · sent 3d ago · overdue · due 5d ago · held · emailed from beta 1d ago · sends after /,
     );
     expect(out.text).toContain(
       new Date(held.until).toLocaleDateString("en-US", { month: "short", day: "numeric" }),

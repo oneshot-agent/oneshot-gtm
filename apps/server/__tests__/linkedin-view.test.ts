@@ -160,11 +160,11 @@ it("versions an unassigned conversation's drafts per workspace, an assigned one'
     [],
   );
   const [unassigned] = linkedInThreads();
-  expect(threadContextVersion(unassigned!, "gtm")).not.toBe(
-    threadContextVersion(unassigned!, "sdk"),
+  expect(threadContextVersion(unassigned!, "alpha")).not.toBe(
+    threadContextVersion(unassigned!, "beta"),
   );
 
   store.assign("linkedin:account:chat", { workspace: "test", prospectId: 1 });
   const [assigned] = linkedInThreads();
-  expect(threadContextVersion(assigned!, "gtm")).toBe(threadContextVersion(assigned!, "sdk"));
+  expect(threadContextVersion(assigned!, "alpha")).toBe(threadContextVersion(assigned!, "beta"));
 });
