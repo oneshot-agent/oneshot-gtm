@@ -41,7 +41,7 @@ describe("replySetNote", () => {
       "The options overlap: Technical and Warm say nearly the same thing. Regenerate for three distinct options.",
     );
     expect(replySetNote(["same-move", "near-duplicate:direct+warm"])).toBe(
-      "The options overlap: the three options take the same approach, and Direct and Warm say nearly the same thing. Regenerate for three distinct options.",
+      "The options overlap: they do not take three different approaches, and Direct and Warm say nearly the same thing. Regenerate for three distinct options.",
     );
   });
 });

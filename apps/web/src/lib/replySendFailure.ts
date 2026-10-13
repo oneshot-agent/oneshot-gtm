@@ -9,7 +9,15 @@ export function replySendFailure(
   // went out. Its own text ("payment rejected: invalid_payload — expected
   // $0.02, signed $0.02") does not say that the wallet is empty, which is what
   // it meant on 2026-10-12.
-  if (/payment rejected|budget exceeded|insufficient credits/i.test(thread.send.error ?? ""))
+  // A budget is a limit the account set on itself: money in the wallet does
+  // not lift it, so it gets its own instruction.
+  if (/budget/i.test(thread.send.error ?? ""))
+    return {
+      recovered: false,
+      message:
+        "Your reply was not sent: it would go over a spending budget set on the OneShot account. Review the budget, then send again.",
+    };
+  if (/payment rejected|insufficient credits/i.test(thread.send.error ?? ""))
     return {
       recovered: false,
       message:

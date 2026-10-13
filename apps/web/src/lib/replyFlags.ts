@@ -55,7 +55,9 @@ export function replyDraftNote(flags: string[]): string | null {
 }
 
 function describeSetFlag(flag: string): string {
-  if (flag === "same-move") return "the three options take the same approach";
+  // The linter raises this for two options sharing an approach and for an
+  // option with no valid one, so the wording must not claim all three match.
+  if (flag === "same-move") return "they do not take three different approaches";
   if (flag.startsWith("near-duplicate:")) {
     const [a, b] = flag.slice("near-duplicate:".length).split("+") as ReplyVariant[];
     const left = OPTION[a!] ?? a;

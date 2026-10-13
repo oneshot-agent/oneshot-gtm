@@ -73,3 +73,25 @@ it("says a refused payment sent nothing and points at the wallet", () => {
       "Your reply was not sent: OneShot refused the payment for it, which usually means the sending wallet is empty. Fund the wallet, then send again.",
   });
 });
+
+it("sends a budget refusal to the budget, not the wallet", () => {
+  const result = replySendFailure({
+    channel: "linkedin",
+    canSend: true,
+    linkedinConnectionState: "connected",
+    send: {
+      id: "s1",
+      status: "failed",
+      body: "x",
+      variant: "direct",
+      generationId: "g1",
+      error: "Daily budget exceeded: $5.00 cap, $4.99 spent",
+    },
+  });
+  expect(result).toEqual({
+    recovered: false,
+    message:
+      "Your reply was not sent: it would go over a spending budget set on the OneShot account. Review the budget, then send again.",
+  });
+  expect(result?.message).not.toMatch(/wallet/);
+});

@@ -84,6 +84,43 @@ describe("selectLiveSweepCandidates", () => {
     expect(picked.map((c) => c.row.id)).toEqual([7, 2, 1]);
     expect(picked[0]?.seed.url).toBe("https://linkedin.com/in/g");
   });
+
+  it("leaves a row alone for three days after an attempt that failed for a reason of its own", () => {
+    const now = Date.parse("2026-10-12T12:00:00.000Z");
+    const ago = (hours: number) => new Date(now - hours * 3_600_000).toISOString();
+    const tried = (id: number, status: string, hours: number, warning?: string) =>
+      row(id, "pending", {
+        name: `P${id}`,
+        linkedinUrl: `${LI}p${id}`,
+        personResearch: { status, researchedAt: ago(hours), ...(warning ? { warning } : {}) },
+      });
+    const rows = [
+      // About the person: the page or the profile is someone else's, the read
+      // failed, nobody has any history for them.
+      tried(11, "partial", 2, "live profile skipped: different-person"),
+      tried(12, "partial", 2, "live profile skipped: failed"),
+      tried(
+        13,
+        "unavailable",
+        2,
+        "profile URL belongs to a different person (Jane Roe); title and verdict left as they were",
+      ),
+      tried(14, "unavailable", 2, "person research returned no organisation history"),
+      // Long enough ago: tried again.
+      tried(15, "partial", 73, "live profile skipped: failed"),
+      // Not about the person: the session, the daily cap, a cost cap, a provider
+      // that failed, a read that did not finish.
+      tried(16, "partial", 2, "live profile skipped: session-invalid"),
+      tried(17, "partial", 2, "live profile skipped: daily-limit"),
+      tried(21, "partial", 2, "live profile skipped: interrupted"),
+      tried(18, "unavailable", 2, "person research skipped: cost cap reached"),
+      tried(19, "unavailable", 2, "person research failed"),
+      // Researched with no live attempt recorded at all.
+      tried(20, "complete", 2),
+    ];
+    const picked = selectLiveSweepCandidates(rows as never, () => false, now);
+    expect(picked.map((c) => c.row.id)).toEqual([21, 20, 19, 18, 17, 16, 15]);
+  });
 });
 
 describe("sweepLiveProfiles", () => {

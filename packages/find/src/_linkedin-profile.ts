@@ -108,6 +108,12 @@ export interface LiveProfile {
   experience: LiveExperience[];
 }
 
+/**
+ * Why no profile came back. `failed` is a read that was refused for this
+ * URL and is negative-cached; `interrupted` is a read that did not finish
+ * for a reason that says nothing about the page (the platform's own error,
+ * a timeout, its budget stop) and is worth trying again at once.
+ */
 export type LiveProfileSkip =
   | "not-linkedin"
   | "not-connected"
@@ -116,6 +122,7 @@ export type LiveProfileSkip =
   | "daily-limit"
   | "cost-cap"
   | "different-person"
+  | "interrupted"
   | "failed";
 
 export interface LiveProfileRead {
@@ -681,7 +688,7 @@ export async function readLinkedInProfile(
           },
           "warn",
         );
-        return { profile: null, skipped: "failed", costUsd, cached: false };
+        return { profile: null, skipped: "interrupted", costUsd, cached: false };
       }
       const out = outputRecord(res.result.output);
       const urls = [
@@ -739,7 +746,12 @@ export async function readLinkedInProfile(
           // best-effort
         }
       }
-      return { profile: null, skipped: "failed", costUsd: 0, cached: false };
+      return {
+        profile: null,
+        skipped: transient ? "interrupted" : "failed",
+        costUsd: 0,
+        cached: false,
+      };
     }
   });
 }
