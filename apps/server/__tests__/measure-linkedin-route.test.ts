@@ -75,6 +75,15 @@ describe("measureLinkedIn", () => {
     expect(res.status).toBe(400);
   });
 
+  it("refuses a zero or negative sinceDays, like the CLI", async () => {
+    for (const qs of ["?sinceDays=0", "?sinceDays=-5"]) {
+      const res = measureLinkedIn(req(qs));
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).error).toBe("sinceDays must be a positive number");
+    }
+    expect(measureLinkedIn(req("?sinceDays=7")).status).toBe(200);
+  });
+
   it("returns an empty funnel for a workspace with no invites", async () => {
     const body = (await measureLinkedIn(req()).json()) as any;
     expect(body.funnel.invitesSent).toBe(0);

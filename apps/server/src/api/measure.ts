@@ -87,6 +87,9 @@ export function measureLinkedIn(req: Request): Response {
   }
   const play = url.searchParams.get("play")?.trim();
   const sinceDays = readPeriodDays(req);
+  if (sinceDays != null && sinceDays <= 0) {
+    return jsonResponse({ error: "sinceDays must be a positive number" }, 400, req);
+  }
   const { view } = readLinkedInMeasure({
     ...(sinceDays != null ? { sinceDays } : {}),
     ...(play ? { play } : {}),
