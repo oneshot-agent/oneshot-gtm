@@ -385,15 +385,15 @@ describe("invite listing rows", () => {
   });
 });
 
-describe("mergeLinkedInReplies", () => {
-  const row = (source: string, occurred_at: string, body: string | null, id = 1) => ({
-    id,
-    prospect_id: 1,
-    source,
-    occurred_at,
-    body,
-  });
+const row = (source: string, occurred_at: string, body: string | null, id = 1) => ({
+  id,
+  prospect_id: 1,
+  source,
+  occurred_at,
+  body,
+});
 
+describe("mergeLinkedInReplies", () => {
   it("merges the same text from two sources even when the times differ", () => {
     const out = mergeLinkedInReplies([
       row("oneshot-linkedin", "2026-10-01T10:00:00Z", "Thanks!  Let's talk"),

@@ -1337,7 +1337,12 @@ measure
   .command("benchmark")
   .description("Compare this install with the opt-in telemetry cohort")
   .option("--json", "output as JSON")
-  .action(runOrFail((opts: { json?: boolean }) => commandMeasureBenchmark(opts)));
+  .action(
+    runOrFail((_opts: { json?: boolean }, cmd: Command) =>
+      // The parent `measure` also declares --json, so commander binds the flag there.
+      commandMeasureBenchmark({ json: cmd.optsWithGlobals<{ json?: boolean }>().json }),
+    ),
+  );
 
 const intel = program.command("intel").description("LLM-powered intelligence layer");
 intel

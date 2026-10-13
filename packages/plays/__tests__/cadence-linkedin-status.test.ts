@@ -490,6 +490,14 @@ describe("/cadences preview", () => {
   });
 });
 
+const fullPage = () => ({
+  invitations: Array.from({ length: 100 }, (_, n) => ({
+    invitation_id: `other-${n}`,
+    status: "pending",
+    accepted_at: null,
+  })),
+});
+
 describe("unattended status sweep", () => {
   it("records an accept with acceptedAt and sends nothing", async () => {
     inviteSent();
@@ -553,14 +561,6 @@ describe("unattended status sweep", () => {
     });
     await sweepLinkedInInvitations({ linkedIn: bad });
     expect(ledger.getPollWatermark(`linkedin.invitations.since:gtm:acct-1`)).toBeNull();
-  });
-
-  const fullPage = () => ({
-    invitations: Array.from({ length: 100 }, (_, n) => ({
-      invitation_id: `other-${n}`,
-      status: "pending",
-      accepted_at: null,
-    })),
   });
 
   it("a full page of 100 may hide an accept: the invite is read on its own", async () => {
