@@ -291,6 +291,19 @@ describe("the connection request", () => {
     expect(preview).toMatchObject({ flags: ["note-too-long: 301/300 characters"] });
   });
 
+  it("carries a note's remaining lint flags to the preview and holds the send", async () => {
+    noteText = "Saw you at the meetup. More at https://example.com";
+    emailCadenceRunOut();
+    const preview = await previewCadenceStep({ prospectId, playName: PLAY });
+    if ("waiting" in preview || "skipped" in preview)
+      throw new Error("the invite step never waits");
+    expect(preview.flags).toContainEqual(expect.stringMatching(/^note-link/));
+    expect(preview.payload).toMatchObject({ kind: "linkedin_invite" });
+    const out = await run(inviteOk());
+    expect(out.action).toBe("skipped");
+    expect(calls).toEqual([]);
+  });
+
   it("is written at its own step with the marker, and there is no step-0 LinkedIn row", async () => {
     emailCadenceRunOut();
     const out = await sendInvite(inviteOk());
@@ -656,5 +669,127 @@ describe("stopping", () => {
     const out = await run(inviteOk());
     expect(out.action).toBe("skipped");
     expect(calls).toEqual([]);
+  });
+});
+
+const profileReply = (headline: string) => (op: Record<string, unknown>) => ({
+  profile: { headline, identifier: op["identifier"] },
+});
+
+describe("evidence-aware prompts (#790)", () => {
+  function firstTouch(metadata: Record<string, unknown>): void {
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: PLAY,
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "hello", body: "hello", ...metadata },
+    });
+    enrollInCadence({ prospectId, playName: PLAY });
+    ledger.advanceCadence({
+      prospectId,
+      playName: PLAY,
+      newStep: 1,
+      nextDueAt: "2000-01-01T00:00:00.000Z",
+    });
+  }
+
+  async function previewPayload(linkedIn?: ReturnType<typeof caller>) {
+    const preview = await previewCadenceStep({
+      prospectId,
+      playName: PLAY,
+      ...(linkedIn ? { linkedIn } : {}),
+    });
+    if ("waiting" in preview || "skipped" in preview) throw new Error("not waiting");
+    return preview;
+  }
+
+  beforeEach(async () => {
+    const { _resetLinkedInLiveReads } = await import("../src/index.ts");
+    _resetLinkedInLiveReads();
+  });
+
+  it("the note gets the aged evidence clause, the buyer type and a no-infra-pitch instruction", async () => {
+    firstTouch({ repo: "acme/widgets", buyerType: "enterprise" });
+    await previewPayload();
+    expect(modelInputs[0]).toContain("EVIDENCE_CLAUSE: starred acme/widgets");
+    expect(modelInputs[0]).toContain("BUYER_TYPE: enterprise");
+    expect(modelInputs[0]).toMatch(/Keep the infra pitch out of the note/);
+  });
+
+  it("a stale stack is left out of the note", async () => {
+    firstTouch({ vendorStack: "Playwright" });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: PLAY,
+      stepIndex: 9,
+      channel: "email",
+      status: "sent",
+      metadata: {},
+    });
+    sql(
+      `UPDATE sequence_events SET created_at = '2020-01-01 00:00:00' WHERE prospect_id = ${prospectId}`,
+    );
+    await previewPayload();
+    expect(modelInputs[0]).not.toContain("EVIDENCE_CLAUSE");
+  });
+
+  it("message 1 names the company only after a live read agrees, and reads once for message 1 and the close", async () => {
+    sql(`UPDATE prospects SET title = 'CEO', company = 'Soren', email = 'dana@usesoren.com'`);
+    firstTouch({ buyerType: "startup" });
+    await sendInvite(inviteOk("already_connected"));
+    calls = [];
+    const li = caller({
+      profile: profileReply("CEO at Soren"),
+      message: () => ({ status: "sent", conversation_id: "conv-1" }),
+    });
+    const first = await previewPayload(li);
+    expect(modelInputs.at(-1)).toContain("COMPANY_THEY_RUN: Soren");
+    expect(modelInputs.at(-1)).toContain("PRIOR_CONTACT: they were emailed");
+    expect(modelInputs.at(-1)).toContain("BUYER_TYPE: startup");
+    await run(li, { persistedPayload: first.payload });
+    makeDue();
+    await previewPayload(li);
+    expect(modelInputs.at(-1)).toContain("COMPANY_THEY_RUN: Soren");
+    expect(calls.filter((c) => c["kind"] === "profile")).toHaveLength(1);
+    expect(calls.find((c) => c["kind"] === "profile")).toMatchObject({
+      accountId: "acct-1",
+      identifier: "https://www.linkedin.com/in/dana-lee",
+    });
+  });
+
+  it("a live headline naming another company, or no live read, leaves the company out", async () => {
+    sql(`UPDATE prospects SET title = 'CEO', company = 'Soren', email = 'dana@usesoren.com'`);
+    firstTouch({});
+    await sendInvite(inviteOk("already_connected"));
+    await previewPayload(caller({ profile: profileReply("Founder at Otherco") }));
+    expect(modelInputs.at(-1)).not.toContain("COMPANY_THEY_RUN");
+    const { _resetLinkedInLiveReads } = await import("../src/index.ts");
+    _resetLinkedInLiveReads();
+    await previewPayload();
+    expect(modelInputs.at(-1)).not.toContain("COMPANY_THEY_RUN");
+  });
+
+  it("the close carries the brief and role; an unknown role carries no goal", async () => {
+    sql(`UPDATE prospects SET title = 'Head of Growth'`);
+    firstTouch({});
+    await sendInvite(inviteOk("already_connected"));
+    const li = caller({ message: () => ({ status: "sent", conversation_id: "conv-1" }) });
+    const first = await previewPayload(li);
+    await run(li, { persistedPayload: first.payload });
+    makeDue();
+    await previewPayload();
+    const known = modelInputs.at(-1)!;
+    expect(known).toContain("READER_ROLE: growth or operations");
+    expect(known).toContain("PRODUCT_BRIEF:");
+    expect(known).toMatch(/Name one concrete goal/);
+
+    sql(`UPDATE prospects SET title = NULL`);
+    await previewPayload();
+    const unknown = modelInputs.at(-1)!;
+    expect(unknown).toContain("READER_ROLE: unknown");
+    expect(unknown).toMatch(/Name no goal/);
+    expect(unknown).not.toMatch(/Name one concrete goal/);
   });
 });

@@ -14,8 +14,9 @@ import {
   SendDeferredError,
   type LinkedInOperation,
 } from "@oneshot-gtm/core";
-import { complete, loadPrompt } from "@oneshot-gtm/intel";
+import { loadPrompt } from "@oneshot-gtm/intel";
 import { enrollInCadence } from "./_cadence.ts";
+import { agedEvidence, draftWithRepair, lintLinkedInNote } from "./_linkedin-evidence.ts";
 import { learningBlock, stampLearningInput, voiceBlock } from "./_lib.ts";
 
 /**
@@ -128,11 +129,17 @@ export async function draftLinkedInNote(
     draftAngle?: string | null;
     /** Facts about earlier contact (an email cadence that got no reply), as prompt lines. */
     priorContact?: string[];
+    /** When the person was first contacted on this play; defaults to now (this note is the first touch). */
+    contactedAt?: Date;
+    /** The trigger's buyer type, when it sets one. */
+    buyerType?: string | null;
   } = {},
 ): Promise<LinkedInNoteDraft> {
   const cfg = loadConfig();
   const maxChars = CHANNEL_SPECS.linkedin.firstTouchMaxChars ?? 200;
   const name = str(row.payload, "name") ?? "them";
+  const now = new Date();
+  const evidence = agedEvidence(row.payload, { contactedAt: opts.contactedAt ?? now, now });
   const voice = voiceBlock("intro");
   const learned = learningBlock({
     channel: "linkedin",
@@ -161,23 +168,26 @@ export async function draftLinkedInNote(
     ...(opts.priorContact?.length
       ? ["PRIOR_CONTACT:", ...opts.priorContact.map((l) => `  ${l}`)]
       : []),
+    ...(evidence ? [`EVIDENCE_CLAUSE: ${evidence}`] : []),
+    ...((opts.buyerType ?? str(row.payload, "buyerType"))
+      ? [`BUYER_TYPE: ${opts.buyerType ?? str(row.payload, "buyerType")}`]
+      : []),
     ...(voice ? [`VOICE:\n${voice.text}`] : []),
     ...(learned ? [learned.text] : []),
     `MAX_CHARS: ${maxChars}`,
   ].join("\n");
   stampLearningInput(learned, input);
-  const res = await complete({
-    messages: [
-      { role: "system", content: loadPrompt("linkedin-invite-note") },
-      { role: "user", content: input },
-    ],
-    temperature: 0.7,
+  const drafted = await draftWithRepair({
+    system: loadPrompt("linkedin-invite-note"),
+    context: input,
+    lint: (text) => lintLinkedInNote(text, maxChars),
     maxTokens: 600,
   });
-  const body = res.content.trim().replace(/^"|"$/g, "");
+  const body = drafted.text;
   if (!body) throw new Error("empty note from the model");
-  const flags: string[] = [];
-  if (body.length > maxChars) flags.push(`note-too-long: ${body.length}/${maxChars} characters`);
+  const flags: string[] = [...drafted.flags];
+  if (body.length > maxChars && !flags.some((f) => f.startsWith("note-too-long")))
+    flags.push(`note-too-long: ${body.length}/${maxChars} characters`);
   if (!linkedInProfileOf(row.payload))
     flags.push("no-linkedin: this row has no LinkedIn profile URL");
   return {

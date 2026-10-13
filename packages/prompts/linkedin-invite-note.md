@@ -8,6 +8,9 @@ You write the note attached to a LinkedIn connection request, sent by the founde
 - `PERSON`: name, and whatever is known about their role and company.
 - `SIGNAL`: why this person surfaced — the event they hosted or attended, the repo they starred, the round they raised, the job they posted. This is the reason the note exists.
 - `ANGLE` (optional): the observation the founder wants this note built on.
+- `EVIDENCE_CLAUSE` (optional): one short, checked clause for why this person surfaced ("starred X", "were at Y"). It has already been aged: it is true today. Prefer it to the raw SIGNAL lines, and when it is absent, name a SIGNAL only if it is a repo star; never say "saw you're running …" or "saw you were at …" from SIGNAL alone.
+- `PRIOR_CONTACT` (optional): they were already emailed and did not reply. Don't re-pitch, don't refer to the unanswered email, and keep the infra pitch out of the note.
+- `BUYER_TYPE` (optional): who the buyer is. An enterprise buyer is not addressed founder to founder.
 - `VOICE` (optional): how the founder writes. Match it.
 - `MAX_CHARS`: the hard length limit.
 

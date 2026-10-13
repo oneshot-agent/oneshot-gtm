@@ -52,6 +52,17 @@ import {
   outboundSendKey,
 } from "@oneshot-gtm/core";
 import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import {
+  agedEvidence,
+  companyTheyRun,
+  draftWithRepair,
+  lintLinkedInClose,
+  lintLinkedInFirstMessage,
+  profileViewReader,
+  readerRole,
+  type LiveProfileReader,
+  type ReaderRole,
+} from "./_linkedin-evidence.ts";
 import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
 import {
   draftLinkedInNote,
@@ -85,6 +96,8 @@ export interface CadenceContext {
   metadata: Record<string, unknown>;
   maxBodyWords?: number;
   recentEmailBodies?: string[];
+  /** A live read of the prospect's LinkedIn profile, when this process can make one. */
+  linkedInRead?: LiveProfileReader;
 }
 
 export type StepPayload =
@@ -107,6 +120,8 @@ export type StepPayload =
   | {
       kind: "linkedin_message";
       text: string;
+      /** Lint findings left after the repair turn; a flagged message is held, never sent unseen. */
+      flags?: string[];
       voiceKey?: string | null;
       learningKey?: string | null;
     }
@@ -114,6 +129,8 @@ export type StepPayload =
   | {
       kind: "linkedin_invite";
       note: string;
+      /** Lint findings left after the repair turn; a flagged note is held, never sent unseen. */
+      flags?: string[];
       voiceKey?: string | null;
       learningKey?: string | null;
     }
@@ -1621,6 +1638,9 @@ export async function runCadenceStepForProspect(
           cfg,
           metadata: {},
           maxBodyWords: step.maxBodyWords ?? 100,
+          ...(step.channel === "linkedin"
+            ? liveReadOf(opts.linkedIn, prospect, opts.playName)
+            : {}),
           recentEmailBodies: ledger.recentSentEmailBodies({
             playName: opts.playName,
             stepIndex: nextIndex,
@@ -1818,6 +1838,8 @@ export async function previewCadenceStep(input: {
    * rejected angle (`rotate`), not a rejected text.
    */
   rotateAngle?: boolean;
+  /** Calls OneShot as the LinkedIn account's workspace: the live profile read for a LinkedIn step. */
+  linkedIn?: LinkedInCaller;
 }): Promise<CadenceStepPreview | CadenceStepWaiting | CadenceStepSkipped> {
   const ledger = getLedger();
   const cfg = loadConfig();
@@ -1890,6 +1912,9 @@ export async function previewCadenceStep(input: {
         cfg,
         metadata: input.rotateAngle ? { rotateFrom: currentPreviewAngle(input) } : {},
         maxBodyWords: step.maxBodyWords ?? 100,
+        ...(step.channel === "linkedin"
+          ? liveReadOf(input.linkedIn, prospect, input.playName)
+          : {}),
         recentEmailBodies: [
           ...(input.extraRecentBodies ?? []),
           ...ledger.recentSentEmailBodies({ playName: input.playName, stepIndex: nextIndex }),
@@ -1934,10 +1959,21 @@ export async function previewCadenceStep(input: {
           ]),
           ...hardBanHold(built),
         ]
-      : built.kind === "linkedin_message" && body.length > LINKEDIN_MESSAGE_MAX_CHARS
-        ? [`too-long: ${body.length}/${LINKEDIN_MESSAGE_MAX_CHARS} characters`]
-        : built.kind === "linkedin_invite" && body.length > LINKEDIN_NOTE_HARD_LIMIT
-          ? [`note-too-long: ${body.length}/${LINKEDIN_NOTE_HARD_LIMIT} characters`]
+      : built.kind === "linkedin_message"
+        ? [
+            ...(body.length > LINKEDIN_MESSAGE_MAX_CHARS
+              ? [`too-long: ${body.length}/${LINKEDIN_MESSAGE_MAX_CHARS} characters`]
+              : []),
+            ...hardBanHold(built).filter((f) => !f.startsWith("too-long")),
+          ]
+        : built.kind === "linkedin_invite"
+          ? [
+              ...hardBanHold(built),
+              ...(body.length > LINKEDIN_NOTE_HARD_LIMIT &&
+              !hardBanHold(built).some((f) => f.startsWith("note-too-long"))
+                ? [`note-too-long: ${body.length}/${LINKEDIN_NOTE_HARD_LIMIT} characters`]
+                : []),
+            ]
           : [];
   ledger.setCadenceDraft({
     prospectId: input.prospectId,
@@ -2654,6 +2690,8 @@ export function buildFollowUpEmail(opts: {
 
 /** A price or a link in a draft that must carry neither (`hardBans`); empty otherwise. */
 export function hardBanHold(payload: StepPayload): string[] {
+  if (payload.kind === "linkedin_message" || payload.kind === "linkedin_invite")
+    return payload.flags ?? [];
   return payload.kind === "email" && payload.hardBans ? hardBanFlags(payload.body) : [];
 }
 
@@ -2875,6 +2913,27 @@ export { LINKEDIN_INVITE_TIMEOUT_DAYS };
 /** Most characters a LinkedIn cadence message may run to. */
 export const LINKEDIN_MESSAGE_MAX_CHARS = 400;
 
+/**
+ * How this process makes a live read of a prospect's profile: the connected
+ * account's silent view. Absent without a caller or an account.
+ */
+function liveReadOf(
+  linkedIn: LinkedInCaller | undefined,
+  prospect: ProspectRecord,
+  playName: string,
+): { linkedInRead?: LiveProfileReader } {
+  if (!linkedIn) return {};
+  const account = linkedInOutreachAccount();
+  if (!account) return {};
+  return {
+    linkedInRead: profileViewReader({
+      call: (operation) => linkedIn(account.workspace, operation),
+      accountId: account.accountId,
+      idempotencyKey: `gtm:${currentWorkspaceName()}:cadence:${prospect.id}:${playName}:profile`,
+    }),
+  };
+}
+
 /** Why this person can't be reached on the step's channel, or null when they can. */
 function missingAddress(
   channel: SequenceStep["channel"],
@@ -3087,21 +3146,78 @@ async function buildLinkedInInvite(
   playName: string,
 ): Promise<StepPayload | null> {
   const { prospect } = ctx;
-  const emailed = getLedger()
-    .listSequenceEventsForProspectPlay(prospect.id, playName)
-    .filter((e) => e.channel === "email" && (e.status === "sent" || e.status === "delivered"));
-  const draft = await draftLinkedInNote(continuationInviteRow(prospect, playName), {
-    priorContact: [
-      `They were emailed ${emailed.length} time${emailed.length === 1 ? "" : "s"} on this and did not reply.`,
-      "Don't re-pitch and don't refer to what the emails said: this is a way to connect, not a second ask.",
-    ],
-  });
+  const events = getLedger().listSequenceEventsForProspectPlay(prospect.id, playName);
+  const emailed = events.filter(
+    (e) => e.channel === "email" && (e.status === "sent" || e.status === "delivered"),
+  );
+  const first = firstTouch(events, playName, prospect.id);
+  const row = continuationInviteRow(prospect, playName);
+  const draft = await draftLinkedInNote(
+    { ...row, payload: { ...row.payload, ...first.metadata } },
+    {
+      priorContact: [
+        `They were emailed ${emailed.length} time${emailed.length === 1 ? "" : "s"} on this and did not reply.`,
+        "Don't re-pitch and don't refer to what the emails said: this is a way to connect, not a second ask.",
+        "Keep the infra pitch out of the note: it names one real, current reason and asks one easy question.",
+      ],
+      contactedAt: first.contactedAt,
+      buyerType: first.buyerType,
+    },
+  );
+  // Length is judged against the hard limit in the preview; carry the rest.
+  const held = draft.flags.filter((f) => !f.startsWith("note-too-long"));
   return {
     kind: "linkedin_invite",
     note: draft.body,
+    ...(held.length > 0 ? { flags: held } : {}),
     ...(draft.voiceKey ? { voiceKey: draft.voiceKey } : {}),
     ...(draft.learningKey ? { learningKey: draft.learningKey } : {}),
   };
+}
+
+/** SQLite's `YYYY-MM-DD HH:MM:SS` (UTC) or an ISO string, as a Date. */
+function eventTime(value: string): Date {
+  const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
+    ? `${value.replace(" ", "T")}Z`
+    : value;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? new Date() : d;
+}
+
+/**
+ * The play's first touch: its step-0 metadata (the evidence), when the person
+ * was first contacted, and the trigger's buyer type.
+ */
+function firstTouch(
+  events: ReturnType<ReturnType<typeof getLedger>["listSequenceEventsForProspectPlay"]>,
+  playName: string,
+  prospectId: number,
+): { metadata: Record<string, unknown>; contactedAt: Date; buyerType: string | null } {
+  const step0 = events.find((e) => e.step_index === 0);
+  const metadata = tryParseJsonObject<Record<string, unknown>>(step0?.metadata_json ?? "", {});
+  const sent = events.find(
+    (e) => e.status === "sent" || e.status === "delivered" || e.status === "replied",
+  );
+  const buyer = metadata["buyerType"];
+  return {
+    metadata,
+    contactedAt: eventTime((sent ?? step0)?.created_at ?? new Date().toISOString()),
+    buyerType:
+      typeof buyer === "string" && buyer.trim()
+        ? buyer.trim()
+        : getStep0MetadataField(prospectId, playName, "buyerType"),
+  };
+}
+
+/** One rule per kind of reader: the goal a close may name is theirs, in their terms. */
+function closeGuidance(role: ReaderRole): string[] {
+  return role === "unknown"
+    ? [
+        "READER_ROLE is unknown: describe the product in one sentence and end with the easy out. Name no goal.",
+      ]
+    : [
+        `READER_ROLE: ${role}. Name one concrete goal the product could carry out for a ${role}, built only from what PRODUCT_BRIEF says it can do. If the brief gives you nothing for them, name no goal.`,
+      ];
 }
 
 async function buildLinkedInMessage(
@@ -3110,8 +3226,8 @@ async function buildLinkedInMessage(
   which: "first" | "last",
 ): Promise<StepPayload | null> {
   const ledger = getLedger();
-  const prior = ledger
-    .listSequenceEventsForProspectPlay(ctx.prospect.id, playName)
+  const events = ledger.listSequenceEventsForProspectPlay(ctx.prospect.id, playName);
+  const prior = events
     .filter((e) => e.channel === "linkedin" && e.status === "sent")
     .map((e) => {
       try {
@@ -3123,6 +3239,20 @@ async function buildLinkedInMessage(
       }
     })
     .filter((line): line is string => line !== null);
+  const emailed = events.some(
+    (e) => e.channel === "email" && (e.status === "sent" || e.status === "delivered"),
+  );
+  const first = firstTouch(events, playName, ctx.prospect.id);
+  const now = new Date();
+  const clause = agedEvidence(first.metadata, { contactedAt: first.contactedAt, now });
+  const title = ctx.prospect.title?.trim() || personTitle(ctx.prospect.dossier_json);
+  const role = readerRole(title);
+  const company = await companyTheyRun({
+    playName,
+    prospect: ctx.prospect,
+    reader: ctx.linkedInRead,
+    now,
+  });
   const voice = voiceBlock(which === "first" ? "followup" : "breakup");
   const learned = learningBlock({
     channel: "linkedin",
@@ -3132,35 +3262,57 @@ async function buildLinkedInMessage(
     playName,
     history: prior,
   });
-  const input = [
+  const lines = [
     `FOUNDER: ${ctx.cfg.founderName ?? ""}`,
     `PRODUCT: ${ctx.cfg.productOneLiner ?? ""}`,
+    ...(which === "last" ? [`PRODUCT_BRIEF: ${ctx.cfg.productBrief ?? "(none)"}`] : []),
     `PERSON: ${ctx.prospect.name ?? "them"}${ctx.prospect.title ? `, ${ctx.prospect.title}` : ""}${
       ctx.prospect.company ? ` at ${ctx.prospect.company}` : ""
     }`,
+    ...(company ? [`COMPANY_THEY_RUN: ${company}`] : []),
+    ...(which === "last" ? [`READER_ROLE: ${role}`] : []),
+    ...(first.buyerType ? [`BUYER_TYPE: ${first.buyerType}`] : []),
+    ...(clause ? [`EVIDENCE_CLAUSE: ${clause}`] : []),
+    ...(emailed
+      ? [
+          "PRIOR_CONTACT: they were emailed on this and did not reply. Don't re-pitch and don't refer to the unanswered email.",
+        ]
+      : []),
     `MESSAGE: ${which === "first" ? "first message after they accepted the connection request" : "last message — a short, graceful close"}`,
+    ...(which === "last" ? closeGuidance(role) : []),
     "PRIOR TOUCHES:",
     ...(prior.length > 0 ? prior.map((l) => `  ${l}`) : ["  (none recorded)"]),
     ...(voice ? [`VOICE:\n${voice.text}`] : []),
     ...(learned ? [learned.text] : []),
     `MAX_CHARS: ${LINKEDIN_MESSAGE_MAX_CHARS}`,
-  ].join("\n");
+  ];
+  const input = lines.join("\n");
   stampLearningInput(learned, input);
-  const res = await complete({
-    messages: [
-      { role: "system", content: loadPrompt("linkedin-message") },
-      { role: "user", content: input },
-    ],
-    temperature: 0.7,
+  const drafted = await draftWithRepair({
+    system: loadPrompt("linkedin-message"),
+    context: input,
+    lint:
+      which === "first"
+        ? (text) => lintLinkedInFirstMessage(text, { clause })
+        : (text) => lintLinkedInClose(text, { context: input, clause }),
     maxTokens: 700,
   });
-  const text = res.content.trim().replace(/^"|"$/g, "");
+  const text = drafted.text;
   return text
     ? {
         kind: "linkedin_message",
         text,
+        ...(drafted.flags.length > 0 ? { flags: drafted.flags } : {}),
         ...(voice ? { voiceKey: voice.key } : {}),
         ...(learned ? { learningKey: learned.key } : {}),
       }
     : null;
+}
+
+/** The title the dossier's person record carries, for a prospect row with none. */
+function personTitle(dossierJson: string | null): string | null {
+  const half = readPersonHalf(dossierJson);
+  const title =
+    half && typeof half === "object" ? (half as Record<string, unknown>)["title"] : undefined;
+  return typeof title === "string" && title.trim() ? title.trim() : null;
 }
