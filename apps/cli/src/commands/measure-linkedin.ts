@@ -20,13 +20,15 @@ export interface LinkedInInvitesOptions {
   json?: boolean;
 }
 
-const STEP_KINDS = new Set<string>(["first-touch", "continuation"]);
+const STEP_KINDS = new Set<string>(["first-touch", "continuation", "friend"]);
 const STATUSES = ["pending", "accepted", "withdrawn"] as const;
 type InviteStatusFilter = (typeof STATUSES)[number];
 
 function stepKindOf(value: string | undefined): LinkedInStepKind | undefined {
   if (value === undefined) return undefined;
-  if (!STEP_KINDS.has(value)) throw new Error("--step-kind must be first-touch or continuation");
+  if (!STEP_KINDS.has(value)) {
+    throw new Error("--step-kind must be first-touch, continuation or friend");
+  }
   return value as LinkedInStepKind;
 }
 
@@ -102,7 +104,7 @@ export async function commandMeasure(opts: MeasureOptions = {}): Promise<void> {
     view.filters.stepKind ? view.filters.stepKind : null,
   ].filter((f): f is string => f !== null);
   if (filters.length > 0) note(c.dim(`filters: ${filters.join(" · ")}`));
-  if (view.funnel.invitesSent === 0) {
+  if (view.funnel.invitesSent === 0 && view.friend.invitesSent === 0) {
     note("No LinkedIn invites sent in this view.");
     return;
   }
@@ -114,6 +116,13 @@ export async function commandMeasure(opts: MeasureOptions = {}): Promise<void> {
   if (view.variants.unrecorded.invitesSent > 0) {
     note("");
     renderFunnel("sent before the clause was recorded", view.variants.unrecorded);
+  }
+  if (view.friend.invitesSent > 0) {
+    note("");
+    renderFunnel(
+      "friend invites (replied to an email; left out of the funnels above)",
+      view.friend,
+    );
   }
   note("");
   note(

@@ -71,7 +71,7 @@ describe("measureLinkedIn", () => {
   });
 
   it("refuses a step kind it does not know", async () => {
-    const res = measureLinkedIn(req("?stepKind=friend"));
+    const res = measureLinkedIn(req("?stepKind=cold"));
     expect(res.status).toBe(400);
   });
 

@@ -428,3 +428,44 @@ describe("mergeLinkedInReplies", () => {
     expect(out.replies).toHaveLength(2);
   });
 });
+
+describe("friend invites (#791)", () => {
+  const FRIEND = "linkedin:friend";
+
+  it("are their own funnel and stay out of the cold one", () => {
+    const before = compute().view;
+    const f = person("Gil Fixture");
+    invite(f, FRIEND, at(6), { acceptedAt: at(5), invitationStatus: "accepted" }, 1);
+    const after = compute().view;
+    expect(after.friend.invitesSent).toBe(1);
+    expect(after.friend.accepted.total).toBe(1);
+    expect(after.funnel).toEqual(before.funnel);
+    expect(after.variants).toEqual(before.variants);
+  });
+
+  it("is labelled friend in the listing, never first-touch or continuation", () => {
+    const f = person("Hue Fixture");
+    invite(f, FRIEND, at(3), {}, 1);
+    const row = compute().rows.find((r) => r.prospectId === f)!;
+    expect(row).toMatchObject({ stepKind: "friend", playName: FRIEND, stepIndex: 1 });
+    expect(compute({ stepKind: "first-touch" }).rows.some((r) => r.prospectId === f)).toBe(false);
+    expect(compute({ stepKind: "continuation" }).rows.some((r) => r.prospectId === f)).toBe(false);
+  });
+
+  it("the friend filter shows only friend invites, in the main funnel too", () => {
+    const f = person("Ivy Fixture");
+    invite(f, FRIEND, at(2), {}, 1);
+    const view = compute({ stepKind: "friend" }).view;
+    expect(view.friend.invitesSent).toBe(1);
+    expect(view.funnel.invitesSent).toBe(1);
+    expect(view.filters.stepKind).toBe("friend");
+  });
+
+  it("tracks a withdrawn friend invite", () => {
+    const f = person("Jo Fixture");
+    invite(f, FRIEND, at(30), {}, 1);
+    withdraw(f, FRIEND, at(9), "timeout", 1);
+    const view = compute().view;
+    expect(view.friend.withdrawn).toEqual({ total: 1, timeout: 1, manual: 0, unknown: 0 });
+  });
+});

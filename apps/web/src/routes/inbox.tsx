@@ -24,6 +24,7 @@ import type {
 import { api } from "../api/client.ts";
 import { IS_DEMO } from "../api/demo.ts";
 import { IntentBadge } from "../components/IntentBadge.tsx";
+import { ConnectOnLinkedIn } from "../components/ConnectOnLinkedIn.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Input } from "../components/primitives/Field.tsx";
 import { Pii } from "../components/primitives/Pii.tsx";
@@ -939,6 +940,9 @@ function ThreadRow({
                 confidence={t.email.intentConfidence}
               />
             </p>
+          )}
+          {t.channel === "email" && t.prospectId != null && (
+            <ConnectOnLinkedIn prospectId={t.prospectId} />
           )}
           {t.snoozedUntil && (
             <p className="pt-3 text-[12px] text-ink-muted">

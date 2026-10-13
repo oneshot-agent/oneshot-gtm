@@ -128,6 +128,11 @@ import { addProspectRoute } from "./api/prospects.ts";
 import { calNoShowWebhookRoute, signupWebhookRoute } from "./api/webhook-triggers.ts";
 import { markLinkedInReplyRoute } from "./api/linkedin-replies.ts";
 import {
+  linkedInFriendDraftRoute,
+  linkedInFriendRoute,
+  linkedInFriendSendRoute,
+} from "./api/linkedin-friend.ts";
+import {
   linkedInInviteQuotaRoute,
   linkedInTouchedCountRoute,
   linkedInTouchedImportRoute,
@@ -168,6 +173,9 @@ const routes: RouteEntry[] = [
   route("POST", "/api/cadences/:id/skip-mail", skipCadenceMailRoute),
   route("POST", "/api/cadences/skip-mail-batch", skipCadenceMailBatchRoute),
   route("POST", "/api/prospects/:id/linkedin-reply", markLinkedInReplyRoute),
+  route("GET", "/api/prospects/:id/linkedin-friend", linkedInFriendRoute),
+  route("POST", "/api/prospects/:id/linkedin-friend/draft", linkedInFriendDraftRoute),
+  route("POST", "/api/prospects/:id/linkedin-friend/send", linkedInFriendSendRoute),
   route("GET", "/api/cadences/:id/drafts", cadenceDraftVersionsRoute),
   route("POST", "/api/cadences/:id/preview-next", previewCadenceStepRoute),
   route("POST", "/api/cadences/:id/send-next", sendCadenceStepRoute),

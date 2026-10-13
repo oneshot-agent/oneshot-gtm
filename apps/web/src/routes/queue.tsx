@@ -1,5 +1,6 @@
 import { FitHold } from "../components/queue/FitHold.tsx";
 import { InviteQuotaLine } from "../components/InviteQuotaLine.tsx";
+import { ConnectOnLinkedIn } from "../components/ConnectOnLinkedIn.tsx";
 import {
   DeliveryBadge,
   DeliveryWarning,
@@ -1757,6 +1758,9 @@ function DraftSection({
           )}
           <DraftHistory queryKey={["queue-drafts", id]} load={() => api.queueDrafts(id)} />
           {linkedinReplyEditor}
+          {status === "sent" && channel === "email" && (
+            <ConnectOnLinkedIn prospectId={prospectId} />
+          )}
         </>
       }
       foot={{

@@ -1323,7 +1323,7 @@ const measure = program
     Number.parseFloat(v),
   )
   .option("--play <name>", "LinkedIn funnel: only this play")
-  .option("--step-kind <kind>", "LinkedIn funnel: first-touch or continuation")
+  .option("--step-kind <kind>", "LinkedIn funnel: first-touch, continuation or friend")
   .action(runOrFail((opts: MeasureOptions) => commandMeasure(opts)));
 measure
   .command("benchmark")

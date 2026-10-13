@@ -53,6 +53,7 @@ export * from "./linkedin-inbox.ts";
 export * from "./linkedin-invite-quota.ts";
 export * from "./linkedin-guard.ts";
 export * from "./linkedin-guard-now.ts";
+export * from "./linkedin-friend.ts";
 export * from "./linkedin-funnel.ts";
 export * from "./linkedin-measure.ts";
 export * from "./linkedin-touched-import.ts";

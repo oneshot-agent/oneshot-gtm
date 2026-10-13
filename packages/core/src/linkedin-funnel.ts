@@ -1,12 +1,13 @@
-import type {
-  LinkedInEvidenceVariant,
-  LinkedInFunnel,
-  LinkedInInviteRow,
-  LinkedInInviteState,
-  LinkedInMeasureView,
-  LinkedInRate,
-  LinkedInStepKind,
-  LinkedInWithdrawnBy,
+import {
+  LINKEDIN_FRIEND_PLAY,
+  type LinkedInEvidenceVariant,
+  type LinkedInFunnel,
+  type LinkedInInviteRow,
+  type LinkedInInviteState,
+  type LinkedInMeasureView,
+  type LinkedInRate,
+  type LinkedInStepKind,
+  type LinkedInWithdrawnBy,
 } from "@oneshot-gtm/shared-types";
 import { LINKEDIN_INVITE_KIND } from "./ledger-cadence.ts";
 import type {
@@ -216,7 +217,12 @@ function buildUnits(input: LinkedInFunnelInput): Unit[] {
           profile: person?.linkedin_url ?? null,
           playName: invite.play_name,
           stepIndex: invite.step_index,
-          stepKind: invite.step_index === 0 ? "first-touch" : "continuation",
+          stepKind:
+            invite.play_name === LINKEDIN_FRIEND_PLAY
+              ? "friend"
+              : invite.step_index === 0
+                ? "first-touch"
+                : "continuation",
           sentAt: new Date(sentAtMs).toISOString(),
           state,
           daysPending:
@@ -317,6 +323,11 @@ export function computeLinkedInFunnel(input: LinkedInFunnelInput): LinkedInFunne
       (!filters.play || u.row.playName === filters.play) &&
       (!filters.stepKind || u.row.stepKind === filters.stepKind),
   );
+  // Friend invites (#791) are warm connects, not outreach: they have their
+  // own funnel and stay out of the cold one unless that is what was asked for.
+  const friendUnits = units.filter((u) => u.row.stepKind === "friend");
+  const outreach =
+    filters.stepKind === "friend" ? units : units.filter((u) => u.row.stepKind !== "friend");
 
   const byPerson = new Map<number, FunnelReplyRow[]>();
   for (const r of input.source.replies) {
@@ -330,7 +341,7 @@ export function computeLinkedInFunnel(input: LinkedInFunnelInput): LinkedInFunne
 
   const of = (variant: LinkedInEvidenceVariant) =>
     funnelOf(
-      units.filter((u) => u.row.evidence === variant),
+      outreach.filter((u) => u.row.evidence === variant),
       replies,
     );
   return {
@@ -342,7 +353,8 @@ export function computeLinkedInFunnel(input: LinkedInFunnelInput): LinkedInFunne
         stepKind: filters.stepKind ?? null,
       },
       plays: [...new Set(all.map((u) => u.row.playName))].toSorted(),
-      funnel: funnelOf(units, replies),
+      funnel: funnelOf(outreach, replies),
+      friend: funnelOf(friendUnits, replies),
       variants: {
         withEvidence: of("with"),
         withoutEvidence: of("without"),

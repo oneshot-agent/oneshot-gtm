@@ -5,8 +5,44 @@
  * here is a platform number.
  */
 
-/** Which kind of invite a unit is. A friend invite (#791) adds a third value. */
-export type LinkedInStepKind = "first-touch" | "continuation";
+/**
+ * Which kind of invite a unit is. `friend` is the warm connect sent to someone
+ * who replied to an email (#791): it never counts as a first touch.
+ */
+export type LinkedInStepKind = "first-touch" | "continuation" | "friend";
+
+/** The play label every friend invite is recorded under (#791). */
+export const LINKEDIN_FRIEND_PLAY = "linkedin:friend";
+
+/** The non-zero step index a friend invite is recorded at, so it is never a first touch. */
+export const LINKEDIN_FRIEND_STEP_INDEX = 1;
+
+/** Where a friend invite stands, as shown on the Replies thread. */
+export type LinkedInFriendInviteState = "sent" | "accepted" | "withdrawn" | "already_connected";
+
+/** GET /api/prospects/:id/linkedin-friend: whether Connect on LinkedIn is offered, and the invite if one was sent. */
+export interface LinkedInFriendView {
+  /** True only when the person qualifies and the invite guard passes. */
+  canConnect: boolean;
+  /** Why not, in words, when `canConnect` is false. */
+  reason: string | null;
+  invite: { state: LinkedInFriendInviteState; sentAt: string; acceptedAt: string | null } | null;
+}
+
+/** POST /api/prospects/:id/linkedin-friend/draft: the note to preview and edit. */
+export interface LinkedInFriendDraftView {
+  note: string;
+  flags: string[];
+  /** The hard limit the note is held to. */
+  maxChars: number;
+}
+
+/** POST /api/prospects/:id/linkedin-friend/send. */
+export interface LinkedInFriendSendView {
+  ok: true;
+  invitationId: string;
+  status: string;
+}
 
 /**
  * Where an invite stands, as GTM detects it. `already_connected` is an invite
@@ -93,6 +129,8 @@ export interface LinkedInMeasureView {
   /** Every play with a sent invite in this workspace, for the filter. */
   plays: string[];
   funnel: LinkedInFunnel;
+  /** Friend invites (#791) as their own row: they are left out of `funnel` and `variants`. */
+  friend: LinkedInFunnel;
   /** The same funnel split by whether the note's prompt carried an evidence clause. */
   variants: {
     withEvidence: LinkedInFunnel;
