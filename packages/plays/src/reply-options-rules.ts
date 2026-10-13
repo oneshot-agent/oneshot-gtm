@@ -349,8 +349,13 @@ export function lintLinkedInDrafts(drafts: Drafts, moves: Moves, input: DraftInp
     ...input.priorOutreach,
   ];
   const perVariant = { direct: [], technical: [], warm: [] } as Record<Variant, string[]>;
+  // A blank option is not a draft: nothing to lint, and nothing to compare the
+  // other options against. The save route lints every edit, including an
+  // editor the founder has emptied, and two blank bodies are "near duplicates"
+  // of each other by construction.
+  const written = VARIANTS.filter((v) => drafts[v].trim().length > 0);
 
-  for (const v of VARIANTS) {
+  for (const v of written) {
     const body = drafts[v];
     const urls = (body.match(URL_RE) ?? []).map(normalizeUrl);
     const flags = lintEmail(
@@ -371,14 +376,19 @@ export function lintLinkedInDrafts(drafts: Drafts, moves: Moves, input: DraftInp
   }
 
   const set: string[] = [];
-  const declared = VARIANTS.map((v) => moves[v] ?? "");
-  const valid = declared.every((m) => (MOVE_NAMES as string[]).includes(m));
-  if (!valid || new Set(declared).size !== VARIANTS.length) set.push("same-move");
-  const words = VARIANTS.map((v) => contentWords(drafts[v]));
-  for (let a = 0; a < VARIANTS.length; a++) {
-    for (let b = a + 1; b < VARIANTS.length; b++) {
-      if (jaccard(words[a]!, words[b]!) > NEAR_DUPLICATE_JACCARD) {
-        set.push(`near-duplicate:${VARIANTS[a]}+${VARIANTS[b]}`);
+  // Set-level checks judge the three options against each other, so they
+  // need all three written; a set the founder is still filling in is not
+  // three options yet.
+  if (written.length === VARIANTS.length) {
+    const declared = VARIANTS.map((v) => moves[v] ?? "");
+    const valid = declared.every((m) => (MOVE_NAMES as string[]).includes(m));
+    if (!valid || new Set(declared).size !== VARIANTS.length) set.push("same-move");
+  }
+  const words = new Map(written.map((v) => [v, contentWords(drafts[v])]));
+  for (let a = 0; a < written.length; a++) {
+    for (let b = a + 1; b < written.length; b++) {
+      if (jaccard(words.get(written[a]!)!, words.get(written[b]!)!) > NEAR_DUPLICATE_JACCARD) {
+        set.push(`near-duplicate:${written[a]}+${written[b]}`);
       }
     }
   }
