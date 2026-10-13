@@ -108,16 +108,18 @@ describe("selectLiveSweepCandidates", () => {
       tried(14, "unavailable", 2, "person research returned no organisation history"),
       // Long enough ago: tried again.
       tried(15, "partial", 73, "live profile skipped: failed"),
-      // Not about the person: the session, the daily cap, a cost cap, a provider that failed.
+      // Not about the person: the session, the daily cap, a cost cap, a provider
+      // that failed, a read that did not finish.
       tried(16, "partial", 2, "live profile skipped: session-invalid"),
       tried(17, "partial", 2, "live profile skipped: daily-limit"),
+      tried(21, "partial", 2, "live profile skipped: interrupted"),
       tried(18, "unavailable", 2, "person research skipped: cost cap reached"),
       tried(19, "unavailable", 2, "person research failed"),
       // Researched with no live attempt recorded at all.
       tried(20, "complete", 2),
     ];
     const picked = selectLiveSweepCandidates(rows as never, () => false, now);
-    expect(picked.map((c) => c.row.id)).toEqual([20, 19, 18, 17, 16, 15]);
+    expect(picked.map((c) => c.row.id)).toEqual([21, 20, 19, 18, 17, 16, 15]);
   });
 });
 

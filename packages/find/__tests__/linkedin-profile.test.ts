@@ -467,7 +467,7 @@ describe("readLinkedInProfile", () => {
     browserSuccess = false;
     browserOutput = "";
     const read = await readLinkedInProfile(URL, ctx, { remainingUsd: 1 });
-    expect(read.skipped).toBe("failed");
+    expect(read.skipped).toBe("interrupted");
     expect(profileRows()).toBe(0);
     expect(cfg["linkedinSessionInvalidAt"]).toBeNull();
   });
@@ -493,7 +493,7 @@ describe("readLinkedInProfile", () => {
 
   it("the platform's own budget stop is not negative-cached", async () => {
     browserError = new Error("Job failed: Browser task failed: cost_limit (ref: 3a960955)");
-    expect((await readLinkedInProfile(URL, ctx, { remainingUsd: 1 })).skipped).toBe("failed");
+    expect((await readLinkedInProfile(URL, ctx, { remainingUsd: 1 })).skipped).toBe("interrupted");
     expect(profileRows()).toBe(0);
   });
 
@@ -509,7 +509,7 @@ describe("readLinkedInProfile", () => {
     cache.clear();
     _resetLinkedInReadGate();
     browserError = Object.assign(new Error("ETIMEDOUT"), { code: "ETIMEDOUT" });
-    expect((await readLinkedInProfile(URL, ctx, { remainingUsd: 1 })).skipped).toBe("failed");
+    expect((await readLinkedInProfile(URL, ctx, { remainingUsd: 1 })).skipped).toBe("interrupted");
     expect(profileRows()).toBe(0);
   });
 

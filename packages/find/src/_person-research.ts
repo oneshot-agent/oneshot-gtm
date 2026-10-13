@@ -405,9 +405,10 @@ const OWN_LIVE_SKIP_RX = /^live profile skipped: (?:different-person|failed)$/;
 /**
  * A dossier's `warning` says the attempt came to nothing because of the
  * person's own record: the profile or the page belongs to someone else, the
- * read failed, or nobody has any history for them. Trying again at once gives
- * the same answer. A skip for the session, the daily cap or the cost cap, and
- * a provider that failed, say nothing about the person.
+ * read was refused, or nobody has any history for them. Trying again at once
+ * gives the same answer. A skip for the session, the daily cap or the cost
+ * cap, a read that did not finish, and a provider that failed, say nothing
+ * about the person.
  */
 export function researchFailedOnItsOwn(warning: unknown): boolean {
   return (
