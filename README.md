@@ -88,7 +88,7 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-81 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+82 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -96,7 +96,7 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 | `compact-receipts`       | trim old receipt payloads and shrink the ledger (dry run unless `--apply`)                                                                                                                                                                                                                                                                                                                           |
 | `config`                 | `llm` · `founder` · `keys` · `voice [--from <path>...]` · `linkedin-session` · `telemetry on\|off` · `slack-webhook [url]` · `x-engine [engine]` · `spend-ceiling [amount\|off]` · `linkedin-invites [count\|off]`                                                                                                                                                                                   |
 | `identities`             | `list` · `add` · `remove <id>` · `send-via <id> provider\|smtp` · `test-send <id> --to <email> [--dry-run]` — the sender pool                                                                                                                                                                                                                                                                        |
-| `linkedin`               | `import-touched <file> [--source <label>] [--dry-run] [--verbose]` · `import-touched --from-ledgers` — suppress profiles already invited elsewhere                                                                                                                                                                                                                                                   |
+| `linkedin`               | `import-touched <file> [--source <label>] [--dry-run] [--verbose]` · `import-touched --from-ledgers` — suppress profiles already invited elsewhere · `invites [--status pending\|accepted\|withdrawn] [--since <date>] [--json]` — every sent invite and where it stands                                                                                                                             |
 | `gmail`                  | `auth` (OAuth a sending account) · `placement` (inbox-placement canary)                                                                                                                                                                                                                                                                                                                              |
 | `smartlead`              | `connect` — API key + pick Smartlead mailboxes into the pool; each sends via its own SMTP when its credentials resolve                                                                                                                                                                                                                                                                               |
 | `sends`                  | `check [--since 7d] [--dry-run]` — confirm keyed sends in Sent and count each unkeyed Smartlead/Gmail send's copies there (read-only)                                                                                                                                                                                                                                                                |
@@ -241,7 +241,7 @@ Workspaces share one thing: `~/.oneshot-gtm-shared/shared.sqlite`, holding share
 
 ```
 apps/
-  cli/        the 81-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        the 82-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/

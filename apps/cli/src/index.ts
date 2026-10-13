@@ -1325,7 +1325,7 @@ pmf
 
 const measure = program
   .command("measure")
-  .description("This workspace's email outcomes and LinkedIn funnel; compare with the cohort")
+  .description("This workspace's sends by play and LinkedIn funnel; compare with the cohort")
   .option("--json", "output as JSON")
   .option("--since-days <n>", "only invites and sends from the last N days", (v) =>
     Number.parseFloat(v),

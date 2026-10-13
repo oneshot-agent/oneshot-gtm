@@ -56,8 +56,8 @@ function renderFunnel(label: string, f: LinkedInFunnel): void {
 }
 
 /**
- * `measure`: this workspace's email outcomes by play and its LinkedIn funnel
- * (#792). Read-only. `--json` is `{ email, linkedin }`.
+ * `measure`: this workspace's sends by play and its LinkedIn funnel
+ * (#792). Read-only. `--json` is `{ events, linkedin }`.
  */
 export async function commandMeasure(opts: MeasureOptions = {}): Promise<void> {
   if (opts.json) setJsonMode(true);
@@ -68,7 +68,7 @@ export async function commandMeasure(opts: MeasureOptions = {}): Promise<void> {
   }
   const sinceIso =
     sinceDays !== undefined ? new Date(Date.now() - sinceDays * 86_400_000).toISOString() : null;
-  const email = getLedger()
+  const events = getLedger()
     .eventsByPlay(sinceIso ? { sinceIso } : {})
     .map((r) => ({
       playName: r.play_name,
@@ -83,13 +83,13 @@ export async function commandMeasure(opts: MeasureOptions = {}): Promise<void> {
     ...(stepKind ? { stepKind } : {}),
   });
   if (opts.json) {
-    await emitJson({ command: "measure", email, linkedin: view });
+    await emitJson({ command: "measure", events, linkedin: view });
     return;
   }
   header("measure");
-  note(c.bold("email, by play"));
-  if (email.length === 0) note("  no sends yet");
-  for (const e of email) {
+  note(c.bold("sends by play, every channel"));
+  if (events.length === 0) note("  no sends yet");
+  for (const e of events) {
     note(
       `  ${e.playName.padEnd(28)} sent ${e.sent} · delivered ${e.delivered} · replied ${e.replied} · bounced ${e.bounced}`,
     );

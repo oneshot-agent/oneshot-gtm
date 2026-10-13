@@ -9,7 +9,11 @@ import { linkedInConversationIndex } from "./linkedin-inbox.ts";
  * Read-only over the workspace ledger and the shared inbox store; no API call.
  */
 export function readLinkedInMeasure(
-  filters: { sinceDays?: number | null; play?: string | null; stepKind?: LinkedInStepKind | null } = {},
+  filters: {
+    sinceDays?: number | null;
+    play?: string | null;
+    stepKind?: LinkedInStepKind | null;
+  } = {},
   now: Date = new Date(),
 ): LinkedInFunnelResult {
   const workspace = currentWorkspaceName();

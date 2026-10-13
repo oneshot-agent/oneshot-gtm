@@ -190,7 +190,9 @@ function buildUnits(input: LinkedInFunnelInput): Unit[] {
         state = "withdrawn";
       } else if (meta["inviteStatus"] === "already_connected") {
         state = "already_connected";
-      } else if (conversationId) {
+      } else if (conversationId || firstMessage !== undefined) {
+        // A message only goes out after an accept was detected, so a sent
+        // message is as good as a conversation for this heuristic.
         state = "accepted";
         acceptedVia = "conversation";
       } else {
@@ -205,7 +207,8 @@ function buildUnits(input: LinkedInFunnelInput): Unit[] {
       units.push({
         sentAtMs,
         acceptedAtMs: Number.isFinite(acceptedAtMs) ? acceptedAtMs : null,
-        firstMessageAtMs: firstMessage === undefined ? null : timeOf(events[firstMessage]!.created_at),
+        firstMessageAtMs:
+          firstMessage === undefined ? null : timeOf(events[firstMessage]!.created_at),
         nextStepAtMs: nextStep === undefined ? null : timeOf(events[nextStep]!.created_at),
         row: {
           prospectId: invite.prospect_id,
@@ -217,7 +220,9 @@ function buildUnits(input: LinkedInFunnelInput): Unit[] {
           sentAt: new Date(sentAtMs).toISOString(),
           state,
           daysPending:
-            state === "pending" ? Math.max(0, Math.floor((now.getTime() - sentAtMs) / DAY_MS)) : null,
+            state === "pending"
+              ? Math.max(0, Math.floor((now.getTime() - sentAtMs) / DAY_MS))
+              : null,
           acceptedAt: state === "accepted" ? acceptedAt : null,
           acceptedVia,
           withdrawnBy,
@@ -265,14 +270,16 @@ function funnelOf(units: Unit[], replies: PersonReplies): LinkedInFunnel {
   const withMessage = people.filter((u) => u.firstMessageAtMs !== null);
   const repliedFirst = withMessage.filter((u) =>
     (replies.get(u.row.prospectId)?.replies ?? []).some(
-      (r) =>
-        r.at >= u.firstMessageAtMs! && (u.nextStepAtMs === null || r.at < u.nextStepAtMs),
+      (r) => r.at >= u.firstMessageAtMs! && (u.nextStepAtMs === null || r.at < u.nextStepAtMs),
     ),
   );
   const repliedAny = people.filter((u) =>
     (replies.get(u.row.prospectId)?.replies ?? []).some((r) => r.at >= u.sentAtMs),
   );
-  const repliesMerged = people.reduce((n, u) => n + (replies.get(u.row.prospectId)?.merged ?? 0), 0);
+  const repliesMerged = people.reduce(
+    (n, u) => n + (replies.get(u.row.prospectId)?.merged ?? 0),
+    0,
+  );
 
   return {
     invitesSent: people.length,

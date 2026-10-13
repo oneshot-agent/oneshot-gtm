@@ -108,6 +108,15 @@ describe("draftLinkedInNote", () => {
       "no-linkedin: this row has no LinkedIn profile URL",
     ]);
   });
+
+  it("reports whether the prompt carried an evidence clause (#792)", async () => {
+    const withClause = await draftLinkedInNote(row({ repo: "acme/widgets" }));
+    expect(completeInputs.at(-1)).toContain("EVIDENCE_CLAUSE: starred acme/widgets");
+    expect(withClause.evidenceClause).toBe(true);
+    const without = await draftLinkedInNote(row());
+    expect(completeInputs.at(-1)).not.toContain("EVIDENCE_CLAUSE");
+    expect(without.evidenceClause).toBe(false);
+  });
 });
 
 describe("sendLinkedInInvite", () => {
@@ -258,6 +267,32 @@ describe("sendLinkedInInvite", () => {
       playName: "luma-events",
       channel: "linkedin",
     });
+  });
+
+  it("records whether the note carried an evidence clause on the invite event (#792)", async () => {
+    const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
+    await sendLinkedInInvite({
+      row: row(),
+      note: "hi",
+      sender: s,
+      workspace: "gtm",
+      evidenceClause: true,
+    });
+    expect(events.at(-1)!["metadata"]).toMatchObject({ evidenceClause: true });
+    await sendLinkedInInvite({
+      row: row({ linkedinUrl: "https://www.linkedin.com/in/other-person", name: "Other Person" }),
+      note: "hi",
+      sender: s,
+      workspace: "gtm",
+      evidenceClause: false,
+    });
+    expect(events.at(-1)!["metadata"]).toMatchObject({ evidenceClause: false });
+  });
+
+  it("records nothing about the clause when the caller does not know (#792)", async () => {
+    const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
+    await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "gtm" });
+    expect(events.at(-1)!["metadata"]).not.toHaveProperty("evidenceClause");
   });
 
   it("turns a refusal the founder can fix into a flag, and records nothing", async () => {

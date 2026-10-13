@@ -304,6 +304,41 @@ describe("the connection request", () => {
     expect(calls).toEqual([]);
   });
 
+  it("stores on the invite whether its note carried an evidence clause, as drafted (#792)", async () => {
+    // Email intro with a repo signal: the note is drafted with a clause.
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: PLAY,
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "hello", body: "hello", repo: "acme/widgets" },
+    });
+    enrollInCadence({ prospectId, playName: PLAY });
+    ledger.advanceCadence({
+      prospectId,
+      playName: PLAY,
+      newStep: 1,
+      nextDueAt: "2000-01-01T00:00:00.000Z",
+    });
+    const preview = await previewCadenceStep({ prospectId, playName: PLAY });
+    if ("waiting" in preview || "skipped" in preview) throw new Error("the invite never waits");
+    expect(preview.payload).toMatchObject({ kind: "linkedin_invite", evidenceClause: true });
+    await run(inviteOk(), { persistedPayload: preview.payload });
+    const [sent] = ledger.listLinkedInInviteEvents(prospectId, PLAY);
+    expect(JSON.parse(sent!.metadata_json!)).toMatchObject({ evidenceClause: true });
+  });
+
+  it("stores evidenceClause false when the note was drafted without a clause (#792)", async () => {
+    emailCadenceRunOut();
+    const preview = await previewCadenceStep({ prospectId, playName: PLAY });
+    if ("waiting" in preview || "skipped" in preview) throw new Error("the invite never waits");
+    expect(preview.payload).toMatchObject({ evidenceClause: false });
+    await run(inviteOk(), { persistedPayload: preview.payload });
+    const [sent] = ledger.listLinkedInInviteEvents(prospectId, PLAY);
+    expect(JSON.parse(sent!.metadata_json!)).toMatchObject({ evidenceClause: false });
+  });
+
   it("is written at its own step with the marker, and there is no step-0 LinkedIn row", async () => {
     emailCadenceRunOut();
     const out = await sendInvite(inviteOk());
@@ -629,6 +664,41 @@ describe("after the invite", () => {
       [2, "withdrawn"],
     ]);
     expect(state().status).toBe("stopped");
+  });
+
+  it("records who ended the invite: the timeout (#792)", async () => {
+    emailCadenceRunOut();
+    await sendInvite(inviteOk());
+    sql(
+      `UPDATE sequence_events SET created_at = datetime('now', '-25 days')
+        WHERE prospect_id = ${prospectId} AND channel = 'linkedin'`,
+    );
+    makeDue();
+    await run(
+      caller({
+        invitation: () => ({ invitation_id: "inv-1", status: "pending", accepted_at: null }),
+        withdraw: () => ({ status: "withdrawn" }),
+      }),
+    );
+    const timedOut = ledger
+      .listLinkedInInviteEvents(prospectId, PLAY)
+      .find((e) => e.status === "withdrawn")!;
+    expect(JSON.parse(timedOut.metadata_json!)).toMatchObject({ withdrawnBy: "timeout" });
+  });
+
+  it("records a withdrawal OneShot reports as manual (#792)", async () => {
+    emailCadenceRunOut();
+    await sendInvite(inviteOk());
+    makeDue();
+    await run(
+      caller({
+        invitation: () => ({ invitation_id: "inv-1", status: "withdrawn", accepted_at: null }),
+      }),
+    );
+    const byHand = ledger
+      .listLinkedInInviteEvents(prospectId, PLAY)
+      .find((e) => e.status === "withdrawn")!;
+    expect(JSON.parse(byHand.metadata_json!)).toMatchObject({ withdrawnBy: "manual" });
   });
 });
 

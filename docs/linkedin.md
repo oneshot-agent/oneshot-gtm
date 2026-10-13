@@ -72,6 +72,16 @@ All of this is prompt context the model may use; no copy is written or wrapped i
 - **Buyer type.** The trigger's `buyerType` goes to all three prompts.
 - **Lint.** The note is held to 300 characters with no pitch phrase or link. Message 1 is held to 400 characters with exactly one question, no meeting ask and no link. The close is held to 400 characters with no link, price, unsupported number or `saw you …` claim beyond the evidence clause. A draft that fails gets one repair turn; whatever it still breaks shows as a flag on /cadences and holds the send.
 
+## LinkedIn funnel
+
+**Measure** shows a LinkedIn section with the funnel for this workspace: invites sent, pending, accepted, withdrawn, first messages sent and replies. The same numbers are in the `linkedin` block of `oneshot-gtm measure --json` and at `GET /api/measure/linkedin` (filters `sinceDays`, `play`, `stepKind`). `oneshot-gtm linkedin invites` lists every sent invite with its state (`--json` for the rows). All of it is read from this workspace's ledger and synced inbox; none of it is a number from LinkedIn.
+
+- **Each person once.** A person counts by their newest sent invite, so a re-invite does not inflate the funnel.
+- **Accepted.** Counted by the invite's recorded `acceptedAt` when GTM has seen one, otherwise by a synced 1:1 conversation with the person, or by a first message having been sent (it only goes out after an accept). The conversation route misses accepts that nobody has messaged, so the section splits the two and treats the acceptance rate as a floor. "Already connected" answers are shown apart and are not acceptances.
+- **Withdrawn.** Each withdrawal records who ended it: `timeout` (GTM withdrew it after the wait), `manual` (withdrawn by hand), or `unknown` for invites withdrawn before this was recorded.
+- **Replies.** Shown two ways: a reply to the first message, and a reply at any point after the invite. Two sources recording the same reply count once.
+- **Evidence clause.** Each invite records, when it is sent, whether its note was drafted with an evidence clause. The section splits the funnel by that, so you can compare. Invites sent before this was recorded show as unrecorded; a prompt change later does not rewrite history.
+
 ## Writing preferences
 
 Replies learns writing preferences from the replies you send on LinkedIn and email: your explicit feedback on an improvement, the same edit made across several conversations, a consistent pattern across more. What it learns is a proposal; nothing applies to a draft until you approve it on `/queue`. **Writing preferences** on Replies shows what is active, lets you disable or re-enable a line, pause learning for the workspace, and links to the proposals waiting for review. [Learning and approval](./learning.md) covers every kind of learned change, what drafts see, and how approval, rollback and the queue's decision reasons work.
