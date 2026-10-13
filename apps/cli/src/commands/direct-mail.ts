@@ -45,7 +45,7 @@ export function registerDirectMailCommand(program: Command) {
     });
   cmd
     .command("refresh <id>")
-    .description("Refresh a mailpiece quote")
+    .description("Refresh a mailpiece's quote, or its order status once submitted")
     .action(async (id) => console.log(JSON.stringify(await refreshDirectMail(id), null, 2)));
   cmd
     .command("approve <id>")

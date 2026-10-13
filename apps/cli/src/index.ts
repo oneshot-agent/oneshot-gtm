@@ -1140,7 +1140,7 @@ motion
     "-t, --target <file>",
     "JSON file: { name, email, company, competitor, evidenceUrl?, evidenceText?, yourEdge }[]",
   )
-  .option("--skip-browser", "skip evidence collection", false)
+  .option("--skip-browser", "skip the browser evidence scrape", false)
   .option("--dry-run", "preview without sending", false)
   .description(
     "Migration-honesty pitch when prospect uses a known competitor (optionally collects public evidence)",
