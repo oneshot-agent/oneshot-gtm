@@ -1,5 +1,6 @@
 import { DirectMailPanel, DirectMailHistory } from "../components/DirectMailPanel.tsx";
 import { InviteQuotaLine } from "../components/InviteQuotaLine.tsx";
+import { ConnectOnLinkedIn } from "../components/ConnectOnLinkedIn.tsx";
 import { DeliveryBadge, DeliveryWarning } from "../components/queue/DeliveryWarning.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
@@ -1292,6 +1293,7 @@ function CadencesPage() {
                             )}
                             {(reminderSignal || fitReason) && <Rule />}
                             <CaseList rows={caseRows} />
+                            <ConnectOnLinkedIn prospectId={c.prospectId} />
                             {c.priorSteps.length > 0 && (
                               <>
                                 <Rule />

@@ -108,7 +108,7 @@ describe("measure --json", () => {
   });
 
   it("rejects a step kind it does not know", async () => {
-    await expect(commandMeasure({ json: true, stepKind: "friend" })).rejects.toThrow(/step-kind/);
+    await expect(commandMeasure({ json: true, stepKind: "cold" })).rejects.toThrow(/step-kind/);
   });
 
   it("prints the funnel for a person", async () => {

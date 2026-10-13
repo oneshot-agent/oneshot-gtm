@@ -1,6 +1,9 @@
 import type { OnboardingStatus } from "@oneshot-gtm/shared-types";
 import type { LinkedInMeasureView } from "@oneshot-gtm/shared-types";
 import type {
+  LinkedInFriendDraftView,
+  LinkedInFriendSendView,
+  LinkedInFriendView,
   LinkedInInviteQuotaView,
   LinkedInTouchedImportView,
   LinkedInTouchedView,
@@ -450,6 +453,12 @@ export const api = {
       ...(businessAddress ? { businessAddress } : {}),
     }),
   linkedInInvites: () => getJson<LinkedInInviteQuotaView>("/linkedin/invites"),
+  linkedInFriend: (prospectId: number) =>
+    getJson<LinkedInFriendView>(`/prospects/${prospectId}/linkedin-friend`),
+  linkedInFriendDraft: (prospectId: number) =>
+    postJson<LinkedInFriendDraftView>(`/prospects/${prospectId}/linkedin-friend/draft`, {}),
+  linkedInFriendSend: (prospectId: number, note: string) =>
+    postJson<LinkedInFriendSendView>(`/prospects/${prospectId}/linkedin-friend/send`, { note }),
   linkedInTouched: () => getJson<LinkedInTouchedView>("/linkedin/touched"),
   importLinkedInTouched: (content: string) =>
     postJson<LinkedInTouchedImportView>("/linkedin/touched", { content }),

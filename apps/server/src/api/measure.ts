@@ -82,8 +82,17 @@ export function measureRocs(req: Request): Response {
 export function measureLinkedIn(req: Request): Response {
   const url = new URL(req.url);
   const stepKind = url.searchParams.get("stepKind");
-  if (stepKind !== null && stepKind !== "first-touch" && stepKind !== "continuation") {
-    return jsonResponse({ error: "stepKind must be first-touch or continuation" }, 400, req);
+  if (
+    stepKind !== null &&
+    stepKind !== "first-touch" &&
+    stepKind !== "continuation" &&
+    stepKind !== "friend"
+  ) {
+    return jsonResponse(
+      { error: "stepKind must be first-touch, continuation or friend" },
+      400,
+      req,
+    );
   }
   const play = url.searchParams.get("play")?.trim();
   const sinceDays = readPeriodDays(req);

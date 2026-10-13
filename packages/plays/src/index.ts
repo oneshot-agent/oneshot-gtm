@@ -47,6 +47,7 @@ export * from "./_mail-letter.ts";
 export * from "./_calendar.ts";
 export * from "./reply-options.ts";
 export * from "./_linkedin-first-touch.ts";
+export * from "./_linkedin-friend.ts";
 export * from "./_x-first-touch.ts";
 
 export * from "./community-reply.ts";

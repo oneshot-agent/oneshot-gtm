@@ -40,6 +40,14 @@ export interface LinkedInInviteProspect {
   icpVerdict?: string | null;
   /** The row carries a human ICP override (`icpOverride` on its payload): only then may a pass beat a stored reject. */
   icpOverridden?: boolean;
+  /**
+   * A warm connect to someone who replied to an email (#791): their email
+   * reply is the qualification, so the `replied` refusal for an email reply
+   * and the ICP gate don't apply. Every other refusal still does (opt-out, a
+   * LinkedIn reply, a stopped cadence, an earlier invite, a conversation).
+   * The caller checks the reply itself (`canConnectAsFriend`).
+   */
+  friend?: boolean;
 }
 
 /** What the guard needs from the ledger. `Ledger` satisfies it. */
@@ -237,7 +245,7 @@ export function canInviteOnLinkedIn(
     const facts = prospectId != null ? ctx.ledger.linkedInGuardFacts(prospectId) : null;
     if (facts) {
       if (facts.optedOut) return refuse("opted-out", "they opted out of contact");
-      if (facts.emailReply || facts.channelReply) {
+      if ((facts.emailReply && !prospect.friend) || facts.channelReply) {
         return refuse("replied", "they already replied");
       }
       if (facts.cadenceStopped) {
@@ -252,7 +260,10 @@ export function canInviteOnLinkedIn(
   // 5. ICP. A reject (on the row, or stored for the prospect) refuses. A
   // stale or unclear row verdict can't clear a stored reject: only an
   // explicit human override on the row can. NULL passes.
-  if (prospect.icpVerdict === "reject" || (storedReject && !prospect.icpOverridden)) {
+  if (
+    !prospect.friend &&
+    (prospect.icpVerdict === "reject" || (storedReject && !prospect.icpOverridden))
+  ) {
     return refuse("icp-rejected", "the ICP gate rejected this person");
   }
 

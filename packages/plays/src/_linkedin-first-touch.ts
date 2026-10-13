@@ -251,6 +251,13 @@ export async function sendLinkedInInvite(input: {
   sender: LinkedInSender;
   workspace: string;
   continuation?: { prospectId: number; stepIndex: number };
+  /**
+   * A warm connect to someone who replied to an email (#791). The caller has
+   * checked the reply allow-list; the guard skips the email-reply and ICP
+   * refusals and keeps every other. Needs `continuation`: it is recorded at a
+   * non-zero step and enrolls no cadence, so no message ever follows.
+   */
+  friend?: boolean;
   /** Whether the note was drafted with an evidence clause in its prompt; stored on the invite so later prompt changes don't rewrite history (#792). Absent when unknown. */
   evidenceClause?: boolean | undefined;
 }): Promise<LinkedInInviteOutcome> {
@@ -282,6 +289,7 @@ export async function sendLinkedInInvite(input: {
     linkedinUrl: str(p0, "linkedinUrl"),
     icpVerdict: str(p0, "icpVerdict"),
     icpOverridden: typeof override === "object" && override !== null,
+    ...(input.friend ? { friend: true } : {}),
   });
   if (!verdict.ok) return { sent: false, flags: [guardFlag(verdict)], guard: verdict.reason };
   if (!target || !profile) {

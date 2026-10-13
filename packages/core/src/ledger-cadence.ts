@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { LINKEDIN_FRIEND_PLAY } from "@oneshot-gtm/shared-types";
 import {
   draftVersionAngle,
   type DraftDiscardReason,
@@ -1014,9 +1015,10 @@ export function recordLinkedInInviteEvent(
 }
 
 /**
- * Prospect and play of every active cadence that has a sent LinkedIn invite
- * event: the candidates for the unattended invitation-status sweep. Whether
- * an invite is still outstanding is read from its events.
+ * Prospect and play of every sent LinkedIn invite that is still waiting on an
+ * answer to be looked up: those of an active cadence, and every friend invite
+ * (#791), which has no cadence. Candidates for the unattended
+ * invitation-status sweep; whether an invite is outstanding is read from its events.
  */
 export function listLinkedInInviteCadences(
   db: Database,
@@ -1025,8 +1027,9 @@ export function listLinkedInInviteCadences(
     .query(
       `SELECT DISTINCT se.prospect_id, se.play_name
          FROM sequence_events se
-         JOIN cadence_state c ON c.prospect_id = se.prospect_id AND c.play_name = se.play_name
-        WHERE c.status = 'active' AND se.channel = 'linkedin' AND se.status = 'sent'
+         LEFT JOIN cadence_state c ON c.prospect_id = se.prospect_id AND c.play_name = se.play_name
+        WHERE (c.status = 'active' OR se.play_name = ?)
+          AND se.channel = 'linkedin' AND se.status = 'sent'
           AND (
             se.step_index = 0
             OR CASE WHEN json_valid(se.metadata_json)
@@ -1034,7 +1037,10 @@ export function listLinkedInInviteCadences(
           )
         ORDER BY se.prospect_id, se.play_name`,
     )
-    .all(LINKEDIN_INVITE_KIND) as Array<{ prospect_id: number; play_name: string }>;
+    .all(LINKEDIN_FRIEND_PLAY, LINKEDIN_INVITE_KIND) as Array<{
+    prospect_id: number;
+    play_name: string;
+  }>;
 }
 
 /**

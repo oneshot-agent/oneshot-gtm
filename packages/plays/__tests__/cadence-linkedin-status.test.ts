@@ -712,3 +712,71 @@ describe("email capacity", () => {
     expect(result.stepsExecuted).toBe(1);
   });
 });
+
+describe("friend invites in the unattended sweep (#791)", () => {
+  const FRIEND = "linkedin:friend";
+  function friendSent(daysAgo = 3): number {
+    const id = ledger.upsertProspect({
+      name: "Sam Roe",
+      email: "sam@example.com",
+      linkedin_url: "https://www.linkedin.com/in/sam-roe",
+      source: PLAY,
+    });
+    ledger.recordLinkedInInviteEvent({
+      prospectId: id,
+      playName: FRIEND,
+      stepIndex: 1,
+      status: "sent",
+      metadata: {
+        note: "hello",
+        invitationId: `inv-${id}`,
+        accountId: "acct-1",
+        accountWorkspace: "gtm",
+        inviteStatus: "sent",
+      },
+    });
+    const db = new Database(dbPath);
+    db.exec(
+      `UPDATE sequence_events SET created_at = datetime('now', '-${daysAgo} days') WHERE prospect_id = ${id}`,
+    );
+    db.close();
+    return id;
+  }
+  const friendMeta = (id: number): Record<string, unknown> =>
+    JSON.parse(ledger.listLinkedInInviteEvents(id, FRIEND).at(-1)!.metadata_json ?? "{}");
+
+  it("records an accept on a friend invite that has no cadence, and sends nothing", async () => {
+    const id = friendSent();
+    const li = caller({
+      invitations: () => ({
+        invitations: [
+          { invitation_id: `inv-${id}`, status: "accepted", accepted_at: "2026-10-01T09:00:00Z" },
+        ],
+      }),
+    });
+    const out = await sweepLinkedInInvitations({ linkedIn: li });
+    expect(out).toMatchObject({ pending: 1, accepted: 1 });
+    expect(kinds()).toEqual(["invitations"]);
+    expect(friendMeta(id)).toMatchObject({ acceptedAt: "2026-10-01T09:00:00Z" });
+    // No cadence appeared, and no step beyond the invite exists.
+    expect(ledger.getCadence(id, FRIEND)).toBeNull();
+    expect(ledger.listSequenceEventsForProspectPlay(id, FRIEND)).toHaveLength(1);
+  });
+
+  it("withdraws a friend invite still pending after the timeout, recorded on its own step", async () => {
+    const id = friendSent(22);
+    const li = caller({
+      invitations: () => ({ invitations: [] }),
+      invitation: () => ({ invitation_id: `inv-${id}`, status: "pending", accepted_at: null }),
+      withdraw: () => ({ status: "withdrawn" }),
+    });
+    const out = await sweepLinkedInInvitations({ linkedIn: li });
+    expect(out.withdrawn).toBe(1);
+    const events = ledger.listLinkedInInviteEvents(id, FRIEND);
+    expect(events.map((e) => [e.status, e.step_index])).toEqual([
+      ["sent", 1],
+      ["withdrawn", 1],
+    ]);
+    expect(ledger.getCadence(id, FRIEND)).toBeNull();
+  });
+});

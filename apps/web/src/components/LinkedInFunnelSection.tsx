@@ -11,6 +11,7 @@ const STEP_KINDS = [
   { label: "all invites", value: undefined },
   { label: "first touch", value: "first-touch" },
   { label: "continuation", value: "continuation" },
+  { label: "friend", value: "friend" },
 ] as const;
 
 const pct = (r: number | null): string => (r === null ? "n/a" : `${(r * 100).toFixed(1)}%`);
@@ -75,6 +76,7 @@ export function LinkedInFunnelSection({ sinceDays }: { sinceDays: number | undef
         ...(view.variants.unrecorded.invitesSent > 0
           ? [{ label: "Before it was recorded", funnel: view.variants.unrecorded }]
           : []),
+        ...(view.friend.invitesSent > 0 ? [{ label: "Friend invites", funnel: view.friend }] : []),
       ]
     : [];
 
@@ -116,7 +118,7 @@ export function LinkedInFunnelSection({ sinceDays }: { sinceDays: number | undef
       </div>
       {q.isLoading ? (
         Array.from({ length: 4 }, (_, i) => <SkeletonRow key={i} />)
-      ) : !view || view.funnel.invitesSent === 0 ? (
+      ) : !view || (view.funnel.invitesSent === 0 && view.friend.invitesSent === 0) ? (
         <div className="px-6 pb-6">
           <EmptyNote note="No LinkedIn invites sent in this view yet. Once invites go out, the funnel lands here." />
         </div>
