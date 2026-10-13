@@ -12,6 +12,12 @@ vi.mock("@oneshot-gtm/core", async () => {
       getCachedEnrichment: (key: string) => cache.get(key) ?? null,
       setCachedEnrichment: (key: string, json: string) =>
         cache.set(key, { result_json: json, fetched_at: new Date().toISOString(), status: null }),
+      setCachedEnrichmentFailure: (key: string, message: string) =>
+        cache.set(key, {
+          result_json: JSON.stringify({ error: message }),
+          fetched_at: new Date().toISOString(),
+          status: "failed",
+        }),
     }),
   };
 });
@@ -31,6 +37,7 @@ const {
   lintLinkedInClose,
   lintLinkedInFirstMessage,
   lintLinkedInNote,
+  profileViewReader,
   readerRole,
   storedFounderCompany,
   tidyCompanyName,
@@ -325,6 +332,35 @@ describe("live-read rule", () => {
     expect(flaky).toHaveBeenCalledTimes(2);
   });
 
+  it("a stored headline corroborates a founder on a personal mailbox, and the live read still decides", async () => {
+    const personal = {
+      ...prospect,
+      title: "Founder",
+      email: "dana@gmail.com",
+      dossier_json: JSON.stringify({ headline: "Founder at Soren" }),
+    };
+    const agrees = reader({ headline: "Founder at Soren", experience: [] });
+    expect(
+      await companyTheyRun({ playName: "a", prospect: personal, reader: agrees, now: NOW }),
+    ).toBe("Soren");
+    cache.clear();
+    const moved = reader({ headline: "Engineer at Otherco", experience: [] });
+    expect(
+      await companyTheyRun({ playName: "b", prospect: personal, reader: moved, now: NOW }),
+    ).toBeNull();
+    // Without the stored headline nothing corroborates, and no view is spent.
+    const bare = reader({ headline: "Founder at Soren", experience: [] });
+    expect(
+      await companyTheyRun({
+        playName: "c",
+        prospect: { ...personal, dossier_json: null },
+        reader: bare,
+        now: NOW,
+      }),
+    ).toBeNull();
+    expect(bare).not.toHaveBeenCalled();
+  });
+
   it("a stored live read is used without calling the reader", async () => {
     cache.set("linkedin-profile:https://linkedin.com/in/dana-lee", {
       result_json: JSON.stringify({ headline: "Founder, Soren", experience: [] }),
@@ -334,6 +370,94 @@ describe("live-read rule", () => {
     const read = reader(null);
     expect(await companyTheyRun({ playName: "p", prospect, reader: read, now: NOW })).toBe("Soren");
     expect(read).not.toHaveBeenCalled();
+  });
+});
+
+const stillRunning = () =>
+  Object.assign(new Error("still processing"), { name: "JobTimeoutError" });
+const kinds = (call: ReturnType<typeof vi.fn>) =>
+  call.mock.calls.map(([op]) => (op as { kind: string }).kind);
+
+describe("profile view reader", () => {
+  const URL = "https://www.linkedin.com/in/dana-lee";
+  const PROFILE = { profile: { headline: "CEO @ Soren", current_company: "Soren" } };
+  const make = (call: ReturnType<typeof vi.fn>, waitMs = 0) =>
+    profileViewReader({
+      call: call as unknown as Parameters<typeof profileViewReader>[0]["call"],
+      accountId: "acct",
+      idempotencyKey: "k",
+      waitMs,
+      pauseMs: 0,
+    });
+
+  it("an acceptance is not a read: nothing is returned and the job id is kept", async () => {
+    const call = vi.fn().mockResolvedValueOnce({ status: "pending", request_id: "job-1" });
+    expect(await make(call)(URL)).toBeNull();
+    expect(JSON.parse(cache.get("linkedin-view-pending:k")!.result_json)).toEqual({
+      requestId: "job-1",
+    });
+  });
+
+  it("the next call resumes the same job instead of asking for another view", async () => {
+    const call = vi
+      .fn()
+      .mockResolvedValueOnce({ status: "pending", request_id: "job-1" })
+      .mockResolvedValueOnce({ status: "completed", result: PROFILE });
+    expect(await make(call)(URL)).toBeNull();
+    expect(await make(call)(URL)).toEqual({
+      headline: "CEO @ Soren",
+      experience: [{ company: "Soren", period: "Present" }],
+    });
+    expect(kinds(call)).toEqual(["profile", "wait"]);
+    expect(call.mock.calls[1]![0]).toEqual({ kind: "wait", requestId: "job-1" });
+    // Settled: a later call asks afresh rather than waiting on a finished job.
+    expect(cache.get("linkedin-view-pending:k")?.status).toBe("failed");
+  });
+
+  it("waits on an accepted view within one call, through a still-running poll", async () => {
+    const call = vi
+      .fn()
+      .mockResolvedValueOnce({ status: "queued", request_id: "job-1" })
+      .mockRejectedValueOnce(stillRunning())
+      .mockResolvedValueOnce(PROFILE);
+    expect(await make(call, 5_000)(URL)).toMatchObject({ headline: "CEO @ Soren" });
+    expect(kinds(call)).toEqual(["profile", "wait", "wait"]);
+  });
+
+  it("an acceptance with no job id, a failed job, and an answer with no profile are not reads", async () => {
+    expect(await make(vi.fn().mockResolvedValueOnce({ status: "pending" }), 5_000)(URL)).toBeNull();
+    expect(
+      await make(vi.fn().mockResolvedValueOnce({ status: "failed", error: "not found" }))(URL),
+    ).toBeNull();
+    expect(await make(vi.fn().mockResolvedValueOnce({ status: "completed" }))(URL)).toBeNull();
+  });
+
+  it("a view that finishes at once is a read", async () => {
+    expect(await make(vi.fn().mockResolvedValueOnce(PROFILE))(URL)).toEqual({
+      headline: "CEO @ Soren",
+      experience: [{ company: "Soren", period: "Present" }],
+    });
+  });
+
+  it("an unfinished view is never stored as the person's profile", async () => {
+    const prospect = {
+      title: "CEO",
+      company: "Soren",
+      email: "dana@usesoren.com",
+      linkedin_url: URL,
+      dossier_json: null,
+    };
+    const call = vi
+      .fn()
+      .mockResolvedValueOnce({ status: "pending", request_id: "job-1" })
+      .mockResolvedValueOnce({ status: "completed", result: PROFILE });
+    const first = await companyTheyRun({ playName: "p", prospect, reader: make(call), now: NOW });
+    expect(first).toBeNull();
+    expect([...cache.keys()].filter((k) => k.startsWith("linkedin-view:"))).toEqual([]);
+    expect(await companyTheyRun({ playName: "p", prospect, reader: make(call), now: NOW })).toBe(
+      "Soren",
+    );
+    expect([...cache.keys()].filter((k) => k.startsWith("linkedin-view:"))).toHaveLength(1);
   });
 });
 
@@ -438,6 +562,34 @@ describe("lint", () => {
       ).toContainEqual(expect.stringMatching(/^unsupported-claim/));
       expect(
         lintLinkedInClose("Saw you starred acme/widgets. A no is fine.", { context, clause }),
+      ).toEqual([]);
+    });
+    it("a second claim joined to the clause is unsupported", () => {
+      for (const text of [
+        "Saw you starred acme/widgets and raised a Seed round. A no is fine.",
+        "Saw you raised a Seed round and starred acme/widgets. A no is fine.",
+        "Saw you starred acme/widgets, plus the launch last week. A no is fine.",
+      ]) {
+        expect(lintLinkedInClose(text, { context, clause })).toContainEqual(
+          expect.stringMatching(/^unsupported-claim/),
+        );
+      }
+    });
+    it("the writer turning to themselves after the clause is not a second claim", () => {
+      for (const text of [
+        "Saw you starred acme/widgets, so figured I'd say what we make. A no is fine.",
+        "Saw you just starred acme/widgets and I wanted to say what we make.",
+        "Saw you've starred acme/widgets too. A no is fine.",
+      ]) {
+        expect(lintLinkedInClose(text, { context, clause })).toEqual([]);
+      }
+    });
+    it("a clause with a dot in it still counts", () => {
+      expect(
+        lintLinkedInClose("Saw you starred vercel/next.js. A no is fine.", {
+          context,
+          clause: "starred vercel/next.js",
+        }),
       ).toEqual([]);
     });
     it("any saw-you claim is unsupported when there is no clause", () => {

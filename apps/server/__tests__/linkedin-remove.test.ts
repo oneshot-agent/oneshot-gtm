@@ -189,3 +189,33 @@ it("distinguishes a missing account from an unknown action without calling the p
   }
   expect(sdk).not.toHaveBeenCalled();
 });
+
+it("adds a permission by reconnecting the same account in its owner workspace, with history untouched", async () => {
+  const { repliesLinkedInRoute } = await import("../src/api/replies.ts");
+  // A refusal left over from asking with a second connection must not block this.
+  store.saveAccount({
+    ...store.account("wallet:old")!,
+    permissionUpgradeError: "OneShot rejected the permission upgrade",
+  });
+  sdk.mockResolvedValueOnce({ url: "https://connect.example/intent", intent_id: "intent-1" });
+  const response = await repliesLinkedInRoute(
+    new Request("http://localhost/api/replies/linkedin", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "upgrade", accountKey: "wallet:old" }),
+    }),
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    url: "https://connect.example/intent",
+    intent_id: "intent-1",
+  });
+  expect(sdk).toHaveBeenCalledTimes(1);
+  expect(sdk).toHaveBeenCalledWith("owner-workspace", {
+    kind: "connect",
+    accountId: "old",
+    upgrade: true,
+  });
+  expect(store.account("wallet:old")).not.toHaveProperty("permissionUpgradeError");
+  historyPreserved();
+});

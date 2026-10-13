@@ -345,24 +345,117 @@ export function _resetLinkedInLiveReads(): void {
   liveReads.clear();
 }
 
+/** A view OneShot has accepted and not finished: its job id, kept so a later call resumes it. */
+const VIEW_PENDING_PREFIX = "linkedin-view-pending:";
+/** A job id older than this is given up on, and the view is asked for again. */
+const VIEW_PENDING_TTL_MS = DAY;
+/** How long one call waits for a view before leaving it for the next call. */
+const VIEW_WAIT_MS = 20_000;
+const VIEW_POLL_PAUSE_MS = 1_000;
+const IN_FLIGHT = new Set(["pending", "processing", "queued", "running"]);
+
+function pendingView(key: string, now: number): string | null {
+  try {
+    const row = getLedger().getCachedEnrichment(VIEW_PENDING_PREFIX + key);
+    if (!row || row.status === "failed") return null;
+    if (now - new Date(row.fetched_at).getTime() >= VIEW_PENDING_TTL_MS) return null;
+    const id = (JSON.parse(row.result_json) as { requestId?: unknown }).requestId;
+    return typeof id === "string" && id ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function keepPendingView(key: string, requestId: string): void {
+  try {
+    getLedger().setCachedEnrichment(VIEW_PENDING_PREFIX + key, JSON.stringify({ requestId }));
+  } catch {
+    // without the id the next call asks again under the same idempotency key
+  }
+}
+
+function dropPendingView(key: string): void {
+  try {
+    if (getLedger().getCachedEnrichment(VIEW_PENDING_PREFIX + key))
+      getLedger().setCachedEnrichmentFailure(VIEW_PENDING_PREFIX + key, "settled");
+  } catch {
+    // a stale id expires on its own
+  }
+}
+
+function record(node: unknown): Record<string, unknown> | null {
+  return node && typeof node === "object" && !Array.isArray(node)
+    ? (node as Record<string, unknown>)
+    : null;
+}
+
 /**
  * A reader over OneShot's `profile` operation (a silent view, `notify: false`).
  * The idempotency key is stable per person and play, so a retry is not billed twice.
+ *
+ * The view is asynchronous: the first answer is usually an acceptance with a
+ * job id and no profile. That is not a read. The job id is kept, the job is
+ * waited on for a short while, and only a finished view that carries a profile
+ * becomes a snapshot. An unfinished one answers null, and the next call for the
+ * same person and play resumes the same job instead of paying for another view.
  */
 export function profileViewReader(input: {
   call: (operation: LinkedInOperation) => Promise<unknown>;
   accountId: string;
   idempotencyKey: string;
+  /** Test hooks; the defaults wait up to 20 seconds, a second between checks. */
+  waitMs?: number;
+  pauseMs?: number;
 }): LiveProfileReader {
+  const key = input.idempotencyKey;
   return async (url) => {
-    const result = await input.call({
-      kind: "profile",
-      accountId: input.accountId,
-      identifier: url,
-      idempotencyKey: input.idempotencyKey,
-    });
-    const headline = findString(result, ["headline"]);
-    const company = findString(result, ["current_company", "company_name"]);
+    const deadline = Date.now() + (input.waitMs ?? VIEW_WAIT_MS);
+    let requestId = pendingView(key, Date.now());
+    let done: Record<string, unknown> | null = null;
+    for (;;) {
+      let answer: Record<string, unknown> | null;
+      try {
+        answer = record(
+          await input.call(
+            requestId
+              ? { kind: "wait", requestId }
+              : {
+                  kind: "profile",
+                  accountId: input.accountId,
+                  identifier: url,
+                  idempotencyKey: key,
+                },
+          ),
+        );
+      } catch (err) {
+        // `wait` gives up after two seconds on a job that is still running.
+        if (!requestId || (err as { name?: unknown }).name !== "JobTimeoutError") {
+          if (requestId) dropPendingView(key);
+          throw err;
+        }
+        if (Date.now() >= deadline) return null;
+        continue;
+      }
+      const status = String(answer?.["status"] ?? "");
+      if (!IN_FLIGHT.has(status)) {
+        dropPendingView(key);
+        if (status === "failed" || status === "error") return null;
+        done = record(answer?.["result"]) ?? answer;
+        break;
+      }
+      const accepted = answer?.["request_id"];
+      if (typeof accepted === "string" && accepted && accepted !== requestId) {
+        requestId = accepted;
+        keepPendingView(key, accepted);
+      }
+      // Accepted with nothing to resume by: not a read, and nothing to wait on.
+      if (!requestId || Date.now() >= deadline) return null;
+      await new Promise((resolve) => setTimeout(resolve, input.pauseMs ?? VIEW_POLL_PAUSE_MS));
+    }
+    // A finished view carries the profile; an answer without one is not evidence.
+    if (!record(done?.["profile"])) return null;
+    const headline = findString(done, ["headline"]);
+    const company = findString(done, ["current_company", "company_name"]);
     return {
       ...(headline ? { headline } : {}),
       experience: company ? [{ company, period: "Present" }] : [],
@@ -514,12 +607,15 @@ export async function companyTheyRun(input: {
     company,
     email: prospect.email,
     dossierDomain,
+    // The stored headline corroborates like a domain does ("Founder at Soren"
+    // on a personal mailbox); the live read below still has to agree.
+    headline: findString(half, ["headline"]),
   };
   // Cheap checks first: no live read is made for someone who fails the stored ones.
   if (!storedFounderCompany(facts)) return null;
   const url = prospect.linkedin_url;
   const live = await liveProfileFor(`${input.playName}|${url ?? ""}`, url, input.reader, input.now);
-  return verifiedFounderCompany({ ...facts, headline: live?.headline ?? null }, live);
+  return verifiedFounderCompany({ ...facts, headline: live?.headline ?? facts.headline }, live);
 }
 
 // ---------------------------------------------------------------------------
@@ -569,11 +665,35 @@ export function lintLinkedInFirstMessage(
 
 const clean = (s: string) => s.trim().replace(/^"|"$/g, "");
 
-/** The "saw you …" claims in a text: each must be the aged evidence clause. */
-function sawYouClaims(text: string): string[] {
-  return [...text.matchAll(/\b(?:saw|noticed|spotted|seen)\s+(?:that\s+)?you\b[^.?!\n]*/gi)].map(
-    (m) => m[0],
-  );
+const SAW_YOU_RX = /\b(?:saw|noticed|spotted|seen)\s+(?:that\s+)?you\b/gi;
+/** Words that may sit between "saw you" and the clause without claiming anything. */
+const CLAIM_FILLER_RX = /^(?:\s*(?:recently|just|also|'ve|have|had)\b)*\s*/i;
+/**
+ * What may follow the clause in its sentence: nothing, or the writer turning
+ * to themselves ("…, so figured I'd ask"). Anything else is a second thing
+ * said about the reader.
+ */
+const CLAIM_TAIL_RX =
+  /^(?:\s+(?:too|recently|on github))?\s*(?:$|[.?!\n]|[,;:–—-]?\s*(?:(?:and|so|which|that)\s+)?(?:i|we|curious|figured|wanted|thought|wondered|had to|made me|got me)\b)/i;
+
+/**
+ * The "saw you …" claims the evidence does not support. A claim is supported
+ * when it says the aged evidence clause and nothing more about the reader:
+ * naming the clause is not enough, since "saw you starred acme/widgets and
+ * raised a Seed round" carries a second claim nothing backs. The clause is
+ * matched where it stands, so one with a dot in it (a repo name) still counts.
+ */
+function unsupportedClaims(text: string, clause: string | undefined): string[] {
+  const out: string[] = [];
+  const want = clause?.toLowerCase();
+  for (const m of text.matchAll(SAW_YOU_RX)) {
+    const rest = text.slice(m.index + m[0].length);
+    const said = rest.slice(CLAIM_FILLER_RX.exec(rest)?.[0].length ?? 0);
+    const supported =
+      !!want && said.toLowerCase().startsWith(want) && CLAIM_TAIL_RX.test(said.slice(want.length));
+    if (!supported) out.push(`${m[0]}${cutAt(rest, /[.?!\n]/)}`);
+  }
+  return out;
 }
 
 export function lintLinkedInClose(
@@ -589,10 +709,8 @@ export function lintLinkedInClose(
   const invented = (text.match(/\d+/g) ?? []).filter((d) => !known.has(d));
   if (invented.length > 0)
     flags.push(`invented-number: ${[...new Set(invented)].join(", ")} is not in the context`);
-  const clause = ctx.clause?.toLowerCase();
-  for (const claim of sawYouClaims(text)) {
-    if (!clause || !claim.toLowerCase().includes(clause))
-      flags.push(`unsupported-claim: "${claim.slice(0, 60)}" is not the evidence clause`);
+  for (const claim of unsupportedClaims(text, ctx.clause)) {
+    flags.push(`unsupported-claim: "${claim.slice(0, 60)}" is not the evidence clause`);
   }
   return flags;
 }

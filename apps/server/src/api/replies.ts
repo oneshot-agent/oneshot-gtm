@@ -592,9 +592,12 @@ export async function repliesLinkedInRoute(req: Request) {
     }
     if (b.action === "connect")
       return jsonResponse(await callLinkedIn(workspace, { kind: "connect" }), 200, req);
-    if (b.action === "upgrade" && a?.permissionUpgradeError)
-      throw new Error(a.permissionUpgradeError);
-    if ((b.action === "reconnect" || b.action === "upgrade") && a)
+    if ((b.action === "reconnect" || b.action === "upgrade") && a) {
+      // A refusal recorded when permissions were asked for with a second
+      // connection says nothing about a reconnect of this account: drop it.
+      if (b.action === "upgrade" && a.permissionUpgradeError) {
+        getLinkedInInboxStore().saveAccount({ ...a, permissionUpgradeError: undefined });
+      }
       return jsonResponse(
         await callLinkedIn(a.workspace, {
           kind: "connect",
@@ -604,6 +607,7 @@ export async function repliesLinkedInRoute(req: Request) {
         200,
         req,
       );
+    }
     if (b.action === "connection" && typeof b.intentId === "string") {
       const result = await callLinkedIn<{ status: string; failure_reason?: string }>(
         a?.workspace ?? workspace,
@@ -616,7 +620,7 @@ export async function repliesLinkedInRoute(req: Request) {
         getLinkedInInboxStore().saveAccount({
           ...a,
           permissionUpgradeError:
-            "OneShot rejected the permission upgrade because this member is already connected. Adding permissions requires replacing the upstream connection or a OneShot grant-upgrade API change. Local history and assignments are preserved.",
+            "OneShot refused the sign-in because this member is already connected (duplicate_member). Nothing changed: the account, its permissions and its imported history are as they were. Try the button again.",
         });
       }
       if (result.status === "completed") await refreshLinkedInInbox(true);

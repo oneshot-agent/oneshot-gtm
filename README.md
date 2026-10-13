@@ -117,7 +117,7 @@ Spend, CAC, RoCS and outcome logging live in the dashboard's Measure and Cadence
 ### Dashboard
 
 ```bash
-bun run cli -- ui [--dev] [--port 4000] [--no-browser]
+bun run cli -- ui [--dev] [--port 4000] [--no-browser] [--install-service [--write]]
 ```
 
 Ten pages plus a run form:
@@ -186,7 +186,7 @@ An optional, individually approved physical-letter step. **Plays → Direct mail
 
 ### Background monitoring as a service
 
-`find watch --install-service` generates a launchd agent (macOS) or systemd user unit (Linux) that keeps the watch daemon running; Windows schedules `find watch --once`. `--fail-on-empty` makes a clean-but-empty run exit `2`, so a cron wrapper can tell idle from broken. `config spend-ceiling` caps what all finders and drains may spend per day; manual sends are never gated by it. [Background monitoring](./docs/background-monitoring.md) has the service files, exit codes and ceiling semantics.
+`ui --install-service` generates a launchd agent (macOS) or systemd user unit (Linux) that starts a workspace's dashboard at login and restarts it after a crash. `find watch --install-service` does the same for the headless watch daemon; Windows schedules `find watch --once`. `--fail-on-empty` makes a clean-but-empty run exit `2`, so a cron wrapper can tell idle from broken. `config spend-ceiling` caps what all finders and drains may spend per day; manual sends are never gated by it. [Background monitoring](./docs/background-monitoring.md) has the service files, exit codes and ceiling semantics.
 
 ---
 

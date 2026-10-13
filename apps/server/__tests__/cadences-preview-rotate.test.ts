@@ -58,6 +58,18 @@ it("answers 200 with the waiting message, not a 500, before acceptance", async (
   });
 });
 
+it("answers 200 with the skip, not a 500, when the invite guard refused the person", async () => {
+  const skipped = {
+    skipped: true,
+    message:
+      "already-in-conversation: the account already has a LinkedIn conversation with this person — LinkedIn steps skipped",
+  };
+  previewMock.mockResolvedValueOnce(skipped as never);
+  const res = await previewCadenceStepRoute(req(), { id: "7" });
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual(skipped);
+});
+
 it("rejects a non-boolean rotateAngle and a non-JSON body", async () => {
   expect((await previewCadenceStepRoute(req({ rotateAngle: "yes" }), { id: "7" })).status).toBe(
     400,

@@ -416,9 +416,11 @@ function LinkedInConnections({ accounts }: { accounts: LinkedInAccountView[] }) 
   const connect = useMutation({
     mutationFn: (accountKey?: string) =>
       api.linkedinAction({
+        // A session that expired is reconnected as it is. Anything else the
+        // button is shown for is a missing permission, added by a reconnect
+        // that asks for the full grant.
         action: accountKey
-          ? accounts.find((a) => a.key === accountKey)?.canResolve ||
-            accounts.some((a) => a.key === accountKey && linkedInConnectionView(a).reconnect)
+          ? accounts.some((a) => a.key === accountKey && linkedInConnectionView(a).reconnect)
             ? "reconnect"
             : "upgrade"
           : "connect",
@@ -526,16 +528,11 @@ function LinkedInConnections({ accounts }: { accounts: LinkedInAccountView[] }) 
                   </p>
                 </div>
                 <div className="replies-connection-actions">
-                  {(view.reconnect || view.needsPermissions) && (
+                  {(view.reconnect || view.needsPermissions || view.needsInvite) && (
                     <Button
                       size="sm"
                       variant="secondary"
-                      disabled={
-                        connect.isPending ||
-                        accountAction.isPending ||
-                        !!intent ||
-                        (!!a.permissionUpgradeError && !view.reconnect)
-                      }
+                      disabled={connect.isPending || accountAction.isPending || !!intent}
                       onClick={() => connect.mutate(a.key)}
                       {...readOnly}
                     >
@@ -543,7 +540,9 @@ function LinkedInConnections({ accounts }: { accounts: LinkedInAccountView[] }) 
                         ? "Opening…"
                         : view.reconnect
                           ? "Reconnect"
-                          : "Allow profile access"}
+                          : view.needsPermissions
+                            ? "Allow profile access"
+                            : "Allow connection requests"}
                     </Button>
                   )}
                   {view.connected && !view.needsPermissions && !view.running && (

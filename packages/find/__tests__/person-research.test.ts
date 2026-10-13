@@ -225,6 +225,7 @@ const {
   personPayloadPatch,
   personSeedFor,
   personSeedForProspect,
+  reconcileOrganizations,
   rejudgePerson,
   researchNewQueueRowPeople,
   researchPerson,
@@ -279,6 +280,33 @@ beforeEach(() => {
 const result = (linkedin_url: string) => ({
   status: "completed",
   result: { full_name: "Julia Zabrodska-Akinci", linkedin_url },
+});
+
+describe("reconcileOrganizations", () => {
+  const live = [
+    { name: "New Co", title: "Engineer", startDate: "Jan 2025", current: true },
+    { name: "Old Co", title: "Engineer", startDate: "2021", endDate: "2024", current: false },
+  ];
+
+  it("a provider's current job at a company the page does not list is not current", () => {
+    // The provider's stale job started later than the page's real one, so
+    // kept current it would win as the current role.
+    const merged = reconcileOrganizations(live, [
+      { name: "Left Co", title: "Staff Engineer", startDate: "Jun 2025", current: true },
+      { name: "Old Co", title: "Developer", startDate: "2021", current: true },
+    ]);
+    expect(merged.map((o) => `${o.name}:${o.current}`)).toEqual([
+      "New Co:true",
+      "Old Co:false",
+      "Left Co:false",
+    ]);
+    expect(deriveCurrentRole(merged).current?.name).toBe("New Co");
+  });
+
+  it("no live read leaves the provider's history as it is", () => {
+    const provider = [{ name: "Left Co", startDate: "Jun 2025", current: true }];
+    expect(reconcileOrganizations([], provider)).toEqual(provider);
+  });
 });
 
 describe("deriveCurrentRole", () => {
@@ -684,6 +712,37 @@ describe("live LinkedIn tier", () => {
     expect(calls.browser).toBe(0);
     expect(dossier.warning).toBe("live profile skipped: session-unchecked");
     expect(dossier.liveProfile).toBeUndefined();
+  });
+
+  it("with no history from the provider, a skipped live read is the reason on record", async () => {
+    const nothingKnown = {
+      ...juliaResearch,
+      result: { enrichment: { organizations: [] } },
+    };
+    const research = async () => {
+      enrichmentCache = {
+        result_json: JSON.stringify(nothingKnown),
+        fetched_at: new Date().toISOString(),
+        status: "ok",
+      };
+      const { dossier } = await researchPerson({
+        seed: personSeedFor(juliaPayload),
+        playName: "luma-events",
+        subject: { queueId: 1 },
+        remainingUsd: 1,
+      });
+      return dossier;
+    };
+    // No session at all: nobody has anything on this person.
+    const unread = await research();
+    expect(unread.status).toBe("unavailable");
+    expect(unread.warning).toBe("person research returned no organisation history");
+    // A session that could not be used: the page was never asked.
+    process.env["LINKEDIN_SESSION_COOKIE"] = "cookie";
+    liveSession = false;
+    const skipped = await research();
+    expect(skipped.status).toBe("unavailable");
+    expect(skipped.warning).toBe("live profile skipped: session-unchecked");
   });
 
   it("liveProfile: false skips the read even with a session; a non-LinkedIn seed never reads", async () => {
