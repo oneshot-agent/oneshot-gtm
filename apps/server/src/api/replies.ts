@@ -370,10 +370,27 @@ export async function replyImproveRoute(req: Request) {
   }
 }
 
+/**
+ * Errors after which nothing was sent, so the composer may offer Send again
+ * under a new request id. A rejected or refused payment is one: OneShot bills
+ * before dispatch, so the job never existed. Left "uncertain", the composer's
+ * 6-second check would re-run the paid call on every poll until the wallet
+ * was funded, then send on its own (2026-10-12, an empty wallet).
+ */
+const PRE_DISPATCH_ERRORS = new Set([
+  "PaymentError",
+  "BudgetExceededError",
+  "InsufficientCreditsError",
+  "ValidationError",
+  "ContentBlockedError",
+  "ActionDeniedError",
+  "ApprovalRequiredError",
+]);
 function knownFailure(e: unknown) {
   const error = e as { name?: string; statusCode?: number; code?: string };
   return (
     (error.name === "JobError" && error.code !== "send_unverified") ||
+    (typeof error.name === "string" && PRE_DISPATCH_ERRORS.has(error.name)) ||
     (typeof error.statusCode === "number" &&
       [400, 401, 403, 404, 422, 429].includes(error.statusCode))
   );

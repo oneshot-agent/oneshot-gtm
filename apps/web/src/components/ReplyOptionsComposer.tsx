@@ -18,6 +18,7 @@ import {
   replyDraftFingerprint as fingerprint,
 } from "../lib/replyLearning.ts";
 import { readOnly } from "../lib/readOnly.ts";
+import { describeReplyMove, replyDraftNote, replySetNote } from "../lib/replyFlags.ts";
 
 function initialDraft(t: ReplyThread): ReplyDraftSet {
   return (
@@ -239,6 +240,9 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
   }
   const selectedBody = draft.edits[draft.selected];
   const sendFailure = replySendFailure(t);
+  // Flags are sentences here; the linter's labels stay in the draft set.
+  const draftNote = replyDraftNote(draft.flags[draft.selected] ?? []);
+  const setNote = replySetNote(draft.setFlags);
   return (
     <div className="reply-composer space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -263,8 +267,8 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
       )}
       {draft.contextVersion !== t.contextVersion && draft.generated && (
         <p role="status" className="text-[12px] text-ink-spend-2">
-          The conversation or its context changed. Your edits are preserved; review new suggestions
-          before sending.
+          The conversation moved on since these suggestions were drafted. Regenerate for fresh ones;
+          anything you wrote stays.
         </p>
       )}
       {draft.read && (
@@ -287,8 +291,8 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
               <span className="capitalize">{v}</span>
               {draft.selected === v && <span className="reply-selected-dot" />}
             </span>
-            <span className="reply-direction-description">
-              {draft.moves[v] ||
+            <span className="reply-direction-description" title={draft.moves[v]}>
+              {describeReplyMove(draft.moves[v]) ||
                 {
                   direct: "Get to the point",
                   technical: "Go into the details",
@@ -321,9 +325,7 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
               generate.isPending ? "Drafting suggestions… You can write here." : "Write your reply…"
             }
           />
-          {!!draft.flags[v]?.length && (
-            <p className="mt-2 text-[11px] text-ink-spend-2">Review: {draft.flags[v].join(", ")}</p>
-          )}
+          {draftNote && <p className="mt-2 text-[11px] text-ink-spend-2">{draftNote}</p>}
           <details className="mt-2 text-[11px] text-ink-muted">
             <summary className="cursor-pointer">Improvement instructions</summary>
             <Textarea
@@ -368,9 +370,7 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
           </div>
         </section>
       ))}
-      {!!draft.setFlags.length && (
-        <p className="text-[11px] text-ink-spend-2">Review options: {draft.setFlags.join(", ")}</p>
-      )}
+      {setNote && <p className="text-[11px] text-ink-spend-2">{setNote}</p>}
       {candidate && (
         <div className="space-y-2 rounded-sm border border-ink-rule p-3">
           <p className="text-[13px] text-ink-cream">
