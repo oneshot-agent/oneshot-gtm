@@ -398,6 +398,26 @@ export function deriveCurrentRole(orgs: PersonResearchOrganization[]): {
   return { current: current[0]?.o ?? null, organizations };
 }
 
+const WRONG_PERSON_WARNING = "profile URL belongs to a different person";
+const NO_HISTORY_WARNING = "person research returned no organisation history";
+const OWN_LIVE_SKIP_RX = /^live profile skipped: (?:different-person|failed)$/;
+
+/**
+ * A dossier's `warning` says the attempt came to nothing because of the
+ * person's own record: the profile or the page belongs to someone else, the
+ * read failed, or nobody has any history for them. Trying again at once gives
+ * the same answer. A skip for the session, the daily cap or the cost cap, and
+ * a provider that failed, say nothing about the person.
+ */
+export function researchFailedOnItsOwn(warning: unknown): boolean {
+  return (
+    typeof warning === "string" &&
+    (OWN_LIVE_SKIP_RX.test(warning) ||
+      warning.startsWith(WRONG_PERSON_WARNING) ||
+      warning === NO_HISTORY_WARNING)
+  );
+}
+
 function unavailable(seed: PersonSeed | null, warning: string): PersonResearchDossier {
   return {
     version: 1,
@@ -584,7 +604,7 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
     return {
       dossier: unavailable(
         seed,
-        `profile URL belongs to a different person (${wrongPerson}); title and verdict left as they were`,
+        `${WRONG_PERSON_WARNING} (${wrongPerson}); title and verdict left as they were`,
       ),
       costUsd,
       cached: false,
@@ -666,7 +686,7 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
   }
   if (!current && organizations.length === 0 && !bio) {
     return {
-      dossier: unavailable(seed, "person research returned no organisation history"),
+      dossier: unavailable(seed, NO_HISTORY_WARNING),
       costUsd,
       cached: !billed,
       ...(live?.skipped ? { liveSkipped: live.skipped } : {}),

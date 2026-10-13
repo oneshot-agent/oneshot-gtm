@@ -18,6 +18,7 @@ import { LINKEDIN_READ_COST_ESTIMATE_USD, linkedinSessionState } from "./_linked
 import {
   applyPersonResearch,
   personSeedFor,
+  researchFailedOnItsOwn,
   researchPerson,
   type PersonSeed,
   type ResearchableQueueRow,
@@ -37,13 +38,11 @@ const DEFAULT_MAX_ROWS = 10;
 const DEFAULT_MAX_COST_USD = 2;
 /**
  * How long a row waits after an attempt that ended without a read for a
- * reason of its own: the page named someone else, the read failed, or the
- * provider's record was the wrong person. The read path caches a failure for
- * about as long, so a sooner retry is answered from that cache and only
- * takes one of the sweep's few slots from a row that could be read.
+ * reason of its own (`researchFailedOnItsOwn`). The read path caches a
+ * failure for about as long, so a sooner retry is answered from that cache
+ * and only takes one of the sweep's few slots from a row that could be read.
  */
 const RETRY_AFTER_MS = 3 * 24 * 60 * 60 * 1000;
-const OWN_FAILURE_RX = /^live profile skipped: (?:different-person|failed)$/;
 
 export type LiveSweepRow = ResearchableQueueRow & Pick<QueueRow, "sent_at" | "send_started_at">;
 
@@ -111,15 +110,11 @@ export function selectLiveSweepCandidates(
 
 /**
  * The last attempt ended without a read because of this row, not because of
- * the session, the daily cap or the budget (those say nothing about the row,
- * and the next sweep should take it again).
+ * the session, the daily cap, a cost cap or a provider failure (those say
+ * nothing about the row, and the next sweep should take it again).
  */
 function triedRecently(research: Record<string, unknown>, now: number): boolean {
-  const warning = research["warning"];
-  const ownFailure =
-    research["status"] === "unavailable" ||
-    (typeof warning === "string" && OWN_FAILURE_RX.test(warning));
-  if (!ownFailure) return false;
+  if (!researchFailedOnItsOwn(research["warning"])) return false;
   const at = Date.parse(
     typeof research["researchedAt"] === "string" ? research["researchedAt"] : "",
   );

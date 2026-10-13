@@ -88,43 +88,36 @@ describe("selectLiveSweepCandidates", () => {
   it("leaves a row alone for three days after an attempt that failed for a reason of its own", () => {
     const now = Date.parse("2026-10-12T12:00:00.000Z");
     const ago = (hours: number) => new Date(now - hours * 3_600_000).toISOString();
-    const tried = (id: number, research: Record<string, unknown>) =>
-      row(id, "pending", { name: `P${id}`, linkedinUrl: `${LI}p${id}`, personResearch: research });
+    const tried = (id: number, status: string, hours: number, warning?: string) =>
+      row(id, "pending", {
+        name: `P${id}`,
+        linkedinUrl: `${LI}p${id}`,
+        personResearch: { status, researchedAt: ago(hours), ...(warning ? { warning } : {}) },
+      });
     const rows = [
-      // The page named someone else, the read failed, the provider's record was the wrong person.
-      tried(11, {
-        status: "partial",
-        researchedAt: ago(2),
-        warning: "live profile skipped: different-person",
-      }),
-      tried(12, {
-        status: "partial",
-        researchedAt: ago(2),
-        warning: "live profile skipped: failed",
-      }),
-      tried(13, { status: "unavailable", researchedAt: ago(2), warning: "person research failed" }),
+      // About the person: the page or the profile is someone else's, the read
+      // failed, nobody has any history for them.
+      tried(11, "partial", 2, "live profile skipped: different-person"),
+      tried(12, "partial", 2, "live profile skipped: failed"),
+      tried(
+        13,
+        "unavailable",
+        2,
+        "profile URL belongs to a different person (Jane Roe); title and verdict left as they were",
+      ),
+      tried(14, "unavailable", 2, "person research returned no organisation history"),
       // Long enough ago: tried again.
-      tried(14, {
-        status: "partial",
-        researchedAt: ago(73),
-        warning: "live profile skipped: failed",
-      }),
-      // The session, the cap and the budget say nothing about the row.
-      tried(15, {
-        status: "partial",
-        researchedAt: ago(2),
-        warning: "live profile skipped: session-invalid",
-      }),
-      tried(16, {
-        status: "partial",
-        researchedAt: ago(2),
-        warning: "live profile skipped: daily-limit",
-      }),
+      tried(15, "partial", 73, "live profile skipped: failed"),
+      // Not about the person: the session, the daily cap, a cost cap, a provider that failed.
+      tried(16, "partial", 2, "live profile skipped: session-invalid"),
+      tried(17, "partial", 2, "live profile skipped: daily-limit"),
+      tried(18, "unavailable", 2, "person research skipped: cost cap reached"),
+      tried(19, "unavailable", 2, "person research failed"),
       // Researched with no live attempt recorded at all.
-      tried(17, { status: "complete", researchedAt: ago(2) }),
+      tried(20, "complete", 2),
     ];
     const picked = selectLiveSweepCandidates(rows as never, () => false, now);
-    expect(picked.map((c) => c.row.id)).toEqual([17, 16, 15, 14]);
+    expect(picked.map((c) => c.row.id)).toEqual([20, 19, 18, 17, 16, 15]);
   });
 });
 
