@@ -47,6 +47,44 @@ describe("CLI documentation", () => {
   );
 
   it(
+    "gives every command a description and keeps implementation wording out (#841)",
+    async () => {
+      process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
+      const { program } = await import("../src/index.ts");
+      const empty: string[] = [];
+      function walk(cmd: Command, parent = "") {
+        const path = parent ? `${parent} ${cmd.name()}` : cmd.name();
+        if (!cmd.description()) empty.push(path);
+        for (const child of cmd.commands) walk(child, path);
+      }
+      walk(program);
+      expect(empty).toEqual([]);
+      const text = renderCliReference(program, revision);
+      for (const phrase of [
+        "from Commander",
+        "thin headless",
+        "VACUUM",
+        "--dev",
+        "screenshots and video",
+        "~55x",
+        "li&#95;at",
+        "provider history only",
+        "deepResearchPerson",
+        "free rungs",
+        "Readiness-gated",
+        "Multi-touch sequence engine",
+        "cadence engine",
+        "G2/BuiltWith",
+        "browser-automation",
+        "Superhuman",
+        "opt-in telemetry",
+      ])
+        expect(text).not.toContain(phrase);
+    },
+    LIVE_TREE_TIMEOUT_MS,
+  );
+
+  it(
     "covers every command and flag in the live tree",
     async () => {
       process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
