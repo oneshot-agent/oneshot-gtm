@@ -517,7 +517,8 @@ export async function cancelRunRoute(
  * Best-effort (logged via `error.swallowed`). Indices match because
  * `verifiedTargets[i]` corresponds to `drafted[i]`.
  */
-function persistDraftsToQueue(input: {
+/** Exported for its test. */
+export function persistDraftsToQueue(input: {
   playName: string;
   drafted: DraftedView[];
   dryRun: boolean;
@@ -547,6 +548,7 @@ function persistDraftsToQueue(input: {
           ...(draft.voiceKey ? { voiceKey: draft.voiceKey } : {}),
           ...(draft.learningKey ? { learningKey: draft.learningKey } : {}),
           ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
+          ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
         },
         // A run's send is not a per-row review: the founder approved the
         // person; the draft went out unseen.

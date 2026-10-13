@@ -999,6 +999,8 @@ export interface LastDraft {
   learningKey?: string | null;
   /** First-touch format arm the draft was written in (`standard` / `brief`); absent when the trigger set none. */
   formatKey?: string | null;
+  /** LinkedIn note only: whether its prompt carried an evidence clause (#792). */
+  evidenceClause?: boolean;
 }
 
 /**
@@ -2017,6 +2019,7 @@ export function isQueueImportInProgress(row: {
 }
 
 export * from "./onboarding.ts";
+export * from "./linkedin-measure.ts";
 
 /** GET /api/linkedin/invites: LinkedIn invites left today (workspace share and account). */
 export interface LinkedInInviteQuotaView {

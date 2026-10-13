@@ -48,6 +48,8 @@ export interface LinkedInNoteDraft {
   voiceKey: string | null;
   /** Fingerprint of the approved learned-guidance set in the prompt (#813). */
   learningKey?: string | null;
+  /** Whether the prompt carried an evidence clause; recorded on the invite when it is sent (#792). */
+  evidenceClause?: boolean;
 }
 
 export type LinkedInInviteOutcome =
@@ -196,6 +198,7 @@ export async function draftLinkedInNote(
     flags,
     voiceKey: voice?.key ?? null,
     learningKey: learned?.key ?? null,
+    evidenceClause: Boolean(evidence),
   };
 }
 
@@ -248,6 +251,8 @@ export async function sendLinkedInInvite(input: {
   sender: LinkedInSender;
   workspace: string;
   continuation?: { prospectId: number; stepIndex: number };
+  /** Whether the note was drafted with an evidence clause in its prompt; stored on the invite so later prompt changes don't rewrite history (#792). Absent when unknown. */
+  evidenceClause?: boolean | undefined;
 }): Promise<LinkedInInviteOutcome> {
   const profile = linkedInProfileOf(input.row.payload);
   // A note OneShot would refuse never leaves; the shorter draft target
@@ -378,6 +383,7 @@ export async function sendLinkedInInvite(input: {
       note,
       invitationId: result.invitation_id,
       inviteStatus: status,
+      ...(input.evidenceClause !== undefined ? { evidenceClause: input.evidenceClause } : {}),
       // The account that sent it: a withdrawal must go to the same one.
       accountId: input.sender.accountId,
       ...(input.sender.workspace ? { accountWorkspace: input.sender.workspace } : {}),

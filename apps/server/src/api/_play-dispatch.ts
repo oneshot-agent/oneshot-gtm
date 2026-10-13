@@ -17,6 +17,8 @@ export interface DraftedView {
   learningKey?: string | null;
   /** First-touch format arm (see `PlayDraft.formatKey`). */
   formatKey?: string | null;
+  /** LinkedIn note only: whether its prompt carried an evidence clause (#792). */
+  evidenceClause?: boolean;
 }
 
 export function toDraftedView(d: {
@@ -32,6 +34,7 @@ export function toDraftedView(d: {
   /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
   learningKey?: string | null;
   formatKey?: string | null;
+  evidenceClause?: boolean;
 }): DraftedView {
   return {
     subject: d.subject,
@@ -45,6 +48,7 @@ export function toDraftedView(d: {
     ...(d.voiceKey ? { voiceKey: d.voiceKey } : {}),
     ...(d.learningKey ? { learningKey: d.learningKey } : {}),
     ...(d.formatKey ? { formatKey: d.formatKey } : {}),
+    ...(d.evidenceClause !== undefined ? { evidenceClause: d.evidenceClause } : {}),
   };
 }
 

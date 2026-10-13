@@ -191,6 +191,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
             ...(draft.voiceKey ? { voiceKey: draft.voiceKey } : {}),
             ...(draft.learningKey ? { learningKey: draft.learningKey } : {}),
             ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
+            ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
           },
           // Drain sends are unattended: the founder approved the row, never
           // this draft: recorded as `auto_sent`, apart from reviewed sends.
@@ -355,7 +356,12 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
   };
   // Reviewed means clean: a saved note still carrying any flag is redrafted.
   const saved = hasCleanDraft(row)
-    ? (JSON.parse(row.last_draft_json!) as { subject?: string; body: string; flags?: unknown })
+    ? (JSON.parse(row.last_draft_json!) as {
+        subject?: string;
+        body: string;
+        flags?: unknown;
+        evidenceClause?: unknown;
+      })
     : null;
   const reviewed =
     saved && (!Array.isArray(saved.flags) || saved.flags.length === 0) ? saved : null;
@@ -365,6 +371,9 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
         body: reviewed.body,
         flags: [],
         voiceKey: null,
+        ...(typeof reviewed.evidenceClause === "boolean"
+          ? { evidenceClause: reviewed.evidenceClause }
+          : {}),
       }
     : await draftLinkedInNote(linkedInRow);
   const base: DrainDraft = {
@@ -375,6 +384,7 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
     receiptIds: [],
     ...(note.voiceKey ? { voiceKey: note.voiceKey } : {}),
     ...(note.learningKey ? { learningKey: note.learningKey } : {}),
+    ...(note.evidenceClause !== undefined ? { evidenceClause: note.evidenceClause } : {}),
   };
   if (opts.dryRun) return base;
   if (note.flags.length > 0) {
@@ -396,6 +406,7 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
     note: note.body,
     sender: opts.linkedIn,
     workspace: currentWorkspaceName(),
+    evidenceClause: note.evidenceClause,
   });
   if (!sent.sent) {
     return {

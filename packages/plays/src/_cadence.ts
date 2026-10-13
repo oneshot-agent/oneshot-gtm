@@ -133,6 +133,8 @@ export type StepPayload =
       flags?: string[];
       voiceKey?: string | null;
       learningKey?: string | null;
+      /** Whether the note was written with an evidence clause (#792). */
+      evidenceClause?: boolean;
     }
   | {
       kind: "voice";
@@ -2243,6 +2245,7 @@ async function dispatchStepImpl(input: {
       },
       workspace: currentWorkspaceName(),
       continuation: { prospectId: input.prospectId, stepIndex: input.stepIndex },
+      evidenceClause: input.payload.evidenceClause,
     });
     if (!out.sent) {
       return out.guard
@@ -3172,6 +3175,7 @@ async function buildLinkedInInvite(
     ...(held.length > 0 ? { flags: held } : {}),
     ...(draft.voiceKey ? { voiceKey: draft.voiceKey } : {}),
     ...(draft.learningKey ? { learningKey: draft.learningKey } : {}),
+    ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
   };
 }
 

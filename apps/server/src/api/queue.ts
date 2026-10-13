@@ -155,6 +155,9 @@ export function toView(row: QueueRow): QueueRowView {
           ...(typeof parsed.formatKey === "string" && parsed.formatKey
             ? { formatKey: parsed.formatKey }
             : {}),
+          ...(typeof parsed.evidenceClause === "boolean"
+            ? { evidenceClause: parsed.evidenceClause }
+            : {}),
           ...(parsed.enrichmentFailed === true ? { enrichmentFailed: true } : {}),
         };
       }
@@ -1279,6 +1282,7 @@ async function regenerateDraftInner(
     ...(draft.learningKey ? { learningKey: draft.learningKey } : {}),
     // The first-touch format arm, so outcomes split by format.
     ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
+    ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
   };
   const saved = ledger.setQueueDraftIfCurrent({
     id,
@@ -1512,6 +1516,8 @@ export async function sendDraftRoute(
           call: (operation) => callLinkedIn(account.workspace, operation),
         },
         workspace: currentWorkspaceName(),
+        evidenceClause:
+          typeof parsed.evidenceClause === "boolean" ? parsed.evidenceClause : undefined,
       });
       if (!out.sent) {
         if (out.guard) {
@@ -1532,6 +1538,9 @@ export async function sendDraftRoute(
                 ...(parsed.angle ? { angle: parsed.angle } : {}),
                 ...(parsed.voiceKey ? { voiceKey: parsed.voiceKey } : {}),
                 ...(parsed.formatKey ? { formatKey: parsed.formatKey } : {}),
+                ...(typeof parsed.evidenceClause === "boolean"
+                  ? { evidenceClause: parsed.evidenceClause }
+                  : {}),
               },
               sentBy: "human",
             });
@@ -1792,7 +1801,7 @@ export async function withdrawInviteRoute(
       playName: row.play_name,
       stepIndex: sent?.step_index ?? 0,
       status: "withdrawn",
-      metadata: { invitationId, withdrawStatus: result.status ?? null },
+      metadata: { invitationId, withdrawStatus: result.status ?? null, withdrawnBy: "manual" },
     });
     return jsonResponse({ ok: true, status: result.status ?? null }, 200, req);
   } catch (err) {

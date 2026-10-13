@@ -809,6 +809,39 @@ export function linkedInHasConversationWith(
 }
 
 /**
+ * Which prospects have a synced 1:1 conversation, read once: the lookup the
+ * LinkedIn funnel (#792) runs for every invite. Same test as
+ * `linkedInConversationFor` (a thread this workspace owns for the prospect, or
+ * a 1:1 thread whose only other person is the prospect's profile, on an
+ * account that is connected and not removed), without a scan per person.
+ */
+export function linkedInConversationIndex(
+  workspace: string,
+  store: LinkedInInboxStore = getLinkedInInboxStore(),
+): (person: { prospectId: number; linkedinUrl: string | null }) => string | null {
+  const byProspect = new Map<number, string>();
+  const byProfile = new Map<string, string>();
+  const live = new Set(
+    store
+      .accounts()
+      .filter((a) => !a.removedAt && a.account.status === "connected")
+      .map((a) => a.key),
+  );
+  for (const t of store.threads()) {
+    if (!live.has(t.accountKey)) continue;
+    if (t.owner?.workspace === workspace && !byProspect.has(t.owner.prospectId)) {
+      byProspect.set(t.owner.prospectId, t.conversation.id);
+    }
+    const peer = oneToOnePeerKey(store, t);
+    if (peer && !byProfile.has(peer)) byProfile.set(peer, t.conversation.id);
+  }
+  return ({ prospectId, linkedinUrl }) => {
+    const key = linkedinUrl ? canonicalLinkedInProfileKey(linkedinUrl) : null;
+    return byProspect.get(prospectId) ?? (key ? (byProfile.get(key) ?? null) : null);
+  };
+}
+
+/**
  * The LinkedIn conversation a prospect has with a connected account, if one
  * has synced: the thread this workspace owns for the prospect, or a 1:1
  * thread whose only other person is the prospect's profile (by verified URL
