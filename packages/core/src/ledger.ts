@@ -76,6 +76,7 @@ import {
   sweepStaleCadenceSends as cadSweepStaleCadenceSends,
 } from "./ledger-cadence.ts";
 import { LedgerCache } from "./ledger-cache.ts";
+import { readLinkedInFunnelSource, type LinkedInFunnelSource } from "./ledger-linkedin-funnel.ts";
 import {
   DraftVersionStore,
   type AngleUsageRow,
@@ -2126,6 +2127,11 @@ export class Ledger {
     return cadListChannelEventsForProspect(this.db, prospectId);
   }
 
+  /** Read-only snapshot for the LinkedIn funnel and invite listing (#792). */
+  readLinkedInFunnelSource(): LinkedInFunnelSource {
+    return readLinkedInFunnelSource(this.db);
+  }
+
   /** Recorded deal outcomes for one prospect, oldest first. */
   listDealOutcomesForProspect(prospectId: number): DealOutcomeRecord[] {
     return outListDealOutcomesForProspect(this.db, prospectId);
@@ -2542,6 +2548,7 @@ export class Ledger {
       /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
       learningKey?: string | null;
       formatKey?: string | null;
+      evidenceClause?: boolean;
     };
     discardReason?: DraftDiscardReason;
     sentBy?: "human" | "machine";

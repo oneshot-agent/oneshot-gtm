@@ -17,6 +17,8 @@ export interface DraftedView {
   learningKey?: string | null;
   /** First-touch format arm (see `PlayDraft.formatKey`). */
   formatKey?: string | null;
+  /** LinkedIn note only: whether its prompt carried an evidence clause (#792). */
+  evidenceClause?: boolean;
 }
 
 export function toDraftedView(d: {

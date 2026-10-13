@@ -1,4 +1,5 @@
 import type { OnboardingStatus } from "@oneshot-gtm/shared-types";
+import type { LinkedInMeasureView } from "@oneshot-gtm/shared-types";
 import type {
   LinkedInInviteQuotaView,
   LinkedInTouchedImportView,
@@ -308,6 +309,14 @@ export const api = {
     getJson<{ goals: RocsGoalView[] }>(
       `/measure/rocs-by-goal${sinceDays != null ? `?sinceDays=${sinceDays}` : ""}`,
     ),
+  measureLinkedIn: (opts: { sinceDays?: number; play?: string; stepKind?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.sinceDays != null) q.set("sinceDays", String(opts.sinceDays));
+    if (opts.play) q.set("play", opts.play);
+    if (opts.stepKind) q.set("stepKind", opts.stepKind);
+    const qs = q.toString();
+    return getJson<LinkedInMeasureView>(`/measure/linkedin${qs ? `?${qs}` : ""}`);
+  },
   measureSpendSeries: (sinceDays?: number) =>
     getJson<SpendSeries>(
       `/measure/spend-series${sinceDays != null ? `?sinceDays=${sinceDays}` : ""}`,

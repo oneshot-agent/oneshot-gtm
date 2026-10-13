@@ -299,7 +299,11 @@ export async function resolveLinkedInInvite(input: ResolveInviteInput): Promise<
           playName: input.playName,
           stepIndex: invite.event.step_index,
           status: "withdrawn",
-          metadata: { invitationId: info.invitationId, withdrawStatus: "withdrawn" },
+          metadata: {
+            invitationId: info.invitationId,
+            withdrawStatus: "withdrawn",
+            withdrawnBy: "manual",
+          },
         });
       }
       return ends("LinkedIn invite was withdrawn");
@@ -421,7 +425,7 @@ async function waitOrTimeOut(
           playName: input.playName,
           stepIndex: invite.event.step_index,
           status: "withdrawn",
-          metadata: { invitationId: invite.invitationId, withdrawStatus },
+          metadata: { invitationId: invite.invitationId, withdrawStatus, withdrawnBy: "timeout" },
         });
       }
     } catch (err) {

@@ -1033,6 +1033,7 @@ export class QueueStore {
       /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
       learningKey?: string | null;
       formatKey?: string | null;
+      evidenceClause?: boolean;
     };
     /** Why the draft being replaced was discarded; default `redraft` (a machine re-draft, no judgment). */
     discardReason?: DraftDiscardReason;

@@ -1,6 +1,12 @@
 #!/usr/bin/env bun
 import { registerDirectMailCommand } from "./commands/direct-mail.ts";
 import { commandLinkedInImportTouched } from "./commands/linkedin.ts";
+import {
+  commandLinkedInInvites,
+  commandMeasure,
+  type LinkedInInvitesOptions,
+  type MeasureOptions,
+} from "./commands/measure-linkedin.ts";
 import { Command, InvalidArgumentError } from "commander";
 
 /** Option parser for counts that must be at least 1; `0` or `abc` is an error, not the default. */
@@ -348,6 +354,15 @@ config
   .action(runOrFail((count?: string) => configLinkedInInvites(count)));
 
 const linkedin = program.command("linkedin").description("LinkedIn outreach safety");
+linkedin
+  .command("invites")
+  .description(
+    "List every LinkedIn invite sent, with the state GTM detects, to compare with LinkedIn. Read-only.",
+  )
+  .option("--since <date>", "only invites sent on or after this date (YYYY-MM-DD)")
+  .option("--status <status>", "pending, accepted or withdrawn")
+  .option("--json", "output as JSON")
+  .action(runOrFail((opts: LinkedInInvitesOptions) => commandLinkedInInvites(opts)));
 linkedin
   .command("import-touched [file]")
   .description(
@@ -1308,7 +1323,16 @@ pmf
   .description("Collect inbound replies and synthesize a Sean Ellis report")
   .action(runOrFail(commandPmfSurveyCollect));
 
-const measure = program.command("measure").description("Compare local GTM performance");
+const measure = program
+  .command("measure")
+  .description("This workspace's email outcomes and LinkedIn funnel; compare with the cohort")
+  .option("--json", "output as JSON")
+  .option("--since-days <n>", "only invites and sends from the last N days", (v) =>
+    Number.parseFloat(v),
+  )
+  .option("--play <name>", "LinkedIn funnel: only this play")
+  .option("--step-kind <kind>", "LinkedIn funnel: first-touch or continuation")
+  .action(runOrFail((opts: MeasureOptions) => commandMeasure(opts)));
 measure
   .command("benchmark")
   .description("Compare this install with the opt-in telemetry cohort")

@@ -1,4 +1,5 @@
 import { Explain } from "../components/primitives/Explain.tsx";
+import { LinkedInFunnelSection } from "../components/LinkedInFunnelSection.tsx";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -399,6 +400,8 @@ function MeasurePage() {
           </table>
         )}
       </section>
+
+      <LinkedInFunnelSection sinceDays={sinceDays} />
     </div>
   );
 }

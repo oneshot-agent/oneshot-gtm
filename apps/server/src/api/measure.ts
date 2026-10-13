@@ -3,6 +3,7 @@ import {
   getLedger,
   logEvent,
   outcomeToValueTag,
+  readLinkedInMeasure,
   tagOutcomeValue,
 } from "@oneshot-gtm/core";
 import type {
@@ -72,6 +73,26 @@ export function measureRocs(req: Request): Response {
       wonValueUsd: r.won_value_usd,
     }));
   return jsonResponse({ spend, events, outcomes }, 200, req);
+}
+
+/**
+ * The LinkedIn funnel for this workspace (#792), read-only over the ledger and
+ * the synced inbox. Filters: `sinceDays`, `play`, `stepKind`.
+ */
+export function measureLinkedIn(req: Request): Response {
+  const url = new URL(req.url);
+  const stepKind = url.searchParams.get("stepKind");
+  if (stepKind !== null && stepKind !== "first-touch" && stepKind !== "continuation") {
+    return jsonResponse({ error: "stepKind must be first-touch or continuation" }, 400, req);
+  }
+  const play = url.searchParams.get("play")?.trim();
+  const sinceDays = readPeriodDays(req);
+  const { view } = readLinkedInMeasure({
+    ...(sinceDays != null ? { sinceDays } : {}),
+    ...(play ? { play } : {}),
+    ...(stepKind ? { stepKind } : {}),
+  });
+  return jsonResponse(view, 200, req);
 }
 
 /**

@@ -43,6 +43,8 @@ export interface DraftedRow {
   learningKey?: string | null;
   /** First-touch format arm (see `PlayDraft.formatKey`). */
   formatKey?: string | null;
+  /** LinkedIn note only: whether its prompt carried an evidence clause (#792). */
+  evidenceClause?: boolean;
 }
 
 /** Run-level options a play may consume. `targets` is play-specific JSON. */

@@ -117,6 +117,16 @@ export const CONCEPTS = {
     body: "What happened to drafts built on each angle, and who replied. Rates appear after 30 sends (30 people for an angle); angles go to whoever they fit, so read differences as a hint.",
     href: docs + "dashboard",
   },
+  linkedinAccepted: {
+    title: "LinkedIn: accepted",
+    body: "The invitation's own status says accepted (its time is the accept time), or, for invites sent before GTM read that status, a synced 1:1 conversation with the person exists. The conversation check misses most accepts, so older invites read low. The two are counted separately.",
+    href: docs + "linkedin",
+  },
+  linkedinRepliedFirst: {
+    title: "LinkedIn: replied to the first message",
+    body: "A human reply that arrived after the first message and before the next step went out (or with no next step sent), over first messages sent. Out-of-office replies don't count. A reply recorded by two sources counts once. Replied at any point is a separate row.",
+    href: docs + "linkedin",
+  },
   firstTouchFormat: {
     title: "First-touch format",
     body: "An opt-in test of the first email: standard against brief (at most 3 sentences, no opener about the reader). Each person stays in one arm; nothing switches automatically.",
