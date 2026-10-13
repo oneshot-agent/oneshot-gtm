@@ -325,6 +325,39 @@ describe("reply options API", () => {
     expect(sdk.mock.calls[0]![1]).toMatchObject({ idempotencyKey: "1234567890123456" });
     expect(sdk.mock.calls[1]![1]).toMatchObject({ idempotencyKey: "1234567890123456" });
   });
+  it("treats a refused payment as a definite failure and allows a fresh send", async () => {
+    // 2026-10-12: an empty wallet left a reply "uncertain"; every 6-second
+    // check re-ran the paid call, and the reply went out by itself once the
+    // wallet was funded. OneShot bills before dispatch, so nothing was sent.
+    const t = seed("linkedin");
+    review.saveDrafts(t.key, drafts(), null);
+    sdk
+      .mockRejectedValueOnce(
+        Object.assign(
+          new Error("payment rejected: invalid_payload — expected $0.02, signed $0.02"),
+          {
+            name: "PaymentError",
+          },
+        ),
+      )
+      .mockResolvedValueOnce({ status: "sent", sent_at: "2026-10-13T00:17:17Z" });
+    expect(
+      await (
+        await replySendRoute(req({ key: t.key, sendId: "1234567890123456", revision: 1 }))
+      ).json(),
+    ).toMatchObject({ status: "failed", error: /payment rejected/ });
+    expect(review.get(t.key)?.drafts?.edits.direct).toBe("My edited answer");
+    expect(
+      await (
+        await replySendRoute(req({ key: t.key, sendId: "2222222222222222", revision: 1 }))
+      ).json(),
+    ).toMatchObject({ status: "sent" });
+    expect(sdk).toHaveBeenCalledTimes(2);
+    expect(sdk.mock.calls[1]![1]).toMatchObject({
+      kind: "reply",
+      idempotencyKey: "2222222222222222",
+    });
+  });
 });
 
 it("applies approved guidance to generation and improvement without changing stored drafts", async () => {

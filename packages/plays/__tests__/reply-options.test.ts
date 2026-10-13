@@ -81,3 +81,29 @@ it("passes learned guidance to both reply prompts with explicit directions takin
   ]);
   expect(call.messages[0].content).toContain("override learned preferences");
 });
+
+it("does not lint blank options or judge a set the founder is still filling in", () => {
+  // The save route lints every edit; an emptied editor used to come back as
+  // same-move plus near-duplicate pairs of blank bodies.
+  const blank = lintLinkedInDrafts({ direct: "", technical: "", warm: "" }, {}, input);
+  expect(blank).toEqual({ perVariant: { direct: [], technical: [], warm: [] }, set: [] });
+  const partial = lintLinkedInDrafts(
+    { direct: "Read https://invented.example", technical: "", warm: "  " },
+    { direct: "answer" },
+    input,
+  );
+  expect(partial.perVariant.direct).toContain("link-not-in-brief");
+  expect(partial.perVariant.technical).toEqual([]);
+  expect(partial.set).toEqual([]);
+  // Two written options that read the same are still a duplicate pair.
+  const pair = lintLinkedInDrafts(
+    {
+      direct: "Payments settle through Stripe or x402 under a spend cap.",
+      technical: "",
+      warm: "Payments settle through Stripe or x402 under a spend cap.",
+    },
+    { direct: "answer", warm: "ask" },
+    input,
+  );
+  expect(pair.set).toEqual(["near-duplicate:direct+warm"]);
+});

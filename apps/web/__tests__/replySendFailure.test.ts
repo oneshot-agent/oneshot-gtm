@@ -49,3 +49,49 @@ it.each(["pending", "uncertain", "sent"] as const)(
     ).toBeNull();
   },
 );
+
+it("says a refused payment sent nothing and points at the wallet", () => {
+  // OneShot bills before dispatch; its rejection text never says "empty wallet".
+  expect(
+    replySendFailure({
+      channel: "linkedin",
+      canSend: true,
+      linkedinConnectionState: "connected",
+      send: {
+        id: "s1",
+        status: "failed",
+        body: "x",
+        variant: "direct",
+        generationId: "g1",
+        error:
+          "payment rejected: invalid_payload — expected $0.02, signed $0.02 [payment attempt a]",
+      },
+    }),
+  ).toEqual({
+    recovered: false,
+    message:
+      "Your reply was not sent: OneShot refused the payment for it, which usually means the sending wallet is empty. Fund the wallet, then send again.",
+  });
+});
+
+it("sends a budget refusal to the budget, not the wallet", () => {
+  const result = replySendFailure({
+    channel: "linkedin",
+    canSend: true,
+    linkedinConnectionState: "connected",
+    send: {
+      id: "s1",
+      status: "failed",
+      body: "x",
+      variant: "direct",
+      generationId: "g1",
+      error: "Daily budget exceeded: $5.00 cap, $4.99 spent",
+    },
+  });
+  expect(result).toEqual({
+    recovered: false,
+    message:
+      "Your reply was not sent: it would go over a spending budget set on the OneShot account. Review the budget, then send again.",
+  });
+  expect(result?.message).not.toMatch(/wallet/);
+});
