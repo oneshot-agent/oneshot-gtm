@@ -779,4 +779,45 @@ describe("friend invites in the unattended sweep (#791)", () => {
     ]);
     expect(ledger.getCadence(id, FRIEND)).toBeNull();
   });
+
+  it("closes out an overdue declined friend invite so later sweeps stop polling it", async () => {
+    const id = friendSent(22);
+    const li = caller({
+      invitations: () => ({ invitations: [] }),
+      invitation: () => ({
+        invitation_id: `inv-${id}`,
+        status: "declined_or_unknown",
+        accepted_at: null,
+      }),
+    });
+    const first = await sweepLinkedInInvitations({ linkedIn: li });
+    expect(first).toMatchObject({ pending: 1, stopped: 1, withdrawn: 0 });
+    expect(friendMeta(id)).toHaveProperty("endedAt");
+    expect(kinds()).not.toContain("withdraw");
+
+    const callsBefore = kinds().length;
+    const second = await sweepLinkedInInvitations({ linkedIn: li });
+    expect(second.pending).toBe(0);
+    expect(kinds()).toHaveLength(callsBefore);
+  });
+
+  it("re-reads a friend invite whose withdraw came back not_pending, then closes it out", async () => {
+    const id = friendSent(22);
+    let status = "pending";
+    const li = caller({
+      invitations: () => ({ invitations: [] }),
+      invitation: () => ({ invitation_id: `inv-${id}`, status, accepted_at: null }),
+      withdraw: () => {
+        status = "declined_or_unknown";
+        return { status: "not_pending" };
+      },
+    });
+    const first = await sweepLinkedInInvitations({ linkedIn: li });
+    expect(first.stopped).toBe(0);
+    expect(friendMeta(id)).not.toHaveProperty("endedAt");
+    const second = await sweepLinkedInInvitations({ linkedIn: li });
+    expect(second.stopped).toBe(1);
+    expect(friendMeta(id)).toHaveProperty("endedAt");
+    expect((await sweepLinkedInInvitations({ linkedIn: li })).pending).toBe(0);
+  });
 });

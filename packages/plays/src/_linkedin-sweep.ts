@@ -61,7 +61,7 @@ export async function sweepLinkedInInvitations(input: {
   for (const c of ledger.listLinkedInInviteCadences()) {
     const invite = liveLinkedInInvite(c.prospect_id, c.play_name);
     if (!invite || invite.withdrawn || !invite.invitationId) continue;
-    if (invite.acceptedAt || invite.alreadyConnected) continue;
+    if (invite.acceptedAt || invite.alreadyConnected || invite.endedAt) continue;
     const account = invite.sentBy ?? fallback;
     if (!account) continue;
     const key = `${account.workspace}\u0000${account.accountId}`;

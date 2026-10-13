@@ -80,6 +80,8 @@ export interface LiveLinkedInInvite {
   alreadyConnected: boolean;
   /** The last status OneShot reported for it, once read. */
   invitationStatus: string | null;
+  /** The invite was closed out (timed out undeclared, or its cadence ended): nothing left to poll. */
+  endedAt: string | null;
   invitedAtMs: number;
 }
 
@@ -119,6 +121,7 @@ export function liveLinkedInInvite(
     acceptedAt: str(meta.acceptedAt),
     alreadyConnected: meta.inviteStatus === "already_connected",
     invitationStatus: str(meta.invitationStatus),
+    endedAt: str(meta.endedAt),
     invitedAtMs: Date.parse(sqliteToIso(event.created_at)),
   };
 }
@@ -266,13 +269,7 @@ export async function resolveLinkedInInvite(input: ResolveInviteInput): Promise<
     }
     // In cadence mode the caller is the send worker, which claimed the
     // sending marker before this ran; a plain stop is refused under it.
-    ledger.stopCadence({
-      prospectId: input.prospectId,
-      playName: input.playName,
-      reason: "other",
-      note,
-      holdingSendingMarker: input.mode === "cadence",
-    });
+    endInvite(input, invite, note);
     return {
       state: "result",
       result: { action: "completed", payload: null, receiptIds: [], note },
@@ -341,6 +338,32 @@ export async function resolveLinkedInInvite(input: ResolveInviteInput): Promise<
     return { state: "accepted" };
   }
   return waitOrTimeOut(input, invite, account, true);
+}
+
+/**
+ * Ends the invite's cadence and closes the invite out. A friend invite (#791)
+ * has no cadence row, so stopping does nothing for it: the `endedAt` mark is
+ * what takes it off the unattended sweep's list.
+ */
+function endInvite(
+  input: ResolveInviteInput,
+  invite: LiveLinkedInInvite | null,
+  note: string,
+): void {
+  const ledger = getLedger();
+  ledger.stopCadence({
+    prospectId: input.prospectId,
+    playName: input.playName,
+    reason: "other",
+    note,
+    holdingSendingMarker: input.mode === "cadence",
+  });
+  if (invite && !invite.endedAt) {
+    ledger.updateLinkedInInviteEvent({
+      id: invite.event.id,
+      metadata: { endedAt: new Date().toISOString(), endedNote: note },
+    });
+  }
 }
 
 /**
@@ -454,13 +477,7 @@ async function waitOrTimeOut(
       };
     }
   }
-  ledger.stopCadence({
-    prospectId: input.prospectId,
-    playName: input.playName,
-    reason: "other",
-    note,
-    holdingSendingMarker: input.mode === "cadence",
-  });
+  endInvite(input, invite, note);
   return {
     state: "result",
     result: {
