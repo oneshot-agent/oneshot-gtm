@@ -36,12 +36,14 @@ export function linkedInFriendRoute(req: Request, params: Record<string, string>
   }
   const view: LinkedInFriendView = linkedInFriendViewNow(id);
   // No account, or one without the invite grant, can't send: don't offer it.
-  if (view.canConnect && !linkedInOutreachAccount()) {
-    return jsonResponse(
-      { canConnect: false, reason: "connect LinkedIn on /setup first", invite: null },
-      200,
-      req,
-    );
+  if (view.canConnect) {
+    const account = linkedInOutreachAccount();
+    const reason = !account
+      ? "connect LinkedIn on /setup first"
+      : !account.canInvite
+        ? "allow connection requests on Replies"
+        : null;
+    if (reason) return jsonResponse({ canConnect: false, reason, invite: null }, 200, req);
   }
   return jsonResponse(view, 200, req);
 }
@@ -101,6 +103,9 @@ export async function linkedInFriendSendRoute(
   const account = linkedInOutreachAccount();
   if (!account) {
     return jsonResponse({ error: "connect LinkedIn on /setup before sending invites" }, 409, req);
+  }
+  if (!account.canInvite) {
+    return jsonResponse({ error: "allow connection requests on Replies" }, 409, req);
   }
   try {
     const out = await sendFriendInvite({

@@ -173,6 +173,25 @@ describe("sendFriendInvite", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("refuses an edited note with a question, pitch or link before anything is sent", async () => {
+    const id = replier("interested");
+    const { sender: s, calls } = sender();
+    const notes = [
+      "Are we still on for next week?",
+      "We built a tool that fits you well.",
+      "More at https://example.com/me",
+    ];
+    for (const [i, note] of notes.entries()) {
+      const out = await sendFriendInvite({ prospectId: id, note, sender: s, workspace: "gtm" });
+      expect(out.sent).toBe(false);
+      expect((out as { flags: string[] }).flags[0]).toMatch(
+        [/^note-question:/, /^note-pitch:/, /^note-link:/][i]!,
+      );
+    }
+    expect(calls).toHaveLength(0);
+    expect(core.getLedger().listLinkedInInviteEvents(id, LINKEDIN_FRIEND_PLAY)).toHaveLength(0);
+  });
+
   it("the guard applies: a profile already invited is refused and nothing is sent", async () => {
     const id = replier("interested");
     core.getSharedDb().markLinkedInTouched({ slug: `person-${seq}`, source: "invite:other" });

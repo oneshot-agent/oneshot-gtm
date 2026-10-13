@@ -5,9 +5,10 @@ import { getLedger } from "@oneshot-gtm/core";
 // test home. The LinkedIn client and the model are stubs; nothing leaves.
 
 const linkedInCalls: Array<Record<string, unknown>> = [];
-let account: { workspace: string; accountId: string } | null = {
+let account: { workspace: string; accountId: string; canInvite: boolean } | null = {
   workspace: "gtm",
   accountId: "acct-1",
+  canInvite: true,
 };
 let note = "We traded emails last week. Connecting so the next hello isn't cold.";
 
@@ -75,7 +76,7 @@ const idParam = (id: number) => ({ id: String(id) });
 
 beforeEach(() => {
   linkedInCalls.length = 0;
-  account = { workspace: "gtm", accountId: "acct-1" };
+  account = { workspace: "gtm", accountId: "acct-1", canInvite: true };
   note = "We traded emails last week. Connecting so the next hello isn't cold.";
 });
 
@@ -103,6 +104,25 @@ describe("GET /api/prospects/:id/linkedin-friend", () => {
 
   it("rejects a bad id", () => {
     expect(linkedInFriendRoute(get("/x"), { id: "abc" }).status).toBe(400);
+  });
+
+  it("doesn't offer it when the account lacks the invite grant", async () => {
+    account = { workspace: "gtm", accountId: "acct-1", canInvite: false };
+    const body = (await linkedInFriendRoute(get("/x"), idParam(replier(["meeting"]))).json()) as {
+      canConnect: boolean;
+      reason: string;
+    };
+    expect(body.canConnect).toBe(false);
+    expect(body.reason).toBe("allow connection requests on Replies");
+    const sent = await linkedInFriendSendRoute(
+      post("/s", { note: "hi" }),
+      idParam(replier(["meeting"])),
+    );
+    expect(sent.status).toBe(409);
+    expect(((await sent.json()) as { error: string }).error).toBe(
+      "allow connection requests on Replies",
+    );
+    expect(linkedInCalls).toHaveLength(0);
   });
 });
 

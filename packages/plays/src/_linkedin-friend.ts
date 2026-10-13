@@ -113,6 +113,15 @@ export async function sendFriendInvite(input: {
     };
   }
   const { prospect } = verdict;
+  // The friend-note contract (no question, pitch or link) holds for an edited
+  // note too; the sender only checks empty and over-limit.
+  const noteFlags = lintFriendNote(input.note).filter(
+    (flag) =>
+      flag.startsWith("note-question:") ||
+      flag.startsWith("note-pitch:") ||
+      flag.startsWith("note-link:"),
+  );
+  if (noteFlags.length > 0) return { sent: false, flags: noteFlags };
   const out: LinkedInInviteOutcome = await sendLinkedInInvite({
     row: {
       id: input.prospectId,
