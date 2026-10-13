@@ -348,6 +348,15 @@ describe("live-read rule", () => {
     expect(
       await companyTheyRun({ playName: "b", prospect: personal, reader: moved, now: NOW }),
     ).toBeNull();
+    cache.clear();
+    // The live headline says something else, but the live current position names it.
+    const position = reader({
+      headline: "Building agents",
+      experience: [{ company: "Soren", period: "2025 - Present" } as never],
+    });
+    expect(
+      await companyTheyRun({ playName: "d", prospect: personal, reader: position, now: NOW }),
+    ).toBe("Soren");
     // Without the stored headline nothing corroborates, and no view is spent.
     const bare = reader({ headline: "Founder at Soren", experience: [] });
     expect(
@@ -583,6 +592,14 @@ describe("lint", () => {
       ]) {
         expect(lintLinkedInClose(text, { context, clause })).toEqual([]);
       }
+    });
+    it("a long run of spaces after the clause is judged quickly", () => {
+      const started = Date.now();
+      const text = `Saw you${" ".repeat(20_000)}starred acme/widgets${" ".repeat(50_000)}x`;
+      expect(lintLinkedInClose(text, { context, clause })).toContainEqual(
+        expect.stringMatching(/^unsupported-claim/),
+      );
+      expect(Date.now() - started).toBeLessThan(1_000);
     });
     it("a clause with a dot in it still counts", () => {
       expect(

@@ -615,7 +615,10 @@ export async function companyTheyRun(input: {
   if (!storedFounderCompany(facts)) return null;
   const url = prospect.linkedin_url;
   const live = await liveProfileFor(`${input.playName}|${url ?? ""}`, url, input.reader, input.now);
-  return verifiedFounderCompany({ ...facts, headline: live?.headline ?? facts.headline }, live);
+  // The stored check keeps the stored headline; the live read is judged on its
+  // own headline and current position, so a live headline that says something
+  // else does not undo a company the live position names.
+  return verifiedFounderCompany(facts, live);
 }
 
 // ---------------------------------------------------------------------------
@@ -666,15 +669,36 @@ export function lintLinkedInFirstMessage(
 const clean = (s: string) => s.trim().replace(/^"|"$/g, "");
 
 const SAW_YOU_RX = /\b(?:saw|noticed|spotted|seen)\s+(?:that\s+)?you\b/gi;
-/** Words that may sit between "saw you" and the clause without claiming anything. */
-const CLAIM_FILLER_RX = /^(?:\s*(?:recently|just|also|'ve|have|had)\b)*\s*/i;
+// The checks below read model output. Whitespace is skipped by trimming, never
+// by a quantifier next to another one, so each is linear in the input.
+/** A word that may sit between "saw you" and the clause without claiming anything. */
+const CLAIM_FILLER_RX = /^(?:recently|just|also|'ve|have|had)\b/i;
+/** A word that may follow the clause without claiming anything. */
+const CLAIM_TAIL_EXTRA_RX = /^(?:too|recently|on github)\b/i;
+/** The writer turning to themselves ("so figured I'd ask"). */
+const CLAIM_TURN_RX =
+  /^(?:(?:and|so|which|that) )?(?:i|we|curious|figured|wanted|thought|wondered|had to|made me|got me)\b/i;
+
+function skipFiller(text: string): string {
+  let rest = text.trimStart();
+  for (let m = CLAIM_FILLER_RX.exec(rest); m; m = CLAIM_FILLER_RX.exec(rest))
+    rest = rest.slice(m[0].length).trimStart();
+  return rest;
+}
+
 /**
- * What may follow the clause in its sentence: nothing, or the writer turning
- * to themselves ("…, so figured I'd ask"). Anything else is a second thing
- * said about the reader.
+ * What may follow the clause on its line: nothing, the end of the sentence, or
+ * the writer turning to themselves. Anything else is a second thing said about
+ * the reader.
  */
-const CLAIM_TAIL_RX =
-  /^(?:\s+(?:too|recently|on github))?\s*(?:$|[.?!\n]|[,;:–—-]?\s*(?:(?:and|so|which|that)\s+)?(?:i|we|curious|figured|wanted|thought|wondered|had to|made me|got me)\b)/i;
+function tailSaysNothingMore(tail: string): boolean {
+  let rest = cutAt(tail, /\n/).trimStart();
+  const extra = CLAIM_TAIL_EXTRA_RX.exec(rest);
+  if (extra) rest = rest.slice(extra[0].length).trimStart();
+  if (!rest || ".?!".includes(rest[0]!)) return true;
+  if (",;:–—-".includes(rest[0]!)) rest = rest.slice(1).trimStart();
+  return CLAIM_TURN_RX.test(rest.replace(/\s/g, " "));
+}
 
 /**
  * The "saw you …" claims the evidence does not support. A claim is supported
@@ -688,9 +712,9 @@ function unsupportedClaims(text: string, clause: string | undefined): string[] {
   const want = clause?.toLowerCase();
   for (const m of text.matchAll(SAW_YOU_RX)) {
     const rest = text.slice(m.index + m[0].length);
-    const said = rest.slice(CLAIM_FILLER_RX.exec(rest)?.[0].length ?? 0);
+    const said = skipFiller(rest);
     const supported =
-      !!want && said.toLowerCase().startsWith(want) && CLAIM_TAIL_RX.test(said.slice(want.length));
+      !!want && said.toLowerCase().startsWith(want) && tailSaysNothingMore(said.slice(want.length));
     if (!supported) out.push(`${m[0]}${cutAt(rest, /[.?!\n]/)}`);
   }
   return out;
