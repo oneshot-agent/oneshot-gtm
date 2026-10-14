@@ -1,8 +1,8 @@
 # Status
 
-**Assume green.** The 67 CLI commands, 23 plays, 16 finders, ten dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
+**Assume green.** Every CLI command, play, finder and dashboard page, and the server's REST + SSE routes, are covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
 
-Last verified **2026-10-13** · Bun 1.3.13 · OneShot SDK 0.48.0 · **6039 tests / 477 files** · typecheck + oxlint + oxfmt pass (0 lint warnings, 0 errors).
+Last verified **2026-10-13** · Bun 1.3.13 · OneShot SDK 0.48.0 · **6035 tests / 477 files** · typecheck + oxlint + oxfmt pass (0 lint warnings, 0 errors).
 
 **What the gate covers.** `apps/web` is now inside `bun run typecheck` — the dashboard source is
 type-checked in CI, and a deliberate error under `apps/web/src` fails the root script. As of
@@ -103,11 +103,7 @@ Updated by hand after each dogfood run.
 
 ## Off by default
 
-Only **`show-hn`** and **`post-funding-auto`** fire out of the box. The other fourteen finders are opt-in, enabled per trigger from `/queue`:
-
-`accelerator-batch` · `job-change` · `hiring-signal` · `podcast-guest` · `luma-events` · `github-topics` · `github-stars` · `breakup-revive` · `x-reposters` · `local-business` · `local-registry` · `gov-solicitation` · `civic-agenda` · `list-page`
-
-Twelve of those also stay **not ready** until you give them required config, and refuse to fire until you do (the API returns `409`):
+Every finder is off in a new workspace and is enabled per trigger from `/queue`. These also stay **not ready** until you give them required config, and refuse to fire until you do (the API returns `409`):
 
 | Finder              | Needs                                                                                                                                                    |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -131,7 +127,7 @@ Both GitHub finders need `GITHUB_TOKEN`. Unauthenticated, GitHub allows 60 reque
 - **Bounce handling is Gmail-only.** DSNs are parsed from connected Gmail/Workspace mailboxes. Sends through OneShot domains and Smartlead mailboxes have no equivalent feed yet; `doctor` names them as not covered rather than reporting a false zero.
 - **Smartlead mailboxes: no warmup ingestion or per-domain cap groups.** `smartlead connect` (or `/setup`) registers Smartlead-hosted mailboxes as sending identities — rotation, warm-up caps (clamped to Smartlead's own per-mailbox limit at registration; later Smartlead-side changes aren't re-synced), sticky threads, suppression, and the cross-workspace hold all apply. Each mailbox's IMAP is synced into `/inbox`, replies thread from the receiving mailbox, and a new mailbox sends through its own SMTP under one keyed Message-ID per email when its credentials resolve. A mailbox on the Smartlead API path has no idempotency key (a provider-side retry can double-send), so its copies in Sent are counted instead and `doctor` warns on it; `identities send-via <id> smtp` switches it. Follow-ups: bounce/warmup ingestion, per-domain cap groups.
 - **`oneshot-gtm-server` requires Bun.** `bun:sqlite`, `Bun.serve`, and `Bun.stdin` are Bun-native; a runtime check in `dist/bin.mjs` fails loudly under plain `node`. A self-contained `bun build --compile` binary is a future option.
-- **The CLI is not on npm.** Only `oneshot-gtm-server` is published (0.8.0). The CLI needs a repo clone plus `bun link`.
+- **The CLI is not on npm.** Only `oneshot-gtm-server` is published. The CLI needs a repo clone plus `bun link`.
 - **No public benchmarks page.** The telemetry endpoint is live and verified; the surface that renders aggregates from it is still roadmap.
 - **The CLI has limited machine-readable output.** Read-only commands (`doctor`, `identities list`, `domains list`, `workspace list`, `find watch --once`, `find drain --dry-run`) now support `--json` for scripted callers. Mutation commands and multi-step flows still require the dashboard or `/api/measure/*` routes.
 - **`events.jsonl` rotates at 10 MB.** `logEvent` rolls the live file to `events.1.jsonl` … `events.3.jsonl` and drops the oldest; `ONESHOT_GTM_MAX_EVENT_LOG_BYTES` moves the ceiling. A rotation failure drops the event rather than throwing, and `tail -f` needs to be `tail -F` to survive the rename.

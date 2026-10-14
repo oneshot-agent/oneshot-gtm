@@ -299,7 +299,7 @@ function supportedPlatform(): "darwin" | "linux" {
   if (platform !== "darwin" && platform !== "linux") {
     bail(
       `no service template for platform "${platform}". On Windows, schedule \`find watch --once\` ` +
-        "with Task Scheduler — see README § Background monitoring as a service.",
+        "with Task Scheduler; the recipe is in docs/background-monitoring.md.",
     );
   }
   return platform;

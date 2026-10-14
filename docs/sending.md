@@ -1,35 +1,49 @@
 # Sending and deliverability
 
-Outbound ships through a **sender identity pool** — any mix of OneShot wallet-owned sending domains (several domains, several mailboxes per domain), your own Gmail / Workspace accounts, and Smartlead-hosted mailboxes. With no pool configured, behavior is the classic single OneShot identity.
+A cap you can talk past is not a cap. Each mailbox sends 10 a day, earns 10 more each week, and stops at 50. At the cap nothing sends. The step stays due until the cap resets at midnight.
+
+Mail leaves through a pool of sender identities: OneShot sending domains, your own Gmail or Workspace accounts, and Smartlead-hosted mailboxes, in any mix.
 
 ## Adding identities
 
-- **OneShot domain + mailbox** — `/setup` or `identities add`. Pick a provisioned domain or type a new one to auto-provision on first send. `domains list · pause · resume` manages the provisioned pool.
-- **Gmail / Workspace** — `gmail auth` (one-time OAuth; needs a Google Cloud _Desktop_ client with the Gmail API on).
-- **Smartlead** — `smartlead connect` (paste the workspace API key, pick from your connected accounts) or `/setup`. Smartlead does the warmup and hosts the inboxes; the default ramp ceiling clamps to each mailbox's own Smartlead limit. Each mailbox's IMAP is synced into `/inbox` while the workspace's server runs, and replies thread from the receiving mailbox. A newly added mailbox sends via its own SMTP (keyed, see below) when its IMAP and SMTP credentials resolve; otherwise it sends through the Smartlead API, and `smartlead connect` or `/setup` shows why. Mailboxes added earlier keep the path they have. `doctor` warns on every mailbox still sending through the API and prints the command that switches it.
+- **OneShot domain and mailbox.** Setup, or `identities add`. Pick a provisioned domain or type a new one; it is provisioned on first send. `domains list`, `pause` and `resume` manage them.
+- **Gmail or Workspace.** `gmail auth`, a one-time OAuth. It needs a Google Cloud Desktop client with the Gmail API on.
+- **Smartlead.** `smartlead connect`, or Setup. Smartlead warms and hosts the mailbox. GTM sends through the mailbox's own SMTP when its credentials resolve, and through the Smartlead API otherwise. `doctor` names every mailbox still on the API and the command that switches it: `identities send-via <id> smtp`.
 
-## Rules the pool enforces
+`identities test-send <id> --to you@example.com --dry-run` shows what a test would send.
 
-- **Sticky threads.** Every email to a prospect comes from the identity that sent their first touch, across plays and cadence steps. In-flight conversations never switch From address.
-- **Warm-up caps, per domain.** A new identity ramps 10/day, +10/week, to a 50 ceiling — editable per identity on `/setup`. OneShot reputation is per-domain, so every mailbox on a domain shares one ramp and budget. Gmail accounts ramp per account.
-- **Defer, never exceed.** When every identity is at cap, cadence steps stay due and queue rows stay approved until midnight. Nothing sends over cap.
-- **One founder, one inbox, however many products.** A [workspace](./workspaces.md) never first-touches someone another workspace emailed in the last 7 days: the draft is held with a `contacted-elsewhere` flag that you can override on a manual send, and auto paths (drain, cadence steps) wait the window out. Touches and the paid lookup caches live in one shared SQLite (`~/.oneshot-gtm-shared/`), so the same person is never researched twice.
-- **Idempotent sends.** OneShot, Gmail and direct-SMTP sends carry a key for what the email is (workspace, play, recipient, step), never its text, so a re-drafted email keeps its key. The key is claimed in the ledger before any transport runs: an email already sent is not sent again, and one whose outcome is unknown (a dropped connection, a crash) waits until its Sent folder has been checked, and is retried only as the same message (same Message-ID, or for OneShot the same content, which the platform dedupes). Where Sent can't tell (an SMTP server that keeps no Sent copy), it is flagged for you, never resent. Sends through the Smartlead API have no key, so their copies in Sent are counted instead. Either way, a few minutes after each Smartlead or Gmail send the sending mailbox's Sent folder is searched (read-only), and a send that turns up more than once, or not at all, is flagged on its queue row, its cadence history and the `sends` status pill; `sends check --since 7d` lists every keyed send and check.
-- **Direct SMTP for Smartlead mailboxes.** The default for a new mailbox whose credentials resolve. `identities send-via <id> smtp` (or the "send via" picker on `/setup`) switches an existing one, and sends through the mailbox's own SMTP instead of the Smartlead API, under one fixed Message-ID per email, so a retry can only ever be the same message. It is refused unless the mailbox's SMTP and IMAP credentials resolve. `identities test-send <id> --to you@example.com --dry-run` shows what a test would send; drop `--dry-run` to send it.
+## The rules
+
+- **One sender per person.** Every email to a prospect comes from the identity that sent the first one, across plays and steps.
+- **Ramp.** 10 a day, plus 10 a week, to 50. Editable per identity on Setup. Mailboxes on one OneShot domain share one ramp, because reputation belongs to the domain. Gmail and Smartlead mailboxes ramp per account, and a Smartlead mailbox never exceeds its own Smartlead limit.
+- **Defer, never exceed.** Capacity is reserved before a send starts, so two sends at once cannot both take the last slot. At the cap, steps stay due and rows stay approved.
+- **One person, one product at a time.** A workspace does not first-touch someone another [workspace](./workspaces.md) emailed in the last 7 days. The draft is flagged `contacted-elsewhere`. Cadences shows the step as held and a batch skips it. You can override on a single manual send.
+- **No duplicates.** Each send carries a key for what it is (workspace, play, recipient, step), not its text. A sent email is never sent again. One whose outcome is unknown waits until the Sent folder has been checked, and is retried only as the same message. Where Sent cannot tell, it is flagged for you and not resent.
+
+`sends check --since 7d` lists every keyed send and what the Sent folder showed. Sends through the Smartlead API carry no key, so their copies in Sent are counted and a send that appears twice, or not at all, is flagged.
 
 ## Replies
 
-The inbox poll merges the OneShot inbox with every authorized Gmail account, so stop-on-reply works whichever identity sent. It walks everything since its last clean poll — a persisted watermark with an hour of overlap, paged newest-first, parking anything beyond one poll's page budget as a backlog the next ticks drain — so a reply is delayed by an outage, never lost to it. A reply you've already read and archived still counts.
+The inbox poll reads the OneShot inbox, every authorised Gmail account and every Smartlead mailbox. A reply stops the cadence whichever identity sent. A reply delayed by an outage is picked up later, not lost, and one you already archived still counts.
 
-Every inbound is classified: out-of-office autoresponders, dead-mailbox notices and unsubscribes are recorded for the conversation history but never count as replies, and the latter two durably suppress the address at the send funnel.
+Every inbound is classified. Out-of-office notices, dead-mailbox notices and unsubscribes are recorded and never count as replies. The last two suppress the address for good.
 
-Human replies get one label from a fixed set: `interested`, `question`, `partnership`, `meeting`, `intro`, `not_now`, `objection`, `complaint`, `not_interested`, `wrong_person`, `unsubscribe`, `pitch_back`, `auto_reply`, `other`. Only `unsubscribe` opts the contact out; any other human reply stops the cadence as an ordinary reply, and the label shapes the drafted answer. Labelling uses your `llmModel` by default. Set `replyClassifier` (or the Reply labels section on `/setup`) to `{ "engine": "decisions", "model": "<openrouter model id>", "minConfidence": 0.5 }` to use OpenRouter's decisions endpoint instead, which also stores a confidence and flags a label under `minConfidence` with "check label". Any decisions failure falls back to the `llm` engine. The scheduler retries a reply from the last week whose labelling failed, once it is two hours old and at most every six hours. `oneshot-gtm intel backfill-intent [--reclassify] [--since 30d] [--dry-run] [--allow-unsubscribe-downgrade] [-l N]` labels older replies; it writes labels only, never sends, and keeps an existing `unsubscribe` unless you pass `--allow-unsubscribe-downgrade`.
+A human reply gets one label: `interested`, `question`, `partnership`, `meeting`, `intro`, `not_now`, `objection`, `complaint`, `not_interested`, `wrong_person`, `unsubscribe`, `pitch_back`, `auto_reply` or `other`. Only `unsubscribe` opts the contact out. The label shapes the drafted answer. **Reply labels** on Setup can route labelling to a classifier that also stores a confidence and marks a weak label "check label". `intel backfill-intent` labels older replies; it writes labels and never sends.
 
-Answering from `/inbox` records the reply, sends from the receiving identity, and threads on both transports — Gmail via `In-Reply-To`/`References`, OneShot via `reply_to_email_id`. A Smartlead mailbox reply goes through the same keyed send ledger as a first touch: one key per send click, a Message-ID derived from it, and only one reply in flight per inbound message. A reply whose outcome is unknown is checked against the mailbox's Sent folder and never resent on its own; where Sent can't tell, it is shown as not confirmed after 10 minutes and the conversation is free to answer again. `sends check` lists replies with the other keyed sends. Drafting is research-grounded: known prospects reuse their stored dossier, unknown senders get enriched and their site read (~$0.06, cached 30 days, receipted under `inbox-reply`), and replies may cite links from your product brief — never invented ones.
+Answering from Replies sends from the mailbox that received the message and threads correctly. Drafts are grounded: a known prospect's stored research, an unknown sender's site, and links only from your product brief. A reply whose outcome is unknown is checked against Sent and never resent on its own.
 
-LinkedIn replies stop email too once recorded in GTM. Connect LinkedIn on Setup; GTM reads messages and sends reviewed replies through OneShot. No LinkedIn webhook setup is needed. You can also record a reply manually from the queue or cadences view. See [LinkedIn](./linkedin.md).
+LinkedIn replies stop email cadences too; see [LinkedIn](./linkedin.md).
+
+## Smartlead inboxes
+
+While a workspace's dashboard runs, it syncs each Smartlead mailbox about once a minute. Smartlead keeps doing warm-up. **Replies** shows connection status, last sync and import progress. The first import covers 30 days.
+
+- **Connection settings** is for a mailbox whose IMAP or SMTP credentials Smartlead does not expose. Both are verified before saving, and stored in the workspace's `mailbox-connections.json`, mode 600.
+- Mail that matches no prospect sits under **No match**, where you can attach it to one.
+- Read, archive and draft state belong to the workspace. They do not change the mailbox.
+- Removing an identity stops its sync and keeps its conversations.
 
 ## Deliverability
 
-- **Bounces.** Delivery status notifications are harvested from connected Gmail mailboxes on a 30-minute sweep, parsed per RFC 3464, and classified hard / block / soft. A hard bounce stops the cadence and suppresses the address at both draft and send time; a `5.7.x` policy block never suppresses, being a verdict on the message rather than the mailbox. `doctor` reports a per-identity rate — warn above 2%, fail above 5%, 20-send minimum. Gmail-only for now.
-- **Inbox placement.** `gmail placement` sends one real message between two authorized mailboxes and reads back where the receiving account filed it, plus the SPF/DKIM/DMARC verdicts that server recorded — a verdict on the real send path, needing no DNS tooling. It's never run automatically, since repeated canaries train the seed mailbox's filter.
+- **Bounces.** Read from connected Gmail mailboxes every 30 minutes. A hard bounce stops the cadence and suppresses the address. A policy block (`5.7.x`) does not: it is a verdict on the message, not the mailbox. `doctor` warns above 2% per identity and fails above 5%, once an identity has 20 sends.
+- **Inbox placement.** `gmail placement` sends one real message between two of your mailboxes and reports where it landed, with the SPF, DKIM and DMARC verdicts. Run it by hand and rarely; repeated canaries train the receiving filter.

@@ -1,122 +1,125 @@
 # LinkedIn
 
-OneShot operates LinkedIn account connections, message synchronization, and authorized actions. GTM owns prospect matching, research, reply drafts, and cadence decisions. Users connect their human LinkedIn account through OneShot; OneShot handles the upstream connection.
+LinkedIn forgives little, so nothing here sends on a timer. You send each invite and each message, or you run the batch that does.
 
-## Account connection and messages
+OneShot holds the account connection and carries out the actions through its API. No browser automation, no webhook to set up. GTM decides who to write to, drafts the text and stops the cadence when someone answers.
 
-The OneShot SDK provides `linkedinConnect`, `getLinkedInConnection`, account listing/status, reconnect, and revoke. The human opens the returned hosted login link and completes verification. OneShot verifies the connection and binds it to the calling agent. Request only the actions needed, such as `read` and `reply`.
+One thing runs unattended. Every 30 minutes the server checks pending invites: it records accepts, and withdraws an invite still pending after 21 days.
 
-`linkedinSync` ingests history in bounded, resumable runs. `linkedinConversations` and `linkedinMessages` read the synchronized data. Check `coverage` and `sync_state`: exhausting a cursor does not establish that the provider has finished importing history. OneShot handles provider notifications and reconciliation internally.
+## Connecting
 
-`linkedinReply` sends into an existing conversation with the account's grant and an idempotency key. `linkedinMessage` sends the first message to a connection that has no conversation yet (same grant, same 1–4000 character limit, same idempotency key scheme), and `linkedinInvitation` / `linkedinInvitations` read invitation status for free. The platform also exposes profile views and post reactions.
+**Connect LinkedIn** on Setup runs two sign-ins back to back: the messaging account, shared by every workspace, then the [profile-reading session](./finders.md#live-linkedin-reads) for this workspace. **Replies → Connections & reply preferences → LinkedIn** manages the account afterwards.
 
-See the [OneShot LinkedIn API documentation](https://docs.oneshotagent.com/api-reference/linkedin/overview) for the current contract and supported actions.
+A new connection asks for `read`, `reply`, `view_profile` and `invite`. An older one adds a missing permission with **Allow profile access** or **Allow connection requests**: you sign in to the same account again and nothing is re-imported.
 
-## Using LinkedIn in GTM
-
-Connect the messaging account from Setup: the one **Connect LinkedIn** button there runs the messaging sign-in and the [profile-research](./finders.md) sign-in back to back. Replies manages the account afterwards (reconnect, permissions, history import, remove). GTM reads conversations and messages through OneShot, supports reconnect and history sync, and sends reviewed replies through the connected account. The server refreshes messages in the background and when the Replies view loads.
-
-Conversations are matched to prospects and assigned to a workspace. Human replies are recorded through GTM's reply handling and stop active or paused cadences for the prospect. Automatic responses remain separate from human replies.
-
-**No LinkedIn webhook setup is required in GTM.** The local app reads from OneShot without exposing a public callback.
-
-The LinkedIn browser connection on `/setup` is for [live profile research](./finders.md), separate from the messaging account, though both start from the same **Connect LinkedIn** button there. You can also record a reply manually from the queue or cadences view, optionally including its text.
+Conversations are matched to prospects. A human reply stops every live cadence for that person, email included. Auto-responses are recorded and do not count.
 
 ## Connection requests as a first touch
 
-LinkedIn is an outreach channel, like email. A queue row on the LinkedIn channel gets a connection-request note (200 characters at most) drafted from the same signal the email would use: the event, repo, round or job that surfaced the person. Review it on `/queue`, then **Send** it (sent exactly as reviewed) or include the row in a drain. Invites go through OneShot's invite route from the connected account; no browser automation.
+A queue row on the LinkedIn channel gets a connection note drafted from the same signal an email would use. The note is written to 200 characters; LinkedIn's limit is 300. Review it on Queue, then **Send** it as reviewed, or include the row in a batch.
 
-- The account needs the `invite` permission. New connections request it. An older connection adds it from **Replies → Connections & reply preferences → LinkedIn → Allow connection requests**: you sign in to the same LinkedIn account again, and the account, its conversations and its import progress stay as they are.
-- OneShot enforces the account's daily invite limit (25 per UTC day by default) across every tool using the account. When it's reached, the drain stops and the remaining rows stay approved for the next day.
-- **Workspace share.** Several workspaces can share one LinkedIn account, and the first to send would otherwise spend the whole day's invites. `oneshot-gtm config linkedin-invites <count>` sets `linkedin.invitesPerDay` in the workspace's `config.json` (a positive whole number; `off` removes it; with no argument it shows the current value). GTM keeps a UTC-day counter per account and workspace in the shared database. Every invite (queue send, drain, cadence step) reserves a slot before calling OneShot, confirms it on success and releases it on failure; a reservation left by a crash stops counting after ten minutes. A send is deferred, not failed, when this workspace has used its share or the account reports no invites left: the row stays approved and the cadence step stays due. Unset means no share, only the account cap. The share never raises the account's limit; OneShot's cap stays authoritative.
-- `/queue`, `/cadences` and the Setup LinkedIn card show what is left today, e.g. `LinkedIn invites today: 4 of 12 left · account 9 left`. The account figure is read from OneShot and refreshed at most every few minutes.
-- A sent invite can be withdrawn from its row (**Withdraw invite**). Withdrawing never removes an accepted connection.
-- **Invite guard.** Before any invite leaves (`/queue` send and drain), `canInviteOnLinkedIn` checks the row. A refused row is never sent and never dropped: it goes back to pending with the reason as its flag, and `find drain` prints the counts (e.g. `not-a-person 3 · already-invited 2`). Fix the row and send again. The reasons: `invalid-profile` (the stored URL isn't a personal `linkedin.com/in/<slug>` profile; X, GitHub, company and school URLs are refused; country hosts, query strings, trailing slashes and `/en`-style locale suffixes are normalised, and the slug's percent-encoding is kept as stored), `not-a-person` (the name is a repo, handle or company: too short, has digits, is a lone token with `-`, `_`, `.` or `/`, contains an org word such as `labs` or `agents`, or is a lone token the company echoes unless the email's local part contains it), `opted-out`, `replied` (a human reply on any channel; an out-of-office doesn't count, a dead mailbox or unsubscribe does), `cadence-stopped` (stopped or unsubscribed), `icp-rejected` (an unjudged row passes), `already-invited` (any workspace sharing the shared database invited this profile, or is sending to it now), `already-touched` (the profile is on the suppression list) and `already-in-conversation` (the synced inbox already holds a 1:1 conversation with this person that has at least one message, whoever started it: another tool, another workspace, or you by hand; a group thread or an empty conversation doesn't count). The profile is reserved in the shared database before the call and made permanent just before the invite is dispatched; only a failure OneShot reports for the job (a code such as `email_required`) frees it again, while a timeout, a lost worker or a local error after the call keeps the profile suppressed. Invites already recorded in the workspace's own ledger are copied into the table once, the first time the guard runs there; the guard never opens another workspace's ledger. The suppression list is the shared-database table `linkedin_touched(slug, source, touched_at)`; every sent invite adds to it, and [Before you turn on LinkedIn steps](#before-you-turn-on-linkedin-steps) loads people invited by another tool or another workspace. When the guard can't read the ledger, the shared database or the synced inbox it refuses (`guard-unavailable`).
-- Any unsent row can move to another channel its person has an address for (the channel menu on the row). Its draft is dropped; Regenerate writes one for the new channel.
-- A LinkedIn first touch starts the LinkedIn cadence, never an email one. The first message is due two days after the invite, but only once the person has accepted. A last, short close follows six days later. A reply on LinkedIn stops the cadence, as it does for email.
-- **How acceptance is detected.** Accepting an invitation does not create a conversation, so GTM asks OneShot for the invitation's status (`linkedinInvitation`, free) rather than waiting for a chat to appear. `accepted` records `acceptedAt` (OneShot's `accepted_at`, or now when it is null) on the invite and the first message becomes due. `pending` keeps waiting. `withdrawn` ends the cadence. `declined_or_unknown` keeps waiting until the 21-day timeout, then ends the cadence without calling withdraw. `not_sent` marks the invite step failed (it never counts as an invite). An invite that answered `already_connected` skips the wait. If the status call fails, or the invite has no recorded invitation id, GTM falls back to "a synced 1:1 conversation with them exists".
-- **Messaging a connection with no conversation.** When the first message is due and the synced inbox has no conversation with the person, it goes out through `linkedinMessage` to their profile URL, with the same `gtm:<workspace>:cadence:<prospectId>:<play>:<step>` idempotency key a reply uses, so a retry never posts twice. The returned `conversation_id` is stored on the sent step, so the close goes into the same conversation; when OneShot omits it, the next inbox sync finds the conversation. `not_connected` and `rate_limited` defer the step (it stays due) rather than failing it. Everything GTM assumes about that result lives in `packages/core/src/linkedin-message.ts`.
-- **What runs unattended, and what does not.** The server's scheduler runs a status sweep every 30 minutes (and the first tick after boot): for each LinkedIn account with pending invites it lists invitations changed since its last good look (`linkedinInvitations({ changedSince })`, free), records accepts, and withdraws invites still pending after 21 days. Those are the only unattended LinkedIn actions. The sweep never drafts and never sends a message: after an accept is recorded, the first message shows up on `/cadences` as due like any follow-up, you preview it, and you send it. Until then the preview says "waiting for acceptance since `<date>`". `oneshot-gtm cadence advance` applies the same status check when it runs. A due LinkedIn step is considered even when no email identity has capacity; the daily email cap only holds email steps.
-- If the invite isn't accepted within 21 days and is still pending, it is withdrawn and the cadence stops.
+- **Daily limit.** OneShot enforces the account's invite limit, 25 per UTC day by default, across every tool that uses the account. At the limit the batch stops and the rows stay approved.
+- **Workspace share.** `config linkedin-invites <count>` gives this workspace a share of that limit, so the first workspace to send does not spend the day. `off` removes it. The share never raises the account's limit.
+- **What is left.** Queue, Cadences and Setup show it: `LinkedIn invites today: 4 of 12 left · account 9 left`.
+- **Withdraw.** **Withdraw invite** on the row. It never removes an accepted connection.
+- **Switch channel.** An unsent row can move to another channel the person has an address on. Its draft is dropped; Regenerate writes a new one.
+
+A LinkedIn first touch starts a LinkedIn cadence, never an email one.
+
+| Step          | Due                                     |
+| ------------- | --------------------------------------- |
+| Invite        | when you send it                        |
+| First message | 2 days later, and only once accepted    |
+| Close         | 6 days after the first message          |
+| Withdrawal    | 21 days after the invite, if unanswered |
+
+Each message appears on Cadences as due. You preview it and send it. Until the invite is accepted the preview reads "waiting for acceptance". `not connected` and `rate limited` answers leave the step due; they do not fail it.
+
+### The invite guard
+
+Before any invite leaves, the row is checked. A refused row is never sent and never dropped: it returns to pending with the reason as its flag. Fix it and send again.
+
+| Reason                    | Means                                                       |
+| ------------------------- | ----------------------------------------------------------- |
+| `invalid-profile`         | the URL is not a personal `linkedin.com/in/…` profile       |
+| `not-a-person`            | the name is a repo, a handle or a company                   |
+| `opted-out`               | they unsubscribed                                           |
+| `replied`                 | a human reply exists on any channel                         |
+| `cadence-stopped`         | you stopped their cadence                                   |
+| `icp-rejected`            | the gate rejected them; an unjudged row passes              |
+| `already-invited`         | any workspace invited this profile, or is sending to it now |
+| `already-touched`         | the profile is on the suppression list                      |
+| `already-in-conversation` | the inbox holds a one-to-one conversation with them         |
+| `guard-unavailable`       | the guard could not read its data, so it refused            |
 
 ### Before you turn on LinkedIn steps
 
-If the account has sent connection requests from another tool or another workspace, tell GTM first, or it will invite those people again. The guard already refuses anyone the account has a conversation with; what it cannot see is a profile that was invited and has **no** conversation yet: still pending, or withdrawn within the last three weeks (LinkedIn does not let you re-invite a withdrawn person sooner). Two imports fill that gap. Neither sends anything or touches a cadence; they only suppress future invites, and re-running either is a no-op.
+If the account has sent connection requests from another tool or another workspace, tell GTM first. The guard sees conversations. It cannot see a profile that was invited and has not answered. Two imports close that gap. Neither sends anything, and running one twice changes nothing.
 
-- `oneshot-gtm linkedin import-touched <file> [--source <label>] [--dry-run] [--verbose]` reads a CSV (a column named `profile_url`, `linkedin_url` or `url`, plus an optional `touched_at`) or a JSON array of URL strings or `{ "url": "...", "touched_at": "..." }` objects. Each URL is normalised like the guard's own check (country hosts, query strings and `/en`-style locale suffixes are dropped); anything that is not a personal `linkedin.com/in/<slug>` profile, such as an X or GitHub URL, is counted and, with `--verbose`, listed. `touched_at` defaults to now and `--source` to `import` (stored as `import:<label>` when given). It prints `imported N · already present M · not a LinkedIn profile K`. `--dry-run` prints the same counts and writes nothing.
-- `oneshot-gtm linkedin import-touched --from-ledgers [--dry-run]` copies the invites recorded in every other registered workspace's ledger into the table as `invite:<workspace>`, at the time each invite was sent. The guard loads only the current workspace's own history, so this is how a workspace learns what the others sent before the guard existed. Each ledger is opened read-only and closed before the next. Workspaces come from the registry under `ONESHOT_GTM_WORKSPACES`. It prints `imported N · already present M` per workspace.
+```bash
+oneshot-gtm linkedin import-touched invited.csv [--source <label>] [--dry-run] [--verbose]
+oneshot-gtm linkedin import-touched --from-ledgers [--dry-run]
+```
 
-The Setup LinkedIn card has an **Already contacted on LinkedIn** control that takes the same CSV or JSON file, runs the same import, and shows how many profiles are on the list.
-
-In any cadence, a step on a channel the person has no address for (an email step for someone with no email, for example) is skipped, and the cadence moves on to the next step.
+The file is a CSV with a `profile_url`, `linkedin_url` or `url` column, or a JSON array of URLs. `--from-ledgers` copies the invites every other workspace on this machine has recorded. **Already contacted on LinkedIn** on the Setup card takes the same file.
 
 ## Continuing an email cadence on LinkedIn
 
-Set `linkedinContinuation: true` in the workspace config, or on a single trigger (the trigger's value wins, either way), and an email cadence that runs out without a reply carries on onto LinkedIn. Three steps follow the last email by three days:
+Set `linkedinContinuation: true` for the workspace or on one trigger; the trigger wins. An email cadence that ends without a reply then carries on three days later:
 
-- `linkedin:invite`: a connection request with a short note. The note is written knowing the person was already emailed, so it reads as a way to connect, not a sequel.
-- `linkedin:1`: a first message once the invite is accepted. A person who was already connected skips the wait.
-- `linkedin:2`: a close.
+- an invite whose note knows the person was already emailed,
+- a first message once they accept, or at once if you were already connected,
+- a close.
 
-Every LinkedIn step is a draft you review on /cadences; the unattended runner never sends one. The invite goes through the same guard and daily quota as any connection request. If the guard refuses (a bot, someone already in a conversation, a profile already invited), previewing the invite shows the refusal instead of a draft, records the step as skipped with that reason and completes the cadence, so the person leaves the active list without anything being sent. An invite still pending after 21 days is withdrawn. A reply on any channel stops the whole cadence.
+Each step is a draft you review on Cadences. The invite passes the same guard and quota. If the guard refuses, the preview shows the refusal, the step is skipped and the cadence completes. A cadence already running keeps the steps it started with.
 
-A cadence already running keeps the steps it was enrolled with; changing the setting affects only new cadences.
+A step on a channel the person has no address for is skipped, in any cadence.
 
-### What the LinkedIn drafts are told
+### What the drafts are told
 
-All of this is prompt context the model may use; no copy is written or wrapped in code.
-
-- **Aged evidence.** The note and messages get one short clause for why the person surfaced (`starred X`, `were at Y`, `running A and B`), aged from the first touch so a stale claim is dropped: a stack after 180 days, an event after 45, a funding round after 180, a job change after 90, a hiring signal after 45. A repo star never ages. A clause over 80 characters is dropped, not cut.
-- **The company they run.** Message 1 and the close are told a company only when the title is a founder's, stored data corroborates it (work-email domain, the dossier's `company_domain`, or a current mention in the title or headline), **and** a live read of the profile names it. The live read is the connected account's silent profile view (`notify: false`), made at most once per person per cadence and reused. The view is asynchronous: an accepted but unfinished view is not a read, its job is waited on for up to 20 seconds and resumed by the next draft for that person, and only a finished view is stored. With no live read, or one that names another company, no company is passed.
-- **The close.** It is told the product one-liner and brief, the reader's role (founder, engineer, student, growth or operations, investor, unknown) and, when verified, their company. It says what the product is, names one goal it could carry out for that reader from the brief, and ends with an easy out. For an unknown role it names no goal.
-- **Buyer type.** The trigger's `buyerType` goes to all three prompts.
-- **Lint.** The note is held to 300 characters with no pitch phrase or link. Message 1 is held to 400 characters with exactly one question, no meeting ask and no link. The close is held to 400 characters with no link, price, unsupported number or `saw you …` claim beyond the evidence clause. A draft that fails gets one repair turn; whatever it still breaks shows as a flag on /cadences and holds the send.
+- **Evidence, aged.** One short clause for why the person surfaced. Stale claims are dropped: an event or hiring signal after 45 days, a job change after 90, a stack or funding round after 180. A repo star does not age.
+- **Their company.** Named only when the title is a founder's, stored data agrees, and a live read of the profile names it. Otherwise no company is passed.
+- **The close.** It says what the product is, names one goal it could carry out for that reader, and ends with an easy out.
+- **Lint.** No link and no pitch phrase in the note. The first message holds to 400 characters and one question, with no link and no meeting ask. The close holds to 400 characters with no link, price or unsupported number. A draft that fails gets one repair; what it still breaks shows as a flag and holds the send.
 
 ## Connecting with people who replied by email
 
-The LinkedIn cadence is built for cold outreach: invite, message, close. That is wrong for someone who is already mid-conversation with you by email. For them there is a separate, lighter touch: **Connect on LinkedIn**, a connection request with a short note that mentions the email exchange, and **nothing after it**. If they accept, the existing Replies thread is where the conversation continues. Nothing about it is automatic.
+Invite, message, close is built for strangers. Someone mid-conversation with you by email gets something lighter: **Connect on LinkedIn**, a note that mentions the exchange, and nothing after it.
 
-- **Who qualifies.** An allow-list that fails closed. They need at least one human email reply labelled `interested`, `question`, `partnership` or `meeting` that is **not** flagged for review (`intent_review = 0`): an untriaged reply (no label) or a low-confidence one does not count. **Any** reply from them labelled `unsubscribe`, `wrong_person`, `complaint`, `not_interested`, `objection` or `pitch_back`, or an unsubscribe-kind reply, vetoes it, whatever else they wrote. There is no ICP gate: the reply is the qualification. They must still pass the invite guard above (a personal profile, a person's name, no opt-out, no LinkedIn reply, no stopped cadence, not already invited, no existing LinkedIn conversation with an open thread); the email-reply and ICP refusals are the only two it lifts. The invite counts against the workspace's daily share like any other.
-- **Where.** The action shows on a qualifying thread in **Replies**, and on the prospect in `/queue` and `/cadences`. It is not shown to anyone who doesn't qualify, or when no LinkedIn account is connected. It is `GET /api/prospects/:id/linkedin-friend` that decides, so the page and the send agree.
-- **Preview first.** **Connect on LinkedIn** drafts the note with the `friend` mode of the invite-note prompt (`packages/prompts/linkedin-invite-note.md`): it says you traded emails and are connecting so the next hello isn't cold, makes one light reference to what the emails were about, and has no pitch, no question, no link and no meeting ask. It is held to 300 characters (LinkedIn's limit), and a note that breaks a rule shows the flag. You edit it, then press **Send connection request**. The send route refuses an empty note, a note over the limit, and anyone who stopped qualifying since the draft; it re-checks everything before it sends.
-- **How it is recorded.** Through the same invite route, guard, profile claim and quota as every invite, with the invite marker at step 1 under the play `linkedin:friend`: never step 0, so it is never a first touch. It enrolls **no cadence** and schedules **no message**. The unattended status sweep still reads its invitation (it records an accept and withdraws it after 21 days if it is still pending), and it never sends anything.
-- **Visibility.** The thread shows the invite's state: sent, accepted, withdrawn (or already connected). The action is no longer offered once an invite has been sent.
-- **In the funnel.** Friend invites are their own row, left out of the cold funnel and its evidence-clause split: `measure` and `GET /api/measure/linkedin` return them as `friend`, the web section shows a **Friend invites** column, and `stepKind` / `--step-kind` accepts `friend`. `oneshot-gtm linkedin invites` lists them with the step kind `friend`.
+- **Who qualifies.** At least one email reply labelled `interested`, `question`, `partnership` or `meeting`, not flagged for review. Any reply labelled `unsubscribe`, `wrong_person`, `complaint`, `not_interested`, `objection` or `pitch_back` vetoes it. They still pass the invite guard.
+- **Where.** On a qualifying thread in Replies, and on the prospect in Queue and Cadences.
+- **How.** The button drafts the note. You edit it and press **Send connection request**. No pitch, no question, no link, no meeting ask, 300 characters at most.
+- **After.** No cadence, no scheduled message. If they accept, the conversation continues in Replies.
+
+## Replies
+
+Replies shows LinkedIn conversations beside email. Drafts are grounded in the prospect's research and may link only to pages in your product brief. The composer says so in words when a draft links elsewhere, or when the options say nearly the same thing.
+
+A reply whose payment OneShot refuses is marked not sent, and Send is offered again. It usually means the sending wallet is empty.
+
+What Replies learns from your edits is a proposal you approve; see [learning](./learning.md).
 
 ## LinkedIn funnel
 
-**Measure** shows a LinkedIn section with the funnel for this workspace: invites sent, pending, accepted, withdrawn, first messages sent and replies. The same numbers are in the `linkedin` block of `oneshot-gtm measure --json` and at `GET /api/measure/linkedin` (filters `sinceDays`, `play`, `stepKind`: `first-touch`, `continuation` or `friend`). `oneshot-gtm linkedin invites` lists every sent invite with its state (`--json` for the rows). All of it is read from this workspace's ledger and synced inbox; none of it is a number from LinkedIn.
+**Measure** shows invites sent, pending, accepted and withdrawn, first messages sent, and replies. The same numbers come from `oneshot-gtm measure --json` and `GET /api/measure/linkedin` (filters `sinceDays`, `play`, `stepKind`: `first-touch`, `continuation`, `friend`). `oneshot-gtm linkedin invites` lists every invite with its state. All of it is read from this workspace's ledger and inbox. None of it is a number from LinkedIn.
 
-- **Each person once.** A person counts by their newest sent invite, so a re-invite does not inflate the funnel.
-- **Accepted.** Counted by the invite's recorded `acceptedAt` when GTM has seen one, otherwise by a synced 1:1 conversation with the person, or by a first message having been sent (it only goes out after an accept). The conversation route misses accepts that nobody has messaged, so the section splits the two and treats the acceptance rate as a floor. "Already connected" answers are shown apart and are not acceptances.
-- **Withdrawn.** Each withdrawal records who ended it: `timeout` (GTM withdrew it after the wait), `manual` (withdrawn by hand), or `unknown` for invites withdrawn before this was recorded.
-- **Replies.** Shown two ways: a reply to the first message, and a reply at any point after the invite. Two sources recording the same reply count once.
-- **Evidence clause.** Each invite records, when it is sent, whether its note was drafted with an evidence clause. The section splits the funnel by that, so you can compare. Invites sent before this was recorded show as unrecorded; a prompt change later does not rewrite history.
+- **Each person once.** A person counts by their newest invite.
+- **Accepted.** Counted from the recorded acceptance, else from a one-to-one conversation with the person, else from a first message having gone out. An accept nobody has messaged can be missed, so read the acceptance rate as a floor. "Already connected" is shown apart.
+- **Withdrawn.** `timeout` when GTM withdrew it after the wait, `manual` when you did, `unknown` when no cause was recorded.
+- **Replies.** Shown two ways: to the first message, and at any point after the invite. The same reply from two sources counts once.
+- **Evidence clause.** The funnel splits by whether the note carried an evidence clause.
+- **Friend invites.** Invites to people who replied by email are their own row, outside the cold funnel.
 
-## Writing preferences
+## History import
 
-Replies learns writing preferences from the replies you send on LinkedIn and email: your explicit feedback on an improvement, the same edit made across several conversations, a consistent pattern across more. What it learns is a proposal; nothing applies to a draft until you approve it on `/queue`. **Writing preferences** on Replies shows what is active, lets you disable or re-enable a line, pause learning for the workspace, and links to the proposals waiting for review. [Learning and approval](./learning.md) covers every kind of learned change, what drafts see, and how approval, rollback and the queue's decision reasons work.
+**Import history** downloads every saved conversation, resolves who the senders are, and replays human replies across your workspaces. A historical reply stops that person's cadences, even one that predates enrolment. Running it again duplicates nothing.
 
-## Historical backfill and identity matching
+A name never establishes identity; only a verified profile does. Unmatched conversations stay visible under their own filter.
 
-**Import history** captures all saved conversation and message pages, resolves distinct inbound sender IDs through silent (`notify: false`) OneShot profile lookups, then replays confirmed human replies across all local workspaces. Names only prioritize possible active-cadence matches; names never establish identity. Verified provider-ID/public-profile mappings are stored in the private shared LinkedIn database and reused across workspaces.
+The import waits when the provider's daily lookup limit is spent and resumes at the reset. A permission, payment or budget failure stops it for you to review; **Resume** continues where it stopped.
 
-Any historical human reply stops that person's active or paused cadences, even when it predates enrollment or conversation ownership is ambiguous. Replay also discards pending drafts and expires re-engagement queue entries. Repeating the backfill does not duplicate reply events. Manual ownership and previously recorded reply history remain intact. Sender resolution does not fill missing attendees or unlock automatic group-conversation reply generation.
+### Remove or replace a connection
 
-New connections request `read`, `reply`, `view_profile` and `invite` together. A connection made before one of them was asked for adds it with **Allow profile access** or **Allow connection requests**: GTM asks OneShot to reconnect the same account with the full list of permissions, and you sign in to LinkedIn again in the page that opens. OneShot keeps the account, its messages, its conversations and its sync progress through a reconnect, and nothing is imported again. A second connection for the same member is refused (`duplicate_member`), so GTM never asks that way; a refusal recorded by an earlier version is cleared the next time you ask. Removing a permission, or revoking the account, is the case that cancels pending sends, and GTM does neither on its own.
+**Remove connection** revokes OneShot's access. Imported messages and their prospect assignments stay.
 
-The shared job saves pagination progress, accepted request IDs, idempotency keys, failures, and per-workspace counts. Both servers share a renewable lease. It uses the wallet's existing spending limits without an additional backfill cap. Permission, payment, and budget failures stop the job for review; Resume uses the existing request ID or submission key. Provider history marked requested/running is awaited without buying repeated imports. Incomplete provider coverage remains visible, even after all currently available local pages have been captured.
-
-Replies starts with matched conversations. Filters also show all conversations or distinguish unresolved identity evidence, resolved profiles with no prospect, and ambiguous ownership. Counts report all imported messages, matched human inbound messages, unresolved human inbound messages, resolved human inbound messages without a prospect, and cadences stopped by LinkedIn replay. Shared imported totals are shown for each workspace; matched totals are specific to that workspace. The API accepts `backfill`, `backfill-status`, and `upgrade` actions on `/api/replies/linkedin` with an `accountKey`; the older `sync` action starts the same resumable backfill.
-
-An explicitly authorized connection replacement retains the private local account key and verifies that the completed hosted login belongs to the same LinkedIn member. Reimported conversations and messages merge by provider IDs when those remain stable. If reconnect changes provider IDs too, only unique exact sender-ID, direction, timestamp, text, and attachment-metadata matches across the old and new connections can merge a conversation. Ambiguous or same-connection duplicates are retained. Manual assignments and original review/message IDs remain intact. Old conversations remain visible, but sending is disabled until the replacement account has supplied their current conversation IDs. After Force reconnect, resume the saved history import explicitly once the verified replacement is attached.
-
-Backfill displays sender progress and the provider’s returned daily lookup limit. Once reported headroom is exhausted, it waits until the provider’s reset timestamp and resumes automatically. Accepted requests are still checked by request ID while the daily allowance is exhausted. Permission, payment, and wallet-budget failures continue to stop the job for review.
-
-### Remove or replace a connection without deleting messages
-
-In **Replies → Connections & reply preferences → LinkedIn**, **Remove connection** revokes OneShot access and removes the account from the connection list across workspaces. Imported messages, conversation keys, and workspace/prospect assignments stay saved. The removed connection cannot send or continue importing history, and background refresh cannot restore it.
-
-If normal Reconnect fails, **Force reconnect** disconnects the old provider account and opens a fresh login. Sign into the same LinkedIn member: the replacement is checked before being attached to the existing local history. Both actions require confirmation and cancel pending provider sends. Force reconnect leaves history imports paused until you explicitly resume them. The confirmation also warns that when the fresh connection comes back with new conversation ids, no imported conversation can be replied to until the history has been downloaded again and restored: resume the import under the connection after the new login, and expect a wait that depends on OneShot and has taken up to a day. Use Reconnect when LinkedIn only asks for a fresh sign-in.
-
-Force reconnect cannot bypass an unavailable connection service. If disconnection succeeds but opening the new login fails, the account stays visible for retry and all imported messages remain saved.
+**Force reconnect** is for when Reconnect fails. It disconnects the provider account and opens a fresh login; sign in as the same LinkedIn member. Both actions cancel pending sends. After a force reconnect, no imported conversation can be replied to until its history is downloaded again, so resume the import and expect a wait.

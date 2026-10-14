@@ -1,15 +1,17 @@
 # Background monitoring
 
-The dashboard server runs an in-process scheduler, so enabling a trigger is enough — no separate daemon. On a cron box or a headless machine, run `find watch` instead. Run one or the other for a workspace, not both: each polls the same triggers.
+A finder that runs only while your terminal is open is a hobby. Install the dashboard as a service and it comes back after a restart or a crash.
+
+The dashboard server runs the scheduler itself, so an enabled trigger is polled while the dashboard is up. On a headless machine run `find watch` instead. Run one or the other for a workspace, never both: each polls the same triggers.
+
+The scheduler polls finders and runs the learning jobs. It does not send. A batch goes out when you press **Batch send…** or run `find drain`.
 
 ## The dashboard as a service
 
-A dashboard started from a terminal stops when the terminal closes or the machine restarts, and while it is down nothing is polled. `ui --install-service` generates a service file that starts the dashboard at login and restarts it if it crashes — a launchd user agent on macOS, a systemd user unit on Linux. Like the watch daemon's below, it prints to stdout; `--write` puts it at the platform-conventional path.
-
-Nothing is typed in by hand. The workspace's name, home, and registered port are read from the workspace the command runs in, and the paths to bun and the server from the checkout it runs from. The service is named after the workspace, so each workspace gets its own: run the command once per workspace.
+`ui --install-service` generates a service file that starts the dashboard at login and restarts it after a crash: a launchd agent on macOS, a systemd user unit on Linux. It prints the file; `--write` puts it in place. The workspace's name, home and port are read from the workspace the command runs in, so run it once per workspace.
 
 ```bash
-oneshot-gtm ui --install-service                     # inspect the file for the current workspace
+oneshot-gtm ui --install-service                     # inspect the file
 oneshot-gtm ui --install-service --write             # default workspace
 oneshot-gtm --workspace acme ui --install-service --write
 ```
@@ -48,13 +50,17 @@ systemctl --user disable --now oneshot-gtm-workspace-acme
 rm ~/.config/systemd/user/oneshot-gtm-workspace-acme.service
 ```
 
-The service needs the web build (`bun run --cwd apps/web build`) and refuses to generate without it. A stop you ask for (`launchctl unload`, `systemctl --user stop`) is respected; only a crash restarts it. A user service starts at login, not at power-on; on Linux `loginctl enable-linger $USER` changes that. Re-run with `--write` after moving bun or the checkout, or after changing the workspace's port, then reload the service as shown above: a restart alone keeps the old file's values. It runs from a clone; the no-clone `bunx oneshot-gtm-server` has no service file.
+- The service needs the web build (`bun run --cwd apps/web build`) and will not generate without it.
+- A stop you ask for is respected. Only a crash restarts it.
+- It starts at login, not at power-on. On Linux, `loginctl enable-linger $USER` changes that.
+- After moving bun or the checkout, or changing the port, run `--write` again and reload. A restart alone keeps the old values.
+- It needs a clone. `bunx oneshot-gtm-server` has no service file.
 
-## As a service
+## The watch daemon as a service
 
-`find watch --install-service` generates a service file that keeps the watch daemon running in the background — a launchd user agent on macOS, a systemd user unit on Linux. It prints to stdout (redirect-friendly); add `--write` to drop it at the platform-conventional path. Every path is embedded absolute at generation time — the bun binary, the CLI entry, and the active `ONESHOT_GTM_HOME` (so `--workspace acme find watch --install-service` pins the service to that workspace) — because service managers don't source your shell profile. Regenerate with `--write` after moving bun or the checkout.
+`find watch --install-service` does the same for the headless daemon. Paths are written absolute, including the active workspace home, so `--workspace acme find watch --install-service` pins the service to that workspace.
 
-**macOS (launchd).** Logs go to `<home>/find-watch.log`; the agent restarts on crash and survives reboots.
+**macOS (launchd).** Logs go to `<home>/find-watch.log`.
 
 ```bash
 oneshot-gtm find watch --install-service            # inspect the plist
@@ -78,9 +84,9 @@ systemctl --user disable --now oneshot-gtm-find-watch
 rm ~/.config/systemd/user/oneshot-gtm-find-watch.service
 ```
 
-On a headless box, also run `loginctl enable-linger $USER` once so the user unit starts at boot rather than at first login.
+On a headless box, run `loginctl enable-linger $USER` once so the unit starts at boot.
 
-**Windows (Task Scheduler).** There's no user-service template; schedule the cron-style `find watch --once` instead, which runs all due triggers and exits:
+**Windows (Task Scheduler).** There is no service template. Schedule `find watch --once`, which runs every due trigger and exits:
 
 ```powershell
 $watchAction = New-ScheduledTaskAction -Execute 'C:\Users\you\.bun\bin\bun.exe' `
@@ -97,15 +103,15 @@ Unregister-ScheduledTask -TaskName 'oneshot-gtm find watch' -Confirm:$false
 
 ## Exit codes for scheduled runs
 
-`find watch --once` exits `1` when a due trigger errored. Add `--fail-on-empty` and a run that worked but produced nothing exits `2` instead of `0`, with one line on stderr naming the triggers and the zero count — enough for a cron wrapper to tell a dry run from a productive one without reading the ledger. `find drain <play>` takes the same flag. Both are opt-in: without it, exit codes are exactly what they were.
+A cron wrapper needs to tell idle from broken. `--fail-on-empty` gives it the third answer.
 
-|       | `find watch --once`                                | `find drain <play>`                                     |
-| ----- | -------------------------------------------------- | ------------------------------------------------------- |
-| **0** | candidates queued, or `--fail-on-empty` not passed | rows drained, or `--fail-on-empty` not passed           |
-| **1** | a due trigger errored (with or without the flag)   | with the flag: a row errored, or the drain itself threw |
-| **2** | with the flag: ran clean, queued nothing           | with the flag: no approved rows to drain                |
+|       | `find watch --once`                      | `find drain <play>`                                           | `find import`                   |
+| ----- | ---------------------------------------- | ------------------------------------------------------------- | ------------------------------- |
+| **0** | candidates queued, or the flag is absent | rows sent, or the flag is absent                              | rows imported, or no flag       |
+| **1** | a due trigger errored                    | with the flag: a row errored, or the spend ceiling stopped it | the import failed               |
+| **2** | with the flag: ran clean, queued nothing | with the flag: no approved rows                               | with the flag: nothing imported |
 
-Errors win over emptiness: a run that both errored and produced nothing exits `1`, not `2`. "Queued nothing" counts candidates that reached the queue, not raw hits scanned — a poll whose every hit was a duplicate or off-ICP left the ledger untouched and reads as empty. `--fail-on-empty` needs `--once`; on the daemon (which never ends on its own) it's rejected rather than ignored.
+An error beats emptiness: a run that errored and produced nothing exits `1`. "Queued nothing" counts candidates that reached the queue, so a poll whose every hit was a duplicate reads as empty. The flag needs `--once`; the daemon rejects it.
 
 ```bash
 oneshot-gtm find watch --once --quiet --fail-on-empty
@@ -116,10 +122,13 @@ case $? in
 esac
 ```
 
-## Learning jobs
-
-The dashboard's scheduler also runs the two learning jobs ([learning](./learning.md)): writing-preference synthesis, at most once every five minutes when there is new reply or draft evidence, and the ICP rewrite, at most once a day once the configured minimum of fit-tagged decisions exists (`icpProposalMinDecisions` in `config.json`, thirty by default). Each takes a persisted lease, reserves against the spend ceiling before calling the model, and writes only proposals; approval on `/queue` is the only thing that changes a draft. Neither runs in demo mode, and no send or draft path waits on them.
-
 ## Spend ceiling
 
-Per-run caps (`maxCostUsd` on a finder, `maxSpendPerRun` on x-reposters) bound one call; they don't stop fifteen independently-scheduled finders and automatic drains from collectively overspending across a day. `config spend-ceiling <amount>` (or the Wallet card on `/setup`) sets an install-wide daily USD ceiling, checked before every automated finder run and drain. A reservation held for the call's duration closes the race between two concurrent automated paths, so they can't both slip under the ceiling before either one's spend has posted. Once reached, scheduled and run-now finders and drains halt with a named reason (`daily spend ceiling reached ($X.XX/$Y.YY spent today)`) visible on the trigger cards and in `doctor`. Manual `/queue` sends (approve, reject, mark-sent, send-draft) are never gated by it — a founder reviewing and sending one email by hand is a deliberate decision the ceiling should never block. The counter resets at local midnight, the same boundary the per-identity send caps use. Unset (the default) is unlimited.
+Per-run caps bound one run. They do not stop several finders from overspending across a day. `config spend-ceiling <amount>`, or the Wallet card on Setup, sets a daily limit in USD for the whole workspace.
+
+- Checked before every finder run and every batch send. Spend is reserved first, so two runs at once cannot both slip under it.
+- Once reached, finders and batches stop with a named reason, `daily spend ceiling reached`, shown on the trigger cards and in `doctor`. Approved rows stay approved.
+- A single send you make by hand is never blocked. That is a decision, and the ceiling is for what runs without one.
+- It resets at local midnight. Unset means no limit.
+
+The [learning jobs](./learning.md) reserve against the same ceiling.
