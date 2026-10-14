@@ -86,7 +86,7 @@ A step on a channel the person has no address for is skipped, in any cadence.
 
 Invite, message, close is built for strangers. Someone mid-conversation with you by email gets something lighter: **Connect on LinkedIn**, a note that mentions the exchange, and nothing after it.
 
-- **Who qualifies.** At least one email reply labelled `interested`, `question`, `partnership` or `meeting`, not flagged for review. Any reply labelled `unsubscribe`, `wrong_person`, `complaint`, `not_interested`, `objection` or `pitch_back` vetoes it. They still pass the invite guard.
+- **Who qualifies.** At least one email reply labelled `interested`, `question`, `partnership` or `meeting`, not flagged for review. Any reply labelled `unsubscribe`, `wrong_person`, `complaint`, `not_interested`, `objection` or `pitch_back` vetoes it. They must still pass the invite guard; only its email-reply and ICP refusals are lifted for them.
 - **Where.** On a qualifying thread in Replies, and on the prospect in Queue and Cadences.
 - **How.** The button drafts the note. You edit it and press **Send connection request**. No pitch, no question, no link, no meeting ask, 300 characters at most.
 - **After.** No cadence, no scheduled message. If they accept, the conversation continues in Replies.

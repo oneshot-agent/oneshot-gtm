@@ -1,6 +1,6 @@
 # Sending and deliverability
 
-A cap you can talk past is not a cap. Each mailbox sends 10 a day, earns 10 more each week, and stops at 50. At the cap nothing sends. The step stays due until the cap resets at midnight.
+A cap you can talk past is not a cap. A new sender starts at 10 a day, earns 10 more each week, and stops at 50. Once the day's quota is used nothing more sends; the step stays due until midnight.
 
 Mail leaves through a pool of sender identities: OneShot sending domains, your own Gmail or Workspace accounts, and Smartlead-hosted mailboxes, in any mix.
 

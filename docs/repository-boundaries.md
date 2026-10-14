@@ -1,6 +1,6 @@
 # Public code and private data
 
-The code is public. Your prospects, keys and ledger are not, and a test fails when one of them gets tracked.
+The code is public. Your prospects, keys and ledger are not. Ignore rules and a boundary test guard the known paths; neither can spot an export you renamed.
 
 The repository holds the application, prompts, tests, fictional examples and docs. It holds nobody's actual workspace.
 

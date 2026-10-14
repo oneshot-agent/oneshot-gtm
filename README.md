@@ -32,7 +32,7 @@ Most outbound tools assume product-market fit and optimise sends. Most founders 
 
 - A first touch never asks a stranger for a meeting. It says one useful thing and asks one line back, or nothing.
 - Every draft passes a lint for machine writing. A flagged draft is held.
-- A new mailbox sends 10 a day and earns 10 more each week, up to 50. At the cap nothing sends.
+- A new mailbox sends 10 a day and earns 10 more each week, up to 50. Once the day's quota is used, nothing more sends until midnight.
 - The `handoff` commands check your replies and deals before a scale move, and say so when it is too early.
 
 ## Setup

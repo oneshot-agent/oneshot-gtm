@@ -16,8 +16,9 @@ const NUMBER_WORD =
   "(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)";
 const COUNT = `(?:\\d+|${NUMBER_WORD}(?:-${NUMBER_WORD})?)`;
 const COUNTED_NOUN = "(?:commands|plays|finders|pages|tests|cases|files)";
+// Emphasis may sit on the count ("**17** finders") or the noun ("Seventeen **finders**").
 const TOTAL = new RegExp(
-  `\\b${COUNT}[- ](?:\\*\\*)?(?:outreach |dashboard |CLI )?${COUNTED_NOUN}\\b`,
+  `\\b${COUNT}(?:-command\\b|(?:\\*\\*|__)?[- ](?:\\*\\*|__)?(?:outreach |dashboard |CLI )?${COUNTED_NOUN}\\b)`,
   "i",
 );
 
@@ -35,6 +36,23 @@ describe("README and finder guide stay true without totals", () => {
   it("states no command, play, finder, page or test totals", () => {
     const offending = README.split("\n").filter((line) => TOTAL.test(line));
     expect(offending, "a total in README goes stale; name the thing or link to it").toEqual([]);
+  });
+
+  it("recognises a total however it is written, and leaves limits alone", () => {
+    for (const total of [
+      "82 commands",
+      "the 82-command CLI",
+      "24 outreach plays",
+      "Seventeen **finders**",
+      "**17** finders",
+      "Twenty-four plays",
+      "6035 tests across 477 files",
+    ]) {
+      expect(TOTAL.test(total), total).toBe(true);
+    }
+    for (const fine of ["One command turns it off", "sends 10 a day", "up to 50"]) {
+      expect(TOTAL.test(fine), fine).toBe(false);
+    }
   });
 
   it("names every finder in the finder guide", () => {
