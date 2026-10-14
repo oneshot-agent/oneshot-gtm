@@ -116,10 +116,10 @@ What Replies learns from your edits is a proposal you approve; see [learning](./
 
 A name never establishes identity; only a verified profile does. Unmatched conversations stay visible under their own filter.
 
-The import waits when the provider's daily lookup limit is spent and resumes at the reset. A permission, payment or budget failure stops it for you to review; **Resume** continues where it stopped.
+The import waits when the day's profile-lookup limit is spent and resumes at the reset. A permission, payment or budget failure stops it for you to review; **Resume** continues where it stopped.
 
 ### Remove or replace a connection
 
 **Remove connection** revokes OneShot's access. Imported messages and their prospect assignments stay.
 
-**Force reconnect** is for when Reconnect fails. It disconnects the provider account and opens a fresh login; sign in as the same LinkedIn member. Both actions cancel pending sends. After a force reconnect, no imported conversation can be replied to until its history is downloaded again, so resume the import and expect a wait.
+**Force reconnect** is for when Reconnect fails. It disconnects the account and opens a fresh login; sign in as the same LinkedIn member. Both actions cancel pending sends. After a force reconnect, no imported conversation can be replied to until its history is downloaded again, so resume the import and expect a wait.

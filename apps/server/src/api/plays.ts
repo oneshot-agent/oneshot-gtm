@@ -29,11 +29,11 @@ const PLAY_CATALOG: PlayMeta[] = [
   },
   {
     name: "show-hn",
-    cli: "oneshot-gtm motion show-hn --target ./examples/show-hn.json",
+    cli: "oneshot-gtm find watch  # fed by the show-hn finder, drained from /queue",
   },
   {
     name: "job-change",
-    cli: "oneshot-gtm motion job-change --target ./examples/job-change.json",
+    cli: "oneshot-gtm find watch  # fed by the job-change finder, drained from /queue",
   },
   {
     name: "post-funding",
@@ -41,7 +41,7 @@ const PLAY_CATALOG: PlayMeta[] = [
   },
   {
     name: "accelerator-batch",
-    cli: "oneshot-gtm motion accelerator-batch --target ./examples/accelerator-batch.json --sender-cohort yc-w26",
+    cli: "oneshot-gtm find watch  # fed by the accelerator-batch finder, drained from /queue",
   },
   {
     name: "concierge",
@@ -105,7 +105,7 @@ const PLAY_CATALOG: PlayMeta[] = [
   },
   {
     name: "design-partner-loi",
-    cli: "oneshot-gtm find watch  # fed by the gov-solicitation finder (non-r/p notices) today; enterprise/hardware targets are manually queued until a matching finder exists, drained from /queue",
+    cli: "oneshot-gtm find watch  # fed by the list-page finder, or any finder whose trigger sets play: design-partner-loi; drained from /queue",
   },
   {
     name: "discovery-interview",

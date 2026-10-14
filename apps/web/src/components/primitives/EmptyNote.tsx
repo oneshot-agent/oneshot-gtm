@@ -10,8 +10,8 @@ import { cn } from "../../lib/cn.ts";
  *
  * Example:
  *   <EmptyNote
- *     note="No receipts yet. One always beats zero."
- *     cli="oneshot-gtm motion show-hn"
+ *     note="No receipts yet. Turn on a finder in Queue, then run it."
+ *     cli="oneshot-gtm find watch --once"
  *   />
  */
 export function EmptyNote({
