@@ -158,7 +158,7 @@ function ReceiptsPage() {
           <div className="px-6 py-8">
             <EmptyNote
               note="No receipts yet. Every call the agent makes leaves one; one always beats zero."
-              cli="oneshot-gtm motion show-hn"
+              cli="oneshot-gtm find watch --once"
             />
           </div>
         ) : visible.length === 0 ? (
