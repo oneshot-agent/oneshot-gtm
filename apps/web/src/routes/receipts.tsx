@@ -157,7 +157,7 @@ function ReceiptsPage() {
         ) : all.length === 0 ? (
           <div className="px-6 py-8">
             <EmptyNote
-              note="No receipts yet. Every call the agent makes leaves one; one always beats zero."
+              note="No receipts yet. Every paid call leaves one. Turn on a finder in Queue, then run it."
               cli="oneshot-gtm find watch --once"
             />
           </div>
