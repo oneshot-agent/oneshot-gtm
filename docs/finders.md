@@ -71,7 +71,7 @@ Person research corrects the row's title and company and keeps the finder's orig
 
 ### Live LinkedIn reads
 
-A data provider's history can trail a live profile by months. **Connect LinkedIn** on Setup signs you in twice, back to back: once for [messaging](./linkedin.md), once for a hosted browser session that reads profiles as you. Where the page lists a company, the page wins over the provider.
+Bought research can trail a live profile by months. **Connect LinkedIn** on Setup signs you in twice, back to back: once for [messaging](./linkedin.md), once for a hosted browser session that reads profiles as you. Where the page lists a company, the page wins over the bought history.
 
 - Reads show up as profile views from your account.
 - They run 15 seconds apart and stop at `linkedinReadsPerDay` (default 80).
