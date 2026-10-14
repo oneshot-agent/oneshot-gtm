@@ -116,7 +116,7 @@ Approved rows go out when you press **Batch send…** or run `find drain <play>`
 
 ## Institutional buyers
 
-Set `play: "design-partner-loi"` and `buyerType` (`enterprise`, `government` or `hardware`) on a trigger. Its rows then go to the design-partner play: the first email asks whether they own the problem, the second offers a design-partner conversation, the last proposes one scoped pilot. It works on `hiring-signal`, `job-change`, `post-funding`, `podcast-guest`, `local-business` and `list-page`. Dedupe covers both plays, so switching never lets the same person through twice.
+Set `play: "design-partner-loi"` and `buyerType` (`enterprise`, `government` or `hardware`) on a trigger. Its rows then go to the design-partner play: the first email asks whether they own the problem, the second offers a design-partner conversation, the last proposes one scoped pilot. It works on the `hiring-signal`, `job-change`, `post-funding-auto`, `podcast-guest`, `local-business` and `list-page` finders. Dedupe covers both plays, so switching never lets the same person through twice.
 
 ## List pages
 

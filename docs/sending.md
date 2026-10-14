@@ -15,7 +15,7 @@ Mail leaves through a pool of sender identities: OneShot sending domains, your o
 ## The rules
 
 - **One sender per person.** Every email to a prospect comes from the identity that sent the first one, across plays and steps.
-- **Ramp.** 10 a day, plus 10 a week, to 50. Editable per identity on Setup. Mailboxes on one OneShot domain share one ramp, because reputation belongs to the domain. Gmail and Smartlead mailboxes ramp per account, and a Smartlead mailbox never exceeds its own Smartlead limit.
+- **Ramp.** 10 a day, plus 10 a week, to 50. Editable per identity on Setup. Mailboxes on one OneShot domain share one ramp within a workspace, because reputation belongs to the domain. Two workspaces on the same domain each count their own, so give each workspace its own domain. Gmail and Smartlead mailboxes ramp per account, and a Smartlead mailbox never exceeds its own Smartlead limit.
 - **Defer, never exceed.** Capacity is reserved before a send starts, so two sends at once cannot both take the last slot. At the cap, steps stay due and rows stay approved.
 - **One person, one product at a time.** A workspace does not first-touch someone another [workspace](./workspaces.md) emailed in the last 7 days. The draft is flagged `contacted-elsewhere`. Cadences shows the step as held and a batch skips it. You can override on a single manual send.
 - **No duplicates.** Each send carries a key for what it is (workspace, play, recipient, step), not its text. A sent email is never sent again. One whose outcome is unknown waits until the Sent folder has been checked, and is retried only as the same message. Where Sent cannot tell, it is flagged for you and not resent.
