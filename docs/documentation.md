@@ -1,48 +1,40 @@
-# Maintaining the GTM docs
+# Maintaining the docs
 
-The hosted documentation is maintained separately from this repository. The guides in `docs/` are available to every contributor without access to the website checkout.
-The GTM README remains a standalone guide; preserve its anchors, especially
-`#watching-whats-happening`, which TELEMETRY.md links to.
+Change behaviour, change the page that states it, in the same pull request. Three things are generated; edit their source, never the output.
 
-## Generate the CLI reference
+| Output                        | Source                                                    | Regenerate                                                  |
+| ----------------------------- | --------------------------------------------------------- | ----------------------------------------------------------- |
+| `docs/plays.md`               | `packages/plays/src/descriptions.ts`, intro in the script | `bun run scripts/generate-play-guide.ts`                    |
+| hosted `cli-reference.mdx`    | the CLI's own command tree                                | `bun run scripts/generate-cli-reference.ts --output <path>` |
+| the stamp line in `STATUS.md` | a real test run                                           | CI, on every merge to `main`                                |
 
-From the GTM checkout, generate a standalone reference into an ignored local directory:
+Both scripts take `--check`, which writes nothing and exits nonzero on drift. Generate the CLI reference from a clean, committed checkout; it records the commit it came from.
+
+## Rules for prose
+
+- Answer first. One sentence that settles the reader's question, then the detail.
+- One fact, one home. Other pages link to it.
+- No totals. Do not count commands, plays, finders or tests in prose; `repo/__tests__/readme-counts.test.ts` fails the README if one appears.
+- No per-tool prices. Link the [pricing page](https://docs.oneshotagent.com/pricing).
+- No history. Say what the tool does, not what it used to do.
+- `acme` and `default` are the only workspace names in examples.
+
+Keep these README anchors; other files link to them: `#setup`, `#the-plays`, `#where-targets-come-from`, `#direct-mail`, `#background-monitoring-as-a-service`, `#watching-whats-happening`.
+
+## The hosted site
+
+The site at docs.oneshotagent.com is maintained in a separate repository. When a change here makes a hosted page wrong and you cannot fix it in the same release, open an issue labelled `docs-follow-up` naming the source pull request and the pages. Deploy a new hosted page before a README link points at it. Telemetry's field list lives only in [TELEMETRY.md](../TELEMETRY.md).
+
+## The mark
+
+The icon is a ledger receipt: cream slip, torn bottom edge, a green total line. Everything is in `apps/web/public/`. `icon.svg` is the master and every raster derives from it.
 
 ```bash
-bun run scripts/generate-cli-reference.ts --output output/cli-reference.mdx
-bun run scripts/generate-cli-reference.ts --output output/cli-reference.mdx --check
+brew install librsvg
+bun run --cwd apps/web brand
 ```
 
-Maintainers can instead point `--output` at the documentation website checkout. The generator imports Commander
-with parsing disabled, isolates its config in a temporary home, and never runs
-command actions. It emits command groups and leaves, positional arguments,
-options and inherited options. Check mode reads without rewriting and exits
-nonzero if content differs. The provenance comment records the source HEAD;
-check mode ignores that SHA so unrelated commits do not cause false drift.
-Generate release artifacts from a clean, committed GTM checkout.
-
-The MDX artifact is committed to the docs repo. A normal docs build needs no
-GTM checkout. Do not hand-edit the generated reference.
-
-## Cross-repo changes
-
-When changing CLI commands, flags, finders, plays, scoring or other documented
-behavior, update the README where relevant and open a linked docs change.
-Use the existing `docs-follow-up` issue label in either repo when the external
-surface cannot be updated in the same release. Name the source PR and affected
-pages so the follow-up has an explicit owner and target.
-
-Avoid hardcoded command/play/finder totals in public prose. Existing README count
-tests remain authoritative for README totals; generated CLI content comes from
-the same command tree. Descriptive guides still need review when behavior changes.
-
-Before a docs release, run generation check against the chosen GTM revision,
-build the docs site, and verify navigation and internal links. Deploy new pages
-before shipping README links to their URLs. Telemetry's authoritative spec stays
-in TELEMETRY.md; link to it instead of duplicating its field whitelist.
-
-## Play descriptions
-
-The dashboard and [play guide](./plays.md) share `packages/plays/src/descriptions.ts`.
-After changing copy, run `bun run scripts/generate-play-guide.ts`; use `--check` to verify parity.
-For the community finder release, the hosted finders and plays pages should mirror this repository's `docs/finders.md` community section and generated play guide using the cross-repo process above.
+- Keep `icon.svg` in hex. librsvg renders `oklch()` fills as black without warning; the script fails the build when a fill stops parsing.
+- `og.png` is rendered through headless Chrome so the real typeface loads. The script checks that it did.
+- The PNGs are committed. Settle the SVG first, then render once.
+- GitHub's social card is an upload, not a file it reads: **Settings → General → Social preview**.

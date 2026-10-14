@@ -1,147 +1,151 @@
 # Finders and the ICP gates
 
-Finders discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve or reject. Each runs as a trigger with its own interval and spend cap. The finder table is in the [README](../README.md#where-targets-come-from); this page is what happens to a candidate after a finder sees it.
+A finder does not find customers. It finds candidates, and a gate throws most of them away. What survives lands in the queue with its evidence, for you to approve or reject.
+
+Each finder is a trigger with its own schedule and spend cap. All of them start off.
+
+| Finder                    | Signal                                                                                           |
+| ------------------------- | ------------------------------------------------------------------------------------------------ |
+| `show-hn`                 | same-day Show HN posts                                                                           |
+| `post-funding-auto`       | funding announcements, by industry and round                                                     |
+| `accelerator-batch`       | new cohorts: Y Combinator, SPC, Neo, Antler, Techstars, 500 Global, AI Grant, HF0, a16z Speedrun |
+| `job-change`              | "joined as" announcements, by persona and company                                                |
+| `hiring-signal`           | open roles on Greenhouse, Lever, Workable and Ashby that imply a need                            |
+| `podcast-guest`           | recent guests on shows you name                                                                  |
+| `github-topics`           | repos by topic, with the vendor stack read from their manifests (needs `GITHUB_TOKEN`)           |
+| `github-stars`            | recent stargazers of repos you watch, each tagged competitor or adjacent (needs `GITHUB_TOKEN`)  |
+| `luma-events`             | hosts and featured guests of upcoming Luma events that match your topics                         |
+| `x-reposters`             | people who repost or quote X accounts you watch (needs X API keys)                               |
+| `local-business`          | main-street businesses by title, industry, location and size                                     |
+| `local-registry`          | newly licensed businesses from public registries: business licences, NPPES, FMCSA                |
+| `gov-solicitation`        | SAM.gov Sources Sought and Presolicitation notices by NAICS code                                 |
+| `civic-agenda`            | city and county council agenda items                                                             |
+| `list-page`               | companies on any public list: an ADOPTERS file, a sponsor page, a customers page                 |
+| `community-buyer-threads` | Reddit and Hacker News posts asking for a recommendation or a replacement                        |
+| `breakup-revive`          | your own ledger: prospects cold for 60 to 90 days. No paid calls                                 |
 
 ## Readiness
 
-All finders start disabled in a new workspace. Enable relevant sources from `/queue` or apply an industry pack. Existing workspaces retain their saved enablement. A trigger missing required config reads as **not ready** — the toggle and Run button disable with the reason, and the API returns `409`, so scripted callers can't bypass the gate either.
+Enable a finder from **Queue**, or apply an industry pack. A trigger missing required config reads **not ready**: the toggle and Run button are disabled with the reason, and the API answers `409`.
 
-## Prescreen, before any spend
+A finder you keep rejecting pauses itself. When fewer than 10% of its reviewed rows were approved over 30 days, with at least 100 reviewed, scheduled runs skip it. `find watch --ignore-approval-rate` runs it anyway.
 
-Before any paid `findEmail`, a prescreen skips dud domains (`*.vercel.app`, social hosts, link aggregators, personal email providers) and inputs whose "name" is obviously a username. When contact lookup captures a LinkedIn URL, it verifies that the profile belongs to the person before storing it.
+## The gates
 
-## Contact qualification
+Three checks, cheapest first. Only a positive reject drops a candidate; an unclear answer moves on.
 
-Contact-based finders use topic and person gates. Community threads use the relevance and buying-intent checks [below](#community-buying-requests).
+1. **Prescreen, free.** Skips dud domains (`*.vercel.app`, social hosts, personal email providers) and names that are plainly usernames.
+2. **Topic gate, before any spend.** Judges the source: the repo, the event, the announcement.
+3. **Person gate.** Judges the human's role against your ICP one-liner. It reads the role text the finder already holds, then the title that comes with a verified email, then one extra lookup if it is still unclear.
 
-The **topic gate** judges the source — the repo, event, or announcement — and keeps whole categories of noise out before any spend.
+What qualifies comes from your ICP, not from the prompt. An ICP about owners who run customer acquisition passes a head of growth and rejects a backend engineer. Change the ICP and the same title flips.
 
-The **person gate** judges the human's role, staged by cost: free role text the finder already holds (an event bio, an extracted title), then the job title off the enrichment every verified email already pays for, then — only when still ambiguous and a LinkedIn URL exists — one extra ~$0.005 lookup. What qualifies comes from your ICP one-liner in config, not from the prompt: the same title flips with the definition, so an ICP that says capability matters more than seniority passes a student shipping real projects and rejects a marketing manager, while an ICP about owners who run customer acquisition passes a head of growth and rejects a backend engineer. The shared prompts carry no assumptions about your product, your buying process or your industry. Only a _positive_ reject drops a candidate — ambiguity escalates or proceeds, never silently discards. Rejections land in `/queue` as auditable `auto: role — <reason>` rows you can override, count as `role-drop` on trigger cards, and a prospect judged off-ICP after contact stops receiving cadence follow-ups (terminal status `off-icp`).
+A rejection is a queue row marked `auto: role` with its reason. You can override it. A prospect judged off-ICP after contact stops receiving follow-ups.
+
+Set `personGate: "affinity"` on a trigger whose topic is what you sell. Showing up then counts as fit, whatever the title.
 
 ## Channels
 
-Contact-based finders queue people on `email`, `linkedin` or `x`. The `channels` setting lists the ones you want, in order of preference. The first channel a person has an address on wins:
+`channels` lists where a person may be reached, in order of preference. The first one they have an address on wins.
 
-- `["email"]` (the default): today's behaviour. Anyone without a deliverable email is dropped.
-- `["email", "linkedin"]`: email when one is found. Otherwise the person is queued on LinkedIn, using the profile the finder already has or one search by name and company, instead of being dropped.
-- `["linkedin"]` or `["linkedin", "email"]`: LinkedIn first. No email lookup is paid for when a profile is found.
+- `["email"]`, the default. No deliverable email, no row.
+- `["email", "linkedin"]`. Email when one is found, otherwise LinkedIn.
+- `["linkedin"]` or `["linkedin", "email"]`. LinkedIn first; no email lookup is paid when a profile is found.
 
-Set it for the whole workspace in `config.json` (`"channels": [...]`) or per trigger in its config. The trigger's setting wins. `linkedinContinuation` (default `false`) is set the same way, in `config.json` or per trigger, and makes an email cadence carry on onto LinkedIn; see [LinkedIn](./linkedin.md#continuing-an-email-cadence-on-linkedin). The person gate applies on every channel. A LinkedIn row goes out as a connection request with a note; see [LinkedIn](./linkedin.md#connection-requests-as-a-first-touch). X is sent by hand: an X row gets a DM (280 characters at most) drafted from its signal. Copy it, send it from X, then **Mark sent**, because OneShot has no X action API yet. The contact step never searches X; a person is queued on X only when the finder already has their handle (Luma lists attendees' X profiles).
+Set it in `config.json` for the workspace or on one trigger. The trigger wins. A LinkedIn row goes out as a [connection request with a note](./linkedin.md#connection-requests-as-a-first-touch). `linkedinContinuation` makes an email cadence [carry on to LinkedIn](./linkedin.md#continuing-an-email-cadence-on-linkedin).
 
-Community replies stay on their source platform (`reddit` or `hacker-news`) and are posted manually.
+X is sent by hand: the row gets a DM draft of at most 280 characters. Copy it, send it on X, then **Mark sent**. A person is queued on X only when the finder already holds their handle.
 
-## Product research
+## Research
 
-Qualified first-touch rows receive a product dossier before the trigger completes: up to two known first-party pages plus quick external research covering the product, ecosystem, architecture, and business model. Set `productResearch: false` on a trigger to disable it. Research counts toward that trigger's `maxCostUsd`; a failure or exhausted cap leaves the row reviewable with an explicit warning. `find research-products` backfills the same context onto active/replied prospects and pending queue rows (`--dry-run`, `--limit`, and `--refresh` are supported). Use `--first-party-only` for a resilient bulk backfill when the external research provider is unavailable.
+Every qualified row is researched after the finder run, never behind a click. All of it counts toward the trigger's `maxCostUsd`. Prices are on the [pricing page](https://docs.oneshotagent.com/pricing).
 
-## Person research
+| Research      | What it adds                                                              | Turn off with                |
+| ------------- | ------------------------------------------------------------------------- | ---------------------------- |
+| Product       | what the company sells, from its own pages and one outside search         | `productResearch: false`     |
+| Person        | current role with start date, history, bio, employer facts                | `personResearch: false`      |
+| Live LinkedIn | the profile's own Experience section, read through your connected session | `linkedinProfileRead: false` |
+| Recent posts  | LinkedIn or X posts, bought when you approve the row                      | `personNewsfeed: false`      |
 
-The finder's title and company are whatever the source showed: a guest-list slogan, a headline, an enrichment that may be a year stale. After a finder run, each new row with a researchable profile (LinkedIn, X, GitHub; else an email plus a name) gets one `deepResearchPerson` call from that profile and one `enrichCompany` lookup for the employer it names as current — about $0.055 per row, minutes per call, so it runs after the finder and never behind a click. The record (`personResearch`: current role with its start date, the organisation history, bio, company facts) lands on the queue payload before a prospect exists and moves into `prospects.dossier_json` at send; the row's `title` and `company` are corrected to the current ones with the finder's originals kept (`titleAtFinder`, `companyAtFinder`). Every consumer reads the same record: the draft's DOSSIER block, angle selection, rotate-angle, and the reject box's prefill. Cross-workspace cache, 90 days, so a person researched for one product is never bought again for another.
+Person research corrects the row's title and company and keeps the finder's originals. The result is cached for 90 days across workspaces, so a person is bought once. The person gate runs again on the researched role. A pending row that now fails is rejected with its reason. An approved row is never auto-rejected: the send is held and the reason is shown. A verified address at an employer the history says has ended is flagged `email-at-former-employer`; **Send anyway** still works.
 
-It is on for every trigger; set `personResearch: false` on a trigger to disable it. Research counts toward that trigger's `maxCostUsd`. Rows drafted before the research landed keep their draft and show a `researched · regenerate to use it` badge.
+### Live LinkedIn reads
 
-The person gate is re-judged on the researched role when its verdict was missing or `unclear`, or when the role changed. A `reject` on a **pending** row rejects it exactly as the finder would have (`auto: role — <reason>`, auditable, overridable). An **approved** row is never auto-rejected: the verdict is stamped with a note and the step-0 off-ICP gate holds the send with the reason visible. A **prospect in cadence** judged off-ICP stops receiving follow-ups; the verdict is on `/prospects` and editable. A verified address at a company the history says has ended is flagged `email-at-former-employer` — a soft flag, so **Send anyway** still works; the address is never swapped for the researched one.
+A data provider's history can trail a live profile by months. **Connect LinkedIn** on Setup signs you in twice, back to back: once for [messaging](./linkedin.md), once for a hosted browser session that reads profiles as you. Where the page lists a company, the page wins over the provider.
 
-**Live LinkedIn reads.** This browser connection is for profile research; [OneShot LinkedIn messaging](./linkedin.md) is a separate connected account, and the one **Connect LinkedIn** button on `/setup` runs both sign-ins back to back: the messaging account first (once, shared by every workspace, confirmed by OneShot on its own), then the profile session (per workspace) in the same tab. The provider's history can trail a person's live profile by months. The profile session is a hosted browser tab where you sign in as yourself (2FA included, $0.30 platform allowance per sign-in); come back and click **Done** and the session is saved into a persistent OneShot browser profile. The sign-in happens on a pending profile and replaces the working one only once its feed verifies, so a Done click before you finished signing in, or after the tab was closed, changes nothing — the card says "not signed in yet" and you can click Done again or cancel. Behind **advanced: use a cookie**, paste your `li_at` (dev tools → Application → Cookies → linkedin.com) and connect with it instead; it is imported into a fresh profile without any credential passing through a task. From then on person research also reads the profile page's Experience section as a cheap browser task in that profile (about $0.02 a row, with a receipt) and lets it win over the provider's history for every company the page lists; a job the provider calls current at a company the page does not list at all is kept as history, never as the current role. Reads run as your LinkedIn account: they show up as profile views, they are serialized fifteen seconds apart, and they stop at `linkedinReadsPerDay` (default 80) per day; a login wall marks the session invalid, `doctor` says so, and `/setup` asks you to reconnect. `oneshot-gtm config linkedin-session` does the same from the terminal. The post-finder pass reads what fits in its wall budget (about four rows); the server's scheduler sweeps the rest a few times a day — live queue rows with a LinkedIn profile and no live read yet, approved first — under the same daily cap, so a busy finder run does not leave rows on provider history. A row whose read failed for a reason of its own (the page or the profile belongs to someone else, the read was refused, nobody has any history for the person) waits three days before the sweep tries it again, so it does not take a slot from a row that can be read; a skip for the session, the daily cap or a cost cap, a read that did not finish (a timeout, the platform's own error or budget stop), and a provider that failed, do not count. Set `linkedinProfileRead: false` on a trigger to leave it on provider history, or pass `--no-live` to a backfill. Rows already researched are not re-read until `--refresh`.
+- Reads show up as profile views from your account.
+- They run 15 seconds apart and stop at `linkedinReadsPerDay` (default 80).
+- A login wall marks the session invalid. `doctor` says so and Setup asks you to reconnect.
+- A row whose read failed for its own reason waits three days before another try.
 
-Backfill, in this order per workspace: `find research-queue --status live` (pending and approved rows), `find research-prospects --scope all --refresh` (every prospect with a profile URL: sent, in cadence, completed, replied), then `find synthesize-angles --refresh --scope active` so follow-ups and reply drafts pick up the new dossier. None of the three has a cost cap by default (`--max-cost-usd` bounds a rehearsal); each run considers up to 100,000 rows per status and researched rows are skipped, so re-running continues where the last run stopped. `--dry-run` shows counts and an estimate; `--no-rejudge` and `--no-company` narrow what is bought. `--cache-only --refresh` re-derives every row from research already bought (the 90-day shared cache) and bills nothing; rows with nothing cached are left alone. Research also keeps the provider's LinkedIn profile URL and fills it onto a row or prospect that has none — never over one a finder set. Recent posts are captured when a row is approved (in the background; approving never waits) and, every few hours, for prospects in a running cadence whose cached posts are missing or older than 14 days — never for the pending rows a finder creates, since most are rejected. Each capture is about $0.07 from a LinkedIn or X profile, one call at a time, cached 14 days across workspaces, under the daily spend ceiling; the dossier keeps only a pointer and nothing drafts from the posts yet. Set `personNewsfeed: false` on a trigger to skip it for that trigger's rows, or pass `--no-newsfeed` on a research run; `--newsfeed-only` captures posts for rows that already carry research, with `--dry-run` showing the count and estimate, and `--cache-only` never buys one.
+`config linkedin-session` does the same from the terminal. `--no-live` on a backfill skips the reads.
 
-**GitHub-only people.** For someone whose whole public footprint is GitHub, the github-stars gate judges on what GitHub publishes, since person research usually comes back `unavailable`: bio, company, site, location, account age, their own recent repos, and a profile-README excerpt on a bare profile (one extra API call per candidate, up to three on bare profiles). The block is stored on the row as `githubEvidence`. `find rejudge-github` re-runs that decision on live github-stars rows with no paid research: pending rejects move to rejected, approved rows only with `--reject-approved`, and a GitHub or classifier failure skips a row rather than rejecting it. `--dry-run` writes nothing.
+### Backfill
 
-**Rows moved from another workspace.** A move (the row's **move →** menu) carries the person and their research across, but not the sending workspace's edge, ICP verdict or fit line: those were written for the other product. On arrival the receiving workspace re-derives them for itself. The edge comes from its own trigger for that play (the trigger the row's source names, else one routed to the same play). If none has an edge, it writes one from the workspace's product positioning and the row's research, marked as generated. The verdict comes from re-judging the carried research against this ICP. A row that doesn't fit stays pending with the reason shown, because you moved it on purpose. This runs in the background and costs at most two small model calls. `find rederive --id <n>` or `find rederive --moved` does the same for rows moved before this existed, or whose background run timed out. `--dry-run` prints without writing, and status never changes.
+Run in this order, per workspace:
 
-## Review order
+```bash
+oneshot-gtm find research-queue --status live                    # pending and approved rows
+oneshot-gtm find research-prospects --scope all --refresh        # everyone already contacted
+oneshot-gtm find synthesize-angles --refresh --scope active      # follow-ups pick up the new dossier
+```
 
-The pending review list on `/queue` can be ordered `newest` or `ranked` (finder-interleaved priority score with exploration slots). It's a toggle on the page, defaulted by `queueReviewOrder` in config. `find calibrate` measures the score against logged outcomes (shadow only; scores drive nothing but this ordering until they clear the acceptance bar).
+The last two stop at 250 rows a run; pass `--limit` for more. Researched rows are skipped, so a re-run continues where the last one stopped. `--dry-run` prints counts and an estimate. `--max-cost-usd` bounds a run. `--cache-only --refresh` re-derives from research already bought and bills nothing. `find research-products` backfills product research and stops at 5 USD unless you pass `--no-cost-limit`.
 
-## Draining
+### People whose footprint is GitHub
 
-Approved rows ship via the **Drain** button or `find drain <play>`. Both respect the daily [spend ceiling](./background-monitoring.md#spend-ceiling) and the per-identity send caps.
+Person research usually finds nothing for them. The `github-stars` gate judges on what GitHub publishes: bio, company, site, location, account age, their own recent repos and a profile README. `find rejudge-github` re-runs that decision on live rows without paid research. Pending rejects move to rejected; approved rows move only with `--reject-approved`.
+
+### Rows moved between workspaces
+
+**move →** on a queue row hands the person and their research to another workspace. The edge, ICP verdict and fit line stay behind; they were written for the other product. The receiving workspace derives its own in the background. A row that does not fit stays pending with the reason shown, because you moved it on purpose. `find rederive --id <n>` or `--moved` runs the same step by hand.
+
+## Review order and sending
+
+The pending list sorts `newest` or `ranked`. The toggle is on the page; `queueReviewOrder` in config sets the default. Ranking only orders the list. It decides nothing else.
+
+Approved rows go out when you press **Batch send…** or run `find drain <play>`. Both respect the [daily spend ceiling](./background-monitoring.md#spend-ceiling) and the mailbox caps.
 
 ## Finder-specific keys
 
-- `GITHUB_TOKEN` — without it the two GitHub finders share GitHub's unauthenticated ceiling of 60 requests/hour per IP and halt on a `403`. A classic token with **no scopes** is enough. `doctor` warns when it's missing and a GitHub finder is on.
-- `x-reposters` — four OAuth1 values for the first-party X API, or `TWITTERAPI_IO_KEY` for the ~55x cheaper third-party engine. Pick the provider on `/setup` or with `config x-engine`.
-- `LUMA_SESSION_COOKIE` — optional; only buys authed Luma guest lists.
+- `GITHUB_TOKEN`. Without it the GitHub finders share 60 requests an hour per IP and halt on a `403`. A classic token with no scopes is enough.
+- `x-reposters`. Four OAuth1 values for the X API, or `TWITTERAPI_IO_KEY` for the third-party engine. Pick one on Setup or with `config x-engine`.
+- `LUMA_SESSION_COOKIE`. Optional; it only adds signed-in guest lists.
 
-All of these are env-only: `init` never asks, but `/setup` and `config keys` store them in the workspace's `.env`.
+`init` never asks for these. Setup and `config keys` store them in the workspace's `.env`.
 
 ## Institutional buyers
 
-Set `play: "design-partner-loi"` and `buyerType` (`enterprise`, `government` or `hardware`) on a finder's trigger to send its rows to the design-partner play instead of the finder's own founder-to-founder play. That play writes for an institutional evaluator: the first email opens on their company and asks whether they own the problem, the second offers a design-partner conversation, and the last proposes one scoped pilot and closes. It works on hiring-signal, job-change, post-funding, podcast-guest, local-business and list-page (which routes only there). The trigger is ready only with an edge and a valid buyer type, and dedupe covers both plays, so switching the setting never lets the same person through twice.
+Set `play: "design-partner-loi"` and `buyerType` (`enterprise`, `government` or `hardware`) on a trigger. Its rows then go to the design-partner play: the first email asks whether they own the problem, the second offers a design-partner conversation, the last proposes one scoped pilot. It works on `hiring-signal`, `job-change`, `post-funding`, `podcast-guest`, `local-business` and `list-page`. Dedupe covers both plays, so switching never lets the same person through twice.
 
 ## List pages
 
-`list-page` turns any public page that lists companies into a source: an open-source project's `ADOPTERS` file, a conference sponsor page, a vendor's customers page. Each entry in `sources` is `{url, signal}`, where `signal` says in a few words what being on the list means, for example `runs Backstage`.
+`list-page` turns any public list of companies into a source. Each entry in `sources` is `{url, signal}`, where `signal` says what being on the list means, for example `runs Backstage`. It routes only to `design-partner-loi`, so it needs `play`, `buyerType` and `yourEdge`.
 
-- A GitHub file link (`/blob/`), a raw GitHub link or a data file (`.json`, `.yml`, `.md`, `.txt`) is fetched directly for free, with two retries if the network fails; any other page costs one web read. The companies are extracted once per version of the page and cached, so an unchanged list costs nothing to re-read.
-- Companies are worked `limit` per run, one from each list in turn, skipping any already queued. A company two lists name is worked once, under the first. For each, the finder finds the company's decision owner from its domain (people search, the person gate, then email). When the page gives no website, one company search looks the domain up by name. Set `jobTitles` (the roles you sell to, most wanted first) to make that a title-scoped people search: up to three matches are tried in your order. A person counts as a match only when their title carries every word of a wanted title as whole words (`VP of AI` matches `Vice President, Artificial Intelligence`; `CTO` does not match `Director`). A company with no one matching is left alone for 30 days, then looked at again, or at once when you change `jobTitles`. It is not rejected. Without it the pick is any senior title at the domain, which at a large company can be someone in PR or recruiting.
-- People the page names, often the engineers who set the tool up, are kept on the row as context and never emailed.
-- Every row carries the signal and the page's own line about that company. An angle in `yourEdge` can open on it (_For a company that runs Backstage —_), and the design-partner email may use it as its hook, stated as the public fact it is.
-- For now it routes only to `design-partner-loi`, so it needs `play`, `buyerType` and `yourEdge` to be ready.
+- A GitHub file, a raw link or a data file is fetched free. Any other page costs one web read. An unchanged list costs nothing to read again.
+- Companies are worked `limit` per run, one from each list in turn.
+- Set `jobTitles`, most wanted first, to pick the owner by title. A title matches only when it carries every word of a wanted title: `VP of AI` matches `Vice President, Artificial Intelligence`; `CTO` does not match `Director`. A company with no match is left for 30 days, then tried again.
+- Without `jobTitles` the pick is any senior title, which at a large company can be PR or recruiting.
+- People the page names are kept as context and never emailed.
 
-### Checking a list someone else compiled
+### A list someone else compiled
 
-An `ADOPTERS` file is a company vouching for itself. A blog roundup, an aggregator or a vendor's marketing page is someone else saying so. Give a source like that `verify: {names, via}`, and each company's own evidence is checked before any paid contact step. `names` is the vendor or tool plus its aliases. Names match as whole words, ignoring case.
+An `ADOPTERS` file is a company vouching for itself. A blog roundup is someone else saying so. Give that source `verify: {names, via}` and each company's own evidence is checked before any paid contact step.
 
-- `via: ["subprocessors"]` (the default) is for hosted vendors that touch customer data, such as an LLM API or a browser cloud.
-  1. Free: the company's subprocessor list is fetched from the usual paths (`/subprocessors`, `/legal/sub-processors`, `trust.<domain>` and similar).
-  2. Paid: when none of those works, one web search finds the page, and one web read renders it if it is built by script.
-  3. A list that names the vendor confirms it. A real list that leaves the vendor out drops the company, recorded once so later runs skip it. A page only counts as a list when it also names the processors such lists always carry (AWS, Datadog and the like), so a trust centre that loads its list by script is never read as "absent".
-- `via: ["mentions"]` is for self-hosted tools. Backstage never appears on a subprocessor list, so never use `subprocessors` for one. The company's own site and its job posts are searched for the tool. A hit on its own site must also carry engineering context, because tool names are often ordinary words. This check can only confirm.
-- No evidence either way keeps the row, marked unconfirmed. The queue shows `uses X (unconfirmed)` or `uses X ✓`, and the email writer is told not to state an unconfirmed signal as fact about the company.
-- A result is cached per domain for 30 days, except one left by a failed call, which is checked again on the next run.
+- `via: ["subprocessors"]`, the default, is for hosted vendors that touch customer data. The company's subprocessor list is fetched from the usual paths. A list that names the vendor confirms it. A real list without the vendor drops the company.
+- `via: ["mentions"]` is for self-hosted tools, which never appear on a subprocessor list. The company's site and job posts are searched. This check can only confirm.
+- No evidence either way keeps the row, marked unconfirmed. The draft is told not to state an unconfirmed signal as fact.
 
-## Expired queue rows
+## Expired and incomplete rows
 
-Expired is a queue status, not deletion. Queue and Prospects allow a human to approve an expired row again; approval makes it eligible for drafting and a later send. Review whether its original signal is still relevant. A prospect who has already replied cannot be re-approved for cold outreach, and sent rows cannot be approved again.
+Expired is a status, not a deletion. You can approve an expired row again; check that its signal still holds. A prospect who already replied cannot be re-approved for cold outreach.
 
-Re-engagement (`breakup-revive`) rows expire when the prospect replies or their cadence is stopped. An age-based expiry helper exists, but no production scheduler currently invokes it, so there is no automatic “expires after N days” policy. CSV imports temporarily reserve rows as expired during ICP classification; those rows cannot be approved until classification finishes.
-
-## Incomplete targets after an override
-
-An early ICP rejection may be saved before contact lookup, so approving that row does not mean it already has an email. Run forms load the source trigger's current `yourEdge` / `yourClaim` without rewriting the historical queue payload.
-
-For approved GitHub Stars rows without an email, **Find missing emails** on the Run page resumes contact lookup using the original GitHub identity and verifies the result. It can incur lookup charges, reloads the form (replacing unsaved edits), and never sends. Failed lookups remain incomplete; enter a verified email manually or leave that row out. Simply listing or approving a row performs no paid contact lookup.
-
-Contact lookup retries reuse completed receipts from the current workspace for
-14 days. Email discovery matches both the full name and domain; verification
-matches the exact email address (case-insensitive). Successful results and
-completed negative results are reused without additional lookup charges.
-Transport errors are not cached as negative results. A public GitHub profile
-email bypasses email discovery and goes straight to verification. GitHub role
-rejections retain an email already verified earlier in the same run.
-
-GitHub Stars and GitHub Topics use a personal-profile README as the final email
-fallback. Public profile email comes first, then existing contact lookup stages
-(including enabled topic enrichment/research), then the individual's public
-`username/username` README. An undeliverable address can fall through; duplicates,
-qualification rejections and temporary service errors do not trigger another search.
-
-README extraction accepts explicit personal contact text or contact-labelled email
-links, skips unrelated/example/team addresses, and leaves ambiguous results unresolved.
-Extracted addresses are verified using the same 14-day receipt history. The queue
-retains the README source URL and resolution timestamp. Completed README extraction
-results are cached in memory for 24 hours; temporary errors are not cached as misses.
-Requests are bounded to 10 seconds and 64 KiB. The existing approved-row recovery
-action gains this fallback; deployment does not retry historical rows or send messages.
+Approving a row the gate rejected early does not give it an email. For approved `github-stars` rows without one, **Find missing emails** on the Run page resumes the lookup and verifies the result. It may bill, and it never sends. Contact lookups reuse results from the last 14 days, hits and clean misses alike.
 
 ## Community buying requests
 
-Enable `community-buyer-threads` in Queue's finder controls. It uses the normal Run now, schedule, review and draft flow; new workspaces start with it disabled.
+`community-buyer-threads` finds Reddit and Hacker News posts asking for what you sell. Set `keywords`, `competitors` or both, up to 20 terms. Defaults: both platforms, the last 7 days, 25 rows, every six hours.
 
-Set `keywords` (category phrases) and/or `competitors` (product names), up to 20 terms total. Defaults:
+Relevant and uncertain threads wait for review; unrelated ones are saved as rejected. No email lookup is needed. Approve a row, then generate its draft or run `find drain community-reply`. Drafts use your product brief and say you are affiliated.
 
-- `platforms`: `["reddit", "hacker-news"]`
-- `sinceDays`: `7`; `limit`: `25`; `maxCostUsd`: `5`
-- Polling: every six hours
-
-HN search needs no Algolia key. Reddit uses existing OneShot search/read credentials. Coverage depends on indexing. Source failures appear separately from empty results and can be retried.
-
-Rows retain the opening post's URL, author, date, text and classification evidence. Relevant and uncertain matches await review; unrelated posts are saved as rejected. Repeated discoveries of a thread are deduplicated. Product and person research default off; no email lookup is required.
-
-Approve a row, then generate its draft or run `oneshot-gtm find drain community-reply`. Setup must contain your founder name, product description and verified product brief. Drafts use that brief and disclose your affiliation; review claims before posting.
-
-Use **Open thread**, **Copy reply**, then **Mark posted** after posting yourself. Confirmation records the action once. Nothing posts automatically or starts an email cadence; later drains retain clean drafts.
-
-Finder caps and daily reservations apply. OneShot calls retain their receipts. LLM calls record provider costs when available, otherwise a labeled $0.05-per-call estimate, including attempted calls with uncertain failure costs. Caps check estimates before calls and reported costs afterward, so actual charges can exceed an estimate. Manual posting creates no paid receipt.
+Nothing posts for you. **Open thread**, **Copy reply**, post it yourself, then **Mark posted**.

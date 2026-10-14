@@ -1,48 +1,60 @@
 # Learning and approval
 
-oneshot-gtm learns from what you send, edit and decide, on email and LinkedIn alike. It never changes how it writes on its own: every learned change is a **proposal** you approve, edit, dismiss or roll back on `/queue`. Recording what happened is automatic; changing behaviour is not.
+The tool proposes. You decide. It records what you send, edit and reject, and nothing it concludes from that reaches a draft until you approve it.
 
-## What is learned
+Proposals wait in the **Learning** strip at the top of Queue.
 
-| Proposal           | Learned from                                                                                                    | What approval changes                                                    |
-| ------------------ | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Writing preference | Your explicit feedback and repeated edits on reply drafts; the drafts you regenerated next to the ones you sent | A guidance line added to drafts on the channels and stages it applies to |
-| Prospect angle     | A human reply (email or LinkedIn) or a recorded outcome for one prospect                                        | That prospect's hook, exclusions and next step                           |
-| Campaign angles    | What you did with each configured angle, plus the objections replies raised, when you ask for it                | The play's `yourEdge` angle set                                          |
-| ICP                | Queue decisions you tagged with a fit reason, plus recorded meetings, qualified opportunities and won deals     | The active ICP one-liner                                                 |
+## What it learns
 
-Each kind answers a different question and is kept apart: a preference is about how you write, an angle about what to argue, the ICP about who to write to.
+| Proposal           | Learned from                                                              | Approval changes                                   |
+| ------------------ | ------------------------------------------------------------------------- | -------------------------------------------------- |
+| Writing preference | your feedback and repeated edits on drafts, on email and LinkedIn         | one guidance line on the channel and stage it fits |
+| Prospect angle     | one prospect's reply or recorded outcome                                  | that prospect's hook, exclusions and next step     |
+| Campaign angles    | what you did with each configured angle, when you ask                     | the play's `yourEdge` angles                       |
+| ICP                | queue decisions you tagged with a fit reason, plus meetings and won deals | the ICP one-liner                                  |
 
-## What drafts see
-
-A draft reads only guidance that was approved: enabled writing preferences for its channel (email or LinkedIn) and stage (first touch, follow-up, reply), the prospect's active angle, and the active ICP. Pending, dismissed, disabled and rolled-back proposals are invisible to it. Each new draft records an immutable snapshot of its active learning context and generation input (`learning_key`), so outcomes can be read per guidance the way they are read per voice card. Configured product facts, the voice card and your instructions in the moment always outrank learned guidance, and a preference is never a source of product facts, links or promises.
-
-A preference learned from LinkedIn replies applies to LinkedIn replies unless the evidence also came from email; nothing is generalised across channels or stages without evidence from both.
+A preference is about how you write. An angle is about what to argue. The ICP is about who to write to. They are kept apart.
 
 ## Reviewing
 
-The **Learning** card at the top of `/queue` lists everything waiting, by kind. Each proposal shows the current value, the proposed one, the scope (channel and stage, prospect, or play), the evidence it stands on (samples, counts, how the evidence was selected) and a summary. Replies and a prospect's sheet link straight to their own proposals.
+Each proposal is one row showing only what would change.
 
-- **Approve** applies it to drafts from now on.
-- **Edit & approve** applies your wording instead.
-- **Dismiss** prevents unchanged evidence from producing the same guidance under different wording. New evidence may support another proposal.
-- **Roll back** restores what was active before an approval.
-- A writing preference can also be **disabled** and re-enabled; twelve can be active at once.
+- **approve** applies it to drafts from now on.
+- **dismiss** drops it. The same evidence will not raise it again in other words.
+- Open the row for **was**, **evidence** and **edit**. **edit before approving**, then **approve edited**, applies your wording.
+- The history below lists what is applied. **Roll back** restores what was active before. A writing preference can be disabled and enabled again; twelve can be active at once.
 
-Approval is refused when the value it would change has moved since the proposal was made (you edited the ICP or the edge by hand, or approved another proposal for the same scope); dismiss it and a fresh one follows. Approving an angle or ICP proposal marks the other pending proposals for the same scope stale, since they were computed against the value just replaced; writing preferences accumulate, so approving one leaves the rest pending. Rollback is also refused when it would overwrite a newer approval or manual edit. An approval never rewrites or sends an existing draft.
+Approval is refused when the value moved since the proposal was made, for instance you edited the ICP by hand. Dismiss it and a fresh one follows. An approval never rewrites or sends an existing draft.
 
-## Queue decisions and the ICP
+## What a draft sees
 
-Approving or rejecting a queue row can carry a reason: _fit_, _not our audience_, _right company, wrong person_, _bad timing_, _draft problem_ or _other_. Only the first three are fit judgments and only they teach the ICP; a rejection for timing or a weak draft says nothing about who your customer is. Ordinary and bulk approvals record no fit judgment. Choose **as fit** to explicitly teach the ICP; overriding a saved fit rejection is also an explicit fit decision. The finder’s examples and ICP rewrite proposals both use only explicit fit reasons. Recorded outcomes (meeting booked, qualified, won) are passed to the ICP job separately, as commercial evidence distinct from approval; lost deals, ghosting, polite replies and unsubscribes are never read as success. The ICP job still needs the configured minimum of tagged decisions (thirty by default, `icpProposalMinDecisions`) and runs at most once a day.
+Only approved guidance: enabled preferences for its channel and stage, the prospect's active angle, the active ICP. Your product facts, the [voice card](./voice.md) and what you type in the moment outrank all of it. A preference is never a source of facts, links or promises.
+
+A preference learned from LinkedIn replies applies to LinkedIn replies. It reaches email only when email evidence supports it too.
+
+## The reject box teaches the ICP, sometimes
+
+Rejecting a row on Queue or Prospects asks why, by tapping:
+
+| Reason           | Teaches the ICP |
+| ---------------- | --------------- |
+| Not our audience | yes             |
+| Wrong person     | yes             |
+| Bad timing       | no              |
+| Already in touch | no              |
+| Draft problem    | no              |
+| Other            | no              |
+
+The box opens with a suggested reason and a one-line note, taken from the gate's verdict or written by the model from the prospect's own evidence. What you tap wins. The note is yours to edit, 300 characters at most; an emptied box clears it.
+
+Approving teaches nothing by default. Choose **as fit** to count an approval as ICP evidence. A booked meeting, a qualified opportunity and a won deal count as commercial evidence. A lost deal, a polite reply and an unsubscribe never count as success.
+
+The ICP proposal needs 30 tagged decisions (`icpProposalMinDecisions`) and is computed at most once a day.
 
 ## Campaign angle suggestions
 
-Under a trigger's edge editor, **Suggest angle changes** reads the counts shown there (offered, rotated away, redrafted, sent, replied, by distinct prospect) and recent objection replies, and proposes which angles to keep, retire or add. The proposal names the selection method (fit classifier or even split) and the sample sizes, and is labelled a hypothesis: the counts are observational, and a difference may come from who was offered an angle rather than the angle itself. Nothing reallocates traffic; the fit classifier and the even split keep running as configured.
+Under a trigger's edge editor, **Suggest angle changes** reads the counts shown there and recent objections, and proposes which angles to keep, retire or add. Treat it as a hypothesis. The counts are observational: a difference can come from who was offered an angle, not from the angle. Nothing reallocates traffic.
 
-## Before approval existed
+## Limits
 
-Preferences learned by the earlier LinkedIn reply learning are moved into the review list once, marked as learned before review existed, with their evidence; they stop applying until approved, and ones you had disabled arrive dismissed. Prospect angles synthesized before this release stay active; only new revisions wait for review. `synthesize-angles` generates proposals for review. The old `--apply` flag is rejected before research or synthesis spends anything.
-
-## Limits and spend
-
-Background learning runs on the scheduler, never on a send or draft path, under the daily spend ceiling and the same leases that stop two processes doing the same work. Reply evidence is read in batches of up to 100 confirmed sends; failed, uncertain and unattended sends, automated replies and unsubscribes are never evidence. A preference needs explicit feedback on one reply, the same edit across three conversations, or a consistent pattern across five; style read from regenerated first touches needs five distinct prospects. The demo install is read-only: proposals render, decisions are refused.
+Learning runs in the background, under the daily spend ceiling, and never delays a draft or a send. Failed sends, unattended sends, auto-replies and unsubscribes are never evidence. A preference needs your explicit feedback on one reply, the same edit across three conversations, or a consistent pattern across five. The demo install shows proposals and refuses decisions.

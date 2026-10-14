@@ -1,23 +1,23 @@
-# Public code and private operating data
+# Public code and private data
 
-This repository contains the GTM application, its workspace-management code, prompts, tests, fictional examples and user documentation. Workspace-management code lets every founder create their own install; it does not include the maintainer's actual workspace.
+The code is public. Your prospects, keys and ledger are not. Ignore rules and a boundary test guard the known paths; neither can spot an export you renamed.
+
+The repository holds the application, prompts, tests, fictional examples and docs. It holds nobody's actual workspace.
 
 ## Keep outside Git
 
-- Actual workspace homes: `~/.oneshot-gtm`, `~/.oneshot-gtm-workspaces` and `~/.oneshot-gtm-shared`.
-- Config with your founder profile or voice, credentials, OAuth tokens, mailbox connections and browser session material.
-- Ledgers, prospect lists, research dossiers, draft/reply exports, transcripts and event logs from real activity.
-- Local launch copy, research output, maintainer notes and infrastructure under `launch/`, `output/` and `ops/`.
-- Private SDK source checkouts and SDK archives. GTM installs `@oneshot-agent/sdk` as an external package dependency; integration wrappers and dependency metadata remain public.
+- Workspace homes: `~/.oneshot-gtm`, `~/.oneshot-gtm-workspaces`, `~/.oneshot-gtm-shared`.
+- Config with your profile or voice, keys, OAuth tokens, `mailbox-connections.json`, LinkedIn session material.
+- Ledgers, prospect lists, research, draft and reply exports, transcripts, event logs.
+- Launch copy, research output and maintainer scripts under `launch/`, `output/` and `ops/`.
+- SDK source or archives. The SDK is installed from the package registry.
 
-Use the normal workspace homes even when developing locally. If you override `ONESHOT_GTM_HOME`, `ONESHOT_GTM_WORKSPACES` or `ONESHOT_GTM_SHARED`, point them outside the checkout. Ignore rules cover the known local paths and runtime files, but cannot identify arbitrary renamed exports. Put temporary exports in the ignored `output/` directory; never use production data as a test fixture.
+If you override `ONESHOT_GTM_HOME`, `ONESHOT_GTM_WORKSPACES` or `ONESHOT_GTM_SHARED`, point them outside the checkout. Keep real target files as `examples/*.local.json` or `examples/*.private.json`, or in `output/`; all three are ignored. Never use real data as a test fixture. For screenshots, use the [demo](./demo-mode.md).
 
-Use `*.local.json`, `*.private.json` or the ignored `output/` directory for real target files. The committed files in `examples/` are sample inputs, not a place to maintain customer lists. Use the [fictional demo](./demo-mode.md) for captures and screenshots.
+## Before you commit
 
-## Review before publishing
+Read `git status --short` and `git diff --cached`. The boundary tests reject tracked runtime files and check that the private paths stay ignored. They are not a secret scanner.
 
-Inspect `git status --short` and `git diff --cached` before committing. The repository boundary tests reject tracked runtime files and private SDK directories; they also check that representative private paths stay ignored. These checks complement review and are not a complete secret scanner.
+Removing a tracked file does not remove it from history.
 
-Removing a tracked file and adding an ignore rule prevents future inclusion. It does not remove copies from prior Git commits. History cleanup is a separate operation.
-
-Local storage does not mean every operation stays offline: configured LLM, research and delivery providers receive the data needed to perform the requested action. [Telemetry](../TELEMETRY.md) documents the separate product-telemetry fields and opt-out.
+Local storage is not offline operation. The LLM, research and delivery providers you configure receive what they need to do the job. [Telemetry](../TELEMETRY.md) is separate and lists its own fields.

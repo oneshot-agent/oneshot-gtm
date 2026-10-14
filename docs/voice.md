@@ -1,46 +1,50 @@
 # Voice
 
-The drafts share standards for grounded claims, useful substance and concise asks, with flexible structure. What they cannot know is how _you_ write. The voice card fills that gap: a short, plain-text description of your own register that every email draft reads at runtime.
+The model writes like the model until you show it how you write. The voice card is that showing: a short plain-text description of your register, read by every draft.
 
-It lives in config as `founderVoice`, edited on `/setup` (Voice) and injected as a `VOICE` block into first-touch emails (and their regenerate/rotate), cadence follow-ups and breakups, breakup-revive, and inbox replies. SMS, letters and X DMs do not carry it. Blank means no block: an install without a card drafts exactly as before.
+It lives in config as `founderVoice` and is edited on Setup. Email first touches, follow-ups and breakups carry it, and so do LinkedIn notes and messages, X DMs, community replies and inbox replies. SMS and letters do not. A blank card adds nothing.
 
 ## What the card is
 
 Four headings, a few lines each, at most 1500 characters:
 
-- **MOVES** — three to five rhetorical moves you actually make, described mechanically ("a concrete fact, then the mechanism under it, then one flat line that closes it"). Not topics; topics are not voice.
-- **SENTENCES** — length pattern, punctuation habits, case, how you cut paragraphs.
-- **NEVER** — what you avoid that the drafts do not already forbid: pleasantries, flattery, moralising, faking certainty, listicle hooks, urgency. Em dashes, three-item lists, "X isn't A, it's B", exclamation marks, emoji, hedging and hype vocabulary are already stripped from every draft, so they do not belong here, and neither do greetings, sign-offs or signatures, which the draft rules set on their own; if your samples lean on one of them, the derivation says so once in its notes instead.
-- **EXEMPLARS** — three to six short lines copied verbatim from your own writing, chosen for cadence, not content. A number belongs there only if it was in the original.
+- **MOVES.** Three to five moves you make, described mechanically: "a concrete fact, then the mechanism under it, then one flat line that closes it". Not topics. Topics are not voice.
+- **SENTENCES.** Length, punctuation, case, how you cut paragraphs.
+- **NEVER.** What you avoid that drafts do not already forbid: pleasantries, flattery, moralising, faking certainty, urgency.
+- **EXEMPLARS.** Three to six short lines copied verbatim from your own writing, chosen for rhythm. A number belongs there only if it was in the original.
 
-## What the block enforces around it
+Every draft already strips em dashes, three-item lists, "X isn't A, it's B", exclamation marks, emoji, hedges and hype words. Greetings and sign-offs are set by the draft rules. None of these belong on the card.
 
-The card controls warmth, dryness, bluntness, playfulness, technical register and rhythm over generic style defaults. Factual grounding, audience and channel constraints, required content and lint rules still apply. The `VOICE` block carries a budget line the model has to obey, and the lint holds the draft regardless:
+## What the card cannot override
 
-- at most **one** aphoristic or deflating line per email, never in the ask; a breakup gets none, a brief closing line in your register; a reply in logistics mode (scheduling, unsubscribe, a plain yes) gets none;
-- numbers only from the inputs, never invented for effect;
-- the register applies to body prose only: the greeting, proper nouns, the product name and the signature stay as given;
-- an asymmetry is stated as a plain declarative ("the hard part is X"), never as "X isn't A, it's B" — that inversion is the banned "negative parallelism" shape the lint flags, however on-brand it feels. The same goes for three-item lists and em dashes.
+The card sets warmth, bluntness, rhythm and register. Facts, audience, channel limits and the lint still hold.
 
-Every draft version records which card (a short hash) it was written with, so the trigger editor's usage line splits sent, regenerated and rotated counts into **voice on** and **voice off**. Judge the card by that split after a week of review, and by whether the lint flags on voiced drafts rose.
+- One aphoristic line per email at most, never in the ask. A breakup gets none. A reply about logistics gets none.
+- Numbers come from the inputs, never invented for effect.
+- The register applies to body prose. The greeting, names, the product name and the signature stay as given.
+- An asymmetry is a plain statement ("the hard part is X"), never "X isn't A, it's B". The lint flags that shape however much it sounds like you.
+
+Each draft records which card it was written with. The trigger editor splits sent, regenerated and rotated counts into **voice on** and **voice off**. Judge the card by that split after a week.
 
 ## Writing one by hand
 
-Ten minutes. Open six things you wrote and were happy with, ideally messages to strangers, and answer the four headings from them, not from how you would like to write. If a line under MOVES could describe most people, delete it. If an exemplar contains a number, check the number is real. Paste it on `/setup`, save, regenerate two queued rows, read them aloud.
+Ten minutes. Open six things you wrote and were happy with, ideally messages to strangers. Answer the four headings from them, not from how you would like to write. If a line under MOVES could describe most people, delete it. Paste it on Setup, save, regenerate two queued rows and read them aloud.
 
 ## Drafting one from your own writing
-
-The CLI can draft the card from local files:
 
 ```
 oneshot-gtm config voice --from ~/writing/posts --messages ~/writing/sent --guide ~/writing/how-i-write.md
 ```
 
-`--from` takes files or folders of `.md`/`.txt` posts. A leading `---` frontmatter block is read for `status:` and `style:` (posts marked posted or published rank first) and stripped. `--messages` takes files or folders of messages you actually sent to people, as fenced code blocks or whole files; they outrank posts, because how you write to a stranger is what the card is for. `--guide` is a note you wrote about your own style, passed as evidence. The reader knows nothing about any notes app or folder layout; it reads plain text files. The prompt (`packages/prompts/voice-derive.md`) is told to describe patterns, never to name an influence, to copy exemplars verbatim, and to carry any inversion habit only in the allowed forms. It shows the card and asks before saving; a thin corpus produces a sketch and refuses to save without `--yes`. `config voice` alone shows the stored card; `--clear` removes it.
+- `--from`: files or folders of `.md` or `.txt` posts.
+- `--messages`: messages you sent to people. They outrank posts, because writing to a stranger is what the card is for.
+- `--guide`: a note you wrote about your own style.
+
+It reads plain text files and knows nothing about any notes app. It shows the card and asks before saving. Too little writing produces a sketch, which it will not save without `--yes`. `config voice` alone shows the stored card; `--clear` removes it.
 
 ## A worked example
 
-One founder's card, as derived from their posts and approved messages and then edited. It is an example of the shape, not a default: your card should not read like this unless you do.
+One founder's card, derived from their posts and messages and then edited. It shows the shape. Yours should not read like this unless you do.
 
 ```
 MOVES

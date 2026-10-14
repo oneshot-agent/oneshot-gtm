@@ -126,7 +126,7 @@ registerDirectMailCommand(program);
 program
   .name("oneshot-gtm")
   .description(
-    "Open-source GTM agent for technical founders. Pay-per-result. Signed receipts.\n" +
+    "Open-source outbound for founders. Local ledger, pay per call, signed receipts.\n" +
       "Use the dashboard (oneshot-gtm ui) for ad-hoc discovery, review and sending.",
   )
   .version(CLI_VERSION)
@@ -399,11 +399,11 @@ gmail
   .option("-y, --yes", "skip the send confirmation")
   .action(runOrFail(commandGmailPlacement));
 
-// Smartlead: bring-your-own cold-email infra (send-only). Smartlead hosts +
-// warms the mailboxes; we send through their API. Replies stay in their UI.
+// Smartlead: bring-your-own cold-email infra. Smartlead hosts and warms the
+// mailboxes; we send from them and sync their replies into the dashboard.
 const smartlead = program
   .command("smartlead")
-  .description("Smartlead send path (send-only; replies stay in Smartlead's UI)");
+  .description("Smartlead-hosted mailboxes: send from them and sync their replies");
 smartlead
   .command("connect")
   .description("Store the Smartlead API key and add its mailboxes to the rotation pool")
