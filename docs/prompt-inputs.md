@@ -31,14 +31,14 @@ Each play adds its own signal on top: the repo they starred, the event they join
 
 Config is source material. No field can force a sentence into an email; every prompt paraphrases what it is given. Put each thing where it has a slot:
 
-| To say                | Use                                                  |
-| --------------------- | ---------------------------------------------------- |
-| proof                 | `founderCredentials`, `productPortfolio`, `partners` |
-| one true concession   | `founderAdmission`                                   |
-| the argument          | `yourEdge`                                           |
-| facts and links       | `productBrief`                                       |
-| who it is for         | `icpOneLiner`                                        |
-| what a pilot includes | `pilotOffer`, never a price                          |
+| To say              | Use                                                  |
+| ------------------- | ---------------------------------------------------- |
+| proof               | `founderCredentials`, `productPortfolio`, `partners` |
+| one true concession | `founderAdmission`                                   |
+| the argument        | `yourEdge`                                           |
+| facts and links     | `productBrief`                                       |
+| who it is for       | `icpOneLiner`                                        |
+| the offer's terms   | `pilotOffer`, never a price                          |
 
 `pilotOffer` replaces the plain breakup on the last step of `repo-interest`, `stack-consolidation`, `competitor-switch`, `hiring-signal` and `post-funding`. `accelerator-batch` always ends on the plain breakup.
 

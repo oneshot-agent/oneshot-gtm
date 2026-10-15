@@ -88,7 +88,7 @@ export function ProspectOffer({
     <section aria-label="Offer" className="min-w-0">
       <div className="mb-1 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-faint">
         <span>offer</span>
-        {offer?.level === "role" && <span>· from role only</span>}
+        {offer?.level === "role" && !offer.editedBy && <span>· from role only</span>}
         {offer?.editedBy === "founder" && <span>· yours</span>}
       </div>
       {editing ? (

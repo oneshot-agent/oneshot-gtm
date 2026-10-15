@@ -1,10 +1,9 @@
-import { getLedger } from "@oneshot-gtm/core";
+import { getLedger, loadConfig } from "@oneshot-gtm/core";
 import { resolveQueueTarget } from "@oneshot-gtm/find";
 import {
   deriveOffer,
   OFFER_MAX,
   OFFER_PROMPT_VERSION,
-  offerOf,
   playMakesOffer,
   type ProspectOffer,
 } from "@oneshot-gtm/plays";
@@ -68,14 +67,18 @@ export async function queueOfferRoute(
     if (text.length > OFFER_MAX.offer * 2) {
       return jsonResponse({ error: `offer is over ${OFFER_MAX.offer * 2} characters` }, 400, req);
     }
-    const previous = offerOf(payload);
-    const steps = typeof body.steps === "string" ? body.steps.trim() : (previous?.steps ?? "");
+    // Same rule as a written offer: none without a brief to ground it.
+    if (!loadConfig().productBrief?.trim()) {
+      return jsonResponse({ error: "No offer can be used without a product brief." }, 422, req);
+    }
+    // The old offer's steps and evidence were reasoning for a different
+    // offer; the founder's text stands on its own unless they give steps.
     offer = {
       offer: text,
-      steps,
-      evidence: previous?.evidence ?? [],
-      stage: previous?.stage ?? "",
-      level: previous?.level ?? "role",
+      steps: typeof body.steps === "string" ? body.steps.trim() : "",
+      evidence: [],
+      stage: "",
+      level: "role",
       version: OFFER_PROMPT_VERSION,
       inputHash: "founder",
       editedBy: "founder",

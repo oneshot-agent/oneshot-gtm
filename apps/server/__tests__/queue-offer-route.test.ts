@@ -8,10 +8,12 @@ const state = vi.hoisted(() => ({
   patched: [] as Array<{ id: number; patch: Record<string, unknown> }>,
   live: true,
   derived: null as null | Record<string, unknown>,
+  brief: "Acme books crews into open slots.",
 }));
 
 vi.mock("@oneshot-gtm/core", async () => ({
   ...(await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core")),
+  loadConfig: () => ({ productBrief: state.brief }),
   getLedger: () => ({
     getQueueRow: () => state.row,
     getTrigger: () => null,
@@ -52,19 +54,30 @@ beforeEach(() => {
   state.patched = [];
   state.live = true;
   state.derived = null;
+  state.brief = "Acme books crews into open slots.";
 });
 
 describe("queueOfferRoute", () => {
-  it("saves the founder's offer as theirs, keeping the evidence", async () => {
+  it("saves the founder's offer as theirs, without the old offer's reasoning", async () => {
     const res = await queueOfferRoute(post({ offer: "  new offer  " }), { id: "5" });
     expect(res.status).toBe(200);
     const offer = state.patched[0]!.patch["offer"] as Record<string, unknown>;
     expect(offer).toMatchObject({
       offer: "new offer",
-      steps: "a, b",
+      steps: "",
+      evidence: [],
       editedBy: "founder",
-      evidence: ["e"],
     });
+  });
+
+  it("refuses a founder's offer when there is no product brief", async () => {
+    state.brief = "";
+    expect((await queueOfferRoute(post({ offer: "x" }), { id: "5" })).status).toBe(422);
+    expect(state.patched).toHaveLength(0);
+  });
+
+  it("refuses a body that is not a JSON object", async () => {
+    expect((await queueOfferRoute(post(null), { id: "5" })).status).toBe(400);
   });
 
   it("writes a fresh one on regenerate", async () => {

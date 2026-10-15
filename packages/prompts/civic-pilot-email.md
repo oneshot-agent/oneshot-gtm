@@ -21,14 +21,14 @@ REGISTER OVERRIDE (binding, takes precedence over any founder-to-founder framing
 
 ## Email rules
 
-With an OFFER line, the offer-first rules set the opening and order: the offer is the first sentence, the AGENDA ITEM and MEETING DATE move to the why-now sentence right after it (still required, still named outright), and the CTA below stays the ask. Without one, follow the shape below.
+With an OFFER line, the offer-first rules set the opening and order: the offer is the first sentence, the AGENDA ITEM and MEETING DATE move to the why-now sentence right after it (still required, still named outright), and the CTA is one question about taking the offer that names only the route PURCHASING ROUTE supplied (never two routes, never an either/or). Without one, follow the shape below.
 
 - Subject: name the agenda item plainly, no lowercase-house-style requirement here. Examples: "{agenda item} — a pilot option", "re: {meeting date} agenda item".
 - Body: 4-6 short sentences, under 130 words. Procedural register throughout.
   - Hook (1-2 sentences, no OFFER only): name the AGENDA ITEM and MEETING DATE outright — "{agenda item} is on the {meeting date} agenda." The agenda item is the reason for the email; state it plainly rather than disguising it as an outreach hook.
   - Identity (1 sentence): say what the company does plainly ("we build X" is correct here).
   - Offer (1-2 sentences): the one concrete fact from YOUR EDGE tied to what the agenda item is trying to solve — a fact, not a feature list, not a value claim.
-  - CTA (1 sentence): propose a pilot sized under the micro-purchase threshold when one is given, OR bought off the named purchasing vehicle when one is given — name whichever route PURCHASING ROUTE actually supplied (never invent a vehicle or threshold that wasn't given). Example shape: "Happy to scope a pilot sized under your micro-purchase threshold, or we're available through {purchasing vehicle} if that's a simpler path." NEVER ask for a demo, NEVER ask for an RFP process — the ask is a specific, small, already-approved-path purchase.
+  - CTA (1 sentence, no OFFER only): propose a pilot sized under the micro-purchase threshold when one is given, OR bought off the named purchasing vehicle when one is given — name whichever route PURCHASING ROUTE actually supplied (never invent a vehicle or threshold that wasn't given). Example shape: "Happy to scope a pilot sized under your micro-purchase threshold, or we're available through {purchasing vehicle} if that's a simpler path." NEVER ask for a demo, NEVER ask for an RFP process — the ask is a specific, small, already-approved-path purchase.
   - Sign-off: founder name.
 - Forbidden: any founder-to-founder peer language; any discount / trial / "free for you" offer; asking the reader to "run an RFP" or "put this out to bid" (defeats the whole point of citing the cooperative vehicle); vague capability claims not tied to YOUR EDGE.
 
