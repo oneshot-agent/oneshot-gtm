@@ -95,6 +95,13 @@ describe("lintOffer", () => {
     );
     expect(flags).toEqual(expect.arrayContaining(["observation", "price", "link"]));
   });
+  it("flags a guarantee", () => {
+    const flags = lintOffer(
+      { ...good, level: "researched", offer: "guarantee same-day slots for the leeds depot" },
+      research,
+    );
+    expect(flags).toContain("guarantee");
+  });
   it("flags an offer that reuses the product's own wording", () => {
     const flags = lintOffer(
       { ...good, level: "researched", offer: "books jobs into open slots for the leeds depot" },

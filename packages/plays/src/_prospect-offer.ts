@@ -156,6 +156,8 @@ const BANNED: Array<[flag: string, pattern: RegExp]> = [
     /\b(you mentioned|i noticed|noticed (that|you|your)|saw (that|you|your)|i came across|congrat\w*|your recent post)\b/i,
   ],
   ["punctuation", /[!"“”—–]|--/],
+  // A promise the founder never made: the offer states an outcome, not a warranty.
+  ["guarantee", /\bguarantee\w*\b/i],
 ];
 
 function normalizeForMatch(text: string): string {
