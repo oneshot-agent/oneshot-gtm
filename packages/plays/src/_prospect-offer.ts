@@ -43,6 +43,8 @@ export interface ProspectOffer {
   version: string;
   /** Hash of the inputs it was written from. */
   inputHash: string;
+  /** Hash of the product config alone (one-liner, brief, terms): its claims rest on it. */
+  productHash?: string;
   /** Set when the founder wrote or edited it. Never re-derived. */
   editedBy?: "founder";
   derivedAt: string;
@@ -136,6 +138,18 @@ export function offerInputHash(
         cfg.productBrief ?? "",
         cfg.pilotOffer ?? "",
       ].join("\u0000"),
+    )
+    .digest("hex")
+    .slice(0, 16);
+}
+
+/** Hash of the product config an offer's claims rest on. */
+export function offerProductHash(
+  cfg: Pick<AppConfig, "productOneLiner" | "productBrief" | "pilotOffer">,
+): string {
+  return createHash("sha256")
+    .update(
+      [cfg.productOneLiner ?? "", cfg.productBrief ?? "", cfg.pilotOffer ?? ""].join("\u0000"),
     )
     .digest("hex")
     .slice(0, 16);
@@ -298,6 +312,7 @@ export async function deriveOffer(input: DeriveOfferInput): Promise<ProspectOffe
           ...parsed,
           version: OFFER_PROMPT_VERSION,
           inputHash,
+          productHash: offerProductHash(cfg),
           derivedAt: new Date().toISOString(),
         };
       }
@@ -347,18 +362,24 @@ export async function ensureOffer(input: DeriveOfferInput): Promise<ProspectOffe
  * The offer a draft is written around. A stored offer of the current version
  * is used as it stands, even though the play's enrichment adds research it
  * never saw: re-deriving on every draft would change the offer under the
- * founder's feet. Only a missing or outdated one is written here.
+ * founder's feet. A change to the product config is different: the offer's
+ * claims rest on the brief, so it is written again. A founder's own offer is
+ * always kept. With no brief there is no offer.
  */
 export async function offerForDraft(input: DeriveOfferInput): Promise<ProspectOffer | null> {
   if (!playMakesOffer(input.playName)) return null;
+  const cfg = input.cfg ?? loadConfig();
   const stored = (input.target as JsonRecord)["offer"];
+  if (isProspectOffer(stored) && stored.editedBy === "founder") return stored;
+  if (!cfg.productBrief?.trim()) return null;
   if (
     isProspectOffer(stored) &&
-    (stored.editedBy === "founder" || stored.version === OFFER_PROMPT_VERSION)
+    stored.version === OFFER_PROMPT_VERSION &&
+    stored.productHash === offerProductHash(cfg)
   ) {
     return stored;
   }
-  return deriveOffer(input);
+  return deriveOffer({ ...input, cfg });
 }
 
 /**

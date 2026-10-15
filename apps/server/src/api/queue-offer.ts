@@ -36,9 +36,11 @@ export async function queueOfferRoute(
   let body: { offer?: unknown; steps?: unknown; regenerate?: unknown };
   try {
     const raw = await req.text();
-    body = raw.trim() ? (JSON.parse(raw) as typeof body) : {};
+    const parsed: unknown = raw.trim() ? JSON.parse(raw) : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    body = parsed as typeof body;
   } catch {
-    return jsonResponse({ error: "body must be JSON" }, 400, req);
+    return jsonResponse({ error: "body must be a JSON object" }, 400, req);
   }
 
   let payload: Record<string, unknown>;

@@ -59,12 +59,21 @@ export function ProspectOffer({
   const apply = useMutation({
     mutationFn: async (body: { offer: string } | { regenerate: true }) => {
       await api.setQueueOffer(rowId, body);
-      return api.regenerateDraft(rowId);
+      try {
+        await api.regenerateDraft(rowId);
+        return { redrafted: true as const };
+      } catch (err) {
+        return { redrafted: false as const, message: (err as Error).message };
+      }
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       setEditing(false);
       void qc.invalidateQueries({ queryKey: ["queue"] });
-      toast.success("offer saved · draft rewritten around it, not sent");
+      if (result.redrafted) toast.success("offer saved · draft rewritten around it, not sent");
+      else
+        toast.error(
+          `offer saved, but the draft still carries the old one · ${result.message}. Regenerate the draft.`,
+        );
     },
     onError: (err) => {
       void qc.invalidateQueries({ queryKey: ["queue"] });

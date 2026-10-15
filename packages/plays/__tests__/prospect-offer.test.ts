@@ -141,7 +141,9 @@ describe("deriveOffer", () => {
 
 describe("offerForDraft", () => {
   it("keeps a stored offer of the current version without a model call", async () => {
+    const { offerProductHash } = await import("../src/_prospect-offer.ts");
     const stored = {
+      productHash: offerProductHash(cfg),
       ...good,
       level: "researched" as const,
       version: OFFER_PROMPT_VERSION,
@@ -220,9 +222,20 @@ describe("opensOnObservation", async () => {
   });
   it("is a lint flag only when the draft was given an offer", () => {
     const body = "I noticed your depot. We help.";
-    expect(lintEmail("s", body, 110, undefined, { offerFirst: true })).toContain(
+    expect(lintEmail("s", body, 110, undefined, { offer: "book leeds crews same day" })).toContain(
       "opens-on-observation",
     );
     expect(lintEmail("s", body, 110, undefined, {})).not.toContain("opens-on-observation");
+  });
+  it("flags an opening that never makes the offer", () => {
+    const offer = "get the leeds depot's crews booked into same-day slots";
+    const flagsFor = (body: string) => lintEmail("s", body, 110, undefined, { offer });
+    expect(flagsFor("Could we connect next week? It's brief.")).toContain("opens-without-offer");
+    expect(flagsFor("Want me to fill your open slots? It's brief.")).not.toContain(
+      "opens-without-offer",
+    );
+    expect(flagsFor("Same-day slots for the Leeds depot crews, booked for you.")).not.toContain(
+      "opens-without-offer",
+    );
   });
 });

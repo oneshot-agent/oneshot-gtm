@@ -2688,7 +2688,7 @@ export function buildFollowUpEmail(opts: {
       maxBodyWords: ctx.maxBodyWords ?? 100,
       followUp: true,
       demoDay,
-      offerFirst: introOffer !== null && offerLines !== null,
+      offer: offerLines ? (introOffer?.offer ?? null) : null,
       extraLint: (draft) => lintOpenerFrequency(draft.body, ctx.recentEmailBodies ?? []),
     });
     return {

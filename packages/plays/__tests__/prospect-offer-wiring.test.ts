@@ -64,7 +64,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
       return {
         content: system.startsWith("prospect-offer")
           ? JSON.stringify(OFFER)
-          : JSON.stringify({ subject: "s", body: "b" }),
+          : JSON.stringify({ subject: "s", body: `I can ${OFFER.offer}. Worth it?` }),
         provider: "t",
         model: "t",
       };
@@ -102,7 +102,14 @@ describe("prospect offer in a play run", () => {
   });
 
   it("uses a stored offer as it stands", async () => {
+    const { offerProductHash } = await import("../src/_prospect-offer.ts");
+    const productHash = offerProductHash({
+      productOneLiner: "thing",
+      productBrief: "Thing drafts quotes, checks price lists and sends them for approval.",
+      pilotOffer: "a month on one team",
+    });
     const stored = {
+      productHash,
       ...OFFER,
       offer: "the stored one",
       version: "offer-v1",
