@@ -64,6 +64,7 @@ import {
   type ReaderRole,
 } from "./_linkedin-evidence.ts";
 import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
+import { offerBlock, offerOf } from "./_prospect-offer.ts";
 import {
   draftLinkedInNote,
   LINKEDIN_NOTE_HARD_LIMIT,
@@ -2489,6 +2490,29 @@ export function getStep0MetadataField(
 }
 
 /**
+ * The prospect offer a sequence carries: the first send's (step-0 metadata),
+ * else the offer on the queue row that was sent. Null for a sequence that
+ * started before prospect offers existed.
+ */
+export function sequenceOffer(
+  prospect: { id: number; email: string | null },
+  playName: string,
+): { offer: string; steps: string } | null {
+  const offer = getStep0MetadataField(prospect.id, playName, "offer");
+  if (offer) {
+    return { offer, steps: getStep0MetadataField(prospect.id, playName, "offerSteps") ?? "" };
+  }
+  if (!prospect.email) return null;
+  try {
+    const payload = getLedger().latestSentQueuePayload(playName, prospect.email);
+    const stored = payload ? offerOf(payload) : null;
+    return stored ? { offer: stored.offer, steps: stored.steps } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The prospect's demo day for this play, judged now. Read from the intro's
  * step-0 metadata (`demoDayMonth`, else `prospectCohort`), then from the sent
  * queue row, so a follow-up weeks after the intro sees whether it has passed.
@@ -2563,8 +2587,6 @@ export function buildFollowUpEmail(opts: {
    * prompt decides how it lands, so it is never withheld.
    */
   admission?: boolean;
-  /** Add `PILOT OFFER` from `cfg.pilotOffer` (the pilot + close step). */
-  pilotOffer?: boolean;
   /**
    * Hold the draft when it carries a price or a link (`hardBanFlags`): the
    * preview flags it, so the dashboard cannot send it, and the unattended
@@ -2618,6 +2640,12 @@ export function buildFollowUpEmail(opts: {
     // may be behind them by the time this step sends.
     const demoDay = prospectDemoDay(ctx.prospect, opts.playName);
     const demoDayText = demoDayLine(demoDay);
+    // OFFER: the same offer the first email made, read back from its send
+    // record, with the founder's terms and the product facts
+    // (_prospect-offer.ts). A sequence that started before prospect offers
+    // existed gets the terms and product facts alone.
+    const introOffer = sequenceOffer(ctx.prospect, opts.playName);
+    const offerLines = offerBlock(introOffer, ctx.cfg, opts.playName);
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,
@@ -2629,9 +2657,7 @@ export function buildFollowUpEmail(opts: {
       ...(opts.admission && ctx.cfg.founderAdmission?.trim()
         ? [`ADMISSION (true, about the sender): ${ctx.cfg.founderAdmission.trim()}`]
         : []),
-      ...(opts.pilotOffer && ctx.cfg.pilotOffer?.trim()
-        ? [`PILOT OFFER: ${ctx.cfg.pilotOffer.trim()}`]
-        : []),
+      ...(offerLines ? ["", offerLines] : []),
       ...(demoDayText ? [demoDayText] : []),
       ...(priorBlock ? ["", priorBlock] : []),
       ...(angleBlock ? ["", angleBlock] : []),
@@ -2662,6 +2688,7 @@ export function buildFollowUpEmail(opts: {
       maxBodyWords: ctx.maxBodyWords ?? 100,
       followUp: true,
       demoDay,
+      offer: offerLines ? (introOffer?.offer ?? null) : null,
       extraLint: (draft) => lintOpenerFrequency(draft.body, ctx.recentEmailBodies ?? []),
     });
     return {
@@ -2717,7 +2744,6 @@ export function pilotOrBreakup(opts: {
     promptName: "pilot-close-followup",
     contextLines: opts.contextLines,
     prospectContext: true,
-    pilotOffer: true,
     hardBans: true,
   });
   const breakup =
@@ -3213,14 +3239,14 @@ function firstTouch(
   };
 }
 
-/** One rule per kind of reader: the goal a close may name is theirs, in their terms. */
+/** One rule per kind of reader: what a close offers is theirs, in their terms. */
 function closeGuidance(role: ReaderRole): string[] {
   return role === "unknown"
     ? [
-        "READER_ROLE is unknown: describe the product in one sentence and end with the easy out. Name no goal.",
+        "READER_ROLE is unknown: make the OFFER when one is given; otherwise describe the product in one sentence. End with the easy out.",
       ]
     : [
-        `READER_ROLE: ${role}. Name one concrete goal the product could carry out for a ${role}, built only from what PRODUCT_BRIEF says it can do. If the brief gives you nothing for them, name no goal.`,
+        `READER_ROLE: ${role}. Make the OFFER when one is given. Otherwise name one concrete outcome the product could deliver for a ${role}, built only from what PRODUCT_BRIEF says it can do; if the brief gives you nothing for them, name none.`,
       ];
 }
 
@@ -3258,6 +3284,11 @@ async function buildLinkedInMessage(
     now,
   });
   const voice = voiceBlock(which === "first" ? "followup" : "breakup");
+  // The same offer every other touch of this sequence makes; the brief is
+  // already on the last message's input.
+  const offerLines = offerBlock(sequenceOffer(ctx.prospect, playName), ctx.cfg, playName, {
+    brief: false,
+  });
   const learned = learningBlock({
     channel: "linkedin",
     stage: "follow_up",
@@ -3270,6 +3301,7 @@ async function buildLinkedInMessage(
     `FOUNDER: ${ctx.cfg.founderName ?? ""}`,
     `PRODUCT: ${ctx.cfg.productOneLiner ?? ""}`,
     ...(which === "last" ? [`PRODUCT_BRIEF: ${ctx.cfg.productBrief ?? "(none)"}`] : []),
+    ...(offerLines ? [offerLines] : []),
     `PERSON: ${ctx.prospect.name ?? "them"}${ctx.prospect.title ? `, ${ctx.prospect.title}` : ""}${
       ctx.prospect.company ? ` at ${ctx.prospect.company}` : ""
     }`,

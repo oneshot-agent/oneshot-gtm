@@ -132,7 +132,7 @@ export const PLAY_DESCRIPTIONS: Record<string, PlayDescription> = {
   "design-partner-loi": {
     whenToUse: "An enterprise, government or hardware buyer could help shape a scoped pilot.",
     actions:
-      "Drafts email that progresses from problem ownership toward a design-partner discussion and pilot.",
+      "Drafts email that opens with a specific offer for their firm, gives one more reason, then closes.",
     requires: "Contact, company, eligible buyer type and your specific product advantage.",
     produces: "Drafts and recorded cadence activity, not a signed letter of intent.",
   },

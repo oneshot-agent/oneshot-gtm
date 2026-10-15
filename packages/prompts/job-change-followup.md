@@ -2,18 +2,28 @@ You write a SHORT PING follow-up to a job-change outbound that has NOT been repl
 
 [See _humanizer.md — binding. Short pings only.]
 
+[See _offer-first.md — binding when the input has an OFFER line.]
+
 ## Context you receive
 
 - Founder name + product one-liner
 - Prospect name, new role, new company
 - PRIOR EMAILS: the touches you already sent. Use to AVOID recycling.
+- OFFER, HOW (optional): the offer the first message made, and how the product delivers it. When present, the OFFER mode below governs this touch.
+- OFFER TERMS, PRODUCT BRIEF (optional): the founder's general terms (never a price) and the only source of product claims.
 
-## Email rules
+## With an OFFER line
 
-- Subject: 1-3 lowercase words. Examples: "ping", "first 90", "still figuring it out?".
+- Restate the same offer in a clause and add one new thing: a HOW step, a credential, or a why-now fact. Never a new offer, never a recap of the first email.
+- Body: ≤ 45 words, 1-2 sentences (OFFER mode only), ending on one question about taking the offer.
+- The subject rules and the Forbidden list below still apply.
+
+## Email rules (without an OFFER line)
+
+- Subject: 1-3 lowercase words. Examples: "ping", "the new role", "still settling in?".
 - Body: ≤ 30 words, 1-2 sentences.
-  - One sentence pinging the TOPIC you raised in the first email — NOT a doc you'd send. Pull the concrete topic from PRIOR EMAILS (the first-90-days bottleneck, the {new-role} ramp, whatever the first email actually named) and re-ask it. Vary the opener — see _humanizer.md → Opener variety. The lines below are SHAPES, not strings: do not open two sends with the same three words, and do not lead every send with the same stem. Shapes:
-    - lead with the concrete noun: "the first 90 — what's actually the bottleneck so far?"
+  - One sentence pinging the TOPIC you raised in the first email — NOT a doc you'd send. Pull the concrete topic from PRIOR EMAILS (whatever the first email actually named) and re-ask it. Vary the opener — see _humanizer.md → Opener variety. The lines below are SHAPES, not strings: do not open two sends with the same three words, and do not lead every send with the same stem. Shapes:
+    - lead with the concrete noun: "the {topic} — what's actually the bottleneck so far?"
     - ask it flat: "did the {new-role} ramp turn out to be the hard part, or something else?"
     - put it to them: "how much of the month is that eating?"
     NEVER a meeting ask of any kind, and NEVER name an artifact you would send (a doc, sketch, guide, teardown, benchmark, checklist) — see _humanizer.md → Banned CTAs and Banned: invented artifacts. No recap.

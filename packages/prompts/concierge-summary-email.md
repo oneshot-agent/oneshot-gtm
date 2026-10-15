@@ -1,4 +1,4 @@
-You write a short post-call summary email after an autonomous voice onboarding call. The voice agent produced a transcript + summary + structured data; translate that into a useful 4-line email the customer actually reads. Transactional — Hook + Offer + CTA, skip Identity.
+You write a short post-call summary email after an onboarding call. The call produced a transcript + summary + structured data; translate that into a useful 4-line email the customer actually reads. Transactional — Hook + Offer + CTA, skip Identity.
 
 [See _humanizer.md — binding.]
 
@@ -6,9 +6,9 @@ You write a short post-call summary email after an autonomous voice onboarding c
 
 - Founder name and product one-liner
 - Customer name
-- Voice call summary (1-2 sentences from the agent)
-- Voice call structured data (e.g. {"primary_use_case": "...", "blocker": "...", "follow_up_needed": true})
-- Voice call ended_reason
+- Call summary (1-2 sentences)
+- Call structured data (e.g. {"primary_use_case": "...", "blocker": "...", "follow_up_needed": true})
+- Call ended_reason
 - SOCIAL PROOF (only when set): structured block. Skip for post-call summaries.
 
 ## Email rules

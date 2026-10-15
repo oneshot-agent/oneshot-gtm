@@ -841,7 +841,7 @@ describe("evidence-aware prompts (#790)", () => {
     expect(modelInputs.at(-1)).not.toContain("COMPANY_THEY_RUN");
   });
 
-  it("the close carries the brief and role; an unknown role carries no goal", async () => {
+  it("the close carries the brief and role; an unknown role names no outcome", async () => {
     sql(`UPDATE prospects SET title = 'Head of Growth'`);
     firstTouch({});
     await sendInvite(inviteOk("already_connected"));
@@ -853,13 +853,13 @@ describe("evidence-aware prompts (#790)", () => {
     const known = modelInputs.at(-1)!;
     expect(known).toContain("READER_ROLE: growth or operations");
     expect(known).toContain("PRODUCT_BRIEF:");
-    expect(known).toMatch(/Name one concrete goal/);
+    expect(known).toMatch(/name one concrete outcome the product could deliver/);
 
     sql(`UPDATE prospects SET title = NULL`);
     await previewPayload();
     const unknown = modelInputs.at(-1)!;
     expect(unknown).toContain("READER_ROLE: unknown");
-    expect(unknown).toMatch(/Name no goal/);
-    expect(unknown).not.toMatch(/Name one concrete goal/);
+    expect(unknown).toMatch(/otherwise describe the product in one sentence/);
+    expect(unknown).not.toMatch(/name one concrete outcome/);
   });
 });

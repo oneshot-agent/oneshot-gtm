@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/bba2fb2d-35c3-4171-a358-fd3a987c24bc
 - Finders watch public signals: a launch, a funding round, a new licence, a starred repo.
 - A gate judges each person against your ICP and rejects who does not fit. You can overrule it.
 - You approve rows in a queue. Approval sends nothing.
-- Plays draft from the signal, in your voice. You send one, or run a batch.
+- Each message opens with an offer specific to their firm, written from research and your product brief, in your voice. You send one, or run a batch. See [the prospect offer](./docs/prompt-inputs.md#the-prospect-offer).
 - Cadences follow up. A reply on any channel stops them.
 
 Every paid call leaves a signed receipt, so spend per reply is a record and not an estimate.

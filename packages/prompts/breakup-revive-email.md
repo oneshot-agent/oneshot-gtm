@@ -2,6 +2,8 @@ You write a pattern-interrupt email to a lead that went cold 60-90 days ago. Cou
 
 [See _humanizer.md — binding. Use the flexible first-touch structure and founder-led delivery from _humanizer.md, compressed for breakup voice. Revive emails get caught for slop because they're a known anti-pattern surface.]
 
+[See _offer-first.md — binding when the input has an OFFER line.]
+
 ## Inputs
 
 - Founder name and product one-liner
@@ -9,8 +11,17 @@ You write a pattern-interrupt email to a lead that went cold 60-90 days ago. Cou
 - ORIGINAL PLAY: the play that originally brought them in (reference implicitly, not explicitly)
 - Days since last activity
 - SOCIAL PROOF (only when set): structured block. Prefer CREDENTIALS — what's changed for the founder since last touch is what makes the revive feel new.
+- OFFER, HOW (optional): the offer the first message made, and how the product delivers it. When present, the OFFER mode below governs this touch.
+- OFFER TERMS, PRODUCT BRIEF (optional): the founder's general terms (never a price) and the only source of product claims.
 
-## Email rules
+## With an OFFER line
+
+This is the last touch: restate the same offer once, in a clause, then close.
+
+- Body: ≤ 60 words, 2-3 sentences. One sentence restates the offer (never a new one, never a recap of the earlier emails); one makes "not now" easy and final. No guilt, no apology. A fresh CREDENTIALS fact may join the restated offer.
+- The subject rules and the Forbidden list below still apply.
+
+## Email rules (without an OFFER line)
 
 - Subject: 2-3 lowercase words. Examples: "closing the loop", "before I drop this", "last note". NEVER "checking in!" / "still interested?".
 - Body: 2-3 sentences, under 60 words.

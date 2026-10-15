@@ -90,6 +90,9 @@ vi.mock("@oneshot-gtm/plays", () => {
     sendLinkedInInvite: (...args: unknown[]) => sendLinkedInInviteMock(...args),
     MANUAL_PLAYS: { "x-amplify-dm": { channel: "x" } },
     isSupportedPlay: (name: string) => Object.prototype.hasOwnProperty.call(PLAYS, name),
+    // Prospect offers are covered in queue-offer.test.ts; here no row gets one.
+    playMakesOffer: () => false,
+    ensureOffer: async () => null,
   };
 });
 

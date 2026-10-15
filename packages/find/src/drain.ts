@@ -19,7 +19,7 @@ import {
   PLAYS,
   sendLinkedInInvite,
 } from "@oneshot-gtm/plays";
-import { resolveQueueTarget } from "./queue-target.ts";
+import { resolveQueueTargetWithOffer } from "./queue-offer.ts";
 
 export interface DrainOpts {
   playName: string;
@@ -242,7 +242,7 @@ async function dispatchOneTarget(opts: DrainOpts, row: QueueRow): Promise<DrainD
   // An X row outside the amplifier play gets the generic X DM. It is sent by
   // hand (Mark sent), so the drain only drafts it.
   if (channelOf(row.channel) === "x" && row.play_name !== "x-amplify-dm") {
-    const target = resolveQueueTarget(row);
+    const target = await resolveQueueTargetWithOffer(row);
     const dm = await draftXDm({
       id: row.id,
       playName: row.play_name,
@@ -263,7 +263,7 @@ async function dispatchOneTarget(opts: DrainOpts, row: QueueRow): Promise<DrainD
     throw new Error("Public replies require the community-reply play");
   const play = PLAYS[opts.playName];
   if (!play) throw new Error(`drain: unsupported play '${opts.playName}'`);
-  const target = resolveQueueTarget(row);
+  const target = await resolveQueueTargetWithOffer(row);
   const result = await play.run({
     dryRun: opts.dryRun,
     targets: [target],
@@ -347,7 +347,7 @@ export type { ProspectRecord };
  * otherwise one is drafted, and sent only when nothing flagged it.
  */
 async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDraft> {
-  const target = resolveQueueTarget(row);
+  const target = await resolveQueueTargetWithOffer(row);
   const linkedInRow = {
     id: row.id,
     playName: row.play_name,

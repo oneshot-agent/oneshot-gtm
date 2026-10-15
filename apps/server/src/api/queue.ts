@@ -39,6 +39,7 @@ import {
   rankPendingRows,
   rederiveQueueRow,
   resolveQueueTarget,
+  ensureQueueRowOffer,
   safeEnrichCompany,
   scheduleNewsfeedOnApproval,
   type MovedFrom,
@@ -1142,7 +1143,7 @@ async function regenerateDraftInner(
   const id = Number.parseInt(params["id"] ?? "", 10);
   if (!Number.isFinite(id)) return jsonResponse({ error: "bad id" }, 400, req);
   const ledger = getLedger();
-  const row = ledger.getQueueRow(id);
+  let row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
   // Once sent, last_draft_json IS the frozen sent content. Never overwrite it.
   if (row.status === "sent") return jsonResponse({ error: "row already sent" }, 400, req);
@@ -1156,6 +1157,9 @@ async function regenerateDraftInner(
     return jsonResponse({ error: "Public replies require the community-reply play" }, 400, req);
   let target: unknown;
   try {
+    // The row's offer is made current first: the draft opens with it. The
+    // row is re-read so the payload check below compares against it.
+    row = await ensureQueueRowOffer(row);
     target = resolveQueueTarget(row);
   } catch (err) {
     const error =

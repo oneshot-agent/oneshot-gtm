@@ -429,6 +429,62 @@ export function closingEitherOrQuestion(body: string, sigLines?: string[]): bool
 
 const RULE_OF_THREE = /(\b\w+\b),\s+(\b\w+\b),\s+and\s+\b\w+\b/;
 
+const OBSERVATION_OPENER =
+  /^(?:i (?:noticed|saw|see|came across|was looking at|read|stumbled on|have been following)\b|(?:just )?saw (?:that|you|your)\b|noticed\b|you mentioned\b|congrat|loved\b|great (?:post|launch|talk|episode|article)\b|your (?:recent )?(?:post|launch|talk|article|episode|announcement)\b)/i;
+
+/**
+ * True when the first sentence after any greeting describes the reader back
+ * to them ("I noticed…", "You mentioned…", "Congrats on…") instead of making
+ * the offer. Keyed on the output only.
+ */
+export function opensOnObservation(body: string): boolean {
+  const lines = body.split("\n").map((l) => l.trim());
+  const start = lines.findIndex((l) => l && !/^(?:hey|hi|hello|dear)\b[^.!?]{0,40},?$/i.test(l));
+  if (start < 0) return false;
+  const first =
+    lines
+      .slice(start)
+      .join(" ")
+      .split(/(?<=[.!?])\s/)[0] ?? "";
+  return OBSERVATION_OPENER.test(first.trim());
+}
+
+const OFFER_VERB =
+  /\b(?:i can|i could|i(?:'d| would) (?:like|love|be glad) to|i want to|i(?:'ll| will)|want me to|let me|happy to|we can|we could|can i|shall i|would you like me to|i(?:'m| am) offering)\b/i;
+
+const STOPWORDS = new Set(
+  "with that this from your their them they have into over about across before after while would could should which where there these those every".split(
+    " ",
+  ),
+);
+
+function contentWords(text: string): Set<string> {
+  return new Set(
+    (text.toLowerCase().match(/[a-z][a-z'-]{3,}/g) ?? []).filter((w) => !STOPWORDS.has(w)),
+  );
+}
+
+/**
+ * True when the first sentence after any greeting makes the offer: it offers
+ * to do something ("I can…", "Want me to…") or names the offer itself (two
+ * of its content words). Keyed on the output and the offer text only.
+ */
+export function opensWithOffer(body: string, offer: string): boolean {
+  const lines = body.split("\n").map((l) => l.trim());
+  const start = lines.findIndex((l) => l && !/^(?:hey|hi|hello|dear)\b[^.!?]{0,40},?$/i.test(l));
+  if (start < 0) return true;
+  const first =
+    lines
+      .slice(start)
+      .join(" ")
+      .split(/(?<=[.!?])\s/)[0] ?? "";
+  if (OFFER_VERB.test(first)) return true;
+  const offerWords = contentWords(offer);
+  let shared = 0;
+  for (const w of contentWords(first)) if (offerWords.has(w)) shared++;
+  return shared >= 2;
+}
+
 export function lintEmail(
   subject: string,
   body: string,
@@ -440,9 +496,15 @@ export function lintEmail(
    * `demoDay`: the prospect's demo day, when known; a body that mentions demo
    * day after it has passed is flagged `stale-demo-day`.
    */
-  opts: { followUp?: boolean; demoDay?: DemoDay | null } = {},
+  opts: { followUp?: boolean; demoDay?: DemoDay | null; offer?: string | null } = {},
 ): string[] {
   const flags: string[] = [];
+  // The draft was given an OFFER: its first sentence must make it, not
+  // describe the reader back to them.
+  if (opts.offer) {
+    if (opensOnObservation(body)) flags.push("opens-on-observation");
+    else if (!opensWithOffer(body, opts.offer)) flags.push("opens-without-offer");
+  }
   if (subject.length === 0) flags.push("empty-subject");
   if (subject.length > 60) flags.push("subject-too-long");
   if (subjectShouty(subject)) flags.push("subject-shouty");
@@ -968,6 +1030,8 @@ export async function draftEmailFromPrompt(opts: {
   demoDay?: DemoDay | null;
   followUp?: boolean;
   hardBans?: boolean;
+  /** The offer the input carries; see `opensOnObservation` and `opensWithOffer`. */
+  offer?: string | null;
 }): Promise<DraftedEmail> {
   const system = loadPrompt(opts.promptName) + signatureDirective();
   const messages: DraftMessages = [
@@ -1034,6 +1098,10 @@ const WRITING_REPAIRS: Record<string, string> = {
   "hard-ban:price": "Remove price and cost figures, rather than spelling out the same offer.",
   "hard-ban:discount-offer": "Remove discount and free-trial offers entirely.",
   "opener-overused": "Use a different opening structure from the supplied recent emails.",
+  "opens-on-observation":
+    "Open with the OFFER: the first sentence after the greeting says what you will do for them. Drop the observation about them or move it after the offer as a short why-now clause.",
+  "opens-without-offer":
+    "Open with the OFFER: the first sentence after the greeting offers to do it for them, in plain words. Move anything else after it.",
 };
 
 /** One bounded rewrite with the original context; revalidate every check before adopting it. */
@@ -1046,6 +1114,8 @@ export async function repairWritingLints(
     demoDay?: DemoDay | null;
     followUp?: boolean;
     hardBans?: boolean;
+    /** The offer the draft was given: an opening that does not make it is a writing flag. */
+    offer?: string | null;
     /** Additional checks are re-run, but only allowlisted writing flags receive repair instructions. */
     extraLint?: (draft: DraftedEmail) => string[];
     skipFlags?: readonly string[];
@@ -1056,6 +1126,7 @@ export async function repairWritingLints(
       ...lintEmail(d.subject, d.body, opts.maxBodyWords ?? Infinity, opts.maxBodySentences, {
         demoDay: opts.demoDay,
         followUp: opts.followUp,
+        offer: opts.offer,
       }),
       ...(opts.hardBans ? hardBanFlags(d.body) : []),
       ...(opts.extraLint?.(d) ?? []),

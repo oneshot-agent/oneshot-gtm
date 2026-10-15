@@ -16,6 +16,9 @@ const candidates = [
 // downstream `]` if a prompt accidentally has another bracket on the line.
 const HUMANIZER_REF_RE = /^\[See _humanizer\.md[^\]]*\]\s*$/gm;
 
+// `[See _offer-first.md ...]`: inlines the offer-first rules (outreach prompts).
+const OFFER_FIRST_REF_RE = /^\[See _offer-first\.md[^\]]*\]\s*$/gm;
+
 let humanizerCache: string | null = null;
 
 // Final (post-humanizer-inline) prompt text by name. Prompt files ship with
@@ -57,7 +60,11 @@ export function loadPrompt(name: string, options: { humanizer?: "followup" } = {
   // Inline it here so every prompt that opts in (by including the reference)
   // actually receives the humanizer rules.
   const humanizer = options.humanizer === "followup" ? loadPrompt("_humanizer-followup") : null;
-  const final = raw.replace(HUMANIZER_REF_RE, () => humanizer ?? loadHumanizer());
+  // Outreach prompts opt into the offer-first rules the same way; the rules
+  // apply only when the input carries an OFFER line.
+  const final = raw
+    .replace(HUMANIZER_REF_RE, () => humanizer ?? loadHumanizer())
+    .replace(OFFER_FIRST_REF_RE, () => loadPrompt("_offer-first").trimEnd());
   promptCache.set(cacheKey, final);
   return final;
 }

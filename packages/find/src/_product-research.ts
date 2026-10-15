@@ -99,7 +99,8 @@ function seedFor(
   // signal/identity. Never reuse one person's dossier for a colleague or a
   // different stargazer of the same repository.
   const identityKey = email?.toLowerCase() ?? name?.toLowerCase() ?? `queue:${row.id}`;
-  const cacheKey = productKey ? `${productKey}|contact:${identityKey}` : null;
+  // `v2`: the research question changed; answers to the old one re-research.
+  const cacheKey = productKey ? `v2|${productKey}|contact:${identityKey}` : null;
   return {
     name,
     company,
@@ -256,9 +257,11 @@ export async function researchQueueRowProduct(
         {
           depth: "quick",
           topic: [
-            `Research the current product and company behind this qualified prospect.`,
-            `Identify what they are building, the product ecosystem, architecture/integrations, business model,`,
-            `and whether payments are a product capability, monetization layer, or separate product.`,
+            `Research the company behind this qualified prospect, from first principles.`,
+            `What it sells and to whom; how it delivers (operations, channels, suppliers, systems);`,
+            `who regulates or certifies it; its scale and stage (headcount, locations, funding, revenue signals);`,
+            `what changed in the last twelve months (launches, funding, hires, open roles, expansions, incidents);`,
+            `and what this prospect's role is accountable for there.`,
             `Use current public sources, distinguish sourced facts from inference, and include source URLs.`,
             `Subject: ${JSON.stringify({ name: seed.name, company: seed.company, urls: seed.urls, known: seed.known })}`,
           ].join(" "),
