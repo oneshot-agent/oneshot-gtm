@@ -66,6 +66,7 @@ const SEEDS = [
   "/meetings",
   "/setup",
   "/setup/domains",
+  "/direct-mail",
   "/linkedin/invites",
   "/linkedin/touched",
 
@@ -100,12 +101,15 @@ const SEEDS = [
   "/measure/cac",
   "/measure/rocs",
   "/measure/rocs-by-goal",
+  "/measure/linkedin",
   "/measure/cac?sinceDays=30",
   "/measure/rocs?sinceDays=30",
   "/measure/rocs-by-goal?sinceDays=30",
+  "/measure/linkedin?sinceDays=30",
   "/measure/cac?sinceDays=7",
   "/measure/rocs?sinceDays=7",
   "/measure/rocs-by-goal?sinceDays=7",
+  "/measure/linkedin?sinceDays=7",
 
   // The sparkline series. The page clamps its window to [7, 90] before asking,
   // so all-time and 30d both resolve to 30 and only two URLs exist.
@@ -129,6 +133,36 @@ const SEEDS = [
 function expand(url: string, body: unknown): string[] {
   if (typeof body !== "object" || body === null) return [];
 
+  // Expanded histories and reply threads read the prospect's invitation state.
+  if (url.startsWith("/cadences") || url === "/replies" || /^\/queue\/\d+$/.test(url)) {
+    const data = body as {
+      cadences?: Array<{
+        prospectId: number;
+        playName: string;
+        nextStepChannel: string;
+        status: string;
+      }>;
+      threads?: Array<{ prospectId: number | null }>;
+      prospect?: { id: number } | null;
+    };
+    const ids = new Set([
+      ...(data.cadences ?? []).map((c) => c.prospectId),
+      ...(data.threads ?? []).map((t) => t.prospectId),
+      data.prospect?.id,
+    ]);
+    return [
+      ...[...ids]
+        .filter((id): id is number => id != null)
+        .map((id) => `/prospects/${id}/linkedin-friend`),
+      ...(data.cadences ?? [])
+        .filter((c) => c.status === "active" && c.nextStepChannel === "direct_mail")
+        .map(
+          (c) =>
+            `/direct-mail?prospectId=${c.prospectId}&playName=${encodeURIComponent(c.playName)}`,
+        ),
+    ];
+  }
+
   if (url.startsWith("/receipts?")) {
     const { receipts } = body as { receipts?: Array<{ id: number }> };
     // Clicking a row opens its detail. Every row is clickable, so every row's
@@ -148,7 +182,7 @@ function expand(url: string, body: unknown): string[] {
       process.exit(1);
     }
     // Every row opens a detail drawer.
-    return (rows ?? []).map((r) => `/queue/${r.id}`);
+    return (rows ?? []).flatMap((r) => [`/queue/${r.id}`, `/queue/${r.id}/dossier`]);
   }
 
   if (url.startsWith("/queue?") && !url.includes("play=")) {

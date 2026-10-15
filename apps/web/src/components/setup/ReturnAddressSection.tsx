@@ -5,15 +5,12 @@ import { MailAddressForm, blankMailAddress } from "../MailAddressForm.tsx";
 import { mailAction } from "../DirectMailPanel.tsx";
 import { Button } from "../primitives/Button.tsx";
 import { readOnly } from "../../lib/readOnly.ts";
+import { getJson } from "../../api/client.ts";
 export function ReturnAddressSection({ founderName }: { founderName: string }) {
   const cache = useQueryClient();
   const { data } = useQuery<{ returnAddress: PostalAddress | null }>({
     queryKey: ["direct-mail", "return"],
-    queryFn: async () => {
-      const r = await fetch("/api/direct-mail");
-      if (!r.ok) throw new Error("Could not load return address");
-      return r.json();
-    },
+    queryFn: () => getJson<{ returnAddress: PostalAddress | null }>("/direct-mail"),
   });
   const [address, setAddress] = useState({ ...blankMailAddress, name: founderName });
   const [dirty, setDirty] = useState(false),

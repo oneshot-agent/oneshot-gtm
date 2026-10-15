@@ -3,7 +3,6 @@ import { ExternalLink } from "lucide-react";
 import { useState } from "react";
 import type { DossierPostView, QueueDossierView } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
-import { IS_DEMO } from "../../api/demo.ts";
 import { timeAgo } from "../../lib/cn.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
 import { Disclosure } from "../ledger/CaseList.tsx";
@@ -231,7 +230,7 @@ export function PersonDossier({ rowId }: { rowId: number }) {
   const query = useQuery({
     queryKey: ["queue-dossier", rowId],
     queryFn: () => api.queueDossier(rowId),
-    enabled: open && !masked && !IS_DEMO,
+    enabled: open && !masked,
     staleTime: 60_000,
   });
   return (
@@ -239,10 +238,6 @@ export function PersonDossier({ rowId }: { rowId: number }) {
       <Disclosure label="Dossier" onToggle={setOpen}>
         {masked ? (
           <p className="mt-2 text-[12px] text-ink-muted">Dossier hidden in privacy mode.</p>
-        ) : IS_DEMO ? (
-          <p className="mt-2 text-[12px] text-ink-muted">
-            The full dossier is not part of the demo.
-          </p>
         ) : query.isPending ? (
           <p className="mt-2 text-[12px] text-ink-muted">Loading dossier…</p>
         ) : query.isError ? (

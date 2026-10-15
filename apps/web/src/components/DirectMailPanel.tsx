@@ -7,16 +7,11 @@ import { Textarea } from "./primitives/Field.tsx";
 import { Modal } from "./primitives/Modal.tsx";
 import { MailAddressForm, blankMailAddress } from "./MailAddressForm.tsx";
 import { readOnly } from "../lib/readOnly.ts";
+import { getJson, postJson } from "../api/client.ts";
+import { demoWrite, IS_DEMO } from "../api/demo.ts";
 
-export async function mailAction(name: string, body: unknown) {
-  const response = await fetch(`/api/direct-mail/${name}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error ?? "Mail action failed");
-  return result;
+export async function mailAction<T = Record<string, unknown>>(name: string, body: unknown) {
+  return postJson<T>(`/direct-mail/${name}`, body);
 }
 interface MailContext {
   configuredMail?: boolean;
@@ -74,14 +69,10 @@ export function DirectMailPanel({
   const queryKey = ["direct-mail", prospect.prospectId, prospect.playName];
   const { data, error: loadError } = useQuery<MailContext>({
     queryKey,
-    queryFn: async () => {
-      const r = await fetch(
-        `/api/direct-mail?prospectId=${prospect.prospectId}&playName=${encodeURIComponent(prospect.playName)}`,
-      );
-      const result = await r.json();
-      if (!r.ok) throw new Error(result.error);
-      return result;
-    },
+    queryFn: () =>
+      getJson<MailContext>(
+        `/direct-mail?prospectId=${prospect.prospectId}&playName=${encodeURIComponent(prospect.playName)}`,
+      ),
   });
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -198,6 +189,7 @@ export function DirectMailPanel({
                       disabled={disabled || !editable}
                       onClick={() =>
                         void run(async () => {
+                          if (IS_DEMO) demoWrite("/direct-mail/upload");
                           await mailAction("address", { ...identity, address: to });
                           setEditingTo(false);
                         })
@@ -324,8 +316,11 @@ export function DirectMailPanel({
                       disabled={disabled}
                       onClick={() =>
                         void run(async () => {
-                          const r = await mailAction("generate", identity);
-                          setBody(r.preparation.body);
+                          const r = await mailAction<{ preparation: MailPreparation }>(
+                            "generate",
+                            identity,
+                          );
+                          setBody(r.preparation.body ?? "");
                         })
                       }
                     >
@@ -554,11 +549,7 @@ export function DirectMailHistory() {
   const cache = useQueryClient();
   const { data } = useQuery<MailContext>({
     queryKey: ["direct-mail", "history"],
-    queryFn: async () => {
-      const r = await fetch("/api/direct-mail");
-      if (!r.ok) throw new Error("Could not load mail history");
-      return r.json();
-    },
+    queryFn: () => getJson<MailContext>("/direct-mail"),
   });
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);

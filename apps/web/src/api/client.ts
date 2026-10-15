@@ -123,14 +123,14 @@ async function errorMessage(res: Response, fallback: string): Promise<string> {
   return message;
 }
 
-async function getJson<T>(path: string): Promise<T> {
+export async function getJson<T>(path: string): Promise<T> {
   if (IS_DEMO) return demoGet<T>(path);
   const res = await fetch(BASE + path);
   if (!res.ok) throw new Error(await errorMessage(res, path));
   return (await res.json()) as T;
 }
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
+export async function postJson<T>(path: string, body: unknown): Promise<T> {
   if (IS_DEMO) demoWrite(path);
   const res = await fetch(BASE + path, {
     method: "POST",
