@@ -85,12 +85,12 @@ export function SocialProofSection({ cfg, onDirtyChange }: SectionProps) {
         </Field>
         <Field
           label="Pilot offer"
-          hint="What you offer someone who hasn't adopted on their own, in plain terms and without a price. When set, the last follow-up of the builder plays offers it and closes the thread instead of a plain breakup. Blank = the breakup, unchanged."
+          hint="Your general terms, in plain words and without a price: a pilot, a trial, a partnership, a service. Every prospect offer carries them, and the last follow-up of the builder plays offers them and closes. Blank = offers carry no terms, and the breakup is unchanged."
         >
           <Textarea
             value={s.values.pilotOffer}
             onChange={(e) => s.set("pilotOffer", e.target.value)}
-            placeholder="e.g. four weeks building one workflow you pick, together, with a named technical contact"
+            placeholder="e.g. a free month on one location, set up with you"
             rows={2}
           />
         </Field>

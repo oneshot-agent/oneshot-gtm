@@ -441,20 +441,20 @@ export interface OneShotConfig {
    */
   founderAdmission: string | null;
   /**
-   * What the founder offers a prospect who has not adopted on their own, in
-   * plain terms (e.g. "four weeks building one workflow they pick, together").
-   * Set: the final follow-up of the builder plays offers it and closes the
-   * thread instead of the plain breakup. Optional like `founderCohort`;
-   * absent or null keeps the breakup, unchanged.
+   * The founder's general terms, in plain words and without a price (a pilot,
+   * a trial, a partnership, a service). Every prospect offer carries them,
+   * and the final follow-up of the builder plays offers them and closes the
+   * thread instead of the plain breakup. Absent or null: offers carry no
+   * terms and the breakup is unchanged.
    */
   pilotOffer?: string | null;
   /**
-   * Product knowledge the reply drafter may cite: concrete facts, architecture,
+   * Product knowledge the drafters may cite: concrete facts, architecture,
    * pricing model, and canonical links (docs pages, repo). Free text, founder-
    * edited on /setup (with a derive-from-sources helper). The reply prompt is
-   * only allowed to include links that appear verbatim here. This field is
-   * what makes a substantive, link-bearing reply possible without inventing
-   * artifacts.
+   * only allowed to include links that appear verbatim here. It is also the
+   * only source of what a prospect offer's steps may claim, so without it no
+   * prospect offer is written.
    */
   productBrief: string | null;
   /**

@@ -2,28 +2,30 @@
 
 The model knows only what you put in config, and each field reaches some drafts and not others. The field names do not tell you which. This table does.
 
-| What you wrote                                       | First touch              | Follow-up                          | Reply                             |
-| ---------------------------------------------------- | ------------------------ | ---------------------------------- | --------------------------------- |
-| `founderName`, `productOneLiner`                     | yes                      | yes                                | yes                               |
-| `yourEdge`, `yourClaim` (from the trigger)           | yes                      | no                                 | no                                |
-| `founderCredentials`, `productPortfolio`, `partners` | yes                      | yes                                | no                                |
-| `founderAdmission`                                   | about 1 in 3             | no                                 | no                                |
-| `pilotOffer`                                         | no                       | the last step of the builder plays | no                                |
-| `icpOneLiner`                                        | no [^icp]                | no                                 | yes                               |
-| `productBrief`                                       | no                       | no                                 | yes, and the only source of links |
-| `founderVoice`, the [voice card](./voice.md)         | yes                      | yes                                | yes                               |
-| Earlier emails on the thread                         | no                       | yes                                | yes                               |
-| `founderCohort`                                      | `accelerator-batch` only | no                                 | no                                |
-| A meeting outcome and your notes                     | no                       | no                                 | yes                               |
-| Approved [learned guidance](./learning.md)           | yes                      | yes                                | yes                               |
+| What you wrote                                       | First touch               | Follow-up                 | Reply                             |
+| ---------------------------------------------------- | ------------------------- | ------------------------- | --------------------------------- |
+| `founderName`, `productOneLiner`                     | yes                       | yes                       | yes                               |
+| `yourEdge`, `yourClaim` (from the trigger)           | yes                       | no                        | no                                |
+| `founderCredentials`, `productPortfolio`, `partners` | yes                       | yes                       | no                                |
+| `founderAdmission`                                   | about 1 in 3              | no                        | no                                |
+| `pilotOffer`                                         | yes, as the offer's terms | yes, as the offer's terms | no                                |
+| `icpOneLiner`                                        | no [^icp]                 | no                        | yes                               |
+| `productBrief`                                       | yes [^offer]              | yes [^offer]              | yes, and the only source of links |
+| `founderVoice`, the [voice card](./voice.md)         | yes                       | yes                       | yes                               |
+| Earlier emails on the thread                         | no                        | yes                       | yes                               |
+| `founderCohort`                                      | `accelerator-batch` only  | no                        | no                                |
+| A meeting outcome and your notes                     | no                        | no                        | yes                               |
+| Approved [learned guidance](./learning.md)           | yes                       | yes                       | yes                               |
 
 [^icp]: `add-prospect`, `profile-intro` and `x-repost-intro` pass it themselves.
+
+[^offer]: With the prospect offer, below. Plays that make no offer (`discovery-interview`, `pmf-survey`, `demo-no-show`, `x-amplify`, `community-reply`) do not get it.
 
 Each play adds its own signal on top: the repo they starred, the event they joined, the cohort they launched in. A reply also gets what the ledger knows about the sender: their research, their angle, any meeting outcome and the gate's verdict.
 
 ## The shape worth remembering
 
-**The first touch knows your argument and not your product. The reply knows your product and not your argument.** `yourEdge` never reaches a reply. `productBrief` never reaches a first touch.
+**Every outreach message opens with an offer specific to this prospect's firm.** `yourEdge` never reaches a reply.
 
 `productOneLiner` is the only field on all three. Keep it to one sentence. It lands in a one-sentence slot, so the model compresses it and the tail is what gets cut.
 
@@ -39,6 +41,19 @@ Config is source material. No field can force a sentence into an email; every pr
 | what a pilot includes | `pilotOffer`, never a price                          |
 
 `pilotOffer` replaces the plain breakup on the last step of `repo-interest`, `stack-consolidation`, `competitor-switch`, `hiring-signal` and `post-funding`. `accelerator-batch` always ends on the plain breakup.
+
+## The prospect offer
+
+Most founders sell something. The prospect offer is that offer, made specific to one firm: the outcome your product would deliver there.
+
+After a finder's research, a model works out how the firm makes money, its stage, and what this person owns, then picks the most valuable outcome your product can deliver. It writes it in the firm's own terms, with the steps your product would take. Every message to them opens with it: the first email, each follow-up, the LinkedIn messages, the X DM and the letter. Follow-ups keep the same offer and add one new reason. The last one restates it and closes.
+
+- It needs `productBrief`. The steps may claim only what the brief says your product does. With no brief, no offer is written and each play keeps its own shape.
+- `pilotOffer` is the general terms every offer carries: a pilot, a trial, a partnership, a service.
+- It is checked before use. Any number must be in the research, any quote must be copied from it, and it cannot borrow your product's own wording, carry a price or a link, or open on an observation about them.
+- It shows at the top of the case on `/queue`. **Edit offer** saves your text, which is never rewritten after that. **New offer** writes a fresh one. Either way the draft is rewritten around it.
+- With thin research it is written from the role and the kind of firm, and tagged so.
+- Plays whose message is not an offer get none: `discovery-interview`, `pmf-survey`, `demo-no-show`, `x-amplify`, `community-reply`. The LinkedIn connection note never makes the offer; it uses the offer's subject as common ground.
 
 ## Angles
 
