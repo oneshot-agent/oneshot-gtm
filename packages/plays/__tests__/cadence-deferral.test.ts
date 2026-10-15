@@ -1,3 +1,4 @@
+import { CADENCE_SEND_UNCONFIRMED } from "@oneshot-gtm/shared-types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Sender-rotation deferral semantics in advanceCadence: when daily caps are
@@ -26,6 +27,7 @@ let cadenceRows: Array<{
   prospect_company: string | null;
 }> = [];
 const advanceCalls: Array<{ prospectId: number; playName: string }> = [];
+const sendErrors: string[] = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -82,6 +84,9 @@ vi.mock("@oneshot-gtm/core", async () => {
       listActiveCadences: () => cadenceRows.filter((c) => c.status === "active"),
       claimCadenceSendingMarker: () => cadenceClaimable,
       clearCadenceSendingMarker: () => {},
+      recordCadenceSendError: (input: { error: string }) => {
+        sendErrors.push(input.error);
+      },
       listCadencesForProspect: (prospectId: number) =>
         cadenceRows.filter((c) => c.prospect_id === prospectId),
       getCadence: (prospectId: number, playName: string) =>
@@ -183,6 +188,7 @@ beforeEach(() => {
   sendEmailUncertain = false;
   cadenceClaimable = true;
   advanceCalls.length = 0;
+  sendErrors.length = 0;
   seedOverdueCadence();
 });
 
@@ -212,6 +218,7 @@ describe("advanceCadence — daily-cap deferral", () => {
     const detail = result.details.find((d) => d.playName === "stack-consolidation");
     expect(detail?.action).toBe("skipped");
     expect(detail?.note).toMatch(/deferred: daily send caps reached/);
+    expect(sendErrors).toEqual([]);
   });
 
   it("an unknown send outcome leaves the step due, with the reason in the note", async () => {
@@ -222,6 +229,8 @@ describe("advanceCadence — daily-cap deferral", () => {
     const detail = result.details.find((d) => d.playName === "stack-consolidation");
     expect(detail?.action).toBe("skipped");
     expect(detail?.note).toMatch(/deferred: .*checking Sent before any retry/);
+    // The card shows why Send is refused until Sent has been checked.
+    expect(sendErrors).toEqual([CADENCE_SEND_UNCONFIRMED]);
   });
 
   it("dry-run ignores the capacity gate (no sends happen anyway)", async () => {

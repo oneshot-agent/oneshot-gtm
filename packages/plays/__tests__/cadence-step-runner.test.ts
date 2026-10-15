@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CADENCE_SEND_UNCONFIRMED } from "@oneshot-gtm/shared-types";
 
 const calls = {
   sendEmail: 0,
@@ -45,6 +46,7 @@ let mailDraft: any = null;
 let mailSends = 0;
 let throwOnSend = false;
 let deferOnSend = false;
+let uncertainOnSend = false;
 // Simulates a sequence_events row already existing at the step about to be sent
 // (nextIndex). The crash-mid-send state the re-send guard must catch.
 let alreadySentNextStep = false;
@@ -86,6 +88,13 @@ vi.mock("@oneshot-gtm/core", async () => {
         decisionContext?: Record<string, unknown>;
       },
     ) => {
+      if (uncertainOnSend) {
+        const e = new Error(
+          "the send to a@b.co may have gone out — checking Sent before any retry",
+        );
+        e.name = "UncertainSendError";
+        throw e;
+      }
       if (deferOnSend) {
         const e = new Error("deferred: daily send caps reached");
         e.name = "SendDeferredError";
@@ -280,6 +289,7 @@ beforeEach(() => {
   statusCalls.length = 0;
   throwOnSend = false;
   deferOnSend = false;
+  uncertainOnSend = false;
   alreadySentNextStep = false;
   suppression = null;
   contactSuppression = null;
@@ -574,6 +584,17 @@ describe("runCadenceStepForProspect", () => {
       runCadenceStepForProspect({ prospectId: 1, playName: "stack-consolidation", dryRun: false }),
     ).rejects.toThrow(/deferred/);
     expect(sendErrorCalls).toHaveLength(0);
+    expect(advanceCalls).toHaveLength(0);
+  });
+
+  it("records an unknown send outcome, so the card says Send is blocked until Sent is checked", async () => {
+    uncertainOnSend = true;
+    await expect(
+      runCadenceStepForProspect({ prospectId: 1, playName: "stack-consolidation", dryRun: false }),
+    ).rejects.toThrow(/may have gone out/);
+    expect(sendErrorCalls).toEqual([
+      { prospectId: 1, playName: "stack-consolidation", error: CADENCE_SEND_UNCONFIRMED },
+    ]);
     expect(advanceCalls).toHaveLength(0);
   });
 

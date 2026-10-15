@@ -1,5 +1,5 @@
 import type { DraftAngleChoice } from "@oneshot-gtm/shared-types";
-import { replyIntentMeta } from "@oneshot-gtm/shared-types";
+import { CADENCE_SEND_UNCONFIRMED, replyIntentMeta } from "@oneshot-gtm/shared-types";
 import {
   classifyReply,
   type InboxEmail,
@@ -1717,12 +1717,16 @@ export async function runCadenceStepForProspect(
       });
     } catch (err) {
       // A daily-cap deferral isn't a failure. The step stays due for
-      // tomorrow. Only genuine send errors are recorded.
-      if (!isSendDeferred(err)) {
+      // tomorrow. Genuine send errors are recorded, and so is an unknown
+      // outcome: it blocks every Send until Sent has been checked.
+      const unconfirmed = (err as Error)?.name === "UncertainSendError";
+      if (unconfirmed || !isSendDeferred(err)) {
         ledger.recordCadenceSendError({
           prospectId: opts.prospectId,
           playName: opts.playName,
-          error: (err as Error)?.message ?? "send failed",
+          error: unconfirmed
+            ? CADENCE_SEND_UNCONFIRMED
+            : ((err as Error)?.message ?? "send failed"),
         });
       }
       throw err;

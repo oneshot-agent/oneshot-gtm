@@ -5,12 +5,22 @@
  * clock is injected so the cases are testable, and the label uppercases in
  * the row, so the text here is plain case.
  */
-import type {
-  CadenceHeldElsewhere,
-  CadenceStopReason,
-  CadenceView,
+import {
+  CADENCE_SEND_UNCONFIRMED,
+  type CadenceHeldElsewhere,
+  type CadenceStopReason,
+  type CadenceView,
 } from "@oneshot-gtm/shared-types";
 import { timeAgo } from "./cn.ts";
+
+/**
+ * Short name for a cadence's `lastSendError`: "checking sent" while a send
+ * with an unknown outcome waits for the Sent-folder check (Send is refused
+ * until then), "send failed" for everything else (Send retries).
+ */
+export function sendErrorLabel(lastSendError: string): "checking sent" | "send failed" {
+  return lastSendError === CADENCE_SEND_UNCONFIRMED ? "checking sent" : "send failed";
+}
 
 export const STOP_REASON_LABELS: Record<CadenceStopReason, string> = {
   bad_timing: "bad timing / revisit later",
@@ -86,7 +96,7 @@ export function cadenceStateLabel(c: CadenceView, now: Date): CadenceState {
         parts.push(`next ${ago(c.nextDueAt)}`);
       }
       if (c.lastSendError) {
-        parts.push("send failed");
+        parts.push(sendErrorLabel(c.lastSendError));
         tone = "blocked";
       }
       // The runner skips a held step whatever is clicked, so say so instead

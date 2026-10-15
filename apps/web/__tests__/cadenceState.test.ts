@@ -1,6 +1,11 @@
-import type { CadenceView } from "@oneshot-gtm/shared-types";
+import { CADENCE_SEND_UNCONFIRMED, type CadenceView } from "@oneshot-gtm/shared-types";
 import { describe, expect, it } from "vitest";
-import { cadenceStateLabel, isHeldElsewhere, mailWaitingRows } from "../src/lib/cadenceState.ts";
+import {
+  cadenceStateLabel,
+  isHeldElsewhere,
+  mailWaitingRows,
+  sendErrorLabel,
+} from "../src/lib/cadenceState.ts";
 import { cadenceKey, cadenceSelection } from "../src/lib/cadenceStop.ts";
 
 // Issue #602: the /cadences row's second line is the sequence state, in one
@@ -70,6 +75,14 @@ describe("cadenceStateLabel", () => {
       text: "step 2 of 4 · sent 3d ago · next in 1d · send failed",
       tone: "blocked",
     });
+  });
+
+  it("a send with an unknown outcome says Sent is being checked, not that it failed", () => {
+    expect(cadenceStateLabel(cadence({ lastSendError: CADENCE_SEND_UNCONFIRMED }), now)).toEqual({
+      text: "step 2 of 4 · sent 3d ago · next in 1d · checking sent",
+      tone: "blocked",
+    });
+    expect(sendErrorLabel("Job failed: Tool execution failed.")).toBe("send failed");
   });
 
   it("sending in flight", () => {

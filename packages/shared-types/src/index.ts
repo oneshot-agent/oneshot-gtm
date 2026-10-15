@@ -20,6 +20,15 @@ export type CadenceStatus =
 
 export type CadenceStopReason = "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
 
+/**
+ * `lastSendError` for a send whose outcome is unknown (the mail server gave
+ * no clear answer). Every resend is refused until the confirm sweep has read
+ * the mailbox's Sent folder, about 10–15 minutes after the first attempt, so
+ * the card says that instead of "click Send to retry".
+ */
+export const CADENCE_SEND_UNCONFIRMED =
+  "may have gone out; checking the Sent folder before any retry, so Send works again about 15 minutes after the first try";
+
 export interface CadenceNextStepDraft {
   subject: string;
   body: string;
