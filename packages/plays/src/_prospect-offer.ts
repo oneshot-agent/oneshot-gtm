@@ -254,9 +254,10 @@ export function lintOffer(
   const researchPairs = contentBigrams(research);
   const linePairs = contentBigrams(oneLiner);
   const briefPhrases = trigrams(product);
+  const researchPhrases = trigrams(research);
   const echoed = [
     ...[...contentBigrams(offer)].filter((g) => linePairs.has(g) && !researchPairs.has(g)),
-    ...[...trigrams(offer)].filter((g) => briefPhrases.has(g) && !haystack.includes(g)),
+    ...[...trigrams(offer)].filter((g) => briefPhrases.has(g) && !researchPhrases.has(g)),
   ];
   if (echoed.length > 0) flags.push(`offer-echoes-product:${echoed.join(", ")}`);
   return flags;
