@@ -180,7 +180,7 @@ it("revokes a connection through the SDK without deleting local messages or invo
 
 it("opens a conversation with linkedinMessage, keyed for a safe retry", async () => {
   account.mockResolvedValue({ status: "connected", allowed_actions: ["reply"] });
-  message.mockResolvedValueOnce({ status: "sent", conversation_id: "conv-1", cost: 0.02 });
+  tool.mockResolvedValueOnce({ status: "sent", conversation_id: "conv-1", cost: 0.02 });
   const result = await linkedInSdk({
     kind: "message",
     accountId: "account",
@@ -190,8 +190,8 @@ it("opens a conversation with linkedinMessage, keyed for a safe retry", async ()
     playName: "luma-events",
   });
   expect(result).toMatchObject({ conversation_id: "conv-1" });
-  expect(message).toHaveBeenLastCalledWith({
-    accountId: "account",
+  expect(tool).toHaveBeenLastCalledWith("linkedin/message", {
+    account_id: "account",
     profile: "https://www.linkedin.com/in/someone",
     text: "Hello",
     idempotencyKey: "stable-first",
@@ -202,7 +202,7 @@ it("opens a conversation with linkedinMessage, keyed for a safe retry", async ()
 });
 
 it("refuses a first message without the reply grant, a disconnected account, or bad text", async () => {
-  message.mockClear();
+  tool.mockClear();
   const base = {
     kind: "message" as const,
     accountId: "account",
@@ -219,7 +219,42 @@ it("refuses a first message without the reply grant, a disconnected account, or 
   await expect(linkedInSdk({ ...base, text: "x".repeat(4001) })).rejects.toThrow(
     "1–4000 characters",
   );
-  expect(message).not.toHaveBeenCalled();
+  expect(tool).not.toHaveBeenCalled();
+});
+
+it("sends invites and withdrawals without the SDK's rejected timeout field", async () => {
+  account.mockResolvedValue({ status: "connected", allowed_actions: ["invite"] });
+  tool.mockResolvedValueOnce({ status: "sent", invitation_id: "inv-1", request_id: "invite-job" });
+  await linkedInSdk({
+    kind: "invite",
+    accountId: "account",
+    profile: "https://www.linkedin.com/in/someone",
+    note: "Hi",
+    idempotencyKey: "stable-invite",
+    playName: "luma-events",
+  });
+  expect(tool).toHaveBeenLastCalledWith("linkedin/invite", {
+    account_id: "account",
+    profile: "https://www.linkedin.com/in/someone",
+    note: "Hi",
+    idempotencyKey: "stable-invite",
+  });
+  tool.mockResolvedValueOnce({ status: "withdrawn", request_id: "withdraw-job" });
+  await linkedInSdk({
+    kind: "withdraw",
+    accountId: "account",
+    invitationId: "inv-1",
+    idempotencyKey: "stable-withdraw",
+    playName: "luma-events",
+  });
+  expect(tool).toHaveBeenLastCalledWith("linkedin/invite/withdraw", {
+    account_id: "account",
+    invitation_id: "inv-1",
+    idempotencyKey: "stable-withdraw",
+  });
+  expect(recordReceipt).toHaveBeenLastCalledWith(
+    expect.objectContaining({ callType: "linkedin.withdraw", oneshotRequestId: "withdraw-job" }),
+  );
 });
 
 it("reads one invitation's status through the SDK", async () => {

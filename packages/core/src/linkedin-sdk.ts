@@ -198,8 +198,12 @@ export async function linkedInSdk(operation: LinkedInOperation): Promise<unknown
         throw new Error("Reconnect this LinkedIn account with permission to reply");
       if (!operation.text.trim() || operation.text.length > 4000)
         throw new Error("LinkedIn messages must contain 1–4000 characters");
-      const result = await agent.linkedinMessage({
-        accountId: operation.accountId,
+      // The SDK's linkedinMessage, linkedinInvite and linkedinWithdrawInvitation
+      // put their polling `timeout` in the body, which these routes' strict
+      // schemas reject (tormine/oneshot#1800). The transport without it still
+      // waits for the job, as the convenience methods did.
+      const result = await agent.tool("linkedin/message", {
+        account_id: operation.accountId,
         profile: operation.profile,
         text: operation.text,
         idempotencyKey: operation.idempotencyKey,
@@ -233,8 +237,9 @@ export async function linkedInSdk(operation: LinkedInOperation): Promise<unknown
       const account = await agent.getLinkedInAccount(operation.accountId);
       if (account.status !== "connected" || !account.allowed_actions.includes("invite"))
         throw new Error("Reconnect this LinkedIn account with permission to send invitations");
-      const result = await agent.linkedinInvite({
-        accountId: operation.accountId,
+      // Without the SDK's `timeout`, as for "message" (tormine/oneshot#1800).
+      const result = await agent.tool("linkedin/invite", {
+        account_id: operation.accountId,
         profile: operation.profile,
         ...(operation.note ? { note: operation.note } : {}),
         idempotencyKey: operation.idempotencyKey,
@@ -249,9 +254,10 @@ export async function linkedInSdk(operation: LinkedInOperation): Promise<unknown
       return result;
     }
     case "withdraw": {
-      const result = await agent.linkedinWithdrawInvitation({
-        accountId: operation.accountId,
-        invitationId: operation.invitationId,
+      // Without the SDK's `timeout`, as for "message" (tormine/oneshot#1800).
+      const result = await agent.tool("linkedin/invite/withdraw", {
+        account_id: operation.accountId,
+        invitation_id: operation.invitationId,
         idempotencyKey: operation.idempotencyKey,
         ...buildAuditOpts({ playName: operation.playName }, "linkedin.withdraw"),
       });
