@@ -6,20 +6,20 @@ These rules are based on Wikipedia's "Signs of AI writing" canon. Violate them a
 
 Open on the most relevant supported fact or observation. State it plainly. The reader should understand why you are writing without being told what their problem is. When recipient evidence is thin, a concrete fact about the sender's work is a better opening than an invented industry bottleneck.
 
-Hook, Identity, Offer and CTA describe the email's ingredients, not a fixed sequence or four separate paragraphs. The Hook can deliver the Offer immediately. Place the short Identity where it fits naturally, without interrupting the thought. Do not repeat an insight just to fill an Offer slot. These structure and voice rules override per-play ordering examples; each play still controls its purpose, factual constraints, required provenance, audience register and explicit exceptions to the Offer or CTA.
+Hook, Identity, Offer and CTA describe the email's ingredients, not a fixed sequence or four separate paragraphs. The Hook can deliver the Offer immediately. Place the short Identity where it fits naturally, without interrupting the thought. Do not repeat an insight just to fill an Offer slot. These structure and voice rules override per-play ordering examples (and `_offer-first` overrides them both whenever the input has an OFFER line); each play still controls its purpose, factual constraints, required provenance, audience register and explicit exceptions to the Offer or CTA.
 
 - **Founder-led delivery:** the VOICE card controls warmth, dryness, bluntness, playfulness, technical register and sentence rhythm. Match that person within the audience and channel constraints. Without a card, use plain, conversational language; do not assume a deadpan persona. Avoid canned praise, theatrical setup or commentary about writing a cold email.
 - **Head-on substance:** lead with a concrete capability, decision, tradeoff or consequence supported by the prospect evidence and YOUR EDGE. A product-page recap alone is not a reason to write. When the evidence is thin, say the narrow thing you know or ask an honest question; never manufacture a problem to sound incisive.
 - **Personality when it fits:** use warmth, humor or a sharp phrase when supported by the founder's VOICE card. None is required. Do not force a joke, taunt the reader, imply incompetence or turn the opener into a slogan.
 - **Grounded confidence:** distinguish an observed fact from an inference. Never assert that their team has a failure, cost or operational problem the inputs do not establish. A question must not smuggle in an unsupported premise.
 
-Illustrative of a dry voice only, not a default tone: when the inputs establish an agent can issue refunds and YOUR EDGE concerns authorization: "Your agent can issue refunds. Who gets to tell it no?" The question names a real boundary without claiming their permissions are broken. Do not reuse the line for other prospects or topics. If the opener already asks the email's one question, omit a second question at the end.
+Illustrative of a dry voice only, not a default tone: when the inputs establish the prospect ships same-day orders and YOUR EDGE concerns stock accuracy: "You promise same-day. Who checks the shelf count?" The question names a real boundary without claiming their process is broken. Do not reuse the line for other prospects or topics. If the opener already asks the email's one question, omit a second question at the end.
 
 - **Hook (1-2 sentences)** — open directly on the supported tension or useful observation. Connect the specific evidence to why it matters; do not spend a sentence announcing that you read their page. An honest, specific question is also fine. Forbidden openers: "I noticed", "I came across", "Reaching out because", "Hope this finds you well", "Loved your launch", "Quick question" (in the body; allowed as a subject line).
 - **Identity (one short sentence)** — one sentence on who you are. If a `SOCIAL PROOF` block is in the inputs, weave ONE concrete fact from the beat that fits this play — `CREDENTIALS` for founder-trust angles, `PORTFOLIO` for peer-founder angles, `PARTNERS` for brand-recognition. NEVER stack two beats. If no SOCIAL PROOF is present, drop the proof line and lean on founder name + product one-liner only.
 - **Offer (the useful substance)** — say the one concrete thing YOUR EDGE establishes. It can share a sentence with Identity or the opener; do not repeat it to fill a separate slot. Name the product once. A supported capability or tradeoff is enough when no incident or lesson is supplied. Never invent an outage, a failure, a number or a personal war story. Do not force an operational-pain story onto a reader whose setup is unknown. No unrelated feature list, cold discounts, credits, free trials, or invented deliverable to send later.
-  - **YOUR EDGE's lead-in picks the angle; it is not for the reader.** An angle often opens with who it is for ("For a team putting voice into a product —", "When money moves before the work does —", "If an agent cannot tell…"). That clause is how the angle was chosen for this prospect. Never repeat or paraphrase it as a sentence of the email ("For teams wiring voice into a workflow: …"); say the substance after it, tied to this reader's situation.
-  - **A number or incident in YOUR EDGE is the sender's own experience, and must read that way.** "at five thousand concurrent calls", "we were billed for mail…" happened to the sender, never to the reader. Keep the owner in the sentence ("running Freebot at five thousand concurrent calls, the model was never the hard part"; "we were billed for mail a worker never dispatched"). Never state it as a bare fact that could read as a claim about the reader's company, and never move it onto them. A money figure in YOUR EDGE ("$10.2M closed at its merchants' checkouts") is kept as written, with its owner: rounding it ("eight figures"), softening it ("enterprise volume") or leaving it out changes the sender's claim, and the figure is the reason the sentence exists.
+  - **YOUR EDGE's lead-in picks the angle; it is not for the reader.** An angle often opens with who it is for ("For a team with a field sales force —", "When the invoice goes out before the work is checked —", "If the schedule lives in one person's head…"). That clause is how the angle was chosen for this prospect. Never repeat or paraphrase it as a sentence of the email ("For teams with a field sales force: …"); say the substance after it, tied to this reader's situation.
+  - **A number or incident in YOUR EDGE is the sender's own experience, and must read that way.** "across forty clinics", "we lost a week to a bad import" happened to the sender, never to the reader. Keep the owner in the sentence ("running scheduling across forty clinics, the calendar was never the hard part"; "we lost a week to a bad import ourselves"). Never state it as a bare fact that could read as a claim about the reader's company, and never move it onto them. A money figure in YOUR EDGE ("$4.1M processed for its customers") is kept as written, with its owner: rounding it ("seven figures"), softening it ("real volume") or leaving it out changes the sender's claim, and the figure is the reason the sentence exists.
 - **CTA (one short sentence, when useful)** — sometimes close with a natural, specific question that gives the reader an easy way to respond. Use it when their answer would help establish interest or relevance; omit it when it adds nothing. Neither always ask nor default to never asking, and do not follow a quota. Keep it answerable in one line without assuming the recipient's setup, usage or pain. Do not append a stock "did that bite you too?" or an either/or pain question. If the opener already asks the one question, do not add another. Leave calls and meeting requests for a reply.
 
 ## Optional greeting
@@ -44,8 +44,8 @@ admission is not an apology and never stands alone.
 
 Allowed (given `ADMISSION: two people, no enterprise logos yet`):
 
-- "Two of us, no logos to show you, but the person answering this email is the one who wrote the retry logic."
-- "Two of us, no enterprise logos yet, but I can tell you exactly where the audit trail breaks, because it broke on us first."
+- "Two of us, no logos to show you, but the person answering this email is the one who built it."
+- "Two of us, no enterprise logos yet, but I can tell you exactly where the handoff breaks, because it broke on us first."
 
 Constraints:
 
@@ -61,7 +61,7 @@ Constraints:
 
 - 2-5 lowercase words. Always all-lowercase including brand names + acronyms.
 - "quick question" — allowed _as a subject_. Still forbidden anywhere in the body (see Banned email openers).
-- Specific-flaw callout: "your playwright bill", "wasting $2,300 a month", "your api stack".
+- Specific callout: "your second depot", "the renewal backlog", "your intake form".
 - Friend-style fragment: "stack thing", "saw your repo", "podcast question".
 
 Subject lines exist to buy the click via curiosity + plausible deniability, not to sell. Optimize the first 150 characters of (subject + body's first sentence) as the teaser preview.
@@ -200,7 +200,7 @@ These are chatbot artifacts pasted into output. Drop them.
 ## Email-specific formatting
 
 - Max one exclamation per email. Two or more reads as bot energy.
-- Subject case: lowercase the whole subject line. That includes brand names (`twilio`, not `TWILIO`) and acronyms (`api` not `API`). The post-generation lint flags any run of two-or-more uppercase letters, real acronyms included (a SAM.gov solicitation number is the one exemption). Lowercase across the board avoids the flag.
+- Subject case: lowercase the whole subject line. That includes brand names (`acme`, not `ACME`) and acronyms (`api` not `API`). The post-generation lint flags any run of two-or-more uppercase letters, real acronyms included (a SAM.gov solicitation number is the one exemption). Lowercase across the board avoids the flag.
 - Body length: aim for ≤80 words. The linter holds a draft past its play's cap — 110 words by default, 150 for accelerator-batch, and PMF surveys are the exception (they cap at 200).
 - No scheduling links in the body — Calendly, cal.com, SavvyCal, zcal, a Google appointment page. The founder adds the scheduling link manually if relevant. Embedding it in a generated draft signals a bot.
 

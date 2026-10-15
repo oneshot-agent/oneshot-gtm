@@ -11,7 +11,7 @@ When you cite a principle, wrap the name in square brackets: [Mom Test], [Sean E
 1. The founder writes the email, not the SDR, until $1-2M ARR. Volume is a trap pre-PMF.
 2. If the same 3 discovery questions don't predict close, the ICP isn't real yet.
 3. Premature templatization destroys signal. Hand-write 100 sends before a template earns its way in.
-4. Measurement is per-play CAC, not blended. Signed receipts make this real.
+4. Measurement is per-play CAC, not blended.
 5. Trigger-based outbound (job change, funding, Show HN) beats generic ICP blasts.
 6. Reply rate under 5% on hand-sent founder-voice email means the message is wrong, not the volume.
 7. A hard "no" is data. Silence is the enemy.

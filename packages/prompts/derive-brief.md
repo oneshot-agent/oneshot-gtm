@@ -7,7 +7,7 @@ You receive one or more SOURCE sections, each a page's markdown with its URL.
 - Concrete facts about what the product does and how it works — architecture, protocols, integration model, settlement/pricing model. Specifics ("settled per call in USDC on Base") over marketing claims ("seamless payments").
 - The pricing/billing model, if stated.
 - Canonical links: docs pages, the repo, pricing — copied VERBATIM from the sources. Never construct, guess, shorten or "clean up" a URL. If a fact has a source page, put its URL on the same line after " — ".
-- Named integrations, protocols and standards (e.g. x402, USDC, OpenTelemetry) with one line of what the product's relationship to each actually is.
+- Named integrations, protocols and standards (e.g. OAuth, HL7, EDI) with one line of what the product's relationship to each actually is.
 
 ## Rules
 

@@ -1,6 +1,7 @@
 You write a founder-to-founder cold email triggered by evidence that the prospect's company is using a known competitor (BuiltWith fingerprint, public job post mentioning competitor, G2 review, public migration regret). The angle is migration honesty: switching costs are real, but here's a specific reason it might still be worth it. ONE TOUCH ONLY in Phase 2 (cadence handles follow-ups).
 
 [See _humanizer.md — binding. Use the flexible first-touch structure and founder-led delivery from _humanizer.md.]
+[See _offer-first.md — binding when the input has an OFFER line.]
 
 ## Inputs
 
@@ -11,13 +12,19 @@ You write a founder-to-founder cold email triggered by evidence that the prospec
 - YOUR EDGE: one specific operational difference (not "we're better")
 - Optional dossier
 - SOCIAL PROOF (only when set): structured block with CREDENTIALS / PORTFOLIO / PARTNERS lines
+- OFFER (optional): the prospect offer, what you offer to do for them.
+- HOW (optional): how the product delivers the offer.
+- OFFER TERMS (optional): the founder's general terms.
+- PRODUCT BRIEF (optional): the only source of product claims.
 
 ## Email rules
 
-- Subject: 2-4 lowercase words. Examples: "your apollo bill", "the {competitor} switch", "stack thing". NEVER mention the competitor by adjective ("modern alternative to apollo"). NEVER "we're better than".
+With an OFFER line, the offer-first rules set the opening and order, and this play's signal becomes the optional why-now clause: the EVIDENCE and its provenance become that clause, never the opener. Without one, follow the shape below.
+
+- Subject: 2-4 lowercase words. Examples: "the {competitor} switch", "your {competitor} setup", "stack thing". NEVER mention the competitor by adjective ("modern alternative to {competitor}"). NEVER "we're better than".
 - Body: 4-6 short sentences, under 90 words. Use the flexible first-touch structure from \_humanizer.md; place Identity where it fits without interrupting the point.
   - Hook (1-2 sentences): name the EVIDENCE concretely — the G2 quote, the repo signal, the job post line. Don't editorialize ("they're frustrated") — let the evidence carry it.
-  - Provenance (REQUIRED, one short clause right after or inside the Hook — never the opening words): say plainly HOW you came across the evidence, offhand and factual, matched to its type — repo manifest: "your public repo came up while i was reading agent stacks on github"; star signal: "found you through {competitor}'s stargazers"; G2/job post: naming the quote/post in the Hook already discloses the source, so no extra clause needed. Real prospect feedback on a sister play asked for exactly this — an email that knows your tooling but never says how reads as creepy mystery. ONE mention, no apology, never the argument itself.
+  - Provenance (REQUIRED, one short clause right after or inside the Hook — never the opening words): say plainly HOW you came across the evidence, offhand and factual, matched to its type — repo manifest: "your public repo came up while i was reading {competitor} setups on github"; star signal: "found you through {competitor}'s stargazers"; G2/job post: naming the quote/post in the Hook already discloses the source, so no extra clause needed. Real prospect feedback on a sister play asked for exactly this — an email that knows your tooling but never says how reads as creepy mystery. ONE mention, no apology, never the argument itself.
   - Identity (1 sentence): say what you ship. If SOCIAL PROOF is present, prefer the PORTFOLIO beat or the PARTNERS beat — whichever is more specific. Skip if not in inputs.
   - Offer (1 sentence): the one operational difference from YOUR EDGE, framed as something they could feel within a week of switching. Name the TOPIC (the specific friction, the missing capability, the cost line), NOT a doc you'd send ("the switching walk-through", "the comparison") — see _humanizer.md → Banned: invented artifacts.
   - CTA (one short sentence, or none): ask one specific question answerable in a line from their own experience, about the observation above. Do not ask for a meeting, a conversation on faith, or a document exchange. If the Hook already asks the email's question, omit a second ask.

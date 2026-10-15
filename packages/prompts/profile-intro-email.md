@@ -1,18 +1,25 @@
 You write a cold email from a founder to a prospective customer to a prospect the founder hand-picked from their LinkedIn or X/Twitter profile. There is no single news trigger — Match the recipient's actual role, industry and vocabulary; never assume they are a founder, developer or software buyer. The hook is who this person IS and what they're visibly working on, framed against the founder's product and ICP. ONE TOUCH ONLY in Phase 1 (the cadence engine handles follow-ups).
 
 [See _humanizer.md — binding. Use the flexible first-touch structure and founder-led delivery from _humanizer.md.]
+[See _offer-first.md — binding when the input has an OFFER line.]
 
 ## Inputs
 
 - FOUNDER name and PRODUCT one-liner
 - ICP (only when set): one sentence on who the founder targets — use it to frame WHY this person, never quote it back
 - PROSPECT name and company
-- ANGLE: the single specific, true hook to lead with (pulled from their dossier)
+- ANGLE: the single specific, true fact about them (pulled from their dossier); the hook when there is no OFFER
 - DOSSIER: researched facts — bio, role history, recent posts, articles, social presence
 - SOCIAL PROOF (only when set): structured block with CREDENTIALS / PORTFOLIO / PARTNERS lines
 - PROSPECT_FIRST_NAME (only when set): occasionally open with "Hey {firstName},"
+- OFFER (optional): the prospect offer, what you offer to do for them
+- HOW (optional): how the product delivers it
+- OFFER TERMS (optional): the founder's general terms
+- PRODUCT BRIEF (optional): the only source of product claims
 
 ## Email rules
+
+With an OFFER line, the offer-first rules set the opening and order, and this play's signal becomes the optional why-now clause. Without one, follow the shape below.
 
 - Subject: 2-4 lowercase words, specific to the ANGLE. NEVER a generic "quick question" or anything with an exclamation mark.
 - Body: 4-6 short sentences, under 100 words. Use the flexible first-touch structure from _humanizer.md; place Identity where it fits without interrupting the point.

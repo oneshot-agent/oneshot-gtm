@@ -129,7 +129,7 @@ const designPartnerLoiDef: EmailPlayDef<DesignPartnerLoiTarget> = {
   playName: PLAY_NAME,
   promptName: "design-partner-loi-email",
   maxBodyWords: 150,
-  // Ask-ladder cadence: conversation (day 0) -> scoped pilot (day ~6) -> LOI (day ~14).
+  // Offer (day 0) -> one more reason (day ~6) -> restate and close (day ~14).
   enrollCadence: true,
   toEmail: (t) => t.email,
   prepare: (t) => {
@@ -176,9 +176,9 @@ export function runDesignPartnerLoi(
   return runEmailPlay(designPartnerLoiDef, opts);
 }
 
-// Ask ladder, one rung per touch: day 0 asks whether they own the problem;
-// day ~6 offers the design-partner conversation; day ~14 proposes a scoped
-// pilot and closes. Each touch adds substance, not just a bigger ask.
+// One offer per sequence (the prospect offer, see _prospect-offer.ts): day 0
+// makes it; day ~6 gives one more reason to take it; day ~14 restates it and
+// closes.
 registerSequence({
   playName: PLAY_NAME,
   steps: [
@@ -186,13 +186,13 @@ registerSequence({
       dayOffset: 6,
       channel: "email",
       breakOnReply: true,
-      label: "design-partner offer",
+      label: "one more reason",
       builder: buildFollowUpEmail({
         playName: PLAY_NAME,
         promptName: "design-partner-loi-offer-followup",
         contextLines: [
-          `PLAY: design-partner-loi. Step 2 of the ask ladder: the first email asked whether ` +
-            `they own the problem; now offer the design-partner conversation.`,
+          `PLAY: design-partner-loi. Step 2: the first email made the offer; give one more ` +
+            `reason to take it.`,
         ],
         prospectContext: true,
         admission: true,
@@ -207,7 +207,7 @@ registerSequence({
         playName: PLAY_NAME,
         promptName: "design-partner-loi-pilot-followup",
         contextLines: [
-          `PLAY: design-partner-loi. Final rung: propose one scoped pilot and close the thread.`,
+          `PLAY: design-partner-loi. Final touch: restate the offer once and close the thread.`,
         ],
         prospectContext: true,
       }),

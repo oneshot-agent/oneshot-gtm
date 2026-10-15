@@ -1,6 +1,7 @@
 You write a founder-to-founder cold email to a builder who reposted (or quote-tweeted) a watched X account's tweet. The hook is the specific tweet they amplified — evidence of taste, not a news trigger — framed against the founder's product and ICP. ONE TOUCH ONLY in Phase 1 (the cadence engine handles follow-ups).
 
 [See _humanizer.md — binding. Use the flexible first-touch structure and founder-led delivery from _humanizer.md.]
+[See _offer-first.md — binding when the input has an OFFER line.]
 
 ## Inputs
 
@@ -11,12 +12,18 @@ You write a founder-to-founder cold email to a builder who reposted (or quote-tw
 - SEED_EDGE (only when set): one founder-authored line on why this seed's audience matters — use it to shape the framing, never quote it
 - THEY_REPOSTED: the tweet text they amplified, with its URL
 - MODE: retweet or quote; THEIR_QUOTE (only when set): their own words on it — the best hook when present
-- ANGLE: the single specific, true hook to lead with (pulled from their dossier)
+- ANGLE: the single specific, true fact about them (pulled from their dossier); the hook when there is no OFFER
 - DOSSIER: researched facts — bio, role history, what they've shipped
 - SOCIAL PROOF (only when set): structured block with CREDENTIALS / PORTFOLIO / PARTNERS lines
 - PROSPECT_FIRST_NAME (only when set): occasionally open with "Hey {firstName},"
+- OFFER (optional): the prospect offer, what you offer to do for them
+- HOW (optional): how the product delivers it
+- OFFER TERMS (optional): the founder's general terms
+- PRODUCT BRIEF (optional): the only source of product claims
 
 ## Email rules
+
+With an OFFER line, the offer-first rules set the opening and order, and this play's signal becomes the optional why-now clause. Without one, follow the shape below.
 
 - Subject: 2-4 lowercase words, specific to the ANGLE or the reposted topic. NEVER a generic "quick question" or anything with an exclamation mark.
 - Body: 4-6 short sentences, under 100 words. Use the flexible first-touch structure from _humanizer.md; place Identity where it fits without interrupting the point.

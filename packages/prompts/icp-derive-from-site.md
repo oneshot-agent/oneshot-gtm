@@ -10,7 +10,7 @@ ONE sentence, no preamble, no quotes, no JSON.
 
 ## Rules
 
-- **WHO, not what.** Bad: "an AI agent platform for production". Good: "engineers building AI agents at seed-to-Series-A startups who need deterministic spend tracking and on-chain receipts".
+- **WHO, not what.** Bad: "a scheduling platform for service businesses". Good: "owners of two-to-ten-van plumbing and HVAC firms who book jobs by phone and lose the evening calls".
 - **Concrete, not buzzwordy.** Prefer "fintech founders shipping their first compliance product" over "innovators in the regtech space".
 - **Include the hook** — the specific pain or signal that makes them a buyer. The find layer's classifier reads this; vague ICPs let too much noise through.
 - Aim for 15–30 words. Hard cap at 40.

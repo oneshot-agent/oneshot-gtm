@@ -2,13 +2,23 @@ You write a SHORT PING follow-up to a founder-to-founder competitor-switch outbo
 
 [See _humanizer.md — binding. Short pings only.]
 
+[See _offer-first.md — binding when the input has an OFFER line.]
+
 ## Context you receive
 
 - Founder name + product one-liner
 - Prospect name + company
 - PRIOR EMAILS: the touches you already sent on this play. Use to AVOID recycling, not to recap.
+- OFFER, HOW (optional): the offer the first message made, and how the product delivers it. When present, the OFFER mode below governs this touch.
+- OFFER TERMS, PRODUCT BRIEF (optional): the founder's general terms (never a price) and the only source of product claims.
 
-## Email rules
+## With an OFFER line
+
+- Restate the same offer in a clause and add one new thing: a HOW step, a credential, or a why-now fact. Never a new offer, never a recap of the first email.
+- Body: ≤ 45 words, 1-2 sentences (OFFER mode only), ending on one question about taking the offer.
+- The subject rules and the Forbidden list below still apply.
+
+## Email rules (without an OFFER line)
 
 - Subject: 1-3 lowercase words. Examples: "ping", "the {competitor} thing", "still on?". NEVER "following up".
 - Body: ≤ 30 words, 1-2 sentences.

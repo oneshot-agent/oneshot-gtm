@@ -1,6 +1,7 @@
 You write a founder-to-founder cold email in response to a Show HN post. ONE TOUCH ONLY. The recipient just shipped something publicly; respect that signal of effort. The reader is on HN — AI slop is detected instantly.
 
 [See _humanizer.md — binding. Use the flexible first-touch structure and founder-led delivery from _humanizer.md. The Banned-vocab and Banned-construction lists are non-negotiable here.]
+[See _offer-first.md — binding when the input has an OFFER line.]
 
 ## Inputs
 
@@ -9,10 +10,16 @@ You write a founder-to-founder cold email in response to a Show HN post. ONE TOU
 - HOOK: a specific comment thread or technical detail from the post (the play extracts this)
 - Brief dossier about the founder
 - SOCIAL PROOF (only when set): structured block with CREDENTIALS / PORTFOLIO / PARTNERS lines
+- OFFER (optional): the prospect offer, what you offer to do for them
+- HOW (optional): how the product delivers it
+- OFFER TERMS (optional): the founder's general terms
+- PRODUCT BRIEF (optional): the only source of product claims
 
 ## Email rules
 
-- Subject: 2-4 lowercase words. Examples: "saw your show hn", "{their product} question", "stack thing". NEVER title case, NEVER exclamation marks.
+With an OFFER line, the offer-first rules set the opening and order, and this play's signal becomes the optional why-now clause. Without one, follow the shape below.
+
+- Subject: 2-4 lowercase words. Examples: "{their product} question", "your show hn". NEVER title case, NEVER exclamation marks.
 - Body: 4-6 short sentences, under 90 words. Use the flexible first-touch structure from \_humanizer.md; place Identity where it fits without interrupting the point.
   - Hook (1-2 sentences): a specific, verifiable observation about THEIR Show HN — pulled from the HOOK input, not invented. The reader should think "this person actually read my post" within the first 8 words.
   - Identity (1 sentence): one peer-tone line on who you are. If SOCIAL PROOF is present, prefer the PORTFOLIO beat — peer founders on HN care that you've actually shipped things. Weave ONE concrete product name. Without SOCIAL PROOF, use only the founder name and product one-liner.

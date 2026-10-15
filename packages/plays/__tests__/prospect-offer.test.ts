@@ -196,3 +196,26 @@ describe("offerBlock", () => {
     expect(offerBlock(good, cfg, "accelerator-batch")).not.toContain("OFFER TERMS");
   });
 });
+
+describe("opensOnObservation", async () => {
+  const { opensOnObservation, lintEmail } = await import("../src/_lib.ts");
+  it("flags a first sentence that describes the reader back to them", () => {
+    expect(opensOnObservation("Hey Dana,\n\nYou mentioned the Leeds depot. We can help.")).toBe(
+      true,
+    );
+    expect(opensOnObservation("I noticed your second depot opened.")).toBe(true);
+    expect(opensOnObservation("Congrats on the round. Here is an idea.")).toBe(true);
+  });
+  it("passes an opening that makes the offer", () => {
+    expect(
+      opensOnObservation("Hey Dana,\n\nI can get Leeds crews booked same day. You mentioned it."),
+    ).toBe(false);
+  });
+  it("is a lint flag only when the draft was given an offer", () => {
+    const body = "I noticed your depot. We help.";
+    expect(lintEmail("s", body, 110, undefined, { offerFirst: true })).toContain(
+      "opens-on-observation",
+    );
+    expect(lintEmail("s", body, 110, undefined, {})).not.toContain("opens-on-observation");
+  });
+});

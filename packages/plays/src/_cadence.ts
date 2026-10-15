@@ -2644,11 +2644,8 @@ export function buildFollowUpEmail(opts: {
     // record, with the founder's terms and the product facts
     // (_prospect-offer.ts). A sequence that started before prospect offers
     // existed gets the terms and product facts alone.
-    const offerLines = offerBlock(
-      sequenceOffer(ctx.prospect, opts.playName),
-      ctx.cfg,
-      opts.playName,
-    );
+    const introOffer = sequenceOffer(ctx.prospect, opts.playName);
+    const offerLines = offerBlock(introOffer, ctx.cfg, opts.playName);
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,
@@ -2691,6 +2688,7 @@ export function buildFollowUpEmail(opts: {
       maxBodyWords: ctx.maxBodyWords ?? 100,
       followUp: true,
       demoDay,
+      offerFirst: introOffer !== null && offerLines !== null,
       extraLint: (draft) => lintOpenerFrequency(draft.body, ctx.recentEmailBodies ?? []),
     });
     return {
@@ -3241,14 +3239,14 @@ function firstTouch(
   };
 }
 
-/** One rule per kind of reader: the goal a close may name is theirs, in their terms. */
+/** One rule per kind of reader: what a close offers is theirs, in their terms. */
 function closeGuidance(role: ReaderRole): string[] {
   return role === "unknown"
     ? [
-        "READER_ROLE is unknown: describe the product in one sentence and end with the easy out. Name no goal.",
+        "READER_ROLE is unknown: make the OFFER when one is given; otherwise describe the product in one sentence. End with the easy out.",
       ]
     : [
-        `READER_ROLE: ${role}. Name one concrete goal the product could carry out for a ${role}, built only from what PRODUCT_BRIEF says it can do. If the brief gives you nothing for them, name no goal.`,
+        `READER_ROLE: ${role}. Make the OFFER when one is given. Otherwise name one concrete outcome the product could deliver for a ${role}, built only from what PRODUCT_BRIEF says it can do; if the brief gives you nothing for them, name none.`,
       ];
 }
 

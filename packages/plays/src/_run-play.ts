@@ -414,10 +414,14 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           hardBans: def.hardBans,
           ...(bodySentenceCap !== undefined ? { maxBodySentences: bodySentenceCap } : {}),
           demoDay,
+          offerFirst: offer !== null,
         });
 
         const flags = [
-          ...lintEmail(draft.subject, draft.body, bodyWordCap, bodySentenceCap, { demoDay }),
+          ...lintEmail(draft.subject, draft.body, bodyWordCap, bodySentenceCap, {
+            demoDay,
+            offerFirst: offer !== null,
+          }),
           ...(def.hardBans ? hardBanFlags(draft.body) : []),
           ...(def.extraFlags?.(target) ?? []),
           ...lintGrounding(target, prep),

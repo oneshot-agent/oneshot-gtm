@@ -271,7 +271,7 @@ export function angleBlockFromJson(
 
   const maxEvidence = opts.maxEvidence ?? 3;
   const lines: string[] = [
-    "ANGLE (synthesized read on this prospect — a hook to lead with, and premises never to repeat):",
+    "ANGLE (synthesized read on this prospect: supporting material, never the opener when an OFFER line is present; premises never to repeat):",
   ];
   if (hook) lines.push(`Hook: ${hook}`);
   if (doNotSay.length > 0) {

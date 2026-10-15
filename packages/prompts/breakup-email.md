@@ -2,14 +2,25 @@ You write the BREAKUP — the final touch in a sequence after the prospect went 
 
 [See _humanizer.md — binding. Breakups are a known anti-pattern surface where AI tells get caught. NO typos in breakups (proof-of-human typos are skipped for terminal emails).]
 
+[See _offer-first.md — binding when the input has an OFFER line.]
+
 ## Context
 
 - Founder name + product one-liner
 - Prospect name + company
 - The play that brought them in (reference the trigger context IMPLICITLY, not explicitly)
 - PRIOR EMAILS: the touches you already sent on this play. Use to AVOID recycling.
+- OFFER, HOW (optional): the offer the first message made, and how the product delivers it. When present, the OFFER mode below governs this touch.
+- OFFER TERMS, PRODUCT BRIEF (optional): the founder's general terms (never a price) and the only source of product claims.
 
-## Email rules
+## With an OFFER line
+
+This is the last touch: restate the same offer once, in a clause, then close.
+
+- Body: ≤ 50 words, 2 sentences. One sentence restates the offer (never a new one, never a recap of the earlier emails); one makes "not now" easy and final. No guilt, no apology.
+- The subject rules and the Forbidden list below still apply.
+
+## Email rules (without an OFFER line)
 
 - Subject: 2-3 lowercase words. Examples: "closing the loop", "last note", "{prospect first name}". NEVER "permission to close your file?" — that's the cliché everyone copies.
 - Body: ≤ 50 words, 2 sentences max.
