@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Verifies design-partner-loi drafts the first rung of the ask ladder (a
-// scoped conversation ask, not a pilot or LOI ask), enrolls the 3-step ladder
-// cadence on a real send, and. The acceptance criterion in issue #463:
+// Verifies design-partner-loi's first email gets the offer and nothing to
+// hook on, enrolls the 3-step cadence on a real send, and. The acceptance
+// criterion in issue #463:
 // REFUSES to draft for an owner-operator buyer rather than relying on the
 // finders routing correctly by convention.
 
@@ -23,6 +23,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       partners: null,
       mobileSignature: false,
       clientId: "test",
+      pilotOffer: "Four weeks on one problem they pick",
     }),
     enrichProfile: async () => ({ result: { profile: {} }, receiptId: 1 }),
     sendEmail: async () => ({ receiptId: 3 }),
@@ -121,44 +122,33 @@ describe("isAllowedDesignPartnerLoiBuyerType — predicate mirror of the assert 
 });
 
 describe("runDesignPartnerLoi", () => {
-  it("drafts a design-partner conversation ask, naming the buyer type", async () => {
+  it("drafts from the offer, naming the buyer type", async () => {
     await runDesignPartnerLoi({ dryRun: true, targets: [{ ...base }] });
     expect(calls.llmInputBlocks[0]).toContain("BUYER TYPE: enterprise");
     expect(calls.llmInputBlocks[0]).toContain("PROSPECT: Jamie Buyer at Enterprise Corp");
-    expect(calls.llmInputBlocks[0]).not.toContain("SIGNAL:");
+    expect(calls.llmInputBlocks[0]).toContain("PILOT OFFER: Four weeks on one problem they pick");
   });
 
-  it("gives the writer the list a list-page row came from", async () => {
-    await runDesignPartnerLoi({
-      dryRun: true,
-      targets: [{ ...base, signal: "runs Backstage", signalContext: "developer portal" }],
-    });
-    expect(calls.llmInputBlocks[0]).toContain(
-      "SIGNAL: runs Backstage (the list says: developer portal)",
-    );
-  });
-
-  it("tells the writer whether a third-party list's signal was confirmed", async () => {
+  // The first email opens with the offer, so it gets nothing to hook on:
+  // no dossier, no list signal, no recent posts.
+  it("gives the writer no dossier, list signal or posts", async () => {
     await runDesignPartnerLoi({
       dryRun: true,
       targets: [
         {
           ...base,
-          signal: "uses Browserbase",
+          signal: "runs Backstage",
+          signalContext: "developer portal",
           signalVerified: "confirmed",
-          signalEvidenceUrl: "https://enterprise.example/legal/subprocessors",
         },
-        { ...base, signal: "uses Browserbase", signalVerified: "unconfirmed" },
       ],
     });
-    expect(calls.llmInputBlocks[0]).toContain(
-      "SIGNAL: uses Browserbase (confirmed on their own site: https://enterprise.example/legal/subprocessors)",
-    );
-    expect(calls.llmInputBlocks[1]).toContain("SIGNAL: uses Browserbase (unconfirmed:");
-    expect(calls.llmInputBlocks[1]).toContain("Do not state it as fact about them");
+    expect(calls.llmInputBlocks[0]).not.toContain("SIGNAL:");
+    expect(calls.llmInputBlocks[0]).not.toContain("DOSSIER:");
+    expect(calls.llmInputBlocks[0]).not.toContain("Backstage");
   });
 
-  it("enrolls the ask-ladder cadence on a real send", async () => {
+  it("enrolls the cadence on a real send", async () => {
     const out = await runDesignPartnerLoi({ dryRun: false, targets: [{ ...base }] });
     expect(out.drafted).toHaveLength(1);
     expect(out.drafted[0]?.sent).toBe(true);

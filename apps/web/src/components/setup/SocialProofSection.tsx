@@ -85,7 +85,7 @@ export function SocialProofSection({ cfg, onDirtyChange }: SectionProps) {
         </Field>
         <Field
           label="Pilot offer"
-          hint="What you offer someone who hasn't adopted on their own, in plain terms and without a price. When set, the last follow-up of the builder plays offers it and closes the thread instead of a plain breakup. Blank = the breakup, unchanged."
+          hint="What you offer someone who hasn't adopted on their own, in plain terms and without a price. The design-partner play opens with it. When set, the last follow-up of the builder plays offers it and closes the thread instead of a plain breakup. Blank = the breakup, unchanged."
         >
           <Textarea
             value={s.values.pilotOffer}

@@ -141,8 +141,8 @@ Preview every draft before it goes. Email and LinkedIn send when you send; X, Re
 
 ## design-partner-loi
 
-- **When to use it:** An enterprise, government or hardware buyer could help shape a scoped pilot.
-- **What it does:** Drafts email that progresses from problem ownership toward a design-partner discussion and pilot.
+- **When to use it:** An enterprise, government or hardware buyer could take a scoped pilot.
+- **What it does:** Drafts email that opens with your pilot offer, gives one more reason, then closes.
 - **What you need:** Contact, company, eligible buyer type and your specific product advantage.
 - **What it produces:** Drafts and recorded cadence activity, not a signed letter of intent.
 

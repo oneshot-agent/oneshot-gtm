@@ -8,7 +8,7 @@ The model knows only what you put in config, and each field reaches some drafts 
 | `yourEdge`, `yourClaim` (from the trigger)           | yes                      | no                                 | no                                |
 | `founderCredentials`, `productPortfolio`, `partners` | yes                      | yes                                | no                                |
 | `founderAdmission`                                   | about 1 in 3             | no                                 | no                                |
-| `pilotOffer`                                         | no                       | the last step of the builder plays | no                                |
+| `pilotOffer`                                         | `design-partner-loi`     | the last step of the builder plays | no                                |
 | `icpOneLiner`                                        | no [^icp]                | no                                 | yes                               |
 | `productBrief`                                       | no                       | no                                 | yes, and the only source of links |
 | `founderVoice`, the [voice card](./voice.md)         | yes                      | yes                                | yes                               |
@@ -38,7 +38,7 @@ Config is source material. No field can force a sentence into an email; every pr
 | who it is for         | `icpOneLiner`                                        |
 | what a pilot includes | `pilotOffer`, never a price                          |
 
-`pilotOffer` replaces the plain breakup on the last step of `repo-interest`, `stack-consolidation`, `competitor-switch`, `hiring-signal` and `post-funding`. `accelerator-batch` always ends on the plain breakup.
+`pilotOffer` replaces the plain breakup on the last step of `repo-interest`, `stack-consolidation`, `competitor-switch`, `hiring-signal` and `post-funding`. `accelerator-batch` always ends on the plain breakup. `design-partner-loi` opens every email with it; left blank, that play offers a short scoped pilot on one problem the buyer picks.
 
 ## Angles
 

@@ -2,7 +2,6 @@ import { emailDomain } from "./_lib.ts";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
 import { designPartnerLoiMetadata } from "./_metadata.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
-import { recentPostsBlock } from "./_recent-posts.ts";
 
 const PLAY_NAME = "design-partner-loi";
 
@@ -87,21 +86,6 @@ export interface DesignPartnerLoiTarget {
   signalEvidenceUrl?: string;
 }
 
-/**
- * The SIGNAL input line. An unconfirmed signal came from a list someone
- * else compiled, so the writer is told not to assert it about the company.
- */
-export function signalLine(t: DesignPartnerLoiTarget): string {
-  const said = t.signalContext ? ` (the list says: ${t.signalContext})` : "";
-  const check =
-    t.signalVerified === "confirmed"
-      ? ` (confirmed on their own site${t.signalEvidenceUrl ? `: ${t.signalEvidenceUrl}` : ""})`
-      : t.signalVerified === "unconfirmed"
-        ? " (unconfirmed: from a third-party list. Do not state it as fact about them; at most say you saw them listed)"
-        : "";
-  return `SIGNAL: ${t.signal}${said}${check}`;
-}
-
 export interface DesignPartnerLoiRunOptions {
   dryRun: boolean;
   targets: DesignPartnerLoiTarget[];
@@ -129,7 +113,7 @@ const designPartnerLoiDef: EmailPlayDef<DesignPartnerLoiTarget> = {
   playName: PLAY_NAME,
   promptName: "design-partner-loi-email",
   maxBodyWords: 150,
-  // Ask-ladder cadence: conversation (day 0) -> scoped pilot (day ~6) -> LOI (day ~14).
+  // Offer (day 0) -> one more reason (day ~6) -> close (day ~14).
   enrollCadence: true,
   toEmail: (t) => t.email,
   prepare: (t) => {
@@ -145,20 +129,19 @@ const designPartnerLoiDef: EmailPlayDef<DesignPartnerLoiTarget> = {
       enrichSlice: 3500,
     });
   },
-  buildInputBlock: (t, prep, cfg) => {
-    const posts = recentPostsBlock(t as unknown as Record<string, unknown>);
-    return [
+  // The first email opens with the offer. It gets no dossier, list signal or
+  // posts, so it has nothing to hook on: the research still runs for the
+  // queue's case panel and the follow-ups' company facts.
+  buildInputBlock: (t, _prep, cfg) =>
+    [
       `FOUNDER: ${cfg.founderName}`,
       `PRODUCT: ${cfg.productOneLiner}`,
       `PROSPECT: ${t.name} at ${t.company}`,
       ...(t.title ? [`ROLE: ${t.title}`] : []),
       `BUYER TYPE: ${t.buyerType}`,
       `YOUR EDGE: ${t.yourEdge}`,
-      ...(t.signal ? [signalLine(t)] : []),
-      `DOSSIER:\n${prep.dossier || "(dry-run)"}`,
-      ...(posts ? ["", posts] : []),
-    ].join("\n");
-  },
+      ...(cfg.pilotOffer?.trim() ? [`PILOT OFFER: ${cfg.pilotOffer.trim()}`] : []),
+    ].join("\n"),
   prospectMeta: (t) => ({
     name: t.name,
     email: t.email,
@@ -176,9 +159,8 @@ export function runDesignPartnerLoi(
   return runEmailPlay(designPartnerLoiDef, opts);
 }
 
-// Ask ladder, one rung per touch: day 0 asks whether they own the problem;
-// day ~6 offers the design-partner conversation; day ~14 proposes a scoped
-// pilot and closes. Each touch adds substance, not just a bigger ask.
+// Day 0 makes the offer (`pilotOffer`); day ~6 gives one more reason to take
+// it; day ~14 restates it and closes.
 registerSequence({
   playName: PLAY_NAME,
   steps: [
@@ -186,16 +168,17 @@ registerSequence({
       dayOffset: 6,
       channel: "email",
       breakOnReply: true,
-      label: "design-partner offer",
+      label: "one more reason",
       builder: buildFollowUpEmail({
         playName: PLAY_NAME,
         promptName: "design-partner-loi-offer-followup",
         contextLines: [
-          `PLAY: design-partner-loi. Step 2 of the ask ladder: the first email asked whether ` +
-            `they own the problem; now offer the design-partner conversation.`,
+          `PLAY: design-partner-loi. Step 2: the first email made the offer; give one more ` +
+            `reason to take it.`,
         ],
         prospectContext: true,
         admission: true,
+        pilotOffer: true,
       }),
     },
     {
@@ -207,9 +190,10 @@ registerSequence({
         playName: PLAY_NAME,
         promptName: "design-partner-loi-pilot-followup",
         contextLines: [
-          `PLAY: design-partner-loi. Final rung: propose one scoped pilot and close the thread.`,
+          `PLAY: design-partner-loi. Final touch: restate the offer once and close the thread.`,
         ],
         prospectContext: true,
+        pilotOffer: true,
       }),
     },
   ],
