@@ -1026,11 +1026,12 @@ async function readThroughAccount(
       "warn",
     );
     // The view was made and charged: it counts toward the day's reads even
-    // though nothing is cached for the profile.
+    // though nothing is cached for the profile. The budget counts rows
+    // without a failure status, so the marker is a plain row of its own.
     try {
-      ledger.setCachedEnrichmentFailure(
+      ledger.setCachedEnrichment(
         `${CACHE_PREFIX}incomplete:${profileHash}:${Date.now()}`,
-        "incomplete view",
+        JSON.stringify({ incomplete: true }),
       );
     } catch {
       // best-effort; the read is retried on a later pass either way

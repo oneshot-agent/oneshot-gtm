@@ -228,6 +228,8 @@ describe("readLinkedInProfile through the connected account", () => {
     // Nothing cached for the profile, but the charged view counts toward the day.
     expect(cache.get(linkedinProfileCacheKey(URL_A))).toBeUndefined();
     expect([...cache.keys()]).toEqual([expect.stringMatching(/^linkedin-profile:incomplete:/)]);
+    // A row without a failure status: the kind the daily budget counts.
+    expect([...cache.values()][0]!.status).toBeNull();
   });
 
   it("sorts failures: reconnect, out of views, this profile (negative-cached), try again", async () => {
