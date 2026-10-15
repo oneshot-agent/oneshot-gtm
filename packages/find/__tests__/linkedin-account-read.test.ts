@@ -155,6 +155,12 @@ describe("readLinkedInProfile through the connected account", () => {
     expect(String(ops[0]!.operation["idempotencyKey"])).toMatch(
       /^gtm:profile-read:[0-9a-f]{32}:\d{4}-\d{2}-\d{2}$/,
     );
+    // The day is the local day, the boundary the daily cap counts from, not the UTC date.
+    const now = new Date();
+    const localDay = [now.getFullYear(), now.getMonth() + 1, now.getDate()]
+      .map((n) => String(n).padStart(2, "0"))
+      .join("-");
+    expect(String(ops[0]!.operation["idempotencyKey"]).endsWith(`:${localDay}`)).toBe(true);
     expect(ops[1]!.operation).toEqual({ kind: "wait", requestId: "req-1" });
     expect(read.skipped).toBeUndefined();
     expect(read.costUsd).toBe(0.01);

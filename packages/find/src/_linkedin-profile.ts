@@ -216,6 +216,13 @@ function startOfLocalDayIso(now: Date): string {
   return d.toISOString();
 }
 
+const pad2 = (n: number): string => String(n).padStart(2, "0");
+
+/** The local calendar day as YYYY-MM-DD: the same day boundary the daily cap counts from. */
+function localDayKey(now: Date): string {
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+}
+
 /**
  * Successful reads written today (local day), across workspaces. When the
  * shared cache cannot answer, the count is unbounded on purpose: the daily
@@ -921,7 +928,7 @@ async function readThroughAccount(
   const call = (operation: LinkedInOperation) => linkedInCall(account.workspace, operation);
   // The key allows only [A-Za-z0-9_.:-], so the profile is named by a hash.
   const profileHash = createHash("sha256").update(key).digest("hex").slice(0, 32);
-  const idempotencyKey = `gtm:profile-read:${profileHash}:${new Date().toISOString().slice(0, 10)}`;
+  const idempotencyKey = `gtm:profile-read:${profileHash}:${localDayKey(new Date())}`;
   const deadline = Date.now() + ACCOUNT_READ_WAIT_MS;
   let requestId: string | null = null;
   let done: Record<string, unknown> | null = null;
