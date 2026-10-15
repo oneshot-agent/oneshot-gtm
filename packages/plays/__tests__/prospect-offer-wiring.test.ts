@@ -112,7 +112,7 @@ describe("prospect offer in a play run", () => {
       productHash,
       ...OFFER,
       offer: "the stored one",
-      version: "offer-v1",
+      version: "offer-v2",
       inputHash: "h",
       derivedAt: "",
     };

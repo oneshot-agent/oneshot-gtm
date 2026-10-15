@@ -22,7 +22,7 @@ type AppConfig = ReturnType<typeof loadConfig>;
 type JsonRecord = Record<string, unknown>;
 
 /** Bump when the prompt or the lint changes: unedited offers re-derive. */
-export const OFFER_PROMPT_VERSION = "offer-v1";
+export const OFFER_PROMPT_VERSION = "offer-v2";
 
 export const OFFER_MAX = { offer: 140, steps: 260, evidence: 200 } as const;
 
@@ -182,11 +182,34 @@ function normalizeForMatch(text: string): string {
     .trim();
 }
 
-/** Three-word phrases of a text, lowercased, for the echo check. */
+const ECHO_STOPWORDS = new Set(
+  (
+    "a an the and or but of to in on at by for with from into onto over under your their our its " +
+    "this that these those it they them you we i is are be been was were as so than then very " +
+    "can will would could should may might each every any all one own do does did not no"
+  ).split(" "),
+);
+
+/** Three-word phrases of a text, lowercased. */
 function trigrams(text: string): Set<string> {
   const words = text.toLowerCase().match(/[a-z0-9']+/g) ?? [];
   const out = new Set<string>();
   for (let i = 0; i + 2 < words.length; i++) out.add(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+  return out;
+}
+
+/**
+ * Adjacent pairs of content words, lowercased, stopwords dropped and a plural
+ * "s" trimmed: "done-checks outside your models" and "a done check outside the
+ * model" share "done check" and "check outside model"'s pairs. Rephrasing the
+ * product's own wording does not escape it.
+ */
+function contentBigrams(text: string): Set<string> {
+  const words = (text.toLowerCase().match(/[a-z0-9']+/g) ?? [])
+    .filter((w) => !ECHO_STOPWORDS.has(w))
+    .map((w) => (w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w));
+  const out = new Set<string>();
+  for (let i = 0; i + 1 < words.length; i++) out.add(`${words[i]} ${words[i + 1]}`);
   return out;
 }
 
@@ -197,7 +220,10 @@ function trigrams(text: string): Set<string> {
 export function lintOffer(
   parts: { offer: string; steps: string; evidence: string[]; level: ProspectOffer["level"] },
   research: string,
+  /** The product's description (one-liner and brief). */
   product = "",
+  /** The one-liner alone: positioning, never an outcome. */
+  oneLiner = "",
 ): string[] {
   const flags: string[] = [];
   const offer = parts.offer.trim();
@@ -219,11 +245,21 @@ export function lintOffer(
     }
   }
   if (steps.split(/,| and /).filter((p) => p.trim()).length < 2) flags.push("steps-too-few");
-  // The offer is their outcome, not the product's mechanism: a three-word
-  // phrase shared with the product's own description means it leaked in.
-  const productPhrases = trigrams(product);
-  const echoed = [...trigrams(offer)].filter((g) => productPhrases.has(g) && !haystack.includes(g));
-  if (echoed.length > 0) flags.push(`offer-echoes-product:${echoed[0]}`);
+  // The offer is their outcome, not the product's mechanism. The one-liner
+  // is pure positioning, so any pair of its content words, however
+  // rephrased, means it leaked in. The brief also names what the product
+  // works on (filings, registries), which an offer may name, so only an exact
+  // three-word phrase from it counts. Either is allowed when their own
+  // research uses it.
+  const researchPairs = contentBigrams(research);
+  const linePairs = contentBigrams(oneLiner);
+  const briefPhrases = trigrams(product);
+  const researchPhrases = trigrams(research);
+  const echoed = [
+    ...[...contentBigrams(offer)].filter((g) => linePairs.has(g) && !researchPairs.has(g)),
+    ...[...trigrams(offer)].filter((g) => briefPhrases.has(g) && !researchPhrases.has(g)),
+  ];
+  if (echoed.length > 0) flags.push(`offer-echoes-product:${echoed.join(", ")}`);
   return flags;
 }
 
@@ -301,7 +337,7 @@ export async function deriveOffer(input: DeriveOfferInput): Promise<ProspectOffe
         logEvent("prospect_offer.skipped", { play: input.playName, round });
         return null;
       }
-      const flags = lintOffer(parsed, research, product);
+      const flags = lintOffer(parsed, research, product, cfg.productOneLiner ?? "");
       if (flags.length === 0) {
         logEvent("prospect_offer.derived", {
           play: input.playName,

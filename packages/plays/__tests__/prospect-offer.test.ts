@@ -110,6 +110,36 @@ describe("lintOffer", () => {
     );
     expect(flags.some((f) => f.startsWith("offer-echoes-product"))).toBe(true);
   });
+  it("catches the product's wording even when it is rephrased", () => {
+    const flags = lintOffer(
+      {
+        ...good,
+        level: "researched",
+        offer: "get leeds depot crews routed and booked, open slot by open slot",
+      },
+      research,
+      "Acme plans crew routes and fills every open slot.",
+      "Acme fills every open slot.",
+    );
+    expect(flags.some((f) => f.startsWith("offer-echoes-product") && f.includes("open slot"))).toBe(
+      true,
+    );
+  });
+  it("allows a pair their own research uses", () => {
+    const own = offerResearchText({ ...target, signal: "every open slot is a lost job" });
+    const flags = lintOffer(
+      {
+        ...good,
+        level: "researched",
+        evidence: ["every open slot is a lost job"],
+        offer: "fill the leeds depot's open slots",
+      },
+      own,
+      "Acme fills every open slot.",
+      "Acme fills every open slot.",
+    );
+    expect(flags.some((f) => f.startsWith("offer-echoes-product"))).toBe(false);
+  });
   it("lets a role-level offer go without evidence", () => {
     expect(lintOffer({ ...good, level: "role", evidence: [] }, research)).toEqual([]);
   });
