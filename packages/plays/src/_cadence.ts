@@ -3200,8 +3200,11 @@ export function continueCadencesOntoLinkedIn(
       playName: c.play_name,
       steps: linkedInContinuationSteps(c.play_name),
     });
-    ledger.saveCadencePlan(c.prospect_id, c.play_name, c.enrolled_at, [...plan, ...tail]);
-    if (reopen) {
+    // One transaction: a plan with the LinkedIn steps on a cadence left
+    // ended would be skipped as already continued on the next run.
+    ledger.transaction(() => {
+      ledger.saveCadencePlan(c.prospect_id, c.play_name, c.enrolled_at, [...plan, ...tail]);
+      if (!reopen) return;
       ledger.setCadenceStatus({
         prospectId: c.prospect_id,
         playName: c.play_name,
@@ -3215,7 +3218,7 @@ export function continueCadencesOntoLinkedIn(
         newStep: plan.length,
         nextDueAt: dueAt,
       });
-    }
+    });
   }
   return result;
 }

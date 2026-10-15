@@ -321,13 +321,13 @@ export async function runLinkedInBackfill(accountKey: string) {
         // Capture the final provider pages before declaring success.
         if (job.stage === "waiting") job.stage = "capture";
         else job.stage = "complete";
-      } else if (
-        status.coverage.provider_history === "error" ||
-        status.sync_state === "reconnect_required"
-      ) {
-        throw new Error(
-          "Provider history or connection requires attention; coverage remains incomplete.",
+      } else if (status.sync_state === "reconnect_required") {
+        throw Object.assign(
+          new Error("Reconnect this LinkedIn account; coverage remains incomplete."),
+          { code: "reconnect_required" },
         );
+      } else if (status.coverage.provider_history === "error") {
+        throw new Error("Provider history requires attention; coverage remains incomplete.");
       } else if (
         status.coverage.pending_cursor ||
         status.sync_state === "never_synced" ||

@@ -1025,6 +1025,16 @@ async function readThroughAccount(
       { via: "account", complete: view?.["experience_complete"] ?? null },
       "warn",
     );
+    // The view was made and charged: it counts toward the day's reads even
+    // though nothing is cached for the profile.
+    try {
+      ledger.setCachedEnrichmentFailure(
+        `${CACHE_PREFIX}incomplete:${profileHash}:${Date.now()}`,
+        "incomplete view",
+      );
+    } catch {
+      // best-effort; the read is retried on a later pass either way
+    }
     return { profile: null, skipped: "interrupted", costUsd, cached: false };
   }
   const experience = experienceFromAccountView(view["experience"]);

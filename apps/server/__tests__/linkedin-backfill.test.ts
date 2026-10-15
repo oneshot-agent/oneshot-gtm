@@ -210,6 +210,16 @@ it("continues only a warranted provider cursor and resumes accepted sync work", 
   expect(sdk.mock.calls.at(-1)?.[1]).toEqual({ kind: "wait", requestId: "import" });
   expect(backfillStatus("account")?.stage).toBe("capture");
 });
+it("blocks for the founder when the provider asks for a reconnect", async () => {
+  startLinkedInBackfill("account");
+  await runLinkedInBackfill("account");
+  sdk.mockImplementation(async () =>
+    status({ sync_state: "reconnect_required", coverage: { complete: false } }),
+  );
+  await runLinkedInBackfill("account");
+  expect(backfillStatus("account")).toMatchObject({ stage: "blocked" });
+  expect(backfillStatus("account")?.error).toMatch(/Reconnect/);
+});
 it("captures provider completion before marking the job complete", async () => {
   startLinkedInBackfill("account");
   await runLinkedInBackfill("account");

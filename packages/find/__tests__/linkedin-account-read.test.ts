@@ -225,7 +225,9 @@ describe("readLinkedInProfile through the connected account", () => {
     script(view([], false));
     const read = await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 });
     expect(read).toMatchObject({ profile: null, skipped: "interrupted" });
-    expect(cache.size).toBe(0);
+    // Nothing cached for the profile, but the charged view counts toward the day.
+    expect(cache.get(linkedinProfileCacheKey(URL_A))).toBeUndefined();
+    expect([...cache.keys()]).toEqual([expect.stringMatching(/^linkedin-profile:incomplete:/)]);
   });
 
   it("sorts failures: reconnect, out of views, this profile (negative-cached), try again", async () => {
