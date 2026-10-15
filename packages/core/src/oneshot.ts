@@ -14,9 +14,9 @@ import {
   type EnrichProfileResult,
   type FindEmailResult,
   type GovNoticeTypeCode,
-  type GovSolicitationsResult,
-  type LocalResolveResult,
-  type LocalSearchResult,
+  type BusinessFindResult,
+  type BusinessResolveResult,
+  type RecordSolicitationsFindResult,
   type InboxEmail,
   type InboxListResult,
   type PeopleSearchResult,
@@ -1405,10 +1405,10 @@ export type {
   GovContact,
   GovNoticeType,
   GovNoticeTypeCode,
-  GovSolicitationsResult,
-  LocalResolveResult,
+  RecordSolicitationsFindResult as GovSolicitationsResult,
+  BusinessResolveResult as LocalResolveResult,
   LocalResult,
-  LocalSearchResult,
+  BusinessFindResult as LocalSearchResult,
   Solicitation,
 } from "@oneshot-agent/sdk";
 
@@ -1444,7 +1444,7 @@ export interface GovSolicitationsInput {
  */
 export async function govSolicitations(input: GovSolicitationsInput, ctx: CallContext) {
   const agent = await getAgent();
-  const opts: Parameters<OneShot["govSolicitations"]>[0] = {
+  const opts: Parameters<OneShot["recordSolicitationsFind"]>[0] = {
     naics: input.naics,
     ...buildAuditOpts(ctx, "gov.solicitations"),
   };
@@ -1459,7 +1459,7 @@ export async function govSolicitations(input: GovSolicitationsInput, ctx: CallCo
   if (input.includeDescription !== undefined) opts.include_description = input.includeDescription;
   if (input.limit) opts.limit = input.limit;
 
-  const result: GovSolicitationsResult = await agent.govSolicitations(opts);
+  const result: RecordSolicitationsFindResult = await agent.recordSolicitationsFind(opts);
   const receiptId = recordCallReceipt({
     ctx,
     callType: "gov.solicitations",
@@ -1495,7 +1495,7 @@ export interface LocalSearchInput {
  */
 export async function localSearch(input: LocalSearchInput, ctx: CallContext) {
   const agent = await getAgent();
-  const opts: Parameters<OneShot["localSearch"]>[0] = {
+  const opts: Parameters<OneShot["businessFind"]>[0] = {
     location: input.location,
     ...buildAuditOpts(ctx, "local.search"),
   };
@@ -1508,7 +1508,7 @@ export async function localSearch(input: LocalSearchInput, ctx: CallContext) {
   if (input.hasDomain !== undefined) opts.has_domain = input.hasDomain;
   if (input.limit) opts.limit = input.limit;
 
-  const result: LocalSearchResult = await agent.localSearch(opts);
+  const result: BusinessFindResult = await agent.businessFind(opts);
   const receiptId = recordCallReceipt({
     ctx,
     callType: "local.search",
@@ -1540,7 +1540,7 @@ export interface LocalResolveInput {
  */
 export async function localResolve(input: LocalResolveInput, ctx: CallContext) {
   const agent = await getAgent();
-  const opts: Parameters<OneShot["localResolve"]>[0] = {
+  const opts: Parameters<OneShot["businessResolve"]>[0] = {
     name: input.name,
     ...buildAuditOpts(ctx, "local.resolve"),
   };
@@ -1550,7 +1550,7 @@ export async function localResolve(input: LocalResolveInput, ctx: CallContext) {
   if (input.postalCode) opts.postal_code = input.postalCode;
   if (input.phone) opts.phone = input.phone;
 
-  const result: LocalResolveResult = await agent.localResolve(opts);
+  const result: BusinessResolveResult = await agent.businessResolve(opts);
   const receiptId = recordCallReceipt({
     ctx,
     callType: "local.resolve",
