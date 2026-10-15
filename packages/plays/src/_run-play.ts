@@ -35,6 +35,7 @@ import {
   voiceBlock,
 } from "./_lib.ts";
 import { enrollInCadence, getSequence } from "./_cadence.ts";
+import { offerBlock, offerForDraft, type ProspectOffer } from "./_prospect-offer.ts";
 import {
   type AngleSelection,
   angleAssignmentOf,
@@ -103,6 +104,8 @@ export type PlayDraft<T, X = Record<string, never>> = {
   learningKey?: string | null;
   /** The first-touch format arm the draft was written in; absent when the trigger never set one. */
   formatKey?: FirstTouchFormat | null;
+  /** The prospect offer the draft opens with; absent for plays that make no offer, or when none could be written. */
+  offer?: ProspectOffer;
 } & X;
 
 /**
@@ -313,13 +316,25 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           }
         }
 
+        // OFFER: the founder's offer made specific to this firm, written from
+        // everything known about the person and the firm (_prospect-offer.ts).
+        // The queue stores it on the row; anything else derives it here.
+        throwIfCancelled(opts.signal, `${def.playName} offer`);
+        const offer = await offerForDraft({
+          target: target as object,
+          dossier: prep.dossier,
+          playName: def.playName,
+          cfg,
+        });
+        const offerLines = offerBlock(offer, cfg, def.playName);
+
         // Append SOCIAL PROOF block when any of the three optional fields is
         // set. Prompts treat it as conditional input: present only when set,
         // and the prompt picks ONE beat per email (never stacks).
         const proof = socialProofBlock();
-        let inputBlock = proof
-          ? `${def.buildInputBlock(draftTarget, prep, cfg)}\n\n${proof}`
-          : def.buildInputBlock(draftTarget, prep, cfg);
+        let inputBlock = def.buildInputBlock(draftTarget, prep, cfg);
+        if (offerLines) inputBlock = `${inputBlock}\n\n${offerLines}`;
+        if (proof) inputBlock = `${inputBlock}\n\n${proof}`;
         // Same conditional shape for the damaging-admission beat: present only
         // when the founder wrote one AND this prospect drew the ~1-in-3 slot,
         // so the prompt has real material or none (and never a frequency to
@@ -454,6 +469,8 @@ export async function runEmailPlay<T, X = Record<string, never>>(
                   }
                 : {}),
               ...(formatKey ? { firstTouchFormat: formatKey } : {}),
+              // Every later touch carries the same offer (_cadence.ts reads it back).
+              ...(offer ? { offer: offer.offer, offerSteps: offer.steps } : {}),
             };
             return Object.keys(metadata).length > 0 ? { metadata } : {};
           })(),
@@ -489,6 +506,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           ...(voice ? { voiceKey: voice.key } : {}),
           ...(learned ? { learningKey: learned.key } : {}),
           ...(formatKey ? { formatKey } : {}),
+          ...(offer ? { offer } : {}),
           ...(angleSelection && edgeField
             ? {
                 angle: {

@@ -39,6 +39,7 @@ import { checkPlayRouteReadiness } from "./_play-route.ts";
 import { collectQueueBusinessAddress } from "@oneshot-gtm/plays";
 import { researchNewQueueRows } from "./_product-research.ts";
 import { researchNewQueueRowPeople } from "./_person-research.ts";
+import { offerNewQueueRows } from "./queue-offer.ts";
 
 export interface TriggerSpec {
   name: string;
@@ -107,6 +108,8 @@ export async function runFinderWithProductResearch(
       ? { maxCostUsd: config["maxCostUsd"] as number }
       : {}),
   });
+  // After every research stage, so the offer is written from all of it.
+  await offerNewQueueRows({ afterId, result });
   return result;
 }
 

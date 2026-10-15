@@ -127,14 +127,16 @@ describe("pilotOrBreakup", () => {
     pilotOffer = OFFER;
     const out = await step("breakup")(ctx());
     expect(llmCalls[0]!.system).toContain("system:pilot-close-followup");
-    expect(llmCalls[0]!.user).toContain(`PILOT OFFER: ${OFFER}`);
+    expect(llmCalls[0]!.user).toContain(
+      `OFFER TERMS (the founder's general terms; never a price): ${OFFER}`,
+    );
     expect(out).toMatchObject({ kind: "email", hardBans: true });
   });
 
   it("keeps the plain breakup when no offer is set", async () => {
     const out = await step("breakup")(ctx());
     expect(llmCalls[0]!.system).toContain("system:breakup-email");
-    expect(llmCalls[0]!.user).not.toContain("PILOT OFFER");
+    expect(llmCalls[0]!.user).not.toContain("OFFER TERMS");
     expect(out).not.toHaveProperty("hardBans");
   });
 
@@ -179,7 +181,7 @@ describe("sequences", () => {
     expect(steps.map((s) => s.label)).toEqual(["single follow-up + breakup"]);
     const out = await steps[0]!.builder(ctx());
     expect(llmCalls[0]!.system).toContain("system:breakup-email");
-    expect(llmCalls[0]!.user).not.toContain("PILOT OFFER");
+    expect(llmCalls[0]!.user).not.toContain("OFFER TERMS");
     expect(out).not.toHaveProperty("hardBans");
   });
 

@@ -18,6 +18,7 @@ import { loadPrompt } from "@oneshot-gtm/intel";
 import { enrollInCadence } from "./_cadence.ts";
 import { agedEvidence, draftWithRepair, lintLinkedInNote } from "./_linkedin-evidence.ts";
 import { learningBlock, stampLearningInput, voiceBlock } from "./_lib.ts";
+import { offerOf, playMakesOffer } from "./_prospect-offer.ts";
 
 /**
  * First touch on the LinkedIn channel: a connection request with a note, sent
@@ -173,6 +174,10 @@ export async function draftLinkedInNote(
     ...(evidence ? [`EVIDENCE_CLAUSE: ${evidence}`] : []),
     ...((opts.buyerType ?? str(row.payload, "buyerType"))
       ? [`BUYER_TYPE: ${opts.buyerType ?? str(row.payload, "buyerType")}`]
+      : []),
+    // The note never makes the offer; its subject is the common ground.
+    ...(offerOf(row.payload) && playMakesOffer(row.playName)
+      ? [`OFFER (context only; the note never makes it): ${offerOf(row.payload)!.offer}`]
       : []),
     ...(voice ? [`VOICE:\n${voice.text}`] : []),
     ...(learned ? [learned.text] : []),

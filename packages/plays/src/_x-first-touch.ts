@@ -2,6 +2,7 @@ import { CHANNEL_SPECS, loadConfig, xHandleFrom } from "@oneshot-gtm/core";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import { type LinkedInFirstTouchRow, signalLines } from "./_linkedin-first-touch.ts";
 import { voiceBlock } from "./_lib.ts";
+import { offerBlock, offerOf } from "./_prospect-offer.ts";
 
 /**
  * First touch on the X channel: a DM drafted from the row's play signal.
@@ -31,6 +32,7 @@ export async function draftXDm(
   // No handle, no recipient: nothing to draft a sendable DM for.
   if (!handle) throw new Error("this row has no X handle");
   const voice = voiceBlock("intro");
+  const offerLines = offerBlock(offerOf(p), cfg, row.playName, { brief: false });
   const input = [
     `FOUNDER: ${cfg.founderName ?? ""}`,
     `PRODUCT: ${cfg.productOneLiner ?? ""}`,
@@ -44,6 +46,7 @@ export async function draftXDm(
     "SIGNAL:",
     ...signalLines(row).map((l) => `  ${l}`),
     ...(opts.draftAngle ? [`ANGLE: ${opts.draftAngle}`] : []),
+    ...(offerLines ? [offerLines] : []),
     ...(voice ? [`VOICE:\n${voice.text}`] : []),
     `MAX_CHARS: ${maxChars}`,
   ].join("\n");
