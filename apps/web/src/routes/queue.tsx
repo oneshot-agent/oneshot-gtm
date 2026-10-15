@@ -7,6 +7,7 @@ import {
   deliveryWarningText,
 } from "../components/queue/DeliveryWarning.tsx";
 import { PersonDossier } from "../components/queue/PersonDossier.tsx";
+import { ProspectOffer } from "../components/queue/ProspectOffer.tsx";
 import { ProductResearch } from "../components/queue/ProductResearch.tsx";
 import { Explain } from "../components/primitives/Explain.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1183,6 +1184,15 @@ export function QueueRow({
                   </p>
                 </div>
               )}
+              <ProspectOffer
+                rowId={row.id}
+                payload={row.payload}
+                editable={
+                  (row.status === "pending" || row.status === "approved") &&
+                  !row.lastDraft?.sent &&
+                  !row.isSending
+                }
+              />
               {!masked && fitReason && (
                 <p className="m-0 text-[13px] leading-5 text-ink-cream-2 [text-wrap:pretty]">
                   {fitReason}

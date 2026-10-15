@@ -102,6 +102,7 @@ import {
   searchQueueRoute,
   sendDraftRoute,
 } from "./api/queue.ts";
+import { queueOfferRoute } from "./api/queue-offer.ts";
 import {
   listTriggersRoute,
   runTriggerRoute,
@@ -264,6 +265,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/queue/:id/reject", rejectQueueRoute),
   route("POST", "/api/queue/:id/reject-reason", suggestRejectReasonRoute),
   route("POST", "/api/queue/:id/regenerate", regenerateDraftRoute),
+  route("POST", "/api/queue/:id/offer", queueOfferRoute),
   route("POST", "/api/queue/:id/send-draft", sendDraftRoute),
   route("POST", "/api/queue/:id/mark-sent", markSentRoute),
   route("POST", "/api/queue/:id/withdraw-invite", withdrawInviteRoute),
