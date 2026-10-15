@@ -184,21 +184,29 @@ export class LinkedInInboxStore {
     `);
     this.addLegacyNames();
   }
-  /** Rows saved with only OneShot's renamed LinkedIn fields get the old names the indexes and matching read. */
+  /**
+   * Rows saved with only OneShot's renamed LinkedIn fields get the old names
+   * the indexes and matching read. Each query selects only rows still missing
+   * them, so a store that has been through this reads nothing.
+   */
   private addLegacyNames() {
-    for (const table of ["accounts", "conversations", "messages"] as const) {
-      const rows = this.db
-        .query<{ rowid: number; data: string }, []>(
-          `SELECT rowid, data FROM ${table} WHERE data LIKE '%external_%' OR data LIKE '%history_sync_%'`,
-        )
-        .all();
-      for (const r of rows) {
-        const data = JSON.stringify(withLegacyLinkedInNames(JSON.parse(r.data)));
-        if (data !== r.data)
-          this.db.run(`UPDATE ${table} SET data=? WHERE rowid=?`, [data, r.rowid]);
-      }
-    }
+    const pending = [
+      "SELECT rowid, data, 'messages' AS tbl FROM messages WHERE json_extract(data,'$.external_message_id') IS NOT NULL AND json_extract(data,'$.provider_message_id') IS NULL",
+      "SELECT rowid, data, 'conversations' AS tbl FROM conversations WHERE json_extract(data,'$.conversation.external_chat_id') IS NOT NULL AND json_extract(data,'$.conversation.provider_chat_id') IS NULL",
+      "SELECT rowid, data, 'accounts' AS tbl FROM accounts WHERE json_extract(data,'$.sync.coverage.history_sync_status') IS NOT NULL AND json_extract(data,'$.sync.coverage.provider_history') IS NULL",
+    ];
+    const update = {
+      messages: this.db.query("UPDATE messages SET data=? WHERE rowid=?"),
+      conversations: this.db.query("UPDATE conversations SET data=? WHERE rowid=?"),
+      accounts: this.db.query("UPDATE accounts SET data=? WHERE rowid=?"),
+    };
+    for (const sql of pending)
+      for (const r of this.db
+        .query<{ rowid: number; data: string; tbl: keyof typeof update }, []>(sql)
+        .all())
+        update[r.tbl].run(JSON.stringify(withLegacyLinkedInNames(JSON.parse(r.data))), r.rowid);
   }
+
   close() {
     this.db.close();
   }

@@ -43,6 +43,22 @@ describe("dossierAsResearch", () => {
     expect(r.result.dossier.summary).toBe("Ada runs engineering at Alpha.");
     expect(r).toMatchObject({ status: "completed", request_id: "req_1", cost: 0.05 });
   });
+
+  it("keeps a profile's plain email when no best_* email came back", () => {
+    const r = dossierAsResearch({
+      status: "completed",
+      result: {
+        profile: { state: "found", data: { email: "bo@beta.test", social_accounts: [] } },
+        social_accounts: { state: "none", data: [] },
+        articles: { state: "none", data: [] },
+        posts: { state: "none", data: [] },
+        summary: "",
+      },
+      request_id: "req_2",
+      completed_at: "2026-10-15T00:00:00Z",
+    });
+    expect(r.result.enrichment.email).toBe("bo@beta.test");
+  });
 });
 
 describe("withLegacyLinkedInNames", () => {
@@ -90,5 +106,13 @@ describe("LinkedInInboxStore", () => {
       sender_provider_id: "s1",
     });
     store.close();
+    // A row that already has the old names is left as it is on the next open.
+    const again = new LinkedInInboxStore(path);
+    again.db.run("UPDATE messages SET data=json_set(data,'$.provider_message_id','kept')");
+    again.close();
+    const reopened = new LinkedInInboxStore(path);
+    const kept = reopened.db.query<{ data: string }, []>("SELECT data FROM messages").get()!;
+    expect(JSON.parse(kept.data).provider_message_id).toBe("kept");
+    reopened.close();
   });
 });

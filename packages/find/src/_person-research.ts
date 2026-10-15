@@ -674,7 +674,7 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
   const { current, organizations } = deriveCurrentRole(orgs);
   const bio = str(enrichment, "bio", "summary", "headline") ?? live?.profile?.headline ?? undefined;
   const location = str(enrichment, "location") ?? live?.profile?.location ?? undefined;
-  const workEmail = str(enrichment, "best_work_email")?.toLowerCase() ?? undefined;
+  const workEmail = str(enrichment, "best_work_email", "email")?.toLowerCase() ?? undefined;
   const linkedinUrl = providerFailed
     ? undefined
     : (providerLinkedInUrl(res.result, seed) ?? undefined);
@@ -801,7 +801,7 @@ export function dossierFromProviderResult(
   const enrichment = isRecord(inner["enrichment"]) ? (inner["enrichment"] as JsonRecord) : {};
   const bio = str(enrichment, "bio", "summary", "headline") ?? undefined;
   const location = str(enrichment, "location") ?? undefined;
-  const workEmail = str(enrichment, "best_work_email")?.toLowerCase() ?? undefined;
+  const workEmail = str(enrichment, "best_work_email", "email")?.toLowerCase() ?? undefined;
   const linkedinUrl = providerLinkedInUrl(result, seed) ?? undefined;
   if (!current && organizations.length === 0 && !bio) return null;
   return boundPersonResearch({
