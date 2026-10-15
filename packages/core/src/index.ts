@@ -47,6 +47,7 @@ export * from "./ledger-delivery.ts";
 export * from "./ledger-outbound.ts";
 export * from "./send-delivery.ts";
 export * from "./linkedin-sdk.ts";
+export * from "./linkedin-fields.ts";
 export * from "./linkedin-workspace.ts";
 export * from "./linkedin-message.ts";
 export * from "./linkedin-error.ts";

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { LinkedInConversation, LinkedInMessage } from "@oneshot-agent/sdk";
+import type { LinkedInConversation, LinkedInMessage } from "../src/linkedin-fields.ts";
 import { Ledger } from "../src/ledger.ts";
 import { LinkedInInboxStore, linkedInHasConversationWith } from "../src/linkedin-inbox.ts";
 import { RESERVATION_TTL_MS, SharedDb } from "../src/shared-db.ts";

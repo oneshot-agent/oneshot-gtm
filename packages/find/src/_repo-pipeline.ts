@@ -604,14 +604,18 @@ export async function resolveContact(args: {
       if (dr.result.status === "error") throw new ContactStopped("platform-error");
       const enr = dr.result.result?.enrichment;
       const drEmail =
-        enr?.best_work_email ?? enr?.best_personal_email ?? enr?.altemails?.[0] ?? null;
+        enr?.best_work_email ??
+        enr?.best_personal_email ??
+        enr?.altemails?.[0] ??
+        enr?.email ??
+        null;
       if (!drEmail) return null;
       const drFullName =
-        [enr?.firstname, enr?.lastname]
+        enr?.full_name ||
+        [enr?.first_name, enr?.last_name]
           .filter((p): p is string => Boolean(p))
           .join(" ")
           .trim() ||
-        enr?.displayname ||
         null;
       const drPhone = extractFirstPhone(enr);
       return {

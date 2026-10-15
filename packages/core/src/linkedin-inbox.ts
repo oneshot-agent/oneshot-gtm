@@ -3,12 +3,13 @@ import { Database } from "bun:sqlite";
 import { openStateDatabase } from "./sqlite-open.ts";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type {
-  LinkedInAccount,
-  LinkedInConversation,
-  LinkedInMessage,
-  LinkedInSyncStatus,
-} from "@oneshot-agent/sdk";
+import type { LinkedInAccount } from "@oneshot-agent/sdk";
+import {
+  type LinkedInConversation,
+  type LinkedInMessage,
+  type LinkedInSyncStatus,
+  withLegacyLinkedInNames,
+} from "./linkedin-fields.ts";
 import { sharedDir, currentWorkspaceName } from "./shared-db.ts";
 import { listWorkspaces } from "./workspaces.ts";
 import { configDir } from "./config.ts";
@@ -181,7 +182,31 @@ export class LinkedInInboxStore {
       CREATE TABLE IF NOT EXISTS message_redirects(account_key TEXT,duplicate_id TEXT,canonical_id TEXT,PRIMARY KEY(account_key,duplicate_id));
       CREATE TABLE IF NOT EXISTS assignments(id INTEGER PRIMARY KEY,thread_key TEXT,old_owner TEXT,new_owner TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
     `);
+    this.addLegacyNames();
   }
+  /**
+   * Rows saved with only OneShot's renamed LinkedIn fields get the old names
+   * the indexes and matching read. Each query selects only rows still missing
+   * them, so a store that has been through this reads nothing.
+   */
+  private addLegacyNames() {
+    const pending = [
+      "SELECT rowid, data, 'messages' AS tbl FROM messages WHERE json_extract(data,'$.external_message_id') IS NOT NULL AND json_extract(data,'$.provider_message_id') IS NULL",
+      "SELECT rowid, data, 'conversations' AS tbl FROM conversations WHERE json_extract(data,'$.conversation.external_chat_id') IS NOT NULL AND json_extract(data,'$.conversation.provider_chat_id') IS NULL",
+      "SELECT rowid, data, 'accounts' AS tbl FROM accounts WHERE json_extract(data,'$.sync.coverage.history_sync_status') IS NOT NULL AND json_extract(data,'$.sync.coverage.provider_history') IS NULL",
+    ];
+    const update = {
+      messages: this.db.query("UPDATE messages SET data=? WHERE rowid=?"),
+      conversations: this.db.query("UPDATE conversations SET data=? WHERE rowid=?"),
+      accounts: this.db.query("UPDATE accounts SET data=? WHERE rowid=?"),
+    };
+    for (const sql of pending)
+      for (const r of this.db
+        .query<{ rowid: number; data: string; tbl: keyof typeof update }, []>(sql)
+        .all())
+        update[r.tbl].run(JSON.stringify(withLegacyLinkedInNames(JSON.parse(r.data))), r.rowid);
+  }
+
   close() {
     this.db.close();
   }

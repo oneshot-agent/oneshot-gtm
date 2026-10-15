@@ -77,6 +77,7 @@ interface DeepResearchEnrichment {
   best_work_email?: string;
   best_personal_email?: string;
   altemails?: string[];
+  email?: string;
   firstname?: string;
   lastname?: string;
   displayname?: string;
@@ -467,6 +468,21 @@ describe("repo pipeline — deepResearchPerson last-resort", () => {
     const out = await runGitHubTopicsFinder(baseOpts);
     expect(out.enqueued).toBe(1);
     expect(calls.enqueued[0]?.["payload"]).toMatchObject({ email: "ada+work@alt.dev" });
+  });
+
+  it("falls back to the profile's plain email when no best_* or alt email came back", async () => {
+    nextSearchHits = [makeRepo("https://github.com/ada/agent")];
+    defaultGhUser = {
+      login: "ada",
+      name: "Ada Lovelace",
+      email: null,
+      blogDomain: null,
+      company: "Acme Agents",
+    };
+    nextDeepResearch = { email: "ada@plain.dev" };
+    const out = await runGitHubTopicsFinder(baseOpts);
+    expect(out.enqueued).toBe(1);
+    expect(calls.enqueued[0]?.["payload"]).toMatchObject({ email: "ada@plain.dev" });
   });
 
   it("does NOT call deepResearchPerson when name OR company is missing (would-be a $0.05 guaranteed-miss)", async () => {

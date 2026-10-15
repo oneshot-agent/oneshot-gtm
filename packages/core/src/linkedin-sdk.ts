@@ -1,6 +1,7 @@
 import { getAgent, buildAuditOpts } from "./oneshot.ts";
 import { demoMode } from "./demo.ts";
 import { getLedger } from "./ledger.ts";
+import { withLegacyLinkedInNames } from "./linkedin-fields.ts";
 import type {
   LinkedInConversationsOptions,
   LinkedInInvitationsOptions,
@@ -90,6 +91,10 @@ export function isWithdrawnStatus(status: string | null | undefined): boolean {
 const LINKEDIN_GRANT = ["read", "reply", "view_profile", "invite"] as const;
 
 export async function linkedInSdk(operation: LinkedInOperation): Promise<unknown> {
+  return withLegacyLinkedInNames(await runLinkedInSdk(operation));
+}
+
+async function runLinkedInSdk(operation: LinkedInOperation): Promise<unknown> {
   if (demoMode()) throw new Error("LinkedIn is unavailable in demo mode");
   const agent = await getAgent();
   const audit = buildAuditOpts(
