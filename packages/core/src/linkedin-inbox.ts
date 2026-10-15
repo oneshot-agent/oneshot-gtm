@@ -779,6 +779,41 @@ export function linkedInOutreachAccount(): {
 }
 
 /**
+ * The connected account person research reads profiles through: one granted
+ * `view_profile`, the outreach account when it qualifies. Null when no account
+ * can read; `linkedInProfileReadBlocker` says why.
+ */
+export function linkedInProfileReadAccount(): { workspace: string; accountId: string } | null {
+  const readers = getLinkedInInboxStore()
+    .accounts()
+    .filter(
+      (a) =>
+        !a.removedAt &&
+        a.account.status === "connected" &&
+        a.account.allowed_actions.includes("view_profile"),
+    );
+  const outreach = linkedInOutreachAccount();
+  const pick =
+    readers.find((a) => outreach && a.account.id === outreach.accountId) ?? readers[0] ?? null;
+  return pick ? { workspace: pick.workspace, accountId: pick.account.id } : null;
+}
+
+/**
+ * Why no connected account can read profiles: `none` when no account was
+ * ever connected (reads fall back to the browser session, if any),
+ * `disconnected` when every account needs a reconnect, `no-grant` when a
+ * connected account was not granted `view_profile`. Null when one can read.
+ */
+export function linkedInProfileReadBlocker(): "none" | "disconnected" | "no-grant" | null {
+  if (linkedInProfileReadAccount()) return null;
+  const accounts = getLinkedInInboxStore()
+    .accounts()
+    .filter((a) => !a.removedAt);
+  if (accounts.length === 0) return "none";
+  return accounts.some((a) => a.account.status === "connected") ? "no-grant" : "disconnected";
+}
+
+/**
  * The profile key of the one other person in a 1:1 thread (by verified URL or
  * a resolved identity), or null for a group thread or an unidentified peer.
  */

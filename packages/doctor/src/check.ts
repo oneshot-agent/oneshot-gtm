@@ -17,6 +17,7 @@ import {
   identityCapacities,
   listSendingDomains,
   listSmartleadAccounts,
+  linkedInProfileReadBlocker,
   llmApiKey,
   loadConfig,
   mailboxHealth,
@@ -605,15 +606,49 @@ function githubTokenCheck(): CheckResult | null {
 }
 
 /**
- * The LinkedIn session behind live profile reads. Unset is fine (person
- * research falls back to the provider's history) and says so at "ok";
- * a cookie that never seeded a session, or one a read found expired, is a
- * warn. The tier silently degrades otherwise.
+ * What live profile reads go through. A connected account that may view
+ * profiles is "ok". One that needs a reconnect or the grant, with no working
+ * browser session behind it, is a warn: the reads are paused. Otherwise the
+ * browser session reports: unset is fine (person research falls back to the
+ * provider's history) and says so at "ok"; a cookie that never seeded a
+ * session, or one a read found expired, is a warn. The tier silently
+ * degrades otherwise.
  */
 function linkedinSessionCheck(cfg: OneShotConfig): CheckResult {
   const cookieSrc = secretSource("LINKEDIN_SESSION_COOKIE");
   const cookieSet = Boolean(process.env["LINKEDIN_SESSION_COOKIE"]);
   const name = "linkedin session";
+  // The connected account is the read path; the browser session below is
+  // only the fallback when no account may view profiles.
+  let blocker: ReturnType<typeof linkedInProfileReadBlocker> = "none";
+  try {
+    blocker = linkedInProfileReadBlocker();
+  } catch {
+    // an unreadable inbox store leaves the browser session to report
+  }
+  if (blocker === null) {
+    return {
+      name,
+      group: "install",
+      severity: "ok",
+      message: "live profile reads go through the connected LinkedIn account (silent views)",
+    };
+  }
+  const browserOk = Boolean(
+    cfg.linkedinBrowserProfileId && cfg.linkedinSessionCheckedAt && !cfg.linkedinSessionInvalidAt,
+  );
+  if (blocker !== "none" && !browserOk) {
+    return {
+      name,
+      group: "install",
+      severity: "warn",
+      message:
+        blocker === "no-grant"
+          ? "the connected LinkedIn account may not view profiles — live profile reads are paused"
+          : "the LinkedIn account needs a reconnect — live profile reads are paused",
+      hint: "reconnect the LinkedIn account on /setup and allow profile views",
+    };
+  }
   if (!cfg.linkedinBrowserProfileId && !cookieSet) {
     return {
       name,

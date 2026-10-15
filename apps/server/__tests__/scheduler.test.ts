@@ -9,6 +9,7 @@ let throwOnNextRun: Error | null = null;
 let runDueTriggersGate: Promise<void> | null = null;
 const calls = {
   sweepLiveProfiles: 0,
+  sweepInFlightNewsfeeds: 0,
   runDueTriggers: 0,
   nextSleepMs: 0,
   eventKinds: [] as string[],
@@ -21,7 +22,11 @@ const calls = {
 vi.mock("@oneshot-gtm/find", () => ({
   sweepLiveProfiles: async () => {
     calls.sweepLiveProfiles++;
-    return { ran: true, candidates: 0, researched: 0, read: 0, costUsd: 0 };
+    return { ran: true, candidates: 0, researched: 0, read: 0, refreshed: 0, costUsd: 0 };
+  },
+  sweepInFlightNewsfeeds: async () => {
+    calls.sweepInFlightNewsfeeds++;
+    return { ran: true, candidates: 0, captured: 0, failed: 0, costUsd: 0 };
   },
   runDueTriggers: async () => {
     calls.runDueTriggers++;
@@ -85,16 +90,22 @@ let postDailySendSummaryIfDueOpts: Array<{ sweepClean?: boolean }> = [];
 
 const { startScheduler } = await import("../src/scheduler.ts");
 
-it("sweeps live profiles on the first tick and then at most every four hours", async () => {
+it("sweeps live profiles on the first tick and then hourly, recent posts every four hours", async () => {
   nextSleepValue = 60_000;
   const handle = startScheduler();
   await vi.advanceTimersByTimeAsync(5_000);
   expect(calls.sweepLiveProfiles).toBe(1);
-  await vi.advanceTimersByTimeAsync(3 * 60 * 60_000);
+  expect(calls.sweepInFlightNewsfeeds).toBe(1);
+  await vi.advanceTimersByTimeAsync(50 * 60_000);
   expect(calls.runDueTriggers).toBeGreaterThan(1);
   expect(calls.sweepLiveProfiles).toBe(1);
-  await vi.advanceTimersByTimeAsync(61 * 60_000);
+  await vi.advanceTimersByTimeAsync(11 * 60_000);
   expect(calls.sweepLiveProfiles).toBe(2);
+  await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
+  expect(calls.sweepLiveProfiles).toBe(4);
+  expect(calls.sweepInFlightNewsfeeds).toBe(1);
+  await vi.advanceTimersByTimeAsync(61 * 60_000);
+  expect(calls.sweepInFlightNewsfeeds).toBe(2);
   handle.stop();
 });
 
@@ -130,6 +141,7 @@ beforeEach(() => {
   calls.pollInboxBounces = 0;
   calls.pollInboxReplies = 0;
   calls.sweepLiveProfiles = 0;
+  calls.sweepInFlightNewsfeeds = 0;
   calls.sweepLinkedInInvitations = 0;
   calls.postDailySendSummaryIfDue = 0;
   nextOutcomes = [];

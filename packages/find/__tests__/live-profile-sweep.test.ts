@@ -3,12 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // The scheduler's live-profile sweep: only live rows with a LinkedIn seed
 // and no live read qualify, approved first; a trigger can opt its play out;
 // the sweep stops where the read path stops (daily cap, login wall) and at
-// its own row and spend caps; nothing runs without a verified session.
+// its own row and spend caps; nothing runs without a connected account or a
+// verified session. A read older than its max age is read again, and people
+// in a cadence are re-read every 14 days with the reads left over.
 
 let cfg: Record<string, unknown> = {};
 let demo = false;
 let triggers: Array<{ name: string; config_json: string | null }> = [];
 let queue: Array<Record<string, unknown>> = [];
+let cadences: Array<{ prospect_id: number; play_name: string; enrolled_at: string }> = [];
+let prospects: Record<number, Record<string, unknown>> = {};
+let readAccount: { workspace: string; accountId: string } | null = null;
 const events: string[] = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -20,14 +25,17 @@ vi.mock("@oneshot-gtm/core", async () => {
     logEvent: (kind: string) => {
       events.push(kind);
     },
+    linkedInProfileReadAccount: () => readAccount,
     getLedger: () => ({
       listTriggers: () => triggers,
       listQueue: (opts: { status: string }) => queue.filter((r) => r["status"] === opts.status),
+      listActiveCadences: () => cadences,
+      getProspectById: (id: number) => prospects[id] ?? null,
     }),
   };
 });
 
-const { selectLiveSweepCandidates, sweepLiveProfiles } =
+const { selectCadenceRefreshCandidates, selectLiveSweepCandidates, sweepLiveProfiles } =
   await import("../src/_live-profile-sweep.ts");
 
 const LI = "https://www.linkedin.com/in/";
@@ -59,6 +67,9 @@ beforeEach(() => {
     linkedinSessionInvalidAt: null,
   };
   triggers = [];
+  cadences = [];
+  prospects = {};
+  readAccount = null;
   events.length = 0;
   queue = [
     row(1, "pending", { name: "A", linkedinUrl: `${LI}a` }),
@@ -83,6 +94,28 @@ describe("selectLiveSweepCandidates", () => {
     const picked = selectLiveSweepCandidates(queue as never, (play) => play === "github-stars");
     expect(picked.map((c) => c.row.id)).toEqual([7, 2, 1]);
     expect(picked[0]?.seed.url).toBe("https://linkedin.com/in/g");
+  });
+
+  it("reads a row again once its live read is 30 days old", () => {
+    const now = Date.parse("2026-10-12T12:00:00.000Z");
+    const readDaysAgo = (id: number, days: number) =>
+      row(id, "pending", {
+        name: `R${id}`,
+        linkedinUrl: `${LI}r${id}`,
+        personResearch: {
+          status: "complete",
+          liveProfile: {
+            url: `${LI}r${id}`,
+            readAt: new Date(now - days * 86_400_000).toISOString(),
+          },
+        },
+      });
+    const picked = selectLiveSweepCandidates(
+      [readDaysAgo(31, 31), readDaysAgo(32, 29)] as never,
+      () => false,
+      now,
+    );
+    expect(picked.map((c) => c.row.id)).toEqual([31]);
   });
 
   it("leaves a row alone for three days after an attempt that failed for a reason of its own", () => {
@@ -123,6 +156,55 @@ describe("selectLiveSweepCandidates", () => {
   });
 });
 
+function prospect(id: number, dossier: unknown, url: string | null = `${LI}p${id}`) {
+  return {
+    id,
+    name: `Person ${id}`,
+    company: "Acme",
+    email: `p${id}@acme.dev`,
+    source: "luma",
+    source_profile_url: url,
+    linkedin_url: null,
+    dossier_json: dossier == null ? null : JSON.stringify({ person: dossier }),
+  };
+}
+
+describe("selectCadenceRefreshCandidates", () => {
+  const now = Date.parse("2026-10-12T12:00:00.000Z");
+  const daysAgo = (days: number) => new Date(now - days * 86_400_000).toISOString();
+
+  it("takes people never read or read 14+ days ago, once each, oldest enrolment first", () => {
+    const people: Record<number, ReturnType<typeof prospect>> = {
+      1: prospect(1, null),
+      2: prospect(2, { status: "complete", liveProfile: { url: "u", readAt: daysAgo(15) } }),
+      3: prospect(3, { status: "complete", liveProfile: { url: "u", readAt: daysAgo(3) } }),
+      4: prospect(4, null, null),
+      5: prospect(5, {
+        status: "partial",
+        researchedAt: daysAgo(1),
+        warning: "live profile skipped: failed",
+      }),
+    };
+    const picked = selectCadenceRefreshCandidates(
+      [
+        { prospect_id: 2, play_name: "luma-events", enrolled_at: "2026-10-01" },
+        { prospect_id: 1, play_name: "luma-events", enrolled_at: "2026-10-02" },
+        { prospect_id: 2, play_name: "show-hn", enrolled_at: "2026-10-03" },
+        { prospect_id: 3, play_name: "luma-events", enrolled_at: "2026-09-01" },
+        { prospect_id: 4, play_name: "luma-events", enrolled_at: "2026-09-02" },
+        { prospect_id: 5, play_name: "luma-events", enrolled_at: "2026-09-03" },
+      ],
+      (id) => people[id] ?? null,
+      now,
+    );
+    expect(picked.map((c) => [c.prospect.id, c.playName])).toEqual([
+      [2, "luma-events"],
+      [1, "luma-events"],
+    ]);
+    expect(picked[1]?.seed.url).toBe("https://linkedin.com/in/p1");
+  });
+});
+
 describe("sweepLiveProfiles", () => {
   const researched: number[] = [];
   const applied: number[] = [];
@@ -148,6 +230,10 @@ describe("sweepLiveProfiles", () => {
       applied.push(r.id);
       return { outcome: "patched", verdict: null, patch: {} };
     },
+    applyPersonResearchToProspect: async (_l: unknown, p: { id: number }) => {
+      applied.push(-p.id);
+      return { outcome: "written", verdict: null, roleChanged: false };
+    },
   } as never;
 
   beforeEach(() => {
@@ -163,6 +249,80 @@ describe("sweepLiveProfiles", () => {
     demo = true;
     expect(await sweepLiveProfiles({}, deps)).toMatchObject({ ran: false, reason: "demo" });
     expect(researched).toEqual([]);
+  });
+
+  it("runs through a connected account with no browser session at all", async () => {
+    triggers = [
+      { name: "github-stars", config_json: JSON.stringify({ linkedinProfileRead: false }) },
+    ];
+    cfg = { linkedinBrowserProfileId: null, linkedinSessionCheckedAt: null };
+    expect(await sweepLiveProfiles({}, deps)).toMatchObject({ ran: false, reason: "session" });
+    readAccount = { workspace: "beta", accountId: "acct-1" };
+    expect(await sweepLiveProfiles({}, deps)).toMatchObject({ ran: true, researched: 3 });
+  });
+
+  it("re-reads people in a cadence with the reads the queue left over, writing only a read that came back", async () => {
+    triggers = [
+      { name: "github-stars", config_json: JSON.stringify({ linkedinProfileRead: false }) },
+    ];
+    prospects = {
+      40: {
+        id: 40,
+        name: "Ada Quill",
+        company: "Acme",
+        email: "ada@acme.dev",
+        source: "luma",
+        source_profile_url: `${LI}ada`,
+        linkedin_url: null,
+        dossier_json: null,
+      },
+      41: {
+        id: 41,
+        name: "Bo Reed",
+        company: "Acme",
+        email: "bo@acme.dev",
+        source: "luma",
+        source_profile_url: `${LI}bo`,
+        linkedin_url: null,
+        dossier_json: null,
+      },
+    };
+    cadences = [
+      { prospect_id: 40, play_name: "luma-events", enrolled_at: "2026-10-01" },
+      { prospect_id: 41, play_name: "luma-events", enrolled_at: "2026-10-02" },
+    ];
+    const seen: Array<{ prospectId?: number; liveMaxAgeMs?: number }> = [];
+    const withProspects = {
+      ...(deps as object),
+      researchPerson: async (input: {
+        subject: { queueId?: number; prospectId?: number };
+        liveMaxAgeMs?: number;
+      }) => {
+        if (input.subject.prospectId !== undefined)
+          seen.push({ prospectId: input.subject.prospectId, liveMaxAgeMs: input.liveMaxAgeMs });
+        const failed = input.subject.prospectId === 41;
+        return {
+          dossier: failed
+            ? { status: "partial", warning: "live profile skipped: interrupted" }
+            : { status: "complete", liveProfile: { url: "u", readAt: "t" } },
+          costUsd: 0.01,
+          cached: false,
+          ...(failed ? { liveSkipped: "interrupted" } : {}),
+        };
+      },
+    } as never;
+    const r = await sweepLiveProfiles({ maxRows: 5 }, withProspects);
+    expect(r).toMatchObject({ researched: 3, read: 3, refreshed: 1 });
+    expect(seen.map((s) => [s.prospectId, s.liveMaxAgeMs])).toEqual([
+      [40, 14 * 86_400_000],
+      [41, 14 * 86_400_000],
+    ]);
+    expect(applied).toEqual([7, 2, 1, -40]);
+
+    applied.length = 0;
+    seen.length = 0;
+    expect(await sweepLiveProfiles({ maxRows: 3 }, withProspects)).toMatchObject({ refreshed: 0 });
+    expect(seen).toEqual([]);
   });
 
   it("researches the candidates in order, counts live reads and spend, and reads the trigger opt-out", async () => {

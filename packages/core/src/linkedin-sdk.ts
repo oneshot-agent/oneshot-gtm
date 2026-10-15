@@ -12,6 +12,15 @@ export type LinkedInOperation =
   | { kind: "revoke"; accountId: string }
   | { kind: "connect"; accountId?: string; upgrade?: boolean }
   | { kind: "profile"; accountId: string; identifier: string; idempotencyKey: string }
+  | {
+      /** A silent view that also returns the Experience list: person research's live read. */
+      kind: "profile-read";
+      accountId: string;
+      identifier: string;
+      idempotencyKey: string;
+      /** The play the research ran for, for the receipt. */
+      playName: string;
+    }
   | { kind: "connection"; intentId: string }
   | { kind: "status"; accountId: string }
   | { kind: "conversations"; options: LinkedInConversationsOptions }
@@ -126,6 +135,28 @@ export async function linkedInSdk(operation: LinkedInOperation): Promise<unknown
         ...audit,
       });
       record(result, "linkedin.profile");
+      return result;
+    }
+    case "profile-read": {
+      // The SDK's linkedinViewProfile puts its polling `timeout` in the body,
+      // which this route's strict schema rejects (tormine/oneshot#1800); the
+      // transport without it works. wait:false returns the job at once and the
+      // caller polls it with "wait", so no call outlives the worker's limit.
+      const result = await agent.tool("linkedin/profile-view", {
+        account_id: operation.accountId,
+        identifier: operation.identifier,
+        notify: false,
+        sections: ["experience"],
+        wait: false,
+        idempotencyKey: operation.idempotencyKey,
+        ...buildAuditOpts({ playName: operation.playName }, "linkedin.profile_read"),
+      });
+      record(
+        result,
+        "linkedin.profile_read",
+        operation.playName,
+        "person research: live LinkedIn profile read",
+      );
       return result;
     }
     case "sync": {

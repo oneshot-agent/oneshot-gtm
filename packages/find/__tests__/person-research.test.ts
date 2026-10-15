@@ -781,6 +781,22 @@ describe("live LinkedIn tier", () => {
     expect(dossier.status).not.toBe("unavailable");
     expect(dossier.currentRole?.company).toBe("WildMuse.App");
   });
+
+  it("a current role read off the live page is complete research without the company record", async () => {
+    process.env["LINKEDIN_SESSION_COOKIE"] = "cookie";
+    liveSession = true;
+    const run = (liveProfile: boolean) =>
+      researchPerson({
+        seed: personSeedFor(juliaPayload),
+        playName: "luma-events",
+        subject: { queueId: 1 },
+        remainingUsd: 1,
+        enrichCompany: false,
+        liveProfile,
+      });
+    expect((await run(true)).dossier.status).toBe("complete");
+    expect((await run(false)).dossier.status).toBe("partial");
+  });
 });
 
 describe("rejudgePerson", () => {

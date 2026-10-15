@@ -88,6 +88,35 @@ it("resolves profiles silently with a persisted idempotency key and no unsupport
   });
 });
 
+it("reads a profile's Experience list silently, without the rejected timeout field, and records the read", async () => {
+  const accepted = { status: "pending", request_id: "read-job", cost: 0.01 };
+  tool.mockResolvedValueOnce(accepted);
+  recordReceipt.mockClear();
+  await linkedInSdk({
+    kind: "profile-read",
+    accountId: "account",
+    identifier: "https://www.linkedin.com/in/ada-quill",
+    idempotencyKey: "gtm:profile-read:ada",
+    playName: "luma-events",
+  });
+  expect(tool).toHaveBeenLastCalledWith("linkedin/profile-view", {
+    account_id: "account",
+    identifier: "https://www.linkedin.com/in/ada-quill",
+    notify: false,
+    sections: ["experience"],
+    wait: false,
+    idempotencyKey: "gtm:profile-read:ada",
+  });
+  expect(recordReceipt).toHaveBeenCalledWith(
+    expect.objectContaining({
+      playName: "luma-events",
+      callType: "linkedin.profile_read",
+      oneshotRequestId: "read-job",
+      costUsd: 0.01,
+    }),
+  );
+});
+
 it("requests read, reply, profile and invite access on the very first login", async () => {
   connect.mockClear();
   await linkedInSdk({ kind: "connect" });
