@@ -3123,6 +3123,106 @@ function continuationInviteVerdict(prospectId: number): LinkedInGuardVerdict {
   });
 }
 
+export interface ContinueCadencesResult {
+  /** Cadences that got (or, without `write`, would get) the LinkedIn steps. */
+  extended: Array<{ prospectId: number; playName: string; status: string; dueAt: string | null }>;
+  /** Why the rest were left alone, counted. */
+  skipped: Record<string, number>;
+}
+
+const CONTINUABLE_STATUSES = new Set(["active", "breakup", "completed"]);
+
+/**
+ * Give email cadences enrolled before `linkedinContinuation` was on the same
+ * LinkedIn steps a new enrollment gets: the connection request, the first
+ * message and the close, appended to the saved plan. A cadence still emailing
+ * reaches them after its last email. One whose emails are done (`breakup`,
+ * `completed`) becomes active at the connection request; those are spread
+ * over the days at the workspace's invite share so the previews on /cadences
+ * arrive at the pace invites can go out. Only people the invite guard would
+ * invite today are touched, and the guard runs again before each draft.
+ */
+export function continueCadencesOntoLinkedIn(
+  opts: { write?: boolean; now?: Date; perDay?: number } = {},
+): ContinueCadencesResult {
+  const ledger = getLedger();
+  const now = opts.now ?? new Date();
+  const perDay = Math.max(1, opts.perDay ?? loadConfig().linkedin?.invitesPerDay ?? 10);
+  const result: ContinueCadencesResult = { extended: [], skipped: {} };
+  const skip = (reason: string) => {
+    result.skipped[reason] = (result.skipped[reason] ?? 0) + 1;
+  };
+  let ended = 0;
+  const cadences = ledger
+    .listAllCadences()
+    .filter((c) => c.channel === "email" && CONTINUABLE_STATUSES.has(c.status))
+    .toSorted((a, b) => b.enrolled_at.localeCompare(a.enrolled_at));
+  for (const c of cadences) {
+    if (c.sending_started_at) {
+      skip("sending");
+      continue;
+    }
+    const seq = effectiveSequence(c.play_name, c.prospect_id);
+    if (!seq) {
+      skip("no-sequence");
+      continue;
+    }
+    const plan = sequencePlan(seq);
+    if (plan.some((s) => s.channel === "linkedin")) {
+      skip("already-on-linkedin");
+      continue;
+    }
+    if (!/linkedin\.com\/in\//i.test(c.prospect_linkedin_url ?? "")) {
+      skip("no-linkedin-profile");
+      continue;
+    }
+    if (c.replied_at) {
+      skip("replied");
+      continue;
+    }
+    const verdict = continuationInviteVerdict(c.prospect_id);
+    if (!verdict.ok) {
+      skip(verdict.reason);
+      continue;
+    }
+    const reopen = c.status !== "active";
+    const dueAt = reopen
+      ? new Date(now.getTime() + Math.floor(ended++ / perDay) * 86_400_000).toISOString()
+      : c.next_due_at;
+    result.extended.push({
+      prospectId: c.prospect_id,
+      playName: c.play_name,
+      status: c.status,
+      dueAt,
+    });
+    if (!opts.write) continue;
+    const tail = sequencePlan({
+      playName: c.play_name,
+      steps: linkedInContinuationSteps(c.play_name),
+    });
+    // One transaction: a plan with the LinkedIn steps on a cadence left
+    // ended would be skipped as already continued on the next run.
+    ledger.transaction(() => {
+      ledger.saveCadencePlan(c.prospect_id, c.play_name, c.enrolled_at, [...plan, ...tail]);
+      if (!reopen) return;
+      ledger.setCadenceStatus({
+        prospectId: c.prospect_id,
+        playName: c.play_name,
+        status: "active",
+      });
+      // The connection request is the step after the last email, whatever
+      // step the ended cadence was left pointing at.
+      ledger.advanceCadence({
+        prospectId: c.prospect_id,
+        playName: c.play_name,
+        newStep: plan.length,
+        nextDueAt: dueAt,
+      });
+    });
+  }
+  return result;
+}
+
 /**
  * A person the account must not (or need not) invite gets no LinkedIn
  * sequence: the invite step is recorded as skipped with the guard's reason and

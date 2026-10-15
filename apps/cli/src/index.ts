@@ -1,6 +1,9 @@
 #!/usr/bin/env bun
 import { registerDirectMailCommand } from "./commands/direct-mail.ts";
-import { commandLinkedInImportTouched } from "./commands/linkedin.ts";
+import {
+  commandLinkedInContinueCadences,
+  commandLinkedInImportTouched,
+} from "./commands/linkedin.ts";
 import {
   commandLinkedInInvites,
   commandMeasure,
@@ -378,6 +381,18 @@ linkedin
         file: string | undefined,
         opts: { source?: string; fromLedgers?: boolean; dryRun?: boolean; verbose?: boolean },
       ) => commandLinkedInImportTouched(file, opts),
+    ),
+  );
+linkedin
+  .command("continue-cadences")
+  .description(
+    "Give email cadences enrolled before linkedinContinuation was on their LinkedIn steps (connection request, first message, close). Counts only unless --write. Sends nothing.",
+  )
+  .option("--write", "save the steps (default: count only)")
+  .option("--verbose", "list every cadence that would continue")
+  .action(
+    runOrFail((opts: { write?: boolean; verbose?: boolean }) =>
+      commandLinkedInContinueCadences(opts),
     ),
   );
 

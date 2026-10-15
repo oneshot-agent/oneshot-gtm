@@ -5,6 +5,7 @@ import {
   importTouchedProfiles,
   parseTouchedFile,
 } from "@oneshot-gtm/core";
+import { continueCadencesOntoLinkedIn } from "@oneshot-gtm/plays";
 import { c, header, note } from "../output.ts";
 
 export interface ImportTouchedOptions {
@@ -54,4 +55,35 @@ export async function commandLinkedInImportTouched(
     `imported ${result.imported} · already present ${result.present} · not a LinkedIn profile ${result.rejected.length}`,
   );
   if (opts.verbose) for (const r of result.rejected) note(`  rejected: ${r || "(empty)"}`);
+}
+
+/**
+ * `linkedin continue-cadences`: give email cadences enrolled before
+ * `linkedinContinuation` was on their LinkedIn steps. Without `--write` it only
+ * counts. Sends nothing: every LinkedIn step is still previewed on /cadences.
+ */
+export async function commandLinkedInContinueCadences(opts: {
+  write?: boolean;
+  verbose?: boolean;
+}): Promise<void> {
+  header(`linkedin continue-cadences ${opts.write ? "" : c.dim("(dry-run)")}`);
+  const result = continueCadencesOntoLinkedIn({ write: opts.write === true });
+  const byStatus = new Map<string, number>();
+  for (const e of result.extended) byStatus.set(e.status, (byStatus.get(e.status) ?? 0) + 1);
+  const statuses = [...byStatus].map(([s, n]) => `${s} ${n}`).join(" · ") || "none";
+  note(`${opts.write ? "continued" : "would continue"} ${result.extended.length} (${statuses})`);
+  const last = result.extended
+    .map((e) => e.dueAt)
+    .filter((d): d is string => Boolean(d))
+    .toSorted()
+    .at(-1);
+  if (last) note(`last connection request due ${last.slice(0, 10)}`);
+  const skipped = Object.entries(result.skipped)
+    .toSorted((a, b) => b[1] - a[1])
+    .map(([reason, n]) => `${reason} ${n}`)
+    .join(" · ");
+  if (skipped) note(`left alone: ${skipped}`);
+  if (opts.verbose)
+    for (const e of result.extended)
+      note(`  #${e.prospectId} ${e.playName} (${e.status}) due ${e.dueAt?.slice(0, 10) ?? "-"}`);
 }
