@@ -12,6 +12,8 @@ let readsToday = 0;
 let cfg: Record<string, unknown> = {};
 let account: { workspace: string; accountId: string } | null = null;
 let browserCalls = 0;
+let countedSince: string | null = null;
+let identities: Array<{ accountKey: string; identity: Record<string, unknown> }> = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -34,7 +36,15 @@ vi.mock("@oneshot-gtm/core", async () => {
           fetched_at: new Date().toISOString(),
           status: "failed",
         }),
-      countCachedEnrichmentSince: () => readsToday,
+      countCachedEnrichmentSince: (_prefix: string, since: string) => {
+        countedSince = since;
+        return readsToday;
+      },
+    }),
+    getLinkedInInboxStore: () => ({
+      accounts: () => [{ key: "wallet:acct-1", account: { id: "acct-1" } }],
+      saveIdentity: (accountKey: string, identity: Record<string, unknown>) =>
+        identities.push({ accountKey, identity }),
     }),
   };
 });
@@ -57,6 +67,8 @@ const view = (experience: unknown, complete: boolean | null = true) => ({
   status: "completed",
   result: {
     profile: {
+      provider_id: "ACoAAAda",
+      public_identifier: "ada-quill",
       name: "Ada Quill",
       headline: "Builds things at Acme",
       location: "Lisbon",
@@ -92,6 +104,8 @@ beforeEach(() => {
   cache.clear();
   readsToday = 0;
   browserCalls = 0;
+  countedSince = null;
+  identities = [];
   ops = [];
   account = { workspace: "beta", accountId: "acct-1" };
   // A browser session that a read once found walled: the account read does not care.
@@ -155,12 +169,19 @@ describe("readLinkedInProfile through the connected account", () => {
     expect(String(ops[0]!.operation["idempotencyKey"])).toMatch(
       /^gtm:profile-read:[0-9a-f]{32}:\d{4}-\d{2}-\d{2}$/,
     );
-    // The day is the local day, the boundary the daily cap counts from, not the UTC date.
-    const now = new Date();
-    const localDay = [now.getFullYear(), now.getMonth() + 1, now.getDate()]
-      .map((n) => String(n).padStart(2, "0"))
-      .join("-");
-    expect(String(ops[0]!.operation["idempotencyKey"]).endsWith(`:${localDay}`)).toBe(true);
+    // The day is the UTC day: the account's view cap resets at 00:00 UTC.
+    const utcDay = new Date().toISOString().slice(0, 10);
+    expect(String(ops[0]!.operation["idempotencyKey"]).endsWith(`:${utcDay}`)).toBe(true);
+    // The view named the member id and public profile: saved for reply matching.
+    expect(identities).toEqual([
+      {
+        accountKey: "wallet:acct-1",
+        identity: expect.objectContaining({
+          providerId: "ACoAAAda",
+          profile: "linkedin.com/in/ada-quill",
+        }),
+      },
+    ]);
     expect(ops[1]!.operation).toEqual({ kind: "wait", requestId: "req-1" });
     expect(read.skipped).toBeUndefined();
     expect(read.costUsd).toBe(0.01);
@@ -237,6 +258,8 @@ describe("readLinkedInProfile through the connected account", () => {
     expect((await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 })).skipped).toBe(
       "daily-limit",
     );
+    // Counted from 00:00 UTC, when the account's view cap resets.
+    expect(countedSince).toMatch(/T00:00:00\.000Z$/);
     readsToday = 0;
     expect((await readLinkedInProfile(URL_A, ctx, { remainingUsd: 0.001 })).skipped).toBe(
       "cost-cap",

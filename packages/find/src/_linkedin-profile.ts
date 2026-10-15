@@ -23,6 +23,7 @@ import {
   finishBrowserProfileSetup,
   getBrowserProfileSetup,
   getLedger,
+  getLinkedInInboxStore,
   isTransientToolError,
   listBrowserProfiles,
   loadConfig,
@@ -33,6 +34,7 @@ import {
   type BrowserCookie,
   type BrowserProfileSetupState,
   type CallContext,
+  verifiedLinkedInProfileKey,
 } from "@oneshot-gtm/core";
 import { createHash } from "node:crypto";
 import { isLinkedInProfileUrl } from "./_linkedin.ts";
@@ -216,11 +218,9 @@ function startOfLocalDayIso(now: Date): string {
   return d.toISOString();
 }
 
-const pad2 = (n: number): string => String(n).padStart(2, "0");
-
-/** The local calendar day as YYYY-MM-DD: the same day boundary the daily cap counts from. */
-function localDayKey(now: Date): string {
-  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+/** The UTC day as YYYY-MM-DD: the day the account's view cap, and its read budget, count from. */
+function utcDayKey(now: Date): string {
+  return now.toISOString().slice(0, 10);
 }
 
 /**
@@ -231,6 +231,23 @@ function localDayKey(now: Date): string {
 export function linkedInReadsToday(now = new Date()): number {
   try {
     return getLedger().countCachedEnrichmentSince(CACHE_PREFIX, startOfLocalDayIso(now));
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+/**
+ * Reads written since 00:00 UTC, when OneShot's daily profile-view cap for
+ * the connected account resets. The account's views also identify new reply
+ * senders, so its reads stop at `linkedinReadsPerDay` counted over the same
+ * day as the cap: counted over the local day they ran past it (98 of about
+ * 100 on 2026-10-15) and left no view for a sender.
+ */
+export function linkedInAccountReadsToday(now = new Date()): number {
+  const start = new Date(now);
+  start.setUTCHours(0, 0, 0, 0);
+  try {
+    return getLedger().countCachedEnrichmentSince(CACHE_PREFIX, start.toISOString());
   } catch {
     return Number.POSITIVE_INFINITY;
   }
@@ -668,7 +685,7 @@ export async function readLinkedInProfile(
   }
   const account = readAccount();
   if (account) {
-    if (linkedInReadsToday(now) >= (loadConfig().linkedinReadsPerDay ?? 80)) {
+    if (linkedInAccountReadsToday(now) >= (loadConfig().linkedinReadsPerDay ?? 80)) {
       return { profile: null, skipped: "daily-limit", costUsd: 0, cached: false };
     }
     if (opts.remainingUsd < LINKEDIN_READ_COST_ESTIMATE_USD) {
@@ -928,7 +945,7 @@ async function readThroughAccount(
   const call = (operation: LinkedInOperation) => linkedInCall(account.workspace, operation);
   // The key allows only [A-Za-z0-9_.:-], so the profile is named by a hash.
   const profileHash = createHash("sha256").update(key).digest("hex").slice(0, 32);
-  const idempotencyKey = `gtm:profile-read:${profileHash}:${localDayKey(new Date())}`;
+  const idempotencyKey = `gtm:profile-read:${profileHash}:${utcDayKey(new Date())}`;
   const deadline = Date.now() + ACCOUNT_READ_WAIT_MS;
   let requestId: string | null = null;
   let done: Record<string, unknown> | null = null;
@@ -1028,12 +1045,44 @@ async function readThroughAccount(
   } catch {
     // cache write is best-effort
   }
+  rememberSenderIdentity(account.accountId, view);
   logEvent("linkedin_profile.read", {
     via: "account",
     positions: experience.length,
     cost_usd: costUsd,
   });
   return { profile, costUsd, cached: false };
+}
+
+/**
+ * The view names the person's member id and public profile: the pair a reply
+ * from them arrives with and is matched by. Saving it now means their first
+ * reply matches without a separate lookup. Best-effort.
+ */
+function rememberSenderIdentity(accountId: string, view: Record<string, unknown>): void {
+  try {
+    const providerId = view["provider_id"] ?? view["external_id"];
+    const slug = view["public_identifier"];
+    if (typeof providerId !== "string" || !providerId || typeof slug !== "string" || !slug) return;
+    const store = getLinkedInInboxStore();
+    const accountKey = store
+      .accounts()
+      .find((a) => a.account.id === accountId && !a.removedAt)?.key;
+    if (!accountKey) return;
+    const profile = verifiedLinkedInProfileKey(
+      `https://www.linkedin.com/in/${encodeURIComponent(slug)}`,
+      providerId,
+    );
+    if (!profile) return;
+    store.saveIdentity(accountKey, {
+      providerId,
+      profile,
+      name: typeof view["name"] === "string" ? view["name"] : null,
+      resolvedAt: new Date().toISOString(),
+    });
+  } catch {
+    // the read itself succeeded; matching falls back to the sender lookup
+  }
 }
 
 /** Test hook: reset the serialization gate. */

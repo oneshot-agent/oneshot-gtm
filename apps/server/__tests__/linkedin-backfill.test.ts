@@ -126,9 +126,14 @@ it("keeps one idempotency key across payment failures with unknown acceptance", 
   startLinkedInBackfill("account");
   sdk.mockRejectedValueOnce(Object.assign(new Error("insufficient funds"), { statusCode: 402 }));
   await runLinkedInBackfill("account");
-  const pending = backfillStatus("account")!.pending!;
-  expect(backfillStatus("account")?.stage).toBe("blocked");
-  startLinkedInBackfill("account");
+  const failed = backfillStatus("account")!;
+  const pending = failed.pending!;
+  // A wallet that ran dry refills: the backfill waits and retries by itself.
+  expect(failed.stage).toBe("resolve");
+  expect(Date.parse(failed.nextAttemptAt!)).toBeGreaterThan(Date.now());
+  await runLinkedInBackfill("account");
+  expect(sdk.mock.calls.filter(([, op]) => op.kind === "profile")).toHaveLength(1);
+  store.saveProgress("backfill:account", { ...failed, nextAttemptAt: "2000-01-01T00:00:00Z" });
   await runLinkedInBackfill("account");
   const submissions = sdk.mock.calls.filter(([, op]) => op.kind === "profile");
   expect(submissions.map(([, op]) => op.idempotencyKey)).toEqual([
@@ -157,7 +162,7 @@ it("replaces a key the provider consumed without a request id, once", async () =
   expect(keys[0]).not.toBe(keys[1]);
   expect(backfillStatus("account")?.senders?.resolved).toBe(1);
 });
-it("a refusal of the replacement key is a real fault and blocks", async () => {
+it("a refusal of the replacement key waits and retries under that key", async () => {
   sender();
   startLinkedInBackfill("account");
   const burned = () =>
@@ -172,7 +177,8 @@ it("a refusal of the replacement key is a real fault and blocks", async () => {
   expect(submissions).toHaveLength(2);
   expect(submissions[0]![1].idempotencyKey).not.toBe(submissions[1]![1].idempotencyKey);
   const job = backfillStatus("account")!;
-  expect(job.stage).toBe("blocked");
+  expect(job.stage).toBe("resolve");
+  expect(job.nextAttemptAt).toBeDefined();
   expect(job.pending?.rekeyed).toBe(true);
   expect(job.pending?.idempotencyKey).toBe(submissions[1]![1].idempotencyKey);
 });
@@ -346,8 +352,23 @@ it.each(["content_rejected", "target_not_found"])(
   },
 );
 
-it.each(["account_disconnected", "rate_limited", "provider_unavailable"])(
-  "still blocks on %s without caching a failed identity",
+it("still blocks on account_disconnected without caching a failed identity", async () => {
+  sender();
+  startLinkedInBackfill("account");
+  sdk.mockRejectedValueOnce(
+    Object.assign(new Error("Account failure"), {
+      code: "account_disconnected",
+      requestId: "accepted",
+    }),
+  );
+  await runLinkedInBackfill("account");
+  expect(backfillStatus("account")?.stage).toBe("blocked");
+  expect(backfillStatus("account")?.pending?.requestId).toBe("accepted");
+  expect(store.identity("account", "internal")).toBeNull();
+});
+
+it.each(["rate_limited", "provider_unavailable"])(
+  "waits and retries on %s without caching a failed identity",
   async (code) => {
     sender();
     startLinkedInBackfill("account");
@@ -355,11 +376,28 @@ it.each(["account_disconnected", "rate_limited", "provider_unavailable"])(
       Object.assign(new Error("Account failure"), { code, requestId: "accepted" }),
     );
     await runLinkedInBackfill("account");
-    expect(backfillStatus("account")?.stage).toBe("blocked");
-    expect(backfillStatus("account")?.pending?.requestId).toBe("accepted");
+    const job = backfillStatus("account")!;
+    expect(job.stage).toBe("resolve");
+    expect(Date.parse(job.nextAttemptAt!)).toBeGreaterThan(Date.now());
+    expect(job.pending?.requestId).toBe("accepted");
     expect(store.identity("account", "internal")).toBeNull();
   },
 );
+
+it("waits for 00:05 UTC after the daily view cap", async () => {
+  sender();
+  startLinkedInBackfill("account");
+  sdk.mockRejectedValueOnce(
+    new Error("Tool request failed: Daily LinkedIn view_profile cap reached for this account"),
+  );
+  await runLinkedInBackfill("account");
+  const job = backfillStatus("account")!;
+  expect(job.stage).toBe("resolve");
+  const next = new Date(job.nextAttemptAt!);
+  expect(next.getUTCHours()).toBe(0);
+  expect(next.getUTCMinutes()).toBe(5);
+  expect(next.getTime() - Date.now()).toBeLessThanOrEqual(24 * 3600_000 + 5 * 60_000);
+});
 
 it("reopens a completed backfill for a new sender, resolves it, and completes without a sync", async () => {
   store.saveProgress("backfill:account", {
@@ -386,6 +424,35 @@ it("reopens a completed backfill for a new sender, resolves it, and completes wi
   expect(backfillStatus("account")?.ongoing).toBeUndefined();
   // Only the profile lookup was bought: no provider sync, no status poll.
   expect(sdk.mock.calls.map(([, op]) => op.kind)).toEqual(["profile"]);
+});
+
+it("reopens a lookup an earlier version blocked on an empty wallet, not one blocked on permission", async () => {
+  const blocked = (failure: { message: string; code?: string; statusCode?: number }) =>
+    store.saveProgress("backfill:account", {
+      id: "stuck",
+      accountKey: "account",
+      stage: "blocked",
+      resumeStage: "resolve",
+      error: failure.message,
+      counts: {},
+      failures: [{ at: "2026-10-12T05:22:02Z", ...failure }],
+      updatedAt: "",
+    });
+  sender();
+  blocked({
+    message: "Grant profile lookup access",
+    code: "view_profile_required",
+    statusCode: 403,
+  });
+  expect(reopenForNewSenders("account", 5_000_000)).toBe(false);
+  expect(backfillStatus("account")?.stage).toBe("blocked");
+
+  blocked({ message: "payment rejected: invalid_payload" });
+  expect(reopenForNewSenders("account", 5_000_000 + 6 * 60_000)).toBe(true);
+  expect(backfillStatus("account")).toMatchObject({ stage: "resolve" });
+  expect(backfillStatus("account")?.error).toBeUndefined();
+  await runLinkedInBackfill("account");
+  expect(store.identity("account", "internal")?.profile).toBe("linkedin.com/in/ada");
 });
 
 it("does not reopen without profile access", async () => {

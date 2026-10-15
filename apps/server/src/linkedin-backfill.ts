@@ -48,6 +48,34 @@ export interface LinkedInBackfill {
   ongoing?: boolean;
 }
 const key = (accountKey: string) => `backfill:${accountKey}`;
+/** How long a backfill waits after a failure that clears by itself (an empty wallet, a provider error). */
+const RETRY_AFTER_MS = 30 * 60_000;
+/**
+ * A refusal only the founder can clear: the account has no profile access or
+ * its grant is gone. Everything else (a wallet that ran dry, the daily view
+ * cap, a provider error) clears by itself, so the backfill waits and retries
+ * instead of stopping until someone clicks Backfill.
+ */
+const FOUNDER_CODES = new Set([
+  "view_profile_required",
+  "account_disconnected",
+  "account_revoked",
+  "reconnect_required",
+]);
+function needsFounder(error: { code?: string; statusCode?: number }): boolean {
+  return (
+    FOUNDER_CODES.has(error.code ?? "") || error.statusCode === 401 || error.statusCode === 403
+  );
+}
+/** When to retry after a failure that clears by itself: the daily view cap resets at 00:00 UTC. */
+function retryAt(message: string, now = Date.now()): string {
+  if (/daily\b.*\b(cap|limit)\b|cap reached/i.test(message)) {
+    const next = new Date(now);
+    next.setUTCHours(24, 5, 0, 0);
+    return next.toISOString();
+  }
+  return new Date(now + RETRY_AFTER_MS).toISOString();
+}
 export function backfillStatus(accountKey: string) {
   return getLinkedInInboxStore().progress<LinkedInBackfill>(key(accountKey));
 }
@@ -105,6 +133,7 @@ export async function runLinkedInBackfill(accountKey: string) {
     if (!job || ["blocked", "complete"].includes(job.stage)) return;
     if (job.nextAttemptAt && Date.parse(job.nextAttemptAt) > Date.now()) return;
     delete job.nextAttemptAt;
+    delete job.error;
     const a = store.account(accountKey)!;
     if (job.stage === "capture") {
       await refreshLinkedInInbox(true);
@@ -394,6 +423,21 @@ export async function runLinkedInBackfill(accountKey: string) {
         save(job);
         return;
       }
+      if (!needsFounder(error)) {
+        if (job.failures.at(-1)?.message !== error.message)
+          job.failures.push({
+            at: new Date().toISOString(),
+            message: error.message,
+            requestId,
+            code: error.code,
+            statusCode: error.statusCode,
+          });
+        job.error = error.message;
+        // Same key on the retry: a lookup whose acceptance is unknown is never bought twice.
+        job.nextAttemptAt = retryAt(error.message);
+        save(job);
+        return;
+      }
       job.resumeStage = job.stage;
       job.stage = "blocked";
       job.error = error.message;
@@ -492,10 +536,17 @@ export function reopenForNewSenders(accountKey: string, now = Date.now()): boole
   // Without profile access every lookup would fail; the manual backfill surfaces that.
   if (!account.account.allowed_actions.includes("view_profile")) return false;
   const job = backfillStatus(accountKey);
-  if (job?.stage !== "complete") return false;
+  // A job an earlier version blocked on a failure that clears by itself
+  // (an empty wallet, the daily view cap) resumes too.
+  const stuck =
+    job?.stage === "blocked" &&
+    job.resumeStage === "resolve" &&
+    !needsFounder(job.failures.at(-1) ?? {});
+  if (job?.stage !== "complete" && !stuck) return false;
   if (unidentifiedInboundSenders(accountKey) === 0) return false;
   job.stage = "resolve";
-  job.ongoing = true;
+  if (!stuck) job.ongoing = true;
+  delete job.resumeStage;
   delete job.error;
   save(job);
   return true;

@@ -49,8 +49,15 @@ vi.mock("@oneshot-gtm/intel", async () => {
   };
 });
 
-const { Ledger, isSendDeferred, getLinkedInInboxStore, _resetInviteLimitsCacheForTests } =
-  await import("@oneshot-gtm/core");
+const {
+  Ledger,
+  isSendDeferred,
+  getLinkedInInboxStore,
+  getSharedDb,
+  importTouchedProfiles,
+  parseTouchedFile,
+  _resetInviteLimitsCacheForTests,
+} = await import("@oneshot-gtm/core");
 const {
   enrollInCadence,
   effectiveSequence,
@@ -61,6 +68,7 @@ const {
   advanceCadence,
   sweepLinkedInInvitations,
   triggerLinkedInContinuation,
+  continueCadencesOntoLinkedIn,
 } = await import("../src/index.ts");
 await import("../src/repo-interest.ts"); // registers a one-step email sequence
 
@@ -861,5 +869,111 @@ describe("evidence-aware prompts (#790)", () => {
     expect(unknown).toContain("READER_ROLE: unknown");
     expect(unknown).toMatch(/otherwise describe the product in one sentence/);
     expect(unknown).not.toMatch(/name one concrete outcome/);
+  });
+});
+
+describe("continueCadencesOntoLinkedIn: cadences enrolled before the setting", () => {
+  /** An email cadence enrolled with the setting off, at `status`. */
+  function enrolledBefore(id: number, status: "active" | "completed" | "breakup"): void {
+    continuationOn = false;
+    enrollInCadence({ prospectId: id, playName: PLAY });
+    if (status !== "active") {
+      ledger.recordSequenceEvent({
+        prospectId: id,
+        playName: PLAY,
+        stepIndex: 1,
+        channel: "email",
+        status: "sent",
+        metadata: { subject: "hello", body: "hello" },
+      });
+      ledger.setCadenceStatus({ prospectId: id, playName: PLAY, status });
+    }
+    continuationOn = true;
+  }
+  const planIds = (id = prospectId) =>
+    ledger.getCadencePlan(id, PLAY, ledger.getCadence(id, PLAY)!.enrolled_at)?.map((s) => s.id) ??
+    effectiveSequence(PLAY, id)!.steps.map((s) => s.id);
+
+  it("counts without --write, then appends the LinkedIn steps once", () => {
+    enrolledBefore(prospectId, "active");
+    const dry = continueCadencesOntoLinkedIn({ write: false });
+    expect(dry.extended.map((e) => e.prospectId)).toEqual([prospectId]);
+    expect(planIds()).toEqual(["base:1"]);
+
+    continueCadencesOntoLinkedIn({ write: true });
+    expect(planIds()).toEqual(["base:1", "linkedin:invite", "linkedin:1", "linkedin:2"]);
+    expect(state().status).toBe("active");
+    expect(effectiveSequence(PLAY, prospectId)!.steps.map((s) => s.channel)).toEqual([
+      "email",
+      "linkedin",
+      "linkedin",
+      "linkedin",
+    ]);
+
+    const again = continueCadencesOntoLinkedIn({ write: true });
+    expect(again.extended).toEqual([]);
+    expect(again.skipped["already-on-linkedin"]).toBe(1);
+  });
+
+  it("reopens an ended cadence at the connection request, spread at the invite share", () => {
+    const second = newProspect({
+      name: "Jo Moss",
+      email: "jo@example.com",
+      linkedin_url: "https://www.linkedin.com/in/jo-moss",
+    });
+    enrolledBefore(prospectId, "completed");
+    enrolledBefore(second, "breakup");
+    const now = new Date("2026-10-16T09:00:00Z");
+    const result = continueCadencesOntoLinkedIn({ write: true, now, perDay: 1 });
+    expect(result.skipped).toEqual({});
+    expect(result.extended).toHaveLength(2);
+    expect(result.extended.map((e) => e.dueAt).toSorted()).toEqual([
+      "2026-10-16T09:00:00.000Z",
+      "2026-10-17T09:00:00.000Z",
+    ]);
+    for (const id of [prospectId, second]) {
+      const c = ledger.getCadence(id, PLAY)!;
+      expect(c.status).toBe("active");
+      // The step after the last email: the connection request, not the email again.
+      expect(c.current_step).toBe(1);
+      expect(effectiveSequence(PLAY, id)!.steps[c.current_step]!.id).toBe("linkedin:invite");
+    }
+  });
+
+  it("leaves alone people who replied, have no profile, or were already contacted on LinkedIn", () => {
+    enrolledBefore(prospectId, "completed");
+    ledger.recordLinkedInReply({
+      prospectId,
+      source: "test",
+      externalEventId: "reply-1",
+      occurredAt: "2026-10-10T00:00:00Z",
+    });
+    const noProfile = newProspect({
+      name: "No Url",
+      email: "nourl@example.com",
+      linkedin_url: null,
+    });
+    enrolledBefore(noProfile, "completed");
+    const touched = newProspect({
+      name: "Kim Park",
+      email: "kim@example.com",
+      linkedin_url: "https://www.linkedin.com/in/kim-park",
+    });
+    enrolledBefore(touched, "completed");
+    importTouchedProfiles(
+      getSharedDb(),
+      parseTouchedFile("url\nhttps://www.linkedin.com/in/kim-park\n"),
+      {
+        source: "elsewhere",
+      },
+    );
+
+    const result = continueCadencesOntoLinkedIn({ write: true });
+    expect(result.extended).toEqual([]);
+    expect(result.skipped["replied"]).toBe(1);
+    expect(result.skipped["no-linkedin-profile"]).toBe(1);
+    expect(Object.values(result.skipped).reduce((a, b) => a + b, 0)).toBe(3);
+    for (const id of [prospectId, noProfile, touched])
+      expect(ledger.getCadence(id, PLAY)!.status).toBe("completed");
   });
 });
