@@ -74,9 +74,9 @@ const h = vi.hoisted(() => ({ ledger: null as unknown as import("../src/ledger.t
 
 vi.mock("@oneshot-agent/sdk", () => ({
   OneShot: class {
-    govSolicitations = govSolicitationsMock;
-    localSearch = localSearchMock;
-    localResolve = localResolveMock;
+    recordSolicitationsFind = govSolicitationsMock;
+    businessFind = localSearchMock;
+    businessResolve = localResolveMock;
     peopleSearch = peopleSearchMock;
   },
 }));
