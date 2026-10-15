@@ -1,8 +1,12 @@
 /**
- * Read live LinkedIn Experience data through a persistent OneShot browser
- * profile. Connect through hosted login (including 2FA) or import a `li_at`
- * cookie. Reads use the founder's identity, so serialize them, space them,
- * and cap daily usage. A login wall invalidates the session until reconnect.
+ * Read live LinkedIn Experience data. The first path is the connected
+ * LinkedIn account's silent profile view (OneShot's `profile-view` with the
+ * experience section): seconds per read, paced and capped by the platform.
+ * The fallback, only when no connected account may view profiles, is a
+ * persistent OneShot browser profile: connect through hosted login (including
+ * 2FA) or import a `li_at` cookie. Browser reads use the founder's identity,
+ * so serialize them, space them, and cap daily usage. A login wall
+ * invalidates the session until reconnect.
  *
  * Cache across workspaces under `linkedin-profile:<url>` for 30 days, with a
  * 3-day negative cache.
@@ -10,6 +14,9 @@
 import {
   browserTask,
   browserTaskCost,
+  callLinkedInAs,
+  linkedInProfileReadAccount,
+  type LinkedInOperation,
   createBrowserProfile,
   deleteBrowserProfile,
   ENRICH_FAILURE_TTL_MS,
@@ -27,6 +34,7 @@ import {
   type BrowserProfileSetupState,
   type CallContext,
 } from "@oneshot-gtm/core";
+import { createHash } from "node:crypto";
 import { isLinkedInProfileUrl } from "./_linkedin.ts";
 
 export const LINKEDIN_PROFILE_NAME = "oneshot-gtm linkedin";
@@ -97,6 +105,8 @@ export interface LiveExperience {
   title?: string;
   period?: string;
   location?: string;
+  /** An end with no start, which a period cannot carry ("- Jan 2020" reads as a start). */
+  endDate?: string;
 }
 
 export interface LiveProfile {
@@ -161,6 +171,29 @@ export function linkedinSessionState(cfg = loadConfig()): LinkedInSessionState {
   return "ok";
 }
 
+/** The account a read goes through, or null; an unreadable inbox store counts as none. */
+function readAccount(): { workspace: string; accountId: string } | null {
+  try {
+    return linkedInProfileReadAccount();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Some live read can be attempted: a connected account may view profiles, or
+ * a browser session is on record (it may still be invalid or unchecked; the
+ * read reports that as its skip reason).
+ */
+export function liveReadConfigured(): boolean {
+  return readAccount() !== null || linkedinSessionState() !== "unset";
+}
+
+/** A live read would run now: a connected account may view profiles, or the browser session is verified. */
+export function liveReadReady(): boolean {
+  return readAccount() !== null || linkedinSessionState() === "ok";
+}
+
 export function linkedinProfileCacheKey(url: string): string {
   return `${CACHE_PREFIX}${normalizeProfileUrl(url)}`;
 }
@@ -181,6 +214,13 @@ function startOfLocalDayIso(now: Date): string {
   const d = new Date(now);
   d.setHours(0, 0, 0, 0);
   return d.toISOString();
+}
+
+const pad2 = (n: number): string => String(n).padStart(2, "0");
+
+/** The local calendar day as YYYY-MM-DD: the same day boundary the daily cap counts from. */
+function localDayKey(now: Date): string {
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
 }
 
 /**
@@ -595,7 +635,12 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
 export async function readLinkedInProfile(
   url: string,
   ctx: CallContext,
-  opts: { remainingUsd: number; now?: Date },
+  opts: {
+    remainingUsd: number;
+    now?: Date;
+    /** A cached read older than this is read again (default: the 30-day cache TTL). */
+    maxAgeMs?: number;
+  },
 ): Promise<LiveProfileRead> {
   if (!isLinkedInProfileUrl(url))
     return { profile: null, skipped: "not-linkedin", costUsd: 0, cached: false };
@@ -613,13 +658,23 @@ export async function readLinkedInProfile(
     if (cached.status === "failed") {
       if (age < ENRICH_FAILURE_TTL_MS)
         return { profile: null, skipped: "failed", costUsd: 0, cached: true };
-    } else if (age < CACHE_TTL_MS) {
+    } else if (age < Math.min(opts.maxAgeMs ?? CACHE_TTL_MS, CACHE_TTL_MS)) {
       try {
         return { profile: JSON.parse(cached.result_json) as LiveProfile, costUsd: 0, cached: true };
       } catch {
         // corrupt row → refetch
       }
     }
+  }
+  const account = readAccount();
+  if (account) {
+    if (linkedInReadsToday(now) >= (loadConfig().linkedinReadsPerDay ?? 80)) {
+      return { profile: null, skipped: "daily-limit", costUsd: 0, cached: false };
+    }
+    if (opts.remainingUsd < LINKEDIN_READ_COST_ESTIMATE_USD) {
+      return { profile: null, skipped: "cost-cap", costUsd: 0, cached: false };
+    }
+    return readThroughAccount(url, key, account, ctx);
   }
   const cfg = loadConfig();
   const state = linkedinSessionState(cfg);
@@ -754,6 +809,231 @@ export async function readLinkedInProfile(
       };
     }
   });
+}
+
+/**
+ * How long an account read waits for its job. The platform spaces views from
+ * one account 15 to 45 seconds apart, so a read queued behind two others in
+ * the same pass can take a couple of minutes to start.
+ */
+const ACCOUNT_READ_WAIT_MS = 180_000;
+const ACCOUNT_READ_POLL_MS = 1_000;
+const JOB_IN_FLIGHT = new Set(["pending", "processing", "queued", "running"]);
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+type LinkedInCall = (workspace: string, operation: LinkedInOperation) => Promise<unknown>;
+let linkedInCall: LinkedInCall = callLinkedInAs;
+let accountReadPauseMs = ACCOUNT_READ_POLL_MS;
+
+/** Test hook: replace the LinkedIn transport (null restores it) and the pause between polls. */
+export function _setLinkedInCall(fn: LinkedInCall | null, pauseMs = ACCOUNT_READ_POLL_MS): void {
+  linkedInCall = fn ?? callLinkedInAs;
+  accountReadPauseMs = pauseMs;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** "5/1/2026" (the shape the view returns) → "May 2026", the way the profile page shows it. */
+function monthYear(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const v = value.trim();
+  const mdy = /^(\d{1,2})\/\d{1,2}\/(\d{4})$/.exec(v);
+  if (mdy) return `${MONTHS[Number(mdy[1]) - 1] ?? ""} ${mdy[2]}`.trim();
+  const iso = /^(\d{4})-(\d{2})/.exec(v);
+  if (iso) return `${MONTHS[Number(iso[2]) - 1] ?? ""} ${iso[1]}`.trim();
+  // A period is split on dashes, so a value that carries one would read as two dates.
+  return /[-–—]/.test(v) ? undefined : v;
+}
+
+/**
+ * The view's `profile.experience` as the read's Experience list. A position
+ * with a start and no end is current whatever the view's own `current` says:
+ * the view marks open positions `current: false` (tormine/oneshot#1801).
+ */
+export function experienceFromAccountView(raw: unknown): LiveExperience[] {
+  if (!Array.isArray(raw)) return [];
+  const out: LiveExperience[] = [];
+  for (const entry of raw) {
+    const e = asRecord(entry);
+    const company = e && typeof e["company"] === "string" ? e["company"].trim() : "";
+    if (!e || !company) continue;
+    const item: LiveExperience = { company };
+    const title = typeof e["title"] === "string" ? e["title"].trim() : "";
+    const location = typeof e["location"] === "string" ? e["location"].trim() : "";
+    const start = monthYear(e["start"]);
+    const end = monthYear(e["end"]);
+    if (title) item.title = title;
+    if (start) item.period = `${start} - ${end ?? "Present"}`;
+    else if (end) item.endDate = end;
+    if (location) item.location = location;
+    out.push(item);
+  }
+  return out;
+}
+
+/**
+ * What a failed account read means. `account`: the account must be
+ * reconnected or granted profile views, so every read would fail the same
+ * way. `limit`: the account's daily views are used up. `person`: this
+ * profile cannot be viewed (negative-cached). Anything else is `interrupted`.
+ */
+function classifyAccountReadError(err: unknown): "account" | "limit" | "person" | "interrupted" {
+  const e = (err ?? {}) as {
+    message?: unknown;
+    code?: unknown;
+    jobError?: unknown;
+    statusCode?: unknown;
+  };
+  const text = [e.message, e.code, e.jobError]
+    .filter((v) => typeof v === "string")
+    .join(" ")
+    .toLowerCase();
+  const status = typeof e.statusCode === "number" ? e.statusCode : null;
+  if (
+    status === 401 ||
+    status === 403 ||
+    /not_connected|not connected|reconnect|revoked|disconnected|view_profile|not granted|permission/.test(
+      text,
+    )
+  )
+    return "account";
+  if (status === 429 || /rate_limited|daily_cap|daily limit|limit_reached|cap reached/.test(text))
+    return "limit";
+  if (status === 404 || /not_found|not found|profile_unavailable|unavailable profile/.test(text))
+    return "person";
+  return "interrupted";
+}
+
+function skip(skipped: LiveProfileSkip): LiveProfileRead {
+  return { profile: null, skipped, costUsd: 0, cached: false };
+}
+
+/**
+ * One silent view through the connected account, with the Experience list.
+ * The view is a job: accepted first, then waited on with `wait`. The
+ * idempotency key is per profile and day, so a retry the same day (another
+ * workspace, a second pass) is answered without a second charge.
+ */
+async function readThroughAccount(
+  url: string,
+  key: string,
+  account: { workspace: string; accountId: string },
+  ctx: CallContext,
+): Promise<LiveProfileRead> {
+  const ledger = getLedger();
+  const call = (operation: LinkedInOperation) => linkedInCall(account.workspace, operation);
+  // The key allows only [A-Za-z0-9_.:-], so the profile is named by a hash.
+  const profileHash = createHash("sha256").update(key).digest("hex").slice(0, 32);
+  const idempotencyKey = `gtm:profile-read:${profileHash}:${localDayKey(new Date())}`;
+  const deadline = Date.now() + ACCOUNT_READ_WAIT_MS;
+  let requestId: string | null = null;
+  let done: Record<string, unknown> | null = null;
+  let costUsd = 0;
+  try {
+    for (;;) {
+      let answer: Record<string, unknown> | null;
+      try {
+        answer = asRecord(
+          await call(
+            requestId
+              ? { kind: "wait", requestId }
+              : {
+                  kind: "profile-read",
+                  accountId: account.accountId,
+                  identifier: url,
+                  idempotencyKey,
+                  playName: ctx.playName,
+                },
+          ),
+        );
+      } catch (err) {
+        // `wait` gives up after two seconds on a job that is still running.
+        if (requestId && (err as { name?: unknown }).name === "JobTimeoutError") {
+          if (Date.now() >= deadline) return skip("interrupted");
+          continue;
+        }
+        throw err;
+      }
+      if (!requestId && typeof answer?.["cost"] === "number") costUsd = answer["cost"];
+      const status = String(answer?.["status"] ?? "");
+      if (!JOB_IN_FLIGHT.has(status)) {
+        if (status === "failed" || status === "error") {
+          throw Object.assign(new Error(String(answer?.["error"] ?? "profile view failed")), {
+            code: answer?.["error_code"],
+          });
+        }
+        done = asRecord(answer?.["result"]) ?? answer;
+        break;
+      }
+      const accepted = answer?.["request_id"];
+      if (typeof accepted === "string" && accepted) requestId = accepted;
+      if (!requestId || Date.now() >= deadline) return skip("interrupted");
+      await new Promise((resolve) => setTimeout(resolve, accountReadPauseMs));
+    }
+  } catch (err) {
+    const kind = classifyAccountReadError(err);
+    logEvent(
+      "linkedin_profile.read_failed",
+      {
+        via: "account",
+        kind,
+        message_120: String((err as { message?: unknown }).message ?? "").slice(0, 120),
+      },
+      "warn",
+    );
+    if (kind === "person") {
+      try {
+        ledger.setCachedEnrichmentFailure(key, String((err as Error).message ?? "view refused"));
+      } catch {
+        // best-effort
+      }
+      return skip("failed");
+    }
+    return skip(
+      kind === "account" ? "session-invalid" : kind === "limit" ? "daily-limit" : "interrupted",
+    );
+  }
+  if (typeof done?.["cost"] === "number") costUsd = done["cost"];
+  const view = asRecord(done?.["profile"]);
+  // No profile, no section, or a section LinkedIn held back: not proof of
+  // what the person lists. The provider's history stands and the row is
+  // read again on a later pass.
+  if (!view || !Array.isArray(view["experience"]) || view["experience_complete"] === false) {
+    logEvent(
+      "linkedin_profile.read_incomplete",
+      { via: "account", complete: view?.["experience_complete"] ?? null },
+      "warn",
+    );
+    return { profile: null, skipped: "interrupted", costUsd, cached: false };
+  }
+  const experience = experienceFromAccountView(view["experience"]);
+  const text = (field: string): string | undefined => {
+    const v = view[field];
+    return typeof v === "string" && v.trim() ? v.trim() : undefined;
+  };
+  const profile: LiveProfile = {
+    url,
+    readAt: new Date().toISOString(),
+    ...(text("name") ? { name: text("name")! } : {}),
+    ...(text("headline") ? { headline: text("headline")! } : {}),
+    ...(text("location") ? { location: text("location")! } : {}),
+    experience,
+  };
+  try {
+    ledger.setCachedEnrichment(key, JSON.stringify(profile));
+  } catch {
+    // cache write is best-effort
+  }
+  logEvent("linkedin_profile.read", {
+    via: "account",
+    positions: experience.length,
+    cost_usd: costUsd,
+  });
+  return { profile, costUsd, cached: false };
 }
 
 /** Test hook: reset the serialization gate. */

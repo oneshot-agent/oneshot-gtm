@@ -9,12 +9,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // it is logged in as: whether it came from a hosted login or a cookie.
 
 let cfgOverride: Record<string, unknown> = {};
+let readBlocker: "none" | "disconnected" | "no-grant" | null = "none";
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
     loadConfig: () => ({ ...actual.loadConfig(), ...cfgOverride }),
+    linkedInProfileReadBlocker: () => readBlocker,
     oneshotEnvReady: () => false,
     getBalance: async () => ({ balance: "1 USDC", raw: "1 USDC" }),
     getLedger: () => ({
@@ -37,6 +39,7 @@ beforeEach(() => {
   process.env["ONESHOT_GTM_WORKSPACE"] = "alpha";
   createWorkspace("alpha");
   cfgOverride = {};
+  readBlocker = "none";
   delete process.env["LINKEDIN_SESSION_COOKIE"];
 });
 afterEach(() => {
@@ -109,5 +112,32 @@ describe("doctor: linkedin session", () => {
     const verified = await linkedinCheck();
     expect(verified.severity).toBe("ok");
     expect(verified.message).toContain("connected via browser login");
+  });
+
+  it("a connected account that may view profiles is the read path, whatever the browser session says", async () => {
+    readBlocker = null;
+    cfgOverride = { linkedinSessionInvalidAt: "2026-10-09T00:00:00.000Z" };
+    const check = await linkedinCheck();
+    expect(check.severity).toBe("ok");
+    expect(check.message).toContain("connected LinkedIn account");
+  });
+
+  it("an account that needs a reconnect or the grant pauses reads unless a browser session works", async () => {
+    readBlocker = "no-grant";
+    const noGrant = await linkedinCheck();
+    expect(noGrant.severity).toBe("warn");
+    expect(noGrant.message).toContain("live profile reads are paused");
+    expect(noGrant.hint).toContain("allow profile views");
+    readBlocker = "disconnected";
+    expect((await linkedinCheck()).message).toContain("needs a reconnect");
+    cfgOverride = {
+      linkedinBrowserProfileId: "prof_1",
+      linkedinSessionCheckedAt: "2026-09-14T10:00:00.000Z",
+      linkedinSessionName: "Ada Quill",
+      linkedinSessionInvalidAt: null,
+    };
+    const fallback = await linkedinCheck();
+    expect(fallback.severity).toBe("ok");
+    expect(fallback.message).toContain("connected via browser login");
   });
 });

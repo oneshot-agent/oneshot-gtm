@@ -2,25 +2,30 @@
  * The live-profile sweep: the scheduler's catch-up for LinkedIn reads.
  *
  * The post-finder hook reads the profile of every row a finder just created,
- * but it works under a 20-minute wall budget and a read takes ~5 minutes, so
- * a busy finder leaves rows with provider history only, and no later run
- * comes back for them. This sweep does: every few hours the server takes
- * the live queue rows (pending or approved, not sent) that have a LinkedIn
- * seed and no live read yet, approved first, and runs them through the same
- * research path. The provider call is a free cache hit; the live read is
- * the spend (~$0.01 a row). It stops at the daily read cap and on a login
- * wall exactly where the reads themselves stop, so it never pushes the
- * founder's account past what a backfill would.
+ * but it works under a wall budget, so a busy finder leaves rows with
+ * provider history only, and no later run comes back for them. This sweep
+ * does: every hour the server takes the live queue rows (pending or approved,
+ * not sent) that have a LinkedIn seed and no live read yet, or one older than
+ * READ_MAX_AGE_MS, approved first, and runs them through the same research
+ * path. Then it re-reads people in an active cadence whose last read is older
+ * than CADENCE_REFRESH_MS, so a follow-up is written against the job they
+ * hold now. The provider call is a free cache hit; the live read is the spend
+ * (~$0.01 a row). It stops at the daily read cap and when the account (or
+ * the browser session) can no longer read, exactly where the reads themselves
+ * stop.
  */
-import { demoMode, getLedger, logEvent, type QueueRow } from "@oneshot-gtm/core";
+import { demoMode, getLedger, logEvent, readPersonHalf, type QueueRow } from "@oneshot-gtm/core";
 import { isLinkedInProfileUrl } from "./_linkedin.ts";
-import { LINKEDIN_READ_COST_ESTIMATE_USD, linkedinSessionState } from "./_linkedin-profile.ts";
+import { LINKEDIN_READ_COST_ESTIMATE_USD, liveReadReady } from "./_linkedin-profile.ts";
 import {
   applyPersonResearch,
+  applyPersonResearchToProspect,
   personSeedFor,
+  personSeedForProspect,
   researchFailedOnItsOwn,
   researchPerson,
   type PersonSeed,
+  type ProspectForResearch,
   type ResearchableQueueRow,
 } from "./_person-research.ts";
 
@@ -29,11 +34,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Rows per sweep. A read takes ~5 minutes and the scheduler gives a sweep an
- * hour, so ten fits; six sweeps a day stay under the read path's daily cap,
- * which is the real ceiling.
+ * Reads per sweep, queue rows and cadence refreshes together. An account read
+ * takes seconds, but the platform spaces one account's views 15 to 45 seconds
+ * apart, so forty fit the sweep's hour; the read path's daily cap is the real
+ * ceiling.
  */
-const DEFAULT_MAX_ROWS = 10;
+const DEFAULT_MAX_ROWS = 40;
 /** Spend per sweep, live reads plus any uncached provider call. */
 const DEFAULT_MAX_COST_USD = 2;
 /**
@@ -43,6 +49,10 @@ const DEFAULT_MAX_COST_USD = 2;
  * and only takes one of the sweep's few slots from a row that could be read.
  */
 const RETRY_AFTER_MS = 3 * 24 * 60 * 60 * 1000;
+/** A queue row's live read older than this is read again (the read cache's own lifetime). */
+export const READ_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+/** A person in an active cadence is read again when their last read is older than this. */
+export const CADENCE_REFRESH_MS = 14 * 24 * 60 * 60 * 1000;
 
 export type LiveSweepRow = ResearchableQueueRow & Pick<QueueRow, "sent_at" | "send_started_at">;
 
@@ -52,7 +62,7 @@ export interface LiveSweepCandidate {
 }
 
 export interface LiveProfileSweepResult {
-  /** False when nothing could run: no verified session, demo mode. */
+  /** False when nothing could run: no account or verified session to read with, demo mode. */
   ran: boolean;
   reason?: "session" | "demo";
   /** Live rows that qualified (before the per-sweep cap). */
@@ -61,6 +71,8 @@ export interface LiveProfileSweepResult {
   researched: number;
   /** Rows whose dossier now carries a live read. */
   read: number;
+  /** People in an active cadence whose read was renewed. */
+  refreshed: number;
   costUsd: number;
   /** Why the sweep ended before its candidates ran out. */
   stoppedBy?: "daily-limit" | "session-invalid" | "budget" | "max-rows" | "deadline";
@@ -70,8 +82,8 @@ export interface LiveProfileSweepResult {
  * Pure: which live rows want a read. A sent or mid-send row never (the
  * payload write would be refused and the read wasted); a row whose seed is
  * not a LinkedIn profile never; a row whose trigger switched the tier off
- * never; a row that already carries a live read not again (the read cache
- * is 30 days and `--refresh` on the CLI is the way to force one); a row
+ * never; a row that already carries a live read not again until the read is
+ * READ_MAX_AGE_MS old (`--refresh` on the CLI forces one sooner); a row
  * whose last attempt failed for a reason of its own not for RETRY_AFTER_MS.
  * Approved rows first (they are the ones about to send) then pending, newest
  * first.
@@ -99,7 +111,9 @@ export function selectLiveSweepCandidates(
     // A loose look at the record: a row from an older build may carry a
     // dossier the strict guard would not recognise, and it still has its read.
     const research = payload["personResearch"];
-    if (isRecord(research) && isRecord(research["liveProfile"])) continue;
+    if (isRecord(research) && isRecord(research["liveProfile"])) {
+      if (!readOlderThan(research["liveProfile"], READ_MAX_AGE_MS, now)) continue;
+    }
     if (isRecord(research) && triedRecently(research, now)) continue;
     const seed = personSeedFor(payload);
     if (!seed?.url || !isLinkedInProfileUrl(seed.url)) continue;
@@ -119,6 +133,53 @@ function triedRecently(research: Record<string, unknown>, now: number): boolean 
     typeof research["researchedAt"] === "string" ? research["researchedAt"] : "",
   );
   return Number.isFinite(at) && now - at < RETRY_AFTER_MS;
+}
+
+/** A dossier's `liveProfile` marker is older than `maxAgeMs`. A marker with no usable date counts as fresh, as it did before reads aged. */
+function readOlderThan(marker: unknown, maxAgeMs: number, now: number): boolean {
+  const at =
+    isRecord(marker) && typeof marker["readAt"] === "string" ? Date.parse(marker["readAt"]) : NaN;
+  return Number.isFinite(at) && now - at >= maxAgeMs;
+}
+
+export interface CadenceRefreshCandidate {
+  prospect: ProspectForResearch;
+  seed: PersonSeed;
+  playName: string;
+}
+
+/**
+ * Pure: which people in an active cadence want a fresh read. One entry per
+ * prospect (earliest enrolment first); a prospect with no LinkedIn seed is
+ * left out, and so is one read within CADENCE_REFRESH_MS or whose last
+ * attempt failed for a reason of its own within RETRY_AFTER_MS.
+ */
+export function selectCadenceRefreshCandidates(
+  cadences: ReadonlyArray<{ prospect_id: number; play_name: string; enrolled_at: string }>,
+  prospectFor: (id: number) => ProspectForResearch | null,
+  now: number = Date.now(),
+): CadenceRefreshCandidate[] {
+  const ordered = cadences.toSorted(
+    (a, b) => a.enrolled_at.localeCompare(b.enrolled_at) || a.prospect_id - b.prospect_id,
+  );
+  const seen = new Set<number>();
+  const out: CadenceRefreshCandidate[] = [];
+  for (const c of ordered) {
+    if (seen.has(c.prospect_id)) continue;
+    seen.add(c.prospect_id);
+    const prospect = prospectFor(c.prospect_id);
+    if (!prospect) continue;
+    const seed = personSeedForProspect(prospect);
+    if (!seed?.url || !isLinkedInProfileUrl(seed.url)) continue;
+    const half = readPersonHalf(prospect.dossier_json);
+    if (isRecord(half)) {
+      const live = half["liveProfile"];
+      if (isRecord(live) && !readOlderThan(live, CADENCE_REFRESH_MS, now)) continue;
+      if (triedRecently(half, now)) continue;
+    }
+    out.push({ prospect, seed, playName: c.play_name });
+  }
+  return out;
 }
 
 /** Approved rows first: they are the ones about to send. */
@@ -143,15 +204,20 @@ function liveReadOffByPlay(ledger: ReturnType<typeof getLedger>): (playName: str
 export interface LiveProfileSweepDeps {
   researchPerson: typeof researchPerson;
   applyPersonResearch: typeof applyPersonResearch;
+  applyPersonResearchToProspect?: typeof applyPersonResearchToProspect;
 }
 
 export async function sweepLiveProfiles(
   opts: { maxRows?: number; maxCostUsd?: number; deadlineAt?: number } = {},
-  deps: LiveProfileSweepDeps = { researchPerson, applyPersonResearch },
+  deps: LiveProfileSweepDeps = {
+    researchPerson,
+    applyPersonResearch,
+    applyPersonResearchToProspect,
+  },
 ): Promise<LiveProfileSweepResult> {
-  const base = { candidates: 0, researched: 0, read: 0, costUsd: 0 };
+  const base = { candidates: 0, researched: 0, read: 0, refreshed: 0, costUsd: 0 };
   if (demoMode()) return { ran: false, reason: "demo", ...base };
-  if (linkedinSessionState() !== "ok") return { ran: false, reason: "session", ...base };
+  if (!liveReadReady()) return { ran: false, reason: "session", ...base };
   const ledger = getLedger();
   const rows = [
     ...ledger.listQueue({ status: "approved", limit: 100_000 }),
@@ -208,13 +274,81 @@ export async function sweepLiveProfiles(
       break;
     }
   }
+  // Queue rows first (they are about to send); the reads left over go to
+  // people already in a cadence.
+  if (!result.stoppedBy) {
+    await refreshCadencePeople(ledger, result, spend, {
+      maxReads: maxRows - result.researched,
+      maxCostUsd,
+      deadlineAt,
+      apply: deps.applyPersonResearchToProspect ?? applyPersonResearchToProspect,
+      research: deps.researchPerson,
+    });
+  }
   result.costUsd = spend.costUsd;
   logEvent("live_profile_sweep.done", {
     candidates: result.candidates,
     researched: result.researched,
     read: result.read,
+    refreshed: result.refreshed,
     cost_usd: result.costUsd,
     stopped_by: result.stoppedBy ?? null,
   });
   return result;
+}
+
+/**
+ * The cadence half of the sweep: people already in a conversation, read again
+ * every CADENCE_REFRESH_MS. A read that came back is written to the prospect
+ * (title, company, verdict re-judged); a read that did not leaves the
+ * prospect as it was, since the provider half alone says nothing new.
+ */
+async function refreshCadencePeople(
+  ledger: ReturnType<typeof getLedger>,
+  result: LiveProfileSweepResult,
+  spend: { costUsd: number },
+  opts: {
+    maxReads: number;
+    maxCostUsd: number;
+    deadlineAt: number;
+    apply: typeof applyPersonResearchToProspect;
+    research: typeof researchPerson;
+  },
+): Promise<void> {
+  if (opts.maxReads <= 0) return;
+  const candidates = selectCadenceRefreshCandidates(ledger.listActiveCadences(), (id) =>
+    ledger.getProspectById(id),
+  );
+  for (const [index, { prospect, seed, playName }] of candidates.entries()) {
+    if (index >= opts.maxReads) {
+      result.stoppedBy = "max-rows";
+      break;
+    }
+    if (Date.now() >= opts.deadlineAt) {
+      result.stoppedBy = "deadline";
+      break;
+    }
+    const remainingUsd = Math.max(0, opts.maxCostUsd - spend.costUsd);
+    if (remainingUsd < LINKEDIN_READ_COST_ESTIMATE_USD) {
+      result.stoppedBy = "budget";
+      break;
+    }
+    const researched = await opts.research({
+      seed,
+      playName,
+      subject: { prospectId: prospect.id },
+      remainingUsd,
+      liveProfile: true,
+      liveMaxAgeMs: CADENCE_REFRESH_MS,
+    });
+    spend.costUsd += researched.costUsd;
+    if (researched.dossier.liveProfile && Date.now() < opts.deadlineAt) {
+      await opts.apply(ledger, prospect, researched.dossier, { rejudge: true, playName });
+      result.refreshed++;
+    }
+    if (researched.liveSkipped === "daily-limit" || researched.liveSkipped === "session-invalid") {
+      result.stoppedBy = researched.liveSkipped;
+      break;
+    }
+  }
 }

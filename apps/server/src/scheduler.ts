@@ -68,13 +68,16 @@ const BOUNCE_POLL_INTERVAL_MS = 30 * 60_000;
  */
 const CALENDAR_POLL_INTERVAL_MS = 10 * 60_000;
 /**
- * Live LinkedIn profile reads for rows the post-finder hook did not reach
- * (its wall budget fits about four five-minute reads). A few times a day is
- * plenty: the reads are capped per day inside the read path, and a sweep
- * runs its rows one at a time.
+ * Live LinkedIn profile reads for rows the post-finder hook did not reach,
+ * and the 14-day refresh for people in a cadence. Hourly: a read through the
+ * connected account takes seconds (the platform spaces them), the reads are
+ * capped per day inside the read path, and a sweep runs its rows one at a
+ * time, inside a deadline shorter than the interval.
  */
-const LIVE_PROFILE_SWEEP_INTERVAL_MS = 4 * 60 * 60_000;
-const LIVE_PROFILE_SWEEP_DEADLINE_MS = 60 * 60_000;
+const LIVE_PROFILE_SWEEP_INTERVAL_MS = 60 * 60_000;
+const LIVE_PROFILE_SWEEP_DEADLINE_MS = 45 * 60_000;
+/** Recent posts for people in a running cadence: billed per capture, so a few times a day. */
+const NEWSFEED_SWEEP_INTERVAL_MS = 4 * 60 * 60_000;
 /**
  * LinkedIn invitation statuses: a free read per account, so it runs often
  * enough that an accept shows on /cadences within the hour. It records
@@ -114,6 +117,7 @@ export function startScheduler(): SchedulerHandle {
   let replyPollClean = true;
   // 0 = never swept, so the first tick after boot catches up right away.
   let lastLiveProfileSweepAt = 0;
+  let lastNewsfeedSweepAt = 0;
   // 0 = never polled, so the first tick can fire the calendar poll too.
   let lastCalendarPollAt = 0;
   // Calendar failures must not block the daily send summary: they do not affect
@@ -242,8 +246,9 @@ export function startScheduler(): SchedulerHandle {
         );
       }
       // Live-profile sweep: rows with a LinkedIn seed and no live read yet,
-      // approved first. Spends (~$0.01 a row) under the read path's daily
-      // cap; idle without a verified session. Isolated like the others and
+      // approved first, then people in a cadence due a re-read. Spends
+      // (~$0.01 a row) under the read path's daily cap; idle with no account
+      // or verified session to read with. Isolated like the others and
       // stamped before the await so a slow sweep never queues ticks up.
       let liveProfilesRead = 0;
       if (Date.now() - lastLiveProfileSweepAt >= LIVE_PROFILE_SWEEP_INTERVAL_MS) {
@@ -264,9 +269,12 @@ export function startScheduler(): SchedulerHandle {
             "warn",
           );
         }
-        // Same cadence, its own guard: recent posts for prospects in a running
-        // cadence whose cached posts are missing or expired. Needs no LinkedIn
-        // session, so it runs even when the read sweep idles.
+      }
+      // Recent posts for prospects in a running cadence whose cached posts
+      // are missing or expired. Its own interval and guard; needs no LinkedIn
+      // session, so it runs even when the read sweep idles.
+      if (Date.now() - lastNewsfeedSweepAt >= NEWSFEED_SWEEP_INTERVAL_MS) {
+        lastNewsfeedSweepAt = Date.now();
         try {
           await withDeadline(
             sweepInFlightNewsfeeds({ deadlineAt: Date.now() + NEWSFEED_SWEEP_DEADLINE_MS }),

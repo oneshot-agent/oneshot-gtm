@@ -33,7 +33,7 @@ import { researchQueueRowProduct } from "./_product-research.ts";
 import { isLinkedInProfileUrl } from "./_linkedin.ts";
 import {
   LINKEDIN_READ_COST_ESTIMATE_USD,
-  linkedinSessionState,
+  liveReadConfigured,
   readLinkedInProfile,
   type LiveProfileRead,
   type LiveProfileSkip,
@@ -48,7 +48,7 @@ export const COMPANY_RESEARCH_COST_ESTIMATE_USD = 0.005;
 /** Reserved per in-flight call against the trigger cap (research + company); released on completion. */
 const RESERVE_USD = PERSON_RESEARCH_COST_ESTIMATE_USD + COMPANY_RESEARCH_COST_ESTIMATE_USD + 0.005;
 
-/** The live read is reserved only for a row that can take one: a LinkedIn seed with the tier on and a session connected. */
+/** The live read is reserved only for a row that can take one: a LinkedIn seed with the tier on and an account or session to read with. */
 function liveReadPossible(
   seed: { url?: string | null } | null,
   liveProfile: boolean | undefined,
@@ -56,7 +56,7 @@ function liveReadPossible(
   return (
     liveProfile !== false &&
     Boolean(seed?.url && isLinkedInProfileUrl(seed.url)) &&
-    linkedinSessionState() !== "unset"
+    liveReadConfigured()
   );
 }
 
@@ -468,8 +468,10 @@ export interface ResearchPersonInput {
   remainingUsd: number;
   /** Buy the current company's record (default true). */
   enrichCompany?: boolean;
-  /** Read the live LinkedIn profile when the seed is one and a session is configured (default true). */
+  /** Read the live LinkedIn profile when the seed is one and an account or session can read it (default true). */
   liveProfile?: boolean;
+  /** A cached live read older than this is read again (default: the read cache's 30 days). */
+  liveMaxAgeMs?: number;
   /**
    * Re-derive from the shared research cache only: no paid call of any kind
    * (no provider call, no retry by email, no live read, no company lookup
@@ -627,7 +629,7 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
     seed.url &&
     isLinkedInProfileUrl(seed.url)
   ) {
-    if (linkedinSessionState() !== "unset") {
+    if (liveReadConfigured()) {
       live = await readLinkedInProfile(
         seed.url,
         {
@@ -635,7 +637,10 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
           memo: "person research: live LinkedIn profile read",
           decisionContext: { source: "person-research", ...input.subject },
         },
-        { remainingUsd: Math.max(0, input.remainingUsd - costUsd) },
+        {
+          remainingUsd: Math.max(0, input.remainingUsd - costUsd),
+          ...(input.liveMaxAgeMs !== undefined ? { maxAgeMs: input.liveMaxAgeMs } : {}),
+        },
       );
       costUsd += live.costUsd;
       if (
@@ -739,7 +744,9 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
 
   const dossier: PersonResearchDossier = boundPersonResearch({
     version: 1,
-    status: company ? "complete" : "partial",
+    // A current role read off the live page is the record a draft needs,
+    // with or without the employer's company facts.
+    status: company || liveOrgs.some((o) => o.current) ? "complete" : "partial",
     researchedAt: new Date().toISOString(),
     seed: {
       ...(seed.url ? { url: seed.url } : {}),
@@ -1118,7 +1125,7 @@ export async function researchNewQueueRowPeople(input: {
   maxCostUsd?: number;
   enabled: boolean;
   priorSdkCostUsd?: number;
-  /** Live LinkedIn reads for this run (default true; needs a configured session). */
+  /** Live LinkedIn reads for this run (default true; needs a connected account or session). */
   liveProfile?: boolean;
 }): Promise<void> {
   if (!input.enabled) return;
