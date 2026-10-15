@@ -35,6 +35,7 @@ import {
   heldLabel,
   isHeldElsewhere,
   mailWaitingRows,
+  sendErrorLabel,
 } from "../lib/cadenceState.ts";
 import { appendReason, REJECT_REASON_CHIPS } from "../lib/rejectReason.ts";
 import {
@@ -734,13 +735,13 @@ function CadencesPage() {
                       }
                     : held && c.heldElsewhere
                       ? { text: heldLabel(c.heldElsewhere, now.getTime()), cls: "text-ink-muted" }
-                      : isOverdue && c.nextDueAt
-                        ? {
-                            text: `${timeAgo(c.nextDueAt).replace(/ ago$/, "")} overdue`,
-                            cls: "text-ink-spend-2",
-                          }
-                        : c.status === "active" && c.lastSendError
-                          ? { text: "send failed", cls: "text-ink-blocked-2" }
+                      : c.status === "active" && c.lastSendError
+                        ? { text: sendErrorLabel(c.lastSendError), cls: "text-ink-blocked-2" }
+                        : isOverdue && c.nextDueAt
+                          ? {
+                              text: `${timeAgo(c.nextDueAt).replace(/ ago$/, "")} overdue`,
+                              cls: "text-ink-spend-2",
+                            }
                           : c.status === "active" && c.nextDueAt
                             ? { text: `Due ${timeAgo(c.nextDueAt)}`, cls: "text-ink-muted" }
                             : null;
@@ -814,7 +815,7 @@ function CadencesPage() {
                   ...(c.lastSendError && !c.isSending
                     ? [
                         {
-                          key: "send failed",
+                          key: sendErrorLabel(c.lastSendError),
                           value: `${c.lastSendError}${
                             c.lastSendErrorAt ? ` · ${timeAgo(c.lastSendErrorAt)}` : ""
                           }`,
@@ -1079,7 +1080,7 @@ function CadencesPage() {
                             !c.isSending && c.status === "active" && c.lastSendError
                               ? `${c.lastSendError}${
                                   c.lastSendErrorAt ? ` · ${timeAgo(c.lastSendErrorAt)}` : ""
-                                } — click Send to retry`
+                                }${sendErrorLabel(c.lastSendError) === "send failed" ? " — click Send to retry" : ""}`
                               : undefined
                           }
                         >
