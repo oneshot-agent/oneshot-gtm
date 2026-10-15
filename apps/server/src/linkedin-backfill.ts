@@ -9,7 +9,7 @@ import {
   type LinkedInWorkspaceCounts,
   type LinkedInOperation,
 } from "@oneshot-gtm/core";
-import type { LinkedInSyncStatus } from "@oneshot-agent/sdk";
+import type { LinkedInSyncStatus } from "@oneshot-gtm/core";
 import { adoptPendingLinkedInReplacements } from "./linkedin-replacement.ts";
 import { callLinkedIn } from "./linkedin-client.ts";
 import { refreshLinkedInInbox } from "./linkedin-sync.ts";

@@ -2,7 +2,7 @@ import { beforeEach, afterEach, expect, it } from "vitest";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import type { LinkedInConversation, LinkedInMessage } from "@oneshot-agent/sdk";
+import type { LinkedInConversation, LinkedInMessage } from "../src/linkedin-fields.ts";
 import { Ledger } from "../src/ledger.ts";
 import { LinkedInInboxStore, type LinkedInMatch } from "../src/linkedin-inbox.ts";
 let store: LinkedInInboxStore;

@@ -6,12 +6,12 @@ import {
   linkedInMatches,
   oneshotEnvReady,
 } from "@oneshot-gtm/core";
+import type { LinkedInAccount } from "@oneshot-agent/sdk";
 import type {
-  LinkedInAccount,
   LinkedInConversationsPage,
   LinkedInMessagesPage,
   LinkedInSyncStatus,
-} from "@oneshot-agent/sdk";
+} from "@oneshot-gtm/core";
 import { adoptPendingLinkedInReplacements } from "./linkedin-replacement.ts";
 import { callLinkedIn } from "./linkedin-client.ts";
 

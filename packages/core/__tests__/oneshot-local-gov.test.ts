@@ -77,7 +77,7 @@ vi.mock("@oneshot-agent/sdk", () => ({
     recordSolicitationsFind = govSolicitationsMock;
     businessFind = localSearchMock;
     businessResolve = localResolveMock;
-    peopleSearch = peopleSearchMock;
+    personFind = peopleSearchMock;
   },
 }));
 

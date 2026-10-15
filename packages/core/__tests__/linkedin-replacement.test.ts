@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { join } from "node:path";
-import type { LinkedInAccount, LinkedInConversation, LinkedInMessage } from "@oneshot-agent/sdk";
+import type { LinkedInAccount } from "@oneshot-agent/sdk";
+import type { LinkedInConversation, LinkedInMessage } from "../src/linkedin-fields.ts";
 import { LinkedInInboxStore } from "../src/linkedin-inbox.ts";
 let store: LinkedInInboxStore;
 const account = (id: string, member = "owner") =>

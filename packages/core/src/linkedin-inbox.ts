@@ -3,12 +3,13 @@ import { Database } from "bun:sqlite";
 import { openStateDatabase } from "./sqlite-open.ts";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type {
-  LinkedInAccount,
-  LinkedInConversation,
-  LinkedInMessage,
-  LinkedInSyncStatus,
-} from "@oneshot-agent/sdk";
+import type { LinkedInAccount } from "@oneshot-agent/sdk";
+import {
+  type LinkedInConversation,
+  type LinkedInMessage,
+  type LinkedInSyncStatus,
+  withLegacyLinkedInNames,
+} from "./linkedin-fields.ts";
 import { sharedDir, currentWorkspaceName } from "./shared-db.ts";
 import { listWorkspaces } from "./workspaces.ts";
 import { configDir } from "./config.ts";
@@ -181,6 +182,22 @@ export class LinkedInInboxStore {
       CREATE TABLE IF NOT EXISTS message_redirects(account_key TEXT,duplicate_id TEXT,canonical_id TEXT,PRIMARY KEY(account_key,duplicate_id));
       CREATE TABLE IF NOT EXISTS assignments(id INTEGER PRIMARY KEY,thread_key TEXT,old_owner TEXT,new_owner TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
     `);
+    this.addLegacyNames();
+  }
+  /** Rows saved with only OneShot's renamed LinkedIn fields get the old names the indexes and matching read. */
+  private addLegacyNames() {
+    for (const table of ["accounts", "conversations", "messages"] as const) {
+      const rows = this.db
+        .query<{ rowid: number; data: string }, []>(
+          `SELECT rowid, data FROM ${table} WHERE data LIKE '%external_%' OR data LIKE '%history_sync_%'`,
+        )
+        .all();
+      for (const r of rows) {
+        const data = JSON.stringify(withLegacyLinkedInNames(JSON.parse(r.data)));
+        if (data !== r.data)
+          this.db.run(`UPDATE ${table} SET data=? WHERE rowid=?`, [data, r.rowid]);
+      }
+    }
   }
   close() {
     this.db.close();

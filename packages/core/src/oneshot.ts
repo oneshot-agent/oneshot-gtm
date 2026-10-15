@@ -5,25 +5,25 @@ import {
   type BrowserCookie as SdkBrowserCookie,
   type BrowserProfileSetup,
   type BrowserResult,
-  type CompanySearchResult,
-  type DeepResearchPersonResult,
+  type CompanyFindResult as CompanySearchResult,
+  type PersonDossierResult,
   type DomainPoolEntry,
   type DomainPoolStatusResult,
   type EmailResult,
-  type EnrichCompanyResult,
-  type EnrichProfileResult,
-  type FindEmailResult,
+  type CompanyProfileResult as EnrichCompanyResult,
+  type PersonProfileResult as EnrichProfileResult,
+  type PersonEmailResult as FindEmailResult,
   type GovNoticeTypeCode,
   type BusinessFindResult,
   type BusinessResolveResult,
   type RecordSolicitationsFindResult,
   type InboxEmail,
   type InboxListResult,
-  type PeopleSearchResult,
-  type PersonNewsfeedResult,
+  type PersonFindResult as PeopleSearchResult,
+  type PersonPostsResult as PersonNewsfeedResult,
   type ResearchResult,
   type SmsSendResult,
-  type VerifyEmailResult,
+  type PersonEmailStatusResult as VerifyEmailResult,
   type VoiceCallResult,
   type WebReadResult,
   type WebSearchResult,
@@ -79,9 +79,9 @@ export type { DomainPoolEntry, DomainPoolStatusResult } from "@oneshot-agent/sdk
 /** Re-exported so callers don't reach into the SDK for the prospecting result shapes. */
 export type {
   CompanyResult,
-  CompanySearchResult,
-  EnrichCompanyResult,
-  PeopleSearchResult,
+  CompanyFindResult as CompanySearchResult,
+  CompanyProfileResult as EnrichCompanyResult,
+  PersonFindResult as PeopleSearchResult,
   PersonResult,
 } from "@oneshot-agent/sdk";
 
@@ -1105,7 +1105,7 @@ export async function deepResearch(input: ResearchInput, ctx: CallContext) {
 
 export async function enrichProfile(input: EnrichInput, ctx: CallContext) {
   const agent = await getAgent();
-  const opts: Parameters<OneShot["enrichProfile"]>[0] = {
+  const opts: Parameters<OneShot["personProfile"]>[0] = {
     ...buildAuditOpts(ctx, "enrich.profile"),
   };
   if (input.email) opts.email = input.email;
@@ -1113,7 +1113,7 @@ export async function enrichProfile(input: EnrichInput, ctx: CallContext) {
   if (input.name) opts.name = input.name;
   if (input.companyDomain) opts.company_domain = input.companyDomain;
 
-  const result: EnrichProfileResult = await agent.enrichProfile(opts);
+  const result: EnrichProfileResult = await agent.personProfile(opts);
   const receiptId = recordCallReceipt({
     ctx,
     callType: "enrich.profile",
@@ -1128,6 +1128,48 @@ export async function enrichProfile(input: EnrichInput, ctx: CallContext) {
     source: "sdk:enrich.profile",
   });
   return { result, receiptId };
+}
+
+/**
+ * A person dossier in the shape the research readers and the cached rows
+ * already use: the profile under `result.enrichment`, articles as a list, and
+ * the written summary and posts under `result.dossier`. SDK 0.52 returns the
+ * profile as `result.profile.data` and each other part as a section with a
+ * state.
+ */
+export interface DeepResearchPersonResult {
+  status: string;
+  result: {
+    enrichment: PersonDossierResult["result"]["profile"]["data"];
+    articles: PersonDossierResult["result"]["articles"]["data"];
+    dossier: {
+      summary: string;
+      posts: PersonDossierResult["result"]["posts"]["data"];
+      social_accounts: PersonDossierResult["result"]["social_accounts"]["data"];
+    };
+  };
+  request_id: string;
+  completed_at: string;
+  receipt_id?: string;
+  memo?: string;
+  cost?: number;
+}
+
+export function dossierAsResearch(r: PersonDossierResult): DeepResearchPersonResult {
+  const { profile, articles, posts, social_accounts, summary } = r.result;
+  return {
+    status: r.status,
+    result: {
+      enrichment: profile.data,
+      articles: articles.data ?? [],
+      dossier: { summary, posts: posts.data ?? [], social_accounts: social_accounts.data ?? [] },
+    },
+    request_id: r.request_id,
+    completed_at: r.completed_at,
+    ...(r.receipt_id ? { receipt_id: r.receipt_id } : {}),
+    ...(r.memo ? { memo: r.memo } : {}),
+    ...(r.cost != null ? { cost: r.cost } : {}),
+  };
 }
 
 export interface DeepResearchPersonInput {
@@ -1150,7 +1192,7 @@ export interface DeepResearchPersonInput {
  */
 export async function deepResearchPerson(input: DeepResearchPersonInput, ctx: CallContext) {
   const agent = await getAgent();
-  const opts: Parameters<OneShot["deepResearchPerson"]>[0] = {
+  const opts: Parameters<OneShot["personDossier"]>[0] = {
     ...buildAuditOpts(ctx, "research.person"),
   };
   if (input.email) opts.email = input.email;
@@ -1158,7 +1200,7 @@ export async function deepResearchPerson(input: DeepResearchPersonInput, ctx: Ca
   if (input.name) opts.name = input.name;
   if (input.company) opts.company = input.company;
 
-  const result: DeepResearchPersonResult = await agent.deepResearchPerson(opts);
+  const result = dossierAsResearch(await agent.personDossier(opts));
   const receiptId = recordCallReceipt({
     ctx,
     callType: "research.person",
@@ -1181,7 +1223,7 @@ export interface PersonNewsfeedInput {
  */
 export async function personNewsfeed(input: PersonNewsfeedInput, ctx: CallContext) {
   const agent = await getAgent();
-  const result: PersonNewsfeedResult = await agent.personNewsfeed({
+  const result: PersonNewsfeedResult = await agent.personPosts({
     social_media_url: input.socialMediaUrl,
     ...buildAuditOpts(ctx, "research.newsfeed"),
   });
@@ -1205,14 +1247,14 @@ export interface FindEmailInput {
 
 export async function findEmail(input: FindEmailInput, ctx: CallContext) {
   const agent = await getAgent();
-  const opts: Parameters<OneShot["findEmail"]>[0] = {
+  const opts: Parameters<OneShot["personEmail"]>[0] = {
     company_domain: input.companyDomain,
     ...buildAuditOpts(ctx, "email.find"),
   };
   if (input.fullName) opts.full_name = input.fullName;
   if (input.firstName) opts.first_name = input.firstName;
   if (input.lastName) opts.last_name = input.lastName;
-  const result: FindEmailResult = await agent.findEmail(opts);
+  const result: FindEmailResult = await agent.personEmail(opts);
   const receiptId = recordCallReceipt({
     ctx,
     callType: "email.find",
@@ -1229,7 +1271,7 @@ export interface VerifyEmailInput {
 
 export async function verifyEmail(input: VerifyEmailInput, ctx: CallContext) {
   const agent = await getAgent();
-  const result: VerifyEmailResult = await agent.verifyEmail({
+  const result: VerifyEmailResult = await agent.personEmailStatus({
     email: input.email,
     ...buildAuditOpts(ctx, "email.verify"),
   });
@@ -1270,7 +1312,7 @@ export interface PeopleSearchInput {
  */
 export async function peopleSearch(input: PeopleSearchInput, ctx: CallContext) {
   const agent = await getAgent();
-  const opts: Parameters<OneShot["peopleSearch"]>[0] = {
+  const opts: Parameters<OneShot["personFind"]>[0] = {
     ...buildAuditOpts(ctx, "research.people"),
   };
   if (input.jobTitles) opts.job_titles = input.jobTitles;
@@ -1288,7 +1330,7 @@ export async function peopleSearch(input: PeopleSearchInput, ctx: CallContext) {
   // returned rows 41 onward).
   if (input.offset) (opts as typeof opts & { offset?: number }).offset = input.offset;
 
-  const result: PeopleSearchResult = await agent.peopleSearch(opts);
+  const result: PeopleSearchResult = await agent.personFind(opts);
   const receiptId = recordCallReceipt({
     ctx,
     callType: "research.people",
@@ -1316,7 +1358,7 @@ export interface CompanySearchInput {
 /** Company-database search: $0.01 flat per call, up to 100 results. All filters optional (an empty call is valid per the SDK signature). */
 export async function companySearch(input: CompanySearchInput, ctx: CallContext) {
   const agent = await getAgent();
-  const opts: Parameters<OneShot["companySearch"]>[0] = {
+  const opts: Parameters<OneShot["companyFind"]>[0] = {
     ...buildAuditOpts(ctx, "research.company"),
   };
   if (input.name) opts.name = input.name;
@@ -1330,7 +1372,7 @@ export async function companySearch(input: CompanySearchInput, ctx: CallContext)
   if (input.tags) opts.tags = input.tags;
   if (input.limit) opts.limit = input.limit;
 
-  const result: CompanySearchResult = await agent.companySearch(opts);
+  const result: CompanySearchResult = await agent.companyFind(opts);
   const receiptId = recordCallReceipt({
     ctx,
     callType: "research.company",
@@ -1357,7 +1399,7 @@ export interface EnrichCompanyInput {
  * the pinned SDK's own `enrichCompany` (node_modules/@oneshot-agent/sdk
  * dist/index.js) fails to validate (it does, throwing the exact same
  * `ValidationError` before any network call), but because `getAgent()` runs
- * BEFORE `agent.enrichCompany(opts)` and, on a cold singleton, itself makes an
+ * BEFORE `agent.companyProfile(opts)` and, on a cold singleton, itself makes an
  * outbound network call (`OneShot.create({ cdp: true })` →
  * `CdpWalletProvider.create()` → `cdp.evm.createAccount()`) that would fire
  * for an all-empty call before the SDK ever got a chance to reject it. Guard
@@ -1376,7 +1418,7 @@ export async function enrichCompany(input: EnrichCompanyInput, ctx: CallContext)
     );
   }
   const agent = await getAgent();
-  const opts: Parameters<OneShot["enrichCompany"]>[0] = {
+  const opts: Parameters<OneShot["companyProfile"]>[0] = {
     ...buildAuditOpts(ctx, "enrich.company"),
   };
   if (input.domain) opts.domain = input.domain;
@@ -1385,7 +1427,7 @@ export async function enrichCompany(input: EnrichCompanyInput, ctx: CallContext)
   if (input.ticker) opts.ticker = input.ticker;
   if (input.timeoutMs) opts.totalTimeoutMs = input.timeoutMs;
 
-  const result: EnrichCompanyResult = await agent.enrichCompany(opts);
+  const result: EnrichCompanyResult = await agent.companyProfile(opts);
   const receiptId = recordCallReceipt({
     ctx,
     callType: "enrich.company",
@@ -2250,7 +2292,6 @@ export async function finishBrowserProfileSetup(
 
 export type {
   BrowserResult,
-  DeepResearchPersonResult,
   InboxEmail,
   InboxListResult,
   SmsSendResult,

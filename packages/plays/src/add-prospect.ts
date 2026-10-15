@@ -153,7 +153,10 @@ export async function runProspectResearch(queueId: number): Promise<void> {
       },
       { playName: PLAY_NAME, decisionContext: { source: "add-prospect", url: payload.url } },
     );
-    const enrichment = (research.result?.result?.enrichment ?? {}) as Record<string, unknown>;
+    const enrichment = (research.result?.result?.enrichment ?? {}) as unknown as Record<
+      string,
+      unknown
+    >;
     const articles = research.result?.result?.articles;
     // Research came back empty (bad/private URL, no match). Don't draft from
     // nothing. A fabricated intro is exactly what we're avoiding. Leave the
@@ -211,7 +214,11 @@ export async function runProspectResearch(queueId: number): Promise<void> {
           ? { githubUrl: payload.url }
           : { linkedinUrl: payload.url };
     const target: ProfileIntroTarget = {
-      name: str(extracted.name) ?? str(enrichment["displayname"]) ?? "(unknown)",
+      name:
+        str(extracted.name) ??
+        str(enrichment["full_name"]) ??
+        str(enrichment["displayname"]) ??
+        "(unknown)",
       email,
       company: str(extracted.company),
       angle: str(extracted.angle),
