@@ -93,4 +93,21 @@ describe("reviewed send of a multiplier row", () => {
     // The letter step's eligibility reads that company and address.
     expect(automaticMailEligible("multiplier", state.prospectMeta!)).toBe(true);
   });
+
+  it("the organization wins over a blank or stale `company` on the payload", async () => {
+    for (const company of ["", "Stale Imports Ltd"]) {
+      state.payload = { ...state.payload, company };
+      state.prospectMeta = null;
+      const res = await sendDraftRoute(
+        new Request("http://localhost/api/queue/1/send-draft", { method: "POST" }),
+        { id: "1" },
+      );
+      expect(res.status).toBe(200);
+      expect(state.prospectMeta).toMatchObject({
+        company: "Harbor Founders Program",
+        source: "multiplier-association",
+      });
+      expect(automaticMailEligible("multiplier", state.prospectMeta!)).toBe(true);
+    }
+  });
 });

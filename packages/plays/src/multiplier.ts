@@ -159,20 +159,22 @@ function memberCountOf(t: MultiplierTarget): number | null {
 export function runMultiplier(opts: MultiplierRunOptions): Promise<{ drafted: MultiplierDraft[] }> {
   // The member offer is founder truth: read from config (the trigger's own
   // when it sets one), quoted verbatim, never written by the model. Resolved
-  // per target: a batch drawn from the queue carries each row's source
+  // per row: a batch drawn from the queue carries each row's source
   // (`queueSources`), so rows from two triggers pitch their own offers and a
   // row from no queue row pitches the workspace's; a single redraft carries
-  // its row's source (`queueSource`).
+  // its row's source (`queueSource`). The row is known by its index in
+  // `targets`, which `runEmailPlay` hands every hook: the target object is
+  // not a key, since the executor drafts from a copy of it once angle
+  // selection has picked one `yourEdge` angle, and the prompt, the allowed
+  // span and the verbatim check must all read the same row's offer.
   const cfg = loadConfig();
   const getTrigger = (name: string) => getLedger().getTrigger(name);
-  const offers = new Map<MultiplierTarget, string>(
-    opts.targets.map((t, i) => [
-      t,
-      effectiveMemberOffer(cfg, opts.queueSources?.[i] ?? opts.queueSource, getTrigger),
-    ]),
+  const offers = opts.targets.map((_t, i) =>
+    effectiveMemberOffer(cfg, opts.queueSources?.[i] ?? opts.queueSource, getTrigger),
   );
-  const memberOfferOf = (t: MultiplierTarget): string =>
-    offers.get(t) ?? effectiveMemberOffer(cfg, opts.queueSource, getTrigger);
+  const memberOfferOf = (index: number | undefined): string =>
+    (index !== undefined ? offers[index] : undefined) ??
+    effectiveMemberOffer(cfg, opts.queueSource, getTrigger);
   const def: EmailPlayDef<MultiplierTarget> = {
     playName: PLAY_NAME,
     promptName: "multiplier-email",
@@ -180,10 +182,11 @@ export function runMultiplier(opts: MultiplierRunOptions): Promise<{ drafted: Mu
     // Links, prices and discounts are banned everywhere except inside the
     // quoted member offer (`hardBanAllow`), which may name credits or a trial.
     hardBans: true,
-    hardBanAllow: (t) => (memberOfferOf(t) ? [memberOfferOf(t)] : []),
+    hardBanAllow: (_t, _cfg, index) => (memberOfferOf(index) ? [memberOfferOf(index)] : []),
     // A draft without the offer verbatim (or the named introducer) is held;
     // `prepare` threw before the draft when the offer was empty.
-    draftFlags: (draft, t) => multiplierDraftFlags(draft.body, memberOfferOf(t), t.introducedBy),
+    draftFlags: (draft, t, _cfg, index) =>
+      multiplierDraftFlags(draft.body, memberOfferOf(index), t.introducedBy),
     enrollCadence: true,
     requiredFields: [
       "organization",
@@ -195,11 +198,11 @@ export function runMultiplier(opts: MultiplierRunOptions): Promise<{ drafted: Mu
       "whyFit",
     ],
     toEmail: (t) => t.email,
-    prepare: async (t, dryRun, signal): Promise<Prepared> => {
+    prepare: async (t, dryRun, signal, index): Promise<Prepared> => {
       // Refuse before any paid call: a pitch without the offer has nothing to
       // propose, and the model must not be left to make one up. (The /run
       // route makes the same refusal before its own paid verification.)
-      if (!memberOfferOf(t)) throw new Error(EMPTY_OFFER_MESSAGE);
+      if (!memberOfferOf(index)) throw new Error(EMPTY_OFFER_MESSAGE);
       const prep = await standardEnrich({
         playName: PLAY_NAME,
         enrichInput: {
@@ -231,11 +234,11 @@ export function runMultiplier(opts: MultiplierRunOptions): Promise<{ drafted: Mu
           JSON.stringify(search.result.results, null, 2).slice(0, ORG_SEARCH_SLICE),
       };
     },
-    buildInputBlock: (t, prep, cfg) =>
+    buildInputBlock: (t, prep, cfg, index) =>
       [
         `FOUNDER: ${cfg.founderName}`,
         `PRODUCT: ${cfg.productOneLiner}`,
-        `MEMBER OFFER: ${memberOfferOf(t)}`,
+        `MEMBER OFFER: ${memberOfferOf(index)}`,
         `ORGANIZATION: ${t.organization} (${t.orgType})`,
         `CONTACT: ${t.name}, ${t.role}`,
         `MEMBERS: ${t.memberDescription}`,

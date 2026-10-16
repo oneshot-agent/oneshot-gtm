@@ -646,7 +646,9 @@ function allowedSpanPatterns(spans: readonly string[]): RegExp[] {
  * and case, where only the whitespace between its words may differ (the
  * model's own line wrapping), and only as a whole: a span that begins or
  * ends in a word or a number is not found inside a longer one (`$150` is not
- * inside `$1500` or `$150.5`). Null for a blank span.
+ * inside `$1500` or `$150.5`), and one that ends in a number and then a
+ * period or comma is not found where that number goes on (`$150.` is not
+ * inside `$150.50`, nor `$150,` inside `$150,000`). Null for a blank span.
  */
 export function allowedSpanPattern(span: string): RegExp | null {
   const words = span.split(/\s+/).filter(Boolean);
@@ -654,7 +656,7 @@ export function allowedSpanPattern(span: string): RegExp | null {
   const text = words.join(" ");
   const escaped = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
   const head = /^\w/.test(text) ? "(?<!\\w|\\d[.,])" : "";
-  const tail = /\w$/.test(text) ? "(?!\\w|[.,]\\d)" : "";
+  const tail = /\w$/.test(text) ? "(?!\\w|[.,]\\d)" : /\d[.,]$/.test(text) ? "(?!\\d)" : "";
   return new RegExp(`${head}${escaped}${tail}`, "g");
 }
 

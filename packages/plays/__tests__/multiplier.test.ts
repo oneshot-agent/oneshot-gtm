@@ -250,6 +250,38 @@ describe("runMultiplier — the member offer", () => {
     expect(block("Manual Org")).toContain(`MEMBER OFFER: ${OFFER}`);
   });
 
+  it("keeps the row's trigger offer when angle selection drafts from a copy of the target", async () => {
+    // A queue row hydrated with a multi-angle `yourEdge` and the arm split:
+    // the executor picks one angle into a copy of the target before the
+    // prompt sees it. The prompt, the allowed span and the verbatim check
+    // must still all read the row's own trigger offer, not the workspace's.
+    const offerA = "Offer A: two seats free for each member.";
+    triggers["orgA"] = JSON.stringify({ memberOffer: offerA });
+    const row = { ...base, yourEdge: "first angle // second angle", angleAssignment: "arm" };
+    calls.replies.push(JSON.stringify({ subject: "s", body: `My offer: ${offerA} Any use?` }));
+    const { drafted } = await runMultiplier({
+      dryRun: false,
+      targets: [row],
+      queueSources: ["find:orgA:1"],
+    });
+    expect(calls.llmInputBlocks[0]).toContain(`MEMBER OFFER: ${offerA}`);
+    expect(calls.llmInputBlocks[0]).not.toContain(OFFER);
+    expect(drafted[0]!.flags).toEqual([]);
+    expect(drafted[0]!.sent).toBe(true);
+
+    // Trigger-only configuration: the workspace has no offer, the row's trigger does.
+    memberOffer = null;
+    calls.replies.push(JSON.stringify({ subject: "s", body: `My offer: ${offerA} Any use?` }));
+    const triggerOnly = await runMultiplier({
+      dryRun: false,
+      targets: [row],
+      queueSources: ["find:orgA:1"],
+    });
+    expect(calls.llmInputBlocks[1]).toContain(`MEMBER OFFER: ${offerA}`);
+    expect(triggerOnly.drafted[0]!.flags).toEqual([]);
+    expect(triggerOnly.drafted[0]!.sent).toBe(true);
+  });
+
   // The founder's own typographic apostrophe, quotes and em dash.
   const TYPOGRAPHIC = "A month’s trial — with $50 credit for “each” member.";
   const STRAIGHTENED = `A month's trial, with $50 credit for "each" member.`;
@@ -333,6 +365,32 @@ describe("runMultiplier — the member offer", () => {
     const embellished = JSON.stringify({
       subject: "for your cohort",
       body: "I would offer: A credit of $1500 for each member.",
+    });
+    calls.replies.push(embellished, embellished);
+    const { drafted } = await runMultiplier({ dryRun: false, targets: [base] });
+    expect(drafted[0]!.flags).toEqual(
+      expect.arrayContaining(["multiplier:offer-missing", "hard-ban:price"]),
+    );
+    expect(drafted[0]!.sent).toBe(false);
+  });
+
+  it("an offer ending in a number and a period or comma does not exempt the number going on past it", async () => {
+    memberOffer = "A credit of $150.";
+    expect(
+      hardBanFlags("I would offer: A credit of $150.50 for each member.", [memberOffer]),
+    ).toEqual(["hard-ban:price"]);
+    expect(hardBanFlags("A credit of $150. For each member.", [memberOffer])).toEqual([]);
+    expect(
+      multiplierDraftFlags("I would offer: A credit of $150.50 for each member.", memberOffer),
+    ).toEqual(["multiplier:offer-missing"]);
+    expect(hardBanFlags("A credit of $150,000 a year.", ["A credit of $150,"])).toEqual([
+      "hard-ban:price",
+    ]);
+    expect(hardBanFlags("A credit of $150, paid monthly.", ["A credit of $150,"])).toEqual([]);
+    // The model keeps the embellished figure on the repair turn too.
+    const embellished = JSON.stringify({
+      subject: "for your cohort",
+      body: "I would offer: A credit of $150.50 for each member.",
     });
     calls.replies.push(embellished, embellished);
     const { drafted } = await runMultiplier({ dryRun: false, targets: [base] });

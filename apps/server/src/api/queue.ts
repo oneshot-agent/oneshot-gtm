@@ -1630,7 +1630,10 @@ export async function sendDraftRoute(
         businessAddressSource: str("businessAddressSource") ?? row.source,
         name: str("name") ?? str("founderName"),
         email,
-        company: str("company") ?? playFields.company ?? null,
+        // The play's own map first, when it has one: a blank or stale
+        // `company` on a multiplier payload must not displace the
+        // organization, which the letter's eligibility reads as the company.
+        company: playFields.company !== undefined ? playFields.company : str("company"),
         // Falls back to twitter/github URL. The column is the de-facto
         // social-profile URL (mirrors the play's own prospectMeta).
         linkedin_url: str("linkedinUrl") ?? str("twitterUrl") ?? str("githubUrl"),

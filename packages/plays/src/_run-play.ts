@@ -130,9 +130,17 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    * boundary before `prepare` is entered, so a def that ignores the arg is
    * still safe: forward it (or `throwIfCancelled` on it) when `prepare` makes
    * more than one paid call, so the second one doesn't fire after an abort.
+   *
+   * `index` (here and on `buildInputBlock`, `hardBanAllow` and `draftFlags`)
+   * is the target's position in `opts.targets`, for a def that resolves
+   * something per row (the `multiplier` play's member offer by the row's
+   * `queueSources` entry). It is the one handle that survives the executor's
+   * own target transformations: `buildInputBlock` reads a copy of the target
+   * once angle selection has picked one `yourEdge` angle, so a lookup keyed
+   * on the target object would miss there.
    */
-  prepare: (t: T, dryRun: boolean, signal?: AbortSignal) => Promise<Prepared<X>>;
-  buildInputBlock: (t: T, prep: Prepared<X>, cfg: AppConfig) => string;
+  prepare: (t: T, dryRun: boolean, signal?: AbortSignal, index?: number) => Promise<Prepared<X>>;
+  buildInputBlock: (t: T, prep: Prepared<X>, cfg: AppConfig, index?: number) => string;
   prospectMeta: (t: T) => SendDraftedOpts["prospectMeta"];
   metadata?: (t: T) => Record<string, unknown>;
   /**
@@ -161,7 +169,7 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    * config). A price or discount the model writes outside them still flags;
    * links always flag.
    */
-  hardBanAllow?: (t: T, cfg: AppConfig) => readonly string[];
+  hardBanAllow?: (t: T, cfg: AppConfig, index?: number) => readonly string[];
   /**
    * Play-specific checks that read the DRAFT, not only the target (compare
    * `extraFlags`): run with the writing lints on the first draft and on every
@@ -169,7 +177,7 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    * final draft, where any flag holds the send. The `multiplier` play holds a
    * draft that does not quote the member offer verbatim.
    */
-  draftFlags?: (draft: DraftedEmail, t: T, cfg: AppConfig) => string[];
+  draftFlags?: (draft: DraftedEmail, t: T, cfg: AppConfig, index?: number) => string[];
   /**
    * Required non-empty, trimmed string fields, mirroring the web form schema.
    * Validate before any paid call because API and queue inputs can bypass
@@ -276,7 +284,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // every target still queued behind the abort dies here having billed
         // nothing at all.
         throwIfCancelled(opts.signal, `${def.playName} prepare`);
-        let prep = await def.prepare(target, opts.dryRun, opts.signal);
+        let prep = await def.prepare(target, opts.dryRun, opts.signal, index);
         // PERSON RESEARCH first, so the merged dossier opens with the current
         // role and company (readers that slice the first few hundred chars
         // see the facts, not an enrich sentinel). A complete record also
@@ -355,7 +363,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // set. Prompts treat it as conditional input: present only when set,
         // and the prompt picks ONE beat per email (never stacks).
         const proof = socialProofBlock();
-        let inputBlock = def.buildInputBlock(draftTarget, prep, cfg);
+        let inputBlock = def.buildInputBlock(draftTarget, prep, cfg, index);
         if (offerLines) inputBlock = `${inputBlock}\n\n${offerLines}`;
         if (proof) inputBlock = `${inputBlock}\n\n${proof}`;
         // Same conditional shape for the damaging-admission beat: present only
@@ -428,9 +436,9 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // Guard #2. The LLM draft, the paid call `prepare` was feeding.
         throwIfCancelled(opts.signal, `${def.playName} draft`);
         stampLearningInput(learned, inputBlock);
-        const hardBanAllow = def.hardBans ? def.hardBanAllow?.(target, cfg) : undefined;
+        const hardBanAllow = def.hardBans ? def.hardBanAllow?.(target, cfg, index) : undefined;
         const draftFlags = def.draftFlags
-          ? (d: DraftedEmail) => def.draftFlags!(d, target, cfg)
+          ? (d: DraftedEmail) => def.draftFlags!(d, target, cfg, index)
           : undefined;
         const draft = await draftEmailFromPrompt({
           promptName: def.promptName,
