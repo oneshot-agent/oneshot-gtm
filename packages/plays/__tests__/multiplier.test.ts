@@ -250,25 +250,71 @@ describe("runMultiplier — the member offer", () => {
     expect(block("Manual Org")).toContain(`MEMBER OFFER: ${OFFER}`);
   });
 
-  it("matches the offer in the house punctuation every draft is cleaned to", async () => {
-    // A typographic apostrophe, quotes and an em dash in the founder's text:
-    // the draft pipeline straightens them, and the offer is still found whole,
-    // its price still exempt.
-    memberOffer = "A month’s trial — with $50 credit for “each” member.";
+  // The founder's own typographic apostrophe, quotes and em dash.
+  const TYPOGRAPHIC = "A month’s trial — with $50 credit for “each” member.";
+  const STRAIGHTENED = `A month's trial, with $50 credit for "each" member.`;
+
+  it("keeps the offer verbatim through cleanup: its own punctuation survives, the model's is straightened", async () => {
+    memberOffer = TYPOGRAPHIC;
     calls.replies.push(
-      JSON.stringify({ subject: "for your cohort", body: `The offer: ${memberOffer} Any use?` }),
+      JSON.stringify({
+        subject: "for your cohort",
+        body: `The offer — in the founder’s words: ${TYPOGRAPHIC} Any use?`,
+      }),
     );
     const { drafted } = await runMultiplier({ dryRun: false, targets: [base] });
     expect(drafted[0]!.flags).toEqual([]);
     expect(drafted[0]!.sent).toBe(true);
-    expect(drafted[0]!.body).toContain(`A month's trial, with $50 credit for "each" member.`);
+    expect(drafted[0]!.body).toContain(TYPOGRAPHIC);
+    expect(drafted[0]!.body).not.toContain(STRAIGHTENED);
+    // The model's own em dash and apostrophe around it were still cleaned.
+    expect(drafted[0]!.body).toBe(`The offer, in the founder's words: ${TYPOGRAPHIC} Any use?`);
 
     calls.replies.push(
-      JSON.stringify({ subject: "for your cohort", body: `${memberOffer} Normally $900.` }),
+      JSON.stringify({ subject: "for your cohort", body: `${TYPOGRAPHIC} Normally $900.` }),
     );
     const priced = await runMultiplier({ dryRun: false, targets: [base] });
     expect(priced.drafted[0]!.flags).toEqual(["hard-ban:price"]);
     expect(priced.drafted[0]!.sent).toBe(false);
+  });
+
+  it("holds an offer quoted in other punctuation or case: only the founder's exact text is verbatim", async () => {
+    memberOffer = TYPOGRAPHIC;
+    calls.replies.push(
+      JSON.stringify({ subject: "for your cohort", body: `The offer: ${STRAIGHTENED} Any use?` }),
+    );
+    const { drafted } = await runMultiplier({ dryRun: false, targets: [base] });
+    expect(drafted[0]!.flags).toEqual(
+      expect.arrayContaining(["multiplier:offer-missing", "hard-ban:price"]),
+    );
+    expect(drafted[0]!.sent).toBe(false);
+    expect(multiplierDraftFlags(`The offer: ${TYPOGRAPHIC.toLowerCase()}`, TYPOGRAPHIC)).toEqual([
+      "multiplier:offer-missing",
+    ]);
+    expect(hardBanFlags(`The offer: ${TYPOGRAPHIC.toUpperCase()}`, [TYPOGRAPHIC])).toEqual([
+      "hard-ban:price",
+    ]);
+  });
+
+  it("keeps the offer verbatim through a writing repair's redraft", async () => {
+    memberOffer = TYPOGRAPHIC;
+    calls.replies.push(
+      JSON.stringify({
+        subject: "for your cohort",
+        body: `${TYPOGRAPHIC} Happy to tailor it! Ask me anything!`,
+      }),
+    );
+    calls.replies.push(
+      JSON.stringify({
+        subject: "for your cohort",
+        body: `${TYPOGRAPHIC} Happy to tailor it. Ask me anything?`,
+      }),
+    );
+    const { drafted } = await runMultiplier({ dryRun: false, targets: [base] });
+    expect(calls.llmInputBlocks).toHaveLength(2);
+    expect(drafted[0]!.flags).toEqual([]);
+    expect(drafted[0]!.sent).toBe(true);
+    expect(drafted[0]!.body).toBe(`${TYPOGRAPHIC} Happy to tailor it. Ask me anything?`);
   });
 
   it("an offer ending in a number does not exempt a larger invented amount that begins with it", async () => {

@@ -450,6 +450,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           ...lintEmail(draft.subject, draft.body, bodyWordCap, bodySentenceCap, {
             demoDay,
             offer: offer?.offer ?? null,
+            protect: hardBanAllow,
           }),
           ...(def.hardBans ? hardBanFlags(draft.body, hardBanAllow) : []),
           ...(draftFlags?.(draft) ?? []),

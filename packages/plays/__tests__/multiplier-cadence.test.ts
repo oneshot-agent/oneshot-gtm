@@ -47,7 +47,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
   };
 });
 
-const { effectiveSequence, enrollInCadence, getSequence, hardBanHold } =
+const { effectiveSequence, enrollInCadence, getSequence, hardBanHold, previewCadenceStep } =
   await import("../src/_cadence.ts");
 const { generateMailLetter } = await import("../src/_mail-letter.ts");
 await import("../src/multiplier.ts"); // registers the sequence
@@ -260,6 +260,27 @@ describe("multiplier follow-up", () => {
     expect(hardBanHold(linked)).toEqual(["hard-ban:link"]);
     const restated = await followUp(id, `The offer stands: ${OFFER} Worth a look?`);
     expect(hardBanHold(restated)).toEqual([]);
+  });
+
+  it("keeps the member offer verbatim through the follow-up's cleanup and preview lints", async () => {
+    memberOffer = "A month’s trial — with $50 credit for “each” member.";
+    const id = prospect(false);
+    const restated = await followUp(
+      id,
+      `The offer stands — “as before”: ${memberOffer} Worth a look?`,
+    );
+    // The founder's punctuation comes through; the model's own is cleaned.
+    expect(restated).toMatchObject({
+      kind: "email",
+      body: `The offer stands, "as before": ${memberOffer} Worth a look?`,
+      hardBanAllow: [memberOffer],
+    });
+    expect(hardBanHold(restated)).toEqual([]);
+    // The previewed step (the follow-up: no address, so no letter) carries no
+    // hold for the offer's own quotes or its price.
+    enrollInCadence({ prospectId: id, playName: PLAY });
+    const preview = await previewCadenceStep({ prospectId: id, playName: PLAY });
+    expect(preview).toMatchObject({ flags: [], body: expect.stringContaining(memberOffer) });
   });
 
   it("allows the offer of the trigger whose row was sent, and holds the workspace's price", async () => {

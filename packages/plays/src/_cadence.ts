@@ -1987,6 +1987,7 @@ export async function previewCadenceStep(input: {
           ...lintEmail(subject, body, step.maxBodyWords ?? 100, undefined, {
             followUp: true,
             demoDay: prospectDemoDay(prospect, input.playName),
+            ...(built.hardBanAllow ? { protect: built.hardBanAllow } : {}),
           }),
           ...lintOpenerFrequency(body, [
             ...(input.extraRecentBodies ?? []),
@@ -2715,11 +2716,17 @@ export function buildFollowUpEmail(opts: {
     const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(res.content, {});
     if (!parsed.subject || !parsed.body) return null;
     // Same deterministic humanization the initial-send plays get via
-    // draftEmailFromPrompt, without it, follow-ups ship em-dashes raw.
-    let cleaned = humanizeDraft({
-      subject: parsed.subject.trim(),
-      body: parsed.body.trim(),
-    });
+    // draftEmailFromPrompt, without it, follow-ups ship em-dashes raw. The
+    // allowed spans (config text quoted verbatim) come through it, and the
+    // repair's redraft, as written.
+    const hardBanAllow = opts.hardBans ? [...(opts.hardBanAllow?.(ctx) ?? [])] : [];
+    let cleaned = humanizeDraft(
+      {
+        subject: parsed.subject.trim(),
+        body: parsed.body.trim(),
+      },
+      hardBanAllow,
+    );
     cleaned = await repairWritingLints(messages, cleaned, {
       promptName: opts.promptName,
       temperature: 0.4,
@@ -2728,9 +2735,9 @@ export function buildFollowUpEmail(opts: {
       followUp: true,
       demoDay,
       offer: offerLines ? (introOffer?.offer ?? null) : null,
+      ...(hardBanAllow.length > 0 ? { hardBanAllow } : {}),
       extraLint: (draft) => lintOpenerFrequency(draft.body, ctx.recentEmailBodies ?? []),
     });
-    const hardBanAllow = opts.hardBans ? [...(opts.hardBanAllow?.(ctx) ?? [])] : [];
     return {
       kind: "email",
       subject: cleaned.subject,

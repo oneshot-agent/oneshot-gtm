@@ -495,10 +495,20 @@ export function lintEmail(
    * `followUp`: flag an either/or closing question (follow-ups and breakups).
    * `demoDay`: the prospect's demo day, when known; a body that mentions demo
    * day after it has passed is flagged `stale-demo-day`.
+   * `protect`: config text the prompt quotes verbatim (see `humanizeDraft`);
+   * the checks on the model's own writing (punctuation, emoji, stock phrases,
+   * exclamations) skip it, since it is the founder's text, kept as written.
+   * The budgets and the opening still read the whole body.
    */
-  opts: { followUp?: boolean; demoDay?: DemoDay | null; offer?: string | null } = {},
+  opts: {
+    followUp?: boolean;
+    demoDay?: DemoDay | null;
+    offer?: string | null;
+    protect?: readonly string[];
+  } = {},
 ): string[] {
   const flags: string[] = [];
+  const written = withoutAllowedSpans(body, opts.protect ?? []);
   // The draft was given an OFFER: its first sentence must make it, not
   // describe the reader back to them.
   if (opts.offer) {
@@ -520,14 +530,14 @@ export function lintEmail(
   }
   if (opts.followUp && closingEitherOrQuestion(body)) flags.push("either-or-question");
   if (mentionsStaleDemoDay(body, opts.demoDay ?? null)) flags.push("stale-demo-day");
-  if (body.includes("—")) flags.push("em-dash");
-  if (/[“”‘’]/.test(body)) flags.push("curly-quotes");
-  if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(body)) flags.push("emoji");
+  if (written.includes("—")) flags.push("em-dash");
+  if (/[“”‘’]/.test(written)) flags.push("curly-quotes");
+  if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(written)) flags.push("emoji");
   for (const [re, label] of SLOP_PHRASES) {
-    if (re.test(body)) flags.push(label);
+    if (re.test(written)) flags.push(label);
   }
-  if (RULE_OF_THREE.test(body)) flags.push("rule-of-three");
-  if ((body.match(/!/g) ?? []).length > 1) flags.push("excess-exclamations");
+  if (RULE_OF_THREE.test(written)) flags.push("rule-of-three");
+  if ((written.match(/!/g) ?? []).length > 1) flags.push("excess-exclamations");
   // Any scheduling link, not only the one vendor the string match used to catch.
   if (/\b(?:calendly|cal\.com|savvycal|zcal)\b|calendar\.app\.google/i.test(body)) {
     flags.push("calendar-link");
@@ -599,10 +609,10 @@ export function citesPublicRecordLeverage(body: string): boolean {
  * `allow` lists spans the price and discount checks skip: text the prompt
  * quotes verbatim from config (the `multiplier` play's member offer, which
  * may name credits or a trial). Each span is removed from the body before
- * those two checks run (`allowedSpanPattern`: across any line wrapping, in
- * the pipeline's house punctuation, and never as part of a longer number, so
- * an allowed `$150` does not exempt an invented `$1500`), and a price or
- * discount the model wrote anywhere else still flags. Links are never allowed.
+ * those two checks run (`allowedSpanPattern`: exactly as written, across any
+ * line wrapping, and never as part of a longer number, so an allowed `$150`
+ * does not exempt an invented `$1500`), and a price or discount the model
+ * wrote anywhere else still flags. Links are never allowed.
  */
 export function hardBanFlags(body: string, allow: readonly string[] = []): string[] {
   const flags: string[] = [];
@@ -616,42 +626,42 @@ export function hardBanFlags(body: string, allow: readonly string[] = []): strin
 }
 
 /**
- * `body` with every occurrence of each allowed span cut out. Unchanged (and
- * not humanized) when nothing is allowed, so every other play's check reads
- * the body as before.
+ * `body` with every occurrence of each allowed span cut out. Unchanged when
+ * nothing is allowed, so every other play's check reads the body as before.
  */
 function withoutAllowedSpans(body: string, allow: readonly string[]): string {
-  const patterns = allow.map(allowedSpanPattern).filter((p): p is RegExp => p !== null);
-  if (patterns.length === 0) return body;
-  let rest = humanizeText(body);
-  for (const pattern of patterns) rest = rest.replace(pattern, " ");
+  let rest = body;
+  for (const pattern of allowedSpanPatterns(allow)) rest = rest.replace(pattern, " ");
   return rest;
+}
+
+/** The patterns of the non-blank spans in `spans`; see `allowedSpanPattern`. */
+function allowedSpanPatterns(spans: readonly string[]): RegExp[] {
+  return spans.map(allowedSpanPattern).filter((p): p is RegExp => p !== null);
 }
 
 /**
  * The pattern that finds a protected span (config text a prompt quotes
- * verbatim) in a draft. Compare against `humanizeText(body)`: the span is
- * matched in the same house punctuation `humanizeDraft` gives every draft
- * (straight quotes, no em dashes), so a founder's typographic apostrophe in
- * the offer still matches the cleaned draft; across re-wrapped whitespace;
- * case-insensitively; and only as a whole: a span that begins or ends in a
- * word or a number is not found inside a longer one (`$150` is not inside
- * `$1500` or `$150.5`). Null for a blank span.
+ * verbatim) in a draft: the founder's text exactly, in its own punctuation
+ * and case, where only the whitespace between its words may differ (the
+ * model's own line wrapping), and only as a whole: a span that begins or
+ * ends in a word or a number is not found inside a longer one (`$150` is not
+ * inside `$1500` or `$150.5`). Null for a blank span.
  */
 export function allowedSpanPattern(span: string): RegExp | null {
-  const words = humanizeText(span).split(/\s+/).filter(Boolean);
+  const words = span.split(/\s+/).filter(Boolean);
   if (words.length === 0) return null;
   const text = words.join(" ");
   const escaped = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
   const head = /^\w/.test(text) ? "(?<!\\w|\\d[.,])" : "";
   const tail = /\w$/.test(text) ? "(?!\\w|[.,]\\d)" : "";
-  return new RegExp(`${head}${escaped}${tail}`, "gi");
+  return new RegExp(`${head}${escaped}${tail}`, "g");
 }
 
-/** Whether `body` quotes `span` whole, by `allowedSpanPattern`. False for a blank span. */
+/** Whether `body` quotes `span` whole and verbatim, by `allowedSpanPattern`. False for a blank span. */
 export function quotesSpan(body: string, span: string): boolean {
   const pattern = allowedSpanPattern(span);
-  return pattern !== null && pattern.test(humanizeText(body));
+  return pattern !== null && pattern.test(body);
 }
 
 export interface DraftedEmail {
@@ -747,17 +757,41 @@ function logTargetErrorUnsafe(
  * Deterministic, semantics-preserving cleanups the LLM occasionally slips
  * through. Applied silently inside `draftEmailFromPrompt` so these flags
  * never surface in the UI.
+ *
+ * `protect` lists config text the prompt quotes verbatim (the `multiplier`
+ * play's member offer): every occurrence of such a span, found by
+ * `allowedSpanPattern`, comes through byte for byte, its own apostrophes,
+ * quotes and dashes included, while the text around it is cleaned as usual.
  */
-export function humanizeDraft(input: DraftedEmail): DraftedEmail {
+export function humanizeDraft(input: DraftedEmail, protect: readonly string[] = []): DraftedEmail {
   return {
-    subject: applyAutofixes(input.subject),
-    body: applyAutofixes(input.body),
+    subject: humanizePreserving(input.subject, protect),
+    body: humanizePreserving(input.body, protect),
   };
 }
 
 /** One string in the house punctuation `humanizeDraft` gives a draft; idempotent. */
 export function humanizeText(s: string): string {
   return applyAutofixes(s);
+}
+
+/**
+ * `applyAutofixes` on everything but the protected spans: each occurrence is
+ * masked with a private-use placeholder no fix touches and restored as
+ * written (the model's own line wrapping inside it included) afterwards.
+ */
+function humanizePreserving(s: string, protect: readonly string[]): string {
+  const patterns = allowedSpanPatterns(protect);
+  if (patterns.length === 0) return applyAutofixes(s);
+  const kept: string[] = [];
+  let masked = s;
+  for (const pattern of patterns) {
+    masked = masked.replace(pattern, (match: string) => {
+      kept.push(match);
+      return `\uE000${kept.length - 1}\uE001`;
+    });
+  }
+  return applyAutofixes(masked).replace(/\uE000(\d+)\uE001/g, (_, i: string) => kept[Number(i)]!);
 }
 
 function applyAutofixes(s: string): string {
@@ -1054,6 +1088,13 @@ interface DraftCallOpts {
   promptName: string;
   temperature?: number;
   maxTokens?: number;
+  /**
+   * Config text the prompt quotes verbatim (the `multiplier` play's member
+   * offer): kept byte for byte through every draft's cleanup (`humanizeDraft`)
+   * and its writing lints, and, with `hardBans`, the spans the price and
+   * discount bans skip (`hardBanFlags`).
+   */
+  hardBanAllow?: readonly string[];
 }
 
 /**
@@ -1083,7 +1124,7 @@ export async function draftEmailFromPrompt(opts: {
   demoDay?: DemoDay | null;
   followUp?: boolean;
   hardBans?: boolean;
-  /** Spans the price and discount bans skip (`hardBanFlags`): config text the prompt quotes verbatim. */
+  /** Config text the prompt quotes verbatim, kept as written through cleanup and lints; see `DraftCallOpts`. */
   hardBanAllow?: readonly string[];
   /** The offer the input carries; see `opensOnObservation` and `opensWithOffer`. */
   offer?: string | null;
@@ -1175,8 +1216,6 @@ export async function repairWritingLints(
     demoDay?: DemoDay | null;
     followUp?: boolean;
     hardBans?: boolean;
-    /** See `draftEmailFromPrompt`: spans the price and discount bans skip. */
-    hardBanAllow?: readonly string[];
     /** The offer the draft was given: an opening that does not make it is a writing flag. */
     offer?: string | null;
     /** Additional checks are re-run, but only allowlisted writing flags receive repair instructions. */
@@ -1190,6 +1229,7 @@ export async function repairWritingLints(
         demoDay: opts.demoDay,
         followUp: opts.followUp,
         offer: opts.offer,
+        protect: opts.hardBanAllow,
       }),
       ...(opts.hardBans ? hardBanFlags(d.body, opts.hardBanAllow) : []),
       ...(opts.extraLint?.(d) ?? []),
@@ -1281,7 +1321,7 @@ async function draftOnce(messages: DraftMessages, opts: DraftCallOpts): Promise<
     });
     const draft = parseSubjectBody(res.content);
     if (draft) {
-      const humanized = humanizeDraft(draft);
+      const humanized = humanizeDraft(draft, opts.hardBanAllow);
       if (humanized.subject.trim() && humanized.body.trim()) return humanized;
     }
     logEvent("email.draft.invalid_response", { promptName: opts.promptName, attempt: attempt + 1 });

@@ -112,11 +112,11 @@ export const EMPTY_OFFER_MESSAGE =
  * shortens it, paraphrases it, changes a figure in it or extends one (`$1500`
  * for `$150`) is held rather than sent, and nothing rewrites the offer into
  * the draft in its place. The offer is matched the way the hard-ban span is
- * (`quotesSpan`): across the model's own line wrapping, in the house
- * punctuation every draft is cleaned to, and only whole; anything else must
- * match exactly. With `introducedBy` set, the draft must name the introducer.
- * Without it, there is no name to check: the prompt forbids implying an
- * introduction.
+ * (`quotesSpan`): verbatim, in the founder's own punctuation and case (the
+ * draft pipeline keeps it so; see `humanizeDraft`), across the model's own
+ * line wrapping, and only whole. With `introducedBy` set, the draft must name
+ * the introducer. Without it, there is no name to check: the prompt forbids
+ * implying an introduction.
  */
 export function multiplierDraftFlags(
   body: string,
