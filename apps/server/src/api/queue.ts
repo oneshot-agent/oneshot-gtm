@@ -1250,7 +1250,16 @@ async function regenerateDraftInner(
                 receiptIds: [],
               },
             ]
-          : await dispatchPlay(row.play_name, body, undefined, undefined, angle?.text);
+          : await dispatchPlay(
+              row.play_name,
+              body,
+              undefined,
+              undefined,
+              angle?.text,
+              // The row's trigger settings apply to the redraft as they did to
+              // the drained draft (the multiplier play's own `memberOffer`).
+              row.source,
+            );
   } catch (err) {
     return jsonResponse({ error: (err as Error).message }, 400, req);
   }

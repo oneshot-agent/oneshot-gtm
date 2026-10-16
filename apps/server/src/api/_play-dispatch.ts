@@ -67,6 +67,11 @@ export function toDraftedView(d: {
  * bail at its paid-call boundaries. When it fires mid-run this call rejects
  * with a `RunCancelledError` (see `isRunCancelled`) instead of resolving with
  * a partial batch. The drafts already finished were reported via `onProgress`.
+ *
+ * `queueSource`: the `source` of the queue row being redrafted (the /queue
+ * regenerate endpoint), so the play reads that row's trigger settings (the
+ * `multiplier` play's `memberOffer`) the way the queue drain does. Absent for
+ * /api/run, whose targets come from no queue row.
  */
 export async function dispatchPlay(
   playName: string,
@@ -74,6 +79,7 @@ export async function dispatchPlay(
   onProgress?: (index: number, view: DraftedView) => void,
   signal?: AbortSignal,
   draftAngle?: string,
+  queueSource?: string | null,
 ): Promise<DraftedView[]> {
   const play = PLAYS[playName];
   if (!play) {
@@ -82,6 +88,7 @@ export async function dispatchPlay(
 
   const result = await play.run({
     ...(draftAngle ? { draftAngle } : {}),
+    ...(queueSource !== undefined ? { queueSource } : {}),
     dryRun: body.dryRun,
     targets: body.targets,
     ...(signal ? { signal } : {}),

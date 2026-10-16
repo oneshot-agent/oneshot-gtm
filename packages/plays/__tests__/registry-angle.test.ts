@@ -1,5 +1,7 @@
 import { expect, it, vi } from "vitest";
-const calls = vi.hoisted(() => new Map<string, { draftAngle?: string; dryRun: boolean }>());
+const calls = vi.hoisted(
+  () => new Map<string, { draftAngle?: string; dryRun: boolean; queueSource?: string | null }>(),
+);
 vi.mock("../src/accelerator-batch.ts", () => ({
   runAcceleratorBatch: async (opts: { draftAngle?: string; dryRun: boolean }) => {
     calls.set("runAcceleratorBatch", opts);
@@ -147,4 +149,14 @@ it.each(Object.keys(PLAYS))("forwards the selected argument to %s", async (name)
     dryRun: true,
     draftAngle: "user selected argument",
   });
+});
+
+// The queue drain and the /queue regenerate route hand the row's `source` to
+// the registry; each runner must receive it, or a trigger's own settings (the
+// multiplier play's `memberOffer`) never reach the draft in production.
+it.each(Object.keys(PLAYS))("forwards the queue row's source to %s", async (name) => {
+  calls.clear();
+  await PLAYS[name]!.run({ dryRun: true, targets: [], queueSource: "find:orgs:1" });
+  expect(calls.size).toBe(1);
+  expect([...calls.values()][0]).toMatchObject({ dryRun: true, queueSource: "find:orgs:1" });
 });
