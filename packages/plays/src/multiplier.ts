@@ -86,6 +86,38 @@ function orgHost(url: string | undefined): string | undefined {
   }
 }
 
+/** Held: the draft does not quote the member offer whole and verbatim. */
+export const OFFER_MISSING_FLAG = "multiplier:offer-missing";
+/** Held: the row names a warm introducer and the draft does not name them. */
+export const INTRODUCER_MISSING_FLAG = "multiplier:introducer-missing";
+
+/** `text` with runs of whitespace folded to one space, so a line the model re-wrapped still compares. */
+const folded = (text: string): string => text.trim().split(/\s+/).join(" ");
+
+/**
+ * The deterministic checks on a multiplier draft, besides the hard bans. The
+ * member offer is founder truth the prompt quotes whole: a body that omits it,
+ * shortens it, paraphrases it or changes a figure in it (`$1500` for `$150`)
+ * is held rather than sent, and nothing rewrites the offer into the draft in
+ * its place. Whitespace is folded on both sides, so the model's own line
+ * wrapping inside the offer passes; anything else must match exactly. With
+ * `introducedBy` set, the draft must name the introducer. Without it, there is
+ * no name to check: the prompt forbids implying an introduction.
+ */
+export function multiplierDraftFlags(
+  body: string,
+  memberOffer: string,
+  introducedBy?: string,
+): string[] {
+  const flags: string[] = [];
+  const text = folded(body);
+  if (!text.includes(folded(memberOffer))) flags.push(OFFER_MISSING_FLAG);
+  const introducer = folded(introducedBy ?? "");
+  if (introducer && !text.toLowerCase().includes(introducer.toLowerCase()))
+    flags.push(INTRODUCER_MISSING_FLAG);
+  return flags;
+}
+
 /** The row's member count as a positive integer, or null when it states none. */
 function memberCountOf(t: MultiplierTarget): number | null {
   const n = typeof t.memberCount === "string" ? Number(t.memberCount.trim()) : t.memberCount;
@@ -107,6 +139,9 @@ export function runMultiplier(opts: MultiplierRunOptions): Promise<{ drafted: Mu
     // quoted member offer (`hardBanAllow`), which may name credits or a trial.
     hardBans: true,
     hardBanAllow: () => (memberOffer ? [memberOffer] : []),
+    // A draft without the offer verbatim (or the named introducer) is held;
+    // `prepare` threw before the draft when the offer was empty.
+    draftFlags: (draft, t) => multiplierDraftFlags(draft.body, memberOffer, t.introducedBy),
     enrollCadence: true,
     requiredFields: [
       "organization",

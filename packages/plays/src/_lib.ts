@@ -1053,6 +1053,12 @@ export async function draftEmailFromPrompt(opts: {
   hardBanAllow?: readonly string[];
   /** The offer the input carries; see `opensOnObservation` and `opensWithOffer`. */
   offer?: string | null;
+  /**
+   * Play-specific checks on each draft (see `repairWritingLints`): a repair
+   * retry that trips one is not adopted, so what the first draft got right
+   * (the `multiplier` play's verbatim member offer) survives the rewrite.
+   */
+  extraLint?: (draft: DraftedEmail) => string[];
 }): Promise<DraftedEmail> {
   const system = loadPrompt(opts.promptName) + signatureDirective();
   const messages: DraftMessages = [

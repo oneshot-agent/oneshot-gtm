@@ -82,7 +82,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
   };
 });
 
-const { runMultiplier } = await import("../src/multiplier.ts");
+const { runMultiplier, multiplierDraftFlags } = await import("../src/multiplier.ts");
 const { hardBanFlags } = await import("../src/_lib.ts");
 
 const base = {
@@ -158,6 +158,70 @@ describe("runMultiplier — the member offer", () => {
     expect(hardBanFlags(`Offer:\n${wrapped}\nAlso $9 extra`, [OFFER])).toEqual(["hard-ban:price"]);
   });
 
+  it("holds a draft that omits the offer instead of sending it", async () => {
+    calls.replies.push(
+      JSON.stringify({ subject: "for your cohort", body: "I would offer your cohort a sprint." }),
+    );
+    const { drafted } = await runMultiplier({ dryRun: false, targets: [base] });
+    expect(drafted[0]!.flags).toContain("multiplier:offer-missing");
+    expect(drafted[0]!.sent).toBe(false);
+    // Nothing rewrote the offer into the draft in the model's place.
+    expect(drafted[0]!.body).not.toContain(OFFER);
+  });
+
+  it("holds a paraphrased offer, and one whose figure the model changed also trips the price ban", async () => {
+    calls.replies.push(
+      quoting().replace("a 30-minute setup for each company", "a short setup for each company"),
+    );
+    const paraphrased = await runMultiplier({ dryRun: false, targets: [base] });
+    expect(paraphrased.drafted[0]!.flags).toContain("multiplier:offer-missing");
+    expect(paraphrased.drafted[0]!.sent).toBe(false);
+
+    calls.replies.push(quoting().replace("up to $150 in credit", "up to $1500 in credit"));
+    const embellished = await runMultiplier({ dryRun: false, targets: [base] });
+    expect(embellished.drafted[0]!.flags).toEqual(
+      expect.arrayContaining(["multiplier:offer-missing", "hard-ban:price"]),
+    );
+    expect(embellished.drafted[0]!.sent).toBe(false);
+  });
+
+  it("sends a draft that quotes the offer whole, re-wrapped across lines", async () => {
+    const wrapped = OFFER.replace("a 30-minute setup", "a 30-minute\nsetup").replace(
+      "and a free trial",
+      "and a\n  free trial",
+    );
+    calls.replies.push(
+      JSON.stringify({
+        subject: "for your cohort",
+        body: `Here is what I would offer:\n${wrapped}`,
+      }),
+    );
+    const { drafted } = await runMultiplier({ dryRun: false, targets: [base] });
+    expect(drafted[0]!.flags).toEqual([]);
+    expect(drafted[0]!.sent).toBe(true);
+  });
+
+  it("a price glued to the quoted offer still flags: the allowed span is the offer alone", () => {
+    expect(hardBanFlags(`${OFFER}$500 after that.`, [OFFER])).toEqual(["hard-ban:price"]);
+    expect(hardBanFlags(`Waive the $99 fee.${OFFER}`, [OFFER])).toEqual(["hard-ban:price"]);
+    expect(multiplierDraftFlags(`${OFFER}$500 after that.`, OFFER)).toEqual([]);
+  });
+
+  it("keeps the offer through a writing repair: a retry that drops it is not adopted", async () => {
+    // First draft quotes the offer but has two exclamation marks; the repair
+    // retry fixes those and drops the offer, so the first draft is kept, held.
+    calls.replies.push(quoting("Happy to tailor it! Ask me anything!"));
+    calls.replies.push(
+      JSON.stringify({ subject: "for your cohort", body: "A sprint for your cohort. Ask me." }),
+    );
+    const { drafted } = await runMultiplier({ dryRun: false, targets: [base] });
+    expect(calls.llmInputBlocks).toHaveLength(2);
+    expect(drafted[0]!.body).toContain(OFFER);
+    expect(drafted[0]!.flags).toContain("excess-exclamations");
+    expect(drafted[0]!.flags).not.toContain("multiplier:offer-missing");
+    expect(drafted[0]!.sent).toBe(false);
+  });
+
   it("reads the trigger's memberOffer over the workspace's", async () => {
     triggerConfig = JSON.stringify({ memberOffer: "Three months free for every member." });
     await runMultiplier({ dryRun: true, targets: [base], queueSource: "find:orgs:1" });
@@ -168,10 +232,31 @@ describe("runMultiplier — the member offer", () => {
 
 describe("runMultiplier — the row", () => {
   it("names the introducer only when the row sets one", async () => {
-    await runMultiplier({ dryRun: true, targets: [base] });
+    calls.replies.push(quoting());
+    const plain = await runMultiplier({ dryRun: false, targets: [base] });
     expect(calls.llmInputBlocks[0]).not.toContain("INTRODUCED BY");
-    await runMultiplier({ dryRun: true, targets: [{ ...base, introducedBy: "Sam Ortiz" }] });
+    expect(plain.drafted[0]!.body).not.toContain("Sam Ortiz");
+    expect(plain.drafted[0]!.sent).toBe(true);
+
+    calls.replies.push(quoting("Sam Ortiz suggested I write to you."));
+    const introduced = await runMultiplier({
+      dryRun: false,
+      targets: [{ ...base, introducedBy: "Sam Ortiz" }],
+    });
     expect(calls.llmInputBlocks[1]).toContain("INTRODUCED BY: Sam Ortiz");
+    expect(introduced.drafted[0]!.body).toContain("Sam Ortiz");
+    expect(introduced.drafted[0]!.flags).toEqual([]);
+    expect(introduced.drafted[0]!.sent).toBe(true);
+  });
+
+  it("holds a draft that leaves a named introducer out", async () => {
+    calls.replies.push(quoting());
+    const { drafted } = await runMultiplier({
+      dryRun: false,
+      targets: [{ ...base, introducedBy: "Sam Ortiz" }],
+    });
+    expect(drafted[0]!.flags).toEqual(["multiplier:introducer-missing"]);
+    expect(drafted[0]!.sent).toBe(false);
   });
 
   it("states a member count only when the row carries one, as a number or from a form", async () => {

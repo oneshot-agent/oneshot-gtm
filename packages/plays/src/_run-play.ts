@@ -20,6 +20,7 @@ import {
 } from "@oneshot-gtm/core";
 import {
   draftEmailFromPrompt,
+  type DraftedEmail,
   errorDraft,
   firstNameFrom,
   hardBanFlags,
@@ -161,6 +162,14 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    * links always flag.
    */
   hardBanAllow?: (t: T, cfg: AppConfig) => readonly string[];
+  /**
+   * Play-specific checks that read the DRAFT, not only the target (compare
+   * `extraFlags`): run with the writing lints on the first draft and on every
+   * repair retry (a retry that trips one is not adopted), and again on the
+   * final draft, where any flag holds the send. The `multiplier` play holds a
+   * draft that does not quote the member offer verbatim.
+   */
+  draftFlags?: (draft: DraftedEmail, t: T, cfg: AppConfig) => string[];
   /**
    * Required non-empty, trimmed string fields, mirroring the web form schema.
    * Validate before any paid call because API and queue inputs can bypass
@@ -413,6 +422,9 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         throwIfCancelled(opts.signal, `${def.playName} draft`);
         stampLearningInput(learned, inputBlock);
         const hardBanAllow = def.hardBans ? def.hardBanAllow?.(target, cfg) : undefined;
+        const draftFlags = def.draftFlags
+          ? (d: DraftedEmail) => def.draftFlags!(d, target, cfg)
+          : undefined;
         const draft = await draftEmailFromPrompt({
           promptName: def.promptName,
           inputBlock,
@@ -421,6 +433,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           maxBodyWords: bodyWordCap,
           hardBans: def.hardBans,
           ...(hardBanAllow ? { hardBanAllow } : {}),
+          ...(draftFlags ? { extraLint: draftFlags } : {}),
           ...(bodySentenceCap !== undefined ? { maxBodySentences: bodySentenceCap } : {}),
           demoDay,
           offer: offer?.offer ?? null,
@@ -432,6 +445,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
             offer: offer?.offer ?? null,
           }),
           ...(def.hardBans ? hardBanFlags(draft.body, hardBanAllow) : []),
+          ...(draftFlags?.(draft) ?? []),
           ...(def.extraFlags?.(target) ?? []),
           ...lintGrounding(target, prep),
           ...lintStaleEmail(target),
