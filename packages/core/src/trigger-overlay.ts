@@ -37,6 +37,22 @@ export function triggerConfigForSource(
 }
 
 /**
+ * The member offer in force for a row: the trigger's own `memberOffer` when
+ * its config sets one as text, else the workspace's. Trimmed; "" when neither
+ * sets one, which the `multiplier` play treats as a refusal. The trigger
+ * overrides the workspace the way `channels` does.
+ */
+export function effectiveMemberOffer(
+  cfg: { memberOffer?: string | null },
+  source: string | null | undefined,
+  getTrigger: GetTrigger = (name) => getLedger().getTrigger(name),
+): string {
+  const fromTrigger = triggerConfigForSource(source, getTrigger)?.["memberOffer"];
+  if (typeof fromTrigger === "string") return fromTrigger.trim();
+  return (cfg.memberOffer ?? "").trim();
+}
+
+/**
  * Overlay a trigger's CURRENT sender-authored settings (edge, first-touch
  * format) onto a queued target, keyed by the row's `source`
  * (`find:<trigger>[:…]`). Used wherever a draft is generated from a stored

@@ -74,6 +74,14 @@ export const acceleratorBatchMetadata = (t: object): Record<string, unknown> => 
   demoDayMonth: str(t, "demoDayMonth"),
 });
 
+export const multiplierMetadata = (t: object): Record<string, unknown> => ({
+  organization: str(t, "organization"),
+  orgType: str(t, "orgType"),
+  memberDescription: str(t, "memberDescription"),
+  whyFit: str(t, "whyFit"),
+  introducedBy: str(t, "introducedBy"),
+});
+
 export const xRepostIntroMetadata = (t: object): Record<string, unknown> => ({
   seedHandle: str(t, "seedHandle"),
   tweetUrl: str(t, "tweetUrl"),
@@ -132,6 +140,7 @@ const REGISTRY: Record<string, (t: object) => Record<string, unknown>> = {
   "podcast-guest": podcastGuestMetadata,
   "competitor-switch": competitorSwitchMetadata,
   "accelerator-batch": acceleratorBatchMetadata,
+  multiplier: multiplierMetadata,
   "x-repost-intro": xRepostIntroMetadata,
   "x-amplify": xAmplifyMetadata,
   "x-amplify-dm": xAmplifyMetadata,

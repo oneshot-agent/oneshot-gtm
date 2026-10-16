@@ -1,0 +1,24 @@
+[
+  {
+    "organization": "Harbor Founders Program",
+    "orgType": "accelerator",
+    "name": "Jordan Lee",
+    "email": "jordan@harbor-founders.example",
+    "role": "Head of Partnerships",
+    "memberDescription": "Forty pre-seed B2B software companies a year, most with a founder doing sales alone.",
+    "whyFit": "Each cohort company has to find its first twenty customers in its first six months, which is the job the product does.",
+    "memberCount": 40,
+    "orgUrl": "https://harbor-founders.example",
+    "linkedinUrl": "https://linkedin.com/in/jordan-lee-fake"
+  },
+  {
+    "organization": "Regional Independent Grocers Association",
+    "orgType": "association",
+    "name": "Priya Natarajan",
+    "email": "priya@riga.example",
+    "role": "Member Services Director",
+    "memberDescription": "Independent grocery stores across three states, mostly family-owned with one to five locations.",
+    "whyFit": "Its members buy from the same regional suppliers the product already serves.",
+    "introducedBy": "Sam Ortiz"
+  }
+]

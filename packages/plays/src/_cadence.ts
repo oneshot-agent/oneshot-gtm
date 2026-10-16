@@ -173,6 +173,12 @@ interface SequenceStep {
 export interface Sequence {
   playName: string;
   steps: SequenceStep[];
+  /**
+   * Whether a new email cadence of this play carries on onto LinkedIn when
+   * neither the workspace nor the trigger sets `linkedinContinuation`. Off
+   * unless the play says otherwise; an explicit `false` on either still wins.
+   */
+  linkedinContinuationDefault?: boolean;
 }
 
 const playSequences = new Map<string, Sequence>();
@@ -310,9 +316,14 @@ export function effectiveSequence(
     enrolled && prospectId !== undefined
       ? getLedger().getCadencePlan(prospectId, playName, enrolled.enrolled_at)
       : null;
+  // A new plan: the trigger's setting, else the workspace's, else the play's
+  // own default (on for `multiplier`, whose programme leads live on LinkedIn).
   const carriesOn = enrolled
     ? (savedPlan?.some((entry) => entry.id === CONTINUATION_INVITE_ID) ?? false)
-    : (continuation ?? cfg.linkedinContinuation === true);
+    : (continuation ??
+      (typeof cfg.linkedinContinuation === "boolean"
+        ? cfg.linkedinContinuation
+        : (base.linkedinContinuationDefault ?? false)));
   if (
     prospectId === undefined &&
     !mail &&

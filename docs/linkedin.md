@@ -65,7 +65,7 @@ The file is a CSV with a `profile_url`, `linkedin_url` or `url` column, or a JSO
 
 ## Continuing an email cadence on LinkedIn
 
-Set `linkedinContinuation: true` for the workspace or on one trigger; the trigger wins. An email cadence that ends without a reply then carries on three days later:
+Set `linkedinContinuation: true` for the workspace or on one trigger; the trigger wins. For `multiplier` it is on unless the workspace or the trigger sets it to `false`: programme leads live on LinkedIn. An email cadence that ends without a reply then carries on three days later:
 
 - an invite whose note knows the person was already emailed,
 - a first message once they accept, or at once if you were already connected,

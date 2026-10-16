@@ -2,24 +2,25 @@
 
 The model knows only what you put in config, and each field reaches some drafts and not others. The field names do not tell you which. This table does.
 
-| What you wrote                                       | First touch               | Follow-up                 | Reply                             |
-| ---------------------------------------------------- | ------------------------- | ------------------------- | --------------------------------- |
-| `founderName`, `productOneLiner`                     | yes                       | yes                       | yes                               |
-| `yourEdge`, `yourClaim` (from the trigger)           | yes                       | no                        | no                                |
-| `founderCredentials`, `productPortfolio`, `partners` | yes                       | yes                       | no                                |
-| `founderAdmission`                                   | about 1 in 3              | no                        | no                                |
-| `pilotOffer`                                         | yes, as the offer's terms | yes, as the offer's terms | no                                |
-| `icpOneLiner`                                        | no [^icp]                 | no                        | yes                               |
-| `productBrief`                                       | yes [^offer]              | yes [^offer]              | yes, and the only source of links |
-| `founderVoice`, the [voice card](./voice.md)         | yes                       | yes                       | yes                               |
-| Earlier emails on the thread                         | no                        | yes                       | yes                               |
-| `founderCohort`                                      | `accelerator-batch` only  | no                        | no                                |
-| A meeting outcome and your notes                     | no                        | no                        | yes                               |
-| Approved [learned guidance](./learning.md)           | yes                       | yes                       | yes                               |
+| What you wrote                                       | First touch                 | Follow-up                 | Reply                             |
+| ---------------------------------------------------- | --------------------------- | ------------------------- | --------------------------------- |
+| `founderName`, `productOneLiner`                     | yes                         | yes                       | yes                               |
+| `yourEdge`, `yourClaim` (from the trigger)           | yes                         | no                        | no                                |
+| `founderCredentials`, `productPortfolio`, `partners` | yes                         | yes                       | no                                |
+| `founderAdmission`                                   | about 1 in 3                | no                        | no                                |
+| `pilotOffer`                                         | yes, as the offer's terms   | yes, as the offer's terms | no                                |
+| `memberOffer`                                        | `multiplier` only, verbatim | `multiplier` letter only  | no                                |
+| `icpOneLiner`                                        | no [^icp]                   | no                        | yes                               |
+| `productBrief`                                       | yes [^offer]                | yes [^offer]              | yes, and the only source of links |
+| `founderVoice`, the [voice card](./voice.md)         | yes                         | yes                       | yes                               |
+| Earlier emails on the thread                         | no                          | yes                       | yes                               |
+| `founderCohort`                                      | `accelerator-batch` only    | no                        | no                                |
+| A meeting outcome and your notes                     | no                          | no                        | yes                               |
+| Approved [learned guidance](./learning.md)           | yes                         | yes                       | yes                               |
 
 [^icp]: `add-prospect`, `profile-intro` and `x-repost-intro` pass it themselves.
 
-[^offer]: With the prospect offer, below. Plays that make no offer (`discovery-interview`, `pmf-survey`, `demo-no-show`, `x-amplify`, `community-reply`) do not get it.
+[^offer]: With the prospect offer, below. Plays that make no offer (`discovery-interview`, `pmf-survey`, `demo-no-show`, `x-amplify`, `community-reply`, `multiplier`) do not get it.
 
 Each play adds its own signal on top: the repo they starred, the event they joined, the cohort they launched in. A reply also gets what the ledger knows about the sender: their research, their angle, any meeting outcome and the gate's verdict.
 
@@ -39,8 +40,13 @@ Config is source material. No field can force a sentence into an email; every pr
 | facts and links     | `productBrief`                                       |
 | who it is for       | `icpOneLiner`                                        |
 | the offer's terms   | `pilotOffer`, never a price                          |
+| what members get    | `memberOffer`, quoted whole by `multiplier`          |
 
 `pilotOffer` replaces the plain breakup on the last step of `repo-interest`, `stack-consolidation`, `competitor-switch`, `hiring-signal` and `post-funding`. `accelerator-batch` always ends on the plain breakup.
+
+`memberOffer` is what an organization's members get when it offers your product to them: credits, setup, an extended trial, in your own words, prices and conditions included. Only `multiplier` reads it. The email quotes it whole, the letter proposes it as its offer and its terms, and the model never writes, shortens or extends it: a price or discount it adds outside the quoted offer is held. With it empty the play refuses before any paid call. Set it in `config.json` for the workspace or as `memberOffer` on one trigger; the trigger wins. Example, in a founder's words:
+
+> A two-week GTM sprint for your cohort: a live kickoff, a 30-minute setup for each company, up to $150 in OneShot credit earned as they go ($25 at setup, $50 after their first 100 sends, $75 at their first booked meeting), and a private benchmark at the end showing each company's reply rate and cost per meeting against the anonymized cohort.
 
 ## The prospect offer
 
@@ -55,7 +61,7 @@ The active offer also gets five angles: reasons it pays back for this firm. The 
 - It is checked before use. Any number must be in the research, any quote must be copied from it, and it cannot borrow your product's own wording, carry a price or a link, open on an observation about them, or lead with watching (track, monitor, keep, ground…). A researched offer needs a return.
 - It shows at the top of the case on `/queue`, with its return and its angles under **How and why**. **Other offers** lists the rest; **Use this offer** makes one active and writes its angles. **Edit offer** saves your text and return, which are never rewritten after that. **New offers** writes five fresh ones. Each way the draft is rewritten around it.
 - With thin research it is written from the role and the kind of firm, and tagged so.
-- Plays whose message is not an offer get none: `discovery-interview`, `pmf-survey`, `demo-no-show`, `x-amplify`, `community-reply`. The LinkedIn connection note never makes the offer; it uses the offer's subject as common ground.
+- Plays whose message is not an offer get none: `discovery-interview`, `pmf-survey`, `demo-no-show`, `x-amplify`, `community-reply`, and `multiplier`, whose offer is `memberOffer` verbatim. The LinkedIn connection note never makes the offer; it uses the offer's subject as common ground.
 
 ## Angles
 

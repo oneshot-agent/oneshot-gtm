@@ -449,6 +449,15 @@ export interface OneShotConfig {
    */
   pilotOffer?: string | null;
   /**
+   * What an organization's members get when it offers the founder's product
+   * to them (credits, setup, an extended trial), in the founder's own words.
+   * The `multiplier` play quotes it verbatim and refuses to draft without
+   * it; the model never writes or embellishes it. A trigger's own
+   * `memberOffer` overrides it, as `channels` is overridden. Absent or null:
+   * no member offer.
+   */
+  memberOffer?: string | null;
+  /**
    * Product knowledge the drafters may cite: concrete facts, architecture,
    * pricing model, and canonical links (docs pages, repo). Free text, founder-
    * edited on /setup (with a derive-from-sources helper). The reply prompt is

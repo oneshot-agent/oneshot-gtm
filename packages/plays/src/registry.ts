@@ -10,6 +10,7 @@ import { type CivicPilotTarget, runCivicPilot } from "./civic-pilot.ts";
 import { type DesignPartnerLoiTarget, runDesignPartnerLoi } from "./design-partner-loi.ts";
 import { type HiringSignalTarget, runHiringSignal } from "./hiring-signal.ts";
 import { type JobChangeTarget, runJobChange } from "./job-change.ts";
+import { type MultiplierTarget, runMultiplier } from "./multiplier.ts";
 import { type LumaEventsTarget, runLumaEvents } from "./luma-events.ts";
 import { type NewBusinessTarget, runNewBusiness } from "./new-business.ts";
 import { type PodcastGuestTarget, runPodcastGuest } from "./podcast-guest.ts";
@@ -138,6 +139,15 @@ export const PLAYS: Record<string, PlayDispatch> = {
       runAcceleratorBatch({
         dryRun: o.dryRun,
         targets: o.targets as AcceleratorBatchTarget[],
+        ...progressOpt(o),
+        ...signalOpt(o),
+      }),
+  },
+  multiplier: {
+    run: (o) =>
+      runMultiplier({
+        dryRun: o.dryRun,
+        targets: o.targets as MultiplierTarget[],
         ...progressOpt(o),
         ...signalOpt(o),
       }),

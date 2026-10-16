@@ -595,15 +595,34 @@ export function citesPublicRecordLeverage(body: string): boolean {
  * The signature's plain domain line (see `signatureDirective`) is written
  * without "http://", "https://", or "www." by contract, so it never trips
  * the link check here.
+ *
+ * `allow` lists spans the price and discount checks skip: text the prompt
+ * quotes verbatim from config (the `multiplier` play's member offer, which
+ * may name credits or a trial). Each span is removed from the body, across
+ * any line wrapping, before those two checks run, so a price or discount the
+ * model wrote anywhere else still flags. Links are never allowed.
  */
-export function hardBanFlags(body: string): string[] {
+export function hardBanFlags(body: string, allow: readonly string[] = []): string[] {
   const flags: string[] = [];
   if (/https?:\/\/|www\./i.test(body)) flags.push("hard-ban:link");
-  if (/\$\s?\d|\b\d+(?:\.\d+)?\s?(?:usd|dollars?)\b/i.test(body)) flags.push("hard-ban:price");
-  if (/\bfree trial\b|\bfree for you\b|\bdiscount\b/i.test(body)) {
+  const rest = withoutAllowedSpans(body, allow);
+  if (/\$\s?\d|\b\d+(?:\.\d+)?\s?(?:usd|dollars?)\b/i.test(rest)) flags.push("hard-ban:price");
+  if (/\bfree trial\b|\bfree for you\b|\bdiscount\b/i.test(rest)) {
     flags.push("hard-ban:discount-offer");
   }
   return flags;
+}
+
+/** `body` with every occurrence of each allowed span cut out, matching across re-wrapped whitespace. */
+function withoutAllowedSpans(body: string, allow: readonly string[]): string {
+  let rest = body;
+  for (const span of allow) {
+    const words = span.trim().split(/\s+/).filter(Boolean);
+    if (words.length === 0) continue;
+    const pattern = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+    rest = rest.replace(new RegExp(pattern, "gi"), " ");
+  }
+  return rest;
 }
 
 export interface DraftedEmail {
@@ -1030,6 +1049,8 @@ export async function draftEmailFromPrompt(opts: {
   demoDay?: DemoDay | null;
   followUp?: boolean;
   hardBans?: boolean;
+  /** Spans the price and discount bans skip (`hardBanFlags`): config text the prompt quotes verbatim. */
+  hardBanAllow?: readonly string[];
   /** The offer the input carries; see `opensOnObservation` and `opensWithOffer`. */
   offer?: string | null;
 }): Promise<DraftedEmail> {
@@ -1114,6 +1135,8 @@ export async function repairWritingLints(
     demoDay?: DemoDay | null;
     followUp?: boolean;
     hardBans?: boolean;
+    /** See `draftEmailFromPrompt`: spans the price and discount bans skip. */
+    hardBanAllow?: readonly string[];
     /** The offer the draft was given: an opening that does not make it is a writing flag. */
     offer?: string | null;
     /** Additional checks are re-run, but only allowlisted writing flags receive repair instructions. */
@@ -1128,7 +1151,7 @@ export async function repairWritingLints(
         followUp: opts.followUp,
         offer: opts.offer,
       }),
-      ...(opts.hardBans ? hardBanFlags(d.body) : []),
+      ...(opts.hardBans ? hardBanFlags(d.body, opts.hardBanAllow) : []),
       ...(opts.extraLint?.(d) ?? []),
     ]),
   ];

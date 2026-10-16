@@ -155,6 +155,13 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    */
   hardBans?: boolean;
   /**
+   * With `hardBans`: spans the price and discount checks skip, read per
+   * target (the `multiplier` play's member offer, quoted verbatim from
+   * config). A price or discount the model writes outside them still flags;
+   * links always flag.
+   */
+  hardBanAllow?: (t: T, cfg: AppConfig) => readonly string[];
+  /**
    * Required non-empty, trimmed string fields, mirroring the web form schema.
    * Validate before any paid call because API and queue inputs can bypass
    * browser validation. Invalid targets become errorDrafts.
@@ -405,6 +412,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // Guard #2. The LLM draft, the paid call `prepare` was feeding.
         throwIfCancelled(opts.signal, `${def.playName} draft`);
         stampLearningInput(learned, inputBlock);
+        const hardBanAllow = def.hardBans ? def.hardBanAllow?.(target, cfg) : undefined;
         const draft = await draftEmailFromPrompt({
           promptName: def.promptName,
           inputBlock,
@@ -412,6 +420,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           // one tighter redraft instead of becoming a lint-held send.
           maxBodyWords: bodyWordCap,
           hardBans: def.hardBans,
+          ...(hardBanAllow ? { hardBanAllow } : {}),
           ...(bodySentenceCap !== undefined ? { maxBodySentences: bodySentenceCap } : {}),
           demoDay,
           offer: offer?.offer ?? null,
@@ -422,7 +431,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
             demoDay,
             offer: offer?.offer ?? null,
           }),
-          ...(def.hardBans ? hardBanFlags(draft.body) : []),
+          ...(def.hardBans ? hardBanFlags(draft.body, hardBanAllow) : []),
           ...(def.extraFlags?.(target) ?? []),
           ...lintGrounding(target, prep),
           ...lintStaleEmail(target),
