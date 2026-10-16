@@ -1,5 +1,11 @@
 import type { DraftAngle } from "@oneshot-gtm/shared-types";
-import { effectiveMemberOffer, loadConfig, throwIfCancelled, webSearch } from "@oneshot-gtm/core";
+import {
+  effectiveMemberOffer,
+  getLedger,
+  loadConfig,
+  throwIfCancelled,
+  webSearch,
+} from "@oneshot-gtm/core";
 import { type EmailPlayDef, type Prepared, runEmailPlay, standardEnrich } from "./_run-play.ts";
 import { multiplierMetadata } from "./_metadata.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
@@ -90,7 +96,9 @@ export function runMultiplier(opts: MultiplierRunOptions): Promise<{ drafted: Mu
   // The member offer is founder truth: read from config (the trigger's own
   // when it sets one), quoted verbatim, never written by the model. Resolved
   // once per run so every row of the batch pitches the same offer.
-  const memberOffer = effectiveMemberOffer(loadConfig(), opts.queueSource);
+  const memberOffer = effectiveMemberOffer(loadConfig(), opts.queueSource, (name) =>
+    getLedger().getTrigger(name),
+  );
   const def: EmailPlayDef<MultiplierTarget> = {
     playName: PLAY_NAME,
     promptName: "multiplier-email",

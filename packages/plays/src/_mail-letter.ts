@@ -17,6 +17,7 @@ export async function generateMailLetter(prospectId: number, playName: string): 
       ? effectiveMemberOffer(
           cfg,
           prospect.email ? ledger.latestQueueSource(playName, prospect.email) : null,
+          (name) => ledger.getTrigger(name),
         )
       : "";
   if (playName === "multiplier" && !memberOffer) {
