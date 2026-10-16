@@ -497,12 +497,14 @@ export function lintOfferAngle(angle: string, research: string, product: string)
  * Write OFFER_ANGLE_COUNT reasons the offer pays back, for its first message
  * and each follow-up. The founder's own angles on the row's edge are passed
  * as reasons the writer may reuse. Angles that fail lint are dropped; one
- * retry when fewer than two survive. Empty on failure: the draft then falls
- * back to the row's own edge.
+ * retry when fewer than two survive. A finished attempt returns what
+ * survived, possibly nothing; a failed call (provider error) returns null, so
+ * the caller can tell "none usable" from "try again later". With no angles
+ * the draft falls back to the row's own edge.
  */
 export async function deriveOfferAngles(
   input: DeriveOfferInput & { offer: Pick<ProspectOffer, "offer" | "steps" | "return"> },
-): Promise<string[]> {
+): Promise<string[] | null> {
   const cfg = input.cfg ?? loadConfig();
   if (!cfg.productBrief?.trim()) return [];
   const t = input.target as JsonRecord;
@@ -569,17 +571,27 @@ export async function deriveOfferAngles(
       },
       "warn",
     );
+    return null;
   }
   return [];
 }
 
-/** The offer with its angles written, when they can be. */
+/**
+ * The offer with its angles written. A finished attempt is recorded even
+ * when nothing usable came back (`angles: []`), so drafts do not pay for it
+ * again; a failed call leaves the offer as it was, to be tried next time.
+ */
 export async function withOfferAngles(
   offer: ProspectOffer,
   input: DeriveOfferInput,
 ): Promise<ProspectOffer> {
   const angles = await deriveOfferAngles({ ...input, offer });
-  return angles.length > 0 ? { ...offer, angles } : offer;
+  return angles === null ? offer : { ...offer, angles };
+}
+
+/** True once an angle attempt finished for this offer, usable angles or not. */
+export function offerAnglesWritten(offer: Pick<ProspectOffer, "angles">): boolean {
+  return Array.isArray(offer.angles);
 }
 
 /**
@@ -620,7 +632,7 @@ export async function ensureOfferSet(
   const research = offerResearchText(t, input.dossier);
   if (offerIsCurrent(stored, offerInputHash(research, cfg))) {
     const candidates = offerCandidatesOf(t);
-    if (stored.angles?.length || !cfg.productBrief?.trim()) {
+    if (offerAnglesWritten(stored) || !cfg.productBrief?.trim()) {
       return { offer: stored, candidates, changed: false };
     }
     const offer = await withOfferAngles(stored, { ...input, cfg });

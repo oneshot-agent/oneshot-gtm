@@ -242,6 +242,38 @@ describe("deriveOfferSet", () => {
   });
 });
 
+describe("offer angles are written once", () => {
+  it("records a finished attempt with nothing usable, so the next draft does not repeat it", async () => {
+    const mod = await import("../src/_prospect-offer.ts");
+    const research = mod.offerResearchText(target);
+    const stored = {
+      ...good,
+      level: "researched" as const,
+      version: OFFER_PROMPT_VERSION,
+      inputHash: mod.offerInputHash(research, cfg),
+      productHash: mod.offerProductHash(cfg),
+      derivedAt: "",
+    };
+    llm.replies = [
+      JSON.stringify({ angles: ["Monitor every slot."] }),
+      JSON.stringify({ angles: [] }),
+    ];
+    const first = await mod.ensureOfferSet({
+      target: { ...target, offer: stored },
+      playName: "new-business",
+    });
+    expect(first?.offer.angles).toEqual([]);
+    expect(first?.changed).toBe(true);
+    const calls = llm.inputs.length;
+    const second = await mod.ensureOfferSet({
+      target: { ...target, offer: first!.offer },
+      playName: "new-business",
+    });
+    expect(second?.changed).toBe(false);
+    expect(llm.inputs.length).toBe(calls);
+  });
+});
+
 describe("deriveOffer", () => {
   it("writes an offer from the brief and the research", async () => {
     llm.replies = [JSON.stringify(good)];

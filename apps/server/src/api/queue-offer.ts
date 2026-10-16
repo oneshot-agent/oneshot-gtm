@@ -4,6 +4,7 @@ import {
   deriveOfferSet,
   OFFER_MAX,
   OFFER_PROMPT_VERSION,
+  offerAnglesWritten,
   offerCandidatesOf,
   playMakesOffer,
   withOfferAngles,
@@ -85,7 +86,7 @@ export async function queueOfferRoute(
     if (!chosen) {
       return jsonResponse({ error: `no offer #${String(body.select)} on this row` }, 400, req);
     }
-    offer = chosen.angles?.length ? chosen : await withOfferAngles(chosen, input);
+    offer = offerAnglesWritten(chosen) ? chosen : await withOfferAngles(chosen, input);
     candidates = candidates.map((c, i) => (i === index ? offer : c));
   } else {
     const text = typeof body.offer === "string" ? body.offer.trim() : "";
