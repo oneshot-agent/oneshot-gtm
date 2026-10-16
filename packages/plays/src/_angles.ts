@@ -15,6 +15,7 @@ import {
   getLedger,
   loadConfig,
   logEvent,
+  overlayOfferAngles,
   resolveTriggerOverlay,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
@@ -296,6 +297,9 @@ const NOT_EVIDENCE = new Set<string>([
   "icpVerdictReason",
   // Our own summaries of the row. Never evidence for a classifier (#592).
   "fitReason",
+  // The prospect offers written for the row: our output, not who they are.
+  "offer",
+  "offerCandidates",
   "fitReasonSource",
   // Provenance of a row moved in from another workspace (queue-portable.ts).
   "movedFrom",
@@ -430,6 +434,8 @@ export async function followUpEdgeSelection(
       "warn",
     );
   }
+  // The intro's offer, when it carries angles, supplies the follow-ups' pool.
+  target = overlayOfferAngles(target);
   const field = edgeFieldOf(target);
   if (!field) return null;
   const edge = target[field] as string;

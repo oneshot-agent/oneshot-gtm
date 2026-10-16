@@ -106,3 +106,29 @@ export function resolveTriggerOverlay(
   }
   return resolved;
 }
+
+/**
+ * The row's active prospect offer carries its own angles (reasons it pays
+ * back, written for that offer): when it does, they are the draft's angle
+ * pool in place of the edge, joined the way a multi-angle edge is. Applied
+ * after `resolveTriggerOverlay`, so the trigger's edge still reaches rows
+ * without offer angles. The edge field keeps its name (`yourClaim` for a row
+ * that has one), so every angle path (selection, Rotate, follow-ups, the
+ * learning record) reads them unchanged. Never written back to the row.
+ */
+export function overlayOfferAngles(target: Record<string, unknown>): Record<string, unknown> {
+  const offer = target["offer"];
+  if (!offer || typeof offer !== "object" || Array.isArray(offer)) return target;
+  const raw = (offer as Record<string, unknown>)["angles"];
+  const angles = Array.isArray(raw)
+    ? raw.filter(
+        (a): a is string => typeof a === "string" && a.trim().length > 0 && !a.includes("//"),
+      )
+    : [];
+  if (angles.length === 0) return target;
+  const field =
+    typeof target["yourClaim"] === "string" && (target["yourClaim"] as string).trim()
+      ? "yourClaim"
+      : "yourEdge";
+  return { ...target, [field]: angles.map((a) => a.trim()).join(" // ") };
+}

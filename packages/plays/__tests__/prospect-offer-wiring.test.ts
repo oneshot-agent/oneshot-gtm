@@ -10,6 +10,7 @@ const OFFER = {
   evidence: ["renewal quotes"],
   stage: "enterprise",
   level: "researched",
+  return: "renewals closed before the customer shops around, counted per renewal",
 };
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -102,7 +103,7 @@ describe("prospect offer in a play run", () => {
   });
 
   it("uses a stored offer as it stands", async () => {
-    const { offerProductHash } = await import("../src/_prospect-offer.ts");
+    const { offerProductHash, OFFER_PROMPT_VERSION } = await import("../src/_prospect-offer.ts");
     const productHash = offerProductHash({
       productOneLiner: "thing",
       productBrief: "Thing drafts quotes, checks price lists and sends them for approval.",
@@ -112,7 +113,7 @@ describe("prospect offer in a play run", () => {
       productHash,
       ...OFFER,
       offer: "the stored one",
-      version: "offer-v2",
+      version: OFFER_PROMPT_VERSION,
       inputHash: "h",
       derivedAt: "",
     };

@@ -44,14 +44,16 @@ Config is source material. No field can force a sentence into an email; every pr
 
 ## The prospect offer
 
-Most founders sell something. The prospect offer is that offer, made specific to one firm: the outcome your product would deliver there.
+Most founders sell something. The prospect offer is that offer, made specific to one firm: a job your product would carry to completion there, and what it returns.
 
-After a finder's research, a model works out how the firm makes money, its stage, and what this person owns, then picks the most valuable outcome your product can deliver. It writes it in the firm's own terms, with the steps your product would take. Every message to them opens with it: the first email, each follow-up, the LinkedIn messages, the X DM and the letter. Follow-ups keep the same offer and add one new reason. The last one restates it and closes.
+After a finder's research, a model works out how the firm makes money, its stage, and what this person owns. It writes five offers, ranked by what each returns to the firm: money in, money not spent, hours back, a risk closed. Each is an execution with an end state, never a standing service: no offer to track, monitor or alert. Each carries the steps your product would take and its return, how the firm would count it. The first is active. Every message to them opens with it: the first email, each follow-up, the LinkedIn messages, the X DM and the letter. The last one restates it and closes.
+
+The active offer also gets five angles: reasons it pays back for this firm. The first message uses one; each follow-up uses another, so every touch brings a new reason behind the same offer. Your `yourEdge` is given to the writer as reasons it may reuse. A row without offer angles uses `yourEdge` as before.
 
 - It needs `productBrief`. The steps may claim only what the brief says your product does. With no brief, no offer is written and each play keeps its own shape.
 - `pilotOffer` is the general terms every offer carries: a pilot, a trial, a partnership, a service.
-- It is checked before use. Any number must be in the research, any quote must be copied from it, and it cannot borrow your product's own wording, carry a price or a link, or open on an observation about them.
-- It shows at the top of the case on `/queue`. **Edit offer** saves your text, which is never rewritten after that. **New offer** writes a fresh one. Either way the draft is rewritten around it.
+- It is checked before use. Any number must be in the research, any quote must be copied from it, and it cannot borrow your product's own wording, carry a price or a link, open on an observation about them, or lead with watching (track, monitor, keep, ground…). A researched offer needs a return.
+- It shows at the top of the case on `/queue`, with its return and its angles under **How and why**. **Other offers** lists the rest; **Use this offer** makes one active and writes its angles. **Edit offer** saves your text and return, which are never rewritten after that. **New offers** writes five fresh ones. Each way the draft is rewritten around it.
 - With thin research it is written from the role and the kind of firm, and tagged so.
 - Plays whose message is not an offer get none: `discovery-interview`, `pmf-survey`, `demo-no-show`, `x-amplify`, `community-reply`. The LinkedIn connection note never makes the offer; it uses the offer's subject as common ground.
 
@@ -76,6 +78,8 @@ Drafting and regenerating read the trigger's current `yourEdge`, including for r
 ### Rotate angle
 
 **Rotate angle** on an unsent draft writes a new preview with the next angle, in order, wrapping at the end. If the trigger has only one angle, the first rotation writes one alternative for that prospect. It does not edit the trigger. Rotating never sends.
+
+A row whose active offer has angles uses those five in place of the trigger's edge: selection, **Rotate angle** and follow-ups all step through them, and nothing new is written.
 
 ## First-touch format
 

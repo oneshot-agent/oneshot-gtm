@@ -31,7 +31,10 @@ vi.mock("@oneshot-gtm/intel", async () => {
 
 const {
   deriveOffer,
+  deriveOffers,
+  deriveOfferSet,
   lintOffer,
+  lintOfferAngle,
   offerBlock,
   offerForDraft,
   offerResearchText,
@@ -53,6 +56,7 @@ const good = {
   evidence: ["opened a second depot in Leeds"],
   stage: "established local business",
   level: "researched",
+  return: "same-day jobs the leeds depot would otherwise turn away, counted per booked job",
 };
 
 beforeEach(() => {
@@ -143,6 +147,99 @@ describe("lintOffer", () => {
   it("lets a role-level offer go without evidence", () => {
     expect(lintOffer({ ...good, level: "role", evidence: [] }, research)).toEqual([]);
   });
+  it("flags an offer that watches instead of doing", () => {
+    for (const offer of [
+      "track leeds depot bookings across every crew",
+      "monitor same-day demand at the leeds depot",
+      "keep the leeds depot's crew rota aligned with demand",
+      "give the leeds depot visibility into missed jobs",
+    ]) {
+      expect(lintOffer({ ...good, level: "researched", offer }, research)).toContain(
+        "offer-not-execution",
+      );
+    }
+  });
+  it("needs a return on a researched offer, not on a role-level one", () => {
+    const { return: _ret, ...bare } = good;
+    expect(lintOffer({ ...bare, level: "researched" }, research)).toContain("no-return");
+    expect(lintOffer({ ...bare, level: "role", evidence: [] }, research)).toEqual([]);
+  });
+  it("checks the return's numbers against the research", () => {
+    expect(
+      lintOffer({ ...good, level: "researched", return: "40 more jobs a week" }, research),
+    ).toContain("number-not-in-research:40");
+  });
+});
+
+describe("lintOfferAngle", () => {
+  const research = offerResearchText(target);
+  it("passes a reason the job pays back", () => {
+    expect(
+      lintOfferAngle(
+        "Every same-day call the second depot turns away goes to a rival, so filling those slots is revenue the crews already have time for.",
+        research,
+        cfg.productBrief,
+      ),
+    ).toEqual([]);
+  });
+  it("flags an angle that leads with watching, a number from nowhere, or a joined pair", () => {
+    expect(lintOfferAngle("Track every open slot in Leeds.", research, "")).toContain(
+      "awareness-lead",
+    );
+    expect(lintOfferAngle("Saves 12 hours a week.", research, "")).toContain("number:12");
+    expect(lintOfferAngle("one // two", research, "")).toContain("separator");
+  });
+});
+
+const second = {
+  ...good,
+  offer: "fill the leeds depot's cancelled slots with waiting jobs the same morning",
+  return: "slots refilled after a cancellation, counted per job",
+};
+const angles = [
+  "A same-day call the depot cannot take goes to a rival, so every filled slot is a job kept.",
+  "The second depot doubled the slots to fill while dispatch stayed one person.",
+];
+
+describe("deriveOffers", () => {
+  it("keeps the ranked offers that pass, in the model's order", async () => {
+    llm.replies = [JSON.stringify({ offers: [good, second] })];
+    const offers = await deriveOffers({ target, playName: "new-business" });
+    expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer]);
+    expect(offers[0]?.return).toBe(good.return);
+  });
+
+  it("asks again for the ones that fail, keeping those that passed", async () => {
+    const watching = { ...second, offer: "monitor cancellations at the leeds depot" };
+    llm.replies = [
+      JSON.stringify({ offers: [good, watching] }),
+      JSON.stringify({ offers: [good, second] }),
+    ];
+    const offers = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs[1]).toContain("offer 2: offer-not-execution");
+    expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer]);
+  });
+});
+
+describe("deriveOfferSet", () => {
+  it("makes the best offer active and writes its angles", async () => {
+    llm.replies = [
+      JSON.stringify({ offers: [good, second] }),
+      JSON.stringify({ angles: [...angles, "Monitor every slot."] }),
+    ];
+    const set = await deriveOfferSet({
+      target: { ...target, yourEdge: "Founder reason one // Founder reason two" },
+      playName: "new-business",
+    });
+    expect(set?.offer.offer).toBe(good.offer);
+    // The angle leading with watching is dropped.
+    expect(set?.offer.angles).toEqual(angles);
+    expect(set?.candidates.map((c) => c.offer)).toEqual([good.offer, second.offer]);
+    expect(llm.inputs[1]).toContain(`OFFER: ${good.offer}`);
+    expect(llm.inputs[1]).toContain(
+      "FOUNDER'S ANGLES:\n- Founder reason one\n- Founder reason two",
+    );
+  });
 });
 
 describe("deriveOffer", () => {
@@ -225,6 +322,7 @@ describe("offerBlock", () => {
       `OFFER (what you offer to do for them; the message opens with it): ${good.offer}`,
     );
     expect(block).toContain("HOW (");
+    expect(block).toContain(`RETURN (what they get back when it is done): ${good.return}`);
     expect(block).toContain("OFFER TERMS");
     expect(block).toContain("PRODUCT BRIEF");
   });

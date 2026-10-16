@@ -15,16 +15,34 @@
 import { createHash } from "node:crypto";
 import { isPersonResearchDossier, loadConfig, logEvent } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
-import { describeTargetForAngle } from "./_angles.ts";
+import {
+  ANGLE_SEPARATOR,
+  angleTextKey,
+  describeTargetForAngle,
+  edgeFieldOf,
+  splitEdgeAngles,
+} from "./_angles.ts";
+import { slopFlags } from "./_lib.ts";
 import { recentPosts } from "./_recent-posts.ts";
 
 type AppConfig = ReturnType<typeof loadConfig>;
 type JsonRecord = Record<string, unknown>;
 
 /** Bump when the prompt or the lint changes: unedited offers re-derive. */
-export const OFFER_PROMPT_VERSION = "offer-v2";
+export const OFFER_PROMPT_VERSION = "offer-v3";
 
-export const OFFER_MAX = { offer: 140, steps: 260, evidence: 200 } as const;
+export const OFFER_MAX = {
+  offer: 140,
+  steps: 260,
+  evidence: 200,
+  return: 120,
+  angle: 300,
+} as const;
+
+/** Offers written per prospect, ranked by return; the first is active. */
+export const OFFER_COUNT = 5;
+/** Angles written per active offer: the intro takes one, each follow-up another. */
+export const OFFER_ANGLE_COUNT = 5;
 
 const RESEARCH_MAX = 12_000;
 const BRIEF_MAX = 6_000;
@@ -40,6 +58,13 @@ export interface ProspectOffer {
   stage: string;
   /** `researched`: built on firm facts. `role`: research was thin, built on role and firm type. */
   level: "researched" | "role";
+  /** What the firm gets back when the job is done, and how they would count it. */
+  return?: string;
+  /**
+   * Reasons this offer pays back, one per touch: the draft's angle pool when
+   * set (see `overlayOfferAngles` in core). Written for the active offer.
+   */
+  angles?: string[];
   version: string;
   /** Hash of the inputs it was written from. */
   inputHash: string;
@@ -214,11 +239,32 @@ function contentBigrams(text: string): Set<string> {
 }
 
 /**
+ * An offer that is awareness, not an execution: it leads with watching or
+ * reporting, or promises visibility. Product-neutral: whatever a product
+ * notices, the offer is what gets done about it. Steps and angles may still
+ * name watching as the mechanism.
+ */
+const AWARENESS_LEAD =
+  /^(?:track|monitor|watch|observe|alert|notify|surface|flag|report|ground|stay|keep|maintain)\b/i;
+const AWARENESS_ANYWHERE = /\b(?:visibility|insights?|dashboards?|alerts?|alerting)\b/i;
+
+export function isAwarenessOffer(offer: string): boolean {
+  const text = offer.trim();
+  return AWARENESS_LEAD.test(text) || AWARENESS_ANYWHERE.test(text);
+}
+
+/**
  * Lint flags for a written offer, keyed on the output alone. An offer that
  * fails gets one repair round, then is dropped.
  */
 export function lintOffer(
-  parts: { offer: string; steps: string; evidence: string[]; level: ProspectOffer["level"] },
+  parts: {
+    offer: string;
+    steps: string;
+    evidence: string[];
+    level: ProspectOffer["level"];
+    return?: string;
+  },
   research: string,
   /** The product's description (one-liner and brief). */
   product = "",
@@ -229,9 +275,13 @@ export function lintOffer(
   const offer = parts.offer.trim();
   const steps = parts.steps.trim();
   if (!offer || !steps) return ["empty"];
+  const ret = (parts.return ?? "").trim();
   if (offer.length > OFFER_MAX.offer) flags.push("offer-too-long");
   if (steps.length > OFFER_MAX.steps) flags.push("steps-too-long");
-  const both = `${offer} ${steps}`;
+  if (ret.length > OFFER_MAX.return) flags.push("return-too-long");
+  if (isAwarenessOffer(offer)) flags.push("offer-not-execution");
+  if (parts.level === "researched" && !ret) flags.push("no-return");
+  const both = `${offer} ${steps} ${ret}`;
   for (const [flag, pattern] of BANNED) if (pattern.test(both)) flags.push(flag);
   const haystack = normalizeForMatch(research);
   for (const n of both.match(/\d[\d,.]*/g) ?? []) {
@@ -269,6 +319,7 @@ interface RawOffer {
   evidence?: unknown;
   stage?: unknown;
   level?: unknown;
+  return?: unknown;
   skip?: unknown;
 }
 
@@ -283,13 +334,27 @@ function readRaw(raw: RawOffer): Omit<ProspectOffer, "version" | "inputHash" | "
         .map((e) => clip(e.trim(), OFFER_MAX.evidence))
         .slice(0, 4)
     : [];
+  const ret = typeof raw.return === "string" ? raw.return.trim().replace(/[.]+$/, "") : "";
   return {
     offer,
     steps,
     evidence,
     stage: typeof raw.stage === "string" ? raw.stage.trim().slice(0, 60) : "",
     level: raw.level === "role" ? "role" : "researched",
+    ...(ret ? { return: ret } : {}),
   };
+}
+
+/** The offers in a model reply: `{offers: [...]}`, or a lone offer object. */
+function readRawList(content: string): RawOffer[] | "skip" {
+  const parsed = tryParseJsonObject<{ offers?: unknown; skip?: unknown } & RawOffer>(content, {});
+  if (parsed.skip === true) return "skip";
+  if (Array.isArray(parsed.offers)) {
+    return parsed.offers.filter(
+      (o): o is RawOffer => !!o && typeof o === "object" && !Array.isArray(o),
+    );
+  }
+  return typeof parsed.offer === "string" ? [parsed] : [];
 }
 
 export interface DeriveOfferInput {
@@ -300,23 +365,17 @@ export interface DeriveOfferInput {
   cfg?: AppConfig;
 }
 
-/**
- * Write the prospect offer. Null when there is no product brief to ground it
- * in, the model skips (nothing at all is known), or both rounds fail lint;
- * the writer then drafts without an OFFER block, as before.
- */
-export async function deriveOffer(input: DeriveOfferInput): Promise<ProspectOffer | null> {
-  if (!playMakesOffer(input.playName)) return null;
-  const cfg = input.cfg ?? loadConfig();
-  // The steps may claim only what the product brief says the product does.
-  // With no brief there is nothing to ground them in.
-  if (!cfg.productBrief?.trim()) return null;
+/** A row's offers: the active one (with its angles) and the ranked list it came from. */
+export interface OfferSet {
+  offer: ProspectOffer;
+  candidates: ProspectOffer[];
+}
+
+function offerUserMessage(input: DeriveOfferInput, cfg: AppConfig, research: string): string {
   const t = input.target as JsonRecord;
-  const research = offerResearchText(t, input.dossier);
-  const inputHash = offerInputHash(research, cfg);
-  const user = [
+  return [
     `PRODUCT: ${cfg.productOneLiner ?? ""}`,
-    `PRODUCT BRIEF:\n${clip(cfg.productBrief.trim(), BRIEF_MAX)}`,
+    `PRODUCT BRIEF:\n${clip((cfg.productBrief ?? "").trim(), BRIEF_MAX)}`,
     ...(cfg.pilotOffer?.trim() ? [`OFFER TERMS: ${cfg.pilotOffer.trim()}`] : []),
     `PLAY: ${input.playName}`,
     `PROSPECT: ${firstString(t, ["name", "founderName", "guestName", "hostName"])}`,
@@ -324,46 +383,66 @@ export async function deriveOffer(input: DeriveOfferInput): Promise<ProspectOffe
     `COMPANY: ${firstString(t, ["company", "newCompany", "guestCompany", "businessName", "municipality"])}`,
     `RESEARCH:\n${research || "(none)"}`,
   ].join("\n\n");
+}
+
+/**
+ * Write up to OFFER_COUNT offers, ranked by return, in one call. Each is
+ * linted on its own; the ones that fail get one repair round together. The
+ * ones that pass are kept in the model's order. Empty when there is no brief,
+ * the model skips (nothing at all is known), or nothing passes.
+ */
+export async function deriveOffers(input: DeriveOfferInput): Promise<ProspectOffer[]> {
+  if (!playMakesOffer(input.playName)) return [];
+  const cfg = input.cfg ?? loadConfig();
+  // The steps may claim only what the product brief says the product does.
+  // With no brief there is nothing to ground them in.
+  if (!cfg.productBrief?.trim()) return [];
+  const research = offerResearchText(input.target as JsonRecord, input.dossier);
+  const inputHash = offerInputHash(research, cfg);
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: loadPrompt("prospect-offer") },
-    { role: "user", content: user },
+    { role: "user", content: offerUserMessage(input, cfg, research) },
   ];
   const product = `${cfg.productOneLiner ?? ""}\n${cfg.productBrief}`;
+  const kept: Array<Omit<ProspectOffer, "version" | "inputHash" | "derivedAt">> = [];
+  const seen = new Set<string>();
   try {
     for (let round = 0; round < 2; round++) {
-      const res = await complete({ messages, temperature: 0.3, maxTokens: 900 });
-      const parsed = readRaw(tryParseJsonObject<RawOffer>(res.content, {}));
-      if (!parsed) {
+      const res = await complete({ messages, temperature: 0.4, maxTokens: 3000 });
+      const raws = readRawList(res.content);
+      if (raws === "skip") {
         logEvent("prospect_offer.skipped", { play: input.playName, round });
-        return null;
+        break;
       }
-      const flags = lintOffer(parsed, research, product, cfg.productOneLiner ?? "");
-      if (flags.length === 0) {
-        logEvent("prospect_offer.derived", {
-          play: input.playName,
-          level: parsed.level,
-          offer_120: parsed.offer.slice(0, 120),
-        });
-        return {
-          ...parsed,
-          version: OFFER_PROMPT_VERSION,
-          inputHash,
-          productHash: offerProductHash(cfg),
-          derivedAt: new Date().toISOString(),
-        };
-      }
+      const failed: string[] = [];
+      raws.forEach((raw, i) => {
+        const parsed = readRaw(raw);
+        if (!parsed) return;
+        const flags = lintOffer(parsed, research, product, cfg.productOneLiner ?? "");
+        const key = angleTextKey(parsed.offer);
+        if (flags.length > 0) {
+          failed.push(`offer ${i + 1}: ${flags.join(", ")}`);
+          return;
+        }
+        if (seen.has(key)) return;
+        seen.add(key);
+        kept.push(parsed);
+      });
+      if (kept.length >= OFFER_COUNT || failed.length === 0) break;
       logEvent("prospect_offer.lint_failed", {
         play: input.playName,
         round,
-        flags_200: flags.join(",").slice(0, 200),
+        kept: kept.length,
+        flags_200: failed.join("; ").slice(0, 200),
       });
       messages.push(
         { role: "assistant", content: res.content },
         {
           role: "user",
           content:
-            `That offer cannot be used: ${flags.join(", ")}. Rewrite it within every rule, ` +
-            `or return {"skip": true, "why": "..."} if nothing supports one. JSON only.`,
+            `These offers cannot be used: ${failed.join("; ")}. Return all five again, best return ` +
+            `first, each within every rule, or {"skip": true, "why": "..."} if nothing supports ` +
+            `one. JSON only.`,
         },
       );
     }
@@ -378,7 +457,177 @@ export async function deriveOffer(input: DeriveOfferInput): Promise<ProspectOffe
       "warn",
     );
   }
-  return null;
+  const derivedAt = new Date().toISOString();
+  const productHash = offerProductHash(cfg);
+  const offers: ProspectOffer[] = kept
+    .slice(0, OFFER_COUNT)
+    .map((o) =>
+      Object.assign(o, { version: OFFER_PROMPT_VERSION, inputHash, productHash, derivedAt }),
+    );
+  if (offers.length > 0) {
+    logEvent("prospect_offer.derived", {
+      play: input.playName,
+      count: offers.length,
+      level: offers[0]!.level,
+      offer_120: offers[0]!.offer.slice(0, 120),
+    });
+  }
+  return offers;
+}
+
+/** Flags for one written angle, keyed on its text alone. */
+export function lintOfferAngle(angle: string, research: string, product: string): string[] {
+  const flags: string[] = [];
+  const text = angle.trim();
+  if (!text) return ["empty"];
+  if (text.length > OFFER_MAX.angle) flags.push("too-long");
+  if (text.includes(ANGLE_SEPARATOR)) flags.push("separator");
+  if (AWARENESS_LEAD.test(text)) flags.push("awareness-lead");
+  for (const [flag, pattern] of BANNED)
+    if (flag !== "punctuation" && pattern.test(text)) flags.push(flag);
+  if (slopFlags(text).includes("negative-parallelism")) flags.push("negation-contrast");
+  for (const n of text.match(/\d[\d,.]*/g) ?? []) {
+    const bare = n.replace(/[.,]$/, "");
+    if (!research.includes(bare) && !product.includes(bare)) flags.push(`number:${n}`);
+  }
+  return flags;
+}
+
+/**
+ * Write OFFER_ANGLE_COUNT reasons the offer pays back, for its first message
+ * and each follow-up. The founder's own angles on the row's edge are passed
+ * as reasons the writer may reuse. Angles that fail lint are dropped; one
+ * retry when fewer than two survive. Empty on failure: the draft then falls
+ * back to the row's own edge.
+ */
+export async function deriveOfferAngles(
+  input: DeriveOfferInput & { offer: Pick<ProspectOffer, "offer" | "steps" | "return"> },
+): Promise<string[]> {
+  const cfg = input.cfg ?? loadConfig();
+  if (!cfg.productBrief?.trim()) return [];
+  const t = input.target as JsonRecord;
+  const research = offerResearchText(t, input.dossier);
+  const field = edgeFieldOf(t);
+  const founderAngles = field ? splitEdgeAngles(String(t[field])) : [];
+  const product = `${cfg.productOneLiner ?? ""}\n${cfg.productBrief}`;
+  const user = [
+    `OFFER: ${input.offer.offer}`,
+    ...(input.offer.return?.trim() ? [`RETURN: ${input.offer.return.trim()}`] : []),
+    ...(input.offer.steps.trim() ? [`HOW: ${input.offer.steps.trim()}`] : []),
+    `PRODUCT: ${cfg.productOneLiner ?? ""}`,
+    `PRODUCT BRIEF:\n${clip(cfg.productBrief.trim(), BRIEF_MAX)}`,
+    ...(founderAngles.length > 0
+      ? [`FOUNDER'S ANGLES:\n${founderAngles.map((a) => `- ${a}`).join("\n")}`]
+      : []),
+    `PLAY: ${input.playName}`,
+    `PROSPECT:\n${research || "(nothing known beyond the offer)"}`,
+  ].join("\n\n");
+  const offerKey = angleTextKey(input.offer.offer);
+  try {
+    for (let round = 0; round < 2; round++) {
+      const res = await complete({
+        messages: [
+          { role: "system", content: loadPrompt("offer-angles") },
+          { role: "user", content: user },
+        ],
+        temperature: 0.6,
+        maxTokens: 2500,
+      });
+      const parsed = tryParseJsonObject<{ angles?: unknown }>(res.content, {});
+      const raw = Array.isArray(parsed.angles) ? parsed.angles : [];
+      const seen = new Set<string>([offerKey]);
+      const out: string[] = [];
+      const dropped: string[] = [];
+      for (const value of raw) {
+        const text = typeof value === "string" ? value.trim() : "";
+        const flags = lintOfferAngle(text, research, product);
+        const key = angleTextKey(text);
+        if (flags.length > 0 || seen.has(key)) {
+          dropped.push(flags.join(",") || "duplicate");
+          continue;
+        }
+        seen.add(key);
+        out.push(text);
+      }
+      if (dropped.length > 0) {
+        logEvent("prospect_offer.angles_dropped", {
+          play: input.playName,
+          round,
+          kept: out.length,
+          flags_200: dropped.join("; ").slice(0, 200),
+        });
+      }
+      if (out.length >= 2 || round === 1) return out.slice(0, OFFER_ANGLE_COUNT);
+    }
+  } catch (err) {
+    logEvent(
+      "error.swallowed",
+      {
+        kind: "offer-angles",
+        play: input.playName,
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "warn",
+    );
+  }
+  return [];
+}
+
+/** The offer with its angles written, when they can be. */
+export async function withOfferAngles(
+  offer: ProspectOffer,
+  input: DeriveOfferInput,
+): Promise<ProspectOffer> {
+  const angles = await deriveOfferAngles({ ...input, offer });
+  return angles.length > 0 ? { ...offer, angles } : offer;
+}
+
+/**
+ * Five ranked offers and the first one's angles. Null when no offer can be
+ * written: no brief, nothing known, or nothing passes lint.
+ */
+export async function deriveOfferSet(input: DeriveOfferInput): Promise<OfferSet | null> {
+  const cfg = input.cfg ?? loadConfig();
+  const offers = await deriveOffers({ ...input, cfg });
+  if (offers.length === 0) return null;
+  const offer = await withOfferAngles(offers[0]!, { ...input, cfg });
+  return { offer, candidates: [offer, ...offers.slice(1)] };
+}
+
+/** One offer, the best of a fresh set: for callers that keep only the active one. */
+export async function deriveOffer(input: DeriveOfferInput): Promise<ProspectOffer | null> {
+  return (await deriveOfferSet(input))?.offer ?? null;
+}
+
+/** The ranked offers a queue payload carries, when it has any. */
+export function offerCandidatesOf(payload: Record<string, unknown>): ProspectOffer[] {
+  const list = payload["offerCandidates"];
+  return Array.isArray(list) ? list.filter(isProspectOffer) : [];
+}
+
+/**
+ * The offers a queue row should carry: the stored set when its active offer
+ * is current (or the founder's), with angles written if they are missing,
+ * else a fresh set. `changed` says whether the caller has anything to persist.
+ */
+export async function ensureOfferSet(
+  input: DeriveOfferInput,
+): Promise<(OfferSet & { changed: boolean }) | null> {
+  if (!playMakesOffer(input.playName)) return null;
+  const cfg = input.cfg ?? loadConfig();
+  const t = input.target as JsonRecord;
+  const stored = t["offer"];
+  const research = offerResearchText(t, input.dossier);
+  if (offerIsCurrent(stored, offerInputHash(research, cfg))) {
+    const candidates = offerCandidatesOf(t);
+    if (stored.angles?.length || !cfg.productBrief?.trim()) {
+      return { offer: stored, candidates, changed: false };
+    }
+    const offer = await withOfferAngles(stored, { ...input, cfg });
+    return { offer, candidates, changed: offer !== stored };
+  }
+  const fresh = await deriveOfferSet({ ...input, cfg });
+  return fresh ? { ...fresh, changed: true } : null;
 }
 
 /**
@@ -386,12 +635,7 @@ export async function deriveOffer(input: DeriveOfferInput): Promise<ProspectOffe
  * founder's), else a fresh one. The caller persists a fresh one.
  */
 export async function ensureOffer(input: DeriveOfferInput): Promise<ProspectOffer | null> {
-  if (!playMakesOffer(input.playName)) return null;
-  const cfg = input.cfg ?? loadConfig();
-  const stored = (input.target as JsonRecord)["offer"];
-  const research = offerResearchText(input.target, input.dossier);
-  if (offerIsCurrent(stored, offerInputHash(research, cfg))) return stored;
-  return deriveOffer({ ...input, cfg });
+  return (await ensureOfferSet(input))?.offer ?? null;
 }
 
 /**
@@ -415,7 +659,7 @@ export async function offerForDraft(input: DeriveOfferInput): Promise<ProspectOf
   ) {
     return stored;
   }
-  return deriveOffer({ ...input, cfg });
+  return (await deriveOfferSet({ ...input, cfg }))?.offer ?? null;
 }
 
 /**
@@ -430,7 +674,7 @@ const NO_TERMS_PLAYS: ReadonlySet<string> = new Set(["accelerator-batch"]);
  * product delivers it, the founder's general terms and the product facts.
  */
 export function offerBlock(
-  offer: Pick<ProspectOffer, "offer" | "steps"> | null,
+  offer: Pick<ProspectOffer, "offer" | "steps" | "return"> | null,
   cfg: Pick<AppConfig, "pilotOffer" | "productBrief">,
   playName: string,
   opts: { brief?: boolean } = {},
@@ -439,6 +683,9 @@ export function offerBlock(
   const lines: string[] = [];
   if (offer) {
     lines.push(`OFFER (what you offer to do for them; the message opens with it): ${offer.offer}`);
+    if (offer.return?.trim()) {
+      lines.push(`RETURN (what they get back when it is done): ${offer.return.trim()}`);
+    }
     if (offer.steps.trim()) {
       lines.push(
         `HOW (how the product delivers it; material, never a list in the message): ${offer.steps}`,

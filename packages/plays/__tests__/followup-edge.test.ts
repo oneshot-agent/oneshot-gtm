@@ -59,6 +59,21 @@ beforeEach(() => {
 });
 
 describe("followUpEdgeSelection", () => {
+  it("picks from the intro offer's angles, over the trigger's edge, never the intro's own", async () => {
+    triggerConfig = { yourEdge: `${C} // ${D}` };
+    sentRow = {
+      payload: {
+        email: "p@x.dev",
+        yourEdge: A,
+        offer: { offer: "o", steps: "s", angles: [A, B, C] },
+      },
+      source: "find:luma-events",
+    };
+    introAngleText = A;
+    const sel = await followUpEdgeSelection(prospect, "luma-events");
+    expect(sel).toMatchObject({ angle: B, index: 1, count: 3 });
+  });
+
   it("picks from the trigger's current edge, not the frozen one", async () => {
     triggerConfig = { yourEdge: `${C} // ${D}` };
     introAngleText = C;
