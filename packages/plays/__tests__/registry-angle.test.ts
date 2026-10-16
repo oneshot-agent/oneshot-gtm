@@ -54,6 +54,12 @@ vi.mock("../src/hiring-signal.ts", () => ({
     return { drafted: [] };
   },
 }));
+vi.mock("../src/multiplier.ts", () => ({
+  runMultiplier: async (opts: { draftAngle?: string; dryRun: boolean }) => {
+    calls.set("runMultiplier", opts);
+    return { drafted: [] };
+  },
+}));
 vi.mock("../src/job-change.ts", () => ({
   runJobChange: async (opts: { draftAngle?: string; dryRun: boolean }) => {
     calls.set("runJobChange", opts);
