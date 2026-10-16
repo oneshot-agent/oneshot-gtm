@@ -134,6 +134,27 @@ describe("multiplier sequence", () => {
     expect(plan(id)).toEqual(["email@10"]);
   });
 
+  it("a workspace false is not overridden by a trigger true: either false turns it off", () => {
+    linkedinContinuation = false;
+    ledger.upsertTrigger({
+      name: "orgs",
+      configJson: JSON.stringify({ linkedinContinuation: true }),
+    });
+    const fromTrigger = prospect(false);
+    enrollInCadence({ prospectId: fromTrigger, playName: PLAY, queueSource: "find:orgs:1" });
+    expect(plan(fromTrigger)).toEqual(["email@10"]);
+
+    const explicit = prospect(false);
+    enrollInCadence({ prospectId: explicit, playName: PLAY, linkedinContinuation: true });
+    expect(plan(explicit)).toEqual(["email@10"]);
+
+    // And a workspace true with a trigger false is off as well.
+    linkedinContinuation = true;
+    const vetoed = prospect(false);
+    enrollInCadence({ prospectId: vetoed, playName: PLAY, linkedinContinuation: false });
+    expect(plan(vetoed)).toEqual(["email@10"]);
+  });
+
   it("a reply on any channel stops the whole cadence", () => {
     const byEmail = prospect();
     enrollInCadence({ prospectId: byEmail, playName: PLAY });

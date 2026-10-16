@@ -285,6 +285,26 @@ export function sequencePlan(seq: Sequence): CadencePlanStep[] {
   }));
 }
 
+/**
+ * Whether a NEW email cadence carries on onto LinkedIn. A play that is on by
+ * default (`linkedinContinuationDefault`: `multiplier`, whose programme leads
+ * live on LinkedIn) is turned off by an explicit `false` on the workspace OR
+ * on the trigger: either veto wins, and a trigger's `true` does not override
+ * the workspace's `false`. Any other play takes the trigger's own setting over
+ * the workspace's, either way, and is off when neither says.
+ */
+function newCadenceCarriesOn(
+  base: Sequence,
+  cfg: { linkedinContinuation?: boolean | null },
+  trigger?: boolean,
+): boolean {
+  if (base.linkedinContinuationDefault)
+    return trigger !== false && cfg.linkedinContinuation !== false;
+  return (
+    trigger ?? (typeof cfg.linkedinContinuation === "boolean" ? cfg.linkedinContinuation : false)
+  );
+}
+
 export function effectiveSequence(
   playName: string,
   prospectId?: number,
@@ -316,14 +336,9 @@ export function effectiveSequence(
     enrolled && prospectId !== undefined
       ? getLedger().getCadencePlan(prospectId, playName, enrolled.enrolled_at)
       : null;
-  // A new plan: the trigger's setting, else the workspace's, else the play's
-  // own default (on for `multiplier`, whose programme leads live on LinkedIn).
   const carriesOn = enrolled
     ? (savedPlan?.some((entry) => entry.id === CONTINUATION_INVITE_ID) ?? false)
-    : (continuation ??
-      (typeof cfg.linkedinContinuation === "boolean"
-        ? cfg.linkedinContinuation
-        : (base.linkedinContinuationDefault ?? false)));
+    : newCadenceCarriesOn(base, cfg, continuation);
   if (
     prospectId === undefined &&
     !mail &&
