@@ -532,8 +532,13 @@ export const api = {
   regenerateDraft: (id: number, rotateAngle = false) =>
     postJson<LastDraft>(`/queue/${id}/regenerate`, { rotateAngle }),
   // Save the founder's own offer for a row, or ask for a fresh one from its research.
-  setQueueOffer: (id: number, body: { offer: string; steps?: string } | { regenerate: true }) =>
-    postJson<{ offer: { offer: string; steps: string } }>(`/queue/${id}/offer`, body),
+  setQueueOffer: (
+    id: number,
+    body:
+      | { offer: string; steps?: string; return?: string }
+      | { regenerate: true }
+      | { select: number },
+  ) => postJson<{ offer: { offer: string; steps: string } }>(`/queue/${id}/offer`, body),
   // Send the row's already-reviewed draft verbatim (no LLM re-roll). Requires
   // a clean, not-yet-sent persisted draft; marks the row sent on success.
   sendDraft: (id: number) =>

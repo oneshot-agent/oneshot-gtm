@@ -6,8 +6,14 @@
  * before offers existed, or whose research changed, gets one. Never throws:
  * a row without an offer drafts as before.
  */
-import { getLedger, logEvent, parallelMap, type QueueRow } from "@oneshot-gtm/core";
-import { ensureOffer, playMakesOffer } from "@oneshot-gtm/plays";
+import {
+  getLedger,
+  logEvent,
+  parallelMap,
+  resolveTriggerOverlay,
+  type QueueRow,
+} from "@oneshot-gtm/core";
+import { ensureOfferSet, playMakesOffer } from "@oneshot-gtm/plays";
 import type { FinderResult } from "./_types.ts";
 import { resolveQueueTarget } from "./queue-target.ts";
 
@@ -24,28 +30,43 @@ function parsePayload(row: Pick<QueueRow, "payload_json">): JsonRecord | null {
   }
 }
 
+/** The payload with the trigger's current edge; the stored one when the trigger can't be read. */
+function edgeTarget(payload: JsonRecord, row: Partial<Pick<QueueRow, "source">>): JsonRecord {
+  try {
+    return resolveTriggerOverlay(payload, row.source ?? null, (name) =>
+      getLedger().getTrigger(name),
+    );
+  } catch {
+    return payload;
+  }
+}
+
 /**
  * The row with a current offer on its payload. Writes only to a live row
  * (pending or approved, not sending); a row that moved on keeps its payload,
  * and the returned row still carries the offer for the draft in hand.
  */
 export async function ensureQueueRowOffer<
-  R extends Pick<QueueRow, "id" | "play_name" | "payload_json">,
+  R extends Pick<QueueRow, "id" | "play_name" | "payload_json"> & Partial<Pick<QueueRow, "source">>,
 >(row: R): Promise<R> {
   const payload = parsePayload(row);
   if (!payload) return row;
   try {
     if (!playMakesOffer(row.play_name)) return row;
-    const offer = await ensureOffer({ target: payload, playName: row.play_name });
-    if (!offer || offer === payload["offer"]) return row;
+    // The trigger's current edge, not the offer's own angles: the angle
+    // writer takes the founder's angles as material.
+    const target = edgeTarget(payload, row);
+    const set = await ensureOfferSet({ target, playName: row.play_name });
+    if (!set?.changed) return row;
+    const patch = { offer: set.offer, offerCandidates: set.candidates };
     const ledger = getLedger();
     // Re-read after the write: callers compare payload_json against the
     // stored text to detect a concurrent change, so it must be the DB's own.
-    const written = ledger.patchLiveQueuePayload({ id: row.id, patch: { offer } });
+    const written = ledger.patchLiveQueuePayload({ id: row.id, patch });
     const fresh = written ? ledger.getQueueRow(row.id) : null;
     return {
       ...row,
-      payload_json: fresh?.payload_json ?? JSON.stringify({ ...payload, offer }),
+      payload_json: fresh?.payload_json ?? JSON.stringify({ ...payload, ...patch }),
     };
   } catch (err) {
     logEvent(

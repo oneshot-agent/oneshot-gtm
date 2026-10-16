@@ -59,6 +59,9 @@ vi.mock("@oneshot-gtm/core", async () => ({
   resolveTriggerOverlay: (
     await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core")
   ).resolveTriggerOverlay,
+  overlayOfferAngles: (
+    await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core")
+  ).overlayOfferAngles,
   isSendDeferred: (err: unknown) => err instanceof Error && err.name === "SendDeferredError",
   DEFAULT_DRAIN_ROW_RESERVATION_USD: 2,
   // Daily spend ceiling (issue #481): the drain test suite exercises drain
@@ -93,6 +96,7 @@ vi.mock("@oneshot-gtm/plays", () => {
     // Prospect offers are covered in queue-offer.test.ts; here no row gets one.
     playMakesOffer: () => false,
     ensureOffer: async () => null,
+    ensureOfferSet: async () => null,
   };
 });
 

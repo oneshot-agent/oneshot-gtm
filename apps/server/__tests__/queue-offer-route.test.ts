@@ -25,7 +25,12 @@ vi.mock("@oneshot-gtm/core", async () => ({
 }));
 vi.mock("@oneshot-gtm/plays", async () => ({
   ...(await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays")),
-  deriveOffer: async () => state.derived,
+  deriveOfferSet: async () =>
+    state.derived
+      ? { offer: state.derived, candidates: [state.derived, { offer: "second" }] }
+      : null,
+  // Angles are written for whichever offer becomes active.
+  withOfferAngles: async (offer: Record<string, unknown>) => ({ ...offer, angles: ["why"] }),
 }));
 
 const { queueOfferRoute } = await import("../src/api/queue-offer.ts");
@@ -59,13 +64,18 @@ beforeEach(() => {
 
 describe("queueOfferRoute", () => {
   it("saves the founder's offer as theirs, without the old offer's reasoning", async () => {
-    const res = await queueOfferRoute(post({ offer: "  new offer  " }), { id: "5" });
+    const res = await queueOfferRoute(
+      post({ offer: "  new offer  ", return: " cash collected " }),
+      { id: "5" },
+    );
     expect(res.status).toBe(200);
     const offer = state.patched[0]!.patch["offer"] as Record<string, unknown>;
     expect(offer).toMatchObject({
       offer: "new offer",
       steps: "",
       evidence: [],
+      return: "cash collected",
+      angles: ["why"],
       editedBy: "founder",
     });
   });
@@ -85,6 +95,31 @@ describe("queueOfferRoute", () => {
     const res = await queueOfferRoute(post({ regenerate: true }), { id: "5" });
     expect(res.status).toBe(200);
     expect(state.patched[0]!.patch["offer"]).toEqual(state.derived);
+    expect(state.patched[0]!.patch["offerCandidates"]).toEqual([
+      state.derived,
+      { offer: "second" },
+    ]);
+  });
+
+  it("makes another of the row's offers active, with its angles", async () => {
+    const first = { offer: "first", steps: "a, b", angles: ["one"] };
+    const second = { offer: "second", steps: "c, d", return: "cash collected" };
+    state.row = {
+      ...state.row!,
+      payload_json: JSON.stringify({
+        name: "Dana",
+        offer: first,
+        offerCandidates: [first, second],
+      }),
+    };
+    const res = await queueOfferRoute(post({ select: 1 }), { id: "5" });
+    expect(res.status).toBe(200);
+    expect(state.patched[0]!.patch["offer"]).toEqual({ ...second, angles: ["why"] });
+    expect(state.patched[0]!.patch["offerCandidates"]).toEqual([
+      first,
+      { ...second, angles: ["why"] },
+    ]);
+    expect((await queueOfferRoute(post({ select: 7 }), { id: "5" })).status).toBe(400);
   });
 
   it("says so when no offer can be written", async () => {
