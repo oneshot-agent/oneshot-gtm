@@ -39,6 +39,9 @@ import {
 import { fitReasonFor } from "../lib/queueRationale.ts";
 import { suggestRejectReason, type RejectReasonSource } from "../lib/rejectReason.ts";
 import { RejectReasonFields } from "../components/queue/RejectReasonFields.tsx";
+import { PersonDossier } from "../components/queue/PersonDossier.tsx";
+import { ProductResearch } from "../components/queue/ProductResearch.tsx";
+import { ProspectOffer } from "../components/queue/ProspectOffer.tsx";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
 import { CaseSection, Rule, Sheet } from "../components/ledger/Sheet.tsx";
@@ -734,8 +737,11 @@ function DetailPanel({ id }: { id: number }) {
               {fitReason}
             </p>
           )}
+          <ProspectOffer rowId={row.id} payload={row.payload} editable={false} />
           <Rule />
           <CaseList rows={caseRows} />
+          <PersonDossier rowId={row.id} />
+          <ProductResearch payload={row.payload} />
           {d.cadences.length > 0 && (
             <>
               <Rule />
