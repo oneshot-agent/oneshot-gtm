@@ -8,7 +8,7 @@ import {
   releaseRunController,
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
-import { verifyAndFilterTargets } from "@oneshot-gtm/plays";
+import { PLAYS, verifyAndFilterTargets } from "@oneshot-gtm/plays";
 import { backfillProspectId } from "@oneshot-gtm/find";
 import {
   isRunnablePlay,
@@ -39,6 +39,18 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
 
   if (!Array.isArray(body.targets) || body.targets.length === 0) {
     return jsonResponse({ error: "targets must be a non-empty array" }, 400, req);
+  }
+
+  // The queue rows a batch was loaded from, by their dedupe keys: each row's
+  // source names the trigger whose settings apply to that target (the
+  // multiplier play's `memberOffer`); null for a manual row.
+  const queueSources = queueSourcesFor(playName, body);
+  // The play's own refusal, made before the route's paid verification below:
+  // a multiplier run without a member offer bills nothing, not even the check.
+  try {
+    PLAYS[playName]?.preflight?.({ targets: body.targets, queueSources });
+  } catch (err) {
+    return jsonResponse({ error: (err as Error).message }, 400, req);
   }
 
   // Create a runs row up-front so the UI gets a runId and can resume on
@@ -200,6 +212,12 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           return;
         }
         const filteredBody: RunPlayRequest = { ...body, targets: verify.verified };
+        // The queue sources re-aligned to the verified rows, handed to the
+        // play only when the batch has queue rows at all.
+        const originalIndexOf = new Map(body.targets.map((target, index) => [target, index]));
+        const verifiedSources = queueSources.some((source) => source !== null)
+          ? verify.verified.map((target) => queueSources[originalIndexOf.get(target) ?? -1] ?? null)
+          : undefined;
 
         send({ kind: "stage", stage: body.dryRun ? "drafting" : "drafting + sending" });
         // Per-target callback: fires draft/send events live so counters tick
@@ -242,6 +260,9 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
             }
           },
           runAbort.signal,
+          undefined,
+          undefined,
+          verifiedSources,
         );
         send({ kind: "done", total: drafted.length, sent: sentCount });
         finished = true;
@@ -517,6 +538,28 @@ export async function cancelRunRoute(
  * Best-effort (logged via `error.swallowed`). Indices match because
  * `verifiedTargets[i]` corresponds to `drafted[i]`.
  */
+/**
+ * Per target, the `source` of the queue row its dedupe key names (the row the
+ * UI loaded it from), null for a manual row or a key no row matches. Exported
+ * for its test.
+ */
+export function queueSourcesFor(playName: string, body: RunPlayRequest): Array<string | null> {
+  const keys =
+    Array.isArray(body.dedupeKeys) && body.dedupeKeys.length === body.targets.length
+      ? body.dedupeKeys
+      : null;
+  if (!keys) return body.targets.map(() => null);
+  const ledger = getLedger();
+  return keys.map((key) => {
+    if (typeof key !== "string" || key.length === 0) return null;
+    try {
+      return ledger.getQueueRowByDedupe(playName, key)?.source ?? null;
+    } catch {
+      return null;
+    }
+  });
+}
+
 /** Exported for its test. */
 export function persistDraftsToQueue(input: {
   playName: string;

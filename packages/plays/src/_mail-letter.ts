@@ -1,7 +1,8 @@
-import { effectiveMemberOffer, getLedger, loadConfig } from "@oneshot-gtm/core";
+import { getLedger, loadConfig } from "@oneshot-gtm/core";
 import { complete } from "@oneshot-gtm/intel";
 import { getPriorStepsForProspect, sequenceOffer } from "./_cadence.ts";
 import { hardBanFlags } from "./_lib.ts";
+import { enrolledMemberOffer } from "./_member-offer.ts";
 import { playMakesOffer } from "./_prospect-offer.ts";
 
 export async function generateMailLetter(prospectId: number, playName: string): Promise<string> {
@@ -9,17 +10,13 @@ export async function generateMailLetter(prospectId: number, playName: string): 
   const prospect = ledger.getProspectById(prospectId);
   if (!prospect) throw new Error("Prospect not found");
   const cfg = loadConfig();
-  // The multiplier letter proposes the member offer, verbatim from config (the
-  // trigger's when it sets one): it is the offer and the offer's terms, so
-  // the "never add a price the terms do not contain" rule checks against it.
+  // The multiplier letter proposes the member offer the originating send
+  // made, verbatim from config (the trigger's when that send's queue row
+  // names one; see `enrolledMemberOffer`): it is the offer and the offer's
+  // terms, so the "never add a price the terms do not contain" rule checks
+  // against it.
   const memberOffer =
-    playName === "multiplier"
-      ? effectiveMemberOffer(
-          cfg,
-          prospect.email ? ledger.latestQueueSource(playName, prospect.email) : null,
-          (name) => ledger.getTrigger(name),
-        )
-      : "";
+    playName === "multiplier" ? enrolledMemberOffer(prospect.email, cfg, ledger) : "";
   if (playName === "multiplier" && !memberOffer) {
     throw new Error("multiplier: set memberOffer in config before generating a letter");
   }

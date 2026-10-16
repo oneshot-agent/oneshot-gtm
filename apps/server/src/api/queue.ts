@@ -52,6 +52,7 @@ import {
   generateRejectReason,
   logTargetError,
   playMetadata,
+  playProspectFields,
   sendDraftedEmail,
   draftLinkedInNote,
   draftXDm,
@@ -1598,6 +1599,10 @@ export async function sendDraftRoute(
   const str = (k: string): string | null => (typeof payload[k] === "string" ? payload[k] : null);
   const email = str("email")?.trim() || str("founderEmail")?.trim();
   if (!email) return jsonResponse({ error: "row has no recipient email" }, 400, req);
+  // What the play maps from its row rather than reading generically (the
+  // multiplier play's organization as company, `multiplier-<orgType>` as
+  // source), so a reviewed send records the prospect an unattended run does.
+  const playFields = playProspectFields(row.play_name, payload);
 
   // Exactly one telemetry event per send attempt; declared after pre-send
   // validation so bad-request returns don't count as executions.
@@ -1625,12 +1630,12 @@ export async function sendDraftRoute(
         businessAddressSource: str("businessAddressSource") ?? row.source,
         name: str("name") ?? str("founderName"),
         email,
-        company: str("company"),
+        company: str("company") ?? playFields.company ?? null,
         // Falls back to twitter/github URL. The column is the de-facto
         // social-profile URL (mirrors the play's own prospectMeta).
         linkedin_url: str("linkedinUrl") ?? str("twitterUrl") ?? str("githubUrl"),
         phone: str("phone"),
-        source: row.play_name,
+        source: playFields.source ?? row.play_name,
         // Read generically so any finder that sets it gets it persisted.
         source_profile_url: str("sourceProfileUrl") ?? str("githubUrl") ?? str("twitterUrl"),
         // Stamped on the payload by the person-level ICP gate in the finders.

@@ -13,7 +13,8 @@ const calls = {
   prospectMeta: [] as Array<Record<string, unknown>>,
 };
 let memberOffer: string | null = null;
-let triggerConfig: string | null = null;
+/** Saved trigger configs by name; a trigger not listed does not exist. */
+let triggers: Record<string, string> = {};
 
 const OFFER =
   "A two-week GTM sprint for your cohort: a 30-minute setup for each company, up to $150 in credit earned as they go ($25 at setup, $50 after their first 100 sends), and a free trial of the benchmark at the end.";
@@ -59,8 +60,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       getCachedEnrichment: () => null,
       setCachedEnrichment: () => {},
       setProspectIcpVerdict: () => {},
-      getTrigger: (name: string) =>
-        name === "orgs" && triggerConfig !== null ? { config_json: triggerConfig } : null,
+      getTrigger: (name: string) => (name in triggers ? { config_json: triggers[name]! } : null),
     }),
     receiptUrlForId: (id: number) => `oneshot://receipt/${id}`,
   };
@@ -82,7 +82,8 @@ vi.mock("@oneshot-gtm/intel", async () => {
   };
 });
 
-const { runMultiplier, multiplierDraftFlags } = await import("../src/multiplier.ts");
+const { runMultiplier, multiplierDraftFlags, multiplierPreflight } =
+  await import("../src/multiplier.ts");
 const { hardBanFlags } = await import("../src/_lib.ts");
 
 const base = {
@@ -109,7 +110,7 @@ beforeEach(() => {
   calls.search = 0;
   calls.prospectMeta = [];
   memberOffer = OFFER;
-  triggerConfig = null;
+  triggers = {};
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -223,10 +224,91 @@ describe("runMultiplier — the member offer", () => {
   });
 
   it("reads the trigger's memberOffer over the workspace's", async () => {
-    triggerConfig = JSON.stringify({ memberOffer: "Three months free for every member." });
+    triggers["orgs"] = JSON.stringify({ memberOffer: "Three months free for every member." });
     await runMultiplier({ dryRun: true, targets: [base], queueSource: "find:orgs:1" });
     expect(calls.llmInputBlocks[0]).toContain("MEMBER OFFER: Three months free for every member.");
     expect(calls.llmInputBlocks[0]).not.toContain(OFFER);
+  });
+
+  it("a batch from the queue pitches each row's own trigger offer, and a manual row the workspace's", async () => {
+    triggers["orgA"] = JSON.stringify({ memberOffer: "Offer A: two seats free for each member." });
+    triggers["orgB"] = JSON.stringify({ memberOffer: "Offer B: a free month for each member." });
+    const rows = [
+      { ...base, organization: "Org A" },
+      { ...base, organization: "Org B", email: "b@b.example" },
+      { ...base, organization: "Manual Org", email: "m@m.example" },
+    ];
+    await runMultiplier({
+      dryRun: true,
+      targets: rows,
+      queueSources: ["find:orgA:1", "find:orgB:1", null],
+    });
+    const block = (org: string) =>
+      calls.llmInputBlocks.find((b) => b.includes(`ORGANIZATION: ${org}`)) ?? "";
+    expect(block("Org A")).toContain("MEMBER OFFER: Offer A: two seats free for each member.");
+    expect(block("Org B")).toContain("MEMBER OFFER: Offer B: a free month for each member.");
+    expect(block("Manual Org")).toContain(`MEMBER OFFER: ${OFFER}`);
+  });
+
+  it("matches the offer in the house punctuation every draft is cleaned to", async () => {
+    // A typographic apostrophe, quotes and an em dash in the founder's text:
+    // the draft pipeline straightens them, and the offer is still found whole,
+    // its price still exempt.
+    memberOffer = "A month’s trial — with $50 credit for “each” member.";
+    calls.replies.push(
+      JSON.stringify({ subject: "for your cohort", body: `The offer: ${memberOffer} Any use?` }),
+    );
+    const { drafted } = await runMultiplier({ dryRun: false, targets: [base] });
+    expect(drafted[0]!.flags).toEqual([]);
+    expect(drafted[0]!.sent).toBe(true);
+    expect(drafted[0]!.body).toContain(`A month's trial, with $50 credit for "each" member.`);
+
+    calls.replies.push(
+      JSON.stringify({ subject: "for your cohort", body: `${memberOffer} Normally $900.` }),
+    );
+    const priced = await runMultiplier({ dryRun: false, targets: [base] });
+    expect(priced.drafted[0]!.flags).toEqual(["hard-ban:price"]);
+    expect(priced.drafted[0]!.sent).toBe(false);
+  });
+
+  it("an offer ending in a number does not exempt a larger invented amount that begins with it", async () => {
+    memberOffer = "A credit of $150";
+    expect(hardBanFlags("A credit of $1500 for each member.", [memberOffer])).toEqual([
+      "hard-ban:price",
+    ]);
+    expect(hardBanFlags("A credit of $150.50 for each member.", [memberOffer])).toEqual([
+      "hard-ban:price",
+    ]);
+    expect(hardBanFlags("A credit of $150. For each member.", [memberOffer])).toEqual([]);
+    expect(multiplierDraftFlags("A credit of $1500 for each member.", memberOffer)).toEqual([
+      "multiplier:offer-missing",
+    ]);
+    // The model keeps the embellished figure on the repair turn too.
+    const embellished = JSON.stringify({
+      subject: "for your cohort",
+      body: "I would offer: A credit of $1500 for each member.",
+    });
+    calls.replies.push(embellished, embellished);
+    const { drafted } = await runMultiplier({ dryRun: false, targets: [base] });
+    expect(drafted[0]!.flags).toEqual(
+      expect.arrayContaining(["multiplier:offer-missing", "hard-ban:price"]),
+    );
+    expect(drafted[0]!.sent).toBe(false);
+  });
+});
+
+describe("multiplierPreflight", () => {
+  it("throws before anything is billed when any target's offer is empty, the trigger's or the workspace's", () => {
+    memberOffer = " ";
+    expect(() => multiplierPreflight([base])).toThrow(/memberOffer is empty/);
+    triggers["orgs"] = JSON.stringify({ memberOffer: "Three months free for every member." });
+    expect(() => multiplierPreflight([base], ["find:orgs:1"])).not.toThrow();
+    memberOffer = OFFER;
+    triggers["orgs"] = JSON.stringify({ memberOffer: "" });
+    expect(() => multiplierPreflight([base, base], [null, "find:orgs:1"])).toThrow(
+      /memberOffer is empty/,
+    );
+    expect(calls.enrich + calls.search + calls.llmInputBlocks.length).toBe(0);
   });
 });
 

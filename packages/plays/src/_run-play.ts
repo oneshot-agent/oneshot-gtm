@@ -216,6 +216,13 @@ export async function runEmailPlay<T, X = Record<string, never>>(
     draftAngle?: string;
     /** `source` of the queue row being sent, when there is one: picks the trigger whose settings apply. */
     queueSource?: string | null;
+    /**
+     * Per target, the `source` of the queue row it was drawn from (a /run
+     * batch loaded from the queue carries its rows' dedupe keys), null for a
+     * row from no queue row. Takes precedence over `queueSource` for that
+     * target: its send enrols with its own row's trigger settings.
+     */
+    queueSources?: ReadonlyArray<string | null | undefined>;
   },
 ): Promise<{ drafted: Array<PlayDraft<T, X>> }> {
   const cfg = loadConfig();
@@ -249,7 +256,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
   const drafted = await parallelMap(
     opts.targets,
     concurrency,
-    async (target) => {
+    async (target, index) => {
       try {
         // Guard #0: required-field shape check, before Guard #1's paid
         // `prepare` call. Mirrors the web form's client-side
@@ -514,11 +521,12 @@ export async function runEmailPlay<T, X = Record<string, never>>(
             getSequence(def.playName)?.steps.some((s) => s.channel === "direct_mail"))
         ) {
           const prospect = getLedger().findProspectByEmail(def.toEmail(target));
+          const queueSource = opts.queueSources?.[index] ?? opts.queueSource;
           if (prospect)
             enrollInCadence({
               prospectId: prospect.id,
               playName: def.playName,
-              ...(opts.queueSource !== undefined ? { queueSource: opts.queueSource } : {}),
+              ...(queueSource !== undefined ? { queueSource } : {}),
             });
         }
 

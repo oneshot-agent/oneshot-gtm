@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadConfig } from "@oneshot-gtm/core";
 import { Ledger } from "../../core/src/ledger.ts";
 
 // The multiplier sequence (#883): a letter at position 2 when the organization
@@ -16,6 +17,8 @@ const LETTER = `Dear Jordan,
 Here is what I would offer your cohort: ${OFFER}
 Founder`;
 let letterText = LETTER;
+/** The model's reply to a follow-up draft; the letter text otherwise. */
+let followUpReply: string | null = null;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -39,12 +42,13 @@ vi.mock("@oneshot-gtm/intel", async () => {
     ...actual,
     complete: async (input: { messages: Array<{ content: string }> }) => {
       letterInputs.push(input.messages[1]!.content);
-      return { content: letterText };
+      return { content: followUpReply ?? letterText };
     },
   };
 });
 
-const { effectiveSequence, enrollInCadence } = await import("../src/_cadence.ts");
+const { effectiveSequence, enrollInCadence, getSequence, hardBanHold } =
+  await import("../src/_cadence.ts");
 const { generateMailLetter } = await import("../src/_mail-letter.ts");
 await import("../src/multiplier.ts"); // registers the sequence
 
@@ -78,8 +82,30 @@ beforeEach(() => {
   linkedinContinuation = undefined;
   memberOffer = OFFER;
   letterText = LETTER;
+  followUpReply = null;
   letterInputs.length = 0;
 });
+
+const OFFER_A = "Offer A: two seats free for each member company.";
+/**
+ * The cadence's originating send: trigger A's row, sent, then a newer pending
+ * row from trigger B (another offer) and a rejected row from trigger C (an
+ * explicit empty offer) for the same address.
+ */
+function sentFromTriggerA(id: number): void {
+  const email = ledger.getProspectById(id)!.email!;
+  ledger.upsertTrigger({ name: "orgA", configJson: JSON.stringify({ memberOffer: OFFER_A }) });
+  ledger.upsertTrigger({
+    name: "orgB",
+    configJson: JSON.stringify({ memberOffer: "Offer B: $900 off the annual plan." }),
+  });
+  ledger.upsertTrigger({ name: "orgC", configJson: JSON.stringify({ memberOffer: "" }) });
+  const row = (key: string, source: string) =>
+    ledger.enqueueTarget({ playName: PLAY, payload: { email }, dedupeKey: key, source })!;
+  ledger.setQueueStatus({ id: row(`a-${id}`, "find:orgA:1"), status: "sent" });
+  row(`b-${id}`, "find:orgB:1");
+  ledger.setQueueStatus({ id: row(`c-${id}`, "find:orgC:1"), status: "rejected" });
+}
 afterEach(() => ledger.close());
 
 describe("multiplier sequence", () => {
@@ -196,5 +222,54 @@ Founder`;
     memberOffer = null;
     await expect(generateMailLetter(prospect(), PLAY)).rejects.toThrow(/set memberOffer/);
     expect(letterInputs).toEqual([]);
+  });
+
+  it("proposes the offer of the trigger whose row was sent, not a newer row's from another trigger", async () => {
+    const id = prospect();
+    sentFromTriggerA(id);
+    letterText = `Dear Jordan,\n${OFFER_A}\nFounder`;
+    const text = await generateMailLetter(id, PLAY);
+    expect(text).toContain(OFFER_A);
+    const input = JSON.parse(letterInputs[0]!);
+    expect(input.offer.what).toBe(OFFER_A);
+    expect(input.offerTerms).toBe(OFFER_A);
+    // The terms are A's: B's price is one the offer does not contain.
+    letterText = `Dear Jordan,\nOffer B: $900 off the annual plan.\nFounder`;
+    await expect(generateMailLetter(id, PLAY)).rejects.toThrow(/does not contain/);
+  });
+});
+
+describe("multiplier follow-up", () => {
+  const step = () => getSequence(PLAY)!.steps.find((s) => s.channel === "email")!;
+  async function followUp(id: number, body: string) {
+    followUpReply = JSON.stringify({ subject: "checking in", body });
+    const built = await step().builder({
+      prospect: ledger.getProspectById(id)!,
+      cfg: loadConfig(),
+      metadata: {},
+    });
+    return built!;
+  }
+
+  it("holds a follow-up with an invented price or a link, and clears one restating the member offer", async () => {
+    const id = prospect(false);
+    const priced = await followUp(id, "The member session is $500. Interested?");
+    expect(priced).toMatchObject({ kind: "email", hardBans: true, hardBanAllow: [OFFER] });
+    expect(hardBanHold(priced)).toEqual(["hard-ban:price"]);
+    const linked = await followUp(id, "Details at https://thing.example/perks. Interested?");
+    expect(hardBanHold(linked)).toEqual(["hard-ban:link"]);
+    const restated = await followUp(id, `The offer stands: ${OFFER} Worth a look?`);
+    expect(hardBanHold(restated)).toEqual([]);
+  });
+
+  it("allows the offer of the trigger whose row was sent, and holds the workspace's price", async () => {
+    const id = prospect(false);
+    sentFromTriggerA(id);
+    const restated = await followUp(id, `The offer stands: ${OFFER_A} Worth a look?`);
+    expect(restated).toMatchObject({ hardBanAllow: [OFFER_A] });
+    expect(hardBanHold(restated)).toEqual([]);
+    expect(hardBanHold(await followUp(id, `The offer stands: ${OFFER} Worth a look?`))).toEqual([
+      "hard-ban:price",
+    ]);
   });
 });

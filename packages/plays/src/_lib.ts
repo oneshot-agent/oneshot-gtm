@@ -598,9 +598,11 @@ export function citesPublicRecordLeverage(body: string): boolean {
  *
  * `allow` lists spans the price and discount checks skip: text the prompt
  * quotes verbatim from config (the `multiplier` play's member offer, which
- * may name credits or a trial). Each span is removed from the body, across
- * any line wrapping, before those two checks run, so a price or discount the
- * model wrote anywhere else still flags. Links are never allowed.
+ * may name credits or a trial). Each span is removed from the body before
+ * those two checks run (`allowedSpanPattern`: across any line wrapping, in
+ * the pipeline's house punctuation, and never as part of a longer number, so
+ * an allowed `$150` does not exempt an invented `$1500`), and a price or
+ * discount the model wrote anywhere else still flags. Links are never allowed.
  */
 export function hardBanFlags(body: string, allow: readonly string[] = []): string[] {
   const flags: string[] = [];
@@ -613,16 +615,43 @@ export function hardBanFlags(body: string, allow: readonly string[] = []): strin
   return flags;
 }
 
-/** `body` with every occurrence of each allowed span cut out, matching across re-wrapped whitespace. */
+/**
+ * `body` with every occurrence of each allowed span cut out. Unchanged (and
+ * not humanized) when nothing is allowed, so every other play's check reads
+ * the body as before.
+ */
 function withoutAllowedSpans(body: string, allow: readonly string[]): string {
-  let rest = body;
-  for (const span of allow) {
-    const words = span.trim().split(/\s+/).filter(Boolean);
-    if (words.length === 0) continue;
-    const pattern = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
-    rest = rest.replace(new RegExp(pattern, "gi"), " ");
-  }
+  const patterns = allow.map(allowedSpanPattern).filter((p): p is RegExp => p !== null);
+  if (patterns.length === 0) return body;
+  let rest = humanizeText(body);
+  for (const pattern of patterns) rest = rest.replace(pattern, " ");
   return rest;
+}
+
+/**
+ * The pattern that finds a protected span (config text a prompt quotes
+ * verbatim) in a draft. Compare against `humanizeText(body)`: the span is
+ * matched in the same house punctuation `humanizeDraft` gives every draft
+ * (straight quotes, no em dashes), so a founder's typographic apostrophe in
+ * the offer still matches the cleaned draft; across re-wrapped whitespace;
+ * case-insensitively; and only as a whole: a span that begins or ends in a
+ * word or a number is not found inside a longer one (`$150` is not inside
+ * `$1500` or `$150.5`). Null for a blank span.
+ */
+export function allowedSpanPattern(span: string): RegExp | null {
+  const words = humanizeText(span).split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+  const text = words.join(" ");
+  const escaped = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+  const head = /^\w/.test(text) ? "(?<!\\w|\\d[.,])" : "";
+  const tail = /\w$/.test(text) ? "(?!\\w|[.,]\\d)" : "";
+  return new RegExp(`${head}${escaped}${tail}`, "gi");
+}
+
+/** Whether `body` quotes `span` whole, by `allowedSpanPattern`. False for a blank span. */
+export function quotesSpan(body: string, span: string): boolean {
+  const pattern = allowedSpanPattern(span);
+  return pattern !== null && pattern.test(humanizeText(body));
 }
 
 export interface DraftedEmail {
@@ -724,6 +753,11 @@ export function humanizeDraft(input: DraftedEmail): DraftedEmail {
     subject: applyAutofixes(input.subject),
     body: applyAutofixes(input.body),
   };
+}
+
+/** One string in the house punctuation `humanizeDraft` gives a draft; idempotent. */
+export function humanizeText(s: string): string {
+  return applyAutofixes(s);
 }
 
 function applyAutofixes(s: string): string {

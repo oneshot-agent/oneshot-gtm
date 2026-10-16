@@ -71,7 +71,9 @@ export function toDraftedView(d: {
  * `queueSource`: the `source` of the queue row being redrafted (the /queue
  * regenerate endpoint), so the play reads that row's trigger settings (the
  * `multiplier` play's `memberOffer`) the way the queue drain does. Absent for
- * /api/run, whose targets come from no queue row.
+ * /api/run, which hands `queueSources` instead: per target, the source of
+ * the queue row it was loaded from (by its dedupe key), null for a manual
+ * row, so each row of a mixed batch reads its own trigger's settings.
  */
 export async function dispatchPlay(
   playName: string,
@@ -80,6 +82,7 @@ export async function dispatchPlay(
   signal?: AbortSignal,
   draftAngle?: string,
   queueSource?: string | null,
+  queueSources?: ReadonlyArray<string | null>,
 ): Promise<DraftedView[]> {
   const play = PLAYS[playName];
   if (!play) {
@@ -89,6 +92,7 @@ export async function dispatchPlay(
   const result = await play.run({
     ...(draftAngle ? { draftAngle } : {}),
     ...(queueSource !== undefined ? { queueSource } : {}),
+    ...(queueSources ? { queueSources } : {}),
     dryRun: body.dryRun,
     targets: body.targets,
     ...(signal ? { signal } : {}),

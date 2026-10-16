@@ -115,6 +115,8 @@ export type StepPayload =
       learningKey?: string | null;
       /** Hold a price or a link before it sends (a pilot offer must carry neither). */
       hardBans?: boolean;
+      /** With `hardBans`: spans the price and discount holds skip (the member offer the originating send made). */
+      hardBanAllow?: string[];
     }
   | { kind: "sms"; message: string; toPhone?: string }
   /** A LinkedIn message into the conversation opened by an accepted invite. */
@@ -2623,6 +2625,13 @@ export function buildFollowUpEmail(opts: {
    * runner refuses it. Off by default: other follow-ups keep today's lint.
    */
   hardBans?: boolean;
+  /**
+   * With `hardBans`: spans the price and discount holds skip, read per
+   * prospect when the step drafts (the `multiplier` play's member offer, the
+   * founder's own text). Carried on the payload, so the preview's hold and
+   * the send's read the same spans. Links are never allowed.
+   */
+  hardBanAllow?: (ctx: CadenceContext) => readonly string[];
 }): SequenceStep["builder"] {
   return async (ctx: CadenceContext) => {
     const system = loadPrompt(opts.promptName, { humanizer: "followup" }) + signatureDirective();
@@ -2721,6 +2730,7 @@ export function buildFollowUpEmail(opts: {
       offer: offerLines ? (introOffer?.offer ?? null) : null,
       extraLint: (draft) => lintOpenerFrequency(draft.body, ctx.recentEmailBodies ?? []),
     });
+    const hardBanAllow = opts.hardBans ? [...(opts.hardBanAllow?.(ctx) ?? [])] : [];
     return {
       kind: "email",
       subject: cleaned.subject,
@@ -2730,6 +2740,7 @@ export function buildFollowUpEmail(opts: {
       ...(voice ? { voiceKey: voice.key } : {}),
       ...(learned ? { learningKey: learned.key } : {}),
       ...(opts.hardBans ? { hardBans: true } : {}),
+      ...(hardBanAllow.length > 0 ? { hardBanAllow } : {}),
       // Carried on the payload so the persisted preview, and its draft
       // version: records the angle the way an intro draft does.
       ...(edgeSelection
@@ -2752,7 +2763,9 @@ export function buildFollowUpEmail(opts: {
 export function hardBanHold(payload: StepPayload): string[] {
   if (payload.kind === "linkedin_message" || payload.kind === "linkedin_invite")
     return payload.flags ?? [];
-  return payload.kind === "email" && payload.hardBans ? hardBanFlags(payload.body) : [];
+  return payload.kind === "email" && payload.hardBans
+    ? hardBanFlags(payload.body, payload.hardBanAllow)
+    : [];
 }
 
 /**

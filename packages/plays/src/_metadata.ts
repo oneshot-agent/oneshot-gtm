@@ -82,6 +82,33 @@ export const multiplierMetadata = (t: object): Record<string, unknown> => ({
   introducedBy: str(t, "introducedBy"),
 });
 
+/**
+ * The prospect fields the `multiplier` play maps from its row rather than
+ * reading generically: the organization is the prospect's company and
+ * `multiplier-<orgType>` its source. The play's `prospectMeta` and the
+ * reviewed /queue send share this map, so a reviewed send records the same
+ * prospect an unattended run does, and the letter's address eligibility
+ * (`automaticMailEligible`, which needs a company) reads it either way.
+ */
+export const multiplierProspectFields = (
+  t: object,
+): { company: string | null; source: string } => ({
+  company: str(t, "organization"),
+  source: `multiplier-${str(t, "orgType") ?? "other"}`,
+});
+
+/**
+ * Per play, the prospect fields the /queue send route cannot read
+ * generically from the payload (`company`, the play name as `source`): only
+ * the `multiplier` play has any; empty for every other play.
+ */
+export function playProspectFields(
+  playName: string,
+  payload: Record<string, unknown>,
+): { company?: string | null; source?: string } {
+  return playName === "multiplier" ? multiplierProspectFields(payload) : {};
+}
+
 export const xRepostIntroMetadata = (t: object): Record<string, unknown> => ({
   seedHandle: str(t, "seedHandle"),
   tweetUrl: str(t, "tweetUrl"),

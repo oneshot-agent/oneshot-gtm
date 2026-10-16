@@ -7,8 +7,10 @@ import {
   webSearch,
 } from "@oneshot-gtm/core";
 import { type EmailPlayDef, type Prepared, runEmailPlay, standardEnrich } from "./_run-play.ts";
-import { multiplierMetadata } from "./_metadata.ts";
+import { multiplierMetadata, multiplierProspectFields } from "./_metadata.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
+import { humanizeText, quotesSpan } from "./_lib.ts";
+import { enrolledMemberOffer } from "./_member-offer.ts";
 
 /** The kinds of organization that serve many of a founder's buyers at once. */
 export type MultiplierOrgType = "accelerator" | "association" | "agency" | "community" | "other";
@@ -56,6 +58,12 @@ export interface MultiplierRunOptions {
   draftAngle?: string;
   /** `source` of the queue row being sent: picks the trigger whose `memberOffer` applies. */
   queueSource?: string | null;
+  /**
+   * Per target, the `source` of the queue row it was drawn from (a /run batch
+   * loaded from the queue), null for a row from no queue; see `runEmailPlay`.
+   * Each row pitches its own trigger's `memberOffer`.
+   */
+  queueSources?: ReadonlyArray<string | null | undefined>;
 }
 
 interface MultiplierDraft {
@@ -94,15 +102,21 @@ export const INTRODUCER_MISSING_FLAG = "multiplier:introducer-missing";
 /** `text` with runs of whitespace folded to one space, so a line the model re-wrapped still compares. */
 const folded = (text: string): string => text.trim().split(/\s+/).join(" ");
 
+/** The refusal made before any paid call when the member offer is empty. */
+export const EMPTY_OFFER_MESSAGE =
+  "multiplier: memberOffer is empty — set it in config (or on the trigger) before drafting";
+
 /**
  * The deterministic checks on a multiplier draft, besides the hard bans. The
  * member offer is founder truth the prompt quotes whole: a body that omits it,
- * shortens it, paraphrases it or changes a figure in it (`$1500` for `$150`)
- * is held rather than sent, and nothing rewrites the offer into the draft in
- * its place. Whitespace is folded on both sides, so the model's own line
- * wrapping inside the offer passes; anything else must match exactly. With
- * `introducedBy` set, the draft must name the introducer. Without it, there is
- * no name to check: the prompt forbids implying an introduction.
+ * shortens it, paraphrases it, changes a figure in it or extends one (`$1500`
+ * for `$150`) is held rather than sent, and nothing rewrites the offer into
+ * the draft in its place. The offer is matched the way the hard-ban span is
+ * (`quotesSpan`): across the model's own line wrapping, in the house
+ * punctuation every draft is cleaned to, and only whole; anything else must
+ * match exactly. With `introducedBy` set, the draft must name the introducer.
+ * Without it, there is no name to check: the prompt forbids implying an
+ * introduction.
  */
 export function multiplierDraftFlags(
   body: string,
@@ -110,12 +124,30 @@ export function multiplierDraftFlags(
   introducedBy?: string,
 ): string[] {
   const flags: string[] = [];
-  const text = folded(body);
-  if (!text.includes(folded(memberOffer))) flags.push(OFFER_MISSING_FLAG);
-  const introducer = folded(introducedBy ?? "");
-  if (introducer && !text.toLowerCase().includes(introducer.toLowerCase()))
+  if (!quotesSpan(body, memberOffer)) flags.push(OFFER_MISSING_FLAG);
+  const introducer = folded(humanizeText(introducedBy ?? "")).toLowerCase();
+  if (introducer && !folded(humanizeText(body)).toLowerCase().includes(introducer))
     flags.push(INTRODUCER_MISSING_FLAG);
   return flags;
+}
+
+/**
+ * The play's refusal, for the /run route to make before its own paid step
+ * (public-route email verification bills before the play runs): throws when
+ * any target's member offer (its queue row's trigger's, else the workspace's)
+ * is empty, so a run without an offer bills nothing at all.
+ */
+export function multiplierPreflight(
+  targets: readonly unknown[],
+  queueSources?: ReadonlyArray<string | null | undefined>,
+): void {
+  const cfg = loadConfig();
+  const getTrigger = (name: string) => getLedger().getTrigger(name);
+  for (let i = 0; i < targets.length; i++) {
+    if (!effectiveMemberOffer(cfg, queueSources?.[i], getTrigger)) {
+      throw new Error(EMPTY_OFFER_MESSAGE);
+    }
+  }
 }
 
 /** The row's member count as a positive integer, or null when it states none. */
@@ -127,10 +159,20 @@ function memberCountOf(t: MultiplierTarget): number | null {
 export function runMultiplier(opts: MultiplierRunOptions): Promise<{ drafted: MultiplierDraft[] }> {
   // The member offer is founder truth: read from config (the trigger's own
   // when it sets one), quoted verbatim, never written by the model. Resolved
-  // once per run so every row of the batch pitches the same offer.
-  const memberOffer = effectiveMemberOffer(loadConfig(), opts.queueSource, (name) =>
-    getLedger().getTrigger(name),
+  // per target: a batch drawn from the queue carries each row's source
+  // (`queueSources`), so rows from two triggers pitch their own offers and a
+  // row from no queue row pitches the workspace's; a single redraft carries
+  // its row's source (`queueSource`).
+  const cfg = loadConfig();
+  const getTrigger = (name: string) => getLedger().getTrigger(name);
+  const offers = new Map<MultiplierTarget, string>(
+    opts.targets.map((t, i) => [
+      t,
+      effectiveMemberOffer(cfg, opts.queueSources?.[i] ?? opts.queueSource, getTrigger),
+    ]),
   );
+  const memberOfferOf = (t: MultiplierTarget): string =>
+    offers.get(t) ?? effectiveMemberOffer(cfg, opts.queueSource, getTrigger);
   const def: EmailPlayDef<MultiplierTarget> = {
     playName: PLAY_NAME,
     promptName: "multiplier-email",
@@ -138,10 +180,10 @@ export function runMultiplier(opts: MultiplierRunOptions): Promise<{ drafted: Mu
     // Links, prices and discounts are banned everywhere except inside the
     // quoted member offer (`hardBanAllow`), which may name credits or a trial.
     hardBans: true,
-    hardBanAllow: () => (memberOffer ? [memberOffer] : []),
+    hardBanAllow: (t) => (memberOfferOf(t) ? [memberOfferOf(t)] : []),
     // A draft without the offer verbatim (or the named introducer) is held;
     // `prepare` threw before the draft when the offer was empty.
-    draftFlags: (draft, t) => multiplierDraftFlags(draft.body, memberOffer, t.introducedBy),
+    draftFlags: (draft, t) => multiplierDraftFlags(draft.body, memberOfferOf(t), t.introducedBy),
     enrollCadence: true,
     requiredFields: [
       "organization",
@@ -155,12 +197,9 @@ export function runMultiplier(opts: MultiplierRunOptions): Promise<{ drafted: Mu
     toEmail: (t) => t.email,
     prepare: async (t, dryRun, signal): Promise<Prepared> => {
       // Refuse before any paid call: a pitch without the offer has nothing to
-      // propose, and the model must not be left to make one up.
-      if (!memberOffer) {
-        throw new Error(
-          "multiplier: memberOffer is empty — set it in config (or on the trigger) before drafting",
-        );
-      }
+      // propose, and the model must not be left to make one up. (The /run
+      // route makes the same refusal before its own paid verification.)
+      if (!memberOfferOf(t)) throw new Error(EMPTY_OFFER_MESSAGE);
       const prep = await standardEnrich({
         playName: PLAY_NAME,
         enrichInput: {
@@ -196,7 +235,7 @@ export function runMultiplier(opts: MultiplierRunOptions): Promise<{ drafted: Mu
       [
         `FOUNDER: ${cfg.founderName}`,
         `PRODUCT: ${cfg.productOneLiner}`,
-        `MEMBER OFFER: ${memberOffer}`,
+        `MEMBER OFFER: ${memberOfferOf(t)}`,
         `ORGANIZATION: ${t.organization} (${t.orgType})`,
         `CONTACT: ${t.name}, ${t.role}`,
         `MEMBERS: ${t.memberDescription}`,
@@ -208,13 +247,14 @@ export function runMultiplier(opts: MultiplierRunOptions): Promise<{ drafted: Mu
         ...(t.introducedBy?.trim() ? [`INTRODUCED BY: ${t.introducedBy.trim()}`] : []),
         `DOSSIER:\n${prep.dossier || "(dry-run; rely on the organization row only)"}`,
       ].join("\n"),
+    // The organization is the prospect's company and `multiplier-<orgType>`
+    // its source, by the same map the reviewed /queue send uses.
     prospectMeta: (t) => ({
       name: t.name,
       email: t.email,
-      company: t.organization,
       linkedin_url: t.linkedinUrl ?? null,
       phone: t.phone ?? null,
-      source: `multiplier-${t.orgType}`,
+      ...multiplierProspectFields(t),
     }),
     metadata: (t) => multiplierMetadata(t),
   };
@@ -239,6 +279,14 @@ registerSequence({
         contextLines: [
           `PLAY: multiplier. This is a partnership ask to an organization that serves many of the sender's buyers, not a sale to the reader; keep it short and put no pressure on them. One line restating that the sender's offer for their members stands, and one easy question.`,
         ],
+        // The intro's holds carry to the follow-up, on the preview and the
+        // send: a link, or a price or discount outside the member offer the
+        // originating send made, holds it.
+        hardBans: true,
+        hardBanAllow: (ctx) => {
+          const offer = enrolledMemberOffer(ctx.prospect.email, ctx.cfg);
+          return offer ? [offer] : [];
+        },
       }),
     },
   ],
