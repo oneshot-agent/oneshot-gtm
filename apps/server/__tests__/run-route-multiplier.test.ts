@@ -231,6 +231,24 @@ describe("targetMatchesQueueRow", () => {
       targetMatchesQueueRow({ ...row, linkedinUrl: "https://www.linkedin.com/in/ada-quill" }, row),
     ).toBe(true);
   });
+  it("refuses a different email and profile even when the name or the org site agrees", () => {
+    const other = {
+      name: "Ada Quill",
+      email: "ada2@a.example",
+      linkedinUrl: "https://www.linkedin.com/in/other",
+    };
+    expect(targetMatchesQueueRow(other, row)).toBe(false);
+    expect(
+      targetMatchesQueueRow(
+        { orgUrl: "https://a.example", email: "jo@a.example" },
+        { orgUrl: "https://a.example", email: "ada@a.example" },
+      ),
+    ).toBe(false);
+  });
+  it("lets a name decide only when no email or profile can be compared", () => {
+    expect(targetMatchesQueueRow({ name: "Ada Quill" }, row)).toBe(true);
+    expect(targetMatchesQueueRow({ name: "Bo Reyes" }, row)).toBe(false);
+  });
   it("refuses another person, and another organization even with the same contact name", () => {
     expect(
       targetMatchesQueueRow(

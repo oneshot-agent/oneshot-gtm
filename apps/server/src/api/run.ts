@@ -549,26 +549,44 @@ export async function cancelRunRoute(
  * Best-effort (logged via `error.swallowed`). Indices match because
  * `verifiedTargets[i]` corresponds to `drafted[i]`.
  */
-/** Fields that say who a target is. A target and the queue row its key names share at least one. */
-const IDENTITY_FIELDS = [
+/** Fields that name exactly one person: when both sides have one, these decide. */
+const STRONG_IDENTITY_FIELDS = [
   "email",
   "founderEmail",
   "linkedinUrl",
   "sourceProfileUrl",
   "candidateLogin",
   "twitterUrl",
-  "orgUrl",
-  "name",
-  "founderName",
 ] as const;
+/** Fields two people can share (a name, an organization's site): they decide only when no strong field can. */
+const WEAK_IDENTITY_FIELDS = ["name", "founderName", "orgUrl"] as const;
 const identityValue = (v: unknown): string =>
   typeof v === "string" ? v.trim().toLowerCase().replace(/\/+$/, "") : "";
 
+/** Whether any field agrees, and whether any could be compared at all. */
+function compareFields(
+  fields: readonly string[],
+  target: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): { agrees: boolean; compared: boolean } {
+  let compared = false;
+  for (const field of fields) {
+    const a = identityValue(target[field]);
+    const b = identityValue(payload[field]);
+    if (!a || !b) continue;
+    if (a === b) return { agrees: true, compared: true };
+    compared = true;
+  }
+  return { agrees: false, compared };
+}
+
 /**
  * Whether a target is the person (or organization) of the queue row its
- * dedupe key names. The run grid is editable, so one corrected field is not
- * a mismatch: the pair belongs together when any identity field agrees, or
- * when they share none to compare. A different organization never does: the
+ * dedupe key names. The run grid is editable, so one corrected field is not a
+ * mismatch while another identifier still agrees. A strong identifier (email,
+ * profile URL, login) decides when both sides have one; a name or an
+ * organization's site decides only when none can be compared; a pair with
+ * nothing to compare belongs. A different organization never does: the
  * organization is what a multiplier row pitches. Exported for its test.
  */
 export function targetMatchesQueueRow(
@@ -577,15 +595,10 @@ export function targetMatchesQueueRow(
 ): boolean {
   const org = [identityValue(target["organization"]), identityValue(payload["organization"])];
   if (org[0] && org[1] && org[0] !== org[1]) return false;
-  let compared = false;
-  for (const field of IDENTITY_FIELDS) {
-    const a = identityValue(target[field]);
-    const b = identityValue(payload[field]);
-    if (!a || !b) continue;
-    if (a === b) return true;
-    compared = true;
-  }
-  return !compared;
+  const strong = compareFields(STRONG_IDENTITY_FIELDS, target, payload);
+  if (strong.compared) return strong.agrees;
+  const weak = compareFields(WEAK_IDENTITY_FIELDS, target, payload);
+  return weak.agrees || !weak.compared;
 }
 
 /**
