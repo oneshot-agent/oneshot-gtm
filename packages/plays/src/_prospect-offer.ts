@@ -84,7 +84,8 @@ export function isProspectOffer(value: unknown): value is ProspectOffer {
 /**
  * Plays whose message is not an offer: a learning interview, a survey, a
  * customer's onboarding call, a missed demo, a launch repost, a public reply.
- * They get no prospect offer and no OFFER block.
+ * They get no prospect offer and no OFFER block. `multiplier` pitches the
+ * founder's member offer verbatim from config, never a written one.
  */
 export const NO_OFFER_PLAYS: ReadonlySet<string> = new Set([
   "discovery-interview",
@@ -94,6 +95,7 @@ export const NO_OFFER_PLAYS: ReadonlySet<string> = new Set([
   "x-amplify",
   "x-amplify-dm",
   "community-reply",
+  "multiplier",
 ]);
 
 export function playMakesOffer(playName: string): boolean {

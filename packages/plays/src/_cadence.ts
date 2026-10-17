@@ -115,6 +115,8 @@ export type StepPayload =
       learningKey?: string | null;
       /** Hold a price or a link before it sends (a pilot offer must carry neither). */
       hardBans?: boolean;
+      /** With `hardBans`: spans the price and discount holds skip (the member offer the originating send made). */
+      hardBanAllow?: string[];
     }
   | { kind: "sms"; message: string; toPhone?: string }
   /** A LinkedIn message into the conversation opened by an accepted invite. */
@@ -173,6 +175,12 @@ interface SequenceStep {
 export interface Sequence {
   playName: string;
   steps: SequenceStep[];
+  /**
+   * Whether a new email cadence of this play carries on onto LinkedIn when
+   * neither the workspace nor the trigger sets `linkedinContinuation`. Off
+   * unless the play says otherwise; an explicit `false` on either still wins.
+   */
+  linkedinContinuationDefault?: boolean;
 }
 
 const playSequences = new Map<string, Sequence>();
@@ -279,6 +287,26 @@ export function sequencePlan(seq: Sequence): CadencePlanStep[] {
   }));
 }
 
+/**
+ * Whether a NEW email cadence carries on onto LinkedIn. A play that is on by
+ * default (`linkedinContinuationDefault`: `multiplier`, whose programme leads
+ * live on LinkedIn) is turned off by an explicit `false` on the workspace OR
+ * on the trigger: either veto wins, and a trigger's `true` does not override
+ * the workspace's `false`. Any other play takes the trigger's own setting over
+ * the workspace's, either way, and is off when neither says.
+ */
+function newCadenceCarriesOn(
+  base: Sequence,
+  cfg: { linkedinContinuation?: boolean | null },
+  trigger?: boolean,
+): boolean {
+  if (base.linkedinContinuationDefault)
+    return trigger !== false && cfg.linkedinContinuation !== false;
+  return (
+    trigger ?? (typeof cfg.linkedinContinuation === "boolean" ? cfg.linkedinContinuation : false)
+  );
+}
+
 export function effectiveSequence(
   playName: string,
   prospectId?: number,
@@ -312,7 +340,7 @@ export function effectiveSequence(
       : null;
   const carriesOn = enrolled
     ? (savedPlan?.some((entry) => entry.id === CONTINUATION_INVITE_ID) ?? false)
-    : (continuation ?? cfg.linkedinContinuation === true);
+    : newCadenceCarriesOn(base, cfg, continuation);
   if (
     prospectId === undefined &&
     !mail &&
@@ -1959,6 +1987,7 @@ export async function previewCadenceStep(input: {
           ...lintEmail(subject, body, step.maxBodyWords ?? 100, undefined, {
             followUp: true,
             demoDay: prospectDemoDay(prospect, input.playName),
+            ...(built.hardBanAllow ? { protect: built.hardBanAllow } : {}),
           }),
           ...lintOpenerFrequency(body, [
             ...(input.extraRecentBodies ?? []),
@@ -2597,6 +2626,13 @@ export function buildFollowUpEmail(opts: {
    * runner refuses it. Off by default: other follow-ups keep today's lint.
    */
   hardBans?: boolean;
+  /**
+   * With `hardBans`: spans the price and discount holds skip, read per
+   * prospect when the step drafts (the `multiplier` play's member offer, the
+   * founder's own text). Carried on the payload, so the preview's hold and
+   * the send's read the same spans. Links are never allowed.
+   */
+  hardBanAllow?: (ctx: CadenceContext) => readonly string[];
 }): SequenceStep["builder"] {
   return async (ctx: CadenceContext) => {
     const system = loadPrompt(opts.promptName, { humanizer: "followup" }) + signatureDirective();
@@ -2680,11 +2716,17 @@ export function buildFollowUpEmail(opts: {
     const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(res.content, {});
     if (!parsed.subject || !parsed.body) return null;
     // Same deterministic humanization the initial-send plays get via
-    // draftEmailFromPrompt, without it, follow-ups ship em-dashes raw.
-    let cleaned = humanizeDraft({
-      subject: parsed.subject.trim(),
-      body: parsed.body.trim(),
-    });
+    // draftEmailFromPrompt, without it, follow-ups ship em-dashes raw. The
+    // allowed spans (config text quoted verbatim) come through it, and the
+    // repair's redraft, as written.
+    const hardBanAllow = opts.hardBans ? [...(opts.hardBanAllow?.(ctx) ?? [])] : [];
+    let cleaned = humanizeDraft(
+      {
+        subject: parsed.subject.trim(),
+        body: parsed.body.trim(),
+      },
+      hardBanAllow,
+    );
     cleaned = await repairWritingLints(messages, cleaned, {
       promptName: opts.promptName,
       temperature: 0.4,
@@ -2693,6 +2735,7 @@ export function buildFollowUpEmail(opts: {
       followUp: true,
       demoDay,
       offer: offerLines ? (introOffer?.offer ?? null) : null,
+      ...(hardBanAllow.length > 0 ? { hardBanAllow } : {}),
       extraLint: (draft) => lintOpenerFrequency(draft.body, ctx.recentEmailBodies ?? []),
     });
     return {
@@ -2704,6 +2747,7 @@ export function buildFollowUpEmail(opts: {
       ...(voice ? { voiceKey: voice.key } : {}),
       ...(learned ? { learningKey: learned.key } : {}),
       ...(opts.hardBans ? { hardBans: true } : {}),
+      ...(hardBanAllow.length > 0 ? { hardBanAllow } : {}),
       // Carried on the payload so the persisted preview, and its draft
       // version: records the angle the way an intro draft does.
       ...(edgeSelection
@@ -2726,7 +2770,9 @@ export function buildFollowUpEmail(opts: {
 export function hardBanHold(payload: StepPayload): string[] {
   if (payload.kind === "linkedin_message" || payload.kind === "linkedin_invite")
     return payload.flags ?? [];
-  return payload.kind === "email" && payload.hardBans ? hardBanFlags(payload.body) : [];
+  return payload.kind === "email" && payload.hardBans
+    ? hardBanFlags(payload.body, payload.hardBanAllow)
+    : [];
 }
 
 /**

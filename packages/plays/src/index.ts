@@ -21,6 +21,7 @@ export * from "./post-funding.ts";
 export * from "./profile-intro.ts";
 export * from "./add-prospect.ts";
 export * from "./accelerator-batch.ts";
+export * from "./multiplier.ts";
 export * from "./pmf-classify.ts";
 export * from "./pmf-survey.ts";
 export * from "./handoff.ts";

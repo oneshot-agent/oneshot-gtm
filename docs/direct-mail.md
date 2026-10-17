@@ -11,6 +11,7 @@ A letter cannot be unsent, so each one is approved by hand. It is an optional st
 | New business, free pilot                       | a named person, a company, a complete U.S. business address     | step 2, three days after the email     |
 | Design-partner LOI                             | the same, for an enterprise or hardware buyer                   | step 2, three days after the email     |
 | Post-funding, hiring-signal, competitor-switch | the same, with a confirmed ICP match and a decision-maker title | step 3, three days after the follow-up |
+| Multiplier                                     | a named contact at an organization with a business address      | step 2, three days after the email     |
 | Every other play                               | off; you can choose Always include                              | where you put it                       |
 
 These are starting rules, not predictions. Registered-agent, registered-office and residential addresses are never picked. A complete address still needs your eye: it does not prove the person works there.

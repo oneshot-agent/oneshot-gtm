@@ -10,6 +10,7 @@ import { type CivicPilotTarget, runCivicPilot } from "./civic-pilot.ts";
 import { type DesignPartnerLoiTarget, runDesignPartnerLoi } from "./design-partner-loi.ts";
 import { type HiringSignalTarget, runHiringSignal } from "./hiring-signal.ts";
 import { type JobChangeTarget, runJobChange } from "./job-change.ts";
+import { type MultiplierTarget, multiplierPreflight, runMultiplier } from "./multiplier.ts";
 import { type LumaEventsTarget, runLumaEvents } from "./luma-events.ts";
 import { type NewBusinessTarget, runNewBusiness } from "./new-business.ts";
 import { type PodcastGuestTarget, runPodcastGuest } from "./podcast-guest.ts";
@@ -75,10 +76,18 @@ export interface PlayRunInput {
   draftAngle?: string;
   /** `source` of the queue row being sent (queue drain); see `runEmailPlay`. */
   queueSource?: string | null;
+  /** Per target, the `source` of its queue row (a /run batch from the queue); see `runEmailPlay`. */
+  queueSources?: ReadonlyArray<string | null | undefined>;
 }
 
 export interface PlayDispatch {
   run: (o: PlayRunInput) => Promise<{ drafted: DraftedRow[] }>;
+  /**
+   * The play's own refusal, for the /api/run route to make before its paid
+   * email verification (the play's `prepare` runs only after it): throws
+   * with the reason, and the route answers 400 having billed nothing.
+   */
+  preflight?: (o: Pick<PlayRunInput, "targets" | "queueSources">) => void;
 }
 
 /**
@@ -98,10 +107,16 @@ const progressOpt = (o: PlayRunInput): { onProgress?: PlayProgressFn } =>
 // absent field rather than an explicit `undefined`.
 const signalOpt = (
   o: PlayRunInput,
-): { signal?: AbortSignal; draftAngle?: string; queueSource?: string | null } => ({
+): {
+  signal?: AbortSignal;
+  draftAngle?: string;
+  queueSource?: string | null;
+  queueSources?: ReadonlyArray<string | null | undefined>;
+} => ({
   ...(o.signal ? { signal: o.signal } : {}),
   ...(o.draftAngle ? { draftAngle: o.draftAngle } : {}),
   ...(o.queueSource !== undefined ? { queueSource: o.queueSource } : {}),
+  ...(o.queueSources ? { queueSources: o.queueSources } : {}),
 });
 
 export const PLAYS: Record<string, PlayDispatch> = {
@@ -138,6 +153,16 @@ export const PLAYS: Record<string, PlayDispatch> = {
       runAcceleratorBatch({
         dryRun: o.dryRun,
         targets: o.targets as AcceleratorBatchTarget[],
+        ...progressOpt(o),
+        ...signalOpt(o),
+      }),
+  },
+  multiplier: {
+    preflight: (o) => multiplierPreflight(o.targets, o.queueSources),
+    run: (o) =>
+      runMultiplier({
+        dryRun: o.dryRun,
+        targets: o.targets as MultiplierTarget[],
         ...progressOpt(o),
         ...signalOpt(o),
       }),

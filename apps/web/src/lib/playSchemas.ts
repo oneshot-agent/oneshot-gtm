@@ -174,6 +174,63 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
       linkedinUrl: "",
     },
   },
+  multiplier: {
+    description:
+      "A partnership pitch to an organization that serves many of your buyers (an accelerator, association, agency or community): it offers your product to their members on your member offer, set under config as memberOffer. One ask; then a letter, one slow follow-up and a LinkedIn continuation.",
+    fields: [
+      { key: "organization", label: "Organization", type: "text", required: true },
+      {
+        key: "orgType",
+        label: "Kind of organization",
+        type: "text",
+        required: true,
+        placeholder: "accelerator · association · agency · community · other",
+      },
+      { key: "name", label: "Contact name", type: "text", required: true },
+      { key: "email", label: "Contact email", type: "email", required: true },
+      {
+        key: "role",
+        label: "Contact role",
+        type: "text",
+        required: true,
+        placeholder: "e.g. Head of Partnerships",
+      },
+      {
+        key: "memberDescription",
+        label: "Who their members are",
+        type: "textarea",
+        required: true,
+      },
+      {
+        key: "whyFit",
+        label: "Why their members are your buyers (one sentence)",
+        type: "textarea",
+        required: true,
+      },
+      { key: "memberCount", label: "Member count (optional)", type: "number" },
+      { key: "orgUrl", label: "Organization URL (optional)", type: "url" },
+      { key: "linkedinUrl", label: "Contact LinkedIn URL (optional)", type: "url" },
+      {
+        key: "introducedBy",
+        label: "Introduced by (optional)",
+        type: "text",
+        hint: "Only when someone really made a warm introduction; the draft names them only then.",
+      },
+    ],
+    defaultRow: {
+      organization: "",
+      orgType: "",
+      name: "",
+      email: "",
+      role: "",
+      memberDescription: "",
+      whyFit: "",
+      memberCount: "",
+      orgUrl: "",
+      linkedinUrl: "",
+      introducedBy: "",
+    },
+  },
   "post-funding": {
     description:
       "Triggered by a recent funding announcement. Day-0 here; cadence engine fires the day-9 follow-up and day-18 breakup automatically (the breakup offers your pilot instead when a pilot offer is set).",

@@ -1,14 +1,32 @@
 import { getLedger, loadConfig } from "@oneshot-gtm/core";
 import { complete } from "@oneshot-gtm/intel";
 import { getPriorStepsForProspect, sequenceOffer } from "./_cadence.ts";
+import { hardBanFlags } from "./_lib.ts";
+import { enrolledMemberOffer } from "./_member-offer.ts";
 import { playMakesOffer } from "./_prospect-offer.ts";
 
 export async function generateMailLetter(prospectId: number, playName: string): Promise<string> {
-  const prospect = getLedger().getProspectById(prospectId);
+  const ledger = getLedger();
+  const prospect = ledger.getProspectById(prospectId);
   if (!prospect) throw new Error("Prospect not found");
   const cfg = loadConfig();
+  // The multiplier letter proposes the member offer the originating send
+  // made, verbatim from config (the trigger's when that send's queue row
+  // names one; see `enrolledMemberOffer`): it is the offer and the offer's
+  // terms, so the "never add a price the terms do not contain" rule checks
+  // against it.
+  const memberOffer =
+    playName === "multiplier" ? enrolledMemberOffer(prospect.email, cfg, ledger) : "";
+  if (playName === "multiplier" && !memberOffer) {
+    throw new Error("multiplier: set memberOffer in config before generating a letter");
+  }
   // The letter makes the same offer as every other touch of the sequence.
-  const offer = playMakesOffer(playName) ? sequenceOffer(prospect, playName) : null;
+  const offer = memberOffer
+    ? { offer: memberOffer, steps: "" }
+    : playMakesOffer(playName)
+      ? sequenceOffer(prospect, playName)
+      : null;
+  const offerTerms = memberOffer || cfg.pilotOffer?.trim() || "";
   const result = await complete({
     messages: [
       {
@@ -26,7 +44,7 @@ export async function generateMailLetter(prospectId: number, playName: string): 
           ...(offer
             ? {
                 offer: { what: offer.offer, how: offer.steps },
-                ...(cfg.pilotOffer?.trim() ? { offerTerms: cfg.pilotOffer.trim() } : {}),
+                ...(offerTerms ? { offerTerms } : {}),
                 ...(cfg.productBrief?.trim() ? { productBrief: cfg.productBrief.trim() } : {}),
               }
             : {}),
@@ -40,5 +58,17 @@ export async function generateMailLetter(prospectId: number, playName: string): 
     temperature: 0.5,
   });
   if (!result.content.trim()) throw new Error("Letter generation returned no content");
-  return result.content.trim();
+  const text = result.content.trim();
+  // A price or discount the member offer does not contain is the model's
+  // invention: refuse the letter rather than hand it to the founder as if it
+  // were the offer. The quoted offer itself may name credits or a trial.
+  if (memberOffer) {
+    const invented = hardBanFlags(text, [memberOffer]).filter((f) => f !== "hard-ban:link");
+    if (invented.length > 0) {
+      throw new Error(
+        `multiplier: the letter adds a price or discount the member offer does not contain (${invented.join(", ")}); generate it again`,
+      );
+    }
+  }
+  return text;
 }

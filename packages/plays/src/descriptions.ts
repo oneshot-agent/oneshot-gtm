@@ -27,6 +27,15 @@ export const PLAY_DESCRIPTIONS: Record<string, PlayDescription> = {
     requires: "Founder contact, company, cohort and a specific useful observation or offer.",
     produces: "Personalized email drafts and recorded cadence activity.",
   },
+  multiplier: {
+    whenToUse:
+      "An organization serves many of your buyers and could offer your product to its members.",
+    actions:
+      "Drafts a partnership pitch built on your member offer, by email, letter and LinkedIn, with one slow follow-up.",
+    requires: "Organization, contact, who its members are, and your member offer.",
+    produces:
+      "An email, an optional letter, one follow-up email and a LinkedIn continuation, each previewed before it goes.",
+  },
   concierge: {
     whenToUse: "A new signup needs guided onboarding.",
     actions: "Runs an automated voice call, with optional preparation and summary emails.",

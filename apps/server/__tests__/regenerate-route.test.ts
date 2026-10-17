@@ -33,6 +33,7 @@ let dispatchPlayImpl: () => Promise<
 const getTrigger = vi.fn();
 const dispatchCalls: unknown[] = [];
 const dispatchAngles: Array<string | undefined> = [];
+const dispatchSources: Array<string | null | undefined> = [];
 
 const setQueueDraftCalls: Array<{ id: number; sent: boolean; discardReason?: string }> = [];
 
@@ -67,8 +68,10 @@ vi.mock("../src/api/_play-dispatch.ts", () => ({
     _progress: unknown,
     _signal: unknown,
     angle?: string,
+    queueSource?: string | null,
   ) => {
     dispatchAngles.push(angle);
+    dispatchSources.push(queueSource);
     dispatchCalls.push(body);
     return dispatchPlayImpl();
   },
@@ -87,6 +90,7 @@ beforeEach(() => {
   setQueueDraftCalls.length = 0;
   dispatchCalls.length = 0;
   dispatchAngles.length = 0;
+  dispatchSources.length = 0;
   getTrigger.mockReset();
   dispatchPlayImpl = async () => [{ subject: "subj", body: "body", flags: [] }];
 });
@@ -171,6 +175,14 @@ it("regenerates from current trigger edges without changing saved context", asyn
     targets: [{ email: "a@b.dev", yourEdge: "the product is the playbook", dossier: "facts" }],
   });
   expect(row.payload_json).toBe(original);
+  // The row's source rides along so the play reads the same trigger's own
+  // settings (the multiplier play's `memberOffer`) the queue drain did.
+  expect(dispatchSources).toEqual(["find:luma-events"]);
+});
+it("dispatches a row with no source without one", async () => {
+  const res = await regenerateDraftRoute(req(), { id: "1" });
+  expect(res.status).toBe(200);
+  expect(dispatchSources).toEqual([undefined]);
 });
 it("rejects malformed trigger config before dispatching", async () => {
   row.source = "find:luma-events";

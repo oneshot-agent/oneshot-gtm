@@ -34,6 +34,13 @@ Preview every draft before it goes. Email and LinkedIn send when you send; X, Re
 - **What you need:** Founder contact, company, cohort and a specific useful observation or offer.
 - **What it produces:** Personalized email drafts and recorded cadence activity.
 
+## multiplier
+
+- **When to use it:** An organization serves many of your buyers and could offer your product to its members.
+- **What it does:** Drafts a partnership pitch built on your member offer, by email, letter and LinkedIn, with one slow follow-up.
+- **What you need:** Organization, contact, who its members are, and your member offer.
+- **What it produces:** An email, an optional letter, one follow-up email and a LinkedIn continuation, each previewed before it goes.
+
 ## concierge
 
 - **When to use it:** A new signup needs guided onboarding.

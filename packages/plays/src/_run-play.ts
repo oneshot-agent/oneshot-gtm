@@ -20,6 +20,7 @@ import {
 } from "@oneshot-gtm/core";
 import {
   draftEmailFromPrompt,
+  type DraftedEmail,
   errorDraft,
   firstNameFrom,
   hardBanFlags,
@@ -129,9 +130,17 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    * boundary before `prepare` is entered, so a def that ignores the arg is
    * still safe: forward it (or `throwIfCancelled` on it) when `prepare` makes
    * more than one paid call, so the second one doesn't fire after an abort.
+   *
+   * `index` (here and on `buildInputBlock`, `hardBanAllow` and `draftFlags`)
+   * is the target's position in `opts.targets`, for a def that resolves
+   * something per row (the `multiplier` play's member offer by the row's
+   * `queueSources` entry). It is the one handle that survives the executor's
+   * own target transformations: `buildInputBlock` reads a copy of the target
+   * once angle selection has picked one `yourEdge` angle, so a lookup keyed
+   * on the target object would miss there.
    */
-  prepare: (t: T, dryRun: boolean, signal?: AbortSignal) => Promise<Prepared<X>>;
-  buildInputBlock: (t: T, prep: Prepared<X>, cfg: AppConfig) => string;
+  prepare: (t: T, dryRun: boolean, signal?: AbortSignal, index?: number) => Promise<Prepared<X>>;
+  buildInputBlock: (t: T, prep: Prepared<X>, cfg: AppConfig, index?: number) => string;
   prospectMeta: (t: T) => SendDraftedOpts["prospectMeta"];
   metadata?: (t: T) => Record<string, unknown>;
   /**
@@ -154,6 +163,21 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    * be held for saying so.
    */
   hardBans?: boolean;
+  /**
+   * With `hardBans`: spans the price and discount checks skip, read per
+   * target (the `multiplier` play's member offer, quoted verbatim from
+   * config). A price or discount the model writes outside them still flags;
+   * links always flag.
+   */
+  hardBanAllow?: (t: T, cfg: AppConfig, index?: number) => readonly string[];
+  /**
+   * Play-specific checks that read the DRAFT, not only the target (compare
+   * `extraFlags`): run with the writing lints on the first draft and on every
+   * repair retry (a retry that trips one is not adopted), and again on the
+   * final draft, where any flag holds the send. The `multiplier` play holds a
+   * draft that does not quote the member offer verbatim.
+   */
+  draftFlags?: (draft: DraftedEmail, t: T, cfg: AppConfig, index?: number) => string[];
   /**
    * Required non-empty, trimmed string fields, mirroring the web form schema.
    * Validate before any paid call because API and queue inputs can bypass
@@ -200,6 +224,13 @@ export async function runEmailPlay<T, X = Record<string, never>>(
     draftAngle?: string;
     /** `source` of the queue row being sent, when there is one: picks the trigger whose settings apply. */
     queueSource?: string | null;
+    /**
+     * Per target, the `source` of the queue row it was drawn from (a /run
+     * batch loaded from the queue carries its rows' dedupe keys), null for a
+     * row from no queue row. Takes precedence over `queueSource` for that
+     * target: its send enrols with its own row's trigger settings.
+     */
+    queueSources?: ReadonlyArray<string | null | undefined>;
   },
 ): Promise<{ drafted: Array<PlayDraft<T, X>> }> {
   const cfg = loadConfig();
@@ -233,7 +264,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
   const drafted = await parallelMap(
     opts.targets,
     concurrency,
-    async (target) => {
+    async (target, index) => {
       try {
         // Guard #0: required-field shape check, before Guard #1's paid
         // `prepare` call. Mirrors the web form's client-side
@@ -253,7 +284,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // every target still queued behind the abort dies here having billed
         // nothing at all.
         throwIfCancelled(opts.signal, `${def.playName} prepare`);
-        let prep = await def.prepare(target, opts.dryRun, opts.signal);
+        let prep = await def.prepare(target, opts.dryRun, opts.signal, index);
         // PERSON RESEARCH first, so the merged dossier opens with the current
         // role and company (readers that slice the first few hundred chars
         // see the facts, not an enrich sentinel). A complete record also
@@ -332,7 +363,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // set. Prompts treat it as conditional input: present only when set,
         // and the prompt picks ONE beat per email (never stacks).
         const proof = socialProofBlock();
-        let inputBlock = def.buildInputBlock(draftTarget, prep, cfg);
+        let inputBlock = def.buildInputBlock(draftTarget, prep, cfg, index);
         if (offerLines) inputBlock = `${inputBlock}\n\n${offerLines}`;
         if (proof) inputBlock = `${inputBlock}\n\n${proof}`;
         // Same conditional shape for the damaging-admission beat: present only
@@ -405,6 +436,10 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // Guard #2. The LLM draft, the paid call `prepare` was feeding.
         throwIfCancelled(opts.signal, `${def.playName} draft`);
         stampLearningInput(learned, inputBlock);
+        const hardBanAllow = def.hardBans ? def.hardBanAllow?.(target, cfg, index) : undefined;
+        const draftFlags = def.draftFlags
+          ? (d: DraftedEmail) => def.draftFlags!(d, target, cfg, index)
+          : undefined;
         const draft = await draftEmailFromPrompt({
           promptName: def.promptName,
           inputBlock,
@@ -412,6 +447,8 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           // one tighter redraft instead of becoming a lint-held send.
           maxBodyWords: bodyWordCap,
           hardBans: def.hardBans,
+          ...(hardBanAllow ? { hardBanAllow } : {}),
+          ...(draftFlags ? { extraLint: draftFlags } : {}),
           ...(bodySentenceCap !== undefined ? { maxBodySentences: bodySentenceCap } : {}),
           demoDay,
           offer: offer?.offer ?? null,
@@ -421,8 +458,10 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           ...lintEmail(draft.subject, draft.body, bodyWordCap, bodySentenceCap, {
             demoDay,
             offer: offer?.offer ?? null,
+            protect: hardBanAllow,
           }),
-          ...(def.hardBans ? hardBanFlags(draft.body) : []),
+          ...(def.hardBans ? hardBanFlags(draft.body, hardBanAllow) : []),
+          ...(draftFlags?.(draft) ?? []),
           ...(def.extraFlags?.(target) ?? []),
           ...lintGrounding(target, prep),
           ...lintStaleEmail(target),
@@ -491,11 +530,12 @@ export async function runEmailPlay<T, X = Record<string, never>>(
             getSequence(def.playName)?.steps.some((s) => s.channel === "direct_mail"))
         ) {
           const prospect = getLedger().findProspectByEmail(def.toEmail(target));
+          const queueSource = opts.queueSources?.[index] ?? opts.queueSource;
           if (prospect)
             enrollInCadence({
               prospectId: prospect.id,
               playName: def.playName,
-              ...(opts.queueSource !== undefined ? { queueSource: opts.queueSource } : {}),
+              ...(queueSource !== undefined ? { queueSource } : {}),
             });
         }
 

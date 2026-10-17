@@ -1103,6 +1103,7 @@ export const RUNNABLE_PLAYS: readonly string[] = [
   "job-change",
   "post-funding",
   "accelerator-batch",
+  "multiplier",
   "hiring-signal",
   "podcast-guest",
   "competitor-switch",

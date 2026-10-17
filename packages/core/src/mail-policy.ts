@@ -38,6 +38,11 @@ const defaults: Record<string, MotionMailSettings & { reason: string }> = {
     delayDays: 3,
     reason: "An additional touch for an ICP-qualified decision maker with a business address.",
   },
+  multiplier: {
+    position: 2,
+    delayDays: 3,
+    reason: "A partnership proposal to an organization's programme lead at its business address.",
+  },
 };
 
 /** Missing settings inherit the recommendation; explicit null always means off. */
@@ -76,6 +81,9 @@ export function automaticMailEligible(
   if (/registered.agent|registered.office|residential|home.address/i.test(source)) return false;
   if (prospect.icp_verdict === "reject" || prospect.icpVerdict === "reject") return false;
   if (playName === "new-business" || playName === "free-pilot") return true;
+  // A partnership proposal goes to the organization's programme lead at its
+  // business address; the organization is the row's company.
+  if (playName === "multiplier") return true;
   if (playName === "design-partner-loi")
     return ["enterprise", "hardware"].includes(
       String(prospect.buyerType ?? "")

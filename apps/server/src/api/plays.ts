@@ -44,6 +44,10 @@ const PLAY_CATALOG: PlayMeta[] = [
     cli: "oneshot-gtm find watch  # fed by the accelerator-batch finder, drained from /queue",
   },
   {
+    name: "multiplier",
+    cli: "run from /run with the organization and its contact as the target; see examples/multiplier.json",
+  },
+  {
     name: "concierge",
     cli: "oneshot-gtm motion concierge --target ./examples/concierge.json",
   },
