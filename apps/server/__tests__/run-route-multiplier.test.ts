@@ -68,7 +68,7 @@ vi.mock("@oneshot-gtm/plays", async () => {
   };
 });
 
-const { runPlay } = await import("../src/api/run.ts");
+const { runPlay, targetMatchesQueueRow } = await import("../src/api/run.ts");
 
 const target = (organization: string, email: string) => ({
   organization,
@@ -166,6 +166,28 @@ describe("POST /api/run/multiplier", () => {
     for (const d of drafts) expect(d.flags).not.toContain("multiplier:offer-missing");
   });
 
+  it("refuses a target paired with another row's key before verification or drafting", async () => {
+    const ledger = getLedger();
+    ledger.upsertTrigger({
+      name: "orgB",
+      configJson: JSON.stringify({ memberOffer: "Offer B: a free month for each member." }),
+    });
+    const a = { ...target("Org A", "a@a.example"), name: "Ada Quill" };
+    const b = { ...target("Org B", "b@b.example"), name: "Bo Reyes" };
+    ledger.enqueueTarget({
+      playName: "multiplier",
+      payload: b,
+      dedupeKey: "row-b",
+      source: "find:orgB:1",
+    });
+    const res = await post({ dryRun: false, targets: [a], dedupeKeys: ["row-b"] });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(
+      /target 1 does not match the queue row/,
+    );
+    expect(calls).toEqual({ verify: 0, enrich: 0, blocks: [] });
+  });
+
   it("with only a trigger offer set, a queue-loaded row runs and a batch with a manual row refuses before verification", async () => {
     memberOffer = null;
     const ledger = getLedger();
@@ -193,5 +215,32 @@ describe("POST /api/run/multiplier", () => {
     });
     expect(refused.status).toBe(400);
     expect(calls.verify).toBe(0);
+  });
+});
+
+describe("targetMatchesQueueRow", () => {
+  const row = {
+    organization: "Org A",
+    name: "Ada Quill",
+    email: "ada@a.example",
+    linkedinUrl: "https://www.linkedin.com/in/ada-quill/",
+  };
+  it("matches when any identity field agrees, so an edited email still belongs", () => {
+    expect(targetMatchesQueueRow({ ...row, email: "ada.quill@a.example" }, row)).toBe(true);
+    expect(
+      targetMatchesQueueRow({ ...row, linkedinUrl: "https://www.linkedin.com/in/ada-quill" }, row),
+    ).toBe(true);
+  });
+  it("refuses another person, and another organization even with the same contact name", () => {
+    expect(
+      targetMatchesQueueRow(
+        { name: "Bo Reyes", email: "bo@b.example", organization: "Org A" },
+        row,
+      ),
+    ).toBe(false);
+    expect(targetMatchesQueueRow({ ...row, organization: "Org B" }, row)).toBe(false);
+  });
+  it("accepts a pair with nothing to compare", () => {
+    expect(targetMatchesQueueRow({ company: "Acme" }, { repo: "acme/x" })).toBe(true);
   });
 });

@@ -41,6 +41,17 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
     return jsonResponse({ error: "targets must be a non-empty array" }, 400, req);
   }
 
+  const mismatched = mismatchedQueueTargets(playName, body);
+  if (mismatched.length > 0) {
+    return jsonResponse(
+      {
+        error: `target ${mismatched.map((i) => i + 1).join(", ")} does not match the queue row its key names. Reload the queue rows and run again.`,
+      },
+      400,
+      req,
+    );
+  }
+
   // The queue rows a batch was loaded from, by their dedupe keys: each row's
   // source names the trigger whose settings apply to that target (the
   // multiplier play's `memberOffer`); null for a manual row.
@@ -538,6 +549,75 @@ export async function cancelRunRoute(
  * Best-effort (logged via `error.swallowed`). Indices match because
  * `verifiedTargets[i]` corresponds to `drafted[i]`.
  */
+/** Fields that say who a target is. A target and the queue row its key names share at least one. */
+const IDENTITY_FIELDS = [
+  "email",
+  "founderEmail",
+  "linkedinUrl",
+  "sourceProfileUrl",
+  "candidateLogin",
+  "twitterUrl",
+  "orgUrl",
+  "name",
+  "founderName",
+] as const;
+const identityValue = (v: unknown): string =>
+  typeof v === "string" ? v.trim().toLowerCase().replace(/\/+$/, "") : "";
+
+/**
+ * Whether a target is the person (or organization) of the queue row its
+ * dedupe key names. The run grid is editable, so one corrected field is not
+ * a mismatch: the pair belongs together when any identity field agrees, or
+ * when they share none to compare. A different organization never does: the
+ * organization is what a multiplier row pitches. Exported for its test.
+ */
+export function targetMatchesQueueRow(
+  target: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): boolean {
+  const org = [identityValue(target["organization"]), identityValue(payload["organization"])];
+  if (org[0] && org[1] && org[0] !== org[1]) return false;
+  let compared = false;
+  for (const field of IDENTITY_FIELDS) {
+    const a = identityValue(target[field]);
+    const b = identityValue(payload[field]);
+    if (!a || !b) continue;
+    if (a === b) return true;
+    compared = true;
+  }
+  return !compared;
+}
+
+/**
+ * Indexes of targets paired with a dedupe key whose queue row is someone
+ * else. The row's source decides the trigger settings a target is pitched
+ * with, and queue rows skip the route's email verification, so a misaligned
+ * pair is refused rather than run. Exported for its test.
+ */
+export function mismatchedQueueTargets(playName: string, body: RunPlayRequest): number[] {
+  const keys =
+    Array.isArray(body.dedupeKeys) && body.dedupeKeys.length === body.targets.length
+      ? body.dedupeKeys
+      : null;
+  if (!keys) return [];
+  const ledger = getLedger();
+  const out: number[] = [];
+  keys.forEach((key, i) => {
+    if (typeof key !== "string" || key.length === 0) return;
+    let payload: Record<string, unknown> | null = null;
+    try {
+      const row = ledger.getQueueRowByDedupe(playName, key);
+      payload = row ? (JSON.parse(row.payload_json) as Record<string, unknown>) : null;
+    } catch {
+      payload = null;
+    }
+    const target = body.targets[i] as Record<string, unknown> | null | undefined;
+    if (payload && target && typeof target === "object" && !targetMatchesQueueRow(target, payload))
+      out.push(i);
+  });
+  return out;
+}
+
 /**
  * Per target, the `source` of the queue row its dedupe key names (the row the
  * UI loaded it from), null for a manual row or a key no row matches. Exported
