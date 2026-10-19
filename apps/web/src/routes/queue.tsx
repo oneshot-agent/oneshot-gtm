@@ -131,6 +131,7 @@ import {
   markDraftGenerating,
   useGeneratingDrafts,
 } from "../lib/draftRunState.ts";
+import { useRowActivity } from "../lib/rowActivity.ts";
 import { summarizeRun } from "../lib/summarizeRun.ts";
 import { READ_ONLY, readOnly } from "../lib/readOnly.ts";
 import {
@@ -1327,22 +1328,26 @@ function DraftSection({
     // Persist a localStorage marker so the spinner survives leaving + returning
     // to /queue while the draft generates server-side; cleared on settle (and,
     // for the unmounted case, reconciled away once lastDraftedAt advances).
-    onMutate: () => markDraftGenerating(id),
-    onSuccess: () => {
-      clearDraftGenerating(id);
+    onMutate: () => ({ stamp: markDraftGenerating(id) }),
+    onSuccess: (_data, _rotate, context) => {
+      clearDraftGenerating(id, context?.stamp);
       void qc.invalidateQueries({ queryKey: ["queue"] });
       toast.success("draft ready · preview only, not sent");
     },
-    onError: (err) => {
-      clearDraftGenerating(id);
+    onError: (err, _rotate, context) => {
+      clearDraftGenerating(id, context?.stamp);
       // Refetch on failure: a concurrent send may have made the cached approved row stale.
       void qc.invalidateQueries({ queryKey: ["queue"] });
       toast.error(`couldn't draft · ${err.message}`);
     },
   });
+  // What the row is busy with when the offer block started it (new offers,
+  // switching offer): the letter shows the same words.
+  const activity = useRowActivity(id);
+  const rotating = regenerate.isPending && regenerate.variables === true;
   // Instant spinner while mounted (isPending) OR restored-from-localStorage
-  // after a remount (generating).
-  const isGenerating = generating || regenerate.isPending;
+  // after a remount (generating), OR offer work that ends in a redraft.
+  const isGenerating = generating || regenerate.isPending || activity != null;
   const send = useMutation({
     mutationFn: () => api.sendDraft(id),
     onSuccess: () => {
@@ -1370,6 +1375,15 @@ function DraftSection({
   const canDraft = status !== "sent" && !sending && !(draft?.sent ?? false);
   const verb = draft ? "Regenerate draft" : "Generate draft";
   const pendingVerb = draft ? "Regenerating…" : "Generating…";
+  const working = activity
+    ? activity
+    : rotating
+      ? "Rotating to the next angle…"
+      : isGenerating
+        ? draft
+          ? "Rewriting the draft…"
+          : "Writing the draft…"
+        : null;
   const draftButton = canDraft ? (
     <div className="flex flex-wrap items-center gap-2">
       <Button
@@ -1380,8 +1394,12 @@ function DraftSection({
         {...readOnly}
         title="Draft this row in preview mode — dry-run, never sends"
       >
-        {isGenerating ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
-        {isGenerating ? pendingVerb : verb}
+        {isGenerating && !rotating ? (
+          <Loader2 size={11} className="animate-spin" />
+        ) : (
+          <RotateCw size={11} />
+        )}
+        {isGenerating && !rotating ? pendingVerb : verb}
       </Button>
       {draft && channel !== "reddit" && channel !== "hacker-news" && (
         <Button
@@ -1392,7 +1410,8 @@ function DraftSection({
           {...readOnly}
           title="Try another angle and generate a new preview"
         >
-          <RotateCw size={11} /> Rotate angle
+          {rotating ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
+          {rotating ? "Rotating…" : "Rotate angle"}
         </Button>
       )}
     </div>
@@ -1785,6 +1804,7 @@ function DraftSection({
         ),
       }}
       sendable={sendable}
+      working={working}
     />
   );
 }

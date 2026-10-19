@@ -748,6 +748,7 @@ function CadencesPage() {
                 const open = expandedKeys.has(key);
                 const draft = c.nextStepDraft;
                 const previewPending = pendingPreviewKey === key;
+                const rotatingAngle = previewPending && previewNext.variables?.rotateAngle === true;
                 const sendPending = c.isSending || pendingSendKey === key;
                 const sendDisabled =
                   !draft ||
@@ -873,12 +874,12 @@ function CadencesPage() {
                       }
                       {...readOnly}
                     >
-                      {previewPending ? (
+                      {previewPending && !rotatingAngle ? (
                         <Loader2 size={11} className="animate-spin" />
                       ) : (
                         <RotateCw size={11} />
                       )}
-                      {previewPending
+                      {previewPending && !rotatingAngle
                         ? draft
                           ? "Regenerating…"
                           : "Generating…"
@@ -941,6 +942,13 @@ function CadencesPage() {
                           ) : undefined
                         }
                         body={draft.body}
+                        working={
+                          rotatingAngle
+                            ? "Rotating to the next angle…"
+                            : previewPending
+                              ? "Rewriting the draft…"
+                              : null
+                        }
                         afterBody={
                           <>
                             {draft.angle && (
@@ -976,7 +984,12 @@ function CadencesPage() {
                                   }
                                   {...readOnly}
                                 >
-                                  <RotateCw size={11} /> Rotate angle
+                                  {rotatingAngle ? (
+                                    <Loader2 size={11} className="animate-spin" />
+                                  ) : (
+                                    <RotateCw size={11} />
+                                  )}
+                                  {rotatingAngle ? "Rotating…" : "Rotate angle"}
                                 </Button>
                               )}
                             </>
