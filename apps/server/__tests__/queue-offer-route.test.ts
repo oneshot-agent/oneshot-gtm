@@ -5,7 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   row: null as null | Record<string, unknown>,
-  patched: [] as Array<{ id: number; patch: Record<string, unknown> }>,
+  patched: [] as Array<{ id: number; patch: Record<string, unknown>; expect?: unknown }>,
+  /** Writes whose compare-and-set held: what actually landed. */
+  written: [] as Array<{ id: number; patch: Record<string, unknown> }>,
+  /** The payload as the ledger holds it at write time; null: the row as read. */
+  dbPayload: null as null | Record<string, unknown>,
   live: true,
   derived: null as null | Record<string, unknown>,
   brief: "Acme books crews into open slots.",
@@ -17,9 +21,27 @@ vi.mock("@oneshot-gtm/core", async () => ({
   getLedger: () => ({
     getQueueRow: () => state.row,
     getTrigger: () => null,
-    patchLiveQueuePayload: (input: { id: number; patch: Record<string, unknown> }) => {
+    patchLiveQueuePayload: (input: {
+      id: number;
+      patch: Record<string, unknown>;
+      expect?: Array<{ path: string; value: string | null }>;
+    }) => {
       state.patched.push(input);
-      return state.live;
+      const db =
+        state.dbPayload ??
+        (JSON.parse(String(state.row?.["payload_json"] ?? "{}")) as Record<string, unknown>);
+      // The guard as the ledger checks it: `$.a.b` must still hold the value (null: absent).
+      const holds = (input.expect ?? []).every(
+        (g) =>
+          (g.path
+            .slice(2)
+            .split(".")
+            .reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], db) ??
+            null) === g.value,
+      );
+      if (!state.live || !holds) return false;
+      state.written.push(input);
+      return true;
     },
   }),
 }));
@@ -57,6 +79,8 @@ beforeEach(() => {
     }),
   };
   state.patched = [];
+  state.written = [];
+  state.dbPayload = null;
   state.live = true;
   state.derived = null;
   state.brief = "Acme books crews into open slots.";
@@ -166,9 +190,21 @@ describe("queueOfferRoute", () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as { offer: Record<string, unknown> };
       expect(body.offer).toMatchObject({ ...weak, weakApprovedAt: expect.any(String) });
-      expect(state.patched).toEqual([
-        { id: 5, patch: { offer: { weakApprovedAt: body.offer["weakApprovedAt"] } } },
+      expect(state.written).toEqual([
+        expect.objectContaining({
+          id: 5,
+          patch: { offer: { weakApprovedAt: body.offer["weakApprovedAt"] } },
+        }),
       ]);
+    });
+
+    it("approves nothing when another offer became active after it was read", async () => {
+      const other = { ...weak, offer: "a different weak offer", derivedAt: "later" };
+      state.dbPayload = { name: "Dana", offer: other, offerCandidates: [weak, other] };
+      const res = await queueOfferRoute(post({ approveWeak: true }), { id: "5" });
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { error: string }).error).toContain("its offer changed");
+      expect(state.written).toHaveLength(0);
     });
 
     it("refuses an offer that is not rated weak, or is the founder's", async () => {

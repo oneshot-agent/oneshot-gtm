@@ -159,10 +159,33 @@ function approveWeakOffer(id: number, payloadJson: string, req: Request): Respon
     return jsonResponse({ error: "the active offer is not rated a weak fit" }, 400, req);
   }
   const weakApprovedAt = new Date().toISOString();
+  const text = (key: string): string | null => {
+    const v = (offer as unknown as Record<string, unknown>)[key];
+    return typeof v === "string" ? v : null;
+  };
   // Only the active offer: its copy among the candidates stays unapproved,
-  // so switching away and back asks again.
-  if (!getLedger().patchLiveQueuePayload({ id, patch: { offer: { weakApprovedAt } } })) {
-    return jsonResponse({ error: "row is no longer pending or approved" }, 409, req);
+  // so switching away and back asks again. Bound to the offer read here: if
+  // another offer became active meanwhile, nothing is approved.
+  const written = getLedger().patchLiveQueuePayload({
+    id,
+    patch: { offer: { weakApprovedAt } },
+    expect: [
+      { path: "$.offer.offer", value: offer.offer },
+      { path: "$.offer.derivedAt", value: text("derivedAt") },
+      { path: "$.offer.inputHash", value: text("inputHash") },
+      { path: "$.offer.relevance", value: "weak" },
+      { path: "$.offer.editedBy", value: null },
+    ],
+  });
+  if (!written) {
+    return jsonResponse(
+      {
+        error:
+          "the row is no longer pending or approved, or its offer changed; refresh and review it again",
+      },
+      409,
+      req,
+    );
   }
   const approved: ProspectOffer = { ...offer, weakApprovedAt };
   return jsonResponse({ offer: approved }, 200, req);

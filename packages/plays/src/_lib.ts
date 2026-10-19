@@ -1511,6 +1511,21 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
   }
   const receiptIds: number[] = [];
   let sent = false;
+  if (
+    !opts.dryRun &&
+    opts.weakOffer &&
+    opts.flags.length > 0 &&
+    !opts.flags.includes(WEAK_OFFER_FLAG)
+  ) {
+    // Its other flags already stop this draft, but the hold is about the
+    // offer, which a redraft cannot fix: record it too, so the drain parks the
+    // row for the founder. A fit rejection still wins, as on a clean draft.
+    const existing = ledger.findProspectByEmail(opts.to);
+    const stored = existing ? ledger.getProspectById(existing.id) : null;
+    if ((opts.icp?.verdict ?? stored?.icp_verdict ?? null) !== "reject") {
+      opts.flags.push(WEAK_OFFER_FLAG);
+    }
+  }
   if (!opts.dryRun && opts.flags.length === 0) {
     // Pre-send dedupe: never send step-0 twice to the same (prospect, play).
     // Residual microsecond race between this read and recordSequenceEvent is

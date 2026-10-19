@@ -152,6 +152,30 @@ describe("idsForSentDrafts", () => {
 });
 
 describe("drainQueue per-target dispatch + persistence", () => {
+  it("holds a lint-flagged row on its weak offer too: back to pending, counted", async () => {
+    ledgerStub.dequeueApproved.mockReturnValue([row(41)]);
+    runStackConsolidationMock.mockResolvedValueOnce({
+      drafted: [
+        {
+          subject: "hi",
+          body: "leverage robust delve",
+          flags: ["ai-vocab", "weak-offer"],
+          sent: false,
+          receiptIds: [],
+        },
+      ],
+    });
+
+    const out = await drainQueue({ playName: "stack-consolidation", dryRun: false });
+
+    expect(out).toMatchObject({ sent: 0, errors: [], held: { "weak-offer": 1 } });
+    expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({
+      id: 41,
+      status: "pending",
+      decidedBy: "machine",
+    });
+  });
+
   it("holds a row the send gate stopped on its weak offer: back to pending, counted, never sent", async () => {
     ledgerStub.dequeueApproved.mockReturnValue([row(40)]);
     runStackConsolidationMock.mockResolvedValueOnce({

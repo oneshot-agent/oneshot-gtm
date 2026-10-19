@@ -81,6 +81,41 @@ describe("Ledger.patchLiveQueuePayload", () => {
   });
 });
 
+describe("Ledger.patchLiveQueuePayload compare-and-set", () => {
+  it("writes only while every expected path still holds its value", () => {
+    const id = enqueue({ name: "A", offer: { offer: "first", relevance: "weak" } });
+    const expectFirst = [
+      { path: "$.offer.offer", value: "first" },
+      { path: "$.offer.editedBy", value: null },
+    ];
+    expect(
+      ledger.patchLiveQueuePayload({
+        id,
+        patch: { offer: { weakApprovedAt: "t1" } },
+        expect: expectFirst,
+      }),
+    ).toBe(true);
+    expect(payloadOf(id)["offer"]).toEqual({
+      offer: "first",
+      relevance: "weak",
+      weakApprovedAt: "t1",
+    });
+
+    ledger.patchLiveQueuePayload({
+      id,
+      patch: { offer: { offer: "second", weakApprovedAt: null } },
+    });
+    expect(
+      ledger.patchLiveQueuePayload({
+        id,
+        patch: { offer: { weakApprovedAt: "t2" } },
+        expect: expectFirst,
+      }),
+    ).toBe(false);
+    expect(payloadOf(id)["offer"]).toEqual({ offer: "second", relevance: "weak" });
+  });
+});
+
 describe("atomic queue draft generation", () => {
   const draft = {
     subject: "s",

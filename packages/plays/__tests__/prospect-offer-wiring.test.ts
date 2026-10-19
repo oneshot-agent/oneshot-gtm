@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // A play run writes the prospect offer first, opens the draft's input with
 // it, and records it on the send so every later touch carries the same one.
 
-const calls = { inputs: [] as string[], events: [] as Array<Record<string, unknown>> };
+const calls = {
+  inputs: [] as string[],
+  events: [] as Array<Record<string, unknown>>,
+  /** The draft's body; null: a clean one that opens with the offer. */
+  body: null as string | null,
+};
 const OFFER = {
   offer: "get every enterprise corp renewal quote out the same day it is asked for",
   steps: "drafts the quote, checks the price list and sends it for approval",
@@ -65,7 +70,10 @@ vi.mock("@oneshot-gtm/intel", async () => {
       return {
         content: system.startsWith("prospect-offer")
           ? JSON.stringify(OFFER)
-          : JSON.stringify({ subject: "s", body: `I can ${OFFER.offer}. Worth it?` }),
+          : JSON.stringify({
+              subject: "s",
+              body: calls.body ?? `I can ${OFFER.offer}. Worth it?`,
+            }),
         provider: "t",
         model: "t",
       };
@@ -86,6 +94,7 @@ const base = {
 beforeEach(() => {
   calls.inputs = [];
   calls.events = [];
+  calls.body = null;
 });
 
 describe("prospect offer in a play run", () => {
@@ -162,5 +171,30 @@ describe("prospect offer in a play run", () => {
       ],
     });
     expect(approved.drafted[0]).toMatchObject({ sent: true, flags: [] });
+  });
+
+  it("holds a lint-flagged draft on its weak-fit offer as well", async () => {
+    const { offerProductHash, OFFER_PROMPT_VERSION } = await import("../src/_prospect-offer.ts");
+    calls.body = `I can ${OFFER.offer}. Let me delve into it and leverage a robust tapestry. Worth it?`;
+    const weak = {
+      productHash: offerProductHash({
+        productOneLiner: "thing",
+        productBrief: "Thing drafts quotes, checks price lists and sends them for approval.",
+        pilotOffer: "a month on one team",
+      }),
+      ...OFFER,
+      relevance: "weak",
+      version: OFFER_PROMPT_VERSION,
+      inputHash: "h",
+      derivedAt: "",
+    };
+    const out = await runDesignPartnerLoi({
+      dryRun: false,
+      targets: [{ ...base, offer: weak } as typeof base],
+    });
+    const flags = out.drafted[0]!.flags;
+    expect(flags.length).toBeGreaterThan(1);
+    expect(flags.at(-1)).toBe("weak-offer");
+    expect(out.drafted[0]!.sent).toBe(false);
   });
 });

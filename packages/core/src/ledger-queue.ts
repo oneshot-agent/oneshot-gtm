@@ -1354,8 +1354,18 @@ export class QueueStore {
    * caller's listing and this call is simply not updated, and the caller is
    * told. `updateQueuePayload` above has no guard and stays for the paths that
    * own their row (the manual add's research rewrite).
+   *
+   * `expect` makes it a compare-and-set: each JSON path must still hold the
+   * scalar value the caller read (null: absent), checked in the same
+   * statement, so a write bound to what the caller reviewed never lands on
+   * something that replaced it.
    */
-  patchLiveQueuePayload(input: { id: number; patch: Record<string, unknown> }): boolean {
+  patchLiveQueuePayload(input: {
+    id: number;
+    patch: Record<string, unknown>;
+    expect?: Array<{ path: string; value: string | null }>;
+  }): boolean {
+    const guards = input.expect ?? [];
     const r = this.db
       .prepare(
         `UPDATE target_queue
@@ -1364,9 +1374,9 @@ export class QueueStore {
             AND status IN ('pending', 'approved')
             AND sent_at IS NULL
             AND send_started_at IS NULL
-            AND json_valid(payload_json)`,
+            AND json_valid(payload_json)${guards.map(() => "\n            AND json_extract(payload_json, ?) IS ?").join("")}`,
       )
-      .run(JSON.stringify(input.patch), input.id);
+      .run(JSON.stringify(input.patch), input.id, ...guards.flatMap((g) => [g.path, g.value]));
     return r.changes === 1;
   }
 
