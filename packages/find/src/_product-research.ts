@@ -61,6 +61,30 @@ function emailDomain(email: string | null): string | null {
   return domain;
 }
 
+/**
+ * The company domain a row's research would read: a stated company domain,
+ * else a work email's. Null for a personal or academic address, or none.
+ */
+export function queueRowCompanyDomain(payload: JsonRecord): string | null {
+  const stated = str(payload, "companyDomain", "newCompanyDomain", "guestCompanyDomain");
+  if (stated) return stated;
+  return emailDomain(str(payload, "email", "founderEmail", "guestEmail"));
+}
+
+/** True when the row carries text read from the company's own pages. */
+export function hasCompanyPages(payload: JsonRecord): boolean {
+  const research = payload["productResearch"];
+  if (!isRecord(research) || !Array.isArray(research["sources"])) return false;
+  return (research["sources"] as unknown[]).some(
+    (s) => isRecord(s) && typeof s["excerpt"] === "string" && s["excerpt"].trim().length > 0,
+  );
+}
+
+/** Plays whose rows never get company research. */
+export function productResearchSkipsPlay(playName: string): boolean {
+  return EXCLUDED_PLAYS.has(playName);
+}
+
 function normalizeUrl(value: string | null): string | null {
   if (!value) return null;
   try {
@@ -85,8 +109,7 @@ function seedFor(
   const name = str(payload, "name", "founderName", "guestName", "hostName");
   const company = str(payload, "company", "newCompany", "guestCompany");
   const email = str(payload, "email", "founderEmail", "guestEmail");
-  const domain =
-    str(payload, "companyDomain", "newCompanyDomain", "guestCompanyDomain") ?? emailDomain(email);
+  const domain = queueRowCompanyDomain(payload);
   const candidates = [
     str(payload, "evidenceUrl", "repoUrl", "postUrl", "launchUrl", "jobUrl", "episodeUrl"),
     domain ? `https://${domain}` : null,
@@ -336,6 +359,20 @@ export async function researchQueueRowProduct(
     ledger.setProductResearchCache(seed.cacheKey, JSON.stringify(dossier));
   }
   return { dossier, costUsd, cached: false };
+}
+
+/**
+ * Replace a live row's company research (pending or approved, not sending).
+ * The ledger's merge patch would keep keys of the old dossier the new one
+ * lacks, so it is cleared first. False when the row is no longer live.
+ */
+export function writeLiveQueueProductResearch(
+  id: number,
+  dossier: ProductResearchDossier,
+): boolean {
+  const ledger = getLedger();
+  if (!ledger.patchLiveQueuePayload({ id, patch: { productResearch: null } })) return false;
+  return ledger.patchLiveQueuePayload({ id, patch: { productResearch: dossier } });
 }
 
 /** Enrich only rows produced by the just-finished finder run. */

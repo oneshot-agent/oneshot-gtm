@@ -466,6 +466,16 @@ export interface SetupRequest {
     minConfidence?: number;
   } | null;
   /**
+   * How written offers are judged for relevance. Same rules as
+   * `replyClassifier`: `undefined` = leave unchanged; `null` = back to the
+   * default (`llm`); `decisions` needs a `model`; `minConfidence` within 0–1.
+   */
+  offerJudge?: {
+    engine: "llm" | "decisions";
+    model?: string;
+    minConfidence?: number;
+  } | null;
+  /**
    * Install-wide IANA time zone (issue #451 surfaced it: no other writer
    * exists). `undefined` = leave unchanged; `null` or blank = clear back to the
    * runtime zone; otherwise must be a valid IANA name or the request is 400.

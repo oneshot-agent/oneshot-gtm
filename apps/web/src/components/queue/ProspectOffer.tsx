@@ -22,6 +22,12 @@ interface OfferView {
   /** Reasons it pays back: the letter's angles. */
   angles: string[];
   editedBy?: "founder";
+  /** The anchor the offer rests on and the fact behind it. */
+  fit?: string;
+  /** The relevance judge's label; `weak` ones only make up the five. */
+  relevance?: "relevant" | "weak" | "irrelevant";
+  /** 0–1: the judge's probability that it is relevant. */
+  relevanceScore?: number;
 }
 
 function strings(v: unknown): string[] {
@@ -42,7 +48,42 @@ function readOffer(o: unknown): OfferView | null {
     return: typeof r["return"] === "string" ? r["return"] : "",
     angles: strings(r["angles"]),
     ...(r["editedBy"] === "founder" ? { editedBy: "founder" as const } : {}),
+    ...(typeof r["fit"] === "string" && r["fit"].trim() ? { fit: r["fit"] } : {}),
+    ...(r["relevance"] === "relevant" ||
+    r["relevance"] === "weak" ||
+    r["relevance"] === "irrelevant"
+      ? { relevance: r["relevance"] }
+      : {}),
+    ...(typeof r["relevanceScore"] === "number" && Number.isFinite(r["relevanceScore"])
+      ? { relevanceScore: r["relevanceScore"] }
+      : {}),
   };
+}
+
+/** "fit 4/5" from the judge's score, "relevant" when it gave only a label. */
+export function offerFitLabel(o: Pick<OfferView, "relevance" | "relevanceScore">): string | null {
+  if (o.relevanceScore !== undefined) {
+    return `fit ${Math.min(5, Math.max(0, Math.round(o.relevanceScore * 5)))}/5`;
+  }
+  return o.relevance === "relevant" ? "relevant" : null;
+}
+
+/** True when the row's research holds text read from the company's own pages. */
+export function hasCompanyPagesInPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const research = (payload as Record<string, unknown>)["productResearch"];
+  if (!research || typeof research !== "object") return false;
+  const sources = (research as Record<string, unknown>)["sources"];
+  return (
+    Array.isArray(sources) &&
+    sources.some(
+      (s) =>
+        !!s &&
+        typeof s === "object" &&
+        typeof (s as Record<string, unknown>)["excerpt"] === "string" &&
+        ((s as Record<string, unknown>)["excerpt"] as string).trim().length > 0,
+    )
+  );
 }
 
 /** The prospect offer stored on a queue payload, when it has one. */
@@ -151,6 +192,7 @@ export function ProspectOffer({
         <span>offer</span>
         {offer?.level === "role" && !offer.editedBy && <span>· from role only</span>}
         {offer?.editedBy === "founder" && <span>· yours</span>}
+        {offer?.relevance === "weak" && !offer.editedBy && <span>· weak fit</span>}
         {activity && (
           <span
             aria-hidden="true"
@@ -219,6 +261,16 @@ export function ProspectOffer({
               Returns: {offer.return}
             </p>
           )}
+          {offer.fit && (
+            <p className="m-0 mt-1 text-[12px] leading-5 text-ink-muted [text-wrap:pretty]">
+              Fit: {offer.fit}
+            </p>
+          )}
+          {!offer.editedBy && !hasCompanyPagesInPayload(payload) && (
+            <p className="m-0 mt-1 text-[11.5px] leading-5 text-ink-faint">
+              written without the company's site
+            </p>
+          )}
         </>
       ) : (
         <p className="m-0 text-[12px] leading-5 text-ink-muted">
@@ -262,6 +314,13 @@ export function ProspectOffer({
                     {i + 1}. {c.offer}
                   </span>
                   {c.return && <span className="text-ink-muted">Returns: {c.return}</span>}
+                  {(offerFitLabel(c) || c.relevance === "weak") && (
+                    <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-faint">
+                      {[offerFitLabel(c), c.relevance === "weak" ? "weak fit" : null]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  )}
                   {editable && (
                     <span>
                       <Button

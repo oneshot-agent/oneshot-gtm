@@ -597,31 +597,51 @@ export function importRederiveSettled(): Promise<unknown> {
 
 /**
  * Fill in, for this workspace, the edge and verdicts a move stripped
- * (packages/find/src/queue-rederive.ts). Runs in the background; a failure or
- * timeout leaves a note on the row naming the manual command.
+ * (packages/find/src/queue-rederive.ts), then read the company's pages if the
+ * row has none and write this workspace's offers. Runs in the background; a
+ * failure or timeout leaves a note on the row naming the manual command.
  */
 function startImportRederive(queueId: number): void {
-  importRederive = rederiveQueueRow(getLedger(), queueId).then(
-    (outcome) => {
-      logEvent("queue.import_rederive", {
-        queue_id: queueId,
-        ok: outcome.ok,
-        ...(outcome.ok
-          ? {
-              edge_source: outcome.patch.yourEdgeSource,
-              verdict: String(outcome.patch["icpVerdict"] ?? ""),
-            }
-          : { reason: outcome.reason }),
-      });
-    },
-    (err: unknown) => {
-      logEvent(
-        "error.swallowed",
-        { kind: "import-rederive", message_120: ((err as Error)?.message ?? "").slice(0, 120) },
-        "warn",
-      );
-    },
-  );
+  importRederive = rederiveQueueRow(getLedger(), queueId)
+    .then(
+      (outcome) => {
+        logEvent("queue.import_rederive", {
+          queue_id: queueId,
+          ok: outcome.ok,
+          ...(outcome.ok
+            ? {
+                edge_source: outcome.patch.yourEdgeSource,
+                verdict: String(outcome.patch["icpVerdict"] ?? ""),
+              }
+            : { reason: outcome.reason }),
+        });
+      },
+      (err: unknown) => {
+        logEvent(
+          "error.swallowed",
+          { kind: "import-rederive", message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+          "warn",
+        );
+      },
+    )
+    .then(() => offerImportedRow(queueId));
+}
+
+/** Company research, then offers, for an imported row. Never throws. */
+async function offerImportedRow(queueId: number): Promise<void> {
+  try {
+    const row = getLedger().getQueueRow(queueId);
+    // Research only rows still open: a sent or rejected row has no offer to write.
+    if (row && (row.status === "pending" || row.status === "approved")) {
+      await ensureQueueRowOffer(row, { research: true });
+    }
+  } catch (err) {
+    logEvent(
+      "error.swallowed",
+      { kind: "import-offer", message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+      "warn",
+    );
+  }
 }
 
 /**
