@@ -14,7 +14,14 @@
  */
 import { createHash } from "node:crypto";
 import { isPersonResearchDossier, loadConfig, logEvent } from "@oneshot-gtm/core";
-import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import {
+  callDecisions,
+  complete,
+  loadPrompt,
+  topDecisionLabels,
+  tryParseJsonObject,
+  type DecisionsChoiceQuestion,
+} from "@oneshot-gtm/intel";
 import {
   ANGLE_SEPARATOR,
   angleTextKey,
@@ -29,13 +36,14 @@ type AppConfig = ReturnType<typeof loadConfig>;
 type JsonRecord = Record<string, unknown>;
 
 /** Bump when the prompt or the lint changes: unedited offers re-derive. */
-export const OFFER_PROMPT_VERSION = "offer-v3";
+export const OFFER_PROMPT_VERSION = "offer-v4";
 
 export const OFFER_MAX = {
   offer: 140,
   steps: 260,
   evidence: 200,
   return: 120,
+  fit: 160,
   angle: 300,
 } as const;
 
@@ -60,6 +68,19 @@ export interface ProspectOffer {
   level: "researched" | "role";
   /** What the firm gets back when the job is done, and how they would count it. */
   return?: string;
+  /** The anchor it rests on (their product, or their firm) and the fact behind it. */
+  fit?: string;
+  /**
+   * The relevance judge's label (see `judgeOffers`). A `weak` offer is kept
+   * only to make up the five when too few were judged relevant.
+   */
+  relevance?: OfferRelevance;
+  /** 0–1: the probability of `relevant`, when the judge gives one. */
+  relevanceScore?: number;
+  /** One line: why the judge labelled it so. */
+  relevanceWhy?: string;
+  /** `<engine>:<model>` that judged it. */
+  relevanceClassifier?: string;
   /**
    * Reasons this offer pays back, one per touch: the draft's angle pool when
    * set (see `overlayOfferAngles` in core). Written for the active offer.
@@ -74,6 +95,8 @@ export interface ProspectOffer {
   editedBy?: "founder";
   derivedAt: string;
 }
+
+export type OfferRelevance = "relevant" | "weak" | "irrelevant";
 
 export function isProspectOffer(value: unknown): value is ProspectOffer {
   if (!value || typeof value !== "object") return false;
@@ -143,6 +166,9 @@ export function offerResearchText(target: object, dossier?: string | null): stri
   if (extra) parts.push(`ENRICHMENT:\n${clip(extra, 4_000)}`);
   return clip(parts.join("\n\n"), RESEARCH_MAX);
 }
+
+const TITLE_KEYS = ["title", "newTitle", "jobTitle"];
+const COMPANY_KEYS = ["company", "newCompany", "guestCompany", "businessName", "municipality"];
 
 function firstString(t: JsonRecord, keys: string[]): string {
   for (const k of keys) {
@@ -266,6 +292,7 @@ export function lintOffer(
     evidence: string[];
     level: ProspectOffer["level"];
     return?: string;
+    fit?: string;
   },
   research: string,
   /** The product's description (one-liner and brief). */
@@ -281,12 +308,16 @@ export function lintOffer(
   if (offer.length > OFFER_MAX.offer) flags.push("offer-too-long");
   if (steps.length > OFFER_MAX.steps) flags.push("steps-too-long");
   if (ret.length > OFFER_MAX.return) flags.push("return-too-long");
+  const fit = (parts.fit ?? "").trim();
+  if (fit.length > OFFER_MAX.fit) flags.push("fit-too-long");
   if (isAwarenessOffer(offer)) flags.push("offer-not-execution");
   if (parts.level === "researched" && !ret) flags.push("no-return");
   const both = `${offer} ${steps} ${ret}`;
   for (const [flag, pattern] of BANNED) if (pattern.test(both)) flags.push(flag);
   const haystack = normalizeForMatch(research);
-  for (const n of both.match(/\d[\d,.]*/g) ?? []) {
+  // The fit is the writer's reasoning, shown to the founder only: its
+  // numbers must still come from the research.
+  for (const n of `${both} ${fit}`.match(/\d[\d,.]*/g) ?? []) {
     if (!research.includes(n.replace(/[.,]$/, ""))) flags.push(`number-not-in-research:${n}`);
   }
   if (parts.level === "researched") {
@@ -322,6 +353,7 @@ interface RawOffer {
   stage?: unknown;
   level?: unknown;
   return?: unknown;
+  fit?: unknown;
   skip?: unknown;
 }
 
@@ -337,6 +369,7 @@ function readRaw(raw: RawOffer): Omit<ProspectOffer, "version" | "inputHash" | "
         .slice(0, 4)
     : [];
   const ret = typeof raw.return === "string" ? raw.return.trim().replace(/[.]+$/, "") : "";
+  const fit = typeof raw.fit === "string" ? raw.fit.trim().replace(/[.]+$/, "") : "";
   return {
     offer,
     steps,
@@ -344,6 +377,7 @@ function readRaw(raw: RawOffer): Omit<ProspectOffer, "version" | "inputHash" | "
     stage: typeof raw.stage === "string" ? raw.stage.trim().slice(0, 60) : "",
     level: raw.level === "role" ? "role" : "researched",
     ...(ret ? { return: ret } : {}),
+    ...(fit ? { fit } : {}),
   };
 }
 
@@ -381,19 +415,284 @@ function offerUserMessage(input: DeriveOfferInput, cfg: AppConfig, research: str
     ...(cfg.pilotOffer?.trim() ? [`OFFER TERMS: ${cfg.pilotOffer.trim()}`] : []),
     `PLAY: ${input.playName}`,
     `PROSPECT: ${firstString(t, ["name", "founderName", "guestName", "hostName"])}`,
-    `TITLE: ${firstString(t, ["title", "newTitle", "jobTitle"])}`,
-    `COMPANY: ${firstString(t, ["company", "newCompany", "guestCompany", "businessName", "municipality"])}`,
+    `TITLE: ${firstString(t, TITLE_KEYS)}`,
+    `COMPANY: ${firstString(t, COMPANY_KEYS)}`,
     `RESEARCH:\n${research || "(none)"}`,
   ].join("\n\n");
 }
 
+type DraftOffer = Omit<ProspectOffer, "version" | "inputHash" | "derivedAt">;
+type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
+
+/** One offer's relevance verdict. */
+export interface OfferJudgement {
+  label: OfferRelevance;
+  /** 0–1: the probability of `relevant`, when the engine gives one. */
+  score: number | null;
+  why: string;
+  /** `<engine>:<model>`. */
+  classifier: string;
+  /** `relevant` with at least the configured confidence. */
+  pass: boolean;
+}
+
+const OFFER_RELEVANCE_LABELS: readonly OfferRelevance[] = ["relevant", "weak", "irrelevant"];
+const DEFAULT_JUDGE_MIN_CONFIDENCE = 0.5;
+// The judge checks `fit` against RESEARCH, so it sees what the writer saw.
+const JUDGE_RESEARCH_MAX = RESEARCH_MAX;
+const JUDGE_WHY_MAX = 140;
+
+/** The decisions-engine criteria for one offer's relevance. */
+export function offerRelevanceCriteria(): Record<OfferRelevance, string> {
+  return {
+    relevant:
+      "A real job for this firm at its stage, owned by or close to this person's role, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
+    weak: "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm.",
+    irrelevant:
+      "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.",
+  };
+}
+
+function isOfferRelevance(v: unknown): v is OfferRelevance {
+  return typeof v === "string" && (OFFER_RELEVANCE_LABELS as readonly string[]).includes(v);
+}
+
+function judgeMinConfidence(cfg: AppConfig): number {
+  const v = cfg.offerJudge?.minConfidence;
+  return typeof v === "number" && v >= 0 && v <= 1 ? v : DEFAULT_JUDGE_MIN_CONFIDENCE;
+}
+
+function describeOffer(o: Pick<ProspectOffer, "offer" | "return" | "fit">): string {
+  return [
+    `offer: ${o.offer}`,
+    ...(o.return?.trim() ? [`returns: ${o.return.trim()}`] : []),
+    ...(o.fit?.trim() ? [`fit: ${o.fit.trim()}`] : []),
+  ].join("\n");
+}
+
+function judgeState(
+  offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
+  research: string,
+  who: { company: string; title: string },
+): string {
+  return [
+    `COMPANY: ${who.company}`,
+    `TITLE: ${who.title}`,
+    `RESEARCH:\n${clip(research, JUDGE_RESEARCH_MAX) || "(none)"}`,
+    `OFFERS:\n${offers.map((o, i) => `${i + 1}.\n${describeOffer(o)}`).join("\n\n")}`,
+  ].join("\n\n");
+}
+
+async function judgeWithDecisions(
+  offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
+  state: string,
+  model: string,
+  key: string,
+  min: number,
+  fetchImpl: typeof fetch | undefined,
+): Promise<OfferJudgement[]> {
+  const criteria = offerRelevanceCriteria();
+  const questions: Record<string, DecisionsChoiceQuestion> = {};
+  offers.forEach((o, i) => {
+    questions[`offer_${i + 1}`] = {
+      type: "choice",
+      instructions:
+        `A founder wants to offer this prospect's firm a job their product would carry to completion. ` +
+        `Judge offer ${i + 1} in the state on its own: is it a real job for this firm and this person? ` +
+        `A market the firm sells into is not a need of the firm.\nOffer ${i + 1}:\n${describeOffer(o)}`,
+      criteria,
+    };
+  });
+  const res = await callDecisions({
+    model,
+    key,
+    questions,
+    state,
+    ...(fetchImpl ? { fetchImpl } : {}),
+  });
+  const classifier = `decisions:${res.model}`;
+  logEvent("prospect_offer.judged", {
+    engine: "decisions",
+    count: offers.length,
+    cost_micros: res.costUsd == null ? null : Math.round(res.costUsd * 1_000_000),
+  });
+  return offers.map((_, i) => {
+    const a = res.answers[`offer_${i + 1}`]!;
+    const label = a.choice as OfferRelevance;
+    const p = a.probabilities?.["relevant"];
+    const score =
+      typeof p === "number"
+        ? p
+        : label === "relevant" && a.confidence != null
+          ? a.confidence
+          : null;
+    return {
+      label,
+      score,
+      why: topDecisionLabels(a.probabilities) || label,
+      classifier,
+      pass: label === "relevant" && (a.confidence ?? score ?? 0) >= min,
+    };
+  });
+}
+
+async function judgeWithLlm(
+  offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
+  state: string,
+  cfg: AppConfig,
+): Promise<Array<OfferJudgement | null>> {
+  const res = await complete({
+    messages: [
+      { role: "system", content: loadPrompt("prospect-offer-judge") },
+      { role: "user", content: state },
+    ],
+    temperature: 0,
+    maxTokens: 1500,
+  });
+  const parsed = tryParseJsonObject<{ judgements?: unknown }>(res.content, {});
+  const list = Array.isArray(parsed.judgements) ? parsed.judgements : [];
+  const classifier = `llm:${cfg.llmModel ?? res.model}`;
+  const byIndex = new Map<number, { label: OfferRelevance; why: string }>();
+  list.forEach((raw, position) => {
+    if (!raw || typeof raw !== "object") return;
+    const j = raw as { offer?: unknown; label?: unknown; why?: unknown };
+    if (!isOfferRelevance(j.label)) return;
+    const n = typeof j.offer === "number" && Number.isInteger(j.offer) ? j.offer - 1 : position;
+    if (n < 0 || n >= offers.length || byIndex.has(n)) return;
+    const why = typeof j.why === "string" ? clip(j.why.trim(), JUDGE_WHY_MAX) : "";
+    byIndex.set(n, { label: j.label, why: why || j.label });
+  });
+  logEvent("prospect_offer.judged", {
+    engine: "llm",
+    count: offers.length,
+    judged: byIndex.size,
+  });
+  return offers.map((_, i) => {
+    const j = byIndex.get(i);
+    return j ? { ...j, score: null, classifier, pass: j.label === "relevant" } : null;
+  });
+}
+
 /**
- * Write up to OFFER_COUNT offers, ranked by return, in one call. Each is
- * linted on its own; the ones that fail get one repair round together. The
- * ones that pass are kept in the model's order. Empty when there is no brief,
- * the model skips (nothing at all is known), or nothing passes.
+ * Judge each offer's relevance to this firm and this person, with the
+ * workspace's `offerJudge` engine. `decisions` asks one choice question per
+ * offer in one request, and falls back to the `llm` judge prompt on a missing
+ * key or model or any failure, like the reply classifier. One entry per offer;
+ * null where no engine gave that offer a verdict. Null overall when no engine
+ * ran at all: the caller keeps the offers unjudged rather than lose them.
  */
-export async function deriveOffers(input: DeriveOfferInput): Promise<ProspectOffer[]> {
+export async function judgeOffers(
+  offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
+  research: string,
+  row: object,
+  cfg: AppConfig,
+  opts: { fetchImpl?: typeof fetch } = {},
+): Promise<Array<OfferJudgement | null> | null> {
+  if (offers.length === 0) return [];
+  const t = row as JsonRecord;
+  const state = judgeState(offers, research, {
+    company: firstString(t, COMPANY_KEYS),
+    title: firstString(t, TITLE_KEYS),
+  });
+  if (cfg.offerJudge?.engine === "decisions") {
+    const model = cfg.offerJudge.model?.trim();
+    const key = process.env["OPENROUTER_API_KEY"]?.trim();
+    if (model && key) {
+      try {
+        return await judgeWithDecisions(
+          offers,
+          state,
+          model,
+          key,
+          judgeMinConfidence(cfg),
+          opts.fetchImpl,
+        );
+      } catch (err) {
+        logEvent(
+          "prospect_offer.judge_fallback",
+          {
+            reason: "decisions_failed",
+            message_120: ((err as Error)?.message ?? "").slice(0, 120),
+          },
+          "warn",
+        );
+      }
+    } else {
+      logEvent(
+        "prospect_offer.judge_fallback",
+        { reason: !model ? "no_model" : "no_openrouter_key" },
+        "warn",
+      );
+    }
+  }
+  try {
+    return await judgeWithLlm(offers, state, cfg);
+  } catch (err) {
+    logEvent(
+      "error.swallowed",
+      { kind: "prospect-offer-judge", message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+    return null;
+  }
+}
+
+function withJudgement(o: DraftOffer, j: OfferJudgement | null): DraftOffer {
+  if (!j) return o;
+  return {
+    ...o,
+    relevance: j.label,
+    ...(j.score != null ? { relevanceScore: Math.round(j.score * 1000) / 1000 } : {}),
+    relevanceWhy: j.why,
+    relevanceClassifier: j.classifier,
+  };
+}
+
+/**
+ * Lint each offer in a reply, dropping failures and repeats. The ones that
+ * pass come back in the model's order; `failed` names what was wrong.
+ */
+function lintReply(
+  content: string,
+  research: string,
+  product: string,
+  oneLiner: string,
+  seen: Set<string>,
+): { kept: DraftOffer[]; failed: string[]; skip: boolean } {
+  const raws = readRawList(content);
+  if (raws === "skip") return { kept: [], failed: [], skip: true };
+  const kept: DraftOffer[] = [];
+  const failed: string[] = [];
+  raws.forEach((raw, i) => {
+    const parsed = readRaw(raw);
+    if (!parsed) return;
+    const flags = lintOffer(parsed, research, product, oneLiner);
+    const key = angleTextKey(parsed.offer);
+    if (flags.length > 0) {
+      failed.push(`offer ${i + 1}: ${flags.join(", ")}`);
+      return;
+    }
+    if (seen.has(key)) return;
+    seen.add(key);
+    kept.push(parsed);
+  });
+  return { kept, failed, skip: false };
+}
+
+/**
+ * Write OFFER_COUNT offers, ranked by return, in one call. Each is linted on
+ * its own; the ones that fail get one repair round together. The ones that
+ * pass are judged for relevance (`judgeOffers`): those the judge does not
+ * pass are dropped, and one replacement round asks for as many new ones,
+ * told why the dropped ones failed. Passing offers keep the model's order.
+ * When still short of five, the best-scored `weak` ones fill the places,
+ * tagged weak; an `irrelevant` or lint-failing offer never does. Empty when
+ * there is no brief, the model skips (nothing at all is known), or nothing
+ * passes.
+ */
+export async function deriveOffers(
+  input: DeriveOfferInput & { fetchImpl?: typeof fetch },
+): Promise<ProspectOffer[]> {
   if (!playMakesOffer(input.playName)) return [];
   const cfg = input.cfg ?? loadConfig();
   // The steps may claim only what the product brief says the product does.
@@ -401,52 +700,55 @@ export async function deriveOffers(input: DeriveOfferInput): Promise<ProspectOff
   if (!cfg.productBrief?.trim()) return [];
   const research = offerResearchText(input.target as JsonRecord, input.dossier);
   const inputHash = offerInputHash(research, cfg);
-  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+  const messages: ChatMessage[] = [
     { role: "system", content: loadPrompt("prospect-offer") },
     { role: "user", content: offerUserMessage(input, cfg, research) },
   ];
   const product = `${cfg.productOneLiner ?? ""}\n${cfg.productBrief}`;
-  const kept: Array<Omit<ProspectOffer, "version" | "inputHash" | "derivedAt">> = [];
+  const oneLiner = cfg.productOneLiner ?? "";
+  let kept: DraftOffer[] = [];
   const seen = new Set<string>();
+  let lastReply = "";
   try {
     for (let round = 0; round < 2; round++) {
       const res = await complete({ messages, temperature: 0.4, maxTokens: 3000 });
-      const raws = readRawList(res.content);
-      if (raws === "skip") {
+      lastReply = res.content;
+      const out = lintReply(res.content, research, product, oneLiner, seen);
+      if (out.skip) {
         logEvent("prospect_offer.skipped", { play: input.playName, round });
         break;
       }
-      const failed: string[] = [];
-      raws.forEach((raw, i) => {
-        const parsed = readRaw(raw);
-        if (!parsed) return;
-        const flags = lintOffer(parsed, research, product, cfg.productOneLiner ?? "");
-        const key = angleTextKey(parsed.offer);
-        if (flags.length > 0) {
-          failed.push(`offer ${i + 1}: ${flags.join(", ")}`);
-          return;
-        }
-        if (seen.has(key)) return;
-        seen.add(key);
-        kept.push(parsed);
-      });
-      if (kept.length >= OFFER_COUNT || failed.length === 0) break;
+      kept.push(...out.kept);
+      if (kept.length >= OFFER_COUNT || out.failed.length === 0) break;
       logEvent("prospect_offer.lint_failed", {
         play: input.playName,
         round,
         kept: kept.length,
-        flags_200: failed.join("; ").slice(0, 200),
+        flags_200: out.failed.join("; ").slice(0, 200),
       });
       messages.push(
         { role: "assistant", content: res.content },
         {
           role: "user",
           content:
-            `These offers cannot be used: ${failed.join("; ")}. Return all five again, best return ` +
+            `These offers cannot be used: ${out.failed.join("; ")}. Return all five again, best return ` +
             `first, each within every rule, or {"skip": true, "why": "..."} if nothing supports ` +
             `one. JSON only.`,
         },
       );
+    }
+    kept = kept.slice(0, OFFER_COUNT);
+    if (kept.length > 0) {
+      kept = await judgeAndReplace(kept, {
+        input,
+        cfg,
+        research,
+        product,
+        oneLiner,
+        seen,
+        messages,
+        lastReply,
+      });
     }
   } catch (err) {
     logEvent(
@@ -471,10 +773,113 @@ export async function deriveOffers(input: DeriveOfferInput): Promise<ProspectOff
       play: input.playName,
       count: offers.length,
       level: offers[0]!.level,
+      weak: offers.filter((o) => o.relevance === "weak").length,
       offer_120: offers[0]!.offer.slice(0, 120),
     });
   }
   return offers;
+}
+
+/**
+ * The judge's pass over the linted offers, and the one replacement round.
+ * Offers the judge gave no verdict are kept as they are: a judge outage
+ * never empties a row.
+ */
+async function judgeAndReplace(
+  kept: DraftOffer[],
+  ctx: {
+    input: DeriveOfferInput & { fetchImpl?: typeof fetch };
+    cfg: AppConfig;
+    research: string;
+    product: string;
+    oneLiner: string;
+    seen: Set<string>;
+    messages: ChatMessage[];
+    lastReply: string;
+  },
+): Promise<DraftOffer[]> {
+  const { input, cfg, research } = ctx;
+  const judgeOpts = input.fetchImpl ? { fetchImpl: input.fetchImpl } : {};
+  const verdicts = await judgeOffers(kept, research, input.target, cfg, judgeOpts);
+  if (!verdicts) return kept;
+  const passing: DraftOffer[] = [];
+  const fill: Array<{ offer: DraftOffer; score: number | null }> = [];
+  const dropped: string[] = [];
+  kept.forEach((o, i) => {
+    const j = verdicts[i] ?? null;
+    const judged = withJudgement(o, j);
+    if (!j || j.pass) {
+      passing.push(judged);
+      return;
+    }
+    dropped.push(`"${o.offer}": ${j.label}, ${j.why}`);
+    if (j.label !== "irrelevant") fill.push({ offer: judged, score: j.score });
+  });
+  if (dropped.length > 0) {
+    logEvent("prospect_offer.judge_dropped", {
+      play: input.playName,
+      dropped: dropped.length,
+      kept: passing.length,
+      why_200: dropped.join("; ").slice(0, 200),
+    });
+  }
+  const missing = OFFER_COUNT - passing.length;
+  if (dropped.length > 0 && missing > 0) {
+    const keptList = passing.map((o) => `- ${o.offer}`).join("\n");
+    ctx.messages.push(
+      { role: "assistant", content: ctx.lastReply },
+      {
+        role: "user",
+        content:
+          `A relevance check dropped these offers: ${dropped.join("; ")}. ` +
+          `Write exactly ${missing} new ${missing === 1 ? "offer" : "offers"}, best return first, ` +
+          `each a different job from ${keptList ? `the ones kept:\n${keptList}\n` : "the dropped ones, "}` +
+          `each resting on an anchor (their product or their firm) and a fact in RESEARCH, ` +
+          `never on an industry word alone, and within every rule. ` +
+          `Return {"offers": [...]} with the same fields. JSON only.`,
+      },
+    );
+    try {
+      const res = await complete({ messages: ctx.messages, temperature: 0.4, maxTokens: 3000 });
+      const out = lintReply(res.content, research, ctx.product, ctx.oneLiner, ctx.seen);
+      const fresh = out.kept.slice(0, missing);
+      if (out.failed.length > 0) {
+        logEvent("prospect_offer.lint_failed", {
+          play: input.playName,
+          round: "replacement",
+          kept: fresh.length,
+          flags_200: out.failed.join("; ").slice(0, 200),
+        });
+      }
+      if (fresh.length > 0) {
+        const more = await judgeOffers(fresh, research, input.target, cfg, judgeOpts);
+        fresh.forEach((o, i) => {
+          const j = more?.[i] ?? null;
+          const judged = withJudgement(o, j);
+          if (!j || j.pass) passing.push(judged);
+          else if (j.label !== "irrelevant") fill.push({ offer: judged, score: j.score });
+        });
+      }
+    } catch (err) {
+      logEvent(
+        "error.swallowed",
+        {
+          kind: "prospect-offer-replace",
+          play: input.playName,
+          message_120: ((err as Error).message ?? "").slice(0, 120),
+        },
+        "warn",
+      );
+    }
+  }
+  if (passing.length >= OFFER_COUNT) return passing.slice(0, OFFER_COUNT);
+  // Fill with the best-scored weak ones; equal (or no) scores keep the order written.
+  const fillers = fill
+    .toSorted((a, b) => (b.score ?? -1) - (a.score ?? -1))
+    .slice(0, OFFER_COUNT - passing.length)
+    // Each is already a copy (withJudgement), so tagging it in place is safe.
+    .map(({ offer }) => Object.assign(offer, { relevance: "weak" as const }));
+  return [...passing, ...fillers];
 }
 
 /** Flags for one written angle, keyed on its text alone. */

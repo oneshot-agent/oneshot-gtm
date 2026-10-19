@@ -44,11 +44,18 @@ vi.mock("@oneshot-gtm/core", async () => {
       clearQueueDraft: (id: number) => {
         calls.cleared.push(id);
       },
+      getQueueRow: (id: number) => ({
+        id,
+        play_name: "luma-events",
+        status: "pending",
+        payload_json: "{}",
+      }),
     }),
   };
 });
 
 const rederived: number[] = [];
+const offered: Array<{ id: number; opts: unknown; afterRederive: boolean }> = [];
 let rederiveGate: Promise<void> = Promise.resolve();
 vi.mock("@oneshot-gtm/find", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/find")>("@oneshot-gtm/find");
@@ -58,6 +65,10 @@ vi.mock("@oneshot-gtm/find", async () => {
       await rederiveGate;
       rederived.push(id);
       return { ok: true, patch: { yourEdgeSource: "none" } };
+    },
+    ensureQueueRowOffer: async (row: { id: number }, opts: unknown) => {
+      offered.push({ id: row.id, opts, afterRederive: rederived.includes(row.id) });
+      return row;
     },
   };
 });
@@ -93,6 +104,7 @@ beforeEach(() => {
   calls.payload.length = 0;
   calls.cleared.length = 0;
   rederived.length = 0;
+  offered.length = 0;
   rederiveGate = Promise.resolve();
 });
 
@@ -108,6 +120,12 @@ describe("POST /api/queue/import", () => {
     release();
     await importRederiveSettled();
     expect(rederived).toEqual([51]);
+  });
+
+  it("then reads the company's pages and writes offers, in the background", async () => {
+    await importQueueRowRoute(req(good));
+    await importRederiveSettled();
+    expect(offered).toEqual([{ id: 51, opts: { research: true }, afterRederive: true }]);
   });
 
   it("re-derives a re-opened row too", async () => {

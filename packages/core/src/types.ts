@@ -346,6 +346,19 @@ export interface ReplyClassifierConfig {
   minConfidence?: number;
 }
 
+/**
+ * How written offers are judged for relevance to the prospect's firm. Same
+ * shape as `ReplyClassifierConfig`: `decisions` names a decisions model, with
+ * the `llm` engine as fallback on any failure.
+ */
+export interface OfferJudgeConfig {
+  engine: "llm" | "decisions";
+  /** Decisions-engine model id (config data only; required for `decisions`). */
+  model?: string;
+  /** 0–1. An offer passes when `relevant` wins with at least this confidence. Default 0.5. */
+  minConfidence?: number;
+}
+
 export interface OneShotConfig {
   walletMode: "cdp" | "private-key";
   llmProvider: "openrouter" | "openai" | "anthropic";
@@ -415,6 +428,13 @@ export interface OneShotConfig {
    * never drive a positive action. Optional: absent means `{ engine: "llm" }`.
    */
   replyClassifier?: ReplyClassifierConfig;
+  /**
+   * How each written prospect offer is judged for relevance before it is
+   * kept (`judgeOffers` in plays). `llm` is the judge prompt on `llmModel`;
+   * `decisions` asks a decisions model one question per offer, falling back
+   * to `llm` on any failure. Optional: absent means `{ engine: "llm" }`.
+   */
+  offerJudge?: OfferJudgeConfig;
   /** Founder's résumé / credentials. The founder-trust social-proof beat. */
   founderCredentials: string | null;
   /** Products you've shipped. The peer-founder social-proof beat. */

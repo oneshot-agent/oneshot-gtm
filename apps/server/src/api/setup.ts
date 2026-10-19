@@ -598,6 +598,14 @@ export function mergeSetupConfig(
               : validateReplyClassifier(body.replyClassifier),
         }
       : {}),
+    ...(body.offerJudge !== undefined || current.offerJudge !== undefined
+      ? {
+          offerJudge:
+            body.offerJudge === undefined
+              ? current.offerJudge
+              : validateOfferJudge(body.offerJudge),
+        }
+      : {}),
     timezone: mergeTimeZone(body.timezone, current.timezone),
     dailySpendCeilingUsd:
       body.dailySpendCeilingUsd === undefined
@@ -656,15 +664,27 @@ function mergeString(incoming: string | undefined, current: string | null): stri
 export function validateReplyClassifier(
   value: SetupRequest["replyClassifier"],
 ): OneShotConfig["replyClassifier"] {
+  return validateEngineConfig("replyClassifier", value);
+}
+
+/** Offer-judge merge: the same rules as the reply classifier's. */
+export function validateOfferJudge(value: SetupRequest["offerJudge"]): OneShotConfig["offerJudge"] {
+  return validateEngineConfig("offerJudge", value);
+}
+
+function validateEngineConfig(
+  field: "replyClassifier" | "offerJudge",
+  value: SetupRequest["replyClassifier"],
+): { engine: "llm" | "decisions"; model?: string; minConfidence?: number } | undefined {
   if (value === null || value === undefined) return undefined;
   if (value.engine !== "llm" && value.engine !== "decisions") {
     throw new SetupValidationError(
-      `invalid replyClassifier.engine '${String(value.engine)}' — must be "llm" or "decisions"`,
+      `invalid ${field}.engine '${String(value.engine)}' — must be "llm" or "decisions"`,
     );
   }
   const model = typeof value.model === "string" ? value.model.trim() : "";
   if (value.engine === "decisions" && !model) {
-    throw new SetupValidationError(`replyClassifier.engine "decisions" needs a model`);
+    throw new SetupValidationError(`${field}.engine "decisions" needs a model`);
   }
   if (
     value.minConfidence !== undefined &&
@@ -674,7 +694,7 @@ export function validateReplyClassifier(
       value.minConfidence > 1)
   ) {
     throw new SetupValidationError(
-      `invalid replyClassifier.minConfidence '${String(value.minConfidence)}' — must be a number from 0 to 1`,
+      `invalid ${field}.minConfidence '${String(value.minConfidence)}' — must be a number from 0 to 1`,
     );
   }
   return {
