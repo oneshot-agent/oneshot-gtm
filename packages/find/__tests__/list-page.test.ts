@@ -784,3 +784,83 @@ describe("verify: a third-party list checked against the company's own evidence"
     expect(verifyCalls).toHaveLength(0);
   });
 });
+
+describe("inline companies: a list written in the config", () => {
+  const titles = ["Head of AI Platform", "CTO"];
+  const INLINE = {
+    signal: "named target account",
+    companies: [
+      { name: "Alpha", domain: "alpha.example" },
+      { name: "Beta", domain: "beta.example", signal: "renewing this quarter" },
+      { name: "Alpha again", domain: "alpha.example" },
+    ],
+  };
+  const inlineBase = { ...base, sources: [INLINE] };
+
+  it("works the listed companies with no fetch, no extraction and no verify", async () => {
+    const out = await runListPageFinder(inlineBase);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(webReads).toBe(0);
+    expect(llmCalls).toBe(0);
+    expect(verifyCalls).toHaveLength(0);
+    expect(out.candidates).toBe(2);
+    expect(out.perSource).toEqual([
+      { source: "inline:named-target-account", label: "named target account", records: 2 },
+    ]);
+    expect(out.enqueued).toBe(2);
+    const row = enqueued[0]!;
+    expect(row.dedupeKey).toBe("list-page:alpha.example");
+    expect(row.source).toBe("find:list-page:named-target-account");
+    expect(row.payload).toMatchObject({
+      company: "Alpha",
+      companyDomain: "alpha.example",
+      signal: "named target account",
+    });
+    expect(row.payload).not.toHaveProperty("sourceUrl");
+    expect(row.payload).not.toHaveProperty("signalContext");
+  });
+
+  it("a company's own signal replaces the source's on its row", async () => {
+    await runListPageFinder(inlineBase);
+    const beta = enqueued.find((r) => r.payload["company"] === "Beta")!;
+    expect(beta.payload["signal"]).toBe("renewing this quarter");
+    expect(beta.dedupeKey).toBe("list-page:beta.example");
+    expect(contactCalls[1]).toMatchObject({
+      companyDomain: "beta.example",
+      person: { evidence: "renewing this quarter" },
+    });
+  });
+
+  it("searches each domain for the wanted titles, like a page's companies", async () => {
+    peopleSearchResult = {
+      results: [person("Ada AI", "Head of AI Platform", "ada@alpha.example")],
+    };
+    await runListPageFinder({ ...inlineBase, jobTitles: titles });
+    expect(peopleSearchCalls.map((c) => c["companyDomains"])).toEqual([
+      ["alpha.example"],
+      ["beta.example"],
+    ]);
+    expect(peopleSearchCalls[0]).toMatchObject({ jobTitles: titles });
+    expect(contactCalls[0]).toMatchObject({ fullName: "Ada AI", companyDomain: "alpha.example" });
+  });
+
+  it("dedupes against a page source and the queue, and remembers a title miss", async () => {
+    queued.add("list-page:beta.example");
+    const withAcme = {
+      ...INLINE,
+      companies: [...INLINE.companies, { name: "Acme Inc", domain: "acme.example" }],
+    };
+    const out = await runListPageFinder({
+      ...base,
+      sources: [SOURCE, withAcme],
+      jobTitles: titles,
+    });
+    // Acme, Beta Corp and Gamma from the page, Alpha inline. Inline Beta is
+    // already queued and inline Acme was claimed by the page first.
+    expect(out.droppedDuplicate).toBe(2);
+    expect(out.droppedRole).toBe(4);
+    expect(
+      [...cache.keys()].some((k) => k.startsWith("list-page-miss:list-page:alpha.example:")),
+    ).toBe(true);
+  });
+});

@@ -218,4 +218,6 @@ export interface ListPageCompany {
   context: string | null;
   /** People the page names for the company: kept as context, never emailed. */
   contacts: Array<{ name?: string; github?: string; linkedin?: string }>;
+  /** This company's own signal, set only by an inline list; the source's otherwise. */
+  signal?: string;
 }

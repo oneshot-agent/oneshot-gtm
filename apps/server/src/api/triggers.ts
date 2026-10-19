@@ -18,6 +18,7 @@ import {
   finderApprovalHealth,
   getTriggerRunningSince,
   isTriggerRunning,
+  listPageSourceErrors,
   storedTriggerConfig,
   TRIGGERS,
   type Readiness,
@@ -226,6 +227,15 @@ export async function setTriggerConfigRoute(
   const continuation = (body.config as Record<string, unknown>)["linkedinContinuation"];
   if (continuation !== undefined && typeof continuation !== "boolean") {
     return jsonResponse({ error: "linkedinContinuation must be true or false" }, 400, req);
+  }
+  // A refusal: a list-page source that cannot run (no domain on an inline
+  // company, both `url` and `companies`) would otherwise be dropped at run
+  // time, and the founder would never learn which entry was left out.
+  if (name === "list-page") {
+    const errors = listPageSourceErrors(body.config as Record<string, unknown>);
+    if (errors.length > 0) {
+      return jsonResponse({ error: `list-page sources: ${errors.join("; ")}`, errors }, 400, req);
+    }
   }
   const ledger = getLedger();
   const stored = ledger.getTrigger(name);

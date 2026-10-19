@@ -246,3 +246,34 @@ describe("setTriggerConfigRoute — angleAssignment", () => {
     expect(body.warnings.some((w) => w.includes("angleAssignment 'arm'"))).toBe(true);
   });
 });
+
+describe("setTriggerConfigRoute — list-page sources", () => {
+  const route = (config: unknown) => setTriggerConfigRoute(req({ config }), { name: "list-page" });
+
+  it("saves an inline company list", async () => {
+    const res = await route({
+      sources: [
+        {
+          signal: "named target account",
+          companies: [{ name: "Alpha", domain: "https://www.alpha.example/" }],
+        },
+      ],
+    });
+    expect(res.status).toBe(200);
+    expect(upserts).toHaveLength(1);
+  });
+
+  it("refuses a source it cannot run, naming the entry, and saves nothing", async () => {
+    const res = await route({
+      sources: [{ signal: "named target account", companies: [{ name: "Beta" }] }],
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; errors: string[] };
+    expect(body.errors).toEqual([
+      "sources[0].companies[0] (Beta): `domain` is required (the company's own site, e.g. alpha.example)",
+    ]);
+    expect(body.error).toContain("sources[0].companies[0] (Beta)");
+    expect(upserts).toHaveLength(0);
+    expect(configWrites).toHaveLength(0);
+  });
+});
