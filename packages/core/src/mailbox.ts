@@ -757,7 +757,11 @@ export async function sendMailboxReply(
   }
 }
 
-/** A new (non-reply) email sent straight through a mailbox's own SMTP. */
+/**
+ * A new email (not a reply to a stored inbound message) sent straight through
+ * a mailbox's own SMTP. A cadence follow-up may still go into the thread of
+ * the first email it sent (`inReplyTo`).
+ */
 export interface MailboxInitialInput {
   identityId: string;
   to: string;
@@ -769,6 +773,10 @@ export interface MailboxInitialInput {
   messageId: string;
   /** Already resolved by the caller; looked up from `identityId` otherwise. */
   connection?: MailboxConnection;
+  /** Sent into an earlier email's thread: the Message-ID it answers. */
+  inReplyTo?: string;
+  /** The References chain, oldest first (defaults to `inReplyTo` alone). */
+  references?: string[];
 }
 
 /**
@@ -790,6 +798,12 @@ export async function sendMailboxInitial(
     text: input.text,
     html: input.html,
     messageId: input.messageId,
+    ...(input.inReplyTo
+      ? {
+          inReplyTo: input.inReplyTo,
+          references: input.references?.length ? input.references : [input.inReplyTo],
+        }
+      : {}),
     date,
   });
   const sentCopySaved = await saveSentCopy(connection, mime, input.messageId, date);

@@ -485,6 +485,23 @@ export function opensWithOffer(body: string, offer: string): boolean {
   return shared >= 2;
 }
 
+/**
+ * A sign-off for a subject ("last note", "closing the loop"): it says the
+ * sequence is ending instead of what the email is about.
+ */
+const SIGNOFF_SUBJECT =
+  /\b(?:last (?:note|try)|closing (?:the loop|(?:this |it )?out)|moving on|following up)\b/i;
+
+/**
+ * The subject checks a threaded follow-up skips: its subject is the first
+ * email's ("Re: <first subject>"), not drafted, so a redraft cannot fix it.
+ */
+export const THREADED_SUBJECT_FLAGS: readonly string[] = [
+  "subject-too-long",
+  "subject-shouty",
+  "signoff-subject",
+];
+
 export function lintEmail(
   subject: string,
   body: string,
@@ -499,12 +516,15 @@ export function lintEmail(
    * the checks on the model's own writing (punctuation, emoji, stock phrases,
    * exclamations) skip it, since it is the founder's text, kept as written.
    * The budgets and the opening still read the whole body.
+   * `threadedSubject`: the subject is the first email's, sent as a reply in
+   * its thread; the subject checks in `THREADED_SUBJECT_FLAGS` are skipped.
    */
   opts: {
     followUp?: boolean;
     demoDay?: DemoDay | null;
     offer?: string | null;
     protect?: readonly string[];
+    threadedSubject?: boolean;
   } = {},
 ): string[] {
   const flags: string[] = [];
@@ -516,8 +536,11 @@ export function lintEmail(
     else if (!opensWithOffer(body, opts.offer)) flags.push("opens-without-offer");
   }
   if (subject.length === 0) flags.push("empty-subject");
-  if (subject.length > 60) flags.push("subject-too-long");
-  if (subjectShouty(subject)) flags.push("subject-shouty");
+  if (!opts.threadedSubject) {
+    if (subject.length > 60) flags.push("subject-too-long");
+    if (subjectShouty(subject)) flags.push("subject-shouty");
+    if (SIGNOFF_SUBJECT.test(subject)) flags.push("signoff-subject");
+  }
   if (body.length === 0) flags.push("empty-body");
   // A sentence-budgeted format (brief) excludes a standalone greeting from
   // both budgets; every other draft counts words exactly as before.
@@ -1182,6 +1205,8 @@ const WRITING_REPAIRS: Record<string, string> = {
   "empty-body": "Write a non-empty body grounded in the supplied context.",
   "subject-too-long": "Shorten the subject to at most 60 characters.",
   "subject-shouty": "Use a lowercase subject; preserve names and identifiers accurately.",
+  "signoff-subject":
+    "Replace the subject with 2-5 lowercase words naming the offer or their work, in their terms. Never a sign-off such as ending, closing or following up.",
   "body-too-long": "Shorten the body to the supplied word budget by cutting whole sentences.",
   "too-many-sentences":
     "Cut sentences to fit the supplied sentence budget; do not join them to evade the check.",
@@ -1256,6 +1281,7 @@ export async function repairWritingLints(
     (f) =>
       f.startsWith("subject-") ||
       f === "empty-subject" ||
+      f === "signoff-subject" ||
       (f === "public-record-leverage" && citesPublicRecordLeverage(draft.subject)),
   );
   messages.push(

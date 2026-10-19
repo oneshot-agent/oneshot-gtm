@@ -1859,7 +1859,8 @@ function buildConfig(): Record<string, unknown> {
 function subjectFor(p: DemoPerson, step: number): string {
   if (step === 0) return `${p.company} + background job traces`;
   if (step === 1) return `Re: ${p.company} + background job traces`;
-  return `Closing the loop, ${p.name.split(" ")[0] ?? p.name}`;
+  // The last email starts a new thread, its subject naming the offer.
+  return "traces for your background jobs";
 }
 
 function bodyFor(p: DemoPerson, step: number): string {

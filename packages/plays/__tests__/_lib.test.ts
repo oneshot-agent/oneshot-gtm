@@ -94,6 +94,29 @@ describe("lintEmail — humanizer canon", () => {
     expect(lintEmail("hi", "First!! Second!! Sam")).toContain("excess-exclamations");
   });
 
+  it.each([
+    "last note",
+    "closing the loop",
+    "Moving on",
+    "closing this out",
+    "following up on alpha",
+  ])("flags a sign-off subject: %s", (subject) => {
+    expect(lintEmail(subject, "Body. Sam")).toContain("signoff-subject");
+  });
+
+  it("passes a subject that names the offer", () => {
+    expect(lintEmail("alpha pipeline audit", "Body. Sam")).not.toContain("signoff-subject");
+  });
+
+  it("skips the subject checks on a threaded follow-up's subject", () => {
+    const subject = `Re: ${"FOLLOWING UP ".repeat(6)}`;
+    const opts = { threadedSubject: true };
+    for (const flag of ["subject-too-long", "subject-shouty", "signoff-subject"]) {
+      expect(lintEmail(subject, "Body. Sam")).toContain(flag);
+      expect(lintEmail(subject, "Body. Sam", 110, undefined, opts)).not.toContain(flag);
+    }
+  });
+
   // finding PRRT_kwDOSKzrBs6ewQdB: a SAM.gov notice number the play must
   // reproduce verbatim (e.g. W912DY-26-R-0042) mixes letters and digits in
   // one token. That's an identifier, not shouting, so it must not trip the

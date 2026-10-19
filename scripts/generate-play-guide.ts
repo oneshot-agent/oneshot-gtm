@@ -11,6 +11,8 @@ Pick the play by what happened to the buyer, not by what you sell. Each one belo
 
 Preview every draft before it goes. Email and LinkedIn send when you send; X, Reddit and Hacker News drafts are posted by you, then marked sent. The dashboard shows each play's cadence timing and its optional letter. To carry an unanswered email cadence on to LinkedIn, see [LinkedIn](./linkedin.md#continuing-an-email-cadence-on-linkedin).
 
+Email follow-ups go out as replies under the first email: same thread, subject "Re: <first subject>". The last email of a sequence (the breakup, or whichever email step comes last) starts a new email, with a subject that names the offer. When a follow-up can't go into that thread (the sender changed, or there is no id for the first email), it goes out as a new email.
+
 ${Object.entries(PLAY_DESCRIPTIONS)
   .map(
     ([name, d]) =>

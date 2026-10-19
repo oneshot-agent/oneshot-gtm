@@ -44,6 +44,7 @@ import { logEvent } from "./events.ts";
 import {
   type GmailBounce,
   getGmailProfile,
+  getSentMessageId,
   listGmailBounces,
   listGmailReplies,
   sendGmailMessage,
@@ -105,6 +106,28 @@ export interface SendEmailInput {
    * Omitted: falls back to a content hash (`contentSendKey`).
    */
   idempotencyKey?: string;
+  /**
+   * Send into the thread of an earlier email this sender sent (a cadence
+   * follow-up replying under the first email). Used only when the email is
+   * routed to `thread.identityId` over a transport that can carry it; any
+   * other sender sends a new email instead, without headers and without a
+   * leading "Re: " on the subject.
+   */
+  thread?: EmailThread;
+}
+
+/** Where an earlier sent email lives, per transport (see `SendEmailInput.thread`). */
+export interface EmailThread {
+  /** The sender identity that sent the earlier email. */
+  identityId: string;
+  /** SMTP and Gmail: the earlier email's RFC Message-ID. */
+  inReplyTo?: string;
+  /** The References chain, oldest first (defaults to `inReplyTo` alone). */
+  references?: string[];
+  /** Gmail: the thread id of the earlier email in the sender's mailbox. */
+  gmailThreadId?: string;
+  /** OneShot: the platform's id of the earlier sent email (`reply_to_email_id`). */
+  oneshotEmailId?: string;
 }
 
 export interface ResearchInput {
@@ -359,14 +382,90 @@ function gmailFailureIsDefinite(err: unknown): boolean {
  */
 function oneshotFailureIsDefinite(err: unknown): boolean {
   if (err instanceof ValidationError) return true;
+  if (isReplyTargetNotFound(err)) return true;
   const msg = (err as Error)?.message ?? "";
   if (/payment rejected|insufficient (funds|balance)/i.test(msg)) return true;
   return !isTransientToolError(err) && /\b4\d\d\b/.test(msg);
 }
 
+/**
+ * The platform did not resolve `reply_to_email_id` (404 `reply_target_not_found`).
+ * It answers before quoting, billing or sending, so nothing went out.
+ */
+function isReplyTargetNotFound(err: unknown): boolean {
+  const e = err as { message?: unknown; responseBody?: unknown; statusCode?: unknown } | null;
+  if (!e || typeof e !== "object") return false;
+  return (
+    /reply_target_not_found/i.test(`${String(e.message ?? "")} ${String(e.responseBody ?? "")}`) ||
+    e.statusCode === 404
+  );
+}
+
+/** A subject without a leading "Re: " (any case), for a follow-up that goes out as a new email. */
+export function withoutReplyPrefix(subject: string): string {
+  return subject.trim().replace(/^re:\s*/i, "");
+}
+
+/**
+ * The thread this send may use with the sender it was routed to. Only the
+ * identity that sent the earlier email can thread under it, and only over a
+ * transport that carries the id it needs: SMTP and Gmail the RFC Message-ID,
+ * OneShot the platform's email id. Anything else sends a new email on the
+ * same topic: the thread is dropped and so is the subject's "Re: ", so an
+ * email never says "Re:" without the headers that make it one.
+ */
+function threadForSender(
+  input: SendEmailInput,
+  identity: EmailIdentity,
+): { input: SendEmailInput; thread: EmailThread | null } {
+  const thread = input.thread;
+  if (!thread) return { input, thread: null };
+  const usable =
+    thread.identityId === identity.id &&
+    (identity.provider === "gmail"
+      ? Boolean(thread.inReplyTo)
+      : identity.provider === "smartlead"
+        ? identity.sendVia === "smtp" && Boolean(thread.inReplyTo)
+        : identity.provider === "oneshot" && Boolean(thread.oneshotEmailId));
+  if (usable) return { input, thread };
+  logEvent("send.thread.dropped", {
+    reason: thread.identityId === identity.id ? "transport" : "sender-changed",
+    provider: identity.provider,
+  });
+  return { input: newEmailFrom(input), thread: null };
+}
+
+/** `input` as a new email: no thread, and no "Re: " on the subject. */
+function newEmailFrom(input: SendEmailInput): SendEmailInput {
+  const { thread: _thread, ...rest } = input;
+  return { ...rest, subject: withoutReplyPrefix(input.subject) };
+}
+
+/** RFC threading headers for a thread, or none. */
+function threadHeaders(
+  thread: EmailThread | null,
+): { inReplyTo: string; references: string[] } | null {
+  if (!thread?.inReplyTo) return null;
+  return {
+    inReplyTo: thread.inReplyTo,
+    references: thread.references?.length ? thread.references : [thread.inReplyTo],
+  };
+}
+
 type SendOut = { result: EmailResult; receiptId: number };
-/** What a keyed attempt sends: the stored content after an unknown outcome, else the caller's. */
-type SendContent = { subject: string; body: string };
+/** A keyed send's outcome, with the subject the email went out under. */
+type KeyedOut = SendOut & { subject: string };
+/**
+ * What a keyed attempt sends: the stored content after an unknown outcome,
+ * else the caller's. `inReplyTo`/`references` are the thread headers on the
+ * row (null and empty for a new email).
+ */
+type SendContent = {
+  subject: string;
+  body: string;
+  inReplyTo: string | null;
+  references: string[];
+};
 
 /**
  * Run one transport send under an `outbound_sends` claim. `send` performs the
@@ -386,13 +485,15 @@ async function keyedSend(args: {
   messageId: string | null;
   /** See `OutboundSend.sentEvidence`. */
   sentEvidence: boolean;
+  /** RFC headers of the thread this email goes into, recorded on the row. */
+  thread?: { inReplyTo: string; references: string[] } | null;
   isDefinite: (err: unknown) => boolean;
   settledStatus: "submitted" | "confirmed";
   send: (
     messageId: string | null,
     content: SendContent,
-  ) => Promise<SendOut & { messageId: string | null }>;
-}): Promise<SendOut> {
+  ) => Promise<SendOut & { messageId: string | null; subject?: string }>;
+}): Promise<KeyedOut> {
   const store = getLedger().outboundSends;
   const claim = store.claim({
     key: args.key,
@@ -403,6 +504,8 @@ async function keyedSend(args: {
     body: args.input.body,
     messageId: args.messageId,
     sentEvidence: args.sentEvidence,
+    inReplyTo: args.thread?.inReplyTo ?? null,
+    references: args.thread?.references ?? null,
   });
   if (claim.verdict === "already_sent") {
     const prior = claim.send;
@@ -436,6 +539,7 @@ async function keyedSend(args: {
         email: { id, provider_message_id: id, status: "sent" },
       } as EmailResult,
       receiptId,
+      subject: prior.subject,
     };
   }
   if (claim.verdict !== "send") {
@@ -452,12 +556,18 @@ async function keyedSend(args: {
     const out = await args.send(claim.send.messageId, {
       subject: claim.send.subject,
       body: claim.send.body,
+      inReplyTo: claim.send.inReplyTo,
+      references: claim.send.references,
     });
     store.mark(args.key, args.settledStatus, {
       messageId: out.messageId,
       receiptId: out.receiptId,
     });
-    return { result: out.result, receiptId: out.receiptId };
+    return {
+      result: out.result,
+      receiptId: out.receiptId,
+      subject: out.subject ?? claim.send.subject,
+    };
   } catch (err) {
     if (args.isDefinite(err)) {
       store.mark(args.key, "failed", { error: ((err as Error).message ?? "").slice(0, 200) });
@@ -488,6 +598,7 @@ async function sendEmailViaMailboxSmtp(
   ctx: CallContext,
   identity: EmailIdentity,
   key: string,
+  thread: EmailThread | null = null,
 ) {
   const cfg = loadConfig();
   const fromEmail = identity.address?.trim().toLowerCase();
@@ -508,6 +619,7 @@ async function sendEmailViaMailboxSmtp(
     ctx,
     messageId: outboundMessageId(key, fromEmail),
     sentEvidence: serverKeepsSentCopy(connection),
+    thread: threadHeaders(thread),
     isDefinite: (err) => !accepted && (err instanceof MailboxSubmitError ? err.definite : true),
     settledStatus: "submitted",
     send: async (messageId, content) => {
@@ -520,6 +632,10 @@ async function sendEmailViaMailboxSmtp(
         html: toHtmlBody(content.body),
         fromName: cfg.founderName,
         messageId: messageId ?? outboundMessageId(key, fromEmail),
+        // The row's headers: an exact resend goes into the same thread.
+        ...(content.inReplyTo
+          ? { inReplyTo: content.inReplyTo, references: content.references }
+          : {}),
       });
       accepted = true;
       const result: EmailResult = {
@@ -631,6 +747,7 @@ async function sendEmailViaGmail(
   ctx: CallContext,
   identity: EmailIdentity,
   key: string,
+  thread: EmailThread | null = null,
 ) {
   // The Gmail API rewrites a supplied Message-ID, so the key is the guard and
   // the API's own message id is what the confirm sweep looks up.
@@ -643,10 +760,22 @@ async function sendEmailViaGmail(
     messageId: null,
     // Gmail files every API send in Sent, so a missing copy proves "not sent".
     sentEvidence: true,
+    thread: threadHeaders(thread),
     isDefinite: gmailFailureIsDefinite,
     settledStatus: "submitted",
     send: async (_messageId, content) => {
-      const out = await sendEmailViaGmailOnce({ ...input, ...content }, ctx, identity);
+      const out = await sendEmailViaGmailOnce(
+        { ...input, subject: content.subject, body: content.body },
+        ctx,
+        identity,
+        content.inReplyTo
+          ? {
+              inReplyTo: content.inReplyTo,
+              references: content.references,
+              ...(thread?.gmailThreadId ? { threadId: thread.gmailThreadId } : {}),
+            }
+          : null,
+      );
       return { ...out, messageId: out.result.request_id ?? null };
     },
   });
@@ -656,6 +785,8 @@ async function sendEmailViaGmailOnce(
   input: SendEmailInput,
   ctx: CallContext,
   identity: EmailIdentity,
+  /** Into an earlier email's thread: its headers and, in the sender's mailbox, its thread id. */
+  thread: { inReplyTo: string; references: string[]; threadId?: string } | null = null,
 ) {
   const cfg = loadConfig();
   const account = gmailAccountFor(identity);
@@ -675,8 +806,10 @@ async function sendEmailViaGmailOnce(
       fromName: cfg.founderName,
       subject: input.subject,
       htmlBody: toHtmlBody(input.body),
+      ...(thread ? { inReplyTo: thread.inReplyTo, references: thread.references } : {}),
     },
     account,
+    thread?.threadId,
   );
   const result: EmailResult = {
     status: "sent",
@@ -806,17 +939,19 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
 }
 
 async function dispatchViaIdentity(
-  input: SendEmailInput,
+  requested: SendEmailInput,
   ctx: CallContext,
   identity: EmailIdentity,
-) {
+): Promise<KeyedOut> {
+  const { input, thread } = threadForSender(requested, identity);
   const key = input.idempotencyKey ?? contentSendKey(identity.id, input);
   if (identity.provider === "gmail") {
-    return sendEmailViaGmail(input, ctx, identity, key);
+    return sendEmailViaGmail(input, ctx, identity, key, thread);
   }
   if (identity.provider === "smartlead") {
-    if (identity.sendVia === "smtp") return sendEmailViaMailboxSmtp(input, ctx, identity, key);
-    return sendEmailViaSmartlead(input, ctx, identity);
+    if (identity.sendVia === "smtp")
+      return sendEmailViaMailboxSmtp(input, ctx, identity, key, thread);
+    return { ...(await sendEmailViaSmartlead(input, ctx, identity)), subject: input.subject };
   }
   // Explicit guard: a provider this branch doesn't know must NEVER fall
   // through to the paid OneShot SDK path below.
@@ -856,37 +991,56 @@ async function dispatchViaIdentity(
   // The SDK key above stays content-derived: the platform rejects a reused key
   // with a different body, and replays pre-dispatch failures under it. The
   // semantic key is our own claim on top, so a re-draft can't send twice.
-  return keyedSend({
-    key,
-    identity,
-    transport: "oneshot",
-    input,
-    ctx,
-    messageId: null,
-    // No Sent folder to read. An unknown outcome is settled by the sweep and
-    // retried with the first attempt's content, so the SDK key below matches
-    // and the platform replays that send rather than making a second one.
-    sentEvidence: false,
-    isDefinite: oneshotFailureIsDefinite,
-    settledStatus: "confirmed",
-    send: async (_messageId, content) => {
-      const result = await agent.email({
-        ...opts,
-        subject: content.subject,
-        body: toHtmlBody(content.body),
-        idempotencyKey: emailIdempotencyKey([identity.id, input.to, content.subject, content.body]),
-      });
-      const receiptId = recordCallReceipt({
-        ctx,
-        callType: "email.send",
-        signedReceipt: result,
-        costUsd: result.cost,
-        oneshotRequestId: result.request_id,
-        senderIdentity: identity.id,
-      });
-      return { result, receiptId, messageId: result.request_id ?? null };
-    },
-  });
+  const send = (attempt: SendEmailInput, replyToEmailId: string | null) =>
+    keyedSend({
+      key,
+      identity,
+      transport: "oneshot",
+      input: attempt,
+      ctx,
+      messageId: null,
+      // No Sent folder to read. An unknown outcome is settled by the sweep and
+      // retried with the first attempt's content, so the SDK key below matches
+      // and the platform replays that send rather than making a second one.
+      sentEvidence: false,
+      isDefinite: oneshotFailureIsDefinite,
+      settledStatus: "confirmed",
+      send: async (_messageId, content) => {
+        // The subject on the row decides the mode, so an exact resend goes out
+        // the way the attempt it repeats did: a "Re:" subject as a reply to the
+        // first email, anything else as a new email without "Re:".
+        const replyTo = replyToEmailId && /^re:/i.test(content.subject) ? replyToEmailId : null;
+        const subject = replyTo ? content.subject : withoutReplyPrefix(content.subject);
+        const result = await agent.email({
+          ...opts,
+          subject,
+          body: toHtmlBody(content.body),
+          idempotencyKey: emailIdempotencyKey([identity.id, attempt.to, subject, content.body]),
+          ...(replyTo ? { reply_to_email_id: replyTo } : {}),
+        });
+        const receiptId = recordCallReceipt({
+          ctx,
+          callType: "email.send",
+          signedReceipt: result,
+          costUsd: result.cost,
+          oneshotRequestId: result.request_id,
+          senderIdentity: identity.id,
+        });
+        return { result, receiptId, messageId: result.request_id ?? null, subject };
+      },
+    });
+  if (!thread?.oneshotEmailId) return send(input, null);
+  try {
+    return await send(input, thread.oneshotEmailId);
+  } catch (err) {
+    // The platform only threads under inbound emails until it accepts the id
+    // of one this agent sent. It refuses before quoting or sending, the claim
+    // is marked failed, and the retry under the same key sends a new email on
+    // the same topic, once.
+    if (!isReplyTargetNotFound(err)) throw err;
+    logEvent("send.thread.fallback", { provider: "oneshot", reason: "reply_target_not_found" });
+    return send(newEmailFrom(input), null);
+  }
 }
 
 /**
@@ -937,6 +1091,26 @@ export interface ReplyEmailInput {
    * to/subject from it (SDK 0.19+).
    */
   replyToEmailId?: string;
+}
+
+/**
+ * The RFC Message-ID Gmail gave an email this Gmail identity sent (the API
+ * rewrites any we supply), or null: not a Gmail identity, no stored token, or
+ * the lookup failed. A follow-up threads under it.
+ */
+export async function gmailSentMessageIdFor(
+  identityId: string,
+  gmailMessageId: string,
+): Promise<string | null> {
+  const identity = resolveIdentities(loadConfig()).find((i) => i.id === identityId);
+  if (identity?.provider !== "gmail") return null;
+  const account = gmailAccountFor(identity);
+  if (!account) return null;
+  try {
+    return await getSentMessageId(gmailMessageId, account);
+  } catch {
+    return null;
+  }
 }
 
 /** "Re: " prefix, idempotent and case-insensitive ("RE: x" passes through). */

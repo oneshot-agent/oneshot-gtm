@@ -238,6 +238,97 @@ describe("sendVia smtp", () => {
   });
 });
 
+describe("sendVia smtp: a follow-up into the first email's thread", () => {
+  const INTRO_ID = "<intro-0001@mail.example.com>";
+
+  async function sentMime(call = 0) {
+    const raw = (mocks.smtp.sendMail.mock.calls[call]![0] as { raw: Buffer }).raw;
+    return simpleParser(raw);
+  }
+
+  it("sets In-Reply-To and References to the first email's Message-ID and records them", async () => {
+    const key = keyFor(1);
+    const out = await sendEmail(
+      {
+        to,
+        subject: "Re: alpha pipeline",
+        body: "one more thing",
+        idempotencyKey: key,
+        thread: { identityId: SMTP_ID.id, inReplyTo: INTRO_ID, references: [INTRO_ID] },
+      },
+      ctx,
+    );
+    const mime = await sentMime();
+    expect(mime.inReplyTo).toBe(INTRO_ID);
+    expect(mime.references).toBe(INTRO_ID);
+    expect(mime.subject).toBe("Re: alpha pipeline");
+    // Its own Message-ID is still the key's.
+    expect(mime.messageId).toBe(outboundMessageId(key, SMTP_ID.address!));
+    expect(out.subject).toBe("Re: alpha pipeline");
+    expect(ledger.outboundSends.get(key)).toMatchObject({
+      status: "submitted",
+      inReplyTo: INTRO_ID,
+      references: [INTRO_ID],
+      kind: "initial",
+    });
+  });
+
+  it("a retry after a definite failure goes into the same thread", async () => {
+    const key = keyFor(1);
+    const thread = { identityId: SMTP_ID.id, inReplyTo: INTRO_ID };
+    mocks.smtp.sendMail.mockRejectedValueOnce(
+      Object.assign(new Error("451 try later"), { responseCode: 451 }),
+    );
+    await expect(
+      sendEmail({ to, subject: "Re: alpha", body: "b", idempotencyKey: key, thread }, ctx),
+    ).rejects.toThrow(/rejected/);
+    await sendEmail({ to, subject: "Re: alpha", body: "b", idempotencyKey: key, thread }, ctx);
+    expect((await sentMime(1)).inReplyTo).toBe(INTRO_ID);
+    expect(ledger.outboundSends.get(key)).toMatchObject({ status: "submitted", attempts: 2 });
+  });
+
+  it('from a different sender: no thread headers and no "Re: " on the subject', async () => {
+    const key = keyFor(1);
+    const out = await sendEmail(
+      {
+        to,
+        subject: "Re: alpha pipeline",
+        body: "one more thing",
+        idempotencyKey: key,
+        thread: { identityId: "smartlead:beta@mail.example.com", inReplyTo: INTRO_ID },
+      },
+      ctx,
+    );
+    const mime = await sentMime();
+    expect(mime.inReplyTo).toBeUndefined();
+    expect(mime.references).toBeUndefined();
+    expect(mime.subject).toBe("alpha pipeline");
+    expect(out.subject).toBe("alpha pipeline");
+    expect(ledger.outboundSends.get(key)).toMatchObject({
+      subject: "alpha pipeline",
+      inReplyTo: null,
+      references: [],
+    });
+  });
+
+  it("an SMTP thread without a Message-ID sends a new email", async () => {
+    const key = keyFor(1);
+    await sendEmail(
+      {
+        to,
+        subject: "Re: alpha",
+        body: "b",
+        idempotencyKey: key,
+        thread: { identityId: SMTP_ID.id, oneshotEmailId: "em_1" },
+      },
+      ctx,
+    );
+    const mime = await sentMime();
+    expect(mime.inReplyTo).toBeUndefined();
+    expect(mime.subject).toBe("alpha");
+  });
+});
+
 describe("sendVia provider (the default)", () => {
   it("still sends through the Smartlead API, unkeyed", async () => {
     const prior = process.env["SMARTLEAD_API_KEY"];

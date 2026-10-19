@@ -21,7 +21,7 @@ This is the last touch: restate the same offer once, in a clause, then close.
 
 ## Email rules (without an OFFER line)
 
-- Subject: 1-3 lowercase words, plain English. Examples: "last note", "closing this out", "{first name}?". NEVER a scripted-sounding line.
+- Subject: 2-5 lowercase words naming the offer (or their work) in their terms, the same rule as the first email: this email starts a new thread, so its subject is read on its own. Never a sign-off ("last note", "closing the loop", "moving on", "closing out", "following up") and never a subject PRIOR EMAILS used. NEVER a scripted-sounding line.
 - Body: ≤ 45 words, 2 sentences max.
   - Hook (1 sentence): name plainly that you're closing the loop / moving on — no apology, no guilt.
   - Probe-as-CTA (1 sentence): either one plain yes/no question about whether now (with the new business getting going) is still a good time, or a plain restatement that you're around whenever it's useful, with no pressure and no follow-up promised. Do not repeat the first email's phrasing.

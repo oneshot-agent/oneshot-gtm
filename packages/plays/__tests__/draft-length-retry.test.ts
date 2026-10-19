@@ -46,8 +46,13 @@ vi.mock("@oneshot-gtm/intel", async () => {
   };
 });
 
-const { draftEmailFromPrompt, repairWritingLints, lintEmail, LENGTH_RETRY_RATIO } =
-  await import("../src/_lib.ts");
+const {
+  draftEmailFromPrompt,
+  repairWritingLints,
+  lintEmail,
+  LENGTH_RETRY_RATIO,
+  THREADED_SUBJECT_FLAGS,
+} = await import("../src/_lib.ts");
 
 const words = (n: number): string => Array.from({ length: n }, (_, i) => `w${i}`).join(" ");
 const json = (body: string): string => JSON.stringify({ subject: "subject", body });
@@ -274,16 +279,32 @@ describe("shared writing lint repair", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it.each(["subject-too-long", "subject-shouty"])(
+  it.each(["subject-too-long", "subject-shouty", "signoff-subject"])(
     "allows changing the subject when %s requires it",
     async (flag) => {
       responses.push(JSON.stringify(clean));
-      const subject = flag === "subject-too-long" ? "a".repeat(61) : "WORKFLOW QUESTION";
+      const subject =
+        flag === "subject-too-long"
+          ? "a".repeat(61)
+          : flag === "subject-shouty"
+            ? "WORKFLOW QUESTION"
+            : "last note";
       expect(
         await repairWritingLints(messages(), { ...clean, subject }, { promptName: "p" }),
       ).toEqual(clean);
     },
   );
+
+  it("spends no repair on a threaded follow-up's subject, which is replaced", async () => {
+    const draft = { ...clean, subject: "closing the loop" };
+    expect(
+      await repairWritingLints(messages(), draft, {
+        promptName: "p",
+        skipFlags: THREADED_SUBJECT_FLAGS,
+      }),
+    ).toEqual(draft);
+    expect(calls).toHaveLength(0);
+  });
 
   it("enforces play-specific hard bans only when opted in", async () => {
     const draft = { ...clean, body: "Try https://example.test for a $10 discount." };
