@@ -50,6 +50,9 @@ import {
   type LinkedInGuardVerdict,
   type LinkedInOperation,
   outboundSendKey,
+  replySubject,
+  gmailSentMessageIdFor,
+  type EmailThread,
 } from "@oneshot-gtm/core";
 import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import {
@@ -83,6 +86,7 @@ import {
   humanizeDraft,
   lintEmail,
   repairWritingLints,
+  THREADED_SUBJECT_FLAGS,
   lintOpenerFrequency,
   overusedOpeners,
   signatureDirective,
@@ -99,6 +103,12 @@ export interface CadenceContext {
   recentEmailBodies?: string[];
   /** A live read of the prospect's LinkedIn profile, when this process can make one. */
   linkedInRead?: LiveProfileReader;
+  /**
+   * The step goes into the first email's thread, so its subject is replaced
+   * by "Re: <first subject>": checks on the drafted subject are moot and
+   * never cost a repair round.
+   */
+  threadedSubject?: boolean;
 }
 
 export type StepPayload =
@@ -117,6 +127,13 @@ export type StepPayload =
       hardBans?: boolean;
       /** With `hardBans`: spans the price and discount holds skip (the member offer the originating send made). */
       hardBanAllow?: string[];
+      /**
+       * Sent as a reply in the first email's thread (`introThreadFor`); the
+       * subject is then "Re: <first subject>". Carried on the stored preview
+       * so it sends the way it was previewed; absent on a step that starts a
+       * new email, and on previews stored before threading existed.
+       */
+      thread?: EmailThread;
     }
   | { kind: "sms"; message: string; toPhone?: string }
   /** A LinkedIn message into the conversation opened by an accepted invite. */
@@ -203,6 +220,125 @@ export function isBreakupLabel(label: string | null | undefined): boolean {
 export function isBreakupStepAt(seq: Sequence, stepEntryIndex: number): boolean {
   if (stepEntryIndex !== seq.steps.length - 1) return false;
   return isBreakupLabel(seq.steps[stepEntryIndex]?.label);
+}
+
+/**
+ * Whether an email step goes out as a reply in the first email's thread.
+ * Every email follow-up does, except the LAST email of the sequence, which
+ * starts a new email with its own subject: a step labelled breakup, or the
+ * last email-channel step. LinkedIn and direct-mail steps appended after it
+ * do not count (`isBreakupStepAt`'s last-index check would miss it then). A
+ * sequence whose only email follow-up is its last one never threads.
+ */
+export function threadsIntoIntro(seq: Sequence, stepEntryIndex: number): boolean {
+  const step = seq.steps[stepEntryIndex];
+  if (step?.channel !== "email" || isBreakupLabel(step.label)) return false;
+  let lastEmail = -1;
+  seq.steps.forEach((s, i) => {
+    if (s.channel === "email") lastEmail = i;
+  });
+  return stepEntryIndex !== lastEmail;
+}
+
+/** The first email of a sequence, and where its thread lives on the transport that sent it. */
+export interface IntroThread extends EmailThread {
+  subject: string;
+}
+
+const RFC_MESSAGE_ID = /^<[^<>\s]+@[^<>\s]+>$/;
+
+function stringField(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+/**
+ * The first email (step 0) of this prospect's sequence and its thread: the
+ * step-0 event's subject and receipt, the `outbound_sends` row for that
+ * receipt (transport, sender, Message-ID), and the receipt itself.
+ * - SMTP: the Message-ID we set on it.
+ * - Gmail: its thread id, and the RFC Message-ID Gmail assigned, looked up
+ *   once and kept on the step-0 metadata (`rfcMessageId`).
+ * - OneShot: the platform's id of the sent email.
+ * Null when there is no usable first email or id (a manual or LinkedIn first
+ * touch, the Smartlead API, an older send without a sender): the follow-up
+ * then goes out as a new email.
+ */
+export async function introThreadFor(
+  prospectId: number,
+  playName: string,
+): Promise<IntroThread | null> {
+  try {
+    const ledger = getLedger();
+    const intro = ledger
+      .listSequenceEventsForProspectPlay(prospectId, playName)
+      .find((e) => e.step_index === 0 && e.channel === "email");
+    if (!intro) return null;
+    const meta = tryParseJsonObject<Record<string, unknown>>(intro.metadata_json ?? "", {});
+    const subject = stringField(meta["subject"]);
+    const receiptId = (intro as { receipt_id?: unknown }).receipt_id;
+    if (!subject || typeof receiptId !== "number") return null;
+    const sent = ledger.outboundSends.forReceipt(receiptId);
+    const receipt = ledger.getReceipt(receiptId);
+    const signed = tryParseJsonObject<Record<string, unknown>>(receipt?.signed_receipt ?? "", {});
+    const identityId = sent?.identityId ?? stringField(receipt?.sender_identity);
+    if (!identityId) return null;
+    const provider = stringField(signed["provider"]);
+    const transport =
+      sent?.transport ??
+      (signed["transport"] === "smtp" ? "smtp" : (provider ?? (receipt ? "oneshot" : null)));
+    if (transport === "smtp") {
+      const messageId = sent?.messageId ?? stringField(signed["message_id"]);
+      if (!messageId || !RFC_MESSAGE_ID.test(messageId)) return null;
+      return { subject, identityId, inReplyTo: messageId, references: [messageId] };
+    }
+    if (transport === "gmail") {
+      const gmailId = stringField(signed["message_id"]) ?? sent?.messageId ?? null;
+      let rfc = stringField(meta["rfcMessageId"]);
+      if (!rfc && gmailId) {
+        rfc = await gmailSentMessageIdFor(identityId, gmailId);
+        if (rfc) ledger.mergeSequenceEventMetadata(intro.id, { rfcMessageId: rfc });
+      }
+      if (!rfc) return null;
+      const threadId = stringField(signed["thread_id"]);
+      return {
+        subject,
+        identityId,
+        inReplyTo: rfc,
+        references: [rfc],
+        ...(threadId ? { gmailThreadId: threadId } : {}),
+      };
+    }
+    if (transport === "oneshot") {
+      const ref = (v: unknown) => stringField((v as { id?: unknown } | null)?.id);
+      const emailId = ref(signed["email_message"]) ?? ref(signed["email"]);
+      return emailId ? { subject, identityId, oneshotEmailId: emailId } : null;
+    }
+    return null;
+  } catch (err) {
+    logEvent(
+      "cadence.thread.lookup_failed",
+      { play_name: playName, message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+      "warn",
+    );
+    return null;
+  }
+}
+
+/** The first email's thread for a step that threads, else null (see `threadsIntoIntro`). */
+async function introThreadForStep(
+  seq: Sequence,
+  stepEntryIndex: number,
+  prospectId: number,
+  playName: string,
+): Promise<IntroThread | null> {
+  return threadsIntoIntro(seq, stepEntryIndex) ? introThreadFor(prospectId, playName) : null;
+}
+
+/** A drafted email step as a reply in the first email's thread: "Re: <first subject>", whatever the model wrote. */
+function withIntroThread(built: StepPayload, intro: IntroThread | null): StepPayload {
+  if (!intro || built.kind !== "email") return built;
+  const { subject, ...thread } = intro;
+  return { ...built, subject: replySubject(subject), thread };
 }
 
 export interface NextStepInfo {
@@ -1660,23 +1796,32 @@ export async function runCadenceStepForProspect(
       note: "Direct mail awaits individual review",
     };
   }
+  // A stored preview already carries its thread (or none, when it predates
+  // threading), so it sends exactly as previewed.
+  const intro =
+    mailDraft || opts.persistedPayload
+      ? null
+      : await introThreadForStep(seq, stepEntryIndex, opts.prospectId, opts.playName);
   const built: StepPayload | null = mailDraft
     ? { kind: "direct_mail", draftId: mailDraft.id }
     : opts.persistedPayload
       ? opts.persistedPayload
-      : await step.builder({
-          prospect,
-          cfg,
-          metadata: {},
-          maxBodyWords: step.maxBodyWords ?? 100,
-          ...(step.channel === "linkedin"
-            ? liveReadOf(opts.linkedIn, prospect, opts.playName)
-            : {}),
-          recentEmailBodies: ledger.recentSentEmailBodies({
-            playName: opts.playName,
-            stepIndex: nextIndex,
-          }),
-        });
+      : await step
+          .builder({
+            prospect,
+            cfg,
+            metadata: {},
+            maxBodyWords: step.maxBodyWords ?? 100,
+            ...(step.channel === "linkedin"
+              ? liveReadOf(opts.linkedIn, prospect, opts.playName)
+              : {}),
+            recentEmailBodies: ledger.recentSentEmailBodies({
+              playName: opts.playName,
+              stepIndex: nextIndex,
+            }),
+            ...(intro ? { threadedSubject: true } : {}),
+          })
+          .then((payload) => payload && withIntroThread(payload, intro));
 
   if (built?.kind === "direct_mail" && opts.directMailId !== built.draftId) {
     return {
@@ -1940,7 +2085,10 @@ export async function previewCadenceStep(input: {
     cadence.enrolled_at,
     nextIndex,
   );
-  const built: StepPayload | null = mailDraft
+  const intro = mailDraft
+    ? null
+    : await introThreadForStep(seq, stepEntryIndex, input.prospectId, input.playName);
+  const drafted: StepPayload | null = mailDraft
     ? { kind: "direct_mail", draftId: mailDraft.id }
     : await step.builder({
         prospect,
@@ -1954,8 +2102,11 @@ export async function previewCadenceStep(input: {
           ...(input.extraRecentBodies ?? []),
           ...ledger.recentSentEmailBodies({ playName: input.playName, stepIndex: nextIndex }),
         ],
+        ...(intro ? { threadedSubject: true } : {}),
       });
-  if (!built) throw new Error("builder returned null — nothing to preview");
+  if (!drafted) throw new Error("builder returned null — nothing to preview");
+  // A step that threads shows, stores and sends "Re: <first subject>".
+  const built = withIntroThread(drafted, intro);
 
   const subject =
     built.kind === "email"
@@ -1988,6 +2139,7 @@ export async function previewCadenceStep(input: {
             followUp: true,
             demoDay: prospectDemoDay(prospect, input.playName),
             ...(built.hardBanAllow ? { protect: built.hardBanAllow } : {}),
+            ...(built.thread ? { threadedSubject: true } : {}),
           }),
           ...lintOpenerFrequency(body, [
             ...(input.extraRecentBodies ?? []),
@@ -2371,6 +2523,9 @@ async function dispatchStepImpl(input: {
           who: `prospect:${input.prospectId}`,
           step: input.stepIndex,
         }),
+        // Into the first email's thread; the send drops it (and the "Re: ")
+        // when the sender or transport can't carry it.
+        ...(input.payload.thread ? { thread: input.payload.thread } : {}),
       },
       {
         playName: input.playName,
@@ -2387,7 +2542,8 @@ async function dispatchStepImpl(input: {
       status: "sent",
       receiptId: send.receiptId,
       metadata: {
-        subject: input.payload.subject,
+        // What went out: a follow-up that could not thread lost its "Re: ".
+        subject: send.subject ?? input.payload.subject,
         body: input.payload.body,
         label: input.label,
         ...(input.payload.angle ? { angleText: input.payload.angle.text } : {}),
@@ -2737,6 +2893,8 @@ export function buildFollowUpEmail(opts: {
       offer: offerLines ? (introOffer?.offer ?? null) : null,
       ...(hardBanAllow.length > 0 ? { hardBanAllow } : {}),
       extraLint: (draft) => lintOpenerFrequency(draft.body, ctx.recentEmailBodies ?? []),
+      // The subject is replaced by the first email's: nothing to repair in it.
+      ...(ctx.threadedSubject ? { skipFlags: THREADED_SUBJECT_FLAGS } : {}),
     });
     return {
       kind: "email",

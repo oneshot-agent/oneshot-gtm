@@ -89,6 +89,7 @@ export interface OutboundSend {
   /** Replies only (null on initial sends). */
   inboundId: string | null;
   threadKey: string | null;
+  /** Replies, and initial sends that go into an earlier email's thread (a cadence follow-up). */
   inReplyTo: string | null;
   references: string[];
   dateHeader: string | null;
@@ -132,6 +133,10 @@ function parseReferences(json: string | null): string[] {
   } catch {
     return [];
   }
+}
+
+function referencesJson(refs: readonly string[] | null | undefined): string | null {
+  return refs?.length ? JSON.stringify(refs) : null;
 }
 
 function toSend(row: Row): OutboundSend {
@@ -198,6 +203,13 @@ export interface ClaimInput {
   messageId: string | null;
   /** See `OutboundSend.sentEvidence`. */
   sentEvidence: boolean;
+  /**
+   * A new email sent into an earlier email's thread: the Message-ID it
+   * answers and the References chain. Kept from the first attempt after an
+   * unknown outcome, like the subject and body.
+   */
+  inReplyTo?: string | null;
+  references?: readonly string[] | null;
   queueId?: number | null;
   prospectId?: number | null;
   /** Injected clock for tests. */
@@ -329,8 +341,9 @@ export class OutboundSendStore {
           .query(
             `INSERT INTO outbound_sends
                (key, identity_id, transport, recipient, subject, body, message_id, status,
-                sent_evidence, attempts, first_attempt_at, last_attempt_at, queue_id, prospect_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?, ?, ?, ?)`,
+                sent_evidence, attempts, first_attempt_at, last_attempt_at, queue_id, prospect_id,
+                in_reply_to, references_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             input.key,
@@ -345,6 +358,8 @@ export class OutboundSendStore {
             nowIso,
             input.queueId ?? null,
             input.prospectId ?? null,
+            input.inReplyTo ?? null,
+            referencesJson(input.references),
           );
         return { verdict: "send", send: this.get(input.key)!, retry: false };
       }
@@ -360,6 +375,8 @@ export class OutboundSendStore {
                       identity_id = ?, transport = ?, error = NULL, sent_evidence = ?,
                       subject = CASE WHEN exact_resend = 1 THEN subject ELSE ? END,
                       body = CASE WHEN exact_resend = 1 THEN body ELSE ? END,
+                      in_reply_to = CASE WHEN exact_resend = 1 THEN in_reply_to ELSE ? END,
+                      references_json = CASE WHEN exact_resend = 1 THEN references_json ELSE ? END,
                       message_id = COALESCE(message_id, ?)
                 WHERE key = ?`,
             )
@@ -370,6 +387,8 @@ export class OutboundSendStore {
               input.sentEvidence ? 1 : 0,
               input.subject,
               input.body,
+              input.inReplyTo ?? null,
+              referencesJson(input.references),
               input.messageId,
               input.key,
             );

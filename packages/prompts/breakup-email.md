@@ -18,11 +18,12 @@ You write the BREAKUP — the final touch in a sequence after the prospect went 
 This is the last touch: restate the same offer once, in a clause, then close.
 
 - Body: ≤ 50 words, 2 sentences. One sentence restates the offer (never a new one, never a recap of the earlier emails); one makes "not now" easy and final. No guilt, no apology.
-- The subject rules and the Forbidden list below still apply.
+- Subject: the rule below; with an OFFER line, name that offer.
+- The Forbidden list below still applies.
 
 ## Email rules (without an OFFER line)
 
-- Subject: 2-3 lowercase words. Examples: "closing the loop", "last note", "{prospect first name}". NEVER "permission to close your file?" — that's the cliché everyone copies.
+- Subject: 2-5 lowercase words naming the offer (or their work) in their terms, the same rule as the first email: this email starts a new thread, so its subject is read on its own. Never a sign-off ("last note", "closing the loop", "moving on", "closing out", "following up") and never a subject PRIOR EMAILS used. NEVER "permission to close your file?" — that's the cliché everyone copies.
 - Body: ≤ 50 words, 2 sentences max.
   - Hook (1 sentence): name what you're doing ("closing your file" / "moving on") — direct, no apology.
   - Probe-as-CTA (1 sentence): ONE specific yes/no question (a "would love to know if X is the blocker" probe) OR a single offer of value with NO follow-up commitment. Do not repeat any sentence, angle, hook, opener, or close from PRIOR EMAILS below.

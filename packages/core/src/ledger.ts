@@ -483,6 +483,11 @@ export class Ledger {
     return cadListLinkedInInviteCadences(this.db);
   }
 
+  /** Merge fields into one sequence event's metadata (status unchanged). False when the row is gone. */
+  mergeSequenceEventMetadata(id: number, metadata: Record<string, unknown>): boolean {
+    return cadUpdateLinkedInInviteEvent(this.db, { id, metadata });
+  }
+
   /** Merge into an invite event's metadata, optionally marking it failed: see updateLinkedInInviteEvent. */
   updateLinkedInInviteEvent(input: {
     id: number;
