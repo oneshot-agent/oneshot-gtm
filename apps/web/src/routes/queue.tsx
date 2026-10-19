@@ -1328,14 +1328,14 @@ function DraftSection({
     // Persist a localStorage marker so the spinner survives leaving + returning
     // to /queue while the draft generates server-side; cleared on settle (and,
     // for the unmounted case, reconciled away once lastDraftedAt advances).
-    onMutate: () => markDraftGenerating(id),
-    onSuccess: () => {
-      clearDraftGenerating(id);
+    onMutate: () => ({ stamp: markDraftGenerating(id) }),
+    onSuccess: (_data, _rotate, context) => {
+      clearDraftGenerating(id, context?.stamp);
       void qc.invalidateQueries({ queryKey: ["queue"] });
       toast.success("draft ready · preview only, not sent");
     },
-    onError: (err) => {
-      clearDraftGenerating(id);
+    onError: (err, _rotate, context) => {
+      clearDraftGenerating(id, context?.stamp);
       // Refetch on failure: a concurrent send may have made the cached approved row stale.
       void qc.invalidateQueries({ queryKey: ["queue"] });
       toast.error(`couldn't draft · ${err.message}`);

@@ -6,7 +6,7 @@ import { api } from "../../api/client.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
 import { cn } from "../../lib/cn.ts";
 import { clearDraftGenerating, markDraftGenerating } from "../../lib/draftRunState.ts";
-import { setRowActivity, useRowActivity } from "../../lib/rowActivity.ts";
+import { clearRowActivity, setRowActivity, useRowActivity } from "../../lib/rowActivity.ts";
 import { Button } from "../primitives/Button.tsx";
 import { Textarea } from "../primitives/Field.tsx";
 import { Disclosure } from "../ledger/CaseList.tsx";
@@ -88,7 +88,7 @@ export function ProspectOffer({
     ) => {
       // Name each step as it runs, so the offer block and the letter show
       // the same work (rowActivity.ts).
-      setRowActivity(
+      const token = setRowActivity(
         rowId,
         "regenerate" in body
           ? "Writing 5 offers and their angles…"
@@ -98,18 +98,18 @@ export function ProspectOffer({
       );
       try {
         await api.setQueueOffer(rowId, body);
-        setRowActivity(rowId, "Rewriting the draft around the offer…");
-        markDraftGenerating(rowId);
+        setRowActivity(rowId, "Rewriting the draft around the offer…", token);
+        const stamp = markDraftGenerating(rowId);
         try {
           await api.regenerateDraft(rowId);
           return { redrafted: true as const };
         } catch (err) {
           return { redrafted: false as const, message: (err as Error).message };
         } finally {
-          clearDraftGenerating(rowId);
+          clearDraftGenerating(rowId, stamp);
         }
       } finally {
-        setRowActivity(rowId, null);
+        clearRowActivity(rowId, token);
       }
     },
     onSuccess: (result) => {
@@ -142,8 +142,7 @@ export function ProspectOffer({
         {offer?.editedBy === "founder" && <span>· yours</span>}
         {activity && (
           <span
-            role="status"
-            aria-live="polite"
+            aria-hidden="true"
             className="inline-flex items-center gap-1 normal-case tracking-normal text-[color:var(--ink-receipt-2)]"
           >
             · <Loader2 size={11} className="animate-spin" /> {activity}
