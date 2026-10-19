@@ -2,7 +2,7 @@
 
 **Assume green.** Every CLI command, play, finder and dashboard page, and the server's REST + SSE routes, are covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
 
-Last verified **2026-10-19** · Bun 1.3.13 · OneShot SDK 0.53.1 · **6412 tests / 498 files** · typecheck + oxlint + oxfmt pass (0 lint warnings, 0 errors).
+Last verified **2026-10-19** · Bun 1.3.13 · OneShot SDK 0.53.1 · **6422 tests / 499 files** · typecheck + oxlint + oxfmt pass (0 lint warnings, 0 errors).
 
 **What the gate covers.** `apps/web` is now inside `bun run typecheck` — the dashboard source is
 type-checked in CI, and a deliberate error under `apps/web/src` fails the root script. As of

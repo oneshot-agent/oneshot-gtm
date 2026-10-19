@@ -95,7 +95,29 @@ export function offerFromPayload(payload: unknown): OfferView | null {
 export function offerCandidatesFromPayload(payload: unknown): OfferView[] {
   if (!payload || typeof payload !== "object") return [];
   const list = (payload as Record<string, unknown>)["offerCandidates"];
-  return Array.isArray(list) ? list.map(readOffer).filter((o): o is OfferView => o !== null) : [];
+  // Same entries the server counts (`offerCandidatesOf`: an offer with a
+  // `steps` string), so the index sent as `{ select: i }` names the same offer.
+  return Array.isArray(list)
+    ? list
+        .filter(
+          (o) =>
+            !!o &&
+            typeof o === "object" &&
+            typeof (o as Record<string, unknown>)["steps"] === "string",
+        )
+        .map(readOffer)
+        .filter((o): o is OfferView => o !== null)
+    : [];
+}
+
+/** Start at the first candidate when the active offer is no longer in the list. */
+export function nextOfferIndex(
+  offer: Pick<OfferView, "offer"> | null,
+  candidates: readonly Pick<OfferView, "offer">[],
+): number | null {
+  if (candidates.length === 0) return null;
+  const activeIndex = candidates.findIndex((candidate) => candidate.offer === offer?.offer);
+  return (activeIndex + 1) % candidates.length;
 }
 
 /**
@@ -168,6 +190,9 @@ export function ProspectOffer({
     },
   });
 
+  // Any offer work on this row (here, or Next offer in the letter) locks
+  // every offer control until it ends, so two changes never race.
+  const busy = apply.isPending || activity != null;
   const pendingBody = apply.isPending ? apply.variables : undefined;
   const writingNew = !!pendingBody && "regenerate" in pendingBody;
   const switchingTo = pendingBody && "select" in pendingBody ? pendingBody.select : null;
@@ -214,7 +239,7 @@ export function ProspectOffer({
           <div className="flex gap-1.5">
             <Button
               size="sm"
-              disabled={apply.isPending || !text.trim()}
+              disabled={busy || !text.trim()}
               onClick={() =>
                 apply.mutate({
                   offer: text.trim(),
@@ -240,7 +265,7 @@ export function ProspectOffer({
           <p
             className={cn(
               "m-0 text-[13px] leading-5 text-ink-cream transition-opacity [text-wrap:pretty]",
-              apply.isPending && "opacity-50",
+              busy && "opacity-50",
             )}
           >
             {offer.offer}
@@ -315,7 +340,7 @@ export function ProspectOffer({
                       <Button
                         size="sm"
                         variant="ghost"
-                        disabled={apply.isPending}
+                        disabled={busy}
                         onClick={() => apply.mutate({ select: i })}
                       >
                         {switchingTo === i ? (
@@ -339,7 +364,7 @@ export function ProspectOffer({
           <Button
             size="sm"
             variant="ghost"
-            disabled={apply.isPending}
+            disabled={busy}
             onClick={() => {
               setText(offer?.offer ?? "");
               setReturnText(offer?.return ?? "");
@@ -351,7 +376,7 @@ export function ProspectOffer({
           <Button
             size="sm"
             variant="ghost"
-            disabled={apply.isPending}
+            disabled={busy}
             onClick={() => apply.mutate({ regenerate: true })}
           >
             {writingNew ? (
