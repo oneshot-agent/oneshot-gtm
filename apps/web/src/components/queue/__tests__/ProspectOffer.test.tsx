@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { offerCandidatesFromPayload, offerFromPayload } from "../ProspectOffer.tsx";
+import { nextOfferIndex, offerCandidatesFromPayload, offerFromPayload } from "../ProspectOffer.tsx";
 
 describe("offerFromPayload", () => {
   it("reads the stored offer", () => {
@@ -38,5 +38,23 @@ describe("offerFromPayload", () => {
     expect(offerFromPayload({})).toBeNull();
     expect(offerFromPayload({ offer: { offer: " " } })).toBeNull();
     expect(offerFromPayload(null)).toBeNull();
+  });
+});
+
+describe("nextOfferIndex", () => {
+  const candidates = ["one", "two", "three", "four", "five"].map((offer) => ({ offer }));
+
+  it("advances through all five candidates and wraps to the first", () => {
+    expect(candidates.map((offer) => nextOfferIndex(offer, candidates))).toEqual([1, 2, 3, 4, 0]);
+  });
+
+  it("starts at the first candidate when the active offer is missing", () => {
+    expect(nextOfferIndex({ offer: "old" }, candidates)).toBe(0);
+    expect(nextOfferIndex(null, candidates)).toBe(0);
+  });
+
+  it("handles empty and single-candidate lists", () => {
+    expect(nextOfferIndex(null, [])).toBeNull();
+    expect(nextOfferIndex(candidates[0]!, candidates.slice(0, 1))).toBe(0);
   });
 });

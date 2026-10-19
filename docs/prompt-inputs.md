@@ -60,6 +60,7 @@ The active offer also gets five angles: reasons it pays back for this firm. The 
 - `pilotOffer` is the general terms every offer carries: a pilot, a trial, a partnership, a service.
 - It is checked before use. Any number must be in the research, any quote must be copied from it, and it cannot borrow your product's own wording, carry a price or a link, open on an observation about them, or lead with watching (track, monitor, keep, ground…). A researched offer needs a return.
 - It shows at the top of the case on `/queue`, with its return and its angles under **How and why**. **Other offers** lists the rest; **Use this offer** makes one active and writes its angles. **Edit offer** saves your text and return, which are never rewritten after that. **New offers** writes five fresh ones. Each way the draft is rewritten around it.
+- **Next offer** in the queue letter's footer steps through the ranked offers and wraps to the first, rewriting the draft each time. **Offer N of M** beside the angle label shows the active position. Rotation is available with at least two candidates, before sending, and only while the active offer is not your own edit.
 - With thin research it is written from the role and the kind of firm, and tagged so.
 - Plays whose message is not an offer get none: `discovery-interview`, `pmf-survey`, `demo-no-show`, `x-amplify`, `community-reply`, and `multiplier`, whose offer is `memberOffer` verbatim. The LinkedIn connection note never makes the offer; it uses the offer's subject as common ground.
 

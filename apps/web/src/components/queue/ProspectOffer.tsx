@@ -53,6 +53,16 @@ export function offerCandidatesFromPayload(payload: unknown): OfferView[] {
   return Array.isArray(list) ? list.map(readOffer).filter((o): o is OfferView => o !== null) : [];
 }
 
+/** Start at the first candidate when the active offer is no longer in the list. */
+export function nextOfferIndex(
+  offer: Pick<OfferView, "offer"> | null,
+  candidates: readonly Pick<OfferView, "offer">[],
+): number | null {
+  if (candidates.length === 0) return null;
+  const activeIndex = candidates.findIndex((candidate) => candidate.offer === offer?.offer);
+  return (activeIndex + 1) % candidates.length;
+}
+
 /**
  * The offer the letter opens with: what the product would deliver for this
  * firm, written from the row's research. The founder can rewrite it or ask

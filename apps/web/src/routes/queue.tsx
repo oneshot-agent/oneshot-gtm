@@ -7,7 +7,12 @@ import {
   deliveryWarningText,
 } from "../components/queue/DeliveryWarning.tsx";
 import { PersonDossier } from "../components/queue/PersonDossier.tsx";
-import { ProspectOffer } from "../components/queue/ProspectOffer.tsx";
+import {
+  ProspectOffer,
+  nextOfferIndex,
+  offerCandidatesFromPayload,
+  offerFromPayload,
+} from "../components/queue/ProspectOffer.tsx";
 import { ProductResearch } from "../components/queue/ProductResearch.tsx";
 import { Explain } from "../components/primitives/Explain.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1283,10 +1288,10 @@ export function QueueRow({
 
 /**
  * Persisted draft with receipt links, send state, and generate/regenerate actions.
- * Both draft actions use the preview-only endpoint and never send. Each finder
+ * Draft actions use the preview-only endpoint and never send. Each finder
  * stores its pitch angle on the row so drafts can be generated inline.
  */
-function DraftSection({
+export function DraftSection({
   id,
   channel,
   sender,
@@ -1322,6 +1327,38 @@ function DraftSection({
 }): React.ReactElement {
   const qc = useQueryClient();
   const { masked } = usePrivacy();
+  const offer = offerFromPayload(payload);
+  const candidates = offerCandidatesFromPayload(payload);
+  const activeOfferIndex =
+    offer?.editedBy === "founder"
+      ? -1
+      : candidates.findIndex((candidate) => candidate.offer === offer?.offer);
+  const nextOffer = useMutation({
+    mutationFn: async (select: number) => {
+      await api.setQueueOffer(id, { select });
+      try {
+        await api.regenerateDraft(id);
+        return { redrafted: true as const };
+      } catch (err) {
+        return { redrafted: false as const, message: (err as Error).message };
+      }
+    },
+    onMutate: () => markDraftGenerating(id),
+    onSuccess: (result) => {
+      clearDraftGenerating(id);
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      if (result.redrafted) toast.success("offer saved · draft rewritten around it, not sent");
+      else
+        toast.error(
+          `offer saved, but the draft still carries the old one · ${result.message}. Regenerate the draft.`,
+        );
+    },
+    onError: (err) => {
+      clearDraftGenerating(id);
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      toast.error(`couldn't update the offer · ${err.message}`);
+    },
+  });
   const regenerate = useMutation({
     mutationFn: (rotateAngle: boolean) => api.regenerateDraft(id, rotateAngle),
     // Persist a localStorage marker so the spinner survives leaving + returning
@@ -1342,7 +1379,7 @@ function DraftSection({
   });
   // Instant spinner while mounted (isPending) OR restored-from-localStorage
   // after a remount (generating).
-  const isGenerating = generating || regenerate.isPending;
+  const isGenerating = generating || regenerate.isPending || nextOffer.isPending;
   const send = useMutation({
     mutationFn: () => api.sendDraft(id),
     onSuccess: () => {
@@ -1393,6 +1430,18 @@ function DraftSection({
           title="Try another angle and generate a new preview"
         >
           <RotateCw size={11} /> Rotate angle
+        </Button>
+      )}
+      {candidates.length > 1 && offer?.editedBy !== "founder" && (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={isGenerating}
+          onClick={() => nextOffer.mutate(nextOfferIndex(offer, candidates)!)}
+          {...readOnly}
+          title="Use the next offer and rewrite the draft around it"
+        >
+          <RotateCw size={11} /> {nextOffer.isPending ? "next offer…" : "Next offer"}
         </Button>
       )}
     </div>
@@ -1758,13 +1807,20 @@ function DraftSection({
       body={draft.body}
       afterBody={
         <>
-          {draft.angle && (
-            <details className="mt-3 text-xs text-ink-muted">
-              <summary className="cursor-pointer">
-                {`Angle ${(draft.angle.index ?? 0) + 1} of ${draft.angle.count ?? 1}${draft.angle.origin === "generated" ? " · generated" : ""}`}
-              </summary>
-              <p className="mt-2">{draft.angle.text}</p>
-            </details>
+          {(draft.angle || activeOfferIndex >= 0) && (
+            <div className="mt-3 flex flex-wrap items-baseline gap-3 text-xs text-ink-muted">
+              {draft.angle && (
+                <details>
+                  <summary className="cursor-pointer">
+                    {`Angle ${(draft.angle.index ?? 0) + 1} of ${draft.angle.count ?? 1}${draft.angle.origin === "generated" ? " · generated" : ""}`}
+                  </summary>
+                  <p className="mt-2">{draft.angle.text}</p>
+                </details>
+              )}
+              {activeOfferIndex >= 0 && (
+                <span>{`Offer ${activeOfferIndex + 1} of ${candidates.length}`}</span>
+              )}
+            </div>
           )}
           <DraftHistory queryKey={["queue-drafts", id]} load={() => api.queueDrafts(id)} />
           {linkedinReplyEditor}
