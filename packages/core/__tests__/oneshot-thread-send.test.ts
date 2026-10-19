@@ -102,7 +102,7 @@ function recipient(): string {
 function stubGmailFetch(): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async (url: string | URL) => {
     const u = String(url);
-    if (u.includes("oauth2.googleapis.com")) {
+    if (new URL(u).host === "oauth2.googleapis.com") {
       return new Response(JSON.stringify({ access_token: "at", expires_in: 3600 }), {
         status: 200,
       });
