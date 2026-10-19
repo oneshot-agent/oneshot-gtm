@@ -95,6 +95,7 @@ import {
 import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandResearchProspects } from "./commands/research-prospects.ts";
 import { commandResearchProducts } from "./commands/research-products.ts";
+import { commandRejudgeOffers } from "./commands/rejudge-offers.ts";
 import { commandResearchQueue } from "./commands/research-queue.ts";
 import { commandRejudgeGitHub } from "./commands/rejudge-github.ts";
 import { commandRederive } from "./commands/rederive.ts";
@@ -936,6 +937,24 @@ find
         });
       },
     ),
+  );
+
+find
+  .command("rejudge-offers")
+  .option("--limit <n>", "max queue rows to judge (default all)", positiveInt("--limit"))
+  .option("--concurrency <n>", "parallel judge calls (default 3)", positiveInt("--concurrency"))
+  .option("--dry-run", "judge and print what would change; write nothing", false)
+  .description(
+    "Re-judge the offers stored on unsent queue rows with the workspace's offerJudge; writes no new offers",
+  )
+  .action(
+    runOrFail(async (opts: { limit?: number; concurrency?: number; dryRun: boolean }) => {
+      await commandRejudgeOffers({
+        dryRun: opts.dryRun,
+        ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+        ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
+      });
+    }),
   );
 
 find

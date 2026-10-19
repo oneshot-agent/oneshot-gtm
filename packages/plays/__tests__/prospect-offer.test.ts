@@ -641,6 +641,99 @@ describe("judgeOffers", () => {
   });
 });
 
+// The decisions answer as the API gives it: `confidence` is its own number,
+// separate from (and often lower than) the label's probability.
+function decisionsRaw(
+  answers: Array<{ choice: string; confidence?: number; probabilities?: Record<string, number> }>,
+): Response {
+  return new Response(
+    JSON.stringify({
+      model: "test/decisions-model",
+      answers: Object.fromEntries(
+        answers.map((a, i) => [`offer_${i + 1}`, { type: "choice", ...a }]),
+      ),
+      usage: { cost: 0.001 },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
+
+describe("judgeOffers pass rule (decisions)", () => {
+  const research = offerResearchText(target);
+  const decisionsCfg = {
+    ...cfg,
+    offerJudge: { engine: "decisions", model: "test/decisions-model" },
+  } as never;
+
+  afterEach(() => {
+    delete process.env["OPENROUTER_API_KEY"];
+  });
+
+  it("passes on P(relevant), not on the separate confidence", async () => {
+    const { judgeOffers } = await import("../src/_prospect-offer.ts");
+    process.env["OPENROUTER_API_KEY"] = "test-key";
+    const fetchImpl = vi.fn(async () =>
+      decisionsRaw([
+        // Labelled relevant at 0.66 with a confidence of 0.3: passes.
+        { choice: "relevant", confidence: 0.3, probabilities: { relevant: 0.66, weak: 0.3 } },
+        // Relevant on top, but P(relevant) under the 0.5 bar: fails.
+        {
+          choice: "relevant",
+          confidence: 0.6,
+          probabilities: { relevant: 0.45, weak: 0.4, irrelevant: 0.15 },
+        },
+        // Weak on top: fails whatever the numbers.
+        { choice: "weak", confidence: 0.9, probabilities: { weak: 0.4, relevant: 0.35 } },
+        // No probabilities: the confidence stands in.
+        { choice: "relevant", confidence: 0.7 },
+        { choice: "relevant", confidence: 0.3 },
+      ]),
+    );
+    const offers = [good, second, third, fourth, fifth];
+    const out = await judgeOffers(offers, research, target, decisionsCfg, {
+      fetchImpl: fetchImpl as never,
+    });
+    expect(out?.map((j) => [j?.label, j?.score, j?.pass])).toEqual([
+      ["relevant", 0.66, true],
+      ["relevant", 0.45, false],
+      ["weak", 0.35, false],
+      ["relevant", 0.7, true],
+      ["relevant", 0.3, false],
+    ]);
+  });
+
+  it("uses the workspace's minConfidence as the bar on P(relevant)", async () => {
+    const { judgeOffers } = await import("../src/_prospect-offer.ts");
+    process.env["OPENROUTER_API_KEY"] = "test-key";
+    const fetchImpl = vi.fn(async () =>
+      decisionsRaw([
+        { choice: "relevant", confidence: 0.2, probabilities: { relevant: 0.66, weak: 0.3 } },
+      ]),
+    );
+    const out = await judgeOffers(
+      [good],
+      research,
+      target,
+      {
+        ...cfg,
+        offerJudge: { engine: "decisions", model: "test/decisions-model", minConfidence: 0.7 },
+      } as never,
+      { fetchImpl: fetchImpl as never },
+    );
+    expect(out?.[0]?.pass).toBe(false);
+  });
+});
+
+describe("storedRelevance", () => {
+  it("keeps the judge's label, and stores a relevant under the bar as weak", async () => {
+    const { storedRelevance } = await import("../src/_prospect-offer.ts");
+    expect(storedRelevance({ label: "relevant", pass: true })).toBe("relevant");
+    expect(storedRelevance({ label: "weak", pass: false })).toBe("weak");
+    expect(storedRelevance({ label: "relevant", pass: false })).toBe("weak");
+    expect(storedRelevance({ label: "irrelevant", pass: false })).toBe("weak");
+  });
+});
+
 describe("deriveOffers with the relevance judge", () => {
   afterEach(() => {
     delete process.env["OPENROUTER_API_KEY"];
@@ -726,6 +819,59 @@ describe("deriveOffers with the relevance judge", () => {
     expect(offers.some((o) => o.offer === fifth.offer || o.offer === replacementTwo.offer)).toBe(
       false,
     );
+  });
+
+  it("fill keeps the judge's labels; a relevant under the bar is tagged weak", async () => {
+    process.env["OPENROUTER_API_KEY"] = "test-key";
+    cfg.offerJudge = { engine: "decisions", model: "test/decisions-model" };
+    llm.replies = [
+      JSON.stringify({ offers: [good, second, third, fourth, fifth] }),
+      JSON.stringify({ offers: [] }),
+    ];
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      decisionsRaw([
+        // Confidence 0.3, P(relevant) 0.66: passes (the old rule dropped it).
+        { choice: "relevant", confidence: 0.3, probabilities: { relevant: 0.66, weak: 0.3 } },
+        { choice: "relevant", confidence: 0.8, probabilities: { relevant: 0.8, weak: 0.15 } },
+        // Relevant on top, under the bar: a filler, stored weak.
+        {
+          choice: "relevant",
+          confidence: 0.4,
+          probabilities: { relevant: 0.45, weak: 0.4, irrelevant: 0.15 },
+        },
+        { choice: "weak", confidence: 0.5, probabilities: { weak: 0.6, relevant: 0.3 } },
+        { choice: "irrelevant", confidence: 0.9, probabilities: { irrelevant: 0.9 } },
+      ]),
+    );
+    const offers = await deriveOffers({
+      target,
+      playName: "new-business",
+      fetchImpl: fetchImpl as never,
+    });
+    expect(offers.map((o) => [o.offer, o.relevance, o.relevanceScore])).toEqual([
+      [good.offer, "relevant", 0.66],
+      [second.offer, "relevant", 0.8],
+      [third.offer, "weak", 0.45],
+      [fourth.offer, "weak", 0.3],
+    ]);
+    // The judge's own verdict stays readable on each filler.
+    expect(offers[2]?.relevanceWhy).toBe("relevant 0.45, weak 0.40, irrelevant 0.15");
+    expect(offers[3]?.relevanceWhy).toBe("weak 0.60, relevant 0.30");
+  });
+
+  it("an llm filler keeps the judge's weak label and reason", async () => {
+    llm.replies = [JSON.stringify({ offers: [good, second] }), JSON.stringify({ offers: [] })];
+    llm.judge = [
+      judgeReply([
+        ["relevant", "the second depot"],
+        ["weak", "would fit any trade business"],
+      ]),
+    ];
+    const offers = await deriveOffers({ target, playName: "new-business" });
+    expect(offers.map((o) => [o.relevance, o.relevanceWhy])).toEqual([
+      ["relevant", "the second depot"],
+      ["weak", "would fit any trade business"],
+    ]);
   });
 
   it("asks for nothing more when the judge drops nothing", async () => {

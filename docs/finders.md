@@ -90,7 +90,7 @@ oneshot-gtm find research-prospects --scope all --refresh        # everyone alre
 oneshot-gtm find synthesize-angles --refresh --scope active      # follow-ups pick up the new dossier
 ```
 
-The last two stop at 250 rows a run; pass `--limit` for more. Researched rows are skipped, so a re-run continues where the last one stopped. `--dry-run` prints counts and an estimate. `--max-cost-usd` bounds a run. `--cache-only --refresh` re-derives from research already bought and bills nothing. `find research-products` backfills product research and stops at 5 USD unless you pass `--no-cost-limit`.
+The last two stop at 250 rows a run; pass `--limit` for more. Researched rows are skipped, so a re-run continues where the last one stopped. `--dry-run` prints counts and an estimate. `--max-cost-usd` bounds a run. `--cache-only --refresh` re-derives from research already bought and bills nothing. `find research-products` backfills product research and stops at 5 USD unless you pass `--no-cost-limit`. `find rejudge-offers` re-runs the offer relevance judge on the offers already stored on unsent rows and writes no new offers. A row whose active offer still fails while another passes switches to that one and is listed for a redraft. `--dry-run` prints what would change.
 
 ### People whose footprint is GitHub
 
