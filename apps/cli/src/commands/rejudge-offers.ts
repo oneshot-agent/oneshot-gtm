@@ -230,6 +230,10 @@ export async function commandRejudgeOffers(opts: RejudgeOffersOpts): Promise<Rej
       const written = ledger.patchLiveQueuePayload({
         id: row.id,
         patch: activeOfferPatch(active, offer, next),
+        // Any concurrent edit (new angles, candidates) skips the row.
+        expectPayloadJson: row.payload_json,
+        // A draft written for the replaced offer must not go out.
+        discardDraft: outcome === "switched",
         expect: [
           { path: "$.offer.offer", value: active.offer },
           { path: "$.offer.derivedAt", value: text("derivedAt") },

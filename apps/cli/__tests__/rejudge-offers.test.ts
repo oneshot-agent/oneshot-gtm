@@ -128,6 +128,15 @@ const payloadOf = (id: number) =>
     offerCandidates: ProspectOffer[];
   };
 
+const draft = (body: string) => ({
+  subject: "s",
+  body,
+  flags: [],
+  sent: false,
+  receiptIds: [],
+  dryRun: false,
+});
+
 describe("commandRejudgeOffers", () => {
   it("lifts a hold when the active offer now passes, and re-labels every candidate", async () => {
     const active = offer(A, { ...weakFields, angles: ["pays back per job"] });
@@ -270,6 +279,49 @@ describe("commandRejudgeOffers", () => {
     const p = payloadOf(id);
     expect(p.offer.offer).toBe(C);
     expect(p.offerCandidates.map((o) => o.relevance)).toEqual(["weak", undefined]);
+  });
+
+  it("drops the stored draft when the active offer switches, and keeps it when it stays", async () => {
+    const switched = enqueue(
+      { offer: offer(A, weakFields), offerCandidates: [offer(A, weakFields), offer(B)] },
+      "approved",
+    );
+    const kept = enqueue(
+      { offer: offer(C, weakFields), offerCandidates: [offer(C, weakFields)] },
+      "approved",
+    );
+    ledger.setQueueDraft({ id: switched, draft: draft("written for A") });
+    ledger.setQueueDraft({ id: kept, draft: draft("written for C") });
+    verdictFor.set(A, verdict("weak", 0.3, false));
+    verdictFor.set(B, verdict("relevant", 0.7, true));
+    verdictFor.set(C, verdict("relevant", 0.7, true));
+
+    const s = await commandRejudgeOffers({ dryRun: false });
+
+    expect(s).toMatchObject({ switched: [switched], lifted: [kept] });
+    expect(payloadOf(switched).offer.offer).toBe(B);
+    expect(ledger.getQueueRow(switched)!.last_draft_json).toBeNull();
+    expect(ledger.getQueueRow(kept)!.last_draft_json).toContain("written for C");
+  });
+
+  it("skips a row whose payload changed anywhere while it was judged", async () => {
+    const id = enqueue({
+      offer: offer(A, weakFields),
+      offerCandidates: [offer(A, weakFields), offer(B)],
+    });
+    verdictFor.set(A, verdict("relevant", 0.7, true));
+    // New angles land on a candidate mid-run; the active offer is untouched.
+    onJudge = () => {
+      ledger.patchLiveQueuePayload({
+        id,
+        patch: { offerCandidates: [offer(A, weakFields), offer(B, { angles: ["fresh"] })] },
+      });
+    };
+    const s = await commandRejudgeOffers({ dryRun: false });
+    expect(s).toMatchObject({ judged: 0, skipped: 1, lifted: [] });
+    const p = payloadOf(id);
+    expect(p.offer.relevance).toBe("weak");
+    expect(p.offerCandidates[1]?.angles).toEqual(["fresh"]);
   });
 
   it("--limit caps the rows judged", async () => {

@@ -1364,20 +1364,32 @@ export class QueueStore {
     id: number;
     patch: Record<string, unknown>;
     expect?: Array<{ path: string; value: string | null }>;
+    expectPayloadJson?: string;
+    discardDraft?: boolean;
   }): boolean {
     const guards = input.expect ?? [];
-    const r = this.db
-      .prepare(
-        `UPDATE target_queue
-            SET payload_json = json_patch(payload_json, ?)
-          WHERE id = ?
-            AND status IN ('pending', 'approved')
-            AND sent_at IS NULL
-            AND send_started_at IS NULL
-            AND json_valid(payload_json)${guards.map(() => "\n            AND json_extract(payload_json, ?) IS ?").join("")}`,
-      )
-      .run(JSON.stringify(input.patch), input.id, ...guards.flatMap((g) => [g.path, g.value]));
-    return r.changes === 1;
+    const whole = input.expectPayloadJson !== undefined;
+    return this.db.transaction(() => {
+      const r = this.db
+        .prepare(
+          `UPDATE target_queue
+              SET payload_json = json_patch(payload_json, ?)${input.discardDraft ? ", last_draft_json = NULL, last_drafted_at = NULL" : ""}
+            WHERE id = ?
+              AND status IN ('pending', 'approved')
+              AND sent_at IS NULL
+              AND send_started_at IS NULL
+              AND json_valid(payload_json)${whole ? "\n              AND payload_json = ?" : ""}${guards.map(() => "\n              AND json_extract(payload_json, ?) IS ?").join("")}`,
+        )
+        .run(
+          JSON.stringify(input.patch),
+          input.id,
+          ...(whole ? [input.expectPayloadJson!] : []),
+          ...guards.flatMap((g) => [g.path, g.value]),
+        );
+      if (r.changes !== 1) return false;
+      if (input.discardDraft) this.drafts.close({ queueId: input.id }, "discarded", "redraft");
+      return true;
+    })();
   }
 
   latestQueueId(): number {
