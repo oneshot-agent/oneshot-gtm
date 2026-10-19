@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Loader2 } from "lucide-react";
 import { cn } from "../../lib/cn.ts";
 import { heldSummary } from "../../lib/flagLabels.ts";
 import { Badge } from "../primitives/Badge.tsx";
@@ -20,6 +21,7 @@ export function LetterCard({
   afterBody,
   foot,
   sendable = false,
+  working = null,
 }: {
   /** Right end of the heading: the letter status or timestamp. */
   meta?: ReactNode;
@@ -32,20 +34,51 @@ export function LetterCard({
   foot?: { left?: ReactNode; right?: ReactNode } | null;
   /** Paints the foot rule receipt green: the founder can send this now. */
   sendable?: boolean;
+  /**
+   * Work in progress on this letter, in words ("Rotating to the next
+   * angle…"). Shown with a spinner under the subject; the letter dims until
+   * the new one lands.
+   */
+  working?: string | null;
 }) {
   return (
     <div className="min-w-0">
       <SheetHeading label="the letter" right={meta} />
-      <div className="rounded-t-[var(--radius-sm)] border border-b-0 border-ink-rule bg-ink-bg-deep">
+      <div
+        className="rounded-t-[var(--radius-sm)] border border-b-0 border-ink-rule bg-ink-bg-deep"
+        aria-busy={working ? true : undefined}
+      >
         <div className="px-5 pt-4">
-          <div className="text-[13px] font-medium leading-5 text-ink-cream">{subject}</div>
+          {working ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="mb-2 flex items-center gap-2 font-mono text-[11px] text-[color:var(--ink-receipt-2)]"
+            >
+              <Loader2 size={12} className="animate-spin" />
+              {working}
+            </div>
+          ) : null}
+          <div
+            className={cn(
+              "text-[13px] font-medium leading-5 text-ink-cream transition-opacity",
+              working && "opacity-50",
+            )}
+          >
+            {subject}
+          </div>
           {stateLine ? (
             <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[12px] leading-4">
               {stateLine}
             </div>
           ) : null}
           <div className="my-3 h-px bg-ink-rule" />
-          <pre className="ln-prose m-0 max-h-[420px] overflow-auto whitespace-pre-wrap text-[13px] text-ink-cream-2">
+          <pre
+            className={cn(
+              "ln-prose m-0 max-h-[420px] overflow-auto whitespace-pre-wrap text-[13px] text-ink-cream-2 transition-opacity",
+              working && "opacity-50",
+            )}
+          >
             {body}
           </pre>
           {afterBody}

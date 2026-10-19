@@ -19,16 +19,24 @@ const MAX_RUNTIME_MS = 5 * 60 * 1000;
  */
 const MIN_VISIBLE_MS = 800;
 
-export function markDraftGenerating(id: number): void {
+/** Mark the row as generating; returns this run's stamp for `clearDraftGenerating`. */
+export function markDraftGenerating(id: number): string {
+  const stamp = String(Date.now());
   try {
-    localStorage.setItem(KEY_PREFIX + id, String(Date.now()));
+    localStorage.setItem(KEY_PREFIX + id, stamp);
   } catch {
     // private mode / SSR: no-op
   }
+  return stamp;
 }
 
-export function clearDraftGenerating(id: number): void {
+/**
+ * Drop the row's marker. With `stamp`, only when the marker is still that
+ * run's: a later run that re-marked the row keeps its spinner.
+ */
+export function clearDraftGenerating(id: number, stamp?: string): void {
   try {
+    if (stamp !== undefined && localStorage.getItem(KEY_PREFIX + id) !== stamp) return;
     localStorage.removeItem(KEY_PREFIX + id);
   } catch {
     // ignore

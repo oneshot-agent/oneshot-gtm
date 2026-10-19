@@ -1,8 +1,12 @@
 import { useState } from "react";
+import { Loader2 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
+import { cn } from "../../lib/cn.ts";
+import { clearDraftGenerating, markDraftGenerating } from "../../lib/draftRunState.ts";
+import { clearRowActivity, setRowActivity, useRowActivity } from "../../lib/rowActivity.ts";
 import { Button } from "../primitives/Button.tsx";
 import { Textarea } from "../primitives/Field.tsx";
 import { Disclosure } from "../ledger/CaseList.tsx";
@@ -118,16 +122,35 @@ export function ProspectOffer({
   const [text, setText] = useState(offer?.offer ?? "");
   const [returnText, setReturnText] = useState(offer?.return ?? "");
 
+  const activity = useRowActivity(rowId);
   const apply = useMutation({
     mutationFn: async (
       body: { offer: string; return?: string } | { regenerate: true } | { select: number },
     ) => {
-      await api.setQueueOffer(rowId, body);
+      // Name each step as it runs, so the offer block and the letter show
+      // the same work (rowActivity.ts).
+      const token = setRowActivity(
+        rowId,
+        "regenerate" in body
+          ? "Writing 5 offers and their angles…"
+          : "select" in body
+            ? `Switching to offer ${body.select + 1}…`
+            : "Saving your offer…",
+      );
       try {
-        await api.regenerateDraft(rowId);
-        return { redrafted: true as const };
-      } catch (err) {
-        return { redrafted: false as const, message: (err as Error).message };
+        await api.setQueueOffer(rowId, body);
+        setRowActivity(rowId, "Rewriting the draft around the offer…", token);
+        const stamp = markDraftGenerating(rowId);
+        try {
+          await api.regenerateDraft(rowId);
+          return { redrafted: true as const };
+        } catch (err) {
+          return { redrafted: false as const, message: (err as Error).message };
+        } finally {
+          clearDraftGenerating(rowId, stamp);
+        }
+      } finally {
+        clearRowActivity(rowId, token);
       }
     },
     onSuccess: (result) => {
@@ -145,6 +168,10 @@ export function ProspectOffer({
     },
   });
 
+  const pendingBody = apply.isPending ? apply.variables : undefined;
+  const writingNew = !!pendingBody && "regenerate" in pendingBody;
+  const switchingTo = pendingBody && "select" in pendingBody ? pendingBody.select : null;
+
   if (masked) return null;
   if (!offer && !editable) return null;
 
@@ -155,6 +182,14 @@ export function ProspectOffer({
         {offer?.level === "role" && !offer.editedBy && <span>· from role only</span>}
         {offer?.editedBy === "founder" && <span>· yours</span>}
         {offer?.relevance === "weak" && !offer.editedBy && <span>· weak fit</span>}
+        {activity && (
+          <span
+            aria-hidden="true"
+            className="inline-flex items-center gap-1 normal-case tracking-normal text-[color:var(--ink-receipt-2)]"
+          >
+            · <Loader2 size={11} className="animate-spin" /> {activity}
+          </span>
+        )}
         {activeIndex >= 0 && candidates.length > 1 && (
           <span>
             · {activeIndex + 1} of {candidates.length}
@@ -187,7 +222,13 @@ export function ProspectOffer({
                 })
               }
             >
-              {apply.isPending ? "rewriting…" : "Save and redraft"}
+              {apply.isPending ? (
+                <>
+                  <Loader2 size={11} className="animate-spin" /> Saving…
+                </>
+              ) : (
+                "Save and redraft"
+              )}
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
               Cancel
@@ -196,7 +237,12 @@ export function ProspectOffer({
         </div>
       ) : offer ? (
         <>
-          <p className="m-0 text-[13px] leading-5 text-ink-cream [text-wrap:pretty]">
+          <p
+            className={cn(
+              "m-0 text-[13px] leading-5 text-ink-cream transition-opacity [text-wrap:pretty]",
+              apply.isPending && "opacity-50",
+            )}
+          >
             {offer.offer}
           </p>
           {offer.return && (
@@ -272,7 +318,13 @@ export function ProspectOffer({
                         disabled={apply.isPending}
                         onClick={() => apply.mutate({ select: i })}
                       >
-                        Use this offer
+                        {switchingTo === i ? (
+                          <>
+                            <Loader2 size={11} className="animate-spin" /> Switching…
+                          </>
+                        ) : (
+                          "Use this offer"
+                        )}
                       </Button>
                     </span>
                   )}
@@ -287,6 +339,7 @@ export function ProspectOffer({
           <Button
             size="sm"
             variant="ghost"
+            disabled={apply.isPending}
             onClick={() => {
               setText(offer?.offer ?? "");
               setReturnText(offer?.return ?? "");
@@ -301,7 +354,13 @@ export function ProspectOffer({
             disabled={apply.isPending}
             onClick={() => apply.mutate({ regenerate: true })}
           >
-            {apply.isPending ? "writing…" : "New offers"}
+            {writingNew ? (
+              <>
+                <Loader2 size={11} className="animate-spin" /> Writing…
+              </>
+            ) : (
+              "New offers"
+            )}
           </Button>
         </div>
       )}
