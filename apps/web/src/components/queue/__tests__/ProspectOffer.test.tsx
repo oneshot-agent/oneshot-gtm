@@ -108,9 +108,11 @@ describe("offer relevance in the case", () => {
       relevance: "relevant",
       relevanceScore: 0.83,
     });
-    expect(offerFromPayload({ offer: { offer: "x", relevance: "nonsense" } })).not.toHaveProperty(
-      "relevance",
-    );
+    const invalidRelevance = offerFromPayload({
+      offer: { offer: "x", steps: "a, b", relevance: "nonsense" },
+    });
+    expect(invalidRelevance).toMatchObject({ offer: "x", steps: "a, b" });
+    expect(invalidRelevance).not.toHaveProperty("relevance");
   });
 
   it("scores out of five, or names the label when there is no score", () => {
