@@ -18,7 +18,7 @@ vi.mock("../src/components/primitives/Button.tsx", async (importOriginal) => {
   };
 });
 
-const candidates = ["one", "two", "three", "four", "five"].map((offer) => ({ offer }));
+const candidates = ["one", "two", "three", "four", "five"].map((offer) => ({ offer, steps: "" }));
 const base: ComponentProps<typeof DraftSection> = {
   id: 5,
   channel: "email",
@@ -97,7 +97,7 @@ describe("queue Next offer", () => {
       expect(render(props)).not.toContain("Next offer");
     }
     expect(
-      render({ payload: { offer: { offer: "missing" }, offerCandidates: candidates } }),
+      render({ payload: { offer: { offer: "missing", steps: "" }, offerCandidates: candidates } }),
     ).not.toContain("Offer 0 of");
   });
 
@@ -134,6 +134,39 @@ describe("queue Next offer", () => {
     expect(JSON.stringify(candidates)).toBe(original);
     expect(refresh).toHaveBeenLastCalledWith({ queryKey: ["queue"] });
     expect(toast.success).toHaveBeenCalledWith("offer saved · draft rewritten around it, not sent");
+  });
+
+  it("uses server-filtered positions when malformed candidates surround valid offers", async () => {
+    const select = vi
+      .spyOn(api, "setQueueOffer")
+      .mockResolvedValue({} as Awaited<ReturnType<typeof api.setQueueOffer>>);
+    vi.spyOn(api, "regenerateDraft").mockResolvedValue(
+      {} as Awaited<ReturnType<typeof api.regenerateDraft>>,
+    );
+    const refresh = vi.spyOn(client, "invalidateQueries");
+    const valid = candidates.slice(0, 2);
+    const offerCandidates = [
+      { offer: "missing steps" },
+      valid[0],
+      { offer: "numeric steps", steps: 42 },
+      valid[1],
+      { offer: "null steps", steps: null },
+    ];
+    for (const [index, offer] of valid.entries()) {
+      const html = render({ payload: { offer, offerCandidates } });
+      expect(html).toContain(`Offer ${index + 1} of 2`);
+      clickNext();
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(index + 1));
+      expect(select).toHaveBeenLastCalledWith(5, { select: (index + 1) % 2 });
+    }
+    expect(
+      render({
+        payload: {
+          offer: valid[0],
+          offerCandidates: offerCandidates.filter((o) => o !== valid[1]),
+        },
+      }),
+    ).not.toContain("Next offer");
   });
 
   it("reports the saved offer when the draft rewrite fails and refreshes the row", async () => {

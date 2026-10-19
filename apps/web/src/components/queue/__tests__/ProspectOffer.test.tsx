@@ -29,7 +29,14 @@ describe("offerFromPayload", () => {
   });
   it("reads the ranked offers, skipping unreadable ones", () => {
     const list = offerCandidatesFromPayload({
-      offerCandidates: [{ offer: "first", steps: "" }, { offer: " " }, { offer: "second" }],
+      offerCandidates: [
+        { offer: "first", steps: "" },
+        { offer: " ", steps: "" },
+        { offer: "missing steps" },
+        { offer: "numeric steps", steps: 42 },
+        { offer: "null steps", steps: null },
+        { offer: "second", steps: "a, b" },
+      ],
     });
     expect(list.map((o) => o.offer)).toEqual(["first", "second"]);
     expect(offerCandidatesFromPayload({})).toEqual([]);

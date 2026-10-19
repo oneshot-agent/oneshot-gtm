@@ -27,10 +27,11 @@ function strings(v: unknown): string[] {
 function readOffer(o: unknown): OfferView | null {
   if (!o || typeof o !== "object" || Array.isArray(o)) return null;
   const r = o as Record<string, unknown>;
-  if (typeof r["offer"] !== "string" || !r["offer"].trim()) return null;
+  if (typeof r["offer"] !== "string" || !r["offer"].trim() || typeof r["steps"] !== "string")
+    return null;
   return {
     offer: r["offer"],
-    steps: typeof r["steps"] === "string" ? r["steps"] : "",
+    steps: r["steps"],
     evidence: strings(r["evidence"]),
     stage: typeof r["stage"] === "string" ? r["stage"] : "",
     level: r["level"] === "role" ? "role" : "researched",
