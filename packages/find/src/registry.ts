@@ -28,7 +28,8 @@ import { runLocalRegistryFinder } from "./local-registry.ts";
 import type { SocrataPortalConfig } from "./_registry-sources.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
 import { runPostFundingFinder } from "./post-funding.ts";
-import { runListPageFinder, type ListPageSource } from "./list-page.ts";
+import { type ListPageInlineCompany, runListPageFinder, type ListPageSource } from "./list-page.ts";
+import { sanitizeCompanyDomain } from "./_accelerator-search-adapter.ts";
 import type { SignalVerifyConfig, VerifyVia } from "./_signal-verify.ts";
 import { runShowHnFinder } from "./show-hn.ts";
 import { runXRepostersFinder } from "./x-reposters.ts";
@@ -255,24 +256,112 @@ export function listPageVerify(raw: unknown): SignalVerifyConfig | null {
   return { names, via: via.length > 0 ? [...new Set(via)] : ["subprocessors"] };
 }
 
-/** `list-page` sources that can run: an http(s) URL and a non-empty signal each. */
+/**
+ * One `list-page` source read from config, with what is wrong with it. A
+ * source is either `{url, signal, verify?}` (an http(s) page to read) or
+ * `{companies, signal}` (companies written inline, each a name and a
+ * domain). `source` is null when it cannot run; an inline company that is
+ * missing a name or a domain is left out and reported.
+ */
+export function parseListPageSource(
+  raw: unknown,
+  at: string,
+): { source: ListPageSource | null; errors: string[] } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {
+      source: null,
+      errors: [`${at}: must be an object: {url, signal} or {companies, signal}`],
+    };
+  }
+  const r = raw as Record<string, unknown>;
+  const errors: string[] = [];
+  const signal = typeof r["signal"] === "string" ? r["signal"].trim() : "";
+  if (!signal) errors.push(`${at}: \`signal\` is required (what being on this list means)`);
+  const hasUrl = r["url"] !== undefined && r["url"] !== null && r["url"] !== "";
+  const hasCompanies = r["companies"] !== undefined && r["companies"] !== null;
+  if (hasUrl === hasCompanies) {
+    errors.push(
+      `${at}: set exactly one of \`url\` (a page to read) or \`companies\` (companies written inline)`,
+    );
+    return { source: null, errors };
+  }
+
+  if (hasUrl) {
+    const url = typeof r["url"] === "string" ? r["url"].trim() : "";
+    let parsed: string | null = null;
+    if (/^https?:\/\//i.test(url)) {
+      try {
+        parsed = new URL(url).toString();
+      } catch {
+        parsed = null;
+      }
+    }
+    if (!parsed) errors.push(`${at}: \`url\` must be an http(s) URL`);
+    if (!parsed || !signal) return { source: null, errors };
+    const verify = listPageVerify(r["verify"]);
+    return { source: { url: parsed, signal, ...(verify ? { verify } : {}) }, errors };
+  }
+
+  if (r["verify"] !== undefined) {
+    errors.push(
+      `${at}: \`verify\` checks a page someone else compiled; drop it from a \`companies\` list`,
+    );
+  }
+  if (!Array.isArray(r["companies"]) || r["companies"].length === 0) {
+    errors.push(`${at}: \`companies\` must be a non-empty list of {name, domain}`);
+    return { source: null, errors };
+  }
+  const companies: ListPageInlineCompany[] = [];
+  for (const [i, item] of (r["companies"] as unknown[]).entries()) {
+    const where = `${at}.companies[${i}]`;
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      errors.push(`${where}: must be an object: {name, domain, signal?}`);
+      continue;
+    }
+    const c = item as Record<string, unknown>;
+    const name = typeof c["name"] === "string" ? c["name"].trim() : "";
+    const rawDomain = typeof c["domain"] === "string" ? c["domain"].trim() : "";
+    const domain = sanitizeCompanyDomain(rawDomain);
+    const label = name ? `${where} (${name})` : where;
+    let ok = true;
+    if (!name) {
+      errors.push(`${where}: \`name\` is required`);
+      ok = false;
+    }
+    if (!rawDomain) {
+      errors.push(`${label}: \`domain\` is required (the company's own site, e.g. alpha.example)`);
+      ok = false;
+    } else if (!domain) {
+      errors.push(`${label}: \`${rawDomain}\` is not a domain (e.g. alpha.example)`);
+      ok = false;
+    }
+    if (c["signal"] !== undefined && typeof c["signal"] !== "string") {
+      errors.push(`${label}: \`signal\` must be text`);
+      ok = false;
+    }
+    if (!ok || !domain) continue;
+    const own = typeof c["signal"] === "string" ? c["signal"].trim() : "";
+    companies.push({ name, domain, ...(own ? { signal: own } : {}) });
+  }
+  if (!signal || companies.length === 0) return { source: null, errors };
+  return { source: { companies, signal }, errors };
+}
+
+/** `list-page` sources that can run; the broken ones are left out (see `listPageSourceErrors`). */
 export function listPageSources(cfg: Record<string, unknown>): ListPageSource[] {
   const raw = Array.isArray(cfg["sources"]) ? (cfg["sources"] as unknown[]) : [];
-  const out: ListPageSource[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object") continue;
-    const r = item as Record<string, unknown>;
-    const url = typeof r["url"] === "string" ? r["url"].trim() : "";
-    const signal = typeof r["signal"] === "string" ? r["signal"].trim() : "";
-    if (!signal || !/^https?:\/\//i.test(url)) continue;
-    const verify = listPageVerify(r["verify"]);
-    try {
-      out.push({ url: new URL(url).toString(), signal, ...(verify ? { verify } : {}) });
-    } catch {
-      // not a URL: skipped, readiness reports none usable
-    }
-  }
-  return out;
+  return raw
+    .map((item, i) => parseListPageSource(item, `sources[${i}]`).source)
+    .filter((s): s is ListPageSource => s !== null);
+}
+
+/** Everything wrong with a `list-page` config's `sources`, one readable line each. */
+export function listPageSourceErrors(cfg: Record<string, unknown>): string[] {
+  const raw = cfg["sources"];
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw))
+    return ["sources: must be a list of {url, signal} or {companies, signal}"];
+  return raw.flatMap((item, i) => parseListPageSource(item, `sources[${i}]`).errors);
 }
 
 export const TRIGGERS: TriggerSpec[] = [
@@ -1031,14 +1120,14 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Turns any public page that lists companies into a source: an open-source project's ADOPTERS file, a conference sponsor page, a vendor's customers page. `sources` is a list of `{url, signal}`: `signal` says in a few words what being on the list means (e.g. `runs Backstage`), and every row carries it plus the page's own line about that company, so an angle can open with who it fits on that fact. A GitHub file URL (`/blob/`), a raw GitHub URL or a data file (`.json`, `.yml`, `.md`, `.txt`) is fetched directly for free; any other page costs one webRead. Companies are extracted once per page version and cached, then worked `limit` per run, one from each list in turn (a company two lists name is worked once, under the first): the company's decision owner is found from its domain (people search → ICP gate → email); people the page names are kept as context, never emailed. `jobTitles` (recommended for large companies: the roles you sell to, most wanted first, e.g. `Head of AI Platform`, `VP Platform Engineering`) makes that one title-scoped people search per company and tries up to three matches in that order. Only a person whose title carries every word of a wanted title, as whole words, is tried (`VP of AI` matches `Vice President, Artificial Intelligence`, `CTO` does not match `Director`); a company with no one matching is left alone for 30 days and then looked at again, or at once when `jobTitles` changes. It is not rejected. Without it the pick is any senior title at the domain, which at a big company can land on PR or recruiting. Enterprise only for now: `play` must be `design-partner-loi` with `buyerType` (`enterprise` | `government` | `hardware`) and `yourEdge` (REQUIRED: `//`-separated angles, each opening with who it fits; an angle can key on the signal, e.g. *For a company that runs Backstage —*). `limit` (companies per run, default 25), `maxCostUsd`. A list someone else compiled (a blog roundup, an aggregator, a vendor's marketing page) should carry `verify: {names, via}` on its source: before the paid contact step each company's own evidence is checked. `names` is the vendor or tool and its aliases. `via: [\"subprocessors\"]` (the default) is for hosted vendors that touch customer data (an LLM API, a browser cloud): the company's subprocessor list is fetched from its usual paths, else searched for and read; naming the vendor confirms it, a real list without it drops the company (recorded once). `via: [\"mentions\"]` is for self-hosted tools (Backstage never appears on a subprocessor list, so never use `subprocessors` for one): the company's own site and job posts are searched; it can only confirm. No evidence either way keeps the row, labelled unconfirmed, and the draft is told not to state the signal as fact. A list companies add themselves to (an ADOPTERS file) needs no `verify`.",
+      "Turns any public page that lists companies into a source: an open-source project's ADOPTERS file, a conference sponsor page, a vendor's customers page. `sources` is a list of `{url, signal}`: `signal` says in a few words what being on the list means (e.g. `runs Backstage`), and every row carries it plus the page's own line about that company, so an angle can open with who it fits on that fact. A source can instead be `{companies: [{name, domain, signal?}], signal}` with no `url`: companies the founder lists by hand (named target accounts), used as written with no fetch, no extraction and no `verify`; a company's own `signal` replaces the source's on its row, and everything after (people search, dedupe, `limit`) is the same. A GitHub file URL (`/blob/`), a raw GitHub URL or a data file (`.json`, `.yml`, `.md`, `.txt`) is fetched directly for free; any other page costs one webRead. Companies are extracted once per page version and cached, then worked `limit` per run, one from each list in turn (a company two lists name is worked once, under the first): the company's decision owner is found from its domain (people search → ICP gate → email); people the page names are kept as context, never emailed. `jobTitles` (recommended for large companies: the roles you sell to, most wanted first, e.g. `Head of AI Platform`, `VP Platform Engineering`) makes that one title-scoped people search per company and tries up to three matches in that order. Only a person whose title carries every word of a wanted title, as whole words, is tried (`VP of AI` matches `Vice President, Artificial Intelligence`, `CTO` does not match `Director`); a company with no one matching is left alone for 30 days and then looked at again, or at once when `jobTitles` changes. It is not rejected. Without it the pick is any senior title at the domain, which at a big company can land on PR or recruiting. Enterprise only for now: `play` must be `design-partner-loi` with `buyerType` (`enterprise` | `government` | `hardware`) and `yourEdge` (REQUIRED: `//`-separated angles, each opening with who it fits; an angle can key on the signal, e.g. *For a company that runs Backstage —*). `limit` (companies per run, default 25), `maxCostUsd`. A list someone else compiled (a blog roundup, an aggregator, a vendor's marketing page) should carry `verify: {names, via}` on its source: before the paid contact step each company's own evidence is checked. `names` is the vendor or tool and its aliases. `via: [\"subprocessors\"]` (the default) is for hosted vendors that touch customer data (an LLM API, a browser cloud): the company's subprocessor list is fetched from its usual paths, else searched for and read; naming the vendor confirms it, a real list without it drops the company (recorded once). `via: [\"mentions\"]` is for self-hosted tools (Backstage never appears on a subprocessor list, so never use `subprocessors` for one): the company's own site and job posts are searched; it can only confirm. No evidence either way keeps the row, labelled unconfirmed, and the draft is told not to state the signal as fact. A list companies add themselves to (an ADOPTERS file) needs no `verify`.",
     readiness: (cfg) => {
       const sources = listPageSources(cfg);
       if (sources.length === 0) {
         return {
           ready: false,
           reason:
-            "add `sources`: at least one `{url, signal}` (an http(s) page and what being on it means)",
+            "add `sources`: at least one `{url, signal}` (an http(s) page and what being on it means) or `{companies: [{name, domain}], signal}`",
         };
       }
       if (cfg["play"] !== "design-partner-loi") {

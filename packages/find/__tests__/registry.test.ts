@@ -5,6 +5,7 @@ import {
   evaluateFinderApprovalHealth,
   effectiveIntervalMs,
   freshRunningStartedAtMs,
+  listPageSourceErrors,
   listPageSources,
   MAX_RUN_AGE_MS,
   nextSleepMs,
@@ -757,5 +758,98 @@ describe("freshRunningStartedAtMs — freshness gate", () => {
     // the row visible than to silently hide a real run.
     const future = new Date(NOW + 60_000).toISOString();
     expect(freshRunningStartedAtMs(future, NOW)).toBe(new Date(future).getTime());
+  });
+});
+
+/** A list-page config with one inline source. */
+function inline(companies: unknown, extra: Record<string, unknown> = {}) {
+  return { sources: [{ companies, signal: "named target account", ...extra }] };
+}
+
+describe("list-page inline companies", () => {
+  it("reads companies written in the config, domains normalised", () => {
+    const cfg = inline([
+      { name: " Alpha ", domain: "https://www.Alpha.example/about?x=1" },
+      { name: "Beta", domain: "beta.example", signal: " renewing this quarter " },
+    ]);
+    expect(listPageSourceErrors(cfg)).toEqual([]);
+    expect(listPageSources(cfg)).toEqual([
+      {
+        signal: "named target account",
+        companies: [
+          { name: "Alpha", domain: "alpha.example" },
+          { name: "Beta", domain: "beta.example", signal: "renewing this quarter" },
+        ],
+      },
+    ]);
+  });
+
+  it("is ready with an inline source alone", () => {
+    const spec = TRIGGERS.find((t) => t.name === "list-page")!;
+    const cfg = {
+      ...inline([{ name: "Alpha", domain: "alpha.example" }]),
+      play: "design-partner-loi",
+      buyerType: "enterprise",
+      yourEdge: "For a named account — one paved path",
+    };
+    expect(checkReadiness(spec, cfg)).toEqual({ ready: true });
+  });
+
+  it("needs exactly one of url or companies", () => {
+    const both = {
+      sources: [
+        {
+          url: "https://x.example/list",
+          companies: [{ name: "Alpha", domain: "alpha.example" }],
+          signal: "s",
+        },
+      ],
+    };
+    const neither = { sources: [{ signal: "s" }] };
+    for (const cfg of [both, neither]) {
+      expect(listPageSources(cfg)).toEqual([]);
+      expect(listPageSourceErrors(cfg)).toEqual([
+        "sources[0]: set exactly one of `url` (a page to read) or `companies` (companies written inline)",
+      ]);
+    }
+  });
+
+  it("reports a company without a name or a usable domain, and runs the rest", () => {
+    const cfg = inline([
+      { name: "Alpha", domain: "alpha.example" },
+      { name: "Beta" },
+      { name: "Gamma", domain: "not a domain" },
+      { domain: "delta.example" },
+    ]);
+    expect(listPageSourceErrors(cfg)).toEqual([
+      "sources[0].companies[1] (Beta): `domain` is required (the company's own site, e.g. alpha.example)",
+      "sources[0].companies[2] (Gamma): `not a domain` is not a domain (e.g. alpha.example)",
+      "sources[0].companies[3]: `name` is required",
+    ]);
+    expect(listPageSources(cfg)[0]?.companies).toEqual([
+      { name: "Alpha", domain: "alpha.example" },
+    ]);
+  });
+
+  it("needs a signal and a non-empty list, and takes no verify", () => {
+    expect(listPageSourceErrors({ sources: [{ companies: [], signal: "s" }] })).toEqual([
+      "sources[0]: `companies` must be a non-empty list of {name, domain}",
+    ]);
+    const noSignal = { sources: [{ companies: [{ name: "Alpha", domain: "alpha.example" }] }] };
+    expect(listPageSources(noSignal)).toEqual([]);
+    expect(listPageSourceErrors(noSignal)[0]).toContain("`signal` is required");
+    const verify = inline([{ name: "Alpha", domain: "alpha.example" }], {
+      verify: { names: ["Tool"] },
+    });
+    expect(listPageSourceErrors(verify)[0]).toContain("`verify`");
+    expect(listPageSources(verify)[0]).not.toHaveProperty("verify");
+  });
+
+  it("still reports a URL source that cannot run, and passes an empty list", () => {
+    expect(listPageSourceErrors({ sources: [{ url: "ftp://x", signal: "s" }] })).toEqual([
+      "sources[0]: `url` must be an http(s) URL",
+    ]);
+    expect(listPageSourceErrors({ sources: [] })).toEqual([]);
+    expect(listPageSourceErrors({})).toEqual([]);
   });
 });

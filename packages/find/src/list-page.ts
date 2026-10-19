@@ -23,6 +23,10 @@ import type { FinderResult, ListPageCompany, RunOpts } from "./_types.ts";
  * the shared domain-only contact spine. Names the page gives (often the
  * engineers who set the tool up) are kept as context, never emailed.
  *
+ * A source can instead write its companies inline (`companies`), for a list
+ * the founder keeps by hand such as named target accounts: no read, no
+ * extraction and no verify, and everything after that the same.
+ *
  * Enterprise routing only for now: rows go to `design-partner-loi` with a
  * `buyerType`, and a run without that route enqueues nothing.
  */
@@ -53,7 +57,17 @@ const READ_RETRY_WAITS_MS = [2_000, 8_000];
 const TITLE_MISS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const CONTEXT_CHARS = 240;
 
-export interface ListPageSource {
+/** A company written into the trigger config: no page, no extraction. */
+export interface ListPageInlineCompany {
+  name: string;
+  /** Bare host, normalised when the config is read (`alpha.example`). */
+  domain: string;
+  /** This company's own signal, in place of the source's ("named target account"). */
+  signal?: string;
+}
+
+/** A public page whose companies are extracted. */
+export interface ListPageUrlSource {
   url: string;
   /** What being on this list means, in a few words ("runs Backstage"). */
   signal: string;
@@ -64,6 +78,41 @@ export interface ListPageSource {
    * is kept and labelled unconfirmed.
    */
   verify?: SignalVerifyConfig;
+  companies?: undefined;
+}
+
+/**
+ * Companies listed in the config itself (a founder's named target accounts):
+ * nothing fetched, nothing extracted, nothing verified. The founder wrote
+ * the list, so it is taken as given.
+ */
+export interface ListPageInlineSource {
+  companies: ListPageInlineCompany[];
+  /** What being on this list means; a company's own `signal` wins. */
+  signal: string;
+  url?: undefined;
+  verify?: undefined;
+}
+
+/** Exactly one of `url` (a page to read) or `companies` (written inline). */
+export type ListPageSource = ListPageUrlSource | ListPageInlineSource;
+
+/** Where a source's companies came from, for the run's per-source report. */
+export function listPageSourceLabel(source: ListPageSource): string {
+  return source.url ?? `inline:${slugify(source.signal)}`;
+}
+
+/** An inline source's companies in the shape extraction returns, one per domain. */
+export function inlineCompanies(source: ListPageInlineSource): ListPageCompany[] {
+  return dedupeCompanies(
+    source.companies.map((c) => ({
+      name: c.name,
+      domain: c.domain,
+      context: null,
+      contacts: [],
+      ...(c.signal ? { signal: c.signal } : {}),
+    })),
+  );
 }
 
 export interface ListPageOpts extends RunOpts {
@@ -309,7 +358,7 @@ const MAX_CHUNK_SPLITS = 3;
  * chunk named more companies than fit: halve it and ask for each half.
  */
 async function extractChunk(
-  source: ListPageSource,
+  source: ListPageUrlSource,
   system: string,
   chunk: string,
   part: string,
@@ -353,7 +402,7 @@ async function extractChunk(
  * unchanged list costs no extraction calls on the next run.
  */
 export async function extractListPage(
-  source: ListPageSource,
+  source: ListPageUrlSource,
   text: string,
 ): Promise<ListPageCompany[]> {
   const page = text.slice(0, MAX_PAGE_CHARS);
@@ -558,13 +607,18 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
       break;
     }
     const rowSource = `${SOURCE}:${slugify(source.signal)}`;
+    const sourceLabel = listPageSourceLabel(source);
     let companies: ListPageCompany[];
     try {
-      const page = await readPage(source.url);
-      result.costUsd += page.costUsd;
-      companies = await extractListPage(source, page.text);
+      if (source.companies) {
+        companies = inlineCompanies(source);
+      } else {
+        const page = await readPage(source.url);
+        result.costUsd += page.costUsd;
+        companies = await extractListPage(source, page.text);
+      }
       result.perSource!.push({
-        source: source.url,
+        source: sourceLabel,
         label: source.signal,
         records: companies.length,
       });
@@ -576,7 +630,7 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
         "warn",
       );
       result.perSource!.push({
-        source: source.url,
+        source: sourceLabel,
         label: source.signal,
         records: 0,
         error: message,
@@ -605,7 +659,7 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
       }
       pending.push({ source, rowSource, company, dedupeKey });
     }
-    bySource.set(`${index}:${source.url}`, pending);
+    bySource.set(`${index}:${sourceLabel}`, pending);
   }
 
   // One company from each list in turn, so a run draws from every list
@@ -641,6 +695,8 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
       continue;
     }
 
+    // A company's own signal (an inline list's "named target account") wins.
+    const signal = company.signal ?? source.signal;
     let verified: { status: "confirmed" | "unconfirmed"; url?: string } | null = null;
     if (source.verify) {
       const check = await verifySignal({ company: company.name, domain, verify: source.verify });
@@ -652,7 +708,7 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
         persistRoleRejection({
           playName: PLAY_NAME,
           dedupeKey,
-          payload: { company: company.name, signal: source.signal },
+          payload: { company: company.name, signal },
           source: rowSource,
           kind: "signal",
           reason: `${check.url} lists subprocessors without ${source.verify.names.join(" / ")}`,
@@ -666,7 +722,7 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
           : { status: "unconfirmed" };
     }
 
-    const evidence = company.context ? `${source.signal}: ${company.context}` : source.signal;
+    const evidence = company.context ? `${signal}: ${company.context}` : signal;
     const found = await findOwner({
       opts,
       domain,
@@ -696,7 +752,7 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
         persistRoleRejection({
           playName: PLAY_NAME,
           dedupeKey,
-          payload: { company: company.name, signal: source.signal },
+          payload: { company: company.name, signal },
           source: rowSource,
           reason: (contact && !contact.ok ? contact.detail : null) ?? "off-ICP role",
           dryRun: opts.dryRun,
@@ -721,14 +777,14 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
         phone: contact.phone,
         icp: icpFields(contact),
       }),
-      signal: source.signal,
+      signal,
       ...(company.context ? { signalContext: company.context } : {}),
       ...(verified ? { signalVerified: verified.status } : {}),
       ...(verified?.url ? { signalEvidenceUrl: verified.url } : {}),
       ...(listContact ? { listContact: listContact.slice(0, CONTEXT_CHARS) } : {}),
       companyDomain: domain,
       launchUrl: `https://${domain}`,
-      sourceUrl: source.url,
+      ...(source.url ? { sourceUrl: source.url } : {}),
     };
     const id = enqueueScoredTarget(ledger, {
       playName: route.playName,

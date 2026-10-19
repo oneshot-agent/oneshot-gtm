@@ -120,13 +120,33 @@ Set `play: "design-partner-loi"` and `buyerType` (`enterprise`, `government` or 
 
 ## List pages
 
-`list-page` turns any public list of companies into a source. Each entry in `sources` is `{url, signal}`, where `signal` says what being on the list means, for example `runs Backstage`. It routes only to `design-partner-loi`, so it needs `play`, `buyerType` and `yourEdge`.
+`list-page` turns any public list of companies into a source. Each entry in `sources` is `{url, signal}` or [`{companies, signal}`](#companies-you-list-yourself), where `signal` says what being on the list means, for example `runs Backstage`. It routes only to `design-partner-loi`, so it needs `play`, `buyerType` and `yourEdge`.
 
 - A GitHub file, a raw link or a data file is fetched free. Any other page costs one web read. An unchanged list costs nothing to read again.
 - Companies are worked `limit` per run, one from each list in turn.
 - Set `jobTitles`, most wanted first, to pick the owner by title. A title matches only when it carries every word of a wanted title: `VP of AI` matches `Vice President, Artificial Intelligence`; `CTO` does not match `Director`. A company with no match is left for 30 days, then tried again.
 - Without `jobTitles` the pick is any senior title, which at a large company can be PR or recruiting.
 - People the page names are kept as context and never emailed.
+
+### Companies you list yourself
+
+A source can name its companies instead of a page: `{companies, signal}` with no `url`. Each company needs a `name` and a `domain`; `https://`, `www.` and any path are stripped. Nothing is fetched, extracted or verified, since you wrote the list. A company's own `signal` replaces the source's on its row. Everything after that is the same as for a page: the people search at the domain, `jobTitles`, dedupe and `limit`.
+
+```json
+{
+  "sources": [
+    {
+      "signal": "named target account",
+      "companies": [
+        { "name": "Alpha", "domain": "alpha.example" },
+        { "name": "Beta", "domain": "https://www.beta.example", "signal": "renewing this quarter" }
+      ]
+    }
+  ]
+}
+```
+
+Saving a source with both `url` and `companies`, or a company without a name or a domain, is refused with the entry named.
 
 ### A list someone else compiled
 
