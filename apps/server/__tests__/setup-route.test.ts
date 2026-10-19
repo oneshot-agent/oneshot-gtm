@@ -488,3 +488,39 @@ describe("minimum onboarding step saves", () => {
     expect(saveSecretsMock).not.toHaveBeenCalled();
   });
 });
+
+// The offer judge's config mirrors the reply classifier's: `decisions` needs
+// a model, the threshold is 0–1, null clears it back to the default `llm`.
+describe("POST /api/setup — offerJudge", () => {
+  it("saves a decisions judge with its model and threshold", async () => {
+    const body = { offerJudge: { engine: "decisions", model: " test/model ", minConfidence: 0.6 } };
+    expect(await post(body)).toEqual({ status: 200 });
+    expect(savedCfg().offerJudge).toEqual({
+      engine: "decisions",
+      model: "test/model",
+      minConfidence: 0.6,
+    });
+  });
+
+  it("refuses decisions without a model, an unknown engine and a threshold outside 0–1", async () => {
+    for (const offerJudge of [
+      { engine: "decisions" },
+      { engine: "magic" },
+      { engine: "llm", minConfidence: 1.5 },
+    ]) {
+      const res = await post({ offerJudge });
+      expect(res.status).toBe(400);
+      expect(res.error).toMatch(/offerJudge/);
+    }
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("null clears it; absent leaves it as stored", async () => {
+    current = { ...current, offerJudge: { engine: "decisions", model: "m" } };
+    expect(await post({ founderName: "Janet" })).toEqual({ status: 200 });
+    expect(savedCfg().offerJudge).toEqual({ engine: "decisions", model: "m" });
+    saveConfigMock.mockClear();
+    expect(await post({ offerJudge: null })).toEqual({ status: 200 });
+    expect(savedCfg().offerJudge).toBeUndefined();
+  });
+});

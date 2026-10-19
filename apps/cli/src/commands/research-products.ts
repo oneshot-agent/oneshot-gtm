@@ -1,12 +1,19 @@
-import { getLedger, parallelMap } from "@oneshot-gtm/core";
-import { researchQueueRowProduct } from "@oneshot-gtm/find";
+import { getLedger, parallelMap, type QueueRow, type QueueStatus } from "@oneshot-gtm/core";
+import {
+  needsCompanyResearch,
+  researchQueueRowProduct,
+  writeLiveQueueProductResearch,
+} from "@oneshot-gtm/find";
 import { c, header, note, ok } from "../output.ts";
 import { parseScopes, resolveCap } from "./research-prospects.ts";
 
 export interface ResearchProductsOpts {
   dryRun: boolean;
   refresh: boolean;
+  /** Pending queue rows (the default). */
   includePending: boolean;
+  /** Pending and approved queue rows: every row not yet sent. Wins over `includePending`. */
+  includeUnsent?: boolean;
   limit?: number;
   concurrency?: number;
   maxCostUsd?: number;
@@ -30,6 +37,35 @@ function recordPayload(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/** The queue statuses a run covers. */
+export function productQueueStatuses(
+  opts: Pick<ResearchProductsOpts, "includePending" | "includeUnsent">,
+): QueueStatus[] {
+  if (opts.includeUnsent) return ["pending", "approved"];
+  return opts.includePending ? ["pending"] : [];
+}
+
+/**
+ * Queue rows to research: never one sent or mid-send, and, unless
+ * refreshing, only one with no company research or with research that has
+ * none of the company's own pages while it has a company domain to read.
+ */
+export function selectProductQueueRows<
+  R extends Pick<QueueRow, "play_name" | "payload_json" | "sent_at" | "send_started_at">,
+>(rows: readonly R[], opts: { refresh: boolean }): R[] {
+  return rows.filter((row) => {
+    if (row.sent_at != null || row.send_started_at != null) return false;
+    try {
+      const payload = recordPayload(JSON.parse(row.payload_json) as unknown);
+      if (!payload) return true;
+      if (opts.refresh || !payload["productResearch"]) return true;
+      return needsCompanyResearch(row.play_name, payload);
+    } catch {
+      return false;
+    }
+  });
+}
+
 export async function commandResearchProducts(opts: ResearchProductsOpts): Promise<void> {
   header(`research-products ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
   const ledger = getLedger();
@@ -41,17 +77,11 @@ export async function commandResearchProducts(opts: ResearchProductsOpts): Promi
       limit: 100_000,
     })
     .filter((row) => opts.refresh || !productAlreadyPresent(row.dossier_json));
-  const queueRows = opts.includePending
-    ? ledger.listQueue({ status: "pending", limit: 100_000 }).filter((row) => {
-        try {
-          const payload = recordPayload(JSON.parse(row.payload_json) as unknown);
-          if (!payload) return true;
-          return opts.refresh || !payload["productResearch"];
-        } catch {
-          return false;
-        }
-      })
-    : [];
+  const statuses = productQueueStatuses(opts);
+  const queueRows = selectProductQueueRows(
+    statuses.flatMap((status) => ledger.listQueue({ status, limit: 100_000 })),
+    { refresh: opts.refresh },
+  );
   const combined = [
     ...prospectRows.map((row) => ({ kind: "prospect" as const, row })),
     ...queueRows.map((row) => ({ kind: "queue" as const, row })),
@@ -60,7 +90,7 @@ export async function commandResearchProducts(opts: ResearchProductsOpts): Promi
   const candidates = cap === undefined ? combined : combined.slice(0, cap);
   process.stdout.write(
     `${c.dim("scope:")} ${scopes.join(",")}  ${c.dim("prospects:")} ${prospectRows.length}` +
-      `  ${c.dim("pending:")} ${queueRows.length}  ${c.dim("to research:")} ${candidates.length}\n`,
+      `  ${c.dim(`${statuses.join("+") || "queue"}:`)} ${queueRows.length}  ${c.dim("to research:")} ${candidates.length}\n`,
   );
   if (candidates.length === 0) {
     note("Nothing to research.");
@@ -135,10 +165,8 @@ export async function commandResearchProducts(opts: ResearchProductsOpts): Promi
       return;
     }
     if (researched.dossier.status === "unavailable") unavailable++;
-    const payload = recordPayload(JSON.parse(row.payload_json) as unknown) ?? {};
-    payload["productResearch"] = researched.dossier;
-    ledger.updateQueuePayload({ id: row.id, payload });
-    written++;
+    // Live rows only: an approved row can be sent while its research runs.
+    if (writeLiveQueueProductResearch(row.id, researched.dossier)) written++;
   });
   ok(
     `researched ${written}  ${c.dim("unavailable:")} ${unavailable}  ` +

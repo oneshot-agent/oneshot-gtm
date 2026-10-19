@@ -108,8 +108,18 @@ export async function runFinderWithProductResearch(
       ? { maxCostUsd: config["maxCostUsd"] as number }
       : {}),
   });
-  // After every research stage, so the offer is written from all of it.
-  await offerNewQueueRows({ afterId, result });
+  // After every research stage, so the offer is written from all of it. A
+  // row the product stage left without company pages is read once more.
+  await offerNewQueueRows({
+    afterId,
+    result,
+    research: {
+      enabled: config["productResearch"] !== false,
+      ...(typeof config["maxCostUsd"] === "number"
+        ? { maxCostUsd: config["maxCostUsd"] as number }
+        : {}),
+    },
+  });
   return result;
 }
 
