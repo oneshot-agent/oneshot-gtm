@@ -2626,7 +2626,12 @@ export class Ledger {
    * told. `updateQueuePayload` above has no guard and stays for the paths that
    * own their row (the manual add's research rewrite).
    */
-  patchLiveQueuePayload(input: { id: number; patch: Record<string, unknown> }): boolean {
+  patchLiveQueuePayload(input: {
+    id: number;
+    patch: Record<string, unknown>;
+    /** Compare-and-set: JSON paths that must still hold these scalar values (null: absent). */
+    expect?: Array<{ path: string; value: string | null }>;
+  }): boolean {
     return this.queue.patchLiveQueuePayload(input);
   }
 

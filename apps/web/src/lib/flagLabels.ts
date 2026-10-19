@@ -36,6 +36,7 @@ const NAMED: Record<string, string> = {
   "already-enrolled": "already in a cadence",
   "already-contacted": "already contacted",
   "off-icp": "off ICP",
+  "weak-offer": "the offer was rated a weak fit",
 };
 
 export function humanizeFlag(flag: string): string {

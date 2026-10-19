@@ -5,7 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   row: null as null | Record<string, unknown>,
-  patched: [] as Array<{ id: number; patch: Record<string, unknown> }>,
+  patched: [] as Array<{ id: number; patch: Record<string, unknown>; expect?: unknown }>,
+  /** Writes whose compare-and-set held: what actually landed. */
+  written: [] as Array<{ id: number; patch: Record<string, unknown> }>,
+  /** The payload as the ledger holds it at write time; null: the row as read. */
+  dbPayload: null as null | Record<string, unknown>,
   live: true,
   derived: null as null | Record<string, unknown>,
   brief: "Acme books crews into open slots.",
@@ -17,9 +21,27 @@ vi.mock("@oneshot-gtm/core", async () => ({
   getLedger: () => ({
     getQueueRow: () => state.row,
     getTrigger: () => null,
-    patchLiveQueuePayload: (input: { id: number; patch: Record<string, unknown> }) => {
+    patchLiveQueuePayload: (input: {
+      id: number;
+      patch: Record<string, unknown>;
+      expect?: Array<{ path: string; value: string | null }>;
+    }) => {
       state.patched.push(input);
-      return state.live;
+      const db =
+        state.dbPayload ??
+        (JSON.parse(String(state.row?.["payload_json"] ?? "{}")) as Record<string, unknown>);
+      // The guard as the ledger checks it: `$.a.b` must still hold the value (null: absent).
+      const holds = (input.expect ?? []).every(
+        (g) =>
+          (g.path
+            .slice(2)
+            .split(".")
+            .reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], db) ??
+            null) === g.value,
+      );
+      if (!state.live || !holds) return false;
+      state.written.push(input);
+      return true;
     },
   }),
 }));
@@ -57,6 +79,8 @@ beforeEach(() => {
     }),
   };
   state.patched = [];
+  state.written = [];
+  state.dbPayload = null;
   state.live = true;
   state.derived = null;
   state.brief = "Acme books crews into open slots.";
@@ -94,7 +118,13 @@ describe("queueOfferRoute", () => {
     state.derived = { offer: "fresh", steps: "x, y" };
     const res = await queueOfferRoute(post({ regenerate: true }), { id: "5" });
     expect(res.status).toBe(200);
-    expect(state.patched[0]!.patch["offer"]).toEqual(state.derived);
+    // The old offer's keys the new one lacks are deleted, not merged onto it.
+    expect(state.patched[0]!.patch["offer"]).toEqual({
+      ...state.derived,
+      evidence: null,
+      stage: null,
+      level: null,
+    });
     expect(state.patched[0]!.patch["offerCandidates"]).toEqual([
       state.derived,
       { offer: "second" },
@@ -137,5 +167,60 @@ describe("queueOfferRoute", () => {
   it("leaves a row that is no longer live", async () => {
     state.live = false;
     expect((await queueOfferRoute(post({ offer: "x" }), { id: "5" })).status).toBe(409);
+  });
+
+  describe("approveWeak", () => {
+    const weak = {
+      offer: "old",
+      steps: "a, b",
+      evidence: [],
+      stage: "startup",
+      level: "researched",
+      relevance: "weak",
+    };
+    beforeEach(() => {
+      state.row = {
+        ...state.row!,
+        payload_json: JSON.stringify({ name: "Dana", offer: weak, offerCandidates: [weak] }),
+      };
+    });
+
+    it("stamps the approval on the active offer only", async () => {
+      const res = await queueOfferRoute(post({ approveWeak: true }), { id: "5" });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { offer: Record<string, unknown> };
+      expect(body.offer).toMatchObject({ ...weak, weakApprovedAt: expect.any(String) });
+      expect(state.written).toEqual([
+        expect.objectContaining({
+          id: 5,
+          patch: { offer: { weakApprovedAt: body.offer["weakApprovedAt"] } },
+        }),
+      ]);
+    });
+
+    it("approves nothing when another offer became active after it was read", async () => {
+      const other = { ...weak, offer: "a different weak offer", derivedAt: "later" };
+      state.dbPayload = { name: "Dana", offer: other, offerCandidates: [weak, other] };
+      const res = await queueOfferRoute(post({ approveWeak: true }), { id: "5" });
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { error: string }).error).toContain("its offer changed");
+      expect(state.written).toHaveLength(0);
+    });
+
+    it("refuses an offer that is not rated weak, or is the founder's", async () => {
+      for (const offer of [
+        { ...weak, relevance: "relevant" },
+        { ...weak, editedBy: "founder" },
+      ]) {
+        state.row = { ...state.row!, payload_json: JSON.stringify({ offer }) };
+        expect((await queueOfferRoute(post({ approveWeak: true }), { id: "5" })).status).toBe(400);
+      }
+      expect(state.patched).toHaveLength(0);
+    });
+
+    it("refuses a row that is no longer live", async () => {
+      state.live = false;
+      expect((await queueOfferRoute(post({ approveWeak: true }), { id: "5" })).status).toBe(409);
+    });
   });
 });

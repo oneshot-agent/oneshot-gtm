@@ -18,6 +18,7 @@ import {
   type LinkedInSender,
   PLAYS,
   sendLinkedInInvite,
+  WEAK_OFFER_FLAG,
 } from "@oneshot-gtm/plays";
 import { resolveQueueTargetWithOffer } from "./queue-offer.ts";
 
@@ -40,6 +41,8 @@ type DrainDraft = DraftedRow & {
   needsReview?: boolean;
   /** The LinkedIn invite guard refused this row: counted per reason in `DrainOutcome.skipped`. */
   guard?: LinkedInGuardReason;
+  /** The send was held for the founder (a weak offer): counted per code in `DrainOutcome.held`. */
+  hold?: typeof WEAK_OFFER_FLAG;
 };
 
 export interface DrainOutcome {
@@ -54,6 +57,12 @@ export interface DrainOutcome {
    * flag: never sent, never dropped. Absent when none were refused.
    */
   skipped?: Record<string, number>;
+  /**
+   * Rows whose send was held for the founder, by hold code (`weak-offer`: the
+   * active offer was rated a weak fit and nobody approved it). They go back
+   * to pending with their draft: never sent. Absent when none were held.
+   */
+  held?: Record<string, number>;
   /**
    * Set when the install-wide daily spend ceiling (issue #481) was already
    * reached before this drain could claim any rows. The named reason
@@ -214,6 +223,9 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
           }
           outcome.sent++;
         }
+        if (draft.hold && !opts.dryRun) {
+          outcome.held = { ...outcome.held, [draft.hold]: (outcome.held?.[draft.hold] ?? 0) + 1 };
+        }
         if (draft.guard && !opts.dryRun) {
           outcome.skipped = {
             ...outcome.skipped,
@@ -270,7 +282,13 @@ async function dispatchOneTarget(opts: DrainOpts, row: QueueRow): Promise<DrainD
     queueSource: row.source,
     ...(row.play_name === "community-reply" ? { spendReserved: true } : {}),
   });
-  return firstDraft(result.drafted);
+  const drafted = firstDraft(result.drafted);
+  // The send gate held it for a weak offer: back to pending for the founder,
+  // or every later drain would redraft and hold it again.
+  if (!drafted.sent && drafted.flags.includes(WEAK_OFFER_FLAG)) {
+    return { ...drafted, needsReview: true, hold: WEAK_OFFER_FLAG };
+  }
+  return drafted;
 }
 
 function firstDraft(drafted: DraftedRow[]): DraftedRow {

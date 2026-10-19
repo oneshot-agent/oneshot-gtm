@@ -93,6 +93,12 @@ export interface ProspectOffer {
   productHash?: string;
   /** Set when the founder wrote or edited it. Never re-derived. */
   editedBy?: "founder";
+  /**
+   * When the founder approved this offer although the judge rated it `weak`.
+   * Lives on this offer object only: picking another offer or writing new
+   * ones starts without it, so the approval never carries over.
+   */
+  weakApprovedAt?: string;
   derivedAt: string;
 }
 
@@ -1122,6 +1128,51 @@ export function offerBlock(
     );
   }
   return lines.length > 0 ? lines.join("\n") : null;
+}
+
+/** What the founder reads on a row held for a weak offer. */
+export const WEAK_OFFER_HOLD_REASON =
+  "The offer was rated a weak fit for this firm. Rewrite it, pick another, or approve it.";
+
+/**
+ * True when this offer must not go out as it stands: the relevance judge
+ * rated it `weak` (kept only to make up the five), the founder did not write
+ * it, and the founder has not approved it anyway. Rewriting it, picking
+ * another or approving it releases the send; redrafting the letter does not.
+ */
+export function offerHoldsSend(offer: unknown): boolean {
+  if (!isProspectOffer(offer)) return false;
+  return (
+    offer.relevance === "weak" &&
+    offer.editedBy !== "founder" &&
+    !(typeof offer.weakApprovedAt === "string" && offer.weakApprovedAt.trim())
+  );
+}
+
+/** True when a queue row of this play is held for its active offer (`offerHoldsSend`). */
+export function weakOfferHold(playName: string, payload: unknown): boolean {
+  if (!playMakesOffer(playName)) return false;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  return offerHoldsSend((payload as JsonRecord)["offer"]);
+}
+
+/**
+ * The payload patch that makes `offer` a row's active offer. The ledger
+ * applies it as a JSON merge patch, which merges nested objects key by key, so
+ * every key of the previous offer the new one lacks is named with null (which
+ * deletes it). Otherwise the old offer's approval, judge label or fit would
+ * carry over onto the new one.
+ */
+export function activeOfferPatch(
+  previous: unknown,
+  offer: ProspectOffer,
+  candidates: ProspectOffer[],
+): { offer: Record<string, unknown>; offerCandidates: ProspectOffer[] } {
+  const next: Record<string, unknown> = { ...offer };
+  if (previous && typeof previous === "object" && !Array.isArray(previous)) {
+    for (const key of Object.keys(previous)) if (next[key] === undefined) next[key] = null;
+  }
+  return { offer: next, offerCandidates: candidates };
 }
 
 /** The offer a queue payload carries, when it has one. */

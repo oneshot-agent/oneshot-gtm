@@ -1,11 +1,13 @@
 import { getLedger, loadConfig } from "@oneshot-gtm/core";
 import { resolveQueueTarget } from "@oneshot-gtm/find";
 import {
+  activeOfferPatch,
   deriveOfferSet,
   OFFER_MAX,
   OFFER_PROMPT_VERSION,
   offerAnglesWritten,
   offerCandidatesOf,
+  isProspectOffer,
   playMakesOffer,
   withOfferAngles,
   type ProspectOffer,
@@ -21,6 +23,10 @@ import { jsonResponse } from "../server.ts";
  *   angles if it has none yet.
  * - `{ offer, steps?, return? }` saves the founder's text; it is never
  *   re-derived after that. Angles are written for it.
+ * - `{ approveWeak: true }` approves the active offer although the judge
+ *   rated it a weak fit, releasing the send hold it puts on the row. Only
+ *   that offer object carries the approval: picking another or writing new
+ *   ones starts without it. 400 when the active offer is not held as weak.
  *
  * Either way the caller regenerates the draft next, so the letter opens with
  * the offer on screen. Only a live row (pending or approved, not sending) is
@@ -45,6 +51,7 @@ export async function queueOfferRoute(
     return?: unknown;
     regenerate?: unknown;
     select?: unknown;
+    approveWeak?: unknown;
   };
   try {
     const raw = await req.text();
@@ -54,6 +61,8 @@ export async function queueOfferRoute(
   } catch {
     return jsonResponse({ error: "body must be a JSON object" }, 400, req);
   }
+
+  if (body.approveWeak === true) return approveWeakOffer(id, row.payload_json, req);
 
   let payload: Record<string, unknown>;
   try {
@@ -121,8 +130,63 @@ export async function queueOfferRoute(
     );
   }
 
-  if (!ledger.patchLiveQueuePayload({ id, patch: { offer, offerCandidates: candidates } })) {
+  // The new offer replaces the stored one whole: an approval or judge label
+  // the old one carried must not survive the JSON merge patch.
+  const patch = activeOfferPatch(storedOffer(row.payload_json), offer, candidates);
+  if (!ledger.patchLiveQueuePayload({ id, patch })) {
     return jsonResponse({ error: "row is no longer pending or approved" }, 409, req);
   }
   return jsonResponse({ offer, candidates }, 200, req);
+}
+
+/** The active offer as stored on the row, before any overlay. */
+function storedOffer(payloadJson: string): unknown {
+  try {
+    const parsed: unknown = JSON.parse(payloadJson);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)["offer"]
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `{ approveWeak: true }`: stamp the founder's approval on the active weak offer. */
+function approveWeakOffer(id: number, payloadJson: string, req: Request): Response {
+  const stored = storedOffer(payloadJson);
+  const offer = isProspectOffer(stored) ? stored : null;
+  if (!offer || offer.relevance !== "weak" || offer.editedBy === "founder") {
+    return jsonResponse({ error: "the active offer is not rated a weak fit" }, 400, req);
+  }
+  const weakApprovedAt = new Date().toISOString();
+  const text = (key: string): string | null => {
+    const v = (offer as unknown as Record<string, unknown>)[key];
+    return typeof v === "string" ? v : null;
+  };
+  // Only the active offer: its copy among the candidates stays unapproved,
+  // so switching away and back asks again. Bound to the offer read here: if
+  // another offer became active meanwhile, nothing is approved.
+  const written = getLedger().patchLiveQueuePayload({
+    id,
+    patch: { offer: { weakApprovedAt } },
+    expect: [
+      { path: "$.offer.offer", value: offer.offer },
+      { path: "$.offer.derivedAt", value: text("derivedAt") },
+      { path: "$.offer.inputHash", value: text("inputHash") },
+      { path: "$.offer.relevance", value: "weak" },
+      { path: "$.offer.editedBy", value: null },
+    ],
+  });
+  if (!written) {
+    return jsonResponse(
+      {
+        error:
+          "the row is no longer pending or approved, or its offer changed; refresh and review it again",
+      },
+      409,
+      req,
+    );
+  }
+  const approved: ProspectOffer = { ...offer, weakApprovedAt };
+  return jsonResponse({ offer: approved }, 200, req);
 }

@@ -18,7 +18,7 @@ import {
   resolveTriggerOverlay,
   type QueueRow,
 } from "@oneshot-gtm/core";
-import { ensureOfferSet, playMakesOffer } from "@oneshot-gtm/plays";
+import { activeOfferPatch, ensureOfferSet, playMakesOffer } from "@oneshot-gtm/plays";
 import {
   hasCompanyPages,
   productResearchSkipsPlay,
@@ -163,14 +163,17 @@ export async function ensureQueueRowOffer<R extends OfferableRow>(
       const fresh = ledger.getQueueRow(row.id);
       return { ...row, payload_json: fresh?.payload_json ?? JSON.stringify(payload) };
     }
-    const patch = { offer: set.offer, offerCandidates: set.candidates };
+    // Replaces the old offer whole: none of its keys (an approval, a label) carry over.
+    const patch = activeOfferPatch(payload["offer"], set.offer, set.candidates);
     // Re-read after the write: callers compare payload_json against the
     // stored text to detect a concurrent change, so it must be the DB's own.
     const written = ledger.patchLiveQueuePayload({ id: row.id, patch });
     const fresh = written ? ledger.getQueueRow(row.id) : null;
     return {
       ...row,
-      payload_json: fresh?.payload_json ?? JSON.stringify({ ...payload, ...patch }),
+      payload_json:
+        fresh?.payload_json ??
+        JSON.stringify({ ...payload, offer: set.offer, offerCandidates: set.candidates }),
     };
   } catch (err) {
     logEvent(

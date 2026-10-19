@@ -1,4 +1,4 @@
-import { FitHold } from "../components/queue/FitHold.tsx";
+import { SendHoldNote } from "../components/queue/WeakOfferHold.tsx";
 import { InviteQuotaLine } from "../components/InviteQuotaLine.tsx";
 import { ConnectOnLinkedIn } from "../components/ConnectOnLinkedIn.tsx";
 import {
@@ -957,7 +957,7 @@ export function QueueRow({
   moveTargets: MoveTarget[];
   busy: boolean;
 }) {
-  const canApproveFit = row.status === "approved" && row.sendHold != null;
+  const canApproveFit = row.status === "approved" && row.sendHold?.code === "off-icp";
   const email = emailFor(row.payload);
   const name = nameFor(row.payload);
   const company = companyFor(row.payload);
@@ -1088,7 +1088,11 @@ export function QueueRow({
         <td className="whitespace-nowrap py-[10px] pr-6">
           <div className="flex items-center gap-1.5">
             <Badge tone={statusTone(row.status)}>{row.status}</Badge>
-            {row.sendHold && <Badge tone="blocked">held · fit review</Badge>}
+            {row.sendHold && (
+              <Badge tone="blocked">
+                {row.sendHold.code === "weak-offer" ? "held · weak offer" : "held · fit review"}
+              </Badge>
+            )}
             <DeliveryBadge delivery={row.delivery} />
             {!expanded &&
               row.status !== "sent" &&
@@ -1702,10 +1706,17 @@ export function DraftSection({
   const softHold = cleanDraft && draft != null && draft.flags.length > 0;
   const softHoldDetail = draft?.flags.includes("contacted-elsewhere")
     ? "Held — another workspace emailed this person in the last 7 days. Send the reviewed draft as-is to override."
-    : draft?.flags.includes("ungrounded")
-      ? "Held — research found nothing on this person, so the draft leans on the company name. Read it once more; send as-is if it still holds up."
-      : "Held for review (event has passed) — send the reviewed draft as-is";
+    : draft?.flags.includes("weak-offer")
+      ? "Held — the offer was rated a weak fit when this draft was written. It has been rewritten, replaced or approved since; send the reviewed draft as-is."
+      : draft?.flags.includes("ungrounded")
+        ? "Held — research found nothing on this person, so the draft leans on the company name. Read it once more; send as-is if it still holds up."
+        : "Held for review (event has passed) — send the reviewed draft as-is";
   const showSend = sender === "api" && status === "approved" && !(draft?.sent ?? false);
+  const weakOffer = sendHold?.code === "weak-offer";
+  const holdLabel = weakOffer ? "Held · weak offer" : "Held · fit review";
+  const holdTitle = weakOffer
+    ? "The offer was rated a weak fit: rewrite it, pick another or approve it before sending; regenerating will not clear this hold"
+    : "Review this person’s fit before sending; regenerating will not clear this hold";
   const sendButton = showSend ? (
     <Button
       variant="receipt"
@@ -1715,7 +1726,7 @@ export function DraftSection({
       {...readOnly}
       title={
         sendHold
-          ? "Review this person’s fit before sending; regenerating will not clear this hold"
+          ? holdTitle
           : softHold
             ? softHoldDetail
             : cleanDraft
@@ -1726,13 +1737,7 @@ export function DraftSection({
       }
     >
       {sending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
-      {sending
-        ? "Sending…"
-        : sendHold
-          ? "Held · fit review"
-          : softHold
-            ? "Send anyway"
-            : "Send now"}
+      {sending ? "Sending…" : sendHold ? holdLabel : softHold ? "Send anyway" : "Send now"}
     </Button>
   ) : null;
 
@@ -1755,7 +1760,8 @@ export function DraftSection({
         below={
           <>
             {" "}
-            {sendHold && <FitHold hold={sendHold} />} {linkedinReplyEditor}{" "}
+            {sendHold && <SendHoldNote rowId={id} hold={sendHold} editable={!sending} />}{" "}
+            {linkedinReplyEditor}{" "}
           </>
         }
       />
@@ -1803,7 +1809,7 @@ export function DraftSection({
       stateLine={
         hasDraftDetails ? (
           <>
-            {sendHold && <FitHold hold={sendHold} />}
+            {sendHold && <SendHoldNote rowId={id} hold={sendHold} editable={!sending} />}
             {deliveryNote && <DeliveryWarning delivery={delivery} />}
             {!draft.sent && draft.flags.length > 0 && (
               <DraftStateLine sent={false} flags={draft.flags} />

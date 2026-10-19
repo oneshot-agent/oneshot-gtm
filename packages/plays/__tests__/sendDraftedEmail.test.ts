@@ -301,3 +301,44 @@ describe("sendDraftedEmail person-level ICP gate", () => {
     expect(out.sent).toBe(true);
   });
 });
+
+describe("sendDraftedEmail weak-offer hold", () => {
+  it("holds the send with the weak-offer flag", async () => {
+    const opts = baseOpts({ weakOffer: true });
+    const out = await sendDraftedEmail(opts);
+    expect(out).toEqual({ receiptIds: [], sent: false });
+    expect(opts.flags).toEqual(["weak-offer"]);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it("records the hold on a draft its lint flags already stop", async () => {
+    const opts = baseOpts({ weakOffer: true, flags: ["em-dash"] });
+    const out = await sendDraftedEmail(opts);
+    expect(out.sent).toBe(false);
+    expect(opts.flags).toEqual(["em-dash", "weak-offer"]);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it("leaves a lint-flagged draft of an off-ICP person to the fit hold", async () => {
+    const opts = baseOpts({
+      weakOffer: true,
+      flags: ["em-dash"],
+      icp: { verdict: "reject" as const, reason: "AE" },
+    });
+    await sendDraftedEmail(opts);
+    expect(opts.flags).toEqual(["em-dash"]);
+  });
+
+  it("does not record it in a dry run", async () => {
+    const opts = baseOpts({ weakOffer: true, flags: ["em-dash"], dryRun: true });
+    await sendDraftedEmail(opts);
+    expect(opts.flags).toEqual(["em-dash"]);
+  });
+
+  it("lets a fit hold win when both apply", async () => {
+    const opts = baseOpts({ weakOffer: true, icp: { verdict: "reject" as const, reason: "AE" } });
+    await sendDraftedEmail(opts);
+    expect(opts.flags).toEqual(["off-icp"]);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+});

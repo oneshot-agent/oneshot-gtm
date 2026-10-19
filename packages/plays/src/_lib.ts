@@ -1445,6 +1445,9 @@ function parseSubjectBody(raw: string): DraftedEmail | null {
   return { subject: subject.trim(), body: body.trim() };
 }
 
+/** The draft flag, and the queue hold code, of a send held for a weak offer (see `offerHoldsSend`). */
+export const WEAK_OFFER_FLAG = "weak-offer";
+
 export interface SendDraftedOpts {
   playName: string;
   to: string;
@@ -1479,6 +1482,12 @@ export interface SendDraftedOpts {
    * `ops/audit-icp.ts` pass. Absent for plays whose finder has no person gate.
    */
   icp?: { verdict: "pass" | "reject" | "unclear"; reason?: string | null };
+  /**
+   * The letter's offer was rated a weak fit for this firm and the founder has
+   * neither rewritten, replaced nor approved it (`offerHoldsSend`). Blocks the
+   * send with the `weak-offer` flag, after the ICP gate (a fit hold wins).
+   */
+  weakOffer?: boolean;
   dryRun: boolean;
   /**
    * Allow a first-touch even if another play already touched the prospect.
@@ -1502,6 +1511,21 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
   }
   const receiptIds: number[] = [];
   let sent = false;
+  if (
+    !opts.dryRun &&
+    opts.weakOffer &&
+    opts.flags.length > 0 &&
+    !opts.flags.includes(WEAK_OFFER_FLAG)
+  ) {
+    // Its other flags already stop this draft, but the hold is about the
+    // offer, which a redraft cannot fix: record it too, so the drain parks the
+    // row for the founder. A fit rejection still wins, as on a clean draft.
+    const existing = ledger.findProspectByEmail(opts.to);
+    const stored = existing ? ledger.getProspectById(existing.id) : null;
+    if ((opts.icp?.verdict ?? stored?.icp_verdict ?? null) !== "reject") {
+      opts.flags.push(WEAK_OFFER_FLAG);
+    }
+  }
   if (!opts.dryRun && opts.flags.length === 0) {
     // Pre-send dedupe: never send step-0 twice to the same (prospect, play).
     // Residual microsecond race between this read and recordSequenceEvent is
@@ -1532,6 +1556,11 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
         { play: opts.playName, to: opts.to, reason_120: why.slice(0, 120) },
         "info",
       );
+      return { receiptIds: [], sent: false };
+    }
+    if (opts.weakOffer) {
+      opts.flags.push(WEAK_OFFER_FLAG);
+      logEvent("play.skipped_weak_offer", { play: opts.playName, to: opts.to }, "info");
       return { receiptIds: [], sent: false };
     }
     // Track as in-flight for the WHOLE send-and-record span (SDK call →

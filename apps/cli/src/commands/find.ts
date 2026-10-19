@@ -105,6 +105,7 @@ export async function commandFindDrain(opts: {
       deferred: result.deferred,
       errors: result.errors.map((e) => ({ id: e.id, message: e.message })),
       ...(result.skipped ? { skipped: result.skipped } : {}),
+      ...(result.held ? { held: result.held } : {}),
       ...(result.haltedReason ? { haltedReason: result.haltedReason } : {}),
     });
   }
@@ -132,6 +133,11 @@ export async function commandFindDrain(opts: {
   ok(`drained ${result.drained} row(s); ${result.sent} ${opts.dryRun ? "would be sent" : "sent"}.`);
   if (result.skipped)
     note(`skipped by the LinkedIn invite guard: ${describeGuardCounts(result.skipped)}`);
+  const weak = result.held?.["weak-offer"] ?? 0;
+  if (weak > 0)
+    note(
+      `held for a weak offer: ${weak} row(s) back to pending. Rewrite, pick another or approve the offer on /queue.`,
+    );
 }
 
 export async function commandFindWatch(opts: {
