@@ -44,11 +44,9 @@ function subscribe(listener: () => void): () => void {
 
 /** The row's current activity label, or null when it is idle. */
 export function useRowActivity(id: number): string | null {
-  return useSyncExternalStore(
-    subscribe,
-    () => activity.get(id) ?? null,
-    () => null,
-  );
+  const read = (): string | null => activity.get(id) ?? null;
+  // The dashboard never renders on a server; a static render reads the same store.
+  return useSyncExternalStore(subscribe, read, read);
 }
 
 /** Test seam: the label without React. */

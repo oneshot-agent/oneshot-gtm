@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { clearRowActivity, setRowActivity } from "../../../lib/rowActivity.ts";
 import {
   hasCompanyPagesInPayload,
   nextOfferIndex,
@@ -134,5 +135,32 @@ describe("offer relevance in the case", () => {
 
   it("tags a weak active offer", () => {
     expect(render({ ...pages, offer: weak })).toContain("· weak fit");
+  });
+});
+
+function disabledCount(html: string): number {
+  return (html.match(/disabled=""/g) ?? []).length;
+}
+
+describe("offer controls while the row is busy", () => {
+  const offer = { offer: "get the second site booked", steps: "a, b" };
+  const payload = {
+    offer,
+    offerCandidates: [offer, { offer: "tidy the job sheets", steps: "a, b" }],
+  };
+  const editable = (p: unknown) =>
+    renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <ProspectOffer rowId={2} payload={p} editable />
+      </QueryClientProvider>,
+    );
+
+  it("locks every offer control while any offer work on the row runs", () => {
+    const idle = editable(payload);
+    const token = setRowActivity(2, "Switching to offer 2…");
+    const busy = editable(payload);
+    clearRowActivity(2, token);
+    expect(disabledCount(busy)).toBeGreaterThan(disabledCount(idle));
+    expect(busy).toContain("Switching to offer 2…");
   });
 });

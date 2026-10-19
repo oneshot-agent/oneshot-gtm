@@ -190,6 +190,9 @@ export function ProspectOffer({
     },
   });
 
+  // Any offer work on this row (here, or Next offer in the letter) locks
+  // every offer control until it ends, so two changes never race.
+  const busy = apply.isPending || activity != null;
   const pendingBody = apply.isPending ? apply.variables : undefined;
   const writingNew = !!pendingBody && "regenerate" in pendingBody;
   const switchingTo = pendingBody && "select" in pendingBody ? pendingBody.select : null;
@@ -236,7 +239,7 @@ export function ProspectOffer({
           <div className="flex gap-1.5">
             <Button
               size="sm"
-              disabled={apply.isPending || !text.trim()}
+              disabled={busy || !text.trim()}
               onClick={() =>
                 apply.mutate({
                   offer: text.trim(),
@@ -262,7 +265,7 @@ export function ProspectOffer({
           <p
             className={cn(
               "m-0 text-[13px] leading-5 text-ink-cream transition-opacity [text-wrap:pretty]",
-              apply.isPending && "opacity-50",
+              busy && "opacity-50",
             )}
           >
             {offer.offer}
@@ -337,7 +340,7 @@ export function ProspectOffer({
                       <Button
                         size="sm"
                         variant="ghost"
-                        disabled={apply.isPending}
+                        disabled={busy}
                         onClick={() => apply.mutate({ select: i })}
                       >
                         {switchingTo === i ? (
@@ -361,7 +364,7 @@ export function ProspectOffer({
           <Button
             size="sm"
             variant="ghost"
-            disabled={apply.isPending}
+            disabled={busy}
             onClick={() => {
               setText(offer?.offer ?? "");
               setReturnText(offer?.return ?? "");
@@ -373,7 +376,7 @@ export function ProspectOffer({
           <Button
             size="sm"
             variant="ghost"
-            disabled={apply.isPending}
+            disabled={busy}
             onClick={() => apply.mutate({ regenerate: true })}
           >
             {writingNew ? (
