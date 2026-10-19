@@ -57,6 +57,9 @@ import {
   draftLinkedInNote,
   draftXDm,
   sendLinkedInInvite,
+  WEAK_OFFER_FLAG,
+  WEAK_OFFER_HOLD_REASON,
+  weakOfferHold,
 } from "@oneshot-gtm/plays";
 import { reportServerExecution } from "../telemetry.ts";
 import {
@@ -126,6 +129,13 @@ function emailFitHold(payload: unknown): QueueRowView["sendHold"] {
     : null;
 }
 
+/** The hold a weak-fit offer puts on the row's send (`weakOfferHold`), when it applies. */
+function weakOfferSendHold(playName: string, payload: unknown): QueueRowView["sendHold"] {
+  return weakOfferHold(playName, payload)
+    ? { code: "weak-offer", reason: WEAK_OFFER_HOLD_REASON }
+    : null;
+}
+
 export function toView(row: QueueRow): QueueRowView {
   let payload: unknown = null;
   try {
@@ -173,9 +183,10 @@ export function toView(row: QueueRow): QueueRowView {
     channel: channelOf(row.channel),
     sender: firstTouchSender(channelOf(row.channel)),
     payload,
+    // A fit hold wins over an offer hold: the person comes before the offer.
     sendHold:
       channelOf(row.channel) === "email" && row.status !== "sent" && !lastDraft?.sent
-        ? emailFitHold(payload)
+        ? (emailFitHold(payload) ?? weakOfferSendHold(row.play_name, payload))
         : null,
     dedupeKey: row.dedupe_key,
     source: row.source,
@@ -1116,6 +1127,7 @@ export async function drainQueueRoute(req: Request): Promise<Response> {
       sent: result.sent,
       errors: result.errors,
       ...(result.skipped ? { skipped: result.skipped } : {}),
+      ...(result.held ? { held: result.held } : {}),
       ...(result.haltedReason ? { haltedReason: result.haltedReason } : {}),
     };
     return jsonResponse(view, 200, req);
@@ -1683,6 +1695,8 @@ export async function sendDraftRoute(
       dryRun: false,
       // This route IS the review-then-send override for `contacted-elsewhere`.
       allowContactedElsewhere: true,
+      // Not for a weak offer: the founder releases that on the offer itself.
+      ...(weakOfferHold(row.play_name, payload) ? { weakOffer: true } : {}),
     });
   } catch (err) {
     // Release the marker so a retry needn't wait for the cold-boot sweep.
@@ -1736,6 +1750,20 @@ export async function sendDraftRoute(
             error: `Send held for fit review: ${hold?.reason ?? "Saved assessment says this person does not fit the target customer profile."} Review their fit before sending; regenerating the draft will not clear this hold.`,
             held: true,
             reason: "off-icp",
+          },
+          409,
+          req,
+        ),
+      );
+    }
+    if (sendFlags.includes(WEAK_OFFER_FLAG)) {
+      return done(
+        "ok",
+        jsonResponse(
+          {
+            error: `Send held for a weak offer: ${WEAK_OFFER_HOLD_REASON} Regenerating the draft will not clear this hold.`,
+            held: true,
+            reason: WEAK_OFFER_FLAG,
           },
           409,
           req,

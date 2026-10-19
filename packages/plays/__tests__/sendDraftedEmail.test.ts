@@ -301,3 +301,20 @@ describe("sendDraftedEmail person-level ICP gate", () => {
     expect(out.sent).toBe(true);
   });
 });
+
+describe("sendDraftedEmail weak-offer hold", () => {
+  it("holds the send with the weak-offer flag", async () => {
+    const opts = baseOpts({ weakOffer: true });
+    const out = await sendDraftedEmail(opts);
+    expect(out).toEqual({ receiptIds: [], sent: false });
+    expect(opts.flags).toEqual(["weak-offer"]);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it("lets a fit hold win when both apply", async () => {
+    const opts = baseOpts({ weakOffer: true, icp: { verdict: "reject" as const, reason: "AE" } });
+    await sendDraftedEmail(opts);
+    expect(opts.flags).toEqual(["off-icp"]);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+});

@@ -678,8 +678,14 @@ export interface SendDeliveryView {
 }
 
 export interface QueueRowView {
-  /** Known email fit hold; absent in older API responses. Approval status is independent. */
-  sendHold?: { code: "off-icp"; reason: string } | null;
+  /**
+   * Why an email row may not send yet, whatever its approval: `off-icp` (the
+   * saved fit assessment rejects the person) or `weak-offer` (the active
+   * offer was rated a weak fit, and the founder has not rewritten, replaced
+   * or approved it). A fit hold wins when both apply. Absent in older API
+   * responses.
+   */
+  sendHold?: { code: "off-icp" | "weak-offer"; reason: string } | null;
   /** Delivery check of the first-touch send, when one ran (sent rows only). */
   delivery?: SendDeliveryView | null;
   id: number;
@@ -1056,6 +1062,10 @@ export type FitReasonSource = "company-gate" | "person-gate" | "generated" | "no
  * block landed hardest on the replies that most needed sending, where a partner
  * had asked point blank whether the terms were authorised. It still earns a
  * second read, which is what a soft flag is for.
+ * `weak-offer`: an unattended send stopped on the row's weak-fit offer. The
+ * hold itself lives on the row (`QueueRowView.sendHold`) and is enforced at
+ * send time; the flag only records why this draft did not go out, so once the
+ * founder rewrites, replaces or approves the offer the reviewed draft can go.
  */
 export const SOFT_REVIEW_FLAGS: readonly string[] = [
   "stale-event",
@@ -1063,6 +1073,7 @@ export const SOFT_REVIEW_FLAGS: readonly string[] = [
   "ungrounded",
   "email-at-former-employer",
   "commits-terms",
+  "weak-offer",
 ];
 
 /**
@@ -1691,6 +1702,8 @@ export interface DrainResult {
   errors: Array<{ id: number; message: string }>;
   /** Rows the LinkedIn invite guard refused, by reason: never sent, back to pending with the reason as a flag. */
   skipped?: Record<string, number>;
+  /** Rows held for the founder, by hold code (`weak-offer`): never sent, back to pending with their draft. */
+  held?: Record<string, number>;
   /** Named reason the daily spend ceiling (issue #481) blocked this drain, if it did. */
   haltedReason?: string;
 }

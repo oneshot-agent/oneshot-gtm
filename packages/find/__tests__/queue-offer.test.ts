@@ -15,9 +15,12 @@ vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return { ...actual, getLedger: () => ledger, logEvent: () => {} };
 });
-vi.mock("@oneshot-gtm/plays", () => ({
+vi.mock("@oneshot-gtm/plays", async () => ({
   playMakesOffer: (play: string) => play !== "pmf-survey",
   ensureOfferSet: (...args: unknown[]) => ensureOfferSet(...args),
+  activeOfferPatch: (
+    await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays")
+  ).activeOfferPatch,
 }));
 
 vi.mock("../src/_product-research.ts", async () => {
@@ -54,6 +57,22 @@ describe("ensureQueueRowOffer", () => {
       patch: { offer, offerCandidates: candidates },
     });
     expect(out.payload_json).toBe('{"stored":true}');
+  });
+
+  it("replaces the old offer whole, so its approval never lands on the new one", async () => {
+    const offer = { offer: "x", steps: "a, b", relevance: "weak" };
+    ensureOfferSet.mockResolvedValue({ offer, candidates: [offer], changed: true });
+    await ensureQueueRowOffer({
+      ...row,
+      payload_json: JSON.stringify({
+        name: "Dana",
+        offer: { offer: "old", steps: "", relevance: "weak", weakApprovedAt: "2026-10-01" },
+      }),
+    });
+    expect(ledger.patchLiveQueuePayload).toHaveBeenCalledWith({
+      id: 7,
+      patch: { offer: { ...offer, weakApprovedAt: null }, offerCandidates: [offer] },
+    });
   });
 
   it("leaves a row alone when its offers are current", async () => {

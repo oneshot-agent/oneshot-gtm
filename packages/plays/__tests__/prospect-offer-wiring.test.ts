@@ -133,4 +133,34 @@ describe("prospect offer in a play run", () => {
       calls.events.find((e) => e["stepIndex"] === 0 || e["step_index"] === 0) ?? calls.events[0];
     expect(JSON.stringify(step0)).toContain(OFFER.offer);
   });
+
+  it("holds the send on a weak-fit offer until the founder approves it", async () => {
+    const { offerProductHash, OFFER_PROMPT_VERSION } = await import("../src/_prospect-offer.ts");
+    const weak = {
+      productHash: offerProductHash({
+        productOneLiner: "thing",
+        productBrief: "Thing drafts quotes, checks price lists and sends them for approval.",
+        pilotOffer: "a month on one team",
+      }),
+      ...OFFER,
+      relevance: "weak",
+      version: OFFER_PROMPT_VERSION,
+      inputHash: "h",
+      derivedAt: "",
+    };
+    const held = await runDesignPartnerLoi({
+      dryRun: false,
+      targets: [{ ...base, offer: weak } as typeof base],
+    });
+    expect(held.drafted[0]).toMatchObject({ sent: false, flags: ["weak-offer"] });
+    expect(calls.events).toHaveLength(0);
+
+    const approved = await runDesignPartnerLoi({
+      dryRun: false,
+      targets: [
+        { ...base, offer: { ...weak, weakApprovedAt: "2026-10-19T00:00:00Z" } } as typeof base,
+      ],
+    });
+    expect(approved.drafted[0]).toMatchObject({ sent: true, flags: [] });
+  });
 });

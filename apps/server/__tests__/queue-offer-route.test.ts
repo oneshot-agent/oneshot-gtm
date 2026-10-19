@@ -94,7 +94,13 @@ describe("queueOfferRoute", () => {
     state.derived = { offer: "fresh", steps: "x, y" };
     const res = await queueOfferRoute(post({ regenerate: true }), { id: "5" });
     expect(res.status).toBe(200);
-    expect(state.patched[0]!.patch["offer"]).toEqual(state.derived);
+    // The old offer's keys the new one lacks are deleted, not merged onto it.
+    expect(state.patched[0]!.patch["offer"]).toEqual({
+      ...state.derived,
+      evidence: null,
+      stage: null,
+      level: null,
+    });
     expect(state.patched[0]!.patch["offerCandidates"]).toEqual([
       state.derived,
       { offer: "second" },
@@ -137,5 +143,48 @@ describe("queueOfferRoute", () => {
   it("leaves a row that is no longer live", async () => {
     state.live = false;
     expect((await queueOfferRoute(post({ offer: "x" }), { id: "5" })).status).toBe(409);
+  });
+
+  describe("approveWeak", () => {
+    const weak = {
+      offer: "old",
+      steps: "a, b",
+      evidence: [],
+      stage: "startup",
+      level: "researched",
+      relevance: "weak",
+    };
+    beforeEach(() => {
+      state.row = {
+        ...state.row!,
+        payload_json: JSON.stringify({ name: "Dana", offer: weak, offerCandidates: [weak] }),
+      };
+    });
+
+    it("stamps the approval on the active offer only", async () => {
+      const res = await queueOfferRoute(post({ approveWeak: true }), { id: "5" });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { offer: Record<string, unknown> };
+      expect(body.offer).toMatchObject({ ...weak, weakApprovedAt: expect.any(String) });
+      expect(state.patched).toEqual([
+        { id: 5, patch: { offer: { weakApprovedAt: body.offer["weakApprovedAt"] } } },
+      ]);
+    });
+
+    it("refuses an offer that is not rated weak, or is the founder's", async () => {
+      for (const offer of [
+        { ...weak, relevance: "relevant" },
+        { ...weak, editedBy: "founder" },
+      ]) {
+        state.row = { ...state.row!, payload_json: JSON.stringify({ offer }) };
+        expect((await queueOfferRoute(post({ approveWeak: true }), { id: "5" })).status).toBe(400);
+      }
+      expect(state.patched).toHaveLength(0);
+    });
+
+    it("refuses a row that is no longer live", async () => {
+      state.live = false;
+      expect((await queueOfferRoute(post({ approveWeak: true }), { id: "5" })).status).toBe(409);
+    });
   });
 });

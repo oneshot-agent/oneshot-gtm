@@ -36,7 +36,12 @@ import {
   voiceBlock,
 } from "./_lib.ts";
 import { enrollInCadence, getSequence } from "./_cadence.ts";
-import { offerBlock, offerForDraft, type ProspectOffer } from "./_prospect-offer.ts";
+import {
+  offerBlock,
+  offerForDraft,
+  offerHoldsSend,
+  type ProspectOffer,
+} from "./_prospect-offer.ts";
 import {
   type AngleSelection,
   angleAssignmentOf,
@@ -521,6 +526,8 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           // gate's verdict on its payload gets it enforced at step 0 and
           // persisted, without every play def naming the field.
           ...icpFromTarget(target),
+          // A weak-fit offer nobody approved holds the send (offerHoldsSend).
+          ...(offerHoldsSend(offer) ? { weakOffer: true } : {}),
           dryRun: opts.dryRun,
         });
 

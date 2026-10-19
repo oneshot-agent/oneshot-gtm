@@ -1445,6 +1445,9 @@ function parseSubjectBody(raw: string): DraftedEmail | null {
   return { subject: subject.trim(), body: body.trim() };
 }
 
+/** The draft flag, and the queue hold code, of a send held for a weak offer (see `offerHoldsSend`). */
+export const WEAK_OFFER_FLAG = "weak-offer";
+
 export interface SendDraftedOpts {
   playName: string;
   to: string;
@@ -1479,6 +1482,12 @@ export interface SendDraftedOpts {
    * `ops/audit-icp.ts` pass. Absent for plays whose finder has no person gate.
    */
   icp?: { verdict: "pass" | "reject" | "unclear"; reason?: string | null };
+  /**
+   * The letter's offer was rated a weak fit for this firm and the founder has
+   * neither rewritten, replaced nor approved it (`offerHoldsSend`). Blocks the
+   * send with the `weak-offer` flag, after the ICP gate (a fit hold wins).
+   */
+  weakOffer?: boolean;
   dryRun: boolean;
   /**
    * Allow a first-touch even if another play already touched the prospect.
@@ -1532,6 +1541,11 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
         { play: opts.playName, to: opts.to, reason_120: why.slice(0, 120) },
         "info",
       );
+      return { receiptIds: [], sent: false };
+    }
+    if (opts.weakOffer) {
+      opts.flags.push(WEAK_OFFER_FLAG);
+      logEvent("play.skipped_weak_offer", { play: opts.playName, to: opts.to }, "info");
       return { receiptIds: [], sent: false };
     }
     // Track as in-flight for the WHOLE send-and-record span (SDK call →

@@ -97,6 +97,7 @@ vi.mock("@oneshot-gtm/plays", () => {
     playMakesOffer: () => false,
     ensureOffer: async () => null,
     ensureOfferSet: async () => null,
+    WEAK_OFFER_FLAG: "weak-offer",
   };
 });
 
@@ -151,6 +152,33 @@ describe("idsForSentDrafts", () => {
 });
 
 describe("drainQueue per-target dispatch + persistence", () => {
+  it("holds a row the send gate stopped on its weak offer: back to pending, counted, never sent", async () => {
+    ledgerStub.dequeueApproved.mockReturnValue([row(40)]);
+    runStackConsolidationMock.mockResolvedValueOnce({
+      drafted: [
+        { subject: "hi", body: "clean body", flags: ["weak-offer"], sent: false, receiptIds: [] },
+      ],
+    });
+
+    const out = await drainQueue({ playName: "stack-consolidation", dryRun: false });
+
+    expect(out).toMatchObject({ drained: 1, sent: 0, errors: [], held: { "weak-offer": 1 } });
+    expect(ledgerStub.setQueueDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 40,
+        draft: expect.objectContaining({ body: "clean body", flags: ["weak-offer"], sent: false }),
+      }),
+    );
+    expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({
+      id: 40,
+      status: "pending",
+      decidedBy: "machine",
+    });
+    expect(ledgerStub.setQueueStatus).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: "sent" }),
+    );
+  });
+
   it("setQueueDraft for every row (sent + held); setQueueStatus only on actual sends", async () => {
     ledgerStub.dequeueApproved.mockReturnValue([row(10), row(20)]);
     runStackConsolidationMock
