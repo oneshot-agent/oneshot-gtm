@@ -1,8 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { clearRowActivity, setRowActivity } from "../../../lib/rowActivity.ts";
 import {
   hasCompanyPagesInPayload,
+  nextOfferIndex,
   offerCandidatesFromPayload,
   offerFitLabel,
   offerFromPayload,
@@ -45,8 +47,14 @@ describe("offerFromPayload", () => {
   });
   it("reads the ranked offers, skipping unreadable ones", () => {
     const list = offerCandidatesFromPayload({
-      offerCandidates: [{ offer: "first", steps: "" }, { offer: " " }, { offer: "second" }],
+      offerCandidates: [
+        { offer: "first", steps: "" },
+        { offer: " ", steps: "" },
+        { offer: "legacy without steps" },
+        { offer: "second", steps: "a, b" },
+      ],
     });
+    // Matches the server's list, so { select: i } names the same offer.
     expect(list.map((o) => o.offer)).toEqual(["first", "second"]);
     expect(offerCandidatesFromPayload({})).toEqual([]);
   });
@@ -54,6 +62,24 @@ describe("offerFromPayload", () => {
     expect(offerFromPayload({})).toBeNull();
     expect(offerFromPayload({ offer: { offer: " " } })).toBeNull();
     expect(offerFromPayload(null)).toBeNull();
+  });
+});
+
+describe("nextOfferIndex", () => {
+  const candidates = ["one", "two", "three", "four", "five"].map((offer) => ({ offer }));
+
+  it("advances through all five candidates and wraps to the first", () => {
+    expect(candidates.map((offer) => nextOfferIndex(offer, candidates))).toEqual([1, 2, 3, 4, 0]);
+  });
+
+  it("starts at the first candidate when the active offer is missing", () => {
+    expect(nextOfferIndex({ offer: "old" }, candidates)).toBe(0);
+    expect(nextOfferIndex(null, candidates)).toBe(0);
+  });
+
+  it("handles empty and single-candidate lists", () => {
+    expect(nextOfferIndex(null, [])).toBeNull();
+    expect(nextOfferIndex(candidates[0]!, candidates.slice(0, 1))).toBe(0);
   });
 });
 
@@ -109,5 +135,32 @@ describe("offer relevance in the case", () => {
 
   it("tags a weak active offer", () => {
     expect(render({ ...pages, offer: weak })).toContain("· weak fit");
+  });
+});
+
+function disabledCount(html: string): number {
+  return (html.match(/disabled=""/g) ?? []).length;
+}
+
+describe("offer controls while the row is busy", () => {
+  const offer = { offer: "get the second site booked", steps: "a, b" };
+  const payload = {
+    offer,
+    offerCandidates: [offer, { offer: "tidy the job sheets", steps: "a, b" }],
+  };
+  const editable = (p: unknown) =>
+    renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <ProspectOffer rowId={2} payload={p} editable />
+      </QueryClientProvider>,
+    );
+
+  it("locks every offer control while any offer work on the row runs", () => {
+    const idle = editable(payload);
+    const token = setRowActivity(2, "Switching to offer 2…");
+    const busy = editable(payload);
+    clearRowActivity(2, token);
+    expect(disabledCount(busy)).toBeGreaterThan(disabledCount(idle));
+    expect(busy).toContain("Switching to offer 2…");
   });
 });
