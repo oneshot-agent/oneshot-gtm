@@ -18,7 +18,10 @@ vi.mock("../src/components/primitives/Button.tsx", async (importOriginal) => {
   };
 });
 
-const candidates = ["one", "two", "three", "four", "five"].map((offer) => ({ offer }));
+const candidates = ["one", "two", "three", "four", "five"].map((offer) => ({
+  offer,
+  steps: "a, b",
+}));
 const base: ComponentProps<typeof DraftSection> = {
   id: 5,
   channel: "email",

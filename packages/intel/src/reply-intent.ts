@@ -1,6 +1,6 @@
 import { loadConfig, logEvent, type InboxEmail, type OneShotConfig } from "@oneshot-gtm/core";
 import { REPLY_INTENTS, isReplyIntent, type ReplyIntent } from "@oneshot-gtm/shared-types";
-import { backoffDelayMs, isRetryableLlmError, LlmError, parseRetryAfter } from "./client.ts";
+import { callDecisions, topDecisionLabels } from "./decisions.ts";
 import { triageEmails } from "./triage.ts";
 
 /**
@@ -30,11 +30,6 @@ export class ReplyIntentError extends Error {
   }
 }
 
-const DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions";
-const DECISIONS_TIMEOUT_MS = 10_000;
-const DECISIONS_MAX_ATTEMPTS = 2;
-/** A Retry-After hint longer than this falls back to the llm engine instead of sleeping. */
-const DECISIONS_MAX_RETRY_AFTER_MS = 5_000;
 const DEFAULT_MIN_CONFIDENCE = 0.5;
 const BODY_CHARS = 2000;
 
@@ -53,117 +48,6 @@ function minConfidenceOf(cfg: OneShotConfig): number {
 
 function stateOf(email: InboxEmail): string {
   return `Subject: ${email.subject ?? ""}\n\n${(email.body ?? "").slice(0, BODY_CHARS)}`;
-}
-
-interface DecisionsAnswer {
-  choice: ReplyIntent;
-  confidence: number | null;
-  probabilities: Record<string, number> | null;
-  costUsd: number | null;
-  model: string;
-}
-
-async function callDecisions(
-  email: InboxEmail,
-  model: string,
-  key: string,
-  fetchImpl: typeof fetch,
-): Promise<DecisionsAnswer> {
-  let attempt = 0;
-  for (;;) {
-    attempt++;
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), DECISIONS_TIMEOUT_MS);
-    let res: Response;
-    try {
-      res = await fetchImpl(DECISIONS_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${key}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://github.com/oneshot-agent/oneshot-gtm",
-          "X-Title": "oneshot-gtm",
-        },
-        body: JSON.stringify({
-          model,
-          questions: {
-            intent: { type: "choice", instructions: INSTRUCTIONS, criteria: replyIntentCriteria() },
-          },
-          state: stateOf(email),
-        }),
-        signal: ctl.signal,
-      });
-    } catch (err) {
-      clearTimeout(timer);
-      // A timeout or transport failure: retryable, like the LLM client's.
-      const e = new LlmError(
-        (err as Error)?.name === "AbortError"
-          ? `decisions request timed out after ${DECISIONS_TIMEOUT_MS}ms`
-          : `decisions request failed: ${(err as Error)?.message ?? err}`,
-        503,
-      );
-      if (attempt < DECISIONS_MAX_ATTEMPTS) {
-        await new Promise((r) => setTimeout(r, backoffDelayMs(attempt)));
-        continue;
-      }
-      throw e;
-    }
-    if (!res.ok) {
-      clearTimeout(timer);
-      const retryAfterMs = parseRetryAfter(res.headers.get("retry-after"), Date.now());
-      const e = new LlmError(`decisions HTTP ${res.status}`, res.status, retryAfterMs);
-      // A long Retry-After would stall the caller (the inbox poll, the
-      // scheduler tick): fall back now rather than sleep through it.
-      const waitOk = retryAfterMs === undefined || retryAfterMs <= DECISIONS_MAX_RETRY_AFTER_MS;
-      if (attempt < DECISIONS_MAX_ATTEMPTS && isRetryableLlmError(e) && waitOk) {
-        await new Promise((r) => setTimeout(r, backoffDelayMs(attempt, retryAfterMs)));
-        continue;
-      }
-      throw e;
-    }
-    // The timeout covers the body read too: a stalled body aborts like a stalled request.
-    const body = (await res
-      .json()
-      .catch(() => null)
-      .finally(() => clearTimeout(timer))) as {
-      model?: string;
-      answers?: { intent?: { choice?: unknown; confidence?: unknown; probabilities?: unknown } };
-      usage?: { cost?: unknown };
-    } | null;
-    const answer = body?.answers?.intent;
-    if (!answer || !isReplyIntent(answer.choice)) {
-      throw new LlmError(
-        `decisions response had no known label (got ${JSON.stringify(answer?.choice ?? null)})`,
-      );
-    }
-    const probs =
-      answer.probabilities && typeof answer.probabilities === "object"
-        ? Object.fromEntries(
-            Object.entries(answer.probabilities as Record<string, unknown>).filter(
-              (e): e is [string, number] => typeof e[1] === "number" && Number.isFinite(e[1]),
-            ),
-          )
-        : null;
-    return {
-      choice: answer.choice,
-      confidence:
-        typeof answer.confidence === "number" && Number.isFinite(answer.confidence)
-          ? answer.confidence
-          : null,
-      probabilities: probs,
-      costUsd: typeof body?.usage?.cost === "number" ? body.usage.cost : null,
-      model: typeof body?.model === "string" && body.model ? body.model : model,
-    };
-  }
-}
-
-function topLabels(probs: Record<string, number> | null, n = 3): string {
-  if (!probs) return "";
-  return Object.entries(probs)
-    .toSorted((a, b) => b[1] - a[1])
-    .slice(0, n)
-    .map(([k, v]) => `${k} ${v.toFixed(2)}`)
-    .join(", ");
 }
 
 async function classifyWithLlm(email: InboxEmail, cfg: OneShotConfig, fellBack: boolean) {
@@ -209,15 +93,27 @@ export async function classifyReplyIntent(
     return classifyWithLlm(email, cfg, true);
   }
   try {
-    const a = await callDecisions(email, model, key, opts.fetchImpl ?? fetch);
+    const res = await callDecisions({
+      model,
+      key,
+      questions: {
+        intent: { type: "choice", instructions: INSTRUCTIONS, criteria: replyIntentCriteria() },
+      },
+      state: stateOf(email),
+      ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+    });
+    const a = res.answers["intent"]!;
+    // The criteria are the shared table, so this only narrows the type.
+    if (!isReplyIntent(a.choice)) throw new ReplyIntentError(`unknown label ${a.choice}`);
+    const intent = a.choice;
     const min = minConfidenceOf(cfg);
     return {
-      intent: a.choice,
-      reason: topLabels(a.probabilities) || a.choice,
+      intent,
+      reason: topDecisionLabels(a.probabilities) || intent,
       confidence: a.confidence,
       probabilities: a.probabilities,
-      classifier: `decisions:${a.model}`,
-      costMicros: a.costUsd == null ? null : Math.round(a.costUsd * 1_000_000),
+      classifier: `decisions:${res.model}`,
+      costMicros: res.costUsd == null ? null : Math.round(res.costUsd * 1_000_000),
       review: a.confidence != null && a.confidence < min,
       fellBack: false,
     };

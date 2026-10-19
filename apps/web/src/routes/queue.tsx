@@ -136,6 +136,7 @@ import {
   markDraftGenerating,
   useGeneratingDrafts,
 } from "../lib/draftRunState.ts";
+import { clearRowActivity, setRowActivity, useRowActivity } from "../lib/rowActivity.ts";
 import { summarizeRun } from "../lib/summarizeRun.ts";
 import { READ_ONLY, readOnly } from "../lib/readOnly.ts";
 import {
@@ -1335,17 +1336,25 @@ export function DraftSection({
       : candidates.findIndex((candidate) => candidate.offer === offer?.offer);
   const nextOffer = useMutation({
     mutationFn: async (select: number) => {
-      await api.setQueueOffer(id, { select });
+      // Same steps and shared label as the offer block's Use this offer.
+      const token = setRowActivity(id, `Switching to offer ${select + 1}…`);
       try {
-        await api.regenerateDraft(id);
-        return { redrafted: true as const };
-      } catch (err) {
-        return { redrafted: false as const, message: (err as Error).message };
+        await api.setQueueOffer(id, { select });
+        setRowActivity(id, "Rewriting the draft around the offer…", token);
+        const stamp = markDraftGenerating(id);
+        try {
+          await api.regenerateDraft(id);
+          return { redrafted: true as const };
+        } catch (err) {
+          return { redrafted: false as const, message: (err as Error).message };
+        } finally {
+          clearDraftGenerating(id, stamp);
+        }
+      } finally {
+        clearRowActivity(id, token);
       }
     },
-    onMutate: () => markDraftGenerating(id),
     onSuccess: (result) => {
-      clearDraftGenerating(id);
       void qc.invalidateQueries({ queryKey: ["queue"] });
       if (result.redrafted) toast.success("offer saved · draft rewritten around it, not sent");
       else
@@ -1354,7 +1363,6 @@ export function DraftSection({
         );
     },
     onError: (err) => {
-      clearDraftGenerating(id);
       void qc.invalidateQueries({ queryKey: ["queue"] });
       toast.error(`couldn't update the offer · ${err.message}`);
     },
@@ -1364,22 +1372,27 @@ export function DraftSection({
     // Persist a localStorage marker so the spinner survives leaving + returning
     // to /queue while the draft generates server-side; cleared on settle (and,
     // for the unmounted case, reconciled away once lastDraftedAt advances).
-    onMutate: () => markDraftGenerating(id),
-    onSuccess: () => {
-      clearDraftGenerating(id);
+    onMutate: () => ({ stamp: markDraftGenerating(id) }),
+    onSuccess: (_data, _rotate, context) => {
+      clearDraftGenerating(id, context?.stamp);
       void qc.invalidateQueries({ queryKey: ["queue"] });
       toast.success("draft ready · preview only, not sent");
     },
-    onError: (err) => {
-      clearDraftGenerating(id);
+    onError: (err, _rotate, context) => {
+      clearDraftGenerating(id, context?.stamp);
       // Refetch on failure: a concurrent send may have made the cached approved row stale.
       void qc.invalidateQueries({ queryKey: ["queue"] });
       toast.error(`couldn't draft · ${err.message}`);
     },
   });
+  // What the row is busy with when the offer block started it (new offers,
+  // switching offer): the letter shows the same words.
+  const activity = useRowActivity(id);
+  const rotating = regenerate.isPending && regenerate.variables === true;
   // Instant spinner while mounted (isPending) OR restored-from-localStorage
-  // after a remount (generating).
-  const isGenerating = generating || regenerate.isPending || nextOffer.isPending;
+  // after a remount (generating), OR offer work that ends in a redraft.
+  const isGenerating =
+    generating || regenerate.isPending || nextOffer.isPending || activity != null;
   const send = useMutation({
     mutationFn: () => api.sendDraft(id),
     onSuccess: () => {
@@ -1407,6 +1420,15 @@ export function DraftSection({
   const canDraft = status !== "sent" && !sending && !(draft?.sent ?? false);
   const verb = draft ? "Regenerate draft" : "Generate draft";
   const pendingVerb = draft ? "Regenerating…" : "Generating…";
+  const working = activity
+    ? activity
+    : rotating
+      ? "Rotating to the next angle…"
+      : isGenerating
+        ? draft
+          ? "Rewriting the draft…"
+          : "Writing the draft…"
+        : null;
   const draftButton = canDraft ? (
     <div className="flex flex-wrap items-center gap-2">
       <Button
@@ -1417,8 +1439,12 @@ export function DraftSection({
         {...readOnly}
         title="Draft this row in preview mode — dry-run, never sends"
       >
-        {isGenerating ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
-        {isGenerating ? pendingVerb : verb}
+        {isGenerating && !rotating ? (
+          <Loader2 size={11} className="animate-spin" />
+        ) : (
+          <RotateCw size={11} />
+        )}
+        {isGenerating && !rotating ? pendingVerb : verb}
       </Button>
       {draft && channel !== "reddit" && channel !== "hacker-news" && (
         <Button
@@ -1429,7 +1455,8 @@ export function DraftSection({
           {...readOnly}
           title="Try another angle and generate a new preview"
         >
-          <RotateCw size={11} /> Rotate angle
+          {rotating ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
+          {rotating ? "Rotating…" : "Rotate angle"}
         </Button>
       )}
       {candidates.length > 1 && offer?.editedBy !== "founder" && (
@@ -1441,7 +1468,12 @@ export function DraftSection({
           {...readOnly}
           title="Use the next offer and rewrite the draft around it"
         >
-          <RotateCw size={11} /> {nextOffer.isPending ? "next offer…" : "Next offer"}
+          {nextOffer.isPending ? (
+            <Loader2 size={11} className="animate-spin" />
+          ) : (
+            <RotateCw size={11} />
+          )}
+          {nextOffer.isPending ? "Switching…" : "Next offer"}
         </Button>
       )}
     </div>
@@ -1841,6 +1873,7 @@ export function DraftSection({
         ),
       }}
       sendable={sendable}
+      working={working}
     />
   );
 }

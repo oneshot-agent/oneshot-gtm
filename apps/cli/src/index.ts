@@ -898,8 +898,15 @@ find
   .option("--first-party-only", "skip external research and retain first-party evidence only")
   .option("--refresh", "refresh rows that already have product research", false)
   .option("--no-include-pending", "exclude pending queue rows")
+  .option(
+    "--include-unsent",
+    "include every unsent queue row (pending and approved), not just pending",
+    false,
+  )
   .option("--dry-run", "list candidates and estimated coverage; research nothing", false)
-  .description("Backfill product-aware dossiers onto live prospects and pending review rows")
+  .description(
+    "Backfill product-aware dossiers onto live prospects and pending (or, with --include-unsent, all unsent) review rows",
+  )
   .action(
     runOrFail(
       async (opts: {
@@ -911,12 +918,14 @@ find
         firstPartyOnly: boolean;
         refresh: boolean;
         includePending: boolean;
+        includeUnsent: boolean;
         dryRun: boolean;
       }) => {
         await commandResearchProducts({
           dryRun: opts.dryRun,
           refresh: opts.refresh,
           includePending: opts.includePending,
+          includeUnsent: opts.includeUnsent,
           externalResearch: !opts.firstPartyOnly,
           ...(opts.costLimit !== false && opts.maxCostUsd != null
             ? { maxCostUsd: opts.maxCostUsd }

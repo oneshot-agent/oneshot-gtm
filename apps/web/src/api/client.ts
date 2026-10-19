@@ -380,6 +380,11 @@ export const api = {
           model?: string;
           minConfidence?: number;
         };
+        offerJudge?: {
+          engine: "llm" | "decisions";
+          model?: string;
+          minConfidence?: number;
+        };
         timezone?: string | null;
         calendarIdentityId?: string | null;
         calendarId?: string;

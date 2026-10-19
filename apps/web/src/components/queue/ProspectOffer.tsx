@@ -1,8 +1,12 @@
 import { useState } from "react";
+import { Loader2 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
+import { cn } from "../../lib/cn.ts";
+import { clearDraftGenerating, markDraftGenerating } from "../../lib/draftRunState.ts";
+import { clearRowActivity, setRowActivity, useRowActivity } from "../../lib/rowActivity.ts";
 import { Button } from "../primitives/Button.tsx";
 import { Textarea } from "../primitives/Field.tsx";
 import { Disclosure } from "../ledger/CaseList.tsx";
@@ -18,6 +22,12 @@ interface OfferView {
   /** Reasons it pays back: the letter's angles. */
   angles: string[];
   editedBy?: "founder";
+  /** The anchor the offer rests on and the fact behind it. */
+  fit?: string;
+  /** The relevance judge's label; `weak` ones only make up the five. */
+  relevance?: "relevant" | "weak" | "irrelevant";
+  /** 0–1: the judge's probability that it is relevant. */
+  relevanceScore?: number;
 }
 
 function strings(v: unknown): string[] {
@@ -37,7 +47,42 @@ function readOffer(o: unknown): OfferView | null {
     return: typeof r["return"] === "string" ? r["return"] : "",
     angles: strings(r["angles"]),
     ...(r["editedBy"] === "founder" ? { editedBy: "founder" as const } : {}),
+    ...(typeof r["fit"] === "string" && r["fit"].trim() ? { fit: r["fit"] } : {}),
+    ...(r["relevance"] === "relevant" ||
+    r["relevance"] === "weak" ||
+    r["relevance"] === "irrelevant"
+      ? { relevance: r["relevance"] }
+      : {}),
+    ...(typeof r["relevanceScore"] === "number" && Number.isFinite(r["relevanceScore"])
+      ? { relevanceScore: r["relevanceScore"] }
+      : {}),
   };
+}
+
+/** "fit 4/5" from the judge's score, "relevant" when it gave only a label. */
+export function offerFitLabel(o: Pick<OfferView, "relevance" | "relevanceScore">): string | null {
+  if (o.relevanceScore !== undefined) {
+    return `fit ${Math.min(5, Math.max(0, Math.round(o.relevanceScore * 5)))}/5`;
+  }
+  return o.relevance === "relevant" ? "relevant" : null;
+}
+
+/** True when the row's research holds text read from the company's own pages. */
+export function hasCompanyPagesInPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const research = (payload as Record<string, unknown>)["productResearch"];
+  if (!research || typeof research !== "object") return false;
+  const sources = (research as Record<string, unknown>)["sources"];
+  return (
+    Array.isArray(sources) &&
+    sources.some(
+      (s) =>
+        !!s &&
+        typeof s === "object" &&
+        typeof (s as Record<string, unknown>)["excerpt"] === "string" &&
+        ((s as Record<string, unknown>)["excerpt"] as string).trim().length > 0,
+    )
+  );
 }
 
 /** The prospect offer stored on a queue payload, when it has one. */
@@ -50,7 +95,19 @@ export function offerFromPayload(payload: unknown): OfferView | null {
 export function offerCandidatesFromPayload(payload: unknown): OfferView[] {
   if (!payload || typeof payload !== "object") return [];
   const list = (payload as Record<string, unknown>)["offerCandidates"];
-  return Array.isArray(list) ? list.map(readOffer).filter((o): o is OfferView => o !== null) : [];
+  // Same entries the server counts (`offerCandidatesOf`: an offer with a
+  // `steps` string), so the index sent as `{ select: i }` names the same offer.
+  return Array.isArray(list)
+    ? list
+        .filter(
+          (o) =>
+            !!o &&
+            typeof o === "object" &&
+            typeof (o as Record<string, unknown>)["steps"] === "string",
+        )
+        .map(readOffer)
+        .filter((o): o is OfferView => o !== null)
+    : [];
 }
 
 /** Start at the first candidate when the active offer is no longer in the list. */
@@ -87,16 +144,35 @@ export function ProspectOffer({
   const [text, setText] = useState(offer?.offer ?? "");
   const [returnText, setReturnText] = useState(offer?.return ?? "");
 
+  const activity = useRowActivity(rowId);
   const apply = useMutation({
     mutationFn: async (
       body: { offer: string; return?: string } | { regenerate: true } | { select: number },
     ) => {
-      await api.setQueueOffer(rowId, body);
+      // Name each step as it runs, so the offer block and the letter show
+      // the same work (rowActivity.ts).
+      const token = setRowActivity(
+        rowId,
+        "regenerate" in body
+          ? "Writing 5 offers and their angles…"
+          : "select" in body
+            ? `Switching to offer ${body.select + 1}…`
+            : "Saving your offer…",
+      );
       try {
-        await api.regenerateDraft(rowId);
-        return { redrafted: true as const };
-      } catch (err) {
-        return { redrafted: false as const, message: (err as Error).message };
+        await api.setQueueOffer(rowId, body);
+        setRowActivity(rowId, "Rewriting the draft around the offer…", token);
+        const stamp = markDraftGenerating(rowId);
+        try {
+          await api.regenerateDraft(rowId);
+          return { redrafted: true as const };
+        } catch (err) {
+          return { redrafted: false as const, message: (err as Error).message };
+        } finally {
+          clearDraftGenerating(rowId, stamp);
+        }
+      } finally {
+        clearRowActivity(rowId, token);
       }
     },
     onSuccess: (result) => {
@@ -114,6 +190,10 @@ export function ProspectOffer({
     },
   });
 
+  const pendingBody = apply.isPending ? apply.variables : undefined;
+  const writingNew = !!pendingBody && "regenerate" in pendingBody;
+  const switchingTo = pendingBody && "select" in pendingBody ? pendingBody.select : null;
+
   if (masked) return null;
   if (!offer && !editable) return null;
 
@@ -123,6 +203,15 @@ export function ProspectOffer({
         <span>offer</span>
         {offer?.level === "role" && !offer.editedBy && <span>· from role only</span>}
         {offer?.editedBy === "founder" && <span>· yours</span>}
+        {offer?.relevance === "weak" && !offer.editedBy && <span>· weak fit</span>}
+        {activity && (
+          <span
+            aria-hidden="true"
+            className="inline-flex items-center gap-1 normal-case tracking-normal text-[color:var(--ink-receipt-2)]"
+          >
+            · <Loader2 size={11} className="animate-spin" /> {activity}
+          </span>
+        )}
         {activeIndex >= 0 && candidates.length > 1 && (
           <span>
             · {activeIndex + 1} of {candidates.length}
@@ -155,7 +244,13 @@ export function ProspectOffer({
                 })
               }
             >
-              {apply.isPending ? "rewriting…" : "Save and redraft"}
+              {apply.isPending ? (
+                <>
+                  <Loader2 size={11} className="animate-spin" /> Saving…
+                </>
+              ) : (
+                "Save and redraft"
+              )}
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
               Cancel
@@ -164,12 +259,27 @@ export function ProspectOffer({
         </div>
       ) : offer ? (
         <>
-          <p className="m-0 text-[13px] leading-5 text-ink-cream [text-wrap:pretty]">
+          <p
+            className={cn(
+              "m-0 text-[13px] leading-5 text-ink-cream transition-opacity [text-wrap:pretty]",
+              apply.isPending && "opacity-50",
+            )}
+          >
             {offer.offer}
           </p>
           {offer.return && (
             <p className="m-0 mt-1 text-[12px] leading-5 text-ink-muted [text-wrap:pretty]">
               Returns: {offer.return}
+            </p>
+          )}
+          {offer.fit && (
+            <p className="m-0 mt-1 text-[12px] leading-5 text-ink-muted [text-wrap:pretty]">
+              Fit: {offer.fit}
+            </p>
+          )}
+          {!offer.editedBy && !hasCompanyPagesInPayload(payload) && (
+            <p className="m-0 mt-1 text-[11.5px] leading-5 text-ink-faint">
+              written without the company's site
             </p>
           )}
         </>
@@ -215,6 +325,13 @@ export function ProspectOffer({
                     {i + 1}. {c.offer}
                   </span>
                   {c.return && <span className="text-ink-muted">Returns: {c.return}</span>}
+                  {(offerFitLabel(c) || c.relevance === "weak") && (
+                    <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-faint">
+                      {[offerFitLabel(c), c.relevance === "weak" ? "weak fit" : null]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  )}
                   {editable && (
                     <span>
                       <Button
@@ -223,7 +340,13 @@ export function ProspectOffer({
                         disabled={apply.isPending}
                         onClick={() => apply.mutate({ select: i })}
                       >
-                        Use this offer
+                        {switchingTo === i ? (
+                          <>
+                            <Loader2 size={11} className="animate-spin" /> Switching…
+                          </>
+                        ) : (
+                          "Use this offer"
+                        )}
                       </Button>
                     </span>
                   )}
@@ -238,6 +361,7 @@ export function ProspectOffer({
           <Button
             size="sm"
             variant="ghost"
+            disabled={apply.isPending}
             onClick={() => {
               setText(offer?.offer ?? "");
               setReturnText(offer?.return ?? "");
@@ -252,7 +376,13 @@ export function ProspectOffer({
             disabled={apply.isPending}
             onClick={() => apply.mutate({ regenerate: true })}
           >
-            {apply.isPending ? "writing…" : "New offers"}
+            {writingNew ? (
+              <>
+                <Loader2 size={11} className="animate-spin" /> Writing…
+              </>
+            ) : (
+              "New offers"
+            )}
           </Button>
         </div>
       )}
