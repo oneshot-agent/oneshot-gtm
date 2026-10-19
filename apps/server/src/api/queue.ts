@@ -631,7 +631,10 @@ function startImportRederive(queueId: number): void {
 async function offerImportedRow(queueId: number): Promise<void> {
   try {
     const row = getLedger().getQueueRow(queueId);
-    if (row) await ensureQueueRowOffer(row, { research: true });
+    // Research only rows still open: a sent or rejected row has no offer to write.
+    if (row && (row.status === "pending" || row.status === "approved")) {
+      await ensureQueueRowOffer(row, { research: true });
+    }
   } catch (err) {
     logEvent(
       "error.swallowed",

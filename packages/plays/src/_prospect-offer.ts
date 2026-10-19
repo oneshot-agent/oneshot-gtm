@@ -438,7 +438,8 @@ export interface OfferJudgement {
 
 const OFFER_RELEVANCE_LABELS: readonly OfferRelevance[] = ["relevant", "weak", "irrelevant"];
 const DEFAULT_JUDGE_MIN_CONFIDENCE = 0.5;
-const JUDGE_RESEARCH_MAX = 6_000;
+// The judge checks `fit` against RESEARCH, so it sees what the writer saw.
+const JUDGE_RESEARCH_MAX = RESEARCH_MAX;
 const JUDGE_WHY_MAX = 140;
 
 /** The decisions-engine criteria for one offer's relevance. */

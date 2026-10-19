@@ -211,7 +211,10 @@ export async function offerNewQueueRows(input: {
     .filter((row) => ownsSource(row.source));
   const research = input.research?.enabled === true;
   const cap = input.research?.maxCostUsd;
-  await parallelMap(rows, 3, async (row) => {
+  // Each row's budget comes from the running total; concurrent workers would
+  // all see the same remainder and could overspend the cap together.
+  const concurrency = research && cap !== undefined ? 1 : 3;
+  await parallelMap(rows, concurrency, async (row) => {
     await ensureQueueRowOffer(row, {
       research,
       researchBudgetUsd:

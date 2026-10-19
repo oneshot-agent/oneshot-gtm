@@ -84,6 +84,8 @@ beforeEach(() => {
   llm.judge = [];
   llm.judgeInputs = [];
   delete cfg.offerJudge;
+  // Judge paths must not depend on a key in the developer's or CI's environment.
+  delete process.env["OPENROUTER_API_KEY"];
 });
 
 describe("offerResearchText", () => {

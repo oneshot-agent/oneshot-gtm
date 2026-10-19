@@ -31,6 +31,16 @@ function productAlreadyPresent(value: string | null | undefined): boolean {
   }
 }
 
+/** Whether a queue payload already carries product research. */
+export function hasProductResearch(payloadJson: string): boolean {
+  try {
+    const payload = recordPayload(JSON.parse(payloadJson) as unknown);
+    return Boolean(payload?.["productResearch"]);
+  } catch {
+    return false;
+  }
+}
+
 function recordPayload(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -164,7 +174,11 @@ export async function commandResearchProducts(opts: ResearchProductsOpts): Promi
       heldByBudget++;
       return;
     }
-    if (researched.dossier.status === "unavailable") unavailable++;
+    if (researched.dossier.status === "unavailable") {
+      unavailable++;
+      // A failed lookup never replaces research the row already has.
+      if (!opts.refresh && hasProductResearch(row.payload_json)) return;
+    }
     // Live rows only: an approved row can be sent while its research runs.
     if (writeLiveQueueProductResearch(row.id, researched.dossier)) written++;
   });

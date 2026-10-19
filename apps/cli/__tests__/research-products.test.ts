@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { productQueueStatuses, selectProductQueueRows } from "../src/commands/research-products.ts";
+import {
+  hasProductResearch,
+  productQueueStatuses,
+  selectProductQueueRows,
+} from "../src/commands/research-products.ts";
 
 // Which queue rows a company-research backfill covers. `--include-unsent`
 // adds approved rows to pending ones; a sent or sending row is never
@@ -55,5 +59,15 @@ describe("selectProductQueueRows", () => {
     const sent = row({}, { sent_at: "2026-10-01T00:00:00Z" });
     const sending = row({}, { send_started_at: "2026-10-01T00:00:00Z" });
     expect(selectProductQueueRows([sent, sending], { refresh: true })).toEqual([]);
+  });
+});
+
+describe("hasProductResearch", () => {
+  it("says whether a failed lookup would replace research the row already has", () => {
+    expect(hasProductResearch(JSON.stringify({ productResearch: { status: "partial" } }))).toBe(
+      true,
+    );
+    expect(hasProductResearch(JSON.stringify({ companyDomain: "alpha.example" }))).toBe(false);
+    expect(hasProductResearch("not json")).toBe(false);
   });
 });

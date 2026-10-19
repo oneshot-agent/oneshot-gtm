@@ -44,7 +44,12 @@ vi.mock("@oneshot-gtm/core", async () => {
       clearQueueDraft: (id: number) => {
         calls.cleared.push(id);
       },
-      getQueueRow: (id: number) => ({ id, play_name: "luma-events", payload_json: "{}" }),
+      getQueueRow: (id: number) => ({
+        id,
+        play_name: "luma-events",
+        status: "pending",
+        payload_json: "{}",
+      }),
     }),
   };
 });
