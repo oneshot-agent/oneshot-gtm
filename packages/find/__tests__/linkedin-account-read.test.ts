@@ -256,6 +256,22 @@ describe("readLinkedInProfile through the connected account", () => {
     expect(cache.get(linkedinProfileCacheKey(URL_A))?.status).toBe("failed");
   });
 
+  it("two reads at once with one view left: one reads, the other stops at the cap", async () => {
+    readsToday = 79;
+    _setLinkedInCall(async (workspace, operation) => {
+      ops.push({ workspace, operation: operation as unknown as Record<string, unknown> });
+      // The read's cache row is what the cap counts.
+      readsToday++;
+      return view(ADA_EXPERIENCE);
+    }, 0);
+    const [a, b] = await Promise.all([
+      readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 }),
+      readLinkedInProfile("https://www.linkedin.com/in/bo-quill", ctx, { remainingUsd: 1 }),
+    ]);
+    expect([a.skipped ?? "read", b.skipped ?? "read"].toSorted()).toEqual(["daily-limit", "read"]);
+    expect(ops).toHaveLength(1);
+  });
+
   it("stops at the daily read cap and the cost cap before asking", async () => {
     script(view(ADA_EXPERIENCE));
     readsToday = 80;

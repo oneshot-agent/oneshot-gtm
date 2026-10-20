@@ -1,5 +1,6 @@
 import type { OnboardingStatus } from "@oneshot-gtm/shared-types";
 import type { LinkedInMeasureView } from "@oneshot-gtm/shared-types";
+import type { LinkedInReadsView, ReadProfileResult } from "@oneshot-gtm/shared-types";
 import type {
   LinkedInFriendDraftView,
   LinkedInFriendSendView,
@@ -397,6 +398,9 @@ export const api = {
       };
       secretsPath: string;
       sources: Record<string, "env" | "file" | null>;
+      // Optional: older servers and the demo fixture predate it; the card
+      // then keeps the browser-session flow.
+      linkedinReads?: LinkedInReadsView;
     }>("/setup"),
   /**
    * The provisioned OneShot domain pool alone. Off the /setup critical path:
@@ -504,6 +508,19 @@ export const api = {
       : getJson<ProspectSearchResponse>(`/queue/search?${toApiQuery(search)}`),
   queueRowDetail: (id: number) => getJson<QueueRowDetail>(`/queue/${id}`),
   queueDossier: (id: number) => getJson<QueueDossierView>(`/queue/${id}/dossier`),
+  // Read the row's LinkedIn profile now, when it has a seed and no fresh live
+  // read; may re-judge the row and rewrite its offer and draft. The demo
+  // reads nothing: a silent skip, not a read-only error on opening a row.
+  readQueueProfile: (id: number): Promise<ReadProfileResult> =>
+    IS_DEMO
+      ? Promise.resolve({
+          read: false,
+          skipped: "not-live",
+          roleChanged: false,
+          redrafted: false,
+          outcome: "skipped",
+        })
+      : postJson<ReadProfileResult>(`/queue/${id}/read-profile`, {}),
   resolveQueueContact: (id: number) =>
     postJson<{ ok: boolean; payload: Record<string, unknown> }>(`/queue/${id}/resolve-contact`, {}),
   // `reason` is the structured fit judgment (#813): `fit` on a deliberate

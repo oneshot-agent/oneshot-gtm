@@ -74,7 +74,9 @@ Person research corrects the row's title and company and keeps the finder's orig
 Bought research can trail a live profile by months. **Connect LinkedIn** on Setup signs you in twice, back to back: once for [messaging](./linkedin.md), once for a hosted browser session that reads profiles as you. Where the page lists a company, the page wins over the bought history.
 
 - Reads show up as profile views from your account.
-- They run 15 seconds apart and stop at `linkedinReadsPerDay` (default 80).
+- They run 15 seconds apart and stop at `linkedinReadsPerDay` (default 95, counted from 00:00 UTC for a connected account). The platform allows about 100 views a day per account; the rest identify reply senders.
+- Opening a row in the queue reads it then, unless it was read in the last 30 days. If the read changes the role or company, the offer and draft are rewritten, unless you wrote the offer.
+- An hourly sweep reads the rest: approved rows first, then unread pending rows, newest first, then approved rows whose read is 30 days old.
 - A login wall marks the session invalid. `doctor` says so and Setup asks you to reconnect.
 - A row whose read failed for its own reason waits three days before another try.
 

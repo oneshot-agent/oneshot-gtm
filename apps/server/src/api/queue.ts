@@ -26,6 +26,7 @@ import {
   isSendDeferred,
   parseProspectPriority,
   sqliteToIso,
+  type DraftDiscardReason,
   type QueueRow,
   type QueueSearchOpts,
   type QueueSearchRow,
@@ -1155,39 +1156,74 @@ export async function regenerateDraftRoute(
   params: Record<string, string>,
 ): Promise<Response> {
   const id = Number.parseInt(params["id"] ?? "", 10);
+  const out = await regenerateQueueDraft(id, { rotate: () => rotateFromBody(req) });
+  return jsonResponse(out.body, out.status, req);
+}
+
+/** The route's `{ rotateAngle?: boolean }` body; null when it is malformed. */
+async function rotateFromBody(req: Request): Promise<boolean | null> {
+  try {
+    const raw = await req.text();
+    const options: unknown = raw.trim() ? JSON.parse(raw) : {};
+    if (!options || typeof options !== "object" || Array.isArray(options)) throw new Error();
+    const value = (options as { rotateAngle?: unknown }).rotateAngle;
+    if (value !== undefined && typeof value !== "boolean") throw new Error();
+    return value === true;
+  } catch {
+    return null;
+  }
+}
+
+export interface RegenerateDraftOpts {
+  /** Whether to rotate the angle; read after the row checks. Null: a malformed request (400). */
+  rotate?: () => Promise<boolean | null>;
+  /**
+   * Why the draft this replaces was discarded. Default: what the founder
+   * said by asking (`rotate` or `regenerate`); a redraft the server starts
+   * on its own passes `redraft`.
+   */
+  discardReason?: DraftDiscardReason;
+}
+
+/**
+ * The regenerate route's work without the HTTP: the status and body it
+ * answers with. One regenerate per row at a time (409 for a second).
+ */
+export async function regenerateQueueDraft(
+  id: number,
+  opts: RegenerateDraftOpts = {},
+): Promise<{ status: number; body: LastDraft | { error: string } }> {
   if (generatingDrafts.has(id))
-    return jsonResponse(
-      { error: "Already generating this draft; wait for it to finish." },
-      409,
-      req,
-    );
+    return {
+      status: 409,
+      body: { error: "Already generating this draft; wait for it to finish." },
+    };
   generatingDrafts.add(id);
   try {
-    return await regenerateDraftInner(req, params);
+    return await regenerateDraftInner(id, opts);
   } finally {
     generatingDrafts.delete(id);
   }
 }
 
 async function regenerateDraftInner(
-  req: Request,
-  params: Record<string, string>,
-): Promise<Response> {
-  const id = Number.parseInt(params["id"] ?? "", 10);
-  if (!Number.isFinite(id)) return jsonResponse({ error: "bad id" }, 400, req);
+  id: number,
+  opts: RegenerateDraftOpts,
+): Promise<{ status: number; body: LastDraft | { error: string } }> {
+  if (!Number.isFinite(id)) return answer({ error: "bad id" }, 400);
   const ledger = getLedger();
   let row = ledger.getQueueRow(id);
-  if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
+  if (!row) return answer({ error: `row #${id} not found` }, 404);
   // Once sent, last_draft_json IS the frozen sent content. Never overwrite it.
-  if (row.status === "sent") return jsonResponse({ error: "row already sent" }, 400, req);
+  if (row.status === "sent") return answer({ error: "row already sent" }, 400);
   // A send claimed the row but hasn't flipped status yet: refuse to start a
   // regenerate that would race it.
   if (row.send_started_at != null) {
-    return jsonResponse({ error: "send in flight, can't regenerate" }, 409, req);
+    return answer({ error: "send in flight, can't regenerate" }, 409);
   }
 
   if (isCommunityPlatform(row.channel) && row.play_name !== "community-reply")
-    return jsonResponse({ error: "Public replies require the community-reply play" }, 400, req);
+    return answer({ error: "Public replies require the community-reply play" }, 400);
   let target: unknown;
   try {
     // The row's offer is made current first: the draft opens with it. The
@@ -1197,27 +1233,18 @@ async function regenerateDraftInner(
   } catch (err) {
     const error =
       err instanceof SyntaxError ? "row payload is not valid JSON" : (err as Error).message;
-    return jsonResponse({ error }, 400, req);
+    return answer({ error }, 400);
   }
 
-  let rotate = false;
-  try {
-    const raw = await req.text();
-    const options: unknown = raw.trim() ? JSON.parse(raw) : {};
-    if (!options || typeof options !== "object" || Array.isArray(options)) throw new Error();
-    const value = (options as { rotateAngle?: unknown }).rotateAngle;
-    if (value !== undefined && typeof value !== "boolean") throw new Error();
-    rotate = value === true;
-  } catch {
-    return jsonResponse({ error: "rotateAngle must be a boolean" }, 400, req);
-  }
+  const rotate = opts.rotate ? await opts.rotate() : false;
+  if (rotate === null) return answer({ error: "rotateAngle must be a boolean" }, 400);
   let previous: Partial<LastDraft> = {};
   try {
     previous = JSON.parse(row.last_draft_json ?? "{}");
   } catch {
     /* legacy draft */
   }
-  if (previous?.sent === true) return jsonResponse({ error: "draft already sent" }, 400, req);
+  if (previous?.sent === true) return answer({ error: "draft already sent" }, 400);
   let angle: LastDraft["angle"];
   try {
     const research =
@@ -1236,7 +1263,7 @@ async function regenerateDraftInner(
             rotate,
           });
   } catch (err) {
-    return jsonResponse({ error: (err as Error).message }, 400, req);
+    return answer({ error: (err as Error).message }, 400);
   }
 
   // The target retains queued prospect facts with current trigger edges.
@@ -1294,14 +1321,13 @@ async function regenerateDraftInner(
               row.source,
             );
   } catch (err) {
-    return jsonResponse({ error: (err as Error).message }, 400, req);
+    return answer({ error: (err as Error).message }, 400);
   }
   const draft = drafted[0];
   if (!draft || !draft.body.trim() || draft.flags.some((f) => f.startsWith("error:"))) {
-    return jsonResponse(
+    return answer(
       { error: "Draft generation failed. Your existing draft is unchanged; try again." },
       500,
-      req,
     );
   }
 
@@ -1310,7 +1336,7 @@ async function regenerateDraftInner(
   // body/receiptIds overwritten below.
   const fresh = ledger.getQueueRow(id);
   if (!fresh || fresh.status === "sent" || fresh.send_started_at != null) {
-    return jsonResponse({ error: "send completed (or started) during regenerate" }, 409, req);
+    return answer({ error: "send completed (or started) during regenerate" }, 409);
   }
 
   const out: LastDraft = {
@@ -1337,16 +1363,18 @@ async function regenerateDraftInner(
     previousChannel: row.channel,
     draft: out,
     // What the founder said about the draft this replaces: rotate = the
-    // angle was wrong, plain regenerate = the text was (angle kept).
-    discardReason: rotate ? "rotate" : "regenerate",
+    // angle was wrong, plain regenerate = the text was (angle kept). A
+    // server redraft says neither.
+    discardReason: opts.discardReason ?? (rotate ? "rotate" : "regenerate"),
   });
   if (!saved)
-    return jsonResponse(
-      { error: "Draft changed during generation; refresh and try again." },
-      409,
-      req,
-    );
-  return jsonResponse(out, 200, req);
+    return answer({ error: "Draft changed during generation; refresh and try again." }, 409);
+  return answer(out, 200);
+}
+
+/** A route answer without the Response: the status and the JSON body. */
+function answer<T>(body: T, status: number): { status: number; body: T } {
+  return { status, body };
 }
 
 /**

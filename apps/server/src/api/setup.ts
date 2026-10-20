@@ -24,9 +24,11 @@ import {
   type EmailIdentity,
   type OneShotConfig,
   isSlackWebhookUrl,
+  getLedger,
 } from "@oneshot-gtm/core";
 import type {
   DomainPoolView,
+  LinkedInReadsView,
   LlmProvider,
   SenderIdentityView,
   SetupRequest,
@@ -39,6 +41,12 @@ import {
   type LinkedInSessionResult,
   cancelLinkedInLogin,
   linkedinLoginState,
+  countLiveReadsWaiting,
+  linkedInAccountReadsToday,
+  linkedInReadsPerDay,
+  linkedInReadsToday,
+  liveReadOffByPlay,
+  liveReadVia,
 } from "@oneshot-gtm/find";
 import { jsonResponse } from "../server.ts";
 
@@ -184,12 +192,38 @@ export async function getSetupDomains(req: Request): Promise<Response> {
   );
 }
 
+/**
+ * The live-read counter for /setup: what reads go through, today's reads
+ * against the cap (counted over the day the cap counts: UTC for the account,
+ * local for the browser session), and how many unsent rows still wait for
+ * a first read. A count the shared cache cannot answer is reported as the
+ * cap: the read path fails closed on it, so no read runs until it answers.
+ */
+export function linkedInReadsView(cfg: OneShotConfig): LinkedInReadsView {
+  const via = liveReadVia();
+  const perDay = linkedInReadsPerDay(cfg);
+  const counted = via === "account" ? linkedInAccountReadsToday() : linkedInReadsToday();
+  let waiting = 0;
+  try {
+    const ledger = getLedger();
+    const rows = [
+      ...ledger.listQueue({ status: "approved", limit: 100_000 }),
+      ...ledger.listQueue({ status: "pending", limit: 100_000 }),
+    ];
+    waiting = countLiveReadsWaiting(rows, liveReadOffByPlay(ledger));
+  } catch {
+    // an unreadable queue waits on nothing the counter can show
+  }
+  return { via, today: Number.isFinite(counted) ? counted : perDay, perDay, waiting };
+}
+
 export async function getSetupStatus(req: Request): Promise<Response> {
   const cfg = loadConfig();
   return jsonResponse(
     {
       cfg: publicCfg(cfg),
       identities: identityViews(cfg),
+      linkedinReads: linkedInReadsView(cfg),
       provisionedDomains: await cachedDomainViews(),
       secretsPath: secretsPath(),
       sources: {

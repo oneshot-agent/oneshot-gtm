@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Check, ExternalLink } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { LinkedInReadsView } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
 import { IS_DEMO } from "../../api/demo.ts";
 import {
@@ -80,7 +81,10 @@ function StatusLine({
 }
 
 /**
- * One LinkedIn card for two connections. One primary action at a time:
+ * One LinkedIn card for two connections. When the messaging account reads
+ * profiles too (`reads.via === "account"`), it is one connection: the
+ * Profile reads line is the day's counter, and nothing here opens the
+ * browser session. Otherwise, one primary action at a time:
  *
  *   nothing connected  → [Connect LinkedIn]  messaging sign-in, then the profile session
  *   messaging step     → waiting line · open the tab again · cancel   (OneShot confirms by itself)
@@ -97,14 +101,18 @@ function StatusLine({
 export function LinkedInConnect({
   cfg,
   cookieSet,
+  reads,
   advancedOpen,
   onToggleAdvanced,
 }: {
   cfg: LinkedInCfg;
   cookieSet: boolean;
+  /** What live reads go through, from `/setup`; null from an older server. */
+  reads: LinkedInReadsView | null;
   advancedOpen: boolean;
   onToggleAdvanced: () => void;
 }) {
+  const viaAccount = reads?.via === "account";
   const qc = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [liveUrl, setLiveUrl] = useState<string | null>(null);
@@ -127,7 +135,7 @@ export function LinkedInConnect({
   const resume = useQuery({
     queryKey: ["linkedin-login-state"],
     queryFn: api.linkedinLoginState,
-    enabled: Boolean(cfg.linkedinPendingProfileId) && !liveUrl,
+    enabled: Boolean(cfg.linkedinPendingProfileId) && !liveUrl && !viaAccount,
     staleTime: 30_000,
   });
   useEffect(() => {
@@ -250,8 +258,18 @@ export function LinkedInConnect({
     accountsError: accounts.error?.message ?? null,
     step,
     liveUrl,
+    reads,
   });
   const researchMissing = view.connectRuns.includes("research");
+  // Bumped by each settled connect and by cancel, so a setup check that
+  // resolves after a cancel cannot open the profile sign-in.
+  const connectAttempt = useRef(0);
+  useEffect(
+    () => () => {
+      connectAttempt.current++;
+    },
+    [],
+  );
 
   // The intent reached a terminal state: either carry on to the profile
   // session in the same tab, or say why it did not connect.
@@ -263,12 +281,25 @@ export function LinkedInConnect({
     setConnectUrl(null);
     if (status === "completed") {
       void qc.invalidateQueries({ queryKey: ["replies"] });
-      if (researchMissing) {
-        start.mutate();
-      } else {
-        setStep(null);
-        dropTab();
-      }
+      // The account just connected may itself read profiles: ask the server
+      // again (a new request, not one already in flight from before the
+      // connect) before opening the browser sign-in the stale view asked for.
+      const attempt = ++connectAttempt.current;
+      void qc
+        .cancelQueries({ queryKey: ["setup"] })
+        .then(() => qc.fetchQuery({ queryKey: ["setup"], queryFn: api.setupStatus, staleTime: 0 }))
+        .then((fresh) => fresh.linkedinReads?.via !== "account")
+        .catch(() => true)
+        .then((stillMissing) => {
+          // Cancelled (or another attempt began) while the check ran.
+          if (attempt !== connectAttempt.current) return;
+          if (researchMissing && stillMissing) {
+            start.mutate();
+          } else {
+            setStep(null);
+            dropTab();
+          }
+        });
     } else {
       setStep(null);
       dropTab();
@@ -279,6 +310,7 @@ export function LinkedInConnect({
   }, [connection.data, intentId]);
 
   const cancelMessaging = () => {
+    connectAttempt.current++;
     clearIntent();
     setIntentId(null);
     setConnectUrl(null);
@@ -305,7 +337,7 @@ export function LinkedInConnect({
         )}
       </StatusLine>
       <StatusLine label="Profile reads" ok={view.research.ok} text={view.research.text}>
-        {view.research.phase === "connected" && step === null && (
+        {view.research.phase === "connected" && !view.research.viaAccount && step === null && (
           <button
             type="button"
             className="text-[12px] text-ink-faint underline underline-offset-2"

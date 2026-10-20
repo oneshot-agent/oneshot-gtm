@@ -1,5 +1,6 @@
 import type { DecisionReason } from "./learning.ts";
 export * from "./reply-email-view.ts";
+export * from "./linkedin-reads.ts";
 /**
  * Wire types shared between apps/cli, apps/server, and apps/web.
  * These are the API contracts for /api/* endpoints. Keep stable.

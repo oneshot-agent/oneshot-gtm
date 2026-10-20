@@ -19,6 +19,7 @@ import {
   type LinkedInOperation,
   createBrowserProfile,
   deleteBrowserProfile,
+  DEFAULT_LINKEDIN_READS_PER_DAY,
   ENRICH_FAILURE_TTL_MS,
   finishBrowserProfileSetup,
   getBrowserProfileSetup,
@@ -34,6 +35,7 @@ import {
   type BrowserCookie,
   type BrowserProfileSetupState,
   type CallContext,
+  type OneShotConfig,
   verifiedLinkedInProfileKey,
 } from "@oneshot-gtm/core";
 import { createHash } from "node:crypto";
@@ -194,6 +196,22 @@ export function liveReadConfigured(): boolean {
 /** A live read would run now: a connected account may view profiles, or the browser session is verified. */
 export function liveReadReady(): boolean {
   return readAccount() !== null || linkedinSessionState() === "ok";
+}
+
+/**
+ * What a live read goes through now: the connected account, else the
+ * verified browser session, else nothing (`liveReadReady` is false).
+ */
+export function liveReadVia(): "account" | "browser" | null {
+  if (readAccount() !== null) return "account";
+  return linkedinSessionState() === "ok" ? "browser" : null;
+}
+
+/** The daily read cap (`linkedinReadsPerDay`), shared by both read paths. */
+export function linkedInReadsPerDay(
+  cfg: Pick<OneShotConfig, "linkedinReadsPerDay"> = loadConfig(),
+): number {
+  return cfg.linkedinReadsPerDay ?? DEFAULT_LINKEDIN_READS_PER_DAY;
 }
 
 export function linkedinProfileCacheKey(url: string): string {
@@ -633,6 +651,19 @@ function leaseSharedGate(startedAt: number): void {
   }
 }
 
+// Account reads run one at a time in this process, so concurrent callers (the
+// sweep, a founder opening rows) cannot all pass the cap check before any of
+// them writes its cache row. No spacing here: the platform paces the
+// account's views. Across processes (one server per workspace) the count can
+// overrun by a read per other process, inside the views the cap leaves spare.
+let accountReadChain: Promise<unknown> = Promise.resolve();
+
+function serializedAccountRead<T>(fn: () => Promise<T>): Promise<T> {
+  const run = accountReadChain.then(fn, fn);
+  accountReadChain = run.catch(() => undefined);
+  return run;
+}
+
 function serialized<T>(fn: () => Promise<T>): Promise<T> {
   const run = readChain.then(async () => {
     const wait = Math.max(lastReadStartedAt + READ_SPACING_MS, sharedNextAllowedAt()) - Date.now();
@@ -685,13 +716,20 @@ export async function readLinkedInProfile(
   }
   const account = readAccount();
   if (account) {
-    if (linkedInAccountReadsToday(now) >= (loadConfig().linkedinReadsPerDay ?? 80)) {
+    if (linkedInAccountReadsToday(now) >= linkedInReadsPerDay(loadConfig())) {
       return { profile: null, skipped: "daily-limit", costUsd: 0, cached: false };
     }
     if (opts.remainingUsd < LINKEDIN_READ_COST_ESTIMATE_USD) {
       return { profile: null, skipped: "cost-cap", costUsd: 0, cached: false };
     }
-    return readThroughAccount(url, key, account, ctx);
+    return serializedAccountRead(async () => {
+      // Re-checked inside the gate: a read that queued behind others may
+      // find the day's cap spent by them.
+      if (linkedInAccountReadsToday(new Date()) >= linkedInReadsPerDay(loadConfig())) {
+        return { profile: null, skipped: "daily-limit", costUsd: 0, cached: false };
+      }
+      return readThroughAccount(url, key, account, ctx);
+    });
   }
   const cfg = loadConfig();
   const state = linkedinSessionState(cfg);
@@ -701,7 +739,7 @@ export async function readLinkedInProfile(
     return { profile: null, skipped: "session-invalid", costUsd: 0, cached: false };
   if (state === "unchecked")
     return { profile: null, skipped: "session-unchecked", costUsd: 0, cached: false };
-  if (linkedInReadsToday(now) >= (cfg.linkedinReadsPerDay ?? 80)) {
+  if (linkedInReadsToday(now) >= linkedInReadsPerDay(cfg)) {
     return { profile: null, skipped: "daily-limit", costUsd: 0, cached: false };
   }
   if (opts.remainingUsd < LINKEDIN_READ_COST_ESTIMATE_USD) {
@@ -714,7 +752,7 @@ export async function readLinkedInProfile(
     if (linkedinSessionState() !== "ok") {
       return { profile: null, skipped: "session-invalid", costUsd: 0, cached: false };
     }
-    if (linkedInReadsToday(new Date()) >= (loadConfig().linkedinReadsPerDay ?? 80)) {
+    if (linkedInReadsToday(new Date()) >= linkedInReadsPerDay(loadConfig())) {
       return { profile: null, skipped: "daily-limit", costUsd: 0, cached: false };
     }
     try {

@@ -1,4 +1,4 @@
-import { getLedger, loadConfig } from "@oneshot-gtm/core";
+import { getLedger, loadConfig, type QueueRow } from "@oneshot-gtm/core";
 import { resolveQueueTarget } from "@oneshot-gtm/find";
 import {
   activeOfferPatch,
@@ -63,33 +63,31 @@ export async function queueOfferRoute(
   }
 
   if (body.approveWeak === true) return approveWeakOffer(id, row.payload_json, req);
-
-  let payload: Record<string, unknown>;
-  try {
-    // The trigger's edge, not the current offer's angles: new angles take the
-    // founder's as material.
-    const target = resolveQueueTarget(row, { offerAngles: false });
-    if (!target || typeof target !== "object" || Array.isArray(target)) throw new Error();
-    payload = target as Record<string, unknown>;
-  } catch {
-    return jsonResponse({ error: "row payload is not valid JSON" }, 400, req);
-  }
-
-  const input = { target: payload, playName: row.play_name };
-  let offer: ProspectOffer;
-  let candidates = offerCandidatesOf(payload);
   if (body.regenerate === true) {
-    const set = await deriveOfferSet(input);
-    if (!set) {
+    const out = await regenerateQueueRowOffer(row);
+    if (out === "bad-payload") {
+      return jsonResponse({ error: "row payload is not valid JSON" }, 400, req);
+    }
+    if (out === "no-offer") {
       return jsonResponse(
         { error: "No offer could be written from this row's research and the product brief." },
         422,
         req,
       );
     }
-    offer = set.offer;
-    candidates = set.candidates;
-  } else if (body.select !== undefined) {
+    if (out === "not-live") {
+      return jsonResponse({ error: "row is no longer pending or approved" }, 409, req);
+    }
+    return jsonResponse(out, 200, req);
+  }
+
+  const payload = offerTarget(row);
+  if (!payload) return jsonResponse({ error: "row payload is not valid JSON" }, 400, req);
+
+  const input = { target: payload, playName: row.play_name };
+  let offer: ProspectOffer;
+  let candidates = offerCandidatesOf(payload);
+  if (body.select !== undefined) {
     const index = typeof body.select === "number" ? body.select : Number.NaN;
     const chosen = Number.isInteger(index) ? candidates[index] : undefined;
     if (!chosen) {
@@ -137,6 +135,43 @@ export async function queueOfferRoute(
     return jsonResponse({ error: "row is no longer pending or approved" }, 409, req);
   }
   return jsonResponse({ offer, candidates }, 200, req);
+}
+
+/**
+ * The row's payload with the trigger's edge, not the current offer's angles:
+ * new angles take the founder's as material. Null when it is not a JSON object.
+ */
+function offerTarget(row: QueueRow): Record<string, unknown> | null {
+  try {
+    const target = resolveQueueTarget(row, { offerAngles: false });
+    return target && typeof target === "object" && !Array.isArray(target)
+      ? (target as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `{ regenerate: true }` without the HTTP: five new offers from the row's
+ * research, the first active with its angles, written to the live row.
+ * Shared with the read-on-open route, which rewrites the offer when a fresh
+ * read moved the person's role.
+ */
+export async function regenerateQueueRowOffer(
+  row: QueueRow,
+): Promise<
+  { offer: ProspectOffer; candidates: ProspectOffer[] } | "bad-payload" | "no-offer" | "not-live"
+> {
+  const payload = offerTarget(row);
+  if (!payload) return "bad-payload";
+  const set = await deriveOfferSet({ target: payload, playName: row.play_name });
+  if (!set) return "no-offer";
+  // The new offer replaces the stored one whole: an approval or judge label
+  // the old one carried must not survive the JSON merge patch.
+  const patch = activeOfferPatch(storedOffer(row.payload_json), set.offer, set.candidates);
+  if (!getLedger().patchLiveQueuePayload({ id: row.id, patch })) return "not-live";
+  return { offer: set.offer, candidates: set.candidates };
 }
 
 /** The active offer as stored on the row, before any overlay. */

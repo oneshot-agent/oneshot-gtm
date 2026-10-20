@@ -5,11 +5,15 @@
  * but it works under a wall budget, so a busy finder leaves rows with
  * provider history only, and no later run comes back for them. This sweep
  * does: every hour the server takes the live queue rows (pending or approved,
- * not sent) that have a LinkedIn seed and no live read yet, or one older than
- * READ_MAX_AGE_MS, approved first, and runs them through the same research
- * path. Then it re-reads people in an active cadence whose last read is older
- * than CADENCE_REFRESH_MS, so a follow-up is written against the job they
- * hold now. The provider call is a free cache hit; the live read is the spend
+ * not sent) that have a LinkedIn seed and runs them through the same research
+ * path, in this order: approved rows never read, pending rows never read
+ * (newest first), then approved rows whose read is older than
+ * READ_MAX_AGE_MS. A pending row is read once here; opening it in the queue
+ * reads it again when its read has aged (`POST /api/queue/:id/read-profile`),
+ * so the sweep's reads go to rows nobody has looked at yet. Then it re-reads
+ * people in an active cadence whose last read is older than
+ * CADENCE_REFRESH_MS, so a follow-up is written against the job they hold
+ * now. The provider call is a free cache hit; the live read is the spend
  * (~$0.01 a row). It stops at the daily read cap and when the account (or
  * the browser session) can no longer read, exactly where the reads themselves
  * stop.
@@ -79,47 +83,84 @@ export interface LiveProfileSweepResult {
 }
 
 /**
- * Pure: which live rows want a read. A sent or mid-send row never (the
- * payload write would be refused and the read wasted); a row whose seed is
- * not a LinkedIn profile never; a row whose trigger switched the tier off
- * never; a row that already carries a live read not again until the read is
- * READ_MAX_AGE_MS old (`--refresh` on the CLI forces one sooner); a row
- * whose last attempt failed for a reason of its own not for RETRY_AFTER_MS.
- * Approved rows first (they are the ones about to send) then pending, newest
- * first.
+ * A live row's LinkedIn seed and payload, or null when no read is owed to
+ * it: a sent or mid-send row never (the payload write would be refused and
+ * the read wasted); a row whose seed is not a LinkedIn profile never; a row
+ * whose trigger switched the tier off never.
+ */
+export function liveReadSeedFor(
+  row: LiveSweepRow,
+  liveReadOffForPlay: (playName: string) => boolean,
+): { seed: PersonSeed; payload: Record<string, unknown> } | null {
+  if (row.sent_at != null || row.send_started_at != null) return null;
+  if (row.status !== "pending" && row.status !== "approved") return null;
+  if (liveReadOffForPlay(row.play_name)) return null;
+  let payload: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(row.payload_json) as unknown;
+    payload = isRecord(parsed) ? parsed : {};
+  } catch {
+    return null;
+  }
+  const seed = personSeedFor(payload);
+  if (!seed?.url || !isLinkedInProfileUrl(seed.url)) return null;
+  return { seed, payload };
+}
+
+/**
+ * The live-read marker a payload's research carries, if any. A loose look at
+ * the record: a row from an older build may carry a dossier the strict guard
+ * would not recognise, and it still has its read.
+ */
+export function liveProfileMarker(
+  payload: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const research = payload["personResearch"];
+  return isRecord(research) && isRecord(research["liveProfile"]) ? research["liveProfile"] : null;
+}
+
+/** Live rows a read is owed to (`liveReadSeedFor`) that carry no live read yet. */
+export function countLiveReadsWaiting(
+  rows: readonly LiveSweepRow[],
+  liveReadOffForPlay: (playName: string) => boolean,
+): number {
+  let waiting = 0;
+  for (const row of rows) {
+    const live = liveReadSeedFor(row, liveReadOffForPlay);
+    if (live && !liveProfileMarker(live.payload)) waiting++;
+  }
+  return waiting;
+}
+
+/**
+ * Pure: which live rows want a read (`liveReadSeedFor`), in rank order.
+ * A row never read always; an approved row whose read is READ_MAX_AGE_MS old
+ * again (`--refresh` on the CLI forces one sooner), a pending one not (it is
+ * read again when it is opened); a row whose last attempt failed for a
+ * reason of its own not for RETRY_AFTER_MS. Approved rows never read first
+ * (they are the ones about to send), then pending rows never read, newest
+ * first, then approved re-reads.
  */
 export function selectLiveSweepCandidates(
   rows: readonly LiveSweepRow[],
   liveReadOffForPlay: (playName: string) => boolean,
   now: number = Date.now(),
 ): LiveSweepCandidate[] {
-  const out: LiveSweepCandidate[] = [];
+  const out: Array<LiveSweepCandidate & { rank: number }> = [];
   for (const row of rows) {
-    if (row.sent_at != null || row.send_started_at != null) continue;
-    if (row.status !== "pending" && row.status !== "approved") continue;
-    if (liveReadOffForPlay(row.play_name)) continue;
-    let payload: Record<string, unknown>;
-    try {
-      const parsed = JSON.parse(row.payload_json) as unknown;
-      payload =
-        parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>)
-          : {};
-    } catch {
+    const live = liveReadSeedFor(row, liveReadOffForPlay);
+    if (!live) continue;
+    const marker = liveProfileMarker(live.payload);
+    if (marker && (row.status !== "approved" || !readOlderThan(marker, READ_MAX_AGE_MS, now))) {
       continue;
     }
-    // A loose look at the record: a row from an older build may carry a
-    // dossier the strict guard would not recognise, and it still has its read.
-    const research = payload["personResearch"];
-    if (isRecord(research) && isRecord(research["liveProfile"])) {
-      if (!readOlderThan(research["liveProfile"], READ_MAX_AGE_MS, now)) continue;
-    }
+    const research = live.payload["personResearch"];
     if (isRecord(research) && triedRecently(research, now)) continue;
-    const seed = personSeedFor(payload);
-    if (!seed?.url || !isLinkedInProfileUrl(seed.url)) continue;
-    out.push({ row, seed });
+    out.push({ row, seed: live.seed, rank: rank(row, marker !== null) });
   }
-  return out.toSorted((a, b) => rank(a.row) - rank(b.row) || b.row.id - a.row.id);
+  return out
+    .toSorted((a, b) => a.rank - b.rank || b.row.id - a.row.id)
+    .map(({ row, seed }) => ({ row, seed }));
 }
 
 /**
@@ -182,13 +223,19 @@ export function selectCadenceRefreshCandidates(
   return out;
 }
 
-/** Approved rows first: they are the ones about to send. */
-function rank(r: LiveSweepRow): number {
+/**
+ * 0: approved, never read (about to send); 1: pending, never read; 2: an
+ * approved row's aged read.
+ */
+function rank(r: LiveSweepRow, read: boolean): number {
+  if (read) return 2;
   return r.status === "approved" ? 0 : 1;
 }
 
 /** Per-play opt-out from the trigger's saved config (`linkedinProfileRead: false`). */
-function liveReadOffByPlay(ledger: ReturnType<typeof getLedger>): (playName: string) => boolean {
+export function liveReadOffByPlay(
+  ledger: ReturnType<typeof getLedger>,
+): (playName: string) => boolean {
   const off = new Set<string>();
   for (const trigger of ledger.listTriggers()) {
     try {

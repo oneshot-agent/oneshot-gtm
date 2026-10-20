@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { LinkedInAccountView } from "@oneshot-gtm/shared-types";
+import type { LinkedInAccountView, LinkedInReadsView } from "@oneshot-gtm/shared-types";
 import {
+  accountReadsText,
   clearIntent,
   connectionFailureCopy,
   linkedinCardView,
@@ -202,6 +203,117 @@ describe("linkedinCardView", () => {
       liveUrl: null,
     });
     expect(cookie.research.text).toBe("A cookie is saved, not connected yet");
+  });
+});
+
+const reads = (over: Partial<LinkedInReadsView> = {}): LinkedInReadsView => ({
+  via: "account",
+  today: 57,
+  perDay: 95,
+  waiting: 312,
+  ...over,
+});
+
+describe("linkedinCardView: reads through the account", () => {
+  it("is one connection: the counter on the reads line, no profile session to run", () => {
+    const v = linkedinCardView({
+      cfg: researchOff,
+      cookieSet: false,
+      accounts: [account()],
+      step: null,
+      liveUrl: null,
+      reads: reads(),
+    });
+    expect(v.research).toMatchObject({
+      ok: true,
+      viaAccount: true,
+      text: "Through your LinkedIn account · 57 of 95 today · 312 rows waiting",
+    });
+    expect(v.connectRuns).toEqual([]);
+    expect(v.primary).toBeNull();
+    expect(v.waiting).toBeNull();
+    expect(v.ok).toBe(true);
+  });
+
+  it("a signed-out or half-finished browser session is not asked about", () => {
+    for (const cfg of [
+      { ...researchOn, linkedinSessionInvalidAt: new Date().toISOString() },
+      { ...researchOff, linkedinPendingProfileId: "prof_pending" },
+    ]) {
+      const v = linkedinCardView({
+        cfg,
+        cookieSet: true,
+        accounts: [account()],
+        step: null,
+        liveUrl: "https://live.example/x",
+        reads: reads(),
+      });
+      expect(v.research.ok).toBe(true);
+      expect(v.research.text).not.toMatch(/sign|cookie/i);
+      expect(v.primary).toBeNull();
+      expect(v.connectRuns).not.toContain("research");
+      expect(v.waiting).toBeNull();
+    }
+  });
+
+  it("the card is ok when messaging is; Connect runs messaging alone", () => {
+    const v = linkedinCardView({
+      cfg: researchOff,
+      cookieSet: false,
+      accounts: [],
+      step: null,
+      liveUrl: null,
+      reads: reads(),
+    });
+    expect(v.connectRuns).toEqual(["messaging"]);
+    expect(v.primary).toBe("connect");
+    expect(v.ok).toBe(false);
+    const signing = linkedinCardView({
+      cfg: researchOff,
+      cookieSet: false,
+      accounts: [],
+      step: "messaging",
+      liveUrl: null,
+      reads: reads(),
+    });
+    expect(signing.waiting).toMatch(/OneShot confirms the connection on its own\.$/);
+    expect(signing.waiting).not.toMatch(/profile session/);
+  });
+
+  it("the counter drops the waiting part at zero and counts one row as a row", () => {
+    expect(accountReadsText(reads({ waiting: 0 }))).toBe(
+      "Through your LinkedIn account · 57 of 95 today",
+    );
+    expect(accountReadsText(reads({ today: 0, waiting: 1 }))).toBe(
+      "Through your LinkedIn account · 0 of 95 today · 1 row waiting",
+    );
+  });
+
+  it("browser, no reads, or an older server keep the browser-session flow", () => {
+    for (const r of [reads({ via: "browser" }), reads({ via: null }), null, undefined]) {
+      const v = linkedinCardView({
+        cfg: researchOff,
+        cookieSet: false,
+        accounts: [account()],
+        step: null,
+        liveUrl: null,
+        reads: r,
+      });
+      expect(v.research).toMatchObject({ ok: false, viaAccount: false, text: "Not connected" });
+      expect(v.connectRuns).toEqual(["research"]);
+      expect(v.primary).toBe("connect");
+      expect(v.ok).toBe(false);
+    }
+    const signingIn = linkedinCardView({
+      cfg: researchOff,
+      cookieSet: false,
+      accounts: [account()],
+      step: "research",
+      liveUrl: "https://live.example/x",
+      reads: reads({ via: "browser" }),
+    });
+    expect(signingIn.primary).toBe("done");
+    expect(signingIn.research.text).toBe("Signing in…");
   });
 });
 

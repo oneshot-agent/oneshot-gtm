@@ -1,6 +1,7 @@
 import { getOnboarding, deferOnboarding, verifyOnboardingAI } from "./api/onboarding.ts";
 import { resolveQueueContactRoute } from "./api/queue-contact.ts";
 import { queueDossierRoute } from "./api/queue-dossier.ts";
+import { readProfileRoute } from "./api/queue-read-profile.ts";
 import {
   repliesRoute,
   replyStateRoute,
@@ -266,6 +267,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/queue/:id/reject-reason", suggestRejectReasonRoute),
   route("POST", "/api/queue/:id/regenerate", regenerateDraftRoute),
   route("POST", "/api/queue/:id/offer", queueOfferRoute),
+  route("POST", "/api/queue/:id/read-profile", readProfileRoute),
   route("POST", "/api/queue/:id/send-draft", sendDraftRoute),
   route("POST", "/api/queue/:id/mark-sent", markSentRoute),
   route("POST", "/api/queue/:id/withdraw-invite", withdrawInviteRoute),

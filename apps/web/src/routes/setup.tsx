@@ -251,6 +251,7 @@ function Sections({
         homeDir={homeDir}
         isLegacyPool={isLegacyPool}
         xEngine={storedXEngine(xTrigger)}
+        linkedinReads={status.linkedinReads ?? null}
         onSmartleadKeySaved={onSmartleadKeySaved}
       />
     </>
