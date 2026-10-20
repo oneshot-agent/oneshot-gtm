@@ -134,6 +134,7 @@ describe("lintEmail — humanizer canon", () => {
     "I can still run the dependency audit on your main repo and send the findings in a week. If it's not the right time, a one-word no helps too.",
     "I can close the loop between your support tickets and the fixes that ship. Worth trying on one queue?",
     "We can close the loop on this by sending the audit to your team lead. Worth it?",
+    "I can write up the final note in the audit for your team lead. Worth it?",
     "We moved on to a new stack last year. Would the migration notes help?",
     "I can keep invoices out of your inbox and in the ledger. Worth setting up?",
     "Close the loop between support and fixes with one audit. Worth trying on one queue?",
