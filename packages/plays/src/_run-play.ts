@@ -685,15 +685,29 @@ export async function standardEnrich(opts: {
 
   if (opts.research) {
     throwIfCancelled(opts.signal, `${opts.playName} research`);
-    const research = await researchWaitingOutRateLimit(
-      { topic: opts.research.topic, depth: "quick" },
-      { playName: opts.playName },
-      opts.signal,
-    );
-    receiptIds.push(research.receiptId);
-    dossier +=
-      "\n\n---\n\n" +
-      JSON.stringify(research.result, null, 2).slice(0, opts.research.slice ?? 4000);
+    // Research adds context to a dossier the enrichment already grounds: a
+    // research job that fails or outlasts its timeout drafts without it
+    // instead of turning the row into an error draft. A cancelled run still
+    // stops here.
+    try {
+      const research = await researchWaitingOutRateLimit(
+        { topic: opts.research.topic, depth: "quick" },
+        { playName: opts.playName },
+        opts.signal,
+      );
+      receiptIds.push(research.receiptId);
+      dossier +=
+        "\n\n---\n\n" +
+        JSON.stringify(research.result, null, 2).slice(0, opts.research.slice ?? 4000);
+    } catch (err) {
+      if (isRunCancelled(err)) throw err;
+      throwIfCancelled(opts.signal, `${opts.playName} research`);
+      logEvent(
+        "research.skipped",
+        { play: opts.playName, message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+    }
   }
 
   return { receiptIds, dossier, ...(enrichmentFailed ? { enrichmentFailed: true } : {}) };

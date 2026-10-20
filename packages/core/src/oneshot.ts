@@ -1260,11 +1260,19 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
   return { result, receiptId };
 }
 
+/**
+ * How long a research job may run before the client stops waiting, in
+ * seconds. The SDK's default is 120 s; quick research took 3.5 to 5 minutes
+ * on 2026-10-20, so every job ran past it and was billed with no answer.
+ */
+export const RESEARCH_TIMEOUT_SEC = 1200;
+
 export async function deepResearch(input: ResearchInput, ctx: CallContext) {
   const agent = await getAgent();
   const result: ResearchResult = await agent.research({
     topic: input.topic,
     depth: input.depth ?? "quick",
+    timeout: RESEARCH_TIMEOUT_SEC,
     ...buildAuditOpts(ctx, "research.deep"),
   });
   const receiptId = recordCallReceipt({
