@@ -513,7 +513,7 @@ const SIGNOFF_BODY = new RegExp(
     String.raw`\bclosing (?:this|things) out\b`,
     String.raw`\b(?:last|final) (?:note|nudge|ping|follow[- ]?up)\b`,
     String.raw`\b(?:this is|this['’]?s|here['’]?s) (?:my |the |a )?(?:last|final) (?:email|message|one)\b`,
-    String.raw`\bone (?:last|final) (?:note|time|try|email|message|nudge|thing)\b`,
+    String.raw`\bone (?:last|final) (?:note|time|try|email|message|nudge)\b`,
     String.raw`\binbox (?:stays|stay) (?:clean|clear)\b`,
     String.raw`\bi(?:['’]ll| will) (?:stop|leave it) (?:here|there)\b`,
     // "I won't bother you again" / "I won't reach out again".
