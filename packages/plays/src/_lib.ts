@@ -505,7 +505,7 @@ const SIGNOFF_BODY = new RegExp(
     // "Moving on." / "Moving on, …" / "Moving on" alone on its line, at the start of a sentence or line, never
     // "Moving on to a new stack": what follows decides.
     String.raw`(?:^|[.!?]\s+|\n\s*)moving on(?=\s*[.!?,;:]|[ \t]*(?:\r?\n|$))`,
-    String.raw`\bi(?:['’]m| am|['’]ll| will)(?: be)? mov(?:e|ing) on\b`,
+    String.raw`\bi(?:['’]m| am|['’]ll| will)(?: be)? mov(?:e|ing) on\b(?!\s+to\b)`,
     String.raw`\bmoving on (?:from (?:here|this|you)|here|now|for now)\b`,
     // "Closing the loop." / "I'll close the loop here", never "close the loop between…".
     String.raw`\bclos(?:e|ing) (?:the|this) loop(?= *(?:[.!?,;]|$| here\b| on (?:this|my|our|it|things)\b| with you\b| for now\b))`,

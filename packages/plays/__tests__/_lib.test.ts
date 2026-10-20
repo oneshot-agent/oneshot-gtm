@@ -136,6 +136,7 @@ describe("lintEmail — humanizer canon", () => {
     "I can keep invoices out of your inbox and in the ledger. Worth setting up?",
     "Close the loop between support and fixes with one audit. Worth trying on one queue?",
     "Moving on to a new stack is where most audits stall. Want one run before the cutover?",
+    "I'm moving on to the API review next week, so the audit could land first. Worth it?",
   ])("passes an offer-first last touch: %s", (body) => {
     expect(lintEmail("repo audit", `${body}\n\nSam`, 110, undefined, followUp)).not.toContain(
       "signoff-body",
