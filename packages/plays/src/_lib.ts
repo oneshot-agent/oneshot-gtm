@@ -508,7 +508,7 @@ const SIGNOFF_BODY = new RegExp(
     String.raw`\bi(?:['’]m| am|['’]ll| will)(?: be)? mov(?:e|ing) on\b(?!\s+(?:to|with)\b)`,
     String.raw`\bmoving on (?:from (?:here|this|you)|here|now|for now)\b`,
     // "Closing the loop." / "I'll close the loop here", never "close the loop between…".
-    String.raw`\bclos(?:e|ing) (?:the|this) loop(?= *(?:[.!?,;]|$|\r?\n| here\b| on (?:this|my|our|it|things)\b| with you\b| for now\b))`,
+    String.raw`\bclos(?:e|ing) (?:the|this) loop(?=(?: here| on (?:this|my|our|it|things)| with you| for now)? *(?:[.!?,;]|$|\r?\n))`,
     String.raw`\bclos(?:e|ing)(?: out)? (?:your|this) file\b`,
     String.raw`\bclosing (?:this|things) out\b`,
     String.raw`\b(?:last|final) (?:note|nudge|ping|follow[- ]?up)\b`,
