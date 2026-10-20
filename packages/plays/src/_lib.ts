@@ -502,12 +502,12 @@ const SIGNOFF_SUBJECT =
  */
 const SIGNOFF_BODY = new RegExp(
   [
-    // "Moving on." / "Moving on from here" at the start of a sentence or line.
-    String.raw`(?:^|[.!?]\s+|\n\s*)moving on\b`,
+    // "Moving on." / "Moving on, …" at the start of a sentence or line, never
+    // "Moving on to a new stack": what follows decides.
+    String.raw`(?:^|[.!?]\s+|\n\s*)moving on(?=\s*(?:[.!?,;:]|$))`,
     String.raw`\bi(?:['’]m| am|['’]ll| will)(?: be)? mov(?:e|ing) on\b`,
     String.raw`\bmoving on (?:from (?:here|this|you)|here|now|for now)\b`,
     // "Closing the loop." / "I'll close the loop here", never "close the loop between…".
-    String.raw`(?:^|[.!?]\s+|\n\s*)(?:i(?:['’]m| am|['’]ll| will) )?(?:just )?clos(?:e|ing) (?:the|this) loop\b`,
     String.raw`\bclos(?:e|ing) (?:the|this) loop(?= *(?:[.!?,;]|$| here\b| on (?:this|my|our|it|things)\b| with you\b| for now\b))`,
     String.raw`\bclos(?:e|ing)(?: out)? (?:your|this) file\b`,
     String.raw`\bclosing (?:this|things) out\b`,
@@ -516,6 +516,9 @@ const SIGNOFF_BODY = new RegExp(
     String.raw`\bone (?:last|final) (?:note|time|try|email|message|nudge|thing)\b`,
     String.raw`\binbox (?:stays|stay) (?:clean|clear)\b`,
     String.raw`\bi(?:['’]ll| will) (?:stop|leave it) (?:here|there)\b`,
+    // "I won't bother you again" / "I won't reach out again".
+    String.raw`\bi (?:won['’]?t|will not) (?:bother|email|contact|ping) you (?:again|any ?more)\b`,
+    String.raw`\bi (?:won['’]?t|will not) (?:reach out|follow up|be in touch|write)(?: to you| with you)? (?:again|any ?more)\b`,
   ].join("|"),
   "i",
 );

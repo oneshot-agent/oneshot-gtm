@@ -118,6 +118,10 @@ describe("lintEmail — humanizer canon", () => {
     "Want me to run the audit on one repo? If not, I'll close the loop here.",
     "I can still run the audit on one repo. This is my last note, so a one-word no is fine.",
     "I can still run the audit, and I'm moving on after this. Worth doing?",
+    "Moving on. Is the audit still worth doing?",
+    "Moving on from this side. Want the audit on one repo?",
+    "I can still run the audit on one repo. If not, I won't bother you again.",
+    "Worth running the audit once? I won't reach out again after this.",
   ])("flags a follow-up body that announces it is ending: %s", (body) => {
     expect(lintEmail("repo audit", `${body}\n\nSam`, 110, undefined, followUp)).toContain(
       "signoff-body",
@@ -129,6 +133,8 @@ describe("lintEmail — humanizer canon", () => {
     "I can close the loop between your support tickets and the fixes that ship. Worth trying on one queue?",
     "We moved on to a new stack last year. Would the migration notes help?",
     "I can keep invoices out of your inbox and in the ledger. Worth setting up?",
+    "Close the loop between support and fixes with one audit. Worth trying on one queue?",
+    "Moving on to a new stack is where most audits stall. Want one run before the cutover?",
   ])("passes an offer-first last touch: %s", (body) => {
     expect(lintEmail("repo audit", `${body}\n\nSam`, 110, undefined, followUp)).not.toContain(
       "signoff-body",
