@@ -108,6 +108,41 @@ describe("lintEmail — humanizer canon", () => {
     expect(lintEmail("alpha pipeline audit", "Body. Sam")).not.toContain("signoff-subject");
   });
 
+  const followUp = { followUp: true };
+
+  it.each([
+    "Moving on from here so your inbox stays clean. Are manual off-screen steps still eating into review time?",
+    "Moving on here, since models usually mark long runs finished. Worth a look before the next run?",
+    "Hi Sam,\nClosing the loop on this. Is the audit still worth doing?",
+    "I'll close your file after this. Want the audit run on one repo?",
+    "Want me to run the audit on one repo? If not, I'll close the loop here.",
+    "I can still run the audit on one repo. This is my last note, so a one-word no is fine.",
+    "I can still run the audit, and I'm moving on after this. Worth doing?",
+  ])("flags a follow-up body that announces it is ending: %s", (body) => {
+    expect(lintEmail("repo audit", `${body}\n\nSam`, 110, undefined, followUp)).toContain(
+      "signoff-body",
+    );
+  });
+
+  it.each([
+    "I can still run the dependency audit on your main repo and send the findings in a week. If it's not the right time, a one-word no helps too.",
+    "I can close the loop between your support tickets and the fixes that ship. Worth trying on one queue?",
+    "We moved on to a new stack last year. Would the migration notes help?",
+    "I can keep invoices out of your inbox and in the ledger. Worth setting up?",
+  ])("passes an offer-first last touch: %s", (body) => {
+    expect(lintEmail("repo audit", `${body}\n\nSam`, 110, undefined, followUp)).not.toContain(
+      "signoff-body",
+    );
+  });
+
+  it("checks the body for a sign-off on follow-ups only", () => {
+    const body = "Moving on from here so your inbox stays clean. Worth it?\n\nSam";
+    expect(lintEmail("repo audit", body)).not.toContain("signoff-body");
+    expect(
+      lintEmail("repo audit", body, 110, undefined, { followUp: true, threadedSubject: true }),
+    ).toContain("signoff-body");
+  });
+
   it("skips the subject checks on a threaded follow-up's subject", () => {
     const subject = `Re: ${"FOLLOWING UP ".repeat(6)}`;
     const opts = { threadedSubject: true };

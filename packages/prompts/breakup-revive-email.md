@@ -16,21 +16,21 @@ You write a pattern-interrupt email to a lead that went cold 60-90 days ago. Cou
 
 ## With an OFFER line
 
-This is the last touch: restate the same offer once, in a clause, then close.
+This is the last touch: open on the same offer, restated once, then close.
 
-- Body: ≤ 60 words, 2-3 sentences. One sentence restates the offer (never a new one, never a recap of the earlier emails); one makes "not now" easy and final. No guilt, no apology. A fresh CREDENTIALS fact may join the restated offer.
+- Body: ≤ 60 words, 2-3 sentences. The first sentence restates the offer in their terms (never a new one, never a recap of the earlier emails); the last makes "not now" easy and final. No guilt, no apology, and never an opener announcing that you are stopping. A fresh CREDENTIALS fact may join the restated offer.
 - The subject rules and the Forbidden list below still apply.
 
 ## Email rules (without an OFFER line)
 
 - Subject: 2-5 lowercase words naming the offer (or their work) in their terms. Never a sign-off ("last note", "closing the loop", "moving on", "closing out", "following up"). NEVER "checking in!" / "still interested?".
 - Body: 2-3 sentences, under 60 words.
-  - Hook (1 sentence): name the move directly ("closing your file" / "moving on"). No apology, no "wanted to make sure I didn't miss something".
+  - Hook (1 sentence): the specific thing for them now, their work or what the original touch was about, in their terms. Never an announcement that you are stopping; no apology, no "wanted to make sure I didn't miss something".
   - Identity-as-update (optional, 1 sentence): if SOCIAL PROOF has a fresh CREDENTIALS fact that wasn't true at original touch, weave it in. Otherwise skip — they remember you.
   - Offer-as-probe (1 sentence): ONE specific question or value drop — what would actually be useful to them right now. Frame as a probe, not a pitch.
-  - CTA: the question above IS the CTA. No additional ask.
+  - CTA: the question above IS the CTA, and "not now" stays an easy answer to it. No additional ask.
   - Sign-off: founder name.
-- Forbidden: "did I miss something?", "permission to close your file", "if I don't hear back", "I won't bother you again", "hate to be a pest", "obviously you're busy", "circling back one last time".
+- Forbidden: "did I miss something?", "permission to close your file", "if I don't hear back", "I won't bother you again", "hate to be a pest", "obviously you're busy", "circling back one last time", any sentence announcing that the sequence is ending ("moving on", "closing your file", "closing the loop", "last note", "one last", "final note", "so your inbox stays clean").
 
 ## Voice
 

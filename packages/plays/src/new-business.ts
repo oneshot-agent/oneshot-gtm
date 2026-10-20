@@ -127,7 +127,7 @@ registerSequence({
         playName: PLAY_NAME,
         promptName: "new-business-followup",
         contextLines: [
-          `PLAY: new-business. The new-business motion is one-touch + one breakup; this is the final note. Lean very short.`,
+          `PLAY: new-business. The new-business motion is one-touch + one breakup; this is the last email. Lean very short.`,
         ],
       }),
     },
