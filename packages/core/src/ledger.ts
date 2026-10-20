@@ -2631,6 +2631,10 @@ export class Ledger {
     patch: Record<string, unknown>;
     /** Compare-and-set: JSON paths that must still hold these scalar values (null: absent). */
     expect?: Array<{ path: string; value: string | null }>;
+    /** Compare-and-set on the whole stored payload: any concurrent change skips the write. */
+    expectPayloadJson?: string;
+    /** Drop the stored draft in the same write (its open version closes as a redraft). */
+    discardDraft?: boolean;
   }): boolean {
     return this.queue.patchLiveQueuePayload(input);
   }

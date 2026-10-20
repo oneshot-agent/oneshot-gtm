@@ -355,7 +355,7 @@ export interface OfferJudgeConfig {
   engine: "llm" | "decisions";
   /** Decisions-engine model id (config data only; required for `decisions`). */
   model?: string;
-  /** 0–1. An offer passes when `relevant` wins with at least this confidence. Default 0.5. */
+  /** 0–1. An offer passes when `relevant` is the top label and P(relevant) is at least this. Default 0.5. */
   minConfidence?: number;
 }
 

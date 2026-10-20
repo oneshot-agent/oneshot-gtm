@@ -438,7 +438,12 @@ export interface OfferJudgement {
   why: string;
   /** `<engine>:<model>`. */
   classifier: string;
-  /** `relevant` with at least the configured confidence. */
+  /**
+   * The top label is `relevant` and P(relevant) is at least
+   * `offerJudge.minConfidence` (the decisions answer's `confidence` only when
+   * it gives no probabilities). The `llm` engine gives labels only: its
+   * `relevant` passes.
+   */
   pass: boolean;
 }
 
@@ -526,6 +531,10 @@ async function judgeWithDecisions(
     const a = res.answers[`offer_${i + 1}`]!;
     const label = a.choice as OfferRelevance;
     const p = a.probabilities?.["relevant"];
+    // The bar is P(relevant), the label's own probability. The API's
+    // `confidence` is a separate, lower number ("relevant 0.66, weak 0.30"
+    // can come with a confidence of 0.3), so it stands in only when no
+    // probabilities came back.
     const score =
       typeof p === "number"
         ? p
@@ -537,7 +546,7 @@ async function judgeWithDecisions(
       score,
       why: topDecisionLabels(a.probabilities) || label,
       classifier,
-      pass: label === "relevant" && (a.confidence ?? score ?? 0) >= min,
+      pass: label === "relevant" && (score ?? 0) >= min,
     };
   });
 }
@@ -643,15 +652,43 @@ export async function judgeOffers(
   }
 }
 
-function withJudgement(o: DraftOffer, j: OfferJudgement | null): DraftOffer {
-  if (!j) return o;
+/**
+ * The label an offer is stored with after a verdict. A passing offer is
+ * `relevant` and one the judge labelled `weak` is `weak`: the judge's own
+ * label. Two cases are stored `weak` although the judge said otherwise,
+ * because `weak` is the label that holds a send for the founder
+ * (`offerHoldsSend`) and neither offer passed:
+ * - a `relevant` whose P(relevant) is under `offerJudge.minConfidence`. Stored
+ *   as `relevant` it would go out unreviewed although the judge did not pass it.
+ * - an `irrelevant` one, only in a re-judge of stored offers (which keeps
+ *   every candidate). A fresh set never keeps an irrelevant offer.
+ * The judge's own label stays readable in `relevanceWhy`.
+ */
+export function storedRelevance(j: Pick<OfferJudgement, "label" | "pass">): OfferRelevance {
+  return j.pass ? j.label : "weak";
+}
+
+/** The judge's fields for an offer: `relevance`, its score, why and classifier. */
+export function judgementFields(
+  j: OfferJudgement,
+): Pick<ProspectOffer, "relevance" | "relevanceScore" | "relevanceWhy" | "relevanceClassifier"> {
+  const relevance = storedRelevance(j);
   return {
-    ...o,
-    relevance: j.label,
+    relevance,
     ...(j.score != null ? { relevanceScore: Math.round(j.score * 1000) / 1000 } : {}),
-    relevanceWhy: j.why,
+    // A decisions why already leads with the labels ("relevant 0.45, weak
+    // 0.40"); an llm why is free text, so name the label it overrode.
+    relevanceWhy:
+      relevance === j.label || j.why.startsWith(j.label)
+        ? j.why
+        : clip(`${j.label}: ${j.why}`, JUDGE_WHY_MAX),
     relevanceClassifier: j.classifier,
   };
+}
+
+function withJudgement(o: DraftOffer, j: OfferJudgement | null): DraftOffer {
+  if (!j) return o;
+  return { ...o, ...judgementFields(j) };
 }
 
 /**
@@ -879,12 +916,14 @@ async function judgeAndReplace(
     }
   }
   if (passing.length >= OFFER_COUNT) return passing.slice(0, OFFER_COUNT);
-  // Fill with the best-scored weak ones; equal (or no) scores keep the order written.
+  // Fill with the best-scored ones that did not pass; equal (or no) scores
+  // keep the order written. Each carries the label `withJudgement` stored
+  // (`storedRelevance`): `weak` as the judge labelled it, or a `relevant`
+  // under the bar stored `weak`, so every filler holds its send.
   const fillers = fill
     .toSorted((a, b) => (b.score ?? -1) - (a.score ?? -1))
     .slice(0, OFFER_COUNT - passing.length)
-    // Each is already a copy (withJudgement), so tagging it in place is safe.
-    .map(({ offer }) => Object.assign(offer, { relevance: "weak" as const }));
+    .map(({ offer }) => offer);
   return [...passing, ...fillers];
 }
 

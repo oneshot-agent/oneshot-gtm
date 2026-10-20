@@ -137,6 +137,9 @@ function likePatternsFor(term: string): string[] {
 /** Best display name for a queue row: the prospect record, then the payload. */
 const QUEUE_SEARCH_NAME_EXPR = `COALESCE(NULLIF(p.name, ''), NULLIF(json_extract(b.payload_json, '$.name'), ''), NULLIF(json_extract(b.payload_json, '$.founderName'), ''))`;
 
+/** How long a drain claim (`drain_claimed_at`) holds a row before it counts as expired. */
+const DRAIN_LEASE_SECONDS = 900;
+
 export class QueueStore {
   /** Draft-version mirror for intro drafts (ledger-drafts.ts); stateless, shares the handle. */
   private readonly drafts: DraftVersionStore;
@@ -856,7 +859,9 @@ export class QueueStore {
    * crashed drain; held/error rows back off for the lease duration.
    */
   dequeueApproved(opts: { playName: string; limit?: number; leaseSeconds?: number }): QueueRow[] {
-    const leaseSeconds = opts.leaseSeconds ?? 900;
+    // Never longer than the shared lease: the payload and channel writers
+    // treat a claim older than it as expired.
+    const leaseSeconds = Math.min(opts.leaseSeconds ?? DRAIN_LEASE_SECONDS, DRAIN_LEASE_SECONDS);
     const claimedAt = new Date().toISOString();
     const cutoff = new Date(Date.now() - leaseSeconds * 1000).toISOString();
     const limit = opts.limit ?? 50;
@@ -1145,7 +1150,9 @@ export class QueueStore {
   ): "changed" | "sent" | "busy" {
     // A row a send or a live drain lease holds keeps its channel: the send
     // already read it, and switching would drop the draft it is shipping.
-    const cutoff = new Date(Date.now() - (opts.leaseSeconds ?? 900) * 1000).toISOString();
+    const cutoff = new Date(
+      Date.now() - (opts.leaseSeconds ?? DRAIN_LEASE_SECONDS) * 1000,
+    ).toISOString();
     return this.db
       .transaction((): "changed" | "sent" | "busy" => {
         const current = this.db
@@ -1364,20 +1371,37 @@ export class QueueStore {
     id: number;
     patch: Record<string, unknown>;
     expect?: Array<{ path: string; value: string | null }>;
+    expectPayloadJson?: string;
+    discardDraft?: boolean;
   }): boolean {
     const guards = input.expect ?? [];
-    const r = this.db
-      .prepare(
-        `UPDATE target_queue
-            SET payload_json = json_patch(payload_json, ?)
-          WHERE id = ?
-            AND status IN ('pending', 'approved')
-            AND sent_at IS NULL
-            AND send_started_at IS NULL
-            AND json_valid(payload_json)${guards.map(() => "\n            AND json_extract(payload_json, ?) IS ?").join("")}`,
-      )
-      .run(JSON.stringify(input.patch), input.id, ...guards.flatMap((g) => [g.path, g.value]));
-    return r.changes === 1;
+    const whole = input.expectPayloadJson !== undefined;
+    // A live drain lease holds the row: the drain sends from the payload it
+    // claimed, so a patch now would store one offer while it sends another.
+    const cutoff = new Date(Date.now() - DRAIN_LEASE_SECONDS * 1000).toISOString();
+    return this.db.transaction(() => {
+      const r = this.db
+        .prepare(
+          `UPDATE target_queue
+              SET payload_json = json_patch(payload_json, ?)${input.discardDraft ? ", last_draft_json = NULL, last_drafted_at = NULL" : ""}
+            WHERE id = ?
+              AND status IN ('pending', 'approved')
+              AND sent_at IS NULL
+              AND send_started_at IS NULL
+              AND (drain_claimed_at IS NULL OR drain_claimed_at < ?)
+              AND json_valid(payload_json)${whole ? "\n              AND payload_json = ?" : ""}${guards.map(() => "\n              AND json_extract(payload_json, ?) IS ?").join("")}`,
+        )
+        .run(
+          JSON.stringify(input.patch),
+          input.id,
+          cutoff,
+          ...(whole ? [input.expectPayloadJson!] : []),
+          ...guards.flatMap((g) => [g.path, g.value]),
+        );
+      if (r.changes !== 1) return false;
+      if (input.discardDraft) this.drafts.close({ queueId: input.id }, "discarded", "redraft");
+      return true;
+    })();
   }
 
   latestQueueId(): number {
