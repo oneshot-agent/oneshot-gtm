@@ -12,7 +12,7 @@ bunx oneshot-gtm-server     # the dashboard, no clone
 
 [![Built with oneshot-sdk](https://img.shields.io/badge/built%20with-oneshot--sdk-0a0a0a?style=flat&labelColor=18181b&color=22c55e)](https://www.npmjs.com/package/@oneshot-agent/sdk) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Bun](https://img.shields.io/badge/runtime-Bun%201.3+-fbf0df?logo=bun&logoColor=black)](https://bun.sh) [![TypeScript](https://img.shields.io/badge/typed-TypeScript%206-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 
-https://github.com/user-attachments/assets/bba2fb2d-35c3-4171-a358-fd3a987c24bc
+https://github.com/user-attachments/assets/d4c3a6b1-2850-481c-bb78-9d3cec940ea5
 
 ## How it works
 
