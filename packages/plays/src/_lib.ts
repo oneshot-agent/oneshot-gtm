@@ -514,8 +514,11 @@ const SIGNOFF_BODY = new RegExp(
     // "my last note", never "the final note in the audit" or "your last note".
     String.raw`(?<!\b(?:your|their|his|her) )\b(?:last|final) (?:note|nudge|ping|follow[- ]?up)\b(?!\s+(?:in|of|on|from|for|about|that|which)\b|\s+to\b(?!\s+you\b))`,
     String.raw`\b(?:this is|this['’]?s|here['’]?s) (?:my |the |a )?(?:last|final) (?:email|message|one)\b`,
-    String.raw`\bone (?:last|final) (?:note|time|try|email|message|nudge)\b`,
-    String.raw`\binbox (?:stays|stay) (?:clean|clear)\b`,
+    // "Sending one last note", never "run it one last time".
+    String.raw`(?:^|[.!?]\s+|\n\s*|\b(?:here['’]?s|this is|sending|just|with) )one (?:last|final) (?:note|try|email|message|nudge)\b`,
+    // The sender leaving their inbox, never an offer about keeping an inbox clean.
+    String.raw`\b(?:so |and )?i(?:['’]m| am)? not (?:clutter(?:ing)?|crowd(?:ing)?|fill(?:ing)?(?: up)?) your inbox\b`,
+    String.raw`\bi(?:['’]ll| will) (?:get|stay) out of your inbox\b`,
     String.raw`\bi(?:['’]ll| will) (?:stop|leave it) (?:here|there)\b`,
     // "I won't bother you again" / "I won't reach out again".
     String.raw`\bi (?:won['’]?t|will not) (?:bother|email|contact|ping) you (?:again|any ?more)\b`,
