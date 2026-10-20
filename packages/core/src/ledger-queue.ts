@@ -1366,9 +1366,13 @@ export class QueueStore {
     expect?: Array<{ path: string; value: string | null }>;
     expectPayloadJson?: string;
     discardDraft?: boolean;
+    leaseSeconds?: number;
   }): boolean {
     const guards = input.expect ?? [];
     const whole = input.expectPayloadJson !== undefined;
+    // A live drain lease holds the row: the drain sends from the payload it
+    // claimed, so a patch now would store one offer while it sends another.
+    const cutoff = new Date(Date.now() - (input.leaseSeconds ?? 900) * 1000).toISOString();
     return this.db.transaction(() => {
       const r = this.db
         .prepare(
@@ -1378,11 +1382,13 @@ export class QueueStore {
               AND status IN ('pending', 'approved')
               AND sent_at IS NULL
               AND send_started_at IS NULL
+              AND (drain_claimed_at IS NULL OR drain_claimed_at < ?)
               AND json_valid(payload_json)${whole ? "\n              AND payload_json = ?" : ""}${guards.map(() => "\n              AND json_extract(payload_json, ?) IS ?").join("")}`,
         )
         .run(
           JSON.stringify(input.patch),
           input.id,
+          cutoff,
           ...(whole ? [input.expectPayloadJson!] : []),
           ...guards.flatMap((g) => [g.path, g.value]),
         );

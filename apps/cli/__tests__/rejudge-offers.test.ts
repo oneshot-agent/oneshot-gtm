@@ -324,6 +324,20 @@ describe("commandRejudgeOffers", () => {
     expect(p.offerCandidates[1]?.angles).toEqual(["fresh"]);
   });
 
+  it("skips a row a live drain has claimed", async () => {
+    const id = enqueue(
+      { offer: offer(A, weakFields), offerCandidates: [offer(A, weakFields), offer(B)] },
+      "approved",
+    );
+    verdictFor.set(A, verdict("relevant", 0.7, true));
+    onJudge = () => {
+      ledger.dequeueApproved({ playName: "new-business" });
+    };
+    const s = await commandRejudgeOffers({ dryRun: false });
+    expect(s).toMatchObject({ judged: 0, skipped: 1, lifted: [] });
+    expect(payloadOf(id).offer.relevance).toBe("weak");
+  });
+
   it("--limit caps the rows judged", async () => {
     for (let i = 0; i < 3; i++) {
       enqueue({ offer: offer(A, weakFields), offerCandidates: [offer(A, weakFields)] });
