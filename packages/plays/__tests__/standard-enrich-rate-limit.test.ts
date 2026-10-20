@@ -97,18 +97,39 @@ describe("standardEnrich research under a rate limit", () => {
     });
   });
 
-  it("gives up after two retries, so the row still errors rather than waiting forever", async () => {
+  it("gives up after two retries and drafts from the enrichment alone, never waiting forever", async () => {
     researchOutcomes = [rateLimited(), rateLimited(), rateLimited()];
-    await expect(run()).rejects.toThrow("Tool request failed");
+    const prep = await run();
     expect(researchCalls).toBe(3);
     expect(sleeps).toHaveLength(2);
+    expect(prep.dossier).not.toContain("Pat shipped a launch");
+    expect(prep.receiptIds).toEqual([7]);
+    expect(events.find((e) => e.kind === "research.skipped")?.ctx).toMatchObject({
+      play: "accelerator-batch",
+    });
   });
 
   it("never retries an error that is not a rate limit", async () => {
     researchOutcomes = [new Error("Tool execution failed")];
-    await expect(run()).rejects.toThrow("Tool execution failed");
+    const prep = await run();
     expect(researchCalls).toBe(1);
     expect(sleeps).toHaveLength(0);
+    expect(prep.dossier).toContain("Pat");
+  });
+
+  it("a research job that outlasts its timeout drafts without it instead of erroring the row", async () => {
+    // 2026-10-20: fifteen accelerator-batch rows became error drafts on
+    // `Job … timed out after 120s` while OneShot finished each job later.
+    researchOutcomes = [
+      Object.assign(new Error("Job 70433d73 timed out after 120.003s"), {
+        name: "JobTimeoutError",
+      }),
+    ];
+    const prep = await run();
+    expect(prep.receiptIds).toEqual([7]);
+    expect(events.find((e) => e.kind === "research.skipped")?.ctx["message_120"]).toContain(
+      "timed out",
+    );
   });
 
   it("a run cancelled during the wait stops instead of retrying", async () => {
