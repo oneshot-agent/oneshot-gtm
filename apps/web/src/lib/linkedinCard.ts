@@ -1,16 +1,17 @@
-import type { LinkedInAccountView } from "@oneshot-gtm/shared-types";
+import type { LinkedInAccountView, LinkedInReadsView } from "@oneshot-gtm/shared-types";
 import { linkedinView, type LinkedInCfg, type LinkedInPhase } from "./linkedinConnect.ts";
 import { linkedInConnectionView } from "./linkedinConnection.ts";
 
 /**
  * The one LinkedIn card on /setup: two connections, one button.
  *
- * Messaging uses one OneShot-connected account across workspaces; profile
- * research uses a browser session per workspace. They need separate sign-ins:
- * the platform profile view lacks Experience history, and the browser profile
- * cannot message. Both connections share the Connect button.
- * Connect runs whichever sign-ins are missing, messaging first because it
- * completes on its own; the profile session ends with the founder's Done.
+ * Messaging uses one OneShot-connected account across workspaces. Live
+ * profile reads go through that same account's silent profile view when it
+ * can view profiles (`reads.via === "account"`): one sign-in covers both,
+ * and the line counts today's reads against the daily cap. Without such an
+ * account, reads fall back to a browser session per workspace, a second
+ * sign-in that ends with the founder's Done. Connect runs whichever sign-ins
+ * are missing, messaging first because it completes on its own.
  *
  * Kept pure so the copy is testable; the component only wires the calls.
  */
@@ -23,7 +24,8 @@ export type ConnectRun = "messaging" | "research";
 
 export interface LinkedInCardView {
   messaging: { state: MessagingState; text: string; ok: boolean };
-  research: { phase: LinkedInPhase; text: string; ok: boolean };
+  /** `viaAccount`: reads go through the messaging account; no browser session to manage. */
+  research: { phase: LinkedInPhase; text: string; ok: boolean; viaAccount: boolean };
   /** The one primary button, if any. */
   primary: "connect" | "done" | null;
   /** What Connect will do, in order. Empty when nothing is missing. */
@@ -56,7 +58,15 @@ export function messagingState(accounts: readonly LinkedInAccountView[] | null):
 }
 
 const MESSAGING_WAITING =
-  "Sign in to LinkedIn in the tab that opened. OneShot confirms the connection on its own; the profile session then opens in the same tab.";
+  "Sign in to LinkedIn in the tab that opened. OneShot confirms the connection on its own.";
+const THEN_PROFILE = " The profile session then opens in the same tab.";
+
+/** "Through your LinkedIn account · 57 of 95 today · 312 rows waiting". */
+export function accountReadsText(reads: LinkedInReadsView): string {
+  const waiting =
+    reads.waiting > 0 ? ` · ${reads.waiting} ${reads.waiting === 1 ? "row" : "rows"} waiting` : "";
+  return `Through your LinkedIn account · ${reads.today} of ${reads.perDay} today${waiting}`;
+}
 
 export function linkedinCardView(args: {
   cfg: LinkedInCfg;
@@ -67,8 +77,12 @@ export function linkedinCardView(args: {
   accountsError?: string | null;
   step: CardStep;
   liveUrl: string | null;
+  /** What reads go through, from `/setup`; `null` from a server that predates it. */
+  reads?: LinkedInReadsView | null;
 }): LinkedInCardView {
   const m = messagingState(args.accounts);
+  const accountReads = args.reads?.via === "account" ? args.reads : null;
+  const viaAccount = accountReads !== null;
   const r = linkedinView(
     args.cfg,
     args.cookieSet,
@@ -91,36 +105,53 @@ export function linkedinCardView(args: {
               : "Checking…"
             : "Not connected",
   };
-  const research = {
-    phase: r.phase,
-    ok: r.phase === "connected",
-    text:
-      r.phase === "connected"
-        ? r.headline
-        : r.phase === "signing-in"
-          ? "Signing in…"
-          : r.phase === "expired"
-            ? "LinkedIn signed you out"
-            : args.cookieSet
-              ? "A cookie is saved, not connected yet"
-              : "Not connected",
-  };
+  const research = accountReads
+    ? {
+        phase: "connected" as const,
+        ok: true,
+        viaAccount,
+        text: accountReadsText(accountReads),
+      }
+    : {
+        phase: r.phase,
+        ok: r.phase === "connected",
+        viaAccount,
+        text:
+          r.phase === "connected"
+            ? r.headline
+            : r.phase === "signing-in"
+              ? "Signing in…"
+              : r.phase === "expired"
+                ? "LinkedIn signed you out"
+                : args.cookieSet
+                  ? "A cookie is saved, not connected yet"
+                  : "Not connected",
+      };
 
+  // Reads through the account never open the browser session: no profile
+  // sign-in to run, no Done to wait for.
+  const signingIn = !viaAccount && r.phase === "signing-in";
   const connectRuns: ConnectRun[] = [];
   if (m.state === "none") connectRuns.push("messaging");
-  if (r.phase !== "connected" && r.phase !== "signing-in") connectRuns.push("research");
+  if (!viaAccount && r.phase !== "connected" && r.phase !== "signing-in") {
+    connectRuns.push("research");
+  }
 
   const primary: LinkedInCardView["primary"] =
     args.step === "messaging"
       ? null
-      : r.phase === "signing-in"
+      : signingIn
         ? "done"
         : connectRuns.length > 0
           ? "connect"
           : null;
 
   const waiting =
-    args.step === "messaging" ? MESSAGING_WAITING : r.phase === "signing-in" ? r.headline : null;
+    args.step === "messaging"
+      ? MESSAGING_WAITING + (connectRuns.includes("research") ? THEN_PROFILE : "")
+      : signingIn
+        ? r.headline
+        : null;
 
   return {
     messaging,
@@ -128,7 +159,7 @@ export function linkedinCardView(args: {
     primary,
     connectRuns,
     waiting,
-    ok: messaging.ok && research.ok,
+    ok: viaAccount ? messaging.ok : messaging.ok && research.ok,
   };
 }
 

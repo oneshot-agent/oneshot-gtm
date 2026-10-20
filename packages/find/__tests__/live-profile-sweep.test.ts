@@ -35,8 +35,12 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
-const { selectCadenceRefreshCandidates, selectLiveSweepCandidates, sweepLiveProfiles } =
-  await import("../src/_live-profile-sweep.ts");
+const {
+  countLiveReadsWaiting,
+  selectCadenceRefreshCandidates,
+  selectLiveSweepCandidates,
+  sweepLiveProfiles,
+} = await import("../src/_live-profile-sweep.ts");
 
 const LI = "https://www.linkedin.com/in/";
 function row(
@@ -96,10 +100,10 @@ describe("selectLiveSweepCandidates", () => {
     expect(picked[0]?.seed.url).toBe("https://linkedin.com/in/g");
   });
 
-  it("reads a row again once its live read is 30 days old", () => {
+  it("re-reads an approved row once its read is 30 days old, never a pending one", () => {
     const now = Date.parse("2026-10-12T12:00:00.000Z");
-    const readDaysAgo = (id: number, days: number) =>
-      row(id, "pending", {
+    const readDaysAgo = (id: number, status: string, days: number) =>
+      row(id, status, {
         name: `R${id}`,
         linkedinUrl: `${LI}r${id}`,
         personResearch: {
@@ -111,11 +115,46 @@ describe("selectLiveSweepCandidates", () => {
         },
       });
     const picked = selectLiveSweepCandidates(
-      [readDaysAgo(31, 31), readDaysAgo(32, 29)] as never,
+      [
+        readDaysAgo(31, "approved", 31),
+        readDaysAgo(32, "approved", 29),
+        // Opening a pending row reads it again; the sweep leaves it.
+        readDaysAgo(33, "pending", 31),
+      ] as never,
       () => false,
       now,
     );
     expect(picked.map((c) => c.row.id)).toEqual([31]);
+  });
+
+  it("ranks approved never read, then pending never read newest first, then approved re-reads", () => {
+    const now = Date.parse("2026-10-12T12:00:00.000Z");
+    const aged = (id: number) =>
+      row(id, "approved", {
+        name: `R${id}`,
+        linkedinUrl: `${LI}r${id}`,
+        personResearch: {
+          status: "complete",
+          liveProfile: {
+            url: `${LI}r${id}`,
+            readAt: new Date(now - 40 * 86_400_000).toISOString(),
+          },
+        },
+      });
+    const fresh = (id: number, status: string) =>
+      row(id, status, { name: `N${id}`, linkedinUrl: `${LI}n${id}` });
+    const picked = selectLiveSweepCandidates(
+      [
+        aged(90),
+        fresh(10, "pending"),
+        aged(5),
+        fresh(11, "approved"),
+        fresh(12, "pending"),
+      ] as never,
+      () => false,
+      now,
+    );
+    expect(picked.map((c) => c.row.id)).toEqual([11, 12, 10, 90, 5]);
   });
 
   it("leaves a row alone for three days after an attempt that failed for a reason of its own", () => {
@@ -153,6 +192,26 @@ describe("selectLiveSweepCandidates", () => {
     ];
     const picked = selectLiveSweepCandidates(rows as never, () => false, now);
     expect(picked.map((c) => c.row.id)).toEqual([21, 20, 19, 18, 17, 16, 15]);
+  });
+});
+
+describe("countLiveReadsWaiting", () => {
+  it("counts live LinkedIn rows with no live read, whatever their last attempt, minus opted-out plays", () => {
+    const rows = [
+      ...queue,
+      row(8, "pending", {
+        name: "H",
+        linkedinUrl: `${LI}h`,
+        personResearch: {
+          status: "partial",
+          researchedAt: new Date().toISOString(),
+          warning: "live profile skipped: failed",
+        },
+      }),
+      row(9, "rejected", { name: "I", linkedinUrl: `${LI}i` }),
+    ];
+    // 1, 2, 7 and 8; 3 is read, 4 has no LinkedIn seed, 5 is sent, 6 opted out, 9 is not live.
+    expect(countLiveReadsWaiting(rows as never, (play) => play === "github-stars")).toBe(4);
   });
 });
 

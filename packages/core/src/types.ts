@@ -575,7 +575,11 @@ export interface OneShotConfig {
   linkedinSessionName?: string | null;
   /** Set when a read hit the login wall; reads stop until a fresh cookie is connected. */
   linkedinSessionInvalidAt?: string | null;
-  /** Reads per local day before the tier skips with a reason (account safety). Default 80. */
+  /**
+   * Live profile reads per day before the tier skips with a reason (account
+   * safety): the UTC day for the connected account, the local day for the
+   * browser session. Default `DEFAULT_LINKEDIN_READS_PER_DAY` (95).
+   */
   linkedinReadsPerDay?: number;
   /**
    * LinkedIn outreach settings. `invitesPerDay`: this workspace's share of the

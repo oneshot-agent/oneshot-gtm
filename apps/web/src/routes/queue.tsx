@@ -137,6 +137,8 @@ import {
   useGeneratingDrafts,
 } from "../lib/draftRunState.ts";
 import { clearRowActivity, setRowActivity, useRowActivity } from "../lib/rowActivity.ts";
+import { liveReadMissing, READING_LINKEDIN } from "../lib/liveRead.ts";
+import { ReadOnOpen } from "../components/queue/ReadOnOpen.tsx";
 import { summarizeRun } from "../lib/summarizeRun.ts";
 import { READ_ONLY, readOnly } from "../lib/readOnly.ts";
 import {
@@ -298,6 +300,10 @@ function QueuePage() {
     queryFn: () => api.queue(queueRequest({ statusFilter, playFilter, orderOverride })),
     refetchInterval: 20_000,
   });
+  // Live reads exist on this install (`/setup` says what they go through):
+  // only then does opening a row read it, or the list mark a row unread.
+  const setupQuery = useQuery({ queryKey: ["setup"], queryFn: () => api.setupStatus() });
+  const liveReads = Boolean(setupQuery.data?.linkedinReads?.via);
   const effectiveOrder = queueQuery.data?.order ?? orderOverride ?? "newest";
 
   // Scroll position survives a round trip away from /queue, but only back onto
@@ -694,6 +700,7 @@ function QueuePage() {
                   }}
                   onToggle={() => setExpanded(expanded === row.id ? null : row.id)}
                   generating={generating.has(row.id)}
+                  liveReads={liveReads}
                   onApprove={(fit) => approve.mutate({ id: row.id, fit })}
                   onMove={(workspace) => move.mutate({ id: row.id, workspace })}
                   moveTargets={targets}
@@ -933,6 +940,7 @@ export function QueueRow({
   onToggleSelect,
   onToggle,
   generating,
+  liveReads = false,
   onApprove,
   onReject,
   onMove,
@@ -948,6 +956,8 @@ export function QueueRow({
   onToggleSelect: () => void;
   onToggle: () => void;
   generating: boolean;
+  /** Live LinkedIn reads run on this install: opening an unread row reads it. */
+  liveReads?: boolean;
   /** `fit` = also record an explicit fit judgment for the ICP (#813). */
   onApprove: (fit?: boolean) => void;
   onReject: () => void;
@@ -958,6 +968,9 @@ export function QueueRow({
   busy: boolean;
 }) {
   const canApproveFit = row.status === "approved" && row.sendHold?.code === "off-icp";
+  // Approve waits for a read that may re-judge the row or rewrite its offer.
+  const reading = useRowActivity(row.id) === READING_LINKEDIN;
+  const approveBusy = busy || reading;
   const email = emailFor(row.payload);
   const name = nameFor(row.payload);
   const company = companyFor(row.payload);
@@ -1094,6 +1107,15 @@ export function QueueRow({
               </Badge>
             )}
             <DeliveryBadge delivery={row.delivery} />
+            {liveReads && liveReadMissing(row) && (
+              <Badge
+                tone="neutral"
+                className="text-ink-faint"
+                title="No live LinkedIn read yet; opening the row reads it"
+              >
+                not read
+              </Badge>
+            )}
             {!expanded &&
               row.status !== "sent" &&
               row.lastDraft &&
@@ -1128,7 +1150,7 @@ export function QueueRow({
               <Button
                 variant="primary"
                 size="sm"
-                disabled={busy}
+                disabled={approveBusy}
                 // Overriding the gate's fit rejection IS an explicit fit judgment.
                 onClick={() => onApprove(canApproveFit)}
                 title={
@@ -1149,7 +1171,7 @@ export function QueueRow({
                 <Button
                   variant="ghost"
                   size="sm"
-                  disabled={busy}
+                  disabled={approveBusy}
                   onClick={() => onApprove(true)}
                   title="Approve and record an explicit fit judgment: this is who you sell to (teaches the ICP)"
                   className="whitespace-nowrap"
@@ -1184,6 +1206,7 @@ export function QueueRow({
           colSpan={7}
           theCase={
             <CaseSection>
+              {liveReads && <ReadOnOpen row={row} />}
               {emptyResearch && (
                 <div role="note" className="text-[12px] leading-5 text-ink-muted">
                   <p className="m-0 font-medium">{emptyResearch}</p>

@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import type { XEngine } from "@oneshot-gtm/shared-types";
+import type { LinkedInReadsView, XEngine } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
 import { Badge } from "../primitives/Badge.tsx";
 import { Button } from "../primitives/Button.tsx";
@@ -89,12 +89,15 @@ export function CredentialsSection({
   homeDir,
   isLegacyPool,
   xEngine,
+  linkedinReads,
   onDirtyChange,
   onSmartleadKeySaved,
 }: SectionProps & {
   homeDir: string;
   isLegacyPool: boolean;
   xEngine: XEngine;
+  /** What live LinkedIn reads go through; null from a server that predates it. */
+  linkedinReads: LinkedInReadsView | null;
   /** A new Smartlead key = a different workspace; the email section drops its loaded list. */
   onSmartleadKeySaved: () => void;
 }) {
@@ -179,7 +182,9 @@ export function CredentialsSection({
       {
         title: "LinkedIn",
         caption:
-          "Replies and live profile reads, as you. Two LinkedIn sign-ins behind one button; the profile session costs $0.30 per sign-in. Optional.",
+          linkedinReads?.via === "account"
+            ? "Replies and live profile reads, as you, through one LinkedIn sign-in. Optional."
+            : "Replies and live profile reads, as you. Two LinkedIn sign-ins behind one button; the profile session costs $0.30 per sign-in. Optional.",
         keys: linkedinAdvanced ? ["LINKEDIN_SESSION_COOKIE"] : [],
         inUse: () => true,
         optional: true,
@@ -187,13 +192,14 @@ export function CredentialsSection({
           <LinkedInConnect
             cfg={cfg}
             cookieSet={cookieSet}
+            reads={linkedinReads}
             advancedOpen={linkedinAdvanced}
             onToggleAdvanced={() => setLinkedinAdvanced((v) => !v)}
           />
         ),
       },
     ],
-    [cfg, sources, isLegacyPool, xEngine, cookieSet, linkedinAdvanced],
+    [cfg, sources, isLegacyPool, xEngine, cookieSet, linkedinAdvanced, linkedinReads],
   );
 
   return (

@@ -37,6 +37,13 @@ export const SECRET_KEYS = [
 ] as const;
 export type SecretKey = (typeof SECRET_KEYS)[number];
 
+/**
+ * Default `linkedinReadsPerDay`. The platform allows about 100 profile views
+ * a day per connected account; the reads take 95 and leave about 5 for
+ * identifying new reply senders.
+ */
+export const DEFAULT_LINKEDIN_READS_PER_DAY = 95;
+
 const DEFAULTS: OneShotConfig = {
   walletMode: "cdp",
   llmProvider: "openrouter",
@@ -71,7 +78,7 @@ const DEFAULTS: OneShotConfig = {
   linkedinSessionCheckedAt: null,
   linkedinSessionName: null,
   linkedinSessionInvalidAt: null,
-  linkedinReadsPerDay: 80,
+  linkedinReadsPerDay: DEFAULT_LINKEDIN_READS_PER_DAY,
   icpProposalMinDecisions: 30,
 };
 
