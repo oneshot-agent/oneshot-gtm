@@ -1366,13 +1366,13 @@ export class QueueStore {
     expect?: Array<{ path: string; value: string | null }>;
     expectPayloadJson?: string;
     discardDraft?: boolean;
-    leaseSeconds?: number;
   }): boolean {
     const guards = input.expect ?? [];
     const whole = input.expectPayloadJson !== undefined;
     // A live drain lease holds the row: the drain sends from the payload it
     // claimed, so a patch now would store one offer while it sends another.
-    const cutoff = new Date(Date.now() - (input.leaseSeconds ?? 900) * 1000).toISOString();
+    // 900s is `dequeueApproved`'s default lease.
+    const cutoff = new Date(Date.now() - 900 * 1000).toISOString();
     return this.db.transaction(() => {
       const r = this.db
         .prepare(

@@ -2635,8 +2635,6 @@ export class Ledger {
     expectPayloadJson?: string;
     /** Drop the stored draft in the same write (its open version closes as a redraft). */
     discardDraft?: boolean;
-    /** A drain claim younger than this holds the row (default 900s, as `dequeueApproved`). */
-    leaseSeconds?: number;
   }): boolean {
     return this.queue.patchLiveQueuePayload(input);
   }
