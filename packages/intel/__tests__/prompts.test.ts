@@ -130,3 +130,28 @@ describe("follow-up prompt isolation", () => {
     expect(loadPrompt("repo-interest-followup", { humanizer: "followup" })).toBe(followup);
   });
 });
+
+describe("last-touch prompts", () => {
+  const lastTouch = [
+    "breakup-email",
+    "breakup-revive-email",
+    "new-business-followup",
+    "free-pilot-followup",
+    "pilot-close-followup",
+    "design-partner-loi-pilot-followup",
+  ];
+
+  it.each(lastTouch)("%s never opens by announcing the sequence is ending", (name) => {
+    const text = loadPrompt(name);
+    // No body rule asks for the sign-off; the phrases only appear as banned.
+    expect(text).not.toMatch(/Hook \(1 sentence\):[^\n]*(?:closing|moving on|the move)/i);
+    expect(text).toContain('any sentence announcing that the sequence is ending ("moving on"');
+    expect(text).not.toContain("restate the same offer once, in a clause, then close");
+  });
+
+  it("the offer-first rule puts the offer first on the last touch", () => {
+    expect(loadPrompt("breakup-email")).toContain(
+      "The last touch opens on it, restated once, and closes; it never opens by announcing that the sequence is ending.",
+    );
+  });
+});

@@ -108,6 +108,65 @@ describe("lintEmail — humanizer canon", () => {
     expect(lintEmail("alpha pipeline audit", "Body. Sam")).not.toContain("signoff-subject");
   });
 
+  const followUp = { followUp: true };
+
+  it.each([
+    "Moving on from here so your inbox stays clean. Are manual off-screen steps still eating into review time?",
+    "Moving on here, since models usually mark long runs finished. Worth a look before the next run?",
+    "Hi Sam,\nClosing the loop on this. Is the audit still worth doing?",
+    "I'll close your file after this. Want the audit run on one repo?",
+    "Want me to run the audit on one repo? If not, I'll close the loop here.",
+    "I can still run the audit on one repo. This is my last note, so a one-word no is fine.",
+    "I can still run the audit, and I'm moving on after this. Worth doing?",
+    "Moving on. Is the audit still worth doing?",
+    "Moving on\n\nIf now isn't right, no worries.",
+    "Want the audit on one repo? Closing the loop\nSam",
+    "Want the audit on one repo? This is my final note to you.",
+    "Want the audit on one repo? I'll close the loop here so you don't have to reply.",
+    "Sending one last note on the audit. Want one repo done this week?",
+    "Want the audit on one repo? Closing the loop on this thread.",
+    "Want the audit on one repo? I'll get out of your inbox after this.",
+    "Closing your file on this side so I'm not cluttering your inbox.",
+    "Moving on from this side. Want the audit on one repo?",
+    "I can still run the audit on one repo. If not, I won't bother you again.",
+    "Worth running the audit once? I won't reach out again after this.",
+  ])("flags a follow-up body that announces it is ending: %s", (body) => {
+    expect(lintEmail("repo audit", `${body}\n\nSam`, 110, undefined, followUp)).toContain(
+      "signoff-body",
+    );
+  });
+
+  it.each([
+    "I can still run the dependency audit on your main repo and send the findings in a week. If it's not the right time, a one-word no helps too.",
+    "I can close the loop between your support tickets and the fixes that ship. Worth trying on one queue?",
+    "We can close the loop on this by sending the audit to your team lead. Worth it?",
+    "I can write up the final note in the audit for your team lead. Worth it?",
+    "I can send the final note to the board after the audit. Worth it?",
+    "Your last note mentioned the audit backlog. Want one repo cleared this week?",
+    "We can rerun the audit one last time before the release. Worth it?",
+    "The last note you sent mentioned the audit backlog. Want one repo cleared?",
+    "We triage support mail so your inbox stays clean. Want it on one queue?",
+    "I can close the loop\nbetween support and fixes on one queue. Worth trying?",
+    "We moved on to a new stack last year. Would the migration notes help?",
+    "I can keep invoices out of your inbox and in the ledger. Worth setting up?",
+    "Close the loop between support and fixes with one audit. Worth trying on one queue?",
+    "Moving on to a new stack is where most audits stall. Want one run before the cutover?",
+    "I'm moving on to the API review next week, so the audit could land first. Worth it?",
+    "I'm moving on with the API integration, so the audit could land first. Worth it?",
+  ])("passes an offer-first last touch: %s", (body) => {
+    expect(lintEmail("repo audit", `${body}\n\nSam`, 110, undefined, followUp)).not.toContain(
+      "signoff-body",
+    );
+  });
+
+  it("checks the body for a sign-off on follow-ups only", () => {
+    const body = "Moving on from here so your inbox stays clean. Worth it?\n\nSam";
+    expect(lintEmail("repo audit", body)).not.toContain("signoff-body");
+    expect(
+      lintEmail("repo audit", body, 110, undefined, { followUp: true, threadedSubject: true }),
+    ).toContain("signoff-body");
+  });
+
   it("skips the subject checks on a threaded follow-up's subject", () => {
     const subject = `Re: ${"FOLLOWING UP ".repeat(6)}`;
     const opts = { threadedSubject: true };

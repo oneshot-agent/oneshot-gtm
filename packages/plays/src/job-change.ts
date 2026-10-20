@@ -119,7 +119,7 @@ registerSequence({
       builder: buildFollowUpEmail({
         playName: PLAY_NAME,
         promptName: "breakup-email",
-        contextLines: [`PLAY: job-change. Sender is closing the file.`],
+        contextLines: [`PLAY: job-change. Final breakup.`],
       }),
     },
   ],

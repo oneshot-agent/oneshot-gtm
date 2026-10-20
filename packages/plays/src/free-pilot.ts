@@ -112,7 +112,7 @@ registerSequence({
         playName: PLAY_NAME,
         promptName: "free-pilot-followup",
         contextLines: [
-          `PLAY: free-pilot. The free-pilot motion is one-touch + one breakup; this is the final note. Lean very short. No "design partner", "pilot program", or "LOI".`,
+          `PLAY: free-pilot. The free-pilot motion is one-touch + one breakup; this is the last email. Lean very short. No "design partner", "pilot program", or "LOI".`,
         ],
       }),
     },

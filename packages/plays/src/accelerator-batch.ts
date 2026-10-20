@@ -147,7 +147,7 @@ registerSequence({
         playName: PLAY_NAME,
         promptName: "breakup-email",
         contextLines: [
-          `PLAY: accelerator-batch. The accelerator-batch motion is one-touch + one breakup; this is the final note. Lean very short.`,
+          `PLAY: accelerator-batch. The accelerator-batch motion is one-touch + one breakup; this is the last email. Lean very short.`,
         ],
       }),
     },

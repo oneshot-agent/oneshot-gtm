@@ -493,6 +493,55 @@ const SIGNOFF_SUBJECT =
   /\b(?:last (?:note|try)|closing (?:the loop|(?:this |it )?out)|moving on|following up)\b/i;
 
 /**
+ * A body line that announces the sequence is ending ("Moving on from here so
+ * your inbox stays clean", "I'll close your file", "Closing the loop") instead
+ * of carrying the offer: the last touch leads with what it does for them and
+ * keeps "not now" easy in its close, without the sign-off. Checked on
+ * follow-ups only, keyed on the output only, and tight on purpose: an offer
+ * to "close the loop between support and fixes" is not a sign-off.
+ */
+const SIGNOFF_BODY = new RegExp(
+  [
+    // "Moving on." / "Moving on, …" / "Moving on" alone on its line, at the start of a sentence or line, never
+    // "Moving on to a new stack": what follows decides.
+    String.raw`(?:^|[.!?]\s+|\n\s*)moving on(?=\s*[.!?,;:]|[ \t]*(?:\r?\n|$))`,
+    String.raw`\bi(?:['’]m| am|['’]ll| will)(?: be)? mov(?:e|ing) on\b(?!\s+(?:to|with)\b)`,
+    String.raw`\bmoving on (?:from (?:here|this|you)|here|now|for now)\b`,
+    // "Closing the loop." / "I'll close the loop here", never "close the loop between…".
+    String.raw`\bclos(?:e|ing) (?:the|this) loop(?!\s+between\b)(?= (?:here|for now|with you)\b| on (?:this|my|our|it|things)(?: thread| one| end)? *(?:[.!?,;]|$|\r?\n)| *(?:[.!?,;]|$|\r?\n))`,
+    String.raw`\bclos(?:e|ing)(?: out)? (?:your|this) file\b`,
+    String.raw`\bclosing (?:this|things) out\b`,
+    // "my last note", never "the final note in the audit" or "your last note".
+    String.raw`(?<!\b(?:your|their|his|her) )\b(?:last|final) (?:note|nudge|ping|follow[- ]?up)\b(?!\s+(?:in|of|on|from|for|about|that|which|you|they|he|she)\b|\s+to\b(?!\s+you\b))`,
+    String.raw`\b(?:this is|this['’]?s|here['’]?s) (?:my |the |a )?(?:last|final) (?:email|message|one)\b`,
+    // "Sending one last note", never "run it one last time".
+    String.raw`(?:^|[.!?]\s+|\n\s*|\b(?:here['’]?s|this is|sending|just|with) )one (?:last|final) (?:note|try|email|message|nudge)\b`,
+    // The sender leaving their inbox, never an offer about keeping an inbox clean.
+    String.raw`\b(?:so |and )?i(?:['’]m| am)? not (?:clutter(?:ing)?|crowd(?:ing)?|fill(?:ing)?(?: up)?) your inbox\b`,
+    String.raw`\bi(?:['’]ll| will) (?:get|stay) out of your inbox\b`,
+    String.raw`\bi(?:['’]ll| will) (?:stop|leave it) (?:here|there)\b`,
+    // "I won't bother you again" / "I won't reach out again".
+    String.raw`\bi (?:won['’]?t|will not) (?:bother|email|contact|ping) you (?:again|any ?more)\b`,
+    String.raw`\bi (?:won['’]?t|will not) (?:reach out|follow up|be in touch|write)(?: to you| with you)? (?:again|any ?more)\b`,
+  ].join("|"),
+  "i",
+);
+
+/** True when the body announces that the sequence is ending; see `SIGNOFF_BODY`. */
+export function announcesSignoff(body: string): boolean {
+  return SIGNOFF_BODY.test(body);
+}
+
+/** Each sentence of `body` that announces the sign-off, quoted for a repair instruction; protected config text is skipped, as in `lintEmail`. */
+function signoffExcerpts(body: string, protect: readonly string[] = []): string[] {
+  return withoutAllowedSpans(body, protect)
+    .split(/\n+/)
+    .flatMap((line) => line.split(/(?<=[.!?])\s+/))
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => SIGNOFF_BODY.test(sentence));
+}
+
+/**
  * The subject checks a threaded follow-up skips: its subject is the first
  * email's ("Re: <first subject>"), not drafted, so a redraft cannot fix it.
  */
@@ -509,7 +558,8 @@ export function lintEmail(
   /** Set by formats with a sentence budget (the brief first touch); absent = no sentence check. */
   maxBodySentences?: number,
   /**
-   * `followUp`: flag an either/or closing question (follow-ups and breakups).
+   * `followUp`: flag an either/or closing question and a line announcing
+   * that the sequence is ending (`signoff-body`), on follow-ups and breakups.
    * `demoDay`: the prospect's demo day, when known; a body that mentions demo
    * day after it has passed is flagged `stale-demo-day`.
    * `protect`: config text the prompt quotes verbatim (see `humanizeDraft`);
@@ -552,6 +602,7 @@ export function lintEmail(
     flags.push("too-many-sentences");
   }
   if (opts.followUp && closingEitherOrQuestion(body)) flags.push("either-or-question");
+  if (opts.followUp && announcesSignoff(written)) flags.push("signoff-body");
   if (mentionsStaleDemoDay(body, opts.demoDay ?? null)) flags.push("stale-demo-day");
   if (written.includes("—")) flags.push("em-dash");
   if (/[“”‘’]/.test(written)) flags.push("curly-quotes");
@@ -1212,6 +1263,8 @@ const WRITING_REPAIRS: Record<string, string> = {
     "Cut sentences to fit the supplied sentence budget; do not join them to evade the check.",
   "either-or-question":
     "End with one specific yes/no question or no question, without offering two options.",
+  "signoff-body":
+    'Remove every line announcing that the sequence is ending (moving on, closing the file or the loop, a last or final note, keeping their inbox clean). Open with the offer, or the specific thing for them, in their terms, and keep "not now" easy in the closing question.',
   "stale-demo-day":
     "Remove references to the passed demo day; use only facts that remain true now.",
   "em-dash": "Replace em dashes with ordinary punctuation.",
@@ -1274,7 +1327,9 @@ export async function repairWritingLints(
     const excerpts =
       flag === "rule-of-three"
         ? (draft.body.match(new RegExp(RULE_OF_THREE.source, "g")) ?? [])
-        : patterns.flatMap(([pattern]) => draft.body.match(pattern)?.[0] ?? []);
+        : flag === "signoff-body"
+          ? signoffExcerpts(draft.body, opts.hardBanAllow)
+          : patterns.flatMap(([pattern]) => draft.body.match(pattern)?.[0] ?? []);
     return `${flag}: ${WRITING_REPAIRS[flag] ?? "Rewrite the flagged wording in plain, direct language. Follow the original writing constraints."}${excerpts.length ? ` Matched text (quoted draft data): ${JSON.stringify(excerpts)}.` : ""}`;
   });
   const mayChangeSubject = problems.some(

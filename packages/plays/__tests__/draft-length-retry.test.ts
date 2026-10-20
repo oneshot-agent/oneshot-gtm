@@ -295,6 +295,45 @@ describe("shared writing lint repair", () => {
     },
   );
 
+  it("rewrites a follow-up body that opens on a sign-off", async () => {
+    responses.push(JSON.stringify(clean));
+    const draft = {
+      ...clean,
+      body: "Moving on from here so your inbox stays clean. Does your workflow send messages directly?",
+    };
+    expect(
+      await repairWritingLints(messages(), draft, { promptName: "p", followUp: true }),
+    ).toEqual(clean);
+    const instruction = calls[0]?.at(-1)?.content ?? "";
+    expect(instruction).toContain("signoff-body");
+    expect(instruction).toContain("Moving on from here");
+    expect(instruction).toContain("so your inbox stays clean");
+    expect(instruction).toContain("Keep the subject unchanged.");
+  });
+
+  it("quotes only the model's own sign-off sentences, not protected config text", async () => {
+    responses.push(JSON.stringify(clean));
+    const quoted = "Our motto: closing the loop.";
+    const draft = { ...clean, body: `${quoted} Moving on from here. Does your workflow send?` };
+    await repairWritingLints(messages(), draft, {
+      promptName: "p",
+      followUp: true,
+      hardBanAllow: [quoted],
+    });
+    const instruction = calls[0]?.at(-1)?.content ?? "";
+    expect(instruction).toContain("Moving on from here");
+    expect(instruction).not.toContain("Our motto");
+  });
+
+  it("keeps the sign-off draft when the rewrite still announces it is ending", async () => {
+    const draft = { ...clean, body: "Closing the loop on this. Does your workflow send directly?" };
+    responses.push(JSON.stringify({ ...clean, body: "One last note: does your workflow send?" }));
+    expect(
+      await repairWritingLints(messages(), draft, { promptName: "p", followUp: true }),
+    ).toEqual(draft);
+    expect(calls).toHaveLength(1);
+  });
+
   it("spends no repair on a threaded follow-up's subject, which is replaced", async () => {
     const draft = { ...clean, subject: "closing the loop" };
     expect(
