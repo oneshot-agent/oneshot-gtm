@@ -528,9 +528,9 @@ export function announcesSignoff(body: string): boolean {
   return SIGNOFF_BODY.test(body);
 }
 
-/** Each sentence of `body` that announces the sign-off, quoted for a repair instruction. */
-function signoffExcerpts(body: string): string[] {
-  return body
+/** Each sentence of `body` that announces the sign-off, quoted for a repair instruction; protected config text is skipped, as in `lintEmail`. */
+function signoffExcerpts(body: string, protect: readonly string[] = []): string[] {
+  return withoutAllowedSpans(body, protect)
     .split(/\n+/)
     .flatMap((line) => line.split(/(?<=[.!?])\s+/))
     .map((sentence) => sentence.trim())
@@ -1324,7 +1324,7 @@ export async function repairWritingLints(
       flag === "rule-of-three"
         ? (draft.body.match(new RegExp(RULE_OF_THREE.source, "g")) ?? [])
         : flag === "signoff-body"
-          ? signoffExcerpts(draft.body)
+          ? signoffExcerpts(draft.body, opts.hardBanAllow)
           : patterns.flatMap(([pattern]) => draft.body.match(pattern)?.[0] ?? []);
     return `${flag}: ${WRITING_REPAIRS[flag] ?? "Rewrite the flagged wording in plain, direct language. Follow the original writing constraints."}${excerpts.length ? ` Matched text (quoted draft data): ${JSON.stringify(excerpts)}.` : ""}`;
   });
