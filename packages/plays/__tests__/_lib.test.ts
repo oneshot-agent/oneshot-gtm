@@ -119,6 +119,7 @@ describe("lintEmail — humanizer canon", () => {
     "I can still run the audit on one repo. This is my last note, so a one-word no is fine.",
     "I can still run the audit, and I'm moving on after this. Worth doing?",
     "Moving on. Is the audit still worth doing?",
+    "Moving on\n\nIf now isn't right, no worries.",
     "Moving on from this side. Want the audit on one repo?",
     "I can still run the audit on one repo. If not, I won't bother you again.",
     "Worth running the audit once? I won't reach out again after this.",
