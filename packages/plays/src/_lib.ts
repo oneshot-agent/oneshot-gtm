@@ -508,11 +508,11 @@ const SIGNOFF_BODY = new RegExp(
     String.raw`\bi(?:['’]m| am|['’]ll| will)(?: be)? mov(?:e|ing) on\b(?!\s+(?:to|with)\b)`,
     String.raw`\bmoving on (?:from (?:here|this|you)|here|now|for now)\b`,
     // "Closing the loop." / "I'll close the loop here", never "close the loop between…".
-    String.raw`\bclos(?:e|ing) (?:the|this) loop(?=(?: here| on (?:this|my|our|it|things)| with you| for now)? *(?:[.!?,;]|$|\r?\n))`,
+    String.raw`\bclos(?:e|ing) (?:the|this) loop(?!\s+between\b)(?=(?: here| on (?:this|my|our|it|things)| with you| for now)? *(?:[.!?,;]|$|\r?\n))`,
     String.raw`\bclos(?:e|ing)(?: out)? (?:your|this) file\b`,
     String.raw`\bclosing (?:this|things) out\b`,
     // "my last note", never "the final note in the audit".
-    String.raw`\b(?:last|final) (?:note|nudge|ping|follow[- ]?up)\b(?!\s+(?:in|of|on|from|for|about|to|that|which)\b)`,
+    String.raw`\b(?:last|final) (?:note|nudge|ping|follow[- ]?up)\b(?!\s+(?:in|of|on|from|for|about|that|which)\b|\s+to\b(?!\s+you\b))`,
     String.raw`\b(?:this is|this['’]?s|here['’]?s) (?:my |the |a )?(?:last|final) (?:email|message|one)\b`,
     String.raw`\bone (?:last|final) (?:note|time|try|email|message|nudge)\b`,
     String.raw`\binbox (?:stays|stay) (?:clean|clear)\b`,
