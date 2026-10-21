@@ -40,6 +40,7 @@ import {
   sendCadenceBatchRoute,
   cadenceDraftVersionsRoute,
 } from "./api/cadences.ts";
+import { cadenceOfferRoute } from "./api/cadence-offer.ts";
 import { listReceipts, getReceipt } from "./api/receipts.ts";
 import {
   archiveInboxConversationRoute,
@@ -181,6 +182,7 @@ const routes: RouteEntry[] = [
   route("GET", "/api/cadences/:id/drafts", cadenceDraftVersionsRoute),
   route("POST", "/api/cadences/:id/preview-next", previewCadenceStepRoute),
   route("POST", "/api/cadences/:id/send-next", sendCadenceStepRoute),
+  route("POST", "/api/cadences/:id/offer", cadenceOfferRoute),
   route("POST", "/api/cadences/preview-batch", previewCadenceBatchRoute),
   route("POST", "/api/cadences/send-batch", sendCadenceBatchRoute),
   route("GET", "/api/receipts", listReceipts),

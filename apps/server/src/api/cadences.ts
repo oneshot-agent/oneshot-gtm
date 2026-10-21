@@ -33,6 +33,7 @@ import type {
 import { jsonResponse } from "../server.ts";
 import { callLinkedIn } from "../linkedin-client.ts";
 import { toDraftVersionView } from "./_draft-versions.ts";
+import { cadenceOfferFor } from "./cadence-offer.ts";
 import { sendsToday } from "./_capacity.ts";
 import { reportServerExecution } from "../telemetry.ts";
 
@@ -114,6 +115,11 @@ function toView(
     row.enrolled_at,
     row.current_step + 1,
   );
+  // The offer the follow-ups restate: only an active cadence has more to send.
+  const offer =
+    row.status === "active"
+      ? cadenceOfferFor(row.prospect_id, row.play_name, row.prospect_email)
+      : undefined;
   return {
     nextStepChannel: mailDraft ? "direct_mail" : (next?.channel ?? null),
     businessAddress: getLedger().getMailAddress(`prospect:${row.prospect_id}`),
@@ -149,6 +155,7 @@ function toView(
     lastSendErrorAt: row.last_send_error_at,
     heldElsewhere: row.status === "active" ? heldElsewhereFor(row.prospect_email) : null,
     queuePayload: payloadByKey.get(payloadKey(row.play_name, row.prospect_email)) ?? null,
+    ...(offer ? { offer } : {}),
   };
 }
 
@@ -352,10 +359,13 @@ function draftAngleChoiceOf(payload: unknown): DraftAngleChoice | null {
   if (typeof c.text !== "string" || !c.text.trim()) return null;
   return {
     text: c.text,
-    origin: c.origin === "generated" ? "generated" : "configured",
+    origin: c.origin === "generated" || c.origin === "offer" ? c.origin : "configured",
     index: Number.isInteger(c.index) ? (c.index as number) : 0,
     count: Number.isInteger(c.count) && (c.count as number) > 0 ? (c.count as number) : 1,
     ...(c.sameAsIntro === true ? { sameAsIntro: true } : {}),
+    ...(Number.isInteger(c.usedAtStep) && (c.usedAtStep as number) >= 0
+      ? { usedAtStep: c.usedAtStep as number }
+      : {}),
   };
 }
 

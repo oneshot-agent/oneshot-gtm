@@ -38,6 +38,7 @@ import {
   type CadenceWithProspect,
   clearCadenceDraft as cadClearCadenceDraft,
   countSends as cadCountSends,
+  discardCadenceDraft as cadDiscardCadenceDraft,
   enrollCadence as cadEnrollCadence,
   eventsByPlay as cadEventsByPlay,
   hasOutreachHistory as cadHasOutreachHistory,
@@ -599,6 +600,15 @@ export class Ledger {
 
   clearCadenceDraft(input: { prospectId: number; playName: string }): void {
     cadClearCadenceDraft(this.db, this.drafts, input);
+  }
+
+  /** Drop the stored next-step preview, unless a send holds the row (ledger-cadence.ts). */
+  discardCadenceDraft(input: {
+    prospectId: number;
+    playName: string;
+    reason: DraftDiscardReason;
+  }): boolean {
+    return cadDiscardCadenceDraft(this.db, this.drafts, input);
   }
 
   /** Every draft version a queue row or cadence step went through, newest first (ledger-drafts.ts). */
@@ -2585,11 +2595,11 @@ export class Ledger {
     return this.queue.latestQueueSource(playName, email);
   }
 
-  /** `latestSentQueuePayload` plus the row's `source`. */
+  /** `latestSentQueuePayload` plus the row's `source` and `id`. */
   latestSentQueueRow(
     playName: string,
     email: string,
-  ): { payload: Record<string, unknown>; source: string } | null {
+  ): { id: number; payload: Record<string, unknown>; source: string } | null {
     return this.queue.latestSentQueueRow(playName, email);
   }
 
@@ -2637,6 +2647,22 @@ export class Ledger {
     discardDraft?: boolean;
   }): boolean {
     return this.queue.patchLiveQueuePayload(input);
+  }
+
+  /**
+   * Merge a sequence's offer (`offer`, `offerCandidates`, nothing else) into
+   * a SENT queue row's payload. See the queue store's doc.
+   */
+  patchSentQueueOffer(input: {
+    id: number;
+    offer: Record<string, unknown>;
+    offerCandidates?: unknown[];
+    /** Compare-and-set: JSON paths that must still hold these scalar values (null: absent). */
+    expect?: Array<{ path: string; value: string | null }>;
+    /** Write only while this cadence holds no send (`sending_started_at`). */
+    cadence?: { prospectId: number; playName: string };
+  }): boolean {
+    return this.queue.patchSentQueueOffer(input);
   }
 
   latestQueueId(): number {

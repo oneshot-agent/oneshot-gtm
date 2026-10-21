@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CADENCE_SEND_UNCONFIRMED } from "@oneshot-gtm/shared-types";
 
+// The intro carried an offer (step-0 metadata), so every follow-up restates it.
+const OFFER = "get every vendor renewal signed before it lapses";
+const BODY =
+  "I can get every vendor renewal signed before it lapses, start to finish. Your ops lead gets back the hours spent chasing them, counted per renewal. Worth trying on the next one?";
+
 const calls = {
   sendEmail: 0,
   llm: 0,
@@ -163,7 +168,9 @@ vi.mock("@oneshot-gtm/core", async () => {
           : null;
       },
       findProspectByEmail: () => null,
-      listSequenceEventsForProspectPlay: () => [],
+      listSequenceEventsForProspectPlay: () => [
+        { step_index: 0, status: "sent", metadata_json: JSON.stringify({ offer: OFFER }) },
+      ],
       hasSentSequenceEvent: () => alreadySentNextStep,
       recordSequenceEvent: () => 0,
       setCadenceStatus: (input: { prospectId: number; playName: string; status: string }) => {
@@ -240,7 +247,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
     complete: async () => {
       calls.llm++;
       return {
-        content: JSON.stringify({ subject: "fresh subject", body: "fresh body" }),
+        content: JSON.stringify({ subject: "fresh subject", body: BODY }),
         provider: "test",
         model: "test",
       };
@@ -311,8 +318,8 @@ describe("previewCadenceStep", () => {
     });
     expect(calls.llm).toBe(1);
     expect(calls.sendEmail).toBe(0);
-    expect(out).toMatchObject({ subject: "fresh subject", body: "fresh body", flags: [] }); // clean draft
-    expect(persistedDraft).toMatchObject({ subject: "fresh subject", body: "fresh body" });
+    expect(out).toMatchObject({ subject: "fresh subject", body: BODY, flags: [] }); // clean draft
+    expect(persistedDraft).toMatchObject({ subject: "fresh subject", body: BODY });
     // A preview is the founder asking for a draft: the one it replaces was
     // rejected on its text (the follow-up keeps the classifier's angle).
     expect(lastDraftDiscardReason).toBe("regenerate");
@@ -344,7 +351,7 @@ describe("sendCadenceStep", () => {
     expect(calls.lastSendEmailArgs).toMatchObject({
       to: "p@x.dev",
       subject: "fresh subject",
-      body: "fresh body",
+      body: BODY,
       // Keyed on (play, prospect, step), never the draft text: a re-draft keeps it.
       idempotencyKey: expect.stringMatching(/^gtm:[^:]+:email:stack-consolidation:prospect:1:\d+$/),
     });

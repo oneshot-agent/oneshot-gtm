@@ -54,6 +54,8 @@ export const OFFER_ANGLE_COUNT = 5;
 
 const RESEARCH_MAX = 12_000;
 const BRIEF_MAX = 6_000;
+const THREAD_EMAIL_MAX = 1_500;
+const THREAD_MAX = 4_000;
 
 export interface ProspectOffer {
   /** The outcome for their firm, imperative, in their terms. */
@@ -399,12 +401,25 @@ function readRawList(content: string): RawOffer[] | "skip" {
   return typeof parsed.offer === "string" ? [parsed] : [];
 }
 
+/** One email a sequence already sent, as the offer writer is shown it. */
+export interface OfferThreadEmail {
+  subject: string;
+  body: string;
+}
+
 export interface DeriveOfferInput {
   target: object;
   /** Extra research the caller holds (a play's enrichment dossier). */
   dossier?: string | null;
   playName: string;
   cfg?: AppConfig;
+  /**
+   * The emails already sent in this sequence, oldest first, for an offer
+   * written mid-sequence: the offer continues what they named. Context for
+   * the writer only, never research: nothing in it grounds a number, a
+   * quote or the evidence.
+   */
+  thread?: ReadonlyArray<OfferThreadEmail>;
 }
 
 /** A row's offers: the active one (with its angles) and the ranked list it came from. */
@@ -413,8 +428,20 @@ export interface OfferSet {
   candidates: ProspectOffer[];
 }
 
+/** The THREAD SO FAR block: each sent email, capped, oldest first. */
+function threadBlock(thread: ReadonlyArray<OfferThreadEmail> | undefined): string | null {
+  const emails = (thread ?? []).filter((e) => e.body.trim());
+  if (emails.length === 0) return null;
+  const parts = emails.map(
+    (e, i) =>
+      `--- email ${i + 1} ---\nSubject: ${clip(e.subject.trim(), 200)}\n${clip(e.body.trim(), THREAD_EMAIL_MAX)}`,
+  );
+  return `THREAD SO FAR:\n${clip(parts.join("\n"), THREAD_MAX)}`;
+}
+
 function offerUserMessage(input: DeriveOfferInput, cfg: AppConfig, research: string): string {
   const t = input.target as JsonRecord;
+  const thread = threadBlock(input.thread);
   return [
     `PRODUCT: ${cfg.productOneLiner ?? ""}`,
     `PRODUCT BRIEF:\n${clip((cfg.productBrief ?? "").trim(), BRIEF_MAX)}`,
@@ -424,6 +451,7 @@ function offerUserMessage(input: DeriveOfferInput, cfg: AppConfig, research: str
     `TITLE: ${firstString(t, TITLE_KEYS)}`,
     `COMPANY: ${firstString(t, COMPANY_KEYS)}`,
     `RESEARCH:\n${research || "(none)"}`,
+    ...(thread ? [thread] : []),
   ].join("\n\n");
 }
 

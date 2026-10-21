@@ -1246,24 +1246,28 @@ export class QueueStore {
    * #584), whichever path sent it (drain, /queue send-draft, mark-sent). Null
    * when nothing was sent to them on this play, or the payload won't parse.
    */
-  /** `latestSentQueuePayload` plus the row's `source`, so a caller can resolve its trigger. */
+  /**
+   * `latestSentQueuePayload` plus the row's `source`, so a caller can resolve
+   * its trigger, and its `id`, so a caller can write the sequence's offer
+   * back to it (`patchSentQueueOffer`).
+   */
   latestSentQueueRow(
     playName: string,
     email: string,
-  ): { payload: Record<string, unknown>; source: string } | null {
+  ): { id: number; payload: Record<string, unknown>; source: string } | null {
     const row = this.db
       .query(
-        `SELECT payload_json, source FROM target_queue
+        `SELECT id, payload_json, source FROM target_queue
           WHERE play_name = ? AND status = 'sent'
             AND lower(trim(json_extract(payload_json, '$.email'))) = lower(trim(?))
           ORDER BY sent_at DESC, id DESC LIMIT 1`,
       )
-      .get(playName, email) as { payload_json: string; source: string } | null;
+      .get(playName, email) as { id: number; payload_json: string; source: string } | null;
     if (!row) return null;
     try {
       const parsed: unknown = JSON.parse(row.payload_json);
       return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? { payload: parsed as Record<string, unknown>, source: row.source }
+        ? { id: row.id, payload: parsed as Record<string, unknown>, source: row.source }
         : null;
     } catch {
       return null;
@@ -1402,6 +1406,54 @@ export class QueueStore {
       if (input.discardDraft) this.drafts.close({ queueId: input.id }, "discarded", "redraft");
       return true;
     })();
+  }
+
+  /**
+   * Write a cadence's offer onto the SENT queue row its intro went out from:
+   * a sequence that started before prospect offers existed gets one when its
+   * next follow-up is drafted, and every later touch reads it back from here.
+   * Only the `offer` and `offerCandidates` keys are merged (JSON merge patch,
+   * so a null inside `offer` deletes that key), and only on a row whose
+   * status is `sent`: a live row's offer belongs to `patchLiveQueuePayload`.
+   * `expect` is the same compare-and-set as there. `cadence` makes the write
+   * wait for no send: it lands only while that cadence holds no
+   * `sending_started_at`, in the same statement, so an offer written while
+   * a send claimed the cadence is never stored. False when nothing was
+   * written.
+   */
+  patchSentQueueOffer(input: {
+    id: number;
+    offer: Record<string, unknown>;
+    offerCandidates?: unknown[];
+    expect?: Array<{ path: string; value: string | null }>;
+    cadence?: { prospectId: number; playName: string };
+  }): boolean {
+    const guards = input.expect ?? [];
+    const patch: Record<string, unknown> = { offer: input.offer };
+    if (input.offerCandidates !== undefined) patch["offerCandidates"] = input.offerCandidates;
+    const cadence = input.cadence;
+    const r = this.db
+      .prepare(
+        `UPDATE target_queue
+            SET payload_json = json_patch(payload_json, ?)
+          WHERE id = ?
+            AND status = 'sent'
+            AND json_valid(payload_json)${guards.map(() => "\n            AND json_extract(payload_json, ?) IS ?").join("")}${
+              cadence
+                ? `
+            AND NOT EXISTS (SELECT 1 FROM cadence_state
+                             WHERE prospect_id = ? AND play_name = ?
+                               AND sending_started_at IS NOT NULL)`
+                : ""
+            }`,
+      )
+      .run(
+        JSON.stringify(patch),
+        input.id,
+        ...guards.flatMap((g) => [g.path, g.value]),
+        ...(cadence ? [cadence.prospectId, cadence.playName] : []),
+      );
+    return r.changes === 1;
   }
 
   latestQueueId(): number {

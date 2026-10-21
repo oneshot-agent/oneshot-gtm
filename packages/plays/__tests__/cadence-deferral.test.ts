@@ -108,7 +108,10 @@ vi.mock("@oneshot-gtm/core", async () => {
           : null;
       },
       findProspectByEmail: () => null,
-      listSequenceEventsForProspectPlay: () => [],
+      // The intro carried an offer, so the unattended runner may draft the follow-up.
+      listSequenceEventsForProspectPlay: () => [
+        { step_index: 0, status: "sent", metadata_json: JSON.stringify({ offer: "an offer" }) },
+      ],
       recordSequenceEvent: () => 0,
       hasSentSequenceEvent: () => false,
       setCadenceStatus: () => {},

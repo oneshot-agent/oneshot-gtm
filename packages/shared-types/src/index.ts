@@ -84,6 +84,53 @@ export interface CadenceHeldElsewhere {
   until: string;
 }
 
+/** One of a sequence's ranked offers, as the /cadences card shows it. */
+export interface CadenceOfferChoice {
+  /** The outcome for their firm, in their terms: the line every follow-up opens on. */
+  text: string;
+  /** What the firm gets back when the job is done, and how they would count it. */
+  return?: string;
+  /** How the product delivers it. */
+  steps?: string;
+  /** Reasons it pays back, one per touch: the follow-ups' angles. */
+  angles?: string[];
+  /** Short quotes from the research it rests on. */
+  evidence?: string[];
+  stage?: string;
+  /** `role`: research was thin, built on role and firm type. */
+  level?: "researched" | "role";
+  /** The anchor it rests on and the fact behind it. */
+  fit?: string;
+  /** The relevance judge's label; `weak` ones only make up the five. */
+  relevance?: "relevant" | "weak" | "irrelevant";
+  /** 0–1: the judge's probability that it is relevant. */
+  relevanceScore?: number;
+}
+
+/**
+ * The offer a cadence's follow-ups restate (`sequenceOfferRecord`): the
+ * intro's own, or one written for the sequence and kept on the sent queue
+ * row. Changed with POST /api/cadences/:id/offer, same body as the queue's.
+ */
+export interface CadenceOfferView extends Omit<CadenceOfferChoice, "text"> {
+  /** The active offer; null while the sequence has none. */
+  text: string | null;
+  /** Rated a weak fit, and neither written nor approved by the founder: it holds the follow-up. */
+  weak: boolean;
+  /** The founder approved it although it was rated a weak fit. */
+  weakApproved: boolean;
+  /** The founder wrote or edited it. */
+  founderEdited: boolean;
+  /** The ranked offers it came from, best return first; empty when only the intro's text is known. */
+  candidates: CadenceOfferChoice[];
+  /** The active offer's place among `candidates`; -1 when it is not one of them. */
+  activeIndex: number;
+  /** The first email carried it: what was sent is fixed, so it cannot change. */
+  introCarriedOffer: boolean;
+  /** The sent queue row it is kept on; null when there is none, and nowhere to keep one. */
+  queueRowId: number | null;
+}
+
 export interface CadenceView {
   nextStepChannel?: StepChannel | null;
   businessAddress?: BusinessMailAddress | null;
@@ -150,6 +197,11 @@ export interface CadenceView {
    * enrolled by hand, an older ledger). The UI simply omits the reminder.
    */
   queuePayload: unknown | null;
+  /**
+   * The offer the follow-ups restate, on an active cadence of a play that
+   * makes one. Absent otherwise.
+   */
+  offer?: CadenceOfferView;
 }
 
 /**
@@ -929,11 +981,18 @@ export interface AddProspectResult {
  */
 export interface DraftAngleChoice {
   text: string;
-  origin: "configured" | "generated";
+  /** `offer`: a follow-up built on one of its sequence offer's own angles. */
+  origin: "configured" | "generated" | "offer";
   index: number;
   count: number;
   /** Follow-ups: the angle is the intro's own, not a new one. */
   sameAsIntro?: boolean;
+  /**
+   * Follow-ups: an earlier step of this sequence already made this angle
+   * (every angle was used): the 0-based step that last did, as the cadence
+   * history numbers steps. Absent when the angle is new to the sequence.
+   */
+  usedAtStep?: number;
 }
 
 /** One entry in a row's draft history (`GET /api/queue/:id/drafts`, `GET /api/cadences/:id/drafts`). */
@@ -943,7 +1002,7 @@ export interface DraftVersionView {
   subject: string;
   body: string;
   flags: string[];
-  angle: { text: string; origin: "configured" | "generated" } | null;
+  angle: { text: string; origin: "configured" | "generated" | "offer" } | null;
   outcome: "open" | "discarded" | "sent" | "auto_sent";
   discardReason: "regenerate" | "rotate" | "redraft" | "abandoned" | null;
   /** Fingerprint of the approved learned-guidance set the draft was written with (#813). */

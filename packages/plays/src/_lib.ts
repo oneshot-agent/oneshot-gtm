@@ -267,6 +267,32 @@ export function bodySentencesForLint(body: string, sigLines?: string[]): number 
   return count;
 }
 
+/** A follow-up under either says nothing new: "If it's not the right time, a one-word no helps too." */
+const THIN_BODY_MIN_WORDS = 20;
+const THIN_BODY_MIN_SENTENCES = 2;
+/** A closing line ("Best,", "Thanks,") or a bare name under it: the sign-off, not the message. */
+const SIGNOFF_LINE = /^(?:[\p{L} ]{1,20},|[\p{L}][\p{L}.'-]*(?: [\p{L}][\p{L}.'-]*){0,2})$/u;
+
+/**
+ * True when a body's message, before the sign-off, is too thin to send: fewer
+ * than two sentences or under twenty words, the greeting and sign-off left
+ * out. An empty body is `empty-body`'s, not this. Keyed on the output only.
+ */
+export function thinBody(body: string, sigLines?: string[]): boolean {
+  if (!body.trim()) return false;
+  const lines = bodyWithoutSignature(body, sigLines)
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  while (lines.length > 0 && SIGNOFF_LINE.test(lines.at(-1)!) && !/[.!?]$/.test(lines.at(-1)!)) {
+    lines.pop();
+  }
+  const message = lines.filter((l) => !GREETING_LINE.test(l)).join("\n");
+  if (!message) return true;
+  const words = message.split(/\s+/).filter(Boolean).length;
+  return words < THIN_BODY_MIN_WORDS || bodySentencesForLint(message, []) < THIN_BODY_MIN_SENTENCES;
+}
+
 /**
  * Words of the body that make up an opener fingerprint. Two, measured: across
  * 411 sent follow-ups the opener "still curious" held 55% at two words but
@@ -559,7 +585,8 @@ export function lintEmail(
   maxBodySentences?: number,
   /**
    * `followUp`: flag an either/or closing question and a line announcing
-   * that the sequence is ending (`signoff-body`), on follow-ups and breakups.
+   * that the sequence is ending (`signoff-body`), on follow-ups and breakups,
+   * and, with an `offer`, a body too thin to carry it (`thin-body`).
    * `demoDay`: the prospect's demo day, when known; a body that mentions demo
    * day after it has passed is flagged `stale-demo-day`.
    * `protect`: config text the prompt quotes verbatim (see `humanizeDraft`);
@@ -601,6 +628,10 @@ export function lintEmail(
   if (maxBodySentences !== undefined && bodySentencesForLint(body) > maxBodySentences) {
     flags.push("too-many-sentences");
   }
+  // A follow-up that carries an offer restates it and makes its angle's
+  // point: one bare line cannot. Plays whose follow-ups are a deliberate
+  // one-line ask carry no offer.
+  if (opts.followUp && opts.offer && thinBody(body)) flags.push("thin-body");
   if (opts.followUp && closingEitherOrQuestion(body)) flags.push("either-or-question");
   if (opts.followUp && announcesSignoff(written)) flags.push("signoff-body");
   if (mentionsStaleDemoDay(body, opts.demoDay ?? null)) flags.push("stale-demo-day");
@@ -1280,6 +1311,8 @@ const WRITING_REPAIRS: Record<string, string> = {
   "hard-ban:price": "Remove price and cost figures, rather than spelling out the same offer.",
   "hard-ban:discount-offer": "Remove discount and free-trial offers entirely.",
   "opener-overused": "Use a different opening structure from the supplied recent emails.",
+  "thin-body":
+    "The body says too little to send. Write at least two sentences and twenty words before the sign-off: open with the OFFER restated in their terms when the input has one, then make the angle's point as what they get back. Keep the closing question short.",
   "opens-on-observation":
     "Open with the OFFER: the first sentence after the greeting says what you will do for them. Drop the observation about them or move it after the offer as a short why-now clause.",
   "opens-without-offer":

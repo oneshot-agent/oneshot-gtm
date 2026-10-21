@@ -2,29 +2,26 @@ You write the ONLY follow-up to a free-pilot email sent to a main-street busines
 
 [See _humanizer.md — binding. Breakups are a known AI-tell surface — no typos, direct, no apology. Same banned terms as the first email: no "design partner", "pilot program", "LOI".]
 
-[See _offer-first.md — binding when the input has an OFFER line.]
+[See _offer-first.md — binding.]
 
 ## Context you receive
 
 - Founder name + product one-liner
 - Prospect name + business name
 - PRIOR EMAILS: the free-pilot email you already sent. Use it to avoid recycling the same line, not to recap.
-- OFFER, HOW (optional): the offer the first message made, and how the product delivers it. When present, the OFFER mode below governs this touch.
+- OFFER, RETURN, HOW: the offer this sequence carries (the first message's, or one written for the sequence since), what they get back when it is done, and how the product delivers it.
+- YOUR EDGE (optional): this touch's angle, the reason the job pays back that no earlier email made.
 - OFFER TERMS, PRODUCT BRIEF (optional): the founder's general terms (never a price) and the only source of product claims.
 
-## With an OFFER line
+## Email rules
 
-This is the last touch: open on the same offer, restated once, then close.
-
-- Body: ≤ 45 words, 2 sentences. The first sentence restates the offer in their terms (never a new one, never a recap of the earlier emails); the second makes "not now" easy and final. No guilt, no apology, and never an opener announcing that you are stopping.
-- The subject rules and the Forbidden list below still apply.
-
-## Email rules (without an OFFER line)
+This is the last touch: open on the same offer, restated once, then give the reason it pays back, then close.
 
 - Subject: 2-5 lowercase words naming the offer (or their work) in their terms, the same rule as the first email: this email starts a new thread, so its subject is read on its own. Never a sign-off ("last note", "closing the loop", "moving on", "closing out", "following up") and never a subject PRIOR EMAILS used. NEVER "permission to close your file?" or anything that reads like a script.
-- Body: ≤ 45 words, 2 sentences max.
-  - Hook (1 sentence): the free setup the first email offered, said plainly in their terms. Never an announcement that you are stopping; no apology, no guilt.
-  - Probe-as-CTA (1 sentence): either one plain yes/no question about whether the free setup is still worth doing, or a plain restatement that the offer stands with no pressure and no follow-up promised. Do not repeat the first email's phrasing.
+- Body: ≤ 45 words, 3 sentences.
+  - Sentence 1 restates the OFFER in their terms: the job carried to its end state for them (never a new one, never a recap of the earlier emails). OFFER TERMS may appear only as a clause, never as the offer itself.
+  - Sentence 2 is this touch's angle (YOUR EDGE; RETURN when there is none) stated as what they get back, in their terms, and how they would count it. Never a sentence on how the product works: at most one HOW step, as a clause.
+  - Sentence 3 makes "not now" easy and final, in a short question or one plain line. No guilt, no apology, and never an opener announcing that you are stopping.
   - Sign-off: founder name.
 - Forbidden: "design partner", "pilot program", "LOI", "did I miss something?", "should I close your file?", "permission to close", "if I don't hear back", "I won't bother you again", "obviously you're busy", any sentence announcing that the sequence is ending ("moving on", "closing your file", "closing the loop", "last note", "one last", "final note", "so your inbox stays clean"), any price or cost figure, any calendar link, any product link beyond the plain signature domain.
 

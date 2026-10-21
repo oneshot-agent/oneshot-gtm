@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const calls = { sendEmail: 0, llm: 0 };
+// The intro carried an offer (step-0 metadata); every follow-up opens on it.
+const OFFER = "get every vendor renewal signed before it lapses";
+const BODY =
+  "I can get every vendor renewal signed before it lapses, start to finish. Your ops lead gets back the hours spent chasing them, counted per renewal. Worth trying on the next one?";
 
 let cadenceRows: Array<{
   prospect_id: number;
@@ -85,7 +89,9 @@ vi.mock("@oneshot-gtm/core", async () => {
           : null;
       },
       findProspectByEmail: () => null,
-      listSequenceEventsForProspectPlay: () => [],
+      listSequenceEventsForProspectPlay: () => [
+        { step_index: 0, status: "sent", metadata_json: JSON.stringify({ offer: OFFER }) },
+      ],
       recordSequenceEvent: () => 0,
       hasSentSequenceEvent: () => false,
       setCadenceStatus: () => {},
@@ -149,7 +155,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
     complete: async () => {
       calls.llm++;
       return {
-        content: JSON.stringify({ subject: "subj", body: "body" }),
+        content: JSON.stringify({ subject: "subj", body: BODY }),
         provider: "test",
         model: "test",
       };

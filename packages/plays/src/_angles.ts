@@ -143,12 +143,21 @@ export interface AngleSelection {
   index: number;
   angle: string;
   count: number;
-  method: "single" | "cached" | "classifier" | "hash" | "arm";
+  /** `reused`: a follow-up whose sequence had used every angle took the least recently used one. */
+  method: "single" | "cached" | "classifier" | "hash" | "arm" | "reused";
   /**
    * Follow-ups only: the pick is the intro's own angle. The arm split, or a
    * rotation that ran out of other angles. Callers must not present it as new.
    */
   sameAsIntro?: boolean;
+  /**
+   * Follow-ups only: an earlier step of the sequence already made this angle,
+   * the 0-based index of the last one that did. Callers must not present it
+   * as new.
+   */
+  usedAtStep?: number;
+  /** Follow-ups only: `offer` when the pool was the sequence offer's own angles. */
+  origin?: "configured" | "offer";
 }
 
 export interface SelectAngleInput {
@@ -347,10 +356,10 @@ export function withSelectedAngle<T>(target: T, field: EdgeField, angle: string)
 }
 
 /**
- * The angle a follow-up should be built on: a different one from the intro's,
- * chosen from the trigger's CURRENT edge. Null (and therefore no block) when
- * the play's sent row carries no multi-angle edge, or the ledger can't answer
- * (test doubles, older rows).
+ * The angle a follow-up should be built on: a different one from every
+ * earlier step's, chosen from the trigger's CURRENT edge. Null (and therefore
+ * no block) when the play's sent row carries no multi-angle edge, or the
+ * ledger can't answer (test doubles, older rows).
  */
 export async function followUpEdgeAngle(
   prospect: { email: string | null; id?: number | null },
@@ -360,28 +369,52 @@ export async function followUpEdgeAngle(
   return sel?.angle ?? null;
 }
 
+/** One angle a sent step of the sequence was built on (issue #584 metadata). */
+interface PriorAngle {
+  step: number;
+  text: string;
+}
+
 /**
- * The intro's angle as recorded on its sent step (issue #584 metadata): its
- * text, and how it was picked (`arm` only when the arm split chose it).
+ * The angles this sequence's sent steps were built on, oldest step first, and
+ * how the intro's was picked (`arm` only when the arm split chose it). Steps
+ * at or after `beforeStep` are left out: they are not "earlier" for the step
+ * being drafted. Skipped steps never carried an angle.
  */
-function introAngle(
+function priorAngles(
   prospectId: number | null | undefined,
   playName: string,
-): { text: string | null; method: string | null } {
-  const none = { text: null, method: null };
+  beforeStep: number | null,
+): { used: PriorAngle[]; introMethod: string | null } {
+  const none = { used: [], introMethod: null };
   if (!prospectId) return none;
   try {
     const rows = getLedger().listSequenceEventsForProspectPlay(prospectId, playName) as Array<{
       step_index: number;
+      status?: string;
       metadata_json: string | null;
     }>;
-    const step0 = rows.find((r) => r.step_index === 0);
-    if (!step0?.metadata_json) return none;
-    const meta = JSON.parse(step0.metadata_json) as { angleText?: unknown; angleMethod?: unknown };
-    return {
-      text: typeof meta.angleText === "string" && meta.angleText.trim() ? meta.angleText : null,
-      method: typeof meta.angleMethod === "string" ? meta.angleMethod : null,
-    };
+    const used: PriorAngle[] = [];
+    let introMethod: string | null = null;
+    let sawIntro = false;
+    for (const row of rows) {
+      if (row.status === "skipped") continue;
+      if (beforeStep != null && row.step_index >= beforeStep) continue;
+      const meta = tryParseJsonObject<{ angleText?: unknown; angleMethod?: unknown }>(
+        row.metadata_json ?? "",
+        {},
+      );
+      if (row.step_index === 0) {
+        // The first step-0 row is the intro, as every other reader takes it.
+        if (sawIntro) continue;
+        sawIntro = true;
+        introMethod = typeof meta.angleMethod === "string" ? meta.angleMethod : null;
+      }
+      if (typeof meta.angleText === "string" && meta.angleText.trim()) {
+        used.push({ step: row.step_index, text: meta.angleText });
+      }
+    }
+    return { used, introMethod };
   } catch {
     return none;
   }
@@ -392,17 +425,30 @@ function introAngle(
  * current edge), so the follow-up draft can carry which angle it was built on
  * the way an intro draft does. The draft-version record keys on it.
  *
- * The edge is the trigger's current one (`resolveTriggerOverlay` over the
- * intro's sent row), so an edit reaches prospects already in cadence; the
- * frozen payload edge is only a fallback when the trigger is gone or its
- * config is invalid. The intro's angle is excluded by its recorded TEXT, so a
- * reordered edge still excludes it and a rewritten one excludes nothing.
- * `rotateFrom` also excludes the angle a "Rotate angle" is moving away from.
+ * The pool is the sequence offer's own angles when it has them (`offer`, else
+ * the offer on the intro's sent row), else the trigger's current edge
+ * (`resolveTriggerOverlay` over the intro's sent row), so an edit reaches
+ * prospects already in cadence; the frozen payload edge is only a fallback
+ * when the trigger is gone or its config is invalid. A sequence with no sent
+ * queue row has only its offer's angles.
+ *
+ * Every angle an earlier step was built on is excluded by its recorded TEXT
+ * (so a reordered edge still excludes it and a rewritten one excludes
+ * nothing), and so is `rotateFrom`, the angle a "Rotate angle" moves away
+ * from. When every angle has been used, the least recently used one is taken
+ * and the selection says when (`usedAtStep`). `stepIndex` is the step being
+ * drafted: it bounds "earlier" and keys the classifier's cached pick, so each
+ * step gets its own.
  */
 export async function followUpEdgeSelection(
   prospect: { email: string | null; id?: number | null },
   playName: string,
-  opts: { rotateFrom?: string | null } = {},
+  opts: {
+    rotateFrom?: string | null;
+    stepIndex?: number | null;
+    /** The sequence's offer, when it is not (or not yet) on the sent row. */
+    offer?: { angles?: unknown } | null;
+  } = {},
 ): Promise<AngleSelection | null> {
   const email = prospect.email?.trim();
   if (!email) return null;
@@ -419,23 +465,31 @@ export async function followUpEdgeSelection(
             return payload ? { payload, source: "" } : null;
           })();
   } catch {
-    return null;
+    row = null;
   }
-  if (!row) return null;
-  const frozenField = edgeFieldOf(row.payload);
-  const frozenEdge = frozenField ? (row.payload[frozenField] as string) : "";
-  let target = row.payload;
-  try {
-    target = resolveTriggerOverlay(row.payload, row.source, (name) => getLedger().getTrigger(name));
-  } catch (err) {
-    logEvent(
-      "angle.followup_frozen_edge",
-      { play: playName, message_120: ((err as Error).message ?? "").slice(0, 120) },
-      "warn",
-    );
+  if (!row && !opts.offer) return null;
+  const payload = row?.payload ?? { email };
+  const frozenField = edgeFieldOf(payload);
+  const frozenEdge = frozenField ? (payload[frozenField] as string) : "";
+  let target = payload;
+  if (row) {
+    try {
+      target = resolveTriggerOverlay(row.payload, row.source, (name) =>
+        getLedger().getTrigger(name),
+      );
+    } catch (err) {
+      logEvent(
+        "angle.followup_frozen_edge",
+        { play: playName, message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+    }
   }
-  // The intro's offer, when it carries angles, supplies the follow-ups' pool.
-  target = overlayOfferAngles(target);
+  // The sequence's offer, when it carries angles, supplies the follow-ups' pool.
+  if (opts.offer) target = { ...target, offer: opts.offer };
+  const overlaid = overlayOfferAngles(target);
+  const origin: "configured" | "offer" = overlaid !== target ? "offer" : "configured";
+  target = overlaid;
   const field = edgeFieldOf(target);
   if (!field) return null;
   const edge = target[field] as string;
@@ -445,15 +499,27 @@ export async function followUpEdgeSelection(
   // What to exclude, by text. With no recorded intro text (rows from before
   // the angle was stamped on the send), fall back to the intro's cached pick
   // on the edge it was chosen from.
-  const intro = introAngle(prospect.id, playName);
-  let introText = intro.text;
+  const prior = priorAngles(prospect.id, playName, opts.stepIndex ?? null);
+  const used = [...prior.used];
+  let introText = used.find((u) => u.step === 0)?.text ?? null;
   if (!introText && frozenEdge) {
     const idx = readCached(
       cacheKeyFor({ edge: frozenEdge, prospectKey: email, description: "" }, null),
     );
     const frozen = splitEdgeAngles(frozenEdge);
-    if (idx != null && idx >= 0 && idx < frozen.length) introText = frozen[idx]!;
+    if (idx != null && idx >= 0 && idx < frozen.length) {
+      introText = frozen[idx]!;
+      used.unshift({ step: 0, text: introText });
+    }
   }
+  /** The last step that used this angle, or null when none did. */
+  const lastUsedAt = (text: string): number | null => {
+    let at: number | null = null;
+    for (const u of used) if (angleTextKey(u.text) === angleTextKey(text)) at = u.step;
+    return at;
+  };
+  const isIntro = (text: string): boolean =>
+    !!introText && angleTextKey(text) === angleTextKey(introText);
   // Arm split: the whole cadence stays on the prospect's arm, so every step
   // of the comparison measures one angle. The intro's angle when it is still
   // in the edge (an edit that reorders angles must not move anyone), else the
@@ -462,57 +528,85 @@ export async function followUpEdgeSelection(
   // fit-picked intro's follow-ups as arm drafts. Turning it off ends the
   // comparison for everyone. A founder's rotate leaves it through the fit
   // path below.
-  if (angleAssignmentOf(target) === "arm" && intro.method === "arm" && !opts.rotateFrom?.trim()) {
+  if (
+    angleAssignmentOf(target) === "arm" &&
+    prior.introMethod === "arm" &&
+    !opts.rotateFrom?.trim()
+  ) {
     const introIndex = introText
       ? angles.findIndex((a) => angleTextKey(a) === angleTextKey(introText!))
       : -1;
     const index = introIndex >= 0 ? introIndex : angleArmIndex(email, angles.length);
+    const usedAt = lastUsedAt(angles[index]!);
     return {
       index,
       angle: angles[index]!,
       count: angles.length,
       method: "arm",
+      origin,
       // Only when the intro's angle is still on the edge: an arm re-picked
       // after an edit removed it is a new angle to the reader.
       sameAsIntro: introIndex >= 0,
+      ...(usedAt != null ? { usedAtStep: usedAt } : {}),
     };
   }
-  const excluded = new Set(
-    [introText, opts.rotateFrom].filter((t): t is string => !!t?.trim()).map(angleTextKey),
-  );
-  let candidates = angles.filter((a) => !excluded.has(angleTextKey(a)));
-  // Rotating away with nothing else left: the intro's angle is fair game again.
-  if (candidates.length === 0 && opts.rotateFrom) {
-    candidates = angles.filter((a) => angleTextKey(a) !== angleTextKey(opts.rotateFrom!));
+  const rotateKey = opts.rotateFrom?.trim() ? angleTextKey(opts.rotateFrom) : null;
+  const excluded = new Set([
+    ...used.map((u) => angleTextKey(u.text)),
+    ...(rotateKey ? [rotateKey] : []),
+  ]);
+  const candidates = angles.filter((a) => !excluded.has(angleTextKey(a)));
+  if (candidates.length === 0) {
+    // Every angle has been made (or is being rotated away from): take the
+    // one made longest ago, never the rotated-away one while another is left.
+    const pool = angles.filter((a) => angleTextKey(a) !== rotateKey);
+    const pick = (pool.length > 0 ? pool : angles).reduce((best, a) =>
+      (lastUsedAt(a) ?? -1) < (lastUsedAt(best) ?? -1) ? a : best,
+    );
+    const usedAt = lastUsedAt(pick);
+    return {
+      index: angles.indexOf(pick),
+      angle: pick,
+      count: angles.length,
+      method: "reused",
+      origin,
+      sameAsIntro: isIntro(pick),
+      ...(usedAt != null ? { usedAtStep: usedAt } : {}),
+    };
   }
-  if (candidates.length === 0) return null;
 
+  const context = [
+    opts.stepIndex != null ? `step-${opts.stepIndex}` : null,
+    angleCacheContext(target) ?? null,
+  ].filter((c): c is string => !!c);
   const pick = await selectAngle({
     edge: candidates.join(" // "),
     prospectKey: email,
     description: describeTargetForAngle(target),
     playName,
-    cacheContext: angleCacheContext(target),
+    ...(context.length > 0 ? { cacheContext: context.join(":") } : {}),
   });
   const index = angles.findIndex((a) => angleTextKey(a) === angleTextKey(pick.angle));
   return {
     ...pick,
     index: index < 0 ? 0 : index,
     count: angles.length,
-    // A rotation with nothing else left lands back on the intro's angle.
-    sameAsIntro: !!introText && angleTextKey(pick.angle) === angleTextKey(introText),
+    origin,
+    sameAsIntro: isIntro(pick.angle),
   };
 }
 
 /**
- * YOUR EDGE block for a follow-up (issue #584): a DIFFERENT angle from the
- * intro's, so the follow-up has new material instead of being a bump. Null
- * when the play's sent row carries no multi-angle edge: byte-identical
+ * YOUR EDGE block for a follow-up (issue #584): an angle no earlier email
+ * made, so the follow-up has new material instead of being a bump. It claims
+ * the angle is new only when it is: the arm split's intro angle, or one taken
+ * again once every angle was used, is framed as a new detail on a made
+ * argument. Null when the sequence has no multi-angle edge: byte-identical
  * output to before.
  */
 export function followUpEdgeBlock(
   angle: string | null,
-  opts: { sameAsIntro?: boolean } = {},
+  opts: { sameAsIntro?: boolean; usedAtStep?: number | null } = {},
 ): string | null {
   if (!angle?.trim()) return null;
   if (opts.sameAsIntro) {
@@ -523,8 +617,14 @@ export function followUpEdgeBlock(
       angle.trim(),
     ].join("\n");
   }
+  if (opts.usedAtStep != null) {
+    return [
+      "YOUR EDGE (an angle an earlier email in PRIOR EMAILS already made — build this follow-up on a new detail, example or consequence of it; never repeat that email's wording, never mention that other angles exist):",
+      angle.trim(),
+    ].join("\n");
+  }
   return [
-    "YOUR EDGE (a different angle from the first email — the new information this follow-up is built on; never re-use the first email's angle, never mention that other angles exist):",
+    "YOUR EDGE (a different angle from the first email and every email since — the new information this follow-up is built on; never re-use an earlier email's angle, never mention that other angles exist):",
     angle.trim(),
     "",
     'This angle was NOT raised in PRIOR EMAILS, and it overrides any instruction to re-ask the first email\'s question: make this angle\'s point in a sentence, then ask one short question about it. Do not open as if it had been raised before — no "still curious", "did that turn out", "any luck with", "what did you end up doing", or any wording that treats it as a question already asked.',

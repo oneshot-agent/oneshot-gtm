@@ -243,6 +243,32 @@ describe("deriveOffers", () => {
     expect(llm.inputs[1]).toContain("offer 2: offer-not-execution");
     expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer]);
   });
+
+  it("shows a mid-sequence writer the THREAD SO FAR, as context it may not quote as evidence", async () => {
+    const thread = [
+      { subject: "crews in leeds", body: "Your crews in Leeds run 412 jobs a week by hand." },
+      { subject: "Re: crews in leeds", body: "Still worth a look?" },
+    ];
+    const quoting = { ...good, evidence: ["Your crews in Leeds run 412 jobs a week by hand."] };
+    llm.replies = [
+      JSON.stringify({ offers: [quoting, second] }),
+      JSON.stringify({ offers: [good, second] }),
+    ];
+    const offers = await deriveOffers({ target, playName: "new-business", thread });
+    expect(llm.inputs[0]).toContain("THREAD SO FAR:");
+    expect(llm.inputs[0]).toContain("--- email 1 ---\nSubject: crews in leeds");
+    expect(llm.inputs[0]).toContain("Still worth a look?");
+    // A quote from our own emails is not research: the offer resting on it is sent back.
+    expect(llm.inputs[1]).toContain("offer 1:");
+    expect(offers.map((o) => o.offer).toSorted()).toEqual([good.offer, second.offer].toSorted());
+    expect(offers.flatMap((o) => o.evidence)).not.toContain(quoting.evidence[0]);
+  });
+
+  it("adds no THREAD SO FAR block for an intro", async () => {
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs[0]).not.toContain("THREAD SO FAR");
+  });
 });
 
 describe("deriveOfferSet", () => {

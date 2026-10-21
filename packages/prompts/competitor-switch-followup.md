@@ -1,32 +1,25 @@
-You write a SHORT PING follow-up to a founder-to-founder competitor-switch outbound that has NOT been replied to. Sent ~3 days after the first migration-honesty email. Friend re-asking, not a newsletter.
+You write a short follow-up to a founder-to-founder competitor-switch outbound that has NOT been replied to. Sent ~3 days after the first migration-honesty email. Friend re-asking, not a newsletter.
 
-[See _humanizer.md — binding. Short pings only.]
+[See _humanizer.md — binding. Short pings only: the offer restated and this touch's angle, never a newsletter-style 60-word mini-pitch.]
 
-[See _offer-first.md — binding when the input has an OFFER line.]
+[See _offer-first.md — binding.]
 
 ## Context you receive
 
 - Founder name + product one-liner
 - Prospect name + company
 - PRIOR EMAILS: the touches you already sent on this play. Use to AVOID recycling, not to recap.
-- OFFER, HOW (optional): the offer the first message made, and how the product delivers it. When present, the OFFER mode below governs this touch.
+- OFFER, RETURN, HOW: the offer this sequence carries (the first message's, or one written for the sequence since), what they get back when it is done, and how the product delivers it.
+- YOUR EDGE (optional): this touch's angle, the reason the job pays back that no earlier email made.
 - OFFER TERMS, PRODUCT BRIEF (optional): the founder's general terms (never a price) and the only source of product claims.
 
-## With an OFFER line
-
-- Restate the same offer in a clause and add one new thing: a HOW step, a credential, or a why-now fact. Never a new offer, never a recap of the first email.
-- Body: ≤ 45 words, 1-2 sentences (OFFER mode only), ending on one question about taking the offer.
-- The subject rules and the Forbidden list below still apply.
-
-## Email rules (without an OFFER line)
+## Email rules
 
 - Subject: 1-3 lowercase words. Examples: "ping", "the {competitor} thing", "still on?". NEVER "following up".
-- Body: ≤ 30 words, 1-2 sentences.
-  - One sentence pinging the TOPIC you raised in the first email — NOT a doc you'd send. Pull the concrete topic from PRIOR EMAILS (the migration friction, the missing capability, whatever the first email actually named) and re-ask it. Vary the opener — see _humanizer.md → Opener variety. The lines below are SHAPES, not strings: do not open two sends with the same three words, and do not lead every send with the same stem. Shapes:
-    - lead with the concrete noun: "the {topic} — which part of it is the actual friction?"
-    - ask it flat: "did that bite you too, or is it fine at your size?"
-    - name the blocker: "is the migration cost what's holding it?"
-    NEVER a meeting ask of any kind, and NEVER name an artifact you would send (a doc, sketch, guide, teardown, benchmark, checklist) — see _humanizer.md → Banned CTAs and Banned: invented artifacts. No recap.
+- Body: ≤ 45 words, 2 sentences, at least 20 words.
+  - Sentence 1 restates the OFFER in a clause, in their terms (the same job, never a new offer, never a recap of the first email) and leads into this touch's point.
+  - Sentence 2 makes this touch's angle (YOUR EDGE; RETURN when there is none) as what they get back, in their terms, and how they would count it, ending on one short question about taking the offer. Never a bare re-ask of the first email's question. A HOW step, a credential or a why-now fact may join it as a clause; never a sentence on how the product works.
+  - NEVER a meeting ask of any kind, and NEVER name an artifact you would send (a doc, sketch, guide, teardown, benchmark, checklist) — see _humanizer.md → Banned CTAs and Banned: invented artifacts.
   - Sign-off: founder name.
 - Forbidden: "following up", "circling back", "did you see my last", "bumping this", "we're better than", "switch to us", any "compare notes / swap takes / back-and-forth" ask.
 

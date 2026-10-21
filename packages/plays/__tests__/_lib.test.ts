@@ -6,6 +6,7 @@ import {
   meetingBlock,
   openerStem,
   overusedOpeners,
+  thinBody,
 } from "../src/_lib.ts";
 
 describe("lintEmail — humanizer canon", () => {
@@ -557,5 +558,47 @@ describe("lintEmail — what the prompts say it catches (issue #593)", () => {
     expect(
       lintEmail("x", "we found the valuable part was the join, not the sending. Sam"),
     ).toContain("ai-vocab");
+  });
+});
+
+describe("thin-body — a follow-up too thin to carry its offer", () => {
+  const offer = "get every vendor renewal signed before it lapses";
+  const opts = { followUp: true, offer };
+  // The production breakup body: no offer, no angle, one line.
+  const bare = "If it's not the right time, a one-word no helps too.\n\nJ";
+  const full =
+    "I can get every vendor renewal signed before it lapses, start to finish. Your ops lead gets back the hours spent chasing them, counted per renewal. Worth trying on the next one?\n\nJ";
+
+  it("flags the bare close, and a single long sentence", () => {
+    expect(thinBody(bare, [])).toBe(true);
+    expect(lintEmail("vendor renewals", bare, 50, undefined, opts)).toContain("thin-body");
+    const oneSentence = `I can ${offer} for your team this quarter and send the signed renewals to your ops lead for review.\n\nJ`;
+    expect(thinBody(oneSentence, [])).toBe(true);
+  });
+
+  it("passes a body that restates the offer and makes its point", () => {
+    expect(thinBody(full, [])).toBe(false);
+    expect(lintEmail("vendor renewals", full, 50, undefined, opts)).toEqual([]);
+  });
+
+  it("leaves out the greeting and the sign-off, and leaves an empty body to empty-body", () => {
+    expect(thinBody("Hi Sam,\n\nWorth it?\n\nBest,\nJ Founder", [])).toBe(true);
+    expect(thinBody("", [])).toBe(false);
+  });
+
+  it("is checked only on a follow-up that carries an offer", () => {
+    expect(lintEmail("vendor renewals", bare, 50)).not.toContain("thin-body");
+    expect(lintEmail("vendor renewals", bare, 50, undefined, { followUp: true })).not.toContain(
+      "thin-body",
+    );
+  });
+
+  it("a follow-up that does not open on its offer is flagged opens-without-offer", () => {
+    const off =
+      "Renewals are a pain for most ops teams this time of year. I can get every vendor renewal signed before it lapses. Worth it?\n\nJ";
+    expect(lintEmail("vendor renewals", off, 50, undefined, opts)).toContain("opens-without-offer");
+    expect(lintEmail("vendor renewals", full, 50, undefined, opts)).not.toContain(
+      "opens-without-offer",
+    );
   });
 });

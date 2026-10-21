@@ -1,18 +1,20 @@
-import { getLedger, loadConfig, type QueueRow } from "@oneshot-gtm/core";
-import { resolveQueueTarget } from "@oneshot-gtm/find";
+import { getLedger, type QueueRow } from "@oneshot-gtm/core";
 import {
   activeOfferPatch,
   deriveOfferSet,
-  OFFER_MAX,
-  OFFER_PROMPT_VERSION,
-  offerAnglesWritten,
   offerCandidatesOf,
-  isProspectOffer,
   playMakesOffer,
-  withOfferAngles,
   type ProspectOffer,
 } from "@oneshot-gtm/plays";
 import { jsonResponse } from "../server.ts";
+import {
+  founderOffer,
+  isOfferEditError,
+  offerTarget,
+  readOfferEditBody,
+  selectOfferCandidate,
+  weakApproval,
+} from "./_offer-edit.ts";
 
 /**
  * POST /api/queue/:id/offer: change a row's prospect offer.
@@ -45,22 +47,8 @@ export async function queueOfferRoute(
     return jsonResponse({ error: `${row.play_name} makes no offer` }, 400, req);
   }
 
-  let body: {
-    offer?: unknown;
-    steps?: unknown;
-    return?: unknown;
-    regenerate?: unknown;
-    select?: unknown;
-    approveWeak?: unknown;
-  };
-  try {
-    const raw = await req.text();
-    const parsed: unknown = raw.trim() ? JSON.parse(raw) : {};
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
-    body = parsed as typeof body;
-  } catch {
-    return jsonResponse({ error: "body must be a JSON object" }, 400, req);
-  }
+  const body = await readOfferEditBody(req);
+  if (!body) return jsonResponse({ error: "body must be a JSON object" }, 400, req);
 
   if (body.approveWeak === true) return approveWeakOffer(id, row.payload_json, req);
   if (body.regenerate === true) {
@@ -88,44 +76,16 @@ export async function queueOfferRoute(
   let offer: ProspectOffer;
   let candidates = offerCandidatesOf(payload);
   if (body.select !== undefined) {
-    const index = typeof body.select === "number" ? body.select : Number.NaN;
-    const chosen = Number.isInteger(index) ? candidates[index] : undefined;
-    if (!chosen) {
-      return jsonResponse({ error: `no offer #${String(body.select)} on this row` }, 400, req);
-    }
-    offer = offerAnglesWritten(chosen) ? chosen : await withOfferAngles(chosen, input);
-    candidates = candidates.map((c, i) => (i === index ? offer : c));
+    const picked = await selectOfferCandidate(candidates, body.select, input, "row");
+    if (isOfferEditError(picked)) return jsonResponse({ error: picked.error }, picked.status, req);
+    offer = picked.offer;
+    candidates = picked.candidates;
   } else {
-    const text = typeof body.offer === "string" ? body.offer.trim() : "";
-    if (!text) return jsonResponse({ error: "offer must be a non-empty string" }, 400, req);
-    if (text.length > OFFER_MAX.offer * 2) {
-      return jsonResponse({ error: `offer is over ${OFFER_MAX.offer * 2} characters` }, 400, req);
+    const written = await founderOffer(body, input);
+    if (isOfferEditError(written)) {
+      return jsonResponse({ error: written.error }, written.status, req);
     }
-    // Same rule as a written offer: none without a brief to ground it.
-    if (!loadConfig().productBrief?.trim()) {
-      return jsonResponse({ error: "No offer can be used without a product brief." }, 422, req);
-    }
-    const ret = typeof body.return === "string" ? body.return.trim() : "";
-    if (ret.length > OFFER_MAX.return * 2) {
-      return jsonResponse({ error: `return is over ${OFFER_MAX.return * 2} characters` }, 400, req);
-    }
-    // The old offer's steps and evidence were reasoning for a different
-    // offer; the founder's text stands on its own unless they give steps.
-    offer = await withOfferAngles(
-      {
-        offer: text,
-        steps: typeof body.steps === "string" ? body.steps.trim() : "",
-        evidence: [],
-        stage: "",
-        level: "role",
-        ...(ret ? { return: ret } : {}),
-        version: OFFER_PROMPT_VERSION,
-        inputHash: "founder",
-        editedBy: "founder",
-        derivedAt: new Date().toISOString(),
-      },
-      input,
-    );
+    offer = written;
   }
 
   // The new offer replaces the stored one whole: an approval or judge label
@@ -135,21 +95,6 @@ export async function queueOfferRoute(
     return jsonResponse({ error: "row is no longer pending or approved" }, 409, req);
   }
   return jsonResponse({ offer, candidates }, 200, req);
-}
-
-/**
- * The row's payload with the trigger's edge, not the current offer's angles:
- * new angles take the founder's as material. Null when it is not a JSON object.
- */
-function offerTarget(row: QueueRow): Record<string, unknown> | null {
-  try {
-    const target = resolveQueueTarget(row, { offerAngles: false });
-    return target && typeof target === "object" && !Array.isArray(target)
-      ? (target as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -188,29 +133,17 @@ function storedOffer(payloadJson: string): unknown {
 
 /** `{ approveWeak: true }`: stamp the founder's approval on the active weak offer. */
 function approveWeakOffer(id: number, payloadJson: string, req: Request): Response {
-  const stored = storedOffer(payloadJson);
-  const offer = isProspectOffer(stored) ? stored : null;
-  if (!offer || offer.relevance !== "weak" || offer.editedBy === "founder") {
+  const approval = weakApproval(storedOffer(payloadJson));
+  if (!approval) {
     return jsonResponse({ error: "the active offer is not rated a weak fit" }, 400, req);
   }
-  const weakApprovedAt = new Date().toISOString();
-  const text = (key: string): string | null => {
-    const v = (offer as unknown as Record<string, unknown>)[key];
-    return typeof v === "string" ? v : null;
-  };
-  // Only the active offer: its copy among the candidates stays unapproved,
-  // so switching away and back asks again. Bound to the offer read here: if
-  // another offer became active meanwhile, nothing is approved.
   const written = getLedger().patchLiveQueuePayload({
     id,
-    patch: { offer: { weakApprovedAt } },
-    expect: [
-      { path: "$.offer.offer", value: offer.offer },
-      { path: "$.offer.derivedAt", value: text("derivedAt") },
-      { path: "$.offer.inputHash", value: text("inputHash") },
-      { path: "$.offer.relevance", value: "weak" },
-      { path: "$.offer.editedBy", value: null },
-    ],
+    patch: { offer: approval.stamp },
+    expect: Object.entries(approval.expect).map(([key, value]) => ({
+      path: `$.offer.${key}`,
+      value,
+    })),
   });
   if (!written) {
     return jsonResponse(
@@ -222,6 +155,5 @@ function approveWeakOffer(id: number, payloadJson: string, req: Request): Respon
       req,
     );
   }
-  const approved: ProspectOffer = { ...offer, weakApprovedAt };
-  return jsonResponse({ offer: approved }, 200, req);
+  return jsonResponse({ offer: approval.approved }, 200, req);
 }

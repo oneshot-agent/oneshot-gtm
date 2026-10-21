@@ -11,6 +11,6 @@ The reader decides in one line whether to keep reading. The only thing that earn
 
 Never open with "I noticed", "I saw", "you mentioned", "congrats", "I came across", "I was looking at", a compliment, or a recap of their company, post, launch or role. The research shaped the offer; the message does not narrate it.
 
-On a follow-up, the `OFFER` is the one the first message made. Keep it; never invent another. Each touch is built on its own angle, a new reason the job pays back, and restates the offer in a clause. The last touch opens on it, restated once, and closes; it never opens by announcing that the sequence is ending.
+On a follow-up, the `OFFER` is the one the sequence carries: the first message's, or one written for the sequence since, continuing what the earlier emails named. Keep it; never invent another. Each touch is built on its own angle, a new reason the job pays back, and restates the offer in a clause: the offer, then the angle's point stated as what they get back, in their terms. `OFFER TERMS` (a duration, a contact, a metric) shape it only as a clause, never stand in for it, and no sentence describes how the product works. The last touch opens on the offer, restated once, gives its reason it pays back, and closes; it never opens by announcing that the sequence is ending.
 
 Keep the play's own length cap, subject rules, register and banned phrases.
