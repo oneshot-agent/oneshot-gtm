@@ -11,6 +11,8 @@ let ledger: Ledger;
 const cfg = { productBrief: "Acme books crews into open slots.", cadenceOverrides: null };
 const derived = vi.hoisted(() => ({
   offers: null as null | Array<Record<string, unknown>>,
+  /** Runs while the models would be writing: a send claiming the cadence meanwhile. */
+  meanwhile: null as null | (() => void),
 }));
 
 vi.mock("@oneshot-gtm/core", async () => ({
@@ -26,14 +28,29 @@ vi.mock("@oneshot-gtm/plays", async () => {
   return {
     ...actual,
     // Angles are written for whichever offer becomes active.
-    withOfferAngles: async (offer: Record<string, unknown>) => ({ ...offer, angles: ["why"] }),
-    // The forced re-derivation, without the models: stores `derived.offers`.
-    deriveSequenceOffer: async (input: { prospectId: number; playName: string }) => {
+    withOfferAngles: async (offer: Record<string, unknown>) => {
+      derived.meanwhile?.();
+      return { ...offer, angles: ["why"] };
+    },
+    // The forced re-derivation, without the models: stores `derived.offers`
+    // the way the real one does, through the same guarded write.
+    deriveSequenceOffer: async (input: {
+      prospectId: number;
+      playName: string;
+      unlessSending?: boolean;
+    }) => {
       const record = actual.sequenceOfferRecord(input);
       if (!derived.offers) return { status: "none", record, reason: "nothing-derived" };
+      derived.meanwhile?.();
       const [offer, ...rest] =
         derived.offers as unknown as import("@oneshot-gtm/plays").ProspectOffer[];
-      actual.writeSequenceOffer({ record, offer: offer!, offerCandidates: [offer!, ...rest] });
+      const stored = actual.writeSequenceOffer({
+        record,
+        offer: offer!,
+        offerCandidates: [offer!, ...rest],
+        ...(input.unlessSending ? { unlessSending: true } : {}),
+      });
+      if (!stored) return { status: "none", record, reason: "not-stored" };
       return { status: "stored", record, offer };
     },
   };
@@ -150,6 +167,7 @@ function versions(id: number) {
 beforeEach(() => {
   ledger = new Ledger(":memory:");
   derived.offers = null;
+  derived.meanwhile = null;
   cfg.productBrief = "Acme books crews into open slots.";
 });
 afterEach(() => ledger.close());
@@ -270,6 +288,31 @@ describe("cadenceOfferRoute", () => {
     expect(out.body["error"]).toContain("in flight");
     expect(rowOffer(rowId)).toMatchObject({ offer: first.offer });
     expect(preview(id)).not.toBeNull();
+  });
+
+  it("stores nothing when a send claims the cadence while the offer is being written", async () => {
+    const claim = (id: number) => () =>
+      ledger.claimCadenceSendingMarker({
+        prospectId: id,
+        playName: PLAY,
+        startedAtIso: new Date().toISOString(),
+      });
+    // Regenerate: the new offers are written, then refused at the store.
+    const a = cadence({ rowOffer: first, candidates: [first, second] });
+    derived.offers = [second];
+    derived.meanwhile = claim(a.id);
+    const regen = await post(a.id, { regenerate: true });
+    expect(regen.status).toBe(409);
+    expect(regen.body["error"]).toContain("in flight");
+    expect(rowOffer(a.rowId)).toMatchObject({ offer: first.offer });
+    expect(preview(a.id)).not.toBeNull();
+
+    // Select: the angles are written, then the swap is refused.
+    const b = cadence({ rowOffer: first, candidates: [first, second] });
+    derived.meanwhile = claim(b.id);
+    expect((await post(b.id, { select: 1 })).status).toBe(409);
+    expect(rowOffer(b.rowId)).toMatchObject({ offer: first.offer });
+    expect(preview(b.id)).not.toBeNull();
   });
 
   it("refuses a cadence that is not active, and one that does not exist", async () => {

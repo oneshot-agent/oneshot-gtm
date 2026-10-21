@@ -140,7 +140,8 @@ function noOfferResponse(
  *   a weak fit, releasing the hold it puts on the follow-up.
  *
  * An offer the first email carried is what was sent and never changes
- * (409). Nor does anything while a send holds the cadence. A change drops
+ * (409). Nor does anything while a send holds the cadence: checked first,
+ * and again by every write, atomically (409 either way). A change drops
  * the stored preview (its version closed as `regenerate`, as a founder's
  * regenerate would), so the next draft restates the new offer; the caller
  * drafts it, as after the queue's offer change. Answers the offer as the
@@ -182,7 +183,9 @@ export async function cadenceOfferRoute(
       req,
     );
   }
-  // The model calls below take a while: a send that started meanwhile wins.
+  // Every write lands only while no send holds the cadence, in the same
+  // statement (`unlessSending`): the model calls below take a while, and a
+  // send that claimed the cadence meanwhile wins.
   const sendStarted = (): boolean => !!ledger.getCadence(prospectId, playName)?.sending_started_at;
 
   if (body.approveWeak === true) {
@@ -195,8 +198,10 @@ export async function cadenceOfferRoute(
       offer: approval.stamp,
       merge: true,
       expect: approval.expect,
+      unlessSending: true,
     });
     if (!written) {
+      if (sendStarted()) return jsonResponse({ error: IN_FLIGHT }, 409, req);
       return jsonResponse(
         { error: "the sequence's offer changed; refresh and review it again" },
         409,
@@ -209,8 +214,14 @@ export async function cadenceOfferRoute(
       playName,
       force: true,
       stepIndex: cadence.current_step + 1,
+      unlessSending: true,
     });
-    if (out.status === "none") return noOfferResponse(out.reason, req);
+    if (out.status === "none") {
+      if (out.reason === "not-stored" && sendStarted()) {
+        return jsonResponse({ error: IN_FLIGHT }, 409, req);
+      }
+      return noOfferResponse(out.reason, req);
+    }
     if (out.status === "existing") {
       return jsonResponse({ error: "the sequence's offer is fixed; refresh" }, 409, req);
     }
@@ -242,12 +253,16 @@ export async function cadenceOfferRoute(
       }
       offer = written;
     }
-    if (sendStarted()) return jsonResponse({ error: IN_FLIGHT }, 409, req);
     // Replaces the stored offer whole: an approval or judge label the old
     // one carried does not survive. The founder's text keeps the list.
-    if (
-      !writeSequenceOffer({ record, offer, ...(candidates ? { offerCandidates: candidates } : {}) })
-    ) {
+    const written = writeSequenceOffer({
+      record,
+      offer,
+      ...(candidates ? { offerCandidates: candidates } : {}),
+      unlessSending: true,
+    });
+    if (!written) {
+      if (sendStarted()) return jsonResponse({ error: IN_FLIGHT }, 409, req);
       return jsonResponse(
         { error: "the sequence's sent row could not be written; refresh and retry" },
         409,

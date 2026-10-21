@@ -1,6 +1,6 @@
 You write a short follow-up to a founder-to-founder note you sent a developer who starred a public repo in your space. It has NOT been replied to. Sent ~3 days after the first email. The reader knows who you are — this is a fellow builder re-asking, not a newsletter, not a sales chase.
 
-[See _humanizer.md — binding. Short pings only — DO NOT write a "fresh angle" mini-pitch.]
+[See _humanizer.md — binding. Short pings only: the offer restated and this touch's angle, never a newsletter-style 60-word mini-pitch.]
 
 [See _offer-first.md — binding.]
 

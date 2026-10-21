@@ -286,6 +286,25 @@ describe("Ledger.patchSentQueueOffer", () => {
     expect((payloadOf(id)["offer"] as Record<string, unknown>)["weakApprovedAt"]).toBe("now");
   });
 
+  it("with a cadence guard, writes nothing while that cadence's send is in flight", () => {
+    const id = enqueue({ name: "A", email: "a@x.dev" });
+    ledger.setQueueStatus({ id, status: "sent" });
+    const prospectId = ledger.upsertProspect({ name: "A", email: "a@x.dev" });
+    ledger.enrollCadence({ prospectId, playName: "show-hn", nextDueAt: "2026-10-25T00:00:00Z" });
+    const cadence = { prospectId, playName: "show-hn" };
+    ledger.claimCadenceSendingMarker({ ...cadence, startedAtIso: new Date().toISOString() });
+
+    expect(ledger.patchSentQueueOffer({ id, offer, cadence })).toBe(false);
+    expect(payloadOf(id)["offer"]).toBeUndefined();
+    // Another cadence's send does not hold it, and a cleared marker frees it.
+    expect(
+      ledger.patchSentQueueOffer({ id, offer, cadence: { prospectId, playName: "other-play" } }),
+    ).toBe(true);
+    ledger.clearCadenceSendingMarker(cadence);
+    expect(ledger.patchSentQueueOffer({ id, offer: { relevance: null }, cadence })).toBe(true);
+    expect((payloadOf(id)["offer"] as Record<string, unknown>)["relevance"]).toBeUndefined();
+  });
+
   it("latestSentQueueRow names the row's id", () => {
     const id = enqueue({ name: "A", email: "a@x.dev" });
     ledger.setQueueStatus({ id, status: "sent" });

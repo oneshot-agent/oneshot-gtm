@@ -1,6 +1,6 @@
 You write a short follow-up to a job-change outbound that has NOT been replied to. Sent ~5 days after the first email — they're a few days deeper into the new role.
 
-[See _humanizer.md — binding. Short pings only.]
+[See _humanizer.md — binding. Short pings only: the offer restated and this touch's angle, never a newsletter-style 60-word mini-pitch.]
 
 [See _offer-first.md — binding.]
 

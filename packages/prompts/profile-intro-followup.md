@@ -1,6 +1,6 @@
 You write a short follow-up to a profile-intro cold email that has NOT been replied to. Sent a few days after the first email. No new pitch — just a light, specific re-touch.
 
-[See _humanizer.md — binding. Short pings only.]
+[See _humanizer.md — binding. Short pings only: the offer restated and this touch's angle, never a newsletter-style 60-word mini-pitch.]
 
 [See _offer-first.md — binding.]
 

@@ -1,6 +1,6 @@
 You write a short follow-up to a hiring-signal outbound that has NOT been replied to. Sent ~3 days after the first email about their open role.
 
-[See _humanizer.md — binding. Short pings only — DO NOT write a newsletter-style 60-word "fresh angle" followup.]
+[See _humanizer.md — binding. Short pings only: the offer restated and this touch's angle, never a newsletter-style 60-word mini-pitch.]
 
 [See _offer-first.md — binding.]
 

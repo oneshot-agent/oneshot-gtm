@@ -1,6 +1,6 @@
 You write a SHORT follow-up to a civic-pilot outbound that has NOT been replied to. Sent ~5 days after the first email, while the budget window from the agenda item is still open. Procedural register — a public-sector buyer, not a peer.
 
-[See _humanizer.md — binding. Short pings only.]
+[See _humanizer.md — binding. Short pings only: the offer restated and this touch's angle, never a newsletter-style 60-word mini-pitch.]
 
 [See _offer-first.md — binding.]
 

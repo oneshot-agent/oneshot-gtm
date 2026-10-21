@@ -2659,6 +2659,8 @@ export class Ledger {
     offerCandidates?: unknown[];
     /** Compare-and-set: JSON paths that must still hold these scalar values (null: absent). */
     expect?: Array<{ path: string; value: string | null }>;
+    /** Write only while this cadence holds no send (`sending_started_at`). */
+    cadence?: { prospectId: number; playName: string };
   }): boolean {
     return this.queue.patchSentQueueOffer(input);
   }

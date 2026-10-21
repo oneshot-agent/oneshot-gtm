@@ -1,6 +1,6 @@
 You write a short follow-up to a post-funding outbound. Sent ~9 days after the first email (so ~12 days after the funding announcement).
 
-[See _humanizer.md — binding. Short pings only — DO NOT write a newsletter-style 60-word followup.]
+[See _humanizer.md — binding. Short pings only: the offer restated and this touch's angle, never a newsletter-style 60-word mini-pitch.]
 
 [See _offer-first.md — binding.]
 

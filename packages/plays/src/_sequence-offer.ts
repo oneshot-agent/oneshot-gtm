@@ -158,8 +158,10 @@ export function sequenceOfferRecord(input: {
  * stored offer key by key instead (an approval stamp). `expect` guards the
  * write on fields of the offer as stored (offer key → scalar, null: absent),
  * e.g. an approval bound to the offer the founder read. `offerCandidates`
- * absent keeps the stored list. False when nothing was written: no sent row,
- * the row changed, or a guard failed.
+ * absent keeps the stored list. `unlessSending` writes only while the
+ * record's cadence holds no send, checked in the same statement. False when
+ * nothing was written: no sent row, the row changed, a guard failed, or a
+ * send held the cadence.
  */
 export function writeSequenceOffer(input: {
   record: SequenceOfferRecord;
@@ -167,6 +169,7 @@ export function writeSequenceOffer(input: {
   offerCandidates?: ProspectOffer[];
   merge?: boolean;
   expect?: Record<string, string | null>;
+  unlessSending?: boolean;
 }): boolean {
   const { record } = input;
   if (record.queueRowId == null) return false;
@@ -184,6 +187,9 @@ export function writeSequenceOffer(input: {
       offer,
       ...(input.offerCandidates ? { offerCandidates: input.offerCandidates } : {}),
       ...(expect.length > 0 ? { expect } : {}),
+      ...(input.unlessSending
+        ? { cadence: { prospectId: record.prospectId, playName: record.playName } }
+        : {}),
     });
   } catch (err) {
     logEvent(
@@ -294,6 +300,8 @@ export async function deriveSequenceOffer(input: {
   force?: boolean;
   /** The step about to be drafted: the thread is every email before it. */
   stepIndex?: number | null;
+  /** Store it only while the cadence holds no send: `not-stored` when one does. */
+  unlessSending?: boolean;
   cfg?: AppConfig;
 }): Promise<DeriveSequenceOfferResult> {
   const prospect = prospectOf(input.prospectId);
@@ -343,6 +351,7 @@ export async function deriveSequenceOffer(input: {
       record,
       offer: set.offer,
       offerCandidates: set.candidates,
+      ...(input.unlessSending ? { unlessSending: true } : {}),
     });
     logEvent("sequence_offer.derived", {
       play: input.playName,
