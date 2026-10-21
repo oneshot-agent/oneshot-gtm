@@ -313,6 +313,18 @@ describe("weak-fit sequence offers", () => {
     ).toBe(true);
     expect((await preview(id)).flags).toEqual([]);
   });
+
+  it("never hold a follow-up for the offer the intro already sent", async () => {
+    const { id } = preOfferSequence({
+      step0: { offer: good.offer, offerSteps: good.steps },
+      rowOffer: { ...good, relevance: "weak", version: "v", inputHash: "h", derivedAt: "" },
+    });
+    expect(sequenceOfferRecord({ prospectId: id, playName: PLAY })).toMatchObject({
+      introCarriedOffer: true,
+      offer: { offer: good.offer, relevance: "weak" },
+    });
+    expect((await preview(id)).flags).toEqual([]);
+  });
 });
 
 describe("follow-up lints at preview", () => {

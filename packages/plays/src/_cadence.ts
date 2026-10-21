@@ -1826,14 +1826,16 @@ export async function runCadenceStepForProspect(
     step.channel === "email" &&
     playMakesOffer(opts.playName)
   ) {
-    const held = sequenceOfferRecord({
+    const record = sequenceOfferRecord({
       prospectId: opts.prospectId,
       playName: opts.playName,
       prospect,
-    }).offer;
+    });
+    const held = record.offer;
+    // The intro already went out with its offer, which no one can change now.
     const flag = !held
       ? NO_OFFER_FLAG
-      : weakOfferHold(opts.playName, { offer: held })
+      : !record.introCarriedOffer && weakOfferHold(opts.playName, { offer: held })
         ? WEAK_OFFER_FLAG
         : null;
     if (flag) {
@@ -2228,8 +2230,10 @@ export async function previewCadenceStep(input: {
           ]),
           ...hardBanHold(built),
           // A weak-fit offer the founder has not approved holds the touch, as
-          // it holds an intro (`offerHoldsSend`).
-          ...(seqOffer && weakOfferHold(input.playName, { offer: seqOffer.offer })
+          // it holds an intro (`offerHoldsSend`); not one the intro already sent.
+          ...(seqOffer &&
+          !seqOffer.record.introCarriedOffer &&
+          weakOfferHold(input.playName, { offer: seqOffer.offer })
             ? [WEAK_OFFER_FLAG]
             : []),
         ]
