@@ -8,8 +8,11 @@ import { useSyncExternalStore } from "react";
  */
 const activity = new Map<number, string>();
 const listeners = new Set<() => void>();
+/** Bumped on every change: the snapshot a page reading many rows subscribes to. */
+let version = 0;
 
 function emit(): void {
+  version++;
   for (const listener of listeners) listener();
 }
 
@@ -49,7 +52,16 @@ export function useRowActivity(id: number): string | null {
   return useSyncExternalStore(subscribe, read, read);
 }
 
-/** Test seam: the label without React. */
+/**
+ * Re-renders on any row's change, for a page that reads many rows' labels
+ * in one render (`rowActivityOf`) instead of one hook per row.
+ */
+export function useRowActivityChanges(): number {
+  const read = (): number => version;
+  return useSyncExternalStore(subscribe, read, read);
+}
+
+/** The label without React: a test, or a render subscribed by `useRowActivityChanges`. */
 export function rowActivityOf(id: number): string | null {
   return activity.get(id) ?? null;
 }

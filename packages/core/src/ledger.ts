@@ -38,6 +38,7 @@ import {
   type CadenceWithProspect,
   clearCadenceDraft as cadClearCadenceDraft,
   countSends as cadCountSends,
+  discardCadenceDraft as cadDiscardCadenceDraft,
   enrollCadence as cadEnrollCadence,
   eventsByPlay as cadEventsByPlay,
   hasOutreachHistory as cadHasOutreachHistory,
@@ -599,6 +600,15 @@ export class Ledger {
 
   clearCadenceDraft(input: { prospectId: number; playName: string }): void {
     cadClearCadenceDraft(this.db, this.drafts, input);
+  }
+
+  /** Drop the stored next-step preview, unless a send holds the row (ledger-cadence.ts). */
+  discardCadenceDraft(input: {
+    prospectId: number;
+    playName: string;
+    reason: DraftDiscardReason;
+  }): boolean {
+    return cadDiscardCadenceDraft(this.db, this.drafts, input);
   }
 
   /** Every draft version a queue row or cadence step went through, newest first (ledger-drafts.ts). */

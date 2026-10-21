@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -11,7 +11,7 @@ import { Button } from "../primitives/Button.tsx";
 import { Textarea } from "../primitives/Field.tsx";
 import { Disclosure } from "../ledger/CaseList.tsx";
 
-interface OfferView {
+export interface OfferView {
   offer: string;
   steps: string;
   evidence: string[];
@@ -28,6 +28,8 @@ interface OfferView {
   relevance?: "relevant" | "weak" | "irrelevant";
   /** 0–1: the judge's probability that it is relevant. */
   relevanceScore?: number;
+  /** The founder approved it although it was rated a weak fit. */
+  weakApproved?: boolean;
 }
 
 function strings(v: unknown): string[] {
@@ -55,6 +57,9 @@ function readOffer(o: unknown): OfferView | null {
       : {}),
     ...(typeof r["relevanceScore"] === "number" && Number.isFinite(r["relevanceScore"])
       ? { relevanceScore: r["relevanceScore"] }
+      : {}),
+    ...(typeof r["weakApprovedAt"] === "string" && r["weakApprovedAt"].trim()
+      ? { weakApproved: true }
       : {}),
   };
 }
@@ -120,6 +125,21 @@ export function nextOfferIndex(
   return (activeIndex + 1) % candidates.length;
 }
 
+/** One change to an offer, the body both offer routes take. */
+export type OfferChange =
+  | { offer: string; return?: string }
+  | { regenerate: true }
+  | { select: number };
+
+/** What an offer change is doing, in the words the offer block and the letter share. */
+export function offerChangeLabel(body: OfferChange): string {
+  return "regenerate" in body
+    ? "Writing 5 offers and their angles…"
+    : "select" in body
+      ? `Switching to offer ${body.select + 1}…`
+      : "Saving your offer…";
+}
+
 /**
  * The offer the letter opens with: what the product would deliver for this
  * firm, written from the row's research. The founder can rewrite it or ask
@@ -135,30 +155,12 @@ export function ProspectOffer({
   /** False once the row is sent or sending. */
   editable: boolean;
 }) {
-  const { masked } = usePrivacy();
   const qc = useQueryClient();
-  const offer = offerFromPayload(payload);
-  const candidates = offerCandidatesFromPayload(payload);
-  const activeIndex = offer ? candidates.findIndex((c) => c.offer === offer.offer) : -1;
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(offer?.offer ?? "");
-  const [returnText, setReturnText] = useState(offer?.return ?? "");
-
-  const activity = useRowActivity(rowId);
   const apply = useMutation({
-    mutationFn: async (
-      body: { offer: string; return?: string } | { regenerate: true } | { select: number },
-    ) => {
+    mutationFn: async (body: OfferChange) => {
       // Name each step as it runs, so the offer block and the letter show
       // the same work (rowActivity.ts).
-      const token = setRowActivity(
-        rowId,
-        "regenerate" in body
-          ? "Writing 5 offers and their angles…"
-          : "select" in body
-            ? `Switching to offer ${body.select + 1}…`
-            : "Saving your offer…",
-      );
+      const token = setRowActivity(rowId, offerChangeLabel(body));
       try {
         await api.setQueueOffer(rowId, body);
         setRowActivity(rowId, "Rewriting the draft around the offer…", token);
@@ -176,7 +178,6 @@ export function ProspectOffer({
       }
     },
     onSuccess: (result) => {
-      setEditing(false);
       void qc.invalidateQueries({ queryKey: ["queue"] });
       if (result.redrafted) toast.success("offer saved · draft rewritten around it, not sent");
       else
@@ -189,16 +190,73 @@ export function ProspectOffer({
       toast.error(`couldn't update the offer · ${err.message}`);
     },
   });
+  return (
+    <OfferBlock
+      activityId={rowId}
+      offer={offerFromPayload(payload)}
+      candidates={offerCandidatesFromPayload(payload)}
+      editable={editable}
+      change={{
+        run: (body, done) => apply.mutate(body, { onSuccess: done }),
+        pending: apply.isPending ? apply.variables : undefined,
+      }}
+      companyPages={hasCompanyPagesInPayload(payload)}
+      emptyNote="No offer yet. It is written from the row's research and your product brief."
+    />
+  );
+}
 
-  // Any offer work on this row (here, or Next offer in the letter) locks
-  // every offer control until it ends, so two changes never race.
-  const busy = apply.isPending || activity != null;
-  const pendingBody = apply.isPending ? apply.variables : undefined;
+/**
+ * The offer block itself, whoever stores the offer: a queue row
+ * (`ProspectOffer`) or a cadence's sequence (`SequenceOffer`). The owner
+ * runs the change; any work on `activityId` (here, or Next offer in the
+ * letter) locks every control until it ends, so two changes never race.
+ */
+export function OfferBlock({
+  activityId,
+  offer,
+  candidates,
+  editable,
+  change,
+  companyPages,
+  emptyNote,
+  note,
+  actions,
+  locked = false,
+}: {
+  activityId: number;
+  offer: OfferView | null;
+  candidates: OfferView[];
+  /** False when the offer can no longer change. */
+  editable: boolean;
+  /** Runs one change; `done` closes the editor once it lands. */
+  change: { run: (body: OfferChange, done: () => void) => void; pending: OfferChange | undefined };
+  /** The research behind it holds text read from the company's own pages. */
+  companyPages: boolean;
+  /** What the block says while there is no offer. */
+  emptyNote: string;
+  /** A line under the offer: why it cannot change, say. */
+  note?: ReactNode;
+  /** More controls beside Edit offer and New offers. */
+  actions?: ReactNode;
+  /** Other work on the letter the offer must not race (a redraft the page started). */
+  locked?: boolean;
+}) {
+  const { masked } = usePrivacy();
+  const activeIndex = offer ? candidates.findIndex((c) => c.offer === offer.offer) : -1;
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(offer?.offer ?? "");
+  const [returnText, setReturnText] = useState(offer?.return ?? "");
+
+  const activity = useRowActivity(activityId);
+  const pendingBody = change.pending;
+  const busy = pendingBody !== undefined || activity != null || locked;
   const writingNew = !!pendingBody && "regenerate" in pendingBody;
   const switchingTo = pendingBody && "select" in pendingBody ? pendingBody.select : null;
+  const apply = (body: OfferChange): void => change.run(body, () => setEditing(false));
 
   if (masked) return null;
-  if (!offer && !editable) return null;
+  if (!offer && !editable && !note) return null;
 
   return (
     <section aria-label="Offer" className="min-w-0">
@@ -206,7 +264,9 @@ export function ProspectOffer({
         <span>offer</span>
         {offer?.level === "role" && !offer.editedBy && <span>· from role only</span>}
         {offer?.editedBy === "founder" && <span>· yours</span>}
-        {offer?.relevance === "weak" && !offer.editedBy && <span>· weak fit</span>}
+        {offer?.relevance === "weak" && !offer.editedBy && (
+          <span>· {offer.weakApproved ? "weak fit, approved" : "weak fit"}</span>
+        )}
         {activity && (
           <span
             aria-hidden="true"
@@ -241,13 +301,13 @@ export function ProspectOffer({
               size="sm"
               disabled={busy || !text.trim()}
               onClick={() =>
-                apply.mutate({
+                apply({
                   offer: text.trim(),
                   ...(returnText.trim() ? { return: returnText.trim() } : {}),
                 })
               }
             >
-              {apply.isPending ? (
+              {pendingBody && "offer" in pendingBody ? (
                 <>
                   <Loader2 size={11} className="animate-spin" /> Saving…
                 </>
@@ -280,16 +340,17 @@ export function ProspectOffer({
               Fit: {offer.fit}
             </p>
           )}
-          {!offer.editedBy && !hasCompanyPagesInPayload(payload) && (
+          {!offer.editedBy && !companyPages && (
             <p className="m-0 mt-1 text-[11.5px] leading-5 text-ink-faint">
               written without the company's site
             </p>
           )}
         </>
       ) : (
-        <p className="m-0 text-[12px] leading-5 text-ink-muted">
-          No offer yet. It is written from the row's research and your product brief.
-        </p>
+        <p className="m-0 text-[12px] leading-5 text-ink-muted">{emptyNote}</p>
+      )}
+      {note && !editing && (
+        <p className="m-0 mt-1 text-[11.5px] leading-5 text-ink-faint">{note}</p>
       )}
       {offer &&
         !editing &&
@@ -341,7 +402,7 @@ export function ProspectOffer({
                         size="sm"
                         variant="ghost"
                         disabled={busy}
-                        onClick={() => apply.mutate({ select: i })}
+                        onClick={() => apply({ select: i })}
                       >
                         {switchingTo === i ? (
                           <>
@@ -377,7 +438,7 @@ export function ProspectOffer({
             size="sm"
             variant="ghost"
             disabled={busy}
-            onClick={() => apply.mutate({ regenerate: true })}
+            onClick={() => apply({ regenerate: true })}
           >
             {writingNew ? (
               <>
@@ -387,6 +448,7 @@ export function ProspectOffer({
               "New offers"
             )}
           </Button>
+          {actions}
         </div>
       )}
     </section>

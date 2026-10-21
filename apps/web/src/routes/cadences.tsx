@@ -53,6 +53,13 @@ import { CaseSection, Rule, Sheet } from "../components/ledger/Sheet.tsx";
 import { CaseList, Disclosure, type CaseListRow } from "../components/ledger/CaseList.tsx";
 import { DraftStateLine, LetterCard, LetterEmpty } from "../components/ledger/LetterCard.tsx";
 import { DraftHistory } from "../components/ledger/DraftHistory.tsx";
+import {
+  NextSequenceOfferButton,
+  SequenceOffer,
+  sequenceOfferActivityId,
+} from "../components/queue/SequenceOffer.tsx";
+import { rowActivityOf, useRowActivityChanges } from "../lib/rowActivity.ts";
+import { offerFlagNote } from "../lib/sequenceOffer.ts";
 
 /** Tailwind can't build class names dynamically: enumerate the tile-count variants. */
 const TILE_GRID_COLS: Record<number, string> = {
@@ -165,6 +172,8 @@ function CadencesPage() {
     setStopFailures([]);
   };
 
+  // Offer work on a card (rowActivity.ts) locks its letter: re-render on any change.
+  useRowActivityChanges();
   const { sinceRun } = Route.useSearch();
   const cadences = useQuery({
     queryKey: ["cadences", showAll, sinceRun],
@@ -750,8 +759,11 @@ function CadencesPage() {
                 const previewPending = pendingPreviewKey === key;
                 const rotatingAngle = previewPending && previewNext.variables?.rotateAngle === true;
                 const sendPending = c.isSending || pendingSendKey === key;
+                // Changing the sequence's offer drops and redrafts the preview.
+                const offerWork = c.offer ? rowActivityOf(sequenceOfferActivityId(c)) : null;
                 const sendDisabled =
                   !draft ||
+                  offerWork != null ||
                   held ||
                   draft.flags.length > 0 ||
                   pendingSendKey != null ||
@@ -863,7 +875,7 @@ function CadencesPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      disabled={pendingPreviewKey != null}
+                      disabled={pendingPreviewKey != null || offerWork != null}
                       title={
                         draft
                           ? `regenerate next step (drafted ${timeAgo(draft.draftedAt)})`
@@ -943,14 +955,20 @@ function CadencesPage() {
                         }
                         body={draft.body}
                         working={
-                          rotatingAngle
+                          offerWork ??
+                          (rotatingAngle
                             ? "Rotating to the next angle…"
                             : previewPending
                               ? "Rewriting the draft…"
-                              : null
+                              : null)
                         }
                         afterBody={
                           <>
+                            {offerFlagNote(draft.flags) && (
+                              <p role="note" className="mt-3 text-xs text-ink-muted">
+                                {offerFlagNote(draft.flags)}
+                              </p>
+                            )}
                             {draft.angle && (
                               <details className="mt-3 text-xs text-ink-muted">
                                 <summary className="cursor-pointer">
@@ -973,7 +991,7 @@ function CadencesPage() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  disabled={pendingPreviewKey != null}
+                                  disabled={pendingPreviewKey != null || offerWork != null}
                                   title="Try another angle from the current edge and generate a new preview"
                                   onClick={() =>
                                     previewNext.mutate({
@@ -991,6 +1009,12 @@ function CadencesPage() {
                                   )}
                                   {rotatingAngle ? "Rotating…" : "Rotate angle"}
                                 </Button>
+                              )}
+                              {regenerateButton && (
+                                <NextSequenceOfferButton
+                                  cadence={c}
+                                  locked={pendingPreviewKey != null}
+                                />
                               )}
                             </>
                           ),
@@ -1297,6 +1321,7 @@ function CadencesPage() {
                         colSpan={6}
                         theCase={
                           <CaseSection>
+                            <SequenceOffer cadence={c} locked={previewPending} />
                             {reminderSignal && (
                               <SignalLabel className="leading-5">{reminderSignal}</SignalLabel>
                             )}

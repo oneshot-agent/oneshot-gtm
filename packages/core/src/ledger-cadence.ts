@@ -498,6 +498,35 @@ export function clearCadenceDraft(
 }
 
 /**
+ * Drop an active cadence's stored next-step preview because what it was
+ * written from changed (the sequence's offer), closing its open versions
+ * with `reason`. Never while a send holds the row: that send ships the
+ * preview it read. False when nothing matched: no such active cadence, or
+ * a send in flight.
+ */
+export function discardCadenceDraft(
+  db: Database,
+  drafts: DraftVersionStore,
+  input: { prospectId: number; playName: string; reason: DraftDiscardReason },
+): boolean {
+  return db
+    .transaction(() => {
+      const res = db
+        .prepare(
+          `UPDATE cadence_state
+           SET next_step_draft_json = NULL, next_step_drafted_at = NULL
+           WHERE prospect_id = ? AND play_name = ? AND status = 'active'
+             AND sending_started_at IS NULL`,
+        )
+        .run(input.prospectId, input.playName);
+      if (res.changes === 0) return false;
+      drafts.closeAllForCadence(input.prospectId, input.playName, "discarded", input.reason);
+      return true;
+    })
+    .immediate();
+}
+
+/**
  * Sweep stale `sending_started_at` markers (any non-null value when
  * `staleAgeMs` is 0, for cold-boot recovery). A matching sequence_event means
  * the send went out: clear the marker only; no event means it was stranded:

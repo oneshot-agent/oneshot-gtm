@@ -24,6 +24,7 @@ import type {
   AddProspectResult,
   QueueDossierView,
   BusinessMailAddress,
+  CadenceOfferView,
   CadencesResult,
   CadenceStopReason,
   CadenceView,
@@ -213,6 +214,21 @@ export const api = {
     >(
       `/cadences/${id}/preview-next?play=${encodeURIComponent(playName)}`,
       rotateAngle ? { rotateAngle: true } : {},
+    ),
+  // Change the offer a cadence's follow-ups restate: same body as setQueueOffer.
+  // The stored preview is dropped; the caller redrafts it around the new offer.
+  setCadenceOffer: (
+    id: number,
+    playName: string,
+    body:
+      | { offer: string; steps?: string; return?: string }
+      | { regenerate: true }
+      | { select: number }
+      | { approveWeak: true },
+  ) =>
+    postJson<{ offer: CadenceOfferView; previewDiscarded: boolean }>(
+      `/cadences/${id}/offer?play=${encodeURIComponent(playName)}`,
+      body,
     ),
   sendCadenceNext: (id: number, playName: string) =>
     postJson<{ accepted: true }>(
