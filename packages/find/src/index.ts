@@ -58,6 +58,8 @@ export * from "./_profile-url.ts";
 export * from "./angle.ts";
 export * from "./queue-target.ts";
 export * from "./queue-offer.ts";
+// Side effect: registers company research for offers written mid-sequence.
+import "./sequence-offer-research.ts";
 export * from "./queue-portable.ts";
 export * from "./queue-rederive.ts";
 export * from "./queue-contact.ts";

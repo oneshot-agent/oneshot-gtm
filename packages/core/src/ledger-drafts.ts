@@ -13,7 +13,12 @@ import type { Database } from "bun:sqlite";
 
 export type DraftVersionOutcome = "open" | "discarded" | "sent" | "auto_sent";
 export type DraftDiscardReason = "regenerate" | "rotate" | "redraft" | "abandoned";
-export type DraftAngleOrigin = "configured" | "generated";
+/**
+ * Where a draft's angle came from: the trigger's edge (`configured`), a
+ * written alternative (`generated`), or a follow-up's sequence offer's own
+ * angles (`offer`).
+ */
+export type DraftAngleOrigin = "configured" | "generated" | "offer";
 
 export interface DraftVersionAngle {
   text: string;
@@ -106,7 +111,8 @@ export function draftVersionAngle(value: unknown): DraftVersionAngle | null {
   if (!value || typeof value !== "object") return null;
   const a = value as { text?: unknown; origin?: unknown; assignment?: unknown };
   if (typeof a.text !== "string" || !a.text.trim()) return null;
-  const origin: DraftAngleOrigin = a.origin === "generated" ? "generated" : "configured";
+  const origin: DraftAngleOrigin =
+    a.origin === "generated" || a.origin === "offer" ? a.origin : "configured";
   return { text: a.text.trim(), origin, ...(a.assignment === "arm" ? { assignment: "arm" } : {}) };
 }
 

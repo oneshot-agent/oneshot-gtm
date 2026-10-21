@@ -954,7 +954,7 @@ function CadencesPage() {
                             {draft.angle && (
                               <details className="mt-3 text-xs text-ink-muted">
                                 <summary className="cursor-pointer">
-                                  {`Angle ${draft.angle.index + 1} of ${draft.angle.count} · ${draft.angle.sameAsIntro ? "the intro's angle" : "a different one from the intro's"}`}
+                                  {`Angle ${draft.angle.index + 1} of ${draft.angle.count} · ${draft.angle.sameAsIntro ? "the intro's angle" : draft.angle.usedAtStep != null ? `used in step ${draft.angle.usedAtStep}` : "a different one from earlier emails"}`}
                                 </summary>
                                 <p className="mt-2">{draft.angle.text}</p>
                               </details>

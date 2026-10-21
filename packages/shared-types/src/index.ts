@@ -929,11 +929,18 @@ export interface AddProspectResult {
  */
 export interface DraftAngleChoice {
   text: string;
-  origin: "configured" | "generated";
+  /** `offer`: a follow-up built on one of its sequence offer's own angles. */
+  origin: "configured" | "generated" | "offer";
   index: number;
   count: number;
   /** Follow-ups: the angle is the intro's own, not a new one. */
   sameAsIntro?: boolean;
+  /**
+   * Follow-ups: an earlier step of this sequence already made this angle
+   * (every angle was used): the 0-based step that last did, as the cadence
+   * history numbers steps. Absent when the angle is new to the sequence.
+   */
+  usedAtStep?: number;
 }
 
 /** One entry in a row's draft history (`GET /api/queue/:id/drafts`, `GET /api/cadences/:id/drafts`). */
@@ -943,7 +950,7 @@ export interface DraftVersionView {
   subject: string;
   body: string;
   flags: string[];
-  angle: { text: string; origin: "configured" | "generated" } | null;
+  angle: { text: string; origin: "configured" | "generated" | "offer" } | null;
   outcome: "open" | "discarded" | "sent" | "auto_sent";
   discardReason: "regenerate" | "rotate" | "redraft" | "abandoned" | null;
   /** Fingerprint of the approved learned-guidance set the draft was written with (#813). */

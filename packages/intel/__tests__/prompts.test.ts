@@ -123,7 +123,7 @@ describe("follow-up prompt isolation", () => {
     const followup = loadPrompt("repo-interest-followup", { humanizer: "followup" });
     expect(initial).toContain("## First-touch substance and voice");
     expect(followup).not.toContain("## First-touch substance and voice");
-    expect(followup).toContain("≤ 30 words");
+    expect(followup).toContain("≤ 45 words");
     expect(followup).toContain("Never transfer a prior claim");
     expect(followup.match(/# Anti-AI-slop rules/g)).toHaveLength(1);
     expect(loadPrompt("repo-interest-followup")).toBe(initial);
@@ -151,7 +151,7 @@ describe("last-touch prompts", () => {
 
   it("the offer-first rule puts the offer first on the last touch", () => {
     expect(loadPrompt("breakup-email")).toContain(
-      "The last touch opens on it, restated once, and closes; it never opens by announcing that the sequence is ending.",
+      "The last touch opens on the offer, restated once, gives its reason it pays back, and closes; it never opens by announcing that the sequence is ending.",
     );
   });
 });

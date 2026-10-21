@@ -352,10 +352,13 @@ function draftAngleChoiceOf(payload: unknown): DraftAngleChoice | null {
   if (typeof c.text !== "string" || !c.text.trim()) return null;
   return {
     text: c.text,
-    origin: c.origin === "generated" ? "generated" : "configured",
+    origin: c.origin === "generated" || c.origin === "offer" ? c.origin : "configured",
     index: Number.isInteger(c.index) ? (c.index as number) : 0,
     count: Number.isInteger(c.count) && (c.count as number) > 0 ? (c.count as number) : 1,
     ...(c.sameAsIntro === true ? { sameAsIntro: true } : {}),
+    ...(Number.isInteger(c.usedAtStep) && (c.usedAtStep as number) >= 0
+      ? { usedAtStep: c.usedAtStep as number }
+      : {}),
   };
 }
 

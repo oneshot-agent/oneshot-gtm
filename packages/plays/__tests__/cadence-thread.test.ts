@@ -54,9 +54,13 @@ const {
 } = await import("../src/_cadence.ts");
 type Seq = Parameters<typeof registerSequence>[0];
 
+// The intro's offer: every follow-up opens on it (and says enough to send).
+const OFFER = "run the beta pipeline review end to end";
+const BODY = `I can ${OFFER} for your team, start to finish. You get back the hours the review takes today, counted per release.\n\nFounder`;
+
 const builder = async (ctx: { threadedSubject?: boolean }) => {
   builderCtx.push(ctx.threadedSubject ? { threadedSubject: true } : {});
-  return { kind: "email" as const, subject: modelSubject, body: "One more thing.\n\nFounder" };
+  return { kind: "email" as const, subject: modelSubject, body: BODY };
 };
 const email = (label: string) => ({
   dayOffset: 3,
@@ -137,7 +141,7 @@ function sentIntro(
     status: "sent",
     // "none": a first email whose receipt carries no usable thread.
     receiptId: transport === "none" ? undefined : receiptId,
-    metadata: { subject: INTRO_SUBJECT, body: "b" },
+    metadata: { subject: INTRO_SUBJECT, body: "b", offer: OFFER },
   });
   enrollInCadence({ prospectId: id, playName: play });
   return id;

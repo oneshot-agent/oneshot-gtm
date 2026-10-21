@@ -222,3 +222,73 @@ describe("isLinkedInProfileKnown", () => {
     expect(ledger.isLinkedInProfileKnown("https://www.linkedin.com/in/rej")).toBe(false);
   });
 });
+
+describe("Ledger.patchSentQueueOffer", () => {
+  const offer = { offer: "get every renewal signed", steps: "drafts it", relevance: "weak" };
+
+  it("writes only the offer keys, and only on a sent row", () => {
+    const sent = enqueue({ name: "A", email: "a@x.dev", yourEdge: "e" });
+    ledger.setQueueStatus({ id: sent, status: "sent" });
+    const pending = enqueue({ name: "B" });
+    const approved = enqueue({ name: "C" }, "approved");
+
+    expect(ledger.patchSentQueueOffer({ id: sent, offer, offerCandidates: [offer] })).toBe(true);
+    expect(payloadOf(sent)).toEqual({
+      name: "A",
+      email: "a@x.dev",
+      yourEdge: "e",
+      offer,
+      offerCandidates: [offer],
+    });
+    expect(ledger.patchSentQueueOffer({ id: pending, offer })).toBe(false);
+    expect(ledger.patchSentQueueOffer({ id: approved, offer })).toBe(false);
+    expect(payloadOf(pending)).toEqual({ name: "B" });
+    expect(payloadOf(approved)).toEqual({ name: "C" });
+    expect(ledger.patchSentQueueOffer({ id: 999_999, offer })).toBe(false);
+  });
+
+  it("merges the offer key by key, a null deleting one, and keeps the candidates when not given", () => {
+    const id = enqueue({ name: "A" });
+    ledger.setQueueStatus({ id, status: "sent" });
+    ledger.patchSentQueueOffer({ id, offer, offerCandidates: [offer] });
+    expect(
+      ledger.patchSentQueueOffer({
+        id,
+        offer: { weakApprovedAt: "2026-10-21T00:00:00Z", relevance: null },
+      }),
+    ).toBe(true);
+    expect(payloadOf(id)).toEqual({
+      name: "A",
+      offer: { offer: offer.offer, steps: offer.steps, weakApprovedAt: "2026-10-21T00:00:00Z" },
+      offerCandidates: [offer],
+    });
+  });
+
+  it("is a compare-and-set with expect", () => {
+    const id = enqueue({ name: "A" });
+    ledger.setQueueStatus({ id, status: "sent" });
+    ledger.patchSentQueueOffer({ id, offer });
+    const stamp = { weakApprovedAt: "now" };
+    expect(
+      ledger.patchSentQueueOffer({
+        id,
+        offer: stamp,
+        expect: [{ path: "$.offer.offer", value: "another offer" }],
+      }),
+    ).toBe(false);
+    expect(
+      ledger.patchSentQueueOffer({
+        id,
+        offer: stamp,
+        expect: [{ path: "$.offer.offer", value: offer.offer }],
+      }),
+    ).toBe(true);
+    expect((payloadOf(id)["offer"] as Record<string, unknown>)["weakApprovedAt"]).toBe("now");
+  });
+
+  it("latestSentQueueRow names the row's id", () => {
+    const id = enqueue({ name: "A", email: "a@x.dev" });
+    ledger.setQueueStatus({ id, status: "sent" });
+    expect(ledger.latestSentQueueRow("show-hn", "A@x.dev ")).toMatchObject({ id });
+  });
+});

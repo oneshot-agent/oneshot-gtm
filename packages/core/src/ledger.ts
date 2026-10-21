@@ -2585,11 +2585,11 @@ export class Ledger {
     return this.queue.latestQueueSource(playName, email);
   }
 
-  /** `latestSentQueuePayload` plus the row's `source`. */
+  /** `latestSentQueuePayload` plus the row's `source` and `id`. */
   latestSentQueueRow(
     playName: string,
     email: string,
-  ): { payload: Record<string, unknown>; source: string } | null {
+  ): { id: number; payload: Record<string, unknown>; source: string } | null {
     return this.queue.latestSentQueueRow(playName, email);
   }
 
@@ -2637,6 +2637,20 @@ export class Ledger {
     discardDraft?: boolean;
   }): boolean {
     return this.queue.patchLiveQueuePayload(input);
+  }
+
+  /**
+   * Merge a sequence's offer (`offer`, `offerCandidates`, nothing else) into
+   * a SENT queue row's payload. See the queue store's doc.
+   */
+  patchSentQueueOffer(input: {
+    id: number;
+    offer: Record<string, unknown>;
+    offerCandidates?: unknown[];
+    /** Compare-and-set: JSON paths that must still hold these scalar values (null: absent). */
+    expect?: Array<{ path: string; value: string | null }>;
+  }): boolean {
+    return this.queue.patchSentQueueOffer(input);
   }
 
   latestQueueId(): number {

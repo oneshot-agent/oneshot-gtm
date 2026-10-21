@@ -67,7 +67,12 @@ import {
   type ReaderRole,
 } from "./_linkedin-evidence.ts";
 import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
-import { offerBlock, offerOf } from "./_prospect-offer.ts";
+import { offerBlock, playMakesOffer, weakOfferHold } from "./_prospect-offer.ts";
+import {
+  deriveSequenceOffer,
+  sequenceOfferRecord,
+  type SequenceOfferValue,
+} from "./_sequence-offer.ts";
 import {
   draftLinkedInNote,
   LINKEDIN_NOTE_HARD_LIMIT,
@@ -93,6 +98,7 @@ import {
   learningBlock,
   stampLearningInput,
   voiceBlock,
+  WEAK_OFFER_FLAG,
 } from "./_lib.ts";
 
 export interface CadenceContext {
@@ -109,7 +115,21 @@ export interface CadenceContext {
    * never cost a repair round.
    */
   threadedSubject?: boolean;
+  /**
+   * The 0-based index of the step being drafted (the cadence history's
+   * numbering). Bounds which steps count as earlier, for the angle a
+   * follow-up must not repeat, and keys its cached pick.
+   */
+  stepIndex?: number;
+  /**
+   * The sequence's offer, as the preview resolved (or wrote) it. Absent: the
+   * builder reads it back from the send records (`sequenceOffer`).
+   */
+  sequenceOffer?: SequenceOfferValue | null;
 }
+
+/** Flag on a follow-up preview of an offer-making play when no offer could be written for its sequence. */
+export const NO_OFFER_FLAG = "no-offer";
 
 export type StepPayload =
   | { kind: "direct_mail"; draftId: string }
@@ -1796,6 +1816,35 @@ export async function runCadenceStepForProspect(
       note: "Direct mail awaits individual review",
     };
   }
+  // An email touch of an offer-making play restates the sequence's offer. The
+  // unattended runner never writes one (that is a reviewed preview's job, and
+  // a paid one): a sequence without an offer, or whose offer is a weak fit
+  // nobody approved, stays due until it is previewed on /cadences.
+  if (
+    !opts.persistedPayload &&
+    !mailDraft &&
+    step.channel === "email" &&
+    playMakesOffer(opts.playName)
+  ) {
+    const held = sequenceOfferRecord({
+      prospectId: opts.prospectId,
+      playName: opts.playName,
+      prospect,
+    }).offer;
+    const flag = !held
+      ? NO_OFFER_FLAG
+      : weakOfferHold(opts.playName, { offer: held })
+        ? WEAK_OFFER_FLAG
+        : null;
+    if (flag) {
+      return {
+        action: "skipped",
+        payload: null,
+        receiptIds: [],
+        note: `held: ${flag} — preview it on /cadences`,
+      };
+    }
+  }
   // A stored preview already carries its thread (or none, when it predates
   // threading), so it sends exactly as previewed.
   const intro =
@@ -1812,6 +1861,7 @@ export async function runCadenceStepForProspect(
             cfg,
             metadata: {},
             maxBodyWords: step.maxBodyWords ?? 100,
+            stepIndex: nextIndex,
             ...(step.channel === "linkedin"
               ? liveReadOf(opts.linkedIn, prospect, opts.playName)
               : {}),
@@ -2085,6 +2135,33 @@ export async function previewCadenceStep(input: {
     cadence.enrolled_at,
     nextIndex,
   );
+  // Every email touch of an offer-making play restates the sequence's offer.
+  // A sequence that started before offers existed gets one written now, and
+  // one that can't (no brief, nothing to go on, every offer judged off, no
+  // sent row to keep it on) is held, never drafted from the terms alone.
+  const offerStep = !mailDraft && step.channel === "email" && playMakesOffer(input.playName);
+  const seqOffer = offerStep
+    ? await deriveSequenceOffer({
+        prospectId: input.prospectId,
+        playName: input.playName,
+        stepIndex: nextIndex,
+        cfg,
+      })
+    : null;
+  if (seqOffer?.status === "none") {
+    logEvent("cadence.preview_no_offer", {
+      play: input.playName,
+      prospect_id: input.prospectId,
+      step: nextIndex,
+      reason: seqOffer.reason,
+    });
+    return storePreview(input, seq, stepEntryIndex, step, {
+      subject: "",
+      body: "",
+      flags: [NO_OFFER_FLAG],
+      payload: { kind: "email", subject: "", body: "" },
+    });
+  }
   const intro = mailDraft
     ? null
     : await introThreadForStep(seq, stepEntryIndex, input.prospectId, input.playName);
@@ -2095,6 +2172,8 @@ export async function previewCadenceStep(input: {
         cfg,
         metadata: input.rotateAngle ? { rotateFrom: currentPreviewAngle(input) } : {},
         maxBodyWords: step.maxBodyWords ?? 100,
+        stepIndex: nextIndex,
+        ...(seqOffer ? { sequenceOffer: seqOffer.offer } : {}),
         ...(step.channel === "linkedin"
           ? liveReadOf(input.linkedIn, prospect, input.playName)
           : {}),
@@ -2138,6 +2217,8 @@ export async function previewCadenceStep(input: {
           ...lintEmail(subject, body, step.maxBodyWords ?? 100, undefined, {
             followUp: true,
             demoDay: prospectDemoDay(prospect, input.playName),
+            // The sequence's offer: the body must open with it.
+            ...(seqOffer ? { offer: seqOffer.offer.offer } : {}),
             ...(built.hardBanAllow ? { protect: built.hardBanAllow } : {}),
             ...(built.thread ? { threadedSubject: true } : {}),
           }),
@@ -2146,6 +2227,11 @@ export async function previewCadenceStep(input: {
             ...ledger.recentSentEmailBodies({ playName: input.playName, stepIndex: nextIndex }),
           ]),
           ...hardBanHold(built),
+          // A weak-fit offer the founder has not approved holds the touch, as
+          // it holds an intro (`offerHoldsSend`).
+          ...(seqOffer && weakOfferHold(input.playName, { offer: seqOffer.offer })
+            ? [WEAK_OFFER_FLAG]
+            : []),
         ]
       : built.kind === "linkedin_message"
         ? [
@@ -2163,10 +2249,27 @@ export async function previewCadenceStep(input: {
                 : []),
             ]
           : [];
+  return storePreview(input, seq, stepEntryIndex, step, {
+    subject,
+    body,
+    flags,
+    payload: built,
+  });
+}
+
+/** Persist a preview (`setCadenceDraft`) and return it as the route shows it. */
+function storePreview(
+  input: { prospectId: number; playName: string; rotateAngle?: boolean },
+  seq: Sequence,
+  stepEntryIndex: number,
+  step: SequenceStep,
+  preview: { subject: string; body: string; flags: string[]; payload: StepPayload },
+): CadenceStepPreview {
+  const ledger = getLedger();
   ledger.setCadenceDraft({
     prospectId: input.prospectId,
     playName: input.playName,
-    draft: { subject, body, flags, payload: built },
+    draft: preview,
     // The founder asking for a new draft: on the same angle the replaced
     // preview was rejected on its text (`regenerate`); with Rotate angle, on
     // its angle (`rotate`).
@@ -2178,10 +2281,7 @@ export async function previewCadenceStep(input: {
   });
   const draftedAt = draft?.draftedAt ?? new Date().toISOString();
   return {
-    subject,
-    body,
-    flags,
-    payload: built,
+    ...preview,
     draftedAt,
     stepLabel: step.label ?? null,
     isBreakup: isBreakupStepAt(seq, stepEntryIndex),
@@ -2680,25 +2780,15 @@ export function getStep0MetadataField(
 
 /**
  * The prospect offer a sequence carries: the first send's (step-0 metadata),
- * else the offer on the queue row that was sent. Null for a sequence that
- * started before prospect offers existed.
+ * else the offer on the queue row that was sent, else the one written for the
+ * sequence later (`_sequence-offer.ts`). Null for a sequence that started
+ * before prospect offers existed and has not had one written.
  */
 export function sequenceOffer(
   prospect: { id: number; email: string | null },
   playName: string,
-): { offer: string; steps: string } | null {
-  const offer = getStep0MetadataField(prospect.id, playName, "offer");
-  if (offer) {
-    return { offer, steps: getStep0MetadataField(prospect.id, playName, "offerSteps") ?? "" };
-  }
-  if (!prospect.email) return null;
-  try {
-    const payload = getLedger().latestSentQueuePayload(playName, prospect.email);
-    const stored = payload ? offerOf(payload) : null;
-    return stored ? { offer: stored.offer, steps: stored.steps } : null;
-  } catch {
-    return null;
-  }
+): SequenceOfferValue | null {
+  return sequenceOfferRecord({ prospectId: prospect.id, playName, prospect }).offer;
 }
 
 /**
@@ -2813,11 +2903,22 @@ export function buildFollowUpEmail(opts: {
       typeof (ctx.metadata as { rotateFrom?: unknown } | undefined)?.rotateFrom === "string"
         ? ((ctx.metadata as { rotateFrom: string }).rotateFrom as string)
         : null;
+    // OFFER: the same offer the first email made, read back from its send
+    // record, or the one the preview wrote for the sequence, with the
+    // founder's terms and the product facts (_prospect-offer.ts). Its angles
+    // are this touch's pool.
+    const introOffer =
+      ctx.sequenceOffer !== undefined
+        ? ctx.sequenceOffer
+        : sequenceOffer(ctx.prospect, opts.playName);
     const edgeSelection = await followUpEdgeSelection(ctx.prospect, opts.playName, {
       rotateFrom,
+      stepIndex: ctx.stepIndex ?? null,
+      offer: introOffer,
     });
     const edgeBlock = followUpEdgeBlock(edgeSelection?.angle ?? null, {
       sameAsIntro: edgeSelection?.sameAsIntro === true,
+      usedAtStep: edgeSelection?.usedAtStep ?? null,
     });
     // VOICE: the founder's register, when a card is set. The breakup step
     // gets the no-aphorism budget; every other follow-up the default one.
@@ -2836,11 +2937,6 @@ export function buildFollowUpEmail(opts: {
     // may be behind them by the time this step sends.
     const demoDay = prospectDemoDay(ctx.prospect, opts.playName);
     const demoDayText = demoDayLine(demoDay);
-    // OFFER: the same offer the first email made, read back from its send
-    // record, with the founder's terms and the product facts
-    // (_prospect-offer.ts). A sequence that started before prospect offers
-    // existed gets the terms and product facts alone.
-    const introOffer = sequenceOffer(ctx.prospect, opts.playName);
     const offerLines = offerBlock(introOffer, ctx.cfg, opts.playName);
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
@@ -2912,11 +3008,12 @@ export function buildFollowUpEmail(opts: {
         ? {
             angle: {
               text: edgeSelection.angle,
-              origin: "configured" as const,
+              origin: edgeSelection.origin ?? ("configured" as const),
               index: edgeSelection.index,
               count: edgeSelection.count,
               ...(edgeSelection.method === "arm" ? { assignment: "arm" as const } : {}),
               ...(edgeSelection.sameAsIntro ? { sameAsIntro: true } : {}),
+              ...(edgeSelection.usedAtStep != null ? { usedAtStep: edgeSelection.usedAtStep } : {}),
             },
           }
         : {}),

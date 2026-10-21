@@ -12,6 +12,8 @@ const D = "For a batch founder — the stars on your repo are the warmest list";
 let sentRow: { payload: Record<string, unknown>; source: string } | null = null;
 let triggerConfig: Record<string, unknown> | null = null;
 let introAngleText: string | null = null;
+/** The sequence's sent steps, when a test needs more than the intro. */
+let priorRows: Array<{ step_index: number; status?: string; metadata_json: string }> | null = null;
 const cache = new Map<string, string>();
 const classifierInputs: string[] = [];
 
@@ -27,9 +29,10 @@ vi.mock("@oneshot-gtm/core", async () => {
       getTrigger: () =>
         triggerConfig ? { config_json: JSON.stringify(triggerConfig) } : undefined,
       listSequenceEventsForProspectPlay: () =>
-        introAngleText
+        priorRows ??
+        (introAngleText
           ? [{ step_index: 0, metadata_json: JSON.stringify({ angleText: introAngleText }) }]
-          : [],
+          : []),
       getProductResearchCache: (k: string) => cache.get(k) ?? null,
       setProductResearchCache: (k: string, v: string) => void cache.set(k, v),
     }),
@@ -48,7 +51,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
   };
 });
 
-const { followUpEdgeSelection } = await import("../src/_angles.ts");
+const { followUpEdgeBlock, followUpEdgeSelection } = await import("../src/_angles.ts");
 const prospect = { email: "p@x.dev", id: 7 };
 
 beforeEach(() => {
@@ -56,6 +59,87 @@ beforeEach(() => {
   sentRow = { payload: { email: "p@x.dev", yourEdge: `${A} // ${B}` }, source: "find:luma-events" };
   triggerConfig = null;
   introAngleText = A;
+  priorRows = null;
+  classifierInputs.length = 0;
+});
+
+/** A sent step built on `angle`. */
+const sent = (step: number, angle: string) => ({
+  step_index: step,
+  status: "sent",
+  metadata_json: JSON.stringify({ subject: "s", body: "b", angleText: angle }),
+});
+
+describe("followUpEdgeSelection across a sequence", () => {
+  beforeEach(() => {
+    triggerConfig = { yourEdge: `${A} // ${B} // ${C} // ${D}` };
+  });
+
+  it("step 2 takes an angle neither step 0 nor step 1 made", async () => {
+    // The production case: step 1 re-ran step 0's exclusion only, and step 2
+    // replayed step 1's cached pick.
+    priorRows = [sent(0, A), sent(1, C)];
+    const sel = await followUpEdgeSelection(prospect, "luma-events", { stepIndex: 2 });
+    expect(sel?.angle).not.toBe(A);
+    expect(sel?.angle).not.toBe(C);
+    expect(sel).toMatchObject({ angle: B, index: 1, count: 4, sameAsIntro: false });
+    expect(sel?.usedAtStep).toBeUndefined();
+    // The classifier was shown only the two unused angles.
+    expect(classifierInputs.at(-1)).toContain(B);
+    expect(classifierInputs.at(-1)).toContain(D);
+    expect(classifierInputs.at(-1)).not.toContain(C);
+  });
+
+  it("keys the cached pick by the step, so a later step never replays an earlier one", async () => {
+    priorRows = [sent(0, A)];
+    await followUpEdgeSelection(prospect, "luma-events", { stepIndex: 1 });
+    priorRows = [sent(0, A), sent(1, B)];
+    const second = await followUpEdgeSelection(prospect, "luma-events", { stepIndex: 2 });
+    expect([...cache.keys()].some((k) => k.endsWith(":step-1"))).toBe(true);
+    expect([...cache.keys()].some((k) => k.endsWith(":step-2"))).toBe(true);
+    expect(second?.angle).toBe(C);
+  });
+
+  it("does not count the step being drafted, or later ones, as earlier", async () => {
+    priorRows = [sent(0, A), sent(1, B), sent(2, C)];
+    const sel = await followUpEdgeSelection(prospect, "luma-events", { stepIndex: 2 });
+    expect(sel?.angle).toBe(C);
+  });
+
+  it("with every angle used, takes the least recently used one and says when", async () => {
+    triggerConfig = { yourEdge: `${A} // ${B}` };
+    priorRows = [sent(0, A), sent(1, B), sent(2, A)];
+    const sel = await followUpEdgeSelection(prospect, "luma-events", { stepIndex: 3 });
+    expect(sel).toMatchObject({
+      angle: B,
+      method: "reused",
+      usedAtStep: 1,
+      sameAsIntro: false,
+    });
+    // The block never claims a used angle is new.
+    const block = followUpEdgeBlock(sel!.angle, { usedAtStep: sel!.usedAtStep ?? null });
+    expect(block).not.toContain("NOT raised in PRIOR EMAILS");
+    expect(block).toContain("already made");
+    expect(followUpEdgeBlock(D)).toContain("NOT raised in PRIOR EMAILS");
+  });
+
+  it("draws on the sequence offer's angles, with origin offer, even with no sent row", async () => {
+    sentRow = null;
+    priorRows = [sent(0, A)];
+    const sel = await followUpEdgeSelection(prospect, "luma-events", {
+      stepIndex: 1,
+      offer: { angles: [A, C, D] },
+    });
+    expect(sel).toMatchObject({ angle: C, origin: "offer", count: 3 });
+    const fromEdge = await followUpEdgeSelection(prospect, "luma-events", { stepIndex: 1 });
+    expect(fromEdge).toBeNull();
+  });
+
+  it("names the trigger's edge as configured", async () => {
+    priorRows = [sent(0, A)];
+    const sel = await followUpEdgeSelection(prospect, "luma-events", { stepIndex: 1 });
+    expect(sel?.origin).toBe("configured");
+  });
 });
 
 describe("followUpEdgeSelection", () => {
