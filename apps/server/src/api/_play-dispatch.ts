@@ -1,4 +1,4 @@
-import { PLAYS } from "@oneshot-gtm/plays";
+import { PLAYS, type ProspectOffer } from "@oneshot-gtm/plays";
 import type { DraftAngle, RunPlayRequest } from "@oneshot-gtm/shared-types";
 
 export interface DraftedView {
@@ -19,6 +19,10 @@ export interface DraftedView {
   formatKey?: string | null;
   /** LinkedIn note only: whether its prompt carried an evidence clause (#792). */
   evidenceClause?: boolean;
+  /** The offer the draft opens with (see `PlayDraft.offer`). */
+  offer?: ProspectOffer;
+  /** The ranked set, only when the draft wrote its offer: the run stores it on the target's queue row. */
+  offerCandidates?: ProspectOffer[];
 }
 
 export function toDraftedView(d: {
@@ -35,6 +39,8 @@ export function toDraftedView(d: {
   learningKey?: string | null;
   formatKey?: string | null;
   evidenceClause?: boolean;
+  offer?: ProspectOffer;
+  offerCandidates?: ProspectOffer[];
 }): DraftedView {
   return {
     subject: d.subject,
@@ -49,6 +55,8 @@ export function toDraftedView(d: {
     ...(d.learningKey ? { learningKey: d.learningKey } : {}),
     ...(d.formatKey ? { formatKey: d.formatKey } : {}),
     ...(d.evidenceClause !== undefined ? { evidenceClause: d.evidenceClause } : {}),
+    ...(d.offer ? { offer: d.offer } : {}),
+    ...(d.offerCandidates ? { offerCandidates: d.offerCandidates } : {}),
   };
 }
 

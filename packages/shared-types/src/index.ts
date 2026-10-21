@@ -1762,7 +1762,7 @@ export interface DrainResult {
   errors: Array<{ id: number; message: string }>;
   /** Rows the LinkedIn invite guard refused, by reason: never sent, back to pending with the reason as a flag. */
   skipped?: Record<string, number>;
-  /** Rows held for the founder, by hold code (`weak-offer`): never sent, back to pending with their draft. */
+  /** Rows held for the founder, by hold code (`weak-offer`, `no-offer`): never sent, back to pending with their draft. */
   held?: Record<string, number>;
   /** Named reason the daily spend ceiling (issue #481) blocked this drain, if it did. */
   haltedReason?: string;

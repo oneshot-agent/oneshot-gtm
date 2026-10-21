@@ -9,7 +9,7 @@ import {
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
 import { PLAYS, verifyAndFilterTargets } from "@oneshot-gtm/plays";
-import { backfillProspectId } from "@oneshot-gtm/find";
+import { backfillProspectId, storeDraftOffer } from "@oneshot-gtm/find";
 import {
   isRunnablePlay,
   type CancelRunResponse,
@@ -40,6 +40,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
   if (!Array.isArray(body.targets) || body.targets.length === 0) {
     return jsonResponse({ error: "targets must be a non-empty array" }, 400, req);
   }
+  body = restoreQueueObjects(playName, body);
 
   const mismatched = mismatchedQueueTargets(playName, body);
   if (mismatched.length > 0) {
@@ -653,6 +654,67 @@ export function queueSourcesFor(playName: string, body: RunPlayRequest): Array<s
   });
 }
 
+/** A JSON object or array: what a queue payload field holds that the run page edits as text. */
+function isJsonContainer(value: unknown): value is object {
+  return value !== null && typeof value === "object";
+}
+
+/**
+ * The /run page edits every target field as text, so a queue row's object
+ * fields (its offer and ranked offers, its person and firm research) arrive
+ * as JSON strings. The play reads those as no offer and no research: it
+ * would write a fresh offer over the founder's and draft without the
+ * research. For each target whose dedupe key names a queue row, every field
+ * the row stores as an object or array and the target carries as a string is
+ * parsed back; text that no longer parses as one falls back to the row's own
+ * value. Text fields, and fields the target dropped, are left as sent.
+ * Exported for its test.
+ */
+export function restoreQueueObjects(playName: string, body: RunPlayRequest): RunPlayRequest {
+  const keys =
+    Array.isArray(body.dedupeKeys) && body.dedupeKeys.length === body.targets.length
+      ? body.dedupeKeys
+      : null;
+  if (!keys) return body;
+  const ledger = getLedger();
+  let changed = false;
+  const targets = body.targets.map((target, i) => {
+    const key = keys[i];
+    if (typeof key !== "string" || key.length === 0) return target;
+    if (!target || typeof target !== "object" || Array.isArray(target)) return target;
+    let payload: Record<string, unknown> | null = null;
+    try {
+      const row = ledger.getQueueRowByDedupe(playName, key);
+      const parsed: unknown = row ? JSON.parse(row.payload_json) : null;
+      payload = isJsonContainer(parsed) ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      payload = null;
+    }
+    if (!payload) return target;
+    const t = target as Record<string, unknown>;
+    let out: Record<string, unknown> | null = null;
+    for (const [field, stored] of Object.entries(payload)) {
+      const sent = t[field];
+      if (!isJsonContainer(stored) || typeof sent !== "string") continue;
+      let value: unknown = stored;
+      try {
+        const parsed: unknown = JSON.parse(sent);
+        if (isJsonContainer(parsed) && Array.isArray(parsed) === Array.isArray(stored)) {
+          value = parsed;
+        }
+      } catch {
+        // Not JSON any more: the row's own value stands.
+      }
+      out ??= { ...t };
+      out[field] = value;
+    }
+    if (!out) return target;
+    changed = true;
+    return out;
+  });
+  return changed ? { ...body, targets } : body;
+}
+
 /** Exported for its test. */
 export function persistDraftsToQueue(input: {
   playName: string;
@@ -670,6 +732,12 @@ export function persistDraftsToQueue(input: {
     try {
       const row = ledger.getQueueRowByDedupe(input.playName, dedupeKey);
       if (!row) continue;
+      // An offer the run wrote (the row had none current) goes on the row
+      // with the draft built on it, before a send flips the row: the queue,
+      // a later Send of this draft and the sequence then name the same one.
+      if (draft.offer && draft.offerCandidates) {
+        storeDraftOffer(row, draft.offer, draft.offerCandidates);
+      }
       ledger.setQueueDraft({
         id: row.id,
         draft: {

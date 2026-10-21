@@ -57,6 +57,8 @@ After a finder's research, a model works out how the firm makes money, its stage
 The active offer also gets five angles: reasons it pays back for this firm. The first message uses one; each follow-up uses another, so every touch brings a new reason behind the same offer. Your `yourEdge` is given to the writer as reasons it may reuse. A row without offer angles uses `yourEdge` as before.
 
 - It needs `productBrief`. The steps may claim only what the brief says your product does. With no brief, no offer is written and each play keeps its own shape.
+- With a brief, a first email no offer could be written for is held (`no-offer`), never sent on the terms alone. Regenerate it on `/queue`, or write an offer.
+- Every follow-up restates the offer the first email made. An email sent from a typed `/run` list or the CLI keeps a sent row on `/queue` for it, linked to the person.
 - `pilotOffer` is the general terms every offer carries: a pilot, a trial, a partnership, a service.
 - It is checked before use. Any number must be in the research, any quote must be copied from it, and it cannot borrow your product's own wording, carry a price or a link, open on an observation about them, or lead with watching (track, monitor, keep, ground…). A researched offer needs a return.
 - It shows at the top of the case on `/queue`, with its return and its angles under **How and why**. **Other offers** lists the rest; **Use this offer** makes one active and writes its angles. **Edit offer** saves your text and return, which are never rewritten after that. **New offers** writes five fresh ones. Each way the draft is rewritten around it.

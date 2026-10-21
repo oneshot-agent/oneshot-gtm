@@ -128,7 +128,11 @@ export interface CadenceContext {
   sequenceOffer?: SequenceOfferValue | null;
 }
 
-/** Flag on a follow-up preview of an offer-making play when no offer could be written for its sequence. */
+/**
+ * Flag on a draft of an offer-making play when no offer could be written: a
+ * follow-up preview whose sequence has none, or an intro with a product
+ * brief to write one from (`runEmailPlay`). Either holds the send.
+ */
 export const NO_OFFER_FLAG = "no-offer";
 
 export type StepPayload =

@@ -98,6 +98,7 @@ vi.mock("@oneshot-gtm/plays", () => {
     ensureOffer: async () => null,
     ensureOfferSet: async () => null,
     WEAK_OFFER_FLAG: "weak-offer",
+    NO_OFFER_FLAG: "no-offer",
   };
 });
 
@@ -171,6 +172,24 @@ describe("drainQueue per-target dispatch + persistence", () => {
     expect(out).toMatchObject({ sent: 0, errors: [], held: { "weak-offer": 1 } });
     expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({
       id: 41,
+      status: "pending",
+      decidedBy: "machine",
+    });
+  });
+
+  it("holds a row whose intro got no offer: back to pending, counted, never sent", async () => {
+    ledgerStub.dequeueApproved.mockReturnValue([row(42)]);
+    runStackConsolidationMock.mockResolvedValueOnce({
+      drafted: [
+        { subject: "hi", body: "clean body", flags: ["no-offer"], sent: false, receiptIds: [] },
+      ],
+    });
+
+    const out = await drainQueue({ playName: "stack-consolidation", dryRun: false });
+
+    expect(out).toMatchObject({ drained: 1, sent: 0, errors: [], held: { "no-offer": 1 } });
+    expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({
+      id: 42,
       status: "pending",
       decidedBy: "machine",
     });

@@ -6,6 +6,8 @@
  * work, fields read defensively.
  */
 
+import { offerOf, offerSendMetadata, playMakesOffer } from "./_prospect-offer.ts";
+
 type Payload = Record<string, unknown>;
 
 function field(raw: object, k: string): unknown {
@@ -198,5 +200,36 @@ export function playMetadata(
   for (const k of Object.keys(out)) {
     if (out[k] === null || out[k] === undefined) delete out[k];
   }
+  return out;
+}
+
+/**
+ * What a reviewed intro's step-0 record carries beyond the play's own map:
+ * the offer on its queue row, and the angle and first-touch format its stored
+ * draft was written with. The same fields an unattended run records
+ * (`runEmailPlay`), so a follow-up reads the offer and the angle back
+ * whichever path sent the intro. Null-valued keys are stripped, as above.
+ */
+export function reviewedIntroMetadata(
+  playName: string,
+  payload: Record<string, unknown>,
+  draft: { angle?: unknown; formatKey?: unknown },
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...playMetadata(playName, payload) };
+  const angle = draft.angle as
+    | { text?: unknown; index?: unknown; count?: unknown; assignment?: unknown }
+    | null
+    | undefined;
+  if (angle && typeof angle === "object" && typeof angle.text === "string" && angle.text.trim()) {
+    out["angleText"] = angle.text;
+    if (typeof angle.index === "number") out["angleIndex"] = angle.index;
+    if (typeof angle.count === "number") out["angleCount"] = angle.count;
+    // Only the arm split is read back (a follow-up keeps the intro's arm).
+    if (angle.assignment === "arm") out["angleMethod"] = "arm";
+  }
+  if (typeof draft.formatKey === "string" && draft.formatKey) {
+    out["firstTouchFormat"] = draft.formatKey;
+  }
+  if (playMakesOffer(playName)) Object.assign(out, offerSendMetadata(offerOf(payload)));
   return out;
 }
