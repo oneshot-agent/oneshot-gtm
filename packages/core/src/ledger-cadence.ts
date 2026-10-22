@@ -259,6 +259,15 @@ export function cadencesForQueueRows(
   rows: ReadonlyArray<{ id: number; prospect_id: number | null; play_name: string }>,
 ): Map<number, QueueRowCadence> {
   const out = new Map<number, QueueRowCadence>();
+  // An unlinked cadence goes to a row only when that row is the only one of
+  // its prospect and play asked about; with several, which one started it is
+  // unknown. Counted over every row, not per chunk.
+  const rowsPerPair = new Map<string, number>();
+  for (const r of rows) {
+    if (r.prospect_id == null) continue;
+    const key = `${r.prospect_id}|${r.play_name}`;
+    rowsPerPair.set(key, (rowsPerPair.get(key) ?? 0) + 1);
+  }
   for (const part of chunks(rows)) {
     const ids = part.map((r) => r.id);
     const prospectIds = [
@@ -282,14 +291,6 @@ export function cadencesForQueueRows(
       // fallback is for cadences that never got a link.
       if (c.queue_id != null) byQueue.set(c.queue_id, c);
       else byPair.set(`${c.prospect_id}|${c.play_name}`, c);
-    }
-    // An unlinked cadence goes to a row only when that row is the only one of
-    // its prospect and play here; with several, which one started it is unknown.
-    const rowsPerPair = new Map<string, number>();
-    for (const r of part) {
-      if (r.prospect_id == null) continue;
-      const key = `${r.prospect_id}|${r.play_name}`;
-      rowsPerPair.set(key, (rowsPerPair.get(key) ?? 0) + 1);
     }
     for (const r of part) {
       const key = r.prospect_id != null ? `${r.prospect_id}|${r.play_name}` : null;
