@@ -3,7 +3,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { CadenceOfferView, CadenceView } from "@oneshot-gtm/shared-types";
 import { clearRowActivity, setRowActivity } from "../../../lib/rowActivity.ts";
-import { NextSequenceOfferButton, SequenceOffer } from "../SequenceOffer.tsx";
+import {
+  NextSequenceOfferButton,
+  SentRowSequenceOffer,
+  SequenceOffer,
+  sequenceOfferActivityId,
+} from "../SequenceOffer.tsx";
 
 // The cadence card's offer block: the queue's block over the sequence's
 // offer, read-only once the first email carried it.
@@ -20,7 +25,6 @@ const offer = (over: Partial<CadenceOfferView> = {}): CadenceOfferView => ({
   ],
   activeIndex: 0,
   introCarriedOffer: false,
-  queueRowId: 31,
   ...over,
 });
 
@@ -84,10 +88,57 @@ describe("SequenceOffer", () => {
     expect(render(<SequenceOffer cadence={card(undefined)} />)).toBe("");
   });
 
-  it("names the offer work running on the card", () => {
-    const token = setRowActivity(31, "Rewriting the draft around the offer…");
+  it("is editable for a sequence that never had a queue row", () => {
+    const html = render(<SequenceOffer cadence={card(offer({ text: null, candidates: [] }))} />);
+    expect(html).toContain("No offer yet.");
+    expect(html).toContain("New offers");
+    expect(html).not.toContain("queue row");
+  });
+
+  it("names the offer work running on the card, keyed by the cadence", () => {
+    const id = sequenceOfferActivityId(card(offer()));
+    const token = setRowActivity(id, "Rewriting the draft around the offer…");
     const html = render(<SequenceOffer cadence={card(offer())} />);
-    clearRowActivity(31, token);
+    clearRowActivity(id, token);
     expect(html).toContain("Rewriting the draft around the offer…");
+  });
+
+  it("keys a cadence's work apart from any queue row and from the prospect's other plays", () => {
+    const id = sequenceOfferActivityId({ prospectId: 4, playName: "show-hn" });
+    expect(id).toBe("cadence:4|show-hn");
+    expect(id).not.toBe(sequenceOfferActivityId({ prospectId: 4, playName: "other" }));
+    // Work on queue row 4 is not the cadence's.
+    const token = setRowActivity(4, "Switching to offer 2…");
+    const html = render(<SequenceOffer cadence={card(offer())} />);
+    clearRowActivity(4, token);
+    expect(html).not.toContain("Switching to offer 2…");
+  });
+});
+
+describe("SentRowSequenceOffer", () => {
+  it("shows a sent row its sequence's offer, read-only", () => {
+    const html = render(
+      <SentRowSequenceOffer
+        rowId={9}
+        payload={{ offer: { offer: "the intro's old offer", steps: "" } }}
+        sequence={{ status: "active", offer: offer() }}
+      />,
+    );
+    expect(html).toContain("book the leeds crews into same-day slots");
+    expect(html).not.toContain("the intro's old offer");
+    expect(html).toContain("follow-ups restate it");
+    expect(html).not.toContain("Edit offer");
+    expect(html).not.toContain("New offers");
+  });
+
+  it("says when the sequence has no offer yet", () => {
+    const html = render(
+      <SentRowSequenceOffer
+        rowId={9}
+        payload={{}}
+        sequence={{ status: "active", offer: offer({ text: null, candidates: [] }) }}
+      />,
+    );
+    expect(html).toContain("No offer for this sequence yet.");
   });
 });

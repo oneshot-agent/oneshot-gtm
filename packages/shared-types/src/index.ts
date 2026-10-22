@@ -128,8 +128,6 @@ export interface CadenceOfferView extends Omit<CadenceOfferChoice, "text"> {
   activeIndex: number;
   /** The first email carried it: what was sent is fixed, so it cannot change. */
   introCarriedOffer: boolean;
-  /** The queue row the sequence started from (`cadence_state.queue_id`); null when none is known. */
-  queueRowId: number | null;
 }
 
 export interface CadenceView {
@@ -742,6 +740,13 @@ export interface QueueRowView {
   sendHold?: { code: "off-icp" | "weak-offer"; reason: string } | null;
   /** Delivery check of the first-touch send, when one ran (sent rows only). */
   delivery?: SendDeliveryView | null;
+  /**
+   * A sent row's sequence and the offer it carries now, read-only here: what
+   * the follow-ups restate, which may no longer be the offer the row went out
+   * with. Changed on the cadence. Absent on unsent rows, rows that started
+   * no sequence, plays that make no offer, and in older API responses.
+   */
+  sequenceOffer?: { status: CadenceStatus; offer: CadenceOfferView };
   id: number;
   playName: string;
   /** Outreach channel of the first touch: email, linkedin or x. */

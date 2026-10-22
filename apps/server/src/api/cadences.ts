@@ -3,8 +3,10 @@ import {
   CONTACT_TOUCH_WINDOW_MS,
   getLedger,
   isDraining,
+  loadConfig,
   logEvent,
   recentTouchElsewhere,
+  type CadencePlanStep,
 } from "@oneshot-gtm/core";
 import {
   getPriorStepsBulk,
@@ -17,6 +19,7 @@ import {
   sendCadenceStepBatch,
   skipDirectMailStep,
   type BatchItem,
+  type LoadedCadence,
   type PriorStepRow,
 } from "@oneshot-gtm/plays";
 import type {
@@ -46,10 +49,10 @@ import { reportServerExecution } from "../telemetry.ts";
  */
 const MAX_SEND_AGE_MS = 5 * 60 * 1000;
 
+type CadenceRow = ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number];
+
 /** The date the invite behind a waiting LinkedIn step went out; null once accepted or on any read failure. */
-function safeWaitingSince(
-  row: ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number],
-): string | null {
+function safeWaitingSince(row: CadenceRow): string | null {
   try {
     return linkedInWaitingSince({
       prospectId: row.prospect_id,
@@ -61,11 +64,26 @@ function safeWaitingSince(
   }
 }
 
-function toView(
-  row: ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number],
-  priorByKey: Map<string, PriorStepRow[]>,
-  payloadByKey: Map<string, Record<string, unknown>>,
-): CadenceView {
+/** A cadence's key in the page's bulk reads: prospect, then play. */
+function cadenceKey(row: Pick<CadenceRow, "prospect_id" | "play_name">): string {
+  return `${row.prospect_id}|${row.play_name}`;
+}
+
+/**
+ * What the page read for every cadence at once, so a row's view reads none
+ * of it again: the sent steps, the intro's queue payload, and (`plans` null
+ * when the bulk read failed: each row then reads its own) the saved plans
+ * and the config its sequence is built from.
+ */
+interface PageReads {
+  priorByKey: Map<string, PriorStepRow[]>;
+  payloadByKey: Map<string, Record<string, unknown>>;
+  plans: Map<string, CadencePlanStep[]> | null;
+  cfg: LoadedCadence["cfg"];
+}
+
+function toView(row: CadenceRow, page: PageReads): CadenceView {
+  const { priorByKey, payloadByKey } = page;
   let nextStepDraft: CadenceNextStepDraft | null = null;
   if (row.next_step_draft_json) {
     try {
@@ -86,21 +104,30 @@ function toView(
       nextStepDraft = null;
     }
   }
-  const next = nextStepInfo(row.play_name, row.current_step, row.prospect_id);
+  // The listed row and the page's plans: the sequence is built without
+  // reading the cadence again.
+  const loaded: LoadedCadence | undefined = page.plans
+    ? {
+        cadence: row,
+        plan: page.plans.get(cadenceKey(row)) ?? null,
+        ...(page.cfg ? { cfg: page.cfg } : {}),
+      }
+    : undefined;
+  const next = nextStepInfo(row.play_name, row.current_step, row.prospect_id, loaded);
   // A LinkedIn message step (not the connection request itself) is waiting
   // while its invite has not been accepted: say so, with the date it went out.
   const linkedinWaitingSince =
     row.status === "active" && next?.channel === "linkedin" && next.stepId !== "linkedin:invite"
       ? safeWaitingSince(row)
       : null;
-  const followupCount = playFollowupCount(row.play_name, row.prospect_id);
+  const followupCount = playFollowupCount(row.play_name, row.prospect_id, loaded);
   let deliveries: Map<string, SendDeliveryView>;
   try {
     deliveries = getLedger().sendDelivery.forProspectSteps(row.prospect_id);
   } catch {
     deliveries = new Map();
   }
-  const priorSteps = (priorByKey.get(`${row.prospect_id}|${row.play_name}`) ?? []).map((s) => ({
+  const priorSteps = (priorByKey.get(cadenceKey(row)) ?? []).map((s) => ({
     stepIndex: s.stepIndex,
     label: s.label,
     subject: s.subject,
@@ -151,7 +178,7 @@ function toView(
     lastSendError: row.last_send_error,
     lastSendErrorAt: row.last_send_error_at,
     heldElsewhere: row.status === "active" ? heldElsewhereFor(row.prospect_email) : null,
-    queuePayload: payloadByKey.get(payloadKey(row.play_name, row.prospect_email)) ?? null,
+    queuePayload: payloadByKey.get(cadenceKey(row)) ?? null,
     ...(offer ? { offer } : {}),
   };
 }
@@ -180,24 +207,75 @@ function payloadKey(playName: string, email: string | null): string {
   return `${playName}|${email?.trim().toLowerCase() ?? ""}`;
 }
 
-export function viewsForRows(
-  rows: ReadonlyArray<ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number]>,
-): CadenceView[] {
-  // Single SQL fetch for ALL (prospect_id, play_name) pairs: avoids N+1.
+/**
+ * The intro's queue payload (signal + fitReason) for each cadence's sheet
+ * reminder (#599), keyed like `cadenceKey`: the row the cadence links
+ * (`queue_id`), all in one read; a cadence with no link falls back to the
+ * newest sent row of its play to its address, those in one more read.
+ * Best-effort like the prior steps: a ledger that cannot answer leaves rows
+ * without one, never without a page.
+ */
+function queuePayloadsFor(rows: ReadonlyArray<CadenceRow>): Map<string, Record<string, unknown>> {
+  const out = new Map<string, Record<string, unknown>>();
+  const ledger = getLedger();
+  const linked = rows.filter((r) => r.queue_id != null);
+  const unlinked = rows.filter((r) => r.queue_id == null);
+  if (linked.length > 0) {
+    try {
+      const byId = ledger.getQueueRowsByIds(linked.map((r) => r.queue_id!));
+      for (const r of linked) {
+        const q = byId.get(r.queue_id!);
+        if (!q) continue;
+        try {
+          const parsed: unknown = JSON.parse(q.payload_json);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            out.set(cadenceKey(r), parsed as Record<string, unknown>);
+          }
+        } catch {
+          // an unparsable payload is no reminder; the row simply has none
+        }
+      }
+    } catch {
+      // no reminders for the linked rows
+    }
+  }
+  if (unlinked.length > 0) {
+    try {
+      const byAddress = ledger.latestSentQueuePayloads(
+        unlinked.map((r) => ({ playName: r.play_name, email: r.prospect_email })),
+      );
+      for (const r of unlinked) {
+        const payload = byAddress.get(payloadKey(r.play_name, r.prospect_email));
+        if (payload) out.set(cadenceKey(r), payload);
+      }
+    } catch {
+      // no reminders for the unlinked rows
+    }
+  }
+  return out;
+}
+
+/**
+ * The views for a page of cadences. Everything a row needs from other rows
+ * of the ledger is read for the page at once (#599): the sent steps, the
+ * intro payloads, the saved plans. The offer comes from the listed row
+ * itself (`offer_json`), so no row costs a query of its own for it.
+ */
+export function viewsForRows(rows: ReadonlyArray<CadenceRow>): CadenceView[] {
   const pairs = rows.map((r) => ({ prospectId: r.prospect_id, playName: r.play_name }));
   const priorByKey = getPriorStepsBulk(pairs);
-  // The intro's queue payload (signal + fitReason) for the sheet's reminder:
-  // one query for the page (#599). Best-effort like the prior steps: a ledger
-  // that cannot answer leaves every row without one, never without a page.
-  let payloadByKey: Map<string, Record<string, unknown>>;
+  const payloadByKey = queuePayloadsFor(rows);
+  let plans: Map<string, CadencePlanStep[]> | null;
+  let cfg: LoadedCadence["cfg"];
   try {
-    payloadByKey = getLedger().latestSentQueuePayloads(
-      rows.map((r) => ({ playName: r.play_name, email: r.prospect_email })),
-    );
+    plans = getLedger().cadencePlansFor(rows);
+    cfg = loadConfig();
   } catch {
-    payloadByKey = new Map();
+    plans = null;
+    cfg = undefined;
   }
-  return rows.map((r) => toView(r, priorByKey, payloadByKey));
+  const page: PageReads = { priorByKey, payloadByKey, plans, cfg };
+  return rows.map((r) => toView(r, page));
 }
 
 export function listCadences(req: Request): Response {

@@ -13,6 +13,8 @@ const derived = vi.hoisted(() => ({
   offers: null as null | Array<Record<string, unknown>>,
   /** Runs while the models would be writing: a send claiming the cadence meanwhile. */
   meanwhile: null as null | (() => void),
+  /** What the last angles were written from. */
+  angleInput: null as null | { target: Record<string, unknown>; dossier?: string | null },
 }));
 
 vi.mock("@oneshot-gtm/core", async () => ({
@@ -28,7 +30,11 @@ vi.mock("@oneshot-gtm/plays", async () => {
   return {
     ...actual,
     // Angles are written for whichever offer becomes active.
-    withOfferAngles: async (offer: Record<string, unknown>) => {
+    withOfferAngles: async (
+      offer: Record<string, unknown>,
+      input: { target: Record<string, unknown>; dossier?: string | null },
+    ) => {
+      derived.angleInput = input;
       derived.meanwhile?.();
       return { ...offer, angles: ["why"] };
     },
@@ -90,21 +96,30 @@ let n = 0;
  * stored preview.
  */
 function cadence(
-  opts: { offer?: Record<string, unknown>; candidates?: unknown[]; intro?: boolean } = {},
-): { id: number; rowId: number } {
+  opts: {
+    offer?: Record<string, unknown>;
+    candidates?: unknown[];
+    intro?: boolean;
+    /** The intro went out from no queue row (a LinkedIn first touch, a typed list). */
+    noRow?: boolean;
+  } = {},
+): { id: number; rowId: number | null } {
   const email = `dana${++n}@northside.example`;
   const id = ledger.upsertProspect({ name: "Dana Lee", email, company: "Northside Plumbing" });
-  const rowId = ledger.enqueueTarget({
-    playName: PLAY,
-    payload: {
-      name: "Dana Lee",
-      email,
-      company: "Northside Plumbing",
-    },
-    dedupeKey: `k-${email}`,
-    source: "find:test",
-  })!;
-  ledger.setQueueStatus({ id: rowId, status: "sent" });
+  const rowId = opts.noRow
+    ? null
+    : ledger.enqueueTarget({
+        playName: PLAY,
+        payload: {
+          name: "Dana Lee",
+          email,
+          company: "Northside Plumbing",
+          signal: "opened a second depot",
+        },
+        dedupeKey: `k-${email}`,
+        source: "find:test",
+      })!;
+  if (rowId != null) ledger.setQueueStatus({ id: rowId, status: "sent" });
   ledger.recordSequenceEvent({
     prospectId: id,
     playName: PLAY,
@@ -160,7 +175,8 @@ function seqOffer(id: number): Record<string, unknown> {
 }
 
 /** The row the intro went out from never changes: the cadence owns the offer. */
-function rowOffer(rowId: number): unknown {
+function rowOffer(rowId: number | null): unknown {
+  if (rowId == null) return undefined;
   return (JSON.parse(ledger.getQueueRow(rowId)!.payload_json) as Record<string, unknown>)["offer"];
 }
 
@@ -183,6 +199,7 @@ beforeEach(() => {
   ledger = new Ledger(":memory:");
   derived.offers = null;
   derived.meanwhile = null;
+  derived.angleInput = null;
   cfg.productBrief = "Acme books crews into open slots.";
 });
 afterEach(() => ledger.close());
@@ -330,6 +347,41 @@ describe("cadenceOfferRoute", () => {
     expect(preview(b.id)).not.toBeNull();
   });
 
+  it("takes the angles' research from the queue row the sequence started from", async () => {
+    const { id } = cadence({ offer: first, candidates: [first, second] });
+    expect((await post(id, { select: 1 })).status).toBe(200);
+    expect(derived.angleInput?.target).toMatchObject({ signal: "opened a second depot" });
+    // The old offer is never material for the new one's angles.
+    expect(derived.angleInput?.target["offer"]).toBeUndefined();
+  });
+
+  it("changes the offer of a sequence with no queue row, from the prospect and their dossier", async () => {
+    const { id } = cadence({ offer: first, candidates: [first, second], noRow: true });
+    ledger.setProspectDossier(id, JSON.stringify({ person: "runs two depots in Leeds" }));
+
+    const picked = await post(id, { select: 1 });
+    expect(picked.status).toBe(200);
+    expect(seqOffer(id)).toMatchObject({ offer: second.offer });
+    expect(derived.angleInput?.target).toMatchObject({
+      name: "Dana Lee",
+      company: "Northside Plumbing",
+    });
+    expect(derived.angleInput?.dossier).toContain("runs two depots in Leeds");
+
+    const typed = await post(id, { offer: "quote every job the day it's asked for" });
+    expect(typed.status).toBe(200);
+    expect(seqOffer(id)).toMatchObject({ editedBy: "founder" });
+
+    const weak = cadence({ offer: { ...first, relevance: "weak" }, noRow: true });
+    expect((await post(weak.id, { approveWeak: true })).status).toBe(200);
+    expect(typeof seqOffer(weak.id)["weakApprovedAt"]).toBe("string");
+
+    const none = cadence({ noRow: true });
+    derived.offers = [first, second];
+    expect((await post(none.id, { regenerate: true })).status).toBe(200);
+    expect(seqOffer(none.id)).toMatchObject({ offer: first.offer });
+  });
+
   it("refuses a cadence that is not active, and one that does not exist", async () => {
     const { id } = cadence({ offer: first });
     ledger.stopCadence({ prospectId: id, playName: PLAY, reason: "not_a_fit" });
@@ -347,7 +399,7 @@ describe("cadenceOfferRoute", () => {
 
 describe("the cadence view", () => {
   it("carries the sequence's offer, its list and whether it can change", async () => {
-    const { id, rowId } = cadence({ offer: first, candidates: [first, second] });
+    const { id } = cadence({ offer: first, candidates: [first, second] });
     expect((await viewOf(id))["offer"]).toEqual({
       text: first.offer,
       return: first.return,
@@ -366,7 +418,6 @@ describe("the cadence view", () => {
       ],
       activeIndex: 0,
       introCarriedOffer: false,
-      queueRowId: rowId,
     });
   });
 
@@ -377,10 +428,9 @@ describe("the cadence view", () => {
       text: first.offer,
       introCarriedOffer: true,
     });
-    expect((await viewOf(none.id))["offer"]).toMatchObject({
-      text: null,
-      candidates: [],
-      queueRowId: none.rowId,
-    });
+    expect((await viewOf(none.id))["offer"]).toEqual(
+      expect.objectContaining({ text: null, candidates: [] }),
+    );
+    expect((await viewOf(none.id))["offer"]).not.toHaveProperty("queueRowId");
   });
 });

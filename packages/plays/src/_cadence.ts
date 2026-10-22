@@ -28,6 +28,8 @@ import {
   type BounceKind,
   type ProspectRecord,
   type CadencePlanStep,
+  type CadenceWithProspect,
+  type OneShotConfig,
   describeTouch,
   recentTouchElsewhere,
   notifySlackBounceRecorded,
@@ -387,8 +389,14 @@ export interface NextStepInfo {
  * Always the registered total regardless of current_step, so the UI's dot
  * count stays stable for completed cadences.
  */
-export function playFollowupCount(playName: string, prospectId?: number): number {
-  return effectiveSequence(playName, prospectId)?.steps.length ?? 0;
+export function playFollowupCount(
+  playName: string,
+  prospectId?: number,
+  loaded?: LoadedCadence,
+): number {
+  return (
+    effectiveSequence(playName, prospectId, false, undefined, undefined, loaded)?.steps.length ?? 0
+  );
 }
 
 /**
@@ -399,8 +407,9 @@ export function nextStepInfo(
   playName: string,
   currentStep: number,
   prospectId?: number,
+  loaded?: LoadedCadence,
 ): NextStepInfo | null {
-  const seq = effectiveSequence(playName, prospectId);
+  const seq = effectiveSequence(playName, prospectId, false, undefined, undefined, loaded);
   if (!seq) return null;
   const nextIndex = currentStep + 1;
   const stepEntryIndex = nextIndex - 1;
@@ -472,6 +481,18 @@ function newCadenceCarriesOn(
   );
 }
 
+/**
+ * What a caller listing many cadences already read for one of them, so
+ * building its sequence reads nothing again: the cadence row (null: not
+ * enrolled), the saved plan of its current enrolment (null: none saved) and
+ * the config for the page.
+ */
+export interface LoadedCadence {
+  cadence: Pick<CadenceWithProspect, "channel" | "enrolled_at"> | null;
+  plan: CadencePlanStep[] | null;
+  cfg?: OneShotConfig;
+}
+
 export function effectiveSequence(
   playName: string,
   prospectId?: number,
@@ -485,23 +506,37 @@ export function effectiveSequence(
    * adds steps to one in flight.
    */
   continuation?: boolean,
+  /** The cadence and plan the caller already read (`LoadedCadence`): read from the ledger otherwise. */
+  loaded?: LoadedCadence,
 ): Sequence | undefined {
-  const cadenceChannel =
-    channel ??
-    (prospectId !== undefined ? getLedger().getCadence(prospectId, playName)?.channel : undefined);
+  // The cadence and its saved plan, read once (or taken from `loaded`).
+  let enrolledRead = false;
+  let enrolledRow: Pick<CadenceWithProspect, "channel" | "enrolled_at"> | null = null;
+  const enrolledCadence = (): typeof enrolledRow => {
+    if (prospectId === undefined) return null;
+    if (!enrolledRead) {
+      enrolledRow = loaded
+        ? loaded.cadence
+        : (getLedger().getCadence(prospectId, playName) ?? null);
+      enrolledRead = true;
+    }
+    return enrolledRow;
+  };
+  const cadenceChannel = channel ?? enrolledCadence()?.channel;
   if (cadenceChannel === "linkedin") return linkedInSequence(playName);
   const base = playSequences.get(playName);
   if (!base) return undefined;
-  const cfg = loadConfig();
+  const cfg = loaded?.cfg ?? loadConfig();
   const override = cfg.cadenceOverrides?.[playName];
   const mail = motionMailPolicy(cfg, playName).settings;
   const conditional = base.steps.some((step) => step.when);
   const tail = linkedInContinuationSteps(playName);
-  const enrolled =
-    prospectId !== undefined ? (getLedger().getCadence(prospectId, playName) ?? null) : null;
+  const enrolled = enrolledCadence();
   const savedPlan =
     enrolled && prospectId !== undefined
-      ? getLedger().getCadencePlan(prospectId, playName, enrolled.enrolled_at)
+      ? loaded
+        ? loaded.plan
+        : getLedger().getCadencePlan(prospectId, playName, enrolled.enrolled_at)
       : null;
   const carriesOn = enrolled
     ? (savedPlan?.some((entry) => entry.id === CONTINUATION_INVITE_ID) ?? false)
@@ -526,9 +561,8 @@ export function effectiveSequence(
   }));
   const steps = registered.filter((_, i) => base.steps[i]!.when?.(cfg) !== false);
   if (prospectId !== undefined) {
-    const ledger = getLedger();
-    const cadence = ledger.getCadence(prospectId, playName);
-    const saved = cadence && ledger.getCadencePlan(prospectId, playName, cadence.enrolled_at);
+    const cadence = enrolled;
+    const saved = savedPlan;
     if (saved && !rebuild)
       return {
         playName,

@@ -380,6 +380,23 @@ export class QueueStore {
   }
 
   /**
+   * `getQueueRow` for many ids: one statement per 400 ids, keyed by id. An
+   * id with no row is absent; an empty input touches nothing.
+   */
+  getQueueRowsByIds(ids: readonly number[]): Map<number, QueueRow> {
+    const out = new Map<number, QueueRow>();
+    const unique = [...new Set(ids)];
+    for (let i = 0; i < unique.length; i += 400) {
+      const part = unique.slice(i, i + 400);
+      const rows = this.db
+        .query(`SELECT * FROM target_queue WHERE id IN (${part.map(() => "?").join(",")})`)
+        .all(...part) as QueueRow[];
+      for (const row of rows) out.set(row.id, row);
+    }
+    return out;
+  }
+
+  /**
    * Most recent queue row linked to a prospect. The finder's original signal
    * that queued them, used as evidence input to angle synthesis (issue #355).
    * Not every prospect has one: manually added prospects, or rows whose queue

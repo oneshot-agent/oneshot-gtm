@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { CadenceView } from "@oneshot-gtm/shared-types";
+import type { CadenceView, QueueRowView } from "@oneshot-gtm/shared-types";
 import { Check, Loader2, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
@@ -7,6 +7,7 @@ import { readOnly } from "../../lib/readOnly.ts";
 import { clearRowActivity, setRowActivity, useRowActivity } from "../../lib/rowActivity.ts";
 import {
   redraftsAfterOfferChange,
+  sentRowSequenceOfferNote,
   sequenceOfferEditable,
   sequenceOfferNote,
   sequenceOfferViews,
@@ -23,11 +24,12 @@ import {
 type SequenceOfferChange = OfferChange | { approveWeak: true };
 
 /**
- * The row-activity key for a cadence's offer work: the sent queue row it is
- * kept on, so the letter and the offer block show the same label.
+ * The row-activity key for a cadence's offer work, so the letter and the
+ * offer block show the same label: the cadence's own (prospect and play), a
+ * string no queue row id can equal.
  */
-export function sequenceOfferActivityId(c: Pick<CadenceView, "prospectId" | "offer">): number {
-  return c.offer?.queueRowId ?? -c.prospectId;
+export function sequenceOfferActivityId(c: Pick<CadenceView, "prospectId" | "playName">): string {
+  return `cadence:${c.prospectId}|${c.playName}`;
 }
 
 /**
@@ -107,7 +109,7 @@ export function SequenceOffer({
         pending: pending && !("approveWeak" in pending) ? pending : undefined,
       }}
       companyPages={hasCompanyPagesInPayload(cadence.queuePayload)}
-      emptyNote="No offer yet. One is written from the sent row's research, the thread so far and your product brief."
+      emptyNote="No offer yet. One is written from the sequence's research, the thread so far and your product brief."
       note={sequenceOfferNote(view)}
       locked={locked}
       actions={
@@ -160,5 +162,34 @@ export function NextSequenceOfferButton({
       {change.isPending ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
       {change.isPending ? "Switching…" : "Next offer"}
     </Button>
+  );
+}
+
+/**
+ * A sent queue row's offer block when the row started a sequence: the
+ * sequence's offer, read-only. It is what the follow-ups restate, which may
+ * no longer be the offer the row went out with; it changes on the cadence.
+ */
+export function SentRowSequenceOffer({
+  rowId,
+  payload,
+  sequence,
+}: {
+  rowId: number;
+  payload: unknown;
+  sequence: NonNullable<QueueRowView["sequenceOffer"]>;
+}) {
+  const { offer, candidates } = sequenceOfferViews(sequence.offer);
+  return (
+    <OfferBlock
+      activityId={rowId}
+      offer={offer}
+      candidates={candidates}
+      editable={false}
+      change={{ run: () => {}, pending: undefined }}
+      companyPages={hasCompanyPagesInPayload(payload)}
+      emptyNote="No offer for this sequence yet. One is written when its next follow-up is drafted."
+      note={sentRowSequenceOfferNote(sequence.status)}
+    />
   );
 }

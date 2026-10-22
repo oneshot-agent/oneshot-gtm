@@ -204,3 +204,62 @@ describe("Ledger.cadenceQueueRow", () => {
     expect(ledger.cadenceQueueRow(lone, PLAY)).toBeNull();
   });
 });
+
+describe("page reads", () => {
+  function sentRow(email: string, prospectId?: number): number {
+    const id = ledger.enqueueTarget({
+      playName: PLAY,
+      payload: { email },
+      dedupeKey: `k-${email}`,
+      source: "find:test",
+    })!;
+    ledger.setQueueStatus({ id, status: "sent" });
+    if (prospectId != null) ledger.setQueueProspectId(id, prospectId);
+    return id;
+  }
+
+  it("getQueueRowsByIds reads rows by id across chunks, missing ids absent", () => {
+    const ids = Array.from({ length: 450 }, (_, i) => sentRow(`r${i}@x.dev`));
+    const got = ledger.getQueueRowsByIds([...ids, ids[0]!, 999_999]);
+    expect(got.size).toBe(450);
+    expect(JSON.parse(got.get(ids[449]!)!.payload_json)).toEqual({ email: "r449@x.dev" });
+    expect(got.has(999_999)).toBe(false);
+    expect(ledger.getQueueRowsByIds([]).size).toBe(0);
+  });
+
+  it("cadencesForQueueRows finds each row's cadence by its link, else its prospect and play", () => {
+    const a = ledger.upsertProspect({ email: "a@x.dev" });
+    const b = ledger.upsertProspect({ email: "b@x.dev" });
+    const rowA = sentRow("a@x.dev");
+    const rowB = sentRow("b@x.dev", b);
+    const rowNone = sentRow("c@x.dev");
+    ledger.enrollCadence({
+      prospectId: a,
+      playName: PLAY,
+      nextDueAt: "2026-10-25T00:00:00Z",
+      queueId: rowA,
+      offer: { offer, candidates: [], origin: "intro" },
+    });
+    ledger.enrollCadence({ prospectId: b, playName: PLAY, nextDueAt: "2026-10-25T00:00:00Z" });
+    const rows = [rowA, rowB, rowNone].map((id) => ledger.getQueueRow(id)!);
+    const got = ledger.cadencesForQueueRows(rows);
+    expect(got.get(rowA)).toMatchObject({ prospect_id: a, status: "active", queue_id: rowA });
+    expect(JSON.parse(got.get(rowA)!.offer_json!)).toMatchObject({ origin: "intro" });
+    expect(got.get(rowB)).toMatchObject({ prospect_id: b, queue_id: null, offer_json: null });
+    expect(got.has(rowNone)).toBe(false);
+    expect(ledger.cadencesForQueueRows([]).size).toBe(0);
+  });
+
+  it("cadencePlansFor reads the plan of each cadence's current enrolment only", () => {
+    const c = enrolled();
+    const cad = ledger.getCadence(c.prospectId, c.playName)!;
+    const plan = [{ id: "base:1", dayOffset: 3, channel: "email" as const, label: "breakup" }];
+    ledger.saveCadencePlan(c.prospectId, PLAY, "2026-01-01T00:00:00Z", [
+      { ...plan[0]!, label: "an older enrolment" },
+    ]);
+    expect(ledger.cadencePlansFor([cad]).size).toBe(0);
+    ledger.saveCadencePlan(c.prospectId, PLAY, cad.enrolled_at, plan);
+    expect(ledger.cadencePlansFor([cad]).get(`${c.prospectId}|${PLAY}`)).toEqual(plan);
+    expect(ledger.cadencePlansFor([]).size).toBe(0);
+  });
+});

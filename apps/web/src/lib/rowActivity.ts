@@ -6,7 +6,13 @@ import { useSyncExternalStore } from "react";
  * letter show the same work, whichever started it. In memory only: the
  * localStorage draft marker (draftRunState.ts) is what survives navigation.
  */
-const activity = new Map<number, string>();
+/**
+ * A row's key: a queue row's id, or a cadence's `cadence:` key
+ * (`sequenceOfferActivityId`), which no queue id can equal.
+ */
+export type RowActivityId = number | string;
+
+const activity = new Map<RowActivityId, string>();
 const listeners = new Set<() => void>();
 /** Bumped on every change: the snapshot a page reading many rows subscribes to. */
 let version = 0;
@@ -16,16 +22,16 @@ function emit(): void {
   for (const listener of listeners) listener();
 }
 
-const owners = new Map<number, symbol>();
+const owners = new Map<RowActivityId, symbol>();
 
 /**
  * Set a row's activity label for one operation. Pass the token back to
  * update or clear it; a token that no longer owns the row (a later operation
  * took over) changes nothing, so a stale cleanup never clears newer work.
  */
-export function setRowActivity(id: number, label: string, token?: symbol): symbol {
+export function setRowActivity(id: RowActivityId, label: string, token?: symbol): symbol {
   if (token && owners.get(id) !== token) return token;
-  const owner = token ?? Symbol(id);
+  const owner = token ?? Symbol(String(id));
   owners.set(id, owner);
   activity.set(id, label);
   emit();
@@ -33,7 +39,7 @@ export function setRowActivity(id: number, label: string, token?: symbol): symbo
 }
 
 /** Clear the row's label, only if `token` is the operation that set it last. */
-export function clearRowActivity(id: number, token: symbol): void {
+export function clearRowActivity(id: RowActivityId, token: symbol): void {
   if (owners.get(id) !== token) return;
   owners.delete(id);
   activity.delete(id);
@@ -46,7 +52,7 @@ function subscribe(listener: () => void): () => void {
 }
 
 /** The row's current activity label, or null when it is idle. */
-export function useRowActivity(id: number): string | null {
+export function useRowActivity(id: RowActivityId): string | null {
   const read = (): string | null => activity.get(id) ?? null;
   // The dashboard never renders on a server; a static render reads the same store.
   return useSyncExternalStore(subscribe, read, read);
@@ -62,6 +68,6 @@ export function useRowActivityChanges(): number {
 }
 
 /** The label without React: a test, or a render subscribed by `useRowActivityChanges`. */
-export function rowActivityOf(id: number): string | null {
+export function rowActivityOf(id: RowActivityId): string | null {
   return activity.get(id) ?? null;
 }

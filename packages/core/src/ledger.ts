@@ -35,9 +35,12 @@ import {
 import {
   advanceCadence as cadAdvanceCadence,
   breakupReviveHoldFor as cadBreakupReviveHoldFor,
+  cadencePlansFor as cadCadencePlansFor,
   cadenceQueueRow as cadCadenceQueueRow,
+  cadencesForQueueRows as cadCadencesForQueueRows,
   type CadenceOfferJson,
   type CadenceWithProspect,
+  type QueueRowCadence,
   clearCadenceDraft as cadClearCadenceDraft,
   countSends as cadCountSends,
   discardCadenceDraft as cadDiscardCadenceDraft,
@@ -242,7 +245,7 @@ export {
 export { canonicalLinkedInProfileKey };
 
 // Re-export cadence types for the Ledger public API.
-export type { CadenceOfferJson, CadenceWithProspect } from "./ledger-cadence.ts";
+export type { CadenceOfferJson, CadenceWithProspect, QueueRowCadence } from "./ledger-cadence.ts";
 
 // Re-export the busy-timeout constant and truncateWal for the Ledger
 // public API (ledger-admin.ts); several call sites import these directly
@@ -497,6 +500,20 @@ export class Ledger {
     playName: string,
   ): { id: number; payload: Record<string, unknown>; source: string } | null {
     return cadCadenceQueueRow(this.db, prospectId, playName);
+  }
+
+  /** The cadence each queue row started, for a page of rows (ledger-cadence.ts). */
+  cadencesForQueueRows(
+    rows: ReadonlyArray<{ id: number; prospect_id: number | null; play_name: string }>,
+  ): Map<number, QueueRowCadence> {
+    return cadCadencesForQueueRows(this.db, rows);
+  }
+
+  /** Each cadence's saved plan for its current enrolment, keyed `prospect_id|play_name` (ledger-cadence.ts). */
+  cadencePlansFor(
+    cadences: ReadonlyArray<Pick<CadenceWithProspect, "prospect_id" | "play_name" | "enrolled_at">>,
+  ): Map<string, import("./types.ts").CadencePlanStep[]> {
+    return cadCadencePlansFor(this.db, cadences);
   }
 
   /**
@@ -2110,6 +2127,11 @@ export class Ledger {
 
   getQueueRow(id: number): QueueRow | null {
     return this.queue.getQueueRow(id);
+  }
+
+  /** Queue rows by id, for a page at once: keyed by id; a missing id is absent. */
+  getQueueRowsByIds(ids: readonly number[]): Map<number, QueueRow> {
+    return this.queue.getQueueRowsByIds(ids);
   }
 
   /**

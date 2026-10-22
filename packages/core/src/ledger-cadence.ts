@@ -233,6 +233,98 @@ export function cadenceQueueRow(
   return new QueueStore(db).latestSentQueueRow(playName, email);
 }
 
+/** How many ids one `IN (...)` statement binds: well under SQLite's variable limit. */
+const IN_CHUNK = 400;
+
+function chunks<T>(items: readonly T[]): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += IN_CHUNK) out.push(items.slice(i, i + IN_CHUNK));
+  return out;
+}
+
+/** The parts of a cadence a queue row shows: its status and the offer it carries. */
+export type QueueRowCadence = Pick<
+  CadenceWithProspect,
+  "prospect_id" | "play_name" | "status" | "offer_json" | "queue_id"
+>;
+
+/**
+ * The cadence each queue row started, for a page of rows at once: the one
+ * linked to the row (`queue_id`), else the cadence of the row's prospect on
+ * its play (there is one per prospect and play). Keyed by queue row id; a
+ * row with neither is absent. One statement per 400 rows.
+ */
+export function cadencesForQueueRows(
+  db: Database,
+  rows: ReadonlyArray<{ id: number; prospect_id: number | null; play_name: string }>,
+): Map<number, QueueRowCadence> {
+  const out = new Map<number, QueueRowCadence>();
+  for (const part of chunks(rows)) {
+    const ids = part.map((r) => r.id);
+    const prospectIds = [
+      ...new Set(part.flatMap((r) => (r.prospect_id != null ? [r.prospect_id] : []))),
+    ];
+    const found = db
+      .query(
+        `SELECT prospect_id, play_name, status, offer_json, queue_id
+           FROM cadence_state
+          WHERE queue_id IN (${ids.map(() => "?").join(",")})${
+            prospectIds.length > 0
+              ? ` OR prospect_id IN (${prospectIds.map(() => "?").join(",")})`
+              : ""
+          }`,
+      )
+      .all(...ids, ...prospectIds) as QueueRowCadence[];
+    const byQueue = new Map<number, QueueRowCadence>();
+    const byPair = new Map<string, QueueRowCadence>();
+    for (const c of found) {
+      if (c.queue_id != null) byQueue.set(c.queue_id, c);
+      byPair.set(`${c.prospect_id}|${c.play_name}`, c);
+    }
+    for (const r of part) {
+      const c =
+        byQueue.get(r.id) ??
+        (r.prospect_id != null ? byPair.get(`${r.prospect_id}|${r.play_name}`) : undefined);
+      if (c) out.set(r.id, c);
+    }
+  }
+  return out;
+}
+
+/**
+ * The saved plan of each cadence's current enrolment (`getCadencePlan` for a
+ * page of cadences), keyed `prospect_id|play_name`. A cadence with no plan
+ * saved is absent. One statement per 400 prospects.
+ */
+export function cadencePlansFor(
+  db: Database,
+  cadences: ReadonlyArray<Pick<CadenceWithProspect, "prospect_id" | "play_name" | "enrolled_at">>,
+): Map<string, CadencePlanStep[]> {
+  const out = new Map<string, CadencePlanStep[]>();
+  const wanted = new Map<string, string>();
+  for (const c of cadences) wanted.set(`${c.prospect_id}|${c.play_name}`, c.enrolled_at);
+  const prospectIds = [...new Set(cadences.map((c) => c.prospect_id))];
+  for (const part of chunks(prospectIds)) {
+    const rows = db
+      .query(
+        `SELECT prospect_id, play_name, enrollment, steps FROM cadence_plans
+          WHERE prospect_id IN (${part.map(() => "?").join(",")})`,
+      )
+      .all(...part) as Array<{
+      prospect_id: number;
+      play_name: string;
+      enrollment: string;
+      steps: string;
+    }>;
+    for (const row of rows) {
+      const key = `${row.prospect_id}|${row.play_name}`;
+      if (wanted.get(key) !== row.enrollment) continue;
+      out.set(key, JSON.parse(row.steps) as CadencePlanStep[]);
+    }
+  }
+  return out;
+}
+
 /**
  * Move an active cadence's due time without advancing it. The LinkedIn
  * step waiting for an invite to be accepted checks again later instead of

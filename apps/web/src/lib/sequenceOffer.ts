@@ -39,28 +39,27 @@ export function sequenceOfferViews(view: CadenceOfferView): {
 
 /**
  * True when the founder can change the sequence's offer now: an active
- * cadence not mid-send, whose first email did not carry it, with a sent row
- * to keep it on.
+ * cadence not mid-send, whose first email did not carry it.
  */
 export function sequenceOfferEditable(
   c: Pick<CadenceView, "status" | "isSending" | "offer">,
 ): boolean {
-  return (
-    c.status === "active" &&
-    !c.isSending &&
-    !!c.offer &&
-    !c.offer.introCarriedOffer &&
-    c.offer.queueRowId != null
-  );
+  return c.status === "active" && !c.isSending && !!c.offer && !c.offer.introCarriedOffer;
 }
 
 /** Why the offer cannot change, in one line; null when it can (or the reason is passing, a send). */
 export function sequenceOfferNote(view: CadenceOfferView): string | null {
-  if (view.introCarriedOffer) return "Sent with the first email, fixed for this sequence.";
-  if (view.queueRowId == null) {
-    return "The intro went out without a queue row, so this sequence has nowhere to keep an offer.";
-  }
-  return null;
+  return view.introCarriedOffer ? "Sent with the first email, fixed for this sequence." : null;
+}
+
+/**
+ * The line under a sent queue row's offer when it shows its sequence's: the
+ * offer the follow-ups restate (or restated), changed on the cadence.
+ */
+export function sentRowSequenceOfferNote(status: CadenceView["status"]): string {
+  return status === "active"
+    ? "The sequence's offer: its follow-ups restate it. Change it on the cadence."
+    : "The offer the sequence carried.";
 }
 
 /** True when an offer change is followed by a new draft of the next step: an email touch is next. */

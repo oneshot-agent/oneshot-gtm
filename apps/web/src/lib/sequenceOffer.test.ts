@@ -4,6 +4,7 @@ import {
   offerFlagNote,
   redraftsAfterOfferChange,
   sequenceOfferEditable,
+  sentRowSequenceOfferNote,
   sequenceOfferNote,
   sequenceOfferViews,
 } from "./sequenceOffer.ts";
@@ -25,7 +26,6 @@ const view = (over: Partial<CadenceOfferView> = {}): CadenceOfferView => ({
   ],
   activeIndex: 0,
   introCarriedOffer: false,
-  queueRowId: 12,
   ...over,
 });
 
@@ -61,15 +61,17 @@ describe("sequenceOfferViews", () => {
 describe("sequenceOfferEditable", () => {
   const card = { status: "active" as const, isSending: false, offer: view() };
 
-  it("is true for an active cadence with a sent row and an offer it may change", () => {
+  it("is true for an active cadence with an offer it may change, queue row or not", () => {
     expect(sequenceOfferEditable(card)).toBe(true);
+    expect(sequenceOfferEditable({ ...card, offer: view({ text: null, candidates: [] }) })).toBe(
+      true,
+    );
   });
 
-  it("is false when the first email carried it, with no sent row, mid-send or stopped", () => {
+  it("is false when the first email carried it, mid-send or stopped", () => {
     expect(sequenceOfferEditable({ ...card, offer: view({ introCarriedOffer: true }) })).toBe(
       false,
     );
-    expect(sequenceOfferEditable({ ...card, offer: view({ queueRowId: null }) })).toBe(false);
     expect(sequenceOfferEditable({ ...card, isSending: true })).toBe(false);
     expect(sequenceOfferEditable({ ...card, status: "stopped" })).toBe(false);
     expect(sequenceOfferEditable({ status: "active", isSending: false })).toBe(false);
@@ -81,8 +83,14 @@ describe("notes", () => {
     expect(sequenceOfferNote(view({ introCarriedOffer: true }))).toBe(
       "Sent with the first email, fixed for this sequence.",
     );
-    expect(sequenceOfferNote(view({ queueRowId: null }))).toContain("nowhere to keep an offer");
     expect(sequenceOfferNote(view())).toBeNull();
+    expect(sequenceOfferNote(view({ text: null, candidates: [] }))).toBeNull();
+  });
+
+  it("says a sent row's offer is its sequence's, changed on the cadence while it runs", () => {
+    expect(sentRowSequenceOfferNote("active")).toContain("follow-ups restate it");
+    expect(sentRowSequenceOfferNote("active")).toContain("on the cadence");
+    expect(sentRowSequenceOfferNote("completed")).toBe("The offer the sequence carried.");
   });
 
   it("points a preview held for its offer at the offer block", () => {

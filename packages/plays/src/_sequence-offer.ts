@@ -252,6 +252,19 @@ function prospectTarget(prospect: ProspectRecord | null): JsonRecord {
   return out;
 }
 
+/**
+ * What an offer for a sequence with no queue row is written from, the way
+ * `deriveSequenceOffer` writes one: the prospect as the ledger knows them,
+ * with their dossier's person half (on the target as `personResearch`, or as
+ * the writer's ENRICHMENT text). No ledger read: pass the prospect row.
+ */
+export function prospectOfferInput(prospect: ProspectRecord | null): {
+  target: JsonRecord;
+  dossier: string | null;
+} {
+  return withPersonResearch(prospectTarget(prospect), prospect);
+}
+
 export type DeriveSequenceOfferResult =
   | {
       /** `existing`: the sequence had one. `stored`: written now, on the cadence. */
