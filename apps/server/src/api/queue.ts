@@ -52,8 +52,8 @@ import {
   enrollInCadence,
   generateRejectReason,
   logTargetError,
-  playMetadata,
   playProspectFields,
+  reviewedIntroMetadata,
   sendDraftedEmail,
   draftLinkedInNote,
   draftXDm,
@@ -1459,7 +1459,8 @@ export async function markSentRoute(
       draftJson: row.last_draft_json,
       metadata: {
         body,
-        ...playMetadata(row.play_name, payload),
+        // The row's offer and the draft's angle, as a sent email records them.
+        ...reviewedIntroMetadata(row.play_name, payload, draft),
         ...(thread
           ? { postUrl: thread.postUrl, threadId: thread.threadId, platform: thread.platform }
           : {}),
@@ -1718,8 +1719,10 @@ export async function sendDraftRoute(
           }
         : {}),
       // Include evidence keys (repo, eventTitle, vendorStack, etc.); downstream
-      // step-0 readers depend on them.
-      metadata: playMetadata(row.play_name, payload),
+      // step-0 readers depend on them. Plus the row's offer and the reviewed
+      // draft's angle, the fields an unattended run records: every follow-up
+      // restates the offer the intro opened with.
+      metadata: reviewedIntroMetadata(row.play_name, payload, parsed),
       dryRun: false,
       // This route IS the review-then-send override for `contacted-elsewhere`.
       allowContactedElsewhere: true,
@@ -1802,8 +1805,15 @@ export async function sendDraftRoute(
   }
 
   const prospect = ledger.findProspectByEmail(email);
-  if (prospect)
+  if (prospect) {
     enrollInCadence({ prospectId: prospect.id, playName: row.play_name, queueSource: row.source });
+    // Link the row to the person, as the LinkedIn branch above and the drain do.
+    try {
+      ledger.setQueueProspectId(id, prospect.id);
+    } catch {
+      // best-effort backfill. The send is already recorded
+    }
+  }
   // The human read this draft and clicked Send. A per-row judgment.
   ledger.setQueueStatus({ id, status: "sent", decidedBy: "human" });
   ledger.setQueueDraft({

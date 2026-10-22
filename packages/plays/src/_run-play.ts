@@ -35,11 +35,14 @@ import {
   stampLearningInput,
   voiceBlock,
 } from "./_lib.ts";
-import { enrollInCadence, getSequence } from "./_cadence.ts";
+import { enrollInCadence, getSequence, NO_OFFER_FLAG } from "./_cadence.ts";
 import {
   offerBlock,
-  offerForDraft,
   offerHoldsSend,
+  offerMissingHoldsSend,
+  offerSendMetadata,
+  offerSetForDraft,
+  playMakesOffer,
   type ProspectOffer,
 } from "./_prospect-offer.ts";
 import {
@@ -112,6 +115,12 @@ export type PlayDraft<T, X = Record<string, never>> = {
   formatKey?: FirstTouchFormat | null;
   /** The prospect offer the draft opens with; absent for plays that make no offer, or when none could be written. */
   offer?: ProspectOffer;
+  /**
+   * Present only when this draft wrote its offer (the target carried no
+   * current one): the ranked set it came from, for a caller holding the
+   * target's queue row to store there, so the queue and the sequence agree.
+   */
+  offerCandidates?: ProspectOffer[];
 } & X;
 
 /**
@@ -356,12 +365,13 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // everything known about the person and the firm (_prospect-offer.ts).
         // The queue stores it on the row; anything else derives it here.
         throwIfCancelled(opts.signal, `${def.playName} offer`);
-        const offer = await offerForDraft({
+        const offerSet = await offerSetForDraft({
           target: target as object,
           dossier: prep.dossier,
           playName: def.playName,
           cfg,
         });
+        const offer = offerSet?.offer ?? null;
         const offerLines = offerBlock(offer, cfg, def.playName);
 
         // Append SOCIAL PROOF block when any of the three optional fields is
@@ -475,6 +485,10 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // soft flag (overridable on manual send) that keeps drain from auto-
         // sending to someone another workspace emailed this week.
         if (recentTouchElsewhere(def.toEmail(target))) flags.push(CONTACTED_ELSEWHERE_FLAG);
+        // Every message of an offer-making play opens with its offer: with a
+        // brief to write one from and none written, the intro is held for the
+        // founder to regenerate, as a follow-up is (`no-offer`).
+        if (offerMissingHoldsSend(def.playName, offer, cfg)) flags.push(NO_OFFER_FLAG);
 
         // Check cancellation before the send, which bills and contacts the prospect.
         throwIfCancelled(opts.signal, `${def.playName} send`);
@@ -518,7 +532,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
                 : {}),
               ...(formatKey ? { firstTouchFormat: formatKey } : {}),
               // Every later touch carries the same offer (_cadence.ts reads it back).
-              ...(offer ? { offer: offer.offer, offerSteps: offer.steps } : {}),
+              ...offerSendMetadata(offer),
             };
             return Object.keys(metadata).length > 0 ? { metadata } : {};
           })(),
@@ -545,6 +559,47 @@ export async function runEmailPlay<T, X = Record<string, never>>(
               ...(queueSource !== undefined ? { queueSource } : {}),
             });
         }
+        const angle: DraftAngle | undefined =
+          angleSelection && edgeField
+            ? {
+                text: angleSelection.angle,
+                origin: "configured",
+                index: angleSelection.index,
+                count: angleSelection.count,
+                // Arm-assigned drafts are the controlled comparison; the
+                // draft-version record keeps them apart from fit picks.
+                ...(angleSelection.method === "arm" ? { assignment: "arm" as const } : {}),
+                // The same fingerprint the rotate module stamps, so a
+                // later regenerate/rotate treats this as a current pick.
+                fingerprint: positioningFingerprint(rawTarget[edgeField] as string),
+                history: [],
+              }
+            : undefined;
+        // After the enrolment: it reads the newest queue row's trigger when
+        // the send names none, and this row names no trigger.
+        if (
+          send.sent &&
+          !opts.dryRun &&
+          playMakesOffer(def.playName) &&
+          !hasQueueRow(opts, index)
+        ) {
+          recordIntroQueueRow({
+            playName: def.playName,
+            email: def.toEmail(target),
+            target: target as object,
+            offer,
+            candidates: offerSet?.candidates ?? [],
+            draft: {
+              subject: draft.subject,
+              body: draft.body,
+              receiptIds: send.receiptIds,
+              ...(angle ? { angle } : {}),
+              ...(voice ? { voiceKey: voice.key } : {}),
+              ...(learned ? { learningKey: learned.key } : {}),
+              ...(formatKey ? { formatKey } : {}),
+            },
+          });
+        }
 
         return {
           target,
@@ -558,23 +613,8 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           ...(learned ? { learningKey: learned.key } : {}),
           ...(formatKey ? { formatKey } : {}),
           ...(offer ? { offer } : {}),
-          ...(angleSelection && edgeField
-            ? {
-                angle: {
-                  text: angleSelection.angle,
-                  origin: "configured" as const,
-                  index: angleSelection.index,
-                  count: angleSelection.count,
-                  // Arm-assigned drafts are the controlled comparison; the
-                  // draft-version record keeps them apart from fit picks.
-                  ...(angleSelection.method === "arm" ? { assignment: "arm" as const } : {}),
-                  // The same fingerprint the rotate module stamps, so a
-                  // later regenerate/rotate treats this as a current pick.
-                  fingerprint: positioningFingerprint(rawTarget[edgeField] as string),
-                  history: [],
-                } satisfies DraftAngle,
-              }
-            : {}),
+          ...(offerSet?.derived ? { offerCandidates: offerSet.candidates } : {}),
+          ...(angle ? { angle } : {}),
           ...(prep.extra ?? ({} as X)),
         } as PlayDraft<T, X>;
       } catch (err) {
@@ -600,6 +640,122 @@ export async function runEmailPlay<T, X = Record<string, never>>(
   );
 
   return { drafted };
+}
+
+/**
+ * True when the target was drawn from a queue row: the drain (`queueSource`)
+ * and a /run batch loaded from the queue (`queueSources`, null for a row the
+ * founder typed) name its source, and those callers flip their own row.
+ */
+function hasQueueRow(
+  opts: {
+    queueSource?: string | null;
+    queueSources?: ReadonlyArray<string | null | undefined>;
+  },
+  index: number,
+): boolean {
+  const source = opts.queueSources ? opts.queueSources[index] : opts.queueSource;
+  return typeof source === "string";
+}
+
+/** Dedupe key of a queue row recorded for an intro sent from none: the address, as the CSV import keys its rows. */
+export function introQueueDedupeKey(email: string): string {
+  return `email:${email.trim().toLowerCase()}`;
+}
+
+/**
+ * Keep a sent queue row for an intro that went out from no queue row (a
+ * typed /run list, the CLI). A sequence keeps its offer on the intro's sent
+ * row (`sequenceOfferRecord`), and one with neither that row nor a step-0
+ * offer can never be given one. The row is the target as sent, with the
+ * address and the offer the intro opened with, linked to the prospect. An
+ * unsent row under the same key (the person queued by an import) is taken
+ * over instead: its payload is kept and the sent offer replaces its own.
+ *
+ * The status write records a machine disposition (`decided_by = 'machine'`),
+ * and every approval rate and the ICP few-shot pool count human decisions
+ * only (`humanDecisionWhereSql`), so the row reads as no review. The draft
+ * is stored as an unattended send (`auto_sent`), as the drain stores its
+ * own. Best-effort: the email already went out, so a failure here is logged.
+ */
+function recordIntroQueueRow(input: {
+  playName: string;
+  email: string;
+  target: object;
+  offer: ProspectOffer | null;
+  candidates: ProspectOffer[];
+  draft: {
+    subject: string;
+    body: string;
+    receiptIds: number[];
+    angle?: DraftAngle;
+    voiceKey?: string;
+    learningKey?: string;
+    formatKey?: FirstTouchFormat;
+  };
+}): void {
+  const email = typeof input.email === "string" ? input.email.trim() : "";
+  if (!email) return;
+  try {
+    const ledger = getLedger();
+    const dedupeKey = introQueueDedupeKey(email);
+    const offerFields = input.offer
+      ? {
+          offer: input.offer,
+          ...(input.candidates.length > 0 ? { offerCandidates: input.candidates } : {}),
+        }
+      : {};
+    let id = ledger.enqueueTarget({
+      playName: input.playName,
+      payload: { ...input.target, email, ...offerFields },
+      dedupeKey,
+      source: "manual",
+      notes: "recorded at send: the intro went out from no queue row",
+    });
+    let sent = false;
+    if (id == null) {
+      const existing = ledger.getQueueRowByDedupe(input.playName, dedupeKey);
+      if (!existing) return;
+      id = existing.id;
+      sent = existing.status === "sent";
+      if (!sent) {
+        let payload: Record<string, unknown> = { ...input.target };
+        try {
+          const parsed: unknown = JSON.parse(existing.payload_json);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+            payload = parsed as Record<string, unknown>;
+        } catch {
+          // An unreadable payload is replaced by the target as sent.
+        }
+        // A whole-payload write: the sent offer replaces the row's own whole.
+        if (input.offer) {
+          delete payload["offer"];
+          delete payload["offerCandidates"];
+        }
+        ledger.updateQueuePayload({ id, payload: { ...payload, email, ...offerFields } });
+      }
+    }
+    if (!sent) {
+      ledger.setQueueDraft({
+        id,
+        draft: { ...input.draft, flags: [], sent: true, dryRun: false },
+        sentBy: "machine",
+      });
+      ledger.setQueueStatus({ id, status: "sent" });
+    }
+    const prospect = ledger.findProspectByEmail(email);
+    if (prospect) ledger.setQueueProspectId(id, prospect.id);
+  } catch (err) {
+    logEvent(
+      "error.swallowed",
+      {
+        kind: "intro-queue-row",
+        play: input.playName,
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "warn",
+    );
+  }
 }
 
 /**

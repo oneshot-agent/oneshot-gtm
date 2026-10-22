@@ -1,5 +1,6 @@
 import { runCommunityReply } from "./community-reply.ts";
 import type { DraftAngle } from "@oneshot-gtm/shared-types";
+import type { ProspectOffer } from "./_prospect-offer.ts";
 import { type AcceleratorBatchTarget, runAcceleratorBatch } from "./accelerator-batch.ts";
 import { type BreakupReviveTarget, runBreakupRevive } from "./breakup-revive.ts";
 import { type CompetitorSwitchTarget, runCompetitorSwitch } from "./competitor-switch.ts";
@@ -46,6 +47,10 @@ export interface DraftedRow {
   formatKey?: string | null;
   /** LinkedIn note only: whether its prompt carried an evidence clause (#792). */
   evidenceClause?: boolean;
+  /** The offer the draft opens with (see `PlayDraft.offer`). */
+  offer?: ProspectOffer;
+  /** The ranked set, only when the draft wrote its offer (see `PlayDraft.offerCandidates`). */
+  offerCandidates?: ProspectOffer[];
 }
 
 /** Run-level options a play may consume. `targets` is play-specific JSON. */

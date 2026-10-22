@@ -1139,19 +1139,44 @@ export async function ensureOffer(input: DeriveOfferInput): Promise<ProspectOffe
  * always kept. With no brief there is no offer.
  */
 export async function offerForDraft(input: DeriveOfferInput): Promise<ProspectOffer | null> {
+  return (await offerSetForDraft(input))?.offer ?? null;
+}
+
+/**
+ * `offerForDraft` with where the offer came from: `derived` when this call
+ * wrote it (nothing current was stored), with the ranked set it came from,
+ * so a caller holding a queue row can store it there.
+ */
+export async function offerSetForDraft(
+  input: DeriveOfferInput,
+): Promise<(OfferSet & { derived: boolean }) | null> {
   if (!playMakesOffer(input.playName)) return null;
   const cfg = input.cfg ?? loadConfig();
-  const stored = (input.target as JsonRecord)["offer"];
-  if (isProspectOffer(stored) && stored.editedBy === "founder") return stored;
+  const t = input.target as JsonRecord;
+  const stored = t["offer"];
+  if (isProspectOffer(stored) && stored.editedBy === "founder") {
+    return { offer: stored, candidates: offerCandidatesOf(t), derived: false };
+  }
   if (!cfg.productBrief?.trim()) return null;
   if (
     isProspectOffer(stored) &&
     stored.version === OFFER_PROMPT_VERSION &&
     stored.productHash === offerProductHash(cfg)
   ) {
-    return stored;
+    return { offer: stored, candidates: offerCandidatesOf(t), derived: false };
   }
-  return (await deriveOfferSet({ ...input, cfg }))?.offer ?? null;
+  const fresh = await deriveOfferSet({ ...input, cfg });
+  return fresh ? { ...fresh, derived: true } : null;
+}
+
+/**
+ * The step-0 send record's offer fields: every later touch carries the same
+ * offer (`sequenceOfferRecord` reads them back). Empty without an offer.
+ */
+export function offerSendMetadata(
+  offer: Pick<ProspectOffer, "offer" | "steps"> | null | undefined,
+): { offer?: string; offerSteps?: string } {
+  return offer ? { offer: offer.offer, offerSteps: offer.steps } : {};
 }
 
 /**
@@ -1240,6 +1265,20 @@ export function activeOfferPatch(
     for (const key of Object.keys(previous)) if (next[key] === undefined) next[key] = null;
   }
   return { offer: next, offerCandidates: candidates };
+}
+
+/**
+ * True when an intro of this play must not go out for want of an offer: the
+ * play makes one, the workspace has a product brief to write it from, and
+ * none could be written. Without a brief no play makes offers, so nothing
+ * is held.
+ */
+export function offerMissingHoldsSend(
+  playName: string,
+  offer: unknown,
+  cfg: Pick<AppConfig, "productBrief">,
+): boolean {
+  return playMakesOffer(playName) && !isProspectOffer(offer) && !!cfg.productBrief?.trim();
 }
 
 /** The offer a queue payload carries, when it has one. */

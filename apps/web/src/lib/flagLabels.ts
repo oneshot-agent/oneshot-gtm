@@ -37,7 +37,7 @@ const NAMED: Record<string, string> = {
   "already-contacted": "already contacted",
   "off-icp": "off ICP",
   "weak-offer": "the offer was rated a weak fit",
-  "no-offer": "no offer could be written for this sequence",
+  "no-offer": "no offer could be written",
   "thin-body": "too thin to send",
 };
 

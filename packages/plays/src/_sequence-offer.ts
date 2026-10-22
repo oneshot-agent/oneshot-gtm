@@ -14,7 +14,9 @@
  * research and the same writer and judge an intro's offer comes from, plus
  * the thread already sent, and it is stored on that sent row so every later
  * touch reads it back. A sequence with no sent queue row has nowhere to keep
- * one and gets none.
+ * one and gets none. Every intro sent since keeps one: an intro sent from no
+ * queue row (a typed /run list, the CLI) has a row recorded at send
+ * (`runEmailPlay`).
  */
 import {
   getLedger,

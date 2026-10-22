@@ -138,6 +138,11 @@ export async function commandFindDrain(opts: {
     note(
       `held for a weak offer: ${weak} row(s) back to pending. Rewrite, pick another or approve the offer on /queue.`,
     );
+  const none = result.held?.["no-offer"] ?? 0;
+  if (none > 0)
+    note(
+      `held with no offer: ${none} row(s) back to pending. Write one or regenerate the draft on /queue.`,
+    );
 }
 
 export async function commandFindWatch(opts: {
