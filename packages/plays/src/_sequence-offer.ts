@@ -222,7 +222,7 @@ export function sequenceThread(
  * `personResearch` when it is a research dossier the row lacks, else as the
  * writer's ENRICHMENT text.
  */
-function withPersonResearch(
+export function withPersonResearch(
   target: JsonRecord,
   prospect: ProspectRecord | null,
 ): { target: JsonRecord; dossier: string | null } {

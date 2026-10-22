@@ -600,7 +600,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         ) {
           const prospect = getLedger().findProspectByEmail(def.toEmail(target));
           const queueSource = opts.queueSources?.[index] ?? opts.queueSource;
-          const queueId = (opts.queueIds ? opts.queueIds[index] : opts.queueId) ?? introRowId;
+          const queueId = opts.queueIds?.[index] ?? opts.queueId ?? introRowId;
           // The sequence starts with the offer the intro opened with.
           if (prospect)
             enrollInCadence({

@@ -6,6 +6,7 @@ import {
   prospectOfferInput,
   sequenceOfferOf,
   sequenceOfferRecord,
+  withPersonResearch,
   writeSequenceOffer,
   type DeriveSequenceOfferResult,
   type ProspectOffer,
@@ -125,22 +126,25 @@ function noOfferResponse(
 
 /**
  * What a chosen or founder-written offer gets its angles from: the queue row
- * the sequence started from (its payload with the trigger's edge, not the
- * old offer's angles), else the prospect and their dossier, as a written
- * offer is (`prospectOfferInput`).
+ * the sequence started from (its payload with the trigger's edge, without the
+ * intro's offer), plus the prospect's dossier as `deriveSequenceOffer` adds
+ * it; else the prospect and their dossier alone (`prospectOfferInput`).
  */
 function sequenceOfferInput(
   prospectId: number,
   playName: string,
 ): { target: Record<string, unknown>; dossier: string | null } {
   const ledger = getLedger();
+  const prospect = ledger.getProspectById(prospectId);
   const queued = ledger.cadenceQueueRow(prospectId, playName);
   const target = queued
     ? offerTarget({ payload_json: JSON.stringify(queued.payload), source: queued.source })
     : null;
-  return target
-    ? { target, dossier: null }
-    : prospectOfferInput(ledger.getProspectById(prospectId));
+  if (!target) return prospectOfferInput(prospect);
+  // The row's own offer is the intro's, not the sequence's: never material.
+  delete target["offer"];
+  delete target["offerCandidates"];
+  return withPersonResearch(target, prospect);
 }
 
 /**

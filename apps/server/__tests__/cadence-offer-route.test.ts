@@ -102,6 +102,8 @@ function cadence(
     intro?: boolean;
     /** The intro went out from no queue row (a LinkedIn first touch, a typed list). */
     noRow?: boolean;
+    /** Extra fields on the queue row's payload. */
+    rowPayload?: Record<string, unknown>;
   } = {},
 ): { id: number; rowId: number | null } {
   const email = `dana${++n}@northside.example`;
@@ -115,6 +117,7 @@ function cadence(
           email,
           company: "Northside Plumbing",
           signal: "opened a second depot",
+          ...opts.rowPayload,
         },
         dedupeKey: `k-${email}`,
         source: "find:test",
@@ -353,6 +356,20 @@ describe("cadenceOfferRoute", () => {
     expect(derived.angleInput?.target).toMatchObject({ signal: "opened a second depot" });
     // The old offer is never material for the new one's angles.
     expect(derived.angleInput?.target["offer"]).toBeUndefined();
+  });
+
+  it("drops the row's intro offer and adds the prospect's dossier to the queue row's research", async () => {
+    const { id } = cadence({
+      offer: first,
+      candidates: [first, second],
+      rowPayload: { offer: { offer: "the intro's old offer" }, offerCandidates: [first] },
+    });
+    ledger.setProspectDossier(id, JSON.stringify({ person: "runs two depots in Leeds" }));
+    expect((await post(id, { select: 1 })).status).toBe(200);
+    expect(derived.angleInput?.target).toMatchObject({ signal: "opened a second depot" });
+    expect(derived.angleInput?.target["offer"]).toBeUndefined();
+    expect(derived.angleInput?.target["offerCandidates"]).toBeUndefined();
+    expect(derived.angleInput?.dossier).toContain("runs two depots in Leeds");
   });
 
   it("changes the offer of a sequence with no queue row, from the prospect and their dossier", async () => {
