@@ -266,6 +266,17 @@ describe("page reads", () => {
     expect(got.has(older)).toBe(false);
   });
 
+  it("cadencesForQueueRows gives an unlinked cadence to its prospect's row only when it is the only one", () => {
+    const a = ledger.upsertProspect({ email: "a@x.dev" });
+    const one = sentRow("a@x.dev", a);
+    const two = sentRow("a@x.dev-2", a);
+    ledger.enrollCadence({ prospectId: a, playName: PLAY, nextDueAt: "2026-10-25T00:00:00Z" });
+    const both = ledger.cadencesForQueueRows([one, two].map((id) => ledger.getQueueRow(id)!));
+    expect(both.size).toBe(0);
+    const alone = ledger.cadencesForQueueRows([ledger.getQueueRow(one)!]);
+    expect(alone.get(one)).toMatchObject({ prospect_id: a, queue_id: null });
+  });
+
   it("cadencePlansFor reads the plan of each cadence's current enrolment only", () => {
     const c = enrolled();
     const cad = ledger.getCadence(c.prospectId, c.playName)!;

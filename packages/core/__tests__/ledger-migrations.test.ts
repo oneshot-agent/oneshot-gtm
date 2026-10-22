@@ -360,6 +360,20 @@ describe("runLedgerMigrations", () => {
       expect(out.get(ids["taken"]!)).toEqual({ queue_id: null, offer: null });
     });
 
+    it("prefers the row the intro recorded it went out from over a newer one", () => {
+      const ids: Record<string, number> = {};
+      seedV15((l) => {
+        ids["origin"] = sent(l, { email: "rec@x.dev", offer: full });
+        ids["rec"] = cadence(l, "rec@x.dev", { queueId: ids["origin"] });
+        // Newer and linked to the same person, but not the row the intro used.
+        sent(l, { email: "rec@x.dev", offer: second }, ids["rec"]);
+      });
+      expect(migrated().get(ids["rec"]!)).toMatchObject({
+        queue_id: ids["origin"],
+        offer: { offer: full, origin: "derived" },
+      });
+    });
+
     it("is idempotent, and never overwrites a link or an offer already there", () => {
       const ids: Record<string, number> = {};
       seedV15(

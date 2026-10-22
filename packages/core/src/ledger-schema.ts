@@ -499,12 +499,15 @@ function copyCadenceOffers(db: Database): void {
         ORDER BY sent_at DESC, id DESC`,
     )
     .all(...plays);
-  const rowsById = new Map<number, { payload: MigrationJson | null }>();
+  const rowsById = new Map<
+    number,
+    { payload: MigrationJson | null; playName: string; prospectId: number | null }
+  >();
   const byProspect = new Map<string, number>();
   const byAddress = new Map<string, Array<{ id: number; prospectId: number | null }>>();
   for (const row of sentRows) {
     const payload = parseJsonObjectForMigration(row.payload_json);
-    rowsById.set(row.id, { payload });
+    rowsById.set(row.id, { payload, playName: row.play_name, prospectId: row.prospect_id });
     if (row.prospect_id != null) {
       const key = `${row.play_name}|${row.prospect_id}`;
       if (!byProspect.has(key)) byProspect.set(key, row.id);
@@ -544,9 +547,22 @@ function copyCadenceOffers(db: Database): void {
   const textKey = normalizeLearnedTextForMigration;
 
   for (const c of cadences) {
+    const meta = parseJsonObjectForMigration(
+      step0.get(c.prospect_id, c.play_name)?.metadata_json ?? null,
+    );
     let queueId = c.queue_id;
     if (queueId == null) {
-      queueId = byProspect.get(`${c.play_name}|${c.prospect_id}`) ?? null;
+      // The row the intro recorded it went out from wins over the newest one.
+      const recorded =
+        typeof meta?.["queueId"] === "number" && Number.isInteger(meta["queueId"])
+          ? rowsById.get(meta["queueId"])
+          : undefined;
+      queueId =
+        recorded &&
+        recorded.playName === c.play_name &&
+        (recorded.prospectId == null || recorded.prospectId === c.prospect_id)
+          ? (meta!["queueId"] as number)
+          : (byProspect.get(`${c.play_name}|${c.prospect_id}`) ?? null);
       const address = addressForMigration(c.email);
       if (queueId == null && address) {
         const match = byAddress
@@ -566,9 +582,6 @@ function copyCadenceOffers(db: Database): void {
     const rowCandidates = Array.isArray(payload?.["offerCandidates"])
       ? (payload["offerCandidates"] as unknown[]).filter(isOfferForMigration)
       : [];
-    const meta = parseJsonObjectForMigration(
-      step0.get(c.prospect_id, c.play_name)?.metadata_json ?? null,
-    );
     const introText =
       typeof meta?.["offer"] === "string" && meta["offer"].trim() ? meta["offer"] : null;
     let stored: { offer: unknown; candidates: unknown[]; origin: "intro" | "derived" } | null =
