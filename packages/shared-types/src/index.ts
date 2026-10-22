@@ -109,8 +109,9 @@ export interface CadenceOfferChoice {
 
 /**
  * The offer a cadence's follow-ups restate (`sequenceOfferRecord`): the
- * intro's own, or one written for the sequence and kept on the sent queue
- * row. Changed with POST /api/cadences/:id/offer, same body as the queue's.
+ * intro's own, or one written for the sequence, kept on the cadence
+ * (`cadence_state.offer_json`). Changed with POST /api/cadences/:id/offer,
+ * same body as the queue's.
  */
 export interface CadenceOfferView extends Omit<CadenceOfferChoice, "text"> {
   /** The active offer; null while the sequence has none. */
@@ -127,8 +128,6 @@ export interface CadenceOfferView extends Omit<CadenceOfferChoice, "text"> {
   activeIndex: number;
   /** The first email carried it: what was sent is fixed, so it cannot change. */
   introCarriedOffer: boolean;
-  /** The sent queue row it is kept on; null when there is none, and nowhere to keep one. */
-  queueRowId: number | null;
 }
 
 export interface CadenceView {
@@ -741,6 +740,13 @@ export interface QueueRowView {
   sendHold?: { code: "off-icp" | "weak-offer"; reason: string } | null;
   /** Delivery check of the first-touch send, when one ran (sent rows only). */
   delivery?: SendDeliveryView | null;
+  /**
+   * A sent row's sequence and the offer it carries now, read-only here: what
+   * the follow-ups restate, which may no longer be the offer the row went out
+   * with. Changed on the cadence. Absent on unsent rows, rows that started
+   * no sequence, plays that make no offer, and in older API responses.
+   */
+  sequenceOffer?: { status: CadenceStatus; offer: CadenceOfferView };
   id: number;
   playName: string;
   /** Outreach channel of the first touch: email, linkedin or x. */
@@ -1053,7 +1059,8 @@ export interface VoiceUsageView {
 export interface DraftAngle {
   pool?: Array<{ text: string; origin: "configured" | "generated" }>;
   text: string;
-  origin: "configured" | "generated";
+  /** `offer`: the pool was the offer's own angles (`overlayOfferAngles`). */
+  origin: "configured" | "generated" | "offer";
   index?: number;
   count?: number;
   /**

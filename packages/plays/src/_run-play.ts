@@ -17,6 +17,7 @@ import {
   CONTACTED_ELSEWHERE_FLAG,
   recentTouchElsewhere,
   angleBlockFromJson,
+  overlayOfferAngles,
 } from "@oneshot-gtm/core";
 import {
   draftEmailFromPrompt,
@@ -40,7 +41,6 @@ import {
   offerBlock,
   offerHoldsSend,
   offerMissingHoldsSend,
-  offerSendMetadata,
   offerSetForDraft,
   playMakesOffer,
   type ProspectOffer,
@@ -245,6 +245,10 @@ export async function runEmailPlay<T, X = Record<string, never>>(
      * target: its send enrols with its own row's trigger settings.
      */
     queueSources?: ReadonlyArray<string | null | undefined>;
+    /** The id of the queue row being sent (the drain): the sequence it starts links it. */
+    queueId?: number | null;
+    /** Per target, the id of the queue row it was drawn from, aligned with `queueSources`. */
+    queueIds?: ReadonlyArray<number | null | undefined>;
   },
 ): Promise<{ drafted: Array<PlayDraft<T, X>> }> {
   const cfg = loadConfig();
@@ -531,8 +535,6 @@ export async function runEmailPlay<T, X = Record<string, never>>(
                   }
                 : {}),
               ...(formatKey ? { firstTouchFormat: formatKey } : {}),
-              // Every later touch carries the same offer (_cadence.ts reads it back).
-              ...offerSendMetadata(offer),
             };
             return Object.keys(metadata).length > 0 ? { metadata } : {};
           })(),
@@ -545,25 +547,16 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           dryRun: opts.dryRun,
         });
 
-        if (
-          send.sent &&
-          (def.enrollCadence ||
-            getSequence(def.playName)?.steps.some((s) => s.channel === "direct_mail"))
-        ) {
-          const prospect = getLedger().findProspectByEmail(def.toEmail(target));
-          const queueSource = opts.queueSources?.[index] ?? opts.queueSource;
-          if (prospect)
-            enrollInCadence({
-              prospectId: prospect.id,
-              playName: def.playName,
-              ...(queueSource !== undefined ? { queueSource } : {}),
-            });
-        }
+        // The pool was the offer's own angles when the edge it was picked
+        // from is them (the queue overlays them, `overlayOfferAngles`).
+        const offerEdge = overlayOfferAngles({ offer: rawTarget["offer"] })["yourEdge"];
+        const offerPool =
+          !!edgeField && typeof offerEdge === "string" && rawTarget[edgeField] === offerEdge;
         const angle: DraftAngle | undefined =
           angleSelection && edgeField
             ? {
                 text: angleSelection.angle,
-                origin: "configured",
+                origin: offerPool ? "offer" : "configured",
                 index: angleSelection.index,
                 count: angleSelection.count,
                 // Arm-assigned drafts are the controlled comparison; the
@@ -575,15 +568,15 @@ export async function runEmailPlay<T, X = Record<string, never>>(
                 history: [],
               }
             : undefined;
-        // After the enrolment: it reads the newest queue row's trigger when
-        // the send names none, and this row names no trigger.
+        // Before the enrolment: the sequence links the row it records.
+        let introRowId: number | null = null;
         if (
           send.sent &&
           !opts.dryRun &&
           playMakesOffer(def.playName) &&
           !hasQueueRow(opts, index)
         ) {
-          recordIntroQueueRow({
+          introRowId = recordIntroQueueRow({
             playName: def.playName,
             email: def.toEmail(target),
             target: target as object,
@@ -599,6 +592,24 @@ export async function runEmailPlay<T, X = Record<string, never>>(
               ...(formatKey ? { formatKey } : {}),
             },
           });
+        }
+        if (
+          send.sent &&
+          (def.enrollCadence ||
+            getSequence(def.playName)?.steps.some((s) => s.channel === "direct_mail"))
+        ) {
+          const prospect = getLedger().findProspectByEmail(def.toEmail(target));
+          const queueSource = opts.queueSources?.[index] ?? opts.queueSource;
+          const queueId = opts.queueIds?.[index] ?? opts.queueId ?? introRowId;
+          // The sequence starts with the offer the intro opened with.
+          if (prospect)
+            enrollInCadence({
+              prospectId: prospect.id,
+              playName: def.playName,
+              ...(queueSource !== undefined ? { queueSource } : {}),
+              ...(queueId != null ? { queueId } : {}),
+              ...(offer ? { offer, offerCandidates: offerSet?.candidates ?? [] } : {}),
+            });
         }
 
         return {
@@ -665,12 +676,13 @@ export function introQueueDedupeKey(email: string): string {
 
 /**
  * Keep a sent queue row for an intro that went out from no queue row (a
- * typed /run list, the CLI). A sequence keeps its offer on the intro's sent
- * row (`sequenceOfferRecord`), and one with neither that row nor a step-0
- * offer can never be given one. The row is the target as sent, with the
- * address and the offer the intro opened with, linked to the prospect. An
- * unsent row under the same key (the person queued by an import) is taken
- * over instead: its payload is kept and the sent offer replaces its own.
+ * typed /run list, the CLI), so /queue has a record of every intro and the
+ * sequence a link to the row it started from (its research input). The row
+ * is the target as sent, with the address and the offer the intro opened
+ * with, linked to the prospect. An unsent row under the same key (the
+ * person queued by an import) is taken over instead: its payload is kept
+ * and the sent offer replaces its own. Returns the row's id, null when none
+ * was recorded.
  *
  * The status write records a machine disposition (`decided_by = 'machine'`),
  * and every approval rate and the ICP few-shot pool count human decisions
@@ -693,9 +705,9 @@ function recordIntroQueueRow(input: {
     learningKey?: string;
     formatKey?: FirstTouchFormat;
   };
-}): void {
+}): number | null {
   const email = typeof input.email === "string" ? input.email.trim() : "";
-  if (!email) return;
+  if (!email) return null;
   try {
     const ledger = getLedger();
     const dedupeKey = introQueueDedupeKey(email);
@@ -715,7 +727,7 @@ function recordIntroQueueRow(input: {
     let sent = false;
     if (id == null) {
       const existing = ledger.getQueueRowByDedupe(input.playName, dedupeKey);
-      if (!existing) return;
+      if (!existing) return null;
       id = existing.id;
       sent = existing.status === "sent";
       if (!sent) {
@@ -745,6 +757,7 @@ function recordIntroQueueRow(input: {
     }
     const prospect = ledger.findProspectByEmail(email);
     if (prospect) ledger.setQueueProspectId(id, prospect.id);
+    return id;
   } catch (err) {
     logEvent(
       "error.swallowed",
@@ -755,6 +768,7 @@ function recordIntroQueueRow(input: {
       },
       "warn",
     );
+    return null;
   }
 }
 

@@ -267,10 +267,29 @@ describe("sendLinkedInInvite", () => {
       },
     });
     // The LinkedIn sequence starts: first message once the invite is accepted.
+    // It links the row; the row has no offer, so the sequence has none yet.
     expect(enrollments[0]).toMatchObject({
       prospectId: 42,
       playName: "luma-events",
       channel: "linkedin",
+      queueId: 7,
+    });
+    expect(enrollments[0]!["offer"]).toBeUndefined();
+  });
+
+  it("starts the sequence with the row's offer, which its messages make (the note never does)", async () => {
+    const offer = { offer: "get every event follow-up sent the same day", steps: "drafts them" };
+    const candidates = [offer, { offer: "get every host thanked", steps: "writes it" }];
+    const { sender: s } = sender({ invitation_id: "inv-2", status: "sent" });
+    await sendLinkedInInvite({
+      row: row({ offer, offerCandidates: candidates }),
+      note: "hi",
+      sender: s,
+      workspace: "alpha",
+    });
+    expect(enrollments[0]).toMatchObject({
+      queueId: 7,
+      offer: { offer, candidates, origin: "derived" },
     });
   });
 

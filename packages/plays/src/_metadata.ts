@@ -6,8 +6,6 @@
  * work, fields read defensively.
  */
 
-import { offerOf, offerSendMetadata, playMakesOffer } from "./_prospect-offer.ts";
-
 type Payload = Record<string, unknown>;
 
 function field(raw: object, k: string): unknown {
@@ -205,10 +203,11 @@ export function playMetadata(
 
 /**
  * What a reviewed intro's step-0 record carries beyond the play's own map:
- * the offer on its queue row, and the angle and first-touch format its stored
- * draft was written with. The same fields an unattended run records
- * (`runEmailPlay`), so a follow-up reads the offer and the angle back
- * whichever path sent the intro. Null-valued keys are stripped, as above.
+ * the angle and first-touch format its stored draft was written with. The
+ * same fields an unattended run records (`runEmailPlay`), so a follow-up
+ * reads the angle back whichever path sent the intro (the offer is the
+ * sequence's own, stamped at enrollment). Null-valued keys are stripped, as
+ * above.
  */
 export function reviewedIntroMetadata(
   playName: string,
@@ -230,6 +229,5 @@ export function reviewedIntroMetadata(
   if (typeof draft.formatKey === "string" && draft.formatKey) {
     out["firstTouchFormat"] = draft.formatKey;
   }
-  if (playMakesOffer(playName)) Object.assign(out, offerSendMetadata(offerOf(payload)));
   return out;
 }

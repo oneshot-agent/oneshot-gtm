@@ -82,6 +82,8 @@ export function toDraftedView(d: {
  * /api/run, which hands `queueSources` instead: per target, the source of
  * the queue row it was loaded from (by its dedupe key), null for a manual
  * row, so each row of a mixed batch reads its own trigger's settings.
+ * `queueIds` are those rows' ids, aligned with `queueSources`: a sequence a
+ * send starts links the row it came from.
  */
 export async function dispatchPlay(
   playName: string,
@@ -91,6 +93,7 @@ export async function dispatchPlay(
   draftAngle?: string,
   queueSource?: string | null,
   queueSources?: ReadonlyArray<string | null>,
+  queueIds?: ReadonlyArray<number | null>,
 ): Promise<DraftedView[]> {
   const play = PLAYS[playName];
   if (!play) {
@@ -101,6 +104,7 @@ export async function dispatchPlay(
     ...(draftAngle ? { draftAngle } : {}),
     ...(queueSource !== undefined ? { queueSource } : {}),
     ...(queueSources ? { queueSources } : {}),
+    ...(queueIds ? { queueIds } : {}),
     dryRun: body.dryRun,
     targets: body.targets,
     ...(signal ? { signal } : {}),

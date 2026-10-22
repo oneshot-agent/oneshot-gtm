@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const calls = { sendEmail: 0, llm: 0 };
-// The intro carried an offer (step-0 metadata); every follow-up opens on it.
+// The intro carried an offer (the cadence's own); every follow-up opens on it.
 const OFFER = "get every vendor renewal signed before it lapses";
+const OFFER_JSON = JSON.stringify({
+  offer: { offer: OFFER, steps: "" },
+  candidates: [],
+  origin: "intro",
+});
 const BODY =
   "I can get every vendor renewal signed before it lapses, start to finish. Your ops lead gets back the hours spent chasing them, counted per renewal. Worth trying on the next one?";
 
@@ -70,8 +75,13 @@ vi.mock("@oneshot-gtm/core", async () => {
       listActiveCadences: () => cadenceRows.filter((c) => c.status === "active"),
       listCadencesForProspect: (prospectId: number) =>
         cadenceRows.filter((c) => c.prospect_id === prospectId),
-      getCadence: (prospectId: number, playName: string) =>
-        cadenceRows.find((c) => c.prospect_id === prospectId && c.play_name === playName) ?? null,
+      // The intro carried the offer: the cadence holds it.
+      getCadence: (prospectId: number, playName: string) => {
+        const row = cadenceRows.find(
+          (c) => c.prospect_id === prospectId && c.play_name === playName,
+        );
+        return row ? { ...row, offer_json: OFFER_JSON, queue_id: null } : null;
+      },
       getProspectById: (id: number) => {
         const row = cadenceRows.find((c) => c.prospect_id === id);
         return row
@@ -90,7 +100,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       },
       findProspectByEmail: () => null,
       listSequenceEventsForProspectPlay: () => [
-        { step_index: 0, status: "sent", metadata_json: JSON.stringify({ offer: OFFER }) },
+        { step_index: 0, status: "sent", metadata_json: JSON.stringify({}) },
       ],
       recordSequenceEvent: () => 0,
       hasSentSequenceEvent: () => false,

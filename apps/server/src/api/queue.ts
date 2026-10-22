@@ -52,6 +52,8 @@ import {
   enrollInCadence,
   generateRejectReason,
   logTargetError,
+  offerCandidatesOf,
+  offerOf,
   playProspectFields,
   reviewedIntroMetadata,
   sendDraftedEmail,
@@ -65,6 +67,7 @@ import {
 import { reportServerExecution } from "../telemetry.ts";
 import {
   blockingFlags,
+  type CadenceStatus,
   isQueueImportInProgress,
   type ImportQueueRowRequest,
   type ImportQueueRowResult,
@@ -92,6 +95,7 @@ import { sendsToday } from "./_capacity.ts";
 import { dispatchPlay } from "./_play-dispatch.ts";
 import { buildProspectTimeline } from "./_prospect-timeline.ts";
 import { viewsForRows } from "./cadences.ts";
+import { cadenceOfferFor } from "./cadence-offer.ts";
 
 /**
  * Shape-check a stored priority artifact via the shared core validator:
@@ -137,7 +141,34 @@ function weakOfferSendHold(playName: string, payload: unknown): QueueRowView["se
     : null;
 }
 
-export function toView(row: QueueRow): QueueRowView {
+/**
+ * The sequence each listed SENT row started and the offer it carries now
+ * (`QueueRowView.sequenceOffer`), for the page in one read
+ * (`cadencesForQueueRows`). Best-effort: a ledger that cannot answer leaves
+ * the rows showing their own offer.
+ */
+function sequenceOffersFor(
+  rows: ReadonlyArray<QueueRow>,
+): Map<number, NonNullable<QueueRowView["sequenceOffer"]>> {
+  const out = new Map<number, NonNullable<QueueRowView["sequenceOffer"]>>();
+  const sent = rows.filter((r) => r.status === "sent");
+  if (sent.length === 0) return out;
+  try {
+    for (const [id, cadence] of getLedger().cadencesForQueueRows(sent)) {
+      const offer = cadenceOfferFor(cadence);
+      if (offer) out.set(id, { status: cadence.status as CadenceStatus, offer });
+    }
+  } catch {
+    // the rows show their own offer
+  }
+  return out;
+}
+
+export function toView(
+  row: QueueRow,
+  /** A sent row's sequence and its offer (`sequenceOffersFor`), when the caller read it. */
+  sequenceOffer?: QueueRowView["sequenceOffer"],
+): QueueRowView {
   let payload: unknown = null;
   try {
     payload = JSON.parse(row.payload_json);
@@ -207,6 +238,7 @@ export function toView(row: QueueRow): QueueRowView {
     decisionReason: isDecisionReason(row.decision_reason) ? row.decision_reason : null,
     decidedAt: row.decided_at ?? null,
     delivery: deliveryFor(row.status, lastDraft),
+    ...(sequenceOffer && row.status === "sent" ? { sequenceOffer } : {}),
   };
 }
 
@@ -475,12 +507,16 @@ export function listQueueRoute(req: Request): Response {
   const counts: QueueCounts = ledger.queueCounts();
   // Unfiltered on purpose. The drain button needs per-play approved counts
   // regardless of the page's current filter.
+  // A sent row shows the offer its sequence carries now: one read for the page.
+  const sequenceOffers = sequenceOffersFor(ordered);
   let views: QueueRowView[];
   try {
     views = ordered.map((row) =>
       url.searchParams.get("forRun") === "1"
-        ? Object.assign(toView(row), { payload: resolveQueueTarget(row) })
-        : toView(row),
+        ? Object.assign(toView(row, sequenceOffers.get(row.id)), {
+            payload: resolveQueueTarget(row),
+          })
+        : toView(row, sequenceOffers.get(row.id)),
     );
   } catch (error) {
     return jsonResponse({ error: (error as Error).message }, 400, req);
@@ -1806,7 +1842,15 @@ export async function sendDraftRoute(
 
   const prospect = ledger.findProspectByEmail(email);
   if (prospect) {
-    enrollInCadence({ prospectId: prospect.id, playName: row.play_name, queueSource: row.source });
+    // The sequence starts with the offer this draft opened with, linked to the row.
+    const offer = offerOf(payload);
+    enrollInCadence({
+      prospectId: prospect.id,
+      playName: row.play_name,
+      queueSource: row.source,
+      queueId: id,
+      ...(offer ? { offer, offerCandidates: offerCandidatesOf(payload) } : {}),
+    });
     // Link the row to the person, as the LinkedIn branch above and the drain do.
     try {
       ledger.setQueueProspectId(id, prospect.id);

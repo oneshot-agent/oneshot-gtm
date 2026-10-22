@@ -68,6 +68,8 @@ export function offerTarget(
 
 interface OfferInput {
   target: Record<string, unknown>;
+  /** Research the target does not carry (a prospect's dossier), as the writer's ENRICHMENT. */
+  dossier?: string | null;
   playName: string;
 }
 

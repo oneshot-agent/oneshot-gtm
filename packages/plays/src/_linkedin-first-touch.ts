@@ -18,7 +18,7 @@ import { loadPrompt } from "@oneshot-gtm/intel";
 import { enrollInCadence } from "./_cadence.ts";
 import { agedEvidence, draftWithRepair, lintLinkedInNote } from "./_linkedin-evidence.ts";
 import { learningBlock, stampLearningInput, voiceBlock } from "./_lib.ts";
-import { offerOf, playMakesOffer } from "./_prospect-offer.ts";
+import { offerCandidatesOf, offerOf, playMakesOffer } from "./_prospect-offer.ts";
 
 /**
  * First touch on the LinkedIn channel: a connection request with a note, sent
@@ -403,9 +403,24 @@ export async function sendLinkedInInvite(input: {
     },
   });
   // The LinkedIn sequence: a message once the invite is accepted, then a close.
-  // A continuation invite belongs to the email cadence already running.
+  // A continuation invite belongs to the email cadence already running. The
+  // sequence starts with the row's offer, which its messages make (the note
+  // never does), linked to the row.
   if (!input.continuation) {
-    enrollInCadence({ prospectId, playName: input.row.playName, channel: "linkedin" });
+    const offer = offerOf(input.row.payload);
+    enrollInCadence({
+      prospectId,
+      playName: input.row.playName,
+      channel: "linkedin",
+      ...(input.row.id > 0 ? { queueId: input.row.id } : {}),
+      ...(offer
+        ? {
+            offer,
+            offerCandidates: offerCandidatesOf(input.row.payload),
+            offerOrigin: "derived" as const,
+          }
+        : {}),
+    });
   }
   logEvent("linkedin.invite_sent", { play: input.row.playName, status });
   return { sent: true, status, invitationId: result.invitation_id, prospectId };

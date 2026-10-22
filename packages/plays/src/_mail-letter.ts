@@ -16,7 +16,7 @@ export async function generateMailLetter(prospectId: number, playName: string): 
   // terms, so the "never add a price the terms do not contain" rule checks
   // against it.
   const memberOffer =
-    playName === "multiplier" ? enrolledMemberOffer(prospect.email, cfg, ledger) : "";
+    playName === "multiplier" ? enrolledMemberOffer(prospect.id, cfg, ledger) : "";
   if (playName === "multiplier" && !memberOffer) {
     throw new Error("multiplier: set memberOffer in config before generating a letter");
   }

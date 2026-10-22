@@ -272,6 +272,32 @@ describe("the sequence", () => {
     enrollInCadence({ prospectId, playName: PLAY, queueSource: "find:repo-stars" });
     expect(effectiveSequence(PLAY, prospectId)!.steps).toHaveLength(1);
   });
+
+  it("reads the trigger off the linked row when the send names no source", () => {
+    ledger.upsertTrigger({
+      name: "repo-stars",
+      configJson: JSON.stringify({ linkedinContinuation: false }),
+    });
+    ledger.upsertTrigger({
+      name: "repo-forks",
+      configJson: JSON.stringify({ linkedinContinuation: true }),
+    });
+    const stars = ledger.enqueueTarget({
+      playName: PLAY,
+      payload: { email: "dana@example.com", name: "Dana Lee" },
+      dedupeKey: "dana-stars",
+      source: "find:repo-stars",
+    })!;
+    ledger.enqueueTarget({
+      playName: PLAY,
+      payload: { email: "dana@example.com", name: "Dana Lee" },
+      dedupeKey: "dana-forks",
+      source: "find:repo-forks",
+    });
+    enrollInCadence({ prospectId, playName: PLAY, queueId: stars });
+    expect(state().queue_id).toBe(stars);
+    expect(effectiveSequence(PLAY, prospectId)!.steps).toHaveLength(1);
+  });
 });
 
 describe("the connection request", () => {
@@ -290,6 +316,40 @@ describe("the connection request", () => {
     expect(preview.flags).toEqual([]);
     expect(preview.payload).toMatchObject({ kind: "linkedin_invite", note: noteText });
     expect(calls).toEqual([]);
+  });
+
+  it("is told the sequence's offer as context, never the intro row's own copy", async () => {
+    const row = ledger.enqueueTarget({
+      playName: PLAY,
+      payload: {
+        email: "dana@example.com",
+        name: "Dana Lee",
+        offer: { offer: "the intro row's old offer", steps: "x" },
+      },
+      dedupeKey: "dana",
+      source: "find:test",
+    })!;
+    ledger.setQueueStatus({ id: row, status: "sent" });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: PLAY,
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "hello", body: "hello" },
+    });
+    enrollInCadence({
+      prospectId,
+      playName: PLAY,
+      queueId: row,
+      offer: { offer: "get every review merged the day it opens", steps: "reviews it" },
+    });
+    ledger.advanceCadence({ prospectId, playName: PLAY, newStep: 1, nextDueAt: null });
+    await previewCadenceStep({ prospectId, playName: PLAY });
+    expect(modelInputs[0]).toContain(
+      "OFFER (context only; the note never makes it): get every review merged the day it opens",
+    );
+    expect(modelInputs[0]).not.toContain("the intro row's old offer");
   });
 
   it("flags a note over 300 characters so it cannot be sent as is", async () => {

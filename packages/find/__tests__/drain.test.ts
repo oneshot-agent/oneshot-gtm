@@ -461,8 +461,10 @@ it("drains with current source edges without rewriting the queue payload", async
   expect(runStackConsolidationMock).toHaveBeenCalledWith({
     dryRun: true,
     targets: [{ ...JSON.parse(original), yourEdge: "the product is the playbook" }],
-    // The drained row's source rides along so cadence enrollment reads its trigger.
+    // The drained row's source rides along so cadence enrollment reads its
+    // trigger, and its id so the sequence links the row.
     queueSource: "find:github-topics",
+    queueId: 91,
   });
   expect(queued.payload_json).toBe(original);
 });

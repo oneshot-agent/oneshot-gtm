@@ -203,6 +203,215 @@ describe("runLedgerMigrations", () => {
     });
   });
 
+  describe("v16 gives every cadence its offer and its queue row", () => {
+    const PLAY = "seq-play";
+    const full = {
+      offer: "Get every Leeds job quoted the same day.",
+      steps: "drafts the quote",
+      angles: ["a", "b"],
+      relevance: "relevant",
+    };
+    const second = { offer: "get every invoice chased", steps: "chases it" };
+
+    /** Writes through a current ledger, then takes the file back to v15. */
+    function seedV15(seed: (l: Ledger) => void, after?: (db: Database) => void): void {
+      const ledger = new Ledger(dbPath);
+      seed(ledger);
+      ledger.close();
+      withRaw((db) => {
+        db.exec("ALTER TABLE cadence_state DROP COLUMN offer_json");
+        db.exec("ALTER TABLE cadence_state DROP COLUMN queue_id");
+        db.exec("PRAGMA user_version = 15");
+        after?.(db);
+      });
+    }
+
+    function sent(l: Ledger, payload: Record<string, unknown>, prospectId?: number): number {
+      const id = l.enqueueTarget({
+        playName: PLAY,
+        payload,
+        dedupeKey: `k-${Math.random().toString(36).slice(2)}`,
+        source: "find:test",
+      })!;
+      l.setQueueStatus({ id, status: "sent" });
+      if (prospectId != null) l.setQueueProspectId(id, prospectId);
+      return id;
+    }
+
+    function cadence(l: Ledger, email: string, step0?: Record<string, unknown>): number {
+      const id = l.upsertProspect({ name: "P", email });
+      l.recordSequenceEvent({
+        prospectId: id,
+        playName: PLAY,
+        stepIndex: 0,
+        channel: "email",
+        status: "sent",
+        metadata: { subject: "s", body: "b", ...step0 },
+      });
+      l.enrollCadence({ prospectId: id, playName: PLAY, nextDueAt: "2026-10-25T00:00:00Z" });
+      return id;
+    }
+
+    function migrated(): Map<number, { queue_id: number | null; offer: unknown }> {
+      new Ledger(dbPath).close();
+      return withRaw((db) => {
+        expect(userVersion(db)).toBe(LEDGER_SCHEMA_VERSION);
+        expect(LEDGER_MIGRATIONS.find((m) => m.name === "cadence-offer")?.version).toBe(16);
+        const rows = db
+          .query("SELECT prospect_id, queue_id, offer_json FROM cadence_state")
+          .all() as Array<{
+          prospect_id: number;
+          queue_id: number | null;
+          offer_json: string | null;
+        }>;
+        return new Map(
+          rows.map((r) => [
+            r.prospect_id,
+            { queue_id: r.queue_id, offer: r.offer_json ? JSON.parse(r.offer_json) : null },
+          ]),
+        );
+      });
+    }
+
+    const prospectIdOf = (rowId: number) =>
+      withRaw(
+        (db) =>
+          (
+            db.query("SELECT prospect_id FROM target_queue WHERE id = ?").get(rowId) as {
+              prospect_id: number | null;
+            }
+          ).prospect_id,
+      );
+
+    it("the intro's text wins: the row's whole offer when it is the same text, else the text", () => {
+      const ids: Record<string, number> = {};
+      seedV15((l) => {
+        ids["sameRow"] = sent(l, {
+          email: "same@x.dev",
+          offer: full,
+          offerCandidates: [full, second, { offer: "" }],
+        });
+        ids["same"] = cadence(l, "same@x.dev", {
+          offer: "get every leeds job quoted the same day",
+        });
+        ids["textRow"] = sent(l, { email: "text@x.dev", offer: second, offerCandidates: [second] });
+        ids["text"] = cadence(l, "text@x.dev", { offer: full.offer, offerSteps: "quotes" });
+      });
+      const out = migrated();
+      expect(out.get(ids["same"]!)).toEqual({
+        queue_id: ids["sameRow"],
+        offer: { offer: full, candidates: [full, second], origin: "intro" },
+      });
+      expect(out.get(ids["text"]!)).toEqual({
+        queue_id: ids["textRow"],
+        offer: { offer: { offer: full.offer, steps: "quotes" }, candidates: [], origin: "intro" },
+      });
+      // The matched rows are linked to their prospects.
+      expect(prospectIdOf(ids["sameRow"]!)).toBe(ids["same"]);
+      expect(prospectIdOf(ids["textRow"]!)).toBe(ids["text"]);
+    });
+
+    it("else the row's own offer, as derived; else none, still linked", () => {
+      const ids: Record<string, number> = {};
+      seedV15((l) => {
+        ids["rowRow"] = sent(l, { email: "row@x.dev", offer: second, offerCandidates: [second] });
+        ids["row"] = cadence(l, "row@x.dev");
+        ids["noneRow"] = sent(l, { email: "none@x.dev", signal: "s" });
+        ids["none"] = cadence(l, "none@x.dev");
+        ids["lone"] = cadence(l, "lone@x.dev", { offer: full.offer });
+      });
+      const out = migrated();
+      expect(out.get(ids["row"]!)).toEqual({
+        queue_id: ids["rowRow"],
+        offer: { offer: second, candidates: [second], origin: "derived" },
+      });
+      expect(out.get(ids["none"]!)).toEqual({ queue_id: ids["noneRow"], offer: null });
+      // No row at all: the intro's text alone.
+      expect(out.get(ids["lone"]!)).toEqual({
+        queue_id: null,
+        offer: { offer: { offer: full.offer, steps: "" }, candidates: [], origin: "intro" },
+      });
+    });
+
+    it("links a row that names the person only by founderEmail, and prefers the prospect link", () => {
+      const ids: Record<string, number> = {};
+      seedV15((l) => {
+        ids["hnRow"] = sent(l, { founderEmail: " HN@x.dev", offer: second });
+        ids["hn"] = cadence(l, "hn@x.dev");
+        ids["linked"] = cadence(l, "linked@x.dev");
+        ids["linkedRow"] = sent(l, { email: "elsewhere@x.dev", offer: full }, ids["linked"]);
+        // Newer, by address, but the prospect link wins.
+        sent(l, { email: "linked@x.dev", offer: second });
+        // A row linked to someone else is not this person's.
+        ids["takenOwner"] = l.upsertProspect({ name: "O", email: "owner@x.dev" });
+        ids["taken"] = cadence(l, "taken@x.dev");
+        sent(l, { email: "taken@x.dev", offer: second }, ids["takenOwner"]);
+      });
+      const out = migrated();
+      expect(out.get(ids["hn"]!)).toMatchObject({
+        queue_id: ids["hnRow"],
+        offer: { offer: second, origin: "derived" },
+      });
+      expect(prospectIdOf(ids["hnRow"]!)).toBe(ids["hn"]);
+      expect(out.get(ids["linked"]!)).toMatchObject({
+        queue_id: ids["linkedRow"],
+        offer: { offer: full, origin: "derived" },
+      });
+      expect(out.get(ids["taken"]!)).toEqual({ queue_id: null, offer: null });
+    });
+
+    it("prefers the row the intro recorded it went out from over a newer one", () => {
+      const ids: Record<string, number> = {};
+      seedV15((l) => {
+        ids["origin"] = sent(l, { email: "rec@x.dev", offer: full });
+        ids["rec"] = cadence(l, "rec@x.dev", { queueId: ids["origin"] });
+        // Newer and linked to the same person, but not the row the intro used.
+        sent(l, { email: "rec@x.dev", offer: second }, ids["rec"]);
+      });
+      expect(migrated().get(ids["rec"]!)).toMatchObject({
+        queue_id: ids["origin"],
+        offer: { offer: full, origin: "derived" },
+      });
+    });
+
+    it("is idempotent, and never overwrites a link or an offer already there", () => {
+      const ids: Record<string, number> = {};
+      seedV15(
+        (l) => {
+          ids["row"] = sent(l, { email: "a@x.dev", offer: second, offerCandidates: [second] });
+          ids["a"] = cadence(l, "a@x.dev");
+          ids["kept"] = cadence(l, "kept@x.dev", { offer: full.offer });
+          sent(l, { email: "kept@x.dev", offer: second });
+        },
+        (db) => {
+          db.exec("ALTER TABLE cadence_state ADD COLUMN offer_json TEXT");
+          db.exec("ALTER TABLE cadence_state ADD COLUMN queue_id INTEGER");
+          db.query(
+            "UPDATE cadence_state SET offer_json = ?, queue_id = 777 WHERE prospect_id = ?",
+          ).run(JSON.stringify({ offer: full, candidates: [], origin: "derived" }), ids["kept"]!);
+        },
+      );
+      const first = migrated();
+      expect(first.get(ids["kept"]!)).toEqual({
+        queue_id: 777,
+        offer: { offer: full, candidates: [], origin: "derived" },
+      });
+      const step = LEDGER_MIGRATIONS.find((m) => m.name === "cadence-offer")!;
+      const dump = () =>
+        withRaw((db) => [
+          db.query("SELECT * FROM cadence_state ORDER BY prospect_id").all(),
+          db.query("SELECT id, prospect_id, payload_json FROM target_queue ORDER BY id").all(),
+        ]);
+      const before = dump();
+      withRaw((db) => {
+        step.up(db);
+        step.up(db);
+      });
+      expect(dump()).toEqual(before);
+      expect(first.get(ids["a"]!)).toMatchObject({ queue_id: ids["row"] });
+    });
+  });
+
   it("migrates a pre-versioning ledger (user_version 0)", () => {
     new Ledger(dbPath).close();
     withRaw((db) => {

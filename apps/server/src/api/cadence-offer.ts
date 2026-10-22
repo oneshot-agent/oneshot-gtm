@@ -1,9 +1,12 @@
-import { getLedger } from "@oneshot-gtm/core";
+import { getLedger, type CadenceWithProspect } from "@oneshot-gtm/core";
 import {
   deriveSequenceOffer,
   offerHoldsSend,
   playMakesOffer,
+  prospectOfferInput,
+  sequenceOfferOf,
   sequenceOfferRecord,
+  withPersonResearch,
   writeSequenceOffer,
   type DeriveSequenceOfferResult,
   type ProspectOffer,
@@ -79,23 +82,21 @@ export function cadenceOfferView(record: SequenceOfferRecord): CadenceOfferView 
     activeIndex:
       o && !founderEdited ? record.offerCandidates.findIndex((c) => c.offer === o.offer) : -1,
     introCarriedOffer: record.introCarriedOffer,
-    queueRowId: record.queueRowId,
   };
 }
 
-/** The offer view for a cadence row, when the play makes one; never throws. */
+/** The offer view for a cadence row, from the row itself, when the play makes one; never throws. */
 export function cadenceOfferFor(
-  prospectId: number,
-  playName: string,
-  email: string | null,
+  cadence: Pick<CadenceWithProspect, "prospect_id" | "play_name" | "offer_json" | "queue_id">,
 ): CadenceOfferView | undefined {
-  if (!playMakesOffer(playName)) return undefined;
-  return cadenceOfferView(
-    sequenceOfferRecord({ prospectId, playName, prospect: { id: prospectId, email } }),
-  );
+  if (!playMakesOffer(cadence.play_name)) return undefined;
+  return cadenceOfferView(sequenceOfferOf(cadence));
 }
 
 const IN_FLIGHT = "cadence send is already in flight; wait for it to finish";
+
+/** A guarded write that landed nothing with no send holding the cadence: it changed meanwhile. */
+const NOT_STORED = "the sequence's offer could not be stored; refresh and retry";
 
 /** Why a forced re-derivation stored nothing, as the route answers it. */
 function noOfferResponse(
@@ -119,29 +120,51 @@ function noOfferResponse(
     case "error":
       return jsonResponse({ error: "writing the offers failed; try again" }, 500, req);
     default:
-      return jsonResponse(
-        { error: "the sequence's sent row could not be written; refresh and retry" },
-        409,
-        req,
-      );
+      return jsonResponse({ error: NOT_STORED }, 409, req);
   }
 }
 
 /**
+ * What a chosen or founder-written offer gets its angles from: the queue row
+ * the sequence started from (its payload with the trigger's edge, without the
+ * intro's offer), plus the prospect's dossier as `deriveSequenceOffer` adds
+ * it; else the prospect and their dossier alone (`prospectOfferInput`).
+ */
+function sequenceOfferInput(
+  prospectId: number,
+  playName: string,
+): { target: Record<string, unknown>; dossier: string | null } {
+  const ledger = getLedger();
+  const prospect = ledger.getProspectById(prospectId);
+  const queued = ledger.cadenceQueueRow(prospectId, playName);
+  const target = queued
+    ? offerTarget({ payload_json: JSON.stringify(queued.payload), source: queued.source })
+    : null;
+  if (!target) return prospectOfferInput(prospect);
+  // The row's own offer is the intro's, not the sequence's: never material.
+  delete target["offer"];
+  delete target["offerCandidates"];
+  return withPersonResearch(target, prospect);
+}
+
+/**
  * POST /api/cadences/:id/offer?play=: change the offer a cadence's
- * follow-ups restate, kept on the sent queue row its intro went out from.
- * Same body as POST /api/queue/:id/offer:
+ * follow-ups restate, kept on the cadence (`cadence_state.offer_json`,
+ * through `setCadenceOffer`); no queue row changes. Same body as POST
+ * /api/queue/:id/offer:
  *
- * - `{ regenerate: true }` writes new offers from the row's research and the
- *   thread already sent (`deriveSequenceOffer`, forced).
+ * - `{ regenerate: true }` writes new offers from the research of the queue
+ *   row the sequence started from (else the prospect's) and the thread
+ *   already sent (`deriveSequenceOffer`, forced).
  * - `{ select: i }` makes the sequence's i-th offer active.
  * - `{ offer, steps?, return? }` saves the founder's own text.
  * - `{ approveWeak: true }` approves the active offer although it was rated
  *   a weak fit, releasing the hold it puts on the follow-up.
  *
- * An offer the first email carried is what was sent and never changes
- * (409). Nor does anything while a send holds the cadence: checked first,
- * and again by every write, atomically (409 either way). A change drops
+ * A sequence with no queue row takes its research from the prospect. An
+ * offer the first email carried is what was sent and never changes (409).
+ * Nor does anything while a send holds the cadence: checked first, and
+ * again by every write, atomically (409 either way). A change drops
  * the stored preview (its version closed as `regenerate`, as a founder's
  * regenerate would), so the next draft restates the new offer; the caller
  * drafts it, as after the queue's offer change. Answers the offer as the
@@ -168,7 +191,7 @@ export async function cadenceOfferRoute(
   const body = await readOfferEditBody(req);
   if (!body) return jsonResponse({ error: "body must be a JSON object" }, 400, req);
 
-  const record = sequenceOfferRecord({ prospectId, playName });
+  const record = sequenceOfferRecord({ prospectId, playName, cadence });
   if (record.introCarriedOffer) {
     return jsonResponse(
       { error: "The first email carried this offer: what was sent is fixed for this sequence." },
@@ -176,15 +199,8 @@ export async function cadenceOfferRoute(
       req,
     );
   }
-  if (record.queueRowId == null) {
-    return jsonResponse(
-      { error: "This sequence has no sent queue row to keep an offer on." },
-      409,
-      req,
-    );
-  }
   // Every write lands only while no send holds the cadence, in the same
-  // statement (`unlessSending`): the model calls below take a while, and a
+  // statement (`setCadenceOffer`): the model calls below take a while, and a
   // send that claimed the cadence meanwhile wins.
   const sendStarted = (): boolean => !!ledger.getCadence(prospectId, playName)?.sending_started_at;
 
@@ -198,7 +214,6 @@ export async function cadenceOfferRoute(
       offer: approval.stamp,
       merge: true,
       expect: approval.expect,
-      unlessSending: true,
     });
     if (!written) {
       if (sendStarted()) return jsonResponse({ error: IN_FLIGHT }, 409, req);
@@ -214,7 +229,6 @@ export async function cadenceOfferRoute(
       playName,
       force: true,
       stepIndex: cadence.current_step + 1,
-      unlessSending: true,
     });
     if (out.status === "none") {
       if (out.reason === "not-stored" && sendStarted()) {
@@ -226,12 +240,7 @@ export async function cadenceOfferRoute(
       return jsonResponse({ error: "the sequence's offer is fixed; refresh" }, 409, req);
     }
   } else {
-    const row = ledger.getQueueRow(record.queueRowId);
-    const target = row ? offerTarget(row) : null;
-    if (!target) {
-      return jsonResponse({ error: "the sequence's sent row payload is not valid JSON" }, 400, req);
-    }
-    const input = { target, playName };
+    const input = { ...sequenceOfferInput(prospectId, playName), playName };
     let offer: ProspectOffer;
     let candidates: ProspectOffer[] | undefined;
     if (body.select !== undefined) {
@@ -259,15 +268,10 @@ export async function cadenceOfferRoute(
       record,
       offer,
       ...(candidates ? { offerCandidates: candidates } : {}),
-      unlessSending: true,
     });
     if (!written) {
       if (sendStarted()) return jsonResponse({ error: IN_FLIGHT }, 409, req);
-      return jsonResponse(
-        { error: "the sequence's sent row could not be written; refresh and retry" },
-        409,
-        req,
-      );
+      return jsonResponse({ error: NOT_STORED }, 409, req);
     }
   }
 

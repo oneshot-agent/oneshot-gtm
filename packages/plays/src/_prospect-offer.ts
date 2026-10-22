@@ -8,9 +8,11 @@
  * `pilotOffer` (the general terms: a pilot, a trial, a partnership). Nothing
  * here names a product or assumes what kind of offer a founder makes.
  *
- * It is stored on the queue row (`payload.offer`) and on the first send's
- * step-0 metadata, so every later touch carries the same one. An offer the
- * founder edited is never re-derived.
+ * Before the first send it is stored on the queue row (`payload.offer`, with
+ * the ranked `offerCandidates`). The send hands it to the sequence it starts
+ * (`cadence_state.offer_json`, see `_sequence-offer.ts`), which owns it from
+ * then on, so every later touch carries the same one. An offer the founder
+ * edited is never re-derived.
  */
 import { createHash } from "node:crypto";
 import { isPersonResearchDossier, loadConfig, logEvent } from "@oneshot-gtm/core";
@@ -1167,16 +1169,6 @@ export async function offerSetForDraft(
   }
   const fresh = await deriveOfferSet({ ...input, cfg });
   return fresh ? { ...fresh, derived: true } : null;
-}
-
-/**
- * The step-0 send record's offer fields: every later touch carries the same
- * offer (`sequenceOfferRecord` reads them back). Empty without an offer.
- */
-export function offerSendMetadata(
-  offer: Pick<ProspectOffer, "offer" | "steps"> | null | undefined,
-): { offer?: string; offerSteps?: string } {
-  return offer ? { offer: offer.offer, offerSteps: offer.steps } : {};
 }
 
 /**

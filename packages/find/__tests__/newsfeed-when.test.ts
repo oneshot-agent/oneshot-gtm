@@ -69,9 +69,11 @@ vi.mock("@oneshot-gtm/core", async () => {
       getProspectById: (id: number) => state.prospects.get(id) ?? null,
       mergeProspectDossierHalf: () => {},
       listActiveCadences: () => state.cadences,
-      latestSentQueueRow: (play: string, email: string) => {
+      // The row each cadence started from, by its prospect's address here.
+      cadenceQueueRow: (id: number, play: string) => {
+        const email = state.cadences.find((c) => c.prospect_id === id)?.prospect_email;
         const source = state.sentSource.get(`${play}|${email}`);
-        return source ? { payload: {}, source } : null;
+        return source ? { id: 1, payload: {}, source } : null;
       },
     }),
   };

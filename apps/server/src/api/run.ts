@@ -9,7 +9,7 @@ import {
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
 import { PLAYS, verifyAndFilterTargets } from "@oneshot-gtm/plays";
-import { backfillProspectId, storeDraftOffer } from "@oneshot-gtm/find";
+import { backfillProspectId } from "@oneshot-gtm/find";
 import {
   isRunnablePlay,
   type CancelRunResponse,
@@ -57,6 +57,8 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
   // source names the trigger whose settings apply to that target (the
   // multiplier play's `memberOffer`); null for a manual row.
   const queueSources = queueSourcesFor(playName, body);
+  // Their ids: a sequence a send starts links the row it came from.
+  const queueIds = queueIdsFor(playName, body);
   // The play's own refusal, made before the route's paid verification below:
   // a multiplier run without a member offer bills nothing, not even the check.
   try {
@@ -230,6 +232,9 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         const verifiedSources = queueSources.some((source) => source !== null)
           ? verify.verified.map((target) => queueSources[originalIndexOf.get(target) ?? -1] ?? null)
           : undefined;
+        const verifiedIds = queueIds.some((id) => id !== null)
+          ? verify.verified.map((target) => queueIds[originalIndexOf.get(target) ?? -1] ?? null)
+          : undefined;
 
         send({ kind: "stage", stage: body.dryRun ? "drafting" : "drafting + sending" });
         // Per-target callback: fires draft/send events live so counters tick
@@ -275,6 +280,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           undefined,
           undefined,
           verifiedSources,
+          verifiedIds,
         );
         send({ kind: "done", total: drafted.length, sent: sentCount });
         finished = true;
@@ -654,6 +660,24 @@ export function queueSourcesFor(playName: string, body: RunPlayRequest): Array<s
   });
 }
 
+/** `queueSourcesFor`, for the rows' ids. Exported for its test. */
+export function queueIdsFor(playName: string, body: RunPlayRequest): Array<number | null> {
+  const keys =
+    Array.isArray(body.dedupeKeys) && body.dedupeKeys.length === body.targets.length
+      ? body.dedupeKeys
+      : null;
+  if (!keys) return body.targets.map(() => null);
+  const ledger = getLedger();
+  return keys.map((key) => {
+    if (typeof key !== "string" || key.length === 0) return null;
+    try {
+      return ledger.getQueueRowByDedupe(playName, key)?.id ?? null;
+    } catch {
+      return null;
+    }
+  });
+}
+
 /** A JSON object or array: what a queue payload field holds that the run page edits as text. */
 function isJsonContainer(value: unknown): value is object {
   return value !== null && typeof value === "object";
@@ -732,12 +756,6 @@ export function persistDraftsToQueue(input: {
     try {
       const row = ledger.getQueueRowByDedupe(input.playName, dedupeKey);
       if (!row) continue;
-      // An offer the run wrote (the row had none current) goes on the row
-      // with the draft built on it, before a send flips the row: the queue,
-      // a later Send of this draft and the sequence then name the same one.
-      if (draft.offer && draft.offerCandidates) {
-        storeDraftOffer(row, draft.offer, draft.offerCandidates);
-      }
       ledger.setQueueDraft({
         id: row.id,
         draft: {

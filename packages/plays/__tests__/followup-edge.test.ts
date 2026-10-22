@@ -10,6 +10,8 @@ const C = "For a growth lead — the second touch re-sends the first argument";
 const D = "For a batch founder — the stars on your repo are the warmest list";
 
 let sentRow: { payload: Record<string, unknown>; source: string } | null = null;
+/** The offer the cadence carries (`offer_json`), when it has one. */
+let seqOffer: Record<string, unknown> | null = null;
 let triggerConfig: Record<string, unknown> | null = null;
 let introAngleText: string | null = null;
 /** The sequence's sent steps, when a test needs more than the intro. */
@@ -24,8 +26,13 @@ vi.mock("@oneshot-gtm/core", async () => {
     logEvent: () => {},
     loadConfig: () => ({ founderName: "F", productOneLiner: "p" }),
     getLedger: () => ({
-      latestSentQueueRow: () => sentRow,
-      latestSentQueuePayload: () => sentRow?.payload ?? null,
+      cadenceQueueRow: () => (sentRow ? { id: 1, ...sentRow } : null),
+      getCadence: () => ({
+        queue_id: sentRow ? 1 : null,
+        offer_json: seqOffer
+          ? JSON.stringify({ offer: seqOffer, candidates: [], origin: "intro" })
+          : null,
+      }),
       getTrigger: () =>
         triggerConfig ? { config_json: JSON.stringify(triggerConfig) } : undefined,
       listSequenceEventsForProspectPlay: () =>
@@ -57,6 +64,7 @@ const prospect = { email: "p@x.dev", id: 7 };
 beforeEach(() => {
   cache.clear();
   sentRow = { payload: { email: "p@x.dev", yourEdge: `${A} // ${B}` }, source: "find:luma-events" };
+  seqOffer = null;
   triggerConfig = null;
   introAngleText = A;
   priorRows = null;
@@ -143,19 +151,29 @@ describe("followUpEdgeSelection across a sequence", () => {
 });
 
 describe("followUpEdgeSelection", () => {
-  it("picks from the intro offer's angles, over the trigger's edge, never the intro's own", async () => {
+  it("picks from the cadence offer's angles, over the trigger's edge, never the intro's own", async () => {
+    triggerConfig = { yourEdge: `${C} // ${D}` };
+    sentRow = { payload: { email: "p@x.dev", yourEdge: A }, source: "find:luma-events" };
+    seqOffer = { offer: "o", steps: "s", angles: [A, B, C] };
+    introAngleText = A;
+    const sel = await followUpEdgeSelection(prospect, "luma-events");
+    expect(sel).toMatchObject({ angle: B, index: 1, count: 3, origin: "offer" });
+  });
+
+  it("never draws on the row's own copy of an offer the cadence replaced", async () => {
     triggerConfig = { yourEdge: `${C} // ${D}` };
     sentRow = {
       payload: {
         email: "p@x.dev",
         yourEdge: A,
-        offer: { offer: "o", steps: "s", angles: [A, B, C] },
+        offer: { offer: "old", steps: "s", angles: [A, B] },
       },
       source: "find:luma-events",
     };
-    introAngleText = A;
+    introAngleText = C;
+    // No offer on the cadence: the trigger's edge, never the row's offer.
     const sel = await followUpEdgeSelection(prospect, "luma-events");
-    expect(sel).toMatchObject({ angle: B, index: 1, count: 3 });
+    expect(sel).toMatchObject({ angle: D, origin: "configured" });
   });
 
   it("picks from the trigger's current edge, not the frozen one", async () => {

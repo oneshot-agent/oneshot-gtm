@@ -43,6 +43,14 @@ export interface CadenceWithProspect {
   last_send_error: string | null;
   /** ISO timestamp of `last_send_error`. */
   last_send_error_at: string | null;
+  /**
+   * The offer the sequence carries, as JSON (`CadenceOfferJson`): written at
+   * enrollment, changed only by `setCadenceOffer`, kept when the cadence
+   * ends. Null while the sequence has none.
+   */
+  offer_json: string | null;
+  /** The queue row the sequence started from; null when it started from none. */
+  queue_id: number | null;
   prospect_email: string | null;
   prospect_name: string | null;
   prospect_company: string | null;
@@ -67,13 +75,38 @@ function normalizeSubject(subject: string | null | undefined): string | null {
   return s.length > 0 ? s : null;
 }
 
+/**
+ * A cadence's offer as `cadence_state.offer_json` stores it. `offer` is the
+ * whole offer (a plays `ProspectOffer`), or only `{offer, steps}` for an
+ * intro whose send record kept nothing else. `origin` is `intro` when the
+ * first message carried it (what was sent is fixed), `derived` when it was
+ * written or chosen for the sequence later.
+ */
+export interface CadenceOfferJson {
+  offer: Record<string, unknown>;
+  candidates: unknown[];
+  origin: "intro" | "derived";
+}
+
+/**
+ * Enroll a prospect in a play's cadence. `offer` and `queueId` are stamped
+ * on a new cadence; a re-enrolment keeps the ones it already has.
+ */
 export function enrollCadence(
   db: Database,
-  input: { prospectId: number; playName: string; nextDueAt: string; channel?: string },
+  input: {
+    prospectId: number;
+    playName: string;
+    nextDueAt: string;
+    channel?: string;
+    offer?: CadenceOfferJson | null;
+    queueId?: number | null;
+  },
 ): void {
   db.prepare(
-    `INSERT INTO cadence_state(prospect_id, play_name, current_step, status, next_due_at, channel)
-     VALUES(?, ?, 0, 'active', ?, ?)
+    `INSERT INTO cadence_state(prospect_id, play_name, current_step, status, next_due_at, channel,
+                               offer_json, queue_id)
+     VALUES(?, ?, 0, 'active', ?, ?, ?, ?)
      ON CONFLICT(prospect_id, play_name) DO UPDATE SET
        status = 'active',
        next_due_at = excluded.next_due_at,
@@ -83,9 +116,225 @@ export function enrollCadence(
        stop_note = NULL,
        stopped_at = NULL,
        last_send_error = NULL,
-       last_send_error_at = NULL
+       last_send_error_at = NULL,
+       offer_json = COALESCE(cadence_state.offer_json, excluded.offer_json),
+       queue_id = COALESCE(cadence_state.queue_id, excluded.queue_id)
      WHERE cadence_state.status != 'stopped'`,
-  ).run(input.prospectId, input.playName, input.nextDueAt, input.channel ?? "email");
+  ).run(
+    input.prospectId,
+    input.playName,
+    input.nextDueAt,
+    input.channel ?? "email",
+    input.offer ? JSON.stringify(input.offer) : null,
+    input.queueId ?? null,
+  );
+}
+
+/**
+ * Change the offer an active cadence carries, in one statement that lands
+ * only while no send holds the cadence (`sending_started_at`), the same
+ * guard `discardCadenceDraft` keeps. `offer` replaces the stored offer
+ * whole; with `merge`, it is a JSON merge patch onto it (an approval stamp;
+ * null deletes a key) and needs one stored. `candidates` absent keeps the
+ * stored list, `origin` absent keeps the stored origin (`derived` when there
+ * is none). `expect` is compare-and-set on the stored offer's keys (key →
+ * scalar, null: absent), e.g. an approval bound to the offer the founder
+ * read. False when nothing was written.
+ */
+export function setCadenceOffer(
+  db: Database,
+  input: {
+    prospectId: number;
+    playName: string;
+    offer: Record<string, unknown>;
+    candidates?: unknown[];
+    origin?: CadenceOfferJson["origin"];
+    merge?: boolean;
+    expect?: Record<string, string | null>;
+  },
+): boolean {
+  const guards = Object.entries(input.expect ?? {});
+  for (const [key] of guards) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`unsafe offer key: ${key}`);
+  }
+  const offerSql = input.merge
+    ? "json_patch(json_extract(offer_json, '$.offer'), json(?))"
+    : "json(?)";
+  const r = db
+    .prepare(
+      `UPDATE cadence_state
+          SET offer_json = json_object(
+                'offer', ${offerSql},
+                'candidates', COALESCE(json(?), json(json_extract(offer_json, '$.candidates')), json('[]')),
+                'origin', COALESCE(?, json_extract(offer_json, '$.origin'), 'derived'))
+        WHERE prospect_id = ? AND play_name = ? AND status = 'active'
+          AND sending_started_at IS NULL
+          AND (offer_json IS NULL OR json_valid(offer_json))${
+            input.merge ? "\n          AND json_type(offer_json, '$.offer') = 'object'" : ""
+          }${guards.map(() => "\n          AND json_extract(offer_json, ?) IS ?").join("")}`,
+    )
+    .run(
+      JSON.stringify(input.offer),
+      input.candidates ? JSON.stringify(input.candidates) : null,
+      input.origin ?? null,
+      input.prospectId,
+      input.playName,
+      ...guards.flatMap(([key, value]) => [`$.offer.${key}`, value]),
+    );
+  return r.changes === 1;
+}
+
+/**
+ * The queue row a cadence started from (`queue_id`), with its payload and
+ * source. A cadence with no link falls back to the newest SENT row of the
+ * play whose `$.email` is the prospect's address. Null when there is none
+ * or its payload won't parse.
+ */
+export function cadenceQueueRow(
+  db: Database,
+  prospectId: number,
+  playName: string,
+): { id: number; payload: Record<string, unknown>; source: string } | null {
+  const linked = db
+    .query(
+      `SELECT c.queue_id AS queue_id, p.email AS email, q.id AS id,
+              q.payload_json AS payload_json, q.source AS source
+         FROM cadence_state c
+         JOIN prospects p ON p.id = c.prospect_id
+         LEFT JOIN target_queue q ON q.id = c.queue_id
+        WHERE c.prospect_id = ? AND c.play_name = ?`,
+    )
+    .get(prospectId, playName) as {
+    queue_id: number | null;
+    email: string | null;
+    id: number | null;
+    payload_json: string | null;
+    source: string | null;
+  } | null;
+  if (linked?.queue_id != null) {
+    if (linked.id == null || linked.payload_json == null) return null;
+    try {
+      const parsed: unknown = JSON.parse(linked.payload_json);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? { id: linked.id, payload: parsed as Record<string, unknown>, source: linked.source ?? "" }
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  const email = linked
+    ? linked.email
+    : (
+        db.query("SELECT email FROM prospects WHERE id = ?").get(prospectId) as {
+          email: string | null;
+        } | null
+      )?.email;
+  if (!email?.trim()) return null;
+  return new QueueStore(db).latestSentQueueRow(playName, email);
+}
+
+/** How many ids one `IN (...)` statement binds: well under SQLite's variable limit. */
+const IN_CHUNK = 400;
+
+function chunks<T>(items: readonly T[]): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += IN_CHUNK) out.push(items.slice(i, i + IN_CHUNK));
+  return out;
+}
+
+/** The parts of a cadence a queue row shows: its status and the offer it carries. */
+export type QueueRowCadence = Pick<
+  CadenceWithProspect,
+  "prospect_id" | "play_name" | "status" | "offer_json" | "queue_id"
+>;
+
+/**
+ * The cadence each queue row started, for a page of rows at once: the one
+ * linked to the row (`queue_id`), else the cadence of the row's prospect on
+ * its play (there is one per prospect and play). Keyed by queue row id; a
+ * row with neither is absent. One statement per 400 rows.
+ */
+export function cadencesForQueueRows(
+  db: Database,
+  rows: ReadonlyArray<{ id: number; prospect_id: number | null; play_name: string }>,
+): Map<number, QueueRowCadence> {
+  const out = new Map<number, QueueRowCadence>();
+  // An unlinked cadence goes to a row only when that row is the only one of
+  // its prospect and play asked about; with several, which one started it is
+  // unknown. Counted over every row, not per chunk.
+  const rowsPerPair = new Map<string, number>();
+  for (const r of rows) {
+    if (r.prospect_id == null) continue;
+    const key = `${r.prospect_id}|${r.play_name}`;
+    rowsPerPair.set(key, (rowsPerPair.get(key) ?? 0) + 1);
+  }
+  for (const part of chunks(rows)) {
+    const ids = part.map((r) => r.id);
+    const prospectIds = [
+      ...new Set(part.flatMap((r) => (r.prospect_id != null ? [r.prospect_id] : []))),
+    ];
+    const found = db
+      .query(
+        `SELECT prospect_id, play_name, status, offer_json, queue_id
+           FROM cadence_state
+          WHERE queue_id IN (${ids.map(() => "?").join(",")})${
+            prospectIds.length > 0
+              ? ` OR prospect_id IN (${prospectIds.map(() => "?").join(",")})`
+              : ""
+          }`,
+      )
+      .all(...ids, ...prospectIds) as QueueRowCadence[];
+    const byQueue = new Map<number, QueueRowCadence>();
+    const byPair = new Map<string, QueueRowCadence>();
+    for (const c of found) {
+      // A linked cadence belongs to its own row only; the prospect + play
+      // fallback is for cadences that never got a link.
+      if (c.queue_id != null) byQueue.set(c.queue_id, c);
+      else byPair.set(`${c.prospect_id}|${c.play_name}`, c);
+    }
+    for (const r of part) {
+      const key = r.prospect_id != null ? `${r.prospect_id}|${r.play_name}` : null;
+      const c =
+        byQueue.get(r.id) ??
+        (key != null && rowsPerPair.get(key) === 1 ? byPair.get(key) : undefined);
+      if (c) out.set(r.id, c);
+    }
+  }
+  return out;
+}
+
+/**
+ * The saved plan of each cadence's current enrolment (`getCadencePlan` for a
+ * page of cadences), keyed `prospect_id|play_name`. A cadence with no plan
+ * saved is absent. One statement per 400 prospects.
+ */
+export function cadencePlansFor(
+  db: Database,
+  cadences: ReadonlyArray<Pick<CadenceWithProspect, "prospect_id" | "play_name" | "enrolled_at">>,
+): Map<string, CadencePlanStep[]> {
+  const out = new Map<string, CadencePlanStep[]>();
+  const wanted = new Map<string, string>();
+  for (const c of cadences) wanted.set(`${c.prospect_id}|${c.play_name}`, c.enrolled_at);
+  const prospectIds = [...new Set(cadences.map((c) => c.prospect_id))];
+  for (const part of chunks(prospectIds)) {
+    const rows = db
+      .query(
+        `SELECT prospect_id, play_name, enrollment, steps FROM cadence_plans
+          WHERE prospect_id IN (${part.map(() => "?").join(",")})`,
+      )
+      .all(...part) as Array<{
+      prospect_id: number;
+      play_name: string;
+      enrollment: string;
+      steps: string;
+    }>;
+    for (const row of rows) {
+      const key = `${row.prospect_id}|${row.play_name}`;
+      if (wanted.get(key) !== row.enrollment) continue;
+      out.set(key, JSON.parse(row.steps) as CadencePlanStep[]);
+    }
+  }
+  return out;
 }
 
 /**

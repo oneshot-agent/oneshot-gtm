@@ -361,6 +361,20 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       addColumnIfMissing(db, "learning_proposals", "applied_key", "TEXT");
     },
   },
+  {
+    // The sequence owns its offer: `offer_json` (`{ offer, candidates,
+    // origin }`) is written at enrollment and changed only through the
+    // cadence, and `queue_id` links the cadence to the queue row it started
+    // from. Until now the offer was pieced together on every read from the
+    // intro's step-0 record and the sent row found by its address.
+    version: 16,
+    name: "cadence-offer",
+    up: (db) => {
+      addColumnIfMissing(db, "cadence_state", "offer_json", "TEXT");
+      addColumnIfMissing(db, "cadence_state", "queue_id", "INTEGER");
+      copyCadenceOffers(db);
+    },
+  },
 ];
 
 /**
@@ -410,6 +424,181 @@ function copyIcpProposals(db: Database): void {
       r.decided_at,
       r.status === "approved" ? r.decided_at : null,
     );
+  }
+}
+
+type MigrationJson = Record<string, unknown>;
+
+function parseJsonObjectForMigration(text: string | null): MigrationJson | null {
+  if (!text) return null;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as MigrationJson)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `isProspectOffer` (plays/_prospect-offer.ts), inlined to keep this module import-free. */
+function isOfferForMigration(value: unknown): value is MigrationJson {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const o = value as { offer?: unknown; steps?: unknown };
+  return typeof o.offer === "string" && o.offer.trim().length > 0 && typeof o.steps === "string";
+}
+
+function addressForMigration(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : null;
+}
+
+/**
+ * Migration 16: link every cadence to its queue row and give it the offer
+ * its follow-ups were restating, read once the way they read it then.
+ *
+ * - The row: the newest SENT row of the cadence's play linked to its
+ *   prospect, else the newest whose `$.email` or `$.founderEmail` is the
+ *   prospect's address (a row linked to someone else is not theirs). A
+ *   matched row with no prospect link gets this one.
+ * - The offer: the intro's step-0 `offer` text when it has one (origin
+ *   `intro`), as the whole offer and its candidates when the row's offer is
+ *   the same text (the `angleTextKey` comparison), else as `{offer, steps}`;
+ *   else the row's own offer and candidates (origin `derived`); else none.
+ *
+ * Idempotent: only a NULL `queue_id`, `offer_json` or row `prospect_id` is
+ * filled, so a second run changes nothing.
+ */
+function copyCadenceOffers(db: Database): void {
+  const cadences = db
+    .query<
+      {
+        prospect_id: number;
+        play_name: string;
+        queue_id: number | null;
+        offer_json: string | null;
+        email: string | null;
+      },
+      []
+    >(
+      `SELECT c.prospect_id, c.play_name, c.queue_id, c.offer_json, p.email
+         FROM cadence_state c JOIN prospects p ON p.id = c.prospect_id
+        WHERE c.queue_id IS NULL OR c.offer_json IS NULL`,
+    )
+    .all();
+  if (cadences.length === 0) return;
+
+  // Every sent row of the plays involved, newest first, indexed once.
+  const plays = [...new Set(cadences.map((c) => c.play_name))];
+  const sentRows = db
+    .query<
+      { id: number; play_name: string; prospect_id: number | null; payload_json: string },
+      string[]
+    >(
+      `SELECT id, play_name, prospect_id, payload_json FROM target_queue
+        WHERE status = 'sent' AND play_name IN (${plays.map(() => "?").join(", ")})
+        ORDER BY sent_at DESC, id DESC`,
+    )
+    .all(...plays);
+  const rowsById = new Map<
+    number,
+    { payload: MigrationJson | null; playName: string; prospectId: number | null }
+  >();
+  const byProspect = new Map<string, number>();
+  const byAddress = new Map<string, Array<{ id: number; prospectId: number | null }>>();
+  for (const row of sentRows) {
+    const payload = parseJsonObjectForMigration(row.payload_json);
+    rowsById.set(row.id, { payload, playName: row.play_name, prospectId: row.prospect_id });
+    if (row.prospect_id != null) {
+      const key = `${row.play_name}|${row.prospect_id}`;
+      if (!byProspect.has(key)) byProspect.set(key, row.id);
+    }
+    const addresses = new Set(
+      [
+        addressForMigration(payload?.["email"]),
+        addressForMigration(payload?.["founderEmail"]),
+      ].filter((a): a is string => a != null),
+    );
+    for (const address of addresses) {
+      const key = `${row.play_name}|${address}`;
+      const list = byAddress.get(key) ?? [];
+      list.push({ id: row.id, prospectId: row.prospect_id });
+      byAddress.set(key, list);
+    }
+  }
+
+  const step0 = db.query<{ metadata_json: string | null }, [number, string]>(
+    `SELECT metadata_json FROM sequence_events
+      WHERE prospect_id = ? AND play_name = ? AND step_index = 0
+        AND status IN ('sent','delivered','replied','skipped')
+      ORDER BY id ASC LIMIT 1`,
+  );
+  const linkCadence = db.query(
+    `UPDATE cadence_state SET queue_id = ?
+      WHERE prospect_id = ? AND play_name = ? AND queue_id IS NULL`,
+  );
+  const linkRow = db.query(
+    "UPDATE target_queue SET prospect_id = ? WHERE id = ? AND prospect_id IS NULL",
+  );
+  const writeOffer = db.query(
+    `UPDATE cadence_state SET offer_json = ?
+      WHERE prospect_id = ? AND play_name = ? AND offer_json IS NULL`,
+  );
+  // The same normalization as `angleTextKey` (ledger-drafts.ts).
+  const textKey = normalizeLearnedTextForMigration;
+
+  for (const c of cadences) {
+    const meta = parseJsonObjectForMigration(
+      step0.get(c.prospect_id, c.play_name)?.metadata_json ?? null,
+    );
+    let queueId = c.queue_id;
+    if (queueId == null) {
+      // The row the intro recorded it went out from wins over the newest one.
+      const recorded =
+        typeof meta?.["queueId"] === "number" && Number.isInteger(meta["queueId"])
+          ? rowsById.get(meta["queueId"])
+          : undefined;
+      queueId =
+        recorded &&
+        recorded.playName === c.play_name &&
+        (recorded.prospectId == null || recorded.prospectId === c.prospect_id)
+          ? (meta!["queueId"] as number)
+          : (byProspect.get(`${c.play_name}|${c.prospect_id}`) ?? null);
+      const address = addressForMigration(c.email);
+      if (queueId == null && address) {
+        const match = byAddress
+          .get(`${c.play_name}|${address}`)
+          ?.find((r) => r.prospectId == null || r.prospectId === c.prospect_id);
+        queueId = match?.id ?? null;
+      }
+      if (queueId != null) {
+        linkCadence.run(queueId, c.prospect_id, c.play_name);
+        linkRow.run(c.prospect_id, queueId);
+      }
+    }
+    if (c.offer_json != null) continue;
+
+    const payload = queueId != null ? (rowsById.get(queueId)?.payload ?? null) : null;
+    const rowOffer = isOfferForMigration(payload?.["offer"]) ? payload["offer"] : null;
+    const rowCandidates = Array.isArray(payload?.["offerCandidates"])
+      ? (payload["offerCandidates"] as unknown[]).filter(isOfferForMigration)
+      : [];
+    const introText =
+      typeof meta?.["offer"] === "string" && meta["offer"].trim() ? meta["offer"] : null;
+    let stored: { offer: unknown; candidates: unknown[]; origin: "intro" | "derived" } | null =
+      null;
+    if (introText) {
+      const same = rowOffer != null && textKey(String(rowOffer["offer"])) === textKey(introText);
+      const steps =
+        typeof meta?.["offerSteps"] === "string" && meta["offerSteps"].trim()
+          ? meta["offerSteps"]
+          : "";
+      stored = same
+        ? { offer: rowOffer, candidates: rowCandidates, origin: "intro" }
+        : { offer: { offer: introText, steps }, candidates: [], origin: "intro" };
+    } else if (rowOffer) {
+      stored = { offer: rowOffer, candidates: rowCandidates, origin: "derived" };
+    }
+    if (stored) writeOffer.run(JSON.stringify(stored), c.prospect_id, c.play_name);
   }
 }
 

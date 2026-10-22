@@ -83,6 +83,10 @@ export interface PlayRunInput {
   queueSource?: string | null;
   /** Per target, the `source` of its queue row (a /run batch from the queue); see `runEmailPlay`. */
   queueSources?: ReadonlyArray<string | null | undefined>;
+  /** The id of the queue row being sent (queue drain); see `runEmailPlay`. */
+  queueId?: number | null;
+  /** Per target, the id of its queue row (a /run batch from the queue); see `runEmailPlay`. */
+  queueIds?: ReadonlyArray<number | null | undefined>;
 }
 
 export interface PlayDispatch {
@@ -117,11 +121,15 @@ const signalOpt = (
   draftAngle?: string;
   queueSource?: string | null;
   queueSources?: ReadonlyArray<string | null | undefined>;
+  queueId?: number | null;
+  queueIds?: ReadonlyArray<number | null | undefined>;
 } => ({
   ...(o.signal ? { signal: o.signal } : {}),
   ...(o.draftAngle ? { draftAngle: o.draftAngle } : {}),
   ...(o.queueSource !== undefined ? { queueSource: o.queueSource } : {}),
   ...(o.queueSources ? { queueSources: o.queueSources } : {}),
+  ...(o.queueId != null ? { queueId: o.queueId } : {}),
+  ...(o.queueIds ? { queueIds: o.queueIds } : {}),
 });
 
 export const PLAYS: Record<string, PlayDispatch> = {

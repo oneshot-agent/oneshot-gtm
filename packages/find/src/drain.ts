@@ -282,6 +282,7 @@ async function dispatchOneTarget(opts: DrainOpts, row: QueueRow): Promise<DrainD
     dryRun: opts.dryRun,
     targets: [target],
     queueSource: row.source,
+    queueId: row.id,
     ...(row.play_name === "community-reply" ? { spendReserved: true } : {}),
   });
   const drafted = firstDraft(result.drafted);

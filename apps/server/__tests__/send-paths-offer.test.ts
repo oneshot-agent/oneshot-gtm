@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getLedger } from "@oneshot-gtm/core";
 import type { RunPlayEvent } from "@oneshot-gtm/shared-types";
 
-// Every path an intro of an offer-making play goes out by leaves the
-// sequence an offer to restate: a sent queue row with the offer, linked to
-// the prospect, and the offer on the step-0 send record. /api/run with a
-// typed list, /queue Send, Mark sent, and /run loaded from the queue (whose
-// page edits every field as text). Real ledger in the per-file temp home
-// (vitest.setup.ts), real play, stubbed models and send.
+// Every path an intro of an offer-making play goes out by starts a sequence
+// that owns the offer it opened with (`cadence_state.offer_json`) and links
+// the queue row it went out from (a sent row linked to the prospect). The
+// step-0 send record keeps the angle, never a copy of the offer. /api/run
+// with a typed list, /queue Send, Mark sent, and /run loaded from the queue
+// (whose page edits every field as text). Real ledger in the per-file temp
+// home (vitest.setup.ts), real play, stubbed models and send.
 
 const llm = vi.hoisted(() => ({ names: [] as string[], drafts: [] as string[] }));
 const OFFER = {
@@ -190,14 +191,20 @@ describe("/api/run with a typed list", () => {
     const record = sequenceOfferRecord({ prospectId: prospect.id, playName: PLAY });
     expect(record.queueRowId).toBe(row.id);
     expect(record.offer).toMatchObject({ offer: OFFER.offer, steps: OFFER.steps });
+    expect(record.introCarriedOffer).toBe(true);
   });
 });
 
 describe("/queue Send", () => {
-  it("links the row to the prospect and records the offer and angle on step 0", async () => {
+  it("links the row to the prospect, starts the sequence with the row's offer, and records the angle on step 0", async () => {
     const t = target();
+    const second = storedOffer({ offer: "get every price list checked before a quote goes out" });
     const id = approvedRow(
-      { ...t, offer: storedOffer({ editedBy: "founder" }) },
+      {
+        ...t,
+        offer: storedOffer({ editedBy: "founder" }),
+        offerCandidates: [storedOffer(), second],
+      },
       { draft: { angle, formatKey: "brief" } },
     );
     const res = await sendDraftRoute(new Request("http://localhost/x", { method: "POST" }), {
@@ -208,23 +215,43 @@ describe("/queue Send", () => {
     const prospect = getLedger().findProspectByEmail(t.email!)!;
     expect(getLedger().getQueueRow(id)).toMatchObject({ status: "sent", prospect_id: prospect.id });
     expect(step0Meta(prospect.id)).toMatchObject({
-      offer: OFFER.offer,
-      offerSteps: OFFER.steps,
       angleText: angle.text,
       angleIndex: 0,
       angleCount: 2,
       firstTouchFormat: "brief",
     });
+    expect(step0Meta(prospect.id)).not.toHaveProperty("offer");
     expect(sequenceOfferRecord({ prospectId: prospect.id, playName: PLAY })).toMatchObject({
       queueRowId: id,
       introCarriedOffer: true,
-      offer: { editedBy: "founder" },
+      offer: { offer: OFFER.offer, editedBy: "founder" },
+      offerCandidates: [{ offer: OFFER.offer }, { offer: second.offer }],
     });
+  });
+
+  it("a re-send keeps the sequence's offer and link", async () => {
+    const t = target();
+    const id = approvedRow({ ...t, offer: storedOffer() });
+    await sendDraftRoute(new Request("http://localhost/x", { method: "POST" }), {
+      id: String(id),
+    });
+    const prospect = getLedger().findProspectByEmail(t.email!)!;
+    const before = getLedger().getCadence(prospect.id, PLAY)!;
+    getLedger().setCadenceStatus({ prospectId: prospect.id, playName: PLAY, status: "completed" });
+    getLedger().enrollCadence({
+      prospectId: prospect.id,
+      playName: PLAY,
+      nextDueAt: "2026-11-01T00:00:00Z",
+      offer: { offer: { offer: "another", steps: "x" }, candidates: [], origin: "intro" },
+      queueId: id + 1000,
+    });
+    const after = getLedger().getCadence(prospect.id, PLAY)!;
+    expect(after).toMatchObject({ queue_id: id, offer_json: before.offer_json });
   });
 });
 
 describe("Mark sent", () => {
-  it("records the row's offer on the hand-sent step 0", async () => {
+  it("records the angle on the hand-sent step 0, and no copy of the offer", async () => {
     const id = approvedRow(
       { ...target(), handle: "jamiebuyer", offer: storedOffer() },
       { channel: "x", draft: { angle } },
@@ -234,11 +261,9 @@ describe("Mark sent", () => {
     });
     expect(res.status).toBe(200);
     const { prospectId } = (await res.json()) as { prospectId: number };
-    expect(step0Meta(prospectId)).toMatchObject({
-      offer: OFFER.offer,
-      offerSteps: OFFER.steps,
-      angleText: angle.text,
-    });
+    expect(step0Meta(prospectId)).toMatchObject({ angleText: angle.text });
+    expect(step0Meta(prospectId)).not.toHaveProperty("offer");
+    expect(step0Meta(prospectId)).not.toHaveProperty("offerSteps");
   });
 });
 
@@ -268,17 +293,23 @@ describe("/run loaded from the queue", () => {
     });
   });
 
-  it("writes an offer the run derived back to the row", async () => {
+  it("a live send links the sequence to the row and gives it the offer the run wrote", async () => {
     const payload = target();
     const id = approvedRow(payload);
     const key = getLedger().getQueueRow(id)!.dedupe_key;
 
-    await run({ dryRun: true, targets: [payload], dedupeKeys: [key] });
+    await run({ dryRun: false, targets: [payload], dedupeKeys: [key] });
 
     expect(llm.names).toContain("prospect-offer");
-    const stored = payloadOf(id);
-    expect(stored["offer"]).toMatchObject({ offer: OFFER.offer, version: "offer-v4" });
-    expect(stored["offerCandidates"]).toHaveLength(1);
+    const prospect = getLedger().findProspectByEmail(payload.email!)!;
+    expect(sequenceOfferRecord({ prospectId: prospect.id, playName: PLAY })).toMatchObject({
+      queueRowId: id,
+      introCarriedOffer: true,
+      offer: { offer: OFFER.offer, version: "offer-v4" },
+      offerCandidates: [{ offer: OFFER.offer }],
+    });
+    // No row of its own is recorded: the batch's row is the one it went out from.
+    expect(getLedger().getQueueRowByDedupe(PLAY, introQueueDedupeKey(payload.email!))).toBeNull();
   });
 
   it("parses object fields back from text, and falls back to the row's own when the text is not JSON", () => {

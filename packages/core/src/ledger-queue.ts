@@ -380,6 +380,23 @@ export class QueueStore {
   }
 
   /**
+   * `getQueueRow` for many ids: one statement per 400 ids, keyed by id. An
+   * id with no row is absent; an empty input touches nothing.
+   */
+  getQueueRowsByIds(ids: readonly number[]): Map<number, QueueRow> {
+    const out = new Map<number, QueueRow>();
+    const unique = [...new Set(ids)];
+    for (let i = 0; i < unique.length; i += 400) {
+      const part = unique.slice(i, i + 400);
+      const rows = this.db
+        .query(`SELECT * FROM target_queue WHERE id IN (${part.map(() => "?").join(",")})`)
+        .all(...part) as QueueRow[];
+      for (const row of rows) out.set(row.id, row);
+    }
+    return out;
+  }
+
+  /**
    * Most recent queue row linked to a prospect. The finder's original signal
    * that queued them, used as evidence input to angle synthesis (issue #355).
    * Not every prospect has one: manually added prospects, or rows whose queue
@@ -1248,8 +1265,8 @@ export class QueueStore {
    */
   /**
    * `latestSentQueuePayload` plus the row's `source`, so a caller can resolve
-   * its trigger, and its `id`, so a caller can write the sequence's offer
-   * back to it (`patchSentQueueOffer`).
+   * its trigger, and its `id`: how a cadence with no `queue_id` finds the row
+   * it started from (`cadenceQueueRow`).
    */
   latestSentQueueRow(
     playName: string,
@@ -1406,54 +1423,6 @@ export class QueueStore {
       if (input.discardDraft) this.drafts.close({ queueId: input.id }, "discarded", "redraft");
       return true;
     })();
-  }
-
-  /**
-   * Write a cadence's offer onto the SENT queue row its intro went out from:
-   * a sequence that started before prospect offers existed gets one when its
-   * next follow-up is drafted, and every later touch reads it back from here.
-   * Only the `offer` and `offerCandidates` keys are merged (JSON merge patch,
-   * so a null inside `offer` deletes that key), and only on a row whose
-   * status is `sent`: a live row's offer belongs to `patchLiveQueuePayload`.
-   * `expect` is the same compare-and-set as there. `cadence` makes the write
-   * wait for no send: it lands only while that cadence holds no
-   * `sending_started_at`, in the same statement, so an offer written while
-   * a send claimed the cadence is never stored. False when nothing was
-   * written.
-   */
-  patchSentQueueOffer(input: {
-    id: number;
-    offer: Record<string, unknown>;
-    offerCandidates?: unknown[];
-    expect?: Array<{ path: string; value: string | null }>;
-    cadence?: { prospectId: number; playName: string };
-  }): boolean {
-    const guards = input.expect ?? [];
-    const patch: Record<string, unknown> = { offer: input.offer };
-    if (input.offerCandidates !== undefined) patch["offerCandidates"] = input.offerCandidates;
-    const cadence = input.cadence;
-    const r = this.db
-      .prepare(
-        `UPDATE target_queue
-            SET payload_json = json_patch(payload_json, ?)
-          WHERE id = ?
-            AND status = 'sent'
-            AND json_valid(payload_json)${guards.map(() => "\n            AND json_extract(payload_json, ?) IS ?").join("")}${
-              cadence
-                ? `
-            AND NOT EXISTS (SELECT 1 FROM cadence_state
-                             WHERE prospect_id = ? AND play_name = ?
-                               AND sending_started_at IS NOT NULL)`
-                : ""
-            }`,
-      )
-      .run(
-        JSON.stringify(patch),
-        input.id,
-        ...guards.flatMap((g) => [g.path, g.value]),
-        ...(cadence ? [cadence.prospectId, cadence.playName] : []),
-      );
-    return r.changes === 1;
   }
 
   latestQueueId(): number {

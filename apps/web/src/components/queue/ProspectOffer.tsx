@@ -6,7 +6,12 @@ import { api } from "../../api/client.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
 import { cn } from "../../lib/cn.ts";
 import { clearDraftGenerating, markDraftGenerating } from "../../lib/draftRunState.ts";
-import { clearRowActivity, setRowActivity, useRowActivity } from "../../lib/rowActivity.ts";
+import {
+  clearRowActivity,
+  setRowActivity,
+  useRowActivity,
+  type RowActivityId,
+} from "../../lib/rowActivity.ts";
 import { Button } from "../primitives/Button.tsx";
 import { Textarea } from "../primitives/Field.tsx";
 import { Disclosure } from "../ledger/CaseList.tsx";
@@ -224,7 +229,7 @@ export function OfferBlock({
   actions,
   locked = false,
 }: {
-  activityId: number;
+  activityId: RowActivityId;
   offer: OfferView | null;
   candidates: OfferView[];
   /** False when the offer can no longer change. */

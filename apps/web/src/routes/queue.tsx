@@ -14,6 +14,7 @@ import {
   offerFromPayload,
 } from "../components/queue/ProspectOffer.tsx";
 import { ProductResearch } from "../components/queue/ProductResearch.tsx";
+import { SentRowSequenceOffer } from "../components/queue/SequenceOffer.tsx";
 import { Explain } from "../components/primitives/Explain.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
@@ -1217,15 +1218,23 @@ export function QueueRow({
                   </p>
                 </div>
               )}
-              <ProspectOffer
-                rowId={row.id}
-                payload={row.payload}
-                editable={
-                  (row.status === "pending" || row.status === "approved") &&
-                  !row.lastDraft?.sent &&
-                  !row.isSending
-                }
-              />
+              {row.status === "sent" && row.sequenceOffer ? (
+                <SentRowSequenceOffer
+                  rowId={row.id}
+                  payload={row.payload}
+                  sequence={row.sequenceOffer}
+                />
+              ) : (
+                <ProspectOffer
+                  rowId={row.id}
+                  payload={row.payload}
+                  editable={
+                    (row.status === "pending" || row.status === "approved") &&
+                    !row.lastDraft?.sent &&
+                    !row.isSending
+                  }
+                />
+              )}
               {!masked && fitReason && (
                 <p className="m-0 text-[13px] leading-5 text-ink-cream-2 [text-wrap:pretty]">
                   {fitReason}

@@ -425,12 +425,13 @@ function priorAngles(
  * current edge), so the follow-up draft can carry which angle it was built on
  * the way an intro draft does. The draft-version record keys on it.
  *
- * The pool is the sequence offer's own angles when it has them (`offer`, else
- * the offer on the intro's sent row), else the trigger's current edge
- * (`resolveTriggerOverlay` over the intro's sent row), so an edit reaches
- * prospects already in cadence; the frozen payload edge is only a fallback
- * when the trigger is gone or its config is invalid. A sequence with no sent
- * queue row has only its offer's angles.
+ * The pool is the sequence offer's own angles when it has them (`offer`, as
+ * the cadence stores it), else the trigger's current edge
+ * (`resolveTriggerOverlay` over the queue row the sequence started from,
+ * `cadenceQueueRow`), so an edit reaches prospects already in cadence; the
+ * frozen payload edge is only a fallback when the trigger is gone or its
+ * config is invalid. A sequence with no queue row has only its offer's
+ * angles.
  *
  * Every angle an earlier step was built on is excluded by its recorded TEXT
  * (so a reordered edge still excludes it and a rewritten one excludes
@@ -446,28 +447,41 @@ export async function followUpEdgeSelection(
   opts: {
     rotateFrom?: string | null;
     stepIndex?: number | null;
-    /** The sequence's offer, when it is not (or not yet) on the sent row. */
+    /** The sequence's offer, as the caller resolved it; absent: read from the cadence. */
     offer?: { angles?: unknown } | null;
   } = {},
 ): Promise<AngleSelection | null> {
   const email = prospect.email?.trim();
   if (!email) return null;
+  const prospectId = prospect.id;
   let row: { payload: Record<string, unknown>; source: string } | null = null;
-  try {
-    const ledger = getLedger() as ReturnType<typeof getLedger> & {
-      latestSentQueueRow?: (p: string, e: string) => typeof row;
-    };
-    row =
-      typeof ledger.latestSentQueueRow === "function"
-        ? ledger.latestSentQueueRow(playName, email)
-        : (() => {
-            const payload = ledger.latestSentQueuePayload(playName, email);
-            return payload ? { payload, source: "" } : null;
-          })();
-  } catch {
-    row = null;
+  let offer = opts.offer;
+  if (prospectId != null) {
+    try {
+      row = getLedger().cadenceQueueRow(prospectId, playName);
+    } catch {
+      row = null;
+    }
+    if (offer === undefined) {
+      try {
+        const stored = tryParseJsonObject<{ offer?: unknown }>(
+          getLedger().getCadence(prospectId, playName)?.offer_json ?? "",
+          {},
+        ).offer;
+        offer = stored && typeof stored === "object" ? (stored as { angles?: unknown }) : null;
+      } catch {
+        offer = null;
+      }
+    }
   }
-  if (!row && !opts.offer) return null;
+  if (row) {
+    // The row's own offer is the intro's copy; the cadence's stands for it.
+    const payload = { ...row.payload };
+    delete payload["offer"];
+    delete payload["offerCandidates"];
+    row = { ...row, payload };
+  }
+  if (!row && !offer) return null;
   const payload = row?.payload ?? { email };
   const frozenField = edgeFieldOf(payload);
   const frozenEdge = frozenField ? (payload[frozenField] as string) : "";
@@ -486,7 +500,7 @@ export async function followUpEdgeSelection(
     }
   }
   // The sequence's offer, when it carries angles, supplies the follow-ups' pool.
-  if (opts.offer) target = { ...target, offer: opts.offer };
+  if (offer) target = { ...target, offer };
   const overlaid = overlayOfferAngles(target);
   const origin: "configured" | "offer" = overlaid !== target ? "offer" : "configured";
   target = overlaid;

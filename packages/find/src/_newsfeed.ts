@@ -561,18 +561,14 @@ export async function sweepInFlightNewsfeeds(
   if (demoMode()) return result;
   const ledger = getLedger();
   const cadences = ledger.listActiveCadences();
-  const emailById = new Map(cadences.map((c) => [c.prospect_id, c.prospect_email]));
   const candidates = selectInFlightNewsfeedCandidates(cadences, {
     seedFor: (id) => {
       const p = ledger.getProspectById(id);
       return p ? newsfeedSeedForProspect(p) : null;
     },
     isFresh: (url) => hasFreshNewsfeed(url),
-    offFor: (id, playName) => {
-      const email = emailById.get(id);
-      const source = email ? (ledger.latestSentQueueRow(playName, email)?.source ?? null) : null;
-      return newsfeedOffForSource(source);
-    },
+    offFor: (id, playName) =>
+      newsfeedOffForSource(ledger.cadenceQueueRow(id, playName)?.source ?? null),
   });
   result.ran = true;
   result.candidates = candidates.length;

@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CADENCE_SEND_UNCONFIRMED } from "@oneshot-gtm/shared-types";
 
-// The intro carried an offer (step-0 metadata), so every follow-up restates it.
+// The intro carried an offer (the cadence's own), so every follow-up restates it.
 const OFFER = "get every vendor renewal signed before it lapses";
+const OFFER_JSON = JSON.stringify({
+  offer: { offer: OFFER, steps: "" },
+  candidates: [],
+  origin: "intro",
+});
 const BODY =
   "I can get every vendor renewal signed before it lapses, start to finish. Your ops lead gets back the hours spent chasing them, counted per renewal. Worth trying on the next one?";
 
@@ -30,6 +35,8 @@ let cadenceRows: Array<{
   prospect_email: string | null;
   prospect_name: string | null;
   prospect_company: string | null;
+  offer_json: string | null;
+  queue_id: number | null;
 }> = [];
 let lastDraftDiscardReason: string | null = null;
 let persistedDraft: {
@@ -169,7 +176,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       },
       findProspectByEmail: () => null,
       listSequenceEventsForProspectPlay: () => [
-        { step_index: 0, status: "sent", metadata_json: JSON.stringify({ offer: OFFER }) },
+        { step_index: 0, status: "sent", metadata_json: JSON.stringify({}) },
       ],
       hasSentSequenceEvent: () => alreadySentNextStep,
       recordSequenceEvent: () => 0,
@@ -279,6 +286,8 @@ function seedActiveCadence(): void {
       prospect_email: "p@x.dev",
       prospect_name: "Pat",
       prospect_company: "Acme",
+      offer_json: OFFER_JSON,
+      queue_id: null,
     },
   ];
 }
