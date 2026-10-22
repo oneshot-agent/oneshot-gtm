@@ -116,10 +116,7 @@ function toView(
     row.current_step + 1,
   );
   // The offer the follow-ups restate: only an active cadence has more to send.
-  const offer =
-    row.status === "active"
-      ? cadenceOfferFor(row.prospect_id, row.play_name, row.prospect_email)
-      : undefined;
+  const offer = row.status === "active" ? cadenceOfferFor(row) : undefined;
   return {
     nextStepChannel: mailDraft ? "direct_mail" : (next?.channel ?? null),
     businessAddress: getLedger().getMailAddress(`prospect:${row.prospect_id}`),

@@ -67,7 +67,12 @@ import {
   type ReaderRole,
 } from "./_linkedin-evidence.ts";
 import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
-import { offerBlock, playMakesOffer, weakOfferHold } from "./_prospect-offer.ts";
+import {
+  offerBlock,
+  playMakesOffer,
+  weakOfferHold,
+  type ProspectOffer,
+} from "./_prospect-offer.ts";
 import {
   deriveSequenceOffer,
   sequenceOfferRecord,
@@ -123,7 +128,7 @@ export interface CadenceContext {
   stepIndex?: number;
   /**
    * The sequence's offer, as the preview resolved (or wrote) it. Absent: the
-   * builder reads it back from the send records (`sequenceOffer`).
+   * builder reads it from the cadence (`sequenceOffer`).
    */
   sequenceOffer?: SequenceOfferValue | null;
 }
@@ -684,16 +689,33 @@ export function enrollInCadence(input: {
   /**
    * `source` of the queue row this send came from. It names the trigger whose
    * `linkedinContinuation` applies, so a newer row from another trigger for the
-   * same address can't override it. Omitted: the newest queue row decides.
+   * same address can't override it. Omitted: `queueId`'s row decides, else
+   * the newest queue row for the address.
    */
   queueSource?: string | null;
+  /** The queue row this send came from: the sequence keeps the link. */
+  queueId?: number | null;
+  /**
+   * The offer the send made (or, for a LinkedIn invite, the row's offer the
+   * sequence will make), with the ranked set it came from. The sequence
+   * starts with it; a re-enrolment keeps the one it has.
+   */
+  offer?: SequenceOfferValue | null;
+  offerCandidates?: ProspectOffer[];
+  /** `intro` (default): the first message carried the offer. `derived`: it did not. */
+  offerOrigin?: "intro" | "derived";
 }): void {
   // An email cadence takes its trigger's `linkedinContinuation` over the workspace's.
   const continuation =
     input.linkedinContinuation ??
     (input.channel === "linkedin"
       ? undefined
-      : triggerLinkedInContinuation(input.playName, input.prospectId, input.queueSource));
+      : triggerLinkedInContinuation(
+          input.playName,
+          input.prospectId,
+          input.queueSource,
+          input.queueId,
+        ));
   const seq = effectiveSequence(
     input.playName,
     input.prospectId,
@@ -710,6 +732,16 @@ export function enrollInCadence(input: {
     playName: input.playName,
     nextDueAt: dueAt,
     ...(input.channel ? { channel: input.channel } : {}),
+    ...(input.offer && playMakesOffer(input.playName)
+      ? {
+          offer: {
+            offer: input.offer as unknown as Record<string, unknown>,
+            candidates: input.offerCandidates ?? [],
+            origin: input.offerOrigin ?? "intro",
+          },
+        }
+      : {}),
+    ...(input.queueId != null ? { queueId: input.queueId } : {}),
   });
   const cadence = getLedger().getCadence(input.prospectId, input.playName);
   if (cadence && !getLedger().getCadencePlan(input.prospectId, input.playName, cadence.enrolled_at))
@@ -1833,7 +1865,7 @@ export async function runCadenceStepForProspect(
     const record = sequenceOfferRecord({
       prospectId: opts.prospectId,
       playName: opts.playName,
-      prospect,
+      cadence,
     });
     const held = record.offer;
     // The intro already went out with its offer, which no one can change now.
@@ -2142,9 +2174,9 @@ export async function previewCadenceStep(input: {
     nextIndex,
   );
   // Every email touch of an offer-making play restates the sequence's offer.
-  // A sequence that started before offers existed gets one written now, and
-  // one that can't (no brief, nothing to go on, every offer judged off, no
-  // sent row to keep it on) is held, never drafted from the terms alone.
+  // A sequence that has none gets one written now, and one that can't (no
+  // brief, nothing to go on, every offer judged off, a send holding the
+  // cadence) is held, never drafted from the terms alone.
   const offerStep = !mailDraft && step.channel === "email" && playMakesOffer(input.playName);
   const seqOffer = offerStep
     ? await deriveSequenceOffer({
@@ -2787,23 +2819,21 @@ export function getStep0MetadataField(
 }
 
 /**
- * The prospect offer a sequence carries: the first send's (step-0 metadata),
- * else the offer on the queue row that was sent, else the one written for the
- * sequence later (`_sequence-offer.ts`). Null for a sequence that started
- * before prospect offers existed and has not had one written.
+ * The prospect offer a sequence carries, as the cadence stores it
+ * (`_sequence-offer.ts`). Null for a sequence that has none yet.
  */
 export function sequenceOffer(
   prospect: { id: number; email: string | null },
   playName: string,
 ): SequenceOfferValue | null {
-  return sequenceOfferRecord({ prospectId: prospect.id, playName, prospect }).offer;
+  return sequenceOfferRecord({ prospectId: prospect.id, playName }).offer;
 }
 
 /**
  * The prospect's demo day for this play, judged now. Read from the intro's
- * step-0 metadata (`demoDayMonth`, else `prospectCohort`), then from the sent
- * queue row, so a follow-up weeks after the intro sees whether it has passed.
- * Null when the cohort has no known schedule.
+ * step-0 metadata (`demoDayMonth`, else `prospectCohort`), then from the
+ * queue row the sequence started from, so a follow-up weeks after the intro
+ * sees whether it has passed. Null when the cohort has no known schedule.
  */
 export function prospectDemoDay(
   prospect: { id: number; email: string | null },
@@ -2818,14 +2848,8 @@ export function prospectDemoDay(
     now,
   );
   if (fromMeta) return fromMeta;
-  const email = prospect.email?.trim();
-  if (!email) return null;
   try {
-    const ledger = getLedger() as ReturnType<typeof getLedger> & {
-      latestSentQueueRow?: (p: string, e: string) => { payload: Record<string, unknown> } | null;
-    };
-    if (typeof ledger.latestSentQueueRow !== "function") return null;
-    return demoDayOf(ledger.latestSentQueueRow(playName, email)?.payload, now);
+    return demoDayOf(getLedger().cadenceQueueRow(prospect.id, playName)?.payload, now);
   } catch {
     return null;
   }
@@ -2911,10 +2935,10 @@ export function buildFollowUpEmail(opts: {
       typeof (ctx.metadata as { rotateFrom?: unknown } | undefined)?.rotateFrom === "string"
         ? ((ctx.metadata as { rotateFrom: string }).rotateFrom as string)
         : null;
-    // OFFER: the same offer the first email made, read back from its send
-    // record, or the one the preview wrote for the sequence, with the
-    // founder's terms and the product facts (_prospect-offer.ts). Its angles
-    // are this touch's pool.
+    // OFFER: the sequence's own, as the cadence holds it (the first email's,
+    // or the one the preview wrote for the sequence), with the founder's
+    // terms and the product facts (_prospect-offer.ts). Its angles are this
+    // touch's pool.
     const introOffer =
       ctx.sequenceOffer !== undefined
         ? ctx.sequenceOffer
@@ -3375,12 +3399,15 @@ function linkedInContinuationSteps(playName: string): SequenceStep[] {
 export function triggerLinkedInContinuation(
   playName: string,
   prospectId: number,
-  /** The originating queue row's `source`; undefined looks up the newest row. */
+  /** The originating queue row's `source`; undefined reads it from `queueId`'s row. */
   queueSource?: string | null,
+  /** The originating queue row; null or undefined looks up the newest row for the address. */
+  queueId?: number | null,
 ): boolean | undefined {
   try {
     const ledger = getLedger();
     let source = queueSource;
+    if (source === undefined && queueId != null) source = ledger.getQueueRow(queueId)?.source;
     if (source === undefined) {
       const email = ledger.getProspectById(prospectId)?.email;
       if (!email) return undefined;
@@ -3397,20 +3424,27 @@ export function triggerLinkedInContinuation(
 
 /**
  * The queue-row shape the invite drafter and sender read, built from the
- * person an email cadence is running on: what the intro row knew, topped up
- * with what the ledger has since.
+ * person an email cadence is running on: what the row the sequence started
+ * from knew, with the sequence's own offer, topped up with what the ledger
+ * has since.
  */
 function continuationInviteRow(
   prospect: ProspectRecord,
   playName: string,
 ): { id: number; playName: string; payload: Record<string, unknown>; notes: string | null } {
-  const queued = prospect.email ? getLedger().latestSentQueueRow(playName, prospect.email) : null;
+  const queued = getLedger().cadenceQueueRow(prospect.id, playName);
+  const { offer, offerCandidates } = sequenceOfferRecord({ prospectId: prospect.id, playName });
+  const payload: Record<string, unknown> = { ...queued?.payload };
+  delete payload["offer"];
+  delete payload["offerCandidates"];
   return {
     id: 0,
     playName,
     notes: null,
     payload: {
-      ...queued?.payload,
+      ...payload,
+      ...(offer ? { offer } : {}),
+      ...(offerCandidates.length > 0 ? { offerCandidates } : {}),
       ...(prospect.name ? { name: prospect.name } : {}),
       ...(prospect.company ? { company: prospect.company } : {}),
       ...(prospect.title ? { title: prospect.title } : {}),
@@ -3425,11 +3459,10 @@ function continuationInviteRow(
 function continuationInviteVerdict(prospectId: number): LinkedInGuardVerdict {
   const prospect = loadProspect(prospectId);
   if (!prospect) return { ok: false, reason: "guard-unavailable", detail: "prospect not found" };
-  const p = continuationInviteRow(prospect, "").payload;
   return canInviteOnLinkedInNow({
     prospectId,
-    name: typeof p["name"] === "string" ? p["name"] : null,
-    company: typeof p["company"] === "string" ? p["company"] : null,
+    name: prospect.name || null,
+    company: prospect.company || null,
     email: prospect.email,
     linkedinUrl: prospect.linkedin_url,
     icpVerdict: prospect.icp_verdict,

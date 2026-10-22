@@ -35,6 +35,8 @@ import {
 import {
   advanceCadence as cadAdvanceCadence,
   breakupReviveHoldFor as cadBreakupReviveHoldFor,
+  cadenceQueueRow as cadCadenceQueueRow,
+  type CadenceOfferJson,
   type CadenceWithProspect,
   clearCadenceDraft as cadClearCadenceDraft,
   countSends as cadCountSends,
@@ -72,6 +74,7 @@ import {
   recordSequenceEvent as cadRecordSequenceEvent,
   saveCadencePlan as cadSaveCadencePlan,
   setCadenceDraft as cadSetCadenceDraft,
+  setCadenceOffer as cadSetCadenceOffer,
   setCadenceStatus as cadSetCadenceStatus,
   stopCadence as cadStopCadence,
   sweepStaleCadenceSends as cadSweepStaleCadenceSends,
@@ -239,7 +242,7 @@ export {
 export { canonicalLinkedInProfileKey };
 
 // Re-export cadence types for the Ledger public API.
-export type { CadenceWithProspect } from "./ledger-cadence.ts";
+export type { CadenceOfferJson, CadenceWithProspect } from "./ledger-cadence.ts";
 
 // Re-export the busy-timeout constant and truncateWal for the Ledger
 // public API (ledger-admin.ts); several call sites import these directly
@@ -467,8 +470,33 @@ export class Ledger {
     nextDueAt: string;
     /** Channel the cadence runs on; defaults to email. */
     channel?: OutreachChannel;
+    /** The offer the sequence starts with; a re-enrolment keeps the one it has. */
+    offer?: CadenceOfferJson | null;
+    /** The queue row the sequence starts from; a re-enrolment keeps the one it has. */
+    queueId?: number | null;
   }): void {
     cadEnrollCadence(this.db, input);
+  }
+
+  /** Change an active cadence's offer while no send holds it (ledger-cadence.ts). */
+  setCadenceOffer(input: {
+    prospectId: number;
+    playName: string;
+    offer: Record<string, unknown>;
+    candidates?: unknown[];
+    origin?: CadenceOfferJson["origin"];
+    merge?: boolean;
+    expect?: Record<string, string | null>;
+  }): boolean {
+    return cadSetCadenceOffer(this.db, input);
+  }
+
+  /** The queue row a cadence started from, else its address's newest sent row (ledger-cadence.ts). */
+  cadenceQueueRow(
+    prospectId: number,
+    playName: string,
+  ): { id: number; payload: Record<string, unknown>; source: string } | null {
+    return cadCadenceQueueRow(this.db, prospectId, playName);
   }
 
   /**
@@ -2647,22 +2675,6 @@ export class Ledger {
     discardDraft?: boolean;
   }): boolean {
     return this.queue.patchLiveQueuePayload(input);
-  }
-
-  /**
-   * Merge a sequence's offer (`offer`, `offerCandidates`, nothing else) into
-   * a SENT queue row's payload. See the queue store's doc.
-   */
-  patchSentQueueOffer(input: {
-    id: number;
-    offer: Record<string, unknown>;
-    offerCandidates?: unknown[];
-    /** Compare-and-set: JSON paths that must still hold these scalar values (null: absent). */
-    expect?: Array<{ path: string; value: string | null }>;
-    /** Write only while this cadence holds no send (`sending_started_at`). */
-    cadence?: { prospectId: number; playName: string };
-  }): boolean {
-    return this.queue.patchSentQueueOffer(input);
   }
 
   latestQueueId(): number {

@@ -1,8 +1,9 @@
-import { getLedger } from "@oneshot-gtm/core";
+import { getLedger, type CadenceWithProspect } from "@oneshot-gtm/core";
 import {
   deriveSequenceOffer,
   offerHoldsSend,
   playMakesOffer,
+  sequenceOfferOf,
   sequenceOfferRecord,
   writeSequenceOffer,
   type DeriveSequenceOfferResult,
@@ -83,16 +84,12 @@ export function cadenceOfferView(record: SequenceOfferRecord): CadenceOfferView 
   };
 }
 
-/** The offer view for a cadence row, when the play makes one; never throws. */
+/** The offer view for a cadence row, from the row itself, when the play makes one; never throws. */
 export function cadenceOfferFor(
-  prospectId: number,
-  playName: string,
-  email: string | null,
+  cadence: Pick<CadenceWithProspect, "prospect_id" | "play_name" | "offer_json" | "queue_id">,
 ): CadenceOfferView | undefined {
-  if (!playMakesOffer(playName)) return undefined;
-  return cadenceOfferView(
-    sequenceOfferRecord({ prospectId, playName, prospect: { id: prospectId, email } }),
-  );
+  if (!playMakesOffer(cadence.play_name)) return undefined;
+  return cadenceOfferView(sequenceOfferOf(cadence));
 }
 
 const IN_FLIGHT = "cadence send is already in flight; wait for it to finish";
@@ -184,7 +181,7 @@ export async function cadenceOfferRoute(
     );
   }
   // Every write lands only while no send holds the cadence, in the same
-  // statement (`unlessSending`): the model calls below take a while, and a
+  // statement (`setCadenceOffer`): the model calls below take a while, and a
   // send that claimed the cadence meanwhile wins.
   const sendStarted = (): boolean => !!ledger.getCadence(prospectId, playName)?.sending_started_at;
 
@@ -198,7 +195,6 @@ export async function cadenceOfferRoute(
       offer: approval.stamp,
       merge: true,
       expect: approval.expect,
-      unlessSending: true,
     });
     if (!written) {
       if (sendStarted()) return jsonResponse({ error: IN_FLIGHT }, 409, req);
@@ -214,7 +210,6 @@ export async function cadenceOfferRoute(
       playName,
       force: true,
       stepIndex: cadence.current_step + 1,
-      unlessSending: true,
     });
     if (out.status === "none") {
       if (out.reason === "not-stored" && sendStarted()) {
@@ -259,7 +254,6 @@ export async function cadenceOfferRoute(
       record,
       offer,
       ...(candidates ? { offerCandidates: candidates } : {}),
-      unlessSending: true,
     });
     if (!written) {
       if (sendStarted()) return jsonResponse({ error: IN_FLIGHT }, 409, req);

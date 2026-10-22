@@ -109,8 +109,9 @@ export interface CadenceOfferChoice {
 
 /**
  * The offer a cadence's follow-ups restate (`sequenceOfferRecord`): the
- * intro's own, or one written for the sequence and kept on the sent queue
- * row. Changed with POST /api/cadences/:id/offer, same body as the queue's.
+ * intro's own, or one written for the sequence, kept on the cadence
+ * (`cadence_state.offer_json`). Changed with POST /api/cadences/:id/offer,
+ * same body as the queue's.
  */
 export interface CadenceOfferView extends Omit<CadenceOfferChoice, "text"> {
   /** The active offer; null while the sequence has none. */
@@ -127,7 +128,7 @@ export interface CadenceOfferView extends Omit<CadenceOfferChoice, "text"> {
   activeIndex: number;
   /** The first email carried it: what was sent is fixed, so it cannot change. */
   introCarriedOffer: boolean;
-  /** The sent queue row it is kept on; null when there is none, and nowhere to keep one. */
+  /** The queue row the sequence started from (`cadence_state.queue_id`); null when none is known. */
   queueRowId: number | null;
 }
 
@@ -1053,7 +1054,8 @@ export interface VoiceUsageView {
 export interface DraftAngle {
   pool?: Array<{ text: string; origin: "configured" | "generated" }>;
   text: string;
-  origin: "configured" | "generated";
+  /** `offer`: the pool was the offer's own angles (`overlayOfferAngles`). */
+  origin: "configured" | "generated" | "offer";
   index?: number;
   count?: number;
   /**

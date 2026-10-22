@@ -3,11 +3,12 @@ import { isHumanDecision } from "@oneshot-gtm/core";
 import { Ledger } from "../../core/src/ledger.ts";
 
 // Every sent intro of an offer-making play keeps a sent queue row with its
-// offer, linked to the prospect: a sequence reads its offer back from there.
-// An intro sent from no queue row (a typed list, the CLI) gets one recorded
-// at send. With a product brief and no offer written, the intro is held
-// `no-offer`; without a brief nothing is held. Real ledger, stubbed models
-// and send.
+// offer, linked to the prospect, and starts a sequence that owns that offer
+// (`cadence_state.offer_json`) and links the row (`queue_id`). An intro sent
+// from no queue row (a typed list, the CLI) gets one recorded at send; one
+// drawn from a queue row links that row. With a product brief and no offer
+// written, the intro is held `no-offer`; without a brief nothing is held.
+// Real ledger, stubbed models and send.
 
 let ledger: Ledger;
 const llm = { offers: "" as string, drafts: [] as string[] };
@@ -122,10 +123,15 @@ describe("an intro sent from no queue row", () => {
     expect(payload["offerCandidates"]).toHaveLength(1);
     expect(JSON.parse(row.last_draft_json!)).toMatchObject({ sent: true, flags: [] });
 
-    // The follow-ups read the whole stored offer back from that row.
+    // The sequence starts with the whole offer and links the row.
     const record = sequenceOfferRecord({ prospectId: prospect.id, playName: PLAY });
     expect(record).toMatchObject({ queueRowId: row.id, introCarriedOffer: true });
     expect(record.offer).toMatchObject({ offer: OFFER.offer, level: "researched" });
+    expect(record.offerCandidates).toHaveLength(1);
+    // The step-0 record keeps the angle, never a second copy of the offer.
+    const step0 = ledger.listSequenceEventsForProspectPlay(prospect.id, PLAY)[0]!;
+    expect(JSON.parse(step0.metadata_json!)).not.toHaveProperty("offer");
+    expect(JSON.parse(step0.metadata_json!)).not.toHaveProperty("offerSteps");
   });
 
   it("records a machine disposition, never a human review", async () => {
@@ -193,9 +199,77 @@ describe("an intro with no offer", () => {
     const out = await runDesignPartnerLoi({ dryRun: false, targets: [t] });
     expect(out.drafted[0]).toMatchObject({ sent: true, flags: [] });
     expect(llm.drafts[0]).not.toContain("OFFER (what you offer");
-    // The row is still kept: an offer written later has somewhere to live.
+    // The row is still kept, and linked: research for an offer written later.
     const row = introRow(t.email)!;
     expect(row.status).toBe("sent");
     expect(JSON.parse(row.payload_json)["offer"]).toBeUndefined();
+    const prospect = ledger.findProspectByEmail(t.email)!;
+    expect(ledger.getCadence(prospect.id, PLAY)).toMatchObject({
+      queue_id: row.id,
+      offer_json: null,
+    });
+  });
+});
+
+describe("an intro drawn from a queue row (the drain, a /run batch from the queue)", () => {
+  function queuedRow(t: ReturnType<typeof target>, payload: Record<string, unknown> = {}): number {
+    return ledger.enqueueTarget({
+      playName: PLAY,
+      payload: { ...t, ...payload },
+      dedupeKey: `q-${t.email}`,
+      source: "find:test",
+    })!;
+  }
+
+  it("starts a sequence that links the row and carries the intro's offer", async () => {
+    const t = target();
+    const id = queuedRow(t);
+    await runDesignPartnerLoi({
+      dryRun: false,
+      targets: [t],
+      queueSource: "find:test",
+      queueId: id,
+    } as never);
+    const prospect = ledger.findProspectByEmail(t.email)!;
+    const record = sequenceOfferRecord({ prospectId: prospect.id, playName: PLAY });
+    expect(record).toMatchObject({ queueRowId: id, introCarriedOffer: true });
+    expect(record.offer).toMatchObject({ offer: OFFER.offer });
+  });
+
+  it("links each target of a batch to its own row", async () => {
+    const [a, b] = [target(), target()];
+    const ids = [queuedRow(a), queuedRow(b)];
+    await runDesignPartnerLoi({
+      dryRun: false,
+      targets: [a, b],
+      queueSources: ["find:test", "find:test"],
+      queueIds: ids,
+    } as never);
+    for (const [i, t] of [a, b].entries()) {
+      const prospect = ledger.findProspectByEmail(t.email)!;
+      expect(ledger.getCadence(prospect.id, PLAY)?.queue_id).toBe(ids[i]);
+    }
+  });
+
+  it("records the intro's angle as the offer's own when its pool was the offer's angles", async () => {
+    const angles = ["renewals slip while quotes wait", "the price list is out of date"];
+    const t = { ...target(), yourEdge: angles.join(" // ") };
+    const offer = { ...OFFER, angles, version: "", productHash: "", editedBy: "founder" };
+    const id = queuedRow(t, { offer });
+    const out = await runDesignPartnerLoi({
+      dryRun: false,
+      targets: [{ ...t, offer }],
+      queueSource: "find:test",
+      queueId: id,
+    } as never);
+    expect((out.drafted[0] as { angle?: { origin?: string } }).angle?.origin).toBe("offer");
+    const plain = target();
+    const configured = await runDesignPartnerLoi({
+      dryRun: false,
+      targets: [{ ...plain, yourEdge: "quotes the same day // price lists stay current" }],
+    });
+    expect((configured.drafted[0] as { angle?: { origin?: string } }).angle?.origin).toBe(
+      "configured",
+    );
   });
 });

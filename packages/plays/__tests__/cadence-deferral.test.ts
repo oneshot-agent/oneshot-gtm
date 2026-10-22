@@ -89,8 +89,23 @@ vi.mock("@oneshot-gtm/core", async () => {
       },
       listCadencesForProspect: (prospectId: number) =>
         cadenceRows.filter((c) => c.prospect_id === prospectId),
-      getCadence: (prospectId: number, playName: string) =>
-        cadenceRows.find((c) => c.prospect_id === prospectId && c.play_name === playName) ?? null,
+      // The intro carried an offer, so the unattended runner may draft the follow-up.
+      getCadence: (prospectId: number, playName: string) => {
+        const row = cadenceRows.find(
+          (c) => c.prospect_id === prospectId && c.play_name === playName,
+        );
+        return row
+          ? {
+              ...row,
+              offer_json: JSON.stringify({
+                offer: { offer: "an offer", steps: "" },
+                candidates: [],
+                origin: "intro",
+              }),
+              queue_id: null,
+            }
+          : null;
+      },
       getProspectById: (id: number) => {
         const row = cadenceRows.find((c) => c.prospect_id === id);
         return row
@@ -108,9 +123,8 @@ vi.mock("@oneshot-gtm/core", async () => {
           : null;
       },
       findProspectByEmail: () => null,
-      // The intro carried an offer, so the unattended runner may draft the follow-up.
       listSequenceEventsForProspectPlay: () => [
-        { step_index: 0, status: "sent", metadata_json: JSON.stringify({ offer: "an offer" }) },
+        { step_index: 0, status: "sent", metadata_json: JSON.stringify({}) },
       ],
       recordSequenceEvent: () => 0,
       hasSentSequenceEvent: () => false,

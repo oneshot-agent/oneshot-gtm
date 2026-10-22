@@ -13,6 +13,7 @@ let ledger: LedgerType;
 let dbPath: string;
 let conversation: { conversationId: string; accountId: string; workspace: string } | null = null;
 let messageText = "Thanks for connecting — how are you handling review today?";
+const modelInputs: string[] = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -31,7 +32,10 @@ vi.mock("@oneshot-gtm/intel", async () => {
   return {
     ...actual,
     loadPrompt: () => "prompt",
-    complete: async () => ({ content: messageText }),
+    complete: async (input: { messages: Array<{ content: string }> }) => {
+      modelInputs.push(input.messages.map((m) => m.content).join("\n"));
+      return { content: messageText };
+    },
   };
 });
 
@@ -80,6 +84,7 @@ beforeEach(() => {
   });
   conversation = null;
   messageText = "Thanks for connecting — how are you handling review today?";
+  modelInputs.length = 0;
 });
 
 afterEach(() => {
@@ -186,6 +191,22 @@ describe("LinkedIn cadence", () => {
     const preview = await previewCadenceStep({ prospectId, playName: "luma-events" });
     expect(preview).toMatchObject({ subject: "LinkedIn message", flags: [] });
     expect("body" in preview && preview.body).toContain("Thanks for connecting");
+  });
+
+  it("a LinkedIn-first sequence's message makes the offer it was enrolled with", async () => {
+    inviteSentDaysAgo(3);
+    enrollInCadence({
+      prospectId,
+      playName: "luma-events",
+      channel: "linkedin",
+      offer: { offer: "get every host's follow-ups sent the same day", steps: "drafts them" },
+      offerOrigin: "derived",
+    });
+    conversation = { conversationId: "conv-9", accountId: "acct-1", workspace: "alpha" };
+    await previewCadenceStep({ prospectId, playName: "luma-events" });
+    expect(modelInputs.at(-1)).toContain(
+      "OFFER (what you offer to do for them; the message opens with it): get every host's follow-ups sent the same day",
+    );
   });
 });
 

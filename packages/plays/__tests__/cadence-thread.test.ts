@@ -141,9 +141,9 @@ function sentIntro(
     status: "sent",
     // "none": a first email whose receipt carries no usable thread.
     receiptId: transport === "none" ? undefined : receiptId,
-    metadata: { subject: INTRO_SUBJECT, body: "b", offer: OFFER },
+    metadata: { subject: INTRO_SUBJECT, body: "b" },
   });
-  enrollInCadence({ prospectId: id, playName: play });
+  enrollInCadence({ prospectId: id, playName: play, offer: { offer: OFFER, steps: "" } });
   return id;
 }
 

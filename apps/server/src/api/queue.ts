@@ -52,6 +52,8 @@ import {
   enrollInCadence,
   generateRejectReason,
   logTargetError,
+  offerCandidatesOf,
+  offerOf,
   playProspectFields,
   reviewedIntroMetadata,
   sendDraftedEmail,
@@ -1806,7 +1808,15 @@ export async function sendDraftRoute(
 
   const prospect = ledger.findProspectByEmail(email);
   if (prospect) {
-    enrollInCadence({ prospectId: prospect.id, playName: row.play_name, queueSource: row.source });
+    // The sequence starts with the offer this draft opened with, linked to the row.
+    const offer = offerOf(payload);
+    enrollInCadence({
+      prospectId: prospect.id,
+      playName: row.play_name,
+      queueSource: row.source,
+      queueId: id,
+      ...(offer ? { offer, offerCandidates: offerCandidatesOf(payload) } : {}),
+    });
     // Link the row to the person, as the LinkedIn branch above and the drain do.
     try {
       ledger.setQueueProspectId(id, prospect.id);

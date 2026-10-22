@@ -18,12 +18,7 @@ import {
   resolveTriggerOverlay,
   type QueueRow,
 } from "@oneshot-gtm/core";
-import {
-  activeOfferPatch,
-  ensureOfferSet,
-  playMakesOffer,
-  type ProspectOffer,
-} from "@oneshot-gtm/plays";
+import { activeOfferPatch, ensureOfferSet, playMakesOffer } from "@oneshot-gtm/plays";
 import {
   hasCompanyPages,
   productResearchSkipsPlay,
@@ -191,42 +186,6 @@ export async function ensureQueueRowOffer<R extends OfferableRow>(
       "warn",
     );
     return row;
-  }
-}
-
-/**
- * Store on a live queue row the offer a draft wrote for it (a /run batch
- * loaded from the queue drafts from the target the page sent, not the row),
- * so the row shows what the letter opened with and its sequence restates the
- * same one. Replaces the row's offer whole (`activeOfferPatch`). Never over a
- * founder's own offer: the write is guarded on it, so an edit made while the
- * draft was being written stands. False when nothing was written.
- */
-export function storeDraftOffer(
-  row: Pick<QueueRow, "id" | "play_name" | "payload_json">,
-  offer: ProspectOffer,
-  candidates: ProspectOffer[],
-): boolean {
-  if (!playMakesOffer(row.play_name)) return false;
-  const payload = parsePayload(row);
-  if (!payload) return false;
-  try {
-    return getLedger().patchLiveQueuePayload({
-      id: row.id,
-      patch: activeOfferPatch(payload["offer"], offer, candidates),
-      expect: [{ path: "$.offer.editedBy", value: null }],
-    });
-  } catch (err) {
-    logEvent(
-      "error.swallowed",
-      {
-        kind: "queue-offer-store",
-        queue_id: row.id,
-        message_120: ((err as Error).message ?? "").slice(0, 120),
-      },
-      "warn",
-    );
-    return false;
   }
 }
 

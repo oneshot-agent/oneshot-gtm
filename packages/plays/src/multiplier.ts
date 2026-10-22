@@ -287,7 +287,7 @@ registerSequence({
         // originating send made, holds it.
         hardBans: true,
         hardBanAllow: (ctx) => {
-          const offer = enrolledMemberOffer(ctx.prospect.email, ctx.cfg);
+          const offer = enrolledMemberOffer(ctx.prospect.id, ctx.cfg);
           return offer ? [offer] : [];
         },
       }),

@@ -43,6 +43,14 @@ export interface CadenceWithProspect {
   last_send_error: string | null;
   /** ISO timestamp of `last_send_error`. */
   last_send_error_at: string | null;
+  /**
+   * The offer the sequence carries, as JSON (`CadenceOfferJson`): written at
+   * enrollment, changed only by `setCadenceOffer`, kept when the cadence
+   * ends. Null while the sequence has none.
+   */
+  offer_json: string | null;
+  /** The queue row the sequence started from; null when it started from none. */
+  queue_id: number | null;
   prospect_email: string | null;
   prospect_name: string | null;
   prospect_company: string | null;
@@ -67,13 +75,38 @@ function normalizeSubject(subject: string | null | undefined): string | null {
   return s.length > 0 ? s : null;
 }
 
+/**
+ * A cadence's offer as `cadence_state.offer_json` stores it. `offer` is the
+ * whole offer (a plays `ProspectOffer`), or only `{offer, steps}` for an
+ * intro whose send record kept nothing else. `origin` is `intro` when the
+ * first message carried it (what was sent is fixed), `derived` when it was
+ * written or chosen for the sequence later.
+ */
+export interface CadenceOfferJson {
+  offer: Record<string, unknown>;
+  candidates: unknown[];
+  origin: "intro" | "derived";
+}
+
+/**
+ * Enroll a prospect in a play's cadence. `offer` and `queueId` are stamped
+ * on a new cadence; a re-enrolment keeps the ones it already has.
+ */
 export function enrollCadence(
   db: Database,
-  input: { prospectId: number; playName: string; nextDueAt: string; channel?: string },
+  input: {
+    prospectId: number;
+    playName: string;
+    nextDueAt: string;
+    channel?: string;
+    offer?: CadenceOfferJson | null;
+    queueId?: number | null;
+  },
 ): void {
   db.prepare(
-    `INSERT INTO cadence_state(prospect_id, play_name, current_step, status, next_due_at, channel)
-     VALUES(?, ?, 0, 'active', ?, ?)
+    `INSERT INTO cadence_state(prospect_id, play_name, current_step, status, next_due_at, channel,
+                               offer_json, queue_id)
+     VALUES(?, ?, 0, 'active', ?, ?, ?, ?)
      ON CONFLICT(prospect_id, play_name) DO UPDATE SET
        status = 'active',
        next_due_at = excluded.next_due_at,
@@ -83,9 +116,121 @@ export function enrollCadence(
        stop_note = NULL,
        stopped_at = NULL,
        last_send_error = NULL,
-       last_send_error_at = NULL
+       last_send_error_at = NULL,
+       offer_json = COALESCE(cadence_state.offer_json, excluded.offer_json),
+       queue_id = COALESCE(cadence_state.queue_id, excluded.queue_id)
      WHERE cadence_state.status != 'stopped'`,
-  ).run(input.prospectId, input.playName, input.nextDueAt, input.channel ?? "email");
+  ).run(
+    input.prospectId,
+    input.playName,
+    input.nextDueAt,
+    input.channel ?? "email",
+    input.offer ? JSON.stringify(input.offer) : null,
+    input.queueId ?? null,
+  );
+}
+
+/**
+ * Change the offer an active cadence carries, in one statement that lands
+ * only while no send holds the cadence (`sending_started_at`), the same
+ * guard `discardCadenceDraft` keeps. `offer` replaces the stored offer
+ * whole; with `merge`, it is a JSON merge patch onto it (an approval stamp;
+ * null deletes a key) and needs one stored. `candidates` absent keeps the
+ * stored list, `origin` absent keeps the stored origin (`derived` when there
+ * is none). `expect` is compare-and-set on the stored offer's keys (key →
+ * scalar, null: absent), e.g. an approval bound to the offer the founder
+ * read. False when nothing was written.
+ */
+export function setCadenceOffer(
+  db: Database,
+  input: {
+    prospectId: number;
+    playName: string;
+    offer: Record<string, unknown>;
+    candidates?: unknown[];
+    origin?: CadenceOfferJson["origin"];
+    merge?: boolean;
+    expect?: Record<string, string | null>;
+  },
+): boolean {
+  const guards = Object.entries(input.expect ?? {});
+  for (const [key] of guards) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`unsafe offer key: ${key}`);
+  }
+  const offerSql = input.merge
+    ? "json_patch(json_extract(offer_json, '$.offer'), json(?))"
+    : "json(?)";
+  const r = db
+    .prepare(
+      `UPDATE cadence_state
+          SET offer_json = json_object(
+                'offer', ${offerSql},
+                'candidates', COALESCE(json(?), json(json_extract(offer_json, '$.candidates')), json('[]')),
+                'origin', COALESCE(?, json_extract(offer_json, '$.origin'), 'derived'))
+        WHERE prospect_id = ? AND play_name = ? AND status = 'active'
+          AND sending_started_at IS NULL
+          AND (offer_json IS NULL OR json_valid(offer_json))${
+            input.merge ? "\n          AND json_type(offer_json, '$.offer') = 'object'" : ""
+          }${guards.map(() => "\n          AND json_extract(offer_json, ?) IS ?").join("")}`,
+    )
+    .run(
+      JSON.stringify(input.offer),
+      input.candidates ? JSON.stringify(input.candidates) : null,
+      input.origin ?? null,
+      input.prospectId,
+      input.playName,
+      ...guards.flatMap(([key, value]) => [`$.offer.${key}`, value]),
+    );
+  return r.changes === 1;
+}
+
+/**
+ * The queue row a cadence started from (`queue_id`), with its payload and
+ * source. A cadence with no link falls back to the newest SENT row of the
+ * play whose `$.email` is the prospect's address. Null when there is none
+ * or its payload won't parse.
+ */
+export function cadenceQueueRow(
+  db: Database,
+  prospectId: number,
+  playName: string,
+): { id: number; payload: Record<string, unknown>; source: string } | null {
+  const linked = db
+    .query(
+      `SELECT c.queue_id AS queue_id, p.email AS email, q.id AS id,
+              q.payload_json AS payload_json, q.source AS source
+         FROM cadence_state c
+         JOIN prospects p ON p.id = c.prospect_id
+         LEFT JOIN target_queue q ON q.id = c.queue_id
+        WHERE c.prospect_id = ? AND c.play_name = ?`,
+    )
+    .get(prospectId, playName) as {
+    queue_id: number | null;
+    email: string | null;
+    id: number | null;
+    payload_json: string | null;
+    source: string | null;
+  } | null;
+  if (linked?.queue_id != null) {
+    if (linked.id == null || linked.payload_json == null) return null;
+    try {
+      const parsed: unknown = JSON.parse(linked.payload_json);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? { id: linked.id, payload: parsed as Record<string, unknown>, source: linked.source ?? "" }
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  const email = linked
+    ? linked.email
+    : (
+        db.query("SELECT email FROM prospects WHERE id = ?").get(prospectId) as {
+          email: string | null;
+        } | null
+      )?.email;
+  if (!email?.trim()) return null;
+  return new QueueStore(db).latestSentQueueRow(playName, email);
 }
 
 /**

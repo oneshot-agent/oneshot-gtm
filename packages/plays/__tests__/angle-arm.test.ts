@@ -12,6 +12,8 @@ const D = "For a batch founder — the stars on your repo are the warmest list";
 const EDGE4 = `${A} // ${B} // ${C} // ${D}`;
 
 let sentRow: { payload: Record<string, unknown>; source: string } | null = null;
+/** The offer the cadence carries (`offer_json`), when it has one. */
+let seqOffer: Record<string, unknown> | null = null;
 let triggerConfig: Record<string, unknown> | null = null;
 let introAngleText: string | null = null;
 /** How the intro's angle was picked, as step-0 metadata records it (`angleMethod`). */
@@ -26,8 +28,13 @@ vi.mock("@oneshot-gtm/core", async () => {
     logEvent: () => {},
     loadConfig: () => ({ founderName: "F", productOneLiner: "p" }),
     getLedger: () => ({
-      latestSentQueueRow: () => sentRow,
-      latestSentQueuePayload: () => sentRow?.payload ?? null,
+      cadenceQueueRow: () => (sentRow ? { id: 1, ...sentRow } : null),
+      getCadence: () => ({
+        queue_id: sentRow ? 1 : null,
+        offer_json: seqOffer
+          ? JSON.stringify({ offer: seqOffer, candidates: [], origin: "intro" })
+          : null,
+      }),
       getTrigger: () =>
         triggerConfig ? { config_json: JSON.stringify(triggerConfig) } : undefined,
       listSequenceEventsForProspectPlay: () =>
@@ -76,6 +83,7 @@ beforeEach(() => {
   cache.clear();
   classifierCalls = 0;
   sentRow = null;
+  seqOffer = null;
   triggerConfig = null;
   introAngleText = null;
   introMethod = null;

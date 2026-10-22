@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SendEmailInput } from "@oneshot-gtm/core";
 import { Ledger } from "../../core/src/ledger.ts";
 
-// Every follow-up of an offer-making play restates its sequence's offer. A
-// sequence that started before prospect offers existed gets one written at
-// its next preview, from the sent row's research and the thread already sent,
-// stored on that sent row, and read back by every later touch. One that can't
-// get one is held, never drafted from the founder's terms alone. Real ledger,
-// stubbed models and send.
+// Every follow-up of an offer-making play restates its sequence's offer,
+// which the cadence owns (`cadence_state.offer_json`). A sequence that started
+// before prospect offers existed gets one written at its next preview, from
+// the research on the queue row it started from (or the prospect, with none)
+// and the thread already sent, stored on the cadence, and read back by every
+// later touch. One that can't get one is held, never drafted from the
+// founder's terms alone. Real ledger, stubbed models and send.
 
 let ledger: Ledger;
 const sends: SendEmailInput[] = [];
@@ -138,12 +139,24 @@ const second = {
   return: "calls to the office the leeds team stops answering, counted per week",
 };
 
+/** An offer whose evidence is `quote`: the writer's quotes must be in the research. */
+const resting = (o: typeof good, quote: string) => ({ ...o, evidence: [quote] });
+
 const INTRO_BODY = "Your Leeds crews could take same-day jobs. Worth a look?";
 let n = 0;
 
-/** A prospect whose intro went out before offers existed: a sent row (unless `queued: false`) and a step-0 send. */
+/**
+ * A prospect whose intro went out before offers existed: a sent row (unless
+ * `queued: false`) the cadence is linked to, a step-0 send, and a cadence
+ * with no offer, or `intro`'s as the first email carried it.
+ */
 function preOfferSequence(
-  opts: { queued?: boolean; step0?: Record<string, unknown>; rowOffer?: unknown } = {},
+  opts: {
+    queued?: boolean;
+    rowOffer?: unknown;
+    payload?: Record<string, unknown>;
+    intro?: Record<string, unknown>;
+  } = {},
 ): { id: number; rowId: number | null } {
   const email = `dana${++n}@northside.example`;
   const id = ledger.upsertProspect({ name: "Dana Lee", email, company: "Northside Plumbing" });
@@ -151,7 +164,7 @@ function preOfferSequence(
   if (opts.queued !== false) {
     rowId = ledger.enqueueTarget({
       playName: PLAY,
-      payload: {
+      payload: opts.payload ?? {
         name: "Dana Lee",
         email,
         company: "Northside Plumbing",
@@ -170,10 +183,20 @@ function preOfferSequence(
     stepIndex: 0,
     channel: "email",
     status: "sent",
-    metadata: { subject: "leeds crews", body: INTRO_BODY, ...opts.step0 },
+    metadata: { subject: "leeds crews", body: INTRO_BODY },
   });
-  enrollInCadence({ prospectId: id, playName: PLAY });
+  enrollInCadence({
+    prospectId: id,
+    playName: PLAY,
+    ...(rowId != null ? { queueId: rowId } : {}),
+    ...(opts.intro ? { offer: opts.intro as never } : {}),
+  });
   return { id, rowId };
+}
+
+function cadenceOffer(id: number): Record<string, unknown> | null {
+  const json = ledger.getCadence(id, PLAY)?.offer_json;
+  return json ? (JSON.parse(json) as Record<string, unknown>) : null;
 }
 
 function rowPayload(rowId: number): Record<string, unknown> {
@@ -197,19 +220,22 @@ beforeEach(() => {
 afterEach(() => ledger.close());
 
 describe("a sequence that started before prospect offers", () => {
-  it("gets an offer written at its next preview, from the thread, stored on the sent row", async () => {
+  it("gets an offer written at its next preview, from the thread, stored on the cadence", async () => {
     const { id, rowId } = preOfferSequence();
+    const before = ledger.getQueueRow(rowId!)!.payload_json;
     const out = await preview(id);
 
-    // The writer was told what the thread already said.
+    // The writer was told what the row says and what the thread already said.
     const writer = llm.inputs.get("prospect-offer")![0]!;
+    expect(writer).toContain("opened a second depot in Leeds");
     expect(writer).toContain("THREAD SO FAR:");
     expect(writer).toContain(INTRO_BODY);
-    // Stored on the sent row: the offer and its candidates, nothing else changed.
-    const payload = rowPayload(rowId!);
-    expect(payload["offer"]).toMatchObject({ offer: good.offer, relevance: "relevant" });
-    expect((payload["offerCandidates"] as unknown[]).length).toBe(2);
-    expect(payload["signal"]).toBe("opened a second depot in Leeds");
+    // Stored on the cadence, the offer and its candidates; the row is untouched.
+    const stored = cadenceOffer(id)!;
+    expect(stored["offer"]).toMatchObject({ offer: good.offer, relevance: "relevant" });
+    expect((stored["candidates"] as unknown[]).length).toBe(2);
+    expect(stored["origin"]).toBe("derived");
+    expect(ledger.getQueueRow(rowId!)!.payload_json).toBe(before);
     // The follow-up opens on it, and nothing holds it.
     expect(llm.inputs.get("seq-followup")![0]).toContain(`: ${good.offer}`);
     expect(out.body.startsWith(`I can ${good.offer}`)).toBe(true);
@@ -236,7 +262,7 @@ describe("a sequence that started before prospect offers", () => {
   it("keeps the intro's own offer when the first email carried one", async () => {
     const carried = "get every leeds job quoted the day it is asked for";
     const { id, rowId } = preOfferSequence({
-      step0: { offer: carried, offerSteps: "drafts the quote" },
+      intro: { offer: carried, steps: "drafts the quote" },
       rowOffer: { ...good, version: "v", inputHash: "h", derivedAt: "" },
     });
     await preview(id);
@@ -258,27 +284,100 @@ describe("a sequence that started before prospect offers", () => {
     llm.offers = JSON.stringify({ offers: [second] });
     const again = await deriveSequenceOffer({ prospectId: id, playName: PLAY, force: true });
     expect(again).toMatchObject({ status: "stored", offer: { offer: second.offer } });
-    expect(rowPayload(rowId!)["offer"]).toMatchObject({ offer: second.offer });
+    expect(cadenceOffer(id)).toMatchObject({
+      offer: { offer: second.offer },
+      candidates: [{ offer: second.offer }],
+    });
+    expect(rowPayload(rowId!)["offer"]).toBeUndefined();
+  });
+
+  it("stores nothing while a send holds the cadence", async () => {
+    const { id } = preOfferSequence();
+    ledger.claimCadenceSendingMarker({
+      prospectId: id,
+      playName: PLAY,
+      startedAtIso: new Date().toISOString(),
+    });
+    const out = await deriveSequenceOffer({ prospectId: id, playName: PLAY });
+    expect(out).toMatchObject({ status: "none", reason: "not-stored" });
+    expect(cadenceOffer(id)).toBeNull();
+  });
+
+  it("with no queue row, is written from the prospect and their dossier", async () => {
+    const { id } = preOfferSequence({ queued: false });
+    ledger.mergeProspectDossierHalf(id, "person", "runs the Leeds depot's dispatch desk");
+    // Its evidence is what the prospect's dossier says.
+    const quote = "runs the Leeds depot's dispatch desk";
+    llm.offers = JSON.stringify({ offers: [resting(good, quote), resting(second, quote)] });
+    const out = await preview(id);
+    const writer = llm.inputs.get("prospect-offer")![0]!;
+    expect(writer).toContain("Northside Plumbing");
+    expect(writer).toContain("runs the Leeds depot's dispatch desk");
+    expect(out.flags).toEqual([]);
+    expect(out.body.startsWith(`I can ${good.offer}`)).toBe(true);
+    expect(sequenceOfferRecord({ prospectId: id, playName: PLAY })).toMatchObject({
+      queueRowId: null,
+      offer: { offer: good.offer },
+    });
+  });
+
+  it("a row that names the person only by founderEmail is linked, and its offer editable", async () => {
+    const email = `hn${++n}@launch.example`;
+    const id = ledger.upsertProspect({ name: "Sam Hill", email, company: "Launchpad" });
+    const rowId = ledger.enqueueTarget({
+      playName: PLAY,
+      payload: { founderName: "Sam Hill", founderEmail: email, projectTitle: "Show HN: Crewbook" },
+      dedupeKey: `hn-${email}`,
+      source: "find:test",
+    })!;
+    ledger.setQueueStatus({ id: rowId, status: "sent" });
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: PLAY,
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "crewbook", body: INTRO_BODY },
+    });
+    enrollInCadence({ prospectId: id, playName: PLAY, queueId: rowId });
+    // Its evidence is what that row says.
+    llm.offers = JSON.stringify({
+      offers: [resting(good, "Show HN: Crewbook"), resting(second, "Show HN: Crewbook")],
+    });
+
+    await preview(id);
+    expect(llm.inputs.get("prospect-offer")![0]).toContain("Show HN: Crewbook");
+    const record = sequenceOfferRecord({ prospectId: id, playName: PLAY });
+    expect(record).toMatchObject({ queueRowId: rowId, introCarriedOffer: false });
+    expect(record.offerCandidates.length).toBe(2);
+    // The founder's own text is written on the cadence, the list kept.
+    expect(
+      writeSequenceOffer({
+        record,
+        offer: {
+          ...second,
+          offer: "book every crew the day the job comes in",
+          editedBy: "founder",
+        },
+      }),
+    ).toBe(true);
+    expect(sequenceOfferRecord({ prospectId: id, playName: PLAY })).toMatchObject({
+      offer: { offer: "book every crew the day the job comes in", editedBy: "founder" },
+      offerCandidates: [{ offer: good.offer }, { offer: second.offer }],
+    });
   });
 });
 
 describe("a sequence that can't get an offer", () => {
-  it("with no sent queue row, is held no-offer and never drafted", async () => {
-    const { id } = preOfferSequence({ queued: false });
-    const out = await preview(id);
-    expect(out).toMatchObject({ subject: "", body: "", flags: ["no-offer"] });
-    expect(llm.inputs.get("seq-followup")).toBeUndefined();
-    expect(llm.inputs.get("prospect-offer")).toBeUndefined();
-    await expect(sendCadenceStep({ prospectId: id, playName: PLAY })).rejects.toThrow(/no-offer/);
-  });
-
   it("when the judge rules out every offer, is held no-offer and never drafted from the terms", async () => {
     llm.judge = "irrelevant";
     const { id, rowId } = preOfferSequence();
     const out = await preview(id);
-    expect(out.flags).toEqual(["no-offer"]);
+    expect(out).toMatchObject({ subject: "", body: "", flags: ["no-offer"] });
     expect(llm.inputs.get("seq-followup")).toBeUndefined();
+    expect(cadenceOffer(id)).toBeNull();
     expect(rowPayload(rowId!)["offer"]).toBeUndefined();
+    await expect(sendCadenceStep({ prospectId: id, playName: PLAY })).rejects.toThrow(/no-offer/);
   });
 
   it("with no product brief, is held no-offer", async () => {
@@ -315,10 +414,7 @@ describe("weak-fit sequence offers", () => {
   });
 
   it("never hold a follow-up for the offer the intro already sent", async () => {
-    const { id } = preOfferSequence({
-      step0: { offer: good.offer, offerSteps: good.steps },
-      rowOffer: { ...good, relevance: "weak", version: "v", inputHash: "h", derivedAt: "" },
-    });
+    const { id } = preOfferSequence({ intro: { ...good, relevance: "weak" } });
     expect(sequenceOfferRecord({ prospectId: id, playName: PLAY })).toMatchObject({
       introCarriedOffer: true,
       offer: { offer: good.offer, relevance: "weak" },
@@ -331,7 +427,7 @@ describe("follow-up lints at preview", () => {
   it("flag a follow-up that does not open on its offer, or is too thin to carry it", async () => {
     // The production breakup body: "If it's not the right time, a one-word no helps too."
     llm.dropOffer = true;
-    const { id } = preOfferSequence({ step0: { offer: good.offer, offerSteps: good.steps } });
+    const { id } = preOfferSequence({ intro: { offer: good.offer, steps: good.steps } });
     const out = await preview(id);
     expect(out.flags).toEqual(expect.arrayContaining(["opens-without-offer", "thin-body"]));
     // One repair round was asked for both before the draft was held.

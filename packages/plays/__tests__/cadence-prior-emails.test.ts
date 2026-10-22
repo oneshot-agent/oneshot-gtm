@@ -40,8 +40,8 @@ vi.mock("@oneshot-gtm/core", async () => {
       recentSentEmailBodies: () => [],
       getCadence: () => ({ current_step: 0, status: "active" }),
       listSequenceEventsForProspectPlay: (_pid: number, _play: string) => storedRows,
-      // The intro's sent queue row, which the follow-up edge angle is chosen from.
-      latestSentQueuePayload: () => sentPayload,
+      // The queue row the sequence started from, which the follow-up edge angle is chosen from.
+      cadenceQueueRow: () => (sentPayload ? { id: 1, payload: sentPayload, source: "" } : null),
       getProductResearchCache: () => null,
       setProductResearchCache: () => {},
     }),
