@@ -250,6 +250,22 @@ describe("page reads", () => {
     expect(ledger.cadencesForQueueRows([]).size).toBe(0);
   });
 
+  it("cadencesForQueueRows never gives a linked cadence to another row of the same prospect", () => {
+    const a = ledger.upsertProspect({ email: "a@x.dev" });
+    const older = sentRow("a@x.dev", a);
+    const newer = sentRow("a@x.dev-2", a);
+    ledger.enrollCadence({
+      prospectId: a,
+      playName: PLAY,
+      nextDueAt: "2026-10-25T00:00:00Z",
+      queueId: newer,
+      offer: { offer, candidates: [], origin: "intro" },
+    });
+    const got = ledger.cadencesForQueueRows([older, newer].map((id) => ledger.getQueueRow(id)!));
+    expect(got.get(newer)).toMatchObject({ queue_id: newer });
+    expect(got.has(older)).toBe(false);
+  });
+
   it("cadencePlansFor reads the plan of each cadence's current enrolment only", () => {
     const c = enrolled();
     const cad = ledger.getCadence(c.prospectId, c.playName)!;

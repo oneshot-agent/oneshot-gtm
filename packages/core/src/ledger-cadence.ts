@@ -278,8 +278,10 @@ export function cadencesForQueueRows(
     const byQueue = new Map<number, QueueRowCadence>();
     const byPair = new Map<string, QueueRowCadence>();
     for (const c of found) {
+      // A linked cadence belongs to its own row only; the prospect + play
+      // fallback is for cadences that never got a link.
       if (c.queue_id != null) byQueue.set(c.queue_id, c);
-      byPair.set(`${c.prospect_id}|${c.play_name}`, c);
+      else byPair.set(`${c.prospect_id}|${c.play_name}`, c);
     }
     for (const r of part) {
       const c =
