@@ -1,4 +1,12 @@
-import { demoMode, getLedger, loadConfig, logEvent } from "@oneshot-gtm/core";
+import {
+  demoMode,
+  getLedger,
+  loadConfig,
+  logEvent,
+  NEAR_DUPLICATE_QUESTION,
+  normalizeQuestion,
+  questionSimilarity,
+} from "@oneshot-gtm/core";
 import {
   approveCodeAnswer,
   captureCodeQuestion,
@@ -80,6 +88,25 @@ export function captureReplyAsk(threadKey: string, ask: ReplyAsk | undefined): s
     );
     return undefined;
   }
+}
+
+/**
+ * Whether a saved draft may point at this answer: one its conversation
+ * asked, for the question the draft's `ask` carries, by the same identity
+ * capture uses (exact, or a near-duplicate phrasing).
+ */
+export function draftAnswerMatches(
+  threadKey: string,
+  id: string,
+  ask: ReplyAsk | undefined,
+): boolean {
+  if (!ask?.question) return false;
+  const answer = codeAnswersForThread(threadKey, { ledger: getLedger() }).find((a) => a.id === id);
+  if (!answer) return false;
+  return (
+    normalizeQuestion(answer.question) === normalizeQuestion(ask.question) ||
+    questionSimilarity(answer.question, ask.question) >= NEAR_DUPLICATE_QUESTION
+  );
 }
 
 /**

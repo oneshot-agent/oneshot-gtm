@@ -212,7 +212,7 @@ describe("capture from the reply composer", () => {
     expect(body.codeAnswerId).toBeTruthy();
   });
 
-  it("a saved draft keeps a well-formed ask and this conversation's answer id, and drops the rest", async () => {
+  it("a saved draft keeps a well-formed ask and the answer for it, and drops the rest", async () => {
     const t = seed();
     const mine = store.capture({ question: QUESTION, threadKey: t.key })!.record.id;
     const theirs = store.capture({
@@ -241,11 +241,42 @@ describe("capture from the reply composer", () => {
       }),
     );
     expect(await saved.json()).toMatchObject({ ask: MECHANISM, codeAnswerId: mine });
+    // An answer this conversation asked, but for another question than the draft's ask.
+    const otherOfMine = store.capture({
+      question: "Is the approval queue ordered by arrival time?",
+      threadKey: t.key,
+    })!.record.id;
+    for (const [codeAnswerId, revision] of [
+      [theirs, 1],
+      [otherOfMine, 2],
+    ] as const) {
+      const res = await replyDraftSaveRoute(
+        post("/api/replies/drafts", {
+          key: t.key,
+          drafts: { ...base, ask: MECHANISM, codeAnswerId },
+          expectedRevision: revision,
+        }),
+      );
+      expect(((await res.json()) as ReplyDraftSet).codeAnswerId).toBeUndefined();
+    }
+    // A rephrasing of the same question still points at it.
+    const rephrased = await replyDraftSaveRoute(
+      post("/api/replies/drafts", {
+        key: t.key,
+        drafts: {
+          ...base,
+          ask: { ...MECHANISM, question: "how are failed calls retried" },
+          codeAnswerId: mine,
+        },
+        expectedRevision: 3,
+      }),
+    );
+    expect(((await rephrased.json()) as ReplyDraftSet).codeAnswerId).toBe(mine);
     const garbled = await replyDraftSaveRoute(
       post("/api/replies/drafts", {
         key: t.key,
-        drafts: { ...base, ask: { level: "deep", briefAnswers: "no" }, codeAnswerId: theirs },
-        expectedRevision: 1,
+        drafts: { ...base, ask: { level: "deep", briefAnswers: "no" }, codeAnswerId: mine },
+        expectedRevision: 4,
       }),
     );
     const body = (await garbled.json()) as ReplyDraftSet;
