@@ -22,6 +22,13 @@ Mail leaves through a pool of sender identities: OneShot sending domains, your o
 
 `sends check --since 7d` lists every keyed send and what the Sent folder showed. Sends through the Smartlead API carry no key, so their copies in Sent are counted and a send that appears twice, or not at all, is flagged.
 
+**A Gmail send cut off at the deadline (#905).** A Gmail API send that has not finished within 30 seconds is recorded `failed` and may be retried at once. That is what issue #905 specifies: a hung send fails definitely instead of ageing into `uncertain`, so the Sent sweep never settles it `failed` five minutes later and resends it. Two requirements meet here and do not agree, and the choice belongs to the issue's owner, not the code:
+
+- The issue reads a definite failure as "nothing was sent", so a retry is safe.
+- A review of the change holds that a send whose remote outcome is unknown must not be retryable until Sent has been reconciled, or the provider deduplicates. Gmail does neither for this path: the API mints its own Message-ID.
+
+The deadline bounds only how long this side waits. Aborting the request does not stop Google from processing one that had already arrived, and a Sent search that finds nothing within a finite window does not prove the message was never accepted. Under the current contract, a send cut off at the deadline and delivered anyway can be followed by a second message under a different Message-ID. Recommended resolution: amend the issue so a `/messages/send` deadline is an unknown outcome that waits for the Sent check (a deadline before the send itself stays definite), and approve explicitly the policy that follows: replay the same message when Sent has the copy, resend only after the settle window finds no copy, never retry on the deadline alone. That code exists in this branch's history and is not applied, pending that decision.
+
 ## Replies
 
 The inbox poll reads the OneShot inbox, every authorised Gmail account and every Smartlead mailbox. A reply stops the cadence whichever identity sent. A reply delayed by an outage is picked up later, not lost, and one you already archived still counts.
