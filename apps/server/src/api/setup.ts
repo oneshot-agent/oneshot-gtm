@@ -585,8 +585,17 @@ export function mergeSetupConfig(
   llmProvider: LlmProvider = body.llmProvider ?? current.llmProvider,
   walletMode: WalletMode = body.walletMode ?? current.walletMode,
 ): OneShotConfig {
+  // Optional fields a save can remove: left out of the spread, put back below.
+  const { sourceRepo: _sourceRepo, codeAnswerDisclosure: _disclosure, ...kept } = current;
+  const sourceRepo = mergeSourceRepo(body.sourceRepo, current.sourceRepo);
+  const codeAnswerDisclosure = mergeDisclosure(
+    body.codeAnswerDisclosure,
+    current.codeAnswerDisclosure,
+  );
   return {
-    ...current,
+    ...kept,
+    ...(sourceRepo ? { sourceRepo } : {}),
+    ...(codeAnswerDisclosure ? { codeAnswerDisclosure } : {}),
     walletMode,
     llmProvider,
     llmModel: body.llmModel ?? current.llmModel,
@@ -671,6 +680,74 @@ function mergeSlackWebhookUrl(incoming: string | undefined, current: string | nu
     );
   }
   return merged;
+}
+
+const MAX_REF_CHARS = 200;
+const MAX_DISCLOSURE_CHARS = 2000;
+
+/**
+ * The source repo read to answer how-it-works questions. `undefined` keeps
+ * it; `null`, or a body with neither `url` nor `path`, turns it off. A URL
+ * must be a GitHub repo (`https://github.com/owner/repo`), a path must be
+ * absolute (or start at `~`), a ref is one name with no spaces.
+ */
+export function mergeSourceRepo(
+  incoming: SetupRequest["sourceRepo"],
+  current: OneShotConfig["sourceRepo"],
+): OneShotConfig["sourceRepo"] {
+  if (incoming === undefined) return current;
+  if (incoming === null) return undefined;
+  if (typeof incoming !== "object" || Array.isArray(incoming))
+    throw new SetupValidationError("sourceRepo must be an object with url or path, and ref");
+  const field = (name: "url" | "path" | "ref"): string => {
+    const value = (incoming as Record<string, unknown>)[name];
+    if (value === undefined || value === null) return "";
+    if (typeof value !== "string") throw new SetupValidationError(`sourceRepo.${name} must be text`);
+    return value.trim();
+  };
+  const url = field("url");
+  const path = field("path");
+  const ref = field("ref");
+  if (!url && !path) return undefined;
+  if (url && !isGitHubRepoUrl(url))
+    throw new SetupValidationError(
+      "sourceRepo.url must be a GitHub repo URL (https://github.com/owner/repo)",
+    );
+  if (path && !path.startsWith("/") && !path.startsWith("~"))
+    throw new SetupValidationError("sourceRepo.path must be an absolute path to a local checkout");
+  if (ref && (ref.length > MAX_REF_CHARS || /\s/.test(ref) || ref.startsWith("-")))
+    throw new SetupValidationError("sourceRepo.ref must be a branch, tag or commit");
+  return { ...(url ? { url } : {}), ...(path ? { path } : {}), ...(ref ? { ref } : {}) };
+}
+
+function isGitHubRepoUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    const parts = u.pathname
+      .replace(/\.git$/, "")
+      .split("/")
+      .filter(Boolean);
+    return (
+      u.protocol === "https:" &&
+      (u.hostname === "github.com" || u.hostname === "www.github.com") &&
+      parts.length === 2
+    );
+  } catch {
+    return false;
+  }
+}
+
+function mergeDisclosure(incoming: unknown, current: string | undefined): string | undefined {
+  if (incoming === undefined) return current;
+  if (incoming === null) return undefined;
+  if (typeof incoming !== "string")
+    throw new SetupValidationError("codeAnswerDisclosure must be text");
+  const trimmed = incoming.trim();
+  if (trimmed.length > MAX_DISCLOSURE_CHARS)
+    throw new SetupValidationError(
+      `codeAnswerDisclosure is limited to ${MAX_DISCLOSURE_CHARS} characters`,
+    );
+  return trimmed || undefined;
 }
 
 function mergeString(incoming: string | undefined, current: string | null): string | null {

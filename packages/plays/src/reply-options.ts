@@ -58,7 +58,8 @@ export async function generateReplyOptions(input: DraftInput) {
           VARIANTS.every((v) => candidate.drafts[v]) &&
           flagPenalty(candidateFlags) < flagPenalty(flags)
         ) {
-          parsed = candidate;
+          // A repair turn that drops the structured read keeps the first one.
+          parsed = candidate.ask || !parsed.ask ? candidate : { ...candidate, ask: parsed.ask };
           flags = candidateFlags;
         }
       } catch {
