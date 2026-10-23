@@ -1,4 +1,4 @@
-import { demoMode, getLedger, getReplyReviewStore, loadConfig, logEvent } from "@oneshot-gtm/core";
+import { demoMode, getLedger, loadConfig, logEvent } from "@oneshot-gtm/core";
 import {
   approveCodeAnswer,
   captureCodeQuestion,
@@ -99,8 +99,6 @@ export function listCodeAnswersRoute(req: Request): Response {
       threadKey ? codeAnswersForThread(threadKey, { ledger }).map((a) => a.id) : [],
     );
     if (id) ids.add(id);
-    const saved = threadKey ? getReplyReviewStore().get(threadKey)?.drafts?.codeAnswerId : null;
-    if (saved) ids.add(saved);
     answers = all.filter((a) => ids.has(a.id));
   }
   return jsonResponse({ answers: answers.map(view) }, 200, req);

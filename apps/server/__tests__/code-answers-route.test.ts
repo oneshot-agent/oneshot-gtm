@@ -212,8 +212,13 @@ describe("capture from the reply composer", () => {
     expect(body.codeAnswerId).toBeTruthy();
   });
 
-  it("a saved draft keeps a well-formed ask and id, and drops a garbled ask", async () => {
+  it("a saved draft keeps a well-formed ask and this conversation's answer id, and drops the rest", async () => {
     const t = seed();
+    const mine = store.capture({ question: QUESTION, threadKey: t.key })!.record.id;
+    const theirs = store.capture({
+      question: "What happens when the spend limit is reached mid-run?",
+      threadKey: "other",
+    })!.record.id;
     const base: ReplyDraftSet = {
       id: "g1",
       revision: 0,
@@ -231,15 +236,15 @@ describe("capture from the reply composer", () => {
     const saved = await replyDraftSaveRoute(
       post("/api/replies/drafts", {
         key: t.key,
-        drafts: { ...base, ask: MECHANISM, codeAnswerId: "q1" },
+        drafts: { ...base, ask: MECHANISM, codeAnswerId: mine },
         expectedRevision: null,
       }),
     );
-    expect(await saved.json()).toMatchObject({ ask: MECHANISM, codeAnswerId: "q1" });
+    expect(await saved.json()).toMatchObject({ ask: MECHANISM, codeAnswerId: mine });
     const garbled = await replyDraftSaveRoute(
       post("/api/replies/drafts", {
         key: t.key,
-        drafts: { ...base, ask: { level: "deep", briefAnswers: "no" } },
+        drafts: { ...base, ask: { level: "deep", briefAnswers: "no" }, codeAnswerId: theirs },
         expectedRevision: 1,
       }),
     );
@@ -262,31 +267,12 @@ describe("code answer routes", () => {
       routes.listCodeAnswersRoute(get("/api/code-answers?threadKey=email")),
     );
     expect(mine.map((x) => x.id)).toEqual([a]);
-    // The id the drafts carry and an explicit id are included too.
-    seed("email");
-    review.saveDrafts(
-      "email",
-      {
-        id: "g",
-        revision: 0,
-        contextVersion: "context",
-        read: "",
-        originals: { direct: "", technical: "", warm: "" },
-        edits: { direct: "", technical: "", warm: "" },
-        moves: {},
-        flags: { direct: [], technical: [], warm: [] },
-        setFlags: [],
-        selected: "direct",
-        steer: "",
-        generated: true,
-        codeAnswerId: b,
-      },
-      null,
-    );
+    // An explicit id (the one the composer's drafts carry) is included too.
     const carried = await answersOf(
       routes.listCodeAnswersRoute(get(`/api/code-answers?threadKey=email&id=${c}`)),
     );
-    expect(carried.map((x) => x.id).toSorted()).toEqual([a, b, c].toSorted());
+    expect(carried.map((x) => x.id).toSorted()).toEqual([a, c].toSorted());
+    expect(carried.some((x) => x.id === b)).toBe(false);
   });
 
   it("approves as read, or with the founder's edit", async () => {

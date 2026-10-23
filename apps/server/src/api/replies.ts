@@ -48,6 +48,7 @@ import { collectReplies, threadContextVersion } from "./replies-view.ts";
 import { sendReplyRoute, archiveInboxConversationRoute } from "./inbox.ts";
 import { mailboxStateRoute } from "./mailboxes.ts";
 import { captureReplyAsk } from "./code-answers.ts";
+import { codeAnswersForThread } from "@oneshot-gtm/find";
 
 function thread(key: unknown): ReplyThread {
   if (typeof key !== "string") throw new Error("Conversation key is required");
@@ -294,6 +295,10 @@ export async function replyDraftSaveRoute(req: Request) {
     const b = await payload(req);
     const t = thread(b.key);
     const d = draftPayload(b.drafts);
+    // The composer shows the answer a draft points at; only one this
+    // conversation asked may ride along.
+    if (d.codeAnswerId && !codeAnswersForThread(t.key).some((a) => a.id === d.codeAnswerId))
+      delete d.codeAnswerId;
     if (b.expectedRevision !== null && !Number.isSafeInteger(b.expectedRevision))
       throw new Error("Draft revision is required");
     const flags = lintReplyOptions(d.edits, d.moves, replyOptionsContext(t, d.steer));
