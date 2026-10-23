@@ -206,7 +206,7 @@ export async function openSourceRepo(
   if (ref && !validRef(ref))
     return { ok: false, error: `'${ref}' is not a valid branch, tag or commit` };
   try {
-    if (path) return openLocal(path, ref, opts.fetchRemote === true);
+    if (path) return await openLocal(path, ref, opts.fetchRemote === true);
     if (url) return await openGitHub(url, ref);
   } catch (err) {
     return { ok: false, error: (err as Error).message || "the source repo could not be read" };
@@ -309,50 +309,54 @@ async function openGitHub(
 
 const GIT_TIMEOUT_MS = 30_000;
 
-function git(
+/** Run git without blocking the event loop (the server shares it with every request). */
+async function git(
   dir: string,
   args: string[],
   timeout = GIT_TIMEOUT_MS,
-): { ok: boolean; out: string; err: string } {
-  const p = Bun.spawnSync(["git", "-C", dir, ...args], {
+): Promise<{ ok: boolean; out: string; err: string }> {
+  const p = Bun.spawn(["git", "-C", dir, ...args], {
     stdout: "pipe",
     stderr: "pipe",
     timeout,
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
   });
-  return { ok: p.exitCode === 0, out: p.stdout.toString(), err: p.stderr.toString().trim() };
+  const [out, err, code] = await Promise.all([
+    new Response(p.stdout).text(),
+    new Response(p.stderr).text(),
+    p.exited,
+  ]);
+  return { ok: code === 0, out, err: err.trim() };
 }
 
 function expandHome(path: string): string {
   return path === "~" || path.startsWith("~/") ? homedir() + path.slice(1) : path;
 }
 
-function openLocal(
+async function openLocal(
   rawPath: string,
   configuredRef: string | undefined,
   fetchRemote: boolean,
-): OpenSourceRepoResult {
+): Promise<OpenSourceRepoResult> {
   const expanded = expandHome(rawPath);
   if (!isAbsolute(expanded))
     return { ok: false, error: `use the full path of the checkout, not '${rawPath}'` };
   const dir = resolve(expanded);
   if (!existsSync(dir)) return { ok: false, error: `no folder at ${dir}` };
-  if (!git(dir, ["rev-parse", "--git-dir"]).ok)
+  if (!(await git(dir, ["rev-parse", "--git-dir"])).ok)
     return { ok: false, error: `${dir} is not a git checkout` };
   let ref = configuredRef;
   if (!ref) {
-    const head = git(dir, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+    const head = await git(dir, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
     ref = head.ok && head.out.trim() ? head.out.trim() : "HEAD";
   }
   if (fetchRemote) {
     const remote = ref.split("/")[0]!;
-    const remotes = git(dir, ["remote"])
-      .out.split("\n")
-      .map((r) => r.trim());
+    const remotes = (await git(dir, ["remote"])).out.split("\n").map((r) => r.trim());
     if (ref.includes("/") && remotes.includes(remote))
-      git(dir, ["fetch", "--quiet", "--no-tags", remote], 60_000);
+      await git(dir, ["fetch", "--quiet", "--no-tags", remote], 60_000);
   }
-  const resolved = git(dir, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+  const resolved = await git(dir, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
   const commit = resolved.out.trim();
   if (!resolved.ok || !/^[0-9a-f]{40,64}$/.test(commit))
     return { ok: false, error: `${dir} has no branch, tag or commit '${ref}'` };
@@ -365,7 +369,7 @@ function openLocal(
       commit,
       async listFiles() {
         if (listing) return listing;
-        const tree = git(dir, ["ls-tree", "-r", "-l", "-z", commit]);
+        const tree = await git(dir, ["ls-tree", "-r", "-l", "-z", commit]);
         if (!tree.ok)
           throw new Error(`could not list ${dir} at ${commit.slice(0, 7)}: ${tree.err}`);
         listing = tree.out
@@ -385,7 +389,7 @@ function openLocal(
       },
       async readFile(p) {
         if (!isReadableSourcePath(p)) return null;
-        const show = git(dir, ["cat-file", "blob", `${commit}:${p}`]);
+        const show = await git(dir, ["cat-file", "blob", `${commit}:${p}`]);
         return show.ok ? usableText(show.out) : null;
       },
     },
