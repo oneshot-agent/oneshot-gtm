@@ -381,6 +381,8 @@ export const api = {
         founderAdmission: string | null;
         pilotOffer?: string | null;
         productBrief: string | null;
+        sourceRepo?: { url?: string; path?: string; ref?: string };
+        codeAnswerDisclosure?: string;
         founderVoice?: string | null;
         mobileSignature: boolean;
         dailySpendCeilingUsd: number | null;

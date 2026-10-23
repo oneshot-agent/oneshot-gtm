@@ -7,6 +7,7 @@ import {
   logEvent,
   tryReserveDailySpend,
   type TriggerRow,
+  productBriefText,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import {
@@ -308,7 +309,7 @@ export async function setTriggerConfigRoute(
 function edgeLintContext(): EdgeLintContext {
   try {
     const cfg = loadConfig();
-    return { factTerms: factTermsFrom(cfg.productOneLiner, cfg.productBrief) };
+    return { factTerms: factTermsFrom(cfg.productOneLiner, productBriefText(cfg)) };
   } catch {
     return {};
   }
@@ -451,7 +452,7 @@ export async function suggestAnglesRoute(
             play: name,
             positioning: {
               product: cfg.productOneLiner,
-              brief: cfg.productBrief,
+              brief: productBriefText(cfg),
               icp: cfg.icpOneLiner,
               edge,
             },

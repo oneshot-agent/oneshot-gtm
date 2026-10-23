@@ -1,6 +1,7 @@
 import type { DecisionReason } from "./learning.ts";
 export * from "./reply-email-view.ts";
 export * from "./linkedin-reads.ts";
+export * from "./code-answers.ts";
 /**
  * Wire types shared between apps/cli, apps/server, and apps/web.
  * These are the API contracts for /api/* endpoints. Keep stable.
@@ -493,6 +494,15 @@ export interface SetupRequest {
   pilotOffer?: string;
   /** Product facts + canonical links replies may cite. Links absent from this brief are never sent. */
   productBrief?: string;
+  /**
+   * The product's source repo, read to answer how-it-works questions. `url`: a
+   * GitHub repo (private needs GITHUB_TOKEN); `path`: a local git checkout;
+   * `ref`: branch, tag or sha (default: the repo's default branch). `null`
+   * clears it; `undefined` leaves it unchanged.
+   */
+  sourceRepo?: { url?: string; path?: string; ref?: string } | null;
+  /** How much an answer from the code may say. Blank = the default (behaviour only). */
+  codeAnswerDisclosure?: string;
   founderVoice?: string;
   /** When true, signature appends a literal "Sent from my iPhone" line. */
   mobileSignature?: boolean;

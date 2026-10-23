@@ -1,4 +1,9 @@
-import { loadConfig, stripQuotedChain, angleBlockFromJson } from "@oneshot-gtm/core";
+import {
+  loadConfig,
+  productBriefText,
+  stripQuotedChain,
+  angleBlockFromJson,
+} from "@oneshot-gtm/core";
 import { complete, type LlmMessage, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { getPriorStepsForProspect, type PriorStepRow } from "./_cadence.ts";
 import {
@@ -506,7 +511,10 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
     ...(input.matched?.playName ? [`PLAY: ${input.matched.playName}`] : []),
     ...(icpGateLine ? [icpGateLine] : []),
     ...(cfg.productBrief?.trim()
-      ? ["", `PRODUCT BRIEF (facts and the ONLY links you may cite):\n${cfg.productBrief.trim()}`]
+      ? [
+          "",
+          `PRODUCT BRIEF (facts and the ONLY links you may cite):\n${(productBriefText(cfg) ?? "").trim()}`,
+        ]
       : []),
     ...(input.dossier?.trim()
       ? ["", `SENDER DOSSIER (research about who wrote this):\n${input.dossier.trim()}`]

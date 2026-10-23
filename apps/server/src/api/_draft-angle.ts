@@ -1,4 +1,9 @@
-import { isPersonResearchDossier, loadConfig, personRecordFromResearch } from "@oneshot-gtm/core";
+import {
+  isPersonResearchDossier,
+  loadConfig,
+  personRecordFromResearch,
+  productBriefText,
+} from "@oneshot-gtm/core";
 import {
   angleAssignmentOf,
   angleTextKey,
@@ -61,7 +66,7 @@ export async function draftAngleFor(input: {
   const angles = splitEdgeAngles(edge);
   const positioning = {
     product: cfg.productOneLiner,
-    brief: cfg.productBrief,
+    brief: productBriefText(cfg),
     icp: cfg.icpOneLiner,
     edge,
   };

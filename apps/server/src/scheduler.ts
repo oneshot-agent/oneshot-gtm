@@ -19,6 +19,7 @@ import {
   nextSleepMs,
   runDueTriggers,
   runPendingRetries,
+  sweepCodeAnswers,
   sweepInFlightNewsfeeds,
   sweepLiveProfiles,
   type TriggerRunOutcome,
@@ -90,6 +91,14 @@ const NEWSFEED_SWEEP_DEADLINE_MS = 15 * 60_000;
 /** Sent-folder delivery checks: every few minutes, a bounded batch of read-only mailbox searches. */
 const DELIVERY_SWEEP_INTERVAL_MS = 5 * 60_000;
 const DELIVERY_SWEEP_DEADLINE_MS = 2 * 60_000;
+/**
+ * Code answers: daily, re-hash the files behind approved and pending answers
+ * at the source repo's current commit, so an answer whose code changed
+ * leaves the brief. Free when the commit has not moved; inert without a
+ * connected repo.
+ */
+const CODE_ANSWER_SWEEP_INTERVAL_MS = 24 * 60 * 60_000;
+const CODE_ANSWER_SWEEP_DEADLINE_MS = 10 * 60_000;
 /** Untriaged-reply retry: a bounded batch every 15 min, so a reply that keeps failing can't cost a paid call per tick. */
 const REPLY_INTENT_RETRY_INTERVAL_MS = 15 * 60_000;
 
@@ -127,6 +136,8 @@ export function startScheduler(): SchedulerHandle {
   let lastDeliverySweepAt = 0;
   // 0 = never swept, so the first tick reads invitation statuses right away.
   let lastLinkedInInviteSweepAt = 0;
+  // 0 = never swept, so the first tick after boot checks the code answers.
+  let lastCodeAnswerSweepAt = 0;
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
@@ -363,6 +374,24 @@ export function startScheduler(): SchedulerHandle {
         } catch (err) {
           logEvent(
             "scheduler.delivery_sweep.failed",
+            { message_120: ((err as Error).message ?? "").slice(0, 120) },
+            "warn",
+          );
+        }
+      }
+      // Code-answer staleness. Isolated and stamped before the await like
+      // the sweeps above; the sweep itself never throws.
+      if (Date.now() - lastCodeAnswerSweepAt >= CODE_ANSWER_SWEEP_INTERVAL_MS) {
+        lastCodeAnswerSweepAt = Date.now();
+        try {
+          await withDeadline(
+            sweepCodeAnswers(),
+            CODE_ANSWER_SWEEP_DEADLINE_MS,
+            "code answer sweep",
+          );
+        } catch (err) {
+          logEvent(
+            "scheduler.code_answer_sweep.failed",
             { message_120: ((err as Error).message ?? "").slice(0, 120) },
             "warn",
           );

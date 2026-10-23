@@ -4,6 +4,7 @@ import type { Ledger } from "./ledger.ts";
 import { loadConfig } from "./config.ts";
 import { angleBlockFromJson } from "./angle.ts";
 import { recoverLearningApplications } from "./learning-decisions.ts";
+import { productBriefText } from "./product-brief.ts";
 
 export interface DraftLearningInput {
   channel: LearningChannel;
@@ -47,7 +48,7 @@ export function draftLearningContext(ledger: Ledger, input: DraftLearningInput) 
     stage: input.stage,
     prospectId: prospect?.id ?? null,
     product: cfg.productOneLiner ?? null,
-    productBrief: cfg.productBrief ?? null,
+    productBrief: productBriefText(cfg, ledger) ?? null,
     icp: cfg.icpOneLiner ?? null,
     prospectAngle: angle,
     campaignAngle: input.campaignAngle ?? null,

@@ -20,7 +20,7 @@
  * why, and the writer is not asked again until that input changes.
  */
 import { createHash } from "node:crypto";
-import { isPersonResearchDossier, loadConfig, logEvent } from "@oneshot-gtm/core";
+import { isPersonResearchDossier, loadConfig, logEvent, productBriefText } from "@oneshot-gtm/core";
 import {
   callDecisions,
   complete,
@@ -248,7 +248,7 @@ export function offerInputHash(
         OFFER_PROMPT_VERSION,
         research,
         cfg.productOneLiner ?? "",
-        cfg.productBrief ?? "",
+        productBriefText(cfg) ?? "",
         cfg.pilotOffer ?? "",
       ].join("\u0000"),
     )
@@ -262,7 +262,7 @@ export function offerProductHash(
 ): string {
   return createHash("sha256")
     .update(
-      [cfg.productOneLiner ?? "", cfg.productBrief ?? "", cfg.pilotOffer ?? ""].join("\u0000"),
+      [cfg.productOneLiner ?? "", productBriefText(cfg) ?? "", cfg.pilotOffer ?? ""].join("\u0000"),
     )
     .digest("hex")
     .slice(0, 16);
@@ -519,7 +519,7 @@ function offerUserMessage(input: DeriveOfferInput, cfg: AppConfig, research: str
   const thread = threadBlock(input.thread);
   return [
     `PRODUCT: ${cfg.productOneLiner ?? ""}`,
-    `PRODUCT BRIEF:\n${clip((cfg.productBrief ?? "").trim(), BRIEF_MAX)}`,
+    `PRODUCT BRIEF:\n${productBriefText(cfg, undefined, { max: BRIEF_MAX }) ?? ""}`,
     ...(cfg.pilotOffer?.trim() ? [`OFFER TERMS: ${cfg.pilotOffer.trim()}`] : []),
     `PLAY: ${input.playName}`,
     `PROSPECT: ${firstString(t, ["name", "founderName", "guestName", "hostName"])}`,
@@ -851,7 +851,7 @@ export async function deriveOffers(
     { role: "system", content: loadPrompt("prospect-offer") },
     { role: "user", content: offerUserMessage(input, cfg, research) },
   ];
-  const product = `${cfg.productOneLiner ?? ""}\n${cfg.productBrief}`;
+  const product = `${cfg.productOneLiner ?? ""}\n${productBriefText(cfg)}`;
   const oneLiner = cfg.productOneLiner ?? "";
   let kept: DraftOffer[] = [];
   const seen = new Set<string>();
@@ -1084,13 +1084,14 @@ export async function deriveOfferAngles(
   const research = offerResearchText(t, input.dossier);
   const field = edgeFieldOf(t);
   const founderAngles = field ? splitEdgeAngles(String(t[field])) : [];
-  const product = `${cfg.productOneLiner ?? ""}\n${cfg.productBrief}`;
+  const brief = (productBriefText(cfg) ?? "").trim();
+  const product = `${cfg.productOneLiner ?? ""}\n${brief}`;
   const user = [
     `OFFER: ${input.offer.offer}`,
     ...(input.offer.return?.trim() ? [`RETURN: ${input.offer.return.trim()}`] : []),
     ...(input.offer.steps.trim() ? [`HOW: ${input.offer.steps.trim()}`] : []),
     `PRODUCT: ${cfg.productOneLiner ?? ""}`,
-    `PRODUCT BRIEF:\n${clip(cfg.productBrief.trim(), BRIEF_MAX)}`,
+    `PRODUCT BRIEF:\n${productBriefText(cfg, undefined, { max: BRIEF_MAX }) ?? ""}`,
     ...(founderAngles.length > 0
       ? [`FOUNDER'S ANGLES:\n${founderAngles.map((a) => `- ${a}`).join("\n")}`]
       : []),
@@ -1326,7 +1327,7 @@ export function offerBlock(
   }
   if (opts.brief !== false && cfg.productBrief?.trim()) {
     lines.push(
-      `PRODUCT BRIEF (the only source of product claims):\n${clip(cfg.productBrief.trim(), BRIEF_MAX)}`,
+      `PRODUCT BRIEF (the only source of product claims):\n${productBriefText(cfg, undefined, { max: BRIEF_MAX }) ?? ""}`,
     );
   }
   return lines.length > 0 ? lines.join("\n") : null;

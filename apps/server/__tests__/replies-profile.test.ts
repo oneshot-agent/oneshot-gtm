@@ -18,6 +18,7 @@ vi.mock("@oneshot-gtm/core", () => ({
     upsert: (_scope: string, t: ReplyThread) => mocks.stored.set(t.key, structuredClone(t)),
   }),
   loadConfig: () => ({}),
+  productBriefText: (cfg: { productBrief?: string | null }) => cfg.productBrief ?? null,
   linkedInMatches: () => [],
   replyContextVersion: () => "context",
 }));

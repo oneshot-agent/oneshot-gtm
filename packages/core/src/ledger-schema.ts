@@ -375,6 +375,44 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       copyCadenceOffers(db);
     },
   },
+  {
+    // Answers from your code (code-answers-store.ts): one row per
+    // how-it-works question a prospect asked, read against the founder's
+    // source repo and approved before it joins the brief. `question_key`
+    // is the normalized question; near-duplicates fold into an existing
+    // row in the store, the unique index only catches exact repeats.
+    // `files_json` pins the files the answer was read from ([{path,
+    // sha256}]) so a change to any of them marks the answer stale.
+    version: 17,
+    name: "code-answers",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS code_answers (
+          id TEXT PRIMARY KEY,
+          question TEXT NOT NULL,
+          question_key TEXT NOT NULL UNIQUE,
+          status TEXT NOT NULL DEFAULT 'open',
+          answer TEXT,
+          founder_edited INTEGER NOT NULL DEFAULT 0,
+          why_unresolved TEXT,
+          files_json TEXT NOT NULL DEFAULT '[]',
+          commit_sha TEXT,
+          prompt_version TEXT,
+          digest TEXT,
+          asked_count INTEGER NOT NULL DEFAULT 1,
+          threads_json TEXT NOT NULL DEFAULT '[]',
+          source_thread_key TEXT,
+          deriving_at TEXT,
+          derive_token TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          decided_at TEXT,
+          decided_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_code_answers_status ON code_answers(status, updated_at DESC);
+      `);
+    },
+  },
 ];
 
 /**
