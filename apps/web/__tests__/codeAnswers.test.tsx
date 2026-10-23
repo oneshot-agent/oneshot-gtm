@@ -43,7 +43,13 @@ const row = (over: Partial<CodeAnswer> = {}): CodeAnswer => ({
 const noop = () => {};
 const card = (answer: CodeAnswer | null) =>
   renderToStaticMarkup(
-    <CodeAnswerCardView answer={answer} busy={false} onApprove={noop} onDismiss={noop} />,
+    <CodeAnswerCardView
+      answer={answer}
+      busy={false}
+      onApprove={noop}
+      onDismiss={noop}
+      onReread={noop}
+    />,
   );
 const list = (answers: CodeAnswer[], repoConfigured = true) =>
   renderToStaticMarkup(
@@ -61,8 +67,17 @@ const list = (answers: CodeAnswer[], repoConfigured = true) =>
 
 describe("composer card", () => {
   it("says it is reading while the code is read", () => {
-    expect(card(row({ status: "open", answer: null }))).toContain("Reading your code…");
+    expect(card(row({ status: "open", answer: null, deriving: true }))).toContain(
+      "Reading your code…",
+    );
     expect(card(row({ deriving: true }))).toContain("Reading your code…");
+  });
+
+  it("offers to read again when the last read did not finish", () => {
+    const html = card(row({ status: "open", answer: null }));
+    expect(html).not.toContain("Reading your code…");
+    expect(html).toContain("Your code wasn&#x27;t read for this yet.");
+    expect(html).toContain("Read again");
   });
 
   it("offers a pending answer to approve, edit or dismiss", () => {
@@ -143,9 +158,18 @@ describe("/setup list", () => {
     expect(approved).toContain("in the brief");
     expect(approved).toContain("Take it out of the brief");
     expect(approved).not.toContain(">Approve");
-    const reading = list([row({ status: "open", answer: null })]);
+    const reading = list([row({ status: "open", answer: null, deriving: true })]);
     expect(reading).toContain("Reading your code…");
     expect(reading).not.toContain("Dismiss");
+  });
+
+  it("marks a question whose read did not finish as not read yet, with a re-read", () => {
+    const html = list([row({ status: "open", answer: null, commit: null })]);
+    expect(html).not.toContain("Reading your code…");
+    expect(html).toContain("not read yet");
+    expect(html).toContain("Read again");
+    expect(html).toContain("Write the answer");
+    expect(list([row({ status: "open", answer: null })], false)).not.toContain("Read again");
   });
 
   it("explains the empty list when a repo is connected, and hides without one", () => {
@@ -195,6 +219,12 @@ describe("helpers", () => {
     expect(sourceRepoRequest("github.com/acme/widget", " main ")).toEqual({
       url: "https://github.com/acme/widget",
       ref: "main",
+    });
+    expect(sourceRepoRequest("http://github.com/acme/widget", "")).toEqual({
+      url: "https://github.com/acme/widget",
+    });
+    expect(sourceRepoRequest("HTTPS://github.com/acme/widget", "")).toEqual({
+      url: "https://github.com/acme/widget",
     });
     expect(sourceRepoRequest("/home/me/widget", "")).toEqual({ path: "/home/me/widget" });
     expect(sourceRepoRequest("  ", "main")).toBeNull();

@@ -27,9 +27,14 @@ export function sortCodeAnswers(answers: readonly CodeAnswer[]): CodeAnswer[] {
     );
 }
 
-/** Reading the code: captured and not answered yet, or a re-read in flight. */
+/** A read of the code is in flight for it. */
 export function isReading(a: CodeAnswer): boolean {
-  return a.deriving || a.status === "open";
+  return a.deriving;
+}
+
+/** Captured, but no read has finished: the last one failed, or none ran. */
+export function isUnread(a: CodeAnswer): boolean {
+  return a.status === "open" && !a.deriving;
 }
 
 /** The answer this conversation asked for: the id its drafts carry, else the latest it first asked. */
@@ -47,12 +52,13 @@ export function threadCodeAnswer(
   );
 }
 
-export type ComposerCodeAnswerState = "reading" | "pending" | "unresolved" | null;
+export type ComposerCodeAnswerState = "reading" | "unread" | "pending" | "unresolved" | null;
 
 /** What the composer shows: nothing once approved (it is in the brief), dismissed or stale. */
 export function composerCodeAnswerState(a: CodeAnswer | null): ComposerCodeAnswerState {
   if (!a) return null;
   if (isReading(a)) return "reading";
+  if (isUnread(a)) return "unread";
   if (a.status === "pending" && a.answer) return "pending";
   if (a.status === "unresolved") return "unresolved";
   return null;
@@ -77,6 +83,8 @@ export function codeAnswerStatusLabel(a: CodeAnswer): string {
       return "code changed · out of the brief";
     case "unresolved":
       return "not settled by the code";
+    case "open":
+      return "not read yet";
     default:
       return a.status;
   }
@@ -94,7 +102,7 @@ export function sourceRepoRequest(repo: string, ref: string): SetupRequest["sour
   const r = ref.trim();
   const withRef = r ? { ref: r } : {};
   if (looksLikeRepoUrl(value))
-    return { url: /^https?:\/\//i.test(value) ? value : `https://${value}`, ...withRef };
+    return { url: `https://${value.replace(/^https?:\/\//i, "")}`, ...withRef };
   return { path: value, ...withRef };
 }
 

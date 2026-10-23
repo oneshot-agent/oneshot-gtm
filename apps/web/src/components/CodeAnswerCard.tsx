@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2, X } from "lucide-react";
+import { Check, Loader2, RefreshCw, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import type { CodeAnswer } from "@oneshot-gtm/shared-types";
@@ -52,12 +52,18 @@ export function CodeAnswerCard({
     onSuccess: () => void invalidate(),
     onError: (e: Error) => toast.error(`couldn't dismiss · ${e.message}`),
   });
+  const reread = useMutation({
+    mutationFn: (id: string) => api.deriveCodeAnswer(id),
+    onSuccess: () => void invalidate(),
+    onError: (e: Error) => toast.error(e.message),
+  });
   return (
     <CodeAnswerCardView
       answer={answer}
-      busy={approve.isPending || dismiss.isPending}
+      busy={approve.isPending || dismiss.isPending || reread.isPending}
       onApprove={(text) => answer && approve.mutate({ id: answer.id, text })}
       onDismiss={() => answer && dismiss.mutate(answer.id)}
+      onReread={() => answer && reread.mutate(answer.id)}
     />
   );
 }
@@ -67,11 +73,13 @@ export function CodeAnswerCardView({
   busy,
   onApprove,
   onDismiss,
+  onReread,
 }: {
   answer: CodeAnswer | null;
   busy: boolean;
   onApprove: (text?: string) => void;
   onDismiss: () => void;
+  onReread: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(answer?.answer ?? "");
@@ -81,6 +89,15 @@ export function CodeAnswerCardView({
     return (
       <p role="status" className="flex items-center gap-1.5 text-[12px] text-ink-muted">
         <Loader2 size={12} className="animate-spin" /> Reading your code…
+      </p>
+    );
+  if (state === "unread")
+    return (
+      <p role="note" className="flex flex-wrap items-center gap-2 text-[12px] text-ink-muted">
+        Your code wasn't read for this yet.
+        <Button size="sm" variant="ghost" disabled={busy} onClick={onReread} {...readOnly}>
+          <RefreshCw size={12} /> Read again
+        </Button>
       </p>
     );
   if (state === "unresolved")

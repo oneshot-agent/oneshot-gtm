@@ -9,6 +9,7 @@ import {
   askedLabel,
   codeAnswerStatusLabel,
   isReading,
+  isUnread,
   shortCommit,
   sortCodeAnswers,
 } from "../../lib/codeAnswers.ts";
@@ -162,9 +163,13 @@ function CodeAnswerRow({
   const commit = shortCommit(a.commit);
   const meta = [codeAnswerStatusLabel(a), askedLabel(a.askedCount), commit].filter(Boolean);
   const reviewable = a.status === "pending" && !reading && Boolean(a.answer);
-  const rereadable = canRead && !reading && (a.status === "unresolved" || a.status === "stale");
+  const rereadable =
+    canRead &&
+    !reading &&
+    (a.status === "open" || a.status === "unresolved" || a.status === "stale");
   // The store takes the founder's own words for a question the code did not settle.
-  const writable = reviewable || a.status === "unresolved" || a.status === "stale";
+  const writable =
+    reviewable || a.status === "open" || a.status === "unresolved" || a.status === "stale";
   return (
     <div className="border-t border-ink-rule/60 pt-2">
       <p className="text-[13px] text-ink-cream">{a.question}</p>
@@ -207,6 +212,10 @@ function CodeAnswerRow({
         <>
           {reading ? (
             <p className="mt-1 text-[12px] text-ink-muted">Reading your code…</p>
+          ) : isUnread(a) ? (
+            <p className="mt-1 text-[12px] text-ink-muted">
+              Not read yet. The last read didn't finish; read it again or write the answer.
+            </p>
           ) : a.status === "unresolved" ? (
             <p className="mt-1 text-[12px] text-ink-muted">
               {a.whyUnresolved
