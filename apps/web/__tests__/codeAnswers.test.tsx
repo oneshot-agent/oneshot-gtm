@@ -201,8 +201,18 @@ describe("/setup list", () => {
 describe("helpers", () => {
   it("picks the thread's answer by id, else the latest it asked", () => {
     const answers = [
-      row({ id: "a", sourceThreadKey: "t1", updatedAt: "2026-10-01T00:00:00Z" }),
-      row({ id: "b", sourceThreadKey: "t1", updatedAt: "2026-10-05T00:00:00Z" }),
+      row({
+        id: "a",
+        sourceThreadKey: "t1",
+        createdAt: "2026-10-01T00:00:00Z",
+        updatedAt: "2026-10-09T00:00:00Z",
+      }),
+      row({
+        id: "b",
+        sourceThreadKey: "t1",
+        createdAt: "2026-10-05T00:00:00Z",
+        updatedAt: "2026-10-06T00:00:00Z",
+      }),
       row({ id: "c", sourceThreadKey: "t2" }),
     ];
     expect(threadCodeAnswer(answers, "t1", "c")?.id).toBe("c");

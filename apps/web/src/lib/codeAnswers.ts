@@ -48,7 +48,7 @@ export function threadCodeAnswer(
   return (
     answers
       .filter((a) => a.sourceThreadKey === threadKey && a.status !== "dismissed")
-      .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null
+      .toSorted((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null
   );
 }
 
