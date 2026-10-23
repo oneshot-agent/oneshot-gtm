@@ -1003,7 +1003,7 @@ export function QueueRow({
   const prio = priorityChip(row.priority, masked, { shadow: !ranked });
   const held =
     row.lastDraft && !row.lastDraft.sent
-      ? heldSummary(row.lastDraft.flags, { offerSkipped: !!row.offerSkip })
+      ? heldSummary(row.lastDraft.flags, { offerSkipped: !masked && !!row.offerSkip })
       : null;
   const detail = sourceDetail(row.source);
   const researchRows = masked ? [] : personResearchRows(row.payload);
@@ -1855,7 +1855,11 @@ export function DraftSection({
             {sendHold && <SendHoldNote rowId={id} hold={sendHold} editable={!sending} />}
             {deliveryNote && <DeliveryWarning delivery={delivery} />}
             {!draft.sent && draft.flags.length > 0 && (
-              <DraftStateLine sent={false} flags={draft.flags} offerSkipped={!!offerSkip} />
+              <DraftStateLine
+                sent={false}
+                flags={draft.flags}
+                offerSkipped={!masked && !!offerSkip}
+              />
             )}
             {softHold && <Explain concept="softHold" detail={softHoldDetail} />}
             {draft.receiptIds.map((rid) => (

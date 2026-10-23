@@ -953,7 +953,7 @@ function CadencesPage() {
                             <DraftStateLine
                               sent={false}
                               flags={draft.flags}
-                              offerSkipped={!!c.offer?.skip}
+                              offerSkipped={!masked && !!c.offer?.skip}
                             />
                           ) : undefined
                         }
