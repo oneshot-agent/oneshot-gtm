@@ -679,4 +679,62 @@ describe("gmailFetch deadline (#905)", () => {
       vi.useRealTimers();
     }
   });
+
+  it("rejects at the same deadline when a non-401 error answers its headers but its body never finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      let sendSignal: AbortSignal | undefined;
+      const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+        if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+        sendSignal = init?.signal ?? undefined;
+        // 500 with headers right away; the error body (which gmailJson reads
+        // with res.text()) never completes.
+        return new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const pending = sendGmailMessage({
+        to: "a@b.com",
+        fromEmail: "jane@gmail.com",
+        fromName: null,
+        subject: "s",
+        htmlBody: "b",
+      });
+      const settled = pending.catch((e: Error) => e);
+      await vi.advanceTimersByTimeAsync(GMAIL_TIMEOUT_MS - 1);
+      expect(sendSignal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const err = await settled;
+      expect((err as Error).message).toBe("Gmail API /messages/send deadline exceeded (30s)");
+      expect(sendSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still rejects a 401 at once when its body never finishes: the auth error does not wait for the deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async (url: string | URL) => {
+        if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+        return new Response(new ReadableStream<Uint8Array>({ start() {} }), { status: 401 });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const settled = sendGmailMessage({
+        to: "a@b.com",
+        fromEmail: "jane@gmail.com",
+        fromName: null,
+        subject: "s",
+        htmlBody: "b",
+      }).catch((e: Error) => e);
+      // No clock advance: the 401 branch throws before any body read.
+      await vi.advanceTimersByTimeAsync(0);
+      const err = await settled;
+      expect((err as Error).message).toMatch(/^Gmail auth rejected \(401\) —/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
