@@ -3,12 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { CadenceOfferView, CadenceView } from "@oneshot-gtm/shared-types";
 import { clearRowActivity, setRowActivity } from "../../../lib/rowActivity.ts";
-import {
-  NextSequenceOfferButton,
-  SentRowSequenceOffer,
-  SequenceOffer,
-  sequenceOfferActivityId,
-} from "../SequenceOffer.tsx";
+import { SentRowSequenceOffer, SequenceOffer, sequenceOfferActivityId } from "../SequenceOffer.tsx";
 
 // The cadence card's offer block: the queue's block over the sequence's
 // offer, read-only once the first email carried it.
@@ -40,6 +35,18 @@ const card = (o: CadenceOfferView | undefined): CadenceView =>
     ...(o ? { offer: o } : {}),
   }) as CadenceView;
 
+/** The offer block's action row: every button but the Other offers list's Use this offer. */
+function buttonLabels(html: string): string[] {
+  return (html.match(/<button\b[^]*?<\/button>/g) ?? [])
+    .map((b) =>
+      [...b.matchAll(/>([^<]*)</g)]
+        .map((m) => m[1])
+        .join("")
+        .trim(),
+    )
+    .filter((label) => label !== "Use this offer");
+}
+
 function render(node: React.ReactElement): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={new QueryClient()}>{node}</QueryClientProvider>,
@@ -47,15 +54,19 @@ function render(node: React.ReactElement): string {
 }
 
 describe("SequenceOffer", () => {
-  it("shows the offer with its controls, and Next offer in the letter", () => {
+  it("shows the offer with every offer control together, Next offer among them", () => {
     const html = render(<SequenceOffer cadence={card(offer())} />);
     expect(html).toContain("book the leeds crews into same-day slots");
     expect(html).toContain("Returns: same-day jobs, counted per job");
-    expect(html).toContain("· 1 of 2");
-    expect(html).toContain("Edit offer");
-    expect(html).toContain("New offers");
+    expect(html).toContain("offer 1 of 2");
+    expect(buttonLabels(html)).toEqual(["Edit offer", "Next offer", "New offers"]);
     expect(html).not.toContain("Approve offer");
-    expect(render(<NextSequenceOfferButton cadence={card(offer())} />)).toContain("Next offer");
+  });
+
+  it("has no Next offer for the founder's own offer", () => {
+    const html = render(<SequenceOffer cadence={card(offer({ founderEdited: true }))} />);
+    expect(html).toContain("Edit offer");
+    expect(html).not.toContain("Next offer");
   });
 
   it("is read-only when the first email carried the offer", () => {
@@ -65,13 +76,13 @@ describe("SequenceOffer", () => {
     expect(html).toContain("Sent with the first email, fixed for this sequence.");
     expect(html).not.toContain("Edit offer");
     expect(html).not.toContain("New offers");
-    expect(render(<NextSequenceOfferButton cadence={card(fixed)} />)).toBe("");
+    expect(html).not.toContain("Next offer");
   });
 
   it("labels a weak offer and offers to approve it, until it is approved", () => {
     const weak = render(<SequenceOffer cadence={card(offer({ relevance: "weak", weak: true }))} />);
     expect(weak).toContain("· weak fit");
-    expect(weak).toContain("Approve offer");
+    expect(buttonLabels(weak)).toEqual(["Edit offer", "Next offer", "New offers", "Approve offer"]);
     const approved = render(
       <SequenceOffer
         cadence={card(offer({ relevance: "weak", weak: false, weakApproved: true }))}
@@ -114,12 +125,16 @@ describe("SequenceOffer", () => {
     expect(html).toContain("New offers");
   });
 
-  it("names the offer work running on the card, keyed by the cadence", () => {
-    const id = sequenceOfferActivityId(card(offer()));
+  it("locks its controls while offer work runs on the card, keyed by the cadence, and leaves the naming to the letter", () => {
+    const id = sequenceOfferActivityId(card(offer({ relevance: "weak", weak: true })));
     const token = setRowActivity(id, "Rewriting the draft around the offer…");
-    const html = render(<SequenceOffer cadence={card(offer())} />);
+    const html = render(<SequenceOffer cadence={card(offer({ relevance: "weak", weak: true }))} />);
     clearRowActivity(id, token);
-    expect(html).toContain("Rewriting the draft around the offer…");
+    expect(html).not.toContain("Rewriting the draft around the offer…");
+    const buttons = html.match(/<button\b[^>]*>/g) ?? [];
+    // Edit offer, Next offer, New offers, Approve offer and the listed offer's Use this offer.
+    expect(buttons).toHaveLength(5);
+    for (const b of buttons) expect(b).toContain('disabled=""');
   });
 
   it("keys a cadence's work apart from any queue row and from the prospect's other plays", () => {
@@ -130,7 +145,7 @@ describe("SequenceOffer", () => {
     const token = setRowActivity(4, "Switching to offer 2…");
     const html = render(<SequenceOffer cadence={card(offer())} />);
     clearRowActivity(4, token);
-    expect(html).not.toContain("Switching to offer 2…");
+    expect(html).not.toContain('disabled=""');
   });
 });
 

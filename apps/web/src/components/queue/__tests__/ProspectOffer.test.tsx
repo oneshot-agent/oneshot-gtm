@@ -8,6 +8,7 @@ import {
   offerCandidatesFromPayload,
   offerFitLabel,
   offerFromPayload,
+  offerMetaTokens,
   ProspectOffer,
 } from "../ProspectOffer.tsx";
 
@@ -207,7 +208,44 @@ describe("offer controls while the row is busy", () => {
     const token = setRowActivity(2, "Switching to offer 2…");
     const busy = editable(payload);
     clearRowActivity(2, token);
-    expect(disabledCount(busy)).toBeGreaterThan(disabledCount(idle));
-    expect(busy).toContain("Switching to offer 2…");
+    expect(disabledCount(idle)).toBe(0);
+    expect(disabledCount(busy)).toBe((busy.match(/<button\b/g) ?? []).length);
+    // The letter's working line names the work; the block only locks.
+    expect(busy).not.toContain("Switching to offer 2…");
+    expect(busy).toContain("New offers");
+  });
+});
+
+/** The offer block's meta line. */
+function header(html: string): string {
+  return html.match(/<section[^>]*>(<div[^]*?<\/div>)/)![1]!;
+}
+
+describe("offer header", () => {
+  const weak = { offer: "tidy the job sheets", steps: "a, b", level: "role", relevance: "weak" };
+  const list = [weak, ...["two", "three", "four", "five"].map((offer) => ({ offer, steps: "" }))];
+
+  it("reads index, rating, then provenance, on one line that wraps between tokens", () => {
+    const html = header(render({ offer: weak, offerCandidates: list }));
+    expect(html).toContain("flex-wrap");
+    const tokens = [...html.matchAll(/<span class="whitespace-nowrap">([^<]*)<\/span>/g)].map(
+      (m) => m[1],
+    );
+    expect(tokens).toEqual(["offer 1 of 5", "· weak fit", "· from role only"]);
+  });
+
+  it("names the founder's own offer and drops the position when there is one offer", () => {
+    expect(
+      offerMetaTokens({ ...offerFromPayload({ offer: weak })!, editedBy: "founder" }, []),
+    ).toEqual(["offer", "yours"]);
+    expect(offerMetaTokens(null, [])).toEqual(["offer"]);
+  });
+
+  it("carries no activity: the letter says what is running", () => {
+    const token = setRowActivity(1, "Writing 5 offers and their angles…");
+    const html = render({ offer: weak, offerCandidates: list });
+    clearRowActivity(1, token);
+    expect(html).not.toContain("Writing 5 offers");
+    expect(html).not.toContain("animate-spin");
   });
 });

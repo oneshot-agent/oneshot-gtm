@@ -1,11 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { CadenceView, QueueRowView } from "@oneshot-gtm/shared-types";
-import { Check, Loader2, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
 import { offerSkipLine } from "../../lib/offerSkip.ts";
-import { readOnly } from "../../lib/readOnly.ts";
-import { clearRowActivity, setRowActivity, useRowActivity } from "../../lib/rowActivity.ts";
+import { clearRowActivity, setRowActivity } from "../../lib/rowActivity.ts";
 import {
   redraftsAfterOfferChange,
   sentRowSequenceOfferNote,
@@ -13,10 +11,8 @@ import {
   sequenceOfferNote,
   sequenceOfferViews,
 } from "../../lib/sequenceOffer.ts";
-import { Button } from "../primitives/Button.tsx";
 import {
   hasCompanyPagesInPayload,
-  nextOfferIndex,
   OfferBlock,
   offerChangeLabel,
   type OfferChange,
@@ -25,9 +21,9 @@ import {
 type SequenceOfferChange = OfferChange | { approveWeak: true };
 
 /**
- * The row-activity key for a cadence's offer work, so the letter and the
- * offer block show the same label: the cadence's own (prospect and play), a
- * string no queue row id can equal.
+ * The row-activity key for a cadence's offer work, so the letter names it
+ * and the offer block locks while it runs: the cadence's own (prospect and
+ * play), a string no queue row id can equal.
  */
 export function sequenceOfferActivityId(c: Pick<CadenceView, "prospectId" | "playName">): string {
   return `cadence:${c.prospectId}|${c.playName}`;
@@ -93,18 +89,16 @@ export function SequenceOffer({
   locked?: boolean;
 }) {
   const change = useSequenceOfferChange(cadence);
-  const activity = useRowActivity(sequenceOfferActivityId(cadence));
   const view = cadence.offer;
   if (!view) return null;
   const { offer, candidates } = sequenceOfferViews(view);
-  const editable = sequenceOfferEditable(cadence);
   const pending = change.isPending ? change.variables : undefined;
   return (
     <OfferBlock
       activityId={sequenceOfferActivityId(cadence)}
       offer={offer}
       candidates={candidates}
-      editable={editable}
+      editable={sequenceOfferEditable(cadence)}
       change={{
         run: (body, done) => change.mutate(body, { onSuccess: done }),
         pending: pending && !("approveWeak" in pending) ? pending : undefined,
@@ -117,56 +111,17 @@ export function SequenceOffer({
       }
       note={sequenceOfferNote(view)}
       locked={locked}
-      actions={
-        editable && view.weak ? (
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={change.isPending || activity != null || locked}
-            onClick={() => change.mutate({ approveWeak: true })}
-            title="Send the follow-ups with this offer as it stands, although it was rated a weak fit"
-            {...readOnly}
-          >
-            {pending && "approveWeak" in pending ? (
-              <Loader2 size={11} className="animate-spin" />
-            ) : (
-              <Check size={11} />
-            )}
-            Approve offer
-          </Button>
-        ) : null
+      approve={
+        view.weak
+          ? {
+              run: () => change.mutate({ approveWeak: true }),
+              pending: !!pending && "approveWeak" in pending,
+              title:
+                "Send the follow-ups with this offer as it stands, although it was rated a weak fit",
+            }
+          : null
       }
     />
-  );
-}
-
-/** The letter's Next offer: the sequence's next ranked offer, then a redraft around it. */
-export function NextSequenceOfferButton({
-  cadence,
-  locked = false,
-}: {
-  cadence: CadenceView;
-  locked?: boolean;
-}) {
-  const change = useSequenceOfferChange(cadence);
-  const activity = useRowActivity(sequenceOfferActivityId(cadence));
-  const view = cadence.offer;
-  if (!view || view.founderEdited || !sequenceOfferEditable(cadence)) return null;
-  const { offer, candidates } = sequenceOfferViews(view);
-  const next = nextOfferIndex(offer, candidates);
-  if (next == null || candidates.length < 2) return null;
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      disabled={change.isPending || activity != null || locked}
-      onClick={() => change.mutate({ select: next })}
-      title="Use the sequence's next offer and redraft the step around it"
-      {...readOnly}
-    >
-      {change.isPending ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
-      {change.isPending ? "Switching…" : "Next offer"}
-    </Button>
   );
 }
 
