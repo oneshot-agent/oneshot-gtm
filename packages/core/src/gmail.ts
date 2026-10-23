@@ -13,10 +13,13 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 /**
  * Deadline on every Gmail API request. Comfortably shorter than the keyed
- * send's STALE_PENDING_MS (5 min): a send that hangs must fail definitely
- * (the request is aborted, the row is `failed`, nothing reached Sent) instead
- * of ageing into `uncertain`, which the confirm sweep would settle as failed
- * and resend under a second Message-ID (#905). Same shape as Smartlead's.
+ * send's STALE_PENDING_MS (5 min): a send that hangs is classified as a
+ * definite local failure (the request is aborted client-side, the row is
+ * `failed`) instead of ageing into `uncertain`, which the confirm sweep would
+ * settle as failed and resend under a second Message-ID (#905). The abort
+ * bounds our wait and asks Google to cancel; it does not prove Google never
+ * accepted the request, so a retry after this failure can still follow a
+ * delivered message. Same shape as Smartlead's deadline.
  */
 export const GMAIL_TIMEOUT_MS = 30_000;
 
@@ -202,9 +205,10 @@ async function gmailFetch(
   account?: GmailAccount,
 ): Promise<Response> {
   const token = await getGmailAccessToken(account);
-  // Abort the request at the deadline, not just the wait on it: a send that
-  // is still running when the deadline rejection makes the row `failed`
-  // would otherwise land later, next to the retry.
+  // Abort the request at the deadline, not just the wait on it, so a send
+  // still in flight when the deadline rejection makes the row `failed` is
+  // asked to stop rather than left running. Whether Google already accepted
+  // it is unknown to us either way.
   const abort = new AbortController();
   try {
     return await withDeadline(
