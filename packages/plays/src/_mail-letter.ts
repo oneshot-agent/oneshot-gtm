@@ -1,4 +1,4 @@
-import { getLedger, loadConfig } from "@oneshot-gtm/core";
+import { getLedger, loadConfig, productBriefText } from "@oneshot-gtm/core";
 import { complete } from "@oneshot-gtm/intel";
 import { getPriorStepsForProspect, sequenceOffer } from "./_cadence.ts";
 import { hardBanFlags } from "./_lib.ts";
@@ -45,7 +45,9 @@ export async function generateMailLetter(prospectId: number, playName: string): 
             ? {
                 offer: { what: offer.offer, how: offer.steps },
                 ...(offerTerms ? { offerTerms } : {}),
-                ...(cfg.productBrief?.trim() ? { productBrief: cfg.productBrief.trim() } : {}),
+                ...(cfg.productBrief?.trim()
+                  ? { productBrief: (productBriefText(cfg) ?? "").trim() }
+                  : {}),
               }
             : {}),
           prospect: { name: prospect.name, company: prospect.company, title: prospect.title },

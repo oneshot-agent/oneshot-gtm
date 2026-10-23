@@ -12,7 +12,13 @@
  * Never throws and never changes a row's status. A `reject` verdict is
  * recorded, not acted on: the founder moved the row here on purpose.
  */
-import { getLedger, loadConfig, logEvent, triggerNameForSource } from "@oneshot-gtm/core";
+import {
+  getLedger,
+  loadConfig,
+  logEvent,
+  productBriefText,
+  triggerNameForSource,
+} from "@oneshot-gtm/core";
 import {
   describeTargetForAngle,
   generateAlternativeAngles,
@@ -196,7 +202,7 @@ export async function rederiveMovedRow(input: RederiveInput): Promise<RederivePa
   const cfg = input.positioning ? null : loadConfig();
   const positioning = input.positioning ?? {
     ...(cfg?.productOneLiner ? { product: cfg.productOneLiner } : {}),
-    ...(cfg?.productBrief ? { brief: cfg.productBrief } : {}),
+    ...(cfg?.productBrief ? { brief: productBriefText(cfg) ?? cfg.productBrief } : {}),
     ...(cfg?.icpOneLiner ? { icp: cfg.icpOneLiner } : {}),
   };
   const triggers = input.triggers ?? getLedger().listTriggers();

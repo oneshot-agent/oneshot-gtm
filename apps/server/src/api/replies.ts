@@ -18,6 +18,7 @@ import {
   replyWorkspaces,
   trackSend,
   type OutboundSend,
+  productBriefText,
 } from "@oneshot-gtm/core";
 import {
   generateReplyOptions,
@@ -201,7 +202,7 @@ export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsCon
       (cfg as unknown as { founderCalendarUrl?: string }).founderCalendarUrl ?? "",
     primaryWorkspace: t.workspace ?? currentWorkspaceName(),
     primaryProduct: cfg.productOneLiner ?? "",
-    primaryBrief: cfg.productBrief ?? "",
+    primaryBrief: productBriefText(cfg) ?? "",
     secondaryProducts: [],
     founderVoice: cfg.founderVoice ?? "",
     // Approved writing preferences for replies on this channel (#813): the

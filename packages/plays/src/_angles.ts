@@ -16,6 +16,7 @@ import {
   loadConfig,
   logEvent,
   overlayOfferAngles,
+  productBriefText,
   resolveTriggerOverlay,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
@@ -79,7 +80,7 @@ export function positioningFingerprint(edge: string): string {
   const cfg = loadConfig();
   const positioning = {
     product: cfg.productOneLiner,
-    brief: cfg.productBrief,
+    brief: productBriefText(cfg),
     icp: cfg.icpOneLiner,
     edge,
   };

@@ -9,6 +9,7 @@ import {
   loadConfig,
   linkedInMatches,
   replyContextVersion,
+  productBriefText,
 } from "@oneshot-gtm/core";
 import type {
   InboxResult,
@@ -151,7 +152,8 @@ export function threadContextVersion(
     // another workspace is for another product, so it must read as stale here.
     workspace: t.workspace ?? (t.channel === "linkedin" ? workspace : null),
     prospect: t.prospectId,
-    brief: cfg.productBrief,
+    // The composed brief: approving a code answer makes cached drafts stale.
+    brief: productBriefText(cfg),
     voice: cfg.founderVoice,
     dossier: prospect?.dossier_json,
     angle: prospect?.angle_json,

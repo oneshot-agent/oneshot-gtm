@@ -391,6 +391,10 @@ export class CodeAnswerStore {
     const text = input.text?.trim() || null;
     if (text && text.length > 1200)
       return { error: "the answer is too long (1200 characters at most)" };
+    // The brief's link allow-list is the founder's brief alone; an answer
+    // that carried a link would make it citable through the back door.
+    if (text && /https?:\/\/|\bwww\./i.test(text))
+      return { error: "links belong in the product brief, not in an answer from the code" };
     if (existing.status === "approved" || existing.status === "dismissed")
       return { error: `this answer is already ${existing.status}` };
     if (existing.status !== "pending" && !text)

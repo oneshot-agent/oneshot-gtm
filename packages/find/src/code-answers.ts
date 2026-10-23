@@ -321,6 +321,8 @@ export async function deriveCodeAnswer(
 
   function fail(reason: string): DeriveCodeAnswerOutcome {
     logEvent("code_answer.derive_failed", { id, message_120: reason.slice(0, 120) }, "warn");
+    // Release before reading the row back, so the view does not say "reading".
+    if (claimed) store.releaseDerive(id);
     return { status: "failed", answer: view(store.get(id) ?? record), reason };
   }
 }

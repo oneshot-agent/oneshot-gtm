@@ -42,6 +42,8 @@ export function disclosureViolations(text: string, opts: { strict?: boolean } = 
   const flags: string[] = [];
   if (text.length > MAX_CODE_ANSWER_CHARS) flags.push("answer exceeds length limit");
   if (/```|`[^`]+`/.test(text)) flags.push("code in the answer");
+  // Links are cited only from the founder's own brief.
+  if (/https?:\/\/|\bwww\./i.test(text)) flags.push("link");
   if (
     /(?:^|[\s(])(?:[\w.-]+\/)+[\w.-]+\.[a-z]{1,5}\b/i.test(text) ||
     /\b[\w-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|swift|cs|php|sql|sh|ya?ml|toml)\b/i.test(
