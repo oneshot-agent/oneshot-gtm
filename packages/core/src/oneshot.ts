@@ -368,15 +368,17 @@ export function contentSendKey(identityId: string, input: SendEmailInput): strin
 
 /**
  * A Gmail API failure the server answered (or auth/config) never sent
- * anything. A request cut off at gmail.ts's deadline is classified definite
- * as well (#905): that is the issue's requested local timeout contract, chosen
- * because the alternative (`uncertain`, then the sweep settling it `failed`)
- * is the duplicate-send path. The client-side abort does not prove Google
- * never accepted the request, so this classification trades that residual
- * risk for a bounded, retryable failure.
+ * anything, and neither did a request cut off at gmail.ts's deadline before
+ * the send itself (the `/profile` lookup): both are definite and safe to
+ * retry at once. A deadline on `/messages/send` is NOT definite (#905): the
+ * request may have reached Google before the client-side abort, so the row
+ * goes `uncertain` and the confirm sweep looks it up in Sent before any
+ * retry. The abort means no request is still running when the sweep settles
+ * the row, which is what made the stale-pending path a duplicate send.
  */
 function gmailFailureIsDefinite(err: unknown): boolean {
   const msg = (err as Error)?.message ?? "";
+  if (msg.startsWith("Gmail API /messages/send deadline exceeded")) return false;
   return /Gmail (API (failed|\S+ deadline exceeded)|auth rejected|credentials missing|token (exchange|refresh) failed)|no Gmail refresh token/i.test(
     msg,
   );
