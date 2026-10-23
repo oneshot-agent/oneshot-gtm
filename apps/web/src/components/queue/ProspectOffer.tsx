@@ -4,7 +4,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
+import type { OfferSkipView } from "@oneshot-gtm/shared-types";
 import { cn } from "../../lib/cn.ts";
+import { offerSkipLine } from "../../lib/offerSkip.ts";
 import { clearDraftGenerating, markDraftGenerating } from "../../lib/draftRunState.ts";
 import {
   clearRowActivity,
@@ -154,11 +156,14 @@ export function ProspectOffer({
   rowId,
   payload,
   editable,
+  skip = null,
 }: {
   rowId: number;
   payload: unknown;
   /** False once the row is sent or sending. */
   editable: boolean;
+  /** The writer declined to write one: its reason (`QueueRowView.offerSkip`). */
+  skip?: OfferSkipView | null;
 }) {
   const qc = useQueryClient();
   const apply = useMutation({
@@ -206,7 +211,11 @@ export function ProspectOffer({
         pending: apply.isPending ? apply.variables : undefined,
       }}
       companyPages={hasCompanyPagesInPayload(payload)}
-      emptyNote="No offer yet. It is written from the row's research and your product brief."
+      emptyNote={
+        skip
+          ? offerSkipLine(skip)
+          : "No offer yet. It is written from the row's research and your product brief."
+      }
     />
   );
 }

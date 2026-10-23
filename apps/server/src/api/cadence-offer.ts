@@ -82,6 +82,7 @@ export function cadenceOfferView(record: SequenceOfferRecord): CadenceOfferView 
     activeIndex:
       o && !founderEdited ? record.offerCandidates.findIndex((c) => c.offer === o.offer) : -1,
     introCarriedOffer: record.introCarriedOffer,
+    ...(!o && record.skip ? { skip: { why: record.skip.why, at: record.skip.skippedAt } } : {}),
   };
 }
 
@@ -100,10 +101,21 @@ const NOT_STORED = "the sequence's offer could not be stored; refresh and retry"
 
 /** Why a forced re-derivation stored nothing, as the route answers it. */
 function noOfferResponse(
-  reason: Extract<DeriveSequenceOfferResult, { status: "none" }>["reason"],
+  out: Extract<DeriveSequenceOfferResult, { status: "none" }>,
   req: Request,
 ): Response {
-  switch (reason) {
+  switch (out.reason) {
+    case "skipped":
+      // The writer read the research and declined: its reason, kept on the
+      // cadence when it has no offer, is the answer.
+      return jsonResponse(
+        {
+          error: `No offer: ${out.skip.why || "the writer found nothing to offer."}`,
+          offer: cadenceOfferView(out.record),
+        },
+        422,
+        req,
+      );
     case "no-brief":
       return jsonResponse({ error: "No offer can be written without a product brief." }, 422, req);
     case "nothing-derived":
@@ -155,7 +167,8 @@ function sequenceOfferInput(
  *
  * - `{ regenerate: true }` writes new offers from the research of the queue
  *   row the sequence started from (else the prospect's) and the thread
- *   already sent (`deriveSequenceOffer`, forced).
+ *   already sent (`deriveSequenceOffer`, forced). When the writer declines,
+ *   422 with its reason, kept on a cadence that has no offer.
  * - `{ select: i }` makes the sequence's i-th offer active.
  * - `{ offer, steps?, return? }` saves the founder's own text.
  * - `{ approveWeak: true }` approves the active offer although it was rated
@@ -234,7 +247,7 @@ export async function cadenceOfferRoute(
       if (out.reason === "not-stored" && sendStarted()) {
         return jsonResponse({ error: IN_FLIGHT }, 409, req);
       }
-      return noOfferResponse(out.reason, req);
+      return noOfferResponse(out, req);
     }
     if (out.status === "existing") {
       return jsonResponse({ error: "the sequence's offer is fixed; refresh" }, 409, req);

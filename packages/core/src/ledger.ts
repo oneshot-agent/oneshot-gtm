@@ -78,6 +78,7 @@ import {
   saveCadencePlan as cadSaveCadencePlan,
   setCadenceDraft as cadSetCadenceDraft,
   setCadenceOffer as cadSetCadenceOffer,
+  setCadenceOfferSkip as cadSetCadenceOfferSkip,
   setCadenceStatus as cadSetCadenceStatus,
   stopCadence as cadStopCadence,
   sweepStaleCadenceSends as cadSweepStaleCadenceSends,
@@ -492,6 +493,15 @@ export class Ledger {
     expect?: Record<string, string | null>;
   }): boolean {
     return cadSetCadenceOffer(this.db, input);
+  }
+
+  /** Keep the offer writer's refusal on an active cadence with no offer (ledger-cadence.ts). */
+  setCadenceOfferSkip(input: {
+    prospectId: number;
+    playName: string;
+    skip: Record<string, unknown>;
+  }): boolean {
+    return cadSetCadenceOfferSkip(this.db, input);
   }
 
   /** The queue row a cadence started from, else its address's newest sent row (ledger-cadence.ts). */

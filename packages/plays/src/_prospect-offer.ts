@@ -13,6 +13,11 @@
  * (`cadence_state.offer_json`, see `_sequence-offer.ts`), which owns it from
  * then on, so every later touch carries the same one. An offer the founder
  * edited is never re-derived.
+ *
+ * The writer may decline (`{"skip": true, "why": ...}`). Its reason is kept
+ * where the offer would be (`payload.offerSkip`, or the cadence's
+ * `offer_json.skip`) with the hash of the input it read, so the founder sees
+ * why, and the writer is not asked again until that input changes.
  */
 import { createHash } from "node:crypto";
 import { isPersonResearchDossier, loadConfig, logEvent } from "@oneshot-gtm/core";
@@ -107,6 +112,51 @@ export interface ProspectOffer {
 }
 
 export type OfferRelevance = "relevant" | "weak" | "irrelevant";
+
+/** Longest skip reason kept: the writer's one line, clipped. */
+export const OFFER_SKIP_WHY_MAX = 300;
+
+/**
+ * The writer's own refusal: it read the research and wrote no offer. Kept so
+ * the founder is told why, and so the writer is not paid again for the same
+ * answer: it stands while `inputHash` matches (as an offer's does) and is
+ * replaced by any offer written or chosen.
+ */
+export interface OfferSkip {
+  /** What the writer said, clipped. */
+  why: string;
+  version: string;
+  /** Hash of the inputs it read (`offerInputHash`). */
+  inputHash: string;
+  /** Hash of the product config alone (`offerProductHash`). */
+  productHash: string;
+  skippedAt: string;
+}
+
+export function isOfferSkip(value: unknown): value is OfferSkip {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const o = value as Partial<OfferSkip>;
+  return (
+    typeof o.why === "string" &&
+    typeof o.version === "string" &&
+    typeof o.inputHash === "string" &&
+    typeof o.productHash === "string" &&
+    typeof o.skippedAt === "string"
+  );
+}
+
+/** True when a stored skip still answers to today's inputs: the writer would read the same. */
+export function offerSkipIsCurrent(stored: unknown, inputHash: string): stored is OfferSkip {
+  return (
+    isOfferSkip(stored) && stored.version === OFFER_PROMPT_VERSION && stored.inputHash === inputHash
+  );
+}
+
+/** The writer's skip a queue payload carries, when it has one. */
+export function offerSkipOf(payload: Record<string, unknown>): OfferSkip | null {
+  const s = payload["offerSkip"];
+  return isOfferSkip(s) ? s : null;
+}
 
 export function isProspectOffer(value: unknown): value is ProspectOffer {
   if (!value || typeof value !== "object") return false;
@@ -391,10 +441,16 @@ function readRaw(raw: RawOffer): Omit<ProspectOffer, "version" | "inputHash" | "
   };
 }
 
-/** The offers in a model reply: `{offers: [...]}`, or a lone offer object. */
-function readRawList(content: string): RawOffer[] | "skip" {
-  const parsed = tryParseJsonObject<{ offers?: unknown; skip?: unknown } & RawOffer>(content, {});
-  if (parsed.skip === true) return "skip";
+/** The offers in a model reply: `{offers: [...]}`, or a lone offer object; a skip with its why. */
+function readRawList(content: string): RawOffer[] | { skip: string } {
+  const parsed = tryParseJsonObject<{ offers?: unknown; skip?: unknown; why?: unknown } & RawOffer>(
+    content,
+    {},
+  );
+  if (parsed.skip === true) {
+    const why = typeof parsed.why === "string" ? parsed.why.replace(/\s+/g, " ").trim() : "";
+    return { skip: clip(why, OFFER_SKIP_WHY_MAX) };
+  }
   if (Array.isArray(parsed.offers)) {
     return parsed.offers.filter(
       (o): o is RawOffer => !!o && typeof o === "object" && !Array.isArray(o),
@@ -428,6 +484,23 @@ export interface DeriveOfferInput {
 export interface OfferSet {
   offer: ProspectOffer;
   candidates: ProspectOffer[];
+}
+
+/** No offer, because the writer declined: its reason, for the caller to keep and show. */
+export interface OfferSkipped {
+  skipped: OfferSkip;
+}
+
+/** What one writer run gave: the offers that passed, or, when none came back, the writer's skip. */
+export interface DerivedOffers {
+  offers: ProspectOffer[];
+  /** Set only when the writer declined and no offer came back. */
+  skip: OfferSkip | null;
+}
+
+/** True when an offer lookup ended in the writer's skip rather than an offer. */
+export function isOfferSkipped(value: unknown): value is OfferSkipped {
+  return !!value && typeof value === "object" && isOfferSkip((value as OfferSkipped).skipped);
 }
 
 /** The THREAD SO FAR block: each sent email, capped, oldest first. */
@@ -731,9 +804,9 @@ function lintReply(
   product: string,
   oneLiner: string,
   seen: Set<string>,
-): { kept: DraftOffer[]; failed: string[]; skip: boolean } {
+): { kept: DraftOffer[]; failed: string[]; skip: string | null } {
   const raws = readRawList(content);
-  if (raws === "skip") return { kept: [], failed: [], skip: true };
+  if (!Array.isArray(raws)) return { kept: [], failed: [], skip: raws.skip };
   const kept: DraftOffer[] = [];
   const failed: string[] = [];
   raws.forEach((raw, i) => {
@@ -749,7 +822,7 @@ function lintReply(
     seen.add(key);
     kept.push(parsed);
   });
-  return { kept, failed, skip: false };
+  return { kept, failed, skip: null };
 }
 
 /**
@@ -759,18 +832,19 @@ function lintReply(
  * pass are dropped, and one replacement round asks for as many new ones,
  * told why the dropped ones failed. Passing offers keep the model's order.
  * When still short of five, the best-scored `weak` ones fill the places,
- * tagged weak; an `irrelevant` or lint-failing offer never does. Empty when
- * there is no brief, the model skips (nothing at all is known), or nothing
- * passes.
+ * tagged weak; an `irrelevant` or lint-failing offer never does. No offers
+ * when there is no brief, the model skips, or nothing passes; a skip with
+ * nothing else kept comes back as `skip`, with the writer's why and the
+ * input hash it read.
  */
 export async function deriveOffers(
   input: DeriveOfferInput & { fetchImpl?: typeof fetch },
-): Promise<ProspectOffer[]> {
-  if (!playMakesOffer(input.playName)) return [];
+): Promise<DerivedOffers> {
+  if (!playMakesOffer(input.playName)) return { offers: [], skip: null };
   const cfg = input.cfg ?? loadConfig();
   // The steps may claim only what the product brief says the product does.
   // With no brief there is nothing to ground them in.
-  if (!cfg.productBrief?.trim()) return [];
+  if (!cfg.productBrief?.trim()) return { offers: [], skip: null };
   const research = offerResearchText(input.target as JsonRecord, input.dossier);
   const inputHash = offerInputHash(research, cfg);
   const messages: ChatMessage[] = [
@@ -782,13 +856,19 @@ export async function deriveOffers(
   let kept: DraftOffer[] = [];
   const seen = new Set<string>();
   let lastReply = "";
+  let skipWhy: string | null = null;
   try {
     for (let round = 0; round < 2; round++) {
       const res = await complete({ messages, temperature: 0.4, maxTokens: 3000 });
       lastReply = res.content;
       const out = lintReply(res.content, research, product, oneLiner, seen);
-      if (out.skip) {
-        logEvent("prospect_offer.skipped", { play: input.playName, round });
+      if (out.skip !== null) {
+        skipWhy = out.skip;
+        logEvent("prospect_offer.skipped", {
+          play: input.playName,
+          round,
+          why_200: out.skip.slice(0, 200),
+        });
         break;
       }
       kept.push(...out.kept);
@@ -850,7 +930,18 @@ export async function deriveOffers(
       offer_120: offers[0]!.offer.slice(0, 120),
     });
   }
-  return offers;
+  // A skip after a round that kept offers is no skip: those offers stand.
+  const skip: OfferSkip | null =
+    offers.length === 0 && skipWhy !== null
+      ? {
+          why: skipWhy,
+          version: OFFER_PROMPT_VERSION,
+          inputHash,
+          productHash,
+          skippedAt: derivedAt,
+        }
+      : null;
+  return { offers, skip };
 }
 
 /**
@@ -1077,20 +1168,28 @@ export function offerAnglesWritten(offer: Pick<ProspectOffer, "angles">): boolea
 }
 
 /**
- * Five ranked offers and the first one's angles. Null when no offer can be
- * written: no brief, nothing known, or nothing passes lint.
+ * Five ranked offers and the first one's angles. `skipped` when the writer
+ * declined, with its why; null when no offer can be written otherwise: no
+ * brief, or nothing passes lint.
  */
-export async function deriveOfferSet(input: DeriveOfferInput): Promise<OfferSet | null> {
+export async function deriveOfferSet(
+  input: DeriveOfferInput,
+): Promise<OfferSet | OfferSkipped | null> {
   const cfg = input.cfg ?? loadConfig();
-  const offers = await deriveOffers({ ...input, cfg });
-  if (offers.length === 0) return null;
+  const { offers, skip } = await deriveOffers({ ...input, cfg });
+  if (offers.length === 0) return skip ? { skipped: skip } : null;
   const offer = await withOfferAngles(offers[0]!, { ...input, cfg });
   return { offer, candidates: [offer, ...offers.slice(1)] };
 }
 
+/** The active offer of an offer lookup; null when it gave none, a skip included. */
+function activeOf(set: OfferSet | OfferSkipped | null): ProspectOffer | null {
+  return set && !isOfferSkipped(set) ? set.offer : null;
+}
+
 /** One offer, the best of a fresh set: for callers that keep only the active one. */
 export async function deriveOffer(input: DeriveOfferInput): Promise<ProspectOffer | null> {
-  return (await deriveOfferSet(input))?.offer ?? null;
+  return activeOf(await deriveOfferSet(input));
 }
 
 /** The ranked offers a queue payload carries, when it has any. */
@@ -1102,23 +1201,31 @@ export function offerCandidatesOf(payload: Record<string, unknown>): ProspectOff
 /**
  * The offers a queue row should carry: the stored set when its active offer
  * is current (or the founder's), with angles written if they are missing,
- * else a fresh set. `changed` says whether the caller has anything to persist.
+ * else a fresh set. A writer skip stored on the target (`offerSkip`) that is
+ * current stands in for a fresh set: the writer would read the same input,
+ * so it is not asked again. `changed` says whether the caller has anything
+ * to persist (a fresh set, or a fresh skip).
  */
 export async function ensureOfferSet(
   input: DeriveOfferInput,
-): Promise<(OfferSet & { changed: boolean }) | null> {
+): Promise<((OfferSet | OfferSkipped) & { changed: boolean }) | null> {
   if (!playMakesOffer(input.playName)) return null;
   const cfg = input.cfg ?? loadConfig();
   const t = input.target as JsonRecord;
   const stored = t["offer"];
   const research = offerResearchText(t, input.dossier);
-  if (offerIsCurrent(stored, offerInputHash(research, cfg))) {
+  const inputHash = offerInputHash(research, cfg);
+  if (offerIsCurrent(stored, inputHash)) {
     const candidates = offerCandidatesOf(t);
     if (offerAnglesWritten(stored) || !cfg.productBrief?.trim()) {
       return { offer: stored, candidates, changed: false };
     }
     const offer = await withOfferAngles(stored, { ...input, cfg });
     return { offer, candidates, changed: offer !== stored };
+  }
+  const skip = t["offerSkip"];
+  if (cfg.productBrief?.trim() && offerSkipIsCurrent(skip, inputHash)) {
+    return { skipped: skip, changed: false };
   }
   const fresh = await deriveOfferSet({ ...input, cfg });
   return fresh ? { ...fresh, changed: true } : null;
@@ -1129,7 +1236,7 @@ export async function ensureOfferSet(
  * founder's), else a fresh one. The caller persists a fresh one.
  */
 export async function ensureOffer(input: DeriveOfferInput): Promise<ProspectOffer | null> {
-  return (await ensureOfferSet(input))?.offer ?? null;
+  return activeOf(await ensureOfferSet(input));
 }
 
 /**
@@ -1141,17 +1248,20 @@ export async function ensureOffer(input: DeriveOfferInput): Promise<ProspectOffe
  * always kept. With no brief there is no offer.
  */
 export async function offerForDraft(input: DeriveOfferInput): Promise<ProspectOffer | null> {
-  return (await offerSetForDraft(input))?.offer ?? null;
+  return activeOf(await offerSetForDraft(input));
 }
 
 /**
  * `offerForDraft` with where the offer came from: `derived` when this call
  * wrote it (nothing current was stored), with the ranked set it came from,
- * so a caller holding a queue row can store it there.
+ * so a caller holding a queue row can store it there. A writer skip stored
+ * on the target (`offerSkip`) under today's prompt and product config is
+ * kept as it stands, as a stored offer is (the queue's `ensureOfferSet`
+ * already asked the writer about the row's own research): `skipped`.
  */
 export async function offerSetForDraft(
   input: DeriveOfferInput,
-): Promise<(OfferSet & { derived: boolean }) | null> {
+): Promise<((OfferSet | OfferSkipped) & { derived: boolean }) | null> {
   if (!playMakesOffer(input.playName)) return null;
   const cfg = input.cfg ?? loadConfig();
   const t = input.target as JsonRecord;
@@ -1166,6 +1276,14 @@ export async function offerSetForDraft(
     stored.productHash === offerProductHash(cfg)
   ) {
     return { offer: stored, candidates: offerCandidatesOf(t), derived: false };
+  }
+  const skip = t["offerSkip"];
+  if (
+    isOfferSkip(skip) &&
+    skip.version === OFFER_PROMPT_VERSION &&
+    skip.productHash === offerProductHash(cfg)
+  ) {
+    return { skipped: skip, derived: false };
   }
   const fresh = await deriveOfferSet({ ...input, cfg });
   return fresh ? { ...fresh, derived: true } : null;
@@ -1245,18 +1363,19 @@ export function weakOfferHold(playName: string, payload: unknown): boolean {
  * applies it as a JSON merge patch, which merges nested objects key by key, so
  * every key of the previous offer the new one lacks is named with null (which
  * deletes it). Otherwise the old offer's approval, judge label or fit would
- * carry over onto the new one.
+ * carry over onto the new one. A writer skip the row kept is deleted too:
+ * the row has an offer now.
  */
 export function activeOfferPatch(
   previous: unknown,
   offer: ProspectOffer,
   candidates: ProspectOffer[],
-): { offer: Record<string, unknown>; offerCandidates: ProspectOffer[] } {
+): { offer: Record<string, unknown>; offerCandidates: ProspectOffer[]; offerSkip: null } {
   const next: Record<string, unknown> = { ...offer };
   if (previous && typeof previous === "object" && !Array.isArray(previous)) {
     for (const key of Object.keys(previous)) if (next[key] === undefined) next[key] = null;
   }
-  return { offer: next, offerCandidates: candidates };
+  return { offer: next, offerCandidates: candidates, offerSkip: null };
 }
 
 /**

@@ -122,6 +122,24 @@ describe("weak-offer send hold", () => {
     expect(state.cleared).toBe(1);
   });
 
+  it("shows the writer's skip on an unsent row with no offer, and only there", () => {
+    const skip = {
+      why: "They left the firm in October.",
+      version: "offer-v4",
+      inputHash: "h",
+      productHash: "p",
+      skippedAt: "2026-10-22T00:00:00.000Z",
+    };
+    state.payload = { email: "person@example.test", offerSkip: skip };
+    expect(toView(row()).offerSkip).toEqual({ why: skip.why, at: skip.skippedAt });
+    expect(toView(row({ status: "sent" }))).not.toHaveProperty("offerSkip");
+    expect(toView(row({ play_name: "pmf-survey" }))).not.toHaveProperty("offerSkip");
+    state.payload = { email: "person@example.test", offer: weakOffer, offerSkip: skip };
+    expect(toView(row())).not.toHaveProperty("offerSkip");
+    state.payload = { email: "person@example.test", offerSkip: { why: "no hash" } };
+    expect(toView(row())).not.toHaveProperty("offerSkip");
+  });
+
   it("asks the send gate for no hold once the offer is approved", async () => {
     state.payload = {
       email: "person@example.test",

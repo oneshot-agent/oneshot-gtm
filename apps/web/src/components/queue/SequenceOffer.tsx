@@ -3,6 +3,7 @@ import type { CadenceView, QueueRowView } from "@oneshot-gtm/shared-types";
 import { Check, Loader2, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
+import { offerSkipLine } from "../../lib/offerSkip.ts";
 import { readOnly } from "../../lib/readOnly.ts";
 import { clearRowActivity, setRowActivity, useRowActivity } from "../../lib/rowActivity.ts";
 import {
@@ -109,7 +110,11 @@ export function SequenceOffer({
         pending: pending && !("approveWeak" in pending) ? pending : undefined,
       }}
       companyPages={hasCompanyPagesInPayload(cadence.queuePayload)}
-      emptyNote="No offer yet. One is written from the sequence's research, the thread so far and your product brief."
+      emptyNote={
+        view.skip
+          ? offerSkipLine(view.skip)
+          : "No offer yet. One is written from the sequence's research, the thread so far and your product brief."
+      }
       note={sequenceOfferNote(view)}
       locked={locked}
       actions={
@@ -188,7 +193,11 @@ export function SentRowSequenceOffer({
       editable={false}
       change={{ run: () => {}, pending: undefined }}
       companyPages={hasCompanyPagesInPayload(payload)}
-      emptyNote="No offer for this sequence yet. One is written when its next follow-up is drafted."
+      emptyNote={
+        sequence.offer.skip
+          ? offerSkipLine(sequence.offer.skip)
+          : "No offer for this sequence yet. One is written when its next follow-up is drafted."
+      }
       note={sentRowSequenceOfferNote(sequence.status)}
     />
   );

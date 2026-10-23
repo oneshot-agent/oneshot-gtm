@@ -138,14 +138,17 @@ export function DraftStateLine({
   sent,
   flags,
   dryRun = true,
+  offerSkipped = false,
   children,
 }: {
   sent: boolean;
   flags: string[];
   dryRun?: boolean;
+  /** The `no-offer` hold is the writer's refusal: regenerating cannot clear it. */
+  offerSkipped?: boolean;
   children?: ReactNode;
 }) {
-  const held = sent ? null : heldSummary(flags);
+  const held = sent ? null : heldSummary(flags, { offerSkipped });
   return (
     <>
       {sent ? (

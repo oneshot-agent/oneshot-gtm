@@ -309,6 +309,7 @@ const NOT_EVIDENCE = new Set<string>([
   // The prospect offers written for the row: our output, not who they are.
   "offer",
   "offerCandidates",
+  "offerSkip",
   "fitReasonSource",
   // Provenance of a row moved in from another workspace (queue-portable.ts).
   "movedFrom",

@@ -81,11 +81,17 @@ function normalizeSubject(subject: string | null | undefined): string | null {
  * intro whose send record kept nothing else. `origin` is `intro` when the
  * first message carried it (what was sent is fixed), `derived` when it was
  * written or chosen for the sequence later.
+ *
+ * `skip`, only while there is no offer (`offer` null): the offer writer's
+ * refusal for the sequence (a plays `OfferSkip`: its why and the hash of the
+ * input it read), written by `setCadenceOfferSkip`. Any offer
+ * `setCadenceOffer` writes drops it.
  */
 export interface CadenceOfferJson {
-  offer: Record<string, unknown>;
+  offer: Record<string, unknown> | null;
   candidates: unknown[];
   origin: "intro" | "derived";
+  skip?: Record<string, unknown>;
 }
 
 /**
@@ -117,7 +123,12 @@ export function enrollCadence(
        stopped_at = NULL,
        last_send_error = NULL,
        last_send_error_at = NULL,
-       offer_json = COALESCE(cadence_state.offer_json, excluded.offer_json),
+       offer_json = CASE
+         WHEN json_valid(cadence_state.offer_json)
+              AND json_type(cadence_state.offer_json, '$.offer') = 'object'
+           THEN cadence_state.offer_json
+         ELSE COALESCE(excluded.offer_json, cadence_state.offer_json)
+       END,
        queue_id = COALESCE(cadence_state.queue_id, excluded.queue_id)
      WHERE cadence_state.status != 'stopped'`,
   ).run(
@@ -181,6 +192,33 @@ export function setCadenceOffer(
       input.playName,
       ...guards.flatMap(([key, value]) => [`$.offer.${key}`, value]),
     );
+  return r.changes === 1;
+}
+
+/**
+ * Keep the offer writer's refusal on an active cadence that has no offer, in
+ * one statement guarded as `setCadenceOffer` is (active, no send holding
+ * it), and only while `offer_json` holds no offer: a skip never stands
+ * beside one. A cadence with no `offer_json` gets `{offer: null,
+ * candidates: [], origin: 'derived', skip}`. False when nothing was written.
+ */
+export function setCadenceOfferSkip(
+  db: Database,
+  input: { prospectId: number; playName: string; skip: Record<string, unknown> },
+): boolean {
+  const r = db
+    .prepare(
+      `UPDATE cadence_state
+          SET offer_json = json_set(
+                COALESCE(offer_json,
+                         json_object('offer', json('null'), 'candidates', json('[]'), 'origin', 'derived')),
+                '$.skip', json(?))
+        WHERE prospect_id = ? AND play_name = ? AND status = 'active'
+          AND sending_started_at IS NULL
+          AND (offer_json IS NULL
+               OR (json_valid(offer_json) AND json_type(offer_json, '$.offer') IS NOT 'object'))`,
+    )
+    .run(JSON.stringify(input.skip), input.prospectId, input.playName);
   return r.changes === 1;
 }
 

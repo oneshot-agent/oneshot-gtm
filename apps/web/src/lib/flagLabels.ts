@@ -62,11 +62,25 @@ export interface HeldSummary {
   next: string;
 }
 
-export function heldSummary(flags: string[]): HeldSummary | null {
+/**
+ * `offerSkipped`: the `no-offer` hold is the writer's own refusal (its
+ * reason is kept with the offer), so regenerating cannot clear it; the next
+ * step is an offer from the founder instead.
+ */
+export function heldSummary(
+  flags: string[],
+  opts: { offerSkipped?: boolean } = {},
+): HeldSummary | null {
   if (flags.length === 0) return null;
   const kind = blockingFlags(flags).length > 0 ? "lint" : "review";
-  const text = `${flags.length} flag${flags.length === 1 ? "" : "s"}: ${flags.map(humanizeFlag).join(", ")}`;
-  const next =
-    kind === "lint" ? "regenerate to clear it, then send" : "read it once more, then send as-is";
+  const skipped = opts.offerSkipped === true && flags.includes("no-offer");
+  const label = (f: string): string =>
+    skipped && f === "no-offer" ? "the writer found no offer to make" : humanizeFlag(f);
+  const text = `${flags.length} flag${flags.length === 1 ? "" : "s"}: ${flags.map(label).join(", ")}`;
+  const next = skipped
+    ? "write the offer yourself or ask for new ones"
+    : kind === "lint"
+      ? "regenerate to clear it, then send"
+      : "read it once more, then send as-is";
   return { kind, text, next };
 }
