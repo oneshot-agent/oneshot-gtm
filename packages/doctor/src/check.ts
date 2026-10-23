@@ -35,7 +35,12 @@ import {
   spendCeilingReason,
   type OneShotConfig,
 } from "@oneshot-gtm/core";
-import { finderApprovalHealth, storedTriggerConfig, TRIGGERS } from "@oneshot-gtm/find";
+import {
+  finderApprovalHealth,
+  storedTriggerConfig,
+  testSourceRepo,
+  TRIGGERS,
+} from "@oneshot-gtm/find";
 
 type CheckSeverity = "ok" | "warn" | "fail";
 
@@ -606,6 +611,46 @@ function githubTokenCheck(): CheckResult | null {
 }
 
 /**
+ * The connected source repo, when there is one: can its ref be resolved and
+ * its files listed? A failure is a warn, not a fail: replies still draft,
+ * how-it-works questions just stay unanswered from the code. The result is
+ * kept for a few minutes per repo setting: doctor runs on page loads, and a
+ * GitHub check costs three API calls.
+ */
+const SOURCE_REPO_CHECK_TTL_MS = 10 * 60_000;
+let sourceRepoCheckCache: {
+  key: string;
+  at: number;
+  test: Awaited<ReturnType<typeof testSourceRepo>>;
+} | null = null;
+
+async function sourceRepoCheck(cfg: OneShotConfig): Promise<CheckResult | null> {
+  if (!cfg.sourceRepo?.path?.trim() && !cfg.sourceRepo?.url?.trim()) return null;
+  const key = JSON.stringify(cfg.sourceRepo);
+  const cached =
+    sourceRepoCheckCache?.key === key &&
+    Date.now() - sourceRepoCheckCache.at < SOURCE_REPO_CHECK_TTL_MS
+      ? sourceRepoCheckCache.test
+      : null;
+  const test = cached ?? (await testSourceRepo(cfg.sourceRepo));
+  if (!cached) sourceRepoCheckCache = { key, at: Date.now(), test };
+  if (test.ok)
+    return {
+      name: "source repo",
+      group: "install",
+      severity: "ok",
+      message: `${test.backend} · ${test.ref} @ ${test.commit?.slice(0, 7)} · ${test.readableFiles} readable files`,
+    };
+  return {
+    name: "source repo",
+    group: "install",
+    severity: "warn",
+    message: test.error ?? "the source repo could not be read",
+    hint: "Check the source repo on /setup (Product brief).",
+  };
+}
+
+/**
  * What live profile reads go through. A connected account that may view
  * profiles is "ok". One that needs a reconnect or the grant, with no working
  * browser session behind it, is a warn: the reads are paused. Otherwise the
@@ -892,6 +937,9 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
 
   const gh = githubTokenCheck();
   if (gh) results.push(gh);
+
+  const repo = await sourceRepoCheck(cfg);
+  if (repo) results.push(repo);
 
   const xc = xCredsCheck();
   if (xc) results.push(xc);

@@ -132,6 +132,7 @@ import {
 } from "./ledger-outcomes.ts";
 import { IcpProposalStore } from "./icp-proposal-store.ts";
 import { LearningStore } from "./learning-store.ts";
+import { CodeAnswerStore } from "./code-answers-store.ts";
 import { SendDeliveryStore } from "./ledger-delivery.ts";
 import { OutboundSendStore } from "./ledger-outbound.ts";
 import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.ts";
@@ -287,6 +288,8 @@ export class Ledger {
   readonly learning: LearningStore;
   /** Compatibility surface over `learning` for the #750 ICP proposal job and routes. */
   readonly icpProposals: IcpProposalStore;
+  /** How-it-works questions answered from the source repo (code-answers-store.ts). */
+  readonly codeAnswers: CodeAnswerStore;
   /** Sent-folder delivery checks for sends with no idempotency key (ledger-delivery.ts). */
   readonly sendDelivery: SendDeliveryStore;
   /** One row per intended outbound email, keyed by a semantic idempotency key (ledger-outbound.ts). */
@@ -349,6 +352,7 @@ export class Ledger {
     this.drafts = new DraftVersionStore(this.db);
     this.learning = new LearningStore(this.db);
     this.icpProposals = new IcpProposalStore(this.learning);
+    this.codeAnswers = new CodeAnswerStore(this.db);
     this.sendDelivery = new SendDeliveryStore(this.db);
     this.outboundSends = new OutboundSendStore(this.db);
   }

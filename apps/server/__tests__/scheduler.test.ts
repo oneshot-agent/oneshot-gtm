@@ -20,6 +20,13 @@ const calls = {
 };
 
 vi.mock("@oneshot-gtm/find", () => ({
+  sweepCodeAnswers: async () => ({
+    skipped: true,
+    checked: 0,
+    unchanged: 0,
+    stale: 0,
+    rederived: 0,
+  }),
   sweepLiveProfiles: async () => {
     calls.sweepLiveProfiles++;
     return { ran: true, candidates: 0, researched: 0, read: 0, refreshed: 0, costUsd: 0 };

@@ -74,11 +74,20 @@ export async function detectRepoStack(args: {
 }
 
 /**
- * Fetch a file from a repo's default branch via the GitHub Contents API.
- * Returns null on any non-2xx, network error, or unexpected content type.
+ * Fetch a file via the GitHub Contents API: from the default branch, or at
+ * `ref` (a branch, tag or commit sha) when given. Returns null on any
+ * non-2xx, network error, or unexpected content type. The source-repo
+ * reader (source-repo.ts) calls it too, always at a resolved commit.
  */
-async function fetchRepoFile(owner: string, repo: string, path: string): Promise<string | null> {
-  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path}`;
+export async function fetchRepoFile(
+  owner: string,
+  repo: string,
+  path: string,
+  ref?: string,
+): Promise<string | null> {
+  const file = path.split("/").map(encodeURIComponent).join("/");
+  const at = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${file}${at}`;
   try {
     const headers = { ...githubHeaders(), Accept: "application/vnd.github.raw" };
     const res = await fetch(url, { headers });
