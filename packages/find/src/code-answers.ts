@@ -247,6 +247,7 @@ export async function deriveCodeAnswer(
       });
       if (!again.changed && digest === record.digest) {
         store.pinCommit(id, snapshot.commit, now());
+        release();
         return { status: "cached", answer: view(store.get(id)) };
       }
     }
@@ -308,8 +309,10 @@ export async function deriveCodeAnswer(
         rewritten: result.answered ? result.rewritten : false,
         kept: !!stored,
       });
-      if (!stored)
+      if (!stored) {
+        release();
         return { status: "skipped", answer: view(store.get(id)), reason: "decided while reading" };
+      }
       return { status: result.answered ? "pending" : "unresolved", answer: view(stored) };
     } finally {
       reservation.release();
@@ -317,13 +320,18 @@ export async function deriveCodeAnswer(
   } catch (err) {
     return fail((err as Error).message || "derive failed");
   } finally {
+    release();
+  }
+
+  function release(): void {
     if (lease) store.releaseDerive(id, lease);
+    lease = null;
   }
 
   function fail(reason: string): DeriveCodeAnswerOutcome {
     logEvent("code_answer.derive_failed", { id, message_120: reason.slice(0, 120) }, "warn");
     // Release before reading the row back, so the view does not say "reading".
-    if (lease) store.releaseDerive(id, lease);
+    release();
     return { status: "failed", answer: view(store.get(id) ?? record), reason };
   }
 }
@@ -387,7 +395,14 @@ export async function sweepCodeAnswers(
       }
       const tracked =
         r.status === "approved" || r.status === "pending" || r.status === "unresolved";
-      if (!tracked || !r.pinned.length || r.commit === snapshot.commit) continue;
+      if (!tracked || r.commit === snapshot.commit) continue;
+      if (!r.pinned.length) {
+        // An unresolved "nothing looked related" holds until the code moves
+        // (its digest stands on the commit); an approved answer with no
+        // files is the founder's own words and never goes stale.
+        if (r.status === "unresolved") rederive.push(r.id);
+        continue;
+      }
       const again = await rehash(snapshot, r.pinned);
       if (r.status === "unresolved") {
         if (again.changed) rederive.push(r.id);

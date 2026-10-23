@@ -149,6 +149,7 @@ describe("deriveCodeAnswer", () => {
     git(dir, "commit", "-q", "-am", "unrelated");
     const again = await deriveCodeAnswer(row.id, { cfg, ledger: ledger(), deps });
     expect(again.status).toBe("cached");
+    expect(again.answer?.deriving).toBe(false);
     expect(again.answer?.commit).toBe(git(dir, "rev-parse", "HEAD"));
     expect(pick).toHaveBeenCalledTimes(1);
     const forced = await deriveCodeAnswer(row.id, { cfg, ledger: ledger(), deps, force: true });
@@ -255,6 +256,19 @@ describe("sweepCodeAnswers", () => {
       founderEdited: true,
     });
     expect(pick).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-reads an unresolved 'nothing related' once the code moves", async () => {
+    const { answer: row } = captured();
+    pick.mockResolvedValueOnce([]);
+    await deriveCodeAnswer(row.id, { cfg, ledger: ledger(), deps });
+    expect((await sweepCodeAnswers({ cfg, ledger: ledger(), deps })).rederived).toBe(0);
+    write(dir, "src/new.ts", "export const added = 1;\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "new file");
+    const out = await sweepCodeAnswers({ cfg, ledger: ledger(), deps });
+    expect(out.rederived).toBe(1);
+    expect(ledger().codeAnswers.get(row.id)?.status).toBe("pending");
   });
 
   it("is skipped without a repo", async () => {
