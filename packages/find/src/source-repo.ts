@@ -120,7 +120,7 @@ export function isSecretShapedPath(path: string): boolean {
     name.startsWith("id_dsa") ||
     name.startsWith("id_ecdsa") ||
     name.startsWith("id_ed25519") ||
-    /private[^/]*key/.test(name) ||
+    (name.includes("private") && name.indexOf("key", name.indexOf("private") + 7) >= 0) ||
     /\.(pem|key|p12|pfx|jks|keystore|kdbx)$/.test(name) ||
     [".npmrc", ".netrc", ".pypirc", ".htpasswd", ".git-credentials", ".dockercfg"].includes(name)
   );
