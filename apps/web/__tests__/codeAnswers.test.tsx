@@ -134,7 +134,18 @@ describe("/setup list", () => {
     ]);
     expect(html).toContain("Your code didn&#x27;t settle this: the retry policy is configured");
     expect(html).toContain("Read again");
+    expect(html).toContain("Write the answer");
     expect(html).not.toContain(">Approve");
+  });
+
+  it("lets an approved answer be dismissed out of the brief, and offers nothing while reading", () => {
+    const approved = list([row({ status: "approved" })]);
+    expect(approved).toContain("in the brief");
+    expect(approved).toContain("Take it out of the brief");
+    expect(approved).not.toContain(">Approve");
+    const reading = list([row({ status: "open", answer: null })]);
+    expect(reading).toContain("Reading your code…");
+    expect(reading).not.toContain("Dismiss");
   });
 
   it("explains the empty list when a repo is connected, and hides without one", () => {

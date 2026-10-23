@@ -1,96 +1,109 @@
+import { demoMode, getLedger, getReplyReviewStore, loadConfig, logEvent } from "@oneshot-gtm/core";
 import {
   approveCodeAnswer,
   captureCodeQuestion,
-  demoMode,
+  codeAnswersEnabled,
+  codeAnswersForThread,
+  deriveCodeAnswer,
   dismissCodeAnswer,
-  getLedger,
-  getReplyReviewStore,
   listCodeAnswers,
-  loadConfig,
-  logEvent,
-  type OneShotConfig,
-} from "@oneshot-gtm/core";
-import { deriveCodeAnswer, sweepCodeAnswers } from "@oneshot-gtm/plays";
-import { testSourceRepo } from "@oneshot-gtm/find";
+  sweepCodeAnswers,
+  testSourceRepo,
+} from "@oneshot-gtm/find";
 import type { CodeAnswer, ReplyAsk, SourceRepoTestResult } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
-import { mergeSourceRepo, SetupValidationError } from "./setup.ts";
+import { mergeSourceRepo } from "./setup.ts";
 
 /**
  * Answers from your code. A how-it-works question a prospect asked that the
  * brief does not answer is captured from the reply composer and read against
- * the configured source repo in the background; the founder approves, edits
+ * the connected source repo in the background; the founder approves, edits
  * or dismisses the answer here (on /setup, or in the composer card). Nothing
  * reaches a prompt until it is approved.
  */
 
 const READ_ONLY = { error: "The demo is read-only." };
-const MAX_ANSWER_CHARS = 2000;
+const NO_REPO = { error: "Connect a source repo on /setup first." };
+/** The store's own limit on an approved answer. */
+const MAX_ANSWER_CHARS = 1200;
+/** Who decided, as the ledger records it for the founder's own decisions. */
+const DECIDED_BY = "human";
 
-/** Derives running in this process, so one question is never read twice at once. */
+/**
+ * Derives this process has started and not finished. The store's lease
+ * marks a row `deriving` once the derive claims it; this covers the moment
+ * before, so a list right after "Read again" already shows it reading.
+ */
 const deriving = new Set<string>();
 
-export function sourceRepoConfigured(cfg: Pick<OneShotConfig, "sourceRepo">): boolean {
-  return Boolean(cfg.sourceRepo?.url?.trim() || cfg.sourceRepo?.path?.trim());
-}
-
 function view(row: CodeAnswer): CodeAnswer {
-  return { ...row, deriving: row.deriving || deriving.has(row.id) };
+  return deriving.has(row.id) && !row.deriving ? { ...row, deriving: true } : row;
 }
 
-function startDerive(ledger: ReturnType<typeof getLedger>, id: string): boolean {
-  if (deriving.has(id)) return false;
+function startDerive(
+  ledger: ReturnType<typeof getLedger>,
+  id: string,
+  opts: { force?: boolean } = {},
+): void {
   deriving.add(id);
-  void Promise.resolve()
-    .then(() => deriveCodeAnswer(ledger, id))
+  // deriveCodeAnswer never throws; it logs its own failures.
+  void deriveCodeAnswer(id, { ledger, ...(opts.force ? { force: true } : {}) })
     .catch((e: unknown) =>
-      logEvent("code_answers.derive.failed", { id, message: (e as Error).message }, "warn"),
+      logEvent("code_answer.derive_failed", { id, message_120: String(e).slice(0, 120) }, "warn"),
     )
     .finally(() => deriving.delete(id));
-  return true;
 }
 
 /**
  * From a fresh reply generation: a mechanism question the brief does not
- * answer, with a repo configured, is captured (or bumped when it was asked
- * before) and read in the background when nothing has read it yet. Returns
- * the captured row's id for the composer card. Never throws: a failure here
- * only means no card, never a failed draft.
+ * answer, with a source repo connected, is captured (or bumps the same
+ * question asked before) and read in the background when nothing has read
+ * it yet. Returns the row's id for the composer card. Never throws: a
+ * failure here only means no card, never a failed draft.
  */
 export function captureReplyAsk(threadKey: string, ask: ReplyAsk | undefined): string | undefined {
   if (ask?.level !== "mechanism" || ask.briefAnswers || !ask.question) return undefined;
   try {
-    if (!sourceRepoConfigured(loadConfig())) return undefined;
+    const cfg = loadConfig();
+    if (!codeAnswersEnabled(cfg)) return undefined;
     const ledger = getLedger();
-    const row = captureCodeQuestion(ledger, { question: ask.question, threadKey });
-    if (row.status === "open" && !row.deriving) startDerive(ledger, row.id);
-    return row.id;
+    const captured = captureCodeQuestion({ question: ask.question, threadKey, ledger, cfg });
+    if (!captured) return undefined;
+    if (captured.shouldDerive && !deriving.has(captured.answer.id))
+      startDerive(ledger, captured.answer.id);
+    return captured.answer.id;
   } catch (e) {
-    logEvent("code_answers.capture.failed", { message: (e as Error).message }, "warn");
+    logEvent(
+      "code_answer.capture_failed",
+      { message_120: (e as Error).message.slice(0, 120) },
+      "warn",
+    );
     return undefined;
   }
 }
 
 /**
- * GET /api/code-answers?threadKey&id — every answer, newest first; with
- * `threadKey`, only the ones that thread asked (its first asker, or the id its
- * saved drafts carry) plus `id` when given.
+ * GET /api/code-answers?threadKey&id — every question, review order; with
+ * `threadKey`, the ones that conversation asked, plus `id` when given (the
+ * one its current drafts carry).
  */
 export function listCodeAnswersRoute(req: Request): Response {
   const url = new URL(req.url);
   const threadKey = url.searchParams.get("threadKey");
   const id = url.searchParams.get("id");
-  let answers = listCodeAnswers(getLedger()).map(view);
+  const ledger = getLedger();
+  const all = listCodeAnswers({ ledger });
+  let answers = all;
   if (threadKey || id) {
-    const ids = new Set<string>();
+    const ids = new Set<string>(
+      threadKey ? codeAnswersForThread(threadKey, { ledger }).map((a) => a.id) : [],
+    );
     if (id) ids.add(id);
     const saved = threadKey ? getReplyReviewStore().get(threadKey)?.drafts?.codeAnswerId : null;
     if (saved) ids.add(saved);
-    answers = answers.filter(
-      (a) => ids.has(a.id) || (threadKey != null && a.sourceThreadKey === threadKey),
-    );
+    answers = all.filter((a) => ids.has(a.id));
   }
-  return jsonResponse({ answers }, 200, req);
+  return jsonResponse({ answers: answers.map(view) }, 200, req);
 }
 
 async function body(req: Request): Promise<Record<string, unknown>> {
@@ -102,20 +115,17 @@ async function body(req: Request): Promise<Record<string, unknown>> {
   }
 }
 
-function failure(req: Request, e: unknown): Response {
-  const message = (e as Error).message || "Request failed";
-  const status =
-    e instanceof SetupValidationError
-      ? 400
-      : typeof (e as { status?: unknown }).status === "number"
-        ? (e as { status: number }).status
-        : /not found|no such|unknown/i.test(message)
-          ? 404
-          : 409;
-  return jsonResponse({ error: message }, status, req);
+function decision(req: Request, out: { answer: CodeAnswer } | { error: string }): Response {
+  if ("error" in out)
+    return jsonResponse({ error: out.error }, /not found/.test(out.error) ? 404 : 409, req);
+  return jsonResponse({ ok: true, answer: view(out.answer) }, 200, req);
 }
 
-/** POST /api/code-answers/:id/approve, body `{ text? }`: approve as read, or the founder's edit. */
+/**
+ * POST /api/code-answers/:id/approve, body `{ text? }`: approve the answer
+ * as read, or the founder's edit (required for a question the code did not
+ * settle). 409 when it was decided already or changed meanwhile.
+ */
 export async function approveCodeAnswerRoute(
   req: Request,
   params: Record<string, string>,
@@ -123,86 +133,80 @@ export async function approveCodeAnswerRoute(
   if (demoMode()) return jsonResponse(READ_ONLY, 403, req);
   const b = await body(req);
   if (b.text !== undefined && (typeof b.text !== "string" || !b.text.trim()))
-    return jsonResponse({ error: "An edited answer needs text" }, 400, req);
-  if (typeof b.text === "string" && b.text.length > MAX_ANSWER_CHARS)
+    return jsonResponse({ error: "An edited answer needs text." }, 400, req);
+  const text = typeof b.text === "string" ? b.text.trim() : undefined;
+  if (text && text.length > MAX_ANSWER_CHARS)
     return jsonResponse(
-      { error: `An answer is limited to ${MAX_ANSWER_CHARS} characters` },
+      { error: `An answer is limited to ${MAX_ANSWER_CHARS} characters.` },
       400,
       req,
     );
-  try {
-    const text = typeof b.text === "string" ? b.text.trim() : undefined;
-    const answer = approveCodeAnswer(getLedger(), params["id"] ?? "", text);
-    return jsonResponse({ ok: true, answer: view(answer) }, 200, req);
-  } catch (e) {
-    return failure(req, e);
-  }
+  return decision(
+    req,
+    approveCodeAnswer(params["id"] ?? "", {
+      text: text ?? null,
+      by: DECIDED_BY,
+      ledger: getLedger(),
+    }),
+  );
 }
 
-/** POST /api/code-answers/:id/dismiss */
+/** POST /api/code-answers/:id/dismiss — out of the brief, and not read again. */
 export function dismissCodeAnswerRoute(req: Request, params: Record<string, string>): Response {
   if (demoMode()) return jsonResponse(READ_ONLY, 403, req);
-  try {
-    const answer = dismissCodeAnswer(getLedger(), params["id"] ?? "");
-    return jsonResponse({ ok: true, answer: view(answer) }, 200, req);
-  } catch (e) {
-    return failure(req, e);
-  }
+  return decision(
+    req,
+    dismissCodeAnswer(params["id"] ?? "", { by: DECIDED_BY, ledger: getLedger() }),
+  );
 }
 
 /** POST /api/code-answers/:id/derive — read the code again for this question, in the background. */
 export function deriveCodeAnswerRoute(req: Request, params: Record<string, string>): Response {
   if (demoMode()) return jsonResponse(READ_ONLY, 403, req);
-  if (!sourceRepoConfigured(loadConfig()))
-    return jsonResponse({ error: "Connect a source repo on /setup first" }, 409, req);
+  if (!codeAnswersEnabled(loadConfig())) return jsonResponse(NO_REPO, 409, req);
   const ledger = getLedger();
   const id = params["id"] ?? "";
-  const row = listCodeAnswers(ledger).find((a) => a.id === id);
-  if (!row) return jsonResponse({ error: "Answer not found" }, 404, req);
-  if (!startDerive(ledger, id))
-    return jsonResponse({ error: "Already reading your code for this" }, 409, req);
+  const row = listCodeAnswers({ ledger }).find((a) => a.id === id);
+  if (!row) return jsonResponse({ error: "Answer not found." }, 404, req);
+  if (row.status === "approved" || row.status === "dismissed")
+    return jsonResponse({ error: `This answer is already ${row.status}.` }, 409, req);
+  if (row.deriving || deriving.has(id))
+    return jsonResponse({ error: "Already reading your code for this." }, 409, req);
+  startDerive(ledger, id, { force: true });
   return jsonResponse({ ok: true, answer: view(row) }, 202, req);
 }
 
-/** POST /api/code-answers/sweep — re-check every answer against the repo now. */
+/** POST /api/code-answers/sweep — check every answer against the repo now. */
 export async function sweepCodeAnswersRoute(req: Request): Promise<Response> {
   if (demoMode()) return jsonResponse(READ_ONLY, 403, req);
-  if (!sourceRepoConfigured(loadConfig()))
-    return jsonResponse({ error: "Connect a source repo on /setup first" }, 409, req);
-  try {
-    const result = await sweepCodeAnswers(getLedger());
-    return jsonResponse({ ok: true, result }, 200, req);
-  } catch (e) {
-    return failure(req, e);
-  }
+  if (!codeAnswersEnabled(loadConfig())) return jsonResponse(NO_REPO, 409, req);
+  const result = await sweepCodeAnswers({ ledger: getLedger() });
+  if (result.error) return jsonResponse({ error: result.error, result }, 502, req);
+  return jsonResponse({ ok: true, result }, 200, req);
 }
 
 /**
  * POST /api/setup/source-repo/test, body `{ url?, path?, ref? }` (the form's
- * unsaved values) or `{}` for the saved repo: can it be read, at which commit.
+ * unsaved values) or `{}` for the saved repo: can it be read, at which
+ * commit. A bad value or an unreachable repo is the answer, not a failure.
  */
 export async function testSourceRepoRoute(req: Request): Promise<Response> {
   if (demoMode()) return jsonResponse(READ_ONLY, 403, req);
+  const b = await body(req);
+  let repo;
   try {
-    const b = await body(req);
-    const repo =
+    repo =
       b.url !== undefined || b.path !== undefined
         ? mergeSourceRepo(b as { url?: string; path?: string; ref?: string }, undefined)
         : loadConfig().sourceRepo;
-    if (!repo || !sourceRepoConfigured({ sourceRepo: repo }))
-      return jsonResponse(
-        { ok: false, error: "Enter a GitHub URL or a local path" } satisfies SourceRepoTestResult,
-        200,
-        req,
-      );
-    const result = await testSourceRepo(repo);
-    return jsonResponse(result, 200, req);
   } catch (e) {
-    // A bad form value or an unreachable repo is the answer to "test", not a failed request.
     return jsonResponse(
       { ok: false, error: (e as Error).message } satisfies SourceRepoTestResult,
       200,
       req,
     );
   }
+  if (!repo)
+    return jsonResponse({ ok: false, error: "Enter a GitHub URL or a local path." }, 200, req);
+  return jsonResponse(await testSourceRepo(repo), 200, req);
 }

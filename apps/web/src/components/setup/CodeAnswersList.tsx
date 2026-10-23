@@ -163,6 +163,8 @@ function CodeAnswerRow({
   const meta = [codeAnswerStatusLabel(a), askedLabel(a.askedCount), commit].filter(Boolean);
   const reviewable = a.status === "pending" && !reading && Boolean(a.answer);
   const rereadable = canRead && !reading && (a.status === "unresolved" || a.status === "stale");
+  // The store takes the founder's own words for a question the code did not settle.
+  const writable = reviewable || a.status === "unresolved" || a.status === "stale";
   return (
     <div className="border-t border-ink-rule/60 pt-2">
       <p className="text-[13px] text-ink-cream">{a.question}</p>
@@ -218,44 +220,33 @@ function CodeAnswerRow({
               {a.answer}
             </p>
           ) : null}
-          {(reviewable || rereadable) && (
-            <div className="mt-1.5 flex items-center gap-1">
+          {!reading && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1">
               {reviewable && (
-                <>
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => onApprove()}
-                    {...readOnly}
-                  >
-                    <Check size={12} /> Approve
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() => {
-                      setText(a.answer ?? "");
-                      setEditing(true);
-                    }}
-                    {...readOnly}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={onDismiss}
-                    className="text-[color:var(--ink-blocked-2)]"
-                    {...readOnly}
-                  >
-                    <X size={12} /> Dismiss
-                  </Button>
-                </>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => onApprove()}
+                  {...readOnly}
+                >
+                  <Check size={12} /> Approve
+                </Button>
+              )}
+              {writable && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => {
+                    setText(a.answer ?? "");
+                    setEditing(true);
+                  }}
+                  {...readOnly}
+                >
+                  {reviewable ? "Edit" : "Write the answer"}
+                </Button>
               )}
               {rereadable && (
                 <Button
@@ -269,6 +260,18 @@ function CodeAnswerRow({
                   <RefreshCw size={12} /> Read again
                 </Button>
               )}
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={onDismiss}
+                className="text-[color:var(--ink-blocked-2)]"
+                title={a.status === "approved" ? "Take it out of the brief" : undefined}
+                {...readOnly}
+              >
+                <X size={12} /> Dismiss
+              </Button>
             </div>
           )}
         </>

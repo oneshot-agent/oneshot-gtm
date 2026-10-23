@@ -341,15 +341,10 @@ export async function replyGenerateRoute(req: Request) {
       ...(generated.ask ? { ask: generated.ask } : {}),
     };
     // A how-it-works question the brief does not answer goes to the source
-    // repo in the background. Regenerating the same conversation state reuses
-    // the earlier capture instead of counting the question again.
-    const asksCode =
-      generated.ask?.level === "mechanism" && !generated.ask.briefAnswers && generated.ask.question;
-    const codeAnswerId = !asksCode
-      ? undefined
-      : t.drafts?.codeAnswerId && t.drafts.contextVersion === t.contextVersion
-        ? t.drafts.codeAnswerId
-        : captureReplyAsk(t.key, generated.ask);
+    // repo in the background; the draft only learns which row to show. The
+    // store counts a question once per conversation, so regenerating does
+    // not inflate it.
+    const codeAnswerId = captureReplyAsk(t.key, generated.ask);
     if (codeAnswerId) next.codeAnswerId = codeAnswerId;
     getReplyReviewStore().learning.recordGeneration(t, next, context);
     // The browser explicitly accepts a replacement; a generation never mutates existing edits.
