@@ -84,6 +84,7 @@ export async function fetchRepoFile(
   repo: string,
   path: string,
   ref?: string,
+  opts: { rejectOversized?: boolean } = {},
 ): Promise<string | null> {
   const file = path.split("/").map(encodeURIComponent).join("/");
   const at = ref ? `?ref=${encodeURIComponent(ref)}` : "";
@@ -93,7 +94,9 @@ export async function fetchRepoFile(
     const res = await fetch(url, { headers });
     if (!res.ok) return null;
     const text = await res.text();
-    // Defensive cap. Only substring matching happens downstream, so trimming is safe.
+    // Defensive cap. Manifest scanning only substring-matches, so trimming is
+    // safe there; a reader that needs the whole file asks for null instead.
+    if (opts.rejectOversized && Buffer.byteLength(text, "utf8") > 200_000) return null;
     return text.length > 200_000 ? text.slice(0, 200_000) : text;
   } catch {
     return null;

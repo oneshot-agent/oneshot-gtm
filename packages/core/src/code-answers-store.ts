@@ -90,12 +90,20 @@ export function normalizeQuestion(question: string): string {
     .trim();
 }
 
+/**
+ * A light suffix strip, enough for two phrasings of a question to meet:
+ * "handling"/"handles"/"handle", "created"/"create", "retries"/"retry", "boxes"/"box". A
+ * trailing "e" goes last so the base form and its inflections agree.
+ */
 function stem(word: string): string {
-  if (word.length > 5 && word.endsWith("ing")) return word.slice(0, -3);
-  if (word.length > 4 && word.endsWith("ed")) return word.slice(0, -2);
-  if (word.length > 4 && word.endsWith("es")) return word.slice(0, -2);
-  if (word.length > 3 && word.endsWith("s") && !word.endsWith("ss")) return word.slice(0, -1);
-  return word;
+  let w = word;
+  if (w.length > 5 && w.endsWith("ing")) w = w.slice(0, -3);
+  else if (w.length > 4 && w.endsWith("ed")) w = w.slice(0, -2);
+  else if (w.length > 4 && w.endsWith("ies")) w = `${w.slice(0, -3)}y`;
+  else if (w.length > 4 && /(?:ss|x|z|ch|sh)es$/.test(w)) w = w.slice(0, -2);
+  else if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss")) w = w.slice(0, -1);
+  if (w.length > 3 && w.endsWith("e")) w = w.slice(0, -1);
+  return w;
 }
 
 /** The content words of a question, stemmed: what two phrasings of it share. */

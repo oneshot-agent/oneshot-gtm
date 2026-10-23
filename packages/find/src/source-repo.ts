@@ -273,6 +273,7 @@ async function openGitHub(
   if (typeof commit !== "string" || !/^[0-9a-f]{40}$/.test(commit))
     return { ok: false, error: `GitHub returned no commit for '${ref}'` };
   let listing: Promise<string[]> | null = null;
+  let listed: Promise<Set<string>> | null = null;
   const listFiles = (): Promise<string[]> =>
     (listing ??= (async () => {
       const tree = await githubJson(`${base}/git/trees/${commit}?recursive=1`);
@@ -297,9 +298,11 @@ async function openGitHub(
       ref,
       commit,
       listFiles,
+      // Only listed paths: the listing applied the size cap from the tree.
       async readFile(p) {
         if (!isReadableSourcePath(p)) return null;
-        return usableText(await fetchRepoFile(owner, repo, p, commit));
+        if (!(await (listed ??= listFiles().then((l) => new Set(l)))).has(p)) return null;
+        return usableText(await fetchRepoFile(owner, repo, p, commit, { rejectOversized: true }));
       },
     },
   };
@@ -361,34 +364,38 @@ async function openLocal(
   if (!resolved.ok || !/^[0-9a-f]{40,64}$/.test(commit))
     return { ok: false, error: `${dir} has no branch, tag or commit '${ref}'` };
   let listing: string[] | null = null;
+  let listed: Set<string> | null = null;
+  const listFiles = async (): Promise<string[]> => {
+    if (listing) return listing;
+    const tree = await git(dir, ["ls-tree", "-r", "-l", "-z", commit]);
+    if (!tree.ok) throw new Error(`could not list ${dir} at ${commit.slice(0, 7)}: ${tree.err}`);
+    listing = tree.out
+      .split("\u0000")
+      .map((entry) => {
+        // "<mode> <type> <object> <size>\t<path>"
+        const tab = entry.indexOf("\t");
+        if (tab < 0) return null;
+        const [mode, type, , size] = entry.slice(0, tab).trim().split(/\s+/);
+        if (type !== "blob" || mode === "120000") return null;
+        const path = entry.slice(tab + 1);
+        return isReadableSourcePath(path, Number(size)) ? path : null;
+      })
+      .filter((p): p is string => p != null)
+      .toSorted();
+    return listing;
+  };
   return {
     ok: true,
     snapshot: {
       backend: "local",
       ref,
       commit,
-      async listFiles() {
-        if (listing) return listing;
-        const tree = await git(dir, ["ls-tree", "-r", "-l", "-z", commit]);
-        if (!tree.ok)
-          throw new Error(`could not list ${dir} at ${commit.slice(0, 7)}: ${tree.err}`);
-        listing = tree.out
-          .split("\u0000")
-          .map((entry) => {
-            // "<mode> <type> <object> <size>\t<path>"
-            const tab = entry.indexOf("\t");
-            if (tab < 0) return null;
-            const [mode, type, , size] = entry.slice(0, tab).trim().split(/\s+/);
-            if (type !== "blob" || mode === "120000") return null;
-            const path = entry.slice(tab + 1);
-            return isReadableSourcePath(path, Number(size)) ? path : null;
-          })
-          .filter((p): p is string => p != null)
-          .toSorted();
-        return listing;
-      },
+      listFiles,
+      // Only listed paths: the listing applied the size cap from the tree.
       async readFile(p) {
         if (!isReadableSourcePath(p)) return null;
+        listed ??= new Set(await listFiles());
+        if (!listed.has(p)) return null;
         const show = await git(dir, ["cat-file", "blob", `${commit}:${p}`]);
         return show.ok ? usableText(show.out) : null;
       },

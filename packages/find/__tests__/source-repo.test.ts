@@ -113,6 +113,7 @@ describe("local checkout", () => {
     write(dir, "config/secrets.json", '{"token":"x"}');
     write(dir, "node_modules/dep/index.js", "module.exports = 1;\n");
     write(dir, "README.md", "# Widgets\n");
+    write(dir, "src/generated.ts", `export const data = "${"x".repeat(300_000)}";\n`);
     git(dir, "add", "-A", "-f");
     git(dir, "commit", "-q", "-m", "one");
     first = git(dir, "rev-parse", "HEAD");
@@ -143,6 +144,8 @@ describe("local checkout", () => {
     expect(await snap.readFile(".env")).toBeNull();
     expect(await snap.readFile("config/secrets.json")).toBeNull();
     expect(await snap.readFile("node_modules/dep/index.js")).toBeNull();
+    // Too large to list, so never read either.
+    expect(await snap.readFile("src/generated.ts")).toBeNull();
   });
 
   it("explains a missing folder, a non-repo and an unknown ref", async () => {

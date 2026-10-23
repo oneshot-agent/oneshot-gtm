@@ -101,6 +101,14 @@ describe("question identity", () => {
       ),
     ).toBeLessThan(0.8);
   });
+
+  it("matches base forms with their inflections", () => {
+    expect(questionSimilarity("How is an invoice created?", "How do you create an invoice?")).toBe(
+      1,
+    );
+    expect(questionSimilarity("Who handles retries?", "What about handling a retry?")).toBe(1);
+    expect(questionSimilarity("Do you process boxes?", "Do you process a box?")).toBe(1);
+  });
 });
 
 describe("capture", () => {
