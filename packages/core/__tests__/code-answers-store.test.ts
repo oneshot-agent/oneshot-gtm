@@ -205,6 +205,18 @@ describe("transitions", () => {
     expect(
       ledger.codeAnswers.approve(record.id, { text: "See https://example.com/docs", by: "f" }),
     ).toMatchObject({ error: expect.stringContaining("links") });
+    // Approving as written checks the stored answer too.
+    ledger.codeAnswers.recordDerive(record.id, {
+      status: "pending",
+      answer: "It is documented at https://example.com/docs.",
+      files: FILES,
+      commit: COMMIT,
+      promptVersion: "v-test",
+      digest: "d2",
+    });
+    expect(ledger.codeAnswers.approve(record.id, { by: "f" })).toMatchObject({
+      error: expect.stringContaining("links"),
+    });
   });
 
   it("a derive finishing after the founder decided does not overwrite the decision", () => {

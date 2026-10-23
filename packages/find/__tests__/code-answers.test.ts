@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -36,12 +37,11 @@ const {
 const QUESTION = "What happens when two people approve the same item at once?";
 
 function git(dir: string, ...args: string[]): string {
-  const p = Bun.spawnSync(
-    ["git", "-C", dir, "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-  if (p.exitCode !== 0) throw new Error(p.stderr.toString());
-  return p.stdout.toString().trim();
+  return execFileSync(
+    "git",
+    ["-C", dir, "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  ).trim();
 }
 
 function write(dir: string, path: string, content: string): void {
