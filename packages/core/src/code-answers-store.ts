@@ -256,7 +256,8 @@ export class CodeAnswerStore {
         .run(id, question, key, JSON.stringify(thread ? [thread] : []), thread, iso, iso);
       return { id, created: true, bumped: false };
     });
-    const out = tx();
+    // IMMEDIATE: the similar-row read and the write happen under one write lock.
+    const out = tx.immediate();
     return { record: this.get(out.id, now.getTime())!, created: out.created, bumped: out.bumped };
   }
 
