@@ -38,7 +38,12 @@ const card = (o: CadenceOfferView | undefined): CadenceView =>
 /** The offer block's action row: every button but the Other offers list's Use this offer. */
 function buttonLabels(html: string): string[] {
   return (html.match(/<button\b[^]*?<\/button>/g) ?? [])
-    .map((b) => b.replace(/<[^>]+>/g, "").trim())
+    .map((b) =>
+      [...b.matchAll(/>([^<]*)</g)]
+        .map((m) => m[1])
+        .join("")
+        .trim(),
+    )
     .filter((label) => label !== "Use this offer");
 }
 

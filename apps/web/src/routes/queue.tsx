@@ -1698,7 +1698,9 @@ export function DraftSection({
   const holdOptions: HeldOptions = {
     offerSkipped: !masked && !!offerSkip,
     offerHeld: weakOffer,
-    review: status === "approved" ? "send" : "approve",
+    // Send anyway exists only on an API row with no send hold.
+    review:
+      sender !== "api" || sendHold ? "regenerate" : status === "approved" ? "send" : "approve",
   };
   const lineFlags =
     draft && !draft.sent ? draft.flags.filter((f) => !(weakOffer && f === "weak-offer")) : [];

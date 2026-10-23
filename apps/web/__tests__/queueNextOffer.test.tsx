@@ -73,7 +73,12 @@ function click(title: string) {
 /** The offer block's action row: every button but the Other offers list's Use this offer. */
 function buttonLabels(html: string): string[] {
   return (html.match(/<button\b[^]*?<\/button>/g) ?? [])
-    .map((b) => b.replace(/<[^>]+>/g, "").trim())
+    .map((b) =>
+      [...b.matchAll(/>([^<]*)</g)]
+        .map((m) => m[1])
+        .join("")
+        .trim(),
+    )
     .filter((label) => label !== "Use this offer");
 }
 
@@ -256,5 +261,18 @@ describe("queue held line", () => {
     const draft = { ...base.draft!, flags: ["stale-event"] };
     expect(letter({ draft })).toContain("read it once more, then send anyway");
     expect(letter({ draft, status: "pending" })).toContain("approve to send");
+  });
+
+  it("never says send where the page has no Send: a hand-sent row or a send hold", () => {
+    const draft = { ...base.draft!, flags: ["stale-event"] };
+    const fitHold = { code: "off-icp" as const, reason: "Not who you sell to." };
+    for (const html of [
+      letter({ draft, sender: "manual" }),
+      letter({ draft, sendHold: fitHold }),
+    ]) {
+      expect(html).toContain("· regenerate the draft");
+      expect(html).not.toContain("send anyway");
+      expect(html).not.toContain("approve to send");
+    }
   });
 });
