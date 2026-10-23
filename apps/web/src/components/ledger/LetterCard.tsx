@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "../../lib/cn.ts";
-import { heldSummary } from "../../lib/flagLabels.ts";
+import { heldSummary, type HeldOptions } from "../../lib/flagLabels.ts";
 import { Badge } from "../primitives/Badge.tsx";
 import { ReceiptEdge } from "../primitives/ReceiptEdge.tsx";
 import { SheetHeading } from "./SheetHeading.tsx";
@@ -131,24 +131,23 @@ export function LetterEmpty({
 
 /**
  * A draft's state in words: sent; held, with the flags named and what to do
- * about them; or clean. `children` follow on the same line: receipt links,
- * an Explain, a stale-draft badge.
+ * about them (`hold`: what the page's buttons can do); or clean. `children`
+ * follow on the same line: receipt links, an Explain, a stale-draft badge.
  */
 export function DraftStateLine({
   sent,
   flags,
   dryRun = true,
-  offerSkipped = false,
+  hold = {},
   children,
 }: {
   sent: boolean;
   flags: string[];
   dryRun?: boolean;
-  /** The `no-offer` hold is the writer's refusal: regenerating cannot clear it. */
-  offerSkipped?: boolean;
+  hold?: HeldOptions;
   children?: ReactNode;
 }) {
-  const held = sent ? null : heldSummary(flags, { offerSkipped });
+  const held = sent ? null : heldSummary(flags, hold);
   return (
     <>
       {sent ? (

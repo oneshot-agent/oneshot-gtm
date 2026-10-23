@@ -1,9 +1,11 @@
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import { api } from "../src/api/client.ts";
+import { ProspectOffer } from "../src/components/queue/ProspectOffer.tsx";
+import { clearRowActivity, setRowActivity } from "../src/lib/rowActivity.ts";
 import { DraftSection } from "../src/routes/queue.tsx";
 
 // Capture the rendered button's handler; keep the real component and mutation lifecycle.
@@ -18,6 +20,8 @@ vi.mock("../src/components/primitives/Button.tsx", async (importOriginal) => {
   };
 });
 
+const NEXT = "Use the next offer and rewrite the draft around it";
+const APPROVE = "Send this offer as it stands, although it was rated a weak fit";
 const candidates = ["one", "two", "three", "four", "five"].map((offer) => ({
   offer,
   steps: "a, b",
@@ -52,17 +56,25 @@ const base: ComponentProps<typeof DraftSection> = {
 };
 let client: QueryClient;
 
-function render(props: Partial<typeof base> = {}) {
-  return renderToStaticMarkup(
-    <QueryClientProvider client={client}>
-      <DraftSection {...base} {...props} />
-    </QueryClientProvider>,
-  );
+function wrap(node: ReactElement): string {
+  return renderToStaticMarkup(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
 }
-function clickNext() {
-  const click = buttons.get("Use the next offer and rewrite the draft around it");
-  expect(click).toBeDefined();
-  click!();
+function letter(props: Partial<typeof base> = {}) {
+  return wrap(<DraftSection {...base} {...props} />);
+}
+function offerBlock(payload: unknown = base.payload, editable = true) {
+  return wrap(<ProspectOffer rowId={5} payload={payload} editable={editable} />);
+}
+function click(title: string) {
+  const handler = buttons.get(title);
+  expect(handler).toBeDefined();
+  handler!();
+}
+/** The offer block's action row: every button but the Other offers list's Use this offer. */
+function buttonLabels(html: string): string[] {
+  return (html.match(/<button\b[^]*?<\/button>/g) ?? [])
+    .map((b) => b.replace(/<[^>]+>/g, "").trim())
+    .filter((label) => label !== "Use this offer");
 }
 
 beforeEach(() => {
@@ -77,41 +89,37 @@ afterEach(() => {
 });
 
 describe("queue Next offer", () => {
-  it("shows the button and the active position beside the angle", () => {
-    for (const [index, offer] of candidates.entries()) {
-      const html = render({ payload: { offer, offerCandidates: candidates } });
-      expect(html).toContain("Next offer");
-      expect(html).toContain(`Offer ${index + 1} of 5`);
-      expect(html).toContain("Angle 1 of 5");
-    }
+  it("sits in the offer block between Edit offer and New offers, not in the letter", () => {
+    const block = offerBlock();
+    expect(buttonLabels(block)).toEqual(["Edit offer", "Next offer", "New offers"]);
+    const html = letter();
+    expect(html).not.toContain("Next offer");
+    expect(html).toContain("Angle 1 of 5");
+    // The position is the offer header's to say.
+    expect(html).not.toContain("Offer 1 of 5");
   });
 
-  it("hides rotation for fewer than two candidates, sent/sending rows and founder edits", () => {
-    for (const props of [
-      { payload: {} },
-      { payload: { offer: candidates[0], offerCandidates: candidates.slice(0, 1) } },
-      { status: "sent" as const },
-      { isSending: true },
-      { draft: { ...base.draft!, sent: true } },
-      {
-        payload: { offer: { ...candidates[0], editedBy: "founder" }, offerCandidates: candidates },
-      },
+  it("hides rotation for fewer than two candidates, a row that cannot change and founder edits", () => {
+    for (const html of [
+      offerBlock({}),
+      offerBlock({ offer: candidates[0], offerCandidates: candidates.slice(0, 1) }),
+      offerBlock(base.payload, false),
+      offerBlock({ offer: { ...candidates[0], editedBy: "founder" }, offerCandidates: candidates }),
     ]) {
-      expect(render(props)).not.toContain("Next offer");
+      expect(html).not.toContain("Next offer");
     }
-    expect(
-      render({ payload: { offer: { offer: "missing" }, offerCandidates: candidates } }),
-    ).not.toContain("Offer 0 of");
   });
 
-  it("disables rotation alongside the other draft actions while generating", () => {
-    const html = render({ generating: true });
-    const renderedButtons = html.match(/<button\b[^]*?<\/button>/g) ?? [];
-    for (const label of ["Next offer", "Rotate angle", "Regenerating…", "Send now"]) {
-      expect(renderedButtons.find((button) => button.includes(label))).toMatch(
-        /^<button[^>]*disabled=""/,
-      );
+  it("locks rotation with the other offer controls while the row is busy", () => {
+    const token = setRowActivity(5, "Rewriting the draft…");
+    const html = offerBlock();
+    clearRowActivity(5, token);
+    const rendered = html.match(/<button\b[^]*?<\/button>/g) ?? [];
+    for (const label of ["Edit offer", "Next offer", "New offers"]) {
+      expect(rendered.find((button) => button.includes(label))).toMatch(/^<button[^>]*disabled=""/);
     }
+    // Named once, on the letter's working line, not in the offer block.
+    expect(html).not.toContain("Rewriting the draft…");
   });
 
   it("selects the next candidate before redrafting, preserves the list and refreshes the row", async () => {
@@ -127,8 +135,8 @@ describe("queue Next offer", () => {
     const refresh = vi.spyOn(client, "invalidateQueries");
     const original = JSON.stringify(candidates);
     for (let index = 0; index < candidates.length; index++) {
-      render({ payload: { offer: candidates[index], offerCandidates: candidates } });
-      clickNext();
+      offerBlock({ offer: candidates[index], offerCandidates: candidates });
+      click(NEXT);
       await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(index + 1));
       expect(api.setQueueOffer).toHaveBeenLastCalledWith(5, { select: (index + 1) % 5 });
     }
@@ -145,8 +153,8 @@ describe("queue Next offer", () => {
     );
     vi.spyOn(api, "regenerateDraft").mockRejectedValue(new Error("offline"));
     const refresh = vi.spyOn(client, "invalidateQueries");
-    render();
-    clickNext();
+    offerBlock();
+    click(NEXT);
     await vi.waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
         "offer saved, but the draft still carries the old one · offline. Regenerate the draft.",
@@ -160,12 +168,93 @@ describe("queue Next offer", () => {
     vi.spyOn(api, "setQueueOffer").mockRejectedValue(new Error("already sent"));
     const redraft = vi.spyOn(api, "regenerateDraft");
     const refresh = vi.spyOn(client, "invalidateQueries");
-    render();
-    clickNext();
+    offerBlock();
+    click(NEXT);
     await vi.waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith("couldn't update the offer · already sent"),
     );
     expect(redraft).not.toHaveBeenCalled();
     expect(refresh).toHaveBeenCalledWith({ queryKey: ["queue"] });
+  });
+});
+
+describe("queue weak offer", () => {
+  const weak = { ...candidates[0], relevance: "weak" };
+  const payload = { offer: weak, offerCandidates: [weak, ...candidates.slice(1)] };
+  const hold = {
+    code: "weak-offer" as const,
+    reason: "The offer was rated a weak fit for this firm.",
+  };
+
+  it("has one Approve offer, in the offer block, after New offers", () => {
+    expect(buttonLabels(offerBlock(payload))).toEqual([
+      "Edit offer",
+      "Next offer",
+      "New offers",
+      "Approve offer",
+    ]);
+    const html = letter({
+      payload,
+      sendHold: hold,
+      draft: { ...base.draft!, flags: ["weak-offer"] },
+    });
+    expect(html).not.toContain("Approve offer");
+  });
+
+  it("hides Approve once the offer is approved or the founder's own", () => {
+    for (const offer of [
+      { ...weak, weakApprovedAt: "2026-10-22T00:00:00Z" },
+      { ...weak, editedBy: "founder" },
+    ]) {
+      expect(offerBlock({ offer, offerCandidates: candidates })).not.toContain("Approve offer");
+    }
+  });
+
+  it("approves without a redraft and refreshes the row", async () => {
+    vi.spyOn(api, "setQueueOffer").mockResolvedValue(
+      {} as Awaited<ReturnType<typeof api.setQueueOffer>>,
+    );
+    const redraft = vi.spyOn(api, "regenerateDraft");
+    const refresh = vi.spyOn(client, "invalidateQueries");
+    offerBlock(payload);
+    click(APPROVE);
+    await vi.waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("offer approved · the draft can be sent"),
+    );
+    expect(api.setQueueOffer).toHaveBeenCalledWith(5, { approveWeak: true });
+    expect(redraft).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledWith({ queryKey: ["queue"] });
+  });
+
+  it("says the hold once: the held note, not a second held line for the same flag", () => {
+    const html = letter({
+      payload,
+      sendHold: hold,
+      draft: { ...base.draft!, flags: ["weak-offer"] },
+    });
+    expect(html).toContain("Held · weak offer · approve the offer, pick another or rewrite it");
+    expect(html).not.toContain("the offer was rated a weak fit");
+    expect(html).not.toContain("send as-is");
+  });
+});
+
+describe("queue held line", () => {
+  it("points a writer's skip at the offer block, with no note under the body", () => {
+    const html = letter({
+      payload: {},
+      offerSkip: { why: "They left the firm in October.", at: "2026-10-22T00:00:00.000Z" },
+      draft: { ...base.draft!, flags: ["no-offer"] },
+    });
+    expect(html).toContain("the writer found no offer to make");
+    expect(html).toContain("write the offer or ask for new ones");
+    expect(html).not.toContain('role="note"');
+    expect(html).not.toContain("No offer: They left the firm");
+    expect(html).toContain("held · write the offer or ask for new ones");
+  });
+
+  it("offers send anyway for a read-only flag on an approved row, approve on a pending one", () => {
+    const draft = { ...base.draft!, flags: ["stale-event"] };
+    expect(letter({ draft })).toContain("read it once more, then send anyway");
+    expect(letter({ draft, status: "pending" })).toContain("approve to send");
   });
 });

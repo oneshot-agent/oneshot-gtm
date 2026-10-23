@@ -53,13 +53,9 @@ import { CaseSection, Rule, Sheet } from "../components/ledger/Sheet.tsx";
 import { CaseList, Disclosure, type CaseListRow } from "../components/ledger/CaseList.tsx";
 import { DraftStateLine, LetterCard, LetterEmpty } from "../components/ledger/LetterCard.tsx";
 import { DraftHistory } from "../components/ledger/DraftHistory.tsx";
-import {
-  NextSequenceOfferButton,
-  SequenceOffer,
-  sequenceOfferActivityId,
-} from "../components/queue/SequenceOffer.tsx";
+import { SequenceOffer, sequenceOfferActivityId } from "../components/queue/SequenceOffer.tsx";
 import { rowActivityOf, useRowActivityChanges } from "../lib/rowActivity.ts";
-import { offerFlagNote } from "../lib/sequenceOffer.ts";
+import { heldSummary, type HeldOptions } from "../lib/flagLabels.ts";
 
 /** Tailwind can't build class names dynamically: enumerate the tile-count variants. */
 const TILE_GRID_COLS: Record<number, string> = {
@@ -780,12 +776,21 @@ function CadencesPage() {
                   held && c.heldElsewhere
                     ? `held — ${c.heldElsewhere.workspace} emailed this person ${timeAgo(c.heldElsewhere.sentAt)}; the shared 7-day contact window ends ${new Date(c.heldElsewhere.until).toLocaleString()}`
                     : null;
+                // A flagged step never sends here (the server refuses it too),
+                // so every fix names a button: the offer block's for an offer
+                // flag, Regenerate draft for the rest.
+                const holdOptions: HeldOptions = {
+                  offerSkipped: !masked && !!c.offer?.skip,
+                  offerHeld: c.offer?.weak === true,
+                  review: "regenerate",
+                };
+                const draftHeld = draft ? heldSummary(draft.flags, holdOptions) : null;
                 const sendTitle = heldTitle
                   ? heldTitle
                   : !draft
                     ? "generate a draft first"
-                    : draft.flags.length > 0
-                      ? `draft held by lint (${draft.flags.length} flag(s)) — regenerate`
+                    : draftHeld
+                      ? `held · ${draftHeld.next}`
                       : c.nextStepIsBreakup
                         ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
                         : `send next step — sends now${earlyNote}`;
@@ -950,11 +955,7 @@ function CadencesPage() {
                         subject={draft.subject}
                         stateLine={
                           draft.flags.length > 0 ? (
-                            <DraftStateLine
-                              sent={false}
-                              flags={draft.flags}
-                              offerSkipped={!masked && !!c.offer?.skip}
-                            />
+                            <DraftStateLine sent={false} flags={draft.flags} hold={holdOptions} />
                           ) : undefined
                         }
                         body={draft.body}
@@ -968,11 +969,6 @@ function CadencesPage() {
                         }
                         afterBody={
                           <>
-                            {offerFlagNote(draft.flags, masked ? null : c.offer?.skip) && (
-                              <p role="note" className="mt-3 text-xs text-ink-muted">
-                                {offerFlagNote(draft.flags, masked ? null : c.offer?.skip)}
-                              </p>
-                            )}
                             {draft.angle && (
                               <details className="mt-3 text-xs text-ink-muted">
                                 <summary className="cursor-pointer">
@@ -1013,12 +1009,6 @@ function CadencesPage() {
                                   )}
                                   {rotatingAngle ? "Rotating…" : "Rotate angle"}
                                 </Button>
-                              )}
-                              {regenerateButton && (
-                                <NextSequenceOfferButton
-                                  cadence={c}
-                                  locked={pendingPreviewKey != null}
-                                />
                               )}
                             </>
                           ),
@@ -1213,8 +1203,8 @@ function CadencesPage() {
                                             ? heldTitle
                                             : !draft
                                               ? "click Preview first"
-                                              : draft.flags.length > 0
-                                                ? `draft held by lint (${draft.flags.length} flag(s)) — re-preview`
+                                              : draftHeld
+                                                ? `held · ${draftHeld.next}`
                                                 : c.nextStepIsBreakup
                                                   ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
                                                   : `send next step — sends now${earlyNote}`

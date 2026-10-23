@@ -3,14 +3,8 @@
  * restate (`CadenceView.offer`), read into the queue's offer shape so both
  * pages draw it with the same block. Pure.
  */
-import type {
-  CadenceOfferChoice,
-  CadenceOfferView,
-  CadenceView,
-  OfferSkipView,
-} from "@oneshot-gtm/shared-types";
+import type { CadenceOfferChoice, CadenceOfferView, CadenceView } from "@oneshot-gtm/shared-types";
 import type { OfferView } from "../components/queue/ProspectOffer.tsx";
-import { offerSkipChoices, offerSkipLine } from "./offerSkip.ts";
 
 function offerViewOf(choice: CadenceOfferChoice): OfferView {
   return {
@@ -73,23 +67,4 @@ export function redraftsAfterOfferChange(
   c: Pick<CadenceView, "status" | "nextStepLabel" | "nextStepChannel">,
 ): boolean {
   return c.status === "active" && c.nextStepLabel != null && c.nextStepChannel === "email";
-}
-
-/**
- * What a preview held for its offer tells the founder to do, pointing at the
- * offer block. `skip`: the writer declined, so its reason leads and
- * regenerating is not offered.
- */
-export function offerFlagNote(
-  flags: readonly string[],
-  skip?: OfferSkipView | null,
-): string | null {
-  if (flags.includes("no-offer")) {
-    if (skip) return `${offerSkipLine(skip)} ${offerSkipChoices("sequence")}`;
-    return "No offer for this sequence yet, so nothing was drafted. Write one in the offer block (New offers, or Edit offer) and the step is redrafted around it.";
-  }
-  if (flags.includes("weak-offer")) {
-    return "The offer was rated a weak fit. Approve it, pick another or rewrite it in the offer block; regenerating the draft will not clear this.";
-  }
-  return null;
 }
