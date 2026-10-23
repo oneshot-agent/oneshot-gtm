@@ -968,9 +968,9 @@ function CadencesPage() {
                         }
                         afterBody={
                           <>
-                            {offerFlagNote(draft.flags, c.offer?.skip) && (
+                            {offerFlagNote(draft.flags, masked ? null : c.offer?.skip) && (
                               <p role="note" className="mt-3 text-xs text-ink-muted">
-                                {offerFlagNote(draft.flags, c.offer?.skip)}
+                                {offerFlagNote(draft.flags, masked ? null : c.offer?.skip)}
                               </p>
                             )}
                             {draft.angle && (

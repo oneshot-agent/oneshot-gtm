@@ -1888,7 +1888,7 @@ export function DraftSection({
       body={draft.body}
       afterBody={
         <>
-          {offerSkip && !draft.sent && draft.flags.includes("no-offer") && (
+          {!masked && offerSkip && !draft.sent && draft.flags.includes("no-offer") && (
             <p role="note" className="mt-3 text-xs text-ink-muted">
               {`${offerSkipLine(offerSkip)} ${offerSkipChoices("row")}`}
             </p>
