@@ -103,23 +103,25 @@ const BINARY_EXT = new Set(
 );
 
 /**
- * Secret-shaped by name: environment files, keys and certificates,
- * credentials and secrets files, auth dotfiles. Matched on the file name
- * alone and on purpose broad ("key" anywhere in it): a source file skipped
- * by mistake costs an answer, a secret sent to a model cannot be undone.
+ * Secret-shaped: environment files, private keys and key stores,
+ * credentials and secrets files, auth dotfiles, and anything under a
+ * `secrets/` directory. Ordinary source that merely mentions a key in its
+ * name (`idempotency-key.ts`, `keyboard.ts`) is read like any other file.
  */
 export function isSecretShapedPath(path: string): boolean {
-  const name = (path.split("/").pop() ?? "").toLowerCase();
+  const parts = path.toLowerCase().split("/");
+  const name = parts.pop() ?? "";
   return (
+    parts.some((p) => p === "secrets" || p === ".secrets") ||
     name.startsWith(".env") ||
-    name.includes("key") ||
-    name.startsWith("secret") ||
-    name.startsWith("credential") ||
+    /^secrets?([._-]|$)/.test(name) ||
+    /^credentials?([._-]|$)/.test(name) ||
     name.startsWith("id_rsa") ||
     name.startsWith("id_dsa") ||
     name.startsWith("id_ecdsa") ||
     name.startsWith("id_ed25519") ||
-    /\.(pem|p12|pfx|jks|keystore|crt|cer|der|kdbx|gpg|asc)$/.test(name) ||
+    /private[^/]*key/.test(name) ||
+    /\.(pem|key|p12|pfx|jks|keystore|kdbx)$/.test(name) ||
     [".npmrc", ".netrc", ".pypirc", ".htpasswd", ".git-credentials", ".dockercfg"].includes(name)
   );
 }

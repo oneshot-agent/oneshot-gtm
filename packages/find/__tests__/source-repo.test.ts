@@ -39,9 +39,17 @@ describe("isReadableSourcePath", () => {
     ".env.production",
     "config/.env.local",
     "certs/server.pem",
-    "deploy/api-key.json",
+    "deploy/private-key.json",
+    "deploy/privatekey.txt",
+    "certs/server.key",
+    "certs/store.p12",
+    "certs/store.pfx",
+    "home/.ssh/id_rsa",
+    "home/.ssh/id_ed25519.pub",
     "secrets.yaml",
+    "secret.json",
     "credentials.json",
+    "config/secrets/prod.yaml",
     "node_modules/x/index.js",
     "dist/app.js",
     "bun.lock",
@@ -54,12 +62,18 @@ describe("isReadableSourcePath", () => {
     expect(isReadableSourcePath(path)).toBe(false);
   });
 
-  it.each(["src/approve.ts", "README.md", "lib/queue/worker.py", "package.json"])(
-    "reads %s",
-    (path) => {
-      expect(isReadableSourcePath(path)).toBe(true);
-    },
-  );
+  it.each([
+    "src/approve.ts",
+    "README.md",
+    "lib/queue/worker.py",
+    "package.json",
+    // Source that only mentions a key or a secret in its name is ordinary source.
+    "src/idempotency-key.ts",
+    "src/keyboard.ts",
+    "src/api-keys/route.ts",
+  ])("reads %s", (path) => {
+    expect(isReadableSourcePath(path)).toBe(true);
+  });
 
   it("skips a file over the size cap", () => {
     expect(isReadableSourcePath("src/big.ts", 500_000)).toBe(false);

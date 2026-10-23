@@ -519,7 +519,7 @@ function offerUserMessage(input: DeriveOfferInput, cfg: AppConfig, research: str
   const thread = threadBlock(input.thread);
   return [
     `PRODUCT: ${cfg.productOneLiner ?? ""}`,
-    `PRODUCT BRIEF:\n${clip((productBriefText(cfg) ?? "").trim(), BRIEF_MAX)}`,
+    `PRODUCT BRIEF:\n${productBriefText(cfg, undefined, { max: BRIEF_MAX }) ?? ""}`,
     ...(cfg.pilotOffer?.trim() ? [`OFFER TERMS: ${cfg.pilotOffer.trim()}`] : []),
     `PLAY: ${input.playName}`,
     `PROSPECT: ${firstString(t, ["name", "founderName", "guestName", "hostName"])}`,
@@ -1091,7 +1091,7 @@ export async function deriveOfferAngles(
     ...(input.offer.return?.trim() ? [`RETURN: ${input.offer.return.trim()}`] : []),
     ...(input.offer.steps.trim() ? [`HOW: ${input.offer.steps.trim()}`] : []),
     `PRODUCT: ${cfg.productOneLiner ?? ""}`,
-    `PRODUCT BRIEF:\n${clip(brief, BRIEF_MAX)}`,
+    `PRODUCT BRIEF:\n${productBriefText(cfg, undefined, { max: BRIEF_MAX }) ?? ""}`,
     ...(founderAngles.length > 0
       ? [`FOUNDER'S ANGLES:\n${founderAngles.map((a) => `- ${a}`).join("\n")}`]
       : []),
@@ -1327,7 +1327,7 @@ export function offerBlock(
   }
   if (opts.brief !== false && cfg.productBrief?.trim()) {
     lines.push(
-      `PRODUCT BRIEF (the only source of product claims):\n${clip((productBriefText(cfg) ?? "").trim(), BRIEF_MAX)}`,
+      `PRODUCT BRIEF (the only source of product claims):\n${productBriefText(cfg, undefined, { max: BRIEF_MAX }) ?? ""}`,
     );
   }
   return lines.length > 0 ? lines.join("\n") : null;

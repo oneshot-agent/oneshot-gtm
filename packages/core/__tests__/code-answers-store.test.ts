@@ -233,6 +233,22 @@ describe("productBriefText", () => {
     expect(productBriefText(cfg, ledger)).toBe("We approve things.");
   });
 
+  it("under a cap, clips the founder's brief and keeps the answers whole", () => {
+    const cfg = { productBrief: "x".repeat(500) };
+    expect(productBriefText(cfg, ledger, { max: 100 })).toBe(`${"x".repeat(99)}…`);
+    const { record } = capture("What happens when two people approve the same item?");
+    derived(record.id);
+    ledger.codeAnswers.approve(record.id, { by: "f" });
+    const block = `${CODE_ANSWERS_HEADING}\n- What happens when two people approve the same item?\n  Two approvals of the same item never both go through.`;
+    const out = productBriefText(cfg, ledger, { max: 400 })!;
+    expect(out.length).toBe(400);
+    expect(out.endsWith(`…\n\n${block}`)).toBe(true);
+    // A brief that fits is left alone.
+    expect(productBriefText({ productBrief: "Short." }, ledger, { max: 400 })).toBe(
+      `Short.\n\n${block}`,
+    );
+  });
+
   it("adds nothing without a brief, or with no ledger", () => {
     const { record } = capture("What happens when two people approve the same item?");
     derived(record.id);
