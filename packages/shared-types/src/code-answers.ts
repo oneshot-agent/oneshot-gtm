@@ -26,6 +26,8 @@ export interface CodeAnswer {
   id: string;
   question: string;
   status: CodeAnswerStatus;
+  /** True while the code is being read for it ("Reading your code…"). */
+  deriving: boolean;
   /** The answer text (the founder's edit when `founderEdited`). Null while open or unresolved. */
   answer: string | null;
   founderEdited: boolean;
