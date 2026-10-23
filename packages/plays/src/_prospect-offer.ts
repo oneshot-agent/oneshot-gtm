@@ -599,8 +599,8 @@ const JUDGE_WHY_MAX = 140;
 export function offerRelevanceCriteria(): Record<OfferRelevance, string> {
   return {
     relevant:
-      "A goal this firm at its stage would put on its plan, carried over weeks to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), owned by or one step from this person, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
-    weak: "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, or a return that is not a counted outcome this person owns.",
+      "A goal this firm at its stage would put on its plan, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), owned by or one step from this person, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
+    weak: "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, or a return that is not a counted outcome this person owns.",
     irrelevant:
       "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.",
   };
@@ -650,7 +650,8 @@ async function judgeWithDecisions(
     questions[`offer_${i + 1}`] = {
       type: "choice",
       instructions:
-        `A founder wants to offer this prospect's firm a goal their product would carry to completion over weeks. ` +
+        `A founder wants to offer this prospect's firm a goal their product would carry to completion ` +
+        `over weeks of work, by machine, with outside parties, or both. ` +
         `Judge offer ${i + 1} in the state on its own: is it a real goal for this firm and this person? ` +
         `A market the firm sells into is not a need of the firm. A check is a step, not a goal: ` +
         `the offer should be what the check wins.\nOffer ${i + 1}:\n${describeOffer(o)}`,
@@ -1345,6 +1346,11 @@ export async function offerSetForDraft(
     return { offer: stored, candidates: offerCandidatesOf(t), derived: false };
   }
   if (!cfg.productBrief?.trim()) return null;
+  // Research is not compared here for any offer (see `offerForDraft`): the
+  // play's enrichment adds research the offer never saw, and a draft must not
+  // rewrite it. An approved offer is held to the same rule under an older
+  // prompt version; `ensureOfferSet` re-derives it when the row's own
+  // research changes.
   if (
     isProspectOffer(stored) &&
     (stored.version === OFFER_PROMPT_VERSION || offerWeakApproved(stored)) &&

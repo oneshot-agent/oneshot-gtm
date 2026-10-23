@@ -1127,6 +1127,14 @@ describe("the offer bar", () => {
       "An offer never opens with vet, verify, validate, screen, scan, audit or check.",
     );
     expect(writer).toContain("only when nothing bigger is honest");
+    // The weeks of work may be the machine's, outside parties', or both.
+    expect(writer).toContain("by machine, with outside parties, or both");
+    expect(writer).toContain("on its own is insight, never the offer");
+  });
+
+  it("the judge holds machine work and plans changed on a forecast to the same bar", () => {
+    expect(judge).toContain("by machine, with outside parties, or both");
+    expect(judge).toContain("a forecast or analysis offered without the plan it changes");
   });
 
   it("the lint flags every lead the writer prompt names, and no other", () => {
@@ -1149,8 +1157,8 @@ describe("the offer bar", () => {
     expect(criteria).toMatchInlineSnapshot(`
       {
         "irrelevant": "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.",
-        "relevant": "A goal this firm at its stage would put on its plan, carried over weeks to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), owned by or one step from this person, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
-        "weak": "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, or a return that is not a counted outcome this person owns.",
+        "relevant": "A goal this firm at its stage would put on its plan, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), owned by or one step from this person, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
+        "weak": "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, or a return that is not a counted outcome this person owns.",
       }
     `);
     // The llm judge's labels say the same as the decisions criteria.
