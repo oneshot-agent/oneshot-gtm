@@ -15,7 +15,10 @@ import {
 import { IMPROVE_INSTRUCTIONS } from "./reply-improve-prompt.ts";
 
 export type { DraftInput as ReplyOptionsContext } from "./reply-options-rules.ts";
-export { lintLinkedInDrafts as lintReplyOptions } from "./reply-options-rules.ts";
+export {
+  lintLinkedInDrafts as lintReplyOptions,
+  parseAsk as parseReplyAsk,
+} from "./reply-options-rules.ts";
 
 export async function generateReplyOptions(input: DraftInput) {
   const reservation = tryReserveDailySpend(2);
@@ -58,7 +61,8 @@ export async function generateReplyOptions(input: DraftInput) {
           VARIANTS.every((v) => candidate.drafts[v]) &&
           flagPenalty(candidateFlags) < flagPenalty(flags)
         ) {
-          parsed = candidate;
+          // A repair turn that drops the structured read keeps the first one.
+          parsed = candidate.ask || !parsed.ask ? candidate : { ...candidate, ask: parsed.ask };
           flags = candidateFlags;
         }
       } catch {

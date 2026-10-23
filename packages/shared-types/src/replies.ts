@@ -44,6 +44,8 @@ export interface ReplyDraftSet {
   generated: boolean;
   /** The question the latest message asks; absent on drafts written before it was parsed. */
   ask?: ReplyAsk;
+  /** The answer from the code captured for `ask`, when one was: the composer shows it. */
+  codeAnswerId?: string;
 }
 export interface ReplySendState {
   id: string;

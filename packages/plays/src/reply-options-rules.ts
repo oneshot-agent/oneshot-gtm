@@ -15,6 +15,7 @@ import { lintEmail, humanizeDraft } from "./_lib.ts";
 import { repeatsPriorText, bodyCommitsTerms, replyWordBudget } from "./reply.ts";
 import { loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { angleBlockFromJson } from "@oneshot-gtm/core";
+import type { ReplyAsk } from "@oneshot-gtm/shared-types";
 
 export type Variant = "direct" | "technical" | "warm";
 export const VARIANTS: readonly Variant[] = ["direct", "technical", "warm"];
@@ -90,6 +91,8 @@ export interface ParsedDraftResponse {
   drafts: Drafts;
   moves: Moves;
   read: string;
+  /** The structured form of `read`; undefined when the model left it out or garbled it. */
+  ask?: ReplyAsk;
 }
 
 const MAX_WORDS = 100;
@@ -150,8 +153,9 @@ export function buildDraftSystemPrompt(channel: "email" | "linkedin" = "linkedin
 
 ${channel.toUpperCase()} REPLY TASK:
 - This is a real 1:1 ${channel === "email" ? "email" : "LinkedIn"} conversation after the person replied. ${channel === "email" ? "Return only the reply body, without a subject; follow the email signature directive below." : "Never add a signature, greeting, or subject."} The humanizer's "Hey {first name}" opener and lowercase-subject rules do not apply here; every other humanizer rule does.
-- Return one JSON object with these fields: read (string), direct (string), technical (string), warm (string), moves (object with keys direct, technical, warm).
+- Return one JSON object with these fields: read (string), ask (object with keys level, question, briefAnswers), direct (string), technical (string), warm (string), moves (object with keys direct, technical, warm).
 - read is one sentence for the founder, not for the prospect: what their latest message asks or claims, whether it asks at CAPABILITY level (does the product do X) or MECHANISM level (how does X behave), and whether PRODUCT BRIEF answers it at that level. Write it before the options and let it govern them.
+- ask is the same read as data. level: "capability", "mechanism", or null when their latest message asks nothing about the product. question: their question as one plain standalone sentence about the product, without their name, their company, or anything private (null when level is null). briefAnswers: true only when PRODUCT BRIEF answers it at that level.
 - Each option must answer the latest message with quote-level specificity. Never merely acknowledge it, repeat an earlier message, or turn immediately into a pitch.
 
 THREE MOVES, NOT THREE TONES:
@@ -202,7 +206,7 @@ VOICE:
 - Mirror their length and energy. Prefer 20-60 words; never exceed 100. Mention only the product detail needed to answer them.
 
 Before answering, silently verify: read written first; three different moves; concede present when they challenged you; no product claim outside PRODUCT BRIEF; no mechanism described that PRODUCT BRIEF does not state; no prospect vocabulary used as a product description; at most one link and only a verbatim one; register matches YOUR REGISTER; natural pressure for this stage; one ask at most; controlled texture matches its flag; no humanizer violation.
-Output only {"read":string,"direct":string,"technical":string,"warm":string,"moves":{"direct":string,"technical":string,"warm":string}}.`;
+Output only {"read":string,"ask":{"level":"capability"|"mechanism"|null,"question":string|null,"briefAnswers":boolean},"direct":string,"technical":string,"warm":string,"moves":{"direct":string,"technical":string,"warm":string}}.`;
 }
 
 export function buildDraftUserPrompt(i: DraftInput): string {
@@ -295,7 +299,39 @@ export function parseDraftResponse(content: string): ParsedDraftResponse {
   }
   const read =
     typeof pick(parsed, "read") === "string" ? (pick(parsed, "read") as string).trim() : "";
-  return { drafts, moves, read };
+  const ask = parseAsk(pick(parsed, "ask") ?? pick(nested, "ask"));
+  return { drafts, moves, read, ...(ask ? { ask } : {}) };
+}
+
+const MAX_QUESTION_CHARS = 500;
+
+/**
+ * The structured read, or undefined when it is missing or does not hold
+ * together: an unknown level, a question that is not text, a briefAnswers
+ * that is not a boolean. A missing ask only means nothing is captured; the
+ * options themselves never depend on it.
+ */
+export function parseAsk(value: unknown): ReplyAsk | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const rawLevel = pick(record, "level");
+  const level =
+    rawLevel === null || rawLevel === undefined
+      ? null
+      : typeof rawLevel === "string"
+        ? rawLevel.trim().toLowerCase()
+        : undefined;
+  if (level !== null && level !== "capability" && level !== "mechanism") return undefined;
+  const briefAnswers = pick(record, "briefAnswers") ?? record.brief_answers;
+  if (typeof briefAnswers !== "boolean") return undefined;
+  const rawQuestion = pick(record, "question");
+  if (rawQuestion !== null && rawQuestion !== undefined && typeof rawQuestion !== "string")
+    return undefined;
+  const question =
+    typeof rawQuestion === "string" && rawQuestion.trim()
+      ? rawQuestion.trim().replace(/\s+/g, " ").slice(0, MAX_QUESTION_CHARS)
+      : null;
+  return { level, question: level === null ? null : question, briefAnswers };
 }
 // Lint gate
 const URL_RE = /(?:https?:\/\/|www\.)[^\s<>()"'\]]+/gi;
@@ -483,7 +519,7 @@ export function repairInstruction(flags: DraftFlags, moves: Moves = {}): string 
     "Describe the product only in PRODUCT BRIEF terms; never restate their own vocabulary as a claim about it; concede what they got right.",
     "At most one link per option and only one that appears verbatim in PRODUCT BRIEF or is exactly FOUNDER CALENDAR URL.",
     `Stay under ${MAX_WORDS} words, keep YOUR REGISTER, and do not reuse a run of wording from their messages or from your earlier turns.`,
-    "Same JSON shape, including read and moves.",
+    "Same JSON shape, including read, ask and moves.",
   ]
     .filter(Boolean)
     .join(" ");
