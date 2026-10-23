@@ -250,6 +250,23 @@ describe("deriveOffers", () => {
     expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer]);
   });
 
+  it("drops an offer that repeats a kept one in other words, and asks again for the place", async () => {
+    const reworded = {
+      ...good,
+      offer: "get the leeds crews booked into same-day slots without a dispatcher",
+    };
+    expect(lintOffer({ ...reworded, level: "researched" }, offerResearchText(target))).toEqual([]);
+    llm.replies = [
+      JSON.stringify({ offers: [good, reworded, second] }),
+      // The repair round restates the kept ones: they are repeats too.
+      JSON.stringify({ offers: [reworded, second, third] }),
+    ];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs).toHaveLength(2);
+    expect(llm.inputs[1]).toContain("offer 2: the same job as another offer");
+    expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer, third.offer]);
+  });
+
   it("shows a mid-sequence writer the THREAD SO FAR, as context it may not quote as evidence", async () => {
     const thread = [
       { subject: "crews in leeds", body: "Your crews in Leeds run 412 jobs a week by hand." },
@@ -892,6 +909,37 @@ describe("deriveOffers with the relevance judge", () => {
     ]);
     expect(offers[4]?.relevanceWhy).toBe("would fit any trade business");
     expect(offers[0]?.relevanceClassifier).toMatch(/^llm:/);
+  });
+
+  it("drops a replacement that repeats a kept offer in other words", async () => {
+    const reworded = {
+      ...second,
+      offer: "fill the leeds depot's cancelled slots with jobs the same morning",
+    };
+    llm.replies = [
+      JSON.stringify({ offers: [good, second, third, fourth, fifth] }),
+      JSON.stringify({ offers: [reworded, replacement] }),
+    ];
+    llm.judge = [
+      judgeReply([
+        ["relevant", "a"],
+        ["relevant", "b"],
+        ["relevant", "c"],
+        ["relevant", "d"],
+        ["irrelevant", "rests on the word healthcare"],
+      ]),
+      judgeReply([["relevant", "their cancelled jobs"]]),
+    ];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs[1]).toContain("Write exactly 1 new offer");
+    expect(llm.judgeInputs[1]).not.toContain(reworded.offer);
+    expect(offers.map((o) => o.offer)).toEqual([
+      good.offer,
+      second.offer,
+      third.offer,
+      fourth.offer,
+      replacement.offer,
+    ]);
   });
 
   it("fills with the best-scored weak offers, never an irrelevant one", async () => {

@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
-import type { OfferSkipView } from "@oneshot-gtm/shared-types";
+import { offersNearDuplicate, type OfferSkipView } from "@oneshot-gtm/shared-types";
 import { cn } from "../../lib/cn.ts";
 import { offerSkipLine } from "../../lib/offerSkip.ts";
 import { clearDraftGenerating, markDraftGenerating } from "../../lib/draftRunState.ts";
@@ -122,14 +122,24 @@ export function offerCandidatesFromPayload(payload: unknown): OfferView[] {
     : [];
 }
 
-/** Start at the first candidate when the active offer is no longer in the list. */
+/**
+ * Start at the first candidate when the active offer is no longer in the
+ * list. A candidate that is the active offer reworded (`offersNearDuplicate`)
+ * is skipped, unless every other one is.
+ */
 export function nextOfferIndex(
   offer: Pick<OfferView, "offer"> | null,
   candidates: readonly Pick<OfferView, "offer">[],
 ): number | null {
   if (candidates.length === 0) return null;
   const activeIndex = candidates.findIndex((candidate) => candidate.offer === offer?.offer);
-  return (activeIndex + 1) % candidates.length;
+  const next = (activeIndex + 1) % candidates.length;
+  if (!offer) return next;
+  for (let step = 1; step <= candidates.length; step++) {
+    const i = (activeIndex + step) % candidates.length;
+    if (i !== activeIndex && !offersNearDuplicate(offer.offer, candidates[i]!.offer)) return i;
+  }
+  return next;
 }
 
 /** One change to an offer, the body both offer routes take. */
