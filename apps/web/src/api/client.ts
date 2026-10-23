@@ -1,4 +1,5 @@
 import type { OnboardingStatus } from "@oneshot-gtm/shared-types";
+import type { CodeAnswer, SourceRepoTestResult } from "@oneshot-gtm/shared-types";
 import type { LinkedInMeasureView } from "@oneshot-gtm/shared-types";
 import type { LinkedInReadsView, ReadProfileResult } from "@oneshot-gtm/shared-types";
 import type {
@@ -434,6 +435,8 @@ export const api = {
     ),
   deriveIcp: (domain: string) => postJson<DeriveIcpResult>("/setup/derive-icp", { domain }),
   deriveBrief: (urls: string[]) => postJson<DeriveBriefResult>("/setup/derive-brief", { urls }),
+  testSourceRepo: (repo: { url?: string; path?: string; ref?: string }) =>
+    postJson<SourceRepoTestResult>("/setup/source-repo/test", repo),
   /**
    * Connect LinkedIn for live profile reads. Two ways in: import the stored
    * li_at cookie into a fresh OneShot browser profile, or open a hosted
@@ -664,4 +667,28 @@ export const api = {
     postJson<{ ok: true }>(`/learning/guidance/${encodeURIComponent(id)}`, { enabled }),
   rollbackLearningGuidance: (id: string) =>
     postJson<{ ok: true }>(`/learning/guidance/${encodeURIComponent(id)}/rollback`, {}),
+  // Answers from your code: questions prospects asked, read against the source repo.
+  codeAnswers: (filter: { threadKey?: string; id?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (filter.threadKey) q.set("threadKey", filter.threadKey);
+    if (filter.id) q.set("id", filter.id);
+    const query = q.toString();
+    return getJson<{ answers: CodeAnswer[] }>(`/code-answers${query ? `?${query}` : ""}`);
+  },
+  approveCodeAnswer: (id: string, text?: string) =>
+    postJson<{ ok: true; answer: CodeAnswer }>(
+      `/code-answers/${encodeURIComponent(id)}/approve`,
+      text === undefined ? {} : { text },
+    ),
+  dismissCodeAnswer: (id: string) =>
+    postJson<{ ok: true; answer: CodeAnswer }>(
+      `/code-answers/${encodeURIComponent(id)}/dismiss`,
+      {},
+    ),
+  deriveCodeAnswer: (id: string) =>
+    postJson<{ ok: true; answer: CodeAnswer }>(
+      `/code-answers/${encodeURIComponent(id)}/derive`,
+      {},
+    ),
+  sweepCodeAnswers: () => postJson<{ ok: true }>("/code-answers/sweep", {}),
 };

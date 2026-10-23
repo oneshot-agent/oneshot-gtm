@@ -24,6 +24,7 @@ import {
   generateReplyOptions,
   improveReplyOption,
   lintReplyOptions,
+  parseReplyAsk,
   type ReplyOptionsContext,
 } from "@oneshot-gtm/plays";
 import {
@@ -46,6 +47,7 @@ import { refreshLinkedInInbox } from "../linkedin-sync.ts";
 import { collectReplies, threadContextVersion } from "./replies-view.ts";
 import { sendReplyRoute, archiveInboxConversationRoute } from "./inbox.ts";
 import { mailboxStateRoute } from "./mailboxes.ts";
+import { captureReplyAsk } from "./code-answers.ts";
 
 function thread(key: unknown): ReplyThread {
   if (typeof key !== "string") throw new Error("Conversation key is required");
@@ -277,7 +279,15 @@ function draftPayload(value: unknown): ReplyDraftSet {
     )
   )
     throw new Error("Invalid reply draft set");
-  return d;
+  // Both are written by the generate route; a saved set carries them back
+  // as they were or not at all.
+  const { ask: rawAsk, codeAnswerId: rawId, ...rest } = d;
+  const ask = parseReplyAsk(rawAsk);
+  return {
+    ...rest,
+    ...(ask ? { ask } : {}),
+    ...(typeof rawId === "string" && rawId && rawId.length <= 100 ? { codeAnswerId: rawId } : {}),
+  };
 }
 export async function replyDraftSaveRoute(req: Request) {
   try {
@@ -328,7 +338,19 @@ export async function replyGenerateRoute(req: Request) {
       generated: true,
       learningVersion,
       learningKey: context.learningKey ?? null,
+      ...(generated.ask ? { ask: generated.ask } : {}),
     };
+    // A how-it-works question the brief does not answer goes to the source
+    // repo in the background. Regenerating the same conversation state reuses
+    // the earlier capture instead of counting the question again.
+    const asksCode =
+      generated.ask?.level === "mechanism" && !generated.ask.briefAnswers && generated.ask.question;
+    const codeAnswerId = !asksCode
+      ? undefined
+      : t.drafts?.codeAnswerId && t.drafts.contextVersion === t.contextVersion
+        ? t.drafts.codeAnswerId
+        : captureReplyAsk(t.key, generated.ask);
+    if (codeAnswerId) next.codeAnswerId = codeAnswerId;
     getReplyReviewStore().learning.recordGeneration(t, next, context);
     // The browser explicitly accepts a replacement; a generation never mutates existing edits.
     return jsonResponse(next, 200, req);

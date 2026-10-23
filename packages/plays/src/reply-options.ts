@@ -15,7 +15,10 @@ import {
 import { IMPROVE_INSTRUCTIONS } from "./reply-improve-prompt.ts";
 
 export type { DraftInput as ReplyOptionsContext } from "./reply-options-rules.ts";
-export { lintLinkedInDrafts as lintReplyOptions } from "./reply-options-rules.ts";
+export {
+  lintLinkedInDrafts as lintReplyOptions,
+  parseAsk as parseReplyAsk,
+} from "./reply-options-rules.ts";
 
 export async function generateReplyOptions(input: DraftInput) {
   const reservation = tryReserveDailySpend(2);

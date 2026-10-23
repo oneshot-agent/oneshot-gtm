@@ -702,7 +702,8 @@ export function mergeSourceRepo(
   const field = (name: "url" | "path" | "ref"): string => {
     const value = (incoming as Record<string, unknown>)[name];
     if (value === undefined || value === null) return "";
-    if (typeof value !== "string") throw new SetupValidationError(`sourceRepo.${name} must be text`);
+    if (typeof value !== "string")
+      throw new SetupValidationError(`sourceRepo.${name} must be text`);
     return value.trim();
   };
   const url = field("url");

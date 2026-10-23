@@ -1,22 +1,59 @@
 import { useMutation } from "@tanstack/react-query";
-import { Wand2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Plug, Wand2 } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import type { SetupRequest, SourceRepoTestResult } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
+import {
+  shortCommit,
+  sourceRepoError,
+  sourceRepoField,
+  sourceRepoRequest,
+} from "../../lib/codeAnswers.ts";
 import { readOnly } from "../../lib/readOnly.ts";
 import { Button } from "../primitives/Button.tsx";
-import { Field, Textarea } from "../primitives/Field.tsx";
+import { Field, Input, Textarea } from "../primitives/Field.tsx";
+import { CodeAnswersList } from "./CodeAnswersList.tsx";
 import { SectionShell } from "./SectionShell.tsx";
 import { useConfigSection } from "./useConfigSection.ts";
 import type { SectionProps } from "./types.ts";
 
 export function ProductBriefSection({ cfg, onDirtyChange }: SectionProps) {
-  const server = useMemo(() => ({ productBrief: cfg.productBrief ?? "" }), [cfg]);
+  const server = useMemo(
+    () => ({
+      productBrief: cfg.productBrief ?? "",
+      sourceRepo: sourceRepoField(cfg.sourceRepo),
+      sourceRef: cfg.sourceRepo?.ref ?? "",
+      codeAnswerDisclosure: cfg.codeAnswerDisclosure ?? "",
+    }),
+    [cfg],
+  );
+  // The repo and its ref go out together whichever of the two was edited.
+  const values = useRef(server);
   const s = useConfigSection({
     id: "brief",
     server,
-    toRequest: (sent) => sent,
+    toRequest: (sent) => {
+      const out: SetupRequest = {};
+      if (sent.productBrief !== undefined) out.productBrief = sent.productBrief;
+      if (sent.codeAnswerDisclosure !== undefined)
+        out.codeAnswerDisclosure = sent.codeAnswerDisclosure;
+      if (sent.sourceRepo !== undefined || sent.sourceRef !== undefined) {
+        const v = { ...values.current, ...sent };
+        out.sourceRepo = sourceRepoRequest(v.sourceRepo, v.sourceRef);
+      }
+      return out;
+    },
+    validate: (v) => ({ sourceRepo: sourceRepoError(v.sourceRepo) }),
     onDirtyChange,
+  });
+  values.current = s.values;
+  const [repoTest, setRepoTest] = useState<SourceRepoTestResult | null>(null);
+  const testRepo = useMutation({
+    mutationFn: () =>
+      api.testSourceRepo(sourceRepoRequest(s.values.sourceRepo, s.values.sourceRef) ?? {}),
+    onSuccess: setRepoTest,
+    onError: (err) => setRepoTest({ ok: false, error: (err as Error).message }),
   });
 
   // Seeded once from the saved signature domain; the section mounts only
@@ -87,6 +124,79 @@ export function ProductBriefSection({ cfg, onDirtyChange }: SectionProps) {
           rows={8}
         />
       </Field>
+      <Field
+        label="Source repo"
+        hint="Read to answer how-it-works questions the brief doesn't. A GitHub URL (private repos use GITHUB_TOKEN) or a local checkout. Answers wait for your approval."
+        error={s.errors.sourceRepo}
+      >
+        <div className="flex gap-2">
+          <Input
+            value={s.values.sourceRepo}
+            onChange={(e) => {
+              s.set("sourceRepo", e.target.value);
+              setRepoTest(null);
+            }}
+            placeholder="https://github.com/you/your-repo or /path/to/checkout"
+          />
+          <Input
+            aria-label="Branch, tag or commit"
+            className="max-w-[12rem]"
+            value={s.values.sourceRef}
+            onChange={(e) => {
+              s.set("sourceRef", e.target.value);
+              setRepoTest(null);
+            }}
+            placeholder="default branch"
+          />
+          <Button
+            type="button"
+            variant="secondary"
+            className="shrink-0 whitespace-nowrap"
+            disabled={
+              testRepo.isPending ||
+              !s.values.sourceRepo.trim() ||
+              Boolean(sourceRepoError(s.values.sourceRepo))
+            }
+            onClick={() => testRepo.mutate()}
+            {...readOnly}
+          >
+            <Plug size={12} className={testRepo.isPending ? "animate-pulse" : undefined} />
+            {testRepo.isPending ? "Testing…" : "Test"}
+          </Button>
+        </div>
+      </Field>
+      {repoTest && <SourceRepoTestLine result={repoTest} />}
+      <Field
+        label="What answers may say"
+        hint="Blank: behaviour only, what a caller observes. Never storage, file paths, internal names or environment."
+      >
+        <Textarea
+          value={s.values.codeAnswerDisclosure}
+          onChange={(e) => s.set("codeAnswerDisclosure", e.target.value)}
+          placeholder="Behaviour only: what a caller sees, in plain words."
+          rows={2}
+        />
+      </Field>
+      <CodeAnswersList repoConfigured={Boolean(cfg.sourceRepo?.url || cfg.sourceRepo?.path)} />
     </SectionShell>
+  );
+}
+
+export function SourceRepoTestLine({ result }: { result: SourceRepoTestResult }) {
+  if (!result.ok)
+    return (
+      <div role="alert" className="font-mono text-[11px] text-ink-blocked-2">
+        can't read it · {result.error ?? "unknown error"}
+      </div>
+    );
+  const parts = [
+    `readable${result.backend ? ` via ${result.backend === "github" ? "GitHub" : "local checkout"}` : ""}`,
+    result.ref && result.commit ? `${result.ref} @ ${shortCommit(result.commit)}` : null,
+    result.readableFiles != null ? `${result.readableFiles} files the answers may read` : null,
+  ].filter(Boolean);
+  return (
+    <div role="status" className="font-mono text-[11px] text-ink-faint">
+      {parts.join(" · ")}
+    </div>
   );
 }

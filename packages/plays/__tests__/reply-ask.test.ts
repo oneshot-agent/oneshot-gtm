@@ -28,7 +28,11 @@ describe("parseAsk", () => {
         question: "  How are   failed calls retried? ",
         briefAnswers: false,
       }),
-    ).toEqual({ level: "mechanism", question: "How are failed calls retried?", briefAnswers: false });
+    ).toEqual({
+      level: "mechanism",
+      question: "How are failed calls retried?",
+      briefAnswers: false,
+    });
   });
 
   it("keeps a null level and drops the question with it", () => {
@@ -77,7 +81,9 @@ describe("parseDraftResponse", () => {
     expect(parsed.ask).toBeUndefined();
     expect("ask" in parsed).toBe(false);
     expect(parsed.drafts.warm).toContain("What do you need");
-    const garbled = parseDraftResponse(JSON.stringify({ ...options, ask: "mechanism, not covered" }));
+    const garbled = parseDraftResponse(
+      JSON.stringify({ ...options, ask: "mechanism, not covered" }),
+    );
     expect(garbled.ask).toBeUndefined();
     expect(garbled.moves).toEqual(options.moves);
   });
@@ -116,7 +122,11 @@ describe("generateReplyOptions", () => {
     ],
     casualTexture: false,
   };
-  const ask = { level: "mechanism", question: "How are failed calls retried?", briefAnswers: false };
+  const ask = {
+    level: "mechanism",
+    question: "How are failed calls retried?",
+    briefAnswers: false,
+  };
 
   it("returns the ask with the options", async () => {
     complete.mockResolvedValue({ content: JSON.stringify({ ...options, ask }) });
