@@ -392,6 +392,100 @@ describe("a sequence that can't get an offer", () => {
   });
 });
 
+describe("a sequence the writer declines", () => {
+  const why = "Dana left Northside Plumbing in October and no longer holds the role.";
+  const writerCalls = () => llm.inputs.get("prospect-offer")?.length ?? 0;
+
+  it("keeps the why on the cadence, held no-offer, and does not ask again while the research stands", async () => {
+    llm.offers = JSON.stringify({ skip: true, why });
+    const { id } = preOfferSequence();
+    const held = await preview(id);
+    expect(held).toMatchObject({ subject: "", body: "", flags: ["no-offer"] });
+    expect(writerCalls()).toBe(1);
+
+    // Stored on the cadence (read back from the row, as after a reload).
+    const stored = cadenceOffer(id)!;
+    expect(stored).toMatchObject({ offer: null, origin: "derived", skip: { why } });
+    expect(typeof (stored["skip"] as Record<string, unknown>)["inputHash"]).toBe("string");
+    expect(sequenceOfferRecord({ prospectId: id, playName: PLAY })).toMatchObject({
+      offer: null,
+      skip: { why },
+    });
+
+    // A regenerate reads the same research: the stored skip answers it.
+    expect((await preview(id)).flags).toEqual(["no-offer"]);
+    const again = await deriveSequenceOffer({ prospectId: id, playName: PLAY });
+    expect(again).toMatchObject({ status: "none", reason: "skipped", skip: { why } });
+    expect(writerCalls()).toBe(1);
+  });
+
+  it("asks again once the research changes", async () => {
+    llm.offers = JSON.stringify({ skip: true, why });
+    const { id } = preOfferSequence();
+    await preview(id);
+    expect(writerCalls()).toBe(1);
+
+    ledger.mergeProspectDossierHalf(id, "person", "joined Southside Heating as operations lead");
+    llm.offers = JSON.stringify({ offers: [good, second] });
+    const out = await preview(id);
+    expect(writerCalls()).toBe(2);
+    expect(out.flags).toEqual([]);
+    // The written offer replaced the skip.
+    const stored = cadenceOffer(id)!;
+    expect(stored["offer"]).toMatchObject({ offer: good.offer });
+    expect(stored["skip"]).toBeUndefined();
+    expect(sequenceOfferRecord({ prospectId: id, playName: PLAY }).skip).toBeNull();
+  });
+
+  it("New offers asks again, and a fresh skip replaces the stored one", async () => {
+    llm.offers = JSON.stringify({ skip: true, why });
+    const { id } = preOfferSequence();
+    await deriveSequenceOffer({ prospectId: id, playName: PLAY });
+    llm.offers = JSON.stringify({ skip: true, why: "Still nothing to offer." });
+    const forced = await deriveSequenceOffer({ prospectId: id, playName: PLAY, force: true });
+    expect(writerCalls()).toBe(2);
+    expect(forced).toMatchObject({ reason: "skipped", skip: { why: "Still nothing to offer." } });
+    expect(sequenceOfferRecord({ prospectId: id, playName: PLAY }).skip?.why).toBe(
+      "Still nothing to offer.",
+    );
+  });
+
+  it("the founder's own offer clears it", async () => {
+    llm.offers = JSON.stringify({ skip: true, why });
+    const { id } = preOfferSequence();
+    await preview(id);
+    const record = sequenceOfferRecord({ prospectId: id, playName: PLAY });
+    expect(
+      writeSequenceOffer({
+        record,
+        offer: {
+          offer: "book every crew the day the job comes in",
+          steps: "",
+          editedBy: "founder",
+        },
+      }),
+    ).toBe(true);
+    const after = sequenceOfferRecord({ prospectId: id, playName: PLAY });
+    expect(after).toMatchObject({ skip: null, offer: { editedBy: "founder" } });
+    expect(cadenceOffer(id)!["skip"]).toBeUndefined();
+    const out = await preview(id);
+    expect(out.flags).toEqual([]);
+    expect(writerCalls()).toBe(1);
+  });
+
+  it("a re-enrolment that brings an offer replaces a stored skip", async () => {
+    llm.offers = JSON.stringify({ skip: true, why });
+    const { id } = preOfferSequence();
+    await deriveSequenceOffer({ prospectId: id, playName: PLAY });
+    enrollInCadence({ prospectId: id, playName: PLAY, offer: { ...good } as never });
+    expect(sequenceOfferRecord({ prospectId: id, playName: PLAY })).toMatchObject({
+      offer: { offer: good.offer },
+      introCarriedOffer: true,
+      skip: null,
+    });
+  });
+});
+
 describe("weak-fit sequence offers", () => {
   it("hold the follow-up for the founder, until the offer is approved", async () => {
     llm.judge = "weak";

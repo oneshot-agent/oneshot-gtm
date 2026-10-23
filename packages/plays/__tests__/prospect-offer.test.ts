@@ -52,11 +52,17 @@ const {
   deriveOffer,
   deriveOffers,
   deriveOfferSet,
+  ensureOfferSet,
+  isOfferSkipped,
   lintOffer,
   lintOfferAngle,
   offerBlock,
   offerForDraft,
+  offerInputHash,
+  offerProductHash,
   offerResearchText,
+  offerSetForDraft,
+  activeOfferPatch,
   OFFER_PROMPT_VERSION,
   playMakesOffer,
 } = await import("../src/_prospect-offer.ts");
@@ -228,7 +234,7 @@ const angles = [
 describe("deriveOffers", () => {
   it("keeps the ranked offers that pass, in the model's order", async () => {
     llm.replies = [JSON.stringify({ offers: [good, second] })];
-    const offers = await deriveOffers({ target, playName: "new-business" });
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer]);
     expect(offers[0]?.return).toBe(good.return);
   });
@@ -239,7 +245,7 @@ describe("deriveOffers", () => {
       JSON.stringify({ offers: [good, watching] }),
       JSON.stringify({ offers: [good, second] }),
     ];
-    const offers = await deriveOffers({ target, playName: "new-business" });
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(llm.inputs[1]).toContain("offer 2: offer-not-execution");
     expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer]);
   });
@@ -254,7 +260,7 @@ describe("deriveOffers", () => {
       JSON.stringify({ offers: [quoting, second] }),
       JSON.stringify({ offers: [good, second] }),
     ];
-    const offers = await deriveOffers({ target, playName: "new-business", thread });
+    const { offers } = await deriveOffers({ target, playName: "new-business", thread });
     expect(llm.inputs[0]).toContain("THREAD SO FAR:");
     expect(llm.inputs[0]).toContain("--- email 1 ---\nSubject: crews in leeds");
     expect(llm.inputs[0]).toContain("Still worth a look?");
@@ -271,6 +277,90 @@ describe("deriveOffers", () => {
   });
 });
 
+describe("the writer's skip", () => {
+  const why = "They left the firm in October and no longer hold the role.";
+
+  it("comes back with its why and the input hash it read", async () => {
+    llm.replies = [JSON.stringify({ skip: true, why: `  ${why}\n` })];
+    const out = await deriveOffers({ target, playName: "new-business" });
+    expect(out.offers).toEqual([]);
+    expect(out.skip?.why).toBe(why);
+    expect(out.skip?.version).toBe(OFFER_PROMPT_VERSION);
+    expect(out.skip?.inputHash).toBe(offerInputHash(offerResearchText(target), cfg));
+    expect(out.skip?.productHash).toBe(offerProductHash(cfg));
+  });
+
+  it("is no skip when an earlier round kept offers", async () => {
+    const watching = { ...second, offer: "monitor cancellations at the leeds depot" };
+    llm.replies = [
+      JSON.stringify({ offers: [good, watching] }),
+      JSON.stringify({ skip: true, why }),
+    ];
+    const out = await deriveOffers({ target, playName: "new-business" });
+    expect(out.offers.map((o) => o.offer)).toEqual([good.offer]);
+    expect(out.skip).toBeNull();
+  });
+
+  it("reaches deriveOfferSet as `skipped`, and a lint failure stays null", async () => {
+    llm.replies = [JSON.stringify({ skip: true, why })];
+    const set = await deriveOfferSet({ target, playName: "new-business" });
+    expect(isOfferSkipped(set) && set.skipped.why).toBe(why);
+    const bad = JSON.stringify({ ...good, offer: "book 40 jobs a day" });
+    llm.replies = [bad, bad];
+    expect(await deriveOfferSet({ target, playName: "new-business" })).toBeNull();
+  });
+
+  it("stored and current, answers ensureOfferSet with no writer call; changed research asks again", async () => {
+    llm.replies = [JSON.stringify({ skip: true, why })];
+    const first = await ensureOfferSet({ target, playName: "new-business" });
+    if (!isOfferSkipped(first)) throw new Error("expected a skip");
+    expect(first.changed).toBe(true);
+    const calls = llm.inputs.length;
+
+    const again = await ensureOfferSet({
+      target: { ...target, offerSkip: first.skipped },
+      playName: "new-business",
+    });
+    expect(isOfferSkipped(again) && again.changed).toBe(false);
+    expect(llm.inputs.length).toBe(calls);
+
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    const moved = await ensureOfferSet({
+      target: { ...target, update: "hired a dispatcher for leeds", offerSkip: first.skipped },
+      playName: "new-business",
+    });
+    expect(llm.inputs.length).toBeGreaterThan(calls);
+    expect(moved && !isOfferSkipped(moved) && moved.offer.offer).toBe(good.offer);
+  });
+
+  it("stored under today's prompt and product, is kept by offerSetForDraft", async () => {
+    llm.replies = [JSON.stringify({ skip: true, why })];
+    const first = await offerSetForDraft({ target, playName: "new-business" });
+    if (!isOfferSkipped(first)) throw new Error("expected a skip");
+    expect(first.derived).toBe(true);
+    const calls = llm.inputs.length;
+    const kept = await offerSetForDraft({
+      target: { ...target, offerSkip: first.skipped },
+      dossier: "more research the row never had",
+      playName: "new-business",
+    });
+    expect(isOfferSkipped(kept) && kept.derived).toBe(false);
+    expect(
+      await offerForDraft({
+        target: { ...target, offerSkip: first.skipped },
+        playName: "new-business",
+      }),
+    ).toBeNull();
+    expect(llm.inputs.length).toBe(calls);
+  });
+
+  it("is deleted by the patch that makes an offer active", async () => {
+    llm.replies = [JSON.stringify(good)];
+    const offer = (await deriveOffer({ target, playName: "new-business" }))!;
+    expect(activeOfferPatch(null, offer, [offer]).offerSkip).toBeNull();
+  });
+});
+
 describe("deriveOfferSet", () => {
   it("makes the best offer active and writes its angles", async () => {
     llm.replies = [
@@ -281,7 +371,8 @@ describe("deriveOfferSet", () => {
       target: { ...target, yourEdge: "Founder reason one // Founder reason two" },
       playName: "new-business",
     });
-    expect(set?.offer.offer).toBe(good.offer);
+    if (!set || isOfferSkipped(set)) throw new Error("expected offers");
+    expect(set.offer.offer).toBe(good.offer);
     // The angle leading with watching is dropped.
     expect(set?.offer.angles).toEqual(angles);
     expect(set?.candidates.map((c) => c.offer)).toEqual([good.offer, second.offer]);
@@ -312,11 +403,12 @@ describe("offer angles are written once", () => {
       target: { ...target, offer: stored },
       playName: "new-business",
     });
-    expect(first?.offer.angles).toEqual([]);
+    if (!first || isOfferSkipped(first)) throw new Error("expected the stored offer");
+    expect(first.offer.angles).toEqual([]);
     expect(first?.changed).toBe(true);
     const calls = llm.inputs.length;
     const second = await mod.ensureOfferSet({
-      target: { ...target, offer: first!.offer },
+      target: { ...target, offer: first.offer },
       playName: "new-business",
     });
     expect(second?.changed).toBe(false);
@@ -515,7 +607,7 @@ describe("offer fit", () => {
   it("is parsed and stored on the offer", async () => {
     const fit = "their firm: a second depot in leeds with booking done by hand";
     llm.replies = [JSON.stringify({ offers: [{ ...good, fit: `${fit}.` }] })];
-    const [offer] = await deriveOffers({ target, playName: "new-business" });
+    const [offer] = (await deriveOffers({ target, playName: "new-business" })).offers;
     expect(offer?.fit).toBe(fit);
   });
 
@@ -781,7 +873,7 @@ describe("deriveOffers with the relevance judge", () => {
       ]),
       judgeReply([["relevant", "their cancelled jobs"]]),
     ];
-    const offers = await deriveOffers({ target, playName: "new-business" });
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(llm.inputs).toHaveLength(2);
     expect(llm.inputs[1]).toContain("Write exactly 2 new offers");
     expect(llm.inputs[1]).toContain("rests on the word healthcare");
@@ -826,7 +918,7 @@ describe("deriveOffers with the relevance judge", () => {
           { choice: "irrelevant", confidence: 0.8, relevant: 0.1 },
         ]),
       );
-    const offers = await deriveOffers({
+    const { offers } = await deriveOffers({
       target,
       playName: "new-business",
       fetchImpl: fetchImpl as never,
@@ -869,7 +961,7 @@ describe("deriveOffers with the relevance judge", () => {
         { choice: "irrelevant", confidence: 0.9, probabilities: { irrelevant: 0.9 } },
       ]),
     );
-    const offers = await deriveOffers({
+    const { offers } = await deriveOffers({
       target,
       playName: "new-business",
       fetchImpl: fetchImpl as never,
@@ -893,7 +985,7 @@ describe("deriveOffers with the relevance judge", () => {
         ["weak", "would fit any trade business"],
       ]),
     ];
-    const offers = await deriveOffers({ target, playName: "new-business" });
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(offers.map((o) => [o.relevance, o.relevanceWhy])).toEqual([
       ["relevant", "the second depot"],
       ["weak", "would fit any trade business"],
@@ -908,7 +1000,7 @@ describe("deriveOffers with the relevance judge", () => {
         ["relevant", "b"],
       ]),
     ];
-    const offers = await deriveOffers({ target, playName: "new-business" });
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(llm.inputs).toHaveLength(1);
     expect(offers.map((o) => o.relevance)).toEqual(["relevant", "relevant"]);
   });
@@ -916,7 +1008,7 @@ describe("deriveOffers with the relevance judge", () => {
   it("keeps the offers unjudged when the judge's reply cannot be read", async () => {
     llm.replies = [JSON.stringify({ offers: [good, second] })];
     llm.judge = ["not json"];
-    const offers = await deriveOffers({ target, playName: "new-business" });
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer]);
     expect(offers[0]?.relevance).toBeUndefined();
   });

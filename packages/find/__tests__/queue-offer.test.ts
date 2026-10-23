@@ -15,13 +15,15 @@ vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return { ...actual, getLedger: () => ledger, logEvent: () => {} };
 });
-vi.mock("@oneshot-gtm/plays", async () => ({
-  playMakesOffer: (play: string) => play !== "pmf-survey",
-  ensureOfferSet: (...args: unknown[]) => ensureOfferSet(...args),
-  activeOfferPatch: (
-    await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays")
-  ).activeOfferPatch,
-}));
+vi.mock("@oneshot-gtm/plays", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays");
+  return {
+    playMakesOffer: (play: string) => play !== "pmf-survey",
+    ensureOfferSet: (...args: unknown[]) => ensureOfferSet(...args),
+    activeOfferPatch: actual.activeOfferPatch,
+    isOfferSkipped: actual.isOfferSkipped,
+  };
+});
 
 vi.mock("../src/_product-research.ts", async () => {
   const actual = await vi.importActual<typeof import("../src/_product-research.ts")>(
@@ -54,7 +56,7 @@ describe("ensureQueueRowOffer", () => {
     const out = await ensureQueueRowOffer(row);
     expect(ledger.patchLiveQueuePayload).toHaveBeenCalledWith({
       id: 7,
-      patch: { offer, offerCandidates: candidates },
+      patch: { offer, offerCandidates: candidates, offerSkip: null },
     });
     expect(out.payload_json).toBe('{"stored":true}');
   });
@@ -71,7 +73,11 @@ describe("ensureQueueRowOffer", () => {
     });
     expect(ledger.patchLiveQueuePayload).toHaveBeenCalledWith({
       id: 7,
-      patch: { offer: { ...offer, weakApprovedAt: null }, offerCandidates: [offer] },
+      patch: {
+        offer: { ...offer, weakApprovedAt: null },
+        offerCandidates: [offer],
+        offerSkip: null,
+      },
     });
   });
 
@@ -81,6 +87,62 @@ describe("ensureQueueRowOffer", () => {
     ensureOfferSet.mockResolvedValue({ offer, candidates: [offer], changed: false });
     expect(await ensureQueueRowOffer(current)).toBe(current);
     expect(ledger.patchLiveQueuePayload).not.toHaveBeenCalled();
+  });
+
+  const skip = {
+    why: "They left the firm and no longer hold the role.",
+    version: "offer-v4",
+    inputHash: "h1",
+    productHash: "p1",
+    skippedAt: "2026-10-22T00:00:00.000Z",
+  };
+
+  it("keeps a fresh writer skip on the live row, with its why", async () => {
+    ensureOfferSet.mockResolvedValue({ skipped: skip, changed: true });
+    const out = await ensureQueueRowOffer(row);
+    expect(ledger.patchLiveQueuePayload).toHaveBeenCalledWith({
+      id: 7,
+      patch: { offerSkip: skip },
+    });
+    expect(out.payload_json).toBe('{"stored":true}');
+  });
+
+  it("writes nothing when the stored skip still stands", async () => {
+    const current = { ...row, payload_json: JSON.stringify({ name: "Dana", offerSkip: skip }) };
+    ensureOfferSet.mockResolvedValue({ skipped: skip, changed: false });
+    expect(await ensureQueueRowOffer(current)).toBe(current);
+    expect(ledger.patchLiveQueuePayload).not.toHaveBeenCalled();
+  });
+
+  it("drops a skip left over from older research when nothing could be written now", async () => {
+    ensureOfferSet.mockResolvedValue(null);
+    await ensureQueueRowOffer({
+      ...row,
+      payload_json: JSON.stringify({ name: "Dana", offerSkip: skip }),
+    });
+    expect(ledger.patchLiveQueuePayload).toHaveBeenCalledWith({
+      id: 7,
+      patch: { offerSkip: null },
+    });
+  });
+
+  it("drops the skip when an offer is written", async () => {
+    const offer = { offer: "x", steps: "a, b" };
+    ensureOfferSet.mockResolvedValue({ offer, candidates: [offer], changed: true });
+    ledger.patchLiveQueuePayload.mockReturnValueOnce(false);
+    const out = await ensureQueueRowOffer({
+      ...row,
+      payload_json: JSON.stringify({ name: "Dana", offerSkip: skip }),
+    });
+    expect(ledger.patchLiveQueuePayload.mock.calls[0]![0].patch).toMatchObject({
+      offerSkip: null,
+    });
+    // A write that did not land still hands the draft the offer, without the skip.
+    expect(JSON.parse(out.payload_json)).toEqual({
+      name: "Dana",
+      offer,
+      offerCandidates: [offer],
+    });
   });
 
   it("skips a play that makes no offer", async () => {
@@ -139,7 +201,7 @@ describe("company research before offers", () => {
     expect(ledger.patchLiveQueuePayload.mock.calls.map((c) => c[0].patch)).toEqual([
       { productResearch: null },
       { productResearch: pages },
-      { offer, offerCandidates: [offer] },
+      { offer, offerCandidates: [offer], offerSkip: null },
     ]);
   });
 
@@ -179,8 +241,8 @@ describe("company research before offers", () => {
     await ensureQueueRowOffer(firm, { research: true });
     expect(ensureOfferSet).toHaveBeenCalledTimes(2);
     expect(ledger.patchLiveQueuePayload.mock.calls.map((c) => c[0].patch)).toEqual([
-      { offer, offerCandidates: [offer] },
-      { offer, offerCandidates: [offer] },
+      { offer, offerCandidates: [offer], offerSkip: null },
+      { offer, offerCandidates: [offer], offerSkip: null },
     ]);
   });
 

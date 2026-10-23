@@ -11,6 +11,8 @@ let ledger: Ledger;
 const cfg = { productBrief: "Acme books crews into open slots.", cadenceOverrides: null };
 const derived = vi.hoisted(() => ({
   offers: null as null | Array<Record<string, unknown>>,
+  /** The writer declines with this why (wins over `offers`). */
+  skip: null as null | string,
   /** Runs while the models would be writing: a send claiming the cadence meanwhile. */
   meanwhile: null as null | (() => void),
   /** What the last angles were written from. */
@@ -42,6 +44,22 @@ vi.mock("@oneshot-gtm/plays", async () => {
     // the way the real one does, through the same guarded write.
     deriveSequenceOffer: async (input: { prospectId: number; playName: string }) => {
       const record = actual.sequenceOfferRecord(input);
+      if (derived.skip !== null) {
+        const skip = {
+          why: derived.skip,
+          version: actual.OFFER_PROMPT_VERSION,
+          inputHash: "h",
+          productHash: "p",
+          skippedAt: "2026-10-22T00:00:00.000Z",
+        };
+        const kept = !record.offer && actual.writeSequenceOfferSkip(record, skip);
+        return {
+          status: "none",
+          record: kept ? { ...record, skip } : record,
+          reason: "skipped",
+          skip,
+        };
+      }
       if (!derived.offers) return { status: "none", record, reason: "nothing-derived" };
       derived.meanwhile?.();
       const [offer, ...rest] =
@@ -201,6 +219,7 @@ function versions(id: number) {
 beforeEach(() => {
   ledger = new Ledger(":memory:");
   derived.offers = null;
+  derived.skip = null;
   derived.meanwhile = null;
   derived.angleInput = null;
   cfg.productBrief = "Acme books crews into open slots.";
@@ -248,6 +267,33 @@ describe("cadenceOfferRoute", () => {
     const out = await post(id, { regenerate: true });
     expect(out.status).toBe(422);
     expect(preview(id)).not.toBeNull();
+  });
+
+  it("answers a writer skip with its why, keeps it on the cadence and the preview stands", async () => {
+    const { id } = cadence();
+    derived.skip = "Dana left Northside Plumbing in October and no longer holds the role.";
+    const out = await post(id, { regenerate: true });
+    expect(out.status).toBe(422);
+    expect(out.body["error"]).toBe(
+      "No offer: Dana left Northside Plumbing in October and no longer holds the role.",
+    );
+    expect(out.body["offer"]).toMatchObject({
+      text: null,
+      skip: { why: derived.skip, at: "2026-10-22T00:00:00.000Z" },
+    });
+    expect(preview(id)).not.toBeNull();
+    expect((await viewOf(id))["offer"]).toMatchObject({ skip: { why: derived.skip } });
+  });
+
+  it("the founder's own text clears a stored skip", async () => {
+    const { id } = cadence();
+    derived.skip = "No longer at the firm.";
+    await post(id, { regenerate: true });
+    const out = await post(id, { offer: "quote every job the day it's asked for" });
+    expect(out.status).toBe(200);
+    expect(out.body["offer"]).not.toHaveProperty("skip");
+    expect((await viewOf(id))["offer"]).not.toHaveProperty("skip");
+    expect(JSON.parse(ledger.getCadence(id, PLAY)!.offer_json!)).not.toHaveProperty("skip");
   });
 
   it("saves the founder's own text as theirs, keeping the ranked list", async () => {

@@ -99,6 +99,19 @@ describe("notes", () => {
     expect(offerFlagNote(["thin-body"])).toBeNull();
   });
 
+  it("leads with the writer's reason when it declined, and never says regenerate", () => {
+    const note = offerFlagNote(["no-offer"], {
+      why: "They left the firm in October",
+      at: "2026-10-22T00:00:00.000Z",
+    })!;
+    expect(note.startsWith("No offer: They left the firm in October.")).toBe(true);
+    expect(note).toContain("Edit offer");
+    expect(note).toContain("New offers");
+    expect(note).toContain("stop the sequence");
+    expect(note).toContain("Regenerating will not change this");
+    expect(offerFlagNote(["weak-offer"], { why: "x", at: "" })).toContain("Approve it");
+  });
+
   it("redrafts after a change only when an email is next", () => {
     const next = { status: "active" as const, nextStepLabel: "breakup" };
     expect(redraftsAfterOfferChange({ ...next, nextStepChannel: "email" })).toBe(true);

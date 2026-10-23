@@ -95,6 +95,7 @@ import {
   xHandleFrom,
 } from "../lib/channels.ts";
 import { heldSummary } from "../lib/flagLabels.ts";
+import { offerSkipChoices, offerSkipLine } from "../lib/offerSkip.ts";
 import {
   caseRows,
   personResearchBadge,
@@ -1000,7 +1001,10 @@ export function QueueRow({
     : null;
   const signalLabel = signal && when ? `${signal} · ${when}` : (signal ?? when);
   const prio = priorityChip(row.priority, masked, { shadow: !ranked });
-  const held = row.lastDraft && !row.lastDraft.sent ? heldSummary(row.lastDraft.flags) : null;
+  const held =
+    row.lastDraft && !row.lastDraft.sent
+      ? heldSummary(row.lastDraft.flags, { offerSkipped: !!row.offerSkip })
+      : null;
   const detail = sourceDetail(row.source);
   const researchRows = masked ? [] : personResearchRows(row.payload);
   const profileHistory = researchRows.filter((r) => r.key === "listed as" || r.key === "formerly");
@@ -1228,6 +1232,7 @@ export function QueueRow({
                 <ProspectOffer
                   rowId={row.id}
                   payload={row.payload}
+                  skip={row.offerSkip ?? null}
                   editable={
                     (row.status === "pending" || row.status === "approved") &&
                     !row.lastDraft?.sent &&
@@ -1309,6 +1314,7 @@ export function QueueRow({
               payload={row.payload}
               status={row.status}
               sendHold={row.sendHold}
+              offerSkip={row.offerSkip ?? null}
               delivery={row.delivery ?? null}
               draft={row.lastDraft}
               draftedAt={row.lastDraftedAt}
@@ -1340,6 +1346,7 @@ export function DraftSection({
   isSending,
   prospectId,
   sendHold,
+  offerSkip = null,
   delivery,
 }: {
   id: number;
@@ -1348,6 +1355,8 @@ export function DraftSection({
   payload: unknown;
   status: QueueStatusView;
   sendHold?: QueueRowView["sendHold"];
+  /** The writer declined to write the row's offer: its reason (`QueueRowView.offerSkip`). */
+  offerSkip?: QueueRowView["offerSkip"] | null;
   /** Sent-folder delivery check of this row's send, when one ran. */
   delivery?: QueueRowView["delivery"];
   draft: QueueRowView["lastDraft"];
@@ -1765,7 +1774,9 @@ export function DraftSection({
               ? "Send this prospect now — sends the reviewed draft, as-is"
               : draft == null
                 ? "Generate a draft first, then send it"
-                : "Draft has lint flags — regenerate to clear them, then send"
+                : offerSkip && draft.flags.includes("no-offer")
+                  ? "No offer for this row: write the offer yourself or ask for new ones, then send"
+                  : "Draft has lint flags — regenerate to clear them, then send"
       }
     >
       {sending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
@@ -1844,7 +1855,7 @@ export function DraftSection({
             {sendHold && <SendHoldNote rowId={id} hold={sendHold} editable={!sending} />}
             {deliveryNote && <DeliveryWarning delivery={delivery} />}
             {!draft.sent && draft.flags.length > 0 && (
-              <DraftStateLine sent={false} flags={draft.flags} />
+              <DraftStateLine sent={false} flags={draft.flags} offerSkipped={!!offerSkip} />
             )}
             {softHold && <Explain concept="softHold" detail={softHoldDetail} />}
             {draft.receiptIds.map((rid) => (
@@ -1877,6 +1888,11 @@ export function DraftSection({
       body={draft.body}
       afterBody={
         <>
+          {offerSkip && !draft.sent && draft.flags.includes("no-offer") && (
+            <p role="note" className="mt-3 text-xs text-ink-muted">
+              {`${offerSkipLine(offerSkip)} ${offerSkipChoices("row")}`}
+            </p>
+          )}
           {(draft.angle || activeOfferIndex >= 0) && (
             <div className="mt-3 flex flex-wrap items-baseline gap-3 text-xs text-ink-muted">
               {draft.angle && (

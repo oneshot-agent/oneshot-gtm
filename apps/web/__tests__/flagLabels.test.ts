@@ -44,6 +44,18 @@ describe("heldSummary", () => {
     });
   });
 
+  it("a writer's skip is no regenerate: the founder writes the offer or asks for new ones", () => {
+    expect(heldSummary(["no-offer"], { offerSkipped: true })).toEqual({
+      kind: "lint",
+      text: "1 flag: the writer found no offer to make",
+      next: "write the offer yourself or ask for new ones",
+    });
+    expect(heldSummary(["no-offer"])?.next).toBe("regenerate to clear it, then send");
+    expect(heldSummary(["em-dash"], { offerSkipped: true })?.next).toBe(
+      "regenerate to clear it, then send",
+    );
+  });
+
   it("a soft flag beside a lint flag is still a lint hold", () => {
     expect(heldSummary(["stale-event", "em-dash"])?.kind).toBe("lint");
     // ungrounded alone is a review hold with a send-anyway, not a lint block.

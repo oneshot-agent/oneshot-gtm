@@ -65,6 +65,25 @@ describe("offerFromPayload", () => {
   });
 });
 
+describe("a row the writer declined", () => {
+  it("shows its reason in place of the empty note", () => {
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <ProspectOffer
+          rowId={1}
+          payload={{}}
+          editable
+          skip={{ why: "They left the firm in October.", at: "2026-10-22T00:00:00.000Z" }}
+        />
+      </QueryClientProvider>,
+    );
+    expect(html).toContain("No offer: They left the firm in October.");
+    expect(html).not.toContain("No offer yet.");
+    expect(html).toContain("Edit offer");
+    expect(html).toContain("New offers");
+  });
+});
+
 describe("nextOfferIndex", () => {
   const candidates = ["one", "two", "three", "four", "five"].map((offer) => ({ offer }));
 

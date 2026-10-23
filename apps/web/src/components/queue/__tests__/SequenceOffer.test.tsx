@@ -95,6 +95,25 @@ describe("SequenceOffer", () => {
     expect(html).not.toContain("queue row");
   });
 
+  it("says why the writer declined, in place of the empty note, keeping the choices", () => {
+    const html = render(
+      <SequenceOffer
+        cadence={card(
+          offer({
+            text: null,
+            candidates: [],
+            activeIndex: -1,
+            skip: { why: "Dana left the firm in October", at: "2026-10-22T00:00:00.000Z" },
+          }),
+        )}
+      />,
+    );
+    expect(html).toContain("No offer: Dana left the firm in October.");
+    expect(html).not.toContain("No offer yet.");
+    expect(html).toContain("Edit offer");
+    expect(html).toContain("New offers");
+  });
+
   it("names the offer work running on the card, keyed by the cadence", () => {
     const id = sequenceOfferActivityId(card(offer()));
     const token = setRowActivity(id, "Rewriting the draft around the offer…");

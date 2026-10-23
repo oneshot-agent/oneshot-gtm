@@ -950,7 +950,11 @@ function CadencesPage() {
                         subject={draft.subject}
                         stateLine={
                           draft.flags.length > 0 ? (
-                            <DraftStateLine sent={false} flags={draft.flags} />
+                            <DraftStateLine
+                              sent={false}
+                              flags={draft.flags}
+                              offerSkipped={!!c.offer?.skip}
+                            />
                           ) : undefined
                         }
                         body={draft.body}
@@ -964,9 +968,9 @@ function CadencesPage() {
                         }
                         afterBody={
                           <>
-                            {offerFlagNote(draft.flags) && (
+                            {offerFlagNote(draft.flags, c.offer?.skip) && (
                               <p role="note" className="mt-3 text-xs text-ink-muted">
-                                {offerFlagNote(draft.flags)}
+                                {offerFlagNote(draft.flags, c.offer?.skip)}
                               </p>
                             )}
                             {draft.angle && (

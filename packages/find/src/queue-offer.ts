@@ -10,6 +10,10 @@
  * pages when the row has a company domain and none were read: offers written
  * from a one-line description lean on industry words. A click never waits on
  * that read (one page takes about a minute).
+ *
+ * When the writer declines, its reason is kept on the payload (`offerSkip`,
+ * with the hash of the research it read) and shown on the row; drafts do
+ * not ask it again until that research changes.
  */
 import {
   getLedger,
@@ -18,7 +22,12 @@ import {
   resolveTriggerOverlay,
   type QueueRow,
 } from "@oneshot-gtm/core";
-import { activeOfferPatch, ensureOfferSet, playMakesOffer } from "@oneshot-gtm/plays";
+import {
+  activeOfferPatch,
+  ensureOfferSet,
+  isOfferSkipped,
+  playMakesOffer,
+} from "@oneshot-gtm/plays";
 import {
   hasCompanyPages,
   productResearchSkipsPlay,
@@ -137,9 +146,40 @@ async function researchCompany(
 }
 
 /**
- * The row with a current offer on its payload. Writes only to a live row
- * (pending or approved, not sending); a row that moved on keeps its payload,
- * and the returned row still carries the offer for the draft in hand.
+ * What the row's payload should change to after an offer lookup, and the
+ * payload as the draft in hand reads it should the write not land: a fresh
+ * set, a fresh writer skip, or, when nothing could be written, no skip left
+ * over from research that has since changed. Null: nothing to write.
+ */
+function offerPayloadChange(
+  payload: JsonRecord,
+  set: Awaited<ReturnType<typeof ensureOfferSet>>,
+): { patch: JsonRecord; fallback: JsonRecord } | null {
+  if (!set) {
+    if (payload["offerSkip"] === undefined) return null;
+    const { offerSkip: _stale, ...rest } = payload;
+    return { patch: { offerSkip: null }, fallback: rest };
+  }
+  if (!set.changed) return null;
+  if (isOfferSkipped(set)) {
+    return {
+      patch: { offerSkip: set.skipped },
+      fallback: { ...payload, offerSkip: set.skipped },
+    };
+  }
+  // Replaces the old offer whole: none of its keys (an approval, a label) carry over.
+  const { offerSkip: _cleared, ...rest } = payload;
+  return {
+    patch: activeOfferPatch(payload["offer"], set.offer, set.candidates),
+    fallback: { ...rest, offer: set.offer, offerCandidates: set.candidates },
+  };
+}
+
+/**
+ * The row with a current offer on its payload, or the writer's current skip.
+ * Writes only to a live row (pending or approved, not sending); a row that
+ * moved on keeps its payload, and the returned row still carries the offer
+ * for the draft in hand.
  */
 export async function ensureQueueRowOffer<R extends OfferableRow>(
   row: R,
@@ -158,23 +198,17 @@ export async function ensureQueueRowOffer<R extends OfferableRow>(
     const target = edgeTarget(payload, row);
     const set = await ensureOfferSet({ target, playName: row.play_name });
     const ledger = getLedger();
-    if (!set?.changed) {
+    const change = offerPayloadChange(payload, set);
+    if (!change) {
       if (!researched.written) return row;
       const fresh = ledger.getQueueRow(row.id);
       return { ...row, payload_json: fresh?.payload_json ?? JSON.stringify(payload) };
     }
-    // Replaces the old offer whole: none of its keys (an approval, a label) carry over.
-    const patch = activeOfferPatch(payload["offer"], set.offer, set.candidates);
     // Re-read after the write: callers compare payload_json against the
     // stored text to detect a concurrent change, so it must be the DB's own.
-    const written = ledger.patchLiveQueuePayload({ id: row.id, patch });
+    const written = ledger.patchLiveQueuePayload({ id: row.id, patch: change.patch });
     const fresh = written ? ledger.getQueueRow(row.id) : null;
-    return {
-      ...row,
-      payload_json:
-        fresh?.payload_json ??
-        JSON.stringify({ ...payload, offer: set.offer, offerCandidates: set.candidates }),
-    };
+    return { ...row, payload_json: fresh?.payload_json ?? JSON.stringify(change.fallback) };
   } catch (err) {
     logEvent(
       "error.swallowed",
