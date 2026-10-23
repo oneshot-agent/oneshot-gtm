@@ -239,6 +239,7 @@ describe("queue weak offer", () => {
     });
     expect(html).toContain("Held · weak offer · approve the offer, pick another or rewrite it");
     expect(html).not.toContain("the offer was rated a weak fit");
+    expect(html).not.toContain(hold.reason);
     expect(html).not.toContain("send as-is");
   });
 });

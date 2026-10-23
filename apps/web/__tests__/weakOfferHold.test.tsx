@@ -7,11 +7,15 @@ const reason =
 const render = (code: "weak-offer" | "off-icp") =>
   renderToStaticMarkup(<SendHoldNote hold={{ code, reason }} />);
 
-it("explains a weak-offer hold with the held line's advice", () => {
+it("explains a weak-offer hold with the held line's advice, said once", () => {
   const html = render("weak-offer");
   expect(html).toContain("Held · weak offer · approve the offer, pick another or rewrite it");
-  expect(html).toContain(reason);
-  expect(html).toContain("Regenerating the draft will not clear this hold");
+  // The body adds only what the summary does not say.
+  expect(html).not.toContain(reason);
+  expect(html.match(/weak fit|weak offer/g)).toHaveLength(1);
+  expect(html).toContain(
+    "Queue approval and the offer are separate. Regenerating the draft will not clear this hold.",
+  );
 });
 
 it("leaves Approve offer to the offer block", () => {
