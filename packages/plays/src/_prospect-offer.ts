@@ -29,6 +29,7 @@ import {
   tryParseJsonObject,
   type DecisionsChoiceQuestion,
 } from "@oneshot-gtm/intel";
+import { nearDuplicateOffer } from "@oneshot-gtm/shared-types";
 import {
   ANGLE_SEPARATOR,
   angleTextKey,
@@ -795,8 +796,9 @@ function withJudgement(o: DraftOffer, j: OfferJudgement | null): DraftOffer {
 }
 
 /**
- * Lint each offer in a reply, dropping failures and repeats. The ones that
- * pass come back in the model's order; `failed` names what was wrong.
+ * Lint each offer in a reply, dropping failures and repeats (near-duplicates
+ * of one already seen, `offersNearDuplicate`). The ones that pass come back
+ * in the model's order; `failed` names what was wrong.
  */
 function lintReply(
   content: string,
@@ -813,13 +815,18 @@ function lintReply(
     const parsed = readRaw(raw);
     if (!parsed) return;
     const flags = lintOffer(parsed, research, product, oneLiner);
-    const key = angleTextKey(parsed.offer);
     if (flags.length > 0) {
       failed.push(`offer ${i + 1}: ${flags.join(", ")}`);
       return;
     }
-    if (seen.has(key)) return;
-    seen.add(key);
+    // A repeat, exact or reworded, is dropped and named, so a short set
+    // gets the repair round like a lint failure. `seen` holds the offers as
+    // written: a "$", a "%" or a capitalized name tells two apart.
+    if (nearDuplicateOffer(parsed.offer, seen) !== null) {
+      failed.push(`offer ${i + 1}: the same job as another offer`);
+      return;
+    }
+    seen.add(parsed.offer);
     kept.push(parsed);
   });
   return { kept, failed, skip: null };

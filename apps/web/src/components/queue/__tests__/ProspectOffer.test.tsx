@@ -100,6 +100,34 @@ describe("nextOfferIndex", () => {
     expect(nextOfferIndex(null, [])).toBeNull();
     expect(nextOfferIndex(candidates[0]!, candidates.slice(0, 1))).toBe(0);
   });
+
+  it("skips a stored candidate that is the active offer reworded", () => {
+    const stored = [
+      "clear pending carrier vetting backlogs by verifying motor carrier operating authority and active safety records",
+      "clear pending carrier vetting backlogs by verifying motor carrier operating authority and safety records",
+      "reconcile import duty rates across freight manifests",
+    ].map((offer) => ({ offer }));
+    expect(nextOfferIndex(stored[0]!, stored)).toBe(2);
+    expect(nextOfferIndex(stored[1]!, stored)).toBe(2);
+    expect(nextOfferIndex(stored[2]!, stored)).toBe(0);
+    // An active offer no longer in the list skips its rewording too.
+    expect(
+      nextOfferIndex(
+        {
+          offer:
+            "clear carrier vetting backlogs by verifying motor carrier operating authority and safety records",
+        },
+        stored.slice(1),
+      ),
+    ).toBe(1);
+  });
+
+  it("falls back to the next one when every other candidate repeats the active offer", () => {
+    const stored = ["clear the vetting backlog", "clear the vetting backlogs"].map((offer) => ({
+      offer,
+    }));
+    expect(nextOfferIndex(stored[0]!, stored)).toBe(1);
+  });
 });
 
 describe("offer relevance in the case", () => {

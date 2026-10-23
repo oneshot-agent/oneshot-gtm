@@ -2150,6 +2150,7 @@ export function isQueueImportInProgress(row: {
 
 export * from "./onboarding.ts";
 export * from "./linkedin-measure.ts";
+export * from "./offer-similarity.ts";
 
 /** GET /api/linkedin/invites: LinkedIn invites left today (workspace share and account). */
 export interface LinkedInInviteQuotaView {
