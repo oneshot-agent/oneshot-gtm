@@ -366,10 +366,15 @@ export function contentSendKey(identityId: string, input: SendEmailInput): strin
   return `content:${emailIdempotencyKey([identityId, input.to, input.subject, input.body])}`;
 }
 
-/** A Gmail API failure the server answered (or auth/config) never sent anything. */
+/**
+ * A Gmail API failure the server answered (or auth/config) never sent
+ * anything. A request cut off at gmail.ts's deadline is definite too: it was
+ * aborted, so it cannot land later, and the alternative (`uncertain`, then
+ * the sweep settling it `failed`) is the duplicate-send path of #905.
+ */
 function gmailFailureIsDefinite(err: unknown): boolean {
   const msg = (err as Error)?.message ?? "";
-  return /Gmail (API failed|auth rejected|credentials missing|token (exchange|refresh) failed)|no Gmail refresh token/i.test(
+  return /Gmail (API (failed|\S+ deadline exceeded)|auth rejected|credentials missing|token (exchange|refresh) failed)|no Gmail refresh token/i.test(
     msg,
   );
 }

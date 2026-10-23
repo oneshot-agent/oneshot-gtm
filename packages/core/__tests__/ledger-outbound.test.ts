@@ -283,6 +283,22 @@ describe("OutboundSendStore.claim", () => {
     expect(retry.send).toMatchObject({ subject: "Rewritten", body: "new", exactResend: false });
   });
 
+  it("a definite failure leaves no row the sweep can settle failed and resend (#905)", () => {
+    // The Gmail path: no deterministic Message-ID and sentEvidence true. A
+    // send cut off at the transport deadline is marked `failed` right away,
+    // so it never ages into `uncertain` for the confirm sweep to settle.
+    const store = ledger.outboundSends;
+    const gmail = input({ transport: "gmail", messageId: null, identityId: "gmail:me@gmail.com" });
+    store.claim(gmail);
+    store.mark(gmail.key, "failed", { error: "Gmail API /messages/send deadline exceeded (30s)" });
+    expect(store.get(gmail.key)).toMatchObject({ status: "failed", messageId: null });
+    const anHour = 60 * 60_000;
+    expect(store.listUnconfirmed({ minAgeMs: 0, limit: 10, now: at(anHour) })).toEqual([]);
+    const retry = store.claim({ ...gmail, now: at(anHour) });
+    expect(retry).toMatchObject({ verdict: "send", retry: true });
+    expect(retry.send).toMatchObject({ status: "pending", attempts: 2, exactResend: false });
+  });
+
   it("stamps submitted / confirmed / checked times by status", () => {
     const store = ledger.outboundSends;
     store.claim(input());

@@ -338,6 +338,33 @@ describe("sendEmail — gmail keyed sends", () => {
     expect(sends(fetchMock)).toBe(1);
     expect(scratch.outboundSends.get(key)?.status).toBe("uncertain");
   });
+
+  it("a hung send fails definitely at the deadline: the row is failed, not uncertain (#905)", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = stubGmailFetch();
+      const base = fetchMock.getMockImplementation() as (u: string | URL) => Promise<Response>;
+      fetchMock.mockImplementation(async (url: string | URL) => {
+        if (String(url).endsWith("/messages/send")) return new Promise<Response>(() => {});
+        return base(url);
+      });
+      const key = "gtm:test:email:show-hn:hung@acme.com:0";
+      const { UncertainSendError } = await import("../src/oneshot.ts");
+      const settled = sendEmail(
+        { to: "hung@acme.com", subject: "hi", body: "b", idempotencyKey: key },
+        { playName: "show-hn" },
+      ).catch((e: Error) => e);
+      await vi.advanceTimersByTimeAsync(31_000);
+      const err = await settled;
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(UncertainSendError);
+      expect((err as Error).message).toMatch(/Gmail API \/messages\/send deadline exceeded/);
+      expect(sends(fetchMock)).toBe(1);
+      expect(scratch.outboundSends.get(key)).toMatchObject({ status: "failed", messageId: null });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("sendEmail — records a cross-workspace contact touch", () => {

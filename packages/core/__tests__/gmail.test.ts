@@ -4,8 +4,10 @@ import {
   buildRawMessage,
   getGmailAccessToken,
   getGmailProfile,
+  GMAIL_TIMEOUT_MS,
   listGmailReplies,
   missingGmailSecrets,
+  sendGmailMessage,
 } from "../src/gmail.ts";
 
 const GMAIL_KEYS = ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"] as const;
@@ -612,5 +614,36 @@ describe("listGmailReplies message cache", () => {
     // The cache is per account: a different account re-fetches.
     await listGmailReplies({ limit: 10 }, { id: "gmail:other", refreshToken: "r" });
     expect(gets.length).toBe(6);
+  });
+});
+
+describe("gmailFetch deadline (#905)", () => {
+  it("rejects a hung send at the deadline and aborts the request instead of hanging", async () => {
+    vi.useFakeTimers();
+    try {
+      let sendSignal: AbortSignal | undefined;
+      const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+        if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+        sendSignal = init?.signal ?? undefined;
+        return new Promise<Response>(() => {});
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const pending = sendGmailMessage({
+        to: "a@b.com",
+        fromEmail: "jane@gmail.com",
+        fromName: null,
+        subject: "s",
+        htmlBody: "b",
+      });
+      const settled = pending.catch((e: Error) => e);
+      await vi.advanceTimersByTimeAsync(GMAIL_TIMEOUT_MS - 1);
+      expect(sendSignal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const err = await settled;
+      expect((err as Error).message).toBe("Gmail API /messages/send deadline exceeded (30s)");
+      expect(sendSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

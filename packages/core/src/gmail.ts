@@ -1,6 +1,6 @@
 import type { InboxEmail, InboxListResult } from "@oneshot-agent/sdk";
 import { htmlToText } from "./html-text.ts";
-import { parallelMap } from "./parallel.ts";
+import { parallelMap, withDeadline } from "./parallel.ts";
 import type { AuthVerdict, BounceKind, GmailPlacement } from "./types.ts";
 
 /**
@@ -11,6 +11,14 @@ import type { AuthVerdict, BounceKind, GmailPlacement } from "./types.ts";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
+/**
+ * Deadline on every Gmail API request. Comfortably shorter than the keyed
+ * send's STALE_PENDING_MS (5 min): a send that hangs must fail definitely
+ * (the request is aborted, the row is `failed`, nothing reached Sent) instead
+ * of ageing into `uncertain`, which the confirm sweep would settle as failed
+ * and resend under a second Message-ID (#905). Same shape as Smartlead's.
+ */
+export const GMAIL_TIMEOUT_MS = 30_000;
 
 export const GMAIL_AUTH_HINT = "run: bun run cli -- gmail auth";
 
@@ -194,10 +202,24 @@ async function gmailFetch(
   account?: GmailAccount,
 ): Promise<Response> {
   const token = await getGmailAccessToken(account);
-  return fetch(`${GMAIL_API}${path}`, {
-    ...init,
-    headers: { ...init?.headers, Authorization: `Bearer ${token}` },
-  });
+  // Abort the request at the deadline, not just the wait on it: a send that
+  // is still running when the deadline rejection makes the row `failed`
+  // would otherwise land later, next to the retry.
+  const abort = new AbortController();
+  try {
+    return await withDeadline(
+      fetch(`${GMAIL_API}${path}`, {
+        ...init,
+        signal: abort.signal,
+        headers: { ...init?.headers, Authorization: `Bearer ${token}` },
+      }),
+      GMAIL_TIMEOUT_MS,
+      `Gmail API ${path.split("?")[0]}`,
+    );
+  } catch (err) {
+    abort.abort();
+    throw err;
+  }
 }
 
 /** Google's stable API error envelope: `{ error: { code, message, status, errors[] } }`. */
