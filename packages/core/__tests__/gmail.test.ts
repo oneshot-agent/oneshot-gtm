@@ -646,4 +646,37 @@ describe("gmailFetch deadline (#905)", () => {
       vi.useRealTimers();
     }
   });
+
+  it("rejects at the same deadline when the headers arrive but the body never finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      let sendSignal: AbortSignal | undefined;
+      const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+        if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+        sendSignal = init?.signal ?? undefined;
+        // 200 with headers right away; the JSON body never completes.
+        return new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const pending = sendGmailMessage({
+        to: "a@b.com",
+        fromEmail: "jane@gmail.com",
+        fromName: null,
+        subject: "s",
+        htmlBody: "b",
+      });
+      const settled = pending.catch((e: Error) => e);
+      await vi.advanceTimersByTimeAsync(GMAIL_TIMEOUT_MS - 1);
+      expect(sendSignal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const err = await settled;
+      expect((err as Error).message).toBe("Gmail API /messages/send deadline exceeded (30s)");
+      expect(sendSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
