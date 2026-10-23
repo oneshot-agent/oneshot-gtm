@@ -211,7 +211,7 @@ export async function deriveCodeAnswer(
   const now = deps.now ?? (() => new Date());
   const view = (r: CodeAnswerRecord | null) => (r ? toCodeAnswerView(r) : null);
   let record: CodeAnswerRecord | null = null;
-  let claimed = false;
+  let lease: string | null = null;
   try {
     const cfg = opts.cfg ?? loadConfig();
     record = store.get(id);
@@ -220,9 +220,9 @@ export async function deriveCodeAnswer(
       return { status: "skipped", answer: view(record), reason: `already ${record.status}` };
     if (!codeAnswersEnabled(cfg) && !opts.snapshot)
       return { status: "skipped", answer: view(record), reason: "no source repo is connected" };
-    if (!store.claimDerive(id, now()))
+    lease = store.claimDerive(id, now());
+    if (!lease)
       return { status: "skipped", answer: view(store.get(id)), reason: "already being read" };
-    claimed = true;
 
     let snapshot = opts.snapshot;
     if (!snapshot) {
@@ -297,6 +297,7 @@ export async function deriveCodeAnswer(
           }),
         },
         now(),
+        lease,
       );
       logEvent("code_answer.derived", {
         id,
@@ -316,13 +317,13 @@ export async function deriveCodeAnswer(
   } catch (err) {
     return fail((err as Error).message || "derive failed");
   } finally {
-    if (claimed) store.releaseDerive(id);
+    if (lease) store.releaseDerive(id, lease);
   }
 
   function fail(reason: string): DeriveCodeAnswerOutcome {
     logEvent("code_answer.derive_failed", { id, message_120: reason.slice(0, 120) }, "warn");
     // Release before reading the row back, so the view does not say "reading".
-    if (claimed) store.releaseDerive(id);
+    if (lease) store.releaseDerive(id, lease);
     return { status: "failed", answer: view(store.get(id) ?? record), reason };
   }
 }

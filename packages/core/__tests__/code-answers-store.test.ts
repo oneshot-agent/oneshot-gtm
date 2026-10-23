@@ -102,6 +102,18 @@ describe("question identity", () => {
     ).toBeLessThan(0.8);
   });
 
+  it("keeps a question and its negation apart", () => {
+    expect(
+      questionSimilarity(
+        "Can I approve the same item twice?",
+        "Can't I approve the same item twice?",
+      ),
+    ).toBe(0);
+    capture("Does it retry a failed send automatically?");
+    capture("Does it not retry a failed send automatically?");
+    expect(ledger.codeAnswers.list()).toHaveLength(2);
+  });
+
   it("keeps questions apart that differ by one content word", () => {
     capture("How does the approval queue handle concurrent writes from many users?");
     capture("How does the approval queue handle concurrent reads from many users?");
@@ -157,9 +169,10 @@ describe("capture", () => {
 describe("transitions", () => {
   it("derive → pending → approved, then markStale takes it out", () => {
     const { record } = capture("What happens when two people approve the same item?");
-    expect(ledger.codeAnswers.claimDerive(record.id)).toBe(true);
+    const lease = ledger.codeAnswers.claimDerive(record.id);
+    expect(lease).toEqual(expect.any(String));
     // A second derive while the first holds the lease is refused.
-    expect(ledger.codeAnswers.claimDerive(record.id)).toBe(false);
+    expect(ledger.codeAnswers.claimDerive(record.id)).toBeNull();
     const pending = derived(record.id)!;
     expect(pending).toMatchObject({ status: "pending", commit: COMMIT, deriving: false });
     expect(toCodeAnswerView(pending).files).toEqual([{ path: "src/approve.ts" }]);
@@ -230,13 +243,39 @@ describe("transitions", () => {
     derived(record.id);
     ledger.codeAnswers.approve(record.id, { by: "f" });
     expect(derived(record.id)).toBeNull();
-    expect(ledger.codeAnswers.claimDerive(record.id)).toBe(false);
+    expect(ledger.codeAnswers.claimDerive(record.id)).toBeNull();
     ledger.codeAnswers.dismiss(record.id, { by: "f" });
     expect(ledger.codeAnswers.get(record.id)?.status).toBe("dismissed");
     expect(derived(record.id)).toBeNull();
     // A dismissed question asked again keeps its status: it only counts.
     const again = capture("What happens when two people approve the same item?", "thread-9");
     expect(again.record).toMatchObject({ status: "dismissed", askedCount: 2 });
+  });
+
+  it("a derive whose lease was taken over cannot write or release", () => {
+    const { record } = capture("What happens when two people approve the same item?");
+    const t0 = new Date("2026-10-23T00:00:00Z");
+    const old = ledger.codeAnswers.claimDerive(record.id, t0)!;
+    // Past the lease, a second derive takes over.
+    const fresh = ledger.codeAnswers.claimDerive(record.id, new Date(t0.getTime() + 11 * 60_000))!;
+    expect(fresh).not.toBe(old);
+    const result = {
+      status: "pending" as const,
+      answer: "Late.",
+      files: FILES,
+      commit: COMMIT,
+      promptVersion: "v",
+      digest: "d",
+    };
+    expect(ledger.codeAnswers.recordDerive(record.id, result, new Date(), old)).toBeNull();
+    ledger.codeAnswers.releaseDerive(record.id, old);
+    expect(
+      ledger.codeAnswers.claimDerive(record.id, new Date(t0.getTime() + 12 * 60_000)),
+    ).toBeNull();
+    expect(
+      ledger.codeAnswers.recordDerive(record.id, { ...result, answer: "Fresh." }, new Date(), fresh)
+        ?.answer,
+    ).toBe("Fresh.");
   });
 
   it("markStale ignores rows that are not approved or pending", () => {

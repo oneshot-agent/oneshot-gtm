@@ -403,6 +403,7 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
           threads_json TEXT NOT NULL DEFAULT '[]',
           source_thread_key TEXT,
           deriving_at TEXT,
+          derive_token TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           decided_at TEXT,

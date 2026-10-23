@@ -55,6 +55,7 @@ interface Row {
   threads_json: string;
   source_thread_key: string | null;
   deriving_at: string | null;
+  derive_token: string | null;
   created_at: string;
   updated_at: string;
   decided_at: string | null;
@@ -116,11 +117,15 @@ export function questionTerms(question: string): Set<string> {
   );
 }
 
+const NEGATION = /\b(?:not|no|never|without|cannot|none|nor)\b|n['\u2019]t\b/i;
+
 /**
  * Dice overlap of two questions' content words, 0..1. Word order, filler and
- * plurals do not count; a different subject word does.
+ * plurals do not count; a different subject word does, and a question and
+ * its negation ("can I…" / "can't I…") score 0: they ask opposite things.
  */
 export function questionSimilarity(a: string, b: string): number {
+  if (NEGATION.test(a) !== NEGATION.test(b)) return 0;
   const x = questionTerms(a);
   const y = questionTerms(b);
   if (!x.size || !y.size) return normalizeQuestion(a) === normalizeQuestion(b) ? 1 : 0;
@@ -302,30 +307,40 @@ export class CodeAnswerStore {
   }
 
   /**
-   * Take the derive lease. False when another derive holds a fresh one, or
-   * the row is approved or dismissed (the founder's decision stands).
+   * Take the derive lease; returns its token, or null when another derive
+   * holds a fresh one or the row is approved or dismissed (the founder's
+   * decision stands). A lease past `CODE_ANSWER_DERIVE_LEASE_MS` may be
+   * taken over; the token then lets the old holder's late result and
+   * release be refused.
    */
-  claimDerive(id: string, now = new Date()): boolean {
+  claimDerive(id: string, now = new Date()): string | null {
     const cutoff = new Date(now.getTime() - CODE_ANSWER_DERIVE_LEASE_MS).toISOString();
-    return (
-      this.db
-        .query(
-          `UPDATE code_answers SET deriving_at=?
-            WHERE id=? AND status IN (${DERIVABLE.map(() => "?").join(",")})
-              AND (deriving_at IS NULL OR deriving_at < ?)`,
-        )
-        .run(now.toISOString(), id, ...DERIVABLE, cutoff).changes > 0
-    );
+    const token = randomUUID();
+    const changes = this.db
+      .query(
+        `UPDATE code_answers SET deriving_at=?, derive_token=?
+          WHERE id=? AND status IN (${DERIVABLE.map(() => "?").join(",")})
+            AND (deriving_at IS NULL OR deriving_at < ?)`,
+      )
+      .run(now.toISOString(), token, id, ...DERIVABLE, cutoff).changes;
+    return changes > 0 ? token : null;
   }
 
-  releaseDerive(id: string): void {
-    this.db.query("UPDATE code_answers SET deriving_at=NULL WHERE id=?").run(id);
+  /** Give the lease back; a no-op when it has since passed to another derive. */
+  releaseDerive(id: string, token: string): void {
+    this.db
+      .query(
+        "UPDATE code_answers SET deriving_at=NULL, derive_token=NULL WHERE id=? AND derive_token=?",
+      )
+      .run(id, token);
   }
 
   /**
    * Store a derive's outcome. Guarded: a row the founder approved or
    * dismissed while the code was being read keeps that decision. A fresh
-   * answer replaces the text and clears `founder_edited`.
+   * answer replaces the text and clears `founder_edited`. With `leaseToken`
+   * (a derive holding the lease) the write also needs the lease to still be
+   * that derive's; without one (seeding, tests) only the status guards it.
    */
   recordDerive(
     id: string,
@@ -339,14 +354,17 @@ export class CodeAnswerStore {
       digest: string;
     },
     now = new Date(),
+    leaseToken?: string,
   ): CodeAnswerRecord | null {
     const iso = now.toISOString();
     const changes = this.db
       .query(
         `UPDATE code_answers
             SET status=?, answer=?, founder_edited=0, why_unresolved=?, files_json=?, commit_sha=?,
-                prompt_version=?, digest=?, deriving_at=NULL, updated_at=?, decided_at=NULL, decided_by=NULL
-          WHERE id=? AND status IN (${DERIVABLE.map(() => "?").join(",")})`,
+                prompt_version=?, digest=?, deriving_at=NULL, derive_token=NULL, updated_at=?,
+                decided_at=NULL, decided_by=NULL
+          WHERE id=? AND status IN (${DERIVABLE.map(() => "?").join(",")})
+            ${leaseToken ? "AND derive_token=?" : ""}`,
       )
       .run(
         result.status,
@@ -359,6 +377,7 @@ export class CodeAnswerStore {
         iso,
         id,
         ...DERIVABLE,
+        ...(leaseToken ? [leaseToken] : []),
       ).changes;
     if (!changes) return null;
     return this.get(id, now.getTime());
