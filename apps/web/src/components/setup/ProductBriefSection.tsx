@@ -36,12 +36,21 @@ export function ProductBriefSection({ cfg, onDirtyChange }: SectionProps) {
     validate: (v) => ({ sourceRepo: sourceRepoError(v.sourceRepo) }),
     onDirtyChange,
   });
-  const [repoTest, setRepoTest] = useState<SourceRepoTestResult | null>(null);
+  // A result is shown only for the repo and ref it was read with: an edit
+  // while a test runs hides the answer that arrives for the old values.
+  const repoKey = JSON.stringify([s.values.sourceRepo.trim(), s.values.sourceRef.trim()]);
+  const [tested, setTested] = useState<{ key: string; result: SourceRepoTestResult } | null>(null);
+  const repoTest = tested?.key === repoKey ? tested.result : null;
   const testRepo = useMutation({
-    mutationFn: () =>
-      api.testSourceRepo(sourceRepoRequest(s.values.sourceRepo, s.values.sourceRef) ?? {}),
-    onSuccess: setRepoTest,
-    onError: (err) => setRepoTest({ ok: false, error: (err as Error).message }),
+    mutationFn: async (key: string) => {
+      const repo = sourceRepoRequest(s.values.sourceRepo, s.values.sourceRef) ?? {};
+      try {
+        return { key, result: await api.testSourceRepo(repo) };
+      } catch (err) {
+        return { key, result: { ok: false, error: (err as Error).message } };
+      }
+    },
+    onSuccess: setTested,
   });
 
   // Seeded once from the saved signature domain; the section mounts only
@@ -120,20 +129,14 @@ export function ProductBriefSection({ cfg, onDirtyChange }: SectionProps) {
         <div className="flex gap-2">
           <Input
             value={s.values.sourceRepo}
-            onChange={(e) => {
-              s.set("sourceRepo", e.target.value);
-              setRepoTest(null);
-            }}
+            onChange={(e) => s.set("sourceRepo", e.target.value)}
             placeholder="https://github.com/you/your-repo or /path/to/checkout"
           />
           <Input
             aria-label="Branch, tag or commit"
             className="max-w-[12rem]"
             value={s.values.sourceRef}
-            onChange={(e) => {
-              s.set("sourceRef", e.target.value);
-              setRepoTest(null);
-            }}
+            onChange={(e) => s.set("sourceRef", e.target.value)}
             placeholder="default branch"
           />
           <Button
@@ -145,7 +148,7 @@ export function ProductBriefSection({ cfg, onDirtyChange }: SectionProps) {
               !s.values.sourceRepo.trim() ||
               Boolean(sourceRepoError(s.values.sourceRepo))
             }
-            onClick={() => testRepo.mutate()}
+            onClick={() => testRepo.mutate(repoKey)}
             {...readOnly}
           >
             <Plug size={12} className={testRepo.isPending ? "animate-pulse" : undefined} />
