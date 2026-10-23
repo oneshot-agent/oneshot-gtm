@@ -129,8 +129,12 @@ export function questionSimilarity(a: string, b: string): number {
   return (2 * shared) / (x.size + y.size);
 }
 
-/** At or above this, a captured question folds into the existing row. */
-export const NEAR_DUPLICATE_QUESTION = 0.8;
+/**
+ * At or above this, a captured question folds into the existing row. High
+ * on purpose: two questions that differ by one content word ("reads" for
+ * "writes") are different questions, while rephrasings share every one.
+ */
+export const NEAR_DUPLICATE_QUESTION = 0.9;
 
 const parse = <T>(raw: string | null, fallback: T): T => {
   if (raw == null) return fallback;

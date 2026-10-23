@@ -91,7 +91,7 @@ export async function fetchRepoFile(
   const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${file}${at}`;
   try {
     const headers = { ...githubHeaders(), Accept: "application/vnd.github.raw" };
-    const res = await fetch(url, { headers });
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
     if (!res.ok) return null;
     const text = await res.text();
     // Defensive cap. Manifest scanning only substring-matches, so trimming is

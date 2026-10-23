@@ -102,6 +102,12 @@ describe("question identity", () => {
     ).toBeLessThan(0.8);
   });
 
+  it("keeps questions apart that differ by one content word", () => {
+    capture("How does the approval queue handle concurrent writes from many users?");
+    capture("How does the approval queue handle concurrent reads from many users?");
+    expect(ledger.codeAnswers.list()).toHaveLength(2);
+  });
+
   it("matches base forms with their inflections", () => {
     expect(questionSimilarity("How is an invoice created?", "How do you create an invoice?")).toBe(
       1,

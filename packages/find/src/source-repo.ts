@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
-import type { OneShotConfig } from "@oneshot-gtm/core";
+import { logEvent, type OneShotConfig } from "@oneshot-gtm/core";
 import { githubHeaders } from "./_github-search.ts";
 import { fetchRepoFile } from "./_repo-stack.ts";
 
@@ -278,12 +278,17 @@ async function openGitHub(
     (listing ??= (async () => {
       const tree = await githubJson(`${base}/git/trees/${commit}?recursive=1`);
       if (!tree.ok) throw new Error(githubError(tree.status, `the file list of ${owner}/${repo}`));
-      const entries = (tree.body as { tree?: unknown }).tree;
+      const body = tree.body as { tree?: unknown; truncated?: unknown };
+      // GitHub caps a recursive tree (about 100,000 entries). The partial
+      // list still answers most questions; say so rather than fail.
+      if (body.truncated === true)
+        logEvent("source_repo.tree_truncated", { repo: `${owner}/${repo}` }, "warn");
+      const entries = body.tree;
       if (!Array.isArray(entries)) return [];
       return entries
         .filter(
-          (e): e is { path: string; type: string; size?: number } =>
-            !!e && typeof e.path === "string" && e.type === "blob",
+          (e): e is { path: string; type: string; mode?: string; size?: number } =>
+            !!e && typeof e.path === "string" && e.type === "blob" && e.mode !== "120000",
         )
         .filter((e) =>
           isReadableSourcePath(e.path, typeof e.size === "number" ? e.size : undefined),

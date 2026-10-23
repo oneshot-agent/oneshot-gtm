@@ -212,6 +212,7 @@ describe("GitHub", () => {
             { path: "src/approve.ts", type: "blob", size: 120 },
             { path: ".env", type: "blob", size: 20 },
             { path: "src", type: "tree" },
+            { path: "src/link.ts", type: "blob", mode: "120000", size: 10 },
             { path: "assets/huge.json", type: "blob", size: 9_000_000 },
           ],
         },
