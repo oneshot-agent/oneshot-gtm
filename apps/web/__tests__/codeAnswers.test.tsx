@@ -11,6 +11,7 @@ import { CodeAnswersListView } from "../src/components/setup/CodeAnswersList.tsx
 import { SourceRepoTestLine } from "../src/components/setup/ProductBriefSection.tsx";
 import {
   askedLabel,
+  briefSectionRequest,
   composerCodeAnswerState,
   sortCodeAnswers,
   sourceRepoError,
@@ -230,6 +231,23 @@ describe("helpers", () => {
     expect(sourceRepoRequest("  ", "main")).toBeNull();
     expect(sourceRepoField({ url: "https://github.com/a/b", path: "/x" })).toBe("/x");
     expect(sourceRepoField(undefined)).toBe("");
+  });
+
+  it("sends the repo with its saved ref when only one of them was edited", () => {
+    const saved = {
+      productBrief: "Brief.",
+      sourceRepo: "https://github.com/acme/widget",
+      sourceRef: "main",
+      codeAnswerDisclosure: "",
+    };
+    expect(briefSectionRequest({ sourceRef: "release" }, saved)).toEqual({
+      sourceRepo: { url: "https://github.com/acme/widget", ref: "release" },
+    });
+    expect(briefSectionRequest({ sourceRepo: "/srv/widget" }, saved)).toEqual({
+      sourceRepo: { path: "/srv/widget", ref: "main" },
+    });
+    expect(briefSectionRequest({ sourceRepo: "" }, saved)).toEqual({ sourceRepo: null });
+    expect(briefSectionRequest({ productBrief: "New." }, saved)).toEqual({ productBrief: "New." });
   });
 
   it("flags a repo the server would refuse", () => {

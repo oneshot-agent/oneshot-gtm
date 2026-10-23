@@ -128,3 +128,29 @@ export function sourceRepoError(repo: string): string | null {
     ? null
     : "Use a GitHub URL or the absolute path of a local checkout.";
 }
+
+export interface BriefSectionValues {
+  productBrief: string;
+  sourceRepo: string;
+  sourceRef: string;
+  codeAnswerDisclosure: string;
+}
+
+/**
+ * The brief section's dirty keys as a setup request. The repo and its ref go
+ * out together whichever of the two was edited; a key that is not dirty
+ * still holds the saved value.
+ */
+export function briefSectionRequest(
+  sent: Partial<BriefSectionValues>,
+  saved: BriefSectionValues,
+): SetupRequest {
+  const out: SetupRequest = {};
+  if (sent.productBrief !== undefined) out.productBrief = sent.productBrief;
+  if (sent.codeAnswerDisclosure !== undefined) out.codeAnswerDisclosure = sent.codeAnswerDisclosure;
+  if (sent.sourceRepo !== undefined || sent.sourceRef !== undefined) {
+    const v = { ...saved, ...sent };
+    out.sourceRepo = sourceRepoRequest(v.sourceRepo, v.sourceRef);
+  }
+  return out;
+}

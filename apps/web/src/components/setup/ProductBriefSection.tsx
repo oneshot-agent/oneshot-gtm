@@ -1,10 +1,11 @@
 import { useMutation } from "@tanstack/react-query";
 import { Plug, Wand2 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import type { SetupRequest, SourceRepoTestResult } from "@oneshot-gtm/shared-types";
+import type { SourceRepoTestResult } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
 import {
+  briefSectionRequest,
   shortCommit,
   sourceRepoError,
   sourceRepoField,
@@ -28,26 +29,13 @@ export function ProductBriefSection({ cfg, onDirtyChange }: SectionProps) {
     }),
     [cfg],
   );
-  // The repo and its ref go out together whichever of the two was edited.
-  const values = useRef(server);
   const s = useConfigSection({
     id: "brief",
     server,
-    toRequest: (sent) => {
-      const out: SetupRequest = {};
-      if (sent.productBrief !== undefined) out.productBrief = sent.productBrief;
-      if (sent.codeAnswerDisclosure !== undefined)
-        out.codeAnswerDisclosure = sent.codeAnswerDisclosure;
-      if (sent.sourceRepo !== undefined || sent.sourceRef !== undefined) {
-        const v = { ...values.current, ...sent };
-        out.sourceRepo = sourceRepoRequest(v.sourceRepo, v.sourceRef);
-      }
-      return out;
-    },
+    toRequest: (sent) => briefSectionRequest(sent, server),
     validate: (v) => ({ sourceRepo: sourceRepoError(v.sourceRepo) }),
     onDirtyChange,
   });
-  values.current = s.values;
   const [repoTest, setRepoTest] = useState<SourceRepoTestResult | null>(null);
   const testRepo = useMutation({
     mutationFn: () =>
