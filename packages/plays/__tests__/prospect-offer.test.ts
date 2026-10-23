@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The prospect offer: written from research, linted on its output alone,
@@ -189,6 +191,34 @@ describe("lintOffer", () => {
       );
     }
   });
+  it("flags an offer that is one pass of checking", () => {
+    for (const offer of [
+      "vet every new leeds supplier before the next contract",
+      "verify each crew's certificates at the leeds depot",
+      "validate the leeds depot's job addresses",
+      "screen new leeds subcontractors",
+      "scan the leeds depot's job history for missed visits",
+      "audit leeds depot invoices",
+      "check every leeds booking for a double slot",
+      "Verify the leeds depot's insurance documents",
+    ]) {
+      expect(lintOffer({ ...good, level: "researched", offer }, research)).toContain(
+        "offer-is-a-check",
+      );
+    }
+  });
+  it("passes a goal that leads with what the work wins, a check named later included", () => {
+    for (const offer of [
+      "renegotiate the leeds depot's van leases after auditing what each van costs",
+      "recover unpaid leeds invoices from the last quarter",
+      "sign the leeds depot's first commercial maintenance contract",
+      "get the leeds depot's crews booked into same-day slots once every address is checked",
+    ]) {
+      expect(lintOffer({ ...good, level: "researched", offer }, research)).not.toContain(
+        "offer-is-a-check",
+      );
+    }
+  });
   it("needs a return on a researched offer, not on a role-level one", () => {
     const { return: _ret, ...bare } = good;
     expect(lintOffer({ ...bare, level: "researched" }, research)).toContain("no-return");
@@ -248,6 +278,21 @@ describe("deriveOffers", () => {
     const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(llm.inputs[1]).toContain("offer 2: offer-not-execution");
     expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer]);
+  });
+
+  it("asks again for a check, telling the writer what the flag means", async () => {
+    const check = { ...good, offer: "vet every new leeds subcontractor before they start" };
+    llm.replies = [
+      JSON.stringify({ offers: [check, second] }),
+      JSON.stringify({ offers: [good, second] }),
+    ];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs).toHaveLength(2);
+    expect(llm.inputs[1]).toContain("offer 1: offer-is-a-check");
+    expect(llm.inputs[1]).toContain(
+      "offer-is-a-check: the offer is one pass of checking; name the multi-week goal that checking wins",
+    );
+    expect(offers.map((o) => o.offer)).toEqual([second.offer, good.offer]);
   });
 
   it("drops an offer that repeats a kept one in other words, and asks again for the place", async () => {
@@ -644,7 +689,7 @@ describe("offer fit", () => {
   });
 
   it("bumps the prompt version so unedited offers re-derive", () => {
-    expect(OFFER_PROMPT_VERSION).toBe("offer-v4");
+    expect(OFFER_PROMPT_VERSION).toBe("offer-v5");
   });
 });
 
@@ -1059,5 +1104,124 @@ describe("deriveOffers with the relevance judge", () => {
     const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer]);
     expect(offers[0]?.relevance).toBeUndefined();
+  });
+});
+
+// The bar: an offer is a multi-week goal with a counted return, never one
+// pass of checking. The writer prompt, the judge prompt and the decisions
+// criteria carry the same rule; the lint backs the writer's lead list.
+
+describe("the offer bar", () => {
+  const prompts = join(import.meta.dirname, "..", "..", "prompts");
+  const writer = readFileSync(join(prompts, "prospect-offer.md"), "utf8");
+  const judge = readFileSync(join(prompts, "prospect-offer-judge.md"), "utf8");
+  const checkPass =
+    "a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching";
+  const leads = ["vet", "verify", "validate", "screen", "scan", "audit", "check"];
+
+  it("the writer starts from the firm's goals and states the bar", () => {
+    expect(writer).toContain("## The bar");
+    expect(writer).toContain("most valuable outcomes this quarter");
+    expect(writer.toLowerCase()).toContain(`${checkPass} is a step, never the offer`);
+    expect(writer).toContain(
+      "An offer never opens with vet, verify, validate, screen, scan, audit or check.",
+    );
+    expect(writer).toContain("only when nothing bigger is honest");
+  });
+
+  it("the lint flags every lead the writer prompt names, and no other", () => {
+    const research = offerResearchText(target);
+    for (const lead of leads) {
+      expect(
+        lintOffer({ ...good, level: "researched", offer: `${lead} the leeds bookings` }, research),
+      ).toContain("offer-is-a-check");
+    }
+    for (const lead of ["review", "inspect", "assess"]) {
+      expect(
+        lintOffer({ ...good, level: "researched", offer: `${lead} the leeds bookings` }, research),
+      ).not.toContain("offer-is-a-check");
+    }
+  });
+
+  it("both judge engines carry the same test", async () => {
+    const { offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
+    const criteria = offerRelevanceCriteria();
+    expect(criteria).toMatchInlineSnapshot(`
+      {
+        "irrelevant": "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.",
+        "relevant": "A goal this firm at its stage would put on its plan, carried over weeks to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), owned by or one step from this person, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
+        "weak": "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, or a return that is not a counted outcome this person owns.",
+      }
+    `);
+    // The llm judge's labels say the same as the decisions criteria.
+    const label = (name: string): string =>
+      judge.match(new RegExp(`^- \`${name}\`: (.+)$`, "m"))?.[1] ?? "";
+    expect(label("relevant").toLowerCase()).toBe(criteria.relevant.toLowerCase());
+    expect(label("weak").toLowerCase()).toBe(criteria.weak.toLowerCase());
+    expect(criteria.weak).toContain(checkPass);
+  });
+});
+
+describe("the prompt version bump", () => {
+  const research = offerResearchText(target);
+  const old = {
+    ...good,
+    offer: "the old offer for the leeds depot",
+    level: "researched" as const,
+    version: "offer-v4",
+    inputHash: offerInputHash(research, cfg, "offer-v4"),
+    productHash: offerProductHash(cfg),
+    angles: [],
+    derivedAt: "",
+  };
+
+  it("re-derives an unedited offer written under the old prompt", async () => {
+    llm.replies = [JSON.stringify({ offers: [good] }), JSON.stringify({ angles: [] })];
+    const out = await ensureOfferSet({
+      target: { ...target, offer: old },
+      playName: "new-business",
+    });
+    if (!out || isOfferSkipped(out)) throw new Error("expected offers");
+    expect(out.changed).toBe(true);
+    expect(out.offer.offer).toBe(good.offer);
+    expect(out.offer.version).toBe(OFFER_PROMPT_VERSION);
+    llm.replies = [JSON.stringify({ offers: [good] }), JSON.stringify({ angles: [] })];
+    const draft = await offerForDraft({
+      target: { ...target, offer: old },
+      playName: "new-business",
+    });
+    expect(draft?.version).toBe(OFFER_PROMPT_VERSION);
+  });
+
+  it("keeps a founder-edited offer and a weak one the founder approved", async () => {
+    const edited = { ...old, editedBy: "founder" as const };
+    const approved = { ...old, relevance: "weak" as const, weakApprovedAt: "2026-10-01T00:00:00Z" };
+    for (const offer of [edited, approved]) {
+      const out = await ensureOfferSet({ target: { ...target, offer }, playName: "new-business" });
+      if (!out || isOfferSkipped(out)) throw new Error("expected the stored offer");
+      expect(out.changed).toBe(false);
+      expect(out.offer).toBe(offer);
+      expect(await offerForDraft({ target: { ...target, offer }, playName: "new-business" })).toBe(
+        offer,
+      );
+    }
+    expect(llm.inputs).toHaveLength(0);
+  });
+
+  it("still re-derives an approved offer when its research changed", async () => {
+    const approved = {
+      ...old,
+      relevance: "weak" as const,
+      weakApprovedAt: "2026-10-01T00:00:00Z",
+      inputHash: "from-other-research",
+    };
+    llm.replies = [JSON.stringify({ offers: [good] }), JSON.stringify({ angles: [] })];
+    const out = await ensureOfferSet({
+      target: { ...target, offer: approved },
+      playName: "new-business",
+    });
+    if (!out || isOfferSkipped(out)) throw new Error("expected offers");
+    expect(out.changed).toBe(true);
+    expect(out.offer.offer).toBe(good.offer);
   });
 });

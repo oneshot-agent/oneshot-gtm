@@ -44,7 +44,7 @@ type AppConfig = ReturnType<typeof loadConfig>;
 type JsonRecord = Record<string, unknown>;
 
 /** Bump when the prompt or the lint changes: unedited offers re-derive. */
-export const OFFER_PROMPT_VERSION = "offer-v4";
+export const OFFER_PROMPT_VERSION = "offer-v5";
 
 export const OFFER_MAX = {
   offer: 140,
@@ -242,11 +242,13 @@ function firstString(t: JsonRecord, keys: string[]): string {
 export function offerInputHash(
   research: string,
   cfg: Pick<AppConfig, "productOneLiner" | "productBrief" | "pilotOffer">,
+  /** The prompt version the hash is for: an older one to check a kept offer. */
+  version: string = OFFER_PROMPT_VERSION,
 ): string {
   return createHash("sha256")
     .update(
       [
-        OFFER_PROMPT_VERSION,
+        version,
         research,
         cfg.productOneLiner ?? "",
         productBriefText(cfg) ?? "",
@@ -269,11 +271,34 @@ export function offerProductHash(
     .slice(0, 16);
 }
 
+/** True when the founder approved this offer although the judge rated it `weak`. */
+function offerWeakApproved(offer: Pick<ProspectOffer, "weakApprovedAt">): boolean {
+  return typeof offer.weakApprovedAt === "string" && offer.weakApprovedAt.trim().length > 0;
+}
+
 /** True when the stored offer still answers to today's inputs, or the founder wrote it. */
 export function offerIsCurrent(stored: unknown, inputHash: string): stored is ProspectOffer {
   if (!isProspectOffer(stored)) return false;
   if (stored.editedBy === "founder") return true;
   return stored.version === OFFER_PROMPT_VERSION && stored.inputHash === inputHash;
+}
+
+/**
+ * True when an offer the founder approved (`weakApprovedAt`) was written from
+ * the same research and product config as today's, under any prompt version.
+ * A prompt bump alone never rewrites an offer the founder read and approved;
+ * new research or a new brief still does.
+ */
+function approvedOfferStands(
+  stored: unknown,
+  research: string,
+  cfg: Pick<AppConfig, "productOneLiner" | "productBrief" | "pilotOffer">,
+): stored is ProspectOffer {
+  return (
+    isProspectOffer(stored) &&
+    offerWeakApproved(stored) &&
+    stored.inputHash === offerInputHash(research, cfg, stored.version)
+  );
 }
 
 const BANNED: Array<[flag: string, pattern: RegExp]> = [
@@ -337,6 +362,18 @@ const AWARENESS_LEAD =
   /^(?:track|monitor|watch|observe|alert|notify|surface|flag|report|ground|stay|keep|maintain)\b/i;
 const AWARENESS_ANYWHERE = /\b(?:visibility|insights?|dashboards?|alerts?|alerting)\b/i;
 
+/**
+ * An offer that is one pass of checking, not a goal: it leads with a check
+ * verb. Product-neutral: whatever a product checks, the offer is what the
+ * checking wins, and the check belongs in steps. Only the first word counts,
+ * so a goal that names a check later on still passes.
+ */
+const CHECK_LEAD = /^(?:vet|verify|validate|screen|scan|audit|check)\b/i;
+
+export function isCheckOffer(offer: string): boolean {
+  return CHECK_LEAD.test(offer.trim());
+}
+
 export function isAwarenessOffer(offer: string): boolean {
   const text = offer.trim();
   return AWARENESS_LEAD.test(text) || AWARENESS_ANYWHERE.test(text);
@@ -372,6 +409,7 @@ export function lintOffer(
   const fit = (parts.fit ?? "").trim();
   if (fit.length > OFFER_MAX.fit) flags.push("fit-too-long");
   if (isAwarenessOffer(offer)) flags.push("offer-not-execution");
+  if (isCheckOffer(offer)) flags.push("offer-is-a-check");
   if (parts.level === "researched" && !ret) flags.push("no-return");
   const both = `${offer} ${steps} ${ret}`;
   for (const [flag, pattern] of BANNED) if (pattern.test(both)) flags.push(flag);
@@ -561,8 +599,8 @@ const JUDGE_WHY_MAX = 140;
 export function offerRelevanceCriteria(): Record<OfferRelevance, string> {
   return {
     relevant:
-      "A real job for this firm at its stage, owned by or close to this person's role, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
-    weak: "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm.",
+      "A goal this firm at its stage would put on its plan, carried over weeks to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), owned by or one step from this person, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
+    weak: "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, or a return that is not a counted outcome this person owns.",
     irrelevant:
       "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.",
   };
@@ -612,9 +650,10 @@ async function judgeWithDecisions(
     questions[`offer_${i + 1}`] = {
       type: "choice",
       instructions:
-        `A founder wants to offer this prospect's firm a job their product would carry to completion. ` +
-        `Judge offer ${i + 1} in the state on its own: is it a real job for this firm and this person? ` +
-        `A market the firm sells into is not a need of the firm.\nOffer ${i + 1}:\n${describeOffer(o)}`,
+        `A founder wants to offer this prospect's firm a goal their product would carry to completion over weeks. ` +
+        `Judge offer ${i + 1} in the state on its own: is it a real goal for this firm and this person? ` +
+        `A market the firm sells into is not a need of the firm. A check is a step, not a goal: ` +
+        `the offer should be what the check wins.\nOffer ${i + 1}:\n${describeOffer(o)}`,
       criteria,
     };
   });
@@ -796,6 +835,32 @@ function withJudgement(o: DraftOffer, j: OfferJudgement | null): DraftOffer {
 }
 
 /**
+ * What a lint flag means, for the repair round: the flags that name a rule
+ * of the prompt rather than spell out what is wrong.
+ */
+const OFFER_FLAG_HINTS: ReadonlyArray<[flag: string, hint: string]> = [
+  [
+    "offer-not-execution",
+    "the offer watches or reports instead of doing; name the action taken and its result",
+  ],
+  [
+    "offer-is-a-check",
+    "the offer is one pass of checking; name the multi-week goal that checking wins, with a counted return, and put the check in steps",
+  ],
+];
+
+/** The repair round's explanation of the flags in `failed`; empty when none needs one. */
+function offerRepairHints(failed: ReadonlyArray<string>): string {
+  const flags = new Set(
+    failed.flatMap((f) => f.slice(f.indexOf(":") + 1).split(",")).map((f) => f.trim()),
+  );
+  const hints = OFFER_FLAG_HINTS.filter(([flag]) => flags.has(flag)).map(
+    ([flag, hint]) => `${flag}: ${hint}`,
+  );
+  return hints.length > 0 ? ` What the flags mean: ${hints.join("; ")}.` : "";
+}
+
+/**
  * Lint each offer in a reply, dropping failures and repeats (near-duplicates
  * of one already seen, `offersNearDuplicate`). The ones that pass come back
  * in the model's order; `failed` names what was wrong.
@@ -891,7 +956,8 @@ export async function deriveOffers(
         {
           role: "user",
           content:
-            `These offers cannot be used: ${out.failed.join("; ")}. Return all five again, best return ` +
+            `These offers cannot be used: ${out.failed.join("; ")}.${offerRepairHints(out.failed)} ` +
+            `Return all five again, best return ` +
             `first, each within every rule, or {"skip": true, "why": "..."} if nothing supports ` +
             `one. JSON only.`,
         },
@@ -1006,7 +1072,8 @@ async function judgeAndReplace(
           `Write exactly ${missing} new ${missing === 1 ? "offer" : "offers"}, best return first, ` +
           `each a different job from ${keptList ? `the ones kept:\n${keptList}\n` : "the dropped ones, "}` +
           `each resting on an anchor (their product or their firm) and a fact in RESEARCH, ` +
-          `never on an industry word alone, and within every rule. ` +
+          `never on an industry word alone, each a multi-week goal with a counted return this ` +
+          `person owns (never one pass of checking), and within every rule. ` +
           `Return {"offers": [...]} with the same fields. JSON only.`,
       },
     );
@@ -1223,7 +1290,7 @@ export async function ensureOfferSet(
   const stored = t["offer"];
   const research = offerResearchText(t, input.dossier);
   const inputHash = offerInputHash(research, cfg);
-  if (offerIsCurrent(stored, inputHash)) {
+  if (offerIsCurrent(stored, inputHash) || approvedOfferStands(stored, research, cfg)) {
     const candidates = offerCandidatesOf(t);
     if (offerAnglesWritten(stored) || !cfg.productBrief?.trim()) {
       return { offer: stored, candidates, changed: false };
@@ -1280,7 +1347,7 @@ export async function offerSetForDraft(
   if (!cfg.productBrief?.trim()) return null;
   if (
     isProspectOffer(stored) &&
-    stored.version === OFFER_PROMPT_VERSION &&
+    (stored.version === OFFER_PROMPT_VERSION || offerWeakApproved(stored)) &&
     stored.productHash === offerProductHash(cfg)
   ) {
     return { offer: stored, candidates: offerCandidatesOf(t), derived: false };
@@ -1352,11 +1419,7 @@ export const WEAK_OFFER_HOLD_REASON =
  */
 export function offerHoldsSend(offer: unknown): boolean {
   if (!isProspectOffer(offer)) return false;
-  return (
-    offer.relevance === "weak" &&
-    offer.editedBy !== "founder" &&
-    !(typeof offer.weakApprovedAt === "string" && offer.weakApprovedAt.trim())
-  );
+  return offer.relevance === "weak" && offer.editedBy !== "founder" && !offerWeakApproved(offer);
 }
 
 /** True when a queue row of this play is held for its active offer (`offerHoldsSend`). */

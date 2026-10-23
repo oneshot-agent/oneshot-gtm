@@ -85,7 +85,8 @@ vi.mock("../src/telemetry.ts", () => ({ reportServerExecution: () => {} }));
 
 const { runPlay, restoreQueueObjects } = await import("../src/api/run.ts");
 const { sendDraftRoute, markSentRoute } = await import("../src/api/queue.ts");
-const { sequenceOfferRecord, introQueueDedupeKey } = await import("@oneshot-gtm/plays");
+const { sequenceOfferRecord, introQueueDedupeKey, OFFER_PROMPT_VERSION } =
+  await import("@oneshot-gtm/plays");
 
 const PLAY = "design-partner-loi";
 let n = 0;
@@ -305,7 +306,7 @@ describe("/run loaded from the queue", () => {
     expect(sequenceOfferRecord({ prospectId: prospect.id, playName: PLAY })).toMatchObject({
       queueRowId: id,
       introCarriedOffer: true,
-      offer: { offer: OFFER.offer, version: "offer-v4" },
+      offer: { offer: OFFER.offer, version: OFFER_PROMPT_VERSION },
       offerCandidates: [{ offer: OFFER.offer }],
     });
     // No row of its own is recorded: the batch's row is the one it went out from.
