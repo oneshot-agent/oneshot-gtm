@@ -487,6 +487,20 @@ export interface OneShotConfig {
    */
   productBrief: string | null;
   /**
+   * The product's source repo, read (never written) to answer how-it-works
+   * questions prospects ask that the brief does not settle. `url`: a GitHub
+   * repo URL (public needs no token; private uses GITHUB_TOKEN). `path`: a
+   * local git checkout, read with git at the resolved commit, never the
+   * working tree. `ref`: branch, tag or sha; unset = the repo's default
+   * branch. `path` wins when both are set. Absent = the feature is off.
+   */
+  sourceRepo?: { url?: string; path?: string; ref?: string };
+  /**
+   * How much an answer from the code may disclose, in plain words. Unset =
+   * `DEFAULT_CODE_ANSWER_DISCLOSURE`: behaviour only, what a caller observes.
+   */
+  codeAnswerDisclosure?: string;
+  /**
    * The founder's own register, as a short card (MOVES / SENTENCES / NEVER /
    * EXEMPLARS), written or pasted on /setup or drafted from their writing by
    * `config voice`. Injected into every email draft as a VOICE block that
