@@ -292,6 +292,23 @@ describe("OutboundSendStore.claim", () => {
     ).toBe("t-2");
   });
 
+  it("the daily cap counts a keyed send that may have gone out without a receipt (#905)", () => {
+    const store = ledger.outboundSends;
+    const since = "2026-10-01 00:00:00";
+    const id = input().identityId;
+    const row = (key: string, status: "uncertain" | "confirmed" | "failed" | null) => {
+      store.claim(input({ key, now: at(60_000) }));
+      if (status) store.mark(key, status, { now: at(60_000) });
+    };
+    row("k-uncertain", "uncertain");
+    row("k-confirmed", "confirmed");
+    row("k-failed", "failed");
+    row("k-pending", null);
+    expect(ledger.countEmailSendsSince(id, since)).toBe(2);
+    // A row from before the window does not count.
+    expect(ledger.countEmailSendsSince(id, "2026-10-02 00:00:00")).toBe(0);
+  });
+
   it("after a definite failure a retry takes the new draft", () => {
     const store = ledger.outboundSends;
     store.claim(input());

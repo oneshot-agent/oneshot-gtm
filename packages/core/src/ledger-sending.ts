@@ -52,12 +52,23 @@ export function countEmailSendsSince(
   identityId: string,
   sinceUtcSqlite: string,
 ): number {
+  // Plus keyed initial sends that may have gone out but wrote no receipt: an
+  // unknown outcome (uncertain), later confirmed in Sent or settled without a
+  // resend. Their reservation expires, so without this each one would let an
+  // extra send through the cap for the rest of the day (#905). A pending row
+  // is still covered by its live reservation; a failed one sent nothing. An
+  // uncertain row may count twice until its reservation expires, which errs safe.
   const row = db
     .query(
-      `SELECT COUNT(*) AS n FROM receipts
-       WHERE call_type = 'email.send' AND sender_identity = ? AND created_at >= ?`,
+      `SELECT
+         (SELECT COUNT(*) FROM receipts
+           WHERE call_type = 'email.send' AND sender_identity = ? AND created_at >= ?)
+       + (SELECT COUNT(*) FROM outbound_sends
+           WHERE kind = 'initial' AND identity_id = ? AND receipt_id IS NULL
+             AND status IN ('uncertain', 'submitted', 'confirmed', 'not_found')
+             AND datetime(last_attempt_at) >= ?) AS n`,
     )
-    .get(identityId, sinceUtcSqlite) as { n: number };
+    .get(identityId, sinceUtcSqlite, identityId, sinceUtcSqlite) as { n: number };
   return row.n;
 }
 
