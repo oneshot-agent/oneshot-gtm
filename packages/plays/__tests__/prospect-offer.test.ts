@@ -103,6 +103,56 @@ describe("offerResearchText", () => {
     expect(text).not.toContain("secret argument");
     expect(text).not.toContain("dana@northside.example");
   });
+
+  // The row drops any field over 240 characters; the GitHub record (their
+  // profile and their own repositories) is read whole, in its own section.
+  const githubEvidence = [
+    "Profile: Sam Ortiz @ Tidewater Labs — account created 2019 — 14 public repos",
+    "Own repos (most recently pushed):",
+    "- harbor-sync (Rust, pushed 2026-08) — syncs berth schedules between port systems",
+    "- tide-cli (Go, pushed 2026-06) — command line for tide tables",
+    "- notes (Markdown, pushed 2025-11) — personal notes and talks",
+  ].join("\n");
+  const starrer = { name: "Sam Ortiz", repo: "someone-else/popular-tool", githubEvidence };
+
+  it("reads the GitHub record in its own section, after the row", () => {
+    expect(githubEvidence.length).toBeGreaterThan(240);
+    const text = offerResearchText(starrer);
+    expect(text).toContain(`THEIR GITHUB:\n${githubEvidence}`);
+    expect(text.indexOf("HOW THEY WERE FOUND")).toBeLessThan(text.indexOf("THEIR GITHUB:"));
+    expect(text).toContain("repo: someone-else/popular-tool");
+  });
+
+  it("reads a short record once, in its own section, not as a row line too", () => {
+    const text = offerResearchText({ ...starrer, githubEvidence: "Own repos: tide-cli" });
+    expect(text).toContain("THEIR GITHUB:\nOwn repos: tide-cli");
+    expect(text).not.toContain("githubEvidence:");
+  });
+
+  it("clips a long record", () => {
+    const long = `${githubEvidence}\n${"- more-repo (Go) — another tool\n".repeat(400)}`;
+    const section = offerResearchText({ ...starrer, githubEvidence: long }).split(
+      "THEIR GITHUB:\n",
+    )[1]!;
+    expect(section.length).toBe(3_000);
+    expect(section.endsWith("…")).toBe(true);
+  });
+
+  it("adds no section for an empty record, or under an older prompt version", () => {
+    expect(offerResearchText({ ...starrer, githubEvidence: "  " })).not.toContain("THEIR GITHUB");
+    expect(offerResearchText(starrer, null, "offer-v5")).not.toContain("THEIR GITHUB");
+    expect(offerResearchText(starrer, null, "offer-v5")).toBe(
+      offerResearchText({ ...starrer, githubEvidence: undefined }),
+    );
+  });
+
+  it("reaches the writer and the judge", async () => {
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    llm.judge = [JSON.stringify({ judgements: [{ offer: 1, label: "relevant", why: "ok" }] })];
+    await deriveOffers({ target: { ...target, githubEvidence }, playName: "repo-interest" });
+    expect(llm.inputs[0]).toContain(`THEIR GITHUB:\n${githubEvidence}`);
+    expect(llm.judgeInputs[0]).toContain(`THEIR GITHUB:\n${githubEvidence}`);
+  });
 });
 
 describe("lintOffer", () => {
@@ -689,7 +739,7 @@ describe("offer fit", () => {
   });
 
   it("bumps the prompt version so unedited offers re-derive", () => {
-    expect(OFFER_PROMPT_VERSION).toBe("offer-v5");
+    expect(OFFER_PROMPT_VERSION).toBe("offer-v6");
   });
 });
 
@@ -1158,7 +1208,7 @@ describe("the offer bar", () => {
       {
         "irrelevant": "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.",
         "relevant": "A goal this firm at its stage would put on its plan, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), owned by or one step from this person, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
-        "weak": "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, or a return that is not a counted outcome this person owns or is one step from.",
+        "weak": "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome this person owns or is one step from, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.",
       }
     `);
     // The llm judge's labels say the same as the decisions criteria.
@@ -1167,6 +1217,32 @@ describe("the offer bar", () => {
     expect(label("relevant").toLowerCase()).toBe(criteria.relevant.toLowerCase());
     expect(label("weak").toLowerCase()).toBe(criteria.weak.toLowerCase());
     expect(criteria.weak).toContain(checkPass);
+  });
+
+  // How they were found is a signal, not their project: the writer, the judge
+  // prompt and the decisions criteria carry the same rule.
+  it("how they were found is never their project, and the brief is never their goal", async () => {
+    const signal =
+      "How they were found (a repository they starred or follow, an event they joined, a post they reacted to, a tool they use) says what they are looking at, not what they own or run.";
+    expect(writer).toContain(signal);
+    expect(judge).toContain(signal);
+    expect(writer).toContain(
+      "A third party's project is never their firm or their project: never an offer to build, ship, improve, test or run it.",
+    );
+    expect(writer).toContain("is a restatement of the brief, not a goal of theirs");
+    expect(writer).toContain(
+      "A project they starred, follow, forked or attended an event about is not their project.",
+    );
+    expect(writer).toContain(
+      "Skip when nothing is known beyond how they were found: no title, no company, no project of their own, no research. `why` says so.",
+    );
+    expect(writer).toContain("Their own project is never a reason to skip.");
+    expect(writer).not.toContain("a repository they work on or follow");
+    const rule =
+      "an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project";
+    expect(judge).toContain(rule);
+    const { offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
+    expect(offerRelevanceCriteria().weak).toContain(rule);
   });
 });
 
@@ -1214,6 +1290,39 @@ describe("the prompt version bump", () => {
       );
     }
     expect(llm.inputs).toHaveLength(0);
+  });
+
+  it("keeps an edited or approved offer when this version reads its GitHub record", async () => {
+    // Written under offer-v5, which never read the record: today's research
+    // text (and so its input hash) has a section the offer was not written from.
+    const row = { ...target, githubEvidence: "Own repos:\n- depot-planner (Go) — plans depots" };
+    const v5 = {
+      ...old,
+      version: "offer-v5",
+      inputHash: offerInputHash(offerResearchText(row, null, "offer-v5"), cfg, "offer-v5"),
+    };
+    expect(v5.inputHash).not.toBe(offerInputHash(offerResearchText(row), cfg, "offer-v5"));
+    const edited = { ...v5, editedBy: "founder" as const };
+    const approved = { ...v5, relevance: "weak" as const, weakApprovedAt: "2026-10-01T00:00:00Z" };
+    for (const offer of [edited, approved]) {
+      const out = await ensureOfferSet({ target: { ...row, offer }, playName: "repo-interest" });
+      if (!out || isOfferSkipped(out)) throw new Error("expected the stored offer");
+      expect(out.changed).toBe(false);
+      expect(out.offer).toBe(offer);
+      expect(await offerForDraft({ target: { ...row, offer }, playName: "repo-interest" })).toBe(
+        offer,
+      );
+    }
+    expect(llm.inputs).toHaveLength(0);
+    // An unedited one is written again, now with the record in RESEARCH.
+    llm.replies = [JSON.stringify({ offers: [good] }), JSON.stringify({ angles: [] })];
+    const out = await ensureOfferSet({
+      target: { ...row, offer: v5 },
+      playName: "repo-interest",
+    });
+    if (!out || isOfferSkipped(out)) throw new Error("expected offers");
+    expect(out.changed).toBe(true);
+    expect(llm.inputs[0]).toContain("THEIR GITHUB:");
   });
 
   it("still re-derives an approved offer when its research changed", async () => {
