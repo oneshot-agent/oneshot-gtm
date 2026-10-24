@@ -1248,6 +1248,19 @@ describe("the prompt version bump", () => {
       playName: "new-business",
     });
     expect(draft).toBe(approved);
+    // One a draft wrote from the row and its dossier is kept for that dossier.
+    const dossier = "enrichment the draft wrote it from";
+    const fromDraft = {
+      ...approved,
+      inputHash: offerInputHash(offerResearchText(target, dossier), cfg, "offer-v4"),
+    };
+    expect(
+      await offerForDraft({
+        target: { ...target, offer: fromDraft },
+        dossier,
+        playName: "new-business",
+      }),
+    ).toBe(fromDraft);
     expect(llm.inputs).toHaveLength(0);
   });
 });

@@ -1348,12 +1348,14 @@ export async function offerSetForDraft(
   if (!cfg.productBrief?.trim()) return null;
   // A current-version offer is kept whatever research the play's enrichment
   // added (see `offerForDraft`). An approved one of an older version is kept
-  // only while the row's own research, without that enrichment, is what it
-  // was written from: a prompt bump alone never rewrites it.
+  // only while it answers to the research it was written from: the row's own
+  // (as `ensureOfferSet` writes it) or the row's with this dossier (as a
+  // draft that wrote it did). A prompt bump alone never rewrites it.
   if (
     isProspectOffer(stored) &&
     (stored.version === OFFER_PROMPT_VERSION ||
-      approvedOfferStands(stored, offerResearchText(t), cfg)) &&
+      approvedOfferStands(stored, offerResearchText(t), cfg) ||
+      approvedOfferStands(stored, offerResearchText(t, input.dossier), cfg)) &&
     stored.productHash === offerProductHash(cfg)
   ) {
     return { offer: stored, candidates: offerCandidatesOf(t), derived: false };
