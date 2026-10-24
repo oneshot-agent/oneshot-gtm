@@ -600,7 +600,7 @@ export function offerRelevanceCriteria(): Record<OfferRelevance, string> {
   return {
     relevant:
       "A goal this firm at its stage would put on its plan, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), owned by or one step from this person, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
-    weak: "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, or a return that is not a counted outcome this person owns.",
+    weak: "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, or a return that is not a counted outcome this person owns or is one step from.",
     irrelevant:
       "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.",
   };
@@ -1346,14 +1346,14 @@ export async function offerSetForDraft(
     return { offer: stored, candidates: offerCandidatesOf(t), derived: false };
   }
   if (!cfg.productBrief?.trim()) return null;
-  // Research is not compared here for any offer (see `offerForDraft`): the
-  // play's enrichment adds research the offer never saw, and a draft must not
-  // rewrite it. An approved offer is held to the same rule under an older
-  // prompt version; `ensureOfferSet` re-derives it when the row's own
-  // research changes.
+  // A current-version offer is kept whatever research the play's enrichment
+  // added (see `offerForDraft`). An approved one of an older version is kept
+  // only while the row's own research, without that enrichment, is what it
+  // was written from: a prompt bump alone never rewrites it.
   if (
     isProspectOffer(stored) &&
-    (stored.version === OFFER_PROMPT_VERSION || offerWeakApproved(stored)) &&
+    (stored.version === OFFER_PROMPT_VERSION ||
+      approvedOfferStands(stored, offerResearchText(t), cfg)) &&
     stored.productHash === offerProductHash(cfg)
   ) {
     return { offer: stored, candidates: offerCandidatesOf(t), derived: false };
