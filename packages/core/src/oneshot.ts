@@ -1073,9 +1073,10 @@ async function dispatchViaIdentity(
         const subject = replyTo ? content.subject : withoutReplyPrefix(content.subject);
         const result = await agent.email({
           ...opts,
+          to: content.to,
           subject,
           body: toHtmlBody(content.body),
-          idempotencyKey: emailIdempotencyKey([identity.id, attempt.to, subject, content.body]),
+          idempotencyKey: emailIdempotencyKey([identity.id, content.to, subject, content.body]),
           ...(replyTo ? { reply_to_email_id: replyTo } : {}),
         });
         const receiptId = recordCallReceipt({

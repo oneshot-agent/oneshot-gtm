@@ -442,6 +442,27 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
     expect(scratch.outboundSends.get(key)?.status).toBe("confirmed");
   });
 
+  it("a retry goes to the recipient first claimed, under the first attempt's SDK key (#905)", async () => {
+    const key = "gtm:test:email:show-hn:kim@acme.com:0";
+    emailMock.mockRejectedValueOnce(new Error("Job timed out after 120s"));
+    await expect(
+      sendEmail(
+        { to: "kim@acme.com", subject: "first", body: "first body", idempotencyKey: key },
+        { playName: "show-hn" },
+      ),
+    ).rejects.toThrow();
+    scratch.outboundSends.mark(key, "failed");
+    await sendEmail(
+      { to: "someone-else@other.com", subject: "first", body: "first body", idempotencyKey: key },
+      { playName: "show-hn" },
+    );
+    const [first, retry] = emailMock.mock.calls.map(
+      (c) => c[0] as { to: string; idempotencyKey: string },
+    );
+    expect(retry!.to).toBe("kim@acme.com");
+    expect(retry!.idempotencyKey).toBe(first!.idempotencyKey);
+  });
+
   it("an explicit platform rejection is definite: the retry may send the new draft", async () => {
     const key = "gtm:test:email:show-hn:sam@acme.com:0";
     emailMock.mockRejectedValueOnce(new Error("Request failed (422): invalid recipient"));
