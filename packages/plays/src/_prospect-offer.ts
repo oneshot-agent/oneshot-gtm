@@ -44,7 +44,7 @@ type AppConfig = ReturnType<typeof loadConfig>;
 type JsonRecord = Record<string, unknown>;
 
 /** Bump when the prompt or the lint changes: unedited offers re-derive. */
-export const OFFER_PROMPT_VERSION = "offer-v5";
+export const OFFER_PROMPT_VERSION = "offer-v6";
 
 export const OFFER_MAX = {
   offer: 140,
@@ -197,15 +197,39 @@ function compactJson(value: unknown, drop: ReadonlySet<string>): string {
 const PERSON_NOISE = new Set(["version", "seed", "researchedAt", "status", "receiptIds", "cost"]);
 const PRODUCT_NOISE = new Set(["version", "researchedAt", "status", "warning", "cost", "kind"]);
 
+/** Longest GitHub record kept: the profile and their own repositories. */
+const GITHUB_EVIDENCE_MAX = 3_000;
+
+/**
+ * True when offers of this prompt version read the row's `githubEvidence` as
+ * its own section (from offer-v6). Older versions read the row alone, which
+ * drops any field over 240 characters, so that record never reached them.
+ */
+function readsGithubEvidence(version: string): boolean {
+  const n = /^offer-v(\d+)$/.exec(version)?.[1];
+  return n === undefined || Number(n) >= 6;
+}
+
 /**
  * Everything known about the person and the firm, as one text the offer is
- * written from and its evidence and numbers are checked against.
+ * written from and its evidence and numbers are checked against. `version`
+ * builds the text as that prompt version read it: an older one to check a
+ * kept offer's input hash against the research it was written from.
  */
-export function offerResearchText(target: object, dossier?: string | null): string {
+export function offerResearchText(
+  target: object,
+  dossier?: string | null,
+  version: string = OFFER_PROMPT_VERSION,
+): string {
   const t = target as JsonRecord;
   const parts: string[] = [];
-  const row = describeTargetForAngle(t, null).trim();
+  const github = readsGithubEvidence(version) ? githubEvidenceOf(t) : "";
+  // A short record would also be a row line; it is read once, in its own section.
+  const rowFields = github ? { ...t, githubEvidence: undefined } : t;
+  const row = describeTargetForAngle(rowFields, null).trim();
   if (row) parts.push(`HOW THEY WERE FOUND AND WHAT THE ROW SAYS:\n${row}`);
+  // What they build themselves: their profile and their own repositories.
+  if (github) parts.push(`THEIR GITHUB:\n${clip(github, GITHUB_EVIDENCE_MAX)}`);
   const person = t["personResearch"];
   if (isPersonResearchDossier(person) && person.status !== "unavailable") {
     parts.push(`PERSON RESEARCH:\n${clip(compactJson(person, PERSON_NOISE), 4_000)}`);
@@ -226,6 +250,11 @@ export function offerResearchText(target: object, dossier?: string | null): stri
   const extra = dossier?.trim();
   if (extra) parts.push(`ENRICHMENT:\n${clip(extra, 4_000)}`);
   return clip(parts.join("\n\n"), RESEARCH_MAX);
+}
+
+function githubEvidenceOf(t: JsonRecord): string {
+  const v = t["githubEvidence"];
+  return typeof v === "string" ? v.trim() : "";
 }
 
 const TITLE_KEYS = ["title", "newTitle", "jobTitle"];
@@ -286,18 +315,21 @@ export function offerIsCurrent(stored: unknown, inputHash: string): stored is Pr
 /**
  * True when an offer the founder approved (`weakApprovedAt`) was written from
  * the same research and product config as today's, under any prompt version.
- * A prompt bump alone never rewrites an offer the founder read and approved;
- * new research or a new brief still does.
+ * The research is rebuilt as the offer's own version read it, so a prompt
+ * bump alone, or a new section a later version reads, never rewrites an
+ * offer the founder read and approved; new research or a new brief still does.
  */
 function approvedOfferStands(
   stored: unknown,
-  research: string,
+  target: JsonRecord,
+  dossier: string | null | undefined,
   cfg: Pick<AppConfig, "productOneLiner" | "productBrief" | "pilotOffer">,
 ): stored is ProspectOffer {
   return (
     isProspectOffer(stored) &&
     offerWeakApproved(stored) &&
-    stored.inputHash === offerInputHash(research, cfg, stored.version)
+    stored.inputHash ===
+      offerInputHash(offerResearchText(target, dossier, stored.version), cfg, stored.version)
   );
 }
 
@@ -600,7 +632,7 @@ export function offerRelevanceCriteria(): Record<OfferRelevance, string> {
   return {
     relevant:
       "A goal this firm at its stage would put on its plan, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), owned by or one step from this person, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
-    weak: "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, or a return that is not a counted outcome this person owns or is one step from.",
+    weak: "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome this person owns or is one step from, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.",
     irrelevant:
       "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.",
   };
@@ -654,7 +686,9 @@ async function judgeWithDecisions(
         `over weeks of work, by machine, with outside parties, or both. ` +
         `Judge offer ${i + 1} in the state on its own: is it a real goal for this firm and this person? ` +
         `A market the firm sells into is not a need of the firm. A check is a step, not a goal: ` +
-        `the offer should be what the check wins.\nOffer ${i + 1}:\n${describeOffer(o)}`,
+        `the offer should be what the check wins. How they were found is not what they own: an offer ` +
+        `about a third party's project they only follow, or one restating what the product does, is weak.` +
+        `\nOffer ${i + 1}:\n${describeOffer(o)}`,
       criteria,
     };
   });
@@ -1291,7 +1325,7 @@ export async function ensureOfferSet(
   const stored = t["offer"];
   const research = offerResearchText(t, input.dossier);
   const inputHash = offerInputHash(research, cfg);
-  if (offerIsCurrent(stored, inputHash) || approvedOfferStands(stored, research, cfg)) {
+  if (offerIsCurrent(stored, inputHash) || approvedOfferStands(stored, t, input.dossier, cfg)) {
     const candidates = offerCandidatesOf(t);
     if (offerAnglesWritten(stored) || !cfg.productBrief?.trim()) {
       return { offer: stored, candidates, changed: false };
@@ -1354,8 +1388,8 @@ export async function offerSetForDraft(
   if (
     isProspectOffer(stored) &&
     (stored.version === OFFER_PROMPT_VERSION ||
-      approvedOfferStands(stored, offerResearchText(t), cfg) ||
-      approvedOfferStands(stored, offerResearchText(t, input.dossier), cfg)) &&
+      approvedOfferStands(stored, t, null, cfg) ||
+      approvedOfferStands(stored, t, input.dossier, cfg)) &&
     stored.productHash === offerProductHash(cfg)
   ) {
     return { offer: stored, candidates: offerCandidatesOf(t), derived: false };
