@@ -323,7 +323,7 @@ describe("runOutboundConfirmations", () => {
         key,
         identityId: gmailId.id,
         transport: "gmail",
-        recipient: "pat@example.org",
+        recipient: `${key}@example.org`,
         subject: "Re: Hello",
         body: "Thanks!",
         messageId: null,
@@ -338,22 +338,44 @@ describe("runOutboundConfirmations", () => {
       ...copy("<minted@gmail>", 20, "Re: Hello"),
       ...(inReplyTo ? { inReplyTo } : {}),
     });
-    const only = (c: SentCopy): ConfirmReaders => readers({}, [c]);
+    const only = (key: string, c: SentCopy): ConfirmReaders => ({
+      smtp: vi.fn(async () => []),
+      gmail: vi.fn(async ({ recipient }) => (recipient === `${key}@example.org` ? [c] : [])),
+    });
 
     // A reply to another message with the same subject is not this reply.
     reply("gm-reply-other");
-    await sweep(T0 + CONFIRM_MIN_AGE_MS, only(answering("<msg-b@mail.example>")));
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, only("gm-reply-other", answering("<msg-b@mail.example>")));
     expect(ledger.outboundSends.get("gm-reply-other")?.status).toBe("uncertain");
 
     // Same target, header spelled differently: confirmed.
     reply("gm-reply-same");
-    await sweep(T0 + CONFIRM_MIN_AGE_MS, only(answering("MSG-A@mail.example")));
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, only("gm-reply-same", answering("MSG-A@mail.example")));
     expect(ledger.outboundSends.get("gm-reply-same")?.status).toBe("confirmed");
 
-    // A copy without the header still counts: a dropped header never reads as "not sent".
+    // A copy without the header is some other message: Gmail keeps the one we send.
     reply("gm-reply-noheader");
-    await sweep(T0 + CONFIRM_MIN_AGE_MS, only(answering(undefined)));
-    expect(ledger.outboundSends.get("gm-reply-noheader")?.status).toBe("confirmed");
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, only("gm-reply-noheader", answering(undefined)));
+    expect(ledger.outboundSends.get("gm-reply-noheader")?.status).toBe("uncertain");
+  });
+
+  it("one Sent copy confirms one send; another send it matches is flagged, never resent (#905)", async () => {
+    const a = keyed("gm-twin-a", "uncertain", gmailId);
+    const b = keyed("gm-twin-b", "uncertain", gmailId);
+    const r: ConfirmReaders = {
+      smtp: vi.fn(async () => []),
+      gmail: vi.fn(async () => [copy("<one@gmail>", 20)]),
+    };
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, r);
+    const statuses = [a.key, b.key].map((k) => ledger.outboundSends.get(k)?.status).toSorted();
+    expect(statuses).toEqual(["confirmed", "not_found"]);
+    const flagged = [a.key, b.key].find(
+      (k) => ledger.outboundSends.get(k)?.status === "not_found",
+    )!;
+    expect(ledger.outboundSends.get(flagged)?.error).toMatch(/also matches another send/);
+    expect(
+      ledger.outboundSends.claim({ ...claimOf(flagged), now: new Date(T0 + 20 * 60_000) }).verdict,
+    ).toBe("already_sent");
   });
 
   it("leaves a send unchanged on a transient read error, one read per mailbox", async () => {

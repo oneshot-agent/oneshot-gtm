@@ -201,6 +201,7 @@ describe("reply options API", () => {
                   headers: [
                     { name: "Subject", value: "Re: Question" },
                     { name: "Message-ID", value: "<sent-reply@gmail>" },
+                    { name: "In-Reply-To", value: "<in>" },
                   ],
                 },
               });

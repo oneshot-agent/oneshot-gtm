@@ -503,6 +503,9 @@ export async function runOutboundConfirmations(opts: {
     now,
   });
   const unreadable = new Set<string>();
+  // Gmail copies already used to confirm a row this sweep, per mailbox: a
+  // copy is matched by recipient and subject, so one copy confirms one row.
+  const usedCopies = new Map<string, Set<string>>();
   const results: ConfirmResult[] = [];
   let reads = 0;
   for (const row of rows) {
@@ -549,14 +552,14 @@ export async function runOutboundConfirmations(opts: {
         const subject = normSubject(row.subject);
         const replyTarget = normMessageId(row.inReplyTo);
         // A reply counts only a copy answering the same message: two replies
-        // to one person can share a subject. A copy without the header still
-        // counts, so a header the server dropped never reads as "not sent".
+        // to one person can share a subject. Gmail keeps the In-Reply-To we
+        // send, so a copy without it is some other message.
         copies = (
           await readers.gmail({ identity, recipient: row.recipient, afterIso, beforeIso })
         ).filter(
           (c) =>
             (!subject || normSubject(c.subject) === subject) &&
-            (!replyTarget || !c.inReplyTo || normMessageId(c.inReplyTo) === replyTarget),
+            (!replyTarget || normMessageId(c.inReplyTo) === replyTarget),
         );
       }
     } catch (err) {
@@ -587,12 +590,28 @@ export async function runOutboundConfirmations(opts: {
       }
       continue;
     }
+    const used = usedCopies.get(row.identityId) ?? new Set<string>();
+    usedCopies.set(row.identityId, used);
+    const free =
+      row.transport === "gmail"
+        ? copies.filter((c) => !used.has(normMessageId(c.messageId)))
+        : copies;
+    // Its only copies confirmed another send: which one went out is unknown,
+    // so flag it rather than confirm it or let it settle into a resend.
+    const shared = free.length === 0 && copies.length > 0;
+    copies = free;
     const observed = new Set(copies.map((c) => c.messageId.trim().toLowerCase())).size;
     const ageMs = nowMs - attemptMs;
     let after: OutboundStatus | "unchanged" = "unchanged";
     let error: string | null = null;
-    if (observed >= 1) after = "confirmed";
-    else if (row.status === "uncertain" && ageMs >= UNCERTAIN_SETTLE_MS) {
+    if (observed >= 1) {
+      after = "confirmed";
+      for (const c of copies) used.add(normMessageId(c.messageId));
+    } else if (shared) {
+      after = "not_found";
+      error =
+        "its copy in Sent also matches another send, so it was not resent; check the recipient's thread before sending again";
+    } else if (row.status === "uncertain" && ageMs >= UNCERTAIN_SETTLE_MS) {
       // Missing from Sent proves "not sent" only where the server files its
       // own copy. Elsewhere nothing could have reached Sent, so never resend.
       if (row.sentEvidence) {
