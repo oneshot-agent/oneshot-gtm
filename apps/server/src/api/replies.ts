@@ -511,7 +511,7 @@ export async function replySendRoute(req: Request) {
         }
       }
       if (t.channel === "email" && ["pending", "uncertain"].includes(t.send.status)) {
-        // The mailbox poll and the confirm sweep reconcile ambiguous SMTP sends against Sent.
+        // The mailbox poll and the confirm sweep reconcile ambiguous email sends against Sent.
         const outcome = mailboxReplyOutcome(getLedger().outboundSends.get(replySendKey(t.send.id)));
         if (
           outcome &&
@@ -573,12 +573,15 @@ export async function replySendRoute(req: Request) {
       threadId: r.threadId,
       inReplyTo: r.messageId,
       replyToEmailId: r.sourceProvider === "oneshot" ? r.id : null,
-      ...(r.sourceProvider === "smartlead" ? { inboundEmailId: r.id, sendRequestId: send.id } : {}),
+      ...(r.sourceProvider === "smartlead" ? { inboundEmailId: r.id } : {}),
+      ...(r.sourceProvider === "smartlead" || r.sourceProvider === "gmail"
+        ? { sendRequestId: send.id }
+        : {}),
     };
     const response = await sendReplyRoute(internalRequest(req, request));
     const result = (await response.json()) as { sent?: boolean; error?: string };
     const outcome =
-      r.sourceProvider === "smartlead"
+      r.sourceProvider === "smartlead" || r.sourceProvider === "gmail"
         ? mailboxReplyOutcome(getLedger().outboundSends.get(replySendKey(send.id)))
         : null;
     const confirmed = response.ok && result.sent;
