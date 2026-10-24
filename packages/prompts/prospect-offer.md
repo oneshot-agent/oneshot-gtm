@@ -1,4 +1,4 @@
-You write FIVE offers a founder could make to this prospect, ranked by what each returns to the prospect's firm. Each offer is a job the founder's product would carry to completion for that firm. The first one is used: every outreach message opens with it, so it is the whole reason they reply. The other four are alternatives the founder can switch to.
+You write FIVE offers a founder could make to this prospect, ranked by what each returns to the prospect's firm. Each offer is a goal of that firm the founder's product would carry to completion over weeks (see The bar). The first one is used: every outreach message opens with it, so it is the whole reason they reply. The other four are alternatives the founder can switch to.
 
 Return JSON only:
 {"offers": [{"offer": "...", "return": "...", "fit": "...", "steps": "...", "evidence": ["...", "..."], "stage": "...", "level": "researched" | "role"}, ... five, best return first]}
@@ -26,9 +26,18 @@ The thread is context, not evidence. It is our own writing, not a fact about the
 1. How does this firm make money? What does it sell, to whom, how does it deliver, what does it depend on (suppliers, regulators, channels, data, people)?
 2. What stage is it at? Pre-product, early startup, scaling startup, established company, enterprise, public body, or a local business. The same title means different work at each.
 3. What is this person accountable for in that firm, given their title and what the research says they do?
-4. Which jobs would they gladly have finished this quarter that are stuck because they are slow, repetitive, multi-step or nobody's full-time job? Look in two places (the anchors below): what their own product could finish for its customers, and what their own firm has to get done.
-5. Which of those can the product carry to completion, using only what PRODUCT BRIEF says it does?
-6. Rank them by direct return to THIS firm: money brought in, money not spent, hours given back, a risk closed out. The return must be something they could count when the job is done. Rank across both anchors together and keep the five with the highest return, best first.
+4. What are the firm's two or three most valuable outcomes this quarter, in its own numbers when RESEARCH has them: revenue to bring in, customers to win or keep, a launch to ship, a contract cycle to close, a cost line to cut, a program to finish? Look in two places (the anchors below): what their own product has to deliver for its customers, and what their own firm has to get done.
+5. Which of those take weeks of work to reach? The work can be done by machine (long multi-step work: processing thousands of documents or records, optimizing routes, allocations or schedules, forecasting or simulating to change a plan, building or migrating software, working through a browser), with outside parties (customers, suppliers, partners, agencies, regulators, candidates), or both.
+6. Which of those can the product carry to the end, using only what PRODUCT BRIEF says it does? The product's own kind of work is how it gets there, never the goal itself.
+7. Rank them by direct return to THIS firm: money brought in, money not spent, something signed, closed, launched or shipped, a risk closed out, hours given back. The return must be something they could count when the goal is reached. Rank across both anchors together and keep the five with the highest return, best first.
+
+## The bar
+
+- An offer is a goal this firm's leadership would put on its plan for the quarter, carried over weeks of work (by machine, with outside parties, or both) to a counted result: money brought in or no longer spent, or something signed, closed, launched or shipped. Size it from their own numbers when RESEARCH has them: their customers, their sites, their contracts, their open roles, their launch.
+- The weeks of work can be done by machine: long multi-step work such as processing thousands of documents or records, optimizing routes, allocations or schedules, forecasting or simulating to change a plan, building or migrating software, or working through a browser. They can run through outside parties: customers, suppliers, partners, agencies, regulators, candidates. Or both. Neither is required; what makes it an offer is a long piece of work that ends in a counted result: "re-plan every delivery route before peak season", "migrate the codebase off a deprecated platform before its cutoff", "sign three new distributors this quarter".
+- A single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching is a STEP, never the offer. The offer is what that work, however long or machine-heavy, wins: a contract renegotiated, money recovered, a deal signed, a launch shipped, every new supplier onboarded in time for next quarter's contracts. "recover overbilled charges from three years of carrier invoices" is an offer; "audit carrier invoices" is a step. The whole path to that result is still work PRODUCT BRIEF says the product does: when the brief gives a check no path to a counted result for this firm, choose another goal rather than claim work the brief does not name. This holds when checking is all the product does: the offer names what the checking wins, and the check goes in STEPS. An offer never opens with vet, verify, validate, screen, scan, audit or check.
+- A forecast, a model or an analysis on its own is insight, never the offer. The offer is the plan changed on it and what that wins: stock reordered before the peak, crews rescheduled, a budget moved.
+- The person owns the goal or is one step from it. When the biggest goal in the firm belongs to someone far from this person, write the biggest one this person owns.
 
 ## Each offer rests on an anchor
 
@@ -43,12 +52,12 @@ An offer that rests on neither is not an offer for this prospect, however well i
 
 - A market the firm sells into is not a need of the firm. "They serve healthcare" does not mean they have healthcare compliance work; "they sell to banks" does not mean they reconcile bank statements. Never build an offer from an industry, sector or customer word alone. A market word can shape an offer only when it rests on an anchor: their product doing something for customers in that market, or work their own firm does there.
 - Stage realism: no job a firm of this size and stage does not have. A small early team has no procurement department, no vendor onboarding program and no back office of its own; an enterprise has more of each. When RESEARCH gives headcount, funding or stage, use it; when it does not, judge from what the firm visibly is.
-- The person's role: a firm-anchored offer is work this person owns or is close to. A research lead does not own invoice reconciliation; an operations lead may.
+- The person's role: a firm-anchored offer is a goal this person owns or is one step from. A research lead does not own invoice reconciliation; an operations lead may. A board director does not own a team's day-to-day backlog.
 - When RESEARCH says little about what their product does, prefer firm-anchored offers built from the role and stage, and say so in `fit`.
 
 ## Each offer is an execution with a return
 
-- A job carried to an end state: something is collected, closed, signed, renewed, filed, cleared, bought, booked, migrated or resolved, and the firm is better off by an amount it could count.
+- A job carried to an end state: something is collected, closed, signed, renewed, filed, cleared, bought, booked, migrated or resolved, and the firm is better off by an amount it could count. The end state is the goal (see The bar), not one pass of the work that reaches it.
 - Never a standing service or an awareness of something: no offer to track, monitor, watch, alert, stay on top of, keep anything up to date or in check, maintain, ground, or give visibility or insight into anything. An offer never opens with track, monitor, watch, alert, stay, keep, maintain or ground. When the product's work starts by noticing something (a change, a record, a deadline), the offer is the action taken on what it notices and its result, and the noticing belongs in STEPS.
 - The five are five different jobs, not five wordings of one.
 
@@ -64,7 +73,8 @@ An offer that rests on neither is not an offer for this prospect, however well i
 
 ## Return
 
-- What the firm gets back when the job is done and how they would count it: "cash collected, counted per paid invoice", "supplier spend cut, counted against last year's contract prices", "hours a week the ops team stops spending on it".
+- What the firm gets back when the goal is reached and how they would count it: the amount, in their terms, at the size the research supports: "cash collected, counted per paid invoice", "supplier spend cut at renewal, counted against last year's contract prices", "new customers signed, counted per signed contract".
+- Hours saved ("hours a week the ops team stops spending on it") only when nothing bigger is honest for this firm.
 - Lowercase, no trailing period, at most 120 characters. Numbers only when the same number appears in RESEARCH.
 
 ## Fit
