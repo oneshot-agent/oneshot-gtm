@@ -25,6 +25,7 @@ import {
   type SmartleadAccount,
   missingGmailSecrets,
   oneshotEnvReady,
+  paidCacheStats,
   resolveIdentities,
   secretSource,
   secretsPath,
@@ -35,7 +36,12 @@ import {
   spendCeilingReason,
   type OneShotConfig,
 } from "@oneshot-gtm/core";
-import { finderApprovalHealth, storedTriggerConfig, TRIGGERS } from "@oneshot-gtm/find";
+import {
+  finderApprovalHealth,
+  storedTriggerConfig,
+  testSourceRepo,
+  TRIGGERS,
+} from "@oneshot-gtm/find";
 
 type CheckSeverity = "ok" | "warn" | "fail";
 
@@ -606,6 +612,46 @@ function githubTokenCheck(): CheckResult | null {
 }
 
 /**
+ * The connected source repo, when there is one: can its ref be resolved and
+ * its files listed? A failure is a warn, not a fail: replies still draft,
+ * how-it-works questions just stay unanswered from the code. The result is
+ * kept for a few minutes per repo setting: doctor runs on page loads, and a
+ * GitHub check costs three API calls.
+ */
+const SOURCE_REPO_CHECK_TTL_MS = 10 * 60_000;
+let sourceRepoCheckCache: {
+  key: string;
+  at: number;
+  test: Awaited<ReturnType<typeof testSourceRepo>>;
+} | null = null;
+
+async function sourceRepoCheck(cfg: OneShotConfig): Promise<CheckResult | null> {
+  if (!cfg.sourceRepo?.path?.trim() && !cfg.sourceRepo?.url?.trim()) return null;
+  const key = JSON.stringify(cfg.sourceRepo);
+  const cached =
+    sourceRepoCheckCache?.key === key &&
+    Date.now() - sourceRepoCheckCache.at < SOURCE_REPO_CHECK_TTL_MS
+      ? sourceRepoCheckCache.test
+      : null;
+  const test = cached ?? (await testSourceRepo(cfg.sourceRepo));
+  if (!cached) sourceRepoCheckCache = { key, at: Date.now(), test };
+  if (test.ok)
+    return {
+      name: "source repo",
+      group: "install",
+      severity: "ok",
+      message: `${test.backend} · ${test.ref} @ ${test.commit?.slice(0, 7)} · ${test.readableFiles} readable files`,
+    };
+  return {
+    name: "source repo",
+    group: "install",
+    severity: "warn",
+    message: test.error ?? "the source repo could not be read",
+    hint: "Check the source repo on /setup (Product brief).",
+  };
+}
+
+/**
  * What live profile reads go through. A connected account that may view
  * profiles is "ok". One that needs a reconnect or the grant, with no working
  * browser session behind it, is a warn: the reads are paused. Otherwise the
@@ -791,6 +837,31 @@ function dailySpendCeilingCheck(): CheckResult | null {
 }
 
 /**
+ * How much of the last 7 days' paid lookups the shared cache answered, in
+ * every workspace. Informational; hidden until a lookup has run.
+ */
+function paidCacheCheck(): CheckResult | null {
+  let stats: ReturnType<typeof paidCacheStats>;
+  try {
+    stats = paidCacheStats(7);
+  } catch {
+    return null; // a report, not a gate: an unreadable shared file is the shared-db check's to flag
+  }
+  const hits = stats.reduce((n, s) => n + s.hits, 0);
+  const purchases = stats.reduce((n, s) => n + s.purchases, 0);
+  if (hits + purchases === 0) return null;
+  const saved = stats.reduce((n, s) => n + s.savedUsd, 0);
+  const share = Math.round((100 * hits) / (hits + purchases));
+  return {
+    name: "paid lookup cache",
+    group: "spend",
+    severity: "ok",
+    message: `${hits} of ${hits + purchases} lookups answered from cache (${share}%), $${saved.toFixed(2)} saved, last 7 days, all workspaces`,
+    hint: "per call type: oneshot-gtm find cache-stats",
+  };
+}
+
+/**
  * Check calendar access for the designated Gmail identity; return null when
  * calendarIdentityId is null. Check stored scope first and request reconnection
  * without a live call if it lacks calendar access. Otherwise probe getGmailProfile:
@@ -892,6 +963,9 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
 
   const gh = githubTokenCheck();
   if (gh) results.push(gh);
+
+  const repo = await sourceRepoCheck(cfg);
+  if (repo) results.push(repo);
 
   const xc = xCredsCheck();
   if (xc) results.push(xc);
@@ -1247,6 +1321,9 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
 
   const spendCeiling = dailySpendCeilingCheck();
   if (spendCeiling) results.push(spendCeiling);
+
+  const paidCache = paidCacheCheck();
+  if (paidCache) results.push(paidCache);
 
   const calendarCheck = await calendarIdentityCheck(cfg);
   if (calendarCheck) results.push(calendarCheck);

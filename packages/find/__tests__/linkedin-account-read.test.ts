@@ -52,13 +52,17 @@ vi.mock("@oneshot-gtm/core", async () => {
 const {
   _setLinkedInCall,
   experienceFromAccountView,
-  linkedinProfileCacheKey,
   liveReadConfigured,
   liveReadReady,
   readLinkedInProfile,
 } = await import("../src/_linkedin-profile.ts");
 
+const { _resetPaidCache, getSharedDb, paidCacheKey, readPaidCache } =
+  await import("@oneshot-gtm/core");
+
 const URL_A = "https://www.linkedin.com/in/ada-quill";
+/** The stored read (or negative entry) for a profile in the paid cache. */
+const stored = (url: string) => readPaidCache("linkedin.profile_read", { url });
 const ctx = { playName: "luma-events" };
 const fail = (fields: Record<string, unknown>) =>
   Object.assign(new Error(String(fields["message"] ?? "Tool request failed")), fields);
@@ -102,6 +106,7 @@ function script(...next: unknown[]) {
 
 beforeEach(() => {
   cache.clear();
+  _resetPaidCache();
   readsToday = 0;
   browserCalls = 0;
   countedSince = null;
@@ -196,7 +201,7 @@ describe("readLinkedInProfile through the connected account", () => {
       title: "Head of Platform",
       period: "May 2026 - Present",
     });
-    expect(cache.get(linkedinProfileCacheKey(URL_A))?.status).toBeNull();
+    expect(stored(URL_A)?.status).toBe("ok");
 
     // The second ask is the cache: no view, no charge.
     const again = await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 });
@@ -205,10 +210,13 @@ describe("readLinkedInProfile through the connected account", () => {
   });
 
   it("reads again past a caller's max age", async () => {
-    cache.set(linkedinProfileCacheKey(URL_A), {
-      result_json: JSON.stringify({ url: URL_A, readAt: "x", experience: [] }),
-      fetched_at: new Date(Date.now() - 15 * 86_400_000).toISOString(),
-      status: null,
+    getSharedDb().setPaidCache({
+      key: paidCacheKey("linkedin.profile_read", { url: URL_A }),
+      callType: "linkedin.profile_read",
+      status: "ok",
+      resultJson: JSON.stringify({ url: URL_A, readAt: "x", experience: [] }),
+      costUsd: 0.01,
+      fetchedAt: new Date(Date.now() - 15 * 86_400_000).toISOString(),
     });
     script(view(ADA_EXPERIENCE));
     const fresh = await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 });
@@ -226,7 +234,7 @@ describe("readLinkedInProfile through the connected account", () => {
     const read = await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 });
     expect(read).toMatchObject({ profile: null, skipped: "interrupted" });
     // Nothing cached for the profile, but the charged view counts toward the day.
-    expect(cache.get(linkedinProfileCacheKey(URL_A))).toBeUndefined();
+    expect(stored(URL_A)).toBeNull();
     expect([...cache.keys()]).toEqual([expect.stringMatching(/^linkedin-profile:incomplete:/)]);
     // A row without a failure status: the kind the daily budget counts.
     expect([...cache.values()][0]!.status).toBeNull();
@@ -250,18 +258,25 @@ describe("readLinkedInProfile through the connected account", () => {
       "interrupted",
     );
     expect(cache.size).toBe(0);
+    expect(stored(URL_A)).toBeNull();
 
     script(fail({ statusCode: 404, code: "profile_not_found" }));
     expect((await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 })).skipped).toBe("failed");
-    expect(cache.get(linkedinProfileCacheKey(URL_A))?.status).toBe("failed");
+    expect(stored(URL_A)?.status).toBe("failed");
+    // The negative entry answers the next ask without a view.
+    const before = ops.length;
+    expect(await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 })).toMatchObject({
+      skipped: "failed",
+      cached: true,
+    });
+    expect(ops).toHaveLength(before);
   });
 
   it("two reads at once with one view left: one reads, the other stops at the cap", async () => {
     readsToday = 79;
     _setLinkedInCall(async (workspace, operation) => {
       ops.push({ workspace, operation: operation as unknown as Record<string, unknown> });
-      // The read's cache row is what the cap counts.
-      readsToday++;
+      // The read's stored row in the paid cache is what the cap counts next.
       return view(ADA_EXPERIENCE);
     }, 0);
     const [a, b] = await Promise.all([

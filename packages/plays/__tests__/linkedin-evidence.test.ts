@@ -45,13 +45,22 @@ const {
   _resetLinkedInLiveReads,
 } = await import("../src/_linkedin-evidence.ts");
 
+const { _resetPaidCache, getSharedDb, paidCacheKey, readPaidCache } =
+  await import("@oneshot-gtm/core");
+
+/** Forget stored reads: the ledger's rows and the paid cache's. */
+function clearStored(): void {
+  cache.clear();
+  _resetPaidCache();
+}
+
 const DAY = 86_400_000;
 const NOW = new Date("2026-10-12T12:00:00Z");
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * DAY);
 const dayStr = (n: number) => daysAgo(n).toISOString();
 
 beforeEach(() => {
-  cache.clear();
+  clearStored();
   completions.length = 0;
   replies = [];
   _resetLinkedInLiveReads();
@@ -274,7 +283,7 @@ describe("live-read rule", () => {
       experience: [{ company: "Soren", period: "Mar 2026 - Present" } as never],
     });
     expect(await companyTheyRun({ playName: "a", prospect, reader: now, now: NOW })).toBe("Soren");
-    cache.clear();
+    clearStored();
     const past = reader({ experience: [{ company: "Soren", period: "2020 - 2022" } as never] });
     expect(await companyTheyRun({ playName: "b", prospect, reader: past, now: NOW })).toBeNull();
   });
@@ -310,7 +319,7 @@ describe("live-read rule", () => {
   it("a remembered read expires after a day, so a long-lived server reads again", async () => {
     const read = reader({ headline: "CEO @ Soren", experience: [] });
     await companyTheyRun({ playName: "p", prospect, reader: read, now: NOW });
-    cache.clear();
+    clearStored();
     await companyTheyRun({
       playName: "p",
       prospect,
@@ -343,12 +352,12 @@ describe("live-read rule", () => {
     expect(
       await companyTheyRun({ playName: "a", prospect: personal, reader: agrees, now: NOW }),
     ).toBe("Soren");
-    cache.clear();
+    clearStored();
     const moved = reader({ headline: "Engineer at Otherco", experience: [] });
     expect(
       await companyTheyRun({ playName: "b", prospect: personal, reader: moved, now: NOW }),
     ).toBeNull();
-    cache.clear();
+    clearStored();
     // The live headline says something else, but the live current position names it.
     const position = reader({
       headline: "Building agents",
@@ -371,10 +380,14 @@ describe("live-read rule", () => {
   });
 
   it("a stored live read is used without calling the reader", async () => {
-    cache.set("linkedin-profile:https://linkedin.com/in/dana-lee", {
-      result_json: JSON.stringify({ headline: "Founder, Soren", experience: [] }),
-      fetched_at: NOW.toISOString(),
-      status: null,
+    // Person research's read of the profile, already in the paid cache.
+    getSharedDb().setPaidCache({
+      key: paidCacheKey("linkedin.profile_read", { url: "https://linkedin.com/in/dana-lee" }),
+      callType: "linkedin.profile_read",
+      status: "ok",
+      resultJson: JSON.stringify({ headline: "Founder, Soren", experience: [] }),
+      costUsd: 0.01,
+      fetchedAt: NOW.toISOString(),
     });
     const read = reader(null);
     expect(await companyTheyRun({ playName: "p", prospect, reader: read, now: NOW })).toBe("Soren");
@@ -462,11 +475,11 @@ describe("profile view reader", () => {
       .mockResolvedValueOnce({ status: "completed", result: PROFILE });
     const first = await companyTheyRun({ playName: "p", prospect, reader: make(call), now: NOW });
     expect(first).toBeNull();
-    expect([...cache.keys()].filter((k) => k.startsWith("linkedin-view:"))).toEqual([]);
+    expect(readPaidCache("linkedin.profile", { url: URL })).toBeNull();
     expect(await companyTheyRun({ playName: "p", prospect, reader: make(call), now: NOW })).toBe(
       "Soren",
     );
-    expect([...cache.keys()].filter((k) => k.startsWith("linkedin-view:"))).toHaveLength(1);
+    expect(readPaidCache("linkedin.profile", { url: URL })?.status).toBe("ok");
   });
 });
 

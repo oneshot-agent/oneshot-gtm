@@ -15,7 +15,11 @@
  * existed, or a LinkedIn touch whose row had none) gets one written when its
  * next follow-up is drafted (`deriveSequenceOffer`), from the same research
  * and the same writer and judge an intro's offer comes from, plus the thread
- * already sent.
+ * already sent. When the writer declines, its reason is kept on the cadence
+ * (`offer_json.skip`, `writeSequenceOfferSkip`) with the hash of the
+ * research it read: later drafts show it and do not ask again until that
+ * research changes. New offers (`force`) asks again; any offer written or
+ * chosen drops it.
  */
 import {
   getLedger,
@@ -30,8 +34,11 @@ import {
 import { tryParseJsonObject } from "@oneshot-gtm/intel";
 import {
   ensureOfferSet,
+  isOfferSkip,
+  isOfferSkipped,
   isProspectOffer,
   playMakesOffer,
+  type OfferSkip,
   type OfferThreadEmail,
   type ProspectOffer,
 } from "./_prospect-offer.ts";
@@ -56,6 +63,8 @@ export interface SequenceOfferRecord {
   offerCandidates: ProspectOffer[];
   /** True when the first email carried the offer (origin `intro`). */
   introCarriedOffer: boolean;
+  /** The writer's refusal while the sequence has no offer; null otherwise. */
+  skip: OfferSkip | null;
 }
 
 interface SequenceRow {
@@ -88,10 +97,12 @@ function text(value: unknown): string | null {
 export function sequenceOfferOf(
   cadence: Pick<CadenceWithProspect, "prospect_id" | "play_name" | "offer_json" | "queue_id">,
 ): SequenceOfferRecord {
-  const stored = tryParseJsonObject<{ offer?: unknown; candidates?: unknown; origin?: unknown }>(
-    cadence.offer_json ?? "",
-    {},
-  );
+  const stored = tryParseJsonObject<{
+    offer?: unknown;
+    candidates?: unknown;
+    origin?: unknown;
+    skip?: unknown;
+  }>(cadence.offer_json ?? "", {});
   const offer = stored.offer as SequenceOfferValue | undefined;
   const has =
     !!offer && typeof offer === "object" && !!text(offer.offer) && typeof offer.steps === "string";
@@ -103,6 +114,7 @@ export function sequenceOfferOf(
     offerCandidates:
       has && Array.isArray(stored.candidates) ? stored.candidates.filter(isProspectOffer) : [],
     introCarriedOffer: has && stored.origin === "intro",
+    skip: !has && isOfferSkip(stored.skip) ? stored.skip : null,
   };
 }
 
@@ -167,6 +179,32 @@ export function writeSequenceOffer(input: {
       "error.swallowed",
       {
         kind: "sequence-offer-write",
+        play: record.playName,
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "warn",
+    );
+    return false;
+  }
+}
+
+/**
+ * Keep the writer's refusal on the cadence, while it has no offer. Guarded
+ * as `writeSequenceOffer` is (active, no send holding it). False when
+ * nothing was written.
+ */
+export function writeSequenceOfferSkip(record: SequenceOfferRecord, skip: OfferSkip): boolean {
+  try {
+    return getLedger().setCadenceOfferSkip({
+      prospectId: record.prospectId,
+      playName: record.playName,
+      skip: { ...skip },
+    });
+  } catch (err) {
+    logEvent(
+      "error.swallowed",
+      {
+        kind: "sequence-offer-skip-write",
         play: record.playName,
         message_120: ((err as Error).message ?? "").slice(0, 120),
       },
@@ -273,6 +311,13 @@ export type DeriveSequenceOfferResult =
       offer: SequenceOfferValue;
     }
   | {
+      /** The writer declined: its reason, kept on the cadence when it has no offer. */
+      status: "none";
+      record: SequenceOfferRecord;
+      reason: "skipped";
+      skip: OfferSkip;
+    }
+  | {
       status: "none";
       record: SequenceOfferRecord;
       reason: "no-play-offer" | "no-brief" | "nothing-derived" | "not-stored" | "error";
@@ -287,7 +332,10 @@ export type DeriveSequenceOfferResult =
  * offers the way an intro's are (`ensureOfferSet`), told the thread already
  * sent, and stores them on the cadence (`writeSequenceOffer`), which a send
  * holding the cadence refuses (`not-stored`). An offer that could not be
- * stored is not returned: the next touch would not see it. Never throws.
+ * stored is not returned: the next touch would not see it. A writer skip
+ * (`skipped`) is kept on a cadence with no offer; while the research it
+ * read is unchanged, the stored one is answered without a writer call,
+ * except with `force`. Never throws.
  */
 export async function deriveSequenceOffer(input: {
   prospectId: number;
@@ -310,9 +358,12 @@ export async function deriveSequenceOffer(input: {
     const ledger = getLedger();
     const queued = ledger.cadenceQueueRow(input.prospectId, input.playName);
     let target: JsonRecord = queued ? { ...queued.payload } : prospectTarget(prospect);
-    // Written fresh: never the stored offer re-used under a new name.
+    // Written fresh: never the stored offer re-used under a new name. The
+    // row's skip is the intro's; the sequence's own stands for it, unless
+    // the founder asked for new offers.
     delete target["offer"];
     delete target["offerCandidates"];
+    delete target["offerSkip"];
     if (queued) {
       if (sequenceOfferResearch) {
         target = await sequenceOfferResearch({
@@ -332,15 +383,39 @@ export async function deriveSequenceOffer(input: {
     const person = withPersonResearch(target, prospect);
     const thread = sequenceThread(input.prospectId, input.playName, input.stepIndex);
     const set = await ensureOfferSet({
-      target: person.target,
+      target:
+        record.skip && !input.force ? { ...person.target, offerSkip: record.skip } : person.target,
       dossier: person.dossier,
       playName: input.playName,
       cfg,
       ...(thread.length > 0 ? { thread } : {}),
     });
     if (!set) {
-      logEvent("sequence_offer.none", { play: input.playName, prospect_id: input.prospectId });
+      logEvent("sequence_offer.none", {
+        play: input.playName,
+        prospect_id: input.prospectId,
+        reason: "nothing-derived",
+      });
       return { status: "none", record, reason: "nothing-derived" };
+    }
+    if (isOfferSkipped(set)) {
+      // A fresh skip is kept only while the sequence has no offer: New
+      // offers over one that stands leaves it standing.
+      const stored = set.changed && !record.offer && writeSequenceOfferSkip(record, set.skipped);
+      logEvent("sequence_offer.none", {
+        play: input.playName,
+        prospect_id: input.prospectId,
+        reason: "skipped",
+        cached: !set.changed,
+        stored,
+        why_200: set.skipped.why.slice(0, 200),
+      });
+      return {
+        status: "none",
+        record: stored ? { ...record, skip: set.skipped } : record,
+        reason: "skipped",
+        skip: set.skipped,
+      };
     }
     const stored = writeSequenceOffer({
       record,
@@ -363,6 +438,7 @@ export async function deriveSequenceOffer(input: {
         offer: set.offer,
         offerCandidates: set.candidates,
         introCarriedOffer: false,
+        skip: null,
       },
       offer: set.offer,
     };

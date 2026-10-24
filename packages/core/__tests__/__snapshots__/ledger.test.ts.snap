@@ -41,6 +41,12 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_code_answers_status",
+      "sql": "CREATE INDEX idx_code_answers_status ON code_answers(status, updated_at DESC)",
+      "tbl_name": "code_answers",
+      "type": "index",
+    },
+    {
       "name": "idx_draft_versions_assignment",
       "sql": "CREATE INDEX idx_draft_versions_assignment ON draft_versions(play_name, angle_assignment)",
       "tbl_name": "draft_versions",
@@ -441,6 +447,33 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         FOREIGN KEY(prospect_id) REFERENCES prospects(id)
       )",
       "tbl_name": "channel_events",
+      "type": "table",
+    },
+    {
+      "name": "code_answers",
+      "sql": "CREATE TABLE code_answers (
+          id TEXT PRIMARY KEY,
+          question TEXT NOT NULL,
+          question_key TEXT NOT NULL UNIQUE,
+          status TEXT NOT NULL DEFAULT 'open',
+          answer TEXT,
+          founder_edited INTEGER NOT NULL DEFAULT 0,
+          why_unresolved TEXT,
+          files_json TEXT NOT NULL DEFAULT '[]',
+          commit_sha TEXT,
+          prompt_version TEXT,
+          digest TEXT,
+          asked_count INTEGER NOT NULL DEFAULT 1,
+          threads_json TEXT NOT NULL DEFAULT '[]',
+          source_thread_key TEXT,
+          deriving_at TEXT,
+          derive_token TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          decided_at TEXT,
+          decided_by TEXT
+        )",
+      "tbl_name": "code_answers",
       "type": "table",
     },
     {

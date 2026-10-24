@@ -7,12 +7,7 @@ import {
   deliveryWarningText,
 } from "../components/queue/DeliveryWarning.tsx";
 import { PersonDossier } from "../components/queue/PersonDossier.tsx";
-import {
-  ProspectOffer,
-  nextOfferIndex,
-  offerCandidatesFromPayload,
-  offerFromPayload,
-} from "../components/queue/ProspectOffer.tsx";
+import { ProspectOffer } from "../components/queue/ProspectOffer.tsx";
 import { ProductResearch } from "../components/queue/ProductResearch.tsx";
 import { SentRowSequenceOffer } from "../components/queue/SequenceOffer.tsx";
 import { Explain } from "../components/primitives/Explain.tsx";
@@ -94,7 +89,7 @@ import {
   reachableChannels,
   xHandleFrom,
 } from "../lib/channels.ts";
-import { heldSummary } from "../lib/flagLabels.ts";
+import { flagAdvice, heldSummary, type HeldOptions } from "../lib/flagLabels.ts";
 import {
   caseRows,
   personResearchBadge,
@@ -137,7 +132,7 @@ import {
   markDraftGenerating,
   useGeneratingDrafts,
 } from "../lib/draftRunState.ts";
-import { clearRowActivity, setRowActivity, useRowActivity } from "../lib/rowActivity.ts";
+import { useRowActivity } from "../lib/rowActivity.ts";
 import { liveReadMissing, READING_LINKEDIN } from "../lib/liveRead.ts";
 import { ReadOnOpen } from "../components/queue/ReadOnOpen.tsx";
 import { summarizeRun } from "../lib/summarizeRun.ts";
@@ -1000,7 +995,10 @@ export function QueueRow({
     : null;
   const signalLabel = signal && when ? `${signal} · ${when}` : (signal ?? when);
   const prio = priorityChip(row.priority, masked, { shadow: !ranked });
-  const held = row.lastDraft && !row.lastDraft.sent ? heldSummary(row.lastDraft.flags) : null;
+  const held =
+    row.lastDraft && !row.lastDraft.sent
+      ? heldSummary(row.lastDraft.flags, { offerSkipped: !masked && !!row.offerSkip })
+      : null;
   const detail = sourceDetail(row.source);
   const researchRows = masked ? [] : personResearchRows(row.payload);
   const profileHistory = researchRows.filter((r) => r.key === "listed as" || r.key === "formerly");
@@ -1228,6 +1226,7 @@ export function QueueRow({
                 <ProspectOffer
                   rowId={row.id}
                   payload={row.payload}
+                  skip={row.offerSkip ?? null}
                   editable={
                     (row.status === "pending" || row.status === "approved") &&
                     !row.lastDraft?.sent &&
@@ -1309,6 +1308,7 @@ export function QueueRow({
               payload={row.payload}
               status={row.status}
               sendHold={row.sendHold}
+              offerSkip={row.offerSkip ?? null}
               delivery={row.delivery ?? null}
               draft={row.lastDraft}
               draftedAt={row.lastDraftedAt}
@@ -1340,6 +1340,7 @@ export function DraftSection({
   isSending,
   prospectId,
   sendHold,
+  offerSkip = null,
   delivery,
 }: {
   id: number;
@@ -1348,6 +1349,8 @@ export function DraftSection({
   payload: unknown;
   status: QueueStatusView;
   sendHold?: QueueRowView["sendHold"];
+  /** The writer declined to write the row's offer: its reason (`QueueRowView.offerSkip`). */
+  offerSkip?: QueueRowView["offerSkip"] | null;
   /** Sent-folder delivery check of this row's send, when one ran. */
   delivery?: QueueRowView["delivery"];
   draft: QueueRowView["lastDraft"];
@@ -1364,45 +1367,6 @@ export function DraftSection({
 }): React.ReactElement {
   const qc = useQueryClient();
   const { masked } = usePrivacy();
-  const offer = offerFromPayload(payload);
-  const candidates = offerCandidatesFromPayload(payload);
-  const activeOfferIndex =
-    offer?.editedBy === "founder"
-      ? -1
-      : candidates.findIndex((candidate) => candidate.offer === offer?.offer);
-  const nextOffer = useMutation({
-    mutationFn: async (select: number) => {
-      // Same steps and shared label as the offer block's Use this offer.
-      const token = setRowActivity(id, `Switching to offer ${select + 1}…`);
-      try {
-        await api.setQueueOffer(id, { select });
-        setRowActivity(id, "Rewriting the draft around the offer…", token);
-        const stamp = markDraftGenerating(id);
-        try {
-          await api.regenerateDraft(id);
-          return { redrafted: true as const };
-        } catch (err) {
-          return { redrafted: false as const, message: (err as Error).message };
-        } finally {
-          clearDraftGenerating(id, stamp);
-        }
-      } finally {
-        clearRowActivity(id, token);
-      }
-    },
-    onSuccess: (result) => {
-      void qc.invalidateQueries({ queryKey: ["queue"] });
-      if (result.redrafted) toast.success("offer saved · draft rewritten around it, not sent");
-      else
-        toast.error(
-          `offer saved, but the draft still carries the old one · ${result.message}. Regenerate the draft.`,
-        );
-    },
-    onError: (err) => {
-      void qc.invalidateQueries({ queryKey: ["queue"] });
-      toast.error(`couldn't update the offer · ${err.message}`);
-    },
-  });
   const regenerate = useMutation({
     mutationFn: (rotateAngle: boolean) => api.regenerateDraft(id, rotateAngle),
     // Persist a localStorage marker so the spinner survives leaving + returning
@@ -1422,13 +1386,12 @@ export function DraftSection({
     },
   });
   // What the row is busy with when the offer block started it (new offers,
-  // switching offer): the letter shows the same words.
+  // next offer, approving it): the letter's working line is where it is named.
   const activity = useRowActivity(id);
   const rotating = regenerate.isPending && regenerate.variables === true;
   // Instant spinner while mounted (isPending) OR restored-from-localStorage
   // after a remount (generating), OR offer work that ends in a redraft.
-  const isGenerating =
-    generating || regenerate.isPending || nextOffer.isPending || activity != null;
+  const isGenerating = generating || regenerate.isPending || activity != null;
   const send = useMutation({
     mutationFn: () => api.sendDraft(id),
     onSuccess: () => {
@@ -1465,6 +1428,8 @@ export function DraftSection({
           ? "Rewriting the draft…"
           : "Writing the draft…"
         : null;
+  // Offer work is named on the working line alone; the button only locks.
+  const redrafting = isGenerating && !rotating && activity == null;
   const draftButton = canDraft ? (
     <div className="flex flex-wrap items-center gap-2">
       <Button
@@ -1475,12 +1440,8 @@ export function DraftSection({
         {...readOnly}
         title="Draft this row in preview mode — dry-run, never sends"
       >
-        {isGenerating && !rotating ? (
-          <Loader2 size={11} className="animate-spin" />
-        ) : (
-          <RotateCw size={11} />
-        )}
-        {isGenerating && !rotating ? pendingVerb : verb}
+        {redrafting ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
+        {redrafting ? pendingVerb : verb}
       </Button>
       {draft && channel !== "reddit" && channel !== "hacker-news" && (
         <Button
@@ -1493,23 +1454,6 @@ export function DraftSection({
         >
           {rotating ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
           {rotating ? "Rotating…" : "Rotate angle"}
-        </Button>
-      )}
-      {candidates.length > 1 && offer?.editedBy !== "founder" && (
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={isGenerating}
-          onClick={() => nextOffer.mutate(nextOfferIndex(offer, candidates)!)}
-          {...readOnly}
-          title="Use the next offer and rewrite the draft around it"
-        >
-          {nextOffer.isPending ? (
-            <Loader2 size={11} className="animate-spin" />
-          ) : (
-            <RotateCw size={11} />
-          )}
-          {nextOffer.isPending ? "Switching…" : "Next offer"}
         </Button>
       )}
     </div>
@@ -1747,8 +1691,20 @@ export function DraftSection({
   const weakOffer = sendHold?.code === "weak-offer";
   const holdLabel = weakOffer ? "Held · weak offer" : "Held · fit review";
   const holdTitle = weakOffer
-    ? "The offer was rated a weak fit: rewrite it, pick another or approve it before sending; regenerating will not clear this hold"
+    ? `${holdLabel}: ${flagAdvice("weak-offer")}; regenerating will not clear this hold`
     : "Review this person’s fit before sending; regenerating will not clear this hold";
+  // The held line's flags and advice. The weak-offer hold says its own
+  // piece in `SendHoldNote`, so its flag is not repeated here.
+  const holdOptions: HeldOptions = {
+    offerSkipped: !masked && !!offerSkip,
+    offerHeld: weakOffer,
+    // Send anyway exists only on an API row with no send hold.
+    review:
+      sender !== "api" || sendHold ? "regenerate" : status === "approved" ? "send" : "approve",
+  };
+  const lineFlags =
+    draft && !draft.sent ? draft.flags.filter((f) => !(weakOffer && f === "weak-offer")) : [];
+  const draftHeld = heldSummary(lineFlags, holdOptions);
   const sendButton = showSend ? (
     <Button
       variant="receipt"
@@ -1765,7 +1721,7 @@ export function DraftSection({
               ? "Send this prospect now — sends the reviewed draft, as-is"
               : draft == null
                 ? "Generate a draft first, then send it"
-                : "Draft has lint flags — regenerate to clear them, then send"
+                : `held · ${draftHeld?.next ?? "regenerate the draft"}`
       }
     >
       {sending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
@@ -1792,8 +1748,7 @@ export function DraftSection({
         below={
           <>
             {" "}
-            {sendHold && <SendHoldNote rowId={id} hold={sendHold} editable={!sending} />}{" "}
-            {linkedinReplyEditor}{" "}
+            {sendHold && <SendHoldNote hold={sendHold} />} {linkedinReplyEditor}{" "}
           </>
         }
       />
@@ -1817,7 +1772,7 @@ export function DraftSection({
   const hasDraftDetails =
     sendHold ||
     deliveryNote ||
-    (!draft.sent && draft.flags.length > 0) ||
+    lineFlags.length > 0 ||
     draft.receiptIds.length > 0 ||
     isStalePostSend ||
     researchWarning ||
@@ -1841,10 +1796,10 @@ export function DraftSection({
       stateLine={
         hasDraftDetails ? (
           <>
-            {sendHold && <SendHoldNote rowId={id} hold={sendHold} editable={!sending} />}
+            {sendHold && <SendHoldNote hold={sendHold} />}
             {deliveryNote && <DeliveryWarning delivery={delivery} />}
-            {!draft.sent && draft.flags.length > 0 && (
-              <DraftStateLine sent={false} flags={draft.flags} />
+            {lineFlags.length > 0 && (
+              <DraftStateLine sent={false} flags={lineFlags} hold={holdOptions} />
             )}
             {softHold && <Explain concept="softHold" detail={softHoldDetail} />}
             {draft.receiptIds.map((rid) => (
@@ -1877,20 +1832,13 @@ export function DraftSection({
       body={draft.body}
       afterBody={
         <>
-          {(draft.angle || activeOfferIndex >= 0) && (
-            <div className="mt-3 flex flex-wrap items-baseline gap-3 text-xs text-ink-muted">
-              {draft.angle && (
-                <details>
-                  <summary className="cursor-pointer">
-                    {`Angle ${(draft.angle.index ?? 0) + 1} of ${draft.angle.count ?? 1}${draft.angle.origin === "generated" ? " · generated" : ""}`}
-                  </summary>
-                  <p className="mt-2">{draft.angle.text}</p>
-                </details>
-              )}
-              {activeOfferIndex >= 0 && (
-                <span>{`Offer ${activeOfferIndex + 1} of ${candidates.length}`}</span>
-              )}
-            </div>
+          {draft.angle && (
+            <details className="mt-3 text-xs text-ink-muted">
+              <summary className="cursor-pointer">
+                {`Angle ${(draft.angle.index ?? 0) + 1} of ${draft.angle.count ?? 1}${draft.angle.origin === "generated" ? " · generated" : ""}`}
+              </summary>
+              <p className="mt-2">{draft.angle.text}</p>
+            </details>
           )}
           <DraftHistory queryKey={["queue-drafts", id]} load={() => api.queueDrafts(id)} />
           {linkedinReplyEditor}

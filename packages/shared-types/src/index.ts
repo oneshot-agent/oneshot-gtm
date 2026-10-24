@@ -1,6 +1,7 @@
 import type { DecisionReason } from "./learning.ts";
 export * from "./reply-email-view.ts";
 export * from "./linkedin-reads.ts";
+export * from "./code-answers.ts";
 /**
  * Wire types shared between apps/cli, apps/server, and apps/web.
  * These are the API contracts for /api/* endpoints. Keep stable.
@@ -108,6 +109,15 @@ export interface CadenceOfferChoice {
 }
 
 /**
+ * Why the offer writer wrote no offer, in its own words, and when. Kept
+ * until the research it read changes, or an offer is written or chosen.
+ */
+export interface OfferSkipView {
+  why: string;
+  at: string;
+}
+
+/**
  * The offer a cadence's follow-ups restate (`sequenceOfferRecord`): the
  * intro's own, or one written for the sequence, kept on the cadence
  * (`cadence_state.offer_json`). Changed with POST /api/cadences/:id/offer,
@@ -128,6 +138,11 @@ export interface CadenceOfferView extends Omit<CadenceOfferChoice, "text"> {
   activeIndex: number;
   /** The first email carried it: what was sent is fixed, so it cannot change. */
   introCarriedOffer: boolean;
+  /**
+   * Set while the sequence has no offer because the writer declined: its
+   * reason. A follow-up is held for it, and regenerating will not change it.
+   */
+  skip?: OfferSkipView;
 }
 
 export interface CadenceView {
@@ -479,6 +494,15 @@ export interface SetupRequest {
   pilotOffer?: string;
   /** Product facts + canonical links replies may cite. Links absent from this brief are never sent. */
   productBrief?: string;
+  /**
+   * The product's source repo, read to answer how-it-works questions. `url`: a
+   * GitHub repo (private needs GITHUB_TOKEN); `path`: a local git checkout;
+   * `ref`: branch, tag or sha (default: the repo's default branch). `null`
+   * clears it; `undefined` leaves it unchanged.
+   */
+  sourceRepo?: { url?: string; path?: string; ref?: string } | null;
+  /** How much an answer from the code may say. Blank = the default (behaviour only). */
+  codeAnswerDisclosure?: string;
   founderVoice?: string;
   /** When true, signature appends a literal "Sent from my iPhone" line. */
   mobileSignature?: boolean;
@@ -747,6 +771,12 @@ export interface QueueRowView {
    * no sequence, plays that make no offer, and in older API responses.
    */
   sequenceOffer?: { status: CadenceStatus; offer: CadenceOfferView };
+  /**
+   * Set on an unsent row with no offer because the writer declined: its
+   * reason (`payload.offerSkip`). The draft is held `no-offer` until an
+   * offer is written; regenerating will not change it.
+   */
+  offerSkip?: OfferSkipView;
   id: number;
   playName: string;
   /** Outreach channel of the first touch: email, linkedin or x. */
@@ -2120,6 +2150,7 @@ export function isQueueImportInProgress(row: {
 
 export * from "./onboarding.ts";
 export * from "./linkedin-measure.ts";
+export * from "./offer-similarity.ts";
 
 /** GET /api/linkedin/invites: LinkedIn invites left today (workspace share and account). */
 export interface LinkedInInviteQuotaView {

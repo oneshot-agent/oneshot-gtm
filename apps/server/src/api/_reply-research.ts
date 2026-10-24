@@ -1,8 +1,7 @@
 import {
-  ENRICH_CACHE_TTL_MS,
   getLedger,
   hasDossierSignal,
-  isTransientToolError,
+  isCachedPaidFailure,
   logEvent,
   webRead,
   withDeadline,
@@ -13,6 +12,12 @@ import { isDudDomain } from "@oneshot-gtm/find";
 const PLAY_NAME = "inbox-reply";
 /** webRead is normally seconds; a hung fetch must not pin the draft button. */
 const WEBREAD_DEADLINE_MS = 30_000;
+/**
+ * A sender's company page or profile changes slowly: a read from the last 30
+ * days (any workspace) answers, not only the half-day a finder's listing page
+ * gets.
+ */
+const SENDER_PAGE_MAX_AGE_MS = 30 * 24 * 3600 * 1000;
 /** Keep the combined research block prompt-sized. */
 const DOSSIER_SLICE = 5000;
 const WEBREAD_SLICE = 3500;
@@ -176,15 +181,6 @@ export async function gatherReplyContext(input: {
   };
 }
 
-/** Cache writes are strictly best-effort. A SQLite hiccup must never turn a successful read into a failure. */
-function bestEffort(fn: () => void): void {
-  try {
-    fn();
-  } catch {
-    // deliberately swallowed
-  }
-}
-
 /**
  * Normalize the finder's stored profile URL into something safe to fetch.
  * These rows are written by our own finders, so this is a guard against bad
@@ -219,50 +215,22 @@ export function siteDomainFor(domain: string): string {
 
 /**
  * Read one page about the sender: their company site, or the profile URL the
- * finder sourced them from: cached in enrichment_cache under `webread:<label>`
- * (30d TTL + negative-cache semantics). Returns null on any failure;
- * transient errors are NOT negative-cached (an outage must not suppress
- * research for a month). The cache write rides the LIVE promise, not the
- * deadline race. A read settling after the deadline was still PAID for and
- * must reach the cache.
+ * finder sourced them from. The paid cache under webRead answers a read from
+ * the last 30 days and remembers a genuine failure; this returns null on any
+ * failure. A read settling after the deadline is still stored by the cache.
  */
 async function readSenderPage(
   url: string,
   label: string,
 ): Promise<{ text: string; paid: boolean; costUsd: number } | null> {
-  const ledger = getLedger();
-  const cacheKey = `webread:${label}`;
-
-  let cached: ReturnType<typeof ledger.getCachedEnrichment> = null;
-  try {
-    cached = ledger.getCachedEnrichment(cacheKey);
-  } catch {
-    // cache-READ failure = cache miss, not a research failure
-  }
-  if (cached) {
-    const fresh = Date.now() - new Date(cached.fetched_at).getTime() < ENRICH_CACHE_TTL_MS;
-    if (fresh) {
-      if (cached.status === "failed") return null;
-      try {
-        const parsed = JSON.parse(cached.result_json) as { text?: string };
-        if (parsed.text) return { text: parsed.text, paid: false, costUsd: 0 };
-      } catch {
-        // corrupt cache row: fall through and refetch
-      }
-    }
-  }
-
   const live = webRead(
     { url },
     {
       playName: PLAY_NAME,
       memo: `read sender's page (${label}) before drafting a reply`,
     },
-  ).then((read) => {
-    const text = (read.result.markdown ?? "").trim().slice(0, WEBREAD_SLICE);
-    if (text) bestEffort(() => ledger.setCachedEnrichment(cacheKey, JSON.stringify({ text })));
-    return read;
-  });
+    { maxAgeMs: SENDER_PAGE_MAX_AGE_MS },
+  );
   // A deadline-abandoned promise must not surface as an unhandled rejection.
   live.catch(() => {});
 
@@ -271,18 +239,16 @@ async function readSenderPage(
     const text = (read.result.markdown ?? "").trim().slice(0, WEBREAD_SLICE);
     if (!text) return null;
     const c = (read.result as unknown as { cost?: number }).cost;
-    return { text, paid: true, costUsd: typeof c === "number" ? c : 0 };
+    const paid = read.receiptId !== 0;
+    return { text, paid, costUsd: paid && typeof c === "number" ? c : 0 };
   } catch (err) {
-    if (!isTransientToolError(err)) {
-      bestEffort(() =>
-        ledger.setCachedEnrichmentFailure(cacheKey, (err as Error).message ?? "webRead failed"),
+    if (!isCachedPaidFailure(err)) {
+      logEvent(
+        "inbox.reply.research.webread_failed",
+        { domain: label, message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
       );
     }
-    logEvent(
-      "inbox.reply.research.webread_failed",
-      { domain: label, message_120: ((err as Error).message ?? "").slice(0, 120) },
-      "warn",
-    );
     return null;
   }
 }

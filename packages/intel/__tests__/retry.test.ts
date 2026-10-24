@@ -384,7 +384,7 @@ describe("complete() retry integration", () => {
   });
 
   it("does NOT retry a status-less truncation error", async () => {
-    const { complete } = await import("../src/client.ts");
+    const { complete, MANDATORY_REASONING_ALLOWANCE_TOKENS } = await import("../src/client.ts");
 
     // Finding 5: a truncated response reproduces exactly on a resend, so
     // retrying it just triples the bill for the same unusable output.
@@ -410,7 +410,11 @@ describe("complete() retry integration", () => {
     await vi.runAllTimersAsync();
 
     const error = await rejection;
-    expect(error.message).toContain("truncated at max_tokens=16");
+    // The default model (Claude Sonnet 5.5 on OpenRouter) reasons, so its
+    // effective budget is the caller's 16 plus the reasoning allowance.
+    expect(error.message).toContain(
+      `truncated at max_tokens=${16 + MANDATORY_REASONING_ALLOWANCE_TOKENS}`,
+    );
     expect(error.status).toBeUndefined();
     expect(attemptCount).toBe(1);
   });

@@ -201,9 +201,14 @@ async function redraftForRole(row: QueueRow): Promise<boolean> {
     if (playMakesOffer(row.play_name)) {
       const out = await regenerateQueueRowOffer(row);
       if (out === "not-live") return false;
-      offerWritten = typeof out !== "string";
+      // A writer skip is kept on the row (its why shows there) but writes no offer.
+      offerWritten = typeof out !== "string" && !("skipped" in out);
       if (!offerWritten) {
-        logEvent("queue_read_profile.offer_unchanged", { queue_id: row.id, reason: out }, "warn");
+        logEvent(
+          "queue_read_profile.offer_unchanged",
+          { queue_id: row.id, reason: typeof out === "string" ? out : "skipped" },
+          "warn",
+        );
       }
     }
     // `redrafted` tells the founder the offer was rewritten too: an offer

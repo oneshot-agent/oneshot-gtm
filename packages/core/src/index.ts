@@ -8,6 +8,7 @@ export { backfillDecisionProvenance, LEDGER_SCHEMA_VERSION } from "./ledger-sche
 export * from "./config.ts";
 export * from "./demo.ts";
 export * from "./shared-db.ts";
+export * from "./paid-cache.ts";
 export { isGroupOrWorldAccessible } from "./sqlite-open.ts";
 export * from "./channels.ts";
 export * from "./workspaces.ts";
@@ -43,6 +44,8 @@ export * from "./reply-review-store.ts";
 export * from "./reply-learning-store.ts";
 export * from "./icp-proposal-store.ts";
 export * from "./learning-store.ts";
+export * from "./code-answers-store.ts";
+export * from "./product-brief.ts";
 export * from "./ledger-delivery.ts";
 export * from "./ledger-outbound.ts";
 export * from "./send-delivery.ts";

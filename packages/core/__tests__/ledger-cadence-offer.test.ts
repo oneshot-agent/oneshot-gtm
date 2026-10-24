@@ -148,6 +148,50 @@ describe("Ledger.setCadenceOffer", () => {
   });
 });
 
+describe("Ledger.setCadenceOfferSkip", () => {
+  const skip = { why: "left the firm", inputHash: "h1", version: "v", skippedAt: "t" };
+
+  it("keeps the writer's skip on a cadence with no offer; any offer written drops it", () => {
+    const c = enrolled();
+    expect(ledger.setCadenceOfferSkip({ ...c, skip })).toBe(true);
+    expect(stored(c)).toEqual({ offer: null, candidates: [], origin: "derived", skip });
+    const fresher = { ...skip, why: "still gone", inputHash: "h2" };
+    expect(ledger.setCadenceOfferSkip({ ...c, skip: fresher })).toBe(true);
+    expect(stored(c)?.["skip"]).toEqual(fresher);
+    expect(ledger.setCadenceOffer({ ...c, offer })).toBe(true);
+    expect(stored(c)).toEqual({ offer, candidates: [], origin: "derived" });
+  });
+
+  it("never stands beside an offer, nor lands while a send holds the cadence or once it ended", () => {
+    const withOffer = enrolled({ offer });
+    expect(ledger.setCadenceOfferSkip({ ...withOffer, skip })).toBe(false);
+    expect(stored(withOffer)).not.toHaveProperty("skip");
+
+    ledger.close();
+    ledger = new Ledger(":memory:");
+    const c = enrolled();
+    ledger.claimCadenceSendingMarker({ ...c, startedAtIso: new Date().toISOString() });
+    expect(ledger.setCadenceOfferSkip({ ...c, skip })).toBe(false);
+    ledger.clearCadenceSendingMarker(c);
+    ledger.setCadenceStatus({ ...c, status: "completed" });
+    expect(ledger.setCadenceOfferSkip({ ...c, skip })).toBe(false);
+    expect(stored(c)).toBeNull();
+  });
+
+  it("a re-enrolment that brings an offer replaces a skip; one that brings none keeps it", () => {
+    const c = enrolled();
+    ledger.setCadenceOfferSkip({ ...c, skip });
+    ledger.enrollCadence({ ...c, nextDueAt: "2026-11-01T00:00:00Z" });
+    expect(stored(c)?.["skip"]).toEqual(skip);
+    ledger.enrollCadence({
+      ...c,
+      nextDueAt: "2026-11-01T00:00:00Z",
+      offer: { offer, candidates: [], origin: "intro" },
+    });
+    expect(stored(c)).toEqual({ offer, candidates: [], origin: "intro" });
+  });
+});
+
 describe("the cadence keeps its offer and link as it moves and ends", () => {
   it("advanceCadence, setCadenceStatus and stopCadence leave offer_json and queue_id alone", () => {
     const c = enrolled({ offer, candidates: [offer], queueId: 5 });

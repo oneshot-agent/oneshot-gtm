@@ -1,10 +1,13 @@
 import { useState, type ReactNode } from "react";
-import { Loader2 } from "lucide-react";
+import { Check, Loader2, RotateCw } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
+import { offersNearDuplicate, type OfferSkipView } from "@oneshot-gtm/shared-types";
 import { cn } from "../../lib/cn.ts";
+import { offerSkipLine } from "../../lib/offerSkip.ts";
+import { readOnly } from "../../lib/readOnly.ts";
 import { clearDraftGenerating, markDraftGenerating } from "../../lib/draftRunState.ts";
 import {
   clearRowActivity,
@@ -120,14 +123,24 @@ export function offerCandidatesFromPayload(payload: unknown): OfferView[] {
     : [];
 }
 
-/** Start at the first candidate when the active offer is no longer in the list. */
+/**
+ * Start at the first candidate when the active offer is no longer in the
+ * list. A candidate that is the active offer reworded (`offersNearDuplicate`)
+ * is skipped, unless every other one is.
+ */
 export function nextOfferIndex(
   offer: Pick<OfferView, "offer"> | null,
   candidates: readonly Pick<OfferView, "offer">[],
 ): number | null {
   if (candidates.length === 0) return null;
   const activeIndex = candidates.findIndex((candidate) => candidate.offer === offer?.offer);
-  return (activeIndex + 1) % candidates.length;
+  const next = (activeIndex + 1) % candidates.length;
+  if (!offer) return next;
+  for (let step = 1; step <= candidates.length; step++) {
+    const i = (activeIndex + step) % candidates.length;
+    if (i !== activeIndex && !offersNearDuplicate(offer.offer, candidates[i]!.offer)) return i;
+  }
+  return next;
 }
 
 /** One change to an offer, the body both offer routes take. */
@@ -136,7 +149,7 @@ export type OfferChange =
   | { regenerate: true }
   | { select: number };
 
-/** What an offer change is doing, in the words the offer block and the letter share. */
+/** What an offer change is doing, in words: the letter's working line shows it. */
 export function offerChangeLabel(body: OfferChange): string {
   return "regenerate" in body
     ? "Writing 5 offers and their angles…"
@@ -154,17 +167,20 @@ export function ProspectOffer({
   rowId,
   payload,
   editable,
+  skip = null,
 }: {
   rowId: number;
   payload: unknown;
   /** False once the row is sent or sending. */
   editable: boolean;
+  /** The writer declined to write one: its reason (`QueueRowView.offerSkip`). */
+  skip?: OfferSkipView | null;
 }) {
   const qc = useQueryClient();
   const apply = useMutation({
     mutationFn: async (body: OfferChange) => {
-      // Name each step as it runs, so the offer block and the letter show
-      // the same work (rowActivity.ts).
+      // Name each step as it runs: the letter shows it, and the offer block
+      // locks its controls until it ends (rowActivity.ts).
       const token = setRowActivity(rowId, offerChangeLabel(body));
       try {
         await api.setQueueOffer(rowId, body);
@@ -195,6 +211,25 @@ export function ProspectOffer({
       toast.error(`couldn't update the offer · ${err.message}`);
     },
   });
+  // Approving a weak offer releases the send hold; the draft stands as it is.
+  const approve = useMutation({
+    mutationFn: async () => {
+      const token = setRowActivity(rowId, "Approving the offer…");
+      try {
+        await api.setQueueOffer(rowId, { approveWeak: true });
+      } finally {
+        clearRowActivity(rowId, token);
+      }
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      toast.success("offer approved · the draft can be sent");
+    },
+    onError: (err) => {
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      toast.error(`couldn't approve the offer · ${err.message}`);
+    },
+  });
   return (
     <OfferBlock
       activityId={rowId}
@@ -206,16 +241,56 @@ export function ProspectOffer({
         pending: apply.isPending ? apply.variables : undefined,
       }}
       companyPages={hasCompanyPagesInPayload(payload)}
-      emptyNote="No offer yet. It is written from the row's research and your product brief."
+      emptyNote={
+        skip
+          ? offerSkipLine(skip)
+          : "No offer yet. It is written from the row's research and your product brief."
+      }
+      approve={{
+        run: () => approve.mutate(),
+        pending: approve.isPending,
+        title: "Send this offer as it stands, although it was rated a weak fit",
+      }}
     />
   );
 }
 
+/** A weak-fit offer the founder has not approved, written or replaced yet: it holds the send. */
+function offerAwaitsApproval(
+  offer: Pick<OfferView, "relevance" | "weakApproved" | "editedBy"> | null,
+): boolean {
+  return offer?.relevance === "weak" && !offer.weakApproved && !offer.editedBy;
+}
+
+/** The offer block's small mono label: its meta line and each listed offer's tags. */
+const EYEBROW = "font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-faint";
+
+/**
+ * The header's tokens, in reading order: which offer of the set, how the
+ * judge rated it, where it came from. "Offer 1 of 5 · weak fit · from role only".
+ */
+export function offerMetaTokens(offer: OfferView | null, candidates: OfferView[]): string[] {
+  const activeIndex = offer ? candidates.findIndex((c) => c.offer === offer.offer) : -1;
+  return [
+    activeIndex >= 0 && candidates.length > 1
+      ? `offer ${activeIndex + 1} of ${candidates.length}`
+      : "offer",
+    offer?.relevance === "weak" && !offer.editedBy
+      ? offer.weakApproved
+        ? "weak fit, approved"
+        : "weak fit"
+      : null,
+    offer?.editedBy === "founder" ? "yours" : offer?.level === "role" ? "from role only" : null,
+  ].filter((t): t is string => t !== null);
+}
+
 /**
  * The offer block itself, whoever stores the offer: a queue row
- * (`ProspectOffer`) or a cadence's sequence (`SequenceOffer`). The owner
- * runs the change; any work on `activityId` (here, or Next offer in the
- * letter) locks every control until it ends, so two changes never race.
+ * (`ProspectOffer`) or a cadence's sequence (`SequenceOffer`). Every offer
+ * action lives here: Edit offer, Next offer, New offers, Approve offer. The
+ * owner runs the change; any work on `activityId` locks every control until
+ * it ends, so two changes never race. The work is named once, on the
+ * letter's working line, where its result lands.
  */
 export function OfferBlock({
   activityId,
@@ -226,7 +301,7 @@ export function OfferBlock({
   companyPages,
   emptyNote,
   note,
-  actions,
+  approve,
   locked = false,
 }: {
   activityId: RowActivityId;
@@ -242,8 +317,8 @@ export function OfferBlock({
   emptyNote: string;
   /** A line under the offer: why it cannot change, say. */
   note?: ReactNode;
-  /** More controls beside Edit offer and New offers. */
-  actions?: ReactNode;
+  /** Approve offer, shown while the active offer is a weak fit nobody approved. */
+  approve?: { run: () => void; pending: boolean; title: string } | null;
   /** Other work on the letter the offer must not race (a redraft the page started). */
   locked?: boolean;
 }) {
@@ -255,9 +330,14 @@ export function OfferBlock({
 
   const activity = useRowActivity(activityId);
   const pendingBody = change.pending;
-  const busy = pendingBody !== undefined || activity != null || locked;
+  const busy = pendingBody !== undefined || approve?.pending === true || activity != null || locked;
   const writingNew = !!pendingBody && "regenerate" in pendingBody;
   const switchingTo = pendingBody && "select" in pendingBody ? pendingBody.select : null;
+  // A founder's own offer is not in the ranked set: there is no next one to rotate to.
+  const next =
+    candidates.length > 1 && offer?.editedBy !== "founder"
+      ? nextOfferIndex(offer, candidates)
+      : null;
   const apply = (body: OfferChange): void => change.run(body, () => setEditing(false));
 
   if (masked) return null;
@@ -265,26 +345,12 @@ export function OfferBlock({
 
   return (
     <section aria-label="Offer" className="min-w-0">
-      <div className="mb-1 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-faint">
-        <span>offer</span>
-        {offer?.level === "role" && !offer.editedBy && <span>· from role only</span>}
-        {offer?.editedBy === "founder" && <span>· yours</span>}
-        {offer?.relevance === "weak" && !offer.editedBy && (
-          <span>· {offer.weakApproved ? "weak fit, approved" : "weak fit"}</span>
-        )}
-        {activity && (
-          <span
-            aria-hidden="true"
-            className="inline-flex items-center gap-1 normal-case tracking-normal text-[color:var(--ink-receipt-2)]"
-          >
-            · <Loader2 size={11} className="animate-spin" /> {activity}
+      <div className={cn("mb-1 flex flex-wrap gap-x-2 gap-y-1", EYEBROW)}>
+        {offerMetaTokens(offer, candidates).map((token, i) => (
+          <span key={token} className="whitespace-nowrap">
+            {i === 0 ? token : `· ${token}`}
           </span>
-        )}
-        {activeIndex >= 0 && candidates.length > 1 && (
-          <span>
-            · {activeIndex + 1} of {candidates.length}
-          </span>
-        )}
+        ))}
       </div>
       {editing ? (
         <div className="flex flex-col gap-2">
@@ -312,13 +378,10 @@ export function OfferBlock({
                 })
               }
             >
-              {pendingBody && "offer" in pendingBody ? (
-                <>
-                  <Loader2 size={11} className="animate-spin" /> Saving…
-                </>
-              ) : (
-                "Save and redraft"
+              {pendingBody && "offer" in pendingBody && (
+                <Loader2 size={11} className="animate-spin" />
               )}
+              Save and redraft
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
               Cancel
@@ -395,7 +458,7 @@ export function OfferBlock({
                   </span>
                   {c.return && <span className="text-ink-muted">Returns: {c.return}</span>}
                   {(offerFitLabel(c) || c.relevance === "weak") && (
-                    <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-faint">
+                    <span className={EYEBROW}>
                       {[offerFitLabel(c), c.relevance === "weak" ? "weak fit" : null]
                         .filter(Boolean)
                         .join(" · ")}
@@ -409,13 +472,8 @@ export function OfferBlock({
                         disabled={busy}
                         onClick={() => apply({ select: i })}
                       >
-                        {switchingTo === i ? (
-                          <>
-                            <Loader2 size={11} className="animate-spin" /> Switching…
-                          </>
-                        ) : (
-                          "Use this offer"
-                        )}
+                        {switchingTo === i && <Loader2 size={11} className="animate-spin" />}
+                        Use this offer
                       </Button>
                     </span>
                   )}
@@ -426,7 +484,7 @@ export function OfferBlock({
         </Disclosure>
       )}
       {editable && !editing && (
-        <div className="mt-2 flex gap-1.5">
+        <div className="mt-2 flex flex-wrap gap-1.5">
           <Button
             size="sm"
             variant="ghost"
@@ -436,24 +494,54 @@ export function OfferBlock({
               setReturnText(offer?.return ?? "");
               setEditing(true);
             }}
+            {...readOnly}
           >
             Edit offer
           </Button>
+          {next != null && (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => apply({ select: next })}
+              title="Use the next offer and rewrite the draft around it"
+              {...readOnly}
+            >
+              {switchingTo === next ? (
+                <Loader2 size={11} className="animate-spin" />
+              ) : (
+                <RotateCw size={11} />
+              )}
+              Next offer
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"
             disabled={busy}
             onClick={() => apply({ regenerate: true })}
+            {...readOnly}
           >
-            {writingNew ? (
-              <>
-                <Loader2 size={11} className="animate-spin" /> Writing…
-              </>
-            ) : (
-              "New offers"
-            )}
+            {writingNew && <Loader2 size={11} className="animate-spin" />}
+            New offers
           </Button>
-          {actions}
+          {approve && offerAwaitsApproval(offer) && (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy}
+              onClick={approve.run}
+              title={approve.title}
+              {...readOnly}
+            >
+              {approve.pending ? (
+                <Loader2 size={11} className="animate-spin" />
+              ) : (
+                <Check size={11} />
+              )}
+              Approve offer
+            </Button>
+          )}
         </div>
       )}
     </section>

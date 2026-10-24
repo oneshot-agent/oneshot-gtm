@@ -1,31 +1,26 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import { SendHoldNote } from "../src/components/queue/WeakOfferHold.tsx";
 
 const reason =
   "The offer was rated a weak fit for this firm. Rewrite it, pick another, or approve it.";
-const render = (code: "weak-offer" | "off-icp", editable?: boolean) =>
-  renderToStaticMarkup(
-    <QueryClientProvider client={new QueryClient()}>
-      <SendHoldNote
-        rowId={1}
-        hold={{ code, reason }}
-        {...(editable !== undefined ? { editable } : {})}
-      />
-    </QueryClientProvider>,
-  );
+const render = (code: "weak-offer" | "off-icp") =>
+  renderToStaticMarkup(<SendHoldNote hold={{ code, reason }} />);
 
-it("explains a weak-offer hold and offers to approve the offer", () => {
+it("explains a weak-offer hold with the held line's advice, said once", () => {
   const html = render("weak-offer");
-  expect(html).toContain("Held · weak offer");
-  expect(html).toContain(reason);
-  expect(html).toContain("Regenerating the draft will not clear this hold");
-  expect(html).toContain("Approve offer");
+  expect(html).toContain("Held · weak offer · approve the offer, pick another or rewrite it");
+  // The body adds only what the summary does not say.
+  expect(html).not.toContain(reason);
+  expect(html.match(/weak fit|weak offer/g)).toHaveLength(1);
+  expect(html).toContain(
+    "Queue approval and the offer are separate. Regenerating the draft will not clear this hold.",
+  );
 });
 
-it("hides the approval while the row cannot change", () => {
-  expect(render("weak-offer", false)).not.toContain("Approve offer");
+it("leaves Approve offer to the offer block", () => {
+  expect(render("weak-offer")).not.toContain("Approve offer");
+  expect(render("weak-offer")).not.toContain("<button");
 });
 
 it("keeps the fit hold for an off-ICP row", () => {

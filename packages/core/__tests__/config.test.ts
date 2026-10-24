@@ -1,5 +1,16 @@
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { bootstrapClientId, llmApiKey, oneshotEnvReady, SECRET_KEYS } from "../src/config.ts";
+import {
+  bootstrapClientId,
+  configDir,
+  DEFAULT_LLM_MODEL,
+  llmApiKey,
+  loadConfig,
+  oneshotEnvReady,
+  SECRET_KEYS,
+  withCurrentDefaultModel,
+} from "../src/config.ts";
 import type { OneShotConfig } from "../src/types.ts";
 
 /**
@@ -141,20 +152,54 @@ describe("bootstrapClientId", () => {
       founderEmail: "sam@acme.dev",
       icpOneLiner: "agent builders",
       productOneLiner: "single SDK",
-      llmModel: "claude-sonnet-4.6",
+      llmModel: "claude-sonnet-5.5",
     };
     const { cfg } = bootstrapClientId(stored);
     expect(cfg.founderName).toBe("Sam");
     expect(cfg.founderEmail).toBe("sam@acme.dev");
     expect(cfg.icpOneLiner).toBe("agent builders");
     expect(cfg.productOneLiner).toBe("single SDK");
-    expect(cfg.llmModel).toBe("claude-sonnet-4.6");
+    expect(cfg.llmModel).toBe("claude-sonnet-5.5");
   });
 
   it("two consecutive bootstraps mint different UUIDs", () => {
     const a = bootstrapClientId(baseCfg);
     const b = bootstrapClientId(baseCfg);
     expect(a.cfg.clientId).not.toBe(b.cfg.clientId);
+  });
+});
+
+describe("retired default model", () => {
+  const configFile = () => join(configDir(), "config.json");
+  afterEach(() => rmSync(configFile(), { force: true }));
+
+  it("defaults to Claude Sonnet 5.5 on OpenRouter", () => {
+    expect(DEFAULT_LLM_MODEL).toBe("anthropic/claude-sonnet-5.5");
+  });
+
+  it("moves a saved Sonnet 4.6 default to Sonnet 5.5 on both providers", () => {
+    const base = { llmModel: "anthropic/claude-sonnet-4.6" } as OneShotConfig;
+    expect(withCurrentDefaultModel(base).llmModel).toBe("anthropic/claude-sonnet-5.5");
+    expect(withCurrentDefaultModel({ ...base, llmModel: "claude-sonnet-4-6" }).llmModel).toBe(
+      "claude-sonnet-5-5",
+    );
+  });
+
+  it("keeps any other saved model", () => {
+    const cfg = { llmModel: "openai/gpt-5.1" } as OneShotConfig;
+    expect(withCurrentDefaultModel(cfg)).toBe(cfg);
+    // An inherited object key is not a mapping.
+    const odd = { llmModel: "constructor" } as OneShotConfig;
+    expect(withCurrentDefaultModel(odd)).toBe(odd);
+  });
+
+  it("loadConfig reads a config saved under the old default as the new default", () => {
+    mkdirSync(configDir(), { recursive: true });
+    writeFileSync(
+      configFile(),
+      JSON.stringify({ llmProvider: "openrouter", llmModel: "anthropic/claude-sonnet-4.6" }),
+    );
+    expect(loadConfig().llmModel).toBe(DEFAULT_LLM_MODEL);
   });
 });
 

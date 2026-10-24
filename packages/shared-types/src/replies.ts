@@ -12,6 +12,18 @@ export interface ReplyMessage {
   attachment?: boolean;
   deleted?: boolean;
 }
+/**
+ * What the prospect's latest message asks, as the reply writer read it.
+ * `level`: "capability" (what it does) or "mechanism" (how it behaves); null
+ * when nothing is asked. `briefAnswers`: the product brief already settles
+ * it. A mechanism question the brief does not answer is read against the
+ * source repo.
+ */
+export interface ReplyAsk {
+  level: "capability" | "mechanism" | null;
+  question: string | null;
+  briefAnswers: boolean;
+}
 export interface ReplyDraftSet {
   learningVersion?: number;
   /** Fingerprint of the approved learned-guidance set the options were written with (#813). */
@@ -30,6 +42,10 @@ export interface ReplyDraftSet {
   selected: ReplyVariant;
   steer: string;
   generated: boolean;
+  /** The question the latest message asks; absent on drafts written before it was parsed. */
+  ask?: ReplyAsk;
+  /** The answer from the code captured for `ask`, when one was: the composer shows it. */
+  codeAnswerId?: string;
 }
 export interface ReplySendState {
   id: string;

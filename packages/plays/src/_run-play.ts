@@ -38,6 +38,7 @@ import {
 } from "./_lib.ts";
 import { enrollInCadence, getSequence, NO_OFFER_FLAG } from "./_cadence.ts";
 import {
+  isOfferSkipped,
   offerBlock,
   offerHoldsSend,
   offerMissingHoldsSend,
@@ -367,14 +368,17 @@ export async function runEmailPlay<T, X = Record<string, never>>(
 
         // OFFER: the founder's offer made specific to this firm, written from
         // everything known about the person and the firm (_prospect-offer.ts).
-        // The queue stores it on the row; anything else derives it here.
+        // The queue stores it on the row; anything else derives it here. A
+        // writer skip (stored on the row, or this call's) is no offer: the
+        // draft is held `no-offer` below.
         throwIfCancelled(opts.signal, `${def.playName} offer`);
-        const offerSet = await offerSetForDraft({
+        const offerLookup = await offerSetForDraft({
           target: target as object,
           dossier: prep.dossier,
           playName: def.playName,
           cfg,
         });
+        const offerSet = offerLookup && !isOfferSkipped(offerLookup) ? offerLookup : null;
         const offer = offerSet?.offer ?? null;
         const offerLines = offerBlock(offer, cfg, def.playName);
 

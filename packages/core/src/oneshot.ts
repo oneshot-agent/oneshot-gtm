@@ -72,6 +72,7 @@ import {
   SuppressedRecipientError,
 } from "./send-routing.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { type PaidCacheOptions, withPaidCache } from "./paid-cache.ts";
 import type { EmailIdentity } from "./types.ts";
 
 /** Re-exported so callers don't reach into the SDK for the domain-pool shape. */
@@ -1287,49 +1288,61 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
  */
 export const RESEARCH_TIMEOUT_SEC = 1200;
 
-export async function deepResearch(input: ResearchInput, ctx: CallContext) {
-  const agent = await getAgent();
-  const result: ResearchResult = await agent.research({
-    topic: input.topic,
-    depth: input.depth ?? "quick",
-    timeout: RESEARCH_TIMEOUT_SEC,
-    ...buildAuditOpts(ctx, "research.deep"),
+export async function deepResearch(
+  input: ResearchInput,
+  ctx: CallContext,
+  cache?: PaidCacheOptions,
+) {
+  return withPaidCache("research.deep", input, cache, async () => {
+    const agent = await getAgent();
+    const result: ResearchResult = await agent.research({
+      topic: input.topic,
+      depth: input.depth ?? "quick",
+      timeout: RESEARCH_TIMEOUT_SEC,
+      ...buildAuditOpts(ctx, "research.deep"),
+    });
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "research.deep",
+      signedReceipt: result,
+      costUsd: result.cost,
+      oneshotRequestId: result.request_id,
+    });
+    return { result, receiptId };
   });
-  const receiptId = recordCallReceipt({
-    ctx,
-    callType: "research.deep",
-    signedReceipt: result,
-    costUsd: result.cost,
-    oneshotRequestId: result.request_id,
-  });
-  return { result, receiptId };
 }
 
-export async function enrichProfile(input: EnrichInput, ctx: CallContext) {
-  const agent = await getAgent();
-  const opts: Parameters<OneShot["personProfile"]>[0] = {
-    ...buildAuditOpts(ctx, "enrich.profile"),
-  };
-  if (input.email) opts.email = input.email;
-  if (input.linkedinUrl) opts.linkedin_url = input.linkedinUrl;
-  if (input.name) opts.name = input.name;
-  if (input.companyDomain) opts.company_domain = input.companyDomain;
+export async function enrichProfile(
+  input: EnrichInput,
+  ctx: CallContext,
+  cache?: PaidCacheOptions,
+) {
+  return withPaidCache("enrich.profile", input, cache, async () => {
+    const agent = await getAgent();
+    const opts: Parameters<OneShot["personProfile"]>[0] = {
+      ...buildAuditOpts(ctx, "enrich.profile"),
+    };
+    if (input.email) opts.email = input.email;
+    if (input.linkedinUrl) opts.linkedin_url = input.linkedinUrl;
+    if (input.name) opts.name = input.name;
+    if (input.companyDomain) opts.company_domain = input.companyDomain;
 
-  const result: EnrichProfileResult = await agent.personProfile(opts);
-  const receiptId = recordCallReceipt({
-    ctx,
-    callType: "enrich.profile",
-    signedReceipt: result,
-    costUsd: result.cost,
-    oneshotRequestId: result.request_id,
+    const result: EnrichProfileResult = await agent.personProfile(opts);
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "enrich.profile",
+      signedReceipt: result,
+      costUsd: result.cost,
+      oneshotRequestId: result.request_id,
+    });
+    captureSdkBusinessAddress(result, {
+      email: input.email,
+      name: input.name,
+      companyDomain: input.companyDomain ?? (result.profile?.company_domain as string | undefined),
+      source: "sdk:enrich.profile",
+    });
+    return { result, receiptId };
   });
-  captureSdkBusinessAddress(result, {
-    email: input.email,
-    name: input.name,
-    companyDomain: input.companyDomain ?? (result.profile?.company_domain as string | undefined),
-    source: "sdk:enrich.profile",
-  });
-  return { result, receiptId };
 }
 
 /**
@@ -1392,25 +1405,31 @@ export interface DeepResearchPersonInput {
  * `companyDomain` to feed findEmail (e.g. GitHub repo owners with no
  * resolvable company), not as a default first-pass.
  */
-export async function deepResearchPerson(input: DeepResearchPersonInput, ctx: CallContext) {
-  const agent = await getAgent();
-  const opts: Parameters<OneShot["personDossier"]>[0] = {
-    ...buildAuditOpts(ctx, "research.person"),
-  };
-  if (input.email) opts.email = input.email;
-  if (input.socialMediaUrl) opts.social_media_url = input.socialMediaUrl;
-  if (input.name) opts.name = input.name;
-  if (input.company) opts.company = input.company;
+export async function deepResearchPerson(
+  input: DeepResearchPersonInput,
+  ctx: CallContext,
+  cache?: PaidCacheOptions,
+) {
+  return withPaidCache("research.person", input, cache, async () => {
+    const agent = await getAgent();
+    const opts: Parameters<OneShot["personDossier"]>[0] = {
+      ...buildAuditOpts(ctx, "research.person"),
+    };
+    if (input.email) opts.email = input.email;
+    if (input.socialMediaUrl) opts.social_media_url = input.socialMediaUrl;
+    if (input.name) opts.name = input.name;
+    if (input.company) opts.company = input.company;
 
-  const result = dossierAsResearch(await agent.personDossier(opts));
-  const receiptId = recordCallReceipt({
-    ctx,
-    callType: "research.person",
-    signedReceipt: result,
-    costUsd: result.cost,
-    oneshotRequestId: result.request_id,
+    const result = dossierAsResearch(await agent.personDossier(opts));
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "research.person",
+      signedReceipt: result,
+      costUsd: result.cost,
+      oneshotRequestId: result.request_id,
+    });
+    return { result, receiptId };
   });
-  return { result, receiptId };
 }
 
 export interface PersonNewsfeedInput {
@@ -1423,20 +1442,26 @@ export interface PersonNewsfeedInput {
  * engagement. ~$0.07 and seconds, but rate-limited per wallet: callers
  * serialize (see `safePersonNewsfeed`).
  */
-export async function personNewsfeed(input: PersonNewsfeedInput, ctx: CallContext) {
-  const agent = await getAgent();
-  const result: PersonNewsfeedResult = await agent.personPosts({
-    social_media_url: input.socialMediaUrl,
-    ...buildAuditOpts(ctx, "research.newsfeed"),
+export async function personNewsfeed(
+  input: PersonNewsfeedInput,
+  ctx: CallContext,
+  cache?: PaidCacheOptions,
+) {
+  return withPaidCache("research.newsfeed", input, cache, async () => {
+    const agent = await getAgent();
+    const result: PersonNewsfeedResult = await agent.personPosts({
+      social_media_url: input.socialMediaUrl,
+      ...buildAuditOpts(ctx, "research.newsfeed"),
+    });
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "research.newsfeed",
+      signedReceipt: result,
+      costUsd: result.cost,
+      oneshotRequestId: result.request_id,
+    });
+    return { result, receiptId };
   });
-  const receiptId = recordCallReceipt({
-    ctx,
-    callType: "research.newsfeed",
-    signedReceipt: result,
-    costUsd: result.cost,
-    oneshotRequestId: result.request_id,
-  });
-  return { result, receiptId };
 }
 
 export interface FindEmailInput {
@@ -1447,44 +1472,52 @@ export interface FindEmailInput {
   companyDomain: string;
 }
 
-export async function findEmail(input: FindEmailInput, ctx: CallContext) {
-  const agent = await getAgent();
-  const opts: Parameters<OneShot["personEmail"]>[0] = {
-    company_domain: input.companyDomain,
-    ...buildAuditOpts(ctx, "email.find"),
-  };
-  if (input.fullName) opts.full_name = input.fullName;
-  if (input.firstName) opts.first_name = input.firstName;
-  if (input.lastName) opts.last_name = input.lastName;
-  const result: FindEmailResult = await agent.personEmail(opts);
-  const receiptId = recordCallReceipt({
-    ctx,
-    callType: "email.find",
-    signedReceipt: result,
-    costUsd: result.cost,
-    oneshotRequestId: result.request_id,
+export async function findEmail(input: FindEmailInput, ctx: CallContext, cache?: PaidCacheOptions) {
+  return withPaidCache("email.find", input, cache, async () => {
+    const agent = await getAgent();
+    const opts: Parameters<OneShot["personEmail"]>[0] = {
+      company_domain: input.companyDomain,
+      ...buildAuditOpts(ctx, "email.find"),
+    };
+    if (input.fullName) opts.full_name = input.fullName;
+    if (input.firstName) opts.first_name = input.firstName;
+    if (input.lastName) opts.last_name = input.lastName;
+    const result: FindEmailResult = await agent.personEmail(opts);
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "email.find",
+      signedReceipt: result,
+      costUsd: result.cost,
+      oneshotRequestId: result.request_id,
+    });
+    return { result, receiptId };
   });
-  return { result, receiptId };
 }
 
 export interface VerifyEmailInput {
   email: string;
 }
 
-export async function verifyEmail(input: VerifyEmailInput, ctx: CallContext) {
-  const agent = await getAgent();
-  const result: VerifyEmailResult = await agent.personEmailStatus({
-    email: input.email,
-    ...buildAuditOpts(ctx, "email.verify"),
+export async function verifyEmail(
+  input: VerifyEmailInput,
+  ctx: CallContext,
+  cache?: PaidCacheOptions,
+) {
+  return withPaidCache("email.verify", input, cache, async () => {
+    const agent = await getAgent();
+    const result: VerifyEmailResult = await agent.personEmailStatus({
+      email: input.email,
+      ...buildAuditOpts(ctx, "email.verify"),
+    });
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "email.verify",
+      signedReceipt: result,
+      costUsd: result.cost,
+      oneshotRequestId: result.request_id,
+    });
+    return { result, receiptId };
   });
-  const receiptId = recordCallReceipt({
-    ctx,
-    callType: "email.verify",
-    signedReceipt: result,
-    costUsd: result.cost,
-    oneshotRequestId: result.request_id,
-  });
-  return { result, receiptId };
 }
 
 export interface PeopleSearchInput {
@@ -1512,35 +1545,41 @@ export interface PeopleSearchInput {
  * directly instead of paying per-candidate through
  * `resolveVerifyEnrichQualify`.
  */
-export async function peopleSearch(input: PeopleSearchInput, ctx: CallContext) {
-  const agent = await getAgent();
-  const opts: Parameters<OneShot["personFind"]>[0] = {
-    ...buildAuditOpts(ctx, "research.people"),
-  };
-  if (input.jobTitles) opts.job_titles = input.jobTitles;
-  if (input.keywords) opts.keywords = input.keywords;
-  if (input.companies) opts.companies = input.companies;
-  if (input.companyDomains) opts.company_domains = input.companyDomains;
-  if (input.location) opts.location = input.location;
-  if (input.skills) opts.skills = input.skills;
-  if (input.seniority) opts.seniority = input.seniority;
-  if (input.industry) opts.industry = input.industry;
-  if (input.companySize) opts.company_size = input.companySize;
-  if (input.limit) opts.limit = input.limit;
-  // The API takes `offset`; the pinned SDK's types don't declare it yet, but
-  // it sends every option through as given (measured 2026-10-11: offset 40
-  // returned rows 41 onward).
-  if (input.offset) (opts as typeof opts & { offset?: number }).offset = input.offset;
+export async function peopleSearch(
+  input: PeopleSearchInput,
+  ctx: CallContext,
+  cache?: PaidCacheOptions,
+) {
+  return withPaidCache("research.people", input, cache, async () => {
+    const agent = await getAgent();
+    const opts: Parameters<OneShot["personFind"]>[0] = {
+      ...buildAuditOpts(ctx, "research.people"),
+    };
+    if (input.jobTitles) opts.job_titles = input.jobTitles;
+    if (input.keywords) opts.keywords = input.keywords;
+    if (input.companies) opts.companies = input.companies;
+    if (input.companyDomains) opts.company_domains = input.companyDomains;
+    if (input.location) opts.location = input.location;
+    if (input.skills) opts.skills = input.skills;
+    if (input.seniority) opts.seniority = input.seniority;
+    if (input.industry) opts.industry = input.industry;
+    if (input.companySize) opts.company_size = input.companySize;
+    if (input.limit) opts.limit = input.limit;
+    // The API takes `offset`; the pinned SDK's types don't declare it yet, but
+    // it sends every option through as given (measured 2026-10-11: offset 40
+    // returned rows 41 onward).
+    if (input.offset) (opts as typeof opts & { offset?: number }).offset = input.offset;
 
-  const result: PeopleSearchResult = await agent.personFind(opts);
-  const receiptId = recordCallReceipt({
-    ctx,
-    callType: "research.people",
-    signedReceipt: result,
-    costUsd: result.cost,
-    oneshotRequestId: result.request_id,
+    const result: PeopleSearchResult = await agent.personFind(opts);
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "research.people",
+      signedReceipt: result,
+      costUsd: result.cost,
+      oneshotRequestId: result.request_id,
+    });
+    return { result, receiptId };
   });
-  return { result, receiptId };
 }
 
 export interface CompanySearchInput {
@@ -1558,31 +1597,37 @@ export interface CompanySearchInput {
 }
 
 /** Company-database search: $0.01 flat per call, up to 100 results. All filters optional (an empty call is valid per the SDK signature). */
-export async function companySearch(input: CompanySearchInput, ctx: CallContext) {
-  const agent = await getAgent();
-  const opts: Parameters<OneShot["companyFind"]>[0] = {
-    ...buildAuditOpts(ctx, "research.company"),
-  };
-  if (input.name) opts.name = input.name;
-  if (input.domain) opts.domain = input.domain;
-  if (input.industry) opts.industry = input.industry;
-  if (input.location) opts.location = input.location;
-  if (input.size) opts.size = input.size;
-  if (input.minEmployeeCount !== undefined) opts.min_employee_count = input.minEmployeeCount;
-  if (input.maxEmployeeCount !== undefined) opts.max_employee_count = input.maxEmployeeCount;
-  if (input.fundingStage) opts.funding_stage = input.fundingStage;
-  if (input.tags) opts.tags = input.tags;
-  if (input.limit) opts.limit = input.limit;
+export async function companySearch(
+  input: CompanySearchInput,
+  ctx: CallContext,
+  cache?: PaidCacheOptions,
+) {
+  return withPaidCache("research.company", input, cache, async () => {
+    const agent = await getAgent();
+    const opts: Parameters<OneShot["companyFind"]>[0] = {
+      ...buildAuditOpts(ctx, "research.company"),
+    };
+    if (input.name) opts.name = input.name;
+    if (input.domain) opts.domain = input.domain;
+    if (input.industry) opts.industry = input.industry;
+    if (input.location) opts.location = input.location;
+    if (input.size) opts.size = input.size;
+    if (input.minEmployeeCount !== undefined) opts.min_employee_count = input.minEmployeeCount;
+    if (input.maxEmployeeCount !== undefined) opts.max_employee_count = input.maxEmployeeCount;
+    if (input.fundingStage) opts.funding_stage = input.fundingStage;
+    if (input.tags) opts.tags = input.tags;
+    if (input.limit) opts.limit = input.limit;
 
-  const result: CompanySearchResult = await agent.companyFind(opts);
-  const receiptId = recordCallReceipt({
-    ctx,
-    callType: "research.company",
-    signedReceipt: result,
-    costUsd: result.cost,
-    oneshotRequestId: result.request_id,
+    const result: CompanySearchResult = await agent.companyFind(opts);
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "research.company",
+      signedReceipt: result,
+      costUsd: result.cost,
+      oneshotRequestId: result.request_id,
+    });
+    return { result, receiptId };
   });
-  return { result, receiptId };
 }
 
 export interface EnrichCompanyInput {
@@ -1612,37 +1657,43 @@ export interface EnrichCompanyInput {
  * safeEnrichCompany (packages/find/src/_sdk-safe.ts), which catches this
  * exact ValidationError and resolves to an empty-result sentinel.
  */
-export async function enrichCompany(input: EnrichCompanyInput, ctx: CallContext) {
+export async function enrichCompany(
+  input: EnrichCompanyInput,
+  ctx: CallContext,
+  cache?: PaidCacheOptions,
+) {
   if (!input.domain && !input.name && !input.linkedinUrl && !input.ticker) {
     throw new ValidationError(
       "At least one of domain, name, linkedin_url, or ticker is required",
       "identifier",
     );
   }
-  const agent = await getAgent();
-  const opts: Parameters<OneShot["companyProfile"]>[0] = {
-    ...buildAuditOpts(ctx, "enrich.company"),
-  };
-  if (input.domain) opts.domain = input.domain;
-  if (input.name) opts.name = input.name;
-  if (input.linkedinUrl) opts.linkedin_url = input.linkedinUrl;
-  if (input.ticker) opts.ticker = input.ticker;
-  if (input.timeoutMs) opts.totalTimeoutMs = input.timeoutMs;
+  return withPaidCache("enrich.company", input, cache, async () => {
+    const agent = await getAgent();
+    const opts: Parameters<OneShot["companyProfile"]>[0] = {
+      ...buildAuditOpts(ctx, "enrich.company"),
+    };
+    if (input.domain) opts.domain = input.domain;
+    if (input.name) opts.name = input.name;
+    if (input.linkedinUrl) opts.linkedin_url = input.linkedinUrl;
+    if (input.ticker) opts.ticker = input.ticker;
+    if (input.timeoutMs) opts.totalTimeoutMs = input.timeoutMs;
 
-  const result: EnrichCompanyResult = await agent.companyProfile(opts);
-  const receiptId = recordCallReceipt({
-    ctx,
-    callType: "enrich.company",
-    signedReceipt: result,
-    costUsd: result.cost,
-    oneshotRequestId: result.request_id,
+    const result: EnrichCompanyResult = await agent.companyProfile(opts);
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "enrich.company",
+      signedReceipt: result,
+      costUsd: result.cost,
+      oneshotRequestId: result.request_id,
+    });
+    captureSdkBusinessAddress(result, {
+      name: result.company?.name,
+      companyDomain: input.domain ?? result.company?.domain,
+      source: "sdk:enrich.company",
+    });
+    return { result, receiptId };
   });
-  captureSdkBusinessAddress(result, {
-    name: result.company?.name,
-    companyDomain: input.domain ?? result.company?.domain,
-    source: "sdk:enrich.company",
-  });
-  return { result, receiptId };
 }
 
 export type {
@@ -1686,32 +1737,38 @@ export interface GovSolicitationsInput {
  * per-notice description) gov-solicitation used to make itself, and with them
  * the SAM_GOV_API_KEY those needed.
  */
-export async function govSolicitations(input: GovSolicitationsInput, ctx: CallContext) {
-  const agent = await getAgent();
-  const opts: Parameters<OneShot["recordSolicitationsFind"]>[0] = {
-    naics: input.naics,
-    ...buildAuditOpts(ctx, "gov.solicitations"),
-  };
-  if (input.noticeTypes) opts.notice_types = input.noticeTypes;
-  if (input.sinceDays !== undefined) opts.since_days = input.sinceDays;
-  if (input.agencies) opts.agencies = input.agencies;
-  if (input.keywords) opts.keywords = input.keywords;
-  if (input.state) opts.state = input.state;
-  if (input.setAside) opts.set_aside = input.setAside;
-  if (input.activeOnly !== undefined) opts.active_only = input.activeOnly;
-  if (input.hasContact !== undefined) opts.has_contact = input.hasContact;
-  if (input.includeDescription !== undefined) opts.include_description = input.includeDescription;
-  if (input.limit) opts.limit = input.limit;
+export async function govSolicitations(
+  input: GovSolicitationsInput,
+  ctx: CallContext,
+  cache?: PaidCacheOptions,
+) {
+  return withPaidCache("gov.solicitations", input, cache, async () => {
+    const agent = await getAgent();
+    const opts: Parameters<OneShot["recordSolicitationsFind"]>[0] = {
+      naics: input.naics,
+      ...buildAuditOpts(ctx, "gov.solicitations"),
+    };
+    if (input.noticeTypes) opts.notice_types = input.noticeTypes;
+    if (input.sinceDays !== undefined) opts.since_days = input.sinceDays;
+    if (input.agencies) opts.agencies = input.agencies;
+    if (input.keywords) opts.keywords = input.keywords;
+    if (input.state) opts.state = input.state;
+    if (input.setAside) opts.set_aside = input.setAside;
+    if (input.activeOnly !== undefined) opts.active_only = input.activeOnly;
+    if (input.hasContact !== undefined) opts.has_contact = input.hasContact;
+    if (input.includeDescription !== undefined) opts.include_description = input.includeDescription;
+    if (input.limit) opts.limit = input.limit;
 
-  const result: RecordSolicitationsFindResult = await agent.recordSolicitationsFind(opts);
-  const receiptId = recordCallReceipt({
-    ctx,
-    callType: "gov.solicitations",
-    signedReceipt: result,
-    costUsd: result.cost,
-    oneshotRequestId: result.request_id,
+    const result: RecordSolicitationsFindResult = await agent.recordSolicitationsFind(opts);
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "gov.solicitations",
+      signedReceipt: result,
+      costUsd: result.cost,
+      oneshotRequestId: result.request_id,
+    });
+    return { result, receiptId };
   });
-  return { result, receiptId };
 }
 
 export interface LocalSearchInput {
@@ -1737,30 +1794,36 @@ export interface LocalSearchInput {
  * location: flat price per search, not per row. The main-street discovery
  * tool the B2B people database never was.
  */
-export async function localSearch(input: LocalSearchInput, ctx: CallContext) {
-  const agent = await getAgent();
-  const opts: Parameters<OneShot["businessFind"]>[0] = {
-    location: input.location,
-    ...buildAuditOpts(ctx, "local.search"),
-  };
-  if (input.category) opts.category = input.category;
-  if (input.keywords) opts.keywords = input.keywords;
-  if (input.minRating !== undefined) opts.min_rating = input.minRating;
-  if (input.minReviewCount !== undefined) opts.min_review_count = input.minReviewCount;
-  if (input.isChain !== undefined) opts.is_chain = input.isChain;
-  if (input.operatingStatus) opts.operating_status = input.operatingStatus;
-  if (input.hasDomain !== undefined) opts.has_domain = input.hasDomain;
-  if (input.limit) opts.limit = input.limit;
+export async function localSearch(
+  input: LocalSearchInput,
+  ctx: CallContext,
+  cache?: PaidCacheOptions,
+) {
+  return withPaidCache("local.search", input, cache, async () => {
+    const agent = await getAgent();
+    const opts: Parameters<OneShot["businessFind"]>[0] = {
+      location: input.location,
+      ...buildAuditOpts(ctx, "local.search"),
+    };
+    if (input.category) opts.category = input.category;
+    if (input.keywords) opts.keywords = input.keywords;
+    if (input.minRating !== undefined) opts.min_rating = input.minRating;
+    if (input.minReviewCount !== undefined) opts.min_review_count = input.minReviewCount;
+    if (input.isChain !== undefined) opts.is_chain = input.isChain;
+    if (input.operatingStatus) opts.operating_status = input.operatingStatus;
+    if (input.hasDomain !== undefined) opts.has_domain = input.hasDomain;
+    if (input.limit) opts.limit = input.limit;
 
-  const result: BusinessFindResult = await agent.businessFind(opts);
-  const receiptId = recordCallReceipt({
-    ctx,
-    callType: "local.search",
-    signedReceipt: result,
-    costUsd: result.cost,
-    oneshotRequestId: result.request_id,
+    const result: BusinessFindResult = await agent.businessFind(opts);
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "local.search",
+      signedReceipt: result,
+      costUsd: result.cost,
+      oneshotRequestId: result.request_id,
+    });
+    return { result, receiptId };
   });
-  return { result, receiptId };
 }
 
 export interface LocalResolveInput {
@@ -1782,34 +1845,40 @@ export interface LocalResolveInput {
  * using the address the registry already gave us instead of guessing from
  * the name alone.
  */
-export async function localResolve(input: LocalResolveInput, ctx: CallContext) {
-  const agent = await getAgent();
-  const opts: Parameters<OneShot["businessResolve"]>[0] = {
-    name: input.name,
-    ...buildAuditOpts(ctx, "local.resolve"),
-  };
-  if (input.address) opts.address = input.address;
-  if (input.city) opts.city = input.city;
-  if (input.region) opts.region = input.region;
-  if (input.postalCode) opts.postal_code = input.postalCode;
-  if (input.phone) opts.phone = input.phone;
+export async function localResolve(
+  input: LocalResolveInput,
+  ctx: CallContext,
+  cache?: PaidCacheOptions,
+) {
+  return withPaidCache("local.resolve", input, cache, async () => {
+    const agent = await getAgent();
+    const opts: Parameters<OneShot["businessResolve"]>[0] = {
+      name: input.name,
+      ...buildAuditOpts(ctx, "local.resolve"),
+    };
+    if (input.address) opts.address = input.address;
+    if (input.city) opts.city = input.city;
+    if (input.region) opts.region = input.region;
+    if (input.postalCode) opts.postal_code = input.postalCode;
+    if (input.phone) opts.phone = input.phone;
 
-  const result: BusinessResolveResult = await agent.businessResolve(opts);
-  const receiptId = recordCallReceipt({
-    ctx,
-    callType: "local.resolve",
-    signedReceipt: result,
-    costUsd: result.cost,
-    oneshotRequestId: result.request_id,
-  });
-  if (result.found && result.result) {
-    captureSdkBusinessAddress(result.result, {
-      name: result.result.name,
-      ...(result.result.domain ? { companyDomain: result.result.domain } : {}),
-      source: "sdk:local.resolve",
+    const result: BusinessResolveResult = await agent.businessResolve(opts);
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "local.resolve",
+      signedReceipt: result,
+      costUsd: result.cost,
+      oneshotRequestId: result.request_id,
     });
-  }
-  return { result, receiptId };
+    if (result.found && result.result) {
+      captureSdkBusinessAddress(result.result, {
+        name: result.result.name,
+        ...(result.result.domain ? { companyDomain: result.result.domain } : {}),
+        source: "sdk:local.resolve",
+      });
+    }
+    return { result, receiptId };
+  });
 }
 
 export async function getBalance(
@@ -2273,41 +2342,45 @@ export interface WebSearchInput {
   maxResults?: number;
 }
 
-export async function webSearch(input: WebSearchInput, ctx: CallContext) {
-  const agent = await getAgent();
-  const opts: Parameters<OneShot["webSearch"]>[0] = {
-    query: input.query,
-    ...buildAuditOpts(ctx, "web.search"),
-  };
-  if (input.maxResults) opts.max_results = input.maxResults;
-  const result: WebSearchResult = await agent.webSearch(opts);
-  const receiptId = recordCallReceipt({
-    ctx,
-    callType: "web.search",
-    signedReceipt: result,
-    costUsd: result.cost,
+export async function webSearch(input: WebSearchInput, ctx: CallContext, cache?: PaidCacheOptions) {
+  return withPaidCache("web.search", input, cache, async () => {
+    const agent = await getAgent();
+    const opts: Parameters<OneShot["webSearch"]>[0] = {
+      query: input.query,
+      ...buildAuditOpts(ctx, "web.search"),
+    };
+    if (input.maxResults) opts.max_results = input.maxResults;
+    const result: WebSearchResult = await agent.webSearch(opts);
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "web.search",
+      signedReceipt: result,
+      costUsd: result.cost,
+    });
+    return { result, receiptId };
   });
-  return { result, receiptId };
 }
 
 export interface WebReadInput {
   url: string;
 }
 
-export async function webRead(input: WebReadInput, ctx: CallContext) {
-  const agent = await getAgent();
-  const result: WebReadResult = await agent.webRead({
-    url: input.url,
-    ...buildAuditOpts(ctx, "web.read"),
+export async function webRead(input: WebReadInput, ctx: CallContext, cache?: PaidCacheOptions) {
+  return withPaidCache("web.read", input, cache, async () => {
+    const agent = await getAgent();
+    const result: WebReadResult = await agent.webRead({
+      url: input.url,
+      ...buildAuditOpts(ctx, "web.read"),
+    });
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "web.read",
+      signedReceipt: result,
+      costUsd: result.cost,
+      oneshotRequestId: result.request_id,
+    });
+    return { result, receiptId };
   });
-  const receiptId = recordCallReceipt({
-    ctx,
-    callType: "web.read",
-    signedReceipt: result,
-    costUsd: result.cost,
-    oneshotRequestId: result.request_id,
-  });
-  return { result, receiptId };
 }
 
 export interface BrowserTaskInput {

@@ -16,6 +16,7 @@ import {
   loadConfig,
   logEvent,
   overlayOfferAngles,
+  productBriefText,
   resolveTriggerOverlay,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
@@ -79,7 +80,7 @@ export function positioningFingerprint(edge: string): string {
   const cfg = loadConfig();
   const positioning = {
     product: cfg.productOneLiner,
-    brief: cfg.productBrief,
+    brief: productBriefText(cfg),
     icp: cfg.icpOneLiner,
     edge,
   };
@@ -309,6 +310,7 @@ const NOT_EVIDENCE = new Set<string>([
   // The prospect offers written for the row: our output, not who they are.
   "offer",
   "offerCandidates",
+  "offerSkip",
   "fitReasonSource",
   // Provenance of a row moved in from another workspace (queue-portable.ts).
   "movedFrom",

@@ -290,11 +290,11 @@ function whichCommand(): string {
 function defaultModel(provider: string): string {
   switch (provider) {
     case "openrouter":
-      return "anthropic/claude-sonnet-4.6";
+      return "anthropic/claude-sonnet-5.5";
     case "openai":
       return "gpt-4o-mini";
     case "anthropic":
-      return "claude-sonnet-4-6";
+      return "claude-sonnet-5-5";
     default:
       return "";
   }

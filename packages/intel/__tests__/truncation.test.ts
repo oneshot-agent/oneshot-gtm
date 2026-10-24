@@ -16,7 +16,13 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
-const { complete, LlmError, LlmTruncatedError } = await import("../src/client.ts");
+const {
+  complete,
+  LlmError,
+  LlmTruncatedError,
+  MANDATORY_REASONING_ALLOWANCE_TOKENS,
+  MANDATORY_REASONING_EFFORT,
+} = await import("../src/client.ts");
 
 const realFetch = global.fetch;
 
@@ -321,6 +327,72 @@ describe("complete() truncation — anthropic", () => {
     expect(res.content).toBe("## Week of\ncut off mid-");
     expect(res.provider).toBe("anthropic");
     expect(res.inputTokens).toBe(30);
+  });
+});
+
+describe("complete() request shape — anthropic", () => {
+  beforeEach(() => {
+    cfg.provider = "anthropic";
+  });
+
+  const ok = { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+
+  it("claude-sonnet-5-5: no sampling params, low effort, budget raised for thinking", async () => {
+    cfg.model = "claude-sonnet-5-5";
+    const fetchMock = respondWith(ok);
+    await complete({
+      messages: [{ role: "user", content: "hi" }],
+      temperature: 0.2,
+      maxTokens: 400,
+    });
+
+    const body = requestOf(fetchMock).body;
+    expect(body).not.toHaveProperty("temperature");
+    expect(body).not.toHaveProperty("thinking");
+    expect(body["output_config"]).toEqual({ effort: MANDATORY_REASONING_EFFORT });
+    expect(body["max_tokens"]).toBe(400 + MANDATORY_REASONING_ALLOWANCE_TOKENS);
+  });
+
+  it("an older model keeps its temperature and budget, with no effort field", async () => {
+    cfg.model = "claude-sonnet-4-5";
+    const fetchMock = respondWith(ok);
+    await complete({
+      messages: [{ role: "user", content: "hi" }],
+      temperature: 0.2,
+      maxTokens: 400,
+    });
+
+    const body = requestOf(fetchMock).body;
+    expect(body["temperature"]).toBe(0.2);
+    expect(body).not.toHaveProperty("output_config");
+    expect(body["max_tokens"]).toBe(400);
+  });
+
+  it("reads text blocks only, skipping thinking blocks", async () => {
+    cfg.model = "claude-sonnet-5-5";
+    respondWith({
+      content: [
+        { type: "thinking", thinking: "", signature: "sig" },
+        { type: "text", text: "answer" },
+      ],
+      stop_reason: "end_turn",
+    });
+    const res = await complete({ messages: [{ role: "user", content: "hi" }] });
+    expect(res.content).toBe("answer");
+  });
+
+  it("a refusal is a named terminal error, not an empty answer", async () => {
+    cfg.model = "claude-sonnet-5-5";
+    const fetchMock = respondWith({
+      content: [],
+      stop_reason: "refusal",
+      stop_details: { type: "refusal", category: "cyber", explanation: "x" },
+    });
+    const err = await errorFrom(complete({ messages: [{ role: "user", content: "hi" }] }));
+
+    expect(err).toBeInstanceOf(LlmError);
+    expect(err.message).toContain("stop_reason=refusal, category=cyber");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -53,20 +53,65 @@ export function humanizeFlag(flag: string): string {
   return detail ? `${words}: ${detail}` : words;
 }
 
+/**
+ * What clears a flag that regenerating the draft cannot: the offer block's
+ * actions (Approve offer, Next offer, Edit offer, New offers).
+ */
+const OFFER_ADVICE: Record<string, string> = {
+  "weak-offer": "approve the offer, pick another or rewrite it",
+  "no-offer": "write the offer or ask for new ones",
+};
+
+export interface HeldOptions {
+  /** The `no-offer` hold is the writer's own refusal: its reason is kept with the offer. */
+  offerSkipped?: boolean;
+  /**
+   * The weak offer still holds the send. False once the founder approved,
+   * replaced or rewrote it: the flag then only records why this draft was held.
+   */
+  offerHeld?: boolean;
+  /**
+   * What the page lets the founder do about a flag only a read clears:
+   * `send` (Send anyway), `approve` (approve the row, then send) or
+   * `regenerate` (Send stays off while any flag stands; the default).
+   */
+  review?: "send" | "approve" | "regenerate";
+}
+
+/** What to do about one flag, in words that match the buttons the page has. */
+export function flagAdvice(flag: string, opts: HeldOptions = {}): string {
+  const offer = Object.hasOwn(OFFER_ADVICE, flag) ? OFFER_ADVICE[flag] : undefined;
+  if (offer && (flag !== "weak-offer" || opts.offerHeld !== false)) return offer;
+  if (blockingFlags([flag]).length > 0) return "regenerate the draft";
+  return opts.review === "send"
+    ? "read it once more, then send anyway"
+    : opts.review === "approve"
+      ? "approve to send"
+      : "regenerate the draft";
+}
+
 export interface HeldSummary {
   /** `lint` blocks sending; `review` is the founder-overridable soft hold. */
   kind: "lint" | "review";
   /** "1 flag: rule of three" / "2 flags: …" */
   text: string;
-  /** What to do about it, in the card's voice. */
+  /** What to do about it, in the card's voice: each distinct fix once. */
   next: string;
 }
 
-export function heldSummary(flags: string[]): HeldSummary | null {
+/** The flags named, then what to do about them, the offer's fix first. */
+export function heldSummary(flags: string[], opts: HeldOptions = {}): HeldSummary | null {
   if (flags.length === 0) return null;
   const kind = blockingFlags(flags).length > 0 ? "lint" : "review";
-  const text = `${flags.length} flag${flags.length === 1 ? "" : "s"}: ${flags.map(humanizeFlag).join(", ")}`;
-  const next =
-    kind === "lint" ? "regenerate to clear it, then send" : "read it once more, then send as-is";
+  const label = (f: string): string =>
+    opts.offerSkipped === true && f === "no-offer"
+      ? "the writer found no offer to make"
+      : humanizeFlag(f);
+  const text = `${flags.length} flag${flags.length === 1 ? "" : "s"}: ${flags.map(label).join(", ")}`;
+  // A new offer redrafts the letter, so its fix comes before a regenerate.
+  const ordered = flags.toSorted(
+    (a, b) => Number(Object.hasOwn(OFFER_ADVICE, b)) - Number(Object.hasOwn(OFFER_ADVICE, a)),
+  );
+  const next = [...new Set(ordered.map((f) => flagAdvice(f, opts)))].join("; ");
   return { kind, text, next };
 }

@@ -19,6 +19,7 @@ import {
 } from "../lib/replyLearning.ts";
 import { readOnly } from "../lib/readOnly.ts";
 import { describeReplyMove, replyDraftNote, replySetNote } from "../lib/replyFlags.ts";
+import { CodeAnswerCard } from "./CodeAnswerCard.tsx";
 
 function initialDraft(t: ReplyThread): ReplyDraftSet {
   return (
@@ -146,6 +147,9 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
       return { result, version, force };
     },
     onSuccess: ({ result, version, force }) => {
+      // This conversation state has its suggestions now: the auto-generate
+      // below must not run again when the thread refetches with this version.
+      attempted.current = result.contextVersion;
       if (!mounted.current) return;
       // Suggestions wait behind "Use new suggestions" only when there are edits
       // to protect; an empty editor just takes them.
@@ -176,6 +180,7 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
   useEffect(() => {
     if (
       IS_DEMO ||
+      generate.isPending ||
       !t.canGenerate ||
       !t.needsReply ||
       (t.send && ["pending", "uncertain"].includes(t.send.status)) ||
@@ -243,6 +248,7 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
   // Flags are sentences here; the linter's labels stay in the draft set.
   const draftNote = replyDraftNote(draft.flags[draft.selected] ?? []);
   const setNote = replySetNote(draft.setFlags);
+  const codeAnswerId = candidate?.codeAnswerId ?? draft.codeAnswerId;
   return (
     <div className="reply-composer space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -276,6 +282,17 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
           <summary>Conversation insight</summary>
           <p>{draft.read}</p>
         </details>
+      )}
+      {codeAnswerId && (
+        <CodeAnswerCard
+          threadKey={t.key}
+          answerId={codeAnswerId}
+          onApproved={() => {
+            // The approved answer is in the brief now: fresh options use it.
+            if (t.canGenerate && !generate.isPending && !busy) generate.mutate(true);
+            void invalidate();
+          }}
+        />
       )}
       <div className="reply-directions" role="group" aria-label="Reply approach">
         {REPLY_VARIANTS.map((v) => (

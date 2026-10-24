@@ -78,6 +78,7 @@ import {
   saveCadencePlan as cadSaveCadencePlan,
   setCadenceDraft as cadSetCadenceDraft,
   setCadenceOffer as cadSetCadenceOffer,
+  setCadenceOfferSkip as cadSetCadenceOfferSkip,
   setCadenceStatus as cadSetCadenceStatus,
   stopCadence as cadStopCadence,
   sweepStaleCadenceSends as cadSweepStaleCadenceSends,
@@ -131,6 +132,7 @@ import {
 } from "./ledger-outcomes.ts";
 import { IcpProposalStore } from "./icp-proposal-store.ts";
 import { LearningStore } from "./learning-store.ts";
+import { CodeAnswerStore } from "./code-answers-store.ts";
 import { SendDeliveryStore } from "./ledger-delivery.ts";
 import { OutboundSendStore } from "./ledger-outbound.ts";
 import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.ts";
@@ -232,12 +234,9 @@ const DEFAULT_DB_PATH = join(configDir(), "ledger.sqlite");
 
 // Re-export cache constants for the Ledger public API.
 export {
-  ENRICH_CACHE_TTL_MS,
   ENRICH_DEADLINE_MS,
-  ENRICH_FAILURE_TTL_MS,
   LINKEDIN_CACHE_TTL_MS,
   LINKEDIN_MISS_TTL_MS,
-  RESEARCH_CACHE_TTL_MS,
   RESEARCH_DEADLINE_MS,
 } from "./ledger-cache.ts";
 
@@ -286,6 +285,8 @@ export class Ledger {
   readonly learning: LearningStore;
   /** Compatibility surface over `learning` for the #750 ICP proposal job and routes. */
   readonly icpProposals: IcpProposalStore;
+  /** How-it-works questions answered from the source repo (code-answers-store.ts). */
+  readonly codeAnswers: CodeAnswerStore;
   /** Sent-folder delivery checks for sends with no idempotency key (ledger-delivery.ts). */
   readonly sendDelivery: SendDeliveryStore;
   /** One row per intended outbound email, keyed by a semantic idempotency key (ledger-outbound.ts). */
@@ -348,6 +349,7 @@ export class Ledger {
     this.drafts = new DraftVersionStore(this.db);
     this.learning = new LearningStore(this.db);
     this.icpProposals = new IcpProposalStore(this.learning);
+    this.codeAnswers = new CodeAnswerStore(this.db);
     this.sendDelivery = new SendDeliveryStore(this.db);
     this.outboundSends = new OutboundSendStore(this.db);
   }
@@ -492,6 +494,15 @@ export class Ledger {
     expect?: Record<string, string | null>;
   }): boolean {
     return cadSetCadenceOffer(this.db, input);
+  }
+
+  /** Keep the offer writer's refusal on an active cadence with no offer (ledger-cadence.ts). */
+  setCadenceOfferSkip(input: {
+    prospectId: number;
+    playName: string;
+    skip: Record<string, unknown>;
+  }): boolean {
+    return cadSetCadenceOfferSkip(this.db, input);
   }
 
   /** The queue row a cadence started from, else its address's newest sent row (ledger-cadence.ts). */
@@ -1354,12 +1365,6 @@ export class Ledger {
   /** Trim pre-slimming receipt payloads (see `slimReceiptPayload`). Dry run unless `apply`. */
   compactReceiptPayloads(opts: { apply: boolean }): ReceiptCompaction {
     return this.receipts.compactPayloads(opts);
-  }
-
-  findContactReceipt(
-    input: { email: string } | { fullName: string; companyDomain: string },
-  ): ReceiptRecord | null {
-    return this.receipts.findContactReceipt(input);
   }
 
   listReceipts(

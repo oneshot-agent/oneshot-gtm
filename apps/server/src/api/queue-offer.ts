@@ -2,8 +2,10 @@ import { getLedger, type QueueRow } from "@oneshot-gtm/core";
 import {
   activeOfferPatch,
   deriveOfferSet,
+  isOfferSkipped,
   offerCandidatesOf,
   playMakesOffer,
+  type OfferSkip,
   type ProspectOffer,
 } from "@oneshot-gtm/plays";
 import { jsonResponse } from "../server.ts";
@@ -20,7 +22,9 @@ import {
  * POST /api/queue/:id/offer: change a row's prospect offer.
  *
  * - `{ regenerate: true }` writes five new offers from the row's research,
- *   ranked by return; the first becomes active, with its angles.
+ *   ranked by return; the first becomes active, with its angles. When the
+ *   writer declines, its reason is kept on the row (`offerSkip`) and the
+ *   answer is 422 with it (`offerSkip.why`); an offer the row had stays.
  * - `{ select: i }` makes the row's i-th offer (0-based) active, writing its
  *   angles if it has none yet.
  * - `{ offer, steps?, return? }` saves the founder's text; it is never
@@ -66,6 +70,16 @@ export async function queueOfferRoute(
     if (out === "not-live") {
       return jsonResponse({ error: "row is no longer pending or approved" }, 409, req);
     }
+    if ("skipped" in out) {
+      return jsonResponse(
+        {
+          error: `No offer: ${out.skipped.why || "the writer found nothing to offer."}`,
+          offerSkip: out.skipped,
+        },
+        422,
+        req,
+      );
+    }
     return jsonResponse(out, 200, req);
   }
 
@@ -101,17 +115,27 @@ export async function queueOfferRoute(
  * `{ regenerate: true }` without the HTTP: five new offers from the row's
  * research, the first active with its angles, written to the live row.
  * Shared with the read-on-open route, which rewrites the offer when a fresh
- * read moved the person's role.
+ * read moved the person's role. A writer skip is written to the row in
+ * place of a set (`skipped`), leaving any offer it had.
  */
 export async function regenerateQueueRowOffer(
   row: QueueRow,
 ): Promise<
-  { offer: ProspectOffer; candidates: ProspectOffer[] } | "bad-payload" | "no-offer" | "not-live"
+  | { offer: ProspectOffer; candidates: ProspectOffer[] }
+  | { skipped: OfferSkip }
+  | "bad-payload"
+  | "no-offer"
+  | "not-live"
 > {
   const payload = offerTarget(row);
   if (!payload) return "bad-payload";
   const set = await deriveOfferSet({ target: payload, playName: row.play_name });
   if (!set) return "no-offer";
+  if (isOfferSkipped(set)) {
+    const patch = { offerSkip: set.skipped };
+    if (!getLedger().patchLiveQueuePayload({ id: row.id, patch })) return "not-live";
+    return { skipped: set.skipped };
+  }
   // The new offer replaces the stored one whole: an approval or judge label
   // the old one carried must not survive the JSON merge patch.
   const patch = activeOfferPatch(storedOffer(row.payload_json), set.offer, set.candidates);

@@ -3,6 +3,7 @@ import {
   tryReserveDailySpend,
   isRunCancelled,
   loadConfig,
+  productBriefText,
   throwIfCancelled,
   type CommunityThread,
 } from "@oneshot-gtm/core";
@@ -19,6 +20,8 @@ export async function runCommunityReply(opts: PlayRunInput): Promise<{ drafted: 
     throw new Error(
       "Add your founder name, product description and verified product brief in Setup before drafting.",
     );
+  // Facts may come from approved code answers too; links only from what the founder wrote.
+  const brief = productBriefText(cfg) ?? cfg.productBrief;
   const drafted: DraftedRow[] = [];
   for (const [index, raw] of opts.targets.entries()) {
     let draft: DraftedRow;
@@ -38,7 +41,7 @@ export async function runCommunityReply(opts: PlayRunInput): Promise<{ drafted: 
                 thread,
                 founder: cfg.founderName,
                 product: cfg.productOneLiner,
-                productBrief: cfg.productBrief,
+                productBrief: brief,
                 voice: cfg.founderVoice ?? null,
               }),
             },
@@ -60,7 +63,7 @@ export async function runCommunityReply(opts: PlayRunInput): Promise<{ drafted: 
         !p.body.trim() ||
         !Array.isArray(p.facts) ||
         p.facts.length === 0 ||
-        !p.facts.every((f) => typeof f === "string" && f.trim() && cfg.productBrief!.includes(f))
+        !p.facts.every((f) => typeof f === "string" && f.trim() && brief.includes(f))
       )
         throw new Error("Reply must cite supporting facts from your product brief");
       const links = p.body.match(/https?:\/\/[^\s)\]>]+/g) ?? [];

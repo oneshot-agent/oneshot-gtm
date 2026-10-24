@@ -68,14 +68,3 @@ export function redraftsAfterOfferChange(
 ): boolean {
   return c.status === "active" && c.nextStepLabel != null && c.nextStepChannel === "email";
 }
-
-/** What a preview held for its offer tells the founder to do, pointing at the offer block. */
-export function offerFlagNote(flags: readonly string[]): string | null {
-  if (flags.includes("no-offer")) {
-    return "No offer for this sequence yet, so nothing was drafted. Write one in the offer block (New offers, or Edit offer) and the step is redrafted around it.";
-  }
-  if (flags.includes("weak-offer")) {
-    return "The offer was rated a weak fit. Approve it, pick another or rewrite it in the offer block; regenerating the draft will not clear this.";
-  }
-  return null;
-}

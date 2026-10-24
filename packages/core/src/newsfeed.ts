@@ -1,6 +1,5 @@
-import { getLedger } from "./ledger.ts";
 import { canonicalLinkedInProfileKey } from "./ledger-prospects.ts";
-import { NEWSFEED_CACHE_TTL_MS } from "./ledger-cache.ts";
+import { readPaidCache } from "./paid-cache.ts";
 
 /**
  * The read side of a person's captured newsfeed: which profile a feed is
@@ -74,10 +73,6 @@ export function newsfeedSeedUrl(candidates: ReadonlyArray<unknown>): string | nu
   return null;
 }
 
-export function newsfeedCacheKey(url: string): string {
-  return `newsfeed:${url.toLowerCase()}`;
-}
-
 export interface NewsfeedPost {
   platform?: string;
   content?: string;
@@ -126,30 +121,17 @@ export function newsfeedPostsFrom(result: unknown): NewsfeedPost[] {
 }
 
 /**
- * The captured posts for a profile, when a fresh capture is cached (14 days).
- * Null when nothing was captured, the capture expired, or it failed.
+ * The captured posts for a profile, when a fresh capture is in the paid cache
+ * (14 days). Null when nothing was captured, the capture expired, or it failed.
  */
-export function getCachedNewsfeed(
-  url: string,
-  ledger: Pick<ReturnType<typeof getLedger>, "getCachedEnrichment"> | null = null,
-): CapturedNewsfeed | null {
+export function getCachedNewsfeed(url: string): CapturedNewsfeed | null {
   const canonical = newsfeedSeedUrl([url]);
   if (!canonical) return null;
-  let cached: ReturnType<ReturnType<typeof getLedger>["getCachedEnrichment"]> = null;
-  try {
-    cached = (ledger ?? getLedger()).getCachedEnrichment(newsfeedCacheKey(canonical));
-  } catch {
-    return null;
-  }
-  if (!cached || cached.status === "failed") return null;
-  if (Date.now() - new Date(cached.fetched_at).getTime() >= NEWSFEED_CACHE_TTL_MS) return null;
-  try {
-    return {
-      url: canonical,
-      fetchedAt: new Date(cached.fetched_at).toISOString(),
-      posts: newsfeedPostsFrom(JSON.parse(cached.result_json)),
-    };
-  } catch {
-    return null;
-  }
+  const cached = readPaidCache("research.newsfeed", { socialMediaUrl: canonical });
+  if (cached?.status !== "ok") return null;
+  return {
+    url: canonical,
+    fetchedAt: new Date(cached.fetchedAt).toISOString(),
+    posts: newsfeedPostsFrom(cached.result),
+  };
 }

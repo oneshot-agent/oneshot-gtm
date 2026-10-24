@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CadenceOfferView } from "@oneshot-gtm/shared-types";
 import {
-  offerFlagNote,
   redraftsAfterOfferChange,
   sequenceOfferEditable,
   sentRowSequenceOfferNote,
@@ -91,12 +90,6 @@ describe("notes", () => {
     expect(sentRowSequenceOfferNote("active")).toContain("follow-ups restate it");
     expect(sentRowSequenceOfferNote("active")).toContain("on the cadence");
     expect(sentRowSequenceOfferNote("completed")).toBe("The offer the sequence carried.");
-  });
-
-  it("points a preview held for its offer at the offer block", () => {
-    expect(offerFlagNote(["no-offer"])).toContain("New offers");
-    expect(offerFlagNote(["thin-body", "weak-offer"])).toContain("Approve it");
-    expect(offerFlagNote(["thin-body"])).toBeNull();
   });
 
   it("redrafts after a change only when an email is next", () => {

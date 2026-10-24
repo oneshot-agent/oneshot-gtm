@@ -5,7 +5,7 @@ import { mergeSetupConfig, publicCfg, SetupValidationError } from "../src/api/se
 const FULL_CFG: OneShotConfig = {
   walletMode: "cdp",
   llmProvider: "openrouter",
-  llmModel: "anthropic/claude-sonnet-4.6",
+  llmModel: "anthropic/claude-sonnet-5.5",
   telemetryEnabled: true,
   founderName: "Jane",
   founderEmail: "jane@acme.dev",
@@ -50,7 +50,7 @@ describe("publicCfg — privacy boundary", () => {
     const view = publicCfg(FULL_CFG);
     expect(view.walletMode).toBe("cdp");
     expect(view.llmProvider).toBe("openrouter");
-    expect(view.llmModel).toBe("anthropic/claude-sonnet-4.6");
+    expect(view.llmModel).toBe("anthropic/claude-sonnet-5.5");
     expect(view.telemetryEnabled).toBe(true);
     expect(view.founderName).toBe("Jane");
     expect(view.founderEmail).toBe("jane@acme.dev");

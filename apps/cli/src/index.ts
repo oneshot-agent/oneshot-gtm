@@ -104,7 +104,12 @@ import { commandScoreProspects } from "./commands/score-prospects.ts";
 import { commandBackfillFitReason } from "./commands/backfill-fit-reason.ts";
 import { commandCompactReceipts } from "./commands/compact-receipts.ts";
 import { commandCalibrate } from "./commands/calibrate.ts";
-import { commandFindDrain, commandFindImport, commandFindWatch } from "./commands/find.ts";
+import {
+  commandFindCacheStats,
+  commandFindDrain,
+  commandFindImport,
+  commandFindWatch,
+} from "./commands/find.ts";
 import {
   commandInstallDashboardService,
   commandInstallService,
@@ -595,6 +600,18 @@ find
     ),
   );
 find
+  .command("cache-stats")
+  .option("--days <n>", "window in days (default 7)", (v) => Number.parseInt(v, 10), 7)
+  .option("--json", "output as JSON")
+  .description(
+    "Per call type: paid lookups the shared cache answered, dollars saved and purchases, all workspaces",
+  )
+  .action(
+    runOrFail((opts: { days: number; json?: boolean }) =>
+      commandFindCacheStats({ days: opts.days, ...(opts.json ? { json: true } : {}) }),
+    ),
+  );
+find
   .command("drain <play>")
   .option("--limit <n>", "max approved rows to drain (default 10)", (v) => Number.parseInt(v, 10))
   .option("--dry-run", "preview drain; don't actually send", false)
@@ -678,6 +695,11 @@ find
   )
   .option("--concurrency <n>", "parallel research calls (default 3)", positiveInt("--concurrency"))
   .option("--refresh", "re-research prospects that already have a dossier", false)
+  .option(
+    "--rebuy",
+    "buy research and posts again even when the shared cache holds them (bills each one)",
+    false,
+  )
   .option("--id <n>", "research one prospect by id, ignoring scope and dossier state", (v) =>
     Number.parseInt(v, 10),
   )
@@ -709,6 +731,7 @@ find
         scope?: string;
         concurrency?: number;
         refresh: boolean;
+        rebuy: boolean;
         id?: number;
         maxCostUsd?: number;
         rejudge: boolean;
@@ -724,6 +747,7 @@ find
           newsfeedOnly: opts.newsfeedOnly === true,
           dryRun: opts.dryRun,
           refresh: opts.refresh,
+          rebuy: opts.rebuy,
           noRejudge: opts.rejudge === false,
           noCompany: opts.company === false,
           noLive: opts.live === false,
@@ -755,6 +779,11 @@ find
     (v) => Number.parseFloat(v),
   )
   .option("--refresh", "re-research rows that already carry person research", false)
+  .option(
+    "--rebuy",
+    "buy research and posts again even when the shared cache holds them (bills each one)",
+    false,
+  )
   .option("--no-rejudge", "keep the row's ICP verdict; skip the person-gate re-judge")
   .option("--no-company", "skip the company lookup for the current employer")
   .option("--no-live", "skip the live LinkedIn profile read")
@@ -783,6 +812,7 @@ find
         concurrency?: number;
         maxCostUsd?: number;
         refresh: boolean;
+        rebuy: boolean;
         rejudge: boolean;
         company: boolean;
         live: boolean;
@@ -796,6 +826,7 @@ find
           newsfeedOnly: opts.newsfeedOnly === true,
           dryRun: opts.dryRun,
           refresh: opts.refresh,
+          rebuy: opts.rebuy,
           noRejudge: opts.rejudge === false,
           noCompany: opts.company === false,
           noLive: opts.live === false,

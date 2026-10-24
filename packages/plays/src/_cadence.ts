@@ -55,6 +55,7 @@ import {
   replySubject,
   gmailSentMessageIdFor,
   type EmailThread,
+  productBriefText,
 } from "@oneshot-gtm/core";
 import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import {
@@ -3780,7 +3781,7 @@ async function buildLinkedInMessage(
   const lines = [
     `FOUNDER: ${ctx.cfg.founderName ?? ""}`,
     `PRODUCT: ${ctx.cfg.productOneLiner ?? ""}`,
-    ...(which === "last" ? [`PRODUCT_BRIEF: ${ctx.cfg.productBrief ?? "(none)"}`] : []),
+    ...(which === "last" ? [`PRODUCT_BRIEF: ${productBriefText(ctx.cfg) ?? "(none)"}`] : []),
     ...(offerLines ? [offerLines] : []),
     `PERSON: ${ctx.prospect.name ?? "them"}${ctx.prospect.title ? `, ${ctx.prospect.title}` : ""}${
       ctx.prospect.company ? ` at ${ctx.prospect.company}` : ""

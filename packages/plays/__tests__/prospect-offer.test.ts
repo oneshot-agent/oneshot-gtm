@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The prospect offer: written from research, linted on its output alone,
@@ -52,11 +54,17 @@ const {
   deriveOffer,
   deriveOffers,
   deriveOfferSet,
+  ensureOfferSet,
+  isOfferSkipped,
   lintOffer,
   lintOfferAngle,
   offerBlock,
   offerForDraft,
+  offerInputHash,
+  offerProductHash,
   offerResearchText,
+  offerSetForDraft,
+  activeOfferPatch,
   OFFER_PROMPT_VERSION,
   playMakesOffer,
 } = await import("../src/_prospect-offer.ts");
@@ -94,6 +102,56 @@ describe("offerResearchText", () => {
     expect(text).toContain("opened a second depot in Leeds");
     expect(text).not.toContain("secret argument");
     expect(text).not.toContain("dana@northside.example");
+  });
+
+  // The row drops any field over 240 characters; the GitHub record (their
+  // profile and their own repositories) is read whole, in its own section.
+  const githubEvidence = [
+    "Profile: Sam Ortiz @ Tidewater Labs — account created 2019 — 14 public repos",
+    "Own repos (most recently pushed):",
+    "- harbor-sync (Rust, pushed 2026-08) — syncs berth schedules between port systems",
+    "- tide-cli (Go, pushed 2026-06) — command line for tide tables",
+    "- notes (Markdown, pushed 2025-11) — personal notes and talks",
+  ].join("\n");
+  const starrer = { name: "Sam Ortiz", repo: "someone-else/popular-tool", githubEvidence };
+
+  it("reads the GitHub record in its own section, after the row", () => {
+    expect(githubEvidence.length).toBeGreaterThan(240);
+    const text = offerResearchText(starrer);
+    expect(text).toContain(`THEIR GITHUB:\n${githubEvidence}`);
+    expect(text.indexOf("HOW THEY WERE FOUND")).toBeLessThan(text.indexOf("THEIR GITHUB:"));
+    expect(text).toContain("repo: someone-else/popular-tool");
+  });
+
+  it("reads a short record once, in its own section, not as a row line too", () => {
+    const text = offerResearchText({ ...starrer, githubEvidence: "Own repos: tide-cli" });
+    expect(text).toContain("THEIR GITHUB:\nOwn repos: tide-cli");
+    expect(text).not.toContain("githubEvidence:");
+  });
+
+  it("clips a long record", () => {
+    const long = `${githubEvidence}\n${"- more-repo (Go) — another tool\n".repeat(400)}`;
+    const section = offerResearchText({ ...starrer, githubEvidence: long }).split(
+      "THEIR GITHUB:\n",
+    )[1]!;
+    expect(section.length).toBe(3_000);
+    expect(section.endsWith("…")).toBe(true);
+  });
+
+  it("adds no section for an empty record, or under an older prompt version", () => {
+    expect(offerResearchText({ ...starrer, githubEvidence: "  " })).not.toContain("THEIR GITHUB");
+    expect(offerResearchText(starrer, null, "offer-v5")).not.toContain("THEIR GITHUB");
+    expect(offerResearchText(starrer, null, "offer-v5")).toBe(
+      offerResearchText({ ...starrer, githubEvidence: undefined }),
+    );
+  });
+
+  it("reaches the writer and the judge", async () => {
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    llm.judge = [JSON.stringify({ judgements: [{ offer: 1, label: "relevant", why: "ok" }] })];
+    await deriveOffers({ target: { ...target, githubEvidence }, playName: "repo-interest" });
+    expect(llm.inputs[0]).toContain(`THEIR GITHUB:\n${githubEvidence}`);
+    expect(llm.judgeInputs[0]).toContain(`THEIR GITHUB:\n${githubEvidence}`);
   });
 });
 
@@ -183,6 +241,34 @@ describe("lintOffer", () => {
       );
     }
   });
+  it("flags an offer that is one pass of checking", () => {
+    for (const offer of [
+      "vet every new leeds supplier before the next contract",
+      "verify each crew's certificates at the leeds depot",
+      "validate the leeds depot's job addresses",
+      "screen new leeds subcontractors",
+      "scan the leeds depot's job history for missed visits",
+      "audit leeds depot invoices",
+      "check every leeds booking for a double slot",
+      "Verify the leeds depot's insurance documents",
+    ]) {
+      expect(lintOffer({ ...good, level: "researched", offer }, research)).toContain(
+        "offer-is-a-check",
+      );
+    }
+  });
+  it("passes a goal that leads with what the work wins, a check named later included", () => {
+    for (const offer of [
+      "renegotiate the leeds depot's van leases after auditing what each van costs",
+      "recover unpaid leeds invoices from the last quarter",
+      "sign the leeds depot's first commercial maintenance contract",
+      "get the leeds depot's crews booked into same-day slots once every address is checked",
+    ]) {
+      expect(lintOffer({ ...good, level: "researched", offer }, research)).not.toContain(
+        "offer-is-a-check",
+      );
+    }
+  });
   it("needs a return on a researched offer, not on a role-level one", () => {
     const { return: _ret, ...bare } = good;
     expect(lintOffer({ ...bare, level: "researched" }, research)).toContain("no-return");
@@ -228,7 +314,7 @@ const angles = [
 describe("deriveOffers", () => {
   it("keeps the ranked offers that pass, in the model's order", async () => {
     llm.replies = [JSON.stringify({ offers: [good, second] })];
-    const offers = await deriveOffers({ target, playName: "new-business" });
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer]);
     expect(offers[0]?.return).toBe(good.return);
   });
@@ -239,9 +325,41 @@ describe("deriveOffers", () => {
       JSON.stringify({ offers: [good, watching] }),
       JSON.stringify({ offers: [good, second] }),
     ];
-    const offers = await deriveOffers({ target, playName: "new-business" });
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(llm.inputs[1]).toContain("offer 2: offer-not-execution");
     expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer]);
+  });
+
+  it("asks again for a check, telling the writer what the flag means", async () => {
+    const check = { ...good, offer: "vet every new leeds subcontractor before they start" };
+    llm.replies = [
+      JSON.stringify({ offers: [check, second] }),
+      JSON.stringify({ offers: [good, second] }),
+    ];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs).toHaveLength(2);
+    expect(llm.inputs[1]).toContain("offer 1: offer-is-a-check");
+    expect(llm.inputs[1]).toContain(
+      "offer-is-a-check: the offer is one pass of checking; name the multi-week goal that checking wins",
+    );
+    expect(offers.map((o) => o.offer)).toEqual([second.offer, good.offer]);
+  });
+
+  it("drops an offer that repeats a kept one in other words, and asks again for the place", async () => {
+    const reworded = {
+      ...good,
+      offer: "get the leeds crews booked into same-day slots without a dispatcher",
+    };
+    expect(lintOffer({ ...reworded, level: "researched" }, offerResearchText(target))).toEqual([]);
+    llm.replies = [
+      JSON.stringify({ offers: [good, reworded, second] }),
+      // The repair round restates the kept ones: they are repeats too.
+      JSON.stringify({ offers: [reworded, second, third] }),
+    ];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs).toHaveLength(2);
+    expect(llm.inputs[1]).toContain("offer 2: the same job as another offer");
+    expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer, third.offer]);
   });
 
   it("shows a mid-sequence writer the THREAD SO FAR, as context it may not quote as evidence", async () => {
@@ -254,7 +372,7 @@ describe("deriveOffers", () => {
       JSON.stringify({ offers: [quoting, second] }),
       JSON.stringify({ offers: [good, second] }),
     ];
-    const offers = await deriveOffers({ target, playName: "new-business", thread });
+    const { offers } = await deriveOffers({ target, playName: "new-business", thread });
     expect(llm.inputs[0]).toContain("THREAD SO FAR:");
     expect(llm.inputs[0]).toContain("--- email 1 ---\nSubject: crews in leeds");
     expect(llm.inputs[0]).toContain("Still worth a look?");
@@ -271,6 +389,90 @@ describe("deriveOffers", () => {
   });
 });
 
+describe("the writer's skip", () => {
+  const why = "They left the firm in October and no longer hold the role.";
+
+  it("comes back with its why and the input hash it read", async () => {
+    llm.replies = [JSON.stringify({ skip: true, why: `  ${why}\n` })];
+    const out = await deriveOffers({ target, playName: "new-business" });
+    expect(out.offers).toEqual([]);
+    expect(out.skip?.why).toBe(why);
+    expect(out.skip?.version).toBe(OFFER_PROMPT_VERSION);
+    expect(out.skip?.inputHash).toBe(offerInputHash(offerResearchText(target), cfg));
+    expect(out.skip?.productHash).toBe(offerProductHash(cfg));
+  });
+
+  it("is no skip when an earlier round kept offers", async () => {
+    const watching = { ...second, offer: "monitor cancellations at the leeds depot" };
+    llm.replies = [
+      JSON.stringify({ offers: [good, watching] }),
+      JSON.stringify({ skip: true, why }),
+    ];
+    const out = await deriveOffers({ target, playName: "new-business" });
+    expect(out.offers.map((o) => o.offer)).toEqual([good.offer]);
+    expect(out.skip).toBeNull();
+  });
+
+  it("reaches deriveOfferSet as `skipped`, and a lint failure stays null", async () => {
+    llm.replies = [JSON.stringify({ skip: true, why })];
+    const set = await deriveOfferSet({ target, playName: "new-business" });
+    expect(isOfferSkipped(set) && set.skipped.why).toBe(why);
+    const bad = JSON.stringify({ ...good, offer: "book 40 jobs a day" });
+    llm.replies = [bad, bad];
+    expect(await deriveOfferSet({ target, playName: "new-business" })).toBeNull();
+  });
+
+  it("stored and current, answers ensureOfferSet with no writer call; changed research asks again", async () => {
+    llm.replies = [JSON.stringify({ skip: true, why })];
+    const first = await ensureOfferSet({ target, playName: "new-business" });
+    if (!isOfferSkipped(first)) throw new Error("expected a skip");
+    expect(first.changed).toBe(true);
+    const calls = llm.inputs.length;
+
+    const again = await ensureOfferSet({
+      target: { ...target, offerSkip: first.skipped },
+      playName: "new-business",
+    });
+    expect(isOfferSkipped(again) && again.changed).toBe(false);
+    expect(llm.inputs.length).toBe(calls);
+
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    const moved = await ensureOfferSet({
+      target: { ...target, update: "hired a dispatcher for leeds", offerSkip: first.skipped },
+      playName: "new-business",
+    });
+    expect(llm.inputs.length).toBeGreaterThan(calls);
+    expect(moved && !isOfferSkipped(moved) && moved.offer.offer).toBe(good.offer);
+  });
+
+  it("stored under today's prompt and product, is kept by offerSetForDraft", async () => {
+    llm.replies = [JSON.stringify({ skip: true, why })];
+    const first = await offerSetForDraft({ target, playName: "new-business" });
+    if (!isOfferSkipped(first)) throw new Error("expected a skip");
+    expect(first.derived).toBe(true);
+    const calls = llm.inputs.length;
+    const kept = await offerSetForDraft({
+      target: { ...target, offerSkip: first.skipped },
+      dossier: "more research the row never had",
+      playName: "new-business",
+    });
+    expect(isOfferSkipped(kept) && kept.derived).toBe(false);
+    expect(
+      await offerForDraft({
+        target: { ...target, offerSkip: first.skipped },
+        playName: "new-business",
+      }),
+    ).toBeNull();
+    expect(llm.inputs.length).toBe(calls);
+  });
+
+  it("is deleted by the patch that makes an offer active", async () => {
+    llm.replies = [JSON.stringify(good)];
+    const offer = (await deriveOffer({ target, playName: "new-business" }))!;
+    expect(activeOfferPatch(null, offer, [offer]).offerSkip).toBeNull();
+  });
+});
+
 describe("deriveOfferSet", () => {
   it("makes the best offer active and writes its angles", async () => {
     llm.replies = [
@@ -281,7 +483,8 @@ describe("deriveOfferSet", () => {
       target: { ...target, yourEdge: "Founder reason one // Founder reason two" },
       playName: "new-business",
     });
-    expect(set?.offer.offer).toBe(good.offer);
+    if (!set || isOfferSkipped(set)) throw new Error("expected offers");
+    expect(set.offer.offer).toBe(good.offer);
     // The angle leading with watching is dropped.
     expect(set?.offer.angles).toEqual(angles);
     expect(set?.candidates.map((c) => c.offer)).toEqual([good.offer, second.offer]);
@@ -312,11 +515,12 @@ describe("offer angles are written once", () => {
       target: { ...target, offer: stored },
       playName: "new-business",
     });
-    expect(first?.offer.angles).toEqual([]);
+    if (!first || isOfferSkipped(first)) throw new Error("expected the stored offer");
+    expect(first.offer.angles).toEqual([]);
     expect(first?.changed).toBe(true);
     const calls = llm.inputs.length;
     const second = await mod.ensureOfferSet({
-      target: { ...target, offer: first!.offer },
+      target: { ...target, offer: first.offer },
       playName: "new-business",
     });
     expect(second?.changed).toBe(false);
@@ -515,7 +719,7 @@ describe("offer fit", () => {
   it("is parsed and stored on the offer", async () => {
     const fit = "their firm: a second depot in leeds with booking done by hand";
     llm.replies = [JSON.stringify({ offers: [{ ...good, fit: `${fit}.` }] })];
-    const [offer] = await deriveOffers({ target, playName: "new-business" });
+    const [offer] = (await deriveOffers({ target, playName: "new-business" })).offers;
     expect(offer?.fit).toBe(fit);
   });
 
@@ -535,7 +739,7 @@ describe("offer fit", () => {
   });
 
   it("bumps the prompt version so unedited offers re-derive", () => {
-    expect(OFFER_PROMPT_VERSION).toBe("offer-v4");
+    expect(OFFER_PROMPT_VERSION).toBe("offer-v6");
   });
 });
 
@@ -781,7 +985,7 @@ describe("deriveOffers with the relevance judge", () => {
       ]),
       judgeReply([["relevant", "their cancelled jobs"]]),
     ];
-    const offers = await deriveOffers({ target, playName: "new-business" });
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(llm.inputs).toHaveLength(2);
     expect(llm.inputs[1]).toContain("Write exactly 2 new offers");
     expect(llm.inputs[1]).toContain("rests on the word healthcare");
@@ -800,6 +1004,37 @@ describe("deriveOffers with the relevance judge", () => {
     ]);
     expect(offers[4]?.relevanceWhy).toBe("would fit any trade business");
     expect(offers[0]?.relevanceClassifier).toMatch(/^llm:/);
+  });
+
+  it("drops a replacement that repeats a kept offer in other words", async () => {
+    const reworded = {
+      ...second,
+      offer: "fill the leeds depot's cancelled slots with jobs the same morning",
+    };
+    llm.replies = [
+      JSON.stringify({ offers: [good, second, third, fourth, fifth] }),
+      JSON.stringify({ offers: [reworded, replacement] }),
+    ];
+    llm.judge = [
+      judgeReply([
+        ["relevant", "a"],
+        ["relevant", "b"],
+        ["relevant", "c"],
+        ["relevant", "d"],
+        ["irrelevant", "rests on the word healthcare"],
+      ]),
+      judgeReply([["relevant", "their cancelled jobs"]]),
+    ];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs[1]).toContain("Write exactly 1 new offer");
+    expect(llm.judgeInputs[1]).not.toContain(reworded.offer);
+    expect(offers.map((o) => o.offer)).toEqual([
+      good.offer,
+      second.offer,
+      third.offer,
+      fourth.offer,
+      replacement.offer,
+    ]);
   });
 
   it("fills with the best-scored weak offers, never an irrelevant one", async () => {
@@ -826,7 +1061,7 @@ describe("deriveOffers with the relevance judge", () => {
           { choice: "irrelevant", confidence: 0.8, relevant: 0.1 },
         ]),
       );
-    const offers = await deriveOffers({
+    const { offers } = await deriveOffers({
       target,
       playName: "new-business",
       fetchImpl: fetchImpl as never,
@@ -869,7 +1104,7 @@ describe("deriveOffers with the relevance judge", () => {
         { choice: "irrelevant", confidence: 0.9, probabilities: { irrelevant: 0.9 } },
       ]),
     );
-    const offers = await deriveOffers({
+    const { offers } = await deriveOffers({
       target,
       playName: "new-business",
       fetchImpl: fetchImpl as never,
@@ -893,7 +1128,7 @@ describe("deriveOffers with the relevance judge", () => {
         ["weak", "would fit any trade business"],
       ]),
     ];
-    const offers = await deriveOffers({ target, playName: "new-business" });
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(offers.map((o) => [o.relevance, o.relevanceWhy])).toEqual([
       ["relevant", "the second depot"],
       ["weak", "would fit any trade business"],
@@ -908,7 +1143,7 @@ describe("deriveOffers with the relevance judge", () => {
         ["relevant", "b"],
       ]),
     ];
-    const offers = await deriveOffers({ target, playName: "new-business" });
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(llm.inputs).toHaveLength(1);
     expect(offers.map((o) => o.relevance)).toEqual(["relevant", "relevant"]);
   });
@@ -916,8 +1151,225 @@ describe("deriveOffers with the relevance judge", () => {
   it("keeps the offers unjudged when the judge's reply cannot be read", async () => {
     llm.replies = [JSON.stringify({ offers: [good, second] })];
     llm.judge = ["not json"];
-    const offers = await deriveOffers({ target, playName: "new-business" });
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer]);
     expect(offers[0]?.relevance).toBeUndefined();
+  });
+});
+
+// The bar: an offer is a multi-week goal with a counted return, never one
+// pass of checking. The writer prompt, the judge prompt and the decisions
+// criteria carry the same rule; the lint backs the writer's lead list.
+
+describe("the offer bar", () => {
+  const prompts = join(import.meta.dirname, "..", "..", "prompts");
+  const writer = readFileSync(join(prompts, "prospect-offer.md"), "utf8");
+  const judge = readFileSync(join(prompts, "prospect-offer-judge.md"), "utf8");
+  const checkPass =
+    "a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching";
+  const leads = ["vet", "verify", "validate", "screen", "scan", "audit", "check"];
+
+  it("the writer starts from the firm's goals and states the bar", () => {
+    expect(writer).toContain("## The bar");
+    expect(writer).toContain("most valuable outcomes this quarter");
+    expect(writer.toLowerCase()).toContain(`${checkPass} is a step, never the offer`);
+    expect(writer).toContain(
+      "An offer never opens with vet, verify, validate, screen, scan, audit or check.",
+    );
+    expect(writer).toContain("only when nothing bigger is honest");
+    // The weeks of work may be the machine's, outside parties', or both.
+    expect(writer).toContain("by machine, with outside parties, or both");
+    expect(writer).toContain("on its own is insight, never the offer");
+  });
+
+  it("the judge holds machine work and plans changed on a forecast to the same bar", () => {
+    expect(judge).toContain("by machine, with outside parties, or both");
+    expect(judge).toContain("a forecast or analysis offered without the plan it changes");
+  });
+
+  it("the lint flags every lead the writer prompt names, and no other", () => {
+    const research = offerResearchText(target);
+    for (const lead of leads) {
+      expect(
+        lintOffer({ ...good, level: "researched", offer: `${lead} the leeds bookings` }, research),
+      ).toContain("offer-is-a-check");
+    }
+    for (const lead of ["review", "inspect", "assess"]) {
+      expect(
+        lintOffer({ ...good, level: "researched", offer: `${lead} the leeds bookings` }, research),
+      ).not.toContain("offer-is-a-check");
+    }
+  });
+
+  it("both judge engines carry the same test", async () => {
+    const { offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
+    const criteria = offerRelevanceCriteria();
+    expect(criteria).toMatchInlineSnapshot(`
+      {
+        "irrelevant": "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.",
+        "relevant": "A goal this firm at its stage would put on its plan, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), owned by or one step from this person, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
+        "weak": "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome this person owns or is one step from, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.",
+      }
+    `);
+    // The llm judge's labels say the same as the decisions criteria.
+    const label = (name: string): string =>
+      judge.match(new RegExp(`^- \`${name}\`: (.+)$`, "m"))?.[1] ?? "";
+    expect(label("relevant").toLowerCase()).toBe(criteria.relevant.toLowerCase());
+    expect(label("weak").toLowerCase()).toBe(criteria.weak.toLowerCase());
+    expect(criteria.weak).toContain(checkPass);
+  });
+
+  // How they were found is a signal, not their project: the writer, the judge
+  // prompt and the decisions criteria carry the same rule.
+  it("how they were found is never their project, and the brief is never their goal", async () => {
+    const signal =
+      "How they were found (a repository they starred or follow, an event they joined, a post they reacted to, a tool they use) says what they are looking at, not what they own or run.";
+    expect(writer).toContain(signal);
+    expect(judge).toContain(signal);
+    expect(writer).toContain(
+      "A third party's project is never their firm or their project: never an offer to build, ship, improve, test or run it.",
+    );
+    expect(writer).toContain("is a restatement of the brief, not a goal of theirs");
+    expect(writer).toContain(
+      "A project they starred, follow, forked or attended an event about is not their project.",
+    );
+    expect(writer).toContain(
+      "Skip when nothing is known beyond how they were found: no title, no company, no project of their own, no research. `why` says so.",
+    );
+    expect(writer).toContain("Their own project is never a reason to skip.");
+    expect(writer).not.toContain("a repository they work on or follow");
+    const rule =
+      "an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project";
+    expect(judge).toContain(rule);
+    const { offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
+    expect(offerRelevanceCriteria().weak).toContain(rule);
+  });
+});
+
+describe("the prompt version bump", () => {
+  const research = offerResearchText(target);
+  const old = {
+    ...good,
+    offer: "the old offer for the leeds depot",
+    level: "researched" as const,
+    version: "offer-v4",
+    inputHash: offerInputHash(research, cfg, "offer-v4"),
+    productHash: offerProductHash(cfg),
+    angles: [],
+    derivedAt: "",
+  };
+
+  it("re-derives an unedited offer written under the old prompt", async () => {
+    llm.replies = [JSON.stringify({ offers: [good] }), JSON.stringify({ angles: [] })];
+    const out = await ensureOfferSet({
+      target: { ...target, offer: old },
+      playName: "new-business",
+    });
+    if (!out || isOfferSkipped(out)) throw new Error("expected offers");
+    expect(out.changed).toBe(true);
+    expect(out.offer.offer).toBe(good.offer);
+    expect(out.offer.version).toBe(OFFER_PROMPT_VERSION);
+    llm.replies = [JSON.stringify({ offers: [good] }), JSON.stringify({ angles: [] })];
+    const draft = await offerForDraft({
+      target: { ...target, offer: old },
+      playName: "new-business",
+    });
+    expect(draft?.version).toBe(OFFER_PROMPT_VERSION);
+  });
+
+  it("keeps a founder-edited offer and a weak one the founder approved", async () => {
+    const edited = { ...old, editedBy: "founder" as const };
+    const approved = { ...old, relevance: "weak" as const, weakApprovedAt: "2026-10-01T00:00:00Z" };
+    for (const offer of [edited, approved]) {
+      const out = await ensureOfferSet({ target: { ...target, offer }, playName: "new-business" });
+      if (!out || isOfferSkipped(out)) throw new Error("expected the stored offer");
+      expect(out.changed).toBe(false);
+      expect(out.offer).toBe(offer);
+      expect(await offerForDraft({ target: { ...target, offer }, playName: "new-business" })).toBe(
+        offer,
+      );
+    }
+    expect(llm.inputs).toHaveLength(0);
+  });
+
+  it("keeps an edited or approved offer when this version reads its GitHub record", async () => {
+    // Written under offer-v5, which never read the record: today's research
+    // text (and so its input hash) has a section the offer was not written from.
+    const row = { ...target, githubEvidence: "Own repos:\n- depot-planner (Go) — plans depots" };
+    const v5 = {
+      ...old,
+      version: "offer-v5",
+      inputHash: offerInputHash(offerResearchText(row, null, "offer-v5"), cfg, "offer-v5"),
+    };
+    expect(v5.inputHash).not.toBe(offerInputHash(offerResearchText(row), cfg, "offer-v5"));
+    const edited = { ...v5, editedBy: "founder" as const };
+    const approved = { ...v5, relevance: "weak" as const, weakApprovedAt: "2026-10-01T00:00:00Z" };
+    for (const offer of [edited, approved]) {
+      const out = await ensureOfferSet({ target: { ...row, offer }, playName: "repo-interest" });
+      if (!out || isOfferSkipped(out)) throw new Error("expected the stored offer");
+      expect(out.changed).toBe(false);
+      expect(out.offer).toBe(offer);
+      expect(await offerForDraft({ target: { ...row, offer }, playName: "repo-interest" })).toBe(
+        offer,
+      );
+    }
+    expect(llm.inputs).toHaveLength(0);
+    // An unedited one is written again, now with the record in RESEARCH.
+    llm.replies = [JSON.stringify({ offers: [good] }), JSON.stringify({ angles: [] })];
+    const out = await ensureOfferSet({
+      target: { ...row, offer: v5 },
+      playName: "repo-interest",
+    });
+    if (!out || isOfferSkipped(out)) throw new Error("expected offers");
+    expect(out.changed).toBe(true);
+    expect(llm.inputs[0]).toContain("THEIR GITHUB:");
+  });
+
+  it("still re-derives an approved offer when its research changed", async () => {
+    const approved = {
+      ...old,
+      relevance: "weak" as const,
+      weakApprovedAt: "2026-10-01T00:00:00Z",
+      inputHash: "from-other-research",
+    };
+    llm.replies = [JSON.stringify({ offers: [good] }), JSON.stringify({ angles: [] })];
+    const out = await ensureOfferSet({
+      target: { ...target, offer: approved },
+      playName: "new-business",
+    });
+    if (!out || isOfferSkipped(out)) throw new Error("expected offers");
+    expect(out.changed).toBe(true);
+    expect(out.offer.offer).toBe(good.offer);
+    // A draft path that skips `ensureOfferSet` does not send it either.
+    llm.replies = [JSON.stringify({ offers: [good] }), JSON.stringify({ angles: [] })];
+    const draft = await offerForDraft({
+      target: { ...target, offer: approved },
+      playName: "new-business",
+    });
+    expect(draft?.offer).toBe(good.offer);
+  });
+
+  it("a draft keeps an approved offer whatever research the play's enrichment adds", async () => {
+    const approved = { ...old, relevance: "weak" as const, weakApprovedAt: "2026-10-01T00:00:00Z" };
+    const draft = await offerForDraft({
+      target: { ...target, offer: approved },
+      dossier: "enrichment the offer never saw",
+      playName: "new-business",
+    });
+    expect(draft).toBe(approved);
+    // One a draft wrote from the row and its dossier is kept for that dossier.
+    const dossier = "enrichment the draft wrote it from";
+    const fromDraft = {
+      ...approved,
+      inputHash: offerInputHash(offerResearchText(target, dossier), cfg, "offer-v4"),
+    };
+    expect(
+      await offerForDraft({
+        target: { ...target, offer: fromDraft },
+        dossier,
+        playName: "new-business",
+      }),
+    ).toBe(fromDraft);
+    expect(llm.inputs).toHaveLength(0);
   });
 });

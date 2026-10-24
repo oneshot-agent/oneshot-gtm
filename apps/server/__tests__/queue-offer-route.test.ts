@@ -12,6 +12,8 @@ const state = vi.hoisted(() => ({
   dbPayload: null as null | Record<string, unknown>,
   live: true,
   derived: null as null | Record<string, unknown>,
+  /** The writer declines with this skip (wins over `derived`). */
+  skipped: null as null | Record<string, unknown>,
   brief: "Acme books crews into open slots.",
 }));
 
@@ -48,9 +50,11 @@ vi.mock("@oneshot-gtm/core", async () => ({
 vi.mock("@oneshot-gtm/plays", async () => ({
   ...(await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays")),
   deriveOfferSet: async () =>
-    state.derived
-      ? { offer: state.derived, candidates: [state.derived, { offer: "second" }] }
-      : null,
+    state.skipped
+      ? { skipped: state.skipped }
+      : state.derived
+        ? { offer: state.derived, candidates: [state.derived, { offer: "second" }] }
+        : null,
   // Angles are written for whichever offer becomes active.
   withOfferAngles: async (offer: Record<string, unknown>) => ({ ...offer, angles: ["why"] }),
 }));
@@ -83,6 +87,7 @@ beforeEach(() => {
   state.dbPayload = null;
   state.live = true;
   state.derived = null;
+  state.skipped = null;
   state.brief = "Acme books crews into open slots.";
 });
 
@@ -129,6 +134,27 @@ describe("queueOfferRoute", () => {
       state.derived,
       { offer: "second" },
     ]);
+  });
+
+  it("keeps a writer skip on the row and answers 422 with its why, leaving the offer", async () => {
+    state.skipped = {
+      why: "They left the firm in October",
+      version: "offer-v4",
+      inputHash: "h",
+      productHash: "p",
+      skippedAt: "2026-10-22T00:00:00.000Z",
+    };
+    const res = await queueOfferRoute(post({ regenerate: true }), { id: "5" });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body["error"]).toBe("No offer: They left the firm in October");
+    expect(body["offerSkip"]).toEqual(state.skipped);
+    expect(state.written).toEqual([{ id: 5, patch: { offerSkip: state.skipped } }]);
+  });
+
+  it("drops a stored skip when the founder writes the offer", async () => {
+    await queueOfferRoute(post({ offer: "new offer" }), { id: "5" });
+    expect(state.patched[0]!.patch["offerSkip"]).toBeNull();
   });
 
   it("makes another of the row's offers active, with its angles", async () => {

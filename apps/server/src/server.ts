@@ -127,6 +127,14 @@ import {
   rollbackLearningProposalRoute,
   setLearningGuidanceRoute,
 } from "./api/learning.ts";
+import {
+  approveCodeAnswerRoute,
+  deriveCodeAnswerRoute,
+  dismissCodeAnswerRoute,
+  listCodeAnswersRoute,
+  sweepCodeAnswersRoute,
+  testSourceRepoRoute,
+} from "./api/code-answers.ts";
 import { addProspectRoute } from "./api/prospects.ts";
 import { calNoShowWebhookRoute, signupWebhookRoute } from "./api/webhook-triggers.ts";
 import { markLinkedInReplyRoute } from "./api/linkedin-replies.ts";
@@ -235,6 +243,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/smartlead/accounts", smartleadAccountsRoute),
   route("POST", "/api/setup/derive-icp", deriveIcpRoute),
   route("POST", "/api/setup/derive-brief", deriveBriefRoute),
+  route("POST", "/api/setup/source-repo/test", testSourceRepoRoute),
   route("POST", "/api/setup/linkedin-session", linkedinSessionRoute),
   route("POST", "/api/setup/linkedin-login/start", linkedinLoginStartRoute),
   route("POST", "/api/setup/linkedin-login/finish", linkedinLoginFinishRoute),
@@ -296,6 +305,12 @@ const routes: RouteEntry[] = [
   route("GET", "/api/learning/guidance", listLearningGuidanceRoute),
   route("POST", "/api/learning/guidance/:id", setLearningGuidanceRoute),
   route("POST", "/api/learning/guidance/:id/rollback", rollbackLearningGuidanceRoute),
+  // Answers from your code. `sweep` is literal, so it is listed before `:id`.
+  route("GET", "/api/code-answers", listCodeAnswersRoute),
+  route("POST", "/api/code-answers/sweep", sweepCodeAnswersRoute),
+  route("POST", "/api/code-answers/:id/approve", approveCodeAnswerRoute),
+  route("POST", "/api/code-answers/:id/dismiss", dismissCodeAnswerRoute),
+  route("POST", "/api/code-answers/:id/derive", deriveCodeAnswerRoute),
 ];
 
 function findRoute(req: Request): { handler: RouteHandler; params: Record<string, string> } | null {

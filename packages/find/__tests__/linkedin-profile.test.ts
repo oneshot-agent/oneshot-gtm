@@ -126,9 +126,11 @@ const {
   startLinkedInLogin,
 } = await import("../src/_linkedin-profile.ts");
 
+const { _resetPaidCache, readPaidCache } = await import("@oneshot-gtm/core");
+
 const URL = "https://www.linkedin.com/in/julia-zabrodska-akinci-cv/";
-/** Cached profile rows only. The shared gate lease lives in the same map under another prefix. */
-const profileRows = () => [...cache.keys()].filter((k) => k.startsWith("linkedin-profile:")).length;
+/** Stored reads (or negative entries) for URL in the paid cache. The gate lease lives in the ledger map. */
+const profileRows = () => (readPaidCache("linkedin.profile_read", { url: URL }) ? 1 : 0);
 const ctx = { playName: "luma-events" };
 const ok = () => ({
   loggedIn: true,
@@ -150,6 +152,7 @@ beforeEach(() => {
     calls.setupFinish =
       0;
   cache.clear();
+  _resetPaidCache();
   saved.length = 0;
   readsToday = 0;
   browserOutput = ok();
@@ -505,8 +508,9 @@ describe("readLinkedInProfile", () => {
   it("negative-caches a hard failure but not a transient one", async () => {
     browserError = new Error("Browser task initiation failed: 400 bad schema");
     expect((await readLinkedInProfile(URL, ctx, { remainingUsd: 1 })).skipped).toBe("failed");
-    expect(cache.get(linkedinProfileCacheKey(URL))?.status).toBe("failed");
+    expect(readPaidCache("linkedin.profile_read", { url: URL })?.status).toBe("failed");
     cache.clear();
+    _resetPaidCache();
     _resetLinkedInReadGate();
     browserError = Object.assign(new Error("ETIMEDOUT"), { code: "ETIMEDOUT" });
     expect((await readLinkedInProfile(URL, ctx, { remainingUsd: 1 })).skipped).toBe("interrupted");

@@ -54,6 +54,8 @@ import {
   logTargetError,
   offerCandidatesOf,
   offerOf,
+  offerSkipOf,
+  playMakesOffer,
   playProspectFields,
   reviewedIntroMetadata,
   sendDraftedEmail,
@@ -142,6 +144,19 @@ function weakOfferSendHold(playName: string, payload: unknown): QueueRowView["se
 }
 
 /**
+ * The writer's reason for an unsent row that has no offer
+ * (`QueueRowView.offerSkip`): what the row's `no-offer` hold rests on.
+ */
+function offerSkipView(row: QueueRow, payload: unknown): QueueRowView["offerSkip"] {
+  if (row.status === "sent" || !playMakesOffer(row.play_name)) return undefined;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
+  const p = payload as Record<string, unknown>;
+  if (offerOf(p)) return undefined;
+  const skip = offerSkipOf(p);
+  return skip ? { why: skip.why, at: skip.skippedAt } : undefined;
+}
+
+/**
  * The sequence each listed SENT row started and the offer it carries now
  * (`QueueRowView.sequenceOffer`), for the page in one read
  * (`cadencesForQueueRows`). Best-effort: a ledger that cannot answer leaves
@@ -209,6 +224,7 @@ export function toView(
       lastDraft = null;
     }
   }
+  const offerSkip = offerSkipView(row, payload);
   return {
     id: row.id,
     playName: row.play_name,
@@ -239,6 +255,7 @@ export function toView(
     decidedAt: row.decided_at ?? null,
     delivery: deliveryFor(row.status, lastDraft),
     ...(sequenceOffer && row.status === "sent" ? { sequenceOffer } : {}),
+    ...(offerSkip ? { offerSkip } : {}),
   };
 }
 

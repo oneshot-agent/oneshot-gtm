@@ -1,4 +1,4 @@
-import { NEWSFEED_CACHE_TTL_MS, type PersonResearchNewsfeed } from "@oneshot-gtm/core";
+import { paidLookupTtlMs, type PersonResearchNewsfeed } from "@oneshot-gtm/core";
 import {
   captureNewsfeedForProspect,
   captureNewsfeedForQueueRow,
@@ -44,7 +44,7 @@ export function hasFreshPointer(pointer: unknown, url: string, now = Date.now())
   const value = pointer as Partial<PersonResearchNewsfeed>;
   if (value.url !== url) return false;
   const at = Date.parse(value.fetchedAt ?? "");
-  if (Number.isNaN(at) || now - at >= NEWSFEED_CACHE_TTL_MS) return false;
+  if (Number.isNaN(at) || now - at >= paidLookupTtlMs("research.newsfeed")) return false;
   return getCachedNewsfeed(url) !== null;
 }
 
@@ -81,7 +81,7 @@ export function newsfeedEstimateLine(items: readonly NewsfeedItem[], cacheOnly: 
 
 export async function runNewsfeedPass(
   items: readonly NewsfeedItem[],
-  opts: { cacheOnly?: boolean; maxCostUsd?: number; spentUsd?: number },
+  opts: { cacheOnly?: boolean; maxCostUsd?: number; spentUsd?: number; fresh?: boolean },
 ): Promise<NewsfeedTally> {
   const tally: NewsfeedTally = {
     captured: 0,
@@ -105,6 +105,8 @@ export async function runNewsfeedPass(
         : undefined;
     const call = {
       ...(opts.cacheOnly ? { cacheOnly: true } : {}),
+      // `--rebuy`: buy the feed again even when a capture is cached.
+      ...(opts.fresh && !opts.cacheOnly ? { fresh: true } : {}),
       ...(remainingUsd !== undefined ? { remainingUsd } : {}),
     };
     let result: Awaited<ReturnType<typeof captureNewsfeedForQueueRow>>;
