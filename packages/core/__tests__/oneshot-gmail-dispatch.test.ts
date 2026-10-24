@@ -339,13 +339,17 @@ describe("sendEmail — gmail keyed sends", () => {
     expect(scratch.outboundSends.get(key)?.status).toBe("uncertain");
   });
 
-  it("a hung send fails definitely at the deadline: the row is failed, not uncertain (#905)", async () => {
+  it("a hung send is cut off at the deadline as an unknown outcome: the request is aborted, the row is uncertain, and the next attempt waits for the Sent check (#905)", async () => {
     vi.useFakeTimers();
     try {
       const fetchMock = stubGmailFetch();
       const base = fetchMock.getMockImplementation() as (u: string | URL) => Promise<Response>;
-      fetchMock.mockImplementation(async (url: string | URL) => {
-        if (String(url).endsWith("/messages/send")) return new Promise<Response>(() => {});
+      let sendSignal: AbortSignal | undefined;
+      fetchMock.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+        if (String(url).endsWith("/messages/send")) {
+          sendSignal = init?.signal ?? undefined;
+          return new Promise<Response>(() => {});
+        }
         return base(url);
       });
       const key = "gtm:test:email:show-hn:hung@acme.com:0";
@@ -356,10 +360,100 @@ describe("sendEmail — gmail keyed sends", () => {
       ).catch((e: Error) => e);
       await vi.advanceTimersByTimeAsync(31_000);
       const err = await settled;
+      // Not `failed`: the request body may have reached Google before the
+      // abort, so an immediate retry could be a second email. The abort means
+      // nothing is still in flight while the sweep reconciles against Sent.
+      expect(err).toBeInstanceOf(UncertainSendError);
+      expect(sendSignal?.aborted).toBe(true);
+      expect(sends(fetchMock)).toBe(1);
+      expect(scratch.outboundSends.get(key)).toMatchObject({
+        status: "uncertain",
+        messageId: null,
+        sentEvidence: true,
+      });
+      await expect(
+        sendEmail(
+          { to: "hung@acme.com", subject: "hi", body: "b", idempotencyKey: key },
+          { playName: "show-hn" },
+        ),
+      ).rejects.toBeInstanceOf(UncertainSendError);
+      expect(sends(fetchMock)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a send Google answered with 200 but whose body never finishes is the same unknown outcome: aborted at the deadline, uncertain, no second send (#905)", async () => {
+    // The concrete duplicate path: the server accepted the message and sent
+    // its headers, but the acknowledgment body is delayed past the deadline.
+    // The abort does not undo the acceptance, so the row must wait for Sent.
+    vi.useFakeTimers();
+    try {
+      const fetchMock = stubGmailFetch();
+      const base = fetchMock.getMockImplementation() as (u: string | URL) => Promise<Response>;
+      let sendSignal: AbortSignal | undefined;
+      fetchMock.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+        if (String(url).endsWith("/messages/send")) {
+          sendSignal = init?.signal ?? undefined;
+          return new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return base(url);
+      });
+      const key = "gtm:test:email:show-hn:accepted-late@acme.com:0";
+      const { UncertainSendError } = await import("../src/oneshot.ts");
+      const settled = sendEmail(
+        { to: "accepted-late@acme.com", subject: "hi", body: "b", idempotencyKey: key },
+        { playName: "show-hn" },
+      ).catch((e: Error) => e);
+      await vi.advanceTimersByTimeAsync(31_000);
+      const err = await settled;
+      expect(err).toBeInstanceOf(UncertainSendError);
+      expect(sendSignal?.aborted).toBe(true);
+      expect(sends(fetchMock)).toBe(1);
+      expect(scratch.outboundSends.get(key)).toMatchObject({
+        status: "uncertain",
+        messageId: null,
+        sentEvidence: true,
+        exactResend: true,
+      });
+      // An immediate retry is refused without another Gmail call: only the
+      // confirm sweep's Sent check can move this row.
+      await expect(
+        sendEmail(
+          { to: "accepted-late@acme.com", subject: "hi", body: "b", idempotencyKey: key },
+          { playName: "show-hn" },
+        ),
+      ).rejects.toBeInstanceOf(UncertainSendError);
+      expect(sends(fetchMock)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a deadline before the send itself (the profile lookup) is definite: nothing went out, the row is failed and retryable (#905)", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = stubGmailFetch();
+      const base = fetchMock.getMockImplementation() as (u: string | URL) => Promise<Response>;
+      fetchMock.mockImplementation(async (url: string | URL) => {
+        if (String(url).endsWith("/profile")) return new Promise<Response>(() => {});
+        return base(url);
+      });
+      const key = "gtm:test:email:show-hn:noprofile@acme.com:0";
+      const { UncertainSendError } = await import("../src/oneshot.ts");
+      const settled = sendEmail(
+        { to: "noprofile@acme.com", subject: "hi", body: "b", idempotencyKey: key },
+        { playName: "show-hn" },
+      ).catch((e: Error) => e);
+      await vi.advanceTimersByTimeAsync(31_000);
+      const err = await settled;
       expect(err).toBeInstanceOf(Error);
       expect(err).not.toBeInstanceOf(UncertainSendError);
-      expect((err as Error).message).toMatch(/Gmail API \/messages\/send deadline exceeded/);
-      expect(sends(fetchMock)).toBe(1);
+      expect((err as Error).message).toBe("Gmail API /profile deadline exceeded (30s)");
+      expect(sends(fetchMock)).toBe(0);
       expect(scratch.outboundSends.get(key)).toMatchObject({ status: "failed", messageId: null });
     } finally {
       vi.useRealTimers();

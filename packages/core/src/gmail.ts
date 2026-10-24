@@ -19,10 +19,10 @@ const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
  * demotion while the request is still running — the race the confirm sweep
  * could settle as failed and resend under a second Message-ID (#905). The
  * abort bounds our wait and asks Google to cancel; it does not prove Google
- * never accepted the request. oneshot.ts classifies the rejection as a
- * definite, retryable failure anyway: that is the issue's requested local
- * timeout contract, and the Gmail transport is not idempotent in this slice.
- * Same shape as Smartlead's deadline.
+ * never accepted the request. So oneshot.ts treats a deadline on
+ * `/messages/send` as an unknown outcome to reconcile against Sent before any
+ * retry, and only a deadline before the send itself (the `/profile` lookup)
+ * as a definite failure. Same shape as Smartlead's deadline.
  */
 export const GMAIL_TIMEOUT_MS = 30_000;
 

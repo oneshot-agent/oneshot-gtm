@@ -280,6 +280,43 @@ describe("runOutboundConfirmations", () => {
     expect(ledger.outboundSends.get(s.key)).toMatchObject({ status: "confirmed", observed: 1 });
   });
 
+  it("reconciles a Gmail send cut off at the deadline before any retry: in Sent → confirmed and replayed, missing after the window → failed and resent (#905)", async () => {
+    // Both rows are left `uncertain` by the transport deadline (oneshot.ts
+    // treats a `/messages/send` deadline as an unknown outcome). Gmail keeps
+    // no deterministic Message-ID, so the lookup is by recipient + subject.
+    const landed = keyed("gm-ack-lost", "uncertain", gmailId);
+    const dead = keyed("gm-dead", "uncertain", gmailId);
+    const r: ConfirmReaders = {
+      smtp: vi.fn(async () => []),
+      gmail: vi.fn(async ({ recipient }) =>
+        recipient === "gm-ack-lost@example.org" ? [copy("<minted@gmail>", 20)] : [],
+      ),
+    };
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, r);
+    expect(ledger.outboundSends.get(landed.key)).toMatchObject({
+      status: "confirmed",
+      observed: 1,
+    });
+    expect(ledger.outboundSends.get(dead.key)?.status).toBe("uncertain");
+    // Google did accept the first request: the next attempt replays, never resends.
+    expect(
+      ledger.outboundSends.claim({ ...claimOf(landed.key), now: new Date(T0 + 4 * 60_000) })
+        .verdict,
+    ).toBe("already_sent");
+    // Nothing in Sent yet: still refused, not retried, until the settle window.
+    expect(
+      ledger.outboundSends.claim({ ...claimOf(dead.key), now: new Date(T0 + 4 * 60_000) }).verdict,
+    ).toBe("uncertain");
+    await sweep(T0 + UNCERTAIN_SETTLE_MS, r);
+    expect(ledger.outboundSends.get(dead.key)?.status).toBe("failed");
+    const retry = ledger.outboundSends.claim({
+      ...claimOf(dead.key),
+      now: new Date(T0 + 11 * 60_000),
+    });
+    expect(retry).toMatchObject({ verdict: "send", retry: true });
+    expect(retry.send).toMatchObject({ attempts: 2, exactResend: true, subject: "Hello there" });
+  });
+
   it("leaves a send unchanged on a transient read error, one read per mailbox", async () => {
     const a = keyed("t1", "submitted");
     const b = keyed("t2", "submitted");
