@@ -376,9 +376,12 @@ export function contentSendKey(identityId: string, input: SendEmailInput): strin
  * it up in Sent before any retry. A copy in Sent means Google accepted the
  * message: the row is confirmed and later attempts replay it, never send a
  * second one. Only a send that the Sent check still finds missing after
- * UNCERTAIN_SETTLE_MS is settled `failed` and may be retried. The abort means
- * no request is still running when the sweep settles the row, which is what
- * made the stale-pending path a duplicate send.
+ * UNCERTAIN_SETTLE_MS is settled `failed` and may be retried. The deadline
+ * only bounds how long this side waits: the local abort asks Google to stop
+ * but cannot end a request Google already received. What closes the
+ * duplicate path is the persisted `uncertain` row, reconciled against Sent
+ * before any retry, in place of a `pending` claim ageing into the stale
+ * demotion the sweep could settle `failed` and resend.
  */
 function gmailFailureIsDefinite(err: unknown): boolean {
   const msg = (err as Error)?.message ?? "";

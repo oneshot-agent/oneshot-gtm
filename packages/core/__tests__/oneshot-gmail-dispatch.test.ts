@@ -361,8 +361,10 @@ describe("sendEmail — gmail keyed sends", () => {
       await vi.advanceTimersByTimeAsync(31_000);
       const err = await settled;
       // Not `failed`: the request body may have reached Google before the
-      // abort, so an immediate retry could be a second email. The abort means
-      // nothing is still in flight while the sweep reconciles against Sent.
+      // abort, so an immediate retry could be a second email. The abort only
+      // bounds the local wait; it cannot stop a request Google already has.
+      // The persisted `uncertain` row is what refuses the next attempt until
+      // the sweep has reconciled against Sent.
       expect(err).toBeInstanceOf(UncertainSendError);
       expect(sendSignal?.aborted).toBe(true);
       expect(sends(fetchMock)).toBe(1);
