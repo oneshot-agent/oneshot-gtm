@@ -3,10 +3,9 @@ import type { ReceiptRecord } from "./types.ts";
 import { toSqliteUtc } from "./time.ts";
 
 /**
- * Call types whose stored result is read back, so it is kept whole:
- * email.find/verify results back the 14-day contact reuse
- * (`findContactReceipt`, find's `_sdk-safe.ts`), and direct_mail.order holds
- * the platform's own signed receipt.
+ * Call types whose stored result is kept whole: email.find/verify results are
+ * the record of who was looked up (their reuse is the paid cache's), and
+ * direct_mail.order holds the platform's own signed receipt.
  */
 export const VERBATIM_RECEIPT_CALL_TYPES: ReadonlySet<string> = new Set([
   "email.find",
@@ -249,32 +248,6 @@ export class ReceiptStore {
     const sql = `SELECT * FROM receipts ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC LIMIT ?`;
     args.push(opts.limit ?? 200);
     return this.db.query(sql).all(...(args as never[])) as ReceiptRecord[];
-  }
-
-  /** Reuse only completed contact results with an exact identity, within 14 days. */
-  findContactReceipt(
-    input: { email: string } | { fullName: string; companyDomain: string },
-  ): ReceiptRecord | null {
-    const verify = "email" in input;
-    const fields = verify ? ["email"] : ["full_name", "company_domain"];
-    const values = verify ? [input.email] : [input.fullName, input.companyDomain];
-    if (values.some((value) => !value.trim())) return null;
-    const match = fields
-      .map((field) => `lower(trim(json_extract(signed_receipt, '$.${field}'))) = ?`)
-      .join(" AND ");
-    return this.db
-      .query(`
-      SELECT * FROM receipts
-      WHERE call_type = ? AND created_at >= datetime('now', '-14 days')
-        AND CASE WHEN json_valid(signed_receipt) THEN
-          json_extract(signed_receipt, '$.status') = 'completed' AND ${match}
-        ELSE 0 END
-      ORDER BY created_at DESC, id DESC LIMIT 1
-    `)
-      .get(
-        verify ? "email.verify" : "email.find",
-        ...values.map((value) => value.trim().toLowerCase()),
-      ) as ReceiptRecord | null;
   }
 
   /** Persist the RoCS value tag (JSON `{type,amount?,label?}`) on a single receipt. */

@@ -51,6 +51,8 @@ export interface ResearchQueueOpts {
   maxCostUsd?: number;
   /** Re-research rows that already carry `personResearch`. */
   refresh: boolean;
+  /** Buy research and posts again even when the paid cache holds them (bills). */
+  rebuy?: boolean;
   /** Skip the person-gate re-judge. */
   noRejudge?: boolean;
   /** Skip the company lookup for the current employer. */
@@ -301,6 +303,8 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
       enrichCompany: !opts.noCompany,
       liveProfile: !opts.noLive,
       ...(opts.cacheOnly ? { cacheOnly: true } : {}),
+      // `--rebuy` buys the research again instead of re-deriving from the cache.
+      ...(opts.rebuy && !opts.cacheOnly ? { fresh: true } : {}),
     });
     if (researched.notCached) {
       tally.notCached++;
@@ -376,6 +380,7 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
   if (items.length === 0) return;
   const newsfeed = await runNewsfeedPass(items, {
     ...(opts.cacheOnly ? { cacheOnly: true } : {}),
+    ...(opts.rebuy ? { fresh: true } : {}),
     ...(opts.maxCostUsd != null ? { maxCostUsd: opts.maxCostUsd } : {}),
     spentUsd: spend.costUsd,
   });
@@ -443,6 +448,7 @@ async function newsfeedOnly(rows: CandidateRow[], opts: ResearchQueueOpts): Prom
   }
   const tally = await runNewsfeedPass(selected, {
     ...(opts.cacheOnly ? { cacheOnly: true } : {}),
+    ...(opts.rebuy ? { fresh: true } : {}),
     ...(opts.maxCostUsd != null ? { maxCostUsd: opts.maxCostUsd } : {}),
   });
   process.stdout.write("\n");

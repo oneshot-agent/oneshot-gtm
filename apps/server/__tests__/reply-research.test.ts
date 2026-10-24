@@ -10,14 +10,12 @@ const ledger = {
   getProspectById: vi.fn(),
   getInboxThreads: vi.fn(() => new Map()),
   listInboxRepliesForProspect: vi.fn(() => []),
-  getCachedEnrichment: vi.fn<Ledger["getCachedEnrichment"]>(() => null),
-  setCachedEnrichment: vi.fn(),
-  setCachedEnrichmentFailure: vi.fn(),
   latestMeetingOutcomeFor: vi.fn(
     (): { outcome: string; note: string | null; summary: string | null } | null => null,
   ),
 };
 
+/** The purchase behind webRead: called only when the paid cache cannot answer. */
 const webReadMock = vi.fn();
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -26,7 +24,12 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     getLedger: () => ledger,
     logEvent: () => {},
-    webRead: webReadMock,
+    // The real paid cache in front of the mocked purchase, as in the wrapper.
+    webRead: (
+      input: { url: string },
+      ctx: unknown,
+      cache?: import("@oneshot-gtm/core").PaidCacheOptions,
+    ) => actual.withPaidCache("web.read", input, cache, () => webReadMock(input, ctx)),
   };
 });
 
@@ -38,12 +41,27 @@ vi.mock("@oneshot-gtm/plays", async () => {
 
 const { gatherReplyContext, profileUrlFor, siteDomainFor } =
   await import("../src/api/_reply-research.ts");
+const core = await import("@oneshot-gtm/core");
+
+const DAY = 24 * 3600 * 1000;
+
+/** Put a page read in the paid cache, bought `ageMs` ago. */
+function seedRead(url: string, markdown: string, ageMs = 0): void {
+  core.getSharedDb().setPaidCache({
+    key: core.paidCacheKey("web.read", { url }),
+    callType: "web.read",
+    status: "ok",
+    resultJson: JSON.stringify({ markdown, cost: 0.01 }),
+    costUsd: 0.01,
+    fetchedAt: new Date(Date.now() - ageMs).toISOString(),
+  });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
+  core._resetPaidCache();
   ledger.getProspectById.mockReturnValue(null);
   ledger.getInboxThreads.mockReturnValue(new Map());
-  ledger.getCachedEnrichment.mockReturnValue(null);
   ledger.latestMeetingOutcomeFor.mockReturnValue(null);
   safeEnrichMock.mockResolvedValue({
     result: { status: "completed", profile: { name: "Aladdin" }, cost: 0.05 },
@@ -222,15 +240,8 @@ describe("gatherReplyContext", () => {
   });
 
   it("serves the site read from cache without a second spend", async () => {
-    ledger.getCachedEnrichment.mockImplementation((key: string) =>
-      key === "webread:aliyev.site"
-        ? {
-            result_json: JSON.stringify({ text: "cached site text" }),
-            fetched_at: new Date().toISOString(),
-            status: null,
-          }
-        : null,
-    );
+    // Two days old: past a finder page's half-day, inside a sender page's 30 days.
+    seedRead("https://aliyev.site", "cached site text", 2 * DAY);
     const ctx = await gatherReplyContext({
       fromEmail: "aladdin@aliyev.site",
       prospectId: null,
@@ -238,6 +249,8 @@ describe("gatherReplyContext", () => {
     });
     expect(webReadMock).not.toHaveBeenCalled();
     expect(ctx.dossier).toContain("cached site text");
+    // The enrich is still bought; the cached read adds nothing.
+    expect(ctx.costUsd).toBeCloseTo(0.05);
   });
 
   it("degrades to no dossier when all research fails — never throws", async () => {
@@ -400,29 +413,24 @@ describe("review-finding regressions (#35)", () => {
     expect(siteDomainFor("labs.acme.com")).toBe("labs.acme.com");
   });
 
-  it("a cache-write failure does not discard a successful site read", async () => {
-    ledger.setCachedEnrichment.mockImplementation(() => {
-      throw new Error("SQLITE_BUSY");
-    });
+  it("a site read older than 30 days is bought again", async () => {
+    seedRead("https://aliyev.site", "stale site text", 31 * DAY);
     const ctx = await gatherReplyContext({
       fromEmail: "aladdin@aliyev.site",
       prospectId: null,
       threadKey: null,
     });
-    // The fetched site text must still reach the dossier.
+    expect(webReadMock).toHaveBeenCalledTimes(1);
     expect(ctx.dossier).toContain("x402 payments");
+    expect(ctx.dossier).not.toContain("stale site text");
   });
 
-  it("a cache-READ failure falls through to a live read instead of throwing", async () => {
-    ledger.getCachedEnrichment.mockImplementation(() => {
-      throw new Error("corrupt db");
-    });
-    const ctx = await gatherReplyContext({
-      fromEmail: "aladdin@aliyev.site",
-      prospectId: null,
-      threadKey: null,
-    });
-    expect(webReadMock).toHaveBeenCalled();
-    expect(ctx.dossier).toContain("x402 payments");
+  it("a remembered genuine failure is not read again and does not block the draft", async () => {
+    webReadMock.mockRejectedValue(new Error("page not found"));
+    const first = { fromEmail: "aladdin@aliyev.site", prospectId: null, threadKey: null };
+    await gatherReplyContext(first);
+    const ctx = await gatherReplyContext(first);
+    expect(webReadMock).toHaveBeenCalledTimes(1);
+    expect(ctx.dossier).toContain("Aladdin");
   });
 });

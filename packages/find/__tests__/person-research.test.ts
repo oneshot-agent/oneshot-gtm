@@ -15,7 +15,6 @@ const statuses: Array<Record<string, unknown>> = [];
 const priorities: Array<{ id: number; priority: unknown }> = [];
 const prospectWrites: Array<Record<string, unknown>> = [];
 const productCache = new Map<string, string>();
-let enrichmentCache: { result_json: string; fetched_at: string; status: string } | null = null;
 let liveRows = new Set<number>([1, 2]);
 let icp: string | null = "founders who own their own customer acquisition";
 let verdict = '{"verdict":"pass","reason":"Founder of a consumer app, owns acquisition."}';
@@ -77,7 +76,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     saveConfig: () => {},
     logEvent: () => {},
     getLedger: () => ({
-      getCachedEnrichment: (key: string) => (key.startsWith("person:") ? enrichmentCache : null),
+      getCachedEnrichment: () => null,
       setCachedEnrichment: () => {},
       setCachedEnrichmentFailure: () => {},
       countCachedEnrichmentSince: () => 0,
@@ -104,40 +103,51 @@ vi.mock("@oneshot-gtm/core", async () => {
         return true;
       },
     }),
-    deepResearchPerson: async (input: { socialMediaUrl?: string; email?: string }) => {
-      calls.research++;
-      const name = input.socialMediaUrl ? providerNameByUrl : providerNameByEmail;
-      return {
-        result: {
-          ...juliaResearch,
-          status: researchStatus,
+    // The real paid cache sits under the mocked purchase, as it does under the wrapper.
+    deepResearchPerson: (
+      input: { socialMediaUrl?: string; email?: string },
+      _ctx: unknown,
+      cache?: Parameters<typeof actual.withPaidCache>[2],
+    ) =>
+      actual.withPaidCache("research.person", input, cache, async () => {
+        calls.research++;
+        const name = input.socialMediaUrl ? providerNameByUrl : providerNameByEmail;
+        return {
           result: {
-            ...juliaResearch.result,
-            ...(name ? { full_name: name } : {}),
-            ...(providerLinkedIn ? { linkedin_url: providerLinkedIn } : {}),
+            ...juliaResearch,
+            status: researchStatus,
+            result: {
+              ...juliaResearch.result,
+              ...(name ? { full_name: name } : {}),
+              ...(providerLinkedIn ? { linkedin_url: providerLinkedIn } : {}),
+            },
           },
-        },
-        receiptId: 7,
-      };
-    },
-    enrichCompany: async () => {
-      calls.company++;
-      return {
-        result: {
-          status: "completed",
-          company: {
-            name: "WildMuse.App",
-            domain: "wildmuse.app",
-            industry: "Software",
-            employee_count: 3,
-            founded: 2026,
-            description: "Consumer wellness app.",
+          receiptId: 7,
+        };
+      }),
+    enrichCompany: (
+      input: Record<string, unknown>,
+      _ctx: unknown,
+      cache?: Parameters<typeof actual.withPaidCache>[2],
+    ) =>
+      actual.withPaidCache("enrich.company", input, cache, async () => {
+        calls.company++;
+        return {
+          result: {
+            status: "completed",
+            company: {
+              name: "WildMuse.App",
+              domain: "wildmuse.app",
+              industry: "Software",
+              employee_count: 3,
+              founded: 2026,
+              description: "Consumer wellness app.",
+            },
+            cost: 0.005,
           },
-          cost: 0.005,
-        },
-        receiptId: 8,
-      };
-    },
+          receiptId: 8,
+        };
+      }),
     browserTask: async () => {
       calls.browser++;
       return {
@@ -231,6 +241,22 @@ const {
   researchPerson,
 } = await import("../src/_person-research.ts");
 const { _resetLinkedInReadGate } = await import("../src/_linkedin-profile.ts");
+const { _resetPaidCache, getSharedDb, paidCacheKey } = await import("@oneshot-gtm/core");
+
+const JULIA_URL = "https://www.linkedin.com/in/julia-zabrodska-akinci-cv";
+const JULIA_EMAIL = "julia.zabrodska@letocaffe.com";
+/** A research.person entry in the paid cache for Julia, under her profile URL and her email. */
+function seedResearch(resultJson: string, status: "ok" | "failed" = "ok"): void {
+  for (const input of [{ socialMediaUrl: JULIA_URL }, { email: JULIA_EMAIL }]) {
+    getSharedDb().setPaidCache({
+      key: paidCacheKey("research.person", input),
+      callType: "research.person",
+      status,
+      resultJson,
+      costUsd: 0.05,
+    });
+  }
+}
 
 const juliaPayload = {
   name: "Julia Zabrodska",
@@ -265,7 +291,7 @@ beforeEach(() => {
   patches.length = notes.length = statuses.length = priorities.length = prospectWrites.length = 0;
   newsfeedCalls.length = 0;
   productCache.clear();
-  enrichmentCache = null;
+  _resetPaidCache();
   liveRows = new Set([1, 2]);
   icp = "founders who own their own customer acquisition";
   verdict = '{"verdict":"pass","reason":"Founder of a consumer app, owns acquisition."}';
@@ -613,11 +639,7 @@ describe("researchPerson + personPayloadPatch", () => {
     expect(capped.dossier.warning).toContain("cost cap");
     expect(calls.research).toBe(0);
 
-    enrichmentCache = {
-      result_json: JSON.stringify(juliaResearch),
-      fetched_at: new Date().toISOString(),
-      status: "ok",
-    };
+    seedResearch(JSON.stringify(juliaResearch));
     const cached = await researchPerson({
       seed: personSeedFor(juliaPayload),
       playName: "luma-events",
@@ -672,11 +694,7 @@ describe("live LinkedIn tier", () => {
   it("the live page wins on currency for the companies it lists; provider-only history is kept", async () => {
     process.env["LINKEDIN_SESSION_COOKIE"] = "cookie";
     liveSession = true;
-    enrichmentCache = {
-      result_json: JSON.stringify(providerSaysLeto),
-      fetched_at: new Date().toISOString(),
-      status: "ok",
-    };
+    seedResearch(JSON.stringify(providerSaysLeto));
     const { dossier, costUsd } = await researchPerson({
       seed: personSeedFor(juliaPayload),
       playName: "luma-events",
@@ -720,11 +738,7 @@ describe("live LinkedIn tier", () => {
       result: { enrichment: { organizations: [] } },
     };
     const research = async () => {
-      enrichmentCache = {
-        result_json: JSON.stringify(nothingKnown),
-        fetched_at: new Date().toISOString(),
-        status: "ok",
-      };
+      seedResearch(JSON.stringify(nothingKnown));
       const { dossier } = await researchPerson({
         seed: personSeedFor(juliaPayload),
         playName: "luma-events",
@@ -1290,8 +1304,8 @@ describe("researchPerson cacheOnly", () => {
 
   it("re-derives from the cache with no provider, live or company call, whatever the budget", async () => {
     liveSession = true;
-    enrichmentCache = {
-      result_json: JSON.stringify({
+    seedResearch(
+      JSON.stringify({
         ...juliaResearch,
         result: {
           ...juliaResearch.result,
@@ -1299,9 +1313,7 @@ describe("researchPerson cacheOnly", () => {
           linkedin_url: "linkedin.com/in/jz",
         },
       }),
-      fetched_at: new Date().toISOString(),
-      status: "ok",
-    };
+    );
     const out = await researchPerson({
       seed,
       playName: "research-queue",
@@ -1317,11 +1329,7 @@ describe("researchPerson cacheOnly", () => {
   });
 
   it("an expired or corrupt entry is a miss, never a paid call", async () => {
-    enrichmentCache = {
-      result_json: "{not json",
-      fetched_at: new Date().toISOString(),
-      status: "ok",
-    };
+    seedResearch("{not json");
     const corrupt = await researchPerson({
       seed,
       playName: "research-queue",
@@ -1334,14 +1342,12 @@ describe("researchPerson cacheOnly", () => {
   });
 
   it("a cached record that names someone else is not retried by email with a paid call", async () => {
-    enrichmentCache = {
-      result_json: JSON.stringify({
+    seedResearch(
+      JSON.stringify({
         ...juliaResearch,
         result: { ...juliaResearch.result, full_name: "Marcus Brandt" },
       }),
-      fetched_at: new Date().toISOString(),
-      status: "ok",
-    };
+    );
     const out = await researchPerson({
       seed,
       playName: "research-queue",
@@ -1356,7 +1362,7 @@ describe("researchPerson cacheOnly", () => {
   });
 
   it("a negative cache entry is not research", async () => {
-    enrichmentCache = { result_json: "{}", fetched_at: new Date().toISOString(), status: "failed" };
+    seedResearch("{}", "failed");
     const out = await researchPerson({
       seed,
       playName: "research-queue",

@@ -30,6 +30,27 @@ The 7-day hold follows a person's known email aliases. The draft is flagged `con
 
 Everything else stays in the workspace: research conclusions, angles, verdicts, outreach history.
 
+## Paid lookups
+
+A lookup bought once is not bought again. Every paid lookup goes through one cache in the shared database, so a result bought in any workspace answers all of them until it expires.
+
+| Lookup                                     | Kept     |
+| ------------------------------------------ | -------- |
+| Person research                            | 90 days  |
+| Person profile, by email, LinkedIn or name | 30 days  |
+| Email find                                 | 30 days  |
+| Company profile, company search            | 30 days  |
+| Local business resolve                     | 30 days  |
+| Topic research                             | 30 days  |
+| LinkedIn profile read and profile view     | 30 days  |
+| Email verify, recent posts                 | 14 days  |
+| People search, local business search       | 7 days   |
+| Page read, web search, federal notices     | 12 hours |
+
+A cached answer costs nothing and writes no receipt. A genuine failure is remembered for 3 days (12 hours for the 12-hour lookups); an outage, a rate limit or an empty wallet never is. Sends, replies, invites, messages, letters, builds and browser tasks are actions, never cached.
+
+`--rebuy` on `research-queue` and `research-prospects`, and **Find business address** on a mail step, buy again. `--refresh` alone re-derives researched rows from the cache. `doctor` shows how much the cache answered over the last 7 days; `find cache-stats` breaks it down per lookup.
+
 ## Rejects and moves
 
 A reject is permanent inside its workspace. A finder cannot queue that person again; only **Approve anyway** on Prospects reopens the row. Nothing carries a reject to another workspace.

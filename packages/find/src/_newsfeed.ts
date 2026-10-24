@@ -2,18 +2,17 @@ import {
   dailySpendStatus,
   demoMode,
   triggerConfigForSource,
-  ENRICH_FAILURE_TTL_MS,
   getLedger,
+  hasCached,
+  isCachedPaidFailure,
   isPersonResearchDossier,
   isTransientToolError,
   logEvent,
-  NEWSFEED_CACHE_TTL_MS,
   NEWSFEED_DEADLINE_MS,
   personNewsfeed,
   rateLimitRetryAfterS,
   readPersonHalf,
   withDeadline,
-  newsfeedCacheKey,
   newsfeedPostsFrom,
   newsfeedSeedUrl,
   getCachedNewsfeed as readCachedNewsfeed,
@@ -25,22 +24,21 @@ import {
 /**
  * Newsfeed capture: a person's recent posts, bought once per profile and kept
  * for later use. Nothing drafts from them yet. The dossier carries only a
- * pointer (`PersonResearchNewsfeed`), and the posts live in the shared
- * enrichment cache under `newsfeed:<canonical url>` for 14 days, readable by
+ * pointer (`PersonResearchNewsfeed`), and the posts live in the paid cache
+ * (research.newsfeed, keyed by the canonical URL) for 14 days, readable by
  * `getCachedNewsfeed`. Measured 2026-09-27: LinkedIn 8/8 non-empty (7/8 with
  * a post inside 90 days), X 4/4 but mostly reposts.
  *
  * The tool is rate-limited per wallet (a burst of 12 parallel calls was all
  * 429 `retry_after: 60`), so every call here runs one at a time, a 429 waits
- * out `retry_after` and retries at most twice, and neither a 429 nor any
- * other transient error is ever negative-cached.
+ * out `retry_after` and retries at most twice, and the paid cache never keeps
+ * a 429 or any other transient error as a negative entry.
  */
 
 // The read side (seed URL, cache key, parsing, lookup) moved to core so plays
 // can read posts; re-exported here for existing importers.
 export {
   canonicalXProfileUrl,
-  newsfeedCacheKey,
   newsfeedSeedUrl,
   type CapturedNewsfeed,
   type NewsfeedPost,
@@ -53,7 +51,7 @@ export const NEWSFEED_COST_ESTIMATE_USD = 0.07;
  * Null when nothing was captured, the capture expired, or it failed.
  */
 export function getCachedNewsfeed(url: string): CapturedNewsfeed | null {
-  return readCachedNewsfeed(url, getLedger());
+  return readCachedNewsfeed(url);
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -180,39 +178,40 @@ export type NewsfeedOutcome =
   | { status: "failed"; transient: boolean; costUsd: number };
 
 /**
- * personNewsfeed that never throws, caches, serializes and cannot hang.
- * `cacheOnly` answers from the cache or not at all. It never calls.
+ * personNewsfeed that never throws, serializes and cannot hang. The paid
+ * cache under the wrapper answers a capture bought in the last 14 days, in
+ * any workspace. `cacheOnly` answers from it or not at all: it never calls.
+ * `fresh` buys again even when a capture is cached.
  */
 export async function safePersonNewsfeed(
   url: string,
   ctx: CallContext,
-  opts: { cacheOnly?: boolean; remainingUsd?: number } = {},
+  opts: { cacheOnly?: boolean; remainingUsd?: number; fresh?: boolean } = {},
 ): Promise<NewsfeedOutcome> {
   const canonical = newsfeedSeedUrl([url]);
   if (!canonical) return { status: "skipped", reason: "no-profile", costUsd: 0 };
-  const key = newsfeedCacheKey(canonical);
-  const ledger = getLedger();
-  let cached: ReturnType<typeof ledger.getCachedEnrichment> = null;
-  try {
-    cached = ledger.getCachedEnrichment(key);
-  } catch {
-    // cache-read failure = miss
-  }
-  if (cached) {
-    const ageMs = Date.now() - new Date(cached.fetched_at).getTime();
-    if (cached.status === "failed") {
-      if (ageMs < ENRICH_FAILURE_TTL_MS) return { status: "failed", transient: false, costUsd: 0 };
-    } else if (ageMs < NEWSFEED_CACHE_TTL_MS) {
-      try {
-        const feed = {
-          url: canonical,
-          fetchedAt: new Date(cached.fetched_at).toISOString(),
-          posts: newsfeedPostsFrom(JSON.parse(cached.result_json)),
-        };
-        return { status: "captured", feed, costUsd: 0, cached: true };
-      } catch {
-        // corrupt row: refetch
-      }
+  const input = { socialMediaUrl: canonical };
+  const captured = (
+    out: Awaited<ReturnType<typeof personNewsfeed>>,
+  ): Extract<NewsfeedOutcome, { status: "captured" }> => ({
+    status: "captured",
+    feed: {
+      url: canonical,
+      fetchedAt: out.cached?.fetchedAt
+        ? new Date(out.cached.fetchedAt).toISOString()
+        : new Date().toISOString(),
+      posts: newsfeedPostsFrom(out.result),
+    },
+    costUsd: out.receiptId !== 0 ? (out.result.cost ?? 0) : 0,
+    cached: Boolean(out.cached),
+  });
+  if (!opts.fresh) {
+    try {
+      // Cache only: a hit costs nothing and skips every gate below.
+      return captured(await personNewsfeed(input, ctx, { cacheOnly: true }));
+    } catch (err) {
+      if (isCachedPaidFailure(err)) return { status: "failed", transient: false, costUsd: 0 };
+      // anything else is a miss
     }
   }
   if (opts.cacheOnly) return { status: "skipped", reason: "not-cached", costUsd: 0 };
@@ -231,34 +230,15 @@ export async function safePersonNewsfeed(
   return serialized(async (hold) => {
     for (let attempt = 0; ; attempt++) {
       try {
-        const live = personNewsfeed({ socialMediaUrl: canonical }, ctx);
+        const live = personNewsfeed(input, ctx, opts.fresh ? { fresh: true } : undefined);
         hold(live);
-        // The cache write rides the live promise: a call that outlives the
-        // deadline was still paid for and must reach the cache.
-        live.then(
-          (out) => {
-            try {
-              ledger.setCachedEnrichment(key, JSON.stringify(out.result));
-            } catch {
-              // best-effort
-            }
-          },
-          () => undefined,
-        );
         const out = await withDeadline(live, NEWSFEED_DEADLINE_MS, "personNewsfeed");
         recordOutcome(false);
-        const costUsd = out.receiptId !== 0 ? (out.result.cost ?? 0) : 0;
-        return {
-          status: "captured" as const,
-          feed: {
-            url: canonical,
-            fetchedAt: new Date().toISOString(),
-            posts: newsfeedPostsFrom(out.result),
-          },
-          costUsd,
-          cached: false,
-        };
+        return captured(out);
       } catch (err) {
+        // Another worker found this feed failing for real while we queued.
+        if (isCachedPaidFailure(err))
+          return { status: "failed" as const, transient: false, costUsd: 0 };
         const retryAfterS = rateLimitRetryAfterS(err);
         if (retryAfterS !== null && attempt < MAX_RATE_LIMIT_RETRIES) {
           logEvent("newsfeed.rate_limited", { retry_after_s: retryAfterS, attempt });
@@ -275,15 +255,6 @@ export async function safePersonNewsfeed(
           "warn",
         );
         recordOutcome(transient);
-        // Only a genuine failure is negative-cached; a rate limit or an outage
-        // would otherwise hide this person's feed for days after recovery.
-        if (!transient) {
-          try {
-            ledger.setCachedEnrichmentFailure(key, (err as Error).message ?? "newsfeed failed");
-          } catch {
-            // best-effort
-          }
-        }
         return { status: "failed" as const, transient, costUsd: 0 };
       }
     }
@@ -307,7 +278,7 @@ export interface AttachResult {
 export async function captureNewsfeedForQueueRow(
   rowId: number,
   playName: string,
-  opts: { cacheOnly?: boolean; remainingUsd?: number } = {},
+  opts: { cacheOnly?: boolean; remainingUsd?: number; fresh?: boolean } = {},
 ): Promise<AttachResult | null> {
   const ledger = getLedger();
   const row = ledger.getQueueRow(rowId);
@@ -350,7 +321,7 @@ export async function captureNewsfeedForQueueRow(
 export async function captureNewsfeedForProspect(
   prospectId: number,
   playName: string,
-  opts: { cacheOnly?: boolean; remainingUsd?: number } = {},
+  opts: { cacheOnly?: boolean; remainingUsd?: number; fresh?: boolean } = {},
 ): Promise<AttachResult | null> {
   const ledger = getLedger();
   const prospect = ledger.getProspectById(prospectId);
@@ -392,21 +363,12 @@ export function newsfeedOffForSource(source: string | null | undefined): boolean
 }
 
 /**
- * True when the cache already answers for this profile: posts younger than
- * the 14-day TTL, or a genuine failure still inside its negative-cache
+ * True when the paid cache already answers for this profile: posts younger
+ * than the 14-day expiry, or a genuine failure still inside its negative
  * window. A missing, expired or unreadable entry is not fresh.
  */
 export function hasFreshNewsfeed(url: string, now = Date.now()): boolean {
-  let cached: ReturnType<ReturnType<typeof getLedger>["getCachedEnrichment"]> = null;
-  try {
-    cached = getLedger().getCachedEnrichment(newsfeedCacheKey(url));
-  } catch {
-    return false;
-  }
-  if (!cached) return false;
-  const ageMs = now - new Date(cached.fetched_at).getTime();
-  if (!Number.isFinite(ageMs)) return false;
-  return cached.status === "failed" ? ageMs < ENRICH_FAILURE_TTL_MS : ageMs < NEWSFEED_CACHE_TTL_MS;
+  return hasCached("research.newsfeed", { socialMediaUrl: url }, { includeFailures: true, now });
 }
 
 export interface ApprovalCaptureResult {

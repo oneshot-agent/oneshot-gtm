@@ -8,8 +8,9 @@
  * so serialize them, space them, and cap daily usage. A login wall
  * invalidates the session until reconnect.
  *
- * Cache across workspaces under `linkedin-profile:<url>` for 30 days, with a
- * 3-day negative cache.
+ * Reads go through the paid cache (linkedin.profile_read, keyed by the
+ * profile URL): shared across workspaces for 30 days, with a 3-day negative
+ * entry for a profile that cannot be read.
  */
 import {
   browserTask,
@@ -19,16 +20,18 @@ import {
   type LinkedInOperation,
   createBrowserProfile,
   deleteBrowserProfile,
+  countPaidResultsSince,
   DEFAULT_LINKEDIN_READS_PER_DAY,
-  ENRICH_FAILURE_TTL_MS,
   finishBrowserProfileSetup,
   getBrowserProfileSetup,
   getLedger,
   getLinkedInInboxStore,
+  isCachedPaidFailure,
   isTransientToolError,
   listBrowserProfiles,
   loadConfig,
   logEvent,
+  paidLookupTtlMs,
   saveConfig,
   startBrowserProfileSetup,
   withDeadline,
@@ -37,6 +40,7 @@ import {
   type CallContext,
   type OneShotConfig,
   verifiedLinkedInProfileKey,
+  withPaidCache,
 } from "@oneshot-gtm/core";
 import { createHash } from "node:crypto";
 import { isLinkedInProfileUrl } from "./_linkedin.ts";
@@ -60,10 +64,10 @@ const READ_MAX_STEPS = 80;
 const READ_TIMEOUT_SEC = 540;
 const VERIFY_MAX_STEPS = 25;
 const VERIFY_MAX_COST_USD = 0.1;
-const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /** Minimum gap between two reads from the same account. */
 const READ_SPACING_MS = 15_000;
-const CACHE_PREFIX = "linkedin-profile:";
+/** A charged read that returned no usable profile: counted toward the day's reads, never a result. */
+const INCOMPLETE_PREFIX = "linkedin-profile:incomplete:";
 const LOGIN_READY_STATUSES = new Set(["idle", "ready"]);
 const LOGIN_FAILED_RX = /fail|error|expired|closed|cancel/i;
 const LOGIN_POLL_MS = 2_000;
@@ -214,8 +218,9 @@ export function linkedInReadsPerDay(
   return cfg.linkedinReadsPerDay ?? DEFAULT_LINKEDIN_READS_PER_DAY;
 }
 
+/** The profile's identity in the view's idempotency key (the key the old per-site cache used). */
 export function linkedinProfileCacheKey(url: string): string {
-  return `${CACHE_PREFIX}${normalizeProfileUrl(url)}`;
+  return `linkedin-profile:${normalizeProfileUrl(url)}`;
 }
 
 function normalizeProfileUrl(value: string): string {
@@ -242,13 +247,33 @@ function utcDayKey(now: Date): string {
 }
 
 /**
+ * Reads made in this process whose profile the paid cache has not stored
+ * yet. The cache stores a read after its gate opens for the next one, so
+ * the next read's cap check counts these too.
+ */
+let readsAwaitingStore = 0;
+
+/**
+ * Reads bought since `sinceIso`, across workspaces: profiles stored in the
+ * paid cache, charged reads that came back incomplete, and this process's
+ * reads still on their way into the cache.
+ */
+function readsSince(sinceIso: string): number {
+  return (
+    countPaidResultsSince("linkedin.profile_read", sinceIso) +
+    getLedger().countCachedEnrichmentSince(INCOMPLETE_PREFIX, sinceIso) +
+    readsAwaitingStore
+  );
+}
+
+/**
  * Successful reads written today (local day), across workspaces. When the
  * shared cache cannot answer, the count is unbounded on purpose: the daily
  * cap protects the founder's account, so it fails closed.
  */
 export function linkedInReadsToday(now = new Date()): number {
   try {
-    return getLedger().countCachedEnrichmentSince(CACHE_PREFIX, startOfLocalDayIso(now));
+    return readsSince(startOfLocalDayIso(now));
   } catch {
     return Number.POSITIVE_INFINITY;
   }
@@ -265,7 +290,7 @@ export function linkedInAccountReadsToday(now = new Date()): number {
   const start = new Date(now);
   start.setUTCHours(0, 0, 0, 0);
   try {
-    return getLedger().countCachedEnrichmentSince(CACHE_PREFIX, start.toISOString());
+    return readsSince(start.toISOString());
   } catch {
     return Number.POSITIVE_INFINITY;
   }
@@ -677,8 +702,8 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Read one profile's Experience section. Cache first; every skip has a
- * reason the caller can put in the dossier's warning.
+ * Read one profile's Experience section. The paid cache first; every skip has
+ * a reason the caller can put in the dossier's warning.
  */
 export async function readLinkedInProfile(
   url: string,
@@ -686,34 +711,51 @@ export async function readLinkedInProfile(
   opts: {
     remainingUsd: number;
     now?: Date;
-    /** A cached read older than this is read again (default: the 30-day cache TTL). */
+    /** A cached read older than this is read again (default: the 30-day cache expiry). */
     maxAgeMs?: number;
   },
 ): Promise<LiveProfileRead> {
   if (!isLinkedInProfileUrl(url))
     return { profile: null, skipped: "not-linkedin", costUsd: 0, cached: false };
-  const ledger = getLedger();
+  // The read that ran in this call, if one did (a hit or a joined read runs none).
+  const ran: { read?: LiveProfileRead } = {};
+  try {
+    const res = await withPaidCache(
+      "linkedin.profile_read",
+      { url: normalizeProfileUrl(url) },
+      // Shorter than the expiry only: a caller can want a newer read, never an older one.
+      opts.maxAgeMs !== undefined
+        ? { maxAgeMs: Math.min(opts.maxAgeMs, paidLookupTtlMs("linkedin.profile_read")) }
+        : undefined,
+      async () => {
+        ran.read = await readLive(url, ctx, opts);
+        return { result: ran.read.profile, receiptId: 0, costUsd: ran.read.costUsd };
+      },
+    );
+    if (ran.read?.profile) readsAwaitingStore--;
+    if (ran.read) return ran.read;
+    if (res.result) return { profile: res.result as LiveProfile, costUsd: 0, cached: true };
+    // Joined a read that came back with nothing: its own skip is not ours to repeat.
+    return { profile: null, skipped: "interrupted", costUsd: 0, cached: false };
+  } catch (err) {
+    if (ran.read?.profile) readsAwaitingStore--;
+    // A profile that cannot be read, now or within the negative window.
+    return { profile: null, skipped: "failed", costUsd: 0, cached: isCachedPaidFailure(err) };
+  }
+}
+
+/**
+ * The read itself, behind the cache: the connected account, else the
+ * browser session. A profile that cannot be read throws, so the cache keeps
+ * it as a negative entry; every other miss is a skip.
+ */
+async function readLive(
+  url: string,
+  ctx: CallContext,
+  opts: { remainingUsd: number; now?: Date },
+): Promise<LiveProfileRead> {
   const key = linkedinProfileCacheKey(url);
   const now = opts.now ?? new Date();
-  let cached: ReturnType<typeof ledger.getCachedEnrichment> = null;
-  try {
-    cached = ledger.getCachedEnrichment(key);
-  } catch {
-    // a cache read failure is a miss
-  }
-  if (cached) {
-    const age = now.getTime() - new Date(cached.fetched_at).getTime();
-    if (cached.status === "failed") {
-      if (age < ENRICH_FAILURE_TTL_MS)
-        return { profile: null, skipped: "failed", costUsd: 0, cached: true };
-    } else if (age < Math.min(opts.maxAgeMs ?? CACHE_TTL_MS, CACHE_TTL_MS)) {
-      try {
-        return { profile: JSON.parse(cached.result_json) as LiveProfile, costUsd: 0, cached: true };
-      } catch {
-        // corrupt row → refetch
-      }
-    }
-  }
   const account = readAccount();
   if (account) {
     if (linkedInAccountReadsToday(now) >= linkedInReadsPerDay(loadConfig())) {
@@ -834,12 +876,9 @@ export async function readLinkedInProfile(
         ...(str(out, "location") ? { location: str(out, "location")! } : {}),
         experience,
       };
-      try {
-        ledger.setCachedEnrichment(key, JSON.stringify(profile));
-      } catch {
-        // cache write is best-effort
-      }
       logEvent("linkedin_profile.read", { positions: experience.length, cost_usd: costUsd });
+      // Counted before the gate opens: the paid cache stores it just after.
+      readsAwaitingStore++;
       return { profile, costUsd, cached: false };
     } catch (err) {
       const message = (err as Error).message ?? "";
@@ -849,19 +888,10 @@ export async function readLinkedInProfile(
         { message_120: message.slice(0, 120), transient },
         "warn",
       );
-      if (!transient) {
-        try {
-          ledger.setCachedEnrichmentFailure(key, message || "linkedin read failed");
-        } catch {
-          // best-effort
-        }
-      }
-      return {
-        profile: null,
-        skipped: transient ? "interrupted" : "failed",
-        costUsd: 0,
-        cached: false,
-      };
+      // A genuine failure goes back to the paid cache, which keeps it.
+      if (!transient)
+        throw err instanceof Error ? err : new Error(message || "linkedin read failed");
+      return { profile: null, skipped: "interrupted", costUsd: 0, cached: false };
     }
   });
 }
@@ -1040,13 +1070,15 @@ async function readThroughAccount(
       },
       "warn",
     );
+    // This profile cannot be viewed: the paid cache keeps it as a negative
+    // entry. Named afresh, because the job's own message can carry the
+    // generic "tool request failed" text that reads as an outage.
     if (kind === "person") {
-      try {
-        ledger.setCachedEnrichmentFailure(key, String((err as Error).message ?? "view refused"));
-      } catch {
-        // best-effort
-      }
-      return skip("failed");
+      const e = (err ?? {}) as { code?: unknown; jobError?: unknown };
+      const code = [e.code, e.jobError].find((v) => typeof v === "string" && v) ?? "not found";
+      throw Object.assign(new Error(`profile cannot be viewed: ${String(code).slice(0, 120)}`), {
+        statusCode: 404,
+      });
     }
     return skip(
       kind === "account" ? "session-invalid" : kind === "limit" ? "daily-limit" : "interrupted",
@@ -1068,7 +1100,7 @@ async function readThroughAccount(
     // without a failure status, so the marker is a plain row of its own.
     try {
       ledger.setCachedEnrichment(
-        `${CACHE_PREFIX}incomplete:${profileHash}:${Date.now()}`,
+        `${INCOMPLETE_PREFIX}${profileHash}:${Date.now()}`,
         JSON.stringify({ incomplete: true }),
       );
     } catch {
@@ -1089,17 +1121,14 @@ async function readThroughAccount(
     ...(text("location") ? { location: text("location")! } : {}),
     experience,
   };
-  try {
-    ledger.setCachedEnrichment(key, JSON.stringify(profile));
-  } catch {
-    // cache write is best-effort
-  }
   rememberSenderIdentity(account.accountId, view);
   logEvent("linkedin_profile.read", {
     via: "account",
     positions: experience.length,
     cost_usd: costUsd,
   });
+  // Counted before the gate opens: the paid cache stores it just after.
+  readsAwaitingStore++;
   return { profile, costUsd, cached: false };
 }
 

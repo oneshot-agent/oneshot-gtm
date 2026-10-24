@@ -9,7 +9,9 @@ import {
   tryReserveDailySpend,
   DEFAULT_SPEND_RESERVATION_USD,
   logEvent,
+  type PaidCacheOptions,
   type PostalAddress,
+  readPaidCache,
 } from "@oneshot-gtm/core";
 import { complete, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { getSequence, captureCadencePlans, applyCadencePlans } from "./_cadence.ts";
@@ -44,6 +46,8 @@ export async function researchBusinessAddress(
   payload: Record<string, unknown>,
   playName: string,
   remainingUsd = DEFAULT_SPEND_RESERVATION_USD,
+  /** `fresh`: the founder asked for this lookup, so the paid calls buy again. */
+  cache?: PaidCacheOptions,
 ): Promise<{ address: PostalAddress | null; source?: string; costUsd: number }> {
   const name = String(payload.name ?? payload.founderName ?? payload.company ?? "");
   const known = extractBusinessAddress(payload, name);
@@ -57,8 +61,11 @@ export async function researchBusinessAddress(
   const email = payload.email ?? payload.founderEmail;
   if (typeof email === "string") {
     try {
-      const cachedProfile = getLedger().getCachedEnrichment(email.trim().toLowerCase());
-      const cachedResult = cachedProfile ? JSON.parse(cachedProfile.result_json) : null;
+      // A profile already bought (any workspace) may carry the address for free.
+      const cachedProfile = readPaidCache("enrich.profile", { email });
+      const cachedResult = (cachedProfile?.status === "ok" ? cachedProfile.result : null) as {
+        profile?: { company_domain?: string };
+      } | null;
       const cachedAddress = extractSdkBusinessAddress(cachedResult, name);
       if (cachedAddress)
         return { address: cachedAddress, source: "sdk:enrich.profile (cached)", costUsd: 0 };
@@ -93,6 +100,7 @@ export async function researchBusinessAddress(
           memo: "Collect business mailing address via SDK",
           decisionContext: { source: "direct_mail.address", companyDomain: domain },
         },
+        cache,
       );
       costUsd += enriched.result.cost ?? 0;
       const address = extractSdkBusinessAddress(enriched.result, name);
@@ -118,6 +126,7 @@ export async function researchBusinessAddress(
             memo: "Collect prospect business mailing address",
             decisionContext: { source: "direct_mail.address", companyDomain: domain },
           },
+          cache,
         );
         costUsd += read.result.cost ?? 0;
         const markdown = read.result.markdown ?? "";

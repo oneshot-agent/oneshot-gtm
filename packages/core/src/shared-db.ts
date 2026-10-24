@@ -63,6 +63,18 @@ export interface ContactTouch {
   status: "sent" | "reserved";
 }
 
+/** One stored paid lookup (paid-cache.ts). */
+export interface PaidCacheRow {
+  key: string;
+  call_type: string;
+  status: "ok" | "failed";
+  result_json: string;
+  fetched_at: string;
+  cost_usd: number | null;
+  hits: number;
+  saved_usd: number;
+}
+
 /** Outcome of an atomic claim: either someone else holds this address, or we now do. */
 export type TouchClaim = { held: ContactTouch } | { reservationId: number };
 
@@ -126,6 +138,31 @@ export class SharedDb {
       CREATE TABLE IF NOT EXISTS legacy_imports (
         ledger_path TEXT PRIMARY KEY,
         imported_at TEXT NOT NULL
+      );
+      -- Every paid lookup's result, keyed by call type + normalised input
+      -- (paid-cache.ts). status 'failed' is a negative entry: a genuine
+      -- failure, kept so the same input is not bought again straight away.
+      CREATE TABLE IF NOT EXISTS paid_call_cache (
+        key         TEXT PRIMARY KEY,
+        call_type   TEXT NOT NULL,
+        status      TEXT NOT NULL DEFAULT 'ok',
+        result_json TEXT NOT NULL,
+        fetched_at  TEXT NOT NULL,
+        cost_usd    REAL,
+        hits        INTEGER NOT NULL DEFAULT 0,
+        saved_usd   REAL NOT NULL DEFAULT 0,
+        last_hit_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_paid_call_cache_type ON paid_call_cache(call_type, fetched_at);
+      -- Per UTC day and call type: answers from the cache vs purchases, for doctor.
+      CREATE TABLE IF NOT EXISTS paid_cache_daily (
+        day        TEXT NOT NULL,
+        call_type  TEXT NOT NULL,
+        hits       INTEGER NOT NULL DEFAULT 0,
+        saved_usd  REAL NOT NULL DEFAULT 0,
+        purchases  INTEGER NOT NULL DEFAULT 0,
+        spent_usd  REAL NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, call_type)
       );
     `);
     // Shared files created before reservations existed. Every workspace's
@@ -229,6 +266,190 @@ export class SharedDb {
            fetched_at = excluded.fetched_at`,
       )
       .run(queryKey, url, url ? "hit" : "miss", new Date().toISOString());
+  }
+
+  getPaidCache(key: string): PaidCacheRow | null {
+    return (
+      (this.db
+        .query(
+          "SELECT key, call_type, status, result_json, fetched_at, cost_usd, hits, saved_usd FROM paid_call_cache WHERE key = ?",
+        )
+        .get(key) as PaidCacheRow) ?? null
+    );
+  }
+
+  /** Write a purchase or a negative entry. `keepExisting` never overwrites a row (the legacy import). */
+  setPaidCache(
+    row: {
+      key: string;
+      callType: string;
+      status: "ok" | "failed";
+      resultJson: string;
+      costUsd: number | null;
+      fetchedAt?: string;
+    },
+    opts: { keepExisting?: boolean } = {},
+  ): boolean {
+    const res = this.db
+      .prepare(
+        opts.keepExisting
+          ? `INSERT OR IGNORE INTO paid_call_cache(key, call_type, status, result_json, fetched_at, cost_usd)
+             VALUES(?, ?, ?, ?, ?, ?)`
+          : `INSERT INTO paid_call_cache(key, call_type, status, result_json, fetched_at, cost_usd)
+             VALUES(?, ?, ?, ?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET
+               call_type = excluded.call_type,
+               status = excluded.status,
+               result_json = excluded.result_json,
+               fetched_at = excluded.fetched_at,
+               cost_usd = excluded.cost_usd`,
+      )
+      .run(
+        row.key,
+        row.callType,
+        row.status,
+        row.resultJson,
+        row.fetchedAt ?? new Date().toISOString(),
+        row.costUsd,
+      );
+    return res.changes > 0;
+  }
+
+  /** A lookup answered from the cache: the row's counters and the day's tally. */
+  recordPaidCacheHit(key: string, callType: string, savedUsd: number): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        "UPDATE paid_call_cache SET hits = hits + 1, saved_usd = saved_usd + ?, last_hit_at = ? WHERE key = ?",
+      )
+      .run(savedUsd, now, key);
+    this.bumpPaidCacheDaily(now.slice(0, 10), callType, { hits: 1, savedUsd });
+  }
+
+  /** A lookup bought because the cache could not answer it. */
+  recordPaidCachePurchase(callType: string, spentUsd: number): void {
+    this.bumpPaidCacheDaily(new Date().toISOString().slice(0, 10), callType, {
+      purchases: 1,
+      spentUsd,
+    });
+  }
+
+  private bumpPaidCacheDaily(
+    day: string,
+    callType: string,
+    d: { hits?: number; savedUsd?: number; purchases?: number; spentUsd?: number },
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO paid_cache_daily(day, call_type, hits, saved_usd, purchases, spent_usd)
+         VALUES(?, ?, ?, ?, ?, ?)
+         ON CONFLICT(day, call_type) DO UPDATE SET
+           hits = hits + excluded.hits,
+           saved_usd = saved_usd + excluded.saved_usd,
+           purchases = purchases + excluded.purchases,
+           spent_usd = spent_usd + excluded.spent_usd`,
+      )
+      .run(day, callType, d.hits ?? 0, d.savedUsd ?? 0, d.purchases ?? 0, d.spentUsd ?? 0);
+  }
+
+  /** Successful results of one call type written since `sinceIso`: the daily counter for capped paid reads. */
+  countPaidCacheSince(callType: string, sinceIso: string): number {
+    const row = this.db
+      .query(
+        "SELECT COUNT(*) AS n FROM paid_call_cache WHERE call_type = ? AND status = 'ok' AND fetched_at >= ?",
+      )
+      .get(callType, sinceIso) as { n: number };
+    return Number(row?.n ?? 0);
+  }
+
+  /** Hits, savings and purchases per call type since `sinceDay` (YYYY-MM-DD, UTC). */
+  paidCacheDaily(sinceDay: string): Array<{
+    call_type: string;
+    hits: number;
+    saved_usd: number;
+    purchases: number;
+    spent_usd: number;
+  }> {
+    return this.db
+      .query(
+        `SELECT call_type, SUM(hits) AS hits, SUM(saved_usd) AS saved_usd,
+                SUM(purchases) AS purchases, SUM(spent_usd) AS spent_usd
+         FROM paid_cache_daily WHERE day >= ? GROUP BY call_type ORDER BY call_type`,
+      )
+      .all(sinceDay) as Array<{
+      call_type: string;
+      hits: number;
+      saved_usd: number;
+      purchases: number;
+      spent_usd: number;
+    }>;
+  }
+
+  /** Delete up to `limit` rows of one call type and status fetched before `beforeIso`. */
+  prunePaidCache(
+    callType: string,
+    status: "ok" | "failed",
+    beforeIso: string,
+    limit: number,
+  ): number {
+    const res = this.db
+      .prepare(
+        `DELETE FROM paid_call_cache WHERE key IN (
+           SELECT key FROM paid_call_cache
+           WHERE call_type = ? AND status = ? AND fetched_at < ? LIMIT ?
+         )`,
+      )
+      .run(callType, status, beforeIso, limit);
+    return res.changes;
+  }
+
+  /** Test hook (`_resetPaidCache`): drop every stored paid result and tally. */
+  clearPaidCache(): void {
+    this.db.exec("DELETE FROM paid_call_cache; DELETE FROM paid_cache_daily;");
+  }
+
+  /** Every enrichment_cache row, for the one-time copy into paid_call_cache. */
+  allCachedEnrichment(): Array<{
+    email: string;
+    result_json: string;
+    fetched_at: string;
+    status: string | null;
+  }> {
+    return this.db
+      .query("SELECT email, result_json, fetched_at, status FROM enrichment_cache")
+      .all() as Array<{
+      email: string;
+      result_json: string;
+      fetched_at: string;
+      status: string | null;
+    }>;
+  }
+
+  /**
+   * Run `fn` once per shared file, under one write lock, recorded in
+   * legacy_imports under `name`. A failure rolls back and leaves it to run again.
+   */
+  runOnce(name: string, fn: () => void): boolean {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.db.query("SELECT 1 FROM legacy_imports WHERE ledger_path = ?").get(name)) {
+        this.db.exec("COMMIT");
+        return false;
+      }
+      fn();
+      this.db
+        .prepare(`INSERT INTO legacy_imports(ledger_path, imported_at) VALUES(?, ?)`)
+        .run(name, new Date().toISOString());
+      this.db.exec("COMMIT");
+      return true;
+    } catch (err) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // already rolled back
+      }
+      throw err;
+    }
   }
 
   /** Rows that count as "this address was touched": confirmed sends, plus unexpired reservations. */

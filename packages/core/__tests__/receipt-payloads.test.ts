@@ -119,17 +119,15 @@ describe("recordReceipt", () => {
     });
   });
 
-  it("still reuses an email.verify receipt that carries a long field", () => {
-    ledger.recordReceipt({
+  it("keeps an email.verify receipt whole, long field and all", () => {
+    const id = ledger.recordReceipt({
       playName: "p",
       callType: "email.verify",
       costUsd: 0.01,
       signedReceipt: { status: "completed", email: "a@x.com", deliverable: true, raw: PAGE },
       oneshotRequestId: "req_v",
     });
-    const hit = ledger.findContactReceipt({ email: "a@x.com" });
-    expect(hit).not.toBeNull();
-    expect(JSON.parse(hit!.signed_receipt!)["raw"]).toBe(PAGE);
+    expect(JSON.parse(storedJson(id))["raw"]).toBe(PAGE);
   });
 });
 

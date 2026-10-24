@@ -3,8 +3,9 @@ import {
   getLedger,
   type NewsfeedPost,
   newsfeedPostsFrom,
+  readPaidCache,
 } from "@oneshot-gtm/core";
-import { organizationsFromResearch, personCacheKey } from "@oneshot-gtm/find";
+import { organizationsFromResearch } from "@oneshot-gtm/find";
 import type {
   DossierEducationView,
   DossierPostView,
@@ -35,34 +36,19 @@ function strings(v: unknown): string[] {
 
 /**
  * The full cached `deepResearchPerson` result for this row, looked up by the
- * same keys research writes under. Read past the purchase TTL: this is for
+ * same inputs research buys with. Read past the purchase expiry: this is for
  * display, and a stale dossier with its date beats none.
  */
 function cachedResearch(
   candidates: { url: string | null; email: string | null }[],
 ): { result: JsonRecord; fetchedAt: string } | null {
-  const ledger = getLedger();
-  const keys = new Set<string>();
   for (const c of candidates) {
     for (const input of [{ socialMediaUrl: c.url ?? undefined }, { email: c.email ?? undefined }]) {
-      const key = personCacheKey(input);
-      if (key) keys.add(key);
-    }
-  }
-  for (const key of keys) {
-    let cached: ReturnType<typeof ledger.getCachedEnrichment> = null;
-    try {
-      cached = ledger.getCachedEnrichment(key);
-    } catch {
-      continue;
-    }
-    if (!cached || cached.status === "failed") continue;
-    try {
-      const parsed = record(JSON.parse(cached.result_json));
-      const result = record(parsed?.["result"]);
-      if (result) return { result, fetchedAt: new Date(cached.fetched_at).toISOString() };
-    } catch {
-      // unreadable entry: try the next key
+      if (!input.socialMediaUrl?.trim() && !input.email?.trim()) continue;
+      const cached = readPaidCache("research.person", input, { maxAgeMs: Infinity });
+      if (cached?.status !== "ok") continue;
+      const result = record(record(cached.result)?.["result"]);
+      if (result) return { result, fetchedAt: new Date(cached.fetchedAt).toISOString() };
     }
   }
   return null;
@@ -168,7 +154,7 @@ export function buildQueueDossier(payload: unknown): QueueDossierView {
 
   const company = record(summary?.["company"]);
   const newsfeedUrl = str(record(summary?.["newsfeed"])?.["url"]);
-  const captured = newsfeedUrl ? getCachedNewsfeed(newsfeedUrl, getLedger()) : null;
+  const captured = newsfeedUrl ? getCachedNewsfeed(newsfeedUrl) : null;
   const researchPosts = result ? newsfeedPostsFrom({ result: result["recent_posts"] }) : [];
 
   return {

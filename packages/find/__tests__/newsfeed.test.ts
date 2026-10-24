@@ -1,20 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Newsfeed capture: recent posts bought once per profile, one call at a time,
-// kept in the shared cache, and only a pointer on the dossier. The rules that
+// kept in the paid cache, and only a pointer on the dossier. The rules that
 // matter: a 429 waits and retries (never a verdict), a transient failure is
 // never negative-cached, cache-only never calls, and no post text reaches the
 // dossier.
-
-type CacheRow = { result_json: string; fetched_at: string; status?: string | null };
 
 const state = {
   calls: [] as string[],
   inFlight: 0,
   maxInFlight: 0,
   behaviour: [] as Array<"ok" | "429" | "transient" | "genuine" | "hang">,
-  cache: new Map<string, CacheRow>(),
-  failures: [] as string[],
   queue: new Map<number, { id: number; payload_json: string }>(),
   patches: [] as Array<{ id: number; patch: Record<string, unknown> }>,
   prospects: new Map<
@@ -52,36 +48,34 @@ vi.mock("@oneshot-gtm/core", async () => {
     NEWSFEED_DEADLINE_MS: 25,
     logEvent: () => {},
     dailySpendStatus: () => ({ ceilingReached: state.ceilingReached }),
-    personNewsfeed: async (input: { socialMediaUrl: string }) => {
-      state.calls.push(input.socialMediaUrl);
-      state.inFlight++;
-      state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
-      try {
-        await new Promise((r) => setTimeout(r, 2));
-        const b = state.behaviour.shift() ?? "ok";
-        if (b === "429") {
-          throw Object.assign(new Error("Tool request failed"), {
-            statusCode: 429,
-            responseBody: JSON.stringify({ error: "rate_limit_exceeded", retry_after: 60 }),
-          });
+    // The real paid cache in front of a fake purchase, as in the wrapper.
+    personNewsfeed: (
+      input: { socialMediaUrl: string },
+      _ctx: unknown,
+      cache?: import("@oneshot-gtm/core").PaidCacheOptions,
+    ) =>
+      actual.withPaidCache("research.newsfeed", input, cache, async () => {
+        state.calls.push(input.socialMediaUrl);
+        state.inFlight++;
+        state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
+        try {
+          await new Promise((r) => setTimeout(r, 2));
+          const b = state.behaviour.shift() ?? "ok";
+          if (b === "429") {
+            throw Object.assign(new Error("Tool request failed"), {
+              statusCode: 429,
+              responseBody: JSON.stringify({ error: "rate_limit_exceeded", retry_after: 60 }),
+            });
+          }
+          if (b === "transient") throw new Error("Tool request failed");
+          if (b === "genuine") throw new Error("profile not found");
+          if (b === "hang") await new Promise((r) => setTimeout(r, 200));
+          return { result: POSTS, receiptId: 5 };
+        } finally {
+          state.inFlight--;
         }
-        if (b === "transient") throw new Error("Tool request failed");
-        if (b === "genuine") throw new Error("profile not found");
-        if (b === "hang") await new Promise((r) => setTimeout(r, 200));
-        return { result: POSTS, receiptId: 5 };
-      } finally {
-        state.inFlight--;
-      }
-    },
+      }),
     getLedger: () => ({
-      getCachedEnrichment: (key: string) => state.cache.get(key) ?? null,
-      setCachedEnrichment: (key: string, json: string) =>
-        state.cache.set(key, {
-          result_json: json,
-          fetched_at: new Date().toISOString(),
-          status: null,
-        }),
-      setCachedEnrichmentFailure: (key: string) => state.failures.push(key),
       getQueueRow: (id: number) => state.queue.get(id) ?? null,
       patchLiveQueuePayload: (p: { id: number; patch: Record<string, unknown> }) => {
         state.patches.push(p);
@@ -95,16 +89,21 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 const nf = await import("../src/_newsfeed.ts");
+const core = await import("@oneshot-gtm/core");
 const CTX = { playName: "test-play" };
 const LI = "https://www.linkedin.com/in/pat-lee";
+
+/** What the paid cache holds for a profile's feed: "ok", "failed", or null. */
+function stored(url: string): string | null {
+  return core.readPaidCache("research.newsfeed", { socialMediaUrl: url })?.status ?? null;
+}
 
 beforeEach(() => {
   state.calls = [];
   state.inFlight = 0;
   state.maxInFlight = 0;
   state.behaviour = [];
-  state.cache = new Map();
-  state.failures = [];
+  core._resetPaidCache();
   state.queue = new Map();
   state.patches = [];
   state.prospects = new Map();
@@ -151,7 +150,7 @@ describe("safePersonNewsfeed", () => {
     if (out.status !== "captured") return;
     expect(out.costUsd).toBe(0.07);
     expect(out.feed.posts).toHaveLength(2);
-    expect(state.cache.has(`newsfeed:${LI}`)).toBe(true);
+    expect(stored(LI)).toBe("ok");
     expect(nf.getCachedNewsfeed("linkedin.com/in/pat-lee")?.posts).toHaveLength(2);
 
     const again = await nf.safePersonNewsfeed(LI, CTX);
@@ -160,11 +159,15 @@ describe("safePersonNewsfeed", () => {
   });
 
   it("marks a retweet as a repost", () => {
-    state.cache.set("newsfeed:https://x.com/pat", {
-      result_json: JSON.stringify({
+    const input = { socialMediaUrl: "https://x.com/pat" };
+    core.getSharedDb().setPaidCache({
+      key: core.paidCacheKey("research.newsfeed", input),
+      callType: "research.newsfeed",
+      status: "ok",
+      resultJson: JSON.stringify({
         result: [{ platform: "twitter", content: "RT @someone: hi" }],
       }),
-      fetched_at: new Date().toISOString(),
+      costUsd: 0.07,
     });
     expect(nf.getCachedNewsfeed("https://x.com/pat")?.posts[0]?.isRepost).toBe(true);
   });
@@ -180,21 +183,27 @@ describe("safePersonNewsfeed", () => {
     expect(slept).toEqual([60_000]);
 
     nf._resetNewsfeed();
-    state.cache = new Map();
+    core._resetPaidCache();
     state.behaviour = ["429", "429", "429"];
     const out = await nf.safePersonNewsfeed(LI, CTX);
     expect(out).toMatchObject({ status: "failed", transient: true });
     expect(state.calls.length).toBe(2 + 3);
-    expect(state.failures).toEqual([]);
+    expect(stored(LI)).toBeNull();
   });
 
   it("negative-caches only a genuine failure", async () => {
     state.behaviour = ["transient"];
     await nf.safePersonNewsfeed(LI, CTX);
-    expect(state.failures).toEqual([]);
+    expect(stored(LI)).toBeNull();
     state.behaviour = ["genuine"];
     await nf.safePersonNewsfeed(LI, CTX);
-    expect(state.failures).toEqual([`newsfeed:${LI}`]);
+    expect(stored(LI)).toBe("failed");
+    // The negative entry answers the next call without buying.
+    expect(await nf.safePersonNewsfeed(LI, CTX)).toMatchObject({
+      status: "failed",
+      transient: false,
+    });
+    expect(state.calls).toHaveLength(2);
   });
 
   it("gives up at the deadline but still caches the paid result", async () => {
@@ -202,7 +211,7 @@ describe("safePersonNewsfeed", () => {
     const out = await nf.safePersonNewsfeed(LI, CTX);
     expect(out).toMatchObject({ status: "failed", transient: true });
     await new Promise((r) => setTimeout(r, 250));
-    expect(state.cache.has(`newsfeed:${LI}`)).toBe(true);
+    expect(stored(LI)).toBe("ok");
   });
 
   it("holds the slot until a call abandoned at the deadline settles", async () => {
@@ -300,7 +309,7 @@ describe("pointer on the dossier", () => {
     const out = await nf.captureNewsfeedForQueueRow(8, "test-play");
     expect(out?.attached).toBe(false);
     expect(state.patches).toEqual([]);
-    expect(state.cache.has(`newsfeed:${LI}`)).toBe(true);
+    expect(stored(LI)).toBe("ok");
   });
 
   it("writes the pointer into a researched prospect's person half", async () => {
