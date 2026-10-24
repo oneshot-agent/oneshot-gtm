@@ -53,6 +53,7 @@ import {
   PaidCacheMissError,
   paidCacheKey,
   paidCacheStats,
+  prunePaidCache,
   readPaidCache,
   withPaidCache,
 } from "../src/paid-cache.ts";
@@ -301,6 +302,88 @@ describe("expiry and options", () => {
       withPaidCache("research.person", { email: "nobody@a.com" }, { cacheOnly: true }, never),
     ).rejects.toBeInstanceOf(PaidCacheMissError);
     expect(never).not.toHaveBeenCalled();
+  });
+});
+
+describe("hostile input", () => {
+  it("keys a long run of '#', '/' or '?' in linear time", () => {
+    const started = performance.now();
+    for (const c of ["#", "/", "?"]) {
+      const run = c.repeat(200_000);
+      paidCacheKey("enrich.company", { domain: `${c}${run}x` });
+      paidCacheKey("research.people", { companyDomains: [`a.com${run}`] });
+      paidCacheKey("web.read", { url: `https://e.example/${run}` });
+    }
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(paidCacheKey("enrich.company", { domain: "acme.com#x?y/z" })).toBe(
+      paidCacheKey("enrich.company", { domain: "acme.com" }),
+    );
+    expect(paidCacheKey("web.read", { url: "https://e.example/a///" })).toBe(
+      paidCacheKey("web.read", { url: "https://e.example/a" }),
+    );
+  });
+});
+
+describe("status codes", () => {
+  it("a 5xx, 408 or 429 status is never a negative entry, whatever the message", async () => {
+    for (const statusCode of [500, 502, 503, 504, 520, 408, 429]) {
+      const err = Object.assign(new Error("Service Unavailable"), { statusCode });
+      expect(isNegativeCacheable(err), String(statusCode)).toBe(false);
+    }
+    const outage = vi.fn(async () => {
+      throw Object.assign(new Error("Bad Gateway"), { statusCode: 502 });
+    });
+    const input = { domain: "outage.example" };
+    await expect(withPaidCache("enrich.company", input, undefined, outage)).rejects.toThrow();
+    await expect(withPaidCache("enrich.company", input, undefined, outage)).rejects.toThrow(
+      "Bad Gateway",
+    );
+    expect(outage).toHaveBeenCalledTimes(2);
+    expect(isNegativeCacheable(Object.assign(new Error("gone"), { statusCode: 404 }))).toBe(true);
+  });
+});
+
+const at = (ageMs: number) => new Date(Date.now() - ageMs).toISOString();
+
+describe("pruning", () => {
+  it("deletes rows past their keep window and never a fresh one", () => {
+    const shared = getSharedDb();
+    const put = (
+      callType: "web.read" | "research.person",
+      input: object,
+      status: "ok" | "failed",
+      ageMs: number,
+    ) =>
+      shared.setPaidCache({
+        key: paidCacheKey(callType, input),
+        callType,
+        status,
+        resultJson: JSON.stringify(status === "ok" ? { status: "completed" } : { message: "x" }),
+        costUsd: 0.01,
+        fetchedAt: at(ageMs),
+      });
+    const H = 3600 * 1000;
+    const D = 24 * H;
+    put("web.read", { url: "https://old.example" }, "ok", 13 * H); // past 12h
+    put("web.read", { url: "https://new.example" }, "ok", 11 * H);
+    put("web.read", { url: "https://bad.example" }, "failed", 13 * H);
+    put("research.person", { email: "stale@a.com" }, "ok", 120 * D); // expired, kept for display
+    put("research.person", { email: "ancient@a.com" }, "ok", 400 * D);
+    put("research.person", { email: "nope@a.com" }, "failed", 4 * D);
+    put("research.person", { email: "recent-fail@a.com" }, "failed", 1 * D);
+
+    expect(prunePaidCache(shared)).toBe(4);
+    const has = (callType: "web.read" | "research.person", input: object) =>
+      shared.getPaidCache(paidCacheKey(callType, input)) !== null;
+    expect(has("web.read", { url: "https://old.example" })).toBe(false);
+    expect(has("web.read", { url: "https://new.example" })).toBe(true);
+    expect(has("web.read", { url: "https://bad.example" })).toBe(false);
+    expect(has("research.person", { email: "stale@a.com" })).toBe(true);
+    expect(has("research.person", { email: "ancient@a.com" })).toBe(false);
+    expect(has("research.person", { email: "nope@a.com" })).toBe(false);
+    expect(has("research.person", { email: "recent-fail@a.com" })).toBe(true);
+    // Nothing left to prune.
+    expect(prunePaidCache(shared)).toBe(0);
   });
 });
 

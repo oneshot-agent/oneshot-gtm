@@ -198,6 +198,11 @@ describe("the paid cache under the wrappers", () => {
         expect(found).toMatchObject({ receiptId: 0, result: { found: false, cost: 0 } });
         const verified = await safeVerifyEmail({ email: "a@b.com" }, { playName: "t" });
         expect(verified).toMatchObject({ receiptId: 0, result: { deliverable: false, cost: 0 } });
+        // A remembered failure is a verdict the spine drops, never a platform error it defers.
+        if (err instanceof CachedPaidFailureError) {
+          expect(found.result.status).toBe("invalid");
+          expect(verified.result.status).toBe("invalid");
+        }
         expect(logged).not.toContain("error.swallowed");
       }
     } finally {

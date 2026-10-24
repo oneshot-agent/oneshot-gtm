@@ -385,6 +385,24 @@ export class SharedDb {
     }>;
   }
 
+  /** Delete up to `limit` rows of one call type and status fetched before `beforeIso`. */
+  prunePaidCache(
+    callType: string,
+    status: "ok" | "failed",
+    beforeIso: string,
+    limit: number,
+  ): number {
+    const res = this.db
+      .prepare(
+        `DELETE FROM paid_call_cache WHERE key IN (
+           SELECT key FROM paid_call_cache
+           WHERE call_type = ? AND status = ? AND fetched_at < ? LIMIT ?
+         )`,
+      )
+      .run(callType, status, beforeIso, limit);
+    return res.changes;
+  }
+
   /** Test hook (`_resetPaidCache`): drop every stored paid result and tally. */
   clearPaidCache(): void {
     this.db.exec("DELETE FROM paid_call_cache; DELETE FROM paid_cache_daily;");

@@ -33,6 +33,8 @@ export interface PaidLookupSpec {
   ttlMs: number;
   /** How long a negative entry answers; 0 never stores one. */
   failureTtlMs: number;
+  /** How long an expired result is kept for display before it is pruned. Defaults to `ttlMs`. */
+  keepMs?: number;
   /** Which part of the input names the thing bought. Defaults to the whole input. */
   identity?: (input: Record<string, unknown>) => unknown;
   /** More inputs the same result answers (an enrich by LinkedIn URL that surfaced the email). */
@@ -85,6 +87,8 @@ export const PAID_LOOKUPS = {
   },
   "research.person": {
     ttlMs: 90 * DAY,
+    // The queue's dossier view shows an expired dossier, with its date, over none.
+    keepMs: 365 * DAY,
     failureTtlMs: PAID_FAILURE_TTL_MS,
     // The social URL identifies a person more precisely than an email.
     identity: (i) =>
@@ -229,18 +233,31 @@ function canonicalUrl(raw: string): string {
   const social = /(^|\.)(linkedin|github|x|twitter)\.com$/.test(host);
   // A listing page's query is part of the page; a profile's is tracking.
   const search = social ? "" : url.search;
-  const path = url.pathname.replace(/\/+$/, "");
+  const path = trimTrailing(url.pathname, "/");
   const out = `${host}${url.port ? `:${url.port}` : ""}${path}${search}`;
   return social ? out.toLowerCase() : out;
 }
 
+/** `value` without any run of `char` at its end. String ops: no backtracking on a long run. */
+function trimTrailing(value: string, char: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === char) end--;
+  return value.slice(0, end);
+}
+
 function canonicalDomain(raw: string): string {
-  return raw
+  const host = raw
     .trim()
     .toLowerCase()
     .replace(/^[a-z]+:\/\//, "")
-    .replace(/^www\./, "")
-    .replace(/[/?#].*$/, "");
+    .replace(/^www\./, "");
+  // Cut at the first path, query or fragment character.
+  let end = host.length;
+  for (const c of ["/", "?", "#"]) {
+    const at = host.indexOf(c);
+    if (at !== -1 && at < end) end = at;
+  }
+  return host.slice(0, end);
 }
 
 function normalise(value: unknown, field = ""): unknown {
@@ -295,9 +312,25 @@ export function paidCacheKey(callType: PaidLookupType, input: unknown): string {
 
 // --- reads and writes -------------------------------------------------------
 
-/** The shared db, with the legacy enrichment_cache rows copied in once per file. */
+/**
+ * The shared db, with the legacy enrichment_cache rows copied in once per
+ * file and expired rows pruned at most once a day per process.
+ */
 function db(): SharedDb {
   const shared = getSharedDb();
+  const now = Date.now();
+  if (now - (prunedAt.get(shared) ?? 0) >= DAY) {
+    prunedAt.set(shared, now);
+    try {
+      prunePaidCache(shared, now);
+    } catch (err) {
+      logEvent(
+        "paid_cache.prune_failed",
+        { message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+    }
+  }
   if (!imported.has(shared)) {
     imported.add(shared);
     try {
@@ -313,6 +346,37 @@ function db(): SharedDb {
   return shared;
 }
 const imported = new WeakSet<SharedDb>();
+const prunedAt = new WeakMap<SharedDb, number>();
+
+/** Rows deleted per call type and status in one prune: a backlog clears over a few days, never in one long lock. */
+export const PAID_CACHE_PRUNE_BATCH = 5000;
+
+/**
+ * Delete stored results past their keep window (the expiry unless the type
+ * keeps them longer) and negative entries past their failure expiry. A row
+ * still inside its window is never touched. Returns the rows deleted.
+ */
+export function prunePaidCache(shared: SharedDb, now = Date.now()): number {
+  let deleted = 0;
+  for (const [callType, raw] of Object.entries(PAID_LOOKUPS)) {
+    const spec: PaidLookupSpec = raw;
+    const keepMs = Math.max(spec.keepMs ?? spec.ttlMs, spec.ttlMs);
+    deleted += shared.prunePaidCache(
+      callType,
+      "ok",
+      new Date(now - keepMs).toISOString(),
+      PAID_CACHE_PRUNE_BATCH,
+    );
+    deleted += shared.prunePaidCache(
+      callType,
+      "failed",
+      new Date(now - spec.failureTtlMs).toISOString(),
+      PAID_CACHE_PRUNE_BATCH,
+    );
+  }
+  if (deleted > 0) logEvent("paid_cache.pruned", { rows: deleted });
+  return deleted;
+}
 
 function costOf(value: unknown): number | null {
   if (!isRecord(value)) return null;
@@ -348,7 +412,12 @@ export function isNegativeCacheable(err: unknown): boolean {
   const e = err as { name?: unknown; statusCode?: unknown; message?: unknown };
   const name = typeof e.name === "string" ? e.name : "";
   if (/Validation|Payment|Abort|Auth/i.test(name)) return false;
-  if (typeof e.statusCode === "number" && [400, 401, 402, 403, 408].includes(e.statusCode))
+  // A status decides whatever the message says: an outage (5xx), a timeout or
+  // a rate limit is never a verdict, nor is a refusal of the call itself.
+  if (
+    typeof e.statusCode === "number" &&
+    (e.statusCode >= 500 || [400, 401, 402, 403, 408, 429].includes(e.statusCode))
+  )
     return false;
   const message = typeof e.message === "string" ? e.message : String(err);
   return !/credentials|wallet|unauthori[sz]ed|forbidden|api key/i.test(message);

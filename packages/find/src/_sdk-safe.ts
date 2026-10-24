@@ -65,8 +65,9 @@ export async function safeFindEmail(
     // billed): SDK 0.32 rejects findEmail without a person name. That is a
     // verdict about our input, not a backend outage: reported as "invalid" so
     // the spine drops the candidate instead of feeding the circuit breaker
-    // five times and blacking out contact resolution for every finder.
-    const status = isValidationError(err) ? "invalid" : "error";
+    // five times and blacking out contact resolution for every finder. A
+    // failure the paid cache remembers is a verdict too, never an outage.
+    const status = isValidationError(err) || isCachedPaidFailure(err) ? "invalid" : "error";
     return { result: { status, email: null, found: false, cost: 0 }, receiptId: 0 };
   }
 }
@@ -92,7 +93,8 @@ export async function safeVerifyEmail(
     swallow(ctx, "verify_email", err);
     return {
       result: {
-        status: "error",
+        // A remembered failure is a verdict (drop), not an outage (defer).
+        status: isCachedPaidFailure(err) ? "invalid" : "error",
         email: input.email,
         valid: false,
         deliverable: false,
