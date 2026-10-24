@@ -52,14 +52,14 @@ export const DEFAULT_LLM_MODEL = "anthropic/claude-sonnet-5.5";
  * these was the default reads as its replacement, so an install that never
  * picked a model moves with the default instead of staying on a retired one.
  */
-const RETIRED_DEFAULT_MODELS: Record<string, string> = {
-  "anthropic/claude-sonnet-4.6": DEFAULT_LLM_MODEL,
-  "claude-sonnet-4-6": "claude-sonnet-5-5",
-};
+const RETIRED_DEFAULT_MODELS = new Map<string, string>([
+  ["anthropic/claude-sonnet-4.6", DEFAULT_LLM_MODEL],
+  ["claude-sonnet-4-6", "claude-sonnet-5-5"],
+]);
 
 /** Swap a retired default model id for its replacement; anything else is kept. */
 export function withCurrentDefaultModel(cfg: OneShotConfig): OneShotConfig {
-  const next = RETIRED_DEFAULT_MODELS[cfg.llmModel];
+  const next = RETIRED_DEFAULT_MODELS.get(cfg.llmModel);
   return next ? { ...cfg, llmModel: next } : cfg;
 }
 

@@ -188,6 +188,9 @@ describe("retired default model", () => {
   it("keeps any other saved model", () => {
     const cfg = { llmModel: "openai/gpt-5.1" } as OneShotConfig;
     expect(withCurrentDefaultModel(cfg)).toBe(cfg);
+    // An inherited object key is not a mapping.
+    const odd = { llmModel: "constructor" } as OneShotConfig;
+    expect(withCurrentDefaultModel(odd)).toBe(odd);
   });
 
   it("loadConfig reads a config saved under the old default as the new default", () => {
