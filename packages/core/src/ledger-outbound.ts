@@ -479,6 +479,26 @@ export class OutboundSendStore {
       .map(toSend);
   }
 
+  /**
+   * One mailbox's sends to `recipient` last attempted in [afterIso, beforeIso]
+   * that may have produced a Sent copy (every status but failed).
+   */
+  listToRecipient(
+    identityId: string,
+    recipient: string,
+    afterIso: string,
+    beforeIso: string,
+  ): OutboundSend[] {
+    return this.db
+      .query<Row, [string, string, string, string]>(
+        `SELECT * FROM outbound_sends
+          WHERE identity_id = ? AND recipient = ? AND status != 'failed'
+            AND last_attempt_at >= ? AND last_attempt_at <= ?`,
+      )
+      .all(identityId, recipient, afterIso, beforeIso)
+      .map(toSend);
+  }
+
   /** Keyed sends first attempted since `sinceIso`, newest first (the `sends check` report). */
   listSince(sinceIso: string, limit: number): OutboundSend[] {
     return this.db

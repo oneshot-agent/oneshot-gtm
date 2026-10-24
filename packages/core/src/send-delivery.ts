@@ -483,7 +483,7 @@ function settleOneShot(
 }
 
 export async function runOutboundConfirmations(opts: {
-  outbound: Pick<OutboundSendStore, "listUnconfirmed" | "mark">;
+  outbound: Pick<OutboundSendStore, "listUnconfirmed" | "listToRecipient" | "mark">;
   delivery: Pick<SendDeliveryStore, "candidateFor" | "record">;
   nowMs?: number;
   limit?: number;
@@ -503,9 +503,6 @@ export async function runOutboundConfirmations(opts: {
     now,
   });
   const unreadable = new Set<string>();
-  // Gmail copies already used to confirm a row this sweep, per mailbox: a
-  // copy is matched by recipient and subject, so one copy confirms one row.
-  const usedCopies = new Map<string, Set<string>>();
   const results: ConfirmResult[] = [];
   let reads = 0;
   for (const row of rows) {
@@ -541,6 +538,8 @@ export async function runOutboundConfirmations(opts: {
       Date.parse(row.firstAttemptAt) - DELIVERY_WINDOW_BEFORE_MS,
     ).toISOString();
     let copies: SentCopy[];
+    // Other sends this Gmail lookup cannot tell apart from this one.
+    let twins = 0;
     try {
       if (!identity) throw new PermanentDeliveryError("sender identity no longer configured");
       if (row.transport === "smtp") {
@@ -561,6 +560,15 @@ export async function runOutboundConfirmations(opts: {
             (!subject || normSubject(c.subject) === subject) &&
             (!replyTarget || normMessageId(c.inReplyTo) === replyTarget),
         );
+        twins = opts.outbound
+          .listToRecipient(row.identityId, row.recipient, afterIso, beforeIso)
+          .filter(
+            (o) =>
+              o.key !== row.key &&
+              o.transport === "gmail" &&
+              normSubject(o.subject) === subject &&
+              normMessageId(o.inReplyTo) === replyTarget,
+          ).length;
       }
     } catch (err) {
       const message = ((err as Error).message ?? "").slice(0, 200);
@@ -590,24 +598,18 @@ export async function runOutboundConfirmations(opts: {
       }
       continue;
     }
-    const used = usedCopies.get(row.identityId) ?? new Set<string>();
-    usedCopies.set(row.identityId, used);
-    const free =
-      row.transport === "gmail"
-        ? copies.filter((c) => !used.has(normMessageId(c.messageId)))
-        : copies;
-    // Its only copies confirmed another send: which one went out is unknown,
-    // so flag it rather than confirm it or let it settle into a resend.
-    const shared = free.length === 0 && copies.length > 0;
-    copies = free;
-    const observed = new Set(copies.map((c) => c.messageId.trim().toLowerCase())).size;
+    const found = new Set(copies.map((c) => c.messageId.trim().toLowerCase())).size;
+    // A Gmail copy is matched by recipient, subject and reply target, so
+    // twins share copies: this send is in Sent only if there are more copies
+    // than twins. Fewer means which one went out is unknown, so flag it
+    // rather than confirm it or let it settle into a resend.
+    const shared = twins > 0 && found > 0 && found <= twins;
+    const observed = shared ? 0 : Math.max(0, found - twins);
     const ageMs = nowMs - attemptMs;
     let after: OutboundStatus | "unchanged" = "unchanged";
     let error: string | null = null;
-    if (observed >= 1) {
-      after = "confirmed";
-      for (const c of copies) used.add(normMessageId(c.messageId));
-    } else if (shared) {
+    if (observed >= 1) after = "confirmed";
+    else if (shared) {
       after = "not_found";
       error =
         "its copy in Sent also matches another send, so it was not resent; check the recipient's thread before sending again";

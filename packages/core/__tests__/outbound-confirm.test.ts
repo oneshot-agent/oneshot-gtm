@@ -359,23 +359,69 @@ describe("runOutboundConfirmations", () => {
     expect(ledger.outboundSends.get("gm-reply-noheader")?.status).toBe("uncertain");
   });
 
-  it("one Sent copy confirms one send; another send it matches is flagged, never resent (#905)", async () => {
-    const a = keyed("gm-twin-a", "uncertain", gmailId);
-    const b = keyed("gm-twin-b", "uncertain", gmailId);
+  it("sends Gmail cannot tell apart confirm only when Sent holds a copy for each; else flagged, never resent (#905)", async () => {
+    const twin = (key: string) => {
+      ledger.outboundSends.claim({
+        key,
+        identityId: gmailId.id,
+        transport: "gmail",
+        recipient: "twin@example.org",
+        subject: "Hello there",
+        body: key,
+        messageId: null,
+        sentEvidence: true,
+        now: new Date(T0),
+      });
+      ledger.outboundSends.mark(key, "uncertain", { now: new Date(T0) });
+    };
+    const sentHolds = (...ids: string[]): ConfirmReaders => ({
+      smtp: vi.fn(async () => []),
+      gmail: vi.fn(async () => ids.map((id) => copy(id, 20))),
+    });
+
+    // One copy, two sends: which one went out is unknown.
+    twin("gm-twin-a");
+    twin("gm-twin-b");
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, sentHolds("<one@gmail>"));
+    for (const k of ["gm-twin-a", "gm-twin-b"]) {
+      expect(ledger.outboundSends.get(k)).toMatchObject({
+        status: "not_found",
+        error: expect.stringMatching(/also matches another send/),
+      });
+      expect(
+        ledger.outboundSends.claim({ ...claimOf(k), now: new Date(T0 + 20 * 60_000) }).verdict,
+      ).toBe("already_sent");
+    }
+  });
+
+  it("two sends Gmail cannot tell apart are both confirmed by two copies (#905)", async () => {
+    for (const key of ["gm-pair-a", "gm-pair-b"]) {
+      ledger.outboundSends.claim({
+        key,
+        identityId: gmailId.id,
+        transport: "gmail",
+        recipient: "pair@example.org",
+        subject: "Hello there",
+        body: key,
+        messageId: null,
+        sentEvidence: true,
+        now: new Date(T0),
+      });
+      ledger.outboundSends.mark(key, "uncertain", { now: new Date(T0) });
+    }
     const r: ConfirmReaders = {
       smtp: vi.fn(async () => []),
-      gmail: vi.fn(async () => [copy("<one@gmail>", 20)]),
+      gmail: vi.fn(async () => [copy("<one@gmail>", 20), copy("<two@gmail>", 25)]),
     };
     await sweep(T0 + CONFIRM_MIN_AGE_MS, r);
-    const statuses = [a.key, b.key].map((k) => ledger.outboundSends.get(k)?.status).toSorted();
-    expect(statuses).toEqual(["confirmed", "not_found"]);
-    const flagged = [a.key, b.key].find(
-      (k) => ledger.outboundSends.get(k)?.status === "not_found",
-    )!;
-    expect(ledger.outboundSends.get(flagged)?.error).toMatch(/also matches another send/);
-    expect(
-      ledger.outboundSends.claim({ ...claimOf(flagged), now: new Date(T0 + 20 * 60_000) }).verdict,
-    ).toBe("already_sent");
+    expect(ledger.outboundSends.get("gm-pair-a")).toMatchObject({
+      status: "confirmed",
+      observed: 1,
+    });
+    expect(ledger.outboundSends.get("gm-pair-b")).toMatchObject({
+      status: "confirmed",
+      observed: 1,
+    });
   });
 
   it("leaves a send unchanged on a transient read error, one read per mailbox", async () => {
