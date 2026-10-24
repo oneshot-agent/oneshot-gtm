@@ -18,7 +18,6 @@ const state = {
   calls: [] as string[],
   rows: new Map<number, Row>(),
   triggers: new Map<string, { config_json: string | null }>(),
-  cache: new Map<string, { result_json: string; fetched_at: string; status?: string | null }>(),
   cadences: [] as Array<{
     prospect_id: number;
     play_name: string;
@@ -54,16 +53,18 @@ vi.mock("@oneshot-gtm/core", async () => {
     dailySpendStatus: () => ({ ceilingReached: state.ceilingReached }),
     triggerConfigForSource: (source: string | null | undefined) =>
       actual.triggerConfigForSource(source, (name) => state.triggers.get(name) ?? null),
-    personNewsfeed: async (input: { socialMediaUrl: string }) => {
-      state.calls.push(input.socialMediaUrl);
-      if (state.slowMs > 0) await new Promise((r) => setTimeout(r, state.slowMs));
-      return { result: POSTS, receiptId: 5 };
-    },
+    // The real paid cache in front of a fake purchase, as in the wrapper.
+    personNewsfeed: (
+      input: { socialMediaUrl: string },
+      _ctx: unknown,
+      cache?: import("@oneshot-gtm/core").PaidCacheOptions,
+    ) =>
+      actual.withPaidCache("research.newsfeed", input, cache, async () => {
+        state.calls.push(input.socialMediaUrl);
+        if (state.slowMs > 0) await new Promise((r) => setTimeout(r, state.slowMs));
+        return { result: POSTS, receiptId: 5 };
+      }),
     getLedger: () => ({
-      getCachedEnrichment: (key: string) => state.cache.get(key) ?? null,
-      setCachedEnrichment: (key: string, json: string) =>
-        state.cache.set(key, { result_json: json, fetched_at: new Date().toISOString() }),
-      setCachedEnrichmentFailure: () => {},
       getQueueRow: (id: number) => state.rows.get(id) ?? null,
       patchLiveQueuePayload: () => true,
       getProspectById: (id: number) => state.prospects.get(id) ?? null,
@@ -86,6 +87,24 @@ const {
   selectInFlightNewsfeedCandidates,
   sweepInFlightNewsfeeds,
 } = await import("../src/_newsfeed.ts");
+const core = await import("@oneshot-gtm/core");
+
+/** Put a capture in the paid cache, bought `ageMs` ago. */
+function seedFeed(url: string, ageMs = 0): void {
+  const input = { socialMediaUrl: url };
+  core.getSharedDb().setPaidCache({
+    key: core.paidCacheKey("research.newsfeed", input),
+    callType: "research.newsfeed",
+    status: "ok",
+    resultJson: JSON.stringify(POSTS),
+    costUsd: 0.07,
+    fetchedAt: new Date(Date.now() - ageMs).toISOString(),
+  });
+}
+
+function stored(url: string): boolean {
+  return core.hasCached("research.newsfeed", { socialMediaUrl: url });
+}
 
 function approvedRow(id: number, over: Partial<Row> = {}): Row {
   return {
@@ -112,7 +131,7 @@ beforeEach(() => {
   state.calls = [];
   state.rows.clear();
   state.triggers.clear();
-  state.cache.clear();
+  core._resetPaidCache();
   state.cadences = [];
   state.prospects.clear();
   state.sentSource.clear();
@@ -153,10 +172,7 @@ describe("captureNewsfeedOnApproval", () => {
   });
 
   it("a fresh cache entry is free", async () => {
-    state.cache.set("newsfeed:https://www.linkedin.com/in/person-1", {
-      result_json: JSON.stringify(POSTS),
-      fetched_at: new Date().toISOString(),
-    });
+    seedFeed("https://www.linkedin.com/in/person-1");
     state.rows.set(1, approvedRow(1));
     const result = await captureNewsfeedOnApproval([1]);
     expect(state.calls).toEqual([]);
@@ -170,10 +186,10 @@ describe("scheduleNewsfeedOnApproval", () => {
     state.rows.set(1, approvedRow(1));
     scheduleNewsfeedOnApproval([1]);
     // Synchronous return: the call has not finished yet.
-    expect(state.cache.size).toBe(0);
+    expect(stored("https://www.linkedin.com/in/person-1")).toBe(false);
     await new Promise((r) => setTimeout(r, 80));
     expect(state.calls).toEqual(["https://www.linkedin.com/in/person-1"]);
-    expect(state.cache.size).toBe(1);
+    expect(stored("https://www.linkedin.com/in/person-1")).toBe(true);
   });
 
   it("never throws into the caller when the capture fails", () => {
@@ -221,14 +237,8 @@ describe("sweepInFlightNewsfeeds", () => {
   it("captures missing or expired feeds, oldest enrolment first, bounded per sweep", async () => {
     inFlight(4);
     // #2 is fresh (skipped); #3 expired (refetched).
-    state.cache.set("newsfeed:https://www.linkedin.com/in/p-2", {
-      result_json: JSON.stringify(POSTS),
-      fetched_at: new Date().toISOString(),
-    });
-    state.cache.set("newsfeed:https://www.linkedin.com/in/p-3", {
-      result_json: JSON.stringify(POSTS),
-      fetched_at: new Date(Date.now() - 15 * DAY).toISOString(),
-    });
+    seedFeed("https://www.linkedin.com/in/p-2");
+    seedFeed("https://www.linkedin.com/in/p-3", 15 * DAY);
     const result = await sweepInFlightNewsfeeds({ maxProspects: 2 });
     expect(result.candidates).toBe(3);
     expect(state.calls).toEqual([

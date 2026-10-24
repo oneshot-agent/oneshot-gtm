@@ -25,6 +25,7 @@ import {
   type SmartleadAccount,
   missingGmailSecrets,
   oneshotEnvReady,
+  paidCacheStats,
   resolveIdentities,
   secretSource,
   secretsPath,
@@ -836,6 +837,31 @@ function dailySpendCeilingCheck(): CheckResult | null {
 }
 
 /**
+ * How much of the last 7 days' paid lookups the shared cache answered, in
+ * every workspace. Informational; hidden until a lookup has run.
+ */
+function paidCacheCheck(): CheckResult | null {
+  let stats: ReturnType<typeof paidCacheStats>;
+  try {
+    stats = paidCacheStats(7);
+  } catch {
+    return null; // a report, not a gate: an unreadable shared file is the shared-db check's to flag
+  }
+  const hits = stats.reduce((n, s) => n + s.hits, 0);
+  const purchases = stats.reduce((n, s) => n + s.purchases, 0);
+  if (hits + purchases === 0) return null;
+  const saved = stats.reduce((n, s) => n + s.savedUsd, 0);
+  const share = Math.round((100 * hits) / (hits + purchases));
+  return {
+    name: "paid lookup cache",
+    group: "spend",
+    severity: "ok",
+    message: `${hits} of ${hits + purchases} lookups answered from cache (${share}%), $${saved.toFixed(2)} saved, last 7 days, all workspaces`,
+    hint: "per call type: oneshot-gtm find cache-stats",
+  };
+}
+
+/**
  * Check calendar access for the designated Gmail identity; return null when
  * calendarIdentityId is null. Check stored scope first and request reconnection
  * without a live call if it lacks calendar access. Otherwise probe getGmailProfile:
@@ -1295,6 +1321,9 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
 
   const spendCeiling = dailySpendCeilingCheck();
   if (spendCeiling) results.push(spendCeiling);
+
+  const paidCache = paidCacheCheck();
+  if (paidCache) results.push(paidCache);
 
   const calendarCheck = await calendarIdentityCheck(cfg);
   if (calendarCheck) results.push(calendarCheck);

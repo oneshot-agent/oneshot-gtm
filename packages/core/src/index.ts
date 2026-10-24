@@ -8,6 +8,7 @@ export { backfillDecisionProvenance, LEDGER_SCHEMA_VERSION } from "./ledger-sche
 export * from "./config.ts";
 export * from "./demo.ts";
 export * from "./shared-db.ts";
+export * from "./paid-cache.ts";
 export { isGroupOrWorldAccessible } from "./sqlite-open.ts";
 export * from "./channels.ts";
 export * from "./workspaces.ts";

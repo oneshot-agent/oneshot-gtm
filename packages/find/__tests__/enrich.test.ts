@@ -14,59 +14,57 @@ let throwOnNextCall = false;
 let nextThrowMessage = "rate limited";
 const calls = { enrichProfile: 0, lastEmail: "" };
 
-// Captures every interaction with the cache so cases can assert read/write
-// behavior without spinning up a real SQLite. `cachedRow` is what the next
-// getCachedEnrichment call returns; cases preload it to test the short-circuit.
-const cache = {
-  setCalls: [] as Array<{ key: string; resultJson: string }>,
-  failureCalls: [] as Array<{ key: string; message: string }>,
-  getCalls: [] as string[],
-  cachedRow: null as { result_json: string; fetched_at: string; status?: string | null } | null,
-};
+// enrichProfile runs the real paid cache around a fake purchase, so these
+// cases check what a finder's post-verify enrich reads from and leaves in it.
+vi.mock("@oneshot-gtm/core", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+  return {
+    ...actual,
+    withDeadline: <T>(p: Promise<T>) => p,
+    enrichProfile: (input: { email?: string }, _ctx: unknown, cache?: unknown) =>
+      actual.withPaidCache("enrich.profile", input, cache as never, async () => {
+        calls.enrichProfile++;
+        calls.lastEmail = input.email ?? "";
+        if (throwOnNextCall) {
+          throwOnNextCall = false;
+          throw new Error(nextThrowMessage);
+        }
+        return {
+          result: { status: "completed", profile: nextProfile ?? {}, cost: nextCost },
+          receiptId: 42,
+        };
+      }),
+    logEvent: () => {},
+  };
+});
 
-vi.mock("@oneshot-gtm/core", () => ({
-  ENRICH_CACHE_TTL_MS: 30 * 24 * 3600 * 1000,
-  ENRICH_FAILURE_TTL_MS: 3 * 24 * 3600 * 1000,
-  ENRICH_DEADLINE_MS: 120_000,
-  withDeadline: <T>(p: Promise<T>) => p,
-  enrichProfile: async (input: { email?: string }) => {
-    calls.enrichProfile++;
-    calls.lastEmail = input.email ?? "";
-    if (throwOnNextCall) {
-      throwOnNextCall = false;
-      throw new Error(nextThrowMessage);
-    }
-    return {
-      result: { status: "completed", profile: nextProfile ?? {}, cost: nextCost },
-      receiptId: 42,
-    };
-  },
-  // Mirror the real classifier closely enough for the cases below.
-  isTransientToolError: (err: unknown) => {
-    const m = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
-    return (
-      m.includes("tool execution failed") ||
-      m.includes("timed out") ||
-      m.includes("rate limit") ||
-      /\b50[0-9]\b/.test(m)
-    );
-  },
-  getLedger: () => ({
-    setCachedEnrichment: (key: string, resultJson: string) => {
-      cache.setCalls.push({ key, resultJson });
-    },
-    setCachedEnrichmentFailure: (key: string, message: string) => {
-      cache.failureCalls.push({ key, message });
-    },
-    getCachedEnrichment: (key: string) => {
-      cache.getCalls.push(key);
-      return cache.cachedRow;
-    },
-  }),
-  logEvent: () => {},
-}));
-
+const core = await import("@oneshot-gtm/core");
 const { enrichVerifiedContact } = await import("../src/_enrich.ts");
+
+function seed(
+  email: string,
+  status: "ok" | "failed",
+  ageMs: number,
+  result: unknown = { message: "rate limited" },
+): void {
+  core.getSharedDb().setPaidCache({
+    key: core.paidCacheKey("enrich.profile", { email }),
+    callType: "enrich.profile",
+    status,
+    resultJson: JSON.stringify(result),
+    costUsd: status === "ok" ? 0.005 : null,
+    fetchedAt: new Date(Date.now() - ageMs).toISOString(),
+  });
+}
+
+function stored(email: string) {
+  return core.readPaidCache("enrich.profile", { email });
+}
+
+function storedResult(email: string): unknown {
+  const row = stored(email);
+  return row?.status === "ok" ? row.result : null;
+}
 
 beforeEach(() => {
   calls.enrichProfile = 0;
@@ -75,10 +73,7 @@ beforeEach(() => {
   nextCost = 0.005;
   throwOnNextCall = false;
   nextThrowMessage = "rate limited";
-  cache.setCalls = [];
-  cache.failureCalls = [];
-  cache.getCalls = [];
-  cache.cachedRow = null;
+  core._resetPaidCache();
 });
 
 afterEach(() => {
@@ -160,46 +155,39 @@ describe("enrichVerifiedContact", () => {
 });
 
 /**
- * Locks in the cache write/read contract that makes find→/run avoid
- * double-enriching the same email. If a future contributor inlines
- * enrichProfile without populating cached_enrichments, or removes the
- * cache-read short-circuit, these cases fail.
+ * Locks in the cache contract that makes find→/run avoid double-enriching the
+ * same email: the result is stored for the address, and a warm address is
+ * answered without a purchase.
  */
-describe("enrichVerifiedContact — cache write + read contract", () => {
-  it("writes the enriched result to the cache on success (key + JSON value match safeEnrich)", async () => {
+describe("enrichVerifiedContact — paid cache contract", () => {
+  it("stores the enriched result for the address on success", async () => {
     nextProfile = {
       email: "ada@acme.dev",
       phone: "+1 415-555-0100",
       linkedin_url: "https://www.linkedin.com/in/ada-lovelace",
     };
     await enrichVerifiedContact("  Ada@Acme.dev  ", { playName: "show-hn" });
-    expect(cache.setCalls).toHaveLength(1);
-    expect(cache.setCalls[0]?.key).toBe("ada@acme.dev");
-    // The value MUST be JSON.stringify(enriched.result) so safeEnrich's
-    // read-side (JSON.parse) reconstructs the same shape.
-    expect(JSON.parse(cache.setCalls[0]!.resultJson)).toMatchObject({
+    expect(stored("ada@acme.dev")?.status).toBe("ok");
+    expect(storedResult("ada@acme.dev")).toMatchObject({
       profile: { email: "ada@acme.dev" },
       cost: 0.005,
     });
   });
 
-  it("skips the cache write when enrichProfile throws", async () => {
+  it("stores nothing when enrichProfile throws a transient error", async () => {
     throwOnNextCall = true;
     await enrichVerifiedContact("x@y.dev", { playName: "show-hn" });
-    expect(cache.setCalls).toHaveLength(0);
+    expect(stored("x@y.dev")).toBeNull();
   });
 
-  it("short-circuits to cache when the key is warm (no SDK call)", async () => {
-    cache.cachedRow = {
-      result_json: JSON.stringify({
-        profile: {
-          phone: "+1 555-9999",
-          linkedin_url: "https://www.linkedin.com/in/cached-person",
-        },
-        cost: 0.005,
-      }),
-      fetched_at: new Date().toISOString(),
-    };
+  it("short-circuits to the cache when the address is warm (no SDK call)", async () => {
+    seed("warm@x.dev", "ok", 0, {
+      profile: {
+        phone: "+1 555-9999",
+        linkedin_url: "https://www.linkedin.com/in/cached-person",
+      },
+      cost: 0.005,
+    });
     const r = await enrichVerifiedContact("warm@x.dev", { playName: "show-hn" });
     expect(calls.enrichProfile).toBe(0);
     expect(r.phone).toBe("+1 555-9999");
@@ -210,58 +198,67 @@ describe("enrichVerifiedContact — cache write + read contract", () => {
     expect(r.receiptId).toBeNull();
   });
 
-  it("falls through to SDK when the cache row is older than the TTL", async () => {
-    // 31 days old > 30-day TTL
-    const ttlPlusOneDayMs = 31 * 24 * 3600 * 1000;
-    cache.cachedRow = {
-      result_json: JSON.stringify({
-        profile: { phone: "+1 555-0000" },
-        cost: 0.005,
+  it("is answered by a by-LinkedIn enrich that surfaced the same email", async () => {
+    await core.withPaidCache(
+      "enrich.profile",
+      { linkedinUrl: "https://www.linkedin.com/in/surfaced" },
+      undefined,
+      async () => ({
+        result: {
+          status: "completed",
+          profile: { email: "Surfaced@Acme.dev", phone: "+1 555-3333" },
+          cost: 0.005,
+        },
+        receiptId: 1,
       }),
-      fetched_at: new Date(Date.now() - ttlPlusOneDayMs).toISOString(),
-    };
+    );
+    const r = await enrichVerifiedContact("surfaced@acme.dev", { playName: "show-hn" });
+    expect(calls.enrichProfile).toBe(0);
+    expect(r.phone).toBe("+1 555-3333");
+    expect(r.costUsd).toBe(0);
+  });
+
+  it("falls through to the SDK when the stored result is older than 30 days", async () => {
+    seed("stale@x.dev", "ok", 31 * 24 * 3600 * 1000, {
+      profile: { phone: "+1 555-0000" },
+      cost: 0.005,
+    });
     nextProfile = { phone: "+1 555-7777" };
     const r = await enrichVerifiedContact("stale@x.dev", { playName: "show-hn" });
     expect(calls.enrichProfile).toBe(1);
-    // Fresh result, not the stale cached one.
+    // Fresh result, not the stale cached one, and it replaces the old row.
     expect(r.phone).toBe("+1 555-7777");
-    // Fresh result → fresh cache write.
-    expect(cache.setCalls).toHaveLength(1);
+    expect(storedResult("stale@x.dev")).toMatchObject({ profile: { phone: "+1 555-7777" } });
   });
 });
 
+const EMPTY = {
+  phone: null,
+  linkedinUrl: null,
+  title: null,
+  summary: null,
+  costUsd: 0,
+  receiptId: null,
+};
+
 describe("enrichVerifiedContact — negative caching", () => {
-  it("writes a failure entry for a GENUINE no-data failure", async () => {
+  it("remembers a GENUINE no-data failure", async () => {
     throwOnNextCall = true;
     nextThrowMessage = "no profile data for this person";
     const r = await enrichVerifiedContact("boom@x.dev", { playName: "show-hn" });
-    expect(r).toEqual({
-      phone: null,
-      linkedinUrl: null,
-      title: null,
-      summary: null,
-      costUsd: 0,
-      receiptId: null,
+    expect(r).toEqual(EMPTY);
+    expect(stored("boom@x.dev")).toMatchObject({
+      status: "failed",
+      message: "no profile data for this person",
     });
-    expect(cache.failureCalls).toEqual([
-      { key: "boom@x.dev", message: "no profile data for this person" },
-    ]);
-    expect(cache.setCalls).toHaveLength(0); // no success row written
   });
 
   it("does NOT negative-cache a TRANSIENT platform error (so it retries after recovery)", async () => {
     throwOnNextCall = true;
     nextThrowMessage = "Job failed: Tool execution failed. (ref: abc)";
     const r = await enrichVerifiedContact("outage@x.dev", { playName: "show-hn" });
-    expect(r).toEqual({
-      phone: null,
-      linkedinUrl: null,
-      title: null,
-      summary: null,
-      costUsd: 0,
-      receiptId: null,
-    });
-    expect(cache.failureCalls).toHaveLength(0); // NOT poisoned
+    expect(r).toEqual(EMPTY);
+    expect(stored("outage@x.dev")).toBeNull(); // NOT poisoned
     // Next call (platform recovered) re-attempts: nothing suppressing it.
     nextProfile = { phone: "+1 555-2222" };
     const r2 = await enrichVerifiedContact("outage@x.dev", { playName: "show-hn" });
@@ -269,33 +266,18 @@ describe("enrichVerifiedContact — negative caching", () => {
   });
 
   it("a fresh failed entry skips the SDK entirely", async () => {
-    cache.cachedRow = {
-      result_json: JSON.stringify({ failed: true, message: "rate limited" }),
-      fetched_at: new Date(Date.now() - 60_000).toISOString(), // 1 min ago
-      status: "failed",
-    };
+    seed("boom@x.dev", "failed", 60_000); // 1 min ago
     const r = await enrichVerifiedContact("boom@x.dev", { playName: "show-hn" });
     expect(calls.enrichProfile).toBe(0);
-    expect(r).toEqual({
-      phone: null,
-      linkedinUrl: null,
-      title: null,
-      summary: null,
-      costUsd: 0,
-      receiptId: null,
-    });
+    expect(r).toEqual(EMPTY);
   });
 
   it("an expired failed entry retries the SDK", async () => {
-    cache.cachedRow = {
-      result_json: JSON.stringify({ failed: true, message: "rate limited" }),
-      fetched_at: new Date(Date.now() - 4 * 24 * 3600 * 1000).toISOString(), // 4 days > 3d TTL
-      status: "failed",
-    };
+    seed("boom@x.dev", "failed", 4 * 24 * 3600 * 1000); // 4 days > 3d
     nextProfile = { phone: "+1 555-1234" };
     const r = await enrichVerifiedContact("boom@x.dev", { playName: "show-hn" });
     expect(calls.enrichProfile).toBe(1);
     expect(r.phone).toBe("+1 555-1234");
-    expect(cache.setCalls).toHaveLength(1); // success overwrites the failure
+    expect(stored("boom@x.dev")?.status).toBe("ok"); // success overwrites the failure
   });
 });

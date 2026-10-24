@@ -191,7 +191,10 @@ export async function directMailRoute(req: Request): Promise<Response> {
       }
       if (action === "research-address") {
         const prospect = ledger.getProspectById(input.prospectId);
-        const result = await researchBusinessAddress({ ...prospect }, input.playName);
+        // The founder asked for this lookup: buy it again rather than reuse a cached miss.
+        const result = await researchBusinessAddress({ ...prospect }, input.playName, undefined, {
+          fresh: true,
+        });
         if (result.address && !ledger.getMailAddress(`prospect:${input.prospectId}`))
           ledger.setMailAddress(`prospect:${input.prospectId}`, result.address, result.source);
         return jsonResponse(

@@ -936,17 +936,9 @@ async function resolveAndEnqueueLumaAttendee(
         resolvedCompany = profile?.company ?? null;
         // Free title: this call is already paid for above.
         profileTitle = typeof profile?.title === "string" ? profile.title.trim() : null;
+        // The paid cache files this result under the surfaced email too, so
+        // the later by-email enrich of the same person is free.
         surfacedEmail = profile?.best_work_email ?? profile?.email ?? null;
-        if (surfacedEmail) {
-          try {
-            ledger.setCachedEnrichment(
-              surfacedEmail.trim().toLowerCase(),
-              JSON.stringify(enr.result),
-            );
-          } catch {
-            // cache write is best-effort
-          }
-        }
       } catch (err) {
         logEvent(
           "error.swallowed",

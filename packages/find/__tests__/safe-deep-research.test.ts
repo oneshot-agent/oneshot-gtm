@@ -1,20 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Caching + failure contract for safeDeepResearchPerson. This call is the most
+// Failure contract for safeDeepResearchPerson. This call is the most
 // expensive and slowest in the toolbox (~$0.05, 2-5 min), so the rules that
 // matter are: never re-buy a cached person, never hang forever, and never
 // negative-cache a transient error (which would make someone un-researchable
-// for the whole failure TTL after the platform recovers).
+// for the whole failure window after the platform recovers). The caching
+// itself is the paid cache's under the wrapper; the mock below runs the real
+// one around a fake purchase.
 
 const calls = { deepResearchPerson: 0 };
 let behaviour: "ok" | "throw" | "hang" = "ok";
 let thrownMessage = "no data for this person";
-
-const cache = {
-  setCalls: [] as Array<{ key: string }>,
-  failureCalls: [] as Array<{ key: string; message: string }>,
-  cachedRow: null as { result_json: string; fetched_at: string; status?: string | null } | null,
-};
+const logged: string[] = [];
 
 const RESULT = {
   status: "completed",
@@ -29,137 +26,150 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     // A short deadline keeps the "hang" case fast; the production constant is 6 min.
     RESEARCH_DEADLINE_MS: 25,
-    deepResearchPerson: async () => {
-      calls.deepResearchPerson++;
-      if (behaviour === "throw") throw new Error(thrownMessage);
-      if (behaviour === "hang") await new Promise((r) => setTimeout(r, 200));
-      return { result: RESULT, receiptId: 9 };
+    deepResearchPerson: (input: unknown, _ctx: unknown, cache?: unknown) =>
+      actual.withPaidCache("research.person", input, cache as never, async () => {
+        calls.deepResearchPerson++;
+        if (behaviour === "throw") throw new Error(thrownMessage);
+        if (behaviour === "hang") await new Promise((r) => setTimeout(r, 200));
+        return { result: RESULT, receiptId: 9 };
+      }),
+    logEvent: (name: string) => {
+      logged.push(name);
     },
-    logEvent: () => {},
-    getLedger: () => ({
-      getCachedEnrichment: () => cache.cachedRow,
-      setCachedEnrichment: (key: string) => cache.setCalls.push({ key }),
-      setCachedEnrichmentFailure: (key: string, message: string) =>
-        cache.failureCalls.push({ key, message }),
-    }),
   };
 });
 
-const { safeDeepResearchPerson, personCacheKey } = await import("../src/_sdk-safe.ts");
+const core = await import("@oneshot-gtm/core");
+const { safeDeepResearchPerson, hasCachedResearch } = await import("../src/_sdk-safe.ts");
 
 const CTX = { playName: "test-play" };
+const PAT = { socialMediaUrl: "https://github.com/pat" };
+
+function stored(input: unknown) {
+  return core.readPaidCache("research.person", input);
+}
+
+function seed(input: unknown, status: "ok" | "failed", ageMs = 0, resultJson?: string): void {
+  core.getSharedDb().setPaidCache({
+    key: core.paidCacheKey("research.person", input),
+    callType: "research.person",
+    status,
+    resultJson:
+      resultJson ?? (status === "ok" ? JSON.stringify(RESULT) : JSON.stringify({ message: "x" })),
+    costUsd: status === "ok" ? 0.05 : null,
+    fetchedAt: new Date(Date.now() - ageMs).toISOString(),
+  });
+}
 
 beforeEach(() => {
   calls.deepResearchPerson = 0;
   behaviour = "ok";
   thrownMessage = "no data for this person";
-  cache.setCalls = [];
-  cache.failureCalls = [];
-  cache.cachedRow = null;
+  logged.length = 0;
+  core._resetPaidCache();
 });
 
 afterEach(() => vi.clearAllMocks());
 
-describe("personCacheKey", () => {
-  it("prefers the social URL — it identifies a person more precisely than an email", () => {
-    expect(personCacheKey({ socialMediaUrl: "https://GitHub.com/Pat", email: "pat@x.dev" })).toBe(
-      "person:https://github.com/pat",
-    );
-  });
-
-  it("falls back to the email, and is null when neither is usable", () => {
-    expect(personCacheKey({ email: "Pat@X.dev" })).toBe("person:pat@x.dev");
-    expect(personCacheKey({ name: "Pat" })).toBeNull();
-    expect(personCacheKey({ socialMediaUrl: "  " })).toBeNull();
-  });
-});
-
 describe("safeDeepResearchPerson", () => {
-  it("caches a successful research under the person key", async () => {
-    const out = await safeDeepResearchPerson({ socialMediaUrl: "https://github.com/pat" }, CTX);
+  it("stores a successful research for the person", async () => {
+    const out = await safeDeepResearchPerson(PAT, CTX);
     expect(out.receiptId).toBe(9);
     expect(calls.deepResearchPerson).toBe(1);
-    expect(cache.setCalls).toEqual([{ key: "person:https://github.com/pat" }]);
+    expect(stored(PAT)?.status).toBe("ok");
+    // The URL names the person whatever else the input carries.
+    expect(hasCachedResearch({ socialMediaUrl: "https://GitHub.com/Pat", name: "Pat" })).toBe(true);
   });
 
   it("serves a fresh cache hit for free — no SDK call, receiptId 0", async () => {
-    cache.cachedRow = { result_json: JSON.stringify(RESULT), fetched_at: new Date().toISOString() };
-    const out = await safeDeepResearchPerson({ socialMediaUrl: "https://github.com/pat" }, CTX);
+    seed(PAT, "ok");
+    const out = await safeDeepResearchPerson(PAT, CTX);
     expect(calls.deepResearchPerson).toBe(0);
     expect(out.receiptId).toBe(0);
     expect(out.result.status).toBe("completed");
+    expect(out.result.cost).toBe(0);
   });
 
-  it("refetches past the 90d TTL", async () => {
-    cache.cachedRow = {
-      result_json: JSON.stringify(RESULT),
-      fetched_at: new Date(Date.now() - 91 * 24 * 3600 * 1000).toISOString(),
-    };
-    await safeDeepResearchPerson({ socialMediaUrl: "https://github.com/pat" }, CTX);
+  it("refetches past the 90d expiry", async () => {
+    seed(PAT, "ok", 91 * 24 * 3600 * 1000);
+    await safeDeepResearchPerson(PAT, CTX);
     expect(calls.deepResearchPerson).toBe(1);
   });
 
   it("refetches through a corrupt cache row instead of throwing", async () => {
-    cache.cachedRow = { result_json: "{not json", fetched_at: new Date().toISOString() };
-    const out = await safeDeepResearchPerson({ socialMediaUrl: "https://github.com/pat" }, CTX);
+    seed(PAT, "ok", 0, "{not json");
+    const out = await safeDeepResearchPerson(PAT, CTX);
     expect(calls.deepResearchPerson).toBe(1);
     expect(out.result.status).toBe("completed");
   });
 
-  it("honours a negative cache entry without re-buying", async () => {
-    cache.cachedRow = {
-      result_json: JSON.stringify({ failed: true }),
-      fetched_at: new Date().toISOString(),
-      status: "failed",
-    };
-    const out = await safeDeepResearchPerson({ socialMediaUrl: "https://github.com/pat" }, CTX);
+  it("honours a negative cache entry without re-buying or logging a new error", async () => {
+    seed(PAT, "failed");
+    const out = await safeDeepResearchPerson(PAT, CTX);
     expect(calls.deepResearchPerson).toBe(0);
     expect(out.result.status).toBe("failed");
     expect(out.receiptId).toBe(0);
+    expect(logged).not.toContain("error.swallowed");
+  });
+
+  it("cacheOnly answers from the cache or not at all", async () => {
+    const miss = await safeDeepResearchPerson(PAT, CTX, { cacheOnly: true });
+    expect(miss.result.status).toBe("failed");
+    expect(calls.deepResearchPerson).toBe(0);
+    expect(logged).not.toContain("error.swallowed");
+    seed(PAT, "ok");
+    const hit = await safeDeepResearchPerson(PAT, CTX, { cacheOnly: true });
+    expect(hit.result.status).toBe("completed");
+    expect(calls.deepResearchPerson).toBe(0);
+    // No URL and no email: nothing to look up, cached or not.
+    const none = await safeDeepResearchPerson({ name: "Pat" }, CTX, { cacheOnly: true });
+    expect(none.result.status).toBe("failed");
   });
 
   it("negative-caches a GENUINE failure and returns the sentinel, never throwing", async () => {
     behaviour = "throw";
-    const out = await safeDeepResearchPerson({ socialMediaUrl: "https://github.com/pat" }, CTX);
+    const out = await safeDeepResearchPerson(PAT, CTX);
     expect(out.result.status).toBe("failed");
     expect(out.result.cost).toBe(0);
     expect(out.receiptId).toBe(0);
-    expect(cache.failureCalls).toEqual([
-      { key: "person:https://github.com/pat", message: "no data for this person" },
-    ]);
+    expect(logged).toContain("error.swallowed");
+    expect(stored(PAT)).toMatchObject({ status: "failed", message: "no data for this person" });
   });
 
   it("does NOT negative-cache a transient error", async () => {
     behaviour = "throw";
     thrownMessage = "tool execution failed";
-    const out = await safeDeepResearchPerson({ socialMediaUrl: "https://github.com/pat" }, CTX);
+    const out = await safeDeepResearchPerson(PAT, CTX);
     expect(out.result.status).toBe("failed");
-    expect(cache.failureCalls).toEqual([]);
+    expect(stored(PAT)).toBeNull();
   });
 
   it("treats a deadline breach as transient — no negative cache", async () => {
     behaviour = "hang";
-    const out = await safeDeepResearchPerson({ socialMediaUrl: "https://github.com/pat" }, CTX);
+    const out = await safeDeepResearchPerson({ socialMediaUrl: "https://github.com/slow" }, CTX);
     expect(out.result.status).toBe("failed");
-    expect(cache.failureCalls).toEqual([]);
+    expect(
+      core.readPaidCache("research.person", { socialMediaUrl: "https://github.com/slow" }),
+    ).toBeNull();
+    // Let the abandoned purchase settle before the next test resets the cache.
+    await new Promise((r) => setTimeout(r, 250));
   });
 
   it("still caches a call that settles AFTER the deadline — it was paid for", async () => {
     behaviour = "hang";
-    // Distinct key: the previous hang test's abandoned promise also settles
-    // during the wait below, so the assertion has to be attributable.
-    const key = "person:https://github.com/late";
-    await safeDeepResearchPerson({ socialMediaUrl: "https://github.com/late" }, CTX);
-    expect(cache.setCalls.map((c) => c.key)).not.toContain(key);
-    // The abandoned promise keeps running; its cache write lands when it settles.
+    const late = { socialMediaUrl: "https://github.com/late" };
+    const out = await safeDeepResearchPerson(late, CTX);
+    expect(out.result.status).toBe("failed");
+    expect(stored(late)).toBeNull();
+    // The abandoned promise keeps running; the cache stores it when it settles.
     await new Promise((r) => setTimeout(r, 250));
-    expect(cache.setCalls.map((c) => c.key)).toContain(key);
+    expect(stored(late)?.status).toBe("ok");
   });
 
-  it("runs uncached when there is no key to cache under", async () => {
-    const out = await safeDeepResearchPerson({ name: "Pat" }, CTX);
+  it("buys again under `fresh` even when a result is cached", async () => {
+    seed(PAT, "ok");
+    const out = await safeDeepResearchPerson(PAT, CTX, { fresh: true });
     expect(calls.deepResearchPerson).toBe(1);
     expect(out.receiptId).toBe(9);
-    expect(cache.setCalls).toEqual([]);
   });
 });

@@ -234,12 +234,9 @@ const DEFAULT_DB_PATH = join(configDir(), "ledger.sqlite");
 
 // Re-export cache constants for the Ledger public API.
 export {
-  ENRICH_CACHE_TTL_MS,
   ENRICH_DEADLINE_MS,
-  ENRICH_FAILURE_TTL_MS,
   LINKEDIN_CACHE_TTL_MS,
   LINKEDIN_MISS_TTL_MS,
-  RESEARCH_CACHE_TTL_MS,
   RESEARCH_DEADLINE_MS,
 } from "./ledger-cache.ts";
 
@@ -1368,12 +1365,6 @@ export class Ledger {
   /** Trim pre-slimming receipt payloads (see `slimReceiptPayload`). Dry run unless `apply`. */
   compactReceiptPayloads(opts: { apply: boolean }): ReceiptCompaction {
     return this.receipts.compactPayloads(opts);
-  }
-
-  findContactReceipt(
-    input: { email: string } | { fullName: string; companyDomain: string },
-  ): ReceiptRecord | null {
-    return this.receipts.findContactReceipt(input);
   }
 
   listReceipts(

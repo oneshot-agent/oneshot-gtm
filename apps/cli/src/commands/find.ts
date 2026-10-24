@@ -12,6 +12,7 @@ import {
   describeGuardCounts,
   linkedInOutreachAccount,
   linkedInSdk,
+  paidCacheStats,
 } from "@oneshot-gtm/core";
 import {
   bail,
@@ -61,6 +62,35 @@ export async function commandFindImport(opts: {
 
   if (opts.failOnEmpty && result.imported === 0) {
     bailEmpty(`find import ${opts.csv}: 0 rows imported`);
+  }
+}
+
+const pct = (s: number | null) => (s === null ? "-" : `${Math.round(s * 100)}%`);
+
+/**
+ * Per call type, over the last `days` and across every workspace: lookups the
+ * paid cache answered, the dollars that saved, and what was bought instead.
+ */
+export async function commandFindCacheStats(opts: { days: number; json?: boolean }): Promise<void> {
+  setJsonMode(opts.json ?? false);
+  const days = Number.isFinite(opts.days) && opts.days > 0 ? Math.floor(opts.days) : 7;
+  const stats = paidCacheStats(days);
+  if (opts.json) {
+    await emitJson({ command: "find cache-stats", days, callTypes: stats });
+    return;
+  }
+  header(`paid lookup cache, last ${days} days, all workspaces`);
+  if (stats.length === 0) {
+    note("No paid lookups in this window.");
+    return;
+  }
+  human(
+    `${"call type".padEnd(22)} ${"hits".padStart(6)} ${"saved".padStart(9)} ${"bought".padStart(7)} ${"spent".padStart(9)} ${"from cache".padStart(10)}\n`,
+  );
+  for (const s of stats) {
+    human(
+      `${s.callType.padEnd(22)} ${String(s.hits).padStart(6)} ${`$${s.savedUsd.toFixed(2)}`.padStart(9)} ${String(s.purchases).padStart(7)} ${`$${s.spentUsd.toFixed(2)}`.padStart(9)} ${pct(s.servedShare).padStart(10)}\n`,
+    );
   }
 }
 

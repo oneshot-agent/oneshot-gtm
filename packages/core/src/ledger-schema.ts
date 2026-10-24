@@ -1058,7 +1058,7 @@ export function migrateLedgerSchema(db: Database): void {
   // Keyed by email, NOT prospect_id: some sends predate the prospect row.
   addColumnIfMissing(db, "receipts", "sender_identity", "TEXT");
   // v12: negative enrichment caching. NULL/"ok" = success, "failed" = skip
-  // retries within ENRICH_FAILURE_TTL_MS instead of re-paying ~70s timeouts.
+  // retries within the failure window instead of re-paying ~70s timeouts.
   addColumnIfMissing(db, "enrichment_cache", "status", "TEXT");
   db.exec(`
       CREATE TABLE IF NOT EXISTS sender_assignments (

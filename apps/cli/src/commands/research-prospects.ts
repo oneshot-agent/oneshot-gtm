@@ -47,6 +47,8 @@ export interface ResearchProspectsOpts {
   concurrency?: number;
   /** Re-research rows that already hold a dossier. */
   refresh: boolean;
+  /** Buy research and posts again even when the paid cache holds them (bills). */
+  rebuy?: boolean;
   scope?: string;
   /** Research exactly this prospect, ignoring scope and dossier state. */
   id?: number;
@@ -226,7 +228,7 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
     });
     const remainingUsd =
       opts.maxCostUsd != null ? Math.max(0, opts.maxCostUsd - costUsd) : Number.POSITIVE_INFINITY;
-    // Share person:<url> cache entries with angle gathering and queue research.
+    // The paid cache shares each purchase with angle gathering and queue research.
     const researched = await researchPerson({
       seed,
       playName: "research-prospects",
@@ -235,6 +237,8 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
       enrichCompany: !opts.noCompany,
       liveProfile: !opts.noLive,
       ...(opts.cacheOnly ? { cacheOnly: true } : {}),
+      // `--rebuy` buys the research again instead of re-deriving from the cache.
+      ...(opts.rebuy && !opts.cacheOnly ? { fresh: true } : {}),
     });
     if (researched.notCached) {
       notCached++;
@@ -316,6 +320,7 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
   if (items.length === 0) return;
   const newsfeed = await runNewsfeedPass(items, {
     ...(opts.cacheOnly ? { cacheOnly: true } : {}),
+    ...(opts.rebuy ? { fresh: true } : {}),
     ...(opts.maxCostUsd != null ? { maxCostUsd: opts.maxCostUsd } : {}),
     spentUsd: costUsd,
   });
@@ -377,6 +382,7 @@ async function prospectNewsfeedOnly(
   }
   const tally = await runNewsfeedPass(selected, {
     ...(opts.cacheOnly ? { cacheOnly: true } : {}),
+    ...(opts.rebuy ? { fresh: true } : {}),
     ...(opts.maxCostUsd != null ? { maxCostUsd: opts.maxCostUsd } : {}),
   });
   process.stdout.write("\n");

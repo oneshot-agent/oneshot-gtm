@@ -1,13 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// The dossier route only reads caches: full research by the person key it was
-// bought under, newsfeed posts by profile URL. It never buys anything.
+// The dossier route only reads the paid cache: full research by the input it
+// was bought with, newsfeed posts by profile URL. It never buys anything.
 
-const cache = new Map<string, { result_json: string; fetched_at: string; status: string | null }>();
 const rows = new Map<number, { payload_json: string }>();
 const ledger = {
   getQueueRow: vi.fn((id: number) => rows.get(id) ?? null),
-  getCachedEnrichment: vi.fn((key: string) => cache.get(key) ?? null),
 };
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -17,6 +15,23 @@ vi.mock("@oneshot-gtm/core", async () => {
 
 const { buildQueueDossier, mergePosts, queueDossierRoute } =
   await import("../src/api/queue-dossier.ts");
+const core = await import("@oneshot-gtm/core");
+
+/** Put a purchase (or a negative entry) in the paid cache. */
+function seed(
+  callType: "research.person" | "research.newsfeed",
+  input: Record<string, string>,
+  resultJson: string,
+  status: "ok" | "failed" = "ok",
+): void {
+  core.getSharedDb().setPaidCache({
+    key: core.paidCacheKey(callType, input),
+    callType,
+    status,
+    resultJson,
+    costUsd: null,
+  });
+}
 
 const LI = "https://www.linkedin.com/in/ada-l";
 const now = new Date().toISOString();
@@ -75,13 +90,13 @@ const payload = {
 };
 
 beforeEach(() => {
-  cache.clear();
+  core._resetPaidCache();
   rows.clear();
 });
 
 describe("buildQueueDossier", () => {
   it("returns the full cached research, not the bounded summary", () => {
-    cache.set(`person:${LI}`, { result_json: research(), fetched_at: now, status: null });
+    seed("research.person", { socialMediaUrl: LI }, research());
     const d = buildQueueDossier(payload);
     expect(d.status).toBe("complete");
     expect(d.person.summary).toBe("Builds the platform every business unit ships agents on.");
@@ -96,9 +111,11 @@ describe("buildQueueDossier", () => {
   });
 
   it("merges research posts with the newsfeed capture, deduped, newest first", () => {
-    cache.set(`person:${LI}`, { result_json: research(), fetched_at: now, status: null });
-    cache.set(`newsfeed:${LI}`, {
-      result_json: JSON.stringify({
+    seed("research.person", { socialMediaUrl: LI }, research());
+    seed(
+      "research.newsfeed",
+      { socialMediaUrl: LI },
+      JSON.stringify({
         result: [
           { url: "https://x.example/p/3", content: "Newest", posted_at: "2026-09-20T00:00:00Z" },
           {
@@ -109,9 +126,7 @@ describe("buildQueueDossier", () => {
           { content: "RT @someone: their words", posted_at: "2026-09-10T00:00:00Z" },
         ],
       }),
-      fetched_at: now,
-      status: null,
-    });
+    );
     const d = buildQueueDossier(payload);
     expect(d.posts.map((p) => p.content)).toEqual([
       "Newest",
@@ -142,12 +157,8 @@ describe("buildQueueDossier", () => {
   });
 
   it("ignores a failed research entry and finds research by email", () => {
-    cache.set(`person:${LI}`, { result_json: "{}", fetched_at: now, status: "failed" });
-    cache.set("person:ada@engines.example", {
-      result_json: research(),
-      fetched_at: now,
-      status: null,
-    });
+    seed("research.person", { socialMediaUrl: LI }, "{}", "failed");
+    seed("research.person", { email: "ada@engines.example" }, research());
     expect(buildQueueDossier(payload).person.fullName).toBe("Ada Lovelace");
   });
 

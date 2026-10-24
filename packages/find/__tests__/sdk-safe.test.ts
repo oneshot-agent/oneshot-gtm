@@ -10,17 +10,27 @@ let verifyThrow = false;
 let peopleSearchThrow = false;
 let companySearchThrow = false;
 let enrichCompanyThrow = false;
+// When set, findEmail/verifyEmail reject with this instead (the paid cache's own answers).
+let cacheError: Error | null = null;
+const cacheArgs: unknown[] = [];
+const logged: string[] = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
-    logEvent: () => {},
-    findEmail: async () => {
+    logEvent: (name: string) => {
+      logged.push(name);
+    },
+    findEmail: async (_input: unknown, _ctx: unknown, cache?: unknown) => {
+      cacheArgs.push(cache);
+      if (cacheError) throw cacheError;
       if (findThrow) throw new Error("Job 035ebe1e timed out after 121");
       return { result: { status: "ok", email: "a@b.com", found: true, cost: 0.005 }, receiptId: 7 };
     },
-    verifyEmail: async () => {
+    verifyEmail: async (_input: unknown, _ctx: unknown, cache?: unknown) => {
+      cacheArgs.push(cache);
+      if (cacheError) throw cacheError;
       if (verifyThrow) throw new Error("Job 035ebe1e timed out after 121");
       return {
         result: {
@@ -160,43 +170,49 @@ describe("safeEnrichCompany", () => {
   });
 });
 
-it("reuses saved misses and verification results without new spend", async () => {
-  const { getLedger } = await import("@oneshot-gtm/core");
-  const saved = vi.spyOn(getLedger(), "findContactReceipt");
-  findThrow = true;
-  verifyThrow = true;
-  try {
-    saved.mockReturnValue({
-      id: 91,
-      signed_receipt: JSON.stringify({
-        status: "completed",
-        found: false,
-        email: null,
-        cost: 0.005,
-      }),
-    } as ReturnType<ReturnType<typeof getLedger>["findContactReceipt"]>);
-    expect(
-      await safeFindEmail(
-        { fullName: "Pat Lee", companyDomain: "example.com" },
-        { playName: "test" },
-      ),
-    ).toMatchObject({ receiptId: 91, result: { found: false, status: "completed", cost: 0 } });
-    expect(saved).toHaveBeenCalledWith({ fullName: "Pat Lee", companyDomain: "example.com" });
-    saved.mockReturnValue({
-      id: 92,
-      signed_receipt: JSON.stringify({
-        status: "completed",
-        email: "pat@example.com",
-        deliverable: true,
-        cost: 0.005,
-      }),
-    } as ReturnType<ReturnType<typeof getLedger>["findContactReceipt"]>);
-    expect(await safeVerifyEmail({ email: "pat@example.com" }, { playName: "test" })).toMatchObject(
-      { receiptId: 92, result: { deliverable: true, cost: 0 } },
+describe("the paid cache under the wrappers", () => {
+  it("passes the caller's cache options through to the wrapper", async () => {
+    cacheArgs.length = 0;
+    await safeFindEmail(
+      { companyDomain: "b.com", fullName: "A" },
+      { playName: "t" },
+      { cacheOnly: true },
     );
-  } finally {
-    saved.mockRestore();
-    findThrow = false;
-    verifyThrow = false;
-  }
+    await safeVerifyEmail({ email: "a@b.com" }, { playName: "t" }, { fresh: true });
+    expect(cacheArgs).toEqual([{ cacheOnly: true }, { fresh: true }]);
+  });
+
+  it("a remembered failure or a cache-only miss is the drop sentinel, with no error logged", async () => {
+    const { CachedPaidFailureError, PaidCacheMissError } = await import("@oneshot-gtm/core");
+    try {
+      for (const err of [
+        new CachedPaidFailureError("no such person", new Date().toISOString()),
+        new PaidCacheMissError("email.find"),
+      ]) {
+        cacheError = err;
+        logged.length = 0;
+        const found = await safeFindEmail(
+          { companyDomain: "b.com", fullName: "A" },
+          { playName: "t" },
+        );
+        expect(found).toMatchObject({ receiptId: 0, result: { found: false, cost: 0 } });
+        const verified = await safeVerifyEmail({ email: "a@b.com" }, { playName: "t" });
+        expect(verified).toMatchObject({ receiptId: 0, result: { deliverable: false, cost: 0 } });
+        expect(logged).not.toContain("error.swallowed");
+      }
+    } finally {
+      cacheError = null;
+    }
+  });
+
+  it("a genuine throw is logged as swallowed", async () => {
+    logged.length = 0;
+    findThrow = true;
+    try {
+      await safeFindEmail({ companyDomain: "b.com", fullName: "A" }, { playName: "t" });
+      expect(logged).toContain("error.swallowed");
+    } finally {
+      findThrow = false;
+    }
+  });
 });

@@ -1,9 +1,11 @@
 import {
   FREEMAIL_DOMAINS,
   getLedger,
+  readPaidCache,
   readPersonHalf,
   demoDayOf,
   type LinkedInOperation,
+  withPaidCache,
 } from "@oneshot-gtm/core";
 import { complete } from "@oneshot-gtm/intel";
 
@@ -330,9 +332,6 @@ export function verifiedFounderCompany(
 // Live read (once per prospect per cadence)
 // ---------------------------------------------------------------------------
 
-const LIVE_CACHE_PREFIX = "linkedin-profile:";
-const LIVE_CACHE_TTL_MS = 30 * DAY;
-
 /** Reads a profile live (the connected account's silent profile view). */
 export type LiveProfileReader = (url: string) => Promise<LiveProfileSnapshot | null>;
 
@@ -463,58 +462,40 @@ export function profileViewReader(input: {
   };
 }
 
-// Same normalisation as the stored read's cache key (packages/find/src/_linkedin-profile.ts).
-function liveCacheKey(value: string): string {
-  let norm = value.trim().toLowerCase();
-  try {
-    const url = new URL(value.trim());
-    url.hash = "";
-    url.search = "";
-    url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
-    norm = url.toString().replace(/\/$/, "").toLowerCase();
-  } catch {
-    // keep the trimmed value
-  }
-  return `${LIVE_CACHE_PREFIX}${norm}`;
+/** A stored read as the snapshot the note and messages use: headline and Experience list. */
+function snapshotFrom(value: unknown): LiveProfileSnapshot | null {
+  const p = record(value);
+  if (!p) return null;
+  const experience = (Array.isArray(p["experience"]) ? p["experience"] : [])
+    .filter((e): e is Record<string, unknown> => !!e && typeof e === "object")
+    .map((e) => {
+      const item: { company: string; title?: string; period?: string } = {
+        company: typeof e["company"] === "string" ? e["company"] : "",
+      };
+      if (typeof e["title"] === "string") item.title = e["title"];
+      if (typeof e["period"] === "string") item.period = e["period"];
+      return item;
+    })
+    .filter((e) => e.company);
+  const headline = p["headline"];
+  return {
+    ...(typeof headline === "string" && headline ? { headline } : {}),
+    experience,
+  };
 }
 
-/** Where a silent profile view is kept, so the cadence's later steps reuse it across runs. */
-const VIEW_CACHE_PREFIX = "linkedin-view:";
-
+/**
+ * A read already bought for this profile, in the paid cache: person
+ * research's full read first, else an earlier silent view.
+ */
 function storedLiveProfile(url: string, now: Date): LiveProfileSnapshot | null {
-  const key = liveCacheKey(url);
-  return (
-    readStored(key, now) ?? readStored(VIEW_CACHE_PREFIX + key.slice(LIVE_CACHE_PREFIX.length), now)
-  );
-}
-
-function readStored(key: string, now: Date): LiveProfileSnapshot | null {
-  try {
-    const cached = getLedger().getCachedEnrichment(key);
-    if (!cached || cached.status === "failed") return null;
-    if (now.getTime() - new Date(cached.fetched_at).getTime() >= LIVE_CACHE_TTL_MS) return null;
-    const p = JSON.parse(cached.result_json) as {
-      headline?: unknown;
-      experience?: unknown;
-    };
-    const experience = (Array.isArray(p.experience) ? p.experience : [])
-      .filter((e): e is Record<string, unknown> => !!e && typeof e === "object")
-      .map((e) => {
-        const item: { company: string; title?: string; period?: string } = {
-          company: typeof e["company"] === "string" ? e["company"] : "",
-        };
-        if (typeof e["title"] === "string") item.title = e["title"];
-        if (typeof e["period"] === "string") item.period = e["period"];
-        return item;
-      })
-      .filter((e) => e.company);
-    return {
-      ...(typeof p.headline === "string" && p.headline ? { headline: p.headline } : {}),
-      experience,
-    };
-  } catch {
-    return null;
+  for (const callType of ["linkedin.profile_read", "linkedin.profile"] as const) {
+    const entry = readPaidCache(callType, { url }, { now: now.getTime() });
+    if (entry?.status !== "ok") continue;
+    const snapshot = snapshotFrom(entry.result);
+    if (snapshot) return snapshot;
   }
+  return null;
 }
 
 /**
@@ -541,18 +522,13 @@ export function liveProfileFor(
     if (stored) return stored;
     if (!reader) return null;
     try {
-      const snapshot = await reader(url);
-      if (snapshot) {
-        try {
-          getLedger().setCachedEnrichment(
-            VIEW_CACHE_PREFIX + liveCacheKey(url).slice(LIVE_CACHE_PREFIX.length),
-            JSON.stringify(snapshot),
-          );
-        } catch {
-          // the in-process memo still holds
-        }
-      }
-      return snapshot;
+      // The paid cache keeps a finished view for the cadence's later steps,
+      // across runs and workspaces; a view that did not finish is not kept.
+      const out = await withPaidCache("linkedin.profile", { url }, undefined, async () => ({
+        result: await reader(url),
+        receiptId: 0,
+      }));
+      return snapshotFrom(out.result);
     } catch {
       return null;
     }

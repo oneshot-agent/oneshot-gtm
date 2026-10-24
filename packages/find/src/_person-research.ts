@@ -69,7 +69,6 @@ function reserveFor(
 /** Soft wall budget for one post-finder pass; leftover rows wait for the backfill or the next run. */
 const RUN_BUDGET_MS = 20 * 60 * 1000;
 const COMPANY_ENRICH_TIMEOUT_MS = 30_000;
-const COMPANY_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_ORGANIZATIONS = 8;
 
 type JsonRecord = Record<string, unknown>;
@@ -478,6 +477,8 @@ export interface ResearchPersonInput {
    * outside its cache). A seed with nothing cached comes back `notCached`.
    */
   cacheOnly?: boolean;
+  /** Buy the person research and company lookup again even when cached (`--rebuy`); the live read keeps `liveMaxAgeMs`. */
+  fresh?: boolean;
 }
 
 /**
@@ -540,13 +541,13 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
       cached: false,
     };
   }
-  const ledger = getLedger();
   const ctx = {
     playName: input.playName,
     memo: "person research: current role and company before review",
     decisionContext: { source: "person-research", ...input.subject },
   };
-  let res = await safeDeepResearchPerson(providerInput, ctx, { cacheOnly: input.cacheOnly });
+  const cacheOpts = input.cacheOnly ? { cacheOnly: true } : input.fresh ? { fresh: true } : {};
+  let res = await safeDeepResearchPerson(providerInput, ctx, cacheOpts);
   if (input.cacheOnly && (!res.result || res.result.status === "failed")) {
     return {
       dossier: unavailable(seed, "not in the research cache"),
@@ -589,7 +590,7 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
       const retry = await safeDeepResearchPerson(
         retryInput,
         { ...ctx, memo: "person research: by email after the profile URL named someone else" },
-        { cacheOnly: input.cacheOnly },
+        cacheOpts,
       );
       if (retry.receiptId !== 0) costUsd += retry.result?.cost ?? 0;
       const retryName = providerPersonName(retry.result);
@@ -704,41 +705,26 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
 
   let company: PersonResearchCompany | undefined;
   if (current && input.enrichCompany !== false) {
-    const key = `company:${current.name.toLowerCase()}`;
-    const cached = ledger.getProductResearchCache(key, COMPANY_CACHE_TTL_MS);
-    if (cached) {
-      try {
-        company = JSON.parse(cached) as PersonResearchCompany;
-      } catch {
-        // corrupt cache → refetch
-      }
-    }
-    if (
-      !company &&
-      !input.cacheOnly &&
-      costUsd + COMPANY_RESEARCH_COST_ESTIMATE_USD <= input.remainingUsd
-    ) {
-      const sameCompany =
-        seed.company != null && normalizeCompany(seed.company) === normalizeCompany(current.name);
-      const enriched = await safeEnrichCompany(
-        {
-          ...(sameCompany && seed.domain ? { domain: seed.domain } : { name: current.name }),
-          timeoutMs: COMPANY_ENRICH_TIMEOUT_MS,
-        },
-        {
-          playName: input.playName,
-          memo: "company facts for the person's current employer",
-          decisionContext: { source: "person-research", ...input.subject },
-        },
-      );
-      if (enriched.receiptId !== 0) costUsd += enriched.result.cost ?? 0;
-      if (enriched.result.status !== "error" && isRecord(enriched.result.company)) {
-        const record = companyFromRecord(enriched.result.company as JsonRecord);
-        if (record) {
-          company = record;
-          ledger.setProductResearchCache(key, JSON.stringify(record));
-        }
-      }
+    const sameCompany =
+      seed.company != null && normalizeCompany(seed.company) === normalizeCompany(current.name);
+    // Past the budget (or under cacheOnly) the paid cache may still answer; it never buys.
+    const cacheOnly =
+      input.cacheOnly || costUsd + COMPANY_RESEARCH_COST_ESTIMATE_USD > input.remainingUsd;
+    const enriched = await safeEnrichCompany(
+      {
+        ...(sameCompany && seed.domain ? { domain: seed.domain } : { name: current.name }),
+        timeoutMs: COMPANY_ENRICH_TIMEOUT_MS,
+      },
+      {
+        playName: input.playName,
+        memo: "company facts for the person's current employer",
+        decisionContext: { source: "person-research", ...input.subject },
+      },
+      cacheOnly ? { cacheOnly: true } : input.fresh ? { fresh: true } : undefined,
+    );
+    if (enriched.receiptId !== 0) costUsd += enriched.result.cost ?? 0;
+    if (enriched.result.status !== "error" && isRecord(enriched.result.company)) {
+      company = companyFromRecord(enriched.result.company as JsonRecord) ?? undefined;
     }
   }
 

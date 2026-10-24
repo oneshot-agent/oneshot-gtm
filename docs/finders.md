@@ -92,7 +92,7 @@ oneshot-gtm find research-prospects --scope all --refresh        # everyone alre
 oneshot-gtm find synthesize-angles --refresh --scope active      # follow-ups pick up the new dossier
 ```
 
-The last two stop at 250 rows a run; pass `--limit` for more. Researched rows are skipped, so a re-run continues where the last one stopped. `--dry-run` prints counts and an estimate. `--max-cost-usd` bounds a run. `--cache-only --refresh` re-derives from research already bought and bills nothing. `find research-products` backfills product research and stops at 5 USD unless you pass `--no-cost-limit`. `find rejudge-offers` re-runs the offer relevance judge on the offers already stored on unsent rows and writes no new offers. A row whose active offer still fails while another passes switches to that one and is listed for a redraft. `--dry-run` prints what would change.
+The last two stop at 250 rows a run; pass `--limit` for more. Researched rows are skipped, so a re-run continues where the last one stopped. `--dry-run` prints counts and an estimate. `--max-cost-usd` bounds a run. `--refresh` re-derives researched rows from research already bought; the shared cache answers it for free. Add `--rebuy` to buy research and posts again. `--cache-only --refresh` never bills. `find research-products` backfills product research and stops at 5 USD unless you pass `--no-cost-limit`. `find rejudge-offers` re-runs the offer relevance judge on the offers already stored on unsent rows and writes no new offers. A row whose active offer still fails while another passes switches to that one and is listed for a redraft. `--dry-run` prints what would change.
 
 ### People whose footprint is GitHub
 
@@ -162,7 +162,7 @@ An `ADOPTERS` file is a company vouching for itself. A blog roundup is someone e
 
 Expired is a status, not a deletion. You can approve an expired row again; check that its signal still holds. A prospect who already replied cannot be re-approved for cold outreach.
 
-Approving a row the gate rejected early does not give it an email. For approved `github-stars` rows without one, **Find missing emails** on the Run page resumes the lookup and verifies the result. It may bill, and it never sends. Contact lookups reuse results from the last 14 days, hits and clean misses alike.
+Approving a row the gate rejected early does not give it an email. For approved `github-stars` rows without one, **Find missing emails** on the Run page resumes the lookup and verifies the result. It may bill, and it never sends. A found or missing address is reused for 30 days and a verification for 14, from any workspace ([paid lookups](./workspaces.md#paid-lookups)).
 
 ## Community buying requests
 

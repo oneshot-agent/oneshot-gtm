@@ -2,15 +2,13 @@ import type { Database } from "bun:sqlite";
 import { getSharedDb } from "./shared-db.ts";
 
 /**
- * Ledger cache storage. Product dossiers stay in the workspace ledger; paid
- * enrichment and LinkedIn lookups use SharedDb to reuse results across workspaces.
+ * Ledger cache storage for records that are NOT a raw paid result: product
+ * dossiers and LLM extractions stay in the workspace ledger; the LinkedIn
+ * name-to-URL resolution, read gates and progress markers use SharedDb. Raw
+ * paid results live in the paid cache (paid-cache.ts), with their expiry.
  * Ledger creates one LedgerCache and delegates cache operations to it.
  */
 
-/** How long a SUCCESSFUL enrichment is reused before refetching (profiles are stable). */
-export const ENRICH_CACHE_TTL_MS = 30 * 24 * 3600 * 1000;
-/** How long a FAILED enrichment suppresses retries: long enough to ride out an SDK outage, short enough to self-heal. */
-export const ENRICH_FAILURE_TTL_MS = 3 * 24 * 3600 * 1000;
 /**
  * Hard ceiling on waiting for one enrichProfile call. The platform's enrich
  * tool has been observed HANGING (no error, no result, 5+ min) rather than
@@ -19,24 +17,12 @@ export const ENRICH_FAILURE_TTL_MS = 3 * 24 * 3600 * 1000;
 export const ENRICH_DEADLINE_MS = 120_000;
 
 /**
- * How long a SUCCESSFUL person dossier (deepResearchPerson) is reused. Longer
- * than the enrich TTL: a person's org history and profiles change slowly, and
- * the call costs 10x as much (~$0.05 vs ~$0.005).
- */
-export const RESEARCH_CACHE_TTL_MS = 90 * 24 * 3600 * 1000;
-/**
  * Hard ceiling on one deepResearchPerson call. Its own doc comment puts it at
  * 2-5 minutes, so this sits above that rather than at the enrich ceiling. The
  * call is legitimately slow, and racing it at 120s would abandon work we paid for.
  */
 export const RESEARCH_DEADLINE_MS = 360_000;
 
-/**
- * How long a person's captured newsfeed (personNewsfeed, ~$0.07) is reused.
- * Far shorter than the dossier TTL: posts go stale in days, a work history
- * does not.
- */
-export const NEWSFEED_CACHE_TTL_MS = 14 * 24 * 3600 * 1000;
 /**
  * Hard ceiling on one personNewsfeed call. Measured 3-12s typical with a 72s
  * and an 82s outlier (2026-09-27, 12 calls); a slow feed must never hold up

@@ -510,20 +510,8 @@ export async function resolveContact(args: {
       const profile = enriched.result.profile;
       // Captured once and reused on every return path.
       const enrichedPhone = extractFirstPhone(profile);
-      // Cache the linkedin-keyed enrich by the SURFACED email so the later
-      // by-email enrichVerifiedContact becomes a cache hit. Only when
-      // profile.email is directly surfaced. A findEmail-derived email may be
-      // a different person, and caching it would poison.
-      if (profile?.email) {
-        try {
-          getLedger().setCachedEnrichment(
-            profile.email.trim().toLowerCase(),
-            JSON.stringify(enriched.result),
-          );
-        } catch {
-          // cache write is best-effort.
-        }
-      }
+      // The paid cache files this linkedin-keyed enrich under the email it
+      // surfaced, so the later by-email enrichVerifiedContact is a cache hit.
       // 1) enrichProfile gave us a direct email. Use it.
       if (profile?.email) {
         const candidate: ResolvedContact = {

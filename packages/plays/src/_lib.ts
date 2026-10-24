@@ -3,12 +3,10 @@ import {
   draftLearningContext,
   type DraftLearningInput,
   type DemoDay,
-  ENRICH_CACHE_TTL_MS,
   ENRICH_DEADLINE_MS,
-  ENRICH_FAILURE_TTL_MS,
   enrichProfile,
   getLedger,
-  isTransientToolError,
+  isCachedPaidFailure,
   loadConfig,
   logEvent,
   mentionsStaleDemoDay,
@@ -23,44 +21,20 @@ import {
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { createHash } from "node:crypto";
 
-/** The shape safeEnrich returns when enrichment failed (live or negative-cached). */
+/** The shape safeEnrich returns when enrichment failed (live or remembered by the paid cache). */
 const FAILED_ENRICH = { status: "failed", profile: null, cost: 0 };
 
 /**
- * enrichProfile that never throws and caches by email (the SDK call is slow
- * and billed). A cache hit returns receiptId 0 (no spend); on failure, returns
- * an empty result so callers' `enr.result` / `enr.receiptId` usage keeps working.
+ * enrichProfile that never throws and cannot hang. The paid cache under the
+ * wrapper answers a person enriched before (receiptId 0, no spend) and
+ * remembers a genuine failure; on failure this returns an empty result so
+ * callers' `enr.result` / `enr.receiptId` usage keeps working.
  */
 export async function safeEnrich(
   input: Parameters<typeof enrichProfile>[0],
   ctx: Parameters<typeof enrichProfile>[1],
 ): Promise<Awaited<ReturnType<typeof enrichProfile>>> {
-  const ledger = getLedger();
   const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : null;
-
-  if (email) {
-    const cached = ledger.getCachedEnrichment(email);
-    if (cached) {
-      const ageMs = Date.now() - new Date(cached.fetched_at).getTime();
-      // A recent SDK failure is cached; retry after the TTL expires.
-      if (cached.status === "failed") {
-        if (ageMs < ENRICH_FAILURE_TTL_MS) {
-          return { result: FAILED_ENRICH, receiptId: 0 } as unknown as Awaited<
-            ReturnType<typeof enrichProfile>
-          >;
-        }
-      } else if (ageMs < ENRICH_CACHE_TTL_MS) {
-        try {
-          return { result: JSON.parse(cached.result_json), receiptId: 0 } as Awaited<
-            ReturnType<typeof enrichProfile>
-          >;
-        } catch {
-          // corrupt cache row: fall through and refetch
-        }
-      }
-    }
-  }
-
   try {
     // Default audit context so even ad-hoc callers that pass only {playName}
     // get a useful decisionContext on the receipt. Caller-supplied keys win.
@@ -75,38 +49,14 @@ export async function safeEnrich(
       },
     };
     const live = enrichProfile(input, enrichedCtx);
-    // Cache writes ride on the LIVE promise, not the deadline race. A call
-    // that outlives the deadline still records its outcome when it settles
-    // (late success overwrites the failure marker written below).
-    live.then(
-      (out) => {
-        if (email) {
-          try {
-            ledger.setCachedEnrichment(email, JSON.stringify(out.result));
-          } catch {
-            // cache write is best-effort
-          }
-        }
-      },
-      () => {
-        // Rejection is handled by the race's catch below (or already raced
-        // out); this handler only exists to silence unhandled-rejection noise
-        // from the abandoned promise.
-      },
-    );
+    // A deadline-abandoned promise must not surface as an unhandled rejection;
+    // the cache still stores it when it settles.
+    live.catch(() => undefined);
     return await withDeadline(live, ENRICH_DEADLINE_MS, "enrichProfile");
   } catch (err) {
-    const message = (err as Error)?.message ?? "";
-    logEvent("enrich.failed", { play: ctx.playName, message_120: message.slice(0, 120) }, "warn");
-    // Only negative-cache a GENUINE failure (no data for this email). A
-    // transient platform/transport error must NOT be cached, or the email stays
-    // un-enrichable for ENRICH_FAILURE_TTL_MS after the platform recovers.
-    if (email && !isTransientToolError(err)) {
-      try {
-        ledger.setCachedEnrichmentFailure(email, message);
-      } catch {
-        // cache write is best-effort
-      }
+    if (!isCachedPaidFailure(err)) {
+      const message = (err as Error)?.message ?? "";
+      logEvent("enrich.failed", { play: ctx.playName, message_120: message.slice(0, 120) }, "warn");
     }
     return {
       result: FAILED_ENRICH,
