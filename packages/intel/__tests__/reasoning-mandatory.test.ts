@@ -22,6 +22,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 
 const { complete, MANDATORY_REASONING_ALLOWANCE_TOKENS, MANDATORY_REASONING_EFFORT } =
   await import("../src/client.ts");
+const { DEFAULT_LLM_MODEL } = await import("@oneshot-gtm/core");
 
 const realFetch = global.fetch;
 
@@ -98,6 +99,20 @@ describe("reasoning-mandatory models (issue #586)", () => {
 
   it("a seeded family never pays for the 400", async () => {
     cfg.model = "google/gemini-3.8-flash";
+    const fetchMock = mandatoryModelFetch();
+    await complete({ messages: [{ role: "user", content: "hi" }], maxTokens: 500 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const only = bodyOf(fetchMock, 0);
+    expect(only["reasoning"]).toEqual({ effort: MANDATORY_REASONING_EFFORT });
+    expect(only["max_tokens"]).toBe(500 + MANDATORY_REASONING_ALLOWANCE_TOKENS);
+  });
+
+  it("the default model (Claude Sonnet 5.5) is seeded: low effort, raised budget, no 400", async () => {
+    // Measured on OpenRouter: with no reasoning param and a small max_tokens it
+    // spends the whole budget thinking and returns empty content.
+    expect(DEFAULT_LLM_MODEL).toBe("anthropic/claude-sonnet-5.5");
+    cfg.model = DEFAULT_LLM_MODEL;
     const fetchMock = mandatoryModelFetch();
     await complete({ messages: [{ role: "user", content: "hi" }], maxTokens: 500 });
 

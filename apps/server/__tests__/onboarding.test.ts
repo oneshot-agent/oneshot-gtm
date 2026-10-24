@@ -29,7 +29,7 @@ beforeEach(() => {
     productOneLiner: null,
     icpOneLiner: null,
     llmProvider: "openrouter",
-    llmModel: "anthropic/claude-sonnet-4.6",
+    llmModel: "anthropic/claude-sonnet-5.5",
     walletMode: "cdp",
   } as OneShotConfig;
   demo = false;

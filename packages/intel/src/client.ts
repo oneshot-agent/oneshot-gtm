@@ -356,7 +356,13 @@ export const MANDATORY_REASONING_EFFORT = "low";
  * seeds that later allow reasoning to be disabled only waste token headroom.
  */
 const mandatoryReasoningModels = new Set<string>();
-const MANDATORY_REASONING_SEED = [/^google\/gemini-3\.[5-9]-flash/, /^openai\/gpt-5/];
+// anthropic/claude-sonnet-5.5 answers `enabled: false` with a 400 ("Reasoning
+// is mandatory for this endpoint and cannot be disabled"), checked live.
+const MANDATORY_REASONING_SEED = [
+  /^google\/gemini-3\.[5-9]-flash/,
+  /^openai\/gpt-5/,
+  /^anthropic\/claude-sonnet-5\.5/,
+];
 function seededMandatory(model: string): boolean {
   return MANDATORY_REASONING_SEED.some((re) => re.test(model));
 }
@@ -575,19 +581,49 @@ interface AnthropicArgs {
   timeoutMs: number | undefined;
 }
 
+/**
+ * Models that answer a non-default `temperature` (or top_p/top_k) with a 400.
+ * Sonnet 4.6 and older accept sampling params; these do not.
+ */
+const ANTHROPIC_NO_SAMPLING = /^claude-(sonnet-5|opus-5|opus-4-[78]|haiku-5|fable|mythos)/;
+
+/**
+ * claude-sonnet-5-5 always thinks (adaptive, effort `high` by default) and
+ * rejects `thinking: { type: "disabled" }`, and its thinking is spent inside
+ * max_tokens. Sonnet 4.6 did not think, so callers size maxTokens for the
+ * answer alone. Low effort keeps thinking short or skipped, and the same
+ * allowance the OpenRouter path adds keeps maxTokens an answer budget.
+ */
+function anthropicEffort(model: string): {
+  extra: { output_config?: { effort: string } };
+  extraMaxTokens: number;
+} {
+  return model.startsWith("claude-sonnet-5-5")
+    ? {
+        extra: { output_config: { effort: MANDATORY_REASONING_EFFORT } },
+        extraMaxTokens: MANDATORY_REASONING_ALLOWANCE_TOKENS,
+      }
+    : { extra: {}, extraMaxTokens: 0 };
+}
+
 async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput> {
   const system = args.input.messages.find((m) => m.role === "system")?.content;
   const messages = args.input.messages
     .filter((m) => m.role !== "system")
     .map((m) => ({ role: m.role, content: m.content }));
+  const effort = anthropicEffort(args.model);
+  const maxTokens = (args.input.maxTokens ?? 1024) + effort.extraMaxTokens;
 
   const data = (await postJson({
     url: "https://api.anthropic.com/v1/messages",
     headers: { "x-api-key": args.key, "anthropic-version": "2023-06-01" },
     body: {
       model: args.model,
-      max_tokens: args.input.maxTokens ?? 1024,
-      temperature: args.input.temperature ?? 0.7,
+      max_tokens: maxTokens,
+      ...(ANTHROPIC_NO_SAMPLING.test(args.model)
+        ? {}
+        : { temperature: args.input.temperature ?? 0.7 }),
+      ...effort.extra,
       ...(system ? { system } : {}),
       messages,
     },
@@ -596,15 +632,24 @@ async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput
   })) as {
     content?: Array<{ type: string; text?: string }>;
     stop_reason?: string;
+    stop_details?: { category?: string | null } | null;
     usage?: { input_tokens?: number; output_tokens?: number };
   };
+
+  // A safety decline is an HTTP 200 with no usable answer. Naming it keeps the
+  // caller from parsing an empty or partial reply, and a retry gets the same no.
+  if (data.stop_reason === "refusal") {
+    throw new LlmError(
+      `anthropic declined the request (stop_reason=refusal, category=${data.stop_details?.category ?? "none"})`,
+    );
+  }
 
   if (data.stop_reason === "max_tokens" && !args.input.allowTruncation) {
     throw new LlmTruncatedError(
       truncationMessage({
         provider: "anthropic",
         model: args.model,
-        maxTokens: args.input.maxTokens ?? 1024,
+        maxTokens,
         completionTokens: data.usage?.output_tokens,
       }),
     );
@@ -618,7 +663,11 @@ async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput
     );
   }
 
-  const text = data.content.map((b) => b.text ?? "").join("");
+  // Read by type: a response can carry `thinking` blocks ahead of the text.
+  const text = data.content
+    .filter((b) => b.type === "text")
+    .map((b) => b.text ?? "")
+    .join("");
   return {
     content: text,
     provider: "anthropic",

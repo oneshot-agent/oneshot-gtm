@@ -50,7 +50,7 @@ async function post(body: unknown): Promise<{ status: number; error?: string }> 
 const BASE: OneShotConfig = {
   walletMode: "cdp",
   llmProvider: "openrouter",
-  llmModel: "anthropic/claude-sonnet-4.6",
+  llmModel: "anthropic/claude-sonnet-5.5",
   telemetryEnabled: true,
   founderName: "Jane",
   founderEmail: "jane@acme.dev",
