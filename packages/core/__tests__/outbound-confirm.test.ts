@@ -353,10 +353,17 @@ describe("runOutboundConfirmations", () => {
     await sweep(T0 + CONFIRM_MIN_AGE_MS, only("gm-reply-same", answering("MSG-A@mail.example")));
     expect(ledger.outboundSends.get("gm-reply-same")?.status).toBe("confirmed");
 
-    // A copy without the header is some other message: Gmail keeps the one we send.
+    // A copy without the header neither confirms the reply nor proves it unsent:
+    // past the settle window it is flagged, never resent.
     reply("gm-reply-noheader");
-    await sweep(T0 + CONFIRM_MIN_AGE_MS, only("gm-reply-noheader", answering(undefined)));
+    const noHeader = only("gm-reply-noheader", answering(undefined));
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, noHeader);
     expect(ledger.outboundSends.get("gm-reply-noheader")?.status).toBe("uncertain");
+    await sweep(T0 + UNCERTAIN_SETTLE_MS, noHeader);
+    expect(ledger.outboundSends.get("gm-reply-noheader")).toMatchObject({
+      status: "not_found",
+      error: expect.stringMatching(/no reply header/),
+    });
   });
 
   it("sends Gmail cannot tell apart confirm only when Sent holds a copy for each; else flagged, never resent (#905)", async () => {

@@ -538,6 +538,9 @@ export async function runOutboundConfirmations(opts: {
       Date.parse(row.firstAttemptAt) - DELIVERY_WINDOW_BEFORE_MS,
     ).toISOString();
     let copies: SentCopy[];
+    // A reply's copies with no In-Reply-To: they cannot confirm it, and they
+    // cannot prove it unsent either.
+    let headerless = 0;
     // Other sends this Gmail lookup cannot tell apart from this one. A send
     // still in flight counts too: its copy may already be the one in Sent, and
     // flagging errs safe, where confirming on its copy could lose this send.
@@ -553,15 +556,14 @@ export async function runOutboundConfirmations(opts: {
         const subject = normSubject(row.subject);
         const replyTarget = normMessageId(row.inReplyTo);
         // A reply counts only a copy answering the same message: two replies
-        // to one person can share a subject. Gmail keeps the In-Reply-To we
-        // send, so a copy without it is some other message.
-        copies = (
+        // to one person can share a subject.
+        const sameSubject = (
           await readers.gmail({ identity, recipient: row.recipient, afterIso, beforeIso })
-        ).filter(
-          (c) =>
-            (!subject || normSubject(c.subject) === subject) &&
-            (!replyTarget || normMessageId(c.inReplyTo) === replyTarget),
+        ).filter((c) => !subject || normSubject(c.subject) === subject);
+        copies = sameSubject.filter(
+          (c) => !replyTarget || normMessageId(c.inReplyTo) === replyTarget,
         );
+        if (replyTarget) headerless = sameSubject.filter((c) => !c.inReplyTo).length;
         twins = opts.outbound
           .listToRecipient(row.identityId, row.recipient, afterIso, beforeIso)
           .filter(
@@ -618,7 +620,11 @@ export async function runOutboundConfirmations(opts: {
     } else if (row.status === "uncertain" && ageMs >= UNCERTAIN_SETTLE_MS) {
       // Missing from Sent proves "not sent" only where the server files its
       // own copy. Elsewhere nothing could have reached Sent, so never resend.
-      if (row.sentEvidence) {
+      if (headerless > 0) {
+        after = "not_found";
+        error =
+          "a copy in Sent has this subject but no reply header, so it was not resent; check the recipient's thread before sending again";
+      } else if (row.sentEvidence) {
         after = "failed";
         error =
           "not found in Sent after the send was interrupted; a retry reuses the same Message-ID";
