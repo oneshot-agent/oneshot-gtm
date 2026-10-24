@@ -538,7 +538,9 @@ export async function runOutboundConfirmations(opts: {
       Date.parse(row.firstAttemptAt) - DELIVERY_WINDOW_BEFORE_MS,
     ).toISOString();
     let copies: SentCopy[];
-    // Other sends this Gmail lookup cannot tell apart from this one.
+    // Other sends this Gmail lookup cannot tell apart from this one. A send
+    // still in flight counts too: its copy may already be the one in Sent, and
+    // flagging errs safe, where confirming on its copy could lose this send.
     let twins = 0;
     try {
       if (!identity) throw new PermanentDeliveryError("sender identity no longer configured");
