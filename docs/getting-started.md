@@ -2,7 +2,7 @@
 
 Setup ends when you read a draft you would send. That takes four steps, and none of them is code.
 
-Install [Bun](https://bun.sh), run `bunx oneshot-gtm-server`, and open the address it prints. For the CLI or a source checkout, use the [repository setup](../README.md#setup).
+Install [Bun](https://bun.sh), run `bunx oneshot-gtm-server`, and open the address it prints. It listens on 3030; `--port <n>` picks another. For the CLI or a source checkout, use the [repository setup](../README.md#setup).
 
 ## 1. Describe the business
 

@@ -1,11 +1,15 @@
 import open from "open";
 import {
   activeSendCount,
+  BASE_PORT,
   beginDraining,
+  configDir,
   getLedger,
   logEvent,
+  portForHome,
   waitForSendsToDrain,
 } from "@oneshot-gtm/core";
+import { parseServerArgs, SERVER_USAGE } from "./args.ts";
 import { buildFetchHandler, SERVER_BASE_OPTS, startServer } from "./server.ts";
 import { startScheduler, type SchedulerHandle } from "./scheduler.ts";
 
@@ -20,8 +24,22 @@ if (typeof (globalThis as { Bun?: unknown }).Bun === "undefined") {
   process.exit(1);
 }
 
-const port = Number.parseInt(process.env["PORT"] ?? "3030", 10);
-const noBrowser = process.env["ONESHOT_GTM_NO_BROWSER"] === "1";
+const args = parseServerArgs(process.argv.slice(2), process.env, () => {
+  try {
+    return portForHome(configDir());
+  } catch {
+    return BASE_PORT;
+  }
+});
+if (args.kind === "help") {
+  process.stdout.write(SERVER_USAGE);
+  process.exit(0);
+}
+if (args.kind === "error") {
+  process.stderr.write(`oneshot-gtm-server: ${args.message}\n\n${SERVER_USAGE}`);
+  process.exit(2);
+}
+const { port, noBrowser } = args;
 
 // Cache the server on globalThis so Bun's `--hot` re-execution (same
 // process) can swap handlers via `server.reload({fetch})` instead of
