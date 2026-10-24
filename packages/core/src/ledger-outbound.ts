@@ -210,6 +210,8 @@ export interface ClaimInput {
    */
   inReplyTo?: string | null;
   references?: readonly string[] | null;
+  /** The provider's thread id (a Gmail reply's threadId). Kept like inReplyTo. */
+  threadKey?: string | null;
   queueId?: number | null;
   prospectId?: number | null;
   /** Injected clock for tests. */
@@ -342,8 +344,8 @@ export class OutboundSendStore {
             `INSERT INTO outbound_sends
                (key, identity_id, transport, recipient, subject, body, message_id, status,
                 sent_evidence, attempts, first_attempt_at, last_attempt_at, queue_id, prospect_id,
-                in_reply_to, references_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?, ?, ?, ?, ?, ?)`,
+                in_reply_to, references_json, thread_key)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             input.key,
@@ -360,6 +362,7 @@ export class OutboundSendStore {
             input.prospectId ?? null,
             input.inReplyTo ?? null,
             referencesJson(input.references),
+            input.threadKey ?? null,
           );
         return { verdict: "send", send: this.get(input.key)!, retry: false };
       }
@@ -377,6 +380,7 @@ export class OutboundSendStore {
                       body = CASE WHEN exact_resend = 1 THEN body ELSE ? END,
                       in_reply_to = CASE WHEN exact_resend = 1 THEN in_reply_to ELSE ? END,
                       references_json = CASE WHEN exact_resend = 1 THEN references_json ELSE ? END,
+                      thread_key = CASE WHEN exact_resend = 1 THEN thread_key ELSE ? END,
                       message_id = COALESCE(message_id, ?)
                 WHERE key = ?`,
             )
@@ -389,6 +393,7 @@ export class OutboundSendStore {
               input.body,
               input.inReplyTo ?? null,
               referencesJson(input.references),
+              input.threadKey ?? null,
               input.messageId,
               input.key,
             );

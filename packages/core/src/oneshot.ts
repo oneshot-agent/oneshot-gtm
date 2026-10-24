@@ -502,6 +502,8 @@ type SendContent = {
   body: string;
   inReplyTo: string | null;
   references: string[];
+  /** The provider thread id on the row (a Gmail reply's threadId), or null. */
+  threadKey: string | null;
 };
 
 /**
@@ -525,6 +527,8 @@ async function keyedSend(args: {
   callType?: "email.send" | "email.reply";
   /** RFC headers of the thread this email goes into, recorded on the row. */
   thread?: { inReplyTo: string; references: string[] } | null;
+  /** Provider thread id recorded on the row (a Gmail reply's threadId). */
+  threadKey?: string | null;
   isDefinite: (err: unknown) => boolean;
   settledStatus: "submitted" | "confirmed";
   send: (
@@ -544,6 +548,7 @@ async function keyedSend(args: {
     sentEvidence: args.sentEvidence,
     inReplyTo: args.thread?.inReplyTo ?? null,
     references: args.thread?.references ?? null,
+    threadKey: args.threadKey ?? null,
   });
   if (claim.verdict === "already_sent") {
     const prior = claim.send;
@@ -604,6 +609,7 @@ async function keyedSend(args: {
       body: claim.send.body,
       inReplyTo: claim.send.inReplyTo,
       references: claim.send.references,
+      threadKey: claim.send.threadKey,
     });
     store.mark(args.key, args.settledStatus, {
       messageId: out.messageId,
@@ -1208,6 +1214,7 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
       thread: input.inReplyTo
         ? { inReplyTo: input.inReplyTo, references: [input.inReplyTo] }
         : null,
+      threadKey: input.threadId ?? null,
       isDefinite: gmailFailureIsDefinite,
       settledStatus: "submitted",
       send: async (_messageId, content) => {
@@ -1230,7 +1237,7 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
               : {}),
           },
           account,
-          input.threadId,
+          content.threadKey ?? undefined,
         );
         const result: EmailResult = {
           status: "sent",

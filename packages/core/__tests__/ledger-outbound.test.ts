@@ -275,6 +275,23 @@ describe("OutboundSendStore.claim", () => {
     expect(retry.send).toMatchObject({ subject: "Hello", body: "Hi there", exactResend: true });
   });
 
+  it("a provider thread id is kept after an unknown outcome and takes the new value after a definite failure (#905)", () => {
+    const store = ledger.outboundSends;
+    store.claim(input({ threadKey: "t-1" }));
+    store.mark(input().key, "uncertain", { now: t0 });
+    store.mark(input().key, "failed", { now: at(10 * 60_000) });
+    expect(store.claim(input({ threadKey: "t-2", now: at(11 * 60_000) })).send.threadKey).toBe(
+      "t-1",
+    );
+
+    const other = "gtm:test:email:play:b@example.org:0";
+    store.claim(input({ key: other, threadKey: "t-1" }));
+    store.mark(other, "failed", { now: t0 });
+    expect(
+      store.claim(input({ key: other, threadKey: "t-2", now: at(60_000) })).send.threadKey,
+    ).toBe("t-2");
+  });
+
   it("after a definite failure a retry takes the new draft", () => {
     const store = ledger.outboundSends;
     store.claim(input());
