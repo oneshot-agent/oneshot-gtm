@@ -170,22 +170,42 @@ export async function getGmailAccessToken(account?: GmailAccount): Promise<strin
     const what = [...missing, ...(refreshToken ? [] : ["refresh token"])].join(", ");
     throw new Error(`Gmail credentials missing (${what}) — ${GMAIL_AUTH_HINT}`);
   }
-  const res = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: process.env["GMAIL_CLIENT_ID"]!,
-      client_secret: process.env["GMAIL_CLIENT_SECRET"]!,
-      refresh_token: refreshToken,
-      grant_type: "refresh_token",
-    }),
-  });
-  const data = (await res.json()) as {
+  // Same deadline as the API calls: a keyed send refreshes the token inside
+  // its claim, so an unbounded refresh could outlive STALE_PENDING_MS and let
+  // the send overlap a retry (#905). Nothing was sent yet, so this failure is
+  // definite.
+  const abort = new AbortController();
+  let res: Response;
+  let data: {
     access_token?: string;
     expires_in?: number;
     error?: string;
     error_description?: string;
   };
+  try {
+    [res, data] = await withDeadline(
+      fetch(TOKEN_URL, {
+        method: "POST",
+        signal: abort.signal,
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: process.env["GMAIL_CLIENT_ID"]!,
+          client_secret: process.env["GMAIL_CLIENT_SECRET"]!,
+          refresh_token: refreshToken,
+          grant_type: "refresh_token",
+        }),
+      }).then(async (r) => [r, (await r.json()) as typeof data] as const),
+      GMAIL_TIMEOUT_MS,
+      "Gmail token request",
+    );
+  } catch (err) {
+    abort.abort();
+    const msg = (err as Error).message ?? "";
+    if (msg.startsWith("Gmail token request deadline exceeded")) {
+      throw new Error(`Gmail token refresh failed: ${msg}`, { cause: err });
+    }
+    throw err;
+  }
   if (!res.ok || !data.access_token) {
     if (data.error === "invalid_grant") {
       throw new Error(
@@ -558,6 +578,8 @@ export interface SentCopy {
   /** ISO time the mailbox recorded the message. */
   date: string;
   subject: string;
+  /** The In-Reply-To header, when the copy has one (Gmail Sent reads only). */
+  inReplyTo?: string;
 }
 
 /**
@@ -585,11 +607,14 @@ export async function listGmailSentTo(
     const meta = new URLSearchParams({ format: "metadata" });
     meta.append("metadataHeaders", "Subject");
     meta.append("metadataHeaders", "Message-ID");
+    meta.append("metadataHeaders", "In-Reply-To");
     const msg = await gmailJson<GmailMessageMeta>(`/messages/${id}?${meta}`, undefined, account);
+    const inReplyTo = header(msg, "In-Reply-To");
     return {
       messageId: header(msg, "Message-ID") || msg.id,
       date: new Date(Number(msg.internalDate)).toISOString(),
       subject: header(msg, "Subject"),
+      ...(inReplyTo ? { inReplyTo } : {}),
     };
   });
 }

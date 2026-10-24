@@ -317,6 +317,45 @@ describe("runOutboundConfirmations", () => {
     expect(retry.send).toMatchObject({ attempts: 2, exactResend: true, subject: "Hello there" });
   });
 
+  it("confirms a Gmail reply only from a Sent copy answering the same message (#905)", async () => {
+    const reply = (key: string) => {
+      ledger.outboundSends.claim({
+        key,
+        identityId: gmailId.id,
+        transport: "gmail",
+        recipient: "pat@example.org",
+        subject: "Re: Hello",
+        body: "Thanks!",
+        messageId: null,
+        sentEvidence: true,
+        inReplyTo: "<msg-a@mail.example>",
+        references: ["<msg-a@mail.example>"],
+        now: new Date(T0),
+      });
+      ledger.outboundSends.mark(key, "uncertain", { now: new Date(T0) });
+    };
+    const answering = (inReplyTo: string | undefined): SentCopy => ({
+      ...copy("<minted@gmail>", 20, "Re: Hello"),
+      ...(inReplyTo ? { inReplyTo } : {}),
+    });
+    const only = (c: SentCopy): ConfirmReaders => readers({}, [c]);
+
+    // A reply to another message with the same subject is not this reply.
+    reply("gm-reply-other");
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, only(answering("<msg-b@mail.example>")));
+    expect(ledger.outboundSends.get("gm-reply-other")?.status).toBe("uncertain");
+
+    // Same target, header spelled differently: confirmed.
+    reply("gm-reply-same");
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, only(answering("MSG-A@mail.example")));
+    expect(ledger.outboundSends.get("gm-reply-same")?.status).toBe("confirmed");
+
+    // A copy without the header still counts: a dropped header never reads as "not sent".
+    reply("gm-reply-noheader");
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, only(answering(undefined)));
+    expect(ledger.outboundSends.get("gm-reply-noheader")?.status).toBe("confirmed");
+  });
+
   it("leaves a send unchanged on a transient read error, one read per mailbox", async () => {
     const a = keyed("t1", "submitted");
     const b = keyed("t2", "submitted");

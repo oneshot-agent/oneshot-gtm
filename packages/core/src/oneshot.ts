@@ -368,6 +368,22 @@ export function contentSendKey(identityId: string, input: SendEmailInput): strin
 }
 
 /**
+ * A reply without a send request ID: the content key plus the message it
+ * answers, so the same text sent in answer to two different emails is two
+ * replies, not a replay of the first.
+ */
+function replyContentKey(identityId: string, input: ReplyEmailInput, subject: string): string {
+  return `content:${emailIdempotencyKey([
+    identityId,
+    input.to,
+    subject,
+    input.body,
+    input.inReplyTo ?? "",
+    input.threadId ?? "",
+  ])}`;
+}
+
+/**
  * A Gmail API failure the server answered (or auth/config) never sent
  * anything, and neither did a request cut off at gmail.ts's deadline before
  * the send itself (the `/profile` lookup): both are definite and safe to
@@ -472,13 +488,16 @@ function threadHeaders(
 
 type SendOut = { result: EmailResult; receiptId: number };
 /** A keyed send's outcome, with the subject the email went out under. */
-type KeyedOut = SendOut & { subject: string };
+/** `to` is where the email went: the claimed recipient on a retry or replay. */
+type KeyedOut = SendOut & { subject: string; to: string };
 /**
  * What a keyed attempt sends: the stored content after an unknown outcome,
  * else the caller's. `inReplyTo`/`references` are the thread headers on the
  * row (null and empty for a new email).
  */
 type SendContent = {
+  /** The recipient on the row: a retry goes where the first attempt went. */
+  to: string;
   subject: string;
   body: string;
   inReplyTo: string | null;
@@ -528,6 +547,8 @@ async function keyedSend(args: {
   });
   if (claim.verdict === "already_sent") {
     const prior = claim.send;
+    const priorTo =
+      prior.recipient === args.input.to.trim().toLowerCase() ? args.input.to : prior.recipient;
     logEvent("send.keyed.replayed", { key_hash: hashKey(args.key), status: prior.status });
     const id = prior.messageId ?? args.key;
     let receiptId = prior.receiptId;
@@ -540,7 +561,7 @@ async function keyedSend(args: {
           provider: args.identity.provider,
           transport: args.transport,
           message_id: id,
-          to: args.input.to,
+          to: priorTo,
           subject: prior.subject,
           replayed: true,
         },
@@ -559,6 +580,7 @@ async function keyedSend(args: {
       } as EmailResult,
       receiptId,
       subject: prior.subject,
+      to: priorTo,
     };
   }
   if (claim.verdict !== "send") {
@@ -572,7 +594,12 @@ async function keyedSend(args: {
   try {
     // The row holds this attempt's content: the caller's draft, or after an
     // unknown outcome the first attempt's, resent unchanged.
+    const claimedTo =
+      claim.send.recipient === args.input.to.trim().toLowerCase()
+        ? args.input.to
+        : claim.send.recipient;
     const out = await args.send(claim.send.messageId, {
+      to: claimedTo,
       subject: claim.send.subject,
       body: claim.send.body,
       inReplyTo: claim.send.inReplyTo,
@@ -586,6 +613,7 @@ async function keyedSend(args: {
       result: out.result,
       receiptId: out.receiptId,
       subject: out.subject ?? claim.send.subject,
+      to: claimedTo,
     };
   } catch (err) {
     if (args.isDefinite(err)) {
@@ -645,7 +673,7 @@ async function sendEmailViaMailboxSmtp(
       const sent = await sendMailboxInitial({
         identityId: identity.id,
         connection,
-        to: input.to,
+        to: content.to,
         subject: content.subject,
         text: content.body,
         html: toHtmlBody(content.body),
@@ -671,7 +699,7 @@ async function sendEmailViaMailboxSmtp(
           transport: "smtp",
           message_id: sent.messageId,
           from: sent.from,
-          to: input.to,
+          to: content.to,
           subject: content.subject,
           memo: ctx.memo ?? `${ctx.playName} email.send`,
         },
@@ -787,7 +815,7 @@ async function sendEmailViaGmail(
     settledStatus: "submitted",
     send: async (_messageId, content) => {
       const out = await sendEmailViaGmailOnce(
-        { ...input, subject: content.subject, body: content.body },
+        { ...input, to: content.to, subject: content.subject, body: content.body },
         ctx,
         identity,
         content.inReplyTo
@@ -973,7 +1001,11 @@ async function dispatchViaIdentity(
   if (identity.provider === "smartlead") {
     if (identity.sendVia === "smtp")
       return sendEmailViaMailboxSmtp(input, ctx, identity, key, thread);
-    return { ...(await sendEmailViaSmartlead(input, ctx, identity)), subject: input.subject };
+    return {
+      ...(await sendEmailViaSmartlead(input, ctx, identity)),
+      subject: input.subject,
+      to: input.to,
+    };
   }
   // Explicit guard: a provider this branch doesn't know must NEVER fall
   // through to the paid OneShot SDK path below.
@@ -1165,7 +1197,7 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
     const out = await keyedSend({
       key: input.sendRequestId
         ? replySendKey(input.sendRequestId)
-        : replySendKey(contentSendKey(identity.id, { ...input, subject })),
+        : replySendKey(replyContentKey(identity.id, input, subject)),
       identity,
       transport: "gmail",
       input: { ...input, subject },
@@ -1188,7 +1220,7 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
         const { emailAddress } = await getGmailProfile(account);
         const sent = await sendGmailMessage(
           {
-            to: input.to,
+            to: content.to,
             fromEmail: emailAddress,
             fromName: cfg.founderName,
             subject: content.subject,
@@ -1214,7 +1246,7 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
             message_id: sent.id,
             thread_id: sent.threadId,
             from: emailAddress,
-            to: input.to,
+            to: content.to,
             subject: content.subject,
             memo: ctx.memo ?? `${ctx.playName} email.reply`,
           },
@@ -1225,7 +1257,7 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
         return { result, receiptId, messageId: sent.id };
       },
     });
-    recordContactTouch(input.to, ctx.playName);
+    recordContactTouch(out.to, ctx.playName);
     return out;
   }
 

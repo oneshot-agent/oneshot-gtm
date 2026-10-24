@@ -29,6 +29,8 @@ Mail leaves through a pool of sender identities: OneShot sending domains, your o
 
 The abort bounds how long this side waits and asks Google to stop; it does not prove Google never processed a request that had already arrived, and a Sent search that finds nothing within a finite window is the policy's evidence of "not sent", not a proof of cancellation. That residual window is the one the owner approved, in place of retrying on the deadline alone, which could send a second message under a different Message-ID after a delivered one.
 
+Gmail replies go through the same claim. A reply sent without a request ID is keyed by its text and the message it answers, so the same text in answer to two emails is two replies. The Sent check confirms a reply only from a copy answering the same message, and a retry goes to the recipient the first attempt was claimed for. The token refresh before a send has the same 30-second deadline, and since nothing was sent, a refresh cut off there is a definite failure.
+
 ## Replies
 
 The inbox poll reads the OneShot inbox, every authorised Gmail account and every Smartlead mailbox. A reply stops the cadence whichever identity sent. A reply delayed by an outage is picked up later, not lost, and one you already archived still counts.

@@ -98,7 +98,7 @@ function mkMsg(id: string, at: string) {
 function stubGmailFetch(): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async (url: string | URL) => {
     const u = String(url);
-    if (u.includes("oauth2.googleapis.com")) {
+    if (new URL(u).hostname === "oauth2.googleapis.com") {
       return new Response(JSON.stringify({ access_token: "at", expires_in: 3600 }), {
         status: 200,
       });
@@ -194,7 +194,7 @@ describe("listInbox — multi-identity merge", () => {
       "fetch",
       vi.fn(async (url: string | URL, init?: RequestInit) => {
         const u = String(url);
-        if (u.includes("oauth2.googleapis.com")) {
+        if (new URL(u).hostname === "oauth2.googleapis.com") {
           const refresh = new URLSearchParams(String(init?.body)).get("refresh_token");
           return new Response(JSON.stringify({ access_token: `at-${refresh}`, expires_in: 3600 }), {
             status: 200,
@@ -259,7 +259,7 @@ describe("listInbox — multi-identity merge", () => {
         "fetch",
         vi.fn(async (url: string | URL, init?: RequestInit) => {
           const u = String(url);
-          if (u.includes("oauth2.googleapis.com")) {
+          if (new URL(u).hostname === "oauth2.googleapis.com") {
             const refresh = new URLSearchParams(String(init?.body)).get("refresh_token");
             // The hung account never gets past its token exchange.
             if (refresh === "rt-hung") return new Promise<Response>(() => {});

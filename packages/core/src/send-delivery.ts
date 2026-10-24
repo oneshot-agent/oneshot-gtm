@@ -59,6 +59,11 @@ function normSubject(s: string): string {
   return s.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+function normMessageId(s: string | null | undefined): string {
+  const t = (s ?? "").trim().toLowerCase();
+  return t.startsWith("<") && t.endsWith(">") ? t.slice(1, -1) : t;
+}
+
 export interface DeliveryVerdict {
   /** null = not final yet: leave unrecorded and look again later. */
   status: DeliveryStatus | null;
@@ -542,9 +547,17 @@ export async function runOutboundConfirmations(opts: {
       } else {
         const beforeIso = new Date(attemptMs + DELIVERY_WINDOW_AFTER_MS).toISOString();
         const subject = normSubject(row.subject);
+        const replyTarget = normMessageId(row.inReplyTo);
+        // A reply counts only a copy answering the same message: two replies
+        // to one person can share a subject. A copy without the header still
+        // counts, so a header the server dropped never reads as "not sent".
         copies = (
           await readers.gmail({ identity, recipient: row.recipient, afterIso, beforeIso })
-        ).filter((c) => !subject || normSubject(c.subject) === subject);
+        ).filter(
+          (c) =>
+            (!subject || normSubject(c.subject) === subject) &&
+            (!replyTarget || !c.inReplyTo || normMessageId(c.inReplyTo) === replyTarget),
+        );
       }
     } catch (err) {
       const message = ((err as Error).message ?? "").slice(0, 200);

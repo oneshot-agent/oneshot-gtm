@@ -184,7 +184,7 @@ describe("reply options API", () => {
           "fetch",
           vi.fn(async (url: string | URL, init?: RequestInit) => {
             const u = String(url);
-            if (u.includes("oauth2.googleapis.com"))
+            if (new URL(u).hostname === "oauth2.googleapis.com")
               return Response.json({ access_token: "test-access", expires_in: 3600 });
             if (u.endsWith("/profile"))
               return Response.json({ emailAddress: "founder@example.com" });
