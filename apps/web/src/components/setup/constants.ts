@@ -4,9 +4,9 @@ export type SecretKey = keyof NonNullable<SetupRequest["secrets"]>;
 export type KeySource = "env" | "file" | null | undefined;
 
 export const LLM_DEFAULTS: Record<string, string> = {
-  openrouter: "anthropic/claude-sonnet-4.6",
+  openrouter: "anthropic/claude-sonnet-5.5",
   openai: "gpt-4o-mini",
-  anthropic: "claude-sonnet-4-6",
+  anthropic: "claude-sonnet-5-5",
 };
 
 export const LLM_KEY: Record<"openrouter" | "openai" | "anthropic", SecretKey> = {

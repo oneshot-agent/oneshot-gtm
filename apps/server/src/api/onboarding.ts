@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID, scryptSync } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { configDir, demoMode, llmApiKey, loadConfig } from "@oneshot-gtm/core";
+import { configDir, DEFAULT_LLM_MODEL, demoMode, llmApiKey, loadConfig } from "@oneshot-gtm/core";
 import { complete } from "@oneshot-gtm/intel";
 import { normalizeWebsite, type OnboardingStatus } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
@@ -92,7 +92,7 @@ export function onboardingStatus(): OnboardingStatus {
       cfg.timezone ||
       cfg.slackWebhookUrl ||
       cfg.llmProvider !== "openrouter" ||
-      cfg.llmModel !== "anthropic/claude-sonnet-4.6" ||
+      cfg.llmModel !== DEFAULT_LLM_MODEL ||
       cfg.walletMode !== "cdp" ||
       process.env.AGENT_PRIVATE_KEY ||
       process.env.CDP_API_KEY_ID ||

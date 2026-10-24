@@ -1824,7 +1824,7 @@ function buildConfig(): Record<string, unknown> {
   return {
     walletMode: "private-key",
     llmProvider: "openrouter",
-    llmModel: "anthropic/claude-sonnet-4.6",
+    llmModel: "anthropic/claude-sonnet-5.5",
     telemetryEnabled: false,
     founderName: DEMO_FOUNDER.name,
     founderEmail: DEMO_FOUNDER.email,

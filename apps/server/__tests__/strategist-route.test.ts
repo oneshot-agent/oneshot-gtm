@@ -118,7 +118,7 @@ let mockCfg: {
 } = {
   walletMode: "cdp",
   llmProvider: "openrouter",
-  llmModel: "anthropic/claude-sonnet-4.6",
+  llmModel: "anthropic/claude-sonnet-5.5",
   telemetryEnabled: true,
   founderName: null,
   founderEmail: null,

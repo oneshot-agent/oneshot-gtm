@@ -44,10 +44,29 @@ export type SecretKey = (typeof SECRET_KEYS)[number];
  */
 export const DEFAULT_LINKEDIN_READS_PER_DAY = 95;
 
+/** Default model on the default provider (OpenRouter). */
+export const DEFAULT_LLM_MODEL = "anthropic/claude-sonnet-5.5";
+
+/**
+ * Former default model ids and what replaced them. A config saved while one of
+ * these was the default reads as its replacement, so an install that never
+ * picked a model moves with the default instead of staying on a retired one.
+ */
+const RETIRED_DEFAULT_MODELS: Record<string, string> = {
+  "anthropic/claude-sonnet-4.6": DEFAULT_LLM_MODEL,
+  "claude-sonnet-4-6": "claude-sonnet-5-5",
+};
+
+/** Swap a retired default model id for its replacement; anything else is kept. */
+export function withCurrentDefaultModel(cfg: OneShotConfig): OneShotConfig {
+  const next = RETIRED_DEFAULT_MODELS[cfg.llmModel];
+  return next ? { ...cfg, llmModel: next } : cfg;
+}
+
 const DEFAULTS: OneShotConfig = {
   walletMode: "cdp",
   llmProvider: "openrouter",
-  llmModel: "anthropic/claude-sonnet-4.6",
+  llmModel: DEFAULT_LLM_MODEL,
   telemetryEnabled: true,
   founderName: null,
   founderEmail: null,
@@ -140,7 +159,7 @@ function readConfigOrDefault(): OneShotConfig {
   if (!existsSync(CONFIG_PATH)) return { ...DEFAULTS };
   try {
     const raw = readFileSync(CONFIG_PATH, "utf8");
-    return { ...DEFAULTS, ...JSON.parse(raw) };
+    return withCurrentDefaultModel({ ...DEFAULTS, ...JSON.parse(raw) });
   } catch {
     return { ...DEFAULTS };
   }
