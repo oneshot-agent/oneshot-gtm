@@ -503,6 +503,7 @@ async function keyedSend(args: {
   messageId: string | null;
   /** See `OutboundSend.sentEvidence`. */
   sentEvidence: boolean;
+  callType?: "email.send" | "email.reply";
   /** RFC headers of the thread this email goes into, recorded on the row. */
   thread?: { inReplyTo: string; references: string[] } | null;
   isDefinite: (err: unknown) => boolean;
@@ -534,7 +535,7 @@ async function keyedSend(args: {
       // Sent, but the process died before the receipt: record it now, once.
       receiptId = recordCallReceipt({
         ctx: args.ctx,
-        callType: "email.send",
+        callType: args.callType ?? "email.send",
         signedReceipt: {
           provider: args.identity.provider,
           transport: args.transport,
@@ -1093,8 +1094,9 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
 }
 
 export interface ReplyEmailInput {
-  /** Direct mailbox: persisted inbound ID and idempotent client send request. */
+  /** Direct mailbox: persisted inbound ID. */
   inboundEmailId?: string;
+  /** Idempotent client send request for Gmail and direct mailbox replies. */
   sendRequestId?: string;
   /** Sender identity that RECEIVED the inbound email; the reply goes out from it. */
   identityId: string;
@@ -1159,49 +1161,72 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
   const subject = replySubject(input.subject);
 
   if (identity.provider === "gmail") {
-    const account = gmailAccountFor(identity);
-    if (!account) {
-      throw new Error(
-        `no Gmail refresh token stored for sender identity '${identity.id}' — re-authorize it (bun run cli -- gmail auth)`,
-      );
-    }
-    const { emailAddress } = await getGmailProfile(account);
-    const sent = await sendGmailMessage(
-      {
-        to: input.to,
-        fromEmail: emailAddress,
-        fromName: cfg.founderName,
-        subject,
-        htmlBody: toHtmlBody(input.body),
-        ...(input.inReplyTo ? { inReplyTo: input.inReplyTo, references: [input.inReplyTo] } : {}),
-      },
-      account,
-      input.threadId,
-    );
-    const result: EmailResult = {
-      status: "sent",
-      request_id: sent.id,
-      cost: 0,
-      email: { id: sent.id, provider_message_id: sent.id, status: "sent" },
-    };
-    const receiptId = recordCallReceipt({
+    // The composer checks this exact key after an interrupted acknowledgment.
+    const out = await keyedSend({
+      key: input.sendRequestId
+        ? replySendKey(input.sendRequestId)
+        : replySendKey(contentSendKey(identity.id, { ...input, subject })),
+      identity,
+      transport: "gmail",
+      input: { ...input, subject },
       ctx,
       callType: "email.reply",
-      signedReceipt: {
-        provider: "gmail",
-        message_id: sent.id,
-        thread_id: sent.threadId,
-        from: emailAddress,
-        to: input.to,
-        subject,
-        memo: ctx.memo ?? `${ctx.playName} email.reply`,
+      messageId: null,
+      sentEvidence: true,
+      thread: input.inReplyTo
+        ? { inReplyTo: input.inReplyTo, references: [input.inReplyTo] }
+        : null,
+      isDefinite: gmailFailureIsDefinite,
+      settledStatus: "submitted",
+      send: async (_messageId, content) => {
+        const account = gmailAccountFor(identity);
+        if (!account) {
+          throw new Error(
+            `no Gmail refresh token stored for sender identity '${identity.id}' — re-authorize it (bun run cli -- gmail auth)`,
+          );
+        }
+        const { emailAddress } = await getGmailProfile(account);
+        const sent = await sendGmailMessage(
+          {
+            to: input.to,
+            fromEmail: emailAddress,
+            fromName: cfg.founderName,
+            subject: content.subject,
+            htmlBody: toHtmlBody(content.body),
+            ...(content.inReplyTo
+              ? { inReplyTo: content.inReplyTo, references: content.references }
+              : {}),
+          },
+          account,
+          input.threadId,
+        );
+        const result: EmailResult = {
+          status: "sent",
+          request_id: sent.id,
+          cost: 0,
+          email: { id: sent.id, provider_message_id: sent.id, status: "sent" },
+        };
+        const receiptId = recordCallReceipt({
+          ctx,
+          callType: "email.reply",
+          signedReceipt: {
+            provider: "gmail",
+            message_id: sent.id,
+            thread_id: sent.threadId,
+            from: emailAddress,
+            to: input.to,
+            subject: content.subject,
+            memo: ctx.memo ?? `${ctx.playName} email.reply`,
+          },
+          costUsd: 0,
+          oneshotRequestId: sent.id,
+          senderIdentity: identity.id,
+        });
+        return { result, receiptId, messageId: sent.id };
       },
-      costUsd: 0,
-      oneshotRequestId: sent.id,
-      senderIdentity: identity.id,
     });
     recordContactTouch(input.to, ctx.playName);
-    return { result, receiptId };
+    return out;
   }
 
   if (identity.provider === "smartlead") {
