@@ -367,10 +367,43 @@ export function contentSendKey(identityId: string, input: SendEmailInput): strin
   return `content:${emailIdempotencyKey([identityId, input.to, input.subject, input.body])}`;
 }
 
-/** A Gmail API failure the server answered (or auth/config) never sent anything. */
+/**
+ * A reply without a send request ID: the content key plus the message it
+ * answers, so the same text sent in answer to two different emails is two
+ * replies, not a replay of the first.
+ */
+function replyContentKey(identityId: string, input: ReplyEmailInput, subject: string): string {
+  return `content:${emailIdempotencyKey([
+    identityId,
+    input.to,
+    subject,
+    input.body,
+    input.inReplyTo ?? "",
+    input.threadId ?? "",
+  ])}`;
+}
+
+/**
+ * A Gmail API failure the server answered (or auth/config) never sent
+ * anything, and neither did a request cut off at gmail.ts's deadline before
+ * the send itself (the `/profile` lookup): both are definite and safe to
+ * retry at once. A deadline on `/messages/send` is NOT definite (#905, owner
+ * ruling of 2026-10-24): the request may have reached Google before the
+ * client-side abort, so the row goes `uncertain` and the confirm sweep looks
+ * it up in Sent before any retry. A copy in Sent means Google accepted the
+ * message: the row is confirmed and later attempts replay it, never send a
+ * second one. Only a send that the Sent check still finds missing after
+ * UNCERTAIN_SETTLE_MS is settled `failed` and may be retried. The deadline
+ * only bounds how long this side waits: the local abort asks Google to stop
+ * but cannot end a request Google already received. What closes the
+ * duplicate path is the persisted `uncertain` row, reconciled against Sent
+ * before any retry, in place of a `pending` claim ageing into the stale
+ * demotion the sweep could settle `failed` and resend.
+ */
 function gmailFailureIsDefinite(err: unknown): boolean {
   const msg = (err as Error)?.message ?? "";
-  return /Gmail (API failed|auth rejected|credentials missing|token (exchange|refresh) failed)|no Gmail refresh token/i.test(
+  if (msg.startsWith("Gmail API /messages/send deadline exceeded")) return false;
+  return /Gmail (API (failed|\S+ deadline exceeded)|auth rejected|credentials missing|token (exchange|refresh) failed)|no Gmail refresh token/i.test(
     msg,
   );
 }
@@ -455,17 +488,22 @@ function threadHeaders(
 
 type SendOut = { result: EmailResult; receiptId: number };
 /** A keyed send's outcome, with the subject the email went out under. */
-type KeyedOut = SendOut & { subject: string };
+/** `to` is where the email went: the claimed recipient on a retry or replay. */
+type KeyedOut = SendOut & { subject: string; to: string };
 /**
  * What a keyed attempt sends: the stored content after an unknown outcome,
  * else the caller's. `inReplyTo`/`references` are the thread headers on the
  * row (null and empty for a new email).
  */
 type SendContent = {
+  /** The recipient on the row: a retry goes where the first attempt went. */
+  to: string;
   subject: string;
   body: string;
   inReplyTo: string | null;
   references: string[];
+  /** The provider thread id on the row (a Gmail reply's threadId), or null. */
+  threadKey: string | null;
 };
 
 /**
@@ -486,8 +524,11 @@ async function keyedSend(args: {
   messageId: string | null;
   /** See `OutboundSend.sentEvidence`. */
   sentEvidence: boolean;
+  callType?: "email.send" | "email.reply";
   /** RFC headers of the thread this email goes into, recorded on the row. */
   thread?: { inReplyTo: string; references: string[] } | null;
+  /** Provider thread id recorded on the row (a Gmail reply's threadId). */
+  threadKey?: string | null;
   isDefinite: (err: unknown) => boolean;
   settledStatus: "submitted" | "confirmed";
   send: (
@@ -507,9 +548,12 @@ async function keyedSend(args: {
     sentEvidence: args.sentEvidence,
     inReplyTo: args.thread?.inReplyTo ?? null,
     references: args.thread?.references ?? null,
+    threadKey: args.threadKey ?? null,
   });
   if (claim.verdict === "already_sent") {
     const prior = claim.send;
+    const priorTo =
+      prior.recipient === args.input.to.trim().toLowerCase() ? args.input.to : prior.recipient;
     logEvent("send.keyed.replayed", { key_hash: hashKey(args.key), status: prior.status });
     const id = prior.messageId ?? args.key;
     let receiptId = prior.receiptId;
@@ -517,12 +561,12 @@ async function keyedSend(args: {
       // Sent, but the process died before the receipt: record it now, once.
       receiptId = recordCallReceipt({
         ctx: args.ctx,
-        callType: "email.send",
+        callType: args.callType ?? "email.send",
         signedReceipt: {
           provider: args.identity.provider,
           transport: args.transport,
           message_id: id,
-          to: args.input.to,
+          to: priorTo,
           subject: prior.subject,
           replayed: true,
         },
@@ -541,6 +585,7 @@ async function keyedSend(args: {
       } as EmailResult,
       receiptId,
       subject: prior.subject,
+      to: priorTo,
     };
   }
   if (claim.verdict !== "send") {
@@ -554,11 +599,17 @@ async function keyedSend(args: {
   try {
     // The row holds this attempt's content: the caller's draft, or after an
     // unknown outcome the first attempt's, resent unchanged.
+    const claimedTo =
+      claim.send.recipient === args.input.to.trim().toLowerCase()
+        ? args.input.to
+        : claim.send.recipient;
     const out = await args.send(claim.send.messageId, {
+      to: claimedTo,
       subject: claim.send.subject,
       body: claim.send.body,
       inReplyTo: claim.send.inReplyTo,
       references: claim.send.references,
+      threadKey: claim.send.threadKey,
     });
     store.mark(args.key, args.settledStatus, {
       messageId: out.messageId,
@@ -568,6 +619,7 @@ async function keyedSend(args: {
       result: out.result,
       receiptId: out.receiptId,
       subject: out.subject ?? claim.send.subject,
+      to: claimedTo,
     };
   } catch (err) {
     if (args.isDefinite(err)) {
@@ -627,7 +679,7 @@ async function sendEmailViaMailboxSmtp(
       const sent = await sendMailboxInitial({
         identityId: identity.id,
         connection,
-        to: input.to,
+        to: content.to,
         subject: content.subject,
         text: content.body,
         html: toHtmlBody(content.body),
@@ -653,7 +705,7 @@ async function sendEmailViaMailboxSmtp(
           transport: "smtp",
           message_id: sent.messageId,
           from: sent.from,
-          to: input.to,
+          to: content.to,
           subject: content.subject,
           memo: ctx.memo ?? `${ctx.playName} email.send`,
         },
@@ -759,14 +811,17 @@ async function sendEmailViaGmail(
     input,
     ctx,
     messageId: null,
-    // Gmail files every API send in Sent, so a missing copy proves "not sent".
+    // Gmail files every API send in Sent, so the confirm sweep can reconcile
+    // an unknown outcome there: a copy means Google accepted the message, and
+    // one still missing after the settle window is what the policy (#905)
+    // treats as not sent and allows to be retried.
     sentEvidence: true,
     thread: threadHeaders(thread),
     isDefinite: gmailFailureIsDefinite,
     settledStatus: "submitted",
     send: async (_messageId, content) => {
       const out = await sendEmailViaGmailOnce(
-        { ...input, subject: content.subject, body: content.body },
+        { ...input, to: content.to, subject: content.subject, body: content.body },
         ctx,
         identity,
         content.inReplyTo
@@ -952,7 +1007,11 @@ async function dispatchViaIdentity(
   if (identity.provider === "smartlead") {
     if (identity.sendVia === "smtp")
       return sendEmailViaMailboxSmtp(input, ctx, identity, key, thread);
-    return { ...(await sendEmailViaSmartlead(input, ctx, identity)), subject: input.subject };
+    return {
+      ...(await sendEmailViaSmartlead(input, ctx, identity)),
+      subject: input.subject,
+      to: input.to,
+    };
   }
   // Explicit guard: a provider this branch doesn't know must NEVER fall
   // through to the paid OneShot SDK path below.
@@ -1014,9 +1073,10 @@ async function dispatchViaIdentity(
         const subject = replyTo ? content.subject : withoutReplyPrefix(content.subject);
         const result = await agent.email({
           ...opts,
+          to: content.to,
           subject,
           body: toHtmlBody(content.body),
-          idempotencyKey: emailIdempotencyKey([identity.id, attempt.to, subject, content.body]),
+          idempotencyKey: emailIdempotencyKey([identity.id, content.to, subject, content.body]),
           ...(replyTo ? { reply_to_email_id: replyTo } : {}),
         });
         const receiptId = recordCallReceipt({
@@ -1073,8 +1133,9 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
 }
 
 export interface ReplyEmailInput {
-  /** Direct mailbox: persisted inbound ID and idempotent client send request. */
+  /** Direct mailbox: persisted inbound ID. */
   inboundEmailId?: string;
+  /** Idempotent client send request for Gmail and direct mailbox replies. */
   sendRequestId?: string;
   /** Sender identity that RECEIVED the inbound email; the reply goes out from it. */
   identityId: string;
@@ -1139,49 +1200,73 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
   const subject = replySubject(input.subject);
 
   if (identity.provider === "gmail") {
-    const account = gmailAccountFor(identity);
-    if (!account) {
-      throw new Error(
-        `no Gmail refresh token stored for sender identity '${identity.id}' — re-authorize it (bun run cli -- gmail auth)`,
-      );
-    }
-    const { emailAddress } = await getGmailProfile(account);
-    const sent = await sendGmailMessage(
-      {
-        to: input.to,
-        fromEmail: emailAddress,
-        fromName: cfg.founderName,
-        subject,
-        htmlBody: toHtmlBody(input.body),
-        ...(input.inReplyTo ? { inReplyTo: input.inReplyTo, references: [input.inReplyTo] } : {}),
-      },
-      account,
-      input.threadId,
-    );
-    const result: EmailResult = {
-      status: "sent",
-      request_id: sent.id,
-      cost: 0,
-      email: { id: sent.id, provider_message_id: sent.id, status: "sent" },
-    };
-    const receiptId = recordCallReceipt({
+    // The composer checks this exact key after an interrupted acknowledgment.
+    const out = await keyedSend({
+      key: input.sendRequestId
+        ? replySendKey(input.sendRequestId)
+        : replySendKey(replyContentKey(identity.id, input, subject)),
+      identity,
+      transport: "gmail",
+      input: { ...input, subject },
       ctx,
       callType: "email.reply",
-      signedReceipt: {
-        provider: "gmail",
-        message_id: sent.id,
-        thread_id: sent.threadId,
-        from: emailAddress,
-        to: input.to,
-        subject,
-        memo: ctx.memo ?? `${ctx.playName} email.reply`,
+      messageId: null,
+      sentEvidence: true,
+      thread: input.inReplyTo
+        ? { inReplyTo: input.inReplyTo, references: [input.inReplyTo] }
+        : null,
+      threadKey: input.threadId ?? null,
+      isDefinite: gmailFailureIsDefinite,
+      settledStatus: "submitted",
+      send: async (_messageId, content) => {
+        const account = gmailAccountFor(identity);
+        if (!account) {
+          throw new Error(
+            `no Gmail refresh token stored for sender identity '${identity.id}' — re-authorize it (bun run cli -- gmail auth)`,
+          );
+        }
+        const { emailAddress } = await getGmailProfile(account);
+        const sent = await sendGmailMessage(
+          {
+            to: content.to,
+            fromEmail: emailAddress,
+            fromName: cfg.founderName,
+            subject: content.subject,
+            htmlBody: toHtmlBody(content.body),
+            ...(content.inReplyTo
+              ? { inReplyTo: content.inReplyTo, references: content.references }
+              : {}),
+          },
+          account,
+          content.threadKey ?? undefined,
+        );
+        const result: EmailResult = {
+          status: "sent",
+          request_id: sent.id,
+          cost: 0,
+          email: { id: sent.id, provider_message_id: sent.id, status: "sent" },
+        };
+        const receiptId = recordCallReceipt({
+          ctx,
+          callType: "email.reply",
+          signedReceipt: {
+            provider: "gmail",
+            message_id: sent.id,
+            thread_id: sent.threadId,
+            from: emailAddress,
+            to: content.to,
+            subject: content.subject,
+            memo: ctx.memo ?? `${ctx.playName} email.reply`,
+          },
+          costUsd: 0,
+          oneshotRequestId: sent.id,
+          senderIdentity: identity.id,
+        });
+        return { result, receiptId, messageId: sent.id };
       },
-      costUsd: 0,
-      oneshotRequestId: sent.id,
-      senderIdentity: identity.id,
     });
-    recordContactTouch(input.to, ctx.playName);
-    return { result, receiptId };
+    recordContactTouch(out.to, ctx.playName);
+    return out;
   }
 
   if (identity.provider === "smartlead") {

@@ -887,7 +887,7 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
     );
   }
   if (
-    stored &&
+    (stored || body.sendRequestId != null) &&
     (typeof body.sendRequestId !== "string" || !/^[a-zA-Z0-9-]{16,100}$/.test(body.sendRequestId))
   )
     return jsonResponse({ error: "A valid send request ID is required." }, 400, req);
@@ -921,7 +921,8 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
           to,
           subject,
           body: replyBody,
-          ...(stored ? { inboundEmailId: stored.id, sendRequestId: body.sendRequestId } : {}),
+          ...(stored ? { inboundEmailId: stored.id } : {}),
+          ...(body.sendRequestId ? { sendRequestId: body.sendRequestId } : {}),
           ...(body.threadId ? { threadId: body.threadId } : {}),
           ...(body.inReplyTo ? { inReplyTo: body.inReplyTo } : {}),
           ...(body.replyToEmailId ? { replyToEmailId: body.replyToEmailId } : {}),

@@ -104,7 +104,7 @@ afterEach(() => {
 function stubGmailFetch(): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async (url: string | URL) => {
     const u = String(url);
-    if (u.includes("oauth2.googleapis.com")) {
+    if (new URL(u).hostname === "oauth2.googleapis.com") {
       return new Response(JSON.stringify({ access_token: "at", expires_in: 3600 }), {
         status: 200,
       });
@@ -120,6 +120,14 @@ function stubGmailFetch(): ReturnType<typeof vi.fn> {
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
+
+const sendCalls = (m: ReturnType<typeof vi.fn>) =>
+  m.mock.calls.filter((c) => String(c[0]).endsWith("/messages/send"));
+const mimeOf = (call: unknown[]) =>
+  Buffer.from(
+    (JSON.parse(String((call[1] as RequestInit).body)) as { raw: string }).raw,
+    "base64url",
+  ).toString("utf8");
 
 describe("replySubject", () => {
   it('prepends "Re: " once, case-insensitively', () => {
@@ -194,6 +202,100 @@ describe("replyEmail — gmail identity", () => {
     expect(payload.threadId).toBeUndefined();
     const mime = Buffer.from(payload.raw, "base64url").toString("utf8");
     expect(mime).not.toMatch(/^In-Reply-To:/m);
+  });
+
+  it("the same text in answer to two different emails is two replies, not a replay (#905)", async () => {
+    const fetchMock = stubGmailFetch();
+    for (const inReplyTo of ["<pat-msg-1@mail.acme.com>", "<pat-msg-2@mail.acme.com>"]) {
+      await replyEmail(
+        {
+          identityId: "gmail:jane@gmail.com",
+          to: "pat@acme.com",
+          subject: "trustclaw stack",
+          body: "Thanks!",
+          threadId: "t-9",
+          inReplyTo,
+        },
+        { playName: "inbox-reply" },
+      );
+    }
+    const calls = sendCalls(fetchMock);
+    expect(calls).toHaveLength(2);
+    expect(mimeOf(calls[1]!)).toMatch(/^In-Reply-To: <pat-msg-2@mail\.acme\.com>$/m);
+  });
+
+  it("a retry under the same send request ID goes to the recipient first claimed (#905)", async () => {
+    const fetchMock = stubGmailFetch();
+    const base = fetchMock.getMockImplementation() as (u: string | URL) => Promise<Response>;
+    let failNext = true;
+    fetchMock.mockImplementation(async (url: string | URL) => {
+      if (String(url).endsWith("/messages/send") && failNext) {
+        failNext = false;
+        return new Response(JSON.stringify({ error: { code: 500, message: "backend" } }), {
+          status: 500,
+        });
+      }
+      return base(url);
+    });
+    const reply = (to: string) =>
+      replyEmail(
+        {
+          identityId: "gmail:jane@gmail.com",
+          sendRequestId: "req-0123456789abcdef",
+          to,
+          subject: "trustclaw stack",
+          body: "fair point.",
+          inReplyTo: "<pat-msg-1@mail.acme.com>",
+        },
+        { playName: "inbox-reply" },
+      );
+    await expect(reply("pat@acme.com")).rejects.toThrow(/Gmail API failed \(500\)/);
+    await reply("someone-else@other.com");
+    const calls = sendCalls(fetchMock);
+    expect(calls).toHaveLength(2);
+    expect(mimeOf(calls[1]!)).toMatch(/^To: pat@acme\.com$/m);
+    expect(recordReceipt).toHaveBeenLastCalledWith(
+      expect.objectContaining({ signedReceipt: expect.objectContaining({ to: "pat@acme.com" }) }),
+    );
+  });
+
+  it("a hung token refresh is a definite failure at the deadline: nothing sent, retryable (#905)", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = stubGmailFetch();
+      const base = fetchMock.getMockImplementation() as (u: string | URL) => Promise<Response>;
+      let tokenSignal: AbortSignal | undefined;
+      fetchMock.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+        if (new URL(String(url)).hostname === "oauth2.googleapis.com") {
+          tokenSignal = init?.signal ?? undefined;
+          return new Promise<Response>(() => {});
+        }
+        return base(url);
+      });
+      const settled = replyEmail(
+        {
+          identityId: "gmail:jane@gmail.com",
+          sendRequestId: "req-token-hangs-0001",
+          to: "pat@acme.com",
+          subject: "trustclaw stack",
+          body: "b",
+        },
+        { playName: "inbox-reply" },
+      ).catch((e: Error) => e);
+      await vi.advanceTimersByTimeAsync(31_000);
+      const err = (await settled) as Error;
+      expect(err.message).toBe(
+        "Gmail token refresh failed: Gmail token request deadline exceeded (30s)",
+      );
+      expect(tokenSignal?.aborted).toBe(true);
+      expect(sendCalls(fetchMock)).toHaveLength(0);
+      const { replySendKey } = await import("../src/mailbox.ts");
+      expect(scratch.outboundSends.get(replySendKey("req-token-hangs-0001"))?.status).toBe(
+        "failed",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -338,6 +440,27 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
     expect(retry!.subject).toBe("first");
     expect(retry!.idempotencyKey).toBe(first!.idempotencyKey);
     expect(scratch.outboundSends.get(key)?.status).toBe("confirmed");
+  });
+
+  it("a retry goes to the recipient first claimed, under the first attempt's SDK key (#905)", async () => {
+    const key = "gtm:test:email:show-hn:kim@acme.com:0";
+    emailMock.mockRejectedValueOnce(new Error("Job timed out after 120s"));
+    await expect(
+      sendEmail(
+        { to: "kim@acme.com", subject: "first", body: "first body", idempotencyKey: key },
+        { playName: "show-hn" },
+      ),
+    ).rejects.toThrow();
+    scratch.outboundSends.mark(key, "failed");
+    await sendEmail(
+      { to: "someone-else@other.com", subject: "first", body: "first body", idempotencyKey: key },
+      { playName: "show-hn" },
+    );
+    const [first, retry] = emailMock.mock.calls.map(
+      (c) => c[0] as { to: string; idempotencyKey: string },
+    );
+    expect(retry!.to).toBe("kim@acme.com");
+    expect(retry!.idempotencyKey).toBe(first!.idempotencyKey);
   });
 
   it("an explicit platform rejection is definite: the retry may send the new draft", async () => {

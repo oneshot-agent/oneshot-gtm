@@ -275,12 +275,64 @@ describe("OutboundSendStore.claim", () => {
     expect(retry.send).toMatchObject({ subject: "Hello", body: "Hi there", exactResend: true });
   });
 
+  it("a provider thread id is kept after an unknown outcome and takes the new value after a definite failure (#905)", () => {
+    const store = ledger.outboundSends;
+    store.claim(input({ threadKey: "t-1" }));
+    store.mark(input().key, "uncertain", { now: t0 });
+    store.mark(input().key, "failed", { now: at(10 * 60_000) });
+    expect(store.claim(input({ threadKey: "t-2", now: at(11 * 60_000) })).send.threadKey).toBe(
+      "t-1",
+    );
+
+    const other = "gtm:test:email:play:b@example.org:0";
+    store.claim(input({ key: other, threadKey: "t-1" }));
+    store.mark(other, "failed", { now: t0 });
+    expect(
+      store.claim(input({ key: other, threadKey: "t-2", now: at(60_000) })).send.threadKey,
+    ).toBe("t-2");
+  });
+
+  it("the daily cap counts a keyed send that may have gone out without a receipt (#905)", () => {
+    const store = ledger.outboundSends;
+    const since = "2026-10-01 00:00:00";
+    const id = input().identityId;
+    const row = (key: string, status: "uncertain" | "confirmed" | "failed" | null) => {
+      store.claim(input({ key, now: at(60_000) }));
+      if (status) store.mark(key, status, { now: at(60_000) });
+    };
+    row("k-uncertain", "uncertain");
+    row("k-confirmed", "confirmed");
+    row("k-failed", "failed");
+    row("k-pending", null);
+    expect(ledger.countEmailSendsSince(id, since)).toBe(2);
+    // A row from before the window does not count.
+    expect(ledger.countEmailSendsSince(id, "2026-10-02 00:00:00")).toBe(0);
+  });
+
   it("after a definite failure a retry takes the new draft", () => {
     const store = ledger.outboundSends;
     store.claim(input());
     store.mark(input().key, "failed", { now: t0 });
     const retry = store.claim(input({ subject: "Rewritten", body: "new", now: at(60_000) }));
     expect(retry.send).toMatchObject({ subject: "Rewritten", body: "new", exactResend: false });
+  });
+
+  it("a definite failure leaves no row the sweep can settle failed and resend (#905)", () => {
+    // The Gmail path: no deterministic Message-ID and sentEvidence true. A
+    // failure the server answered is marked `failed` right away, so it never
+    // ages into `uncertain` for the confirm sweep to settle.
+    const store = ledger.outboundSends;
+    const gmail = input({ transport: "gmail", messageId: null, identityId: "gmail:me@gmail.com" });
+    store.claim(gmail);
+    store.mark(gmail.key, "failed", {
+      error: "Gmail API failed (500): backendError [/messages/send]",
+    });
+    expect(store.get(gmail.key)).toMatchObject({ status: "failed", messageId: null });
+    const anHour = 60 * 60_000;
+    expect(store.listUnconfirmed({ minAgeMs: 0, limit: 10, now: at(anHour) })).toEqual([]);
+    const retry = store.claim({ ...gmail, now: at(anHour) });
+    expect(retry).toMatchObject({ verdict: "send", retry: true });
+    expect(retry.send).toMatchObject({ status: "pending", attempts: 2, exactResend: false });
   });
 
   it("stamps submitted / confirmed / checked times by status", () => {

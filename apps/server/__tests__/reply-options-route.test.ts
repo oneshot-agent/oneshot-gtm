@@ -155,6 +155,134 @@ beforeEach(() => {
     .mockResolvedValue(Response.json({ sent: true, id: "email-send", costUsd: 0 }));
 });
 describe("reply options API", () => {
+  it.each([true, false])(
+    "Gmail reply deadline reconciles through the status checker (in Sent: %s)",
+    async (inSent) => {
+      const core = await import("@oneshot-gtm/core");
+      const inbox =
+        await vi.importActual<typeof import("../src/api/inbox.ts")>("../src/api/inbox.ts");
+      emailSend.mockImplementation(inbox.sendReplyRoute);
+      const cfg = loadConfig();
+      core.registerGmailIdentity({ address: "founder@example.com", refreshToken: "test-refresh" });
+      vi.stubEnv("GMAIL_CLIENT_ID", "test-client");
+      vi.stubEnv("GMAIL_CLIENT_SECRET", "test-secret");
+      core._resetGmailCache();
+      vi.useFakeTimers();
+      try {
+        const t = seed();
+        review.saveDrafts(t.key, drafts(), null);
+        const sendId = inSent ? "gmail-deadline-landed" : "gmail-deadline-missing";
+        const key = core.replySendKey(sendId);
+        const start = Date.now();
+        let sendSignal: AbortSignal | null | undefined;
+        const send = vi.fn((_url: string, init?: RequestInit) => {
+          sendSignal = init?.signal;
+          // Google accepts the request; its success body stalls beyond 30 seconds.
+          return new Response(new ReadableStream<Uint8Array>({ start() {} }), { status: 200 });
+        });
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async (url: string | URL, init?: RequestInit) => {
+            const u = String(url);
+            if (new URL(u).hostname === "oauth2.googleapis.com")
+              return Response.json({ access_token: "test-access", expires_in: 3600 });
+            if (u.endsWith("/profile"))
+              return Response.json({ emailAddress: "founder@example.com" });
+            if (u.endsWith("/messages/send")) return send(u, init);
+            if (u.includes("/messages?")) {
+              expect(new URL(u).searchParams.get("q")).toContain("in:sent to:ada@example.com");
+              return Response.json({ messages: inSent ? [{ id: "sent-reply" }] : [] });
+            }
+            if (u.includes("/messages/sent-reply?"))
+              return Response.json({
+                id: "sent-reply",
+                internalDate: String(start),
+                payload: {
+                  headers: [
+                    { name: "Subject", value: "Re: Question" },
+                    { name: "Message-ID", value: "<sent-reply@gmail>" },
+                    { name: "In-Reply-To", value: "<in>" },
+                  ],
+                },
+              });
+            throw new Error(`unexpected fetch: ${u}`);
+          }),
+        );
+        const pending = replySendRoute(req({ key: t.key, sendId, revision: 1 }));
+        await vi.advanceTimersByTimeAsync(core.GMAIL_TIMEOUT_MS);
+        expect(await (await pending).json()).toMatchObject({ status: "uncertain" });
+        expect(sendSignal?.aborted).toBe(true);
+        expect(getLedger().outboundSends.get(key)).toMatchObject({
+          status: "uncertain",
+          transport: "gmail",
+          identityId: t.email!.sourceIdentityId,
+          recipient: "ada@example.com",
+          subject: "Re: Question",
+          body: "My edited answer",
+          inReplyTo: "<in>",
+          references: ["<in>"],
+          sentEvidence: true,
+        });
+        expect(
+          (await replySendRoute(req({ key: t.key, sendId: "gmail-another-request", revision: 1 })))
+            .status,
+        ).toBe(409);
+        const sweep = (nowMs: number) =>
+          core.runOutboundConfirmations({
+            outbound: getLedger().outboundSends,
+            delivery: getLedger().sendDelivery,
+            nowMs,
+          });
+        await sweep(start + core.CONFIRM_MIN_AGE_MS);
+        const checked = await (await replySendRoute(req({ key: t.key, check: true }))).json();
+        expect(checked).toMatchObject({ status: inSent ? "sent" : "uncertain" });
+        if (inSent) {
+          expect(review.get(t.key)?.drafts?.edits.direct).toBe("");
+          // Bypass the composer too: replaying the same request cannot submit again.
+          await core.replyEmail(
+            {
+              identityId: t.email!.sourceIdentityId!,
+              to: "ada@example.com",
+              subject: "Question",
+              body: "My edited answer",
+              sendRequestId: sendId,
+              threadId: "gmail-thread",
+              inReplyTo: "<in>",
+            },
+            { playName: "inbox-reply" },
+          );
+          expect(
+            getLedger().countEmailSendsSince(t.email!.sourceIdentityId!, "2000-01-01 00:00:00"),
+          ).toBe(0);
+        } else {
+          await sweep(start + core.UNCERTAIN_SETTLE_MS);
+          expect(
+            await (await replySendRoute(req({ key: t.key, check: true }))).json(),
+          ).toMatchObject({ status: "failed" });
+          expect(review.get(t.key)?.drafts?.edits.direct).toBe("My edited answer");
+          send.mockImplementation(() =>
+            Response.json({ id: "retry-reply", threadId: "gmail-thread" }),
+          );
+          expect(
+            await (
+              await replySendRoute(req({ key: t.key, sendId: "gmail-retry-request", revision: 1 }))
+            ).json(),
+          ).toMatchObject({ status: "sent" });
+        }
+        expect(send).toHaveBeenCalledTimes(inSent ? 1 : 2);
+        const wire = JSON.parse(String(send.mock.calls[0]![1]!.body));
+        expect(wire.threadId).toBe("gmail-thread");
+        expect(Buffer.from(wire.raw, "base64url").toString()).toContain("In-Reply-To: <in>");
+      } finally {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
+        core._resetGmailCache();
+        saveConfig(cfg);
+      }
+    },
+  );
+
   it("does not disclose workspace prospects in demo mode", async () => {
     const previous = process.env.ONESHOT_GTM_DEMO;
     process.env.ONESHOT_GTM_DEMO = "1";

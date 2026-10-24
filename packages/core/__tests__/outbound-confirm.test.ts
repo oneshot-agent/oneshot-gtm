@@ -280,6 +280,157 @@ describe("runOutboundConfirmations", () => {
     expect(ledger.outboundSends.get(s.key)).toMatchObject({ status: "confirmed", observed: 1 });
   });
 
+  it("reconciles a Gmail send cut off at the deadline before any retry: in Sent → confirmed and replayed, missing after the window → failed and resent (#905)", async () => {
+    // Both rows are left `uncertain` by the transport deadline (oneshot.ts
+    // treats a `/messages/send` deadline as an unknown outcome). Gmail keeps
+    // no deterministic Message-ID, so the lookup is by recipient + subject.
+    const landed = keyed("gm-ack-lost", "uncertain", gmailId);
+    const dead = keyed("gm-dead", "uncertain", gmailId);
+    const r: ConfirmReaders = {
+      smtp: vi.fn(async () => []),
+      gmail: vi.fn(async ({ recipient }) =>
+        recipient === "gm-ack-lost@example.org" ? [copy("<minted@gmail>", 20)] : [],
+      ),
+    };
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, r);
+    expect(ledger.outboundSends.get(landed.key)).toMatchObject({
+      status: "confirmed",
+      observed: 1,
+    });
+    expect(ledger.outboundSends.get(dead.key)?.status).toBe("uncertain");
+    // Google did accept the first request: the next attempt replays, never resends.
+    expect(
+      ledger.outboundSends.claim({ ...claimOf(landed.key), now: new Date(T0 + 4 * 60_000) })
+        .verdict,
+    ).toBe("already_sent");
+    // Nothing in Sent yet: still refused, not retried, until the settle window.
+    expect(
+      ledger.outboundSends.claim({ ...claimOf(dead.key), now: new Date(T0 + 4 * 60_000) }).verdict,
+    ).toBe("uncertain");
+    await sweep(T0 + UNCERTAIN_SETTLE_MS, r);
+    expect(ledger.outboundSends.get(dead.key)?.status).toBe("failed");
+    const retry = ledger.outboundSends.claim({
+      ...claimOf(dead.key),
+      now: new Date(T0 + 11 * 60_000),
+    });
+    expect(retry).toMatchObject({ verdict: "send", retry: true });
+    expect(retry.send).toMatchObject({ attempts: 2, exactResend: true, subject: "Hello there" });
+  });
+
+  it("confirms a Gmail reply only from a Sent copy answering the same message (#905)", async () => {
+    const reply = (key: string) => {
+      ledger.outboundSends.claim({
+        key,
+        identityId: gmailId.id,
+        transport: "gmail",
+        recipient: `${key}@example.org`,
+        subject: "Re: Hello",
+        body: "Thanks!",
+        messageId: null,
+        sentEvidence: true,
+        inReplyTo: "<msg-a@mail.example>",
+        references: ["<msg-a@mail.example>"],
+        now: new Date(T0),
+      });
+      ledger.outboundSends.mark(key, "uncertain", { now: new Date(T0) });
+    };
+    const answering = (inReplyTo: string | undefined): SentCopy => ({
+      ...copy("<minted@gmail>", 20, "Re: Hello"),
+      ...(inReplyTo ? { inReplyTo } : {}),
+    });
+    const only = (key: string, c: SentCopy): ConfirmReaders => ({
+      smtp: vi.fn(async () => []),
+      gmail: vi.fn(async ({ recipient }) => (recipient === `${key}@example.org` ? [c] : [])),
+    });
+
+    // A reply to another message with the same subject is not this reply.
+    reply("gm-reply-other");
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, only("gm-reply-other", answering("<msg-b@mail.example>")));
+    expect(ledger.outboundSends.get("gm-reply-other")?.status).toBe("uncertain");
+
+    // Same target, header spelled differently: confirmed.
+    reply("gm-reply-same");
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, only("gm-reply-same", answering("MSG-A@mail.example")));
+    expect(ledger.outboundSends.get("gm-reply-same")?.status).toBe("confirmed");
+
+    // A copy without the header neither confirms the reply nor proves it unsent:
+    // past the settle window it is flagged, never resent.
+    reply("gm-reply-noheader");
+    const noHeader = only("gm-reply-noheader", answering(undefined));
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, noHeader);
+    expect(ledger.outboundSends.get("gm-reply-noheader")?.status).toBe("uncertain");
+    await sweep(T0 + UNCERTAIN_SETTLE_MS, noHeader);
+    expect(ledger.outboundSends.get("gm-reply-noheader")).toMatchObject({
+      status: "not_found",
+      error: expect.stringMatching(/no reply header/),
+    });
+  });
+
+  it("sends Gmail cannot tell apart confirm only when Sent holds a copy for each; else flagged, never resent (#905)", async () => {
+    const twin = (key: string) => {
+      ledger.outboundSends.claim({
+        key,
+        identityId: gmailId.id,
+        transport: "gmail",
+        recipient: "twin@example.org",
+        subject: "Hello there",
+        body: key,
+        messageId: null,
+        sentEvidence: true,
+        now: new Date(T0),
+      });
+      ledger.outboundSends.mark(key, "uncertain", { now: new Date(T0) });
+    };
+    const sentHolds = (...ids: string[]): ConfirmReaders => ({
+      smtp: vi.fn(async () => []),
+      gmail: vi.fn(async () => ids.map((id) => copy(id, 20))),
+    });
+
+    // One copy, two sends: which one went out is unknown.
+    twin("gm-twin-a");
+    twin("gm-twin-b");
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, sentHolds("<one@gmail>"));
+    for (const k of ["gm-twin-a", "gm-twin-b"]) {
+      expect(ledger.outboundSends.get(k)).toMatchObject({
+        status: "not_found",
+        error: expect.stringMatching(/also matches another send/),
+      });
+      expect(
+        ledger.outboundSends.claim({ ...claimOf(k), now: new Date(T0 + 20 * 60_000) }).verdict,
+      ).toBe("already_sent");
+    }
+  });
+
+  it("two sends Gmail cannot tell apart are both confirmed by two copies (#905)", async () => {
+    for (const key of ["gm-pair-a", "gm-pair-b"]) {
+      ledger.outboundSends.claim({
+        key,
+        identityId: gmailId.id,
+        transport: "gmail",
+        recipient: "pair@example.org",
+        subject: "Hello there",
+        body: key,
+        messageId: null,
+        sentEvidence: true,
+        now: new Date(T0),
+      });
+      ledger.outboundSends.mark(key, "uncertain", { now: new Date(T0) });
+    }
+    const r: ConfirmReaders = {
+      smtp: vi.fn(async () => []),
+      gmail: vi.fn(async () => [copy("<one@gmail>", 20), copy("<two@gmail>", 25)]),
+    };
+    await sweep(T0 + CONFIRM_MIN_AGE_MS, r);
+    expect(ledger.outboundSends.get("gm-pair-a")).toMatchObject({
+      status: "confirmed",
+      observed: 1,
+    });
+    expect(ledger.outboundSends.get("gm-pair-b")).toMatchObject({
+      status: "confirmed",
+      observed: 1,
+    });
+  });
+
   it("leaves a send unchanged on a transient read error, one read per mailbox", async () => {
     const a = keyed("t1", "submitted");
     const b = keyed("t2", "submitted");

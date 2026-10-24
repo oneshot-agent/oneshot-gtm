@@ -1,6 +1,6 @@
 import type { InboxEmail, InboxListResult } from "@oneshot-agent/sdk";
 import { htmlToText } from "./html-text.ts";
-import { parallelMap } from "./parallel.ts";
+import { parallelMap, withDeadline } from "./parallel.ts";
 import type { AuthVerdict, BounceKind, GmailPlacement } from "./types.ts";
 
 /**
@@ -11,6 +11,20 @@ import type { AuthVerdict, BounceKind, GmailPlacement } from "./types.ts";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
+/**
+ * Deadline on every Gmail API request, covering the whole exchange: headers
+ * and the body read alike. Comfortably shorter than the keyed send's
+ * STALE_PENDING_MS (5 min): a send that hangs is aborted client-side and
+ * rejected here, so its `pending` row never ages into the stale-claim
+ * demotion while the request is still running — the race the confirm sweep
+ * could settle as failed and resend under a second Message-ID (#905). The
+ * abort bounds our wait and asks Google to cancel; it does not prove Google
+ * never accepted the request. So oneshot.ts treats a deadline on
+ * `/messages/send` as an unknown outcome to reconcile against Sent before any
+ * retry, and only a deadline before the send itself (the `/profile` lookup)
+ * as a definite failure. Same shape as Smartlead's deadline.
+ */
+export const GMAIL_TIMEOUT_MS = 30_000;
 
 export const GMAIL_AUTH_HINT = "run: bun run cli -- gmail auth";
 
@@ -156,22 +170,42 @@ export async function getGmailAccessToken(account?: GmailAccount): Promise<strin
     const what = [...missing, ...(refreshToken ? [] : ["refresh token"])].join(", ");
     throw new Error(`Gmail credentials missing (${what}) — ${GMAIL_AUTH_HINT}`);
   }
-  const res = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: process.env["GMAIL_CLIENT_ID"]!,
-      client_secret: process.env["GMAIL_CLIENT_SECRET"]!,
-      refresh_token: refreshToken,
-      grant_type: "refresh_token",
-    }),
-  });
-  const data = (await res.json()) as {
+  // Same deadline as the API calls: a keyed send refreshes the token inside
+  // its claim, so an unbounded refresh could outlive STALE_PENDING_MS and let
+  // the send overlap a retry (#905). Nothing was sent yet, so this failure is
+  // definite.
+  const abort = new AbortController();
+  let res: Response;
+  let data: {
     access_token?: string;
     expires_in?: number;
     error?: string;
     error_description?: string;
   };
+  try {
+    [res, data] = await withDeadline(
+      fetch(TOKEN_URL, {
+        method: "POST",
+        signal: abort.signal,
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: process.env["GMAIL_CLIENT_ID"]!,
+          client_secret: process.env["GMAIL_CLIENT_SECRET"]!,
+          refresh_token: refreshToken,
+          grant_type: "refresh_token",
+        }),
+      }).then(async (r) => [r, (await r.json()) as typeof data] as const),
+      GMAIL_TIMEOUT_MS,
+      "Gmail token request",
+    );
+  } catch (err) {
+    abort.abort();
+    const msg = (err as Error).message ?? "";
+    if (msg.startsWith("Gmail token request deadline exceeded")) {
+      throw new Error(`Gmail token refresh failed: ${msg}`, { cause: err });
+    }
+    throw err;
+  }
   if (!res.ok || !data.access_token) {
     if (data.error === "invalid_grant") {
       throw new Error(
@@ -188,16 +222,38 @@ export async function getGmailAccessToken(account?: GmailAccount): Promise<strin
   return entry.token;
 }
 
-async function gmailFetch(
+/**
+ * One Gmail API request under GMAIL_TIMEOUT_MS. `consume` reads the response
+ * inside the deadline, so a server that answers the headers promptly but never
+ * finishes the body is cut off at the same deadline as one that never answers
+ * at all; the timer is not released when the headers arrive.
+ */
+async function gmailFetch<T>(
   path: string,
-  init?: RequestInit,
-  account?: GmailAccount,
-): Promise<Response> {
+  init: RequestInit | undefined,
+  account: GmailAccount | undefined,
+  consume: (res: Response) => Promise<T>,
+): Promise<T> {
   const token = await getGmailAccessToken(account);
-  return fetch(`${GMAIL_API}${path}`, {
-    ...init,
-    headers: { ...init?.headers, Authorization: `Bearer ${token}` },
-  });
+  // Abort the request at the deadline, not just the wait on it, so a request
+  // still in flight (headers or body) when the deadline rejection settles the
+  // row is asked to stop rather than left running. Whether Google already
+  // accepted it is unknown to us either way.
+  const abort = new AbortController();
+  try {
+    return await withDeadline(
+      fetch(`${GMAIL_API}${path}`, {
+        ...init,
+        signal: abort.signal,
+        headers: { ...init?.headers, Authorization: `Bearer ${token}` },
+      }).then(consume),
+      GMAIL_TIMEOUT_MS,
+      `Gmail API ${path.split("?")[0]}`,
+    );
+  } catch (err) {
+    abort.abort();
+    throw err;
+  }
 }
 
 /** Google's stable API error envelope: `{ error: { code, message, status, errors[] } }`. */
@@ -256,32 +312,33 @@ export function formatGmailApiError(raw: string): string {
 }
 
 async function gmailJson<T>(path: string, init?: RequestInit, account?: GmailAccount): Promise<T> {
-  const res = await gmailFetch(path, init, account);
-  if (!res.ok) {
-    // Check 401 before reading the body: a stuck/slow/unclosed body on an
-    // auth-rejected response must not delay the auth error the caller needs
-    // to act on (re-auth), and there's nothing in that body worth parsing.
-    if (res.status === 401) {
-      // Release the unread body's stream now rather than leaving it open
-      // until GC: matters for a long-running worker hitting repeated 401s.
-      // cancel() can reject (locked stream / source cancel-algorithm
-      // failure); swallow that rather than letting it surface as an
-      // unhandled rejection right after the 401 error below is thrown.
-      res.body?.cancel().catch(() => {});
-      throw new Error(`Gmail auth rejected (401) — ${GMAIL_AUTH_HINT}`);
+  return gmailFetch(path, init, account, async (res) => {
+    if (!res.ok) {
+      // Check 401 before reading the body: a stuck/slow/unclosed body on an
+      // auth-rejected response must not delay the auth error the caller needs
+      // to act on (re-auth), and there's nothing in that body worth parsing.
+      if (res.status === 401) {
+        // Release the unread body's stream now rather than leaving it open
+        // until GC: matters for a long-running worker hitting repeated 401s.
+        // cancel() can reject (locked stream / source cancel-algorithm
+        // failure); swallow that rather than letting it surface as an
+        // unhandled rejection right after the 401 error below is thrown.
+        res.body?.cancel().catch(() => {});
+        throw new Error(`Gmail auth rejected (401) — ${GMAIL_AUTH_HINT}`);
+      }
+      const raw = await res.text();
+      // The endpoint path is put LAST, not first: it's diagnostic but
+      // variable-length (e.g. `/messages/<id>?format=full`), and every call
+      // site truncates this message to its first ~120 chars for logging
+      // (oneshot.ts's `message_120`). A long path pushed to the front would
+      // crowd out the status/quota-metric text that actually explains the
+      // failure.
+      throw new Error(
+        `Gmail API failed (${res.status}): ${formatGmailApiError(raw)} [${path.split("?")[0]}]`,
+      );
     }
-    const raw = await res.text();
-    // The endpoint path is put LAST, not first: it's diagnostic but
-    // variable-length (e.g. `/messages/<id>?format=full`), and every call
-    // site truncates this message to its first ~120 chars for logging
-    // (oneshot.ts's `message_120`). A long path pushed to the front would
-    // crowd out the status/quota-metric text that actually explains the
-    // failure.
-    throw new Error(
-      `Gmail API failed (${res.status}): ${formatGmailApiError(raw)} [${path.split("?")[0]}]`,
-    );
-  }
-  return (await res.json()) as T;
+    return (await res.json()) as T;
+  });
 }
 
 /** Header values must be single-line; strips CR/LF to block header injection. */
@@ -521,6 +578,8 @@ export interface SentCopy {
   /** ISO time the mailbox recorded the message. */
   date: string;
   subject: string;
+  /** The In-Reply-To header, when the copy has one (Gmail Sent reads only). */
+  inReplyTo?: string;
 }
 
 /**
@@ -548,11 +607,14 @@ export async function listGmailSentTo(
     const meta = new URLSearchParams({ format: "metadata" });
     meta.append("metadataHeaders", "Subject");
     meta.append("metadataHeaders", "Message-ID");
+    meta.append("metadataHeaders", "In-Reply-To");
     const msg = await gmailJson<GmailMessageMeta>(`/messages/${id}?${meta}`, undefined, account);
+    const inReplyTo = header(msg, "In-Reply-To");
     return {
       messageId: header(msg, "Message-ID") || msg.id,
       date: new Date(Number(msg.internalDate)).toISOString(),
       subject: header(msg, "Subject"),
+      ...(inReplyTo ? { inReplyTo } : {}),
     };
   });
 }
