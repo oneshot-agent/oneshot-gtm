@@ -469,6 +469,16 @@ export interface OneShotConfig {
    */
   pilotOffer?: string | null;
   /**
+   * Kinds of goal the founder never offers a prospect, one plain-language
+   * entry each ("recruiting: hiring, sourcing, vetting or interviewing people
+   * for the prospect's own open roles"). The offer writer is told never to
+   * write one, and the judge rates one `irrelevant`, so it is never used.
+   * Read through `offerExclusionsOf` (trimmed, blanks dropped). Not part of
+   * an offer's input hash: stored offers are swept with
+   * `find rejudge-offers`. Absent or empty: no exclusions.
+   */
+  offerExclusions?: string[];
+  /**
    * What an organization's members get when it offers the founder's product
    * to them (credits, setup, an extended trial), in the founder's own words.
    * The `multiplier` play quotes it verbatim and refuses to draft without

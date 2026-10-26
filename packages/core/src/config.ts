@@ -63,6 +63,23 @@ export function withCurrentDefaultModel(cfg: OneShotConfig): OneShotConfig {
   return next ? { ...cfg, llmModel: next } : cfg;
 }
 
+/**
+ * The workspace's `offerExclusions` as the writer and judge read them: each
+ * entry trimmed, blanks and repeats dropped. A hand-edited lone string counts
+ * as one entry; anything else reads as none.
+ */
+export function offerExclusionsOf(cfg: { offerExclusions?: unknown }): string[] {
+  const raw = cfg.offerExclusions;
+  const list = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : [];
+  const out: string[] = [];
+  for (const entry of list) {
+    if (typeof entry !== "string") continue;
+    const text = entry.replace(/\s+/g, " ").trim();
+    if (text && !out.includes(text)) out.push(text);
+  }
+  return out;
+}
+
 const DEFAULTS: OneShotConfig = {
   walletMode: "cdp",
   llmProvider: "openrouter",

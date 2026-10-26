@@ -8,6 +8,7 @@ or {"skip": true, "why": "..."}
 
 - PRODUCT, PRODUCT BRIEF: what the founder's product does. The ONLY source of what it can deliver.
 - OFFER TERMS (optional): the founder's general terms (a pilot, a trial, a partnership, a service). They set the size and shape of the offer; never repeat them inside it.
+- NEVER OFFER (optional): kinds of goal the founder never takes on for a prospect.
 - PLAY: how this prospect was found.
 - PROSPECT, TITLE, COMPANY: who they are.
 - RESEARCH: everything known about them and their firm: the row the finder wrote, their own repositories, person research, their own pages, firm research, recent posts, enrichment.
@@ -39,6 +40,7 @@ The thread is context, not evidence. It is our own writing, not a fact about the
 - A single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching is a STEP, never the offer. The offer is what that work, however long or machine-heavy, wins: a contract renegotiated, money recovered, a deal signed, a launch shipped, every new supplier onboarded in time for next quarter's contracts. "recover overbilled charges from three years of carrier invoices" is an offer; "audit carrier invoices" is a step. The whole path to that result is still work PRODUCT BRIEF says the product does: when the brief gives a check no path to a counted result for this firm, choose another goal rather than claim work the brief does not name. This holds when checking is all the product does: the offer names what the checking wins, and the check goes in STEPS. An offer never opens with vet, verify, validate, screen, scan, audit or check.
 - A forecast, a model or an analysis on its own is insight, never the offer. The offer is the plan changed on it and what that wins: stock reordered before the peak, crews rescheduled, a budget moved.
 - The person owns the goal or is one step from it. When the biggest goal in the firm belongs to someone far from this person, write the biggest one this person owns.
+- No offer, in any wording, is a goal of a kind listed in NEVER OFFER, however much RESEARCH says the firm needs it. Pick another goal.
 
 ## Each offer rests on an anchor
 

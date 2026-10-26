@@ -13,6 +13,7 @@ const verdictFor = new Map<string, Partial<OfferJudgement>>();
 const judgeMock = vi.fn();
 const writerMock = vi.fn();
 let onJudge: (() => void) | null = null;
+let extraCfg: Record<string, unknown> = {};
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -22,6 +23,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     loadConfig: () => ({
       ...actual.loadConfig(),
       offerJudge: { engine: "decisions", model: "test/decisions-model" },
+      ...extraCfg,
     }),
   };
 });
@@ -45,8 +47,13 @@ vi.mock("../src/output.ts", () => ({
 
 const { Ledger: RealLedger } = await import("@oneshot-gtm/core");
 const { offerHoldsSend } = await import("@oneshot-gtm/plays");
-const { commandRejudgeOffers, commandRewriteWeakOffers, selectAllWeakSequences } =
-  await import("../src/commands/rejudge-offers.ts");
+const {
+  commandListExcludedOffers,
+  commandRejudgeOffers,
+  commandRewriteWeakOffers,
+  selectAllWeakRows,
+  selectAllWeakSequences,
+} = await import("../src/commands/rejudge-offers.ts");
 
 function verdict(label: OfferJudgement["label"], score: number, pass: boolean): OfferJudgement {
   return {
@@ -68,6 +75,7 @@ beforeEach(() => {
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   verdictFor.clear();
   onJudge = null;
+  extraCfg = {};
   writerMock.mockReset();
   judgeMock.mockReset();
   judgeMock.mockImplementation(async (offers: Array<{ offer: string }>) => {
@@ -455,5 +463,134 @@ describe("commandRewriteWeakOffers", () => {
       () => null,
     );
     expect(items.map((i) => i.key)).toEqual(["sequence 1/new-business"]);
+  });
+});
+
+// `offerExclusions`: the judge rates an offer of an excluded kind
+// irrelevant (`excluded: true`). The sweep replaces it on unsent rows, an
+// approval never keeps it, and sequences are only listed.
+
+describe("offer exclusions", () => {
+  const excluded = (): OfferJudgement => ({
+    ...verdict("irrelevant", 0.9, false),
+    why: "excluded 0.92",
+    excluded: true,
+  });
+  const approvedAt = "2026-10-20T00:00:00.000Z";
+
+  it("switches an approved offer judged excluded to the first passing candidate", async () => {
+    const id = enqueue({
+      offer: offer(A, { ...weakFields, weakApprovedAt: approvedAt }),
+      offerCandidates: [offer(A, weakFields), offer(B, weakFields)],
+    });
+    verdictFor.set(A, excluded());
+    verdictFor.set(B, verdict("relevant", 0.7, true));
+    const s = await commandRejudgeOffers({ dryRun: false });
+    expect(s).toMatchObject({ switched: [id], excluded: [id], weak: [] });
+    const p = payloadOf(id);
+    expect(p.offer.offer).toBe(B);
+    expect("weakApprovedAt" in p.offer).toBe(false);
+    // The excluded candidate is stored weak, so it can never go out unreviewed.
+    expect(p.offerCandidates[0]).toMatchObject({
+      offer: A,
+      relevance: "weak",
+      relevanceWhy: "irrelevant: excluded 0.92",
+    });
+  });
+
+  it("drops the approval when nothing else passes: held, and then rewritten by --rewrite-all-weak", async () => {
+    const id = enqueue({
+      offer: offer(A, { ...weakFields, weakApprovedAt: approvedAt }),
+      offerCandidates: [offer(A, weakFields), offer(B, weakFields)],
+    });
+    expect(offerHoldsSend(payloadOf(id).offer)).toBe(false);
+    verdictFor.set(A, excluded());
+    verdictFor.set(B, verdict("weak", 0.3, false));
+    const s = await commandRejudgeOffers({ dryRun: false });
+    expect(s).toMatchObject({ weak: [id], newlyHeld: [id], excluded: [id], switched: [] });
+    const held = payloadOf(id).offer;
+    expect(held).toMatchObject({ offer: A, relevance: "weak" });
+    expect("weakApprovedAt" in held).toBe(false);
+    expect(offerHoldsSend(held)).toBe(true);
+
+    const fresh = offer(C, { relevance: "relevant", relevanceScore: 0.7 });
+    writerMock.mockResolvedValue({ offer: fresh, candidates: [fresh] });
+    const r = await commandRewriteWeakOffers({ dryRun: false });
+    expect(r).toMatchObject({ eligible: 1, passing: [`#${id}`] });
+    expect(payloadOf(id).offer.offer).toBe(C);
+  });
+
+  it("keeps an approved offer the judge rates weak but not excluded", async () => {
+    const id = enqueue({
+      offer: offer(A, { ...weakFields, weakApprovedAt: approvedAt }),
+      offerCandidates: [offer(A, weakFields), offer(B, weakFields)],
+    });
+    verdictFor.set(A, verdict("weak", 0.3, false));
+    verdictFor.set(B, verdict("relevant", 0.7, true));
+    const s = await commandRejudgeOffers({ dryRun: false });
+    expect(s).toMatchObject({ weak: [id], excluded: [], switched: [] });
+    expect(payloadOf(id).offer).toMatchObject({ offer: A, weakApprovedAt: approvedAt });
+  });
+
+  it("a founder-edited offer is never judged, whatever the exclusions", async () => {
+    const id = enqueue({
+      offer: offer(A, { editedBy: "founder" }),
+      offerCandidates: [offer(A), offer(B)],
+    });
+    verdictFor.set(A, excluded());
+    const before = ledger.getQueueRow(id)!.payload_json;
+    const s = await commandRejudgeOffers({ dryRun: false });
+    expect(s).toMatchObject({ judged: 0, skipped: 1, excluded: [] });
+    expect(ledger.getQueueRow(id)!.payload_json).toBe(before);
+  });
+
+  it("--rewrite-all-weak counts a set of weak and irrelevant offers", () => {
+    const id = enqueue({
+      offer: offer(A, { relevance: "irrelevant" }),
+      offerCandidates: [offer(A, { relevance: "irrelevant" }), offer(B, weakFields)],
+    });
+    const rows = (["pending", "approved"] as const).flatMap((status) =>
+      ledger.listQueue({ status, limit: 100 }),
+    );
+    expect(selectAllWeakRows(rows).map((i) => i.key)).toEqual([`#${id}`]);
+  });
+
+  it("--list-excluded lists active sequences whose offer is excluded and writes nothing", async () => {
+    extraCfg = { offerExclusions: ["recruiting: hiring people for their open roles"] };
+    const cadences = [
+      cadence({ offer: offer(A), candidates: [offer(A)], origin: "intro" }, 1),
+      cadence({ offer: offer(B), candidates: [offer(B)], origin: "derived" }, 2),
+      cadence({ skip: null }, 3),
+    ];
+    vi.spyOn(ledger, "listActiveCadences").mockReturnValue(cadences as never);
+    vi.spyOn(ledger, "cadenceQueueRow").mockImplementation((prospectId: number) =>
+      prospectId === 1
+        ? { id: 9, payload: { name: "Dana Lee", company: "Northside Plumbing" }, source: "s" }
+        : null,
+    );
+    const getProspect = vi.spyOn(ledger, "getProspectById").mockReturnValue(null);
+    verdictFor.set(A, excluded());
+    verdictFor.set(B, verdict("relevant", 0.7, true));
+    const s = await commandListExcludedOffers({});
+    expect(s).toEqual({
+      eligible: 2,
+      judged: 2,
+      excluded: ["sequence 1/new-business"],
+      errors: 0,
+    });
+    // Judged from the row the sequence started from, else the prospect.
+    const research = judgeMock.mock.calls.map((call) => call[1] as string);
+    expect(research.some((r) => r.includes("Northside Plumbing"))).toBe(true);
+    expect(getProspect).toHaveBeenCalledWith(2);
+    expect(writerMock).not.toHaveBeenCalled();
+  });
+
+  it("--list-excluded makes no judge call without offerExclusions", async () => {
+    vi.spyOn(ledger, "listActiveCadences").mockReturnValue([
+      cadence({ offer: offer(A), candidates: [offer(A)] }, 1),
+    ] as never);
+    const s = await commandListExcludedOffers({});
+    expect(s).toEqual({ eligible: 0, judged: 0, excluded: [], errors: 0 });
+    expect(judgeMock).not.toHaveBeenCalled();
   });
 });

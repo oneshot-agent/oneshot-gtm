@@ -22,6 +22,7 @@ const cfg: {
   pilotOffer: string;
   llmModel?: string;
   offerJudge?: { engine: "llm" | "decisions"; model?: string; minConfidence?: number };
+  offerExclusions?: string[];
 } = {
   founderName: "Founder",
   productOneLiner: "Acme schedules field crews",
@@ -100,6 +101,7 @@ beforeEach(() => {
   llm.judge = [];
   llm.judgeInputs = [];
   delete cfg.offerJudge;
+  delete cfg.offerExclusions;
   // Judge paths must not depend on a key in the developer's or CI's environment.
   delete process.env["OPENROUTER_API_KEY"];
 });
@@ -1581,5 +1583,155 @@ describe("the prompt version bump", () => {
       }),
     ).toBe(fromDraft);
     expect(llm.inputs).toHaveLength(0);
+  });
+});
+
+// `offerExclusions`: kinds of goal the founder never offers. The writer is
+// told them, both judge engines rate such an offer irrelevant, and nothing
+// changes for a workspace without them.
+
+describe("offer exclusions", () => {
+  const research = offerResearchText(target);
+  const hiring = {
+    ...good,
+    offer: "hire two dispatchers for the leeds depot before the winter peak",
+    return: "open dispatcher roles filled, counted per hire",
+  };
+  const exclusions = [
+    "  recruiting:  hiring, sourcing, vetting or interviewing people for the prospect's own open roles ",
+    "",
+    "   ",
+  ];
+  const kind =
+    "recruiting: hiring, sourcing, vetting or interviewing people for the prospect's own open roles";
+
+  afterEach(() => {
+    delete process.env["OPENROUTER_API_KEY"];
+  });
+
+  it("the writer is told NEVER OFFER, trimmed and without blanks; without exclusions, nothing", async () => {
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs[0]).not.toContain("NEVER OFFER");
+    cfg.offerExclusions = exclusions;
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs[1]).toContain(`NEVER OFFER:\n- ${kind}\n\nPLAY: new-business`);
+    expect(llm.inputs[1]).toContain("OFFER TERMS: a free month on one depot\n\nNEVER OFFER:");
+  });
+
+  it("an excluded offer is dropped like an irrelevant one, never a filler, and the writer is told why", async () => {
+    cfg.offerExclusions = exclusions;
+    llm.replies = [
+      JSON.stringify({ offers: [good, second, hiring] }),
+      JSON.stringify({ offers: [replacement] }),
+    ];
+    llm.judge = [
+      JSON.stringify({
+        judgements: [
+          { offer: 1, label: "relevant", why: "the second depot" },
+          { offer: 2, label: "relevant", why: "cancelled slots" },
+          { offer: 3, label: "relevant", why: "recruiting", excluded: true },
+        ],
+      }),
+      judgeReply([["relevant", "cancelled jobs"]]),
+    ];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.judgeInputs[0]).toContain(`NEVER OFFER:\n- ${kind}`);
+    expect(llm.inputs[1]).toContain(`"${hiring.offer}": irrelevant, excluded: recruiting`);
+    expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer, replacement.offer]);
+  });
+
+  it("llm engine: excluded makes the label irrelevant; without exclusions the flag is ignored", async () => {
+    const { judgeOffers } = await import("../src/_prospect-offer.ts");
+    const reply = JSON.stringify({
+      judgements: [
+        { offer: 1, label: "relevant", why: "the second depot" },
+        { offer: 2, label: "weak", why: "hiring for their open roles", excluded: true },
+      ],
+    });
+    llm.judge = [reply];
+    const plain = await judgeOffers([good, hiring], research, target, cfg as never);
+    expect(plain?.map((j) => [j?.label, j?.pass, j?.excluded])).toEqual([
+      ["relevant", true, undefined],
+      ["weak", false, undefined],
+    ]);
+    expect(llm.judgeInputs[0]).not.toContain("NEVER OFFER");
+    cfg.offerExclusions = exclusions;
+    llm.judge = [reply];
+    const out = await judgeOffers([good, hiring], research, target, cfg as never);
+    expect(out?.[0]).toMatchObject({ label: "relevant", pass: true });
+    expect(out?.[0]?.excluded).toBeUndefined();
+    expect(out?.[1]).toMatchObject({
+      label: "irrelevant",
+      pass: false,
+      excluded: true,
+      why: "excluded: hiring for their open roles",
+    });
+    expect(llm.judgeInputs[1]).toContain(`NEVER OFFER:\n- ${kind}`);
+  });
+
+  it("decisions engine: an exclusion question per offer, and irrelevant names the kinds", async () => {
+    const { judgeOffers, offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
+    process.env["OPENROUTER_API_KEY"] = "test-key";
+    cfg.offerExclusions = exclusions;
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            model: "test/decisions-model",
+            answers: {
+              offer_1: { choice: "relevant", confidence: 0.8, probabilities: { relevant: 0.8 } },
+              offer_2: { choice: "relevant", confidence: 0.9, probabilities: { relevant: 0.9 } },
+              excluded_1: { choice: "allowed", probabilities: { allowed: 0.95, excluded: 0.05 } },
+              excluded_2: { choice: "excluded", probabilities: { excluded: 0.92, allowed: 0.08 } },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    const out = await judgeOffers(
+      [good, hiring],
+      research,
+      target,
+      { ...cfg, offerJudge: { engine: "decisions", model: "test/decisions-model" } } as never,
+      { fetchImpl: fetchImpl as never },
+    );
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(init.body));
+    expect(Object.keys(body.questions)).toEqual(["offer_1", "excluded_1", "offer_2", "excluded_2"]);
+    expect(body.questions.offer_1.criteria).toEqual(offerRelevanceCriteria([kind]));
+    expect(body.questions.offer_1.criteria.irrelevant).toContain(kind);
+    expect(body.questions.offer_1.instructions).toContain("NEVER OFFER");
+    expect(Object.keys(body.questions.excluded_2.criteria)).toEqual(["excluded", "allowed"]);
+    expect(body.questions.excluded_2.criteria.excluded).toContain(kind);
+    expect(body.state).toContain(`NEVER OFFER:\n- ${kind}`);
+    expect(out?.map((j) => [j?.label, j?.pass, j?.excluded, j?.why])).toEqual([
+      ["relevant", true, undefined, "relevant 0.80"],
+      ["irrelevant", false, true, "excluded 0.92"],
+    ]);
+  });
+
+  it("without exclusions the criteria are as before", async () => {
+    const { offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
+    expect(offerRelevanceCriteria([])).toEqual(offerRelevanceCriteria());
+    expect(offerRelevanceCriteria().irrelevant).not.toContain("NEVER OFFER");
+  });
+
+  it("is not part of an offer's input or product hash: stored offers stand until swept", () => {
+    const withExclusions = { ...cfg, offerExclusions: [kind] };
+    expect(offerInputHash(research, withExclusions)).toBe(offerInputHash(research, cfg));
+    expect(offerProductHash(withExclusions)).toBe(offerProductHash(cfg));
+  });
+
+  it("the writer and judge prompts carry the rule, naming no kind of goal", () => {
+    const prompts = join(import.meta.dirname, "..", "..", "prompts");
+    const writer = readFileSync(join(prompts, "prospect-offer.md"), "utf8");
+    const judge = readFileSync(join(prompts, "prospect-offer-judge.md"), "utf8");
+    expect(writer).toContain("- NEVER OFFER (optional):");
+    expect(writer).toContain("No offer, in any wording, is a goal of a kind listed in NEVER OFFER");
+    expect(judge).toContain("- NEVER OFFER (optional):");
+    expect(judge).toContain('set `"excluded": true`');
+    for (const text of [writer, judge]) expect(text.toLowerCase()).not.toContain("recruit");
   });
 });

@@ -5,8 +5,10 @@
  * message opens with it.
  *
  * Product facts come only from config: `productOneLiner`, `productBrief`, and
- * `pilotOffer` (the general terms: a pilot, a trial, a partnership). Nothing
- * here names a product or assumes what kind of offer a founder makes.
+ * `pilotOffer` (the general terms: a pilot, a trial, a partnership). The kinds
+ * of goal a founder never offers come from `offerExclusions`: the writer is
+ * told them and the judge rates such an offer `irrelevant`. Nothing here
+ * names a product or assumes what kind of offer a founder makes.
  *
  * Before the first send it is stored on the queue row (`payload.offer`, with
  * the ranked `offerCandidates`). The send hands it to the sequence it starts
@@ -20,7 +22,13 @@
  * why, and the writer is not asked again until that input changes.
  */
 import { createHash } from "node:crypto";
-import { isPersonResearchDossier, loadConfig, logEvent, productBriefText } from "@oneshot-gtm/core";
+import {
+  isPersonResearchDossier,
+  loadConfig,
+  logEvent,
+  offerExclusionsOf,
+  productBriefText,
+} from "@oneshot-gtm/core";
 import {
   callDecisions,
   complete,
@@ -652,6 +660,7 @@ function offerUserMessage(input: DeriveOfferInput, cfg: AppConfig, research: str
     `PRODUCT: ${cfg.productOneLiner ?? ""}`,
     `PRODUCT BRIEF:\n${productBriefText(cfg, undefined, { max: BRIEF_MAX }) ?? ""}`,
     ...(cfg.pilotOffer?.trim() ? [`OFFER TERMS: ${cfg.pilotOffer.trim()}`] : []),
+    ...neverOfferBlock(offerExclusionsOf(cfg)),
     `PLAY: ${input.playName}`,
     `PROSPECT: ${firstString(t, ["name", "founderName", "guestName", "hostName"])}`,
     `TITLE: ${firstString(t, TITLE_KEYS)}`,
@@ -662,6 +671,13 @@ function offerUserMessage(input: DeriveOfferInput, cfg: AppConfig, research: str
       ? [`ALREADY OFFERED:\n${avoid.map((o) => `- ${clip(o, OFFER_MAX.offer)}`).join("\n")}`]
       : []),
   ].join("\n\n");
+}
+
+/** The NEVER OFFER section the writer and the judge read; none without exclusions. */
+function neverOfferBlock(exclusions: readonly string[]): string[] {
+  return exclusions.length > 0
+    ? [`NEVER OFFER:\n${exclusions.map((e) => `- ${e}`).join("\n")}`]
+    : [];
 }
 
 /** The offers to write around, trimmed, without blanks. */
@@ -687,6 +703,11 @@ export interface OfferJudgement {
    * `relevant` passes.
    */
   pass: boolean;
+  /**
+   * Set (always true) when the offer is of a kind the workspace never offers
+   * (`offerExclusions`). Its label is then `irrelevant` and it never passes.
+   */
+  excluded?: true;
 }
 
 const OFFER_RELEVANCE_LABELS: readonly OfferRelevance[] = ["relevant", "weak", "irrelevant"];
@@ -695,14 +716,34 @@ const DEFAULT_JUDGE_MIN_CONFIDENCE = 0.5;
 const JUDGE_RESEARCH_MAX = RESEARCH_MAX;
 const JUDGE_WHY_MAX = 140;
 
-/** The decisions-engine criteria for one offer's relevance. */
-export function offerRelevanceCriteria(): Record<OfferRelevance, string> {
+/**
+ * The decisions-engine criteria for one offer's relevance. With `exclusions`
+ * (the workspace's `offerExclusions`), an offer of one of those kinds is
+ * `irrelevant`; without, the criteria are the same as ever.
+ */
+export function offerRelevanceCriteria(
+  exclusions: readonly string[] = [],
+): Record<OfferRelevance, string> {
+  const excluded =
+    exclusions.length > 0
+      ? ` Also irrelevant, whatever else is true of it: a goal of a kind listed under NEVER OFFER, in any wording (${exclusions.join("; ")}).`
+      : "";
   return {
     relevant:
       "A goal this firm at its stage would put on its plan, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), owned by or one step from this person, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
     weak: "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome this person owns or is one step from, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.",
-    irrelevant:
-      "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.",
+    irrelevant: `A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.${excluded}`,
+  };
+}
+
+/** The decisions-engine criteria for whether one offer is of a kind the founder never offers. */
+function offerExclusionCriteria(
+  exclusions: readonly string[],
+): Record<"excluded" | "allowed", string> {
+  const kinds = exclusions.join("; ");
+  return {
+    excluded: `The offer's goal is of one of these kinds, in any wording: ${kinds}.`,
+    allowed: `The offer's goal is of none of these kinds: ${kinds}.`,
   };
 }
 
@@ -727,10 +768,12 @@ function judgeState(
   offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
   research: string,
   who: { company: string; title: string },
+  exclusions: readonly string[],
 ): string {
   return [
     `COMPANY: ${who.company}`,
     `TITLE: ${who.title}`,
+    ...neverOfferBlock(exclusions),
     `RESEARCH:\n${clip(research, JUDGE_RESEARCH_MAX) || "(none)"}`,
     `OFFERS:\n${offers.map((o, i) => `${i + 1}.\n${describeOffer(o)}`).join("\n\n")}`,
   ].join("\n\n");
@@ -742,10 +785,12 @@ async function judgeWithDecisions(
   model: string,
   key: string,
   min: number,
+  exclusions: readonly string[],
   fetchImpl: typeof fetch | undefined,
   onCost: ((usd: number) => void) | undefined,
 ): Promise<OfferJudgement[]> {
-  const criteria = offerRelevanceCriteria();
+  const criteria = offerRelevanceCriteria(exclusions);
+  const exclusionCriteria = exclusions.length > 0 ? offerExclusionCriteria(exclusions) : null;
   const questions: Record<string, DecisionsChoiceQuestion> = {};
   offers.forEach((o, i) => {
     questions[`offer_${i + 1}`] = {
@@ -757,9 +802,23 @@ async function judgeWithDecisions(
         `A market the firm sells into is not a need of the firm. A check is a step, not a goal: ` +
         `the offer should be what the check wins. How they were found is not what they own: an offer ` +
         `about a third party's project they only follow, or one restating what the product does, is weak.` +
+        (exclusionCriteria
+          ? ` A goal of a kind listed under NEVER OFFER, in any wording, is irrelevant.`
+          : "") +
         `\nOffer ${i + 1}:\n${describeOffer(o)}`,
       criteria,
     };
+    // Its own question, so an excluded offer is known as excluded, not only as irrelevant.
+    if (exclusionCriteria) {
+      questions[`excluded_${i + 1}`] = {
+        type: "choice",
+        instructions:
+          `The founder never offers a goal of a kind listed under NEVER OFFER in the state. ` +
+          `Is offer ${i + 1} a goal of one of those kinds, however it is worded?` +
+          `\nOffer ${i + 1}:\n${describeOffer(o)}`,
+        criteria: exclusionCriteria,
+      };
+    }
   });
   const res = await callDecisions({
     model,
@@ -789,6 +848,17 @@ async function judgeWithDecisions(
         : label === "relevant" && a.confidence != null
           ? a.confidence
           : null;
+    const ex = res.answers[`excluded_${i + 1}`];
+    if (ex?.choice === "excluded") {
+      return {
+        label: "irrelevant",
+        score,
+        why: topDecisionLabels(ex.probabilities, 1) || "excluded",
+        classifier,
+        pass: false,
+        excluded: true,
+      };
+    }
     return {
       label,
       score,
@@ -803,6 +873,7 @@ async function judgeWithLlm(
   offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
   state: string,
   cfg: AppConfig,
+  exclusions: readonly string[],
   onCost: ((usd: number) => void) | undefined,
 ): Promise<Array<OfferJudgement | null>> {
   const res = await complete({
@@ -817,14 +888,24 @@ async function judgeWithLlm(
   const parsed = tryParseJsonObject<{ judgements?: unknown }>(res.content, {});
   const list = Array.isArray(parsed.judgements) ? parsed.judgements : [];
   const classifier = `llm:${cfg.llmModel ?? res.model}`;
-  const byIndex = new Map<number, { label: OfferRelevance; why: string }>();
+  const byIndex = new Map<number, { label: OfferRelevance; why: string; excluded?: true }>();
   list.forEach((raw, position) => {
     if (!raw || typeof raw !== "object") return;
-    const j = raw as { offer?: unknown; label?: unknown; why?: unknown };
+    const j = raw as { offer?: unknown; label?: unknown; why?: unknown; excluded?: unknown };
     if (!isOfferRelevance(j.label)) return;
     const n = typeof j.offer === "number" && Number.isInteger(j.offer) ? j.offer - 1 : position;
     if (n < 0 || n >= offers.length || byIndex.has(n)) return;
     const why = typeof j.why === "string" ? clip(j.why.trim(), JUDGE_WHY_MAX) : "";
+    // Only with NEVER OFFER given: an excluded offer is irrelevant whatever label came with it.
+    if (exclusions.length > 0 && j.excluded === true) {
+      const text = why || "of a kind never offered";
+      byIndex.set(n, {
+        label: "irrelevant",
+        why: text.startsWith("excluded") ? text : clip(`excluded: ${text}`, JUDGE_WHY_MAX),
+        excluded: true,
+      });
+      return;
+    }
     byIndex.set(n, { label: j.label, why: why || j.label });
   });
   logEvent("prospect_offer.judged", {
@@ -855,10 +936,13 @@ export async function judgeOffers(
 ): Promise<Array<OfferJudgement | null> | null> {
   if (offers.length === 0) return [];
   const t = row as JsonRecord;
-  const state = judgeState(offers, research, {
-    company: firstString(t, COMPANY_KEYS),
-    title: firstString(t, TITLE_KEYS),
-  });
+  const exclusions = offerExclusionsOf(cfg);
+  const state = judgeState(
+    offers,
+    research,
+    { company: firstString(t, COMPANY_KEYS), title: firstString(t, TITLE_KEYS) },
+    exclusions,
+  );
   if (cfg.offerJudge?.engine === "decisions") {
     const model = cfg.offerJudge.model?.trim();
     const key = process.env["OPENROUTER_API_KEY"]?.trim();
@@ -870,6 +954,7 @@ export async function judgeOffers(
           model,
           key,
           judgeMinConfidence(cfg),
+          exclusions,
           opts.fetchImpl,
           opts.onCost,
         );
@@ -892,7 +977,7 @@ export async function judgeOffers(
     }
   }
   try {
-    return await judgeWithLlm(offers, state, cfg, opts.onCost);
+    return await judgeWithLlm(offers, state, cfg, exclusions, opts.onCost);
   } catch (err) {
     logEvent(
       "error.swallowed",

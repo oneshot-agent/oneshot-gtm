@@ -515,6 +515,27 @@ describe("POST /api/setup — offerJudge", () => {
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
 
+  it("offerExclusions: trimmed, blanks dropped; absent keeps, null or empty clears, non-strings refused", async () => {
+    expect(
+      await post({ offerExclusions: ["  recruiting:  hiring people ", "", "  ", "legal advice"] }),
+    ).toEqual({ status: 200 });
+    expect(savedCfg().offerExclusions).toEqual(["recruiting: hiring people", "legal advice"]);
+    current = { ...current, offerExclusions: ["recruiting"] };
+    saveConfigMock.mockClear();
+    expect(await post({ founderName: "Janet" })).toEqual({ status: 200 });
+    expect(savedCfg().offerExclusions).toEqual(["recruiting"]);
+    for (const offerExclusions of [null, [" "]]) {
+      saveConfigMock.mockClear();
+      expect(await post({ offerExclusions })).toEqual({ status: 200 });
+      expect(savedCfg().offerExclusions).toBeUndefined();
+    }
+    saveConfigMock.mockClear();
+    const res = await post({ offerExclusions: ["ok", 3] });
+    expect(res.status).toBe(400);
+    expect(res.error).toMatch(/offerExclusions/);
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
   it("null clears it; absent leaves it as stored", async () => {
     current = { ...current, offerJudge: { engine: "decisions", model: "m" } };
     expect(await post({ founderName: "Janet" })).toEqual({ status: 200 });

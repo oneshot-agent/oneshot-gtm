@@ -95,7 +95,11 @@ import {
 import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandResearchProspects } from "./commands/research-prospects.ts";
 import { commandResearchProducts } from "./commands/research-products.ts";
-import { commandRejudgeOffers, commandRewriteWeakOffers } from "./commands/rejudge-offers.ts";
+import {
+  commandListExcludedOffers,
+  commandRejudgeOffers,
+  commandRewriteWeakOffers,
+} from "./commands/rejudge-offers.ts";
 import { commandResearchQueue } from "./commands/research-queue.ts";
 import { commandRejudgeGitHub } from "./commands/rejudge-github.ts";
 import { commandRederive } from "./commands/rederive.ts";
@@ -980,8 +984,13 @@ find
     "write new offers (research first when missing) for live rows and sequences whose every offer is weak; spends money",
     false,
   )
+  .option(
+    "--list-excluded",
+    "list active sequences whose offer is of a kind in offerExclusions; one judge call each, changes nothing",
+    false,
+  )
   .description(
-    "Re-judge the offers stored on unsent queue rows with the workspace's offerJudge; writes no new offers unless --rewrite-all-weak",
+    "Re-judge the offers stored on unsent queue rows with the workspace's offerJudge and offerExclusions; writes no new offers unless --rewrite-all-weak",
   )
   .action(
     runOrFail(
@@ -990,7 +999,18 @@ find
         concurrency?: number;
         dryRun: boolean;
         rewriteAllWeak: boolean;
+        listExcluded: boolean;
       }) => {
+        if (opts.listExcluded && opts.rewriteAllWeak) {
+          throw new Error("--list-excluded and --rewrite-all-weak cannot be combined");
+        }
+        if (opts.listExcluded) {
+          await commandListExcludedOffers({
+            ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+            ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
+          });
+          return;
+        }
         const run = opts.rewriteAllWeak ? commandRewriteWeakOffers : commandRejudgeOffers;
         await run({
           dryRun: opts.dryRun,
