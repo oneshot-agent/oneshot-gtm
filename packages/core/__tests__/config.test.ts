@@ -7,6 +7,7 @@ import {
   DEFAULT_LLM_MODEL,
   llmApiKey,
   loadConfig,
+  offerExclusionsOf,
   oneshotEnvReady,
   SECRET_KEYS,
   withCurrentDefaultModel,
@@ -212,5 +213,21 @@ describe("SECRET_KEYS", () => {
     expect(SECRET_KEYS).toContain("CDP_API_KEY_SECRET");
     expect(SECRET_KEYS).toContain("CDP_WALLET_SECRET");
     expect(SECRET_KEYS).toContain("AGENT_PRIVATE_KEY");
+  });
+});
+
+describe("offerExclusionsOf", () => {
+  it("trims each entry and drops blanks, repeats and non-strings", () => {
+    expect(
+      offerExclusionsOf({
+        offerExclusions: [" recruiting:  hiring ", "", "recruiting: hiring", 3],
+      }),
+    ).toEqual(["recruiting: hiring"]);
+  });
+
+  it("reads a lone string as one entry and anything else as none", () => {
+    expect(offerExclusionsOf({ offerExclusions: " legal advice " })).toEqual(["legal advice"]);
+    expect(offerExclusionsOf({})).toEqual([]);
+    expect(offerExclusionsOf({ offerExclusions: { a: 1 } })).toEqual([]);
   });
 });

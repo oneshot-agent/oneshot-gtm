@@ -1,6 +1,7 @@
 import {
   getLedger,
   loadConfig,
+  offerExclusionsOf,
   parallelMap,
   safeParseJsonRecord,
   type QueueRow,
@@ -19,6 +20,7 @@ import {
   offerOf,
   offerResearchText,
   playMakesOffer,
+  prospectOfferInput,
   sequenceOfferOf,
   type OfferJudgement,
   type ProspectOffer,
@@ -38,6 +40,13 @@ import { c, header, note, ok, warn } from "../output.ts";
  * with its angles if it has them, and the row is reported for a redraft: its
  * letter was written around the old offer. A founder-edited offer is never
  * judged or replaced.
+ *
+ * The judge reads the workspace's `offerExclusions`, so an offer of a kind
+ * the founder never offers is judged `irrelevant` (stored `weak`, so it holds
+ * the send) and is replaced like any other failing offer. The founder's
+ * approval of a weak offer (`weakApprovedAt`) does not keep an excluded one:
+ * it is switched when another candidate passes, and loses the approval
+ * when none does, so it is held and `--rewrite-all-weak` rewrites it.
  *
  * Writes go through `patchLiveQueuePayload`, bound to the active offer read
  * here, so a row that was sent, or whose offer changed while it was judged,
@@ -67,6 +76,8 @@ export interface RejudgeOffersSummary {
   weak: number[];
   /** Of `weak`, rows that were not held before this run. */
   newlyHeld: number[];
+  /** Rows whose active offer was judged of a kind in `offerExclusions` (switched or now held). */
+  excluded: number[];
   /** Founder-edited, active offer not among the candidates, no verdict on it, or changed meanwhile. */
   skipped: number;
   errors: number;
@@ -157,6 +168,7 @@ export async function commandRejudgeOffers(opts: RejudgeOffersOpts): Promise<Rej
     switched: [],
     weak: [],
     newlyHeld: [],
+    excluded: [],
     skipped: founderEdited,
     errors: 0,
   };
@@ -210,8 +222,12 @@ export async function commandRejudgeOffers(opts: RejudgeOffersOpts): Promise<Rej
       offer = rejudged(active, verdict);
       outcome = wasHeld ? "lifted" : "passing";
     } else {
-      // A weak offer the founder approved stays theirs: it is not swapped out.
-      const approved = typeof active.weakApprovedAt === "string" && !!active.weakApprovedAt.trim();
+      // A weak offer the founder approved stays theirs: it is not swapped
+      // out. An approval never keeps an offer of a kind the founder never offers.
+      const approved =
+        typeof active.weakApprovedAt === "string" &&
+        !!active.weakApprovedAt.trim() &&
+        verdict.excluded !== true;
       const first = approved ? -1 : next.findIndex((_, i) => verdicts[i]?.pass === true);
       if (first >= 0) {
         // Its angles if it has them; none leaves the key unset and drafting
@@ -219,12 +235,18 @@ export async function commandRejudgeOffers(opts: RejudgeOffersOpts): Promise<Rej
         const { weakApprovedAt: _approval, ...picked } = next[first]!;
         offer = picked;
         outcome = "switched";
+      } else if (verdict.excluded === true) {
+        // Held, and open to `--rewrite-all-weak`: the approval was not given on this verdict.
+        const { weakApprovedAt: _approval, ...held } = rejudged(active, verdict);
+        offer = held;
+        outcome = "weak";
       } else {
         offer = rejudged(active, verdict);
         outcome = "weak";
       }
     }
-    const line = `  #${row.id} ${outcome.padEnd(8)} ${short(offer.offer)}`;
+    const tag = verdict.excluded === true ? ` ${c.dim("(excluded)")}` : "";
+    const line = `  #${row.id} ${outcome.padEnd(8)} ${short(offer.offer)}${tag}`;
     if (opts.dryRun) {
       process.stdout.write(`${line}\n`);
     } else {
@@ -257,16 +279,24 @@ export async function commandRejudgeOffers(opts: RejudgeOffersOpts): Promise<Rej
     }
     summary[outcome].push(row.id);
     if (outcome === "weak" && !wasHeld && offerHoldsSend(offer)) summary.newlyHeld.push(row.id);
+    if (verdict.excluded === true) summary.excluded.push(row.id);
   });
 
-  for (const list of [summary.lifted, summary.passing, summary.switched, summary.weak]) {
+  for (const list of [
+    summary.lifted,
+    summary.passing,
+    summary.switched,
+    summary.weak,
+    summary.newlyHeld,
+    summary.excluded,
+  ]) {
     list.sort((a, b) => a - b);
   }
-  summary.newlyHeld.sort((a, b) => a - b);
   ok(
     `judged ${summary.judged} · holds lifted ${summary.lifted.length} · still passing ${summary.passing.length}` +
       ` · active switched ${summary.switched.length} · still weak ${summary.weak.length}` +
-      ` (newly held ${summary.newlyHeld.length}) · skipped ${summary.skipped} · errors ${summary.errors}` +
+      ` (newly held ${summary.newlyHeld.length}) · excluded ${summary.excluded.length}` +
+      ` · skipped ${summary.skipped} · errors ${summary.errors}` +
       (opts.dryRun ? " · dry run — nothing written." : ""),
   );
   if (summary.switched.length > 0) {
@@ -324,12 +354,17 @@ type WeakItem =
       researched: boolean;
     };
 
-/** Every offer is weak, and the active one is no founder's text or approval. */
+/** A label no send may go out on unreviewed: `weak`, or `irrelevant`. */
+function failing(o: Pick<ProspectOffer, "relevance">): boolean {
+  return o.relevance === "weak" || o.relevance === "irrelevant";
+}
+
+/** Every offer is weak or irrelevant, and the active one is no founder's text or approval. */
 function allWeak(active: ProspectOffer | null, candidates: readonly ProspectOffer[]): boolean {
   if (!active || candidates.length === 0) return false;
   if (active.editedBy === "founder") return false;
   if (typeof active.weakApprovedAt === "string" && active.weakApprovedAt.trim()) return false;
-  return active.relevance === "weak" && candidates.every((o) => o.relevance === "weak");
+  return failing(active) && candidates.every(failing);
 }
 
 function completeResearch(payload: Record<string, unknown> | null | undefined): boolean {
@@ -497,5 +532,83 @@ export async function commandRewriteWeakOffers(
   if (summary.passing.length + summary.weak.length > 0) {
     note("Rewritten rows' letters were dropped: they are drafted again around the new offer.");
   }
+  return summary;
+}
+
+/**
+ * `--list-excluded`: the active sequences whose offer the judge now rates of
+ * a kind in `offerExclusions`. A sequence keeps the offer it is carrying, so
+ * this lists and changes nothing: the founder decides on each one. Each
+ * sequence's active offer is judged once, against the queue row it started
+ * from (else the prospect), which costs one judge call per sequence.
+ */
+export interface ListExcludedSummary {
+  /** Active sequences carrying an offer. */
+  eligible: number;
+  judged: number;
+  /** `sequence <prospectId>/<play>` keys whose offer is of an excluded kind. */
+  excluded: string[];
+  errors: number;
+}
+
+export async function commandListExcludedOffers(
+  opts: Pick<RejudgeOffersOpts, "limit" | "concurrency">,
+): Promise<ListExcludedSummary> {
+  header("rejudge-offers --list-excluded");
+  const ledger = getLedger();
+  const cfg = loadConfig();
+  const summary: ListExcludedSummary = { eligible: 0, judged: 0, excluded: [], errors: 0 };
+  if (offerExclusionsOf(cfg).length === 0) {
+    note("No offerExclusions in this workspace's config: nothing is excluded.");
+    return summary;
+  }
+  const sequences = ledger
+    .listActiveCadences()
+    .filter((cad) => playMakesOffer(cad.play_name))
+    .map((cad) => ({ cad, record: sequenceOfferOf(cad) }))
+    .filter(({ record }) => isProspectOffer(record.offer));
+  summary.eligible = sequences.length;
+  const cap = resolveCap(opts.limit);
+  const work = cap === undefined ? sequences : sequences.slice(0, cap);
+  process.stdout.write(
+    `${c.dim("active sequences with an offer:")} ${summary.eligible}  ${c.dim("to judge:")} ${work.length}\n`,
+  );
+  await parallelMap(work, opts.concurrency ?? 3, async ({ cad, record }) => {
+    const key = `sequence ${cad.prospect_id}/${cad.play_name}`;
+    const offer = record.offer as ProspectOffer;
+    try {
+      let target: Record<string, unknown>;
+      let dossier: string | null = null;
+      const queued = ledger.cadenceQueueRow(cad.prospect_id, cad.play_name);
+      if (queued) {
+        target = queued.payload;
+      } else {
+        const input = prospectOfferInput(ledger.getProspectById(cad.prospect_id));
+        target = input.target;
+        dossier = input.dossier;
+      }
+      const verdicts = await judgeOffers([offer], offerResearchText(target, dossier), target, cfg);
+      const v = verdicts?.[0] ?? null;
+      if (!v) {
+        summary.errors++;
+        warn(`${key}: no judge engine gave a verdict`);
+        return;
+      }
+      summary.judged++;
+      if (v.excluded === true) {
+        summary.excluded.push(key);
+        const sent = record.introCarriedOffer ? " (sent in the first email)" : "";
+        process.stdout.write(`  ${key} ${short(offer.offer)}${c.dim(sent)}\n`);
+      }
+    } catch (err) {
+      summary.errors++;
+      warn(`${key}: ${((err as Error).message ?? "").slice(0, 120)}`);
+    }
+  });
+  summary.excluded.sort();
+  ok(
+    `judged ${summary.judged} · excluded ${summary.excluded.length} · errors ${summary.errors}` +
+      " · nothing written: each sequence keeps its offer.",
+  );
   return summary;
 }

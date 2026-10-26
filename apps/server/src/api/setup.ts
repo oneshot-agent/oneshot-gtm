@@ -9,6 +9,7 @@ import {
   listSendingDomains,
   loadConfig,
   loadGmailTokens,
+  offerExclusionsOf,
   parseSendVia,
   registerOneShotIdentity,
   registerSmartleadIdentity,
@@ -586,7 +587,13 @@ export function mergeSetupConfig(
   walletMode: WalletMode = body.walletMode ?? current.walletMode,
 ): OneShotConfig {
   // Optional fields a save can remove: left out of the spread, put back below.
-  const { sourceRepo: _sourceRepo, codeAnswerDisclosure: _disclosure, ...kept } = current;
+  const {
+    sourceRepo: _sourceRepo,
+    codeAnswerDisclosure: _disclosure,
+    offerExclusions: _exclusions,
+    ...kept
+  } = current;
+  const offerExclusions = mergeOfferExclusions(body.offerExclusions, current.offerExclusions);
   const sourceRepo = mergeSourceRepo(body.sourceRepo, current.sourceRepo);
   const codeAnswerDisclosure = mergeDisclosure(
     body.codeAnswerDisclosure,
@@ -596,6 +603,7 @@ export function mergeSetupConfig(
     ...kept,
     ...(sourceRepo ? { sourceRepo } : {}),
     ...(codeAnswerDisclosure ? { codeAnswerDisclosure } : {}),
+    ...(offerExclusions ? { offerExclusions } : {}),
     walletMode,
     llmProvider,
     llmModel: body.llmModel ?? current.llmModel,
@@ -777,6 +785,35 @@ export function validateReplyClassifier(
   value: SetupRequest["replyClassifier"],
 ): OneShotConfig["replyClassifier"] {
   return validateEngineConfig("replyClassifier", value);
+}
+
+const MAX_OFFER_EXCLUSIONS = 20;
+const MAX_OFFER_EXCLUSION_CHARS = 500;
+
+/**
+ * `offerExclusions` merge: `undefined` keeps the stored list, `null` or a
+ * list with nothing left after trimming clears it. Each entry must be a
+ * string; at most 20 entries of 500 characters.
+ */
+export function mergeOfferExclusions(
+  incoming: SetupRequest["offerExclusions"],
+  current: OneShotConfig["offerExclusions"],
+): OneShotConfig["offerExclusions"] {
+  if (incoming === undefined) return current;
+  if (incoming === null) return undefined;
+  if (!Array.isArray(incoming) || incoming.some((e) => typeof e !== "string")) {
+    throw new SetupValidationError("offerExclusions must be a list of strings");
+  }
+  const list = offerExclusionsOf({ offerExclusions: incoming });
+  if (list.length > MAX_OFFER_EXCLUSIONS) {
+    throw new SetupValidationError(`offerExclusions holds at most ${MAX_OFFER_EXCLUSIONS} entries`);
+  }
+  if (list.some((e) => e.length > MAX_OFFER_EXCLUSION_CHARS)) {
+    throw new SetupValidationError(
+      `each offerExclusions entry is at most ${MAX_OFFER_EXCLUSION_CHARS} characters`,
+    );
+  }
+  return list.length > 0 ? list : undefined;
 }
 
 /** Offer-judge merge: the same rules as the reply classifier's. */

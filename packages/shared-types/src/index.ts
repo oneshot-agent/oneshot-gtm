@@ -492,6 +492,12 @@ export interface SetupRequest {
   founderAdmission?: string;
   /** What you offer someone who has not adopted on their own; the builder plays' last follow-up offers it instead of a plain breakup. */
   pilotOffer?: string;
+  /**
+   * Kinds of goal never offered to a prospect, one plain-language entry each.
+   * `undefined` = leave unchanged; `null` or `[]` = clear. Entries are
+   * trimmed and blanks dropped; a non-string entry is a 400.
+   */
+  offerExclusions?: string[] | null;
   /** Product facts + canonical links replies may cite. Links absent from this brief are never sent. */
   productBrief?: string;
   /**

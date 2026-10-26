@@ -9,6 +9,7 @@ The model knows only what you put in config, and each field reaches some drafts 
 | `founderCredentials`, `productPortfolio`, `partners` | yes                         | yes                       | no                                |
 | `founderAdmission`                                   | about 1 in 3                | no                        | no                                |
 | `pilotOffer`                                         | yes, as the offer's terms   | yes, as the offer's terms | no                                |
+| `offerExclusions`                                    | the offer's writer, judge   | the offer's writer, judge | no                                |
 | `memberOffer`                                        | `multiplier` only, verbatim | `multiplier` letter only  | no                                |
 | `icpOneLiner`                                        | no [^icp]                   | no                        | yes                               |
 | `productBrief`                                       | yes [^offer]                | yes [^offer]              | yes, and the only source of links |
@@ -40,6 +41,7 @@ Config is source material. No field can force a sentence into an email; every pr
 | facts and links     | `productBrief`                                       |
 | who it is for       | `icpOneLiner`                                        |
 | the offer's terms   | `pilotOffer`, never a price                          |
+| never offered       | `offerExclusions`                                    |
 | what members get    | `memberOffer`, quoted whole by `multiplier`          |
 
 `pilotOffer` replaces the plain breakup on the last step of `repo-interest`, `stack-consolidation`, `competitor-switch`, `hiring-signal` and `post-funding`. `accelerator-batch` always ends on the plain breakup.
@@ -60,6 +62,7 @@ The active offer also gets five angles: reasons it pays back for this firm. The 
 - With a brief, a first email no offer could be written for is held (`no-offer`), never sent on the terms alone. Regenerate it on `/queue`, or write an offer.
 - Every follow-up restates the offer the first email made. The sequence keeps that offer from the first send, with a link to the queue row it started from; changing it on the `/cadences` card changes the sequence, never the row. A sequence with no offer gets one written at its next preview, from that row's research or, with no row, the person's. An email sent from a typed `/run` list or the CLI keeps a sent row on `/queue` for it, linked to the person.
 - `pilotOffer` is the general terms every offer carries: a pilot, a trial, a partnership, a service.
+- `offerExclusions` lists kinds of goal you never offer, one plain-language entry each: `["legal work: drafting or reviewing the prospect's own contracts"]`. The writer is told never to write one and the judge rates one `irrelevant`, so it is never used. Adding one rewrites no stored offer. `find rejudge-offers` re-judges unsent rows and moves an excluded active offer to the next one that passes; your approval does not keep it, only your own edited text does. With nothing left that passes it is held, and `--rewrite-all-weak` writes the set again. A sequence keeps the offer it carries; `--list-excluded` lists the ones whose offer is now excluded.
 - It is checked before use. Any number must be in the research, any quote must be copied from it, and it cannot borrow your product's own wording, carry a price or a link, open on an observation about them, lead with watching (track, monitor, keep, ground…), or lead with a check (vet, verify, validate, screen, scan, audit, check). A researched offer needs a return.
 - It shows at the top of the case on `/queue`, with its return and its angles under **How and why**. **Other offers** lists the rest; **Use this offer** makes one active and writes its angles. **Edit offer** saves your text and return, which are never rewritten after that. **Approve offer** sends one rated a weak fit as it stands; a prompt update never rewrites it. **New offers** writes five fresh ones, each a different job from the ones it replaces. Each way the draft is rewritten around it.
 - Each offer is judged before it is kept. One the judge does not pass is replaced once; a weak one only makes up the five, and holds the send until you rewrite it, pick another or approve it. When none of the five passes, the firm's research is read first if the row has none complete, and the writer tries once more: it is shown the rejected offers and what the judge means by weak, and builds each offer on the most specific fact the research holds. The offers that pass then lead. When none does, the set stays held as before.
