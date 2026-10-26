@@ -59,7 +59,10 @@ export async function queueOfferRoute(
 
   if (body.approveWeak === true) return approveWeakOffer(id, row.payload_json, req);
   if (body.regenerate === true) {
-    const out = await regenerateQueueRowOffer(row, { avoidCurrent: true });
+    const out = await regenerateQueueRowOffer(row, {
+      avoidCurrent: true,
+      researchWaitMs: CLICK_RESEARCH_WAIT_MS,
+    });
     if (out === "bad-payload") {
       return jsonResponse({ error: "row payload is not valid JSON" }, 400, req);
     }
@@ -122,11 +125,14 @@ export async function queueOfferRoute(
  * place of a set (`skipped`), leaving any offer it had. `avoidCurrent`
  * (the founder's New offers) asks for jobs other than the row's current
  * ones. A set the judge passes none of reads the row's company research
- * first, waiting at most `CLICK_RESEARCH_WAIT_MS`.
+ * first, waiting at most `researchWaitMs` (default none: the read lands on
+ * the row when it finishes). The founder's click passes
+ * `CLICK_RESEARCH_WAIT_MS`; the read-on-open route, which the UI awaits,
+ * passes nothing.
  */
 export async function regenerateQueueRowOffer(
   row: QueueRow,
-  opts: { avoidCurrent?: boolean } = {},
+  opts: { avoidCurrent?: boolean; researchWaitMs?: number } = {},
 ): Promise<
   | { offer: ProspectOffer; candidates: ProspectOffer[] }
   | { skipped: OfferSkip }
@@ -141,7 +147,7 @@ export async function regenerateQueueRowOffer(
     target: payload,
     playName: row.play_name,
     ...(avoid.length > 0 ? { avoid } : {}),
-    research: offerResearchRow(row, { researchWaitMs: CLICK_RESEARCH_WAIT_MS }),
+    research: offerResearchRow(row, { researchWaitMs: opts.researchWaitMs ?? 0 }),
   });
   if (!set) return "no-offer";
   if (isOfferSkipped(set)) {
