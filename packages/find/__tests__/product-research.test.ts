@@ -5,6 +5,8 @@ const rows: Array<Record<string, unknown>> = [];
 const updates: Array<{ id: number; payload: unknown }> = [];
 const notes: Array<{ id: number; notes: string }> = [];
 const calls = { read: 0, research: 0 };
+const topics: string[] = [];
+const readUrls: string[] = [];
 let researchFails = false;
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -20,13 +22,15 @@ vi.mock("@oneshot-gtm/core", async () => {
     }),
     webRead: async ({ url }: { url: string }) => {
       calls.read++;
+      readUrls.push(url);
       return {
         result: { markdown: `first-party ${url}`, cost: 0.01 },
         receiptId: 1,
       };
     },
-    deepResearch: async () => {
+    deepResearch: async ({ topic }: { topic: string }) => {
       calls.research++;
+      topics.push(topic);
       if (researchFails) throw new Error("provider unavailable");
       return {
         result: {
@@ -41,8 +45,13 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
-const { researchNewQueueRows, researchQueueRowProduct } =
-  await import("../src/_product-research.ts");
+const { RESEARCH_TOPIC_MAX } = await import("@oneshot-gtm/core");
+const {
+  productResearchTopic,
+  queueRowCompanyDomain,
+  researchNewQueueRows,
+  researchQueueRowProduct,
+} = await import("../src/_product-research.ts");
 
 const row = {
   id: 42,
@@ -64,6 +73,8 @@ beforeEach(() => {
   notes.length = 0;
   calls.read = 0;
   calls.research = 0;
+  topics.length = 0;
+  readUrls.length = 0;
   researchFails = false;
 });
 
@@ -204,5 +215,68 @@ describe("product research", () => {
       { remainingUsd: 1, externalResearch: true },
     );
     expect(calls.research).toBe(4);
+  });
+});
+
+// The platform refuses a research topic over 500 characters. The question
+// alone used to be 517, so every company-research call was refused and no
+// row ever got its FIRM RESEARCH.
+describe("the research topic", () => {
+  it("fits the platform's limit for the row it is asked about", async () => {
+    // Forced past the circuit an earlier test opened.
+    await researchQueueRowProduct(row, { remainingUsd: 1, externalResearch: true });
+    expect(topics).toHaveLength(1);
+    expect(topics[0]!.length).toBeLessThanOrEqual(RESEARCH_TOPIC_MAX);
+    expect(topics[0]).toContain("name: Alessandro Binda; company: S.C.A.L.A. AI");
+  });
+
+  it("drops the least telling facts first and clips long ones, keeping name and company", () => {
+    const long = "word ".repeat(200);
+    const topic = productResearchTopic({
+      name: long,
+      company: long,
+      urls: [`https://example.com/${"a".repeat(300)}`],
+      known: { play: "repo-interest", title: long, signal: long },
+    });
+    expect(topic.length).toBeLessThanOrEqual(RESEARCH_TOPIC_MAX);
+    expect(topic).toContain("Subject: name: word");
+    expect(topic).toContain("; company: word");
+    expect(topic).not.toContain("signal:");
+    const short = productResearchTopic({
+      name: "Dana Lee",
+      company: "Northside",
+      urls: ["https://northside.example"],
+      known: { play: "new-business", title: "COO", signal: "opened a depot" },
+    });
+    expect(short).toMatch(
+      /Subject: name: Dana Lee; company: Northside; title: COO; site: https:\/\/northside.example; play: new-business; signal: opened a depot$/,
+    );
+  });
+});
+
+describe("first-party pages", () => {
+  it("never reads a starred repository as the stargazer's own pages", async () => {
+    await researchQueueRowProduct(
+      {
+        ...row,
+        play_name: "repo-interest",
+        payload_json: JSON.stringify({
+          name: "Tiago",
+          company: "Starian",
+          email: "tiago@starian.example",
+          evidenceUrl: "https://github.com/someone-else/popular-tool",
+          sourceProfileUrl: "https://github.com/tiago",
+        }),
+      },
+      { remainingUsd: 1 },
+    );
+    expect(readUrls).toEqual(["https://starian.example", "https://github.com/tiago"]);
+  });
+
+  it("reads no free mail provider's homepage as the company's", () => {
+    for (const domain of ["163.com", "qq.com", "foxmail.com", "naver.com", "outlook.com"]) {
+      expect(queueRowCompanyDomain({ email: `someone@${domain}` })).toBeNull();
+    }
+    expect(queueRowCompanyDomain({ email: "dana@northside.example" })).toBe("northside.example");
   });
 });

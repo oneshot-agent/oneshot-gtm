@@ -125,22 +125,27 @@ export function offerCandidatesFromPayload(payload: unknown): OfferView[] {
 
 /**
  * Start at the first candidate when the active offer is no longer in the
- * list. A candidate that is the active offer reworded (`offersNearDuplicate`)
- * is skipped, unless every other one is.
+ * list. A candidate the judge rated a weak fit is passed over for the next
+ * one that is not, and a candidate that is the active offer reworded
+ * (`offersNearDuplicate`) is skipped; when every other candidate is one or
+ * the other, Next goes through them in order. Picking one by hand still
+ * reaches any of them.
  */
 export function nextOfferIndex(
   offer: Pick<OfferView, "offer"> | null,
-  candidates: readonly Pick<OfferView, "offer">[],
+  candidates: readonly Pick<OfferView, "offer" | "relevance">[],
 ): number | null {
   if (candidates.length === 0) return null;
   const activeIndex = candidates.findIndex((candidate) => candidate.offer === offer?.offer);
   const next = (activeIndex + 1) % candidates.length;
-  if (!offer) return next;
+  const order: number[] = [];
   for (let step = 1; step <= candidates.length; step++) {
     const i = (activeIndex + step) % candidates.length;
-    if (i !== activeIndex && !offersNearDuplicate(offer.offer, candidates[i]!.offer)) return i;
+    if (i === activeIndex) continue;
+    if (offer && offersNearDuplicate(offer.offer, candidates[i]!.offer)) continue;
+    order.push(i);
   }
-  return next;
+  return order.find((i) => candidates[i]!.relevance !== "weak") ?? order[0] ?? next;
 }
 
 /** One change to an offer, the body both offer routes take. */

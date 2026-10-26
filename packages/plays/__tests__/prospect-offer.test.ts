@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const llm = {
   replies: [] as string[],
   inputs: [] as string[],
+  temperatures: [] as number[],
   judge: [] as string[],
   judgeInputs: [] as string[],
 };
@@ -38,14 +39,20 @@ vi.mock("@oneshot-gtm/intel", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/intel")>("@oneshot-gtm/intel");
   return {
     ...actual,
-    loadPrompt: (name: string) => name,
-    complete: async (input: { messages: Array<{ role: string; content: string }> }) => {
+    // The rescue round's text is the test's subject: read as shipped.
+    loadPrompt: (name: string) =>
+      name === "prospect-offer-rescue" ? actual.loadPrompt(name) : name,
+    complete: async (input: {
+      messages: Array<{ role: string; content: string }>;
+      temperature?: number;
+    }) => {
       if (input.messages[0]?.content === "prospect-offer-judge") {
         llm.judgeInputs.push(input.messages.at(-1)?.content ?? "");
-        return { content: llm.judge.shift() ?? "{}", provider: "t", model: "t" };
+        return { content: llm.judge.shift() ?? "{}", provider: "t", model: "t", costUsd: 0.001 };
       }
       llm.inputs.push(input.messages.at(-1)?.content ?? "");
-      return { content: llm.replies.shift() ?? "{}", provider: "t", model: "t" };
+      llm.temperatures.push(input.temperature ?? -1);
+      return { content: llm.replies.shift() ?? "{}", provider: "t", model: "t", costUsd: 0.002 };
     },
   };
 });
@@ -89,6 +96,7 @@ const good = {
 beforeEach(() => {
   llm.replies = [];
   llm.inputs = [];
+  llm.temperatures = [];
   llm.judge = [];
   llm.judgeInputs = [];
   delete cfg.offerJudge;
@@ -1154,6 +1162,208 @@ describe("deriveOffers with the relevance judge", () => {
     const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(offers.map((o) => o.offer)).toEqual([good.offer, second.offer]);
     expect(offers[0]?.relevance).toBeUndefined();
+  });
+});
+
+// The rescue: a set the judge passed none of is written once more, after
+// the firm's research is read when the row has none complete, with the
+// rejected offers and what the judge means by weak.
+
+describe("rescue of a set the judge passed none of", () => {
+  const five = JSON.stringify({ offers: [good, second, third, fourth, fifth] });
+  const allWeak = judgeReply([
+    ["weak", "would fit any trade business"],
+    ["weak", "generic"],
+    ["weak", "generic"],
+    ["weak", "generic"],
+    ["weak", "rests on the word healthcare"],
+  ]);
+
+  afterEach(async () => {
+    const { registerOfferResearch } = await import("../src/_prospect-offer.ts");
+    registerOfferResearch(null);
+  });
+
+  it("writes once more, with the rejected offers and what weak means, and leads with what passes", async () => {
+    const { offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
+    llm.replies = [
+      five,
+      JSON.stringify({ offers: [] }),
+      JSON.stringify({ offers: [replacement, replacementTwo] }),
+    ];
+    llm.judge = [
+      allWeak,
+      judgeReply([
+        ["relevant", "their cancelled jobs"],
+        ["weak", "generic"],
+      ]),
+    ];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    // First write, the replacement round, exactly one rescue.
+    expect(llm.inputs).toHaveLength(3);
+    expect(llm.temperatures).toEqual([0.4, 0.4, 0.7]);
+    const rescue = llm.inputs[2]!;
+    expect(rescue).toContain(`- "${good.offer}": weak, would fit any trade business`);
+    expect(rescue).toContain(`- "${fifth.offer}": weak, rests on the word healthcare`);
+    expect(rescue).toContain(`What the check means by weak: ${offerRelevanceCriteria().weak}`);
+    expect(rescue).toContain("list the most specific facts RESEARCH holds");
+    expect(rescue).not.toContain("{{");
+    // The passing rescue offer leads; the five are made up with the weak
+    // ones of the earlier round first on a tie, then the rescue's own.
+    expect(offers.map((o) => [o.offer, o.relevance])).toEqual([
+      [replacement.offer, "relevant"],
+      [good.offer, "weak"],
+      [second.offer, "weak"],
+      [third.offer, "weak"],
+      [fourth.offer, "weak"],
+    ]);
+  });
+
+  it("keeps the weak set, held, when nothing in the rescue passes", async () => {
+    llm.replies = [five, JSON.stringify({ offers: [] }), JSON.stringify({ offers: [replacement] })];
+    llm.judge = [allWeak, judgeReply([["irrelevant", "not their job"]])];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs).toHaveLength(3);
+    expect(offers.map((o) => o.offer)).toEqual([
+      good.offer,
+      second.offer,
+      third.offer,
+      fourth.offer,
+      fifth.offer,
+    ]);
+    expect(offers.every((o) => o.relevance === "weak")).toBe(true);
+  });
+
+  it("is not run when any offer passes, or when the judge gave no verdict", async () => {
+    llm.replies = [five, JSON.stringify({ offers: [] })];
+    llm.judge = [
+      judgeReply([
+        ["relevant", "the second depot"],
+        ["weak", "generic"],
+        ["weak", "generic"],
+        ["weak", "generic"],
+        ["weak", "generic"],
+      ]),
+    ];
+    await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs).toHaveLength(2);
+    llm.inputs = [];
+    llm.replies = [five];
+    llm.judge = ["not json"];
+    await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs).toHaveLength(1);
+  });
+
+  it("reads the firm's research first when the row has none complete, and writes from it", async () => {
+    const { registerOfferResearch } = await import("../src/_prospect-offer.ts");
+    const firm = {
+      version: 1,
+      status: "complete",
+      sources: [],
+      external: { answer: "Northside runs a fleet of vans from two depots" },
+    };
+    const research = vi.fn(async ({ target: t }: { target: Record<string, unknown> }) => ({
+      target: { ...t, productResearch: firm },
+      researched: true,
+      costUsd: 0.01,
+    }));
+    registerOfferResearch(research);
+    llm.replies = [five, JSON.stringify({ offers: [] }), JSON.stringify({ offers: [replacement] })];
+    llm.judge = [allWeak, judgeReply([["relevant", "their vans"]])];
+    const costs: number[] = [];
+    const { offers } = await deriveOffers({
+      target,
+      playName: "new-business",
+      research: { queueRowId: 12, source: "find:x", waitMs: 5_000 },
+      onCost: (usd) => costs.push(usd),
+    });
+    expect(research).toHaveBeenCalledTimes(1);
+    expect(research.mock.calls[0]![0]).toMatchObject({
+      playName: "new-business",
+      queueRowId: 12,
+      source: "find:x",
+      waitMs: 5_000,
+    });
+    expect(llm.inputs[2]).toContain("New research about this firm was read. RESEARCH is now:");
+    expect(llm.inputs[2]).toContain("Northside runs a fleet of vans from two depots");
+    // Stamped with the research the row now holds, so the next pass keeps them.
+    const now = offerResearchText({ ...target, productResearch: firm });
+    expect(offers[0]?.inputHash).toBe(offerInputHash(now, cfg));
+    // Three writer calls, two judge calls and the read.
+    expect(costs.reduce((a, b) => a + b, 0)).toBeCloseTo(3 * 0.002 + 2 * 0.001 + 0.01);
+  });
+
+  it("never reads research the row has complete, nor without its row", async () => {
+    const { registerOfferResearch } = await import("../src/_prospect-offer.ts");
+    const research = vi.fn();
+    registerOfferResearch(research);
+    const complete = {
+      ...target,
+      productResearch: { version: 1, status: "complete", sources: [], external: { a: "b" } },
+    };
+    llm.replies = [five, JSON.stringify({ offers: [] }), JSON.stringify({ offers: [] })];
+    llm.judge = [allWeak];
+    await deriveOffers({
+      target: complete,
+      playName: "new-business",
+      research: { queueRowId: 12, source: "find:x" },
+    });
+    llm.replies = [five, JSON.stringify({ offers: [] }), JSON.stringify({ offers: [] })];
+    llm.judge = [allWeak];
+    await deriveOffers({ target, playName: "new-business" });
+    expect(research).not.toHaveBeenCalled();
+    // Both still got their one rescue.
+    expect(llm.inputs).toHaveLength(6);
+  });
+});
+
+describe("New offers writes around the ones it replaces", () => {
+  it("names them in the first message and drops a reply that repeats one", async () => {
+    llm.replies = [JSON.stringify({ offers: [good, second] }), JSON.stringify({ offers: [third] })];
+    const { offers } = await deriveOffers({
+      target,
+      playName: "new-business",
+      avoid: [good.offer, "  "],
+    });
+    expect(llm.inputs[0]).toContain(`ALREADY OFFERED:\n- ${good.offer}`);
+    expect(llm.inputs[0]).not.toContain("- \n");
+    // The repeat failed as one, so the repair round asked again.
+    expect(llm.inputs[1]).toContain("the same job as another offer");
+    expect(offers.map((o) => o.offer)).toEqual([second.offer, third.offer]);
+  });
+});
+
+describe("new research re-derives the offers", () => {
+  it("a stored set is kept for the research it was written from and rewritten once research lands", async () => {
+    const research = offerResearchText(target);
+    const stored = {
+      ...good,
+      level: "researched" as const,
+      angles: [],
+      version: OFFER_PROMPT_VERSION,
+      inputHash: offerInputHash(research, cfg),
+      productHash: offerProductHash(cfg),
+      derivedAt: "",
+    };
+    const kept = await ensureOfferSet({ target: { ...target, offer: stored }, playName: "x" });
+    expect(kept?.changed).toBe(false);
+    expect(llm.inputs).toHaveLength(0);
+    llm.replies = [JSON.stringify({ offers: [second] })];
+    const fresh = await ensureOfferSet({
+      target: {
+        ...target,
+        offer: stored,
+        productResearch: {
+          version: 1,
+          status: "complete",
+          sources: [{ url: "https://northside.example", kind: "website", excerpt: "Two depots" }],
+          external: { answer: "Northside runs a fleet of vans" },
+        },
+      },
+      playName: "x",
+    });
+    expect(fresh?.changed).toBe(true);
+    expect(llm.inputs[0]).toContain("Northside runs a fleet of vans");
   });
 });
 

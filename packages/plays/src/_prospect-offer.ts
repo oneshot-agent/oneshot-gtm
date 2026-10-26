@@ -549,6 +549,65 @@ export interface DeriveOfferInput {
    * quote or the evidence.
    */
   thread?: ReadonlyArray<OfferThreadEmail>;
+  /**
+   * Offers the writer must not write again: the set "New offers" replaces.
+   * Its first message names them, and a reply that repeats one is dropped
+   * as a repeat.
+   */
+  avoid?: ReadonlyArray<string>;
+  /**
+   * The queue row the target came from, for the company research a weak set
+   * gets before it is written again (`registerOfferResearch`). Absent, that
+   * round writes from what the target holds. `waitMs` bounds the wait on a
+   * click (see `OfferResearch`).
+   */
+  research?: { queueRowId: number; source: string; waitMs?: number };
+  /** Told what each model call and research read cost, in USD. */
+  onCost?: (usd: number) => void;
+}
+
+/** What the registered company research gave: the target, with research added when any came back. */
+export interface OfferResearchResult {
+  target: JsonRecord;
+  /** True when new research is on the target. */
+  researched: boolean;
+  costUsd: number;
+}
+
+/**
+ * Reads the firm's pages and its outside research for an offer, from the
+ * queue row the target came from. Registered by `@oneshot-gtm/find`
+ * (offer-research.ts), which owns company research, its per-row spend cap and
+ * which rows need it, so plays never imports find. With `waitMs`, a read
+ * still running past it comes back with the target as it was, and lands on a
+ * live queue row when it finishes. Never throws.
+ */
+export type OfferResearch = (input: {
+  target: JsonRecord;
+  playName: string;
+  queueRowId: number;
+  source: string;
+  waitMs?: number;
+}) => Promise<OfferResearchResult>;
+
+let offerResearch: OfferResearch | null = null;
+
+export function registerOfferResearch(fn: OfferResearch | null): void {
+  offerResearch = fn;
+}
+
+/** The registered company research; the target as it was when none is registered. */
+export async function researchForOffer(
+  input: Parameters<OfferResearch>[0],
+): Promise<OfferResearchResult> {
+  if (!offerResearch) return { target: input.target, researched: false, costUsd: 0 };
+  return offerResearch(input);
+}
+
+/** True when the target's company research has its outside half (`status: "complete"`). */
+function hasCompleteResearch(target: JsonRecord): boolean {
+  const firm = target["productResearch"];
+  return !!firm && typeof firm === "object" && (firm as JsonRecord)["status"] === "complete";
 }
 
 /** A row's offers: the active one (with its angles) and the ranked list it came from. */
@@ -588,6 +647,7 @@ function threadBlock(thread: ReadonlyArray<OfferThreadEmail> | undefined): strin
 function offerUserMessage(input: DeriveOfferInput, cfg: AppConfig, research: string): string {
   const t = input.target as JsonRecord;
   const thread = threadBlock(input.thread);
+  const avoid = avoidList(input);
   return [
     `PRODUCT: ${cfg.productOneLiner ?? ""}`,
     `PRODUCT BRIEF:\n${productBriefText(cfg, undefined, { max: BRIEF_MAX }) ?? ""}`,
@@ -598,7 +658,15 @@ function offerUserMessage(input: DeriveOfferInput, cfg: AppConfig, research: str
     `COMPANY: ${firstString(t, COMPANY_KEYS)}`,
     `RESEARCH:\n${research || "(none)"}`,
     ...(thread ? [thread] : []),
+    ...(avoid.length > 0
+      ? [`ALREADY OFFERED:\n${avoid.map((o) => `- ${clip(o, OFFER_MAX.offer)}`).join("\n")}`]
+      : []),
   ].join("\n\n");
+}
+
+/** The offers to write around, trimmed, without blanks. */
+function avoidList(input: Pick<DeriveOfferInput, "avoid">): string[] {
+  return (input.avoid ?? []).map((o) => o.trim()).filter((o) => o.length > 0);
 }
 
 type DraftOffer = Omit<ProspectOffer, "version" | "inputHash" | "derivedAt">;
@@ -675,6 +743,7 @@ async function judgeWithDecisions(
   key: string,
   min: number,
   fetchImpl: typeof fetch | undefined,
+  onCost: ((usd: number) => void) | undefined,
 ): Promise<OfferJudgement[]> {
   const criteria = offerRelevanceCriteria();
   const questions: Record<string, DecisionsChoiceQuestion> = {};
@@ -700,6 +769,7 @@ async function judgeWithDecisions(
     ...(fetchImpl ? { fetchImpl } : {}),
   });
   const classifier = `decisions:${res.model}`;
+  if (res.costUsd != null) onCost?.(res.costUsd);
   logEvent("prospect_offer.judged", {
     engine: "decisions",
     count: offers.length,
@@ -733,6 +803,7 @@ async function judgeWithLlm(
   offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
   state: string,
   cfg: AppConfig,
+  onCost: ((usd: number) => void) | undefined,
 ): Promise<Array<OfferJudgement | null>> {
   const res = await complete({
     messages: [
@@ -742,6 +813,7 @@ async function judgeWithLlm(
     temperature: 0,
     maxTokens: 1500,
   });
+  if (res.costUsd != null) onCost?.(res.costUsd);
   const parsed = tryParseJsonObject<{ judgements?: unknown }>(res.content, {});
   const list = Array.isArray(parsed.judgements) ? parsed.judgements : [];
   const classifier = `llm:${cfg.llmModel ?? res.model}`;
@@ -779,7 +851,7 @@ export async function judgeOffers(
   research: string,
   row: object,
   cfg: AppConfig,
-  opts: { fetchImpl?: typeof fetch } = {},
+  opts: { fetchImpl?: typeof fetch; onCost?: (usd: number) => void } = {},
 ): Promise<Array<OfferJudgement | null> | null> {
   if (offers.length === 0) return [];
   const t = row as JsonRecord;
@@ -799,6 +871,7 @@ export async function judgeOffers(
           key,
           judgeMinConfidence(cfg),
           opts.fetchImpl,
+          opts.onCost,
         );
       } catch (err) {
         logEvent(
@@ -819,7 +892,7 @@ export async function judgeOffers(
     }
   }
   try {
-    return await judgeWithLlm(offers, state, cfg);
+    return await judgeWithLlm(offers, state, cfg, opts.onCost);
   } catch (err) {
     logEvent(
       "error.swallowed",
@@ -939,10 +1012,12 @@ function lintReply(
  * pass are dropped, and one replacement round asks for as many new ones,
  * told why the dropped ones failed. Passing offers keep the model's order.
  * When still short of five, the best-scored `weak` ones fill the places,
- * tagged weak; an `irrelevant` or lint-failing offer never does. No offers
- * when there is no brief, the model skips, or nothing passes; a skip with
- * nothing else kept comes back as `skip`, with the writer's why and the
- * input hash it read.
+ * tagged weak; an `irrelevant` or lint-failing offer never does. When the
+ * judge passed none, one rescue round (`rescueWeakSet`) reads the firm's
+ * research if the row has none complete and writes five again another way.
+ * No offers when there is no brief, the model skips, or nothing passes; a
+ * skip with nothing else kept comes back as `skip`, with the writer's why
+ * and the input hash it read.
  */
 export async function deriveOffers(
   input: DeriveOfferInput & { fetchImpl?: typeof fetch },
@@ -952,8 +1027,7 @@ export async function deriveOffers(
   // The steps may claim only what the product brief says the product does.
   // With no brief there is nothing to ground them in.
   if (!cfg.productBrief?.trim()) return { offers: [], skip: null };
-  const research = offerResearchText(input.target as JsonRecord, input.dossier);
-  const inputHash = offerInputHash(research, cfg);
+  let research = offerResearchText(input.target as JsonRecord, input.dossier);
   const messages: ChatMessage[] = [
     { role: "system", content: loadPrompt("prospect-offer") },
     { role: "user", content: offerUserMessage(input, cfg, research) },
@@ -961,12 +1035,17 @@ export async function deriveOffers(
   const product = `${cfg.productOneLiner ?? ""}\n${productBriefText(cfg)}`;
   const oneLiner = cfg.productOneLiner ?? "";
   let kept: DraftOffer[] = [];
-  const seen = new Set<string>();
+  // The offers being replaced count as written: a reply repeating one is a repeat.
+  const seen = new Set<string>(avoidList(input));
   let lastReply = "";
   let skipWhy: string | null = null;
+  const spend = (usd: number | undefined): void => {
+    if (typeof usd === "number" && Number.isFinite(usd) && usd > 0) input.onCost?.(usd);
+  };
   try {
     for (let round = 0; round < 2; round++) {
       const res = await complete({ messages, temperature: 0.4, maxTokens: 3000 });
+      spend(res.costUsd);
       lastReply = res.content;
       const out = lintReply(res.content, research, product, oneLiner, seen);
       if (out.skip !== null) {
@@ -1000,7 +1079,7 @@ export async function deriveOffers(
     }
     kept = kept.slice(0, OFFER_COUNT);
     if (kept.length > 0) {
-      kept = await judgeAndReplace(kept, {
+      const ctx: OfferRoundContext = {
         input,
         cfg,
         research,
@@ -1009,7 +1088,15 @@ export async function deriveOffers(
         seen,
         messages,
         lastReply,
-      });
+        spend,
+      };
+      const judged = await judgeAndReplace(kept, ctx);
+      kept = judged.offers;
+      if (judged.rejected.length > 0 && kept.every((o) => o.relevance === "weak")) {
+        const rescued = await rescueWeakSet(kept, judged.rejected, ctx);
+        kept = rescued.offers;
+        research = rescued.research;
+      }
     }
   } catch (err) {
     logEvent(
@@ -1022,6 +1109,8 @@ export async function deriveOffers(
       "warn",
     );
   }
+  // Hashed after any research the rescue read: the row holds it now.
+  const inputHash = offerInputHash(research, cfg);
   const derivedAt = new Date().toISOString();
   const productHash = offerProductHash(cfg);
   const offers: ProspectOffer[] = kept
@@ -1052,30 +1141,47 @@ export async function deriveOffers(
   return { offers, skip };
 }
 
+/** What the judge and replacement rounds share with the writer's first round. */
+interface OfferRoundContext {
+  input: DeriveOfferInput & { fetchImpl?: typeof fetch };
+  cfg: AppConfig;
+  research: string;
+  product: string;
+  oneLiner: string;
+  seen: Set<string>;
+  /** The writer's conversation; each round appends its reply and the next ask. */
+  messages: ChatMessage[];
+  /** The writer's latest reply, not yet in `messages`. */
+  lastReply: string;
+  spend: (usd: number | undefined) => void;
+}
+
+/** One offer the judge did not pass, with its score for the fill. */
+interface Rejected {
+  offer: DraftOffer;
+  judgement: OfferJudgement;
+}
+
 /**
  * The judge's pass over the linted offers, and the one replacement round.
  * Offers the judge gave no verdict are kept as they are: a judge outage
- * never empties a row.
+ * never empties a row. `rejected` lists every offer the judge did not pass,
+ * irrelevant ones included, from both rounds.
  */
 async function judgeAndReplace(
   kept: DraftOffer[],
-  ctx: {
-    input: DeriveOfferInput & { fetchImpl?: typeof fetch };
-    cfg: AppConfig;
-    research: string;
-    product: string;
-    oneLiner: string;
-    seen: Set<string>;
-    messages: ChatMessage[];
-    lastReply: string;
-  },
-): Promise<DraftOffer[]> {
+  ctx: OfferRoundContext,
+): Promise<{ offers: DraftOffer[]; rejected: Rejected[] }> {
   const { input, cfg, research } = ctx;
-  const judgeOpts = input.fetchImpl ? { fetchImpl: input.fetchImpl } : {};
+  const judgeOpts = {
+    ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+    onCost: ctx.spend,
+  };
   const verdicts = await judgeOffers(kept, research, input.target, cfg, judgeOpts);
-  if (!verdicts) return kept;
+  if (!verdicts) return { offers: kept, rejected: [] };
   const passing: DraftOffer[] = [];
   const fill: Array<{ offer: DraftOffer; score: number | null }> = [];
+  const rejected: Rejected[] = [];
   const dropped: string[] = [];
   kept.forEach((o, i) => {
     const j = verdicts[i] ?? null;
@@ -1084,6 +1190,7 @@ async function judgeAndReplace(
       passing.push(judged);
       return;
     }
+    rejected.push({ offer: judged, judgement: j });
     dropped.push(`"${o.offer}": ${j.label}, ${j.why}`);
     if (j.label !== "irrelevant") fill.push({ offer: judged, score: j.score });
   });
@@ -1114,6 +1221,8 @@ async function judgeAndReplace(
     );
     try {
       const res = await complete({ messages: ctx.messages, temperature: 0.4, maxTokens: 3000 });
+      ctx.spend(res.costUsd);
+      ctx.lastReply = res.content;
       const out = lintReply(res.content, research, ctx.product, ctx.oneLiner, ctx.seen);
       const fresh = out.kept.slice(0, missing);
       if (out.failed.length > 0) {
@@ -1129,8 +1238,12 @@ async function judgeAndReplace(
         fresh.forEach((o, i) => {
           const j = more?.[i] ?? null;
           const judged = withJudgement(o, j);
-          if (!j || j.pass) passing.push(judged);
-          else if (j.label !== "irrelevant") fill.push({ offer: judged, score: j.score });
+          if (!j || j.pass) {
+            passing.push(judged);
+            return;
+          }
+          rejected.push({ offer: judged, judgement: j });
+          if (j.label !== "irrelevant") fill.push({ offer: judged, score: j.score });
         });
       }
     } catch (err) {
@@ -1145,16 +1258,141 @@ async function judgeAndReplace(
       );
     }
   }
+  return { offers: withFillers(passing, fill), rejected };
+}
+
+/**
+ * The passing offers, then the best-scored ones that did not pass up to
+ * five; equal (or no) scores keep the order written. Each filler carries the
+ * label `withJudgement` stored (`storedRelevance`): `weak` as the judge
+ * labelled it, or a `relevant` under the bar stored `weak`, so every filler
+ * holds its send.
+ */
+function withFillers(
+  passing: DraftOffer[],
+  fill: ReadonlyArray<{ offer: DraftOffer; score: number | null }>,
+): DraftOffer[] {
   if (passing.length >= OFFER_COUNT) return passing.slice(0, OFFER_COUNT);
-  // Fill with the best-scored ones that did not pass; equal (or no) scores
-  // keep the order written. Each carries the label `withJudgement` stored
-  // (`storedRelevance`): `weak` as the judge labelled it, or a `relevant`
-  // under the bar stored `weak`, so every filler holds its send.
   const fillers = fill
     .toSorted((a, b) => (b.score ?? -1) - (a.score ?? -1))
     .slice(0, OFFER_COUNT - passing.length)
     .map(({ offer }) => offer);
   return [...passing, ...fillers];
+}
+
+/**
+ * The rescue round, for a set the judge passed none of. The writer had the
+ * facts it had, and the judge says only how weak each offer was, so a plain
+ * retry writes the same offers again. First, when the row's company research
+ * is missing or lacks its outside half, it is read once (the registered
+ * `OfferResearch`, within find's per-row cap). Then the writer is asked again
+ * in the same conversation (`prospect-offer-rescue`): the rejected offers,
+ * what the judge means by weak, and a different approach, built on the most
+ * specific facts RESEARCH holds. Passing offers lead; the rest of the five
+ * are the best-scored weak ones of every round. When nothing passes the set
+ * stays as it was. Never throws.
+ */
+async function rescueWeakSet(
+  weak: DraftOffer[],
+  rejected: ReadonlyArray<Rejected>,
+  ctx: OfferRoundContext,
+): Promise<{ offers: DraftOffer[]; research: string }> {
+  const { input, cfg } = ctx;
+  let research = ctx.research;
+  let cost = 0;
+  const spend = (usd: number | undefined): void => {
+    if (typeof usd === "number" && Number.isFinite(usd) && usd > 0) cost += usd;
+    ctx.spend(usd);
+  };
+  let target = input.target as JsonRecord;
+  let researched = false;
+  if (input.research && !hasCompleteResearch(target)) {
+    const out = await researchForOffer({
+      target,
+      playName: input.playName,
+      queueRowId: input.research.queueRowId,
+      source: input.research.source,
+      ...(input.research.waitMs !== undefined ? { waitMs: input.research.waitMs } : {}),
+    });
+    spend(out.costUsd);
+    if (out.researched) {
+      const next = offerResearchText(out.target, input.dossier);
+      researched = next !== research;
+      target = out.target;
+      research = next;
+    }
+  }
+  const criteria = offerRelevanceCriteria();
+  const content = loadPrompt("prospect-offer-rescue")
+    .replace("{{rejected}}", () =>
+      rejected
+        .map(({ offer, judgement }) => `- "${offer.offer}": ${judgement.label}, ${judgement.why}`)
+        .join("\n"),
+    )
+    .replace("{{weak}}", () => criteria.weak)
+    .replace("{{research}}", () =>
+      researched ? `New research about this firm was read. RESEARCH is now:\n${research}\n\n` : "",
+    );
+  if (ctx.messages.at(-1)?.role !== "assistant") {
+    ctx.messages.push({ role: "assistant", content: ctx.lastReply });
+  }
+  ctx.messages.push({ role: "user", content });
+  let offers = weak;
+  let passed = 0;
+  try {
+    const res = await complete({ messages: ctx.messages, temperature: 0.7, maxTokens: 3000 });
+    spend(res.costUsd);
+    const out = lintReply(res.content, research, ctx.product, ctx.oneLiner, ctx.seen);
+    if (out.failed.length > 0) {
+      logEvent("prospect_offer.lint_failed", {
+        play: input.playName,
+        round: "rescue",
+        kept: out.kept.length,
+        flags_200: out.failed.join("; ").slice(0, 200),
+      });
+    }
+    const fresh = out.kept.slice(0, OFFER_COUNT);
+    if (fresh.length > 0) {
+      const judgeOpts = {
+        ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+        onCost: spend,
+      };
+      const verdicts = await judgeOffers(fresh, research, target, cfg, judgeOpts);
+      if (verdicts) {
+        const passing: DraftOffer[] = [];
+        // The earlier rounds' weak offers keep their scores and come first
+        // on a tie: they were written first.
+        const fill = weak.map((o) => ({ offer: o, score: o.relevanceScore ?? null }));
+        fresh.forEach((o, i) => {
+          const j = verdicts[i] ?? null;
+          // No verdict: unknown, so it never takes a place from a judged offer.
+          if (!j) return;
+          const judged = withJudgement(o, j);
+          if (j.pass) passing.push(judged);
+          else if (j.label !== "irrelevant") fill.push({ offer: judged, score: j.score });
+        });
+        passed = passing.length;
+        offers = withFillers(passing, fill);
+      }
+    }
+  } catch (err) {
+    logEvent(
+      "error.swallowed",
+      {
+        kind: "prospect-offer-rescue",
+        play: input.playName,
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "warn",
+    );
+  }
+  logEvent("prospect_offer.rescue", {
+    play: input.playName,
+    researched,
+    passed,
+    cost_micros: Math.round(cost * 1_000_000),
+  });
+  return { offers, research };
 }
 
 /** Flags for one written angle, keyed on its text alone. */
@@ -1218,6 +1456,7 @@ export async function deriveOfferAngles(
         temperature: 0.6,
         maxTokens: 2500,
       });
+      if (res.costUsd != null && res.costUsd > 0) input.onCost?.(res.costUsd);
       const parsed = tryParseJsonObject<{ angles?: unknown }>(res.content, {});
       const raw = Array.isArray(parsed.angles) ? parsed.angles : [];
       const seen = new Set<string>([offerKey]);

@@ -77,6 +77,19 @@ vi.mock("../src/api/_play-dispatch.ts", () => ({
   },
 }));
 
+// The real offer pass, watched: what a regenerate asks it for.
+const offerPassOpts: unknown[] = [];
+vi.mock("@oneshot-gtm/find", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/find")>("@oneshot-gtm/find");
+  return {
+    ...actual,
+    ensureQueueRowOffer: (r: Parameters<typeof actual.ensureQueueRowOffer>[0], opts?: unknown) => {
+      offerPassOpts.push(opts);
+      return actual.ensureQueueRowOffer(r, opts as never);
+    },
+  };
+});
+
 const { regenerateDraftRoute } = await import("../src/api/queue.ts");
 
 beforeEach(() => {
@@ -88,6 +101,7 @@ beforeEach(() => {
     send_started_at: null,
   };
   setQueueDraftCalls.length = 0;
+  offerPassOpts.length = 0;
   dispatchCalls.length = 0;
   dispatchAngles.length = 0;
   dispatchSources.length = 0;
@@ -155,6 +169,12 @@ describe("regenerateDraftRoute — TOCTOU guards", () => {
     // A plain regenerate is the founder rejecting the text, angle kept.
     expect(setQueueDraftCalls[0]?.discardReason).toBe("regenerate");
   });
+});
+
+it("reads the row's company research before its offers, waiting only so long", async () => {
+  const { CLICK_RESEARCH_WAIT_MS } = await import("@oneshot-gtm/find");
+  expect((await regenerateDraftRoute(req(), { id: "1" })).status).toBe(200);
+  expect(offerPassOpts).toEqual([{ research: true, researchWaitMs: CLICK_RESEARCH_WAIT_MS }]);
 });
 
 it("regenerates from current trigger edges without changing saved context", async () => {

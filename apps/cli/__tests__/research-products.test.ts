@@ -43,16 +43,23 @@ describe("selectProductQueueRows", () => {
     sources: [{ url: "https://alpha.example", excerpt: "Alpha builds search" }],
   };
 
-  it("takes a row with no research, or with a company domain and none of its pages", () => {
+  it("takes a row with no research, or a company to read and research without its outside half", () => {
     const fresh = row({ companyDomain: "alpha.example" });
     const pageless = row({ companyDomain: "alpha.example", productResearch: noPages });
-    const read = row({ companyDomain: "alpha.example", productResearch: pages });
+    // A homepage read alone is partial: the outside research is still missing.
+    const homepage = row({ companyDomain: "alpha.example", productResearch: pages });
+    const complete = row({
+      companyDomain: "alpha.example",
+      productResearch: { ...pages, status: "complete", external: { answer: "a" } },
+    });
     const builder = row({ email: "ada@gmail.com", productResearch: noPages });
-    expect(selectProductQueueRows([fresh, pageless, read, builder], { refresh: false })).toEqual([
-      fresh,
-      pageless,
+    expect(
+      selectProductQueueRows([fresh, pageless, homepage, complete, builder], { refresh: false }),
+    ).toEqual([fresh, pageless, homepage]);
+    expect(selectProductQueueRows([complete, builder], { refresh: true })).toEqual([
+      complete,
+      builder,
     ]);
-    expect(selectProductQueueRows([read, builder], { refresh: true })).toEqual([read, builder]);
   });
 
   it("never a sent or sending row", () => {

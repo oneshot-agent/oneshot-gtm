@@ -1,4 +1,5 @@
 import { getLedger, type CadenceWithProspect } from "@oneshot-gtm/core";
+import { CLICK_RESEARCH_WAIT_MS } from "@oneshot-gtm/find";
 import {
   deriveSequenceOffer,
   offerHoldsSend,
@@ -237,11 +238,21 @@ export async function cadenceOfferRoute(
       );
     }
   } else if (body.regenerate === true) {
+    // New offers, never the ones on screen; the firm's research is read
+    // first when it is missing, for as long as a click can wait.
+    const avoid = [
+      ...new Set([
+        ...record.offerCandidates.map((o) => o.offer),
+        ...(record.offer ? [record.offer.offer] : []),
+      ]),
+    ];
     const out = await deriveSequenceOffer({
       prospectId,
       playName,
       force: true,
       stepIndex: cadence.current_step + 1,
+      ...(avoid.length > 0 ? { avoid } : {}),
+      researchWaitMs: CLICK_RESEARCH_WAIT_MS,
     });
     if (out.status === "none") {
       if (out.reason === "not-stored" && sendStarted()) {
