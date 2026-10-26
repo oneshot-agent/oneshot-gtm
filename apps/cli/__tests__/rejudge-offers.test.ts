@@ -212,6 +212,37 @@ describe("commandRejudgeOffers", () => {
     expect(writerMock).not.toHaveBeenCalled();
   });
 
+  it("under prefer-product, a passing product-anchored candidate is taken over an earlier one", async () => {
+    extraCfg = { offerAnchor: "prefer-product" };
+    const id = enqueue({
+      offer: offer(A, weakFields),
+      offerCandidates: [
+        offer(A, weakFields),
+        offer(B, { relevance: "weak", anchor: "firm" }),
+        offer(C, { relevance: "weak", anchor: "product" }),
+      ],
+    });
+    verdictFor.set(A, verdict("weak", 0.3, false));
+    verdictFor.set(B, verdict("relevant", 0.9, true));
+    verdictFor.set(C, verdict("relevant", 0.6, true));
+    await commandRejudgeOffers({ dryRun: false });
+    // C, although B passes first and scores higher.
+    expect(payloadOf(id).offer.offer).toBe(C);
+  });
+
+  it("candidates written before the anchor existed still take the first passing one", async () => {
+    extraCfg = { offerAnchor: "prefer-product" };
+    const id = enqueue({
+      offer: offer(A, weakFields),
+      offerCandidates: [offer(A, weakFields), offer(B), offer(C)],
+    });
+    verdictFor.set(A, verdict("weak", 0.3, false));
+    verdictFor.set(B, verdict("relevant", 0.62, true));
+    verdictFor.set(C, verdict("relevant", 0.8, true));
+    await commandRejudgeOffers({ dryRun: false });
+    expect(payloadOf(id).offer.offer).toBe(B);
+  });
+
   it("keeps a switched candidate's own angles", async () => {
     const id = enqueue({
       offer: offer(A, weakFields),

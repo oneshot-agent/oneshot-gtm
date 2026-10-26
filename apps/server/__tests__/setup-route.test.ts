@@ -536,6 +536,28 @@ describe("POST /api/setup — offerJudge", () => {
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
 
+  it("offerAnchor: saved as given, absent keeps, null clears, an unknown value refused", async () => {
+    expect(await post({ offerAnchor: "prefer-product" })).toEqual({ status: 200 });
+    expect(savedCfg().offerAnchor).toBe("prefer-product");
+    current = { ...current, offerAnchor: "prefer-product" };
+    saveConfigMock.mockClear();
+    expect(await post({ founderName: "Janet" })).toEqual({ status: 200 });
+    expect(savedCfg().offerAnchor).toBe("prefer-product");
+    saveConfigMock.mockClear();
+    expect(await post({ offerAnchor: "either" })).toEqual({ status: 200 });
+    expect(savedCfg().offerAnchor).toBe("either");
+    saveConfigMock.mockClear();
+    expect(await post({ offerAnchor: null })).toEqual({ status: 200 });
+    expect(savedCfg().offerAnchor).toBeUndefined();
+    // A misspelling is a 400 here rather than a silent fall back to the
+    // default, which would turn the preference off without saying so.
+    saveConfigMock.mockClear();
+    const res = await post({ offerAnchor: "prefer_product" });
+    expect(res.status).toBe(400);
+    expect(res.error).toMatch(/offerAnchor/);
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
   it("null clears it; absent leaves it as stored", async () => {
     current = { ...current, offerJudge: { engine: "decisions", model: "m" } };
     expect(await post({ founderName: "Janet" })).toEqual({ status: 200 });

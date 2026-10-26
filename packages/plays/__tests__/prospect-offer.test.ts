@@ -23,6 +23,7 @@ const cfg: {
   llmModel?: string;
   offerJudge?: { engine: "llm" | "decisions"; model?: string; minConfidence?: number };
   offerExclusions?: string[];
+  offerAnchor?: "prefer-product" | "either";
 } = {
   founderName: "Founder",
   productOneLiner: "Acme schedules field crews",
@@ -102,6 +103,7 @@ beforeEach(() => {
   llm.judgeInputs = [];
   delete cfg.offerJudge;
   delete cfg.offerExclusions;
+  delete cfg.offerAnchor;
   // Judge paths must not depend on a key in the developer's or CI's environment.
   delete process.env["OPENROUTER_API_KEY"];
 });
@@ -1750,5 +1752,152 @@ describe("offer exclusions", () => {
     expect(judge).toContain("- NEVER OFFER (optional):");
     expect(judge).toContain('set `"excluded": true`');
     for (const text of [writer, judge]) expect(text.toLowerCase()).not.toContain("recruit");
+  });
+});
+
+// `offerAnchor`: where the research allows a choice, the founder can prefer a
+// goal of the prospect's own product. The writer and the judge are told, the
+// passing product-anchored offers lead, and a workspace that has not set it
+// sees the message, the criteria and the order it always saw.
+
+describe("offer anchor", () => {
+  const research = offerResearchText(target);
+  const product = { ...good, anchor: "product" as const };
+  const firm = {
+    ...second,
+    anchor: "firm" as const,
+  };
+  const ANCHOR_LINE = "ANCHOR: prefer their product.";
+
+  it("the writer is told, after NEVER OFFER; `either` and an unknown value say nothing", async () => {
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs[0]).not.toContain("ANCHOR");
+
+    cfg.offerAnchor = "either";
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs[1]).not.toContain("ANCHOR");
+
+    (cfg as { offerAnchor?: unknown }).offerAnchor = "prefer_product";
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs[2]).not.toContain("ANCHOR");
+
+    cfg.offerAnchor = "prefer-product";
+    cfg.offerExclusions = ["legal work: drafting the prospect's own contracts"];
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs[3]).toContain(`${ANCHOR_LINE}`);
+    expect(llm.inputs[3]).toContain("own contracts\n\nANCHOR: prefer their product.");
+    expect(llm.inputs[3]).toContain("not penalised.\n\nPLAY: new-business");
+  });
+
+  it("the judge is told, and its weak criterion gains the preference", async () => {
+    const { judgeOffers, offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
+    expect(offerRelevanceCriteria([], "either")).toEqual(offerRelevanceCriteria());
+    expect(offerRelevanceCriteria().weak).not.toContain("resting on their firm where RESEARCH");
+    expect(offerRelevanceCriteria([], "prefer-product").weak).toContain(
+      "resting on their firm where RESEARCH plainly says what their own product does",
+    );
+
+    llm.judge = [judgeReply([["relevant", "the second depot"]])];
+    await judgeOffers([good], research, target, cfg as never);
+    expect(llm.judgeInputs[0]).not.toContain("ANCHOR");
+
+    cfg.offerAnchor = "prefer-product";
+    llm.judge = [judgeReply([["relevant", "the second depot"]])];
+    await judgeOffers([good], research, target, cfg as never);
+    expect(llm.judgeInputs[1]).toContain(ANCHOR_LINE);
+  });
+
+  it("a passing product-anchored offer leads; a weak one does not overtake", async () => {
+    const { preferProductAnchor } = await import("../src/_prospect-offer.ts");
+    const relevant = { relevance: "relevant" as const };
+    const weak = { relevance: "weak" as const };
+    const set = [
+      { ...firm, ...relevant },
+      { ...product, offer: "a", ...weak },
+      { ...product, offer: "b", ...relevant },
+      { ...product, offer: "c", ...relevant },
+    ];
+    expect(preferProductAnchor(set, "prefer-product").map((o) => o.offer)).toEqual([
+      "b",
+      "c",
+      firm.offer,
+      "a",
+    ]);
+    // `either` and a set with no anchors at all keep the model's order.
+    expect(preferProductAnchor(set, "either")).toEqual(set);
+    const unanchored = [
+      { ...good, ...relevant },
+      { ...second, ...relevant },
+    ];
+    expect(preferProductAnchor(unanchored, "prefer-product")).toEqual(unanchored);
+  });
+
+  it("a founder-approved weak product offer leads; an edited one is not held back", async () => {
+    const { preferProductAnchor } = await import("../src/_prospect-offer.ts");
+    const firmFirst = { ...firm, relevance: "relevant" as const };
+    const approved = {
+      ...product,
+      offer: "approved",
+      relevance: "weak" as const,
+      weakApprovedAt: "2026-10-27T00:00:00.000Z",
+    };
+    const edited = {
+      ...product,
+      offer: "edited",
+      relevance: "weak" as const,
+      editedBy: "founder" as const,
+    };
+    expect(
+      preferProductAnchor([firmFirst, approved, edited], "prefer-product").map((o) => o.offer),
+    ).toEqual(["approved", "edited", firm.offer]);
+  });
+
+  it("deriveOffers reorders what it keeps, and the writer's anchor is stored", async () => {
+    cfg.offerAnchor = "prefer-product";
+    llm.replies = [JSON.stringify({ offers: [firm, product] })];
+    llm.judge = [
+      judgeReply([
+        ["relevant", "the second depot"],
+        ["relevant", "same-day slots"],
+      ]),
+    ];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    expect(offers.map((o) => [o.offer, o.anchor])).toEqual([
+      [product.offer, "product"],
+      [firm.offer, "firm"],
+    ]);
+  });
+
+  it("an offer with no anchor, or an unknown one, stores none", async () => {
+    llm.replies = [JSON.stringify({ offers: [good, { ...second, anchor: "their product" }] })];
+    llm.judge = [
+      judgeReply([
+        ["relevant", "the second depot"],
+        ["relevant", "cancelled slots"],
+      ]),
+    ];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    expect(offers.map((o) => o.anchor)).toEqual([undefined, undefined]);
+  });
+
+  it("is not part of an offer's input or product hash: stored offers stand until swept", () => {
+    const preferring = { ...cfg, offerAnchor: "prefer-product" as const };
+    expect(offerInputHash(research, preferring)).toBe(offerInputHash(research, cfg));
+    expect(offerProductHash(preferring)).toBe(offerProductHash(cfg));
+  });
+
+  it("the writer and judge prompts carry the rule and the output field", () => {
+    const prompts = join(import.meta.dirname, "..", "..", "prompts");
+    const writer = readFileSync(join(prompts, "prospect-offer.md"), "utf8");
+    const judge = readFileSync(join(prompts, "prospect-offer-judge.md"), "utf8");
+    expect(writer).toContain("- ANCHOR (optional):");
+    expect(writer).toContain('"anchor": "product" | "firm"');
+    expect(writer).toContain("With `ANCHOR: prefer their product`");
+    expect(judge).toContain("- ANCHOR (optional):");
+    expect(judge).toContain("With `ANCHOR: prefer their product`, an offer resting on their firm");
   });
 });

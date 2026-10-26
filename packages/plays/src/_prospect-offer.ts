@@ -7,8 +7,9 @@
  * Product facts come only from config: `productOneLiner`, `productBrief`, and
  * `pilotOffer` (the general terms: a pilot, a trial, a partnership). The kinds
  * of goal a founder never offers come from `offerExclusions`: the writer is
- * told them and the judge rates such an offer `irrelevant`. Nothing here
- * names a product or assumes what kind of offer a founder makes.
+ * told them and the judge rates such an offer `irrelevant`. `offerAnchor`
+ * says which anchor to prefer where the research allows a choice. Nothing
+ * here names a product or assumes what kind of offer a founder makes.
  *
  * Before the first send it is stored on the queue row (`payload.offer`, with
  * the ranked `offerCandidates`). The send hands it to the sequence it starts
@@ -26,8 +27,10 @@ import {
   isPersonResearchDossier,
   loadConfig,
   logEvent,
+  offerAnchorOf,
   offerExclusionsOf,
   productBriefText,
+  type OfferAnchor,
 } from "@oneshot-gtm/core";
 import {
   callDecisions,
@@ -89,6 +92,13 @@ export interface ProspectOffer {
   /** The anchor it rests on (their product, or their firm) and the fact behind it. */
   fit?: string;
   /**
+   * Which anchor it rests on, as the writer named it: the machine-readable
+   * half of `fit`, which states the same thing in prose. Absent on every
+   * offer written before the field existed, and on a founder's own edit, so
+   * a reader treats absent as unknown rather than as `firm`.
+   */
+  anchor?: OfferAnchorKind;
+  /**
    * The relevance judge's label (see `judgeOffers`). A `weak` offer is kept
    * only to make up the five when too few were judged relevant.
    */
@@ -121,6 +131,9 @@ export interface ProspectOffer {
 }
 
 export type OfferRelevance = "relevant" | "weak" | "irrelevant";
+
+/** Which of the two anchors one offer rests on. */
+export type OfferAnchorKind = "product" | "firm";
 
 /** Longest skip reason kept: the writer's one line, clipped. */
 export const OFFER_SKIP_WHY_MAX = 300;
@@ -493,6 +506,7 @@ interface RawOffer {
   level?: unknown;
   return?: unknown;
   fit?: unknown;
+  anchor?: unknown;
   skip?: unknown;
 }
 
@@ -509,6 +523,8 @@ function readRaw(raw: RawOffer): Omit<ProspectOffer, "version" | "inputHash" | "
     : [];
   const ret = typeof raw.return === "string" ? raw.return.trim().replace(/[.]+$/, "") : "";
   const fit = typeof raw.fit === "string" ? raw.fit.trim().replace(/[.]+$/, "") : "";
+  // Absent or anything else stays absent: unknown, never a guessed "firm".
+  const anchor = raw.anchor === "product" || raw.anchor === "firm" ? raw.anchor : null;
   return {
     offer,
     steps,
@@ -517,6 +533,7 @@ function readRaw(raw: RawOffer): Omit<ProspectOffer, "version" | "inputHash" | "
     level: raw.level === "role" ? "role" : "researched",
     ...(ret ? { return: ret } : {}),
     ...(fit ? { fit } : {}),
+    ...(anchor ? { anchor } : {}),
   };
 }
 
@@ -661,6 +678,7 @@ function offerUserMessage(input: DeriveOfferInput, cfg: AppConfig, research: str
     `PRODUCT BRIEF:\n${productBriefText(cfg, undefined, { max: BRIEF_MAX }) ?? ""}`,
     ...(cfg.pilotOffer?.trim() ? [`OFFER TERMS: ${cfg.pilotOffer.trim()}`] : []),
     ...neverOfferBlock(offerExclusionsOf(cfg)),
+    ...anchorBlock(offerAnchorOf(cfg)),
     `PLAY: ${input.playName}`,
     `PROSPECT: ${firstString(t, ["name", "founderName", "guestName", "hostName"])}`,
     `TITLE: ${firstString(t, TITLE_KEYS)}`,
@@ -677,6 +695,22 @@ function offerUserMessage(input: DeriveOfferInput, cfg: AppConfig, research: str
 function neverOfferBlock(exclusions: readonly string[]): string[] {
   return exclusions.length > 0
     ? [`NEVER OFFER:\n${exclusions.map((e) => `- ${e}`).join("\n")}`]
+    : [];
+}
+
+/**
+ * The ANCHOR section the writer and the judge read. Nothing under `either`,
+ * so a workspace that has not set the preference sends the message it always
+ * sent, byte for byte.
+ */
+function anchorBlock(anchor: OfferAnchor): string[] {
+  return anchor === "prefer-product"
+    ? [
+        "ANCHOR: prefer their product. Where RESEARCH says what their own product does, " +
+          "the strongest offers are goals it would carry to completion for its own users, " +
+          "and the best of those leads. Where RESEARCH says nothing about their product, " +
+          "a firm-anchored offer is right and is not penalised.",
+      ]
     : [];
 }
 
@@ -723,15 +757,23 @@ const JUDGE_WHY_MAX = 140;
  */
 export function offerRelevanceCriteria(
   exclusions: readonly string[] = [],
+  anchor: OfferAnchor = "either",
 ): Record<OfferRelevance, string> {
   const excluded =
     exclusions.length > 0
       ? ` Also irrelevant, whatever else is true of it: a goal of a kind listed under NEVER OFFER, in any wording (${exclusions.join("; ")}).`
       : "";
+  // Narrow on purpose: only where RESEARCH plainly says what their product
+  // does. Thin research leaves a firm-anchored offer exactly as strong as it
+  // was, so the preference never turns into a hold on rows that know little.
+  const preferProduct =
+    anchor === "prefer-product"
+      ? " Also weak: an offer resting on their firm where RESEARCH plainly says what their own product does and a goal of that product was available instead."
+      : "";
   return {
     relevant:
       "A goal this firm at its stage would put on its plan, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), owned by or one step from this person, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
-    weak: "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome this person owns or is one step from, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.",
+    weak: `Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome this person owns or is one step from, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.${preferProduct}`,
     irrelevant: `A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.${excluded}`,
   };
 }
@@ -769,11 +811,13 @@ function judgeState(
   research: string,
   who: { company: string; title: string },
   exclusions: readonly string[],
+  anchor: OfferAnchor,
 ): string {
   return [
     `COMPANY: ${who.company}`,
     `TITLE: ${who.title}`,
     ...neverOfferBlock(exclusions),
+    ...anchorBlock(anchor),
     `RESEARCH:\n${clip(research, JUDGE_RESEARCH_MAX) || "(none)"}`,
     `OFFERS:\n${offers.map((o, i) => `${i + 1}.\n${describeOffer(o)}`).join("\n\n")}`,
   ].join("\n\n");
@@ -786,10 +830,11 @@ async function judgeWithDecisions(
   key: string,
   min: number,
   exclusions: readonly string[],
+  anchor: OfferAnchor,
   fetchImpl: typeof fetch | undefined,
   onCost: ((usd: number) => void) | undefined,
 ): Promise<OfferJudgement[]> {
-  const criteria = offerRelevanceCriteria(exclusions);
+  const criteria = offerRelevanceCriteria(exclusions, anchor);
   const exclusionCriteria = exclusions.length > 0 ? offerExclusionCriteria(exclusions) : null;
   const questions: Record<string, DecisionsChoiceQuestion> = {};
   offers.forEach((o, i) => {
@@ -940,11 +985,13 @@ export async function judgeOffers(
   if (offers.length === 0) return [];
   const t = row as JsonRecord;
   const exclusions = offerExclusionsOf(cfg);
+  const anchor = offerAnchorOf(cfg);
   const state = judgeState(
     offers,
     research,
     { company: firstString(t, COMPANY_KEYS), title: firstString(t, TITLE_KEYS) },
     exclusions,
+    anchor,
   );
   if (cfg.offerJudge?.engine === "decisions") {
     const model = cfg.offerJudge.model?.trim();
@@ -958,6 +1005,7 @@ export async function judgeOffers(
           key,
           judgeMinConfidence(cfg),
           exclusions,
+          anchor,
           opts.fetchImpl,
           opts.onCost,
         );
@@ -1197,6 +1245,7 @@ export async function deriveOffers(
       "warn",
     );
   }
+  kept = preferProductAnchor(kept, offerAnchorOf(cfg));
   // Hashed after any research the rescue read: the row holds it now.
   const inputHash = offerInputHash(research, cfg);
   const derivedAt = new Date().toISOString();
@@ -1789,6 +1838,25 @@ export const WEAK_OFFER_HOLD_REASON =
 export function offerHoldsSend(offer: unknown): boolean {
   if (!isProspectOffer(offer)) return false;
   return offer.relevance === "weak" && offer.editedBy !== "founder" && !offerWeakApproved(offer);
+}
+
+/**
+ * Under `prefer-product`, the ranked offers with the product-anchored ones
+ * that would go out moved to the front. Stable: the order inside each group
+ * is the model's, so the best return still leads within it, and an offer the
+ * judge did not pass never overtakes one it did. Under `either` the list
+ * comes back untouched, which is every workspace that has not set the
+ * preference.
+ *
+ * `anchor` absent reads as unknown, not as `firm`, so a set written before
+ * the writer emitted the field keeps its order exactly.
+ */
+export function preferProductAnchor<
+  T extends Pick<ProspectOffer, "offer" | "steps" | "anchor" | "relevance">,
+>(offers: readonly T[], anchor: OfferAnchor): T[] {
+  if (anchor !== "prefer-product") return [...offers];
+  const leads = (o: T): boolean => o.anchor === "product" && !offerHoldsSend(o);
+  return [...offers.filter(leads), ...offers.filter((o) => !leads(o))];
 }
 
 /** True when a queue row of this play is held for its active offer (`offerHoldsSend`). */
