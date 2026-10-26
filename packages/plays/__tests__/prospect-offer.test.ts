@@ -1671,6 +1671,23 @@ describe("offer exclusions", () => {
     expect(llm.judgeInputs[1]).toContain(`NEVER OFFER:\n- ${kind}`);
   });
 
+  it("llm engine: an excluded flag without a valid label still excludes; without exclusions it gives no verdict", async () => {
+    const { judgeOffers } = await import("../src/_prospect-offer.ts");
+    const reply = JSON.stringify({
+      judgements: [
+        { offer: 1, label: "relevant", why: "the second depot" },
+        { offer: 2, why: "hiring for their open roles", excluded: true },
+      ],
+    });
+    llm.judge = [reply];
+    const plain = await judgeOffers([good, hiring], research, target, cfg as never);
+    expect(plain?.[1]).toBeNull();
+    cfg.offerExclusions = exclusions;
+    llm.judge = [reply];
+    const out = await judgeOffers([good, hiring], research, target, cfg as never);
+    expect(out?.[1]).toMatchObject({ label: "irrelevant", pass: false, excluded: true });
+  });
+
   it("decisions engine: an exclusion question per offer, and irrelevant names the kinds", async () => {
     const { judgeOffers, offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
     process.env["OPENROUTER_API_KEY"] = "test-key";

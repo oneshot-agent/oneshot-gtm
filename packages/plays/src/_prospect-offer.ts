@@ -892,12 +892,14 @@ async function judgeWithLlm(
   list.forEach((raw, position) => {
     if (!raw || typeof raw !== "object") return;
     const j = raw as { offer?: unknown; label?: unknown; why?: unknown; excluded?: unknown };
-    if (!isOfferRelevance(j.label)) return;
+    // Only with NEVER OFFER given: an excluded offer is irrelevant whatever
+    // label came with it, including none.
+    const excluded = exclusions.length > 0 && j.excluded === true;
+    if (!excluded && !isOfferRelevance(j.label)) return;
     const n = typeof j.offer === "number" && Number.isInteger(j.offer) ? j.offer - 1 : position;
     if (n < 0 || n >= offers.length || byIndex.has(n)) return;
     const why = typeof j.why === "string" ? clip(j.why.trim(), JUDGE_WHY_MAX) : "";
-    // Only with NEVER OFFER given: an excluded offer is irrelevant whatever label came with it.
-    if (exclusions.length > 0 && j.excluded === true) {
+    if (excluded) {
       const text = why || "of a kind never offered";
       byIndex.set(n, {
         label: "irrelevant",
@@ -906,6 +908,7 @@ async function judgeWithLlm(
       });
       return;
     }
+    if (!isOfferRelevance(j.label)) return;
     byIndex.set(n, { label: j.label, why: why || j.label });
   });
   logEvent("prospect_offer.judged", {
