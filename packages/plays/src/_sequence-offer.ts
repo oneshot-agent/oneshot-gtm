@@ -38,6 +38,9 @@ import {
   isOfferSkipped,
   isProspectOffer,
   playMakesOffer,
+  registerOfferResearch,
+  researchForOffer,
+  type OfferResearch,
   type OfferSkip,
   type OfferThreadEmail,
   type ProspectOffer,
@@ -215,24 +218,11 @@ export function writeSequenceOfferSkip(record: SequenceOfferRecord, skip: OfferS
 }
 
 /**
- * Reads the firm's own pages for a sequence's offer, when the queue row it
- * started from has a company domain and no page text yet. Registered by
- * `@oneshot-gtm/find` (sequence-offer-research.ts), which owns company
- * research and its per-row spend cap; absent, or for a sequence with no
- * row, offers are written from what is stored.
+ * The company research a sequence's offer reads first: the one hook every
+ * offer uses (`registerOfferResearch`), under its old name.
  */
-export type SequenceOfferResearch = (input: {
-  target: JsonRecord;
-  playName: string;
-  queueRowId: number;
-  source: string;
-}) => Promise<JsonRecord>;
-
-let sequenceOfferResearch: SequenceOfferResearch | null = null;
-
-export function registerSequenceOfferResearch(fn: SequenceOfferResearch | null): void {
-  sequenceOfferResearch = fn;
-}
+export type SequenceOfferResearch = OfferResearch;
+export const registerSequenceOfferResearch = registerOfferResearch;
 
 /** The emails this sequence already sent, oldest first: the THREAD SO FAR an offer continues. */
 export function sequenceThread(
@@ -326,8 +316,9 @@ export type DeriveSequenceOfferResult =
 /**
  * The sequence's offer, written now when it has none (or always, with
  * `force`, except over the intro's own). The research target is the queue
- * row the sequence started from, its firm's pages read first when it has
- * none (the registered research, within find's per-row cap), else the
+ * row the sequence started from, its firm's research read first when it is
+ * missing or incomplete (the registered research, within find's per-row
+ * cap), else the
  * prospect; the prospect's dossier tops either up. Writes and judges the
  * offers the way an intro's are (`ensureOfferSet`), told the thread already
  * sent, and stores them on the cadence (`writeSequenceOffer`), which a send
@@ -344,6 +335,12 @@ export async function deriveSequenceOffer(input: {
   force?: boolean;
   /** The step about to be drafted: the thread is every email before it. */
   stepIndex?: number | null;
+  /** Offers to write around: the sequence's own, when the founder asked for new ones. */
+  avoid?: ReadonlyArray<string>;
+  /** Longest wait for the company research on a click; see `OfferResearch`. */
+  researchWaitMs?: number;
+  /** Told what each model call and research read cost, in USD. */
+  onCost?: (usd: number) => void;
   cfg?: AppConfig;
 }): Promise<DeriveSequenceOfferResult> {
   const record = sequenceOfferRecord(input);
@@ -365,14 +362,15 @@ export async function deriveSequenceOffer(input: {
     delete target["offerCandidates"];
     delete target["offerSkip"];
     if (queued) {
-      if (sequenceOfferResearch) {
-        target = await sequenceOfferResearch({
-          target,
-          playName: input.playName,
-          queueRowId: queued.id,
-          source: queued.source,
-        });
-      }
+      const researched = await researchForOffer({
+        target,
+        playName: input.playName,
+        queueRowId: queued.id,
+        source: queued.source,
+        ...(input.researchWaitMs !== undefined ? { waitMs: input.researchWaitMs } : {}),
+      });
+      if (researched.costUsd > 0) input.onCost?.(researched.costUsd);
+      target = researched.target;
       // The trigger's current edge, as an intro's offer is written with.
       try {
         target = resolveTriggerOverlay(target, queued.source, (name) => ledger.getTrigger(name));
@@ -389,6 +387,8 @@ export async function deriveSequenceOffer(input: {
       playName: input.playName,
       cfg,
       ...(thread.length > 0 ? { thread } : {}),
+      ...(input.avoid && input.avoid.length > 0 ? { avoid: input.avoid } : {}),
+      ...(input.onCost ? { onCost: input.onCost } : {}),
     });
     if (!set) {
       logEvent("sequence_offer.none", {

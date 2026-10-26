@@ -57,8 +57,8 @@ export function productQueueStatuses(
 
 /**
  * Queue rows to research: never one sent or mid-send, and, unless
- * refreshing, only one with no company research or with research that has
- * none of the company's own pages while it has a company domain to read.
+ * refreshing, only one with no company research, or with a company to read
+ * and research that lacks its outside half (`needsCompanyResearch`).
  */
 export function selectProductQueueRows<
   R extends Pick<QueueRow, "play_name" | "payload_json" | "sent_at" | "send_started_at">,

@@ -15,6 +15,8 @@ const state = vi.hoisted(() => ({
   /** The writer declines with this skip (wins over `derived`). */
   skipped: null as null | Record<string, unknown>,
   brief: "Acme books crews into open slots.",
+  /** What each fresh set was asked for. */
+  deriveInputs: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("@oneshot-gtm/core", async () => ({
@@ -49,12 +51,13 @@ vi.mock("@oneshot-gtm/core", async () => ({
 }));
 vi.mock("@oneshot-gtm/plays", async () => ({
   ...(await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays")),
-  deriveOfferSet: async () =>
-    state.skipped
-      ? { skipped: state.skipped }
-      : state.derived
-        ? { offer: state.derived, candidates: [state.derived, { offer: "second" }] }
-        : null,
+  deriveOfferSet: async (input: Record<string, unknown>) => {
+    state.deriveInputs.push(input);
+    if (state.skipped) return { skipped: state.skipped };
+    return state.derived
+      ? { offer: state.derived, candidates: [state.derived, { offer: "second" }] }
+      : null;
+  },
   // Angles are written for whichever offer becomes active.
   withOfferAngles: async (offer: Record<string, unknown>) => ({ ...offer, angles: ["why"] }),
 }));
@@ -89,6 +92,7 @@ beforeEach(() => {
   state.derived = null;
   state.skipped = null;
   state.brief = "Acme books crews into open slots.";
+  state.deriveInputs = [];
 });
 
 describe("queueOfferRoute", () => {
@@ -134,6 +138,21 @@ describe("queueOfferRoute", () => {
       state.derived,
       { offer: "second" },
     ]);
+  });
+
+  it("asks for jobs other than the ones on screen, and lets a weak set read the firm first", async () => {
+    const { CLICK_RESEARCH_WAIT_MS } = await import("@oneshot-gtm/find");
+    const payload = JSON.parse(String(state.row!["payload_json"])) as Record<string, unknown>;
+    state.row!["payload_json"] = JSON.stringify({
+      ...payload,
+      offerCandidates: [payload["offer"], { offer: "other", steps: "c, d" }],
+    });
+    state.derived = { offer: "fresh", steps: "x, y" };
+    expect((await queueOfferRoute(post({ regenerate: true }), { id: "5" })).status).toBe(200);
+    expect(state.deriveInputs[0]).toMatchObject({
+      avoid: ["old", "other"],
+      research: { queueRowId: 5, source: "show-hn", waitMs: CLICK_RESEARCH_WAIT_MS },
+    });
   });
 
   it("keeps a writer skip on the row and answers 422 with its why, leaving the offer", async () => {

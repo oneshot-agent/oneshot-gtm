@@ -40,6 +40,7 @@ import {
   rankPendingRows,
   rederiveQueueRow,
   resolveQueueTarget,
+  CLICK_RESEARCH_WAIT_MS,
   ensureQueueRowOffer,
   safeEnrichCompany,
   scheduleNewsfeedOnApproval,
@@ -1199,8 +1200,9 @@ export async function drainQueueRoute(req: Request): Promise<Response> {
 
 /**
  * Re-draft a single queue row in PREVIEW mode and overwrite its persisted
- * draft. Always dry-run: enrichment is skipped and nothing is sent, even
- * when the fresh draft is lint-clean.
+ * draft. Always dry-run: the play's enrichment is skipped (the row's company
+ * research is read first when it is missing or incomplete) and nothing is
+ * sent, even when the fresh draft is lint-clean.
  */
 const generatingDrafts = new Set<number>();
 
@@ -1279,9 +1281,15 @@ async function regenerateDraftInner(
     return answer({ error: "Public replies require the community-reply play" }, 400);
   let target: unknown;
   try {
-    // The row's offer is made current first: the draft opens with it. The
-    // row is re-read so the payload check below compares against it.
-    row = await ensureQueueRowOffer(row);
+    // The row's offer is made current first: the draft opens with it. A row
+    // whose company research is missing or incomplete has it read first, so
+    // the offers are written again from it; a read past the wait lands on the
+    // row for the next regenerate. The row is re-read so the payload check
+    // below compares against it.
+    row = await ensureQueueRowOffer(row, {
+      research: true,
+      researchWaitMs: CLICK_RESEARCH_WAIT_MS,
+    });
     target = resolveQueueTarget(row);
   } catch (err) {
     const error =

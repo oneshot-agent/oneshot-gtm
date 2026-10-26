@@ -169,6 +169,29 @@ describe("queue Next offer", () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 
+  it("skips weak offers to the next one that is not, and goes in order when all are weak", async () => {
+    vi.spyOn(api, "setQueueOffer").mockResolvedValue(
+      {} as Awaited<ReturnType<typeof api.setQueueOffer>>,
+    );
+    vi.spyOn(api, "regenerateDraft").mockResolvedValue(
+      {} as Awaited<ReturnType<typeof api.regenerateDraft>>,
+    );
+    const refresh = vi.spyOn(client, "invalidateQueries");
+    const labelled = candidates.map((c, i) => ({
+      ...c,
+      relevance: i === 3 ? ("relevant" as const) : ("weak" as const),
+    }));
+    offerBlock({ offer: labelled[0], offerCandidates: labelled });
+    click(NEXT);
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    expect(api.setQueueOffer).toHaveBeenLastCalledWith(5, { select: 3 });
+    const allWeak = candidates.map((c) => ({ ...c, relevance: "weak" as const }));
+    offerBlock({ offer: allWeak[0], offerCandidates: allWeak });
+    click(NEXT);
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+    expect(api.setQueueOffer).toHaveBeenLastCalledWith(5, { select: 1 });
+  });
+
   it("does not redraft when offer selection fails", async () => {
     vi.spyOn(api, "setQueueOffer").mockRejectedValue(new Error("already sent"));
     const redraft = vi.spyOn(api, "regenerateDraft");

@@ -6,10 +6,12 @@
  * before offers existed, or whose research changed, gets one. Never throws:
  * a row without an offer drafts as before.
  *
- * Background paths (a finder run, a moved row) first read the company's own
- * pages when the row has a company domain and none were read: offers written
- * from a one-line description lean on industry words. A click never waits on
- * that read (one page takes about a minute).
+ * Background paths (a finder run, a moved row) and Regenerate draft first
+ * read the company's research when the row has a company to read and its
+ * research is missing or lacks the outside half: offers written from a
+ * homepage, or a one-line description, lean on industry words. A click waits
+ * for that read at most `CLICK_RESEARCH_WAIT_MS` (the outside research takes
+ * minutes); a read still running then lands on the row for the next pass.
  *
  * When the writer declines, its reason is kept on the payload (`offerSkip`,
  * with the hash of the research it read) and shown on the row; drafts do
@@ -29,7 +31,6 @@ import {
   playMakesOffer,
 } from "@oneshot-gtm/plays";
 import {
-  hasCompanyPages,
   productResearchSkipsPlay,
   queueRowCompanyDomain,
   researchQueueRowProduct,
@@ -67,14 +68,27 @@ export const ROW_RESEARCH_BUDGET_USD = 1;
 /** A research attempt this recent (the finder's own, moments ago) is not repeated. */
 const RESEARCH_RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Longest a click waits for company research before writing from what is
+ * stored. Under the server's 255 s idle timeout, with room for the offers
+ * and the draft after it.
+ */
+export const CLICK_RESEARCH_WAIT_MS = 120_000;
+
 export interface QueueRowOfferOpts {
   /**
-   * Read the company's own pages first when the row has a company domain and
-   * no page text yet. Background paths only: it can take minutes.
+   * Read the company's research first when it is missing or incomplete
+   * (`needsCompanyResearch`). It can take minutes: a click sets
+   * `researchWaitMs`.
    */
   research?: boolean;
   /** Spend cap for that read. Default ROW_RESEARCH_BUDGET_USD. */
   researchBudgetUsd?: number;
+  /**
+   * Longest wait for that read. Past it the offers are written from what is
+   * stored, and the read lands on the live row when it finishes.
+   */
+  researchWaitMs?: number;
   /** Told what the read cost, so a finder run can count it. */
   onResearchCost?: (usd: number) => void;
 }
@@ -82,26 +96,75 @@ export interface QueueRowOfferOpts {
 type OfferableRow = Pick<QueueRow, "id" | "play_name" | "payload_json"> &
   Partial<Pick<QueueRow, "source" | "notes">>;
 
-/** True when a background pass should read the company's pages before writing offers. */
+function companyName(payload: JsonRecord): string | null {
+  for (const key of ["company", "newCompany", "guestCompany"]) {
+    const v = payload[key];
+    if (typeof v === "string" && v.trim() && v.trim() !== "(unknown)") return v.trim();
+  }
+  return null;
+}
+
+/**
+ * True when the row's company research should be read before offers are
+ * written: it has a company to read (a domain or a name), and its research
+ * is missing or lacks the outside half (`status` other than `complete`). A
+ * homepage read alone is not enough: it is often a cookie banner. An attempt
+ * in the last day is not repeated, so a read that keeps failing is not
+ * bought again on every click.
+ */
 export function needsCompanyResearch(playName: string, payload: JsonRecord): boolean {
-  if (productResearchSkipsPlay(playName) || hasCompanyPages(payload)) return false;
-  if (!queueRowCompanyDomain(payload)) return false;
+  if (productResearchSkipsPlay(playName)) return false;
   const prior = payload["productResearch"] as JsonRecord | undefined;
+  if (prior && typeof prior === "object" && prior["status"] === "complete") return false;
+  if (!queueRowCompanyDomain(payload) && !companyName(payload)) return false;
   const at = prior && typeof prior === "object" ? Date.parse(String(prior["researchedAt"])) : NaN;
   return !(Number.isFinite(at) && Date.now() - at < RESEARCH_RETRY_AFTER_MS);
 }
 
+/** What one company read gave the row. */
+export interface RowResearch {
+  /** The payload, with the new research when it came back. */
+  payload: JsonRecord;
+  /** True when the new research is on `payload`. */
+  researched: boolean;
+  /** True when it was also written to the live row. */
+  written: boolean;
+  costUsd: number;
+}
+
 /**
- * The payload with company research added, written to the live row. Errors
- * and a refused budget leave the payload as it was: offers are then written
- * from what is stored.
+ * The payload with company research added, written to the live row (a sent
+ * row keeps its payload). Errors, a refused budget and a read past
+ * `researchWaitMs` leave the payload as it was: offers are then written from
+ * what is stored. Never throws.
  */
-async function researchCompany(
+export async function researchQueueRowCompany(
+  row: OfferableRow,
+  payload: JsonRecord,
+  opts: QueueRowOfferOpts = {},
+): Promise<RowResearch> {
+  const unchanged: RowResearch = { payload, researched: false, written: false, costUsd: 0 };
+  if (!needsCompanyResearch(row.play_name, payload)) return unchanged;
+  const read = readCompany(row, payload, opts);
+  if (opts.researchWaitMs === undefined) return read;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), opts.researchWaitMs);
+  });
+  const out = await Promise.race([read, late]);
+  clearTimeout(timer);
+  if (out) return out;
+  // The read goes on, and writes the live row when it lands.
+  logEvent("queue_offer.research_pending", { queue_id: row.id, wait_ms: opts.researchWaitMs });
+  return unchanged;
+}
+
+async function readCompany(
   row: OfferableRow,
   payload: JsonRecord,
   opts: QueueRowOfferOpts,
-): Promise<{ payload: JsonRecord; written: boolean }> {
-  if (!needsCompanyResearch(row.play_name, payload)) return { payload, written: false };
+): Promise<RowResearch> {
+  const unchanged: RowResearch = { payload, researched: false, written: false, costUsd: 0 };
   try {
     const out = await researchQueueRowProduct(
       {
@@ -109,18 +172,20 @@ async function researchCompany(
         play_name: row.play_name,
         source: row.source ?? "",
         notes: row.notes ?? null,
-        payload_json: row.payload_json,
+        // The payload as the caller holds it: a sequence's target has the
+        // intro's offer taken off.
+        payload_json: JSON.stringify(payload),
       },
       { remainingUsd: opts.researchBudgetUsd ?? ROW_RESEARCH_BUDGET_USD },
     );
     opts.onResearchCost?.(out.costUsd);
     const { dossier } = out;
     if (!out.cached && dossier.warning?.includes("cost cap reached")) {
-      return { payload, written: false };
+      return { ...unchanged, costUsd: out.costUsd };
     }
     // Never replace research the row has with a read that found nothing.
     if (dossier.status === "unavailable" && payload["productResearch"]) {
-      return { payload, written: false };
+      return { ...unchanged, costUsd: out.costUsd };
     }
     const written = writeLiveQueueProductResearch(row.id, dossier);
     logEvent("queue_offer.researched", {
@@ -130,7 +195,12 @@ async function researchCompany(
       cached: out.cached,
       cost_usd: out.costUsd,
     });
-    return { payload: { ...payload, productResearch: dossier }, written };
+    return {
+      payload: { ...payload, productResearch: dossier },
+      researched: true,
+      written,
+      costUsd: out.costUsd,
+    };
   } catch (err) {
     logEvent(
       "error.swallowed",
@@ -141,7 +211,7 @@ async function researchCompany(
       },
       "warn",
     );
-    return { payload, written: false };
+    return unchanged;
   }
 }
 
@@ -175,6 +245,18 @@ function offerPayloadChange(
   };
 }
 
+/** The row as the offer writer's research hook takes it (`DeriveOfferInput.research`). */
+export function offerResearchRow(
+  row: Pick<OfferableRow, "id" | "source">,
+  opts: Pick<QueueRowOfferOpts, "researchWaitMs"> = {},
+): { queueRowId: number; source: string; waitMs?: number } {
+  return {
+    queueRowId: row.id,
+    source: row.source ?? "",
+    ...(opts.researchWaitMs !== undefined ? { waitMs: opts.researchWaitMs } : {}),
+  };
+}
+
 /**
  * The row with a current offer on its payload, or the writer's current skip.
  * Writes only to a live row (pending or approved, not sending); a row that
@@ -190,13 +272,19 @@ export async function ensureQueueRowOffer<R extends OfferableRow>(
   try {
     if (!playMakesOffer(row.play_name)) return row;
     const researched = opts.research
-      ? await researchCompany(row, stored, opts)
+      ? await researchQueueRowCompany(row, stored, opts)
       : { payload: stored, written: false };
     const payload = researched.payload;
     // The trigger's current edge, not the offer's own angles: the angle
     // writer takes the founder's angles as material.
     const target = edgeTarget(payload, row);
-    const set = await ensureOfferSet({ target, playName: row.play_name });
+    const set = await ensureOfferSet({
+      target,
+      playName: row.play_name,
+      // A set the judge passes none of reads the research first, unless
+      // this pass already asked for it (a read still running is not bought twice).
+      ...(opts.research ? {} : { research: offerResearchRow(row, opts) }),
+    });
     const ledger = getLedger();
     const change = offerPayloadChange(payload, set);
     if (!change) {

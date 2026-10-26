@@ -1,8 +1,10 @@
-import { getLedger, type QueueRow } from "@oneshot-gtm/core";
+import { getLedger, safeParseJsonRecord, type QueueRow } from "@oneshot-gtm/core";
+import { CLICK_RESEARCH_WAIT_MS, offerResearchRow } from "@oneshot-gtm/find";
 import {
   activeOfferPatch,
   deriveOfferSet,
   isOfferSkipped,
+  isProspectOffer,
   offerCandidatesOf,
   playMakesOffer,
   type OfferSkip,
@@ -22,7 +24,8 @@ import {
  * POST /api/queue/:id/offer: change a row's prospect offer.
  *
  * - `{ regenerate: true }` writes five new offers from the row's research,
- *   ranked by return; the first becomes active, with its angles. When the
+ *   ranked by return, each a different job from the ones it replaces; the
+ *   first becomes active, with its angles. When the
  *   writer declines, its reason is kept on the row (`offerSkip`) and the
  *   answer is 422 with it (`offerSkip.why`); an offer the row had stays.
  * - `{ select: i }` makes the row's i-th offer (0-based) active, writing its
@@ -56,7 +59,10 @@ export async function queueOfferRoute(
 
   if (body.approveWeak === true) return approveWeakOffer(id, row.payload_json, req);
   if (body.regenerate === true) {
-    const out = await regenerateQueueRowOffer(row);
+    const out = await regenerateQueueRowOffer(row, {
+      avoidCurrent: true,
+      researchWaitMs: CLICK_RESEARCH_WAIT_MS,
+    });
     if (out === "bad-payload") {
       return jsonResponse({ error: "row payload is not valid JSON" }, 400, req);
     }
@@ -116,10 +122,17 @@ export async function queueOfferRoute(
  * research, the first active with its angles, written to the live row.
  * Shared with the read-on-open route, which rewrites the offer when a fresh
  * read moved the person's role. A writer skip is written to the row in
- * place of a set (`skipped`), leaving any offer it had.
+ * place of a set (`skipped`), leaving any offer it had. `avoidCurrent`
+ * (the founder's New offers) asks for jobs other than the row's current
+ * ones. A set the judge passes none of reads the row's company research
+ * first, waiting at most `researchWaitMs` (default none: the read lands on
+ * the row when it finishes). The founder's click passes
+ * `CLICK_RESEARCH_WAIT_MS`; the read-on-open route, which the UI awaits,
+ * passes nothing.
  */
 export async function regenerateQueueRowOffer(
   row: QueueRow,
+  opts: { avoidCurrent?: boolean; researchWaitMs?: number } = {},
 ): Promise<
   | { offer: ProspectOffer; candidates: ProspectOffer[] }
   | { skipped: OfferSkip }
@@ -129,7 +142,13 @@ export async function regenerateQueueRowOffer(
 > {
   const payload = offerTarget(row);
   if (!payload) return "bad-payload";
-  const set = await deriveOfferSet({ target: payload, playName: row.play_name });
+  const avoid = opts.avoidCurrent ? currentOfferTexts(row.payload_json) : [];
+  const set = await deriveOfferSet({
+    target: payload,
+    playName: row.play_name,
+    ...(avoid.length > 0 ? { avoid } : {}),
+    research: offerResearchRow(row, { researchWaitMs: opts.researchWaitMs ?? 0 }),
+  });
   if (!set) return "no-offer";
   if (isOfferSkipped(set)) {
     const patch = { offerSkip: set.skipped };
@@ -141,6 +160,18 @@ export async function regenerateQueueRowOffer(
   const patch = activeOfferPatch(storedOffer(row.payload_json), set.offer, set.candidates);
   if (!getLedger().patchLiveQueuePayload({ id: row.id, patch })) return "not-live";
   return { offer: set.offer, candidates: set.candidates };
+}
+
+/** The row's written offers and its active one, as stored: what New offers replaces. */
+function currentOfferTexts(payloadJson: string): string[] {
+  const payload = safeParseJsonRecord(payloadJson);
+  if (!payload) return [];
+  const active = payload["offer"];
+  const texts = [
+    ...offerCandidatesOf(payload).map((o) => o.offer),
+    ...(isProspectOffer(active) ? [active.offer] : []),
+  ];
+  return [...new Set(texts)];
 }
 
 /** The active offer as stored on the row, before any overlay. */

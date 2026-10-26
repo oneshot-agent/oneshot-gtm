@@ -6,6 +6,7 @@ import {
   type ProductResearchDossier,
   type ProductResearchSource,
   type QueueRow,
+  RESEARCH_TOPIC_MAX,
   webRead,
 } from "@oneshot-gtm/core";
 import type { FinderResult } from "./_types.ts";
@@ -24,7 +25,29 @@ const DUD_DOMAINS = new Set([
   "icloud.com",
   "proton.me",
   "protonmail.com",
+  "aol.com",
+  "live.com",
+  "msn.com",
+  "me.com",
+  "gmx.com",
+  "gmx.de",
+  "web.de",
+  "mail.ru",
+  "yandex.ru",
+  "yandex.com",
+  "qq.com",
+  "foxmail.com",
+  "163.com",
+  "126.com",
+  "naver.com",
 ]);
+
+/**
+ * Plays whose signal URL is someone else's project: a repository they
+ * starred. Read as their own pages it made offers about that project, which
+ * the judge rates weak by definition, so it is never read as first-party.
+ */
+const THIRD_PARTY_SIGNAL_PLAYS = new Set(["repo-interest"]);
 
 let consecutiveExternalFailures = 0;
 let externalCircuitUntil = 0;
@@ -111,7 +134,9 @@ function seedFor(
   const email = str(payload, "email", "founderEmail", "guestEmail");
   const domain = queueRowCompanyDomain(payload);
   const candidates = [
-    str(payload, "evidenceUrl", "repoUrl", "postUrl", "launchUrl", "jobUrl", "episodeUrl"),
+    THIRD_PARTY_SIGNAL_PLAYS.has(row.play_name)
+      ? null
+      : str(payload, "evidenceUrl", "repoUrl", "postUrl", "launchUrl", "jobUrl", "episodeUrl"),
     domain ? `https://${domain}` : null,
     str(payload, "sourceProfileUrl", "websiteUrl"),
   ];
@@ -137,6 +162,56 @@ function seedFor(
       title: payload["title"] ?? null,
     },
   };
+}
+
+type ResearchSeed = ReturnType<typeof seedFor>;
+
+/** Longest single fact in the subject: one long field never crowds out the rest. */
+const TOPIC_FIELD_MAX = 100;
+
+const TOPIC_ASK =
+  "Research the company behind this prospect: what it sells and to whom, how it delivers, " +
+  "its stage (headcount, funding, revenue), what changed in the last year (launches, funding, " +
+  "hires, open roles), and what this person's role owns there. Cite source URLs; mark inference.";
+
+/**
+ * The research question for one row, within the platform's topic limit
+ * (`RESEARCH_TOPIC_MAX`): the ask, then who it is about. The subject gives up
+ * its least telling facts first (the signal, the play, the site, the title);
+ * the name and the company, each clipped, always fit.
+ */
+export function productResearchTopic(
+  seed: Pick<ResearchSeed, "name" | "company" | "urls" | "known">,
+): string {
+  const known = seed.known;
+  const fields: Array<[label: string, value: unknown]> = [
+    ["name", seed.name],
+    ["company", seed.company],
+    ["title", known["title"]],
+    ["site", seed.urls[0]],
+    ["play", known["play"]],
+    ["signal", known["signal"]],
+  ];
+  const present = fields
+    .map(
+      ([label, value]) =>
+        [
+          label,
+          typeof value === "string"
+            ? value.replace(/\s+/g, " ").trim().slice(0, TOPIC_FIELD_MAX)
+            : "",
+        ] as const,
+    )
+    .filter(([, value]) => value.length > 0);
+  for (let keep = present.length; keep >= 0; keep--) {
+    const subject = present
+      .slice(0, keep)
+      .map(([label, value]) => `${label}: ${value}`)
+      .join("; ");
+    const topic = subject ? `${TOPIC_ASK} Subject: ${subject}` : TOPIC_ASK;
+    if (topic.length <= RESEARCH_TOPIC_MAX) return topic;
+  }
+  return TOPIC_ASK.slice(0, RESEARCH_TOPIC_MAX);
 }
 
 function sourceKind(url: string): ProductResearchSource["kind"] {
@@ -277,18 +352,7 @@ export async function researchQueueRowProduct(
   ) {
     try {
       const research = await deepResearch(
-        {
-          depth: "quick",
-          topic: [
-            `Research the company behind this qualified prospect, from first principles.`,
-            `What it sells and to whom; how it delivers (operations, channels, suppliers, systems);`,
-            `who regulates or certifies it; its scale and stage (headcount, locations, funding, revenue signals);`,
-            `what changed in the last twelve months (launches, funding, hires, open roles, expansions, incidents);`,
-            `and what this prospect's role is accountable for there.`,
-            `Use current public sources, distinguish sourced facts from inference, and include source URLs.`,
-            `Subject: ${JSON.stringify({ name: seed.name, company: seed.company, urls: seed.urls, known: seed.known })}`,
-          ].join(" "),
-        },
+        { depth: "quick", topic: productResearchTopic(seed) },
         {
           playName: row.play_name,
           memo: `quick product research before queue review`,
@@ -310,11 +374,16 @@ export async function researchQueueRowProduct(
       if (consecutiveExternalFailures >= EXTERNAL_FAILURE_LIMIT) {
         externalCircuitUntil = Date.now() + EXTERNAL_COOLDOWN_MS;
       }
+      const status = (err as { statusCode?: unknown }).statusCode;
       logEvent(
         "product_research.external_failed",
         {
           queue_id: row.id,
           message_120: ((err as Error).message ?? "").slice(0, 120),
+          // The SDK names every refused call "Tool request failed": the
+          // status and the platform's own answer say why.
+          status: typeof status === "number" ? status : null,
+          body_120: String((err as { responseBody?: unknown }).responseBody ?? "").slice(0, 120),
           consecutive_failures: consecutiveExternalFailures,
           circuit_open_until:
             externalCircuitUntil > Date.now() ? new Date(externalCircuitUntil).toISOString() : null,

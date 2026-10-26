@@ -85,6 +85,14 @@ describe("a row the writer declined", () => {
   });
 });
 
+/** Candidates labelled by the judge, in order; undefined: unjudged. */
+function rated(labels: Array<"relevant" | "weak" | undefined>) {
+  return labels.map((relevance, i) => ({
+    offer: `offer ${i}`,
+    ...(relevance ? { relevance } : {}),
+  }));
+}
+
 describe("nextOfferIndex", () => {
   const candidates = ["one", "two", "three", "four", "five"].map((offer) => ({ offer }));
 
@@ -95,6 +103,31 @@ describe("nextOfferIndex", () => {
   it("starts at the first candidate when the active offer is missing", () => {
     expect(nextOfferIndex({ offer: "old" }, candidates)).toBe(0);
     expect(nextOfferIndex(null, candidates)).toBe(0);
+  });
+
+  it("passes over weak candidates for the next one that is not, wrapping", () => {
+    const mixed = rated(["weak", "weak", "relevant", "weak", undefined]);
+    expect(nextOfferIndex(mixed[0]!, mixed)).toBe(2);
+    expect(nextOfferIndex(mixed[2]!, mixed)).toBe(4);
+    // Unjudged counts as not weak; wrapping finds the next one.
+    expect(nextOfferIndex(mixed[4]!, mixed)).toBe(2);
+    expect(nextOfferIndex(null, mixed)).toBe(2);
+    // Every other one weak: Next cycles in order.
+    const allWeak = rated(["weak", "weak", "weak"]);
+    expect(allWeak.map((o) => nextOfferIndex(o, allWeak))).toEqual([1, 2, 0]);
+    // The only other offer that is not weak is the active one reworded: it is skipped.
+    const reworded = [
+      {
+        offer: "fill the leeds depot's cancelled slots the same morning",
+        relevance: "weak" as const,
+      },
+      {
+        offer: "fill the leeds depot's cancelled slots on the same morning",
+        relevance: "relevant" as const,
+      },
+      { offer: "sign three new distributors this quarter", relevance: "weak" as const },
+    ];
+    expect(nextOfferIndex(reworded[0]!, reworded)).toBe(2);
   });
 
   it("handles empty and single-candidate lists", () => {

@@ -45,7 +45,8 @@ vi.mock("../src/output.ts", () => ({
 
 const { Ledger: RealLedger } = await import("@oneshot-gtm/core");
 const { offerHoldsSend } = await import("@oneshot-gtm/plays");
-const { commandRejudgeOffers } = await import("../src/commands/rejudge-offers.ts");
+const { commandRejudgeOffers, commandRewriteWeakOffers, selectAllWeakSequences } =
+  await import("../src/commands/rejudge-offers.ts");
 
 function verdict(label: OfferJudgement["label"], score: number, pass: boolean): OfferJudgement {
   return {
@@ -346,5 +347,113 @@ describe("commandRejudgeOffers", () => {
     const s = await commandRejudgeOffers({ dryRun: true, limit: 2 });
     expect(s.judged).toBe(2);
     expect(judgeMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+// `--rewrite-all-weak`: new offers for the sets the judge passed none of.
+
+/** An active cadence row carrying this offer record. */
+function cadence(offerJson: Record<string, unknown>, prospectId: number) {
+  return {
+    prospect_id: prospectId,
+    play_name: "new-business",
+    offer_json: JSON.stringify(offerJson),
+    queue_id: null,
+    status: "active",
+  };
+}
+
+describe("commandRewriteWeakOffers", () => {
+  const weak = (text: string, extra: Partial<ProspectOffer> = {}) =>
+    offer(text, { ...weakFields, ...extra });
+
+  it("rewrites only live sets whose every offer is weak, never the founder's or an approved one", async () => {
+    const held = enqueue(
+      {
+        offer: weak(A),
+        offerCandidates: [weak(A), weak(B)],
+        productResearch: { status: "partial" },
+      },
+      "approved",
+    );
+    const mixed = enqueue({ offer: weak(A), offerCandidates: [weak(A), offer(B)] });
+    const edited = enqueue({
+      offer: weak(A, { editedBy: "founder" }),
+      offerCandidates: [weak(A), weak(B)],
+    });
+    const approved = enqueue({
+      offer: weak(A, { weakApprovedAt: "2026-10-20T00:00:00.000Z" }),
+      offerCandidates: [weak(A), weak(B)],
+    });
+    const sent = enqueue({ offer: weak(A), offerCandidates: [weak(A), weak(B)] }, "sent");
+    ledger.setQueueDraft({ id: held, draft: draft("written for A") });
+    const fresh = offer(C, { relevance: "relevant", relevanceScore: 0.7 });
+    writerMock.mockResolvedValue({ offer: fresh, candidates: [fresh, weak(B)] });
+    const untouched = [mixed, edited, approved, sent].map(
+      (id) => ledger.getQueueRow(id)!.payload_json,
+    );
+
+    const s = await commandRewriteWeakOffers({ dryRun: false });
+
+    expect(s).toMatchObject({
+      eligible: 1,
+      unresearched: 1,
+      passing: [`#${held}`],
+      weak: [],
+      errors: 0,
+    });
+    expect(writerMock).toHaveBeenCalledTimes(1);
+    // Written around the old offers, with the row for the research it reads.
+    expect(writerMock.mock.calls[0]![0]).toMatchObject({
+      playName: "new-business",
+      avoid: [A, B],
+      research: { queueRowId: held, source: "find:new-business" },
+    });
+    const p = payloadOf(held);
+    expect(p.offer).toMatchObject({ offer: C, relevance: "relevant" });
+    expect(offerHoldsSend(p.offer)).toBe(false);
+    expect(p.offerCandidates.map((o) => o.offer)).toEqual([C, B]);
+    // The letter written around the old offer is dropped.
+    expect(ledger.getQueueRow(held)!.last_draft_json).toBeNull();
+    expect(
+      [mixed, edited, approved, sent].map((id) => ledger.getQueueRow(id)!.payload_json),
+    ).toEqual(untouched);
+  });
+
+  it("--dry-run lists what it would rewrite, calls no model and writes nothing", async () => {
+    const id = enqueue({ offer: weak(A), offerCandidates: [weak(A)] });
+    const before = ledger.getQueueRow(id)!.payload_json;
+    const s = await commandRewriteWeakOffers({ dryRun: true });
+    expect(s).toMatchObject({ eligible: 1, passing: [], weak: [], unchanged: [], costUsd: 0 });
+    expect(writerMock).not.toHaveBeenCalled();
+    expect(ledger.getQueueRow(id)!.payload_json).toBe(before);
+  });
+
+  it("leaves a row the writer gave nothing for, and one whose offer changed meanwhile", async () => {
+    const nothing = enqueue({ offer: weak(A), offerCandidates: [weak(A)] });
+    const moved = enqueue({ offer: weak(B), offerCandidates: [weak(B)] });
+    const fresh = offer(C, { relevance: "relevant" });
+    writerMock.mockImplementation(async (input: { target: { offer?: { offer?: string } } }) => {
+      if (input.target.offer?.offer === A) return null;
+      // The founder picked another offer while this one was written.
+      ledger.patchLiveQueuePayload({ id: moved, patch: { offer: { offer: "picked" } } });
+      return { offer: fresh, candidates: [fresh] };
+    });
+    const s = await commandRewriteWeakOffers({ dryRun: false, concurrency: 1 });
+    expect(s.unchanged.toSorted()).toEqual([`#${moved}`, `#${nothing}`].toSorted());
+    expect(payloadOf(moved).offer.offer).toBe("picked");
+  });
+
+  it("selects active sequences whose every offer is weak, never one the first email carried", () => {
+    const items = selectAllWeakSequences(
+      [
+        cadence({ offer: weak(A), candidates: [weak(A), weak(B)], origin: "derived" }, 1),
+        cadence({ offer: weak(A), candidates: [weak(A)], origin: "intro" }, 2),
+        cadence({ offer: weak(A), candidates: [weak(A), offer(B)], origin: "derived" }, 3),
+        cadence({ offer: weak(A, { editedBy: "founder" }), candidates: [weak(A)] }, 4),
+      ],
+      () => null,
+    );
+    expect(items.map((i) => i.key)).toEqual(["sequence 1/new-business"]);
   });
 });

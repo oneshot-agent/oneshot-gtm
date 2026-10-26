@@ -17,6 +17,8 @@ const derived = vi.hoisted(() => ({
   meanwhile: null as null | (() => void),
   /** What the last angles were written from. */
   angleInput: null as null | { target: Record<string, unknown>; dossier?: string | null },
+  /** What the last forced re-derivation was asked for. */
+  deriveInput: null as null | Record<string, unknown>,
 }));
 
 vi.mock("@oneshot-gtm/core", async () => ({
@@ -43,6 +45,7 @@ vi.mock("@oneshot-gtm/plays", async () => {
     // The forced re-derivation, without the models: stores `derived.offers`
     // the way the real one does, through the same guarded write.
     deriveSequenceOffer: async (input: { prospectId: number; playName: string }) => {
+      derived.deriveInput = input;
       const record = actual.sequenceOfferRecord(input);
       if (derived.skip !== null) {
         const skip = {
@@ -222,6 +225,7 @@ beforeEach(() => {
   derived.skip = null;
   derived.meanwhile = null;
   derived.angleInput = null;
+  derived.deriveInput = null;
   cfg.productBrief = "Acme books crews into open slots.";
 });
 afterEach(() => ledger.close());
@@ -260,6 +264,18 @@ describe("cadenceOfferRoute", () => {
     expect(rowOffer(rowId)).toBeUndefined();
     expect(out.body["offer"]).toMatchObject({ text: first.offer, activeIndex: 0 });
     expect(preview(id)).toBeNull();
+  });
+
+  it("asks for offers other than the sequence's own, waiting for research only so long", async () => {
+    const { CLICK_RESEARCH_WAIT_MS } = await import("@oneshot-gtm/find");
+    const { id } = cadence({ offer: second, candidates: [first, second] });
+    derived.offers = [first];
+    expect((await post(id, { regenerate: true })).status).toBe(200);
+    expect(derived.deriveInput).toMatchObject({
+      force: true,
+      avoid: [first.offer, second.offer],
+      researchWaitMs: CLICK_RESEARCH_WAIT_MS,
+    });
   });
 
   it("answers 422 when no offer could be written, and keeps the preview", async () => {

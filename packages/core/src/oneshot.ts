@@ -1353,11 +1353,24 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
  */
 export const RESEARCH_TIMEOUT_SEC = 1200;
 
+/**
+ * The longest research topic the platform takes, in characters. A longer one
+ * is refused with a 400 the SDK reports only as "Tool request failed", so it
+ * is refused here first, by name.
+ */
+export const RESEARCH_TOPIC_MAX = 500;
+
 export async function deepResearch(
   input: ResearchInput,
   ctx: CallContext,
   cache?: PaidCacheOptions,
 ) {
+  if (input.topic.length > RESEARCH_TOPIC_MAX) {
+    throw new ValidationError(
+      `research topic is ${input.topic.length} characters; the limit is ${RESEARCH_TOPIC_MAX}`,
+      "topic",
+    );
+  }
   return withPaidCache("research.deep", input, cache, async () => {
     const agent = await getAgent();
     const result: ResearchResult = await agent.research({

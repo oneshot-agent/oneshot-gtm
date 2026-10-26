@@ -157,8 +157,8 @@ describe("ensureQueueRowOffer", () => {
   });
 });
 
-// Background paths read the company's own pages before writing offers; a
-// click (draft regenerate, New offers) never waits on that read.
+// Background paths and Regenerate draft read the company's research before
+// writing offers; a click waits for that read only so long.
 describe("company research before offers", () => {
   const firm = {
     id: 9,
@@ -205,17 +205,27 @@ describe("company research before offers", () => {
     ]);
   });
 
-  it("never runs on the click path", async () => {
+  it("never runs unasked; the offers then carry the row for a weak set's own read", async () => {
     ensureOfferSet.mockResolvedValue({ offer, candidates: [offer], changed: true });
     await ensureQueueRowOffer(firm);
     expect(researchQueueRowProduct).not.toHaveBeenCalled();
+    expect(ensureOfferSet.mock.calls[0]![0]).toMatchObject({
+      research: { queueRowId: 9, source: "find:x" },
+    });
+    // Asked for here, it is not asked for again by the writer.
+    researchQueueRowProduct.mockResolvedValue({ dossier: pages, costUsd: 0, cached: true });
+    await ensureQueueRowOffer(firm, { research: true });
+    expect(ensureOfferSet.mock.calls[1]![0]).not.toHaveProperty("research");
   });
 
-  it("is skipped when the row has page text, no company domain, or a fresh attempt", async () => {
+  it("is skipped when the research is complete, there is no company, or a fresh attempt", async () => {
     ensureOfferSet.mockResolvedValue({ offer, candidates: [offer], changed: false });
-    const withPages = {
+    const complete = {
       ...firm,
-      payload_json: JSON.stringify({ companyDomain: "alpha.example", productResearch: pages }),
+      payload_json: JSON.stringify({
+        companyDomain: "alpha.example",
+        productResearch: { ...pages, status: "complete", external: { answer: "a" } },
+      }),
     };
     const personal = { ...firm, payload_json: JSON.stringify({ email: "ada@gmail.com" }) };
     const fresh = {
@@ -225,8 +235,56 @@ describe("company research before offers", () => {
         productResearch: { ...pages, sources: [], researchedAt: new Date().toISOString() },
       }),
     };
-    for (const r of [withPages, personal, fresh]) await ensureQueueRowOffer(r, { research: true });
+    for (const r of [complete, personal, fresh]) await ensureQueueRowOffer(r, { research: true });
     expect(researchQueueRowProduct).not.toHaveBeenCalled();
+  });
+
+  it("reads again a row whose only research is a homepage read, or that has only a company name", async () => {
+    // The Starian shape: one excerpt (a cookie banner), no outside research, read days ago.
+    ensureOfferSet.mockResolvedValue({ offer, candidates: [offer], changed: false });
+    researchQueueRowProduct.mockResolvedValue({ dossier: pages, costUsd: 0.01, cached: false });
+    const homepageOnly = {
+      ...firm,
+      payload_json: JSON.stringify({ companyDomain: "alpha.example", productResearch: pages }),
+    };
+    const nameOnly = {
+      ...firm,
+      payload_json: JSON.stringify({ name: "Ada", company: "Alpha", email: "ada@qq.com" }),
+    };
+    const unknown = { ...firm, payload_json: JSON.stringify({ company: "(unknown)" }) };
+    for (const r of [homepageOnly, nameOnly, unknown]) {
+      await ensureQueueRowOffer(r, { research: true });
+    }
+    expect(researchQueueRowProduct).toHaveBeenCalledTimes(2);
+  });
+
+  it("a click waits for the read only so long; a late read lands on the row afterwards", async () => {
+    vi.useFakeTimers();
+    try {
+      const read: { land?: (v: unknown) => void } = {};
+      researchQueueRowProduct.mockImplementation(
+        () => new Promise((resolve) => (read.land = resolve)),
+      );
+      ensureOfferSet.mockResolvedValue({ offer, candidates: [offer], changed: true });
+      const pending = ensureQueueRowOffer(firm, { research: true, researchWaitMs: 1_000 });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await pending;
+      // Offers written from what was stored; the read has not landed.
+      const target = (ensureOfferSet.mock.calls[0]![0] as { target: Record<string, unknown> })
+        .target;
+      expect(target["productResearch"]).toBeUndefined();
+      expect(ledger.patchLiveQueuePayload.mock.calls.map((c) => c[0].patch)).toEqual([
+        { offer, offerCandidates: [offer], offerSkip: null },
+      ]);
+      read.land?.({ dossier: pages, costUsd: 0.2, cached: false });
+      await vi.waitFor(() =>
+        expect(ledger.patchLiveQueuePayload.mock.calls.map((c) => c[0].patch)).toContainEqual({
+          productResearch: pages,
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("still writes offers from what is stored when the read fails or is over budget", async () => {
