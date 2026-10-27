@@ -136,11 +136,18 @@ export type LinkedInTemplateValues = Partial<Record<LinkedInTemplatePlaceholder,
 
 export type LinkedInTemplateRender = { text: string } | { missing: string[] };
 
+// Whitespace is already collapsed to single spaces when these are stripped.
+const TRAILING_STOPS: ReadonlySet<string> = new Set([" ", ".", "!", "?", ";", ":", ","]);
+
 function clean(name: string, value: string | null | undefined): string | null {
   const v = value?.replace(/\s+/g, " ").trim();
   if (!v) return null;
+  if (name === "first_name") return v;
   // A clause or an offer drops into a sentence that brings its own full stop.
-  return name === "first_name" ? v : v.replace(/[\s.!?;:,]+$/, "") || null;
+  // A loop, not a regex: an anchored character class backtracks on long runs.
+  let end = v.length;
+  while (end > 0 && TRAILING_STOPS.has(v[end - 1]!)) end--;
+  return v.slice(0, end) || null;
 }
 
 // The opening greeting a missing name can be dropped from: a short word or
