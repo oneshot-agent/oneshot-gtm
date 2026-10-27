@@ -456,10 +456,7 @@ export class Ledger {
     return claimMarker(this.db, opts);
   }
 
-  /**
-   * Release a timestamp marker (set to NULL). Idempotent: no-op if the row
-   * doesn't exist or the column is already NULL.
-   */
+  /** @see ledger-markers.ts#clearMarker */
   private clearMarker(opts: {
     table: string;
     pkeyWhere: string;
@@ -587,7 +584,7 @@ export class Ledger {
     return cadGetCadence(this.db, prospectId, playName);
   }
 
-  /** All cadences for one prospect: index seek on cadence_state.prospect_id (PK prefix). */
+  /** @see ledger-cadence.ts#listCadencesForProspect */
   listCadencesForProspect(prospectId: number): CadenceWithProspect[] {
     return cadListCadencesForProspect(this.db, prospectId);
   }
@@ -926,11 +923,7 @@ export class Ledger {
     this.inbox.restoreInboxConversation(prospectId);
   }
 
-  /**
-   * Persist one inbound reply (full body) keyed by provider email id.
-   * INSERT OR IGNORE: re-sweeps and double captures are no-ops. Returns true
-   * when this call stored a NEW reply.
-   */
+  /** @see ledger-inbox.ts#InboxStore.recordInboxReply */
   recordInboxReply(row: {
     id: string;
     threadKey: string;
@@ -1050,7 +1043,7 @@ export class Ledger {
     return this.inbox.listRepliesByIntentForPlay(playName, intents, limit);
   }
 
-  /** Provider ids of every persisted reply: dedupe set for capture passes. */
+  /** @see ledger-inbox.ts#InboxStore.listInboxReplyIds */
   listInboxReplyIds(): Set<string> {
     return this.inbox.listInboxReplyIds();
   }
@@ -1080,7 +1073,7 @@ export class Ledger {
     return this.inbox.listHumanRepliesForReclassify(opts);
   }
 
-  /** Prospects that have at least one persisted reply, most recent activity first. */
+  /** @see ledger-inbox.ts#InboxStore.listProspectIdsWithReplies */
   listProspectIdsWithReplies(): number[] {
     return this.inbox.listProspectIdsWithReplies();
   }
@@ -1199,7 +1192,7 @@ export class Ledger {
     return sendHasPriorEmailSend(this.db, email);
   }
 
-  /** First email.send by this identity (warm-up ramp anchor). SQLite-format UTC or null. */
+  /** @see ledger-sending.ts#firstEmailSendAt */
   firstEmailSendAt(identityId: string): string | null {
     return sendFirstEmailSendAt(this.db, identityId);
   }
@@ -1630,7 +1623,7 @@ export class Ledger {
     return outRecordOutcome(this.db, input);
   }
 
-  /** Latest outcome timestamp per prospect, bulk-read to acknowledge earlier positive replies. */
+  /** @see ledger-outcomes.ts#listLatestOutcomeRecordedAtByProspect */
   listLatestOutcomeRecordedAtByProspect(): Map<number, string> {
     return outListLatestOutcomeRecordedAtByProspect(this.db);
   }
@@ -1695,7 +1688,7 @@ export class Ledger {
     return cadRecordSequenceEvent(this.db, input);
   }
 
-  /** Persist the RoCS value tag (JSON `{type,amount?,label?}`) on a single receipt. */
+  /** @see ledger-receipts.ts#ReceiptStore.setReceiptValueTag */
   setReceiptValueTag(receiptId: number, valueTagJson: string): void {
     this.receipts.setReceiptValueTag(receiptId, valueTagJson);
   }
@@ -1710,7 +1703,7 @@ export class Ledger {
     return this.receipts.setReceiptValueTagByGoal(goalId, valueTagJson);
   }
 
-  /** Current local value tag for a goal (any one of its receipts), or null. */
+  /** @see ledger-receipts.ts#ReceiptStore.currentGoalValueTag */
   currentGoalValueTag(goalId: string): string | null {
     return this.receipts.currentGoalValueTag(goalId);
   }
@@ -1792,13 +1785,7 @@ export class Ledger {
     return cadRecordProspectReply(this.db, this.drafts, prospectId, opts);
   }
 
-  /**
-   * Which play an EMAIL reply belongs to. With a subject, the sent email whose
-   * subject it threads on wins (reply prefixes in a few languages stripped, case
-   * and whitespace ignored); otherwise, or when nothing matches, the prospect's
-   * most recent sent email. Other channels (sms/voice/linkedin) are never
-   * credited with an email reply. Null if never emailed.
-   */
+  /** @see ledger-cadence.ts#latestSentPlayForProspect */
   latestSentPlayForProspect(prospectId: number, replySubject?: string | null): string | null {
     return cadLatestSentPlayForProspect(this.db, prospectId, replySubject);
   }
@@ -1821,16 +1808,12 @@ export class Ledger {
     return cadListSequenceEventsForProspectPlay(this.db, prospectId, playName);
   }
 
-  /** Every sent step for a prospect across ALL plays. The outreach half of a conversation timeline. */
+  /** @see ledger-cadence.ts#listSequenceEventsForProspect */
   listSequenceEventsForProspect(prospectId: number): SequenceEventRecord[] {
     return cadListSequenceEventsForProspect(this.db, prospectId);
   }
 
-  /**
-   * Bulk variant of listSequenceEventsForProspectPlay: one round-trip, Map
-   * keyed `${prospect_id}|${play_name}`, same (step_index ASC, id ASC)
-   * ordering. Index-served by idx_sequence_events_prospect_play.
-   */
+  /** @see ledger-cadence.ts#listSequenceEventsForCadences */
   listSequenceEventsForCadences(
     pairs: ReadonlyArray<{ prospectId: number; playName: string }>,
   ): Map<string, SequenceEventRecord[]> {
@@ -1924,12 +1907,12 @@ export class Ledger {
     return spendReserveSpend(this.db, amountUsd);
   }
 
-  /** Release a reservation once the caller's actual spend has posted (or the call was skipped/failed). */
+  /** @see ledger-spend.ts#releaseSpendReservation */
   releaseSpendReservation(id: number): void {
     spendReleaseSpendReservation(this.db, id);
   }
 
-  /** Sum of currently-held reservations since `sinceIso` (the local-midnight boundary). */
+  /** @see ledger-spend.ts#reservedSpendUsd */
   reservedSpendUsd(sinceIso: string): number {
     return spendReservedSpendUsd(this.db, sinceIso);
   }
@@ -1990,10 +1973,7 @@ export class Ledger {
     return this.queue.qualifiedOutcomeExamples(limit);
   }
 
-  /**
-   * Insert a row into target_queue. Returns the new id, or null if a row with
-   * the same (play_name, dedupe_key) already exists.
-   */
+  /** @see ledger-queue.ts#QueueStore.enqueueTarget */
   enqueueTarget(input: {
     playName: string;
     payload: unknown;
@@ -2036,12 +2016,12 @@ export class Ledger {
     sysUpsertPendingResolution(this.db, input);
   }
 
-  /** True when (play, dedupeKey) is awaiting retry: finders OR this into their dedup. */
+  /** @see ledger-system.ts#isPendingResolution */
   isPendingResolution(playName: string, dedupeKey: string): boolean {
     return sysIsPendingResolution(this.db, playName, dedupeKey);
   }
 
-  /** Pending rows (optionally one play), oldest first, for the retry pass. */
+  /** @see ledger-system.ts#listPendingResolution */
   listPendingResolution(opts?: { playName?: string; limit?: number }): Array<{
     play_name: string;
     dedupe_key: string;
@@ -2054,7 +2034,7 @@ export class Ledger {
     return sysListPendingResolution(this.db, opts);
   }
 
-  /** Mark a pending row as just-attempted (bumps attempts + last_attempt_at). */
+  /** @see ledger-system.ts#markPendingResolutionAttempted */
   markPendingResolutionAttempted(playName: string, dedupeKey: string): void {
     sysMarkPendingResolutionAttempted(this.db, playName, dedupeKey);
   }
@@ -2072,7 +2052,7 @@ export class Ledger {
     return sysSweepStalePendingResolution(this.db, maxAgeMs);
   }
 
-  /** Tweet ids the x-reposters finder paid for since `cutoffIso`: skipped on the next harvest. */
+  /** @see ledger-system.ts#recentXHarvestedTweetIds */
   recentXHarvestedTweetIds(cutoffIso: string): Set<string> {
     return sysRecentXHarvestedTweetIds(this.db, cutoffIso);
   }
@@ -2177,22 +2157,17 @@ export class Ledger {
     return this.queue.searchQueueStatusCounts(opts);
   }
 
-  /** Every play that has ever enqueued a row, for the /prospects play filter. */
+  /** @see ledger-queue.ts#QueueStore.listQueuePlayNames */
   listQueuePlayNames(): string[] {
     return this.queue.listQueuePlayNames();
   }
 
-  /**
-   * Every recorded step for a prospect across all plays: including bounced,
-   * failed and unsubscribed ones, which `listSequenceEventsForProspect`
-   * (the conversation view) filters out. `queued` rows are reservations,
-   * not history. Oldest first.
-   */
+  /** @see ledger-cadence.ts#listAllSequenceEventsForProspect */
   listAllSequenceEventsForProspect(prospectId: number): SequenceEventRecord[] {
     return cadListAllSequenceEventsForProspect(this.db, prospectId);
   }
 
-  /** Inbound engagement on non-email channels (LinkedIn replies) for one prospect, oldest first. */
+  /** @see ledger-cadence.ts#listChannelEventsForProspect */
   listChannelEventsForProspect(prospectId: number): ChannelEventRecord[] {
     return cadListChannelEventsForProspect(this.db, prospectId);
   }
@@ -2202,12 +2177,12 @@ export class Ledger {
     return readLinkedInFunnelSource(this.db);
   }
 
-  /** Recorded deal outcomes for one prospect, oldest first. */
+  /** @see ledger-outcomes.ts#listDealOutcomesForProspect */
   listDealOutcomesForProspect(prospectId: number): DealOutcomeRecord[] {
     return outListDealOutcomesForProspect(this.db, prospectId);
   }
 
-  /** Remove an unreviewed queue reservation, leaving reviewed rows untouched. */
+  /** @see ledger-queue.ts#QueueStore.removePendingQueueTarget */
   removePendingQueueTarget(id: number): boolean {
     return this.queue.removePendingQueueTarget(id);
   }
@@ -2327,7 +2302,7 @@ export class Ledger {
     return this.queue.approvedCountsByPlay();
   }
 
-  /** Reviewed queue outcomes for one finder inside a trailing time window. */
+  /** @see ledger-queue.ts#QueueStore.finderApprovalStats */
   finderApprovalStats(input: { finder: string; sinceIso: string }): {
     approved: number;
     reviewed: number;
@@ -2708,7 +2683,7 @@ export class Ledger {
     return this.queue.latestQueueId();
   }
 
-  /** Newly-created pending rows, used by the post-finder product research stage. */
+  /** @see ledger-queue.ts#QueueStore.listPendingQueueAfterId */
   listPendingQueueAfterId(id: number): QueueRow[] {
     return this.queue.listPendingQueueAfterId(id);
   }
@@ -2721,20 +2696,12 @@ export class Ledger {
     this.cache.setProductResearchCache(cacheKey, dossierJson);
   }
 
-  /**
-   * Set a queue row's `notes` without touching its status. Used by the manual
-   * add-prospect flow to update the transient "researching profile…" note to
-   * a "no email found" flag (or a research-failed message) once the async job
-   * settles. Pass an empty string to clear it.
-   */
+  /** @see ledger-queue.ts#QueueStore.setQueueNotes */
   setQueueNotes(input: { id: number; notes: string }): void {
     this.queue.setQueueNotes(input);
   }
 
-  /**
-   * Overwrite a queue row's shadow priority (the `score-prospects` backfill
-   * writer). Pass null to clear.
-   */
+  /** @see ledger-queue.ts#QueueStore.setQueuePriority */
   setQueuePriority(id: number, priority: ProspectPriority | null): void {
     this.queue.setQueuePriority(id, priority);
   }
@@ -2785,7 +2752,7 @@ export class Ledger {
     adminVacuum(this.db);
   }
 
-  /** Pages VACUUM would reclaim. */
+  /** @see ledger-admin.ts#freePages */
   freePages(): number {
     return adminFreePages(this.db);
   }
@@ -2855,11 +2822,7 @@ export class Ledger {
     return mtgGetMeeting(this.db, calendarId, eventId);
   }
 
-  /**
-   * The fast path for an unchanged event (`event_updated_at` hasn't
-   * advanced since last poll): touch `last_seen_at` only, skip re-deriving
-   * anything else. Returns false (no-op) if the row doesn't exist.
-   */
+  /** @see ledger-meetings.ts#touchMeetingLastSeen */
   touchMeetingLastSeen(calendarId: string, eventId: string): boolean {
     return mtgTouchMeetingLastSeen(this.db, calendarId, eventId);
   }
@@ -2890,7 +2853,7 @@ export class Ledger {
     return cadHasOutreachHistory(this.db, prospectId);
   }
 
-  /** Most recent sequence_events timestamp for a prospect, or null with no history. Tie-break helper alongside `hasOutreachHistory`. */
+  /** @see ledger-cadence.ts#lastOutreachAt */
   lastOutreachAt(prospectId: number): string | null {
     return cadLastOutreachAt(this.db, prospectId);
   }
@@ -2908,7 +2871,7 @@ export class Ledger {
     return mtgListPendingOutcomeMeetings(this.db);
   }
 
-  /** Founder-facing review queue: events with a fuzzy suggestion or an ambiguous multi-candidate match, unresolved. */
+  /** @see ledger-meetings.ts#listMeetingsForReview */
   listMeetingsForReview(): MeetingRecord[] {
     return mtgListMeetingsForReview(this.db);
   }
@@ -2969,12 +2932,12 @@ export class Ledger {
     mtgDismissMeetingMatch(this.db, calendarId, eventId);
   }
 
-  /** Atomically consume a signed webhook replay key. */
+  /** @see ledger-system.ts#consumeWebhookReplay */
   consumeWebhookReplay(replayKey: string, expiresAt: number, now: number): boolean {
     return sysConsumeWebhookReplay(this.db, replayKey, expiresAt, now);
   }
 
-  /** Test helper for isolating webhook verification cases. */
+  /** @see ledger-system.ts#clearWebhookReplays */
   clearWebhookReplays(): void {
     sysClearWebhookReplays(this.db);
   }
