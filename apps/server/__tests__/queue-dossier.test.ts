@@ -1,3 +1,5 @@
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The dossier route only reads the paid cache: full research by the input it
@@ -95,6 +97,45 @@ beforeEach(() => {
 });
 
 describe("buildQueueDossier", () => {
+  it("reads seeded demo research without exposing the paid cache", () => {
+    seed(
+      "research.person",
+      { socialMediaUrl: LI },
+      research({ full_name: "Private cached person" }),
+    );
+    const fixtureDir = core.demoFixtureDir();
+    const fixturePath = join(fixtureDir, "research-person.json");
+    mkdirSync(fixtureDir, { recursive: true });
+    const oldDemo = process.env["ONESHOT_GTM_DEMO"];
+    process.env["ONESHOT_GTM_DEMO"] = "1";
+    try {
+      // No seeded fixture must leave the real cache unread, even on a hit.
+      expect(buildQueueDossier(payload).status).toBe("summary-only");
+      writeFileSync(
+        fixturePath,
+        JSON.stringify({
+          [core.paidCacheKey("research.person", { email: payload.email })]: {
+            status: "ok",
+            result: JSON.parse(research()),
+            fetchedAt: now,
+            costUsd: 0,
+          },
+        }),
+      );
+      const dossier = buildQueueDossier(payload);
+      expect(dossier.status).toBe("complete");
+      expect(dossier.person.fullName).toBe("Ada Lovelace");
+      expect(dossier.posts).toHaveLength(2);
+      expect(core.readPaidCache("research.person", { socialMediaUrl: LI })).toBeNull();
+      writeFileSync(fixturePath, "invalid json");
+      expect(buildQueueDossier(payload).status).toBe("summary-only");
+    } finally {
+      if (oldDemo === undefined) delete process.env["ONESHOT_GTM_DEMO"];
+      else process.env["ONESHOT_GTM_DEMO"] = oldDemo;
+      rmSync(fixturePath, { force: true });
+    }
+  });
+
   it("returns the full cached research, not the bounded summary", () => {
     seed("research.person", { socialMediaUrl: LI }, research());
     const d = buildQueueDossier(payload);
