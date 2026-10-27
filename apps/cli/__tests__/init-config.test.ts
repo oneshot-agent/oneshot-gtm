@@ -32,6 +32,13 @@ describe("whichCommand", () => {
     expect(existsSync(resolve(cwd, cmd.split(" ").at(-1) as string))).toBe(true);
   });
 
+  it("shell-quotes an entry path that contains a space", () => {
+    // Unquoted, `bun run one shot/apps/cli/src/main.ts doctor` hands the shell `one`
+    // as the script and the rest as its arguments.
+    process.argv[1] = "/tmp/one shot/apps/cli/src/main.ts";
+    expect(whichCommand("/tmp")).toBe("bun run 'one shot/apps/cli/src/main.ts'");
+  });
+
   it("falls back to the repo-root entry when argv carries no script path", () => {
     process.argv[1] = "";
     expect(whichCommand(REPO_ROOT)).toBe(`bun run ${DEV_CLI_ENTRY}`);
