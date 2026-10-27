@@ -55,30 +55,27 @@ function parseMailboxBounces(from: string, subject: string, body: string, delive
 
 /** List delivery failures captured from active Smartlead mailboxes. */
 export function listMailboxBounces(opts?: { since?: string }): BounceListResult {
-  const identities = new Set(smartleadMailboxIdentities().map((i) => i.id));
-  if (!identities.size) return { bounces: [], failedSources: [] };
+  const identities = smartleadMailboxIdentities().map((i) => i.id);
+  if (!identities.length) return { bounces: [], failedSources: [] };
   const ledger = getLedger();
-  const bounces = ledger.mailboxes
-    .bounceCandidates(opts?.since)
-    .filter((m) => identities.has(m.identityId))
-    .flatMap((m) => {
-      const parsed = m.bounces ?? parseMailboxBounces(m.from, m.subject, m.body);
-      if (m.bounces == null) ledger.mailboxes.reclassify(m, m.kind, parsed);
-      return (
-        parsed
-          // Smartlead warmup shares the mailbox but is not workspace outreach.
-          .filter((b) => ledger.hasPriorEmailSend(b.recipient))
-          .map((b) => ({
-            recipient: b.recipient,
-            kind: b.kind,
-            statusCode: b.statusCode,
-            diagnostic: b.diagnostic,
-            messageId: m.id,
-            identityId: m.identityId,
-            bouncedAt: m.at,
-          }))
-      );
-    });
+  const bounces = ledger.mailboxes.bounceCandidates(identities, opts?.since).flatMap((m) => {
+    const parsed = m.bounces ?? parseMailboxBounces(m.from, m.subject, m.body);
+    if (m.bounces == null) ledger.mailboxes.reclassify(m, m.kind, parsed);
+    return (
+      parsed
+        // Smartlead warmup shares the mailbox but is not workspace outreach.
+        .filter((b) => ledger.hasPriorEmailSend(b.recipient))
+        .map((b) => ({
+          recipient: b.recipient,
+          kind: b.kind,
+          statusCode: b.statusCode,
+          diagnostic: b.diagnostic,
+          messageId: m.id,
+          identityId: m.identityId,
+          bouncedAt: m.at,
+        }))
+    );
+  });
   return {
     bounces,
     failedSources: mailboxHealth()
