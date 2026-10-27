@@ -630,7 +630,7 @@ export interface OneShotConfig {
    *   fills fixed text per step; `"model"` has the model write each one from
    *   the `linkedin-invite-note` and `linkedin-message` prompts.
    * - `templates`: this workspace's text per step. A step left unset uses the
-   *   shipped default (`DEFAULT_LINKEDIN_TEMPLATES` in the plays package).
+   *   shipped default (`DEFAULT_LINKEDIN_TEMPLATES` in shared-types).
    */
   linkedin?: {
     invitesPerDay?: number;

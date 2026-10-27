@@ -1327,12 +1327,18 @@ describe("templates: the default writer", () => {
   });
 
   it("a step the workspace leaves unset uses the shipped default", async () => {
-    linkedinCfg = { templates: { note: "hey {first_name} - saw {evidence}." } };
-    started({ prospectCohort: "yc-f26" }, OFFER);
-    const note = await shown();
-    expect(note.body).toBe("hey Dana - saw you're in YC F26.");
-    await invite(note.body, "already_connected");
-    expect((await shown()).body).toBe("Hi Dana, what are you working on right now?");
+    // Mid-batch, so the cohort reads "in YC F26", not "went through".
+    vi.useFakeTimers({ now: new Date("2026-10-15T12:00:00Z"), toFake: ["Date"] });
+    try {
+      linkedinCfg = { templates: { note: "hey {first_name} - saw {evidence}." } };
+      started({ prospectCohort: "yc-f26" }, OFFER);
+      const note = await shown();
+      expect(note.body).toBe("hey Dana - saw you're in YC F26.");
+      await invite(note.body, "already_connected");
+      expect((await shown()).body).toBe("Hi Dana, what are you working on right now?");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("an over-long message carries its length flag on the payload, so the send holds", async () => {
