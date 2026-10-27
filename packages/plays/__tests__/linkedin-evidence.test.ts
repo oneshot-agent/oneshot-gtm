@@ -774,6 +774,9 @@ describe("lintSharedCohort", () => {
     expect(lintSharedCohort("We're both in antler-2026. What are you on?", "antler-2026")).toEqual(
       [],
     );
+    // Every program the lint knows counts, and the whole sentence is read.
+    expect(lintSharedCohort("I'm in YC W25 and also in speedrun.", "yc-w25")).not.toEqual([]);
+    expect(lintSharedCohort("You're in YC F26 and I'm in YC W25 too.", "yc-w25")).not.toEqual([]);
     // A subjectless match opens on the previous sentence's full stop.
     expect(lintSharedCohort("Hey Ana. In YC W25 as well, how are evals?", "yc-w25")).toEqual([]);
     // Unnamed, it can't be checked against the sender's own batch.
