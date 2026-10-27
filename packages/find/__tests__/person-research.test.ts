@@ -229,6 +229,7 @@ const {
   applyPersonResearch,
   applyPersonResearchToProspect,
   deriveCurrentRole,
+  hasLiveProfile,
   normalizeCompany,
   organizationsFromResearch,
   parsePeriod,
@@ -1116,6 +1117,17 @@ describe("researchMergePatch", () => {
     } as never);
     expect(live["warning"]).toBe("x");
     expect(live["liveProfile"]).toMatchObject({ url: "https://www.linkedin.com/in/x" });
+  });
+});
+
+describe("hasLiveProfile", () => {
+  it("is true for a prospect half carrying only the flattened liveProfileReadAt, and still for a liveProfile object", () => {
+    const readAt = "2026-09-14T10:55:56.464Z";
+    expect(hasLiveProfile({ status: "complete", liveProfileReadAt: readAt })).toBe(true);
+    expect(hasLiveProfile({ status: "complete", liveProfile: { url: "u", readAt } })).toBe(true);
+    expect(hasLiveProfile({ status: "complete", liveProfileReadAt: "" })).toBe(false);
+    expect(hasLiveProfile({ status: "complete" })).toBe(false);
+    expect(hasLiveProfile(null)).toBe(false);
   });
 });
 
