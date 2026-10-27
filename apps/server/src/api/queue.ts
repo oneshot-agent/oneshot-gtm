@@ -400,6 +400,25 @@ function resolveProspectId(ledger: ReturnType<typeof getLedger>, row: QueueRow):
  * replies, or a step whose status flipped to `replied` (legacy rows that
  * predate `inbox_replies`). Overrides must not email past this.
  */
+function hasReplied(history: {
+  replies: ReadonlyArray<{ kind?: string | null }>;
+  channelEvents: ReadonlyArray<{ event_type: string }>;
+  sequenceEvents: ReadonlyArray<{ status: string }>;
+}): boolean {
+  return (
+    history.replies.some((r) => (r.kind ?? "human") === "human") ||
+    history.channelEvents.some((e) => e.event_type === "reply") ||
+    history.sequenceEvents.some((e) => e.status === "replied")
+  );
+}
+
+/**
+ * `hasReplied` read from the ledger, for the approve guard, which has read
+ * nothing else about the prospect. The detail route answers it from the
+ * history it already holds (issue #929: it read the same three tables
+ * twice). A `SELECT 1 … LIMIT 1` probe needs a method on the ledger facade,
+ * which this change does not own.
+ */
 function prospectHasReplied(ledger: ReturnType<typeof getLedger>, prospectId: number): boolean {
   return (
     ledger.listInboxRepliesForProspect(prospectId).some((r) => (r.kind ?? "human") === "human") ||
@@ -479,11 +498,13 @@ export function queueRowDetailRoute(req: Request, params: Record<string, string>
   const deliveries = prospect
     ? deliveriesForEvents(ledger, prospect.id, sequenceEvents)
     : new Map<number, SendDeliveryView>();
+  const replies = prospect ? ledger.listInboxRepliesForProspect(prospect.id) : [];
+  const channelEvents = prospect ? ledger.listChannelEventsForProspect(prospect.id) : [];
   const timeline = buildProspectTimeline({
     row,
     sequenceEvents,
-    replies: prospect ? ledger.listInboxRepliesForProspect(prospect.id) : [],
-    channelEvents: prospect ? ledger.listChannelEventsForProspect(prospect.id) : [],
+    replies,
+    channelEvents,
     outcomes: prospect ? ledger.listDealOutcomesForProspect(prospect.id) : [],
     deliveries,
   });
@@ -502,7 +523,9 @@ export function queueRowDetailRoute(req: Request, params: Record<string, string>
     cadences,
     timeline,
     flags: {
-      replied: prospect ? prospectHasReplied(ledger, prospect.id) : false,
+      // From the history above: `sequenceEvents` is every non-queued step,
+      // a superset of the conversation view's, so a `replied` step is in it.
+      replied: prospect ? hasReplied({ replies, channelEvents, sequenceEvents }) : false,
       bounced: flagEmail ? ledger.suppressionFor(flagEmail) != null : false,
       contactSuppressed: contactSuppressed?.kind ?? null,
       breakupHold: flagEmail ? ledger.breakupReviveHoldFor(flagEmail) != null : false,
