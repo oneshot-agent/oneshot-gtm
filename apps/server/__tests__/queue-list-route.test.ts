@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { personResearchRows } from "../../web/src/lib/queueCase.ts";
 
 // GET /api/queue carries `approvedByPlay`: whole-queue approved counts per
 // play: alongside the filtered `rows`. /queue's drain button reads it, so the
@@ -388,6 +389,43 @@ describe("list payload trim (#929)", () => {
         dossier: "a long dossier the list never shows",
         rawEvent: { html: "<p>…</p>" },
       });
+    } finally {
+      nextRows = [];
+    }
+  });
+
+  it("keeps every person-research field the open row's Profile history reads (formerRoles was dropped once)", async () => {
+    // What a researched row carries after `_person-research.ts` stamps it:
+    // the trimmed list payload must still yield every history row the page
+    // renders through `personResearchRows`, not only the ones a fixture had.
+    const row = queueRow(null);
+    row.payload_json = JSON.stringify({
+      name: "Ada",
+      email: "ada@example.com",
+      personResearch: {
+        version: 1,
+        status: "complete",
+        researchedAt: "2026-09-11T20:00:00.000Z",
+        organizations: [],
+      },
+      currentRole: "Founder at WildMuse since Mar 2026",
+      companyFacts: "WildMuse · Software · 1-10 employees",
+      titleAtFinder: "Curious Explorer",
+      companyAtFinder: "L'eto Group",
+      formerRoles: "Head of Product at L'ETO Group (Nov 2024–Oct 2025)",
+      dossier: "not shown by the list",
+    });
+    nextRows = [row];
+    try {
+      const listed = await body("http://x/api/queue");
+      const payload = (listed.rows as Array<{ payload: unknown }>)[0]?.payload;
+      expect(payload).not.toHaveProperty("dossier");
+      expect(personResearchRows(payload)).toEqual([
+        { key: "now", value: "Founder at WildMuse since Mar 2026" },
+        { key: "company", value: "WildMuse · Software · 1-10 employees" },
+        { key: "listed as", value: "Curious Explorer · L'eto Group" },
+        { key: "formerly", value: "Head of Product at L'ETO Group (Nov 2024–Oct 2025)" },
+      ]);
     } finally {
       nextRows = [];
     }

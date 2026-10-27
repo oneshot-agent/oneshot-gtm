@@ -573,6 +573,7 @@ const LIST_PAYLOAD_KEYS: ReadonlySet<string> = new Set([
   "eventUrl",
   "fitReason",
   "followers",
+  "formerRoles",
   "founderEmail",
   "founderName",
   "githubUrl",
