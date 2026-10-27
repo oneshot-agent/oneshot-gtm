@@ -90,6 +90,7 @@ import {
   LINKEDIN_INVITE_TIMEOUT_DAYS,
   linkedInSenderFor,
   linkedInWaitingSince,
+  liveLinkedInInvite,
   resolveLinkedInInvite,
   storedLinkedInConversation,
 } from "./_linkedin-invites.ts";
@@ -3738,8 +3739,12 @@ async function buildLinkedInMessage(
 ): Promise<StepPayload | null> {
   const ledger = getLedger();
   const events = ledger.listSequenceEventsForProspectPlay(ctx.prospect.id, playName);
+  // Connected before this sequence: the invite created no request, so its note
+  // was never delivered, and nobody "accepted" anything.
+  const alreadyConnected = liveLinkedInInvite(ctx.prospect.id, playName)?.alreadyConnected === true;
   const prior = events
     .filter((e) => e.channel === "linkedin" && e.status === "sent")
+    .filter((e) => !(alreadyConnected && undeliveredInviteNote(e)))
     .map((e) => {
       try {
         const m = JSON.parse(e.metadata_json ?? "{}") as { body?: unknown; note?: unknown };
@@ -3795,7 +3800,18 @@ async function buildLinkedInMessage(
           "PRIOR_CONTACT: they were emailed on this and did not reply. Don't re-pitch and don't refer to the unanswered email.",
         ]
       : []),
-    `MESSAGE: ${which === "first" ? "first message after they accepted the connection request" : "last message — a short, graceful close"}`,
+    ...(alreadyConnected
+      ? [
+          "ALREADY_CONNECTED: you were already connected on LinkedIn before this sequence; no connection request was sent or accepted.",
+        ]
+      : []),
+    `MESSAGE: ${
+      which === "first"
+        ? alreadyConnected
+          ? "first message on LinkedIn — you were already connected"
+          : "first message after they accepted the connection request"
+        : "last message — a short, graceful close"
+    }`,
     ...(which === "last" ? closeGuidance(role) : []),
     "PRIOR TOUCHES:",
     ...(prior.length > 0 ? prior.map((l) => `  ${l}`) : ["  (none recorded)"]),
@@ -3824,6 +3840,16 @@ async function buildLinkedInMessage(
         ...(learned ? { learningKey: learned.key } : {}),
       }
     : null;
+}
+
+/** An invite that answered `already_connected`: LinkedIn delivered no note. */
+function undeliveredInviteNote(e: { metadata_json: string | null }): boolean {
+  try {
+    const m = JSON.parse(e.metadata_json ?? "{}") as { kind?: unknown; inviteStatus?: unknown };
+    return m.kind === "linkedin_invite" && m.inviteStatus === "already_connected";
+  } catch {
+    return false;
+  }
 }
 
 /** The title the dossier's person record carries, for a prospect row with none. */

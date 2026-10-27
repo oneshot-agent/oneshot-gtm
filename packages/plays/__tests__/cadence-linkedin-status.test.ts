@@ -13,6 +13,7 @@ let ledger: LedgerType;
 let dbPath: string;
 let conversation: { conversationId: string; accountId: string; workspace: string } | null = null;
 let emailCapacity = true;
+const modelInputs: string[] = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -33,7 +34,10 @@ vi.mock("@oneshot-gtm/intel", async () => {
   return {
     ...actual,
     loadPrompt: () => "prompt",
-    complete: async () => ({ content: "Thanks for connecting — how is review going?" }),
+    complete: async (input: { messages: Array<{ content: string }> }) => {
+      modelInputs.push(input.messages[1]!.content);
+      return { content: "Thanks for connecting — how is review going?" };
+    },
   };
 });
 
@@ -128,6 +132,7 @@ beforeEach(() => {
   conversation = null;
   emailCapacity = true;
   calls = [];
+  modelInputs.length = 0;
 });
 
 afterEach(() => {
@@ -487,6 +492,24 @@ describe("/cadences preview", () => {
     const preview = await previewCadenceStep({ prospectId, playName: PLAY });
     expect(preview).toMatchObject({ subject: "LinkedIn message", flags: [] });
     expect("waiting" in preview).toBe(false);
+    // A stranger who accepted: written as one, the note they saw among the prior touches.
+    const input = modelInputs.at(-1)!;
+    expect(input).not.toContain("ALREADY_CONNECTED");
+    expect(input).toContain(
+      "\nMESSAGE: first message after they accepted the connection request\nPRIOR TOUCHES:\n  STEP 0: hello\n",
+    );
+  });
+
+  it("an invite that answered already_connected: drafted knowing it, without the undelivered note", async () => {
+    inviteSent({ inviteStatus: "already_connected" });
+    const preview = await previewCadenceStep({ prospectId, playName: PLAY });
+    expect("waiting" in preview).toBe(false);
+    const input = modelInputs.at(-1)!;
+    expect(input).toContain(
+      "\nALREADY_CONNECTED: you were already connected on LinkedIn before this sequence; no connection request was sent or accepted.\nMESSAGE: first message on LinkedIn — you were already connected\nPRIOR TOUCHES:\n  (none recorded)\n",
+    );
+    expect(input).not.toContain("accepted the connection request");
+    expect(input).not.toContain("STEP 0");
   });
 });
 
