@@ -69,6 +69,16 @@ export class MailboxStore {
     `);
     addColumnIfMissing(db, "mailbox_threads", "last_read_at", "TEXT");
     addColumnIfMissing(db, "mailbox_messages", "needs_processing", "INTEGER NOT NULL DEFAULT 1");
+    // When this workspace stored the row, as opposed to `at`, the message's own
+    // date. The bounce poll windows on this, so a delivery notice imported by a
+    // backfill long after it was sent is still read. Rows from before the column
+    // take their message date: the unbounded poll that ran until then already
+    // read every one of them.
+    addColumnIfMissing(db, "mailbox_messages", "stored_at", "TEXT");
+    db.exec("UPDATE mailbox_messages SET stored_at=at WHERE stored_at IS NULL");
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS mailbox_messages_bounce ON mailbox_messages(identity_id, direction, stored_at)",
+    );
   }
 
   /** Look up a persisted mailbox message by its workspace ID. */
@@ -103,9 +113,15 @@ export class MailboxStore {
         const existingMessage = this.get(message.id);
         if (existingMessage) {
           if (existingMessage.bounces == null && message.bounces != null) {
+            // Re-stamped: a notice classified late must fall inside the bounce
+            // poll's window even when the row was stored long ago.
             this.db
-              .query("UPDATE mailbox_messages SET data=? WHERE id=?")
-              .run(JSON.stringify({ ...existingMessage, bounces: message.bounces }), message.id);
+              .query("UPDATE mailbox_messages SET data=?,stored_at=? WHERE id=?")
+              .run(
+                JSON.stringify({ ...existingMessage, bounces: message.bounces }),
+                new Date().toISOString(),
+                message.id,
+              );
           }
           return false;
         }
@@ -117,8 +133,8 @@ export class MailboxStore {
           .get(message.threadKey) as { last_read_at: string | null } | null;
         this.db
           .query(`INSERT INTO mailbox_messages
-        (id,identity_id,thread_key,message_id,prospect_id,direction,at,data,is_read)
-        VALUES(?,?,?,?,?,?,?,?,?)`)
+        (id,identity_id,thread_key,message_id,prospect_id,direction,at,stored_at,data,is_read)
+        VALUES(?,?,?,?,?,?,?,?,?,?)`)
           .run(
             message.id,
             message.identityId,
@@ -127,6 +143,7 @@ export class MailboxStore {
             message.prospectId,
             message.direction,
             message.at,
+            new Date().toISOString(),
             JSON.stringify(message),
             message.direction === "outbound" ||
               (readState?.last_read_at && message.at < readState.last_read_at)
@@ -187,14 +204,19 @@ export class MailboxStore {
     ).map((r) => JSON.parse(r.data));
   }
 
-  /** Read only potential delivery notices, including legacy rows awaiting classification. */
+  /**
+   * Read only potential delivery notices, including legacy rows awaiting
+   * classification. `since` bounds the rows by when they were stored, not by the
+   * message's own date: a backfill imports old notices with an old `at`, and
+   * windowing on `at` would skip them for good.
+   */
   bounceCandidates(identityIds: string[], since?: string): MailboxMessage[] {
     if (!identityIds.length) return [];
     return (
       this.db
         .query(`SELECT data FROM mailbox_messages WHERE direction='inbound'
       AND identity_id IN (${identityIds.map(() => "?").join(",")})
-      AND (? IS NULL OR at >= ?) AND (json_extract(data, '$.bounces') IS NULL
+      AND (? IS NULL OR stored_at >= ?) AND (json_extract(data, '$.bounces') IS NULL
       OR json_array_length(data, '$.bounces') > 0)`)
         .all(...identityIds, since ?? null, since ?? null) as { data: string }[]
     ).map((row) => JSON.parse(row.data));

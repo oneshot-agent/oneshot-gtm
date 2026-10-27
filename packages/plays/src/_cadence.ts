@@ -1313,8 +1313,9 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
     clean: true,
     details: [],
   };
-  // Mailbox bounces store parsed DSNs, not proof that recordBounce ran. Old
-  // backfill or a polling outage can leave unprocessed DSNs outside this window.
+  // The mailbox source windows on when a notice was stored, not on its own
+  // date, so one a backfill imports long after it was sent is still read. Only
+  // a polling outage longer than this window can leave a notice unread.
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const { bounces, failedSources } = await listBounces({ since });
   out.polled = bounces.length;

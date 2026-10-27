@@ -254,8 +254,15 @@ describe("durable mailbox threads", () => {
   });
 });
 
+/** Pin when the workspace stored a row (`stored_at`), which the bounce window reads. */
+function storedAt(id: string, iso: string): void {
+  (ledger.mailboxes as unknown as { db: Database }).db
+    .query("UPDATE mailbox_messages SET stored_at=? WHERE id=?")
+    .run(iso, id);
+}
+
 describe("mailbox sync", () => {
-  it("bounds no-argument listBounces to 30 days and filters identities in SQL", async () => {
+  it("bounds no-argument listBounces to 30 days of stored mail and filters identities in SQL", async () => {
     vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-27T12:00:00.000Z"));
     const since = "2026-09-27T12:00:00.000Z";
     const prospectId = ledger.upsertProspect({ email: "prospect@example.org" });
@@ -281,6 +288,9 @@ describe("mailbox sync", () => {
     ledger.mailboxes.put(message);
     ledger.mailboxes.put({ ...message, id: "old-dsn", at: "2026-09-27T11:59:59.999Z" });
     ledger.mailboxes.put({ ...message, id: "removed-dsn", identityId: "removed" });
+    storedAt(message.id, since);
+    storedAt("old-dsn", "2026-09-27T11:59:59.999Z");
+    storedAt("removed-dsn", since);
     const query = vi.spyOn(Database.prototype, "query");
     const candidates = vi.spyOn(ledger.mailboxes, "bounceCandidates");
 
@@ -290,12 +300,79 @@ describe("mailbox sync", () => {
     expect(candidates).toHaveBeenCalledWith([identityId], since);
     expect(
       query.mock.calls.some(
-        ([sql]) => /identity_id\s+IN\s*\(\?\)/i.test(sql) && /at\s*>=\s*\?/.test(sql),
+        ([sql]) => /identity_id\s+IN\s*\(\?\)/i.test(sql) && /stored_at\s*>=\s*\?/.test(sql),
       ),
     ).toBe(true);
     expect(candidates.mock.results[0]?.value.map((m: { id: string }) => m.id)).toEqual([
       message.id,
     ]);
+  });
+
+  it("reads a notice a backfill stores today although its own date is older than the window", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-27T12:00:00.000Z"));
+    const prospectId = ledger.upsertProspect({ email: "prospect@example.org" });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "outreach",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    // Sent 45 days ago; imported by a backfill an hour ago. Windowing on the
+    // message's own date skipped it on every poll, so the address kept getting mail.
+    const backfilled = {
+      ...(await parsed("backfilled-dsn")),
+      at: "2026-09-12T08:00:00.000Z",
+      bounces: [
+        {
+          recipient: "prospect@example.org",
+          kind: "hard" as const,
+          statusCode: "5.1.1",
+          diagnostic: "No such user",
+        },
+      ],
+    };
+    ledger.mailboxes.put(backfilled);
+    storedAt(backfilled.id, "2026-10-27T11:00:00.000Z");
+
+    const result = await listBounces();
+
+    expect(result.bounces.map((b) => b.messageId)).toEqual([backfilled.id]);
+    expect(result.bounces[0]?.bouncedAt).toBe(backfilled.at);
+  });
+
+  it("re-stamps a stored row when its bounces are classified late", async () => {
+    const message = { ...(await parsed("late-dsn")), bounces: undefined };
+    ledger.mailboxes.put(message);
+    const old = "2026-01-01T00:00:00.000Z";
+    storedAt(message.id, old);
+    const read = (): string =>
+      (
+        (ledger.mailboxes as unknown as { db: Database }).db
+          .query("SELECT stored_at FROM mailbox_messages WHERE id=?")
+          .get(message.id) as { stored_at: string }
+      ).stored_at;
+
+    ledger.mailboxes.put({
+      ...message,
+      bounces: [{ recipient: "p@example.org", kind: "hard", statusCode: null, diagnostic: null }],
+    });
+
+    expect(read() > old).toBe(true);
+    expect(ledger.mailboxes.get(message.id)?.bounces?.[0]?.kind).toBe("hard");
+  });
+
+  it("serves the bounce window from its index, not a scan of all mail", () => {
+    const plan = (
+      (ledger.mailboxes as unknown as { db: Database }).db
+        .query(`EXPLAIN QUERY PLAN SELECT data FROM mailbox_messages WHERE direction='inbound'
+          AND identity_id IN (?) AND (? IS NULL OR stored_at >= ?)`)
+        .all("id", "2026-09-27T12:00:00.000Z", "2026-09-27T12:00:00.000Z") as { detail: string }[]
+    )
+      .map((r) => r.detail)
+      .join("\n");
+    expect(plan).toContain("mailbox_messages_bounce");
+    expect(plan).not.toMatch(/SCAN mailbox_messages\b(?! USING)/);
   });
 
   it("preserves explicit windows, legacy parsing and multiple active identities", async () => {
