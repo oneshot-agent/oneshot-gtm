@@ -68,8 +68,10 @@ The file is a CSV with a `profile_url`, `linkedin_url` or `url` column, or a JSO
 Set `linkedinContinuation: true` for the workspace or on one trigger; the trigger wins. For `multiplier` it is on unless the workspace or the trigger sets it to `false`: programme leads live on LinkedIn. An email cadence that ends without a reply then carries on three days later:
 
 - an invite whose note knows the person was already emailed,
-- a first message once they accept, or at once if you were already connected,
+- a first message once they accept, no sooner than two days after the invite,
 - a close.
+
+Someone you were already connected with gets no request and has nothing to accept: their first message goes two days after the invite step. Both messages are written knowing you were already connected, with no thanks for connecting and no mention of a note they never received.
 
 Each step is a draft you review on Cadences. The invite passes the same guard and quota. If the guard refuses, the preview shows the refusal, the step is skipped and the cadence completes. A cadence already running keeps the steps it started with.
 
