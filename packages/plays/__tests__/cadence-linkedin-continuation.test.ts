@@ -898,7 +898,7 @@ describe("evidence-aware prompts (#790)", () => {
     await previewPayload();
     expect(modelInputs[0]).toContain("EVIDENCE_CLAUSE: starred acme/widgets");
     expect(modelInputs[0]).toContain("BUYER_TYPE: enterprise");
-    expect(modelInputs[0]).toMatch(/Keep the infra pitch out of the note/);
+    expect(modelInputs[0]).toMatch(/Keep any pitch out of the note/);
   });
 
   it("a stale stack is left out of the note", async () => {

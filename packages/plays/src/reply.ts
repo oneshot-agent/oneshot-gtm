@@ -106,7 +106,9 @@ const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
     regex: /\b(?:pric(?:e|es|ing)|discount(?:s|ed)?|% off|free tier|for free)\b/i,
     requireAffirmative: true,
   },
-  // Distribution / traffic promises ("point our builders toward X", "route users to Y").
+  // Distribution / traffic promises: sending the founder's own users,
+  // customers or community to the other party ("point our users toward X",
+  // "route customers to Y").
   // Round-2 correction (#480): a bare mention ("we read about your distribution
   // model") is as common as an actual promise: same affirmative-cue gate as pricing.
   {
@@ -127,21 +129,23 @@ const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
   // Headcount / hiring commitments. Round-2 correction (#480): "how is your
   // hiring going this quarter?" is small talk, not a commitment.
   { regex: /\bheadcount\b|\bhir(?:e|ing)\b/i, requireAffirmative: true },
-  // Documentation placement ("adding X to our documentation").
+  // Placement in the founder's own docs ("adding X to our documentation").
   {
     regex: /\b(?:add(?:ing)?|list(?:ing)?)\b[^.]{0,60}\b(?:documentation|docs)\b/i,
     requireAffirmative: true,
   },
-  // "Recommended / preferred partner" (or environment/integration/provider) designations.
+  // Endorsing the other party: a "recommended" or "preferred" designation
+  // for whatever they are (a partner, a provider, a platform, a tool).
   {
     regex:
-      /\b(?:recommended|preferred)\b[^.]{0,40}\b(?:partner|environment|integration|provider|option|vendor|choice)\b/i,
+      /\b(?:recommended|preferred)\b[^.]{0,40}\b(?:partner|environment|integration|provider|option|vendor|choice|solution|platform|tool|supplier)\b/i,
     requireAffirmative: true,
   },
-  // Featuring the sender in a reference implementation / case study / website.
+  // Featuring the other party in the founder's own material: an example,
+  // a case study, the website, the docs, a post.
   {
     regex:
-      /\bfeatur(?:e|ing)\b[^.]{0,60}\b(?:reference implementation|case study|website|repo|documentation)\b/i,
+      /\bfeatur(?:e|ing)\b[^.]{0,60}\b(?:reference implementation|example|case stud(?:y|ies)|website|repo|documentation|docs|blog|newsletter)\b/i,
   },
 ];
 
@@ -314,8 +318,8 @@ function bodyFrom(raw: string): string {
  * Sentences the founder already asked in this thread ("does that work for
  * you?", "what's the actual proposal here?"): extracted from every reply
  * already sent, so `draftInboxReply` can tell the model never to restate an
- * outstanding ask (issue #480, the Aladdin Aug 26/27 exchange: three
- * discovery questions in a row with no named purpose). A crude sentence
+ * outstanding ask (issue #480: a thread where three discovery questions in a
+ * row went out with no named purpose). A crude sentence
  * split on `.`/`?`/`!` is enough. This feeds a "don't repeat" instruction,
  * not a structured parse.
  */
@@ -384,8 +388,8 @@ export interface DraftInboxReplyInput {
   /**
    * The ICP gate's call on this prospect (`prospects.icp_verdict` + reason):
    * title-based and made before the conversation. Rendered with the caveat
-   * that the thread outranks it. A reject whose reply shows they build
-   * agent systems is a stale verdict, not a reason to disengage. Missing or
+   * that the thread outranks it. A reject whose reply shows they are the
+   * person the ICP describes is a stale verdict, not a reason to disengage. Missing or
    * null verdict → no line, unchanged output.
    */
   icp?: { verdict: string | null; reason: string | null } | null;
@@ -440,7 +444,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
 
   // ASKS ALREADY MADE (issue #480): outstanding questions from your own prior
   // replies. An ask you've already made must be answered or waited on, never
-  // restated. This is the "circling" half of the Aladdin failure.
+  // restated: a reply that re-asks reads as circling.
   const asks = input.threadSent ? priorAsks(input.threadSent) : [];
   const asksBlock =
     asks.length > 0

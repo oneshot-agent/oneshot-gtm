@@ -1,9 +1,9 @@
 [
   {
-    "name": "Maya Chen",
-    "email": "maya@helix.dev",
+    "name": "Luis Moreno",
+    "email": "luis@morenoelectric.example",
     "phone": "+15551234567",
-    "signupContext": "Signed up via Show HN launch; selected the 'AI agent infra' use case at signup.",
+    "signupContext": "Signed up from the pricing page; picked 'emergency call scheduling' as the use case and listed six techs.",
     "callWindow": "in the next 30 minutes"
   }
 ]

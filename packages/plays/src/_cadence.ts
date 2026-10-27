@@ -3838,7 +3838,7 @@ async function buildLinkedInInvite(
             priorContact: [
               `They were emailed ${emailed.length} time${emailed.length === 1 ? "" : "s"} on this and did not reply.`,
               "Don't re-pitch and don't refer to what the emails said: this is a way to connect, not a second ask.",
-              "Keep the infra pitch out of the note: it names one real, current reason and asks one easy question.",
+              "Keep any pitch out of the note: it names one real, current reason and asks one easy question.",
             ],
           }
         : {}),

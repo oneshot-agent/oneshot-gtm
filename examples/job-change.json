@@ -1,19 +1,19 @@
 [
   {
-    "name": "Jordan Lee",
-    "email": "jordan@acmedata.io",
-    "newRole": "Head of Platform",
-    "newCompany": "Acme Data",
-    "previousRole": "Staff Engineer, Infra",
-    "previousCompany": "Stripe",
-    "linkedinUrl": "https://linkedin.com/in/jordan-lee-fake"
+    "name": "Nadia Petrov",
+    "email": "nadia@summitservicegroup.example",
+    "newRole": "Head of Operations",
+    "newCompany": "Summit Service Group",
+    "previousRole": "Dispatch Manager",
+    "previousCompany": "Lakeside Plumbing & Drain",
+    "linkedinUrl": "https://linkedin.com/in/nadia-petrov-example"
   },
   {
-    "name": "Priya Shah",
-    "email": "priya@northstar.ai",
-    "newRole": "VP Engineering",
-    "newCompany": "Northstar AI",
-    "previousRole": "Director of Engineering",
-    "previousCompany": "Datadog"
+    "name": "Renee Dubois",
+    "email": "renee@duboisheating.example",
+    "newRole": "General Manager",
+    "newCompany": "Dubois Heating & Air",
+    "previousRole": "Service Manager",
+    "previousCompany": "Northgate Comfort Systems"
   }
 ]

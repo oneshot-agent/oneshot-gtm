@@ -24,6 +24,13 @@ The card sets warmth, bluntness, rhythm and register. Facts, audience, channel l
 - The register applies to body prose. The greeting, names, the product name and the signature stay as given.
 - An asymmetry is a plain statement ("the hard part is X"), never "X isn't A, it's B". The lint flags that shape however much it sounds like you.
 
+## Greeting and subject case
+
+Two config settings change the draft rules' defaults. Unset, drafts are as before. Both reach the drafts that carry the card, with or without a card.
+
+- `founderGreeting`: the word a draft greets with when it greets. Unset: `Hey`. `"Hi"` gives "Hi," or "Hi Sam,"; `"none"` means no greeting.
+- `subjectCase`: unset or `"lowercase"`: the whole subject lowercased, acronyms included, and a subject with two capitals in a row (`API`, `URGENT`) is held and rewritten; a single capital (`Hello Sam`) passes. `"sentence"`: sentence case. `"as-written"`: no case rule. Either of those two turns the hold off.
+
 Each draft records which card it was written with. The trigger editor splits sent, regenerated and rotated counts into **voice on** and **voice off**. Judge the card by that split after a week.
 
 ## Writing one by hand

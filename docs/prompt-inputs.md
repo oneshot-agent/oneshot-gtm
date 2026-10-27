@@ -15,12 +15,16 @@ The model knows only what you put in config, and each field reaches some drafts 
 | `icpOneLiner`                                        | no [^icp]                   | no                        | yes                               |
 | `productBrief`                                       | yes [^offer]                | yes [^offer]              | yes, and the only source of links |
 | `founderVoice`, the [voice card](./voice.md)         | yes                         | yes                       | yes                               |
+| `founderGreeting` [^style]                           | yes                         | yes                       | yes                               |
+| `subjectCase` [^style]                               | yes                         | yes                       | no (a reply has no subject)       |
 | Earlier emails on the thread                         | no                          | yes                       | yes                               |
 | `founderCohort`                                      | `accelerator-batch` only    | no                        | no                                |
 | A meeting outcome and your notes                     | no                          | no                        | yes                               |
 | Approved [learned guidance](./learning.md)           | yes                         | yes                       | yes                               |
 
 [^icp]: `add-prospect`, `profile-intro` and `x-repost-intro` pass it themselves.
+
+[^style]: Only when set to something other than the default (`Hey`, lowercase subjects). See [Greeting and subject case](./voice.md#greeting-and-subject-case).
 
 [^offer]: With the prospect offer, below. Plays that make no offer (`discovery-interview`, `pmf-survey`, `demo-no-show`, `x-amplify`, `community-reply`, `multiplier`) do not get it.
 

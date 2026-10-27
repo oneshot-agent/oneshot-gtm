@@ -18,6 +18,7 @@ import {
   type LinkedInWriter,
   type OfferAnchor,
   type OneShotConfig,
+  type SubjectCase,
 } from "./types.ts";
 
 // Data dir for config.json, .env, ledger.sqlite, events.jsonl, gmail-tokens.json.
@@ -94,6 +95,35 @@ export function offerExclusionsOf(cfg: { offerExclusions?: unknown }): string[] 
  */
 export function offerAnchorOf(cfg: { offerAnchor?: unknown }): OfferAnchor {
   return cfg.offerAnchor === "prefer-product" ? "prefer-product" : "either";
+}
+
+/** The humanizer's greeting word: what `founderGreeting` reads as when unset. */
+export const DEFAULT_FOUNDER_GREETING = "Hey";
+
+/**
+ * The workspace's `founderGreeting` as the drafters read it: the greeting
+ * word, trimmed, or "none" (any case) for no greeting. Blank or not a string
+ * reads as `DEFAULT_FOUNDER_GREETING`, the behaviour from before the setting
+ * existed.
+ */
+export function founderGreetingOf(cfg: { founderGreeting?: unknown }): string {
+  const raw = cfg.founderGreeting;
+  if (typeof raw !== "string") return DEFAULT_FOUNDER_GREETING;
+  const word = raw.replace(/\s+/g, " ").trim().replace(/,$/, "").trim();
+  if (!word) return DEFAULT_FOUNDER_GREETING;
+  return word.toLowerCase() === "none" ? "none" : word;
+}
+
+/**
+ * The workspace's `subjectCase` as the drafters and lint read it. Only the
+ * exact strings `sentence` and `as-written` turn the lowercase rule off;
+ * absent, misspelled or any other value reads as `lowercase`, the behaviour
+ * from before the setting existed.
+ */
+export function subjectCaseOf(cfg: { subjectCase?: unknown }): SubjectCase {
+  return cfg.subjectCase === "sentence" || cfg.subjectCase === "as-written"
+    ? cfg.subjectCase
+    : "lowercase";
 }
 
 /**

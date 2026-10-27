@@ -632,7 +632,7 @@ export async function companyTheyRun(input: {
     company,
     email: prospect.email,
     dossierDomain,
-    // The stored headline corroborates like a domain does ("Founder at Soren"
+    // The stored headline corroborates like a domain does ("Founder at Beacon"
     // on a personal mailbox); the live read below still has to agree.
     headline: findString(half, ["headline"]),
   };
@@ -695,7 +695,7 @@ export function lintLinkedInFirstMessage(
  * The framing an already-connected reader must not get: thanks for connecting,
  * a request, an invite, an acceptance, or "glad we connected". Each pattern names
  * the social connection, not the verb: these messages talk about products that
- * connect things, and "we connect agents to your tools" is not a violation.
+ * connect things, and "we connect your booking page to your CRM" is not a violation.
  */
 const ALREADY_CONNECTED_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
   // Thanks for any act of joining their network: connecting, accepting, or
@@ -758,7 +758,7 @@ const SHARED_COHORT_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
       "i",
     ),
   ],
-  // "in antler-2026 as well", "in YC F26 too": the "too" is the sender.
+  // "in techstars-2026 as well", "in YC F26 too": the "too" is the sender.
   [
     "in it too",
     new RegExp(
@@ -766,7 +766,7 @@ const SHARED_COHORT_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
       "i",
     ),
   ],
-  // A sentence with no subject that opens on the cohort ("Hey Vinod, in YC
+  // A sentence with no subject that opens on the cohort ("Hey Sam, in YC
   // F26 currently.") reads as the sender's own status.
   [
     "subjectless cohort",

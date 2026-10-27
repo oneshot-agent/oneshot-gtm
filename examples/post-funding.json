@@ -1,20 +1,20 @@
 [
   {
-    "name": "Maya Chen",
-    "email": "maya@helix.dev",
-    "company": "Helix",
+    "name": "Nadia Petrov",
+    "email": "nadia@summitservicegroup.example",
+    "company": "Summit Service Group",
     "round": "Series A",
     "amountUsd": 14000000,
-    "leadInvestor": "Index Ventures",
-    "sourceUrl": "https://techcrunch.com/2026/04/example-helix-series-a"
+    "leadInvestor": "Northfield Partners",
+    "sourceUrl": "https://news.example/2026/04/summit-service-group-series-a"
   },
   {
-    "name": "Diego Alvarez",
-    "email": "diego@compass.run",
-    "company": "Compass",
+    "name": "Marco Lindqvist",
+    "email": "marco@chargefix.example",
+    "company": "Chargefix",
     "round": "Seed",
     "amountUsd": 4500000,
-    "leadInvestor": "First Round Capital",
-    "sourceUrl": "https://twitter.com/diegoalvarez/status/example"
+    "leadInvestor": "Ridgeline Ventures",
+    "sourceUrl": "https://social.example/marcolindqvist/status/example"
   }
 ]

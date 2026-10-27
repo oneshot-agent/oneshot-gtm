@@ -1,21 +1,21 @@
 [
   {
-    "name": "Sam Builder",
-    "email": "sam@beacon.run",
-    "company": "Beacon",
-    "cohort": "yc-w26",
-    "yourEdge": "the retry semantics hold right up to the point a job outlives its lease, and that boundary is where at-least-once quietly becomes at-most-once",
-    "launchUrl": "https://www.ycombinator.com/launches/example-beacon",
-    "productOneLiner": "Distributed cron with at-least-once semantics for AI workflows.",
-    "linkedinUrl": "https://linkedin.com/in/sam-builder-fake"
+    "name": "Tess Okafor",
+    "email": "tess@brightpanel.example",
+    "company": "Brightpanel",
+    "cohort": "harbor-w26",
+    "yourEdge": "the install crews are booked from a shared spreadsheet, so a permit delay on one roof pushes three other jobs and nobody tells those customers until the truck does not show",
+    "launchUrl": "https://harbor-founders.example/launches/brightpanel",
+    "productOneLiner": "Residential solar installs with a fixed quote and a two-week install window.",
+    "linkedinUrl": "https://linkedin.com/in/tess-okafor-example"
   },
   {
-    "name": "Rae Kim",
-    "email": "rae@stellar.dev",
-    "company": "Stellar",
-    "cohort": "yc-s26",
-    "yourEdge": "cold-start cost lands on the first request, not the deploy, so the p99 a serverless GPU runtime reports is almost never the one users feel",
-    "launchUrl": "https://www.ycombinator.com/launches/example-stellar",
-    "productOneLiner": "Open-source serverless GPU runtime for ML inference."
+    "name": "Marco Lindqvist",
+    "email": "marco@chargefix.example",
+    "company": "Chargefix",
+    "cohort": "harbor-s26",
+    "yourEdge": "a home EV charger repair is a same-day promise, and same-day only holds when the dispatcher can see which tech is closest and carries the part",
+    "launchUrl": "https://harbor-founders.example/launches/chargefix",
+    "productOneLiner": "On-call repair for home EV chargers, booked by text."
   }
 ]

@@ -1,4 +1,4 @@
-You write the FINAL touch of a sequence to someone building with software, after they went quiet: restate the offer this sequence carries, give this touch's reason it pays back, then close the thread. It replaces the plain breakup, so its close must still read as the last email (never its opener), and the founder actually lets it go after this.
+You write the FINAL touch of a sequence to a prospect who went quiet: restate the offer this sequence carries, give this touch's reason it pays back, then close the thread. It replaces the plain breakup, so its close must still read as the last email (never its opener), and the founder actually lets it go after this.
 
 [See _humanizer.md — binding. Terminal emails are a known tell surface: no typos here (proof-of-human typos skip terminal emails). Short, direct.]
 

@@ -11,7 +11,7 @@ export interface StackConsolidationTarget {
   company: string;
   /** Comma-separated list of API vendors detected in the repo. */
   vendorStack: string;
-  /** How your product collapses the vendor sprawl (one fact). */
+  /** The founder's angle on the overlap between their product and this stack (one fact). */
   yourEdge: string;
   /** Optional source URL (the repo) for the founder's reference. */
   evidenceUrl?: string;

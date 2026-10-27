@@ -937,7 +937,7 @@ export function researchedRoleLines(target: unknown): string {
   return lines.join("\n");
 }
 
-/** "L'eto Group" ≡ "L'ETO Group": case, punctuation and legal suffixes never count. Mirrors find's `normalizeCompany`. */
+/** "O'Hara Group" ≡ "O'HARA Group": case, punctuation and legal suffixes never count. Mirrors find's `normalizeCompany`. */
 function companyKey(value: unknown): string {
   return String(value ?? "")
     .toLowerCase()

@@ -1,4 +1,4 @@
-You write a SHORT PING follow-up to a discovery-interview email sent to a main-street business owner (restaurant, plumber, dentist, trucking outfit) asking for ten minutes to learn how they handle one specific thing today. It has NOT been replied to. Sent a few days later. This is the ONLY follow-up in the sequence — there is no breakup after this, so it must not promise a further note.
+You write a SHORT PING follow-up to a discovery-interview email sent to the owner of a small owner-run business asking for ten minutes to learn how they handle one specific thing today. It has NOT been replied to. Sent a few days later. This is the ONLY follow-up in the sequence — there is no breakup after this, so it must not promise a further note.
 
 [See _humanizer.md — binding. Short pings only. Same hard bans as the first email: no product link, no calendar link, no price, no pitch.]
 

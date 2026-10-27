@@ -5,6 +5,8 @@ import {
   type DemoDay,
   ENRICH_DEADLINE_MS,
   enrichProfile,
+  DEFAULT_FOUNDER_GREETING,
+  founderGreetingOf,
   getLedger,
   isCachedPaidFailure,
   loadConfig,
@@ -12,6 +14,7 @@ import {
   mentionsStaleDemoDay,
   receiptUrlForId,
   sendEmail,
+  subjectCaseOf,
   throwIfCancelled,
   trackSend,
   verifyEmail,
@@ -79,13 +82,13 @@ export const SLOP_PHRASES: Array<[RegExp, string]> = [
   ],
   [/\bI'd love to (?:chat|connect|jump on a call|hear)\b/i, "banned-cta:love-to-chat"],
   // Any time-boxed meeting ask, not just the 15-minute one: "worth a 10-min
-  // back and forth" shipped 291 times past the literal 15 in this pattern.
+  // back and forth" walked past a pattern that matched only the literal 15.
   [/\bWorth a \d+.?min/i, "banned-cta:worth-n-min"],
   [/\bMind if I\b/i, "banned-cta:mind-if-i"],
   [/\bJust wanted to\b/i, "banned-filler:just-wanted-to"],
   // A meeting ask dressed as a small one (_humanizer.md -> Banned CTAs). Prompt
-  // text alone did not hold it: 120 of 312 repo-interest second touches shipped
-  // with one, because several play prompts quoted the phrase while banning it.
+  // text alone does not hold it: a play prompt that quotes the phrase while
+  // banning it teaches the model the phrase.
   [/\b(?:compare notes|swap takes|back.?and.?forth|trade notes)\b/i, "banned-cta:compare-notes"],
   // "3:30 today or 12:00 tomorrow?". A meeting ask dressed as a scheduling question.
   [
@@ -150,8 +153,38 @@ export function slopFlags(text: string): string[] {
   return SLOP_PHRASES.filter(([re]) => re.test(text)).map(([, label]) => label);
 }
 
+/**
+ * `words` (a regex alternation of greeting words) plus the workspace's own
+ * `founderGreeting` when it sets another word, so a draft that opens "Yo Sam,"
+ * is read past its greeting like one that opens "Hey Sam,". Unchanged when
+ * the greeting is the default, `none`, or config cannot be read.
+ */
+function withConfiguredGreeting(words: string): string {
+  let greeting: string;
+  try {
+    greeting = founderGreetingOf(loadConfig());
+  } catch {
+    return words;
+  }
+  if (greeting === "none" || greeting === DEFAULT_FOUNDER_GREETING) return words;
+  return `${words}|${greeting.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`;
+}
+
 /** A line that is only a greeting ("Hey Sam,"), which a format's budget may exclude. */
-const GREETING_LINE = /^(?:hey|hi|hello|dear)\b[^.!?]{0,40},$/i;
+function greetingLine(): RegExp {
+  return new RegExp(
+    String.raw`^(?:${withConfiguredGreeting("hey|hi|hello|dear")})\b[^.!?]{0,40},$`,
+    "i",
+  );
+}
+
+/** A greeting line before the first sentence, comma optional; see `opensOnObservation`. */
+function leadingGreeting(): RegExp {
+  return new RegExp(
+    String.raw`^(?:${withConfiguredGreeting("hey|hi|hello|dear")})\b[^.!?]{0,40},?$`,
+    "i",
+  );
+}
 
 export function bodyWordsForLint(
   body: string,
@@ -160,10 +193,11 @@ export function bodyWordsForLint(
   opts: { excludeGreeting?: boolean } = {},
 ): number {
   const text = bodyWithoutSignature(body, sigLines);
+  const greeting = greetingLine();
   const counted = opts.excludeGreeting
     ? text
         .split("\n")
-        .filter((l) => !GREETING_LINE.test(l.trim()))
+        .filter((l) => !greeting.test(l.trim()))
         .join("\n")
     : text;
   return counted.split(/\s+/).filter(Boolean).length;
@@ -198,11 +232,12 @@ function bodyWithoutSignature(body: string, sigLines?: string[]): string {
  * line that ends without punctuation still counts as one.
  */
 export function bodySentencesForLint(body: string, sigLines?: string[]): number {
+  const greeting = greetingLine();
   const lines = bodyWithoutSignature(body, sigLines)
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean)
-    .filter((l) => !GREETING_LINE.test(l))
+    .filter((l) => !greeting.test(l))
     .filter((l) => !/^[\p{L} ]{1,20},$/u.test(l) || /\s\S+\s/.test(l));
   let count = 0;
   for (const line of lines) {
@@ -237,7 +272,8 @@ export function thinBody(body: string, sigLines?: string[]): boolean {
   while (lines.length > 0 && SIGNOFF_LINE.test(lines.at(-1)!) && !/[.!?]$/.test(lines.at(-1)!)) {
     lines.pop();
   }
-  const message = lines.filter((l) => !GREETING_LINE.test(l)).join("\n");
+  const greeting = greetingLine();
+  const message = lines.filter((l) => !greeting.test(l)).join("\n");
   if (!message) return true;
   const words = message.split(/\s+/).filter(Boolean).length;
   return words < THIN_BODY_MIN_WORDS || bodySentencesForLint(message, []) < THIN_BODY_MIN_SENTENCES;
@@ -272,7 +308,10 @@ export function openerStem(body: string, words = OPENER_STEM_WORDS): string {
   const first = lines[0] ?? "";
   const rest =
     lines.length > 1 &&
-    /^(?:hey|hi|hello|good (?:morning|afternoon))\b[^,]{0,40}[,\-–—]?$/i.test(first)
+    new RegExp(
+      String.raw`^(?:${withConfiguredGreeting("hey|hi|hello|good (?:morning|afternoon)")})\b[^,]{0,40}[,\-–—]?$`,
+      "i",
+    ).test(first)
       ? lines.slice(1)
       : lines;
   const normalized = rest
@@ -330,7 +369,8 @@ export function lintOpenerFrequency(
 /**
  * A run of 2+ consecutive uppercase letters normally reads as shouting
  * (the humanizer's own rule: "lowercase the whole subject line ... Acronyms
- * (`api` not `API`)"). But a token shaped like a SAM.gov solicitation number
+ * (`api` not `API`)"); a workspace whose `subjectCase` is `sentence` or
+ * `as-written` turned that rule off, so lintEmail skips the check. But a token shaped like a SAM.gov solicitation number
  * (hyphen-separated alphanumeric segments such as `W912DY-26-R-0042`) is an
  * identifier the play is REQUIRED to reproduce verbatim
  * (packages/prompts/sources-sought-email.md line 11/20), not a shouted word
@@ -415,7 +455,8 @@ const OBSERVATION_OPENER =
  */
 export function opensOnObservation(body: string): boolean {
   const lines = body.split("\n").map((l) => l.trim());
-  const start = lines.findIndex((l) => l && !/^(?:hey|hi|hello|dear)\b[^.!?]{0,40},?$/i.test(l));
+  const greeting = leadingGreeting();
+  const start = lines.findIndex((l) => l && !greeting.test(l));
   if (start < 0) return false;
   const first =
     lines
@@ -447,7 +488,8 @@ function contentWords(text: string): Set<string> {
  */
 export function opensWithOffer(body: string, offer: string): boolean {
   const lines = body.split("\n").map((l) => l.trim());
-  const start = lines.findIndex((l) => l && !/^(?:hey|hi|hello|dear)\b[^.!?]{0,40},?$/i.test(l));
+  const greeting = leadingGreeting();
+  const start = lines.findIndex((l) => l && !greeting.test(l));
   if (start < 0) return true;
   const first =
     lines
@@ -565,7 +607,9 @@ export function lintEmail(
   if (subject.length === 0) flags.push("empty-subject");
   if (!opts.threadedSubject) {
     if (subject.length > 60) flags.push("subject-too-long");
-    if (subjectShouty(subject)) flags.push("subject-shouty");
+    if (subjectCaseOf(loadConfig()) === "lowercase" && subjectShouty(subject)) {
+      flags.push("subject-shouty");
+    }
     if (SIGNOFF_SUBJECT.test(subject)) flags.push("signoff-subject");
   }
   if (body.length === 0) flags.push("empty-body");
@@ -932,15 +976,60 @@ const VOICE_BUDGET: Record<VoiceSurface, string> = {
 };
 
 /**
- * VOICE input block from the founder's card (`founderVoice`). Null when the
- * card is blank, so an unconfigured install drafts exactly as before. The
- * card controls tone and rhythm; factual, audience, channel and lint
- * constraints still apply. The shared structure is flexible. Platform-generic on purpose: no founder
- * name, no product, no influence named.
+ * Override lines for the humanizer's two style defaults, from
+ * `founderGreeting` and `subjectCase`. Empty when both are unset (or set to
+ * the default), so the prompt carries the humanizer's `Hey` and lowercase
+ * subject rules as written. Each line states its own rule and that it
+ * overrides the default, so it binds wherever a play prompt repeats it.
+ */
+export function voiceOverrideLines(
+  cfg: { founderGreeting?: unknown; subjectCase?: unknown } = loadConfig(),
+): string[] {
+  const lines: string[] = [];
+  const greeting = founderGreetingOf(cfg);
+  if (greeting === "none") {
+    lines.push(
+      `GREETING: none (never open with a greeting; this overrides every "${DEFAULT_FOUNDER_GREETING}" greeting rule in the instructions)`,
+    );
+  } else if (greeting !== DEFAULT_FOUNDER_GREETING) {
+    lines.push(
+      `GREETING: ${greeting} (when you open with a greeting, it is exactly "${greeting}," or "${greeting} <first name>,", never another word; this overrides every "${DEFAULT_FOUNDER_GREETING}" greeting rule in the instructions)`,
+    );
+  }
+  const subjectCase = subjectCaseOf(cfg);
+  if (subjectCase === "sentence") {
+    lines.push(
+      "SUBJECT CASE: sentence (capitalize the first word and proper nouns only, and keep acronyms and identifiers as written; this overrides every lowercase-subject rule in the instructions)",
+    );
+  } else if (subjectCase === "as-written") {
+    lines.push(
+      "SUBJECT CASE: as written (no case rule: case the subject the way the founder would type it, brand names and acronyms included; this overrides every lowercase-subject rule in the instructions)",
+    );
+  }
+  return lines;
+}
+
+/**
+ * VOICE input block from the founder's card (`founderVoice`) and the
+ * greeting and subject-case overrides (`voiceOverrideLines`). Null when the
+ * card is blank and no override is set, so an unconfigured install drafts
+ * exactly as before. The card controls tone and rhythm; factual, audience,
+ * channel and lint constraints still apply. The shared structure is
+ * flexible. Platform-generic on purpose: no founder name, no product, no
+ * influence named. Keyed on the card when there is one, so an override does
+ * not split a card's outcomes.
  */
 export function voiceBlock(surface: VoiceSurface): { text: string; key: string } | null {
-  const card = loadConfig().founderVoice?.trim();
-  if (!card) return null;
+  const cfg = loadConfig();
+  const card = cfg.founderVoice?.trim();
+  const overrides = voiceOverrideLines(cfg);
+  if (!card) {
+    if (overrides.length === 0) return null;
+    return {
+      key: voiceKey(overrides.join("\n")),
+      text: ["VOICE (the founder's style settings; they bind):", ...overrides].join("\n"),
+    };
+  }
   const cut =
     card.length > VOICE_CARD_MAX_CHARS ? card.slice(0, VOICE_CARD_MAX_CHARS).trimEnd() : card;
   return {
@@ -948,6 +1037,7 @@ export function voiceBlock(surface: VoiceSurface): { text: string; key: string }
     text: [
       "VOICE (the founder's own register — this card controls warmth, dryness, bluntness, playfulness, technical register and sentence rhythm over generic style defaults. The shared structure is flexible. Factual grounding, audience and channel constraints, required content, banned vocabulary and banned constructions still bind and win on conflict):",
       cut,
+      ...overrides,
       VOICE_BUDGET[surface],
     ].join("\n"),
   };
@@ -1084,8 +1174,8 @@ export function intentDirectiveBlock(intent: string | null | undefined): string 
 
 /**
  * FOUNDER STEER block (issue #480). A short standing instruction the founder
- * typed on `/inbox` ("docs listing only, no exclusivity, no traffic
- * promise"), persisted on the thread's draft row and passed back in on every
+ * typed on `/inbox` ("no pricing talk, no exclusivity, no launch
+ * date"), persisted on the thread's draft row and passed back in on every
  * redraft. Binding: it overrides the prompt's default framing, not just a
  * suggestion alongside it.
  */
@@ -1269,6 +1359,10 @@ const WRITING_REPAIRS: Record<string, string> = {
     "Open with the OFFER: the first sentence after the greeting offers to do it for them, in plain words. Move anything else after it.",
 };
 
+/** The `signoff-subject` repair for a workspace whose `subjectCase` is not `lowercase`. */
+const SIGNOFF_SUBJECT_REPAIR_ANY_CASE =
+  "Replace the subject with 2-5 words naming the offer or their work, in their terms, cased as the SUBJECT CASE line says. Never a sign-off such as ending, closing or following up.";
+
 /** One bounded rewrite with the original context; revalidate every check before adopting it. */
 export async function repairWritingLints(
   messages: DraftMessages,
@@ -1305,6 +1399,8 @@ export async function repairWritingLints(
       (Object.hasOwn(WRITING_REPAIRS, flag) || SLOP_PHRASES.some(([, label]) => label === flag)),
   );
   if (!problems.length) return draft;
+  // A workspace off the lowercase subject rule gets the sign-off repair without it.
+  const subjectCase = subjectCaseOf(loadConfig());
   const instructions = problems.map((flag) => {
     const patterns = SLOP_PHRASES.filter(([, label]) => label === flag);
     const excerpts =
@@ -1313,7 +1409,11 @@ export async function repairWritingLints(
         : flag === "signoff-body"
           ? signoffExcerpts(draft.body, opts.hardBanAllow)
           : patterns.flatMap(([pattern]) => draft.body.match(pattern)?.[0] ?? []);
-    return `${flag}: ${WRITING_REPAIRS[flag] ?? "Rewrite the flagged wording in plain, direct language. Follow the original writing constraints."}${excerpts.length ? ` Matched text (quoted draft data): ${JSON.stringify(excerpts)}.` : ""}`;
+    const repair =
+      flag === "signoff-subject" && subjectCase !== "lowercase"
+        ? SIGNOFF_SUBJECT_REPAIR_ANY_CASE
+        : WRITING_REPAIRS[flag];
+    return `${flag}: ${repair ?? "Rewrite the flagged wording in plain, direct language. Follow the original writing constraints."}${excerpts.length ? ` Matched text (quoted draft data): ${JSON.stringify(excerpts)}.` : ""}`;
   });
   const mayChangeSubject = problems.some(
     (f) =>
@@ -1676,7 +1776,7 @@ const HONORIFIC_TOKENS = new Set([
   "sr",
   "jr.",
   "jr",
-  // "Md. Naimur Rahman": Mohammed, abbreviated; common in South Asian names.
+  // "Md.": Mohammed, abbreviated; common in South Asian names.
   "md.",
   "md",
   "eng.",
@@ -1685,8 +1785,8 @@ const HONORIFIC_TOKENS = new Set([
   "sir",
 ]);
 
-// An opening token that is a role or mailbox, not a person. "Hey CEO," went
-// out once; that is the bar for this list.
+// An opening token that is a role or mailbox, not a person: a greeting
+// like "Hey CEO," is the failure this list exists to prevent.
 const ROLE_TOKENS = new Set([
   "ceo",
   "cto",
@@ -1766,8 +1866,8 @@ export function firstNameFrom(name: string | null | undefined): string | null {
   if (trimmed.length === 0 || trimmed === "(unknown)") return null;
   const tokens = trimmed.split(/\s+/);
 
-  // Company, not a person: any org word anywhere ("Bytedance Inc.", "Megabyte
-  // Labs") or a glued org/domain suffix ("MyriaLabs", "Arcade.dev").
+  // Company, not a person: any org word anywhere ("Acme Inc.", "Beacon
+  // Labs") or a glued org/domain suffix ("BeaconLabs", "Acme.dev").
   if (tokens.some((t) => ORG_TOKENS.has(t.replace(/,$/, "").toLowerCase()))) return null;
   if (tokens.some((t) => ORG_SUFFIX_RE.test(t.replace(/,$/, "")))) return null;
 
@@ -1800,7 +1900,7 @@ export function firstNameFrom(name: string | null | undefined): string | null {
     first = first[0]! + first.slice(1).toLowerCase();
   }
 
-  // Handle-looking inputs ("schen", "samaralihussain") almost always come from
+  // Handle-looking inputs ("schen", "samdoe42") almost always come from
   // a finder pre-screen failure; greeting "Hey schen," is worse than no greeting.
   if (!/^[A-Z]/.test(first)) return null;
   return first;
