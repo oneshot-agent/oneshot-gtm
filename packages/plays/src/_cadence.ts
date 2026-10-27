@@ -17,7 +17,6 @@ import {
   readPersonHalf,
   parallelMap,
   cadenceGoalId,
-  receiptUrlForId,
   sendEmail,
   sendSms,
   tagOutcomeValue,
@@ -1314,7 +1313,11 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
     clean: true,
     details: [],
   };
-  const { bounces, failedSources } = await listBounces();
+  // The mailbox source windows on when a notice was stored, not on its own
+  // date, so one a backfill imports long after it was sent is still read. Only
+  // a polling outage longer than this window can leave a notice unread.
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const { bounces, failedSources } = await listBounces({ since });
   out.polled = bounces.length;
   out.clean = failedSources.length === 0;
 
@@ -1330,8 +1333,8 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
       prospectId: prospect?.id ?? null,
       bouncedAt: b.bouncedAt,
     });
-    // The sweep re-reads a 30-day window every tick, so most of what comes back
-    // was handled days ago. Acting only on first sight keeps the cadence writes
+    // Every source re-reads the explicit 30-day window each tick, so most results
+    // were handled days ago. Acting only on first sight keeps the cadence writes
     // and event log from repeating forever.
     if (!isNew) continue;
     out.recorded++;
@@ -3301,10 +3304,6 @@ export function buildVoiceStep(opts: {
       ...(opts.maxDurationMinutes ? { maxDurationMinutes: opts.maxDurationMinutes } : {}),
     };
   };
-}
-
-export function receiptUrlsForCadence(receiptIds: number[]): string[] {
-  return receiptIds.map(receiptUrlForId);
 }
 
 /** Calls OneShot as a given workspace (the owner of the LinkedIn account). */
