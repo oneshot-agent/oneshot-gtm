@@ -77,9 +77,10 @@ describe("templateProblems", () => {
     expect(templateProblems("note", "Hi {First_Name}")).toEqual([
       "unknown placeholder {First_Name}",
     ]);
-    expect(templateProblems("note", "Hi {name2}, {first-name}")).toEqual([
+    expect(templateProblems("note", "Hi {name2}, {first-name}, {first.name}")).toEqual([
       "unknown placeholder {name2}",
       "unknown placeholder {first-name}",
+      "unknown placeholder {first.name}",
     ]);
     expect(renderLinkedInTemplate("Hi {First_Name}", dana)).toEqual({ missing: ["First_Name"] });
   });
@@ -105,6 +106,13 @@ describe("chooseLinkedInTemplate", () => {
       text: "yo Dana",
       step: "firstMessage",
       source: "workspace",
+      usesEvidence: false,
+    });
+    expect(chooseLinkedInTemplate("note", {}, dana)).toMatchObject({ usesEvidence: true });
+    // A workspace note that never names the evidence didn't use it.
+    expect(chooseLinkedInTemplate("note", { note: "hey {first_name}." }, dana)).toMatchObject({
+      step: "note",
+      usesEvidence: false,
     });
     // The workspace's first message wants an offer this person doesn't have.
     expect(

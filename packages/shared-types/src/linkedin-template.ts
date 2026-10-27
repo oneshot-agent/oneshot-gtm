@@ -101,9 +101,9 @@ export const DEFAULT_LINKEDIN_TEMPLATES: Readonly<Record<LinkedInTemplateStep, s
   friendNote: "Hi {first_name}, we traded emails, so connecting here so the next hello isn't cold.",
 };
 
-// Any brace-wrapped name, so a mistyped one ({First_Name}, {name2}) is
+// Any brace-wrapped name, so a mistyped one ({First_Name}, {name2}, {first.name}) is
 // refused on save and never sent as literal braces.
-const PLACEHOLDER_RX = /\{([A-Za-z0-9_-]+)\}/g;
+const PLACEHOLDER_RX = /\{([A-Za-z0-9_.-]+)\}/g;
 const KNOWN: ReadonlySet<string> = new Set<LinkedInTemplatePlaceholder>([
   "first_name",
   "evidence",
@@ -198,6 +198,8 @@ export interface ChosenLinkedInTemplate {
   step: LinkedInTemplateStep;
   /** `workspace` when the workspace's own text was used, else `default`. */
   source: "workspace" | "default";
+  /** Whether the text that was filled in carries `{evidence}`. */
+  usesEvidence: boolean;
 }
 
 /** The step a kind of touch uses, given what is known about the person. */
@@ -234,7 +236,10 @@ export function chooseLinkedInTemplate(
   candidates.push({ template: DEFAULT_LINKEDIN_TEMPLATES[step], source: "default" });
   for (const { template, source } of candidates) {
     const rendered = renderLinkedInTemplate(template, facts);
-    if ("text" in rendered) return { text: rendered.text, step, source };
+    if ("text" in rendered) {
+      const usesEvidence = templatePlaceholders(template).includes("evidence");
+      return { text: rendered.text, step, source, usesEvidence };
+    }
   }
   // Unreachable with the shipped defaults; kept so a bad default can't send braces.
   throw new Error(`no LinkedIn template fills for ${step}`);

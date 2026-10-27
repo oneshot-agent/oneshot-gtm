@@ -158,7 +158,8 @@ export async function draftLinkedInNote(
       flags: noteFlags(row, templated.text, maxChars, []),
       voiceKey: null,
       learningKey: null,
-      evidenceClause: templated.step === "note",
+      // Recorded for the funnel: whether the note sent actually names why.
+      evidenceClause: templated.usesEvidence,
     };
   }
   const voice = voiceBlock("intro");
