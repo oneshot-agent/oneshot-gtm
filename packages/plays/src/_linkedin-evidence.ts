@@ -651,7 +651,7 @@ export function lintLinkedInFirstMessage(
 const ALREADY_CONNECTED_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
   ["thanks for connecting", /\bthank(?:s|\s+you)\b[^.?!\n]{0,30}\b(?:connect|accept)/i],
   ["connection request", /\bconnection\s+request/i],
-  ["invite", /\b(?:my|the|your|our)\s+(?:invite|invitation)\b/i],
+  ["invite", /\b(?:an|my|the|your|our)\s+(?:invite|invitation)\b|\binvited\s+you\b/i],
   ["accepted", /\baccept(?:ed|ing)\s+(?:my|the|our)\s+(?:connection|invite|invitation|request)\b/i],
   [
     "glad we connected",
