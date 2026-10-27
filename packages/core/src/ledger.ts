@@ -136,7 +136,7 @@ import { CodeAnswerStore } from "./code-answers-store.ts";
 import { SendDeliveryStore } from "./ledger-delivery.ts";
 import { OutboundSendStore } from "./ledger-outbound.ts";
 import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.ts";
-import { QueueStore } from "./ledger-queue.ts";
+import { prospectHasReplied as queueProspectHasReplied, QueueStore } from "./ledger-queue.ts";
 import {
   appendRunEvent as runAppendRunEvent,
   cancelRun as runCancelRun,
@@ -1854,8 +1854,15 @@ export class Ledger {
     return this.queue.getQueueRowByDedupe(playName, dedupeKey);
   }
 
+  /** @see ledger-queue.ts#QueueStore.listQueue (`columns` projects the read, issue #929) */
   listQueue(
-    opts: { playName?: string; status?: QueueStatus; limit?: number; ids?: number[] } = {},
+    opts: {
+      playName?: string;
+      status?: QueueStatus;
+      limit?: number;
+      ids?: number[];
+      columns?: readonly string[];
+    } = {},
   ): QueueRow[] {
     return this.queue.listQueue(opts);
   }
@@ -1867,6 +1874,11 @@ export class Ledger {
   /** Queue rows by id, for a page at once: keyed by id; a missing id is absent. */
   getQueueRowsByIds(ids: readonly number[]): Map<number, QueueRow> {
     return this.queue.getQueueRowsByIds(ids);
+  }
+
+  /** @see ledger-queue.ts#prospectHasReplied */
+  prospectHasReplied(prospectId: number): boolean {
+    return queueProspectHasReplied(this.db, prospectId);
   }
 
   /** @see ledger-queue.ts#QueueStore.getQueueRowForProspect */
