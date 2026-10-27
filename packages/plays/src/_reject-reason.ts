@@ -18,9 +18,6 @@ import { isDecisionReason, type DecisionReason } from "@oneshot-gtm/shared-types
 import { describeTargetForAngle } from "./_angles.ts";
 import { normalizeFitReason } from "./_fit-reason.ts";
 
-/** Same order of magnitude as `FIT_REASON_COST_ESTIMATE_USD`: one small completion. */
-export const REJECT_REASON_COST_ESTIMATE_USD = 0.001;
-
 export interface GenerateRejectReasonInput {
   /** The founder's ICP one-liner; null/blank → no call, null result. */
   icp?: string | null;

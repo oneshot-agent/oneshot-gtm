@@ -24,8 +24,6 @@ export interface LogisticFit {
 export interface FitOptions {
   /** L2 strength (bias unpenalized). */
   lambda?: number;
-  iterations?: number;
-  learningRate?: number;
 }
 
 function sigmoid(z: number): number {
@@ -34,8 +32,8 @@ function sigmoid(z: number): number {
 
 export function fitLogistic(xs: number[][], ys: Array<0 | 1>, opts: FitOptions = {}): LogisticFit {
   const lambda = opts.lambda ?? 1.0;
-  const iterations = opts.iterations ?? 500;
-  const learningRate = opts.learningRate ?? 0.5;
+  const iterations = 500;
+  const learningRate = 0.5;
   const n = xs.length;
   if (n === 0 || n !== ys.length) throw new Error("fitLogistic: empty or mismatched inputs");
   const d = xs[0]!.length;

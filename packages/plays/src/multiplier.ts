@@ -15,14 +15,6 @@ import { enrolledMemberOffer } from "./_member-offer.ts";
 /** The kinds of organization that serve many of a founder's buyers at once. */
 export type MultiplierOrgType = "accelerator" | "association" | "agency" | "community" | "other";
 
-export const MULTIPLIER_ORG_TYPES: readonly MultiplierOrgType[] = [
-  "accelerator",
-  "association",
-  "agency",
-  "community",
-  "other",
-];
-
 export interface MultiplierTarget {
   /** The organization that serves the founder's buyers. */
   organization: string;
