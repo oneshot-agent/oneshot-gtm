@@ -1849,13 +1849,19 @@ export function offerHoldsSend(offer: unknown): boolean {
  * preference.
  *
  * `anchor` absent reads as unknown, not as `firm`, so a set written before
- * the writer emitted the field keeps its order exactly.
+ * the writer emitted the field keeps its order exactly. An offer the judge
+ * gave no verdict on is unknown too: `judgeAndReplace` keeps it (a missing
+ * judgement is not a failure), but it was never assessed, so it holds its
+ * place rather than overtaking one that passed.
  */
 export function preferProductAnchor<
   T extends Pick<ProspectOffer, "offer" | "steps" | "anchor" | "relevance">,
 >(offers: readonly T[], anchor: OfferAnchor): T[] {
   if (anchor !== "prefer-product") return [...offers];
-  const leads = (o: T): boolean => o.anchor === "product" && !offerHoldsSend(o);
+  // `relevance` set means the judge assessed it; `!offerHoldsSend` then means
+  // it may go out, which keeps the founder's approval of a weak offer working.
+  const leads = (o: T): boolean =>
+    o.anchor === "product" && o.relevance !== undefined && !offerHoldsSend(o);
   return [...offers.filter(leads), ...offers.filter((o) => !leads(o))];
 }
 

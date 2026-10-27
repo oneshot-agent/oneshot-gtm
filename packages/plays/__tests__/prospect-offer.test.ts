@@ -1836,6 +1836,27 @@ describe("offer anchor", () => {
     expect(preferProductAnchor(unanchored, "prefer-product")).toEqual(unanchored);
   });
 
+  it("an offer the judge gave no verdict on holds its place, never overtaking one that passed", async () => {
+    const { preferProductAnchor } = await import("../src/_prospect-offer.ts");
+    // judgeAndReplace keeps an offer with no judgement (a missing verdict is
+    // not a failure), so it reaches here with `relevance` unset. Unassessed is
+    // not passing: it must not lead a firm offer the judge actually passed.
+    const set = [
+      { ...firm, relevance: "relevant" as const },
+      { ...product, offer: "unjudged" },
+    ];
+    expect(preferProductAnchor(set, "prefer-product").map((o) => o.offer)).toEqual([
+      firm.offer,
+      "unjudged",
+    ]);
+    // It keeps its place among other unjudged ones rather than being demoted.
+    const none = [{ ...firm }, { ...product, offer: "unjudged" }];
+    expect(preferProductAnchor(none, "prefer-product").map((o) => o.offer)).toEqual([
+      firm.offer,
+      "unjudged",
+    ]);
+  });
+
   it("a founder-approved weak product offer leads; an edited one is not held back", async () => {
     const { preferProductAnchor } = await import("../src/_prospect-offer.ts");
     const firmFirst = { ...firm, relevance: "relevant" as const };
