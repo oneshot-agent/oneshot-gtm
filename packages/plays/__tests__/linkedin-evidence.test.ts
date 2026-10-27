@@ -685,6 +685,8 @@ describe("lintAlreadyConnected", () => {
       ["Following up on my invite: what is the team building?", "invite"],
       ["I sent an invite last week. What are you shipping?", "invite"],
       ["I invited you a while ago. What are you on now?", "invite"],
+      ["I sent a connection invite last week. What are you shipping?", "invite"],
+      ["Sent you a LinkedIn invitation earlier; what are you building?", "invite"],
       ["Appreciate you accepting my invitation.", "accepted"],
       ["Glad we connected here. What are you on now?", "glad we connected"],
       ["Great to be connected. What are you building?", "glad we connected"],
