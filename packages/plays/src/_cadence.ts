@@ -17,7 +17,6 @@ import {
   readPersonHalf,
   parallelMap,
   cadenceGoalId,
-  receiptUrlForId,
   sendEmail,
   sendSms,
   tagOutcomeValue,
@@ -62,6 +61,7 @@ import {
   agedEvidence,
   companyTheyRun,
   draftWithRepair,
+  lintAlreadyConnected,
   lintLinkedInClose,
   lintLinkedInFirstMessage,
   profileViewReader,
@@ -90,6 +90,7 @@ import {
   LINKEDIN_INVITE_TIMEOUT_DAYS,
   linkedInSenderFor,
   linkedInWaitingSince,
+  liveLinkedInInvite,
   resolveLinkedInInvite,
   storedLinkedInConversation,
 } from "./_linkedin-invites.ts";
@@ -1314,7 +1315,11 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
     clean: true,
     details: [],
   };
-  const { bounces, failedSources } = await listBounces();
+  // The mailbox source windows on when a notice was stored, not on its own
+  // date, so one a backfill imports long after it was sent is still read. Only
+  // a polling outage longer than this window can leave a notice unread.
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const { bounces, failedSources } = await listBounces({ since });
   out.polled = bounces.length;
   out.clean = failedSources.length === 0;
 
@@ -1330,8 +1335,8 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
       prospectId: prospect?.id ?? null,
       bouncedAt: b.bouncedAt,
     });
-    // The sweep re-reads a 30-day window every tick, so most of what comes back
-    // was handled days ago. Acting only on first sight keeps the cadence writes
+    // Every source re-reads the explicit 30-day window each tick, so most results
+    // were handled days ago. Acting only on first sight keeps the cadence writes
     // and event log from repeating forever.
     if (!isNew) continue;
     out.recorded++;
@@ -3303,10 +3308,6 @@ export function buildVoiceStep(opts: {
   };
 }
 
-export function receiptUrlsForCadence(receiptIds: number[]): string[] {
-  return receiptIds.map(receiptUrlForId);
-}
-
 /** Calls OneShot as a given workspace (the owner of the LinkedIn account). */
 export type LinkedInCaller = (workspace: string, operation: LinkedInOperation) => Promise<unknown>;
 
@@ -3738,8 +3739,13 @@ async function buildLinkedInMessage(
 ): Promise<StepPayload | null> {
   const ledger = getLedger();
   const events = ledger.listSequenceEventsForProspectPlay(ctx.prospect.id, playName);
+  // Connected before this sequence: the invite created no request, so its note
+  // was never delivered, and nobody "accepted" anything.
+  const invite = liveLinkedInInvite(ctx.prospect.id, playName);
+  const alreadyConnected = invite?.alreadyConnected === true;
   const prior = events
     .filter((e) => e.channel === "linkedin" && e.status === "sent")
+    .filter((e) => !(alreadyConnected && undeliveredInviteNote(e, invite!.event.id)))
     .map((e) => {
       try {
         const m = JSON.parse(e.metadata_json ?? "{}") as { body?: unknown; note?: unknown };
@@ -3795,7 +3801,18 @@ async function buildLinkedInMessage(
           "PRIOR_CONTACT: they were emailed on this and did not reply. Don't re-pitch and don't refer to the unanswered email.",
         ]
       : []),
-    `MESSAGE: ${which === "first" ? "first message after they accepted the connection request" : "last message — a short, graceful close"}`,
+    ...(alreadyConnected
+      ? [
+          "ALREADY_CONNECTED: you were already connected on LinkedIn before this sequence; no connection request was sent or accepted.",
+        ]
+      : []),
+    `MESSAGE: ${
+      which === "first"
+        ? alreadyConnected
+          ? "first message on LinkedIn — you were already connected"
+          : "first message after they accepted the connection request"
+        : "last message — a short, graceful close"
+    }`,
     ...(which === "last" ? closeGuidance(role) : []),
     "PRIOR TOUCHES:",
     ...(prior.length > 0 ? prior.map((l) => `  ${l}`) : ["  (none recorded)"]),
@@ -3808,10 +3825,14 @@ async function buildLinkedInMessage(
   const drafted = await draftWithRepair({
     system: loadPrompt("linkedin-message"),
     context: input,
-    lint:
-      which === "first"
-        ? (text) => lintLinkedInFirstMessage(text, { clause })
-        : (text) => lintLinkedInClose(text, { context: input, clause }),
+    lint: (text) => [
+      ...(which === "first"
+        ? lintLinkedInFirstMessage(text, { clause })
+        : lintLinkedInClose(text, { context: input, clause })),
+      // The prompt tells the model not to thank them for connecting; this holds
+      // it to that, through a repair round, on the already-connected path only.
+      ...(alreadyConnected ? lintAlreadyConnected(text) : []),
+    ],
     maxTokens: 700,
   });
   const text = drafted.text;
@@ -3824,6 +3845,26 @@ async function buildLinkedInMessage(
         ...(learned ? { learningKey: learned.key } : {}),
       }
     : null;
+}
+
+/**
+ * An invite that answered `already_connected`, so LinkedIn delivered no note:
+ * the one the decision was read from, or any other that answered the same.
+ * Matched on `inviteStatus` alone, which only invite events carry: invites
+ * recorded before the `kind` marker existed have the status but no `kind`, and
+ * the decision (`liveLinkedInInvite`) reads them all the same.
+ */
+function undeliveredInviteNote(
+  e: { id: number; metadata_json: string | null },
+  decidedBy: number,
+): boolean {
+  if (e.id === decidedBy) return true;
+  try {
+    const m = JSON.parse(e.metadata_json ?? "{}") as { inviteStatus?: unknown };
+    return m.inviteStatus === "already_connected";
+  } catch {
+    return false;
+  }
 }
 
 /** The title the dossier's person record carries, for a prospect row with none. */

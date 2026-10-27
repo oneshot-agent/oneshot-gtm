@@ -34,6 +34,7 @@ const {
   companyTheyRun,
   draftWithRepair,
   isFounderTitle,
+  lintAlreadyConnected,
   lintLinkedInClose,
   lintLinkedInFirstMessage,
   lintLinkedInNote,
@@ -672,5 +673,45 @@ describe("repair turn", () => {
     expect(completions).toHaveLength(2);
     expect(out.text).toBe("two");
     expect(out.flags).toContainEqual(expect.stringMatching(/^questions/));
+  });
+});
+
+describe("lintAlreadyConnected", () => {
+  it("flags the framing of a request they never received", () => {
+    for (const [text, label] of [
+      ["Thanks for connecting — how is review going?", "thanks for connecting"],
+      ["Thank you for accepting. What are you shipping?", "thanks for connecting"],
+      ["Thanks for adding me on LinkedIn — what are you building?", "thanks for connecting"],
+      ["Thanks for the add! What are you shipping these days?", "thanks for connecting"],
+      ["Saw you got my connection request a while back.", "connection request"],
+      ["Following up on my invite: what is the team building?", "invite"],
+      ["I sent an invite last week. What are you shipping?", "invite"],
+      ["I invited you a while ago. What are you on now?", "invite"],
+      ["I sent a connection invite last week. What are you shipping?", "invite"],
+      ["Sent you a LinkedIn invitation earlier; what are you building?", "invite"],
+      ["Appreciate you accepting my invitation.", "accepted"],
+      ["Glad we connected here. What are you on now?", "glad we connected"],
+      ["Great to be connected. What are you building?", "glad we connected"],
+    ] as const) {
+      // A sentence can match more than one pattern ("accepting my invitation" is
+      // both an acceptance and an invite); any flag sends the draft to repair.
+      expect(lintAlreadyConnected(text), text).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(new RegExp(`^already-connected: "${label}"`)),
+        ]),
+      );
+    }
+  });
+
+  it("leaves product talk about connecting things alone", () => {
+    for (const text of [
+      "We connect agents to the tools your team already uses. What are you building?",
+      "Northwind's workers stay connected to the queue under backpressure, right?",
+      "How do you connect a run's retries into one trace today?",
+      "What are you building at Brightkiln right now?",
+      "Thanks — what address does the team ship invoices from?",
+    ]) {
+      expect(lintAlreadyConnected(text), text).toEqual([]);
+    }
   });
 });

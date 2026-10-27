@@ -1,5 +1,5 @@
 import { currentWorkspaceName, linkedInSdk } from "@oneshot-gtm/core";
-import { advanceCadence, receiptUrlsForCadence } from "@oneshot-gtm/plays";
+import { advanceCadence, receiptUrls } from "@oneshot-gtm/plays";
 import { c, header, note, ok } from "../output.ts";
 
 export async function commandCadenceAdvance(opts: { dryRun: boolean }): Promise<void> {
@@ -45,7 +45,7 @@ export async function commandCadenceAdvance(opts: { dryRun: boolean }): Promise<
       `  ${action.padEnd(20)} ${subject}${d.note ? c.dim(" — " + d.note) : ""}\n`,
     );
     if (d.receiptIds.length > 0) {
-      const urls = receiptUrlsForCadence(d.receiptIds);
+      const urls = receiptUrls(d.receiptIds);
       process.stdout.write(`    ${c.dim("receipts:")} ${urls.map((u) => c.dim(u)).join(" ")}\n`);
     }
   }
