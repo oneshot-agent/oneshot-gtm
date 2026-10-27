@@ -5,6 +5,9 @@ import type { ProductResearchDossier } from "./dossier.ts";
 import type { SharedPerson } from "./shared-people.ts";
 import type { ProspectRecord } from "./types.ts";
 
+/** How many ids one `IN (...)` statement binds: well under SQLite's variable limit. */
+const IN_CHUNK = 400;
+
 /**
  * Prospect persistence, dossier updates, ICP verdicts, AND shared-person
  * identity resolution (issue #751 round-1 correction: this used to say
@@ -326,6 +329,24 @@ export class ProspectStore {
    */
   getProspectRow(id: number): ProspectRecord | null {
     return this.db.query("SELECT * FROM prospects WHERE id = ?").get(id) as ProspectRecord | null;
+  }
+
+  /**
+   * Raw prospect rows for a set of ids at once (#935): one `IN (...)` read
+   * per chunk of ids, Map keyed by id, no mail address and no
+   * shared-identity resolution (`Ledger.listProspectsByIds` adds the
+   * latter, as `getProspectById` does for one row). A missing id has no entry.
+   */
+  getProspectRows(ids: readonly number[]): Map<number, ProspectRecord> {
+    const map = new Map<number, ProspectRecord>();
+    for (let i = 0; i < ids.length; i += IN_CHUNK) {
+      const part = ids.slice(i, i + IN_CHUNK);
+      const rows = this.db
+        .query(`SELECT * FROM prospects WHERE id IN (${part.map(() => "?").join(",")})`)
+        .all(...part) as ProspectRecord[];
+      for (const r of rows) map.set(r.id, r);
+    }
+    return map;
   }
 
   /**

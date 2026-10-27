@@ -409,7 +409,13 @@ function cadenceIndex(
   return byEmail;
 }
 
-/** Assemble one ConversationView per prospect with at least one persisted reply. */
+/**
+ * Assemble one ConversationView per prospect with at least one persisted
+ * reply. What the list needs per prospect (the prospect row, its persisted
+ * inbound replies, its sent outreach steps) is read for every replying
+ * prospect at once, so a conversation's view reads none of it again (#935):
+ * the reads are constant in the number of prospects, not three per prospect.
+ */
 function buildConversations(
   ledger: ReturnType<typeof getLedger>,
   byEmail: Map<
@@ -421,14 +427,18 @@ function buildConversations(
 ): ConversationView[] {
   const out: ConversationView[] = [];
   const archives = ledger.listInboxArchives();
-  for (const prospectId of ledger.listProspectIdsWithReplies()) {
-    const prospect = ledger.getProspectById(prospectId);
+  const prospectIds = ledger.listProspectIdsWithReplies();
+  const prospects = ledger.listProspectsByIds(prospectIds);
+  const inboundByProspect = ledger.listInboxRepliesForProspects(prospectIds);
+  const eventsByProspect = ledger.listSequenceEventsForProspects(prospectIds);
+  for (const prospectId of prospectIds) {
+    const prospect = prospects.get(prospectId);
     if (!prospect?.email) continue;
-    const inbound = ledger.listInboxRepliesForProspect(prospectId);
+    const inbound = inboundByProspect.get(prospectId) ?? [];
     if (inbound.length === 0) continue;
 
     const items: ConversationItem[] = [];
-    for (const ev of ledger.listSequenceEventsForProspect(prospectId)) {
+    for (const ev of eventsByProspect.get(prospectId) ?? []) {
       if (ev.channel !== "email") continue;
       let subject: string | null = null;
       let body: string | null = null;

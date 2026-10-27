@@ -51,6 +51,7 @@ import {
   listAllSequenceEventsForProspect as cadListAllSequenceEventsForProspect,
   listChannelEventsForProspect as cadListChannelEventsForProspect,
   listSequenceEventsForProspect as cadListSequenceEventsForProspect,
+  listSequenceEventsForProspects as cadListSequenceEventsForProspects,
   postponeCadence as cadPostponeCadence,
   listLinkedInInviteEvents as cadListLinkedInInviteEvents,
   listLinkedInInviteCadences as cadListLinkedInInviteCadences,
@@ -994,10 +995,30 @@ export class Ledger {
     return this.inbox.listProspectIdsWithReplies();
   }
 
+  /** @see ledger-inbox.ts#InboxStore.listInboxRepliesForProspects */
+  listInboxRepliesForProspects(prospectIds: readonly number[]): Map<number, InboxReplyRecord[]> {
+    return this.inbox.listInboxRepliesForProspects(prospectIds);
+  }
+
   /** Full prospect record by id (PK seek). Avoids loading every prospect to find one. */
   getProspectById(id: number): ProspectRecord | null {
     const prospect = this.prospects.withSharedIdentity(this.prospects.getProspectRow(id));
     return this.prospects.attachMailAddress(prospect, id);
+  }
+
+  /**
+   * `getProspectById` for a set of ids at once (#935): one read per chunk of
+   * ids, then the shared-identity overlay per row. No mail address: the
+   * inbox's conversation list, the one reader, shows name, company, email
+   * and source only. A missing id has no entry.
+   */
+  listProspectsByIds(ids: readonly number[]): Map<number, ProspectRecord> {
+    const out = new Map<number, ProspectRecord>();
+    for (const [id, row] of this.prospects.getProspectRows(ids)) {
+      const prospect = this.prospects.withSharedIdentity(row);
+      if (prospect) out.set(id, prospect);
+    }
+    return out;
   }
 
   /**
@@ -1609,6 +1630,13 @@ export class Ledger {
   /** @see ledger-cadence.ts#listSequenceEventsForProspect */
   listSequenceEventsForProspect(prospectId: number): SequenceEventRecord[] {
     return cadListSequenceEventsForProspect(this.db, prospectId);
+  }
+
+  /** @see ledger-cadence.ts#listSequenceEventsForProspects */
+  listSequenceEventsForProspects(
+    prospectIds: readonly number[],
+  ): Map<number, SequenceEventRecord[]> {
+    return cadListSequenceEventsForProspects(this.db, prospectIds);
   }
 
   /** @see ledger-cadence.ts#listSequenceEventsForCadences */

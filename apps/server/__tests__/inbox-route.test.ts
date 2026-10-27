@@ -12,7 +12,10 @@ const setInboxDraftBodyMock = vi.fn();
 const recordProspectReplyMock = vi.fn(() => []);
 const listProspectIdsWithRepliesMock = vi.fn((): number[] => []);
 const listInboxRepliesForProspectMock = vi.fn((): unknown[] => []);
-const listSequenceEventsForProspectMock = vi.fn((): unknown[] => []);
+// The conversation list's page reads (#935): one Map per read, keyed by prospect id.
+const listProspectsByIdsMock = vi.fn((): Map<number, unknown> => new Map());
+const listInboxRepliesForProspectsMock = vi.fn((): Map<number, unknown[]> => new Map());
+const listSequenceEventsForProspectsMock = vi.fn((): Map<number, unknown[]> => new Map());
 const recordInboxReplyMock = vi.fn(() => true);
 const getProspectByIdMock = vi.fn((): unknown => null);
 const listInboxReplyIntentsMock = vi.fn(() => new Map());
@@ -44,7 +47,9 @@ const ledger = {
   // mockReturnValueOnce (one-shot, so nothing leaks across tests).
   listProspectIdsWithReplies: listProspectIdsWithRepliesMock,
   listInboxRepliesForProspect: listInboxRepliesForProspectMock,
-  listSequenceEventsForProspect: listSequenceEventsForProspectMock,
+  listProspectsByIds: listProspectsByIdsMock,
+  listInboxRepliesForProspects: listInboxRepliesForProspectsMock,
+  listSequenceEventsForProspects: listSequenceEventsForProspectsMock,
   recordInboxReply: recordInboxReplyMock,
   getProspectById: getProspectByIdMock,
   getProspectByEmail: getProspectByEmailMock,
@@ -313,39 +318,60 @@ describe("inbox route — persisted drafts & sent replies", () => {
     );
     inboxArchivesMock.mockReturnValueOnce(new Map([[7, "2026-09-09T12:00:00Z"]]));
     listProspectIdsWithRepliesMock.mockReturnValueOnce([7]);
-    getProspectByIdMock.mockReturnValueOnce({
-      id: 7,
-      name: "Coder",
-      email: "coder@x.example",
-      company: "OGs",
-      source: "stack-consolidation",
-    });
-    listInboxRepliesForProspectMock.mockReturnValueOnce([
-      {
-        id: "m1",
-        thread_key: "t1",
-        prospect_id: 7,
-        play_name: "stack-consolidation",
-        from_email: "coder@x.example",
-        subject: "Re: stack thing",
-        body: "It's sdk maintenance",
-        received_at: "2026-08-25T22:38:09.000Z",
-        source_identity_id: "gmail:me@x.com",
-        thread_id: "t1",
-        message_id: "<m1@mail>",
-      },
-    ]);
-    listSequenceEventsForProspectMock.mockReturnValueOnce([
-      {
-        prospect_id: 7,
-        play_name: "stack-consolidation",
-        step_index: 0,
-        channel: "email",
-        status: "replied",
-        metadata_json: JSON.stringify({ subject: "stack thing", body: "outreach body" }),
-        created_at: "2026-08-24 10:00:00",
-      },
-    ]);
+    listProspectsByIdsMock.mockReturnValueOnce(
+      new Map([
+        [
+          7,
+          {
+            id: 7,
+            name: "Coder",
+            email: "coder@x.example",
+            company: "OGs",
+            source: "stack-consolidation",
+          },
+        ],
+      ]),
+    );
+    listInboxRepliesForProspectsMock.mockReturnValueOnce(
+      new Map([
+        [
+          7,
+          [
+            {
+              id: "m1",
+              thread_key: "t1",
+              prospect_id: 7,
+              play_name: "stack-consolidation",
+              from_email: "coder@x.example",
+              subject: "Re: stack thing",
+              body: "It's sdk maintenance",
+              received_at: "2026-08-25T22:38:09.000Z",
+              source_identity_id: "gmail:me@x.com",
+              thread_id: "t1",
+              message_id: "<m1@mail>",
+            },
+          ],
+        ],
+      ]),
+    );
+    listSequenceEventsForProspectsMock.mockReturnValueOnce(
+      new Map([
+        [
+          7,
+          [
+            {
+              prospect_id: 7,
+              play_name: "stack-consolidation",
+              step_index: 0,
+              channel: "email",
+              status: "replied",
+              metadata_json: JSON.stringify({ subject: "stack thing", body: "outreach body" }),
+              created_at: "2026-08-24 10:00:00",
+            },
+          ],
+        ],
+      ]),
+    );
 
     const res = await listInboxRoute(new Request("http://localhost/api/inbox"));
     const out = (await res.json()) as {
@@ -378,22 +404,27 @@ describe("inbox route — persisted drafts & sent replies", () => {
     listInboxMock.mockResolvedValue({ emails: [] });
     getInboxThreadsMock.mockReturnValue(new Map());
     listProspectIdsWithRepliesMock.mockReturnValueOnce([7]);
-    getProspectByIdMock.mockReturnValueOnce({
-      id: 7,
-      name: "Coder",
-      email: "coder@x.example",
-      company: "OGs",
-      source: "show-hn",
-    });
-    listInboxRepliesForProspectMock.mockReturnValueOnce([
-      {
-        id: "m1",
-        thread_key: "t1",
-        prospect_id: 7,
-        received_at: "2026-09-07T10:00:00.000Z",
-        intent: "interested",
-      },
-    ]);
+    listProspectsByIdsMock.mockReturnValueOnce(
+      new Map([
+        [7, { id: 7, name: "Coder", email: "coder@x.example", company: "OGs", source: "show-hn" }],
+      ]),
+    );
+    listInboxRepliesForProspectsMock.mockReturnValueOnce(
+      new Map([
+        [
+          7,
+          [
+            {
+              id: "m1",
+              thread_key: "t1",
+              prospect_id: 7,
+              received_at: "2026-09-07T10:00:00.000Z",
+              intent: "interested",
+            },
+          ],
+        ],
+      ]),
+    );
     listLatestOutcomeRecordedAtByProspectMock.mockReturnValueOnce(
       new Map(recordedAt == null ? [] : [[7, recordedAt]]),
     );
