@@ -78,6 +78,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 const {
   countLiveReadsWaiting,
   listLiveReadRows,
+  liveReadOffByPlay,
   selectCadenceRefreshCandidates,
   selectLiveSweepCandidates,
   sweepLiveProfiles,
@@ -301,7 +302,10 @@ describe("countLiveReadsWaiting", () => {
       }),
     ];
     const projected = listLiveReadRows(getLedger());
-    const off = (play: string) => play === "github-stars";
+    triggers = [
+      { name: "github-stars", config_json: JSON.stringify({ linkedinProfileRead: false }) },
+    ];
+    const off = liveReadOffByPlay(getLedger());
     expect(countLiveReadsWaiting(projected, off)).toBe(countLiveReadsWaiting(queue as never, off));
     expect(countLiveReadsWaiting(projected, off)).toBe(18);
     const now = Date.now();

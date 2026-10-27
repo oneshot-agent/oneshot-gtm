@@ -69,6 +69,34 @@ export type LiveSweepRow = Pick<
   "id" | "play_name" | "payload_json" | "status" | "sent_at" | "send_started_at"
 >;
 
+// These are the URL candidates in personSeedFor, in its original payload
+// shape. Non-string values cannot be seeds, so do not materialise them.
+const textAt = (path: string) =>
+  `CASE WHEN json_type(payload_json, '${path}') = 'text'
+    THEN json_extract(payload_json, '${path}') END`;
+const urls = [
+  "linkedinUrl",
+  "sourceProfileUrl",
+  "profileUrl",
+  "authorUrl",
+  "twitterUrl",
+  "xUrl",
+  "githubUrl",
+]
+  .map((key) => `'${key}', ${textAt(`$.${key}`)}`)
+  .join(", ");
+const LIVE_READ_ROWS_SQL = `SELECT id, play_name, status, sent_at, send_started_at,
+  CASE WHEN json_valid(payload_json) THEN json_object(
+    ${urls},
+    'personResearch', json_object(
+      'liveProfile', CASE WHEN json_type(payload_json, '$.personResearch.liveProfile') = 'object'
+        THEN json_object('readAt', ${textAt("$.personResearch.liveProfile.readAt")}) END,
+      'researchedAt', ${textAt("$.personResearch.researchedAt")},
+      'warning', ${textAt("$.personResearch.warning")}
+    )
+  ) ELSE '{}' END AS payload_json
+  FROM target_queue WHERE status = ? ORDER BY found_at DESC LIMIT 100000`;
+
 /**
  * Project only the selector inputs, never the full payload or saved draft.
  * Keep URL precedence/normalisation in personSeedFor: a SQL LIKE predicate
@@ -76,37 +104,12 @@ export type LiveSweepRow = Pick<
  * The sweep fetches the full row only when it has budget to research it.
  */
 export function listLiveReadRows(ledger: ReturnType<typeof getLedger>): LiveSweepRow[] {
-  // These are the URL candidates in personSeedFor, in its original payload
-  // shape. Non-string values cannot be seeds, so do not materialise them.
-  const textAt = (path: string) =>
-    `CASE WHEN json_type(payload_json, '${path}') = 'text'
-      THEN json_extract(payload_json, '${path}') END`;
-  const urls = [
-    "linkedinUrl",
-    "sourceProfileUrl",
-    "profileUrl",
-    "authorUrl",
-    "twitterUrl",
-    "xUrl",
-    "githubUrl",
-  ]
-    .map((key) => `'${key}', ${textAt(`$.${key}`)}`)
-    .join(", ");
-  const sql = `SELECT id, play_name, status, sent_at, send_started_at,
-    CASE WHEN json_valid(payload_json) THEN json_object(
-      ${urls},
-      'personResearch', json_object(
-        'liveProfile', CASE WHEN json_type(payload_json, '$.personResearch.liveProfile') = 'object'
-          THEN json_object('readAt', ${textAt("$.personResearch.liveProfile.readAt")}) END,
-        'researchedAt', ${textAt("$.personResearch.researchedAt")},
-        'warning', ${textAt("$.personResearch.warning")}
-      )
-    ) ELSE '{}' END AS payload_json
-    FROM target_queue WHERE status = ? ORDER BY found_at DESC LIMIT 100000`;
   const db = openLedgerDatabase(ledger.filePath, { readonly: true });
   try {
     // Retain listQueue's per-status limit and ordering before filtering.
-    return ["approved", "pending"].flatMap((status) => db.query(sql).all(status) as LiveSweepRow[]);
+    return ["approved", "pending"].flatMap(
+      (status) => db.query(LIVE_READ_ROWS_SQL).all(status) as LiveSweepRow[],
+    );
   } finally {
     db.close();
   }
