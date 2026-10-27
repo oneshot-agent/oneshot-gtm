@@ -18,6 +18,7 @@ import {
 } from "./_linkedin-first-touch.ts";
 import { draftWithRepair, lintLinkedInNote } from "./_linkedin-evidence.ts";
 import { voiceBlock } from "./_lib.ts";
+import { templatedLinkedIn } from "./_linkedin-template.ts";
 
 /**
  * The warm LinkedIn connect (#791): a short, no-pitch connection request to
@@ -59,6 +60,18 @@ export async function draftFriendNote(prospectId: number): Promise<FriendDraftRe
   if (!verdict.ok) return { ok: false, reason: verdict.reason };
   const { prospect } = verdict;
   const cfg = loadConfig();
+  const templated = templatedLinkedIn("friend", cfg, { name: prospect.name });
+  if (templated) {
+    // Held to the same rules the send route checks an edited note against.
+    return {
+      ok: true,
+      draft: {
+        note: templated.text,
+        flags: lintFriendNote(templated.text),
+        maxChars: FRIEND_NOTE_MAX_CHARS,
+      },
+    };
+  }
   const replies = getLedger().listInboxRepliesForProspect(prospectId);
   const voice = voiceBlock("intro");
   const context = [

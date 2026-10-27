@@ -2,7 +2,7 @@
 
 The model writes like the model until you show it how you write. The voice card is that showing: a short plain-text description of your register, read by every draft.
 
-It lives in config as `founderVoice` and is edited on Setup. Email first touches, follow-ups and breakups carry it, and so do LinkedIn notes and messages, X DMs, community replies and inbox replies. SMS and letters do not. A blank card adds nothing.
+It lives in config as `founderVoice` and is edited on Setup. Email first touches, follow-ups and breakups carry it, and so do X DMs, community replies and inbox replies. LinkedIn notes and messages carry it only when the model writes them (`linkedin.writer: "model"`); otherwise they are your [templates](./linkedin.md#templates), already in your voice. SMS and letters do not. A blank card adds nothing.
 
 ## What the card is
 

@@ -21,7 +21,11 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     getLedger: () => ledger,
     currentWorkspaceName: () => "alpha",
-    loadConfig: () => ({ founderName: "Founder", productOneLiner: "a GTM workspace" }),
+    loadConfig: () => ({
+      founderName: "Founder",
+      productOneLiner: "a GTM workspace",
+      linkedin: { writer: "model" },
+    }),
     linkedInConversationFor: () => conversation,
     linkedInOutreachAccount: () => ({ workspace: "alpha", accountId: "acct-1" }),
     hasAnySendCapacity: () => emailCapacity,

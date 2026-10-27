@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import type { SetupRequest } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
 import type { SectionId } from "./constants.ts";
@@ -48,7 +49,9 @@ export function useConfigSection<T extends Record<string, Primitive>>(opts: {
 
   const save = useSectionSave<Partial<T>>({
     save: async (sent) => {
-      await api.setup(opts.toRequest(sent));
+      const res = await api.setup(opts.toRequest(sent));
+      // Saved, but worth a look: shown once, the save still counts.
+      for (const warning of res.warnings ?? []) toast.warning(warning);
     },
     refetch: [["setup"]],
     alsoInvalidate: [["doctor"], ["home"]],

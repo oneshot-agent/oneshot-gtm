@@ -132,7 +132,11 @@ describe("draft and send", () => {
     const res = await linkedInFriendDraftRoute(post("/d", {}), idParam(id));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { note: string; flags: string[]; maxChars: number };
-    expect(body.note).toBe(note);
+    // The shipped template, filled with their first name: no model call.
+    expect(body.note).toMatch(
+      /^Hi (?:Dana|Eli|Fay|Gus), we traded emails, so connecting here so the next hello isn't cold\.$/,
+    );
+    expect(body.flags).toEqual([]);
     expect(body.maxChars).toBe(300);
     expect(linkedInCalls).toEqual([]);
     expect(getLedger().listLinkedInInviteEvents(id, "linkedin:friend")).toEqual([]);

@@ -15,6 +15,7 @@ import { LlmSection } from "../components/setup/LlmSection.tsx";
 import { NotificationsSection } from "../components/setup/NotificationsSection.tsx";
 import { ProductBriefSection } from "../components/setup/ProductBriefSection.tsx";
 import { VoiceSection } from "../components/setup/VoiceSection.tsx";
+import { LinkedInTemplatesSection } from "../components/setup/LinkedInTemplatesSection.tsx";
 import { ReviewQueueSection } from "../components/setup/ReviewQueueSection.tsx";
 import { ReplyClassifierSection } from "../components/setup/ReplyClassifierSection.tsx";
 import { SectionNav, jumpToSection } from "../components/setup/SectionNav.tsx";
@@ -233,6 +234,7 @@ function Sections({
       <SocialProofSection {...common} />
       <ProductBriefSection {...common} />
       <VoiceSection {...common} />
+      <LinkedInTemplatesSection {...common} />
       <LlmSection {...common} />
       <ReplyClassifierSection {...common} />
       <WalletSection {...common} homeDir={homeDir} />

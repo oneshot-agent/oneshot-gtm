@@ -2,7 +2,7 @@
 
 LinkedIn forgives little, so nothing here sends on a timer. You send each invite and each message, or you run the batch that does.
 
-OneShot holds the account connection and carries out the actions through its API. No browser automation, no webhook to set up. GTM decides who to write to, drafts the text and stops the cadence when someone answers.
+OneShot holds the account connection and carries out the actions through its API. No browser automation, no webhook to set up. GTM decides who to write to, fills in the text from your [templates](#templates) and stops the cadence when someone answers.
 
 One thing runs unattended. Every 30 minutes the server checks pending invites: it records accepts, and withdraws an invite still pending after 21 days.
 
@@ -16,7 +16,7 @@ Conversations are matched to prospects. A human reply stops every live cadence f
 
 ## Connection requests as a first touch
 
-A queue row on the LinkedIn channel gets a connection note drafted from the same signal an email would use. The note is written to 200 characters; LinkedIn's limit is 300. Review it on Queue, then **Send** it as reviewed, or include the row in a batch.
+A queue row on the LinkedIn channel gets a connection note from the [templates](#templates), filled in from the same signal an email would use. Keep notes under 200 characters, the limit on a free LinkedIn account; Premium allows 300. Review it on Queue, then **Send** it as reviewed, or include the row in a batch.
 
 - **Daily limit.** OneShot enforces the account's invite limit, 25 per UTC day by default, across every tool that uses the account. At the limit the batch stops and the rows stay approved.
 - **Workspace share.** `config linkedin-invites <count>` gives this workspace a share of that limit, so the first workspace to send does not spend the day. `off` removes it. The share never raises the account's limit.
@@ -77,7 +77,29 @@ Each step is a draft you review on Cadences. The invite passes the same guard an
 
 A step on a channel the person has no address for is skipped, in any cadence.
 
-### What the drafts are told
+## Templates
+
+Every note and message is a template with the person's details filled in. No model writes them, so the same facts always give the same text. Set your own wording on **Setup → LinkedIn templates**; a step you leave blank uses the default.
+
+| Step                                    | Used when                                                             | Default                                                                                                                                            |
+| --------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connection request                      | we know why they surfaced                                             | `Hi {first_name}, saw {evidence}. Would be good to connect.`                                                                                       |
+| Connection request, no evidence         | we don't                                                              | `Hi {first_name}, would be good to connect.`                                                                                                       |
+| First message                           | they accepted                                                         | `Hi {first_name}, thanks for connecting. What are you working on right now?`                                                                       |
+| First message, already connected        | you were connected before the sequence                                | `Hi {first_name}, what are you working on right now?`                                                                                              |
+| Last message                            | the prospect has an offer                                             | `Hi {first_name}, last one from me, no reply needed. One thing I'd like to do for you: {offer}. Want me to run a small version? A no is fine too.` |
+| Last message, no offer                  | they don't                                                            | `Hi {first_name}, last one from me, no reply needed. If it's ever useful to compare notes, I'm around.`                                            |
+| Connection request after an email reply | [they replied by email](#connecting-with-people-who-replied-by-email) | `Hi {first_name}, we traded emails, so connecting here so the next hello isn't cold.`                                                              |
+
+- **`{first_name}`.** Taken from their name. When the name is a handle or a company, the greeting is dropped: `Hi {first_name}, saw …` reads `Saw …`.
+- **`{evidence}`.** Why they surfaced, aged as below, as a clause with its subject: `you starred acme/widgets`, `you're in YC F26`, `Acme Ventures led your seed round`.
+- **`{offer}`.** The [offer](./prompt-inputs.md#the-prospect-offer) the sequence makes them. The connection requests can't use it: a note that pitches gets declined.
+- **A template that can't be filled.** A step whose text needs a value this person doesn't have uses the default for that step.
+- **Saving.** Setup refuses an unknown placeholder, or one the step never has, and warns when a template could run past its step's limit.
+
+In `config.json` the templates are `linkedin.templates` (`note`, `noteFallback`, `firstMessage`, `firstMessageConnected`, `lastMessage`, `lastMessageFallback`, `friendNote`). To have the model write each note and message instead, set `linkedin.writer` to `"model"`, or pick **Model** on the Setup card. The rest of this page's rules for drafts apply in that mode.
+
+### What the model is told (`writer: "model"`)
 
 - **Evidence, aged.** One short clause for why the person surfaced. Stale claims are dropped: an event or hiring signal after 45 days, a job change after 90, a stack or funding round after 180. A repo star does not age.
 - **Their company.** Named only when the title is a founder's, stored data agrees, and a live read of the profile names it. Otherwise no company is passed.
@@ -90,7 +112,7 @@ Invite, message, close is built for strangers. Someone mid-conversation with you
 
 - **Who qualifies.** At least one email reply labelled `interested`, `question`, `partnership` or `meeting`, not flagged for review. Any reply labelled `unsubscribe`, `wrong_person`, `complaint`, `not_interested`, `objection` or `pitch_back` vetoes it. They must still pass the invite guard; only its email-reply and ICP refusals are lifted for them.
 - **Where.** On a qualifying thread in Replies, and on the prospect in Queue and Cadences.
-- **How.** The button drafts the note. You edit it and press **Send connection request**. No pitch, no question, no link, no meeting ask, 300 characters at most.
+- **How.** The button fills in the note from its template. You edit it and press **Send connection request**. No pitch, no question, no link, no meeting ask, 300 characters at most.
 - **After.** No cadence, no scheduled message. If they accept, the conversation continues in Replies.
 
 ## Replies

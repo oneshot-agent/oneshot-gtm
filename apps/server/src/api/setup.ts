@@ -1,4 +1,10 @@
-import { normalizeWebsite } from "@oneshot-gtm/shared-types";
+import {
+  LINKEDIN_TEMPLATE_FIELDS,
+  normalizeWebsite,
+  renderLinkedInTemplate,
+  templateProblems,
+  type LinkedInTemplateStep,
+} from "@oneshot-gtm/shared-types";
 import { aiFingerprint, invalidateOnboardingAI } from "./onboarding.ts";
 import {
   defaultSendViaForSmartlead,
@@ -391,8 +397,13 @@ export async function setup(req: Request): Promise<Response> {
     }
     throw err;
   }
+  const warnings = linkedinTemplateWarnings(body.linkedin);
   return jsonResponse(
-    sendViaNotices.length > 0 ? { ok: true, sendViaNotices } : { ok: true },
+    {
+      ok: true,
+      ...(sendViaNotices.length > 0 ? { sendViaNotices } : {}),
+      ...(warnings.length > 0 ? { warnings } : {}),
+    },
     200,
     req,
   );
@@ -592,8 +603,10 @@ export function mergeSetupConfig(
     codeAnswerDisclosure: _disclosure,
     offerExclusions: _exclusions,
     offerAnchor: _anchor,
+    linkedin: _linkedin,
     ...kept
   } = current;
+  const linkedin = mergeLinkedIn(body.linkedin, current.linkedin);
   const offerExclusions = mergeOfferExclusions(body.offerExclusions, current.offerExclusions);
   const offerAnchor = mergeOfferAnchor(body.offerAnchor, current.offerAnchor);
   const sourceRepo = mergeSourceRepo(body.sourceRepo, current.sourceRepo);
@@ -607,6 +620,7 @@ export function mergeSetupConfig(
     ...(codeAnswerDisclosure ? { codeAnswerDisclosure } : {}),
     ...(offerExclusions ? { offerExclusions } : {}),
     ...(offerAnchor ? { offerAnchor } : {}),
+    ...(linkedin ? { linkedin } : {}),
     walletMode,
     llmProvider,
     llmModel: body.llmModel ?? current.llmModel,
@@ -760,6 +774,108 @@ function mergeDisclosure(incoming: unknown, current: string | undefined): string
       `codeAnswerDisclosure is limited to ${MAX_DISCLOSURE_CHARS} characters`,
     );
   return trimmed || undefined;
+}
+
+type LinkedInSettings = NonNullable<OneShotConfig["linkedin"]>;
+
+/**
+ * `linkedin` merge. Rebuilt from the stored object so `invitesPerDay` (set
+ * by the CLI) always survives a Setup save. `writer`: `undefined` keeps it,
+ * `null` clears it (back to templates), else `template` or `model`.
+ * `templates`: `undefined` keeps them, `null` clears them all; per step,
+ * `undefined` keeps it, blank or `null` removes it, text sets it (trimmed)
+ * after `templateProblems` passes. An unknown step is a 400. An object left
+ * empty is dropped rather than saved as `{}`.
+ */
+export function mergeLinkedIn(
+  incoming: SetupRequest["linkedin"],
+  current: OneShotConfig["linkedin"],
+): OneShotConfig["linkedin"] {
+  if (incoming === undefined) return current;
+  if (incoming === null || typeof incoming !== "object" || Array.isArray(incoming))
+    throw new SetupValidationError("linkedin must be an object with templates and/or writer");
+  const { writer: currentWriter, templates: currentTemplates, ...rest } = current ?? {};
+  const writer = mergeLinkedInWriter(incoming.writer, currentWriter);
+  const templates = mergeLinkedInTemplates(incoming.templates, currentTemplates);
+  const next: LinkedInSettings = {
+    ...rest,
+    ...(writer ? { writer } : {}),
+    ...(templates ? { templates } : {}),
+  };
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function mergeLinkedInWriter(
+  incoming: unknown,
+  current: LinkedInSettings["writer"],
+): LinkedInSettings["writer"] {
+  if (incoming === undefined) return current;
+  if (incoming === null) return undefined;
+  if (incoming !== "template" && incoming !== "model")
+    throw new SetupValidationError("linkedin.writer must be one of template, model");
+  return incoming;
+}
+
+function linkedinTemplateField(step: string): (typeof LINKEDIN_TEMPLATE_FIELDS)[number] {
+  const field = LINKEDIN_TEMPLATE_FIELDS.find((f) => f.step === step);
+  if (!field) throw new SetupValidationError(`linkedin.templates: unknown step ${step}`);
+  return field;
+}
+
+function mergeLinkedInTemplates(
+  incoming: unknown,
+  current: LinkedInSettings["templates"],
+): LinkedInSettings["templates"] {
+  if (incoming === undefined) return current;
+  if (incoming === null) return undefined;
+  if (typeof incoming !== "object" || Array.isArray(incoming))
+    throw new SetupValidationError("linkedin.templates must be an object of text per step");
+  const next: Partial<Record<LinkedInTemplateStep, string>> = { ...current };
+  for (const [step, value] of Object.entries(incoming)) {
+    const field = linkedinTemplateField(step);
+    if (value === undefined) continue;
+    if (value !== null && typeof value !== "string")
+      throw new SetupValidationError(`${field.label}: the template must be text`);
+    const text = value?.trim() ?? "";
+    if (!text) {
+      delete next[field.step];
+      continue;
+    }
+    const problems = templateProblems(field.step, text);
+    if (problems.length > 0)
+      throw new SetupValidationError(`${field.label}: ${problems.join("; ")}`);
+    next[field.step] = text;
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+/** The longest values a template is checked against for its step's limit. */
+const LONGEST_TEMPLATE_VALUES = {
+  first_name: "x".repeat(20),
+  // An aged clause is at most 80 characters; "you're " is its subject.
+  evidence: `you're ${"x".repeat(80)}`,
+  offer: "x".repeat(140),
+} as const;
+
+/**
+ * Templates in this save that can run past their step's limit once filled
+ * with long values. Saved anyway: a short name or offer fits, so this is a
+ * warning on the response, not a 400. Call after the body validated.
+ */
+export function linkedinTemplateWarnings(incoming: SetupRequest["linkedin"]): string[] {
+  const templates = incoming?.templates;
+  if (!templates || typeof templates !== "object") return [];
+  const warnings: string[] = [];
+  for (const field of LINKEDIN_TEMPLATE_FIELDS) {
+    const text = templates[field.step]?.trim();
+    if (!text) continue;
+    const rendered = renderLinkedInTemplate(text, LONGEST_TEMPLATE_VALUES);
+    if (!("text" in rendered) || rendered.text.length <= field.limit) continue;
+    warnings.push(
+      `${field.label}: up to ${rendered.text.length} characters with a long name, evidence or offer, over its ${field.limit}-character limit.`,
+    );
+  }
+  return warnings;
 }
 
 function mergeString(incoming: string | undefined, current: string | null): string | null {

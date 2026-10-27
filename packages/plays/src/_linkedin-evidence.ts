@@ -166,6 +166,20 @@ export function agedEvidence(
   );
 }
 
+/**
+ * An `agedEvidence` clause as a clause with its subject, for a template's
+ * `{evidence}`: "starred acme/widgets" reads "you starred acme/widgets",
+ * "in YC F26" reads "you're in YC F26", and "Acme Ventures led your seed
+ * round" already has one.
+ */
+export function evidenceWithSubject(clause: string | null | undefined): string | null {
+  const c = clause?.trim();
+  if (!c) return null;
+  if (/\bled your\b/.test(c)) return c;
+  if (/^(?:in|running|hiring)\s/.test(c)) return `you're ${c}`;
+  return `you ${c}`;
+}
+
 // ---------------------------------------------------------------------------
 // Reader role and the company they run
 // ---------------------------------------------------------------------------
