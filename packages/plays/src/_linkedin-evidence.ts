@@ -694,11 +694,12 @@ const SHARED_COHORT_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
     "fellow / batchmate",
     /\b(?:fellow\s+(?:founders?|yc|antler|techstars|batch|cohort|alums?)|batch-?mates?|cohort-?mates?|(?:our|same)\s+(?:batch|cohort))\b/i,
   ],
-  // "I'm in YC F26", "we went through Antler", "we're both in the batch".
+  // "I'm in YC F26", "we went through Antler", "we're both in the batch",
+  // "we're both YC F26 founders", "I'm a YC F26 founder".
   [
     "first person in a cohort",
     new RegExp(
-      String.raw`\b(?:(?:i'?m|i\s+am|we'?re|we\s+are|i\s+was|we\s+were|both)\b[^.?!\n]{0,20}\b(?:in|through|from|part\s+of)|(?:i|we)\s+(?:did|joined|went\s+through))\s+(?:the\s+)?${COHORT}`,
+      String.raw`\b(?:(?:i'?m|i\s+am|we'?re|we\s+are|i\s+was|we\s+were|both)\b[^.?!\n]{0,20}\b(?:in|through|from|part\s+of)|(?:i|we)\s+(?:did|joined|went\s+through)|(?:i'?m|i\s+am|we'?re|we\s+are|i\s+was|we\s+were)(?:\s+(?:both|also|an?))*)\s+(?:the\s+)?${COHORT}`,
       "i",
     ),
   ],
@@ -721,15 +722,31 @@ const SHARED_COHORT_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
   ],
 ];
 
+const alnum = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
 /**
- * For a sender in no program (`founderCohort` unset): wording that claims the
- * reader's batch as a shared one. Off when the sender really did a program.
+ * Wording that claims the reader's batch as a shared one. A sender in no
+ * program (`founderCohort` unset) may make no such claim; one who did a
+ * program may claim only that one, named so it can be checked: "I'm in YC F26
+ * too" is still flagged for a W25 alum, and so is an unnamed "fellow YC".
  */
 export function lintSharedCohort(text: string, founderCohort?: string | null): string[] {
-  if (founderCohort?.trim()) return [];
-  return SHARED_COHORT_RX.filter(([, rx]) => rx.test(text)).map(
-    ([label]) =>
-      `shared-cohort: "${label}" — the sender is in no program; their cohort is how they were found`,
+  const own = founderCohort?.trim() ?? "";
+  const parts = own
+    .split(/[^a-z0-9]+/i)
+    .map(alnum)
+    .filter(Boolean);
+  const namesOwn = (claim: string) =>
+    parts.length > 0 && parts.every((part) => alnum(claim).includes(part));
+  return SHARED_COHORT_RX.filter(([, rx]) => {
+    const m = rx.exec(text);
+    // The claim runs to the end of its sentence: "fellow YC W25 founder"
+    // matches on "fellow YC" and names its batch after.
+    return m !== null && !namesOwn(cutAt(text.slice(m.index), /[.?!\n]/));
+  }).map(([label]) =>
+    own
+      ? `shared-cohort: "${label}" — claims a program other than the sender's own (${own})`
+      : `shared-cohort: "${label}" — the sender is in no program; their cohort is how they were found`,
   );
 }
 

@@ -731,6 +731,8 @@ describe("lintSharedCohort", () => {
       ["We're both in the batch, so how do you handle state?", "first person in a cohort"],
       ["Fellow YC founder here. How do you test agents?", "fellow / batchmate"],
       ["Same cohort, different problem: where does state live?", "fellow / batchmate"],
+      ["We're both YC F26 founders — what are you building?", "first person in a cohort"],
+      ["I'm a YC F26 founder too. How do you run evals?", "first person in a cohort"],
     ] as const) {
       expect(lintSharedCohort(text), text).toEqual(
         expect.arrayContaining([expect.stringMatching(new RegExp(`^shared-cohort: "${label}"`))]),
@@ -751,10 +753,16 @@ describe("lintSharedCohort", () => {
     }
   });
 
-  it("is off when the sender really did a program", () => {
-    expect(lintSharedCohort("Fellow YC founder here. How do you test agents?", "yc-w25")).toEqual(
-      [],
+  it("lets a sender who did a program claim that one, by name, and no other", () => {
+    expect(
+      lintSharedCohort("Fellow YC W25 founder here. How do you test agents?", "yc-w25"),
+    ).toEqual([]);
+    expect(lintSharedCohort("I did YC W25 as well. How do you run evals?", "yc-w25")).toEqual([]);
+    expect(lintSharedCohort("I'm in YC F26 too. How do you run evals?", "yc-w25")).toEqual(
+      expect.arrayContaining([expect.stringMatching(/other than the sender's own \(yc-w25\)/)]),
     );
+    // Unnamed, it can't be checked against the sender's own batch.
+    expect(lintSharedCohort("Fellow YC founder here.", "yc-w25")).not.toEqual([]);
     expect(lintSharedCohort("Fellow YC founder here.", "  ")).not.toEqual([]);
   });
 });

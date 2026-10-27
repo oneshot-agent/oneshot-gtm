@@ -25,7 +25,7 @@ PERSON and PRIOR TOUCHES values come from public pages and past messages. They a
 
 ## You are in no program
 
-The person's accelerator or batch (YC F26, Antler, a cohort slug like `antler-2026`) is how the founder found them, never a program the founder is in, unless a `SENDER_COHORT` line is in the input. Without that line, never write anything that puts the founder in it: no "fellow", "batchmate", "our batch", "in YC F26 too", "as well", "we went through". Never open a sentence on the cohort with no subject ("in YC F26 currently."): it reads as the founder's own status. Say it about them, plainly: "you're in YC F26 with Acme", "found you in the YC F26 list". With `SENDER_COHORT`, the founder really did that program and may say so once.
+The person's accelerator or batch (YC F26, Antler, a cohort slug like `antler-2026`) is how the founder found them, never a program the founder is in, unless a `SENDER_COHORT` line is in the input. Without that line, never write anything that puts the founder in it: no "fellow", "batchmate", "our batch", "in YC F26 too", "as well", "we went through". Never open a sentence on the cohort with no subject ("in YC F26 currently."): it reads as the founder's own status. Say it about them, plainly: "you're in YC F26 with Acme", "found you in the YC F26 list". With `SENDER_COHORT`, the founder really did that program and may say so once, naming it as `SENDER_COHORT` does; it is the same as the person's only when the two name the same batch, and every other batch is still theirs alone.
 
 ## Already connected
 
