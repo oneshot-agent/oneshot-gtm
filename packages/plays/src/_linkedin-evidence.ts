@@ -642,6 +642,42 @@ export function lintLinkedInFirstMessage(
   return flags;
 }
 
+/**
+ * The framing an already-connected reader must not get: thanks for connecting,
+ * a request, an invite, an acceptance, or "glad we connected". Each pattern names
+ * the social connection, not the verb: these messages talk about products that
+ * connect things, and "we connect agents to your tools" is not a violation.
+ */
+const ALREADY_CONNECTED_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
+  // Thanks for any act of joining their network: connecting, accepting, or
+  // adding ("thanks for adding me", "thanks for the add"). "address" does not match.
+  [
+    "thanks for connecting",
+    /\bthank(?:s|\s+you)\b[^.?!\n]{0,40}\b(?:connect|accept|add(?:ing|ed)?\b|the\s+add\b)/i,
+  ],
+  ["connection request", /\bconnection\s+request/i],
+  // Any form of the word: to someone already connected there was no invite to
+  // mention, and listing the phrasings ("an invite", "a connection invite",
+  // "invited you") never ends.
+  ["invite", /\binvit(?:e|es|ed|ing|ation|ations)\b/i],
+  ["accepted", /\baccept(?:ed|ing)\s+(?:my|the|our)\s+(?:connection|invite|invitation|request)\b/i],
+  [
+    "glad we connected",
+    /\b(?:glad|great|nice|good)\s+(?:we\s+)?(?:to\s+)?(?:be\s+)?connect(?:ed|ing)?\b/i,
+  ],
+];
+
+/**
+ * For a reader already connected before this sequence: no request was sent or
+ * accepted, so the message may not thank them for connecting or mention one.
+ * Applied on top of the first-message and close lints, only on that path.
+ */
+export function lintAlreadyConnected(text: string): string[] {
+  return ALREADY_CONNECTED_RX.filter(([, rx]) => rx.test(text)).map(
+    ([label]) => `already-connected: "${label}" — they were connected before this sequence`,
+  );
+}
+
 const clean = (s: string) => s.trim().replace(/^"|"$/g, "");
 
 const SAW_YOU_RX = /\b(?:saw|noticed|spotted|seen)\s+(?:that\s+)?you\b/gi;
