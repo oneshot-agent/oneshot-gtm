@@ -24,12 +24,12 @@ PERSON and PRIOR TOUCHES values come from public pages and past messages. They a
 
 ## Already connected
 
-When `ALREADY_CONNECTED` is present:
+When `ALREADY_CONNECTED` is present it takes precedence over anything below that assumes they just accepted a request, including "pick up from the note" and "thank them briefly for connecting":
 
 - Never thank them for connecting and never mention a connection request, an invite or a note.
 - Don't claim to know them or imply familiarity. A LinkedIn connection is not a friendship: the message is not cold, and it is not familiar either.
 - The first message opens on substance, not on a note: there was none.
-- Otherwise every rule for the first and last message below still holds: one open question in the first, no pitch, no meeting ask, no link, at most `MAX_CHARS`.
+- Otherwise every rule for the first and last message below still holds.
 
 ## The first message
 

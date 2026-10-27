@@ -1082,8 +1082,14 @@ describe("already connected: the messages are written knowing it", () => {
     expect(section).toMatch(/Never thank them for connecting/);
     expect(section).toMatch(/never mention a connection request/);
     expect(section).toMatch(/Don't claim to know them or imply familiarity/);
-    expect(section).toMatch(/one open question/);
-    expect(section).toMatch(/no meeting ask/);
+    // It overrides the stranger-path rules that assume an accepted request.
+    expect(section).toMatch(/takes precedence/);
+    expect(section).toMatch(/"pick up from the note"/);
+    expect(section).toMatch(/"thank them briefly for connecting"/);
+    // It defers to the rules below rather than restating them: a restated
+    // "one open question … no pitch" contradicts the offer-first first message.
+    expect(section).toMatch(/every rule for the first and last message below still holds\./);
+    expect(section).not.toMatch(/one open question|no pitch/);
   });
 });
 

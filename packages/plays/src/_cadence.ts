@@ -3741,10 +3741,11 @@ async function buildLinkedInMessage(
   const events = ledger.listSequenceEventsForProspectPlay(ctx.prospect.id, playName);
   // Connected before this sequence: the invite created no request, so its note
   // was never delivered, and nobody "accepted" anything.
-  const alreadyConnected = liveLinkedInInvite(ctx.prospect.id, playName)?.alreadyConnected === true;
+  const invite = liveLinkedInInvite(ctx.prospect.id, playName);
+  const alreadyConnected = invite?.alreadyConnected === true;
   const prior = events
     .filter((e) => e.channel === "linkedin" && e.status === "sent")
-    .filter((e) => !(alreadyConnected && undeliveredInviteNote(e)))
+    .filter((e) => !(alreadyConnected && undeliveredInviteNote(e, invite!.event.id)))
     .map((e) => {
       try {
         const m = JSON.parse(e.metadata_json ?? "{}") as { body?: unknown; note?: unknown };
@@ -3842,11 +3843,21 @@ async function buildLinkedInMessage(
     : null;
 }
 
-/** An invite that answered `already_connected`: LinkedIn delivered no note. */
-function undeliveredInviteNote(e: { metadata_json: string | null }): boolean {
+/**
+ * An invite that answered `already_connected`, so LinkedIn delivered no note:
+ * the one the decision was read from, or any other that answered the same.
+ * Matched on `inviteStatus` alone, which only invite events carry: invites
+ * recorded before the `kind` marker existed have the status but no `kind`, and
+ * the decision (`liveLinkedInInvite`) reads them all the same.
+ */
+function undeliveredInviteNote(
+  e: { id: number; metadata_json: string | null },
+  decidedBy: number,
+): boolean {
+  if (e.id === decidedBy) return true;
   try {
-    const m = JSON.parse(e.metadata_json ?? "{}") as { kind?: unknown; inviteStatus?: unknown };
-    return m.kind === "linkedin_invite" && m.inviteStatus === "already_connected";
+    const m = JSON.parse(e.metadata_json ?? "{}") as { inviteStatus?: unknown };
+    return m.inviteStatus === "already_connected";
   } catch {
     return false;
   }

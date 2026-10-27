@@ -511,6 +511,32 @@ describe("/cadences preview", () => {
     expect(input).not.toContain("accepted the connection request");
     expect(input).not.toContain("STEP 0");
   });
+
+  it("an invite recorded before the kind marker existed still loses its undelivered note", async () => {
+    // Invites from 2026-09-27 to 2026-10-08 carry `inviteStatus` but no `kind`.
+    // The decision reads them, so the note filter must too, or the model is told
+    // "no note was sent" while the note sits in PRIOR TOUCHES.
+    inviteSent({ inviteStatus: "already_connected" });
+    const db = new Database(dbPath);
+    db.exec(
+      `UPDATE sequence_events SET metadata_json = json_remove(metadata_json, '$.kind') WHERE prospect_id = ${prospectId}`,
+    );
+    expect(
+      (
+        db
+          .query("SELECT metadata_json FROM sequence_events WHERE prospect_id = ?")
+          .get(prospectId) as {
+          metadata_json: string;
+        }
+      ).metadata_json,
+    ).not.toContain('"kind"');
+    db.close();
+    await previewCadenceStep({ prospectId, playName: PLAY });
+    const input = modelInputs.at(-1)!;
+    expect(input).toContain("ALREADY_CONNECTED:");
+    expect(input).toContain("PRIOR TOUCHES:\n  (none recorded)\n");
+    expect(input).not.toContain("STEP 0");
+  });
 });
 
 const fullPage = () => ({
