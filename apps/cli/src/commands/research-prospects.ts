@@ -8,7 +8,7 @@ import {
   researchPerson,
   researchUrl,
 } from "@oneshot-gtm/find";
-import { c, header, note, ok, warn } from "../output.ts";
+import { c, header, note, ok, resolveCap, warn } from "../output.ts";
 import { ROW_COST_ESTIMATE_USD } from "./research-queue.ts";
 import {
   hasFreshPointer,
@@ -17,6 +17,9 @@ import {
   reportNewsfeed,
   runNewsfeedPass,
 } from "./_newsfeed-pass.ts";
+
+// research-products and synthesize-angles take the shared `--limit` cap from here.
+export { resolveCap };
 
 // Keep existing imports compatible with the shared profile-selection helper.
 export { isResearchableUrl, researchUrl };
@@ -83,17 +86,6 @@ export function parseScopes(raw: string | undefined): ResearchScope[] {
     throw new Error(`unknown --scope value(s): ${bad.join(", ")}. Valid: ${SCOPES.join(", ")}`);
   }
   return [...new Set(parts)] as ResearchScope[];
-}
-
-/**
- * How many rows this run may research, or undefined for "no cap". Mirrors
- * enrich-linkedin's resolveCap: a bad `--limit` must never WIDEN a paid run,
- * so NaN collapses to 0 rather than to the whole ledger.
- */
-export function resolveCap(limit: number | undefined): number | undefined {
-  if (limit === undefined) return undefined;
-  if (!Number.isFinite(limit)) return 0;
-  return Math.max(0, Math.floor(limit));
 }
 
 /**

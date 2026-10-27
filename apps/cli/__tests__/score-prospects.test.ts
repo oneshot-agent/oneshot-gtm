@@ -22,7 +22,6 @@ const {
   hasCurrentScore,
   isAutoRejected,
   parseScope,
-  resolveCap,
   shouldSkipRow,
 } = await import("../src/commands/score-prospects.ts");
 
@@ -93,13 +92,6 @@ describe("pure helpers", () => {
     expect(parseScope(undefined)).toBe("all");
     expect(parseScope("post-funding")).toBe("post-funding");
     expect(() => parseScope("post-fundig")).toThrow(/unknown --scope/);
-  });
-
-  it("resolveCap never widens a run", () => {
-    expect(resolveCap(undefined)).toBeUndefined();
-    expect(resolveCap(Number.NaN)).toBe(0);
-    expect(resolveCap(5.9)).toBe(5);
-    expect(resolveCap(-2)).toBe(0);
   });
 
   it("bucketOf boundaries", () => {
