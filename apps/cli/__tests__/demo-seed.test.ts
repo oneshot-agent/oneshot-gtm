@@ -272,7 +272,7 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
     const n = rows(db, "SELECT COUNT(*) n FROM prospects");
     db.close();
     expect(Number(n[0]?.["n"])).toBe(first.counts["prospects"]);
-  }, 15_000);
+  });
 
   it("refuses to seed into the real install", () => {
     const real = join(homedir(), ".oneshot-gtm");
