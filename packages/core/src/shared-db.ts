@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { demoMode } from "./demo.ts";
 import { openStateDatabase } from "./sqlite-open.ts";
+import { SharedPeople } from "./shared-people.ts";
 import { logEvent } from "./events.ts";
 
 /**
@@ -87,6 +88,10 @@ export class SharedDb {
     // every CLI run share this file, so write contention is the normal case.
     this.db = openStateDatabase(path, { busyTimeoutMs: 10000 });
     this.migrate();
+    // Establish the schema once instead of probing sqlite_master on every touch.
+    // An empty registry still resolves to the supplied email, and identities
+    // added by another connection become visible without reopening SharedDb.
+    SharedPeople.ensureSchema(this.db);
   }
 
   private migrate(): void {
@@ -481,12 +486,6 @@ export class SharedDb {
   /** Include every verified email alias of the shared person in contact protection. */
   private contactEmails(email: string): string[] {
     const normalized = email.trim().toLowerCase();
-    if (
-      !this.db
-        .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='person_aliases'")
-        .get()
-    )
-      return [normalized];
     const aliases = this.db
       .query(`SELECT substr(alias,7) email FROM person_aliases
       WHERE alias LIKE 'email:%' AND person_id=(SELECT person_id FROM person_aliases WHERE alias=?)`)

@@ -44,7 +44,11 @@ export class SharedPeople {
   constructor(path: string) {
     // person_aliases.person_id references shared_people(id).
     this.db = openStateDatabase(path, { busyTimeoutMs: 10000, foreignKeys: true });
-    this.db.exec(`
+    SharedPeople.ensureSchema(this.db);
+  }
+  /** SharedDb also needs aliases, even when it opens before the first ledger. */
+  static ensureSchema(db: Database): void {
+    db.exec(`
       CREATE TABLE IF NOT EXISTS shared_people (
         id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, company TEXT,
         linkedin_url TEXT, source_profile_url TEXT, title TEXT
@@ -57,6 +61,7 @@ export class SharedPeople {
         PRIMARY KEY(ledger_path, prospect_id)
       );
       CREATE INDEX IF NOT EXISTS person_memberships_person ON person_memberships(person_id);
+      CREATE INDEX IF NOT EXISTS person_aliases_person ON person_aliases(person_id);
     `);
   }
   version(): string {
