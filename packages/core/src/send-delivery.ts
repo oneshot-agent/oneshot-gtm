@@ -452,7 +452,7 @@ export interface ConfirmResult {
  * Gmail API sends):
  * - found once → confirmed; found more than once → confirmed, flagged duplicate;
  * - uncertain and still missing after UNCERTAIN_SETTLE_MS → failed (the next
- *   attempt may retry under the same Message-ID);
+ *   attempt may retry: SMTP reuses the Message-ID, Gmail assigns a new one);
  * - submitted and still missing after SUBMITTED_NOT_FOUND_MS → not_found
  *   (never resent: the server accepted it).
  * Settled sends with a receipt also get a `send_delivery_checks` row, so the
@@ -627,7 +627,9 @@ export async function runOutboundConfirmations(opts: {
       } else if (row.sentEvidence) {
         after = "failed";
         error =
-          "not found in Sent after the send was interrupted; a retry reuses the same Message-ID";
+          row.transport === "gmail"
+            ? "not found in Sent after the send was interrupted; a retry sends a new message with a new Message-ID on Gmail"
+            : "not found in Sent after the send was interrupted; a retry reuses the same Message-ID";
       } else {
         after = "not_found";
         error =
