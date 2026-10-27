@@ -733,6 +733,8 @@ describe("lintSharedCohort", () => {
       ["Same cohort, different problem: where does state live?", "fellow / batchmate"],
       ["We're both YC F26 founders — what are you building?", "first person in a cohort"],
       ["Our YC F26 batch is building agents. What are you on?", "fellow / batchmate"],
+      ["Our YC P25 batch is building agents. What are you on?", "fellow / batchmate"],
+      ["Fellow speedrun founder here. How do you run evals?", "fellow / batchmate"],
       ["I'm a YC F26 founder too. How do you run evals?", "first person in a cohort"],
     ] as const) {
       expect(lintSharedCohort(text), text).toEqual(

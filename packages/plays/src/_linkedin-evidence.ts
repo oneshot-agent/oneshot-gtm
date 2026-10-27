@@ -694,7 +694,11 @@ const COHORT = String.raw`(?:${PROGRAM}|${BATCH_CODE}|(?:the|same|this)\s+(?:bat
 const SHARED_COHORT_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
   [
     "fellow / batchmate",
-    /\b(?:fellow\s+(?:founders?|yc|antler|techstars|batch|cohort|alums?)|batch-?mates?|cohort-?mates?|(?:our|same)\s+(?:(?:yc|antler|techstars|hf0|[wsfx]\d{2}|20\d\d|[a-z]+-20\d\d)\s+){0,2}(?:batch|cohort))\b/i,
+    // Built from the same program and batch lists as COHORT, so the two never drift.
+    new RegExp(
+      String.raw`\b(?:fellow\s+(?:founders?|${PROGRAM}|batch|cohort|alums?)|batch-?mates?|cohort-?mates?|(?:our|same)\s+(?:(?:${PROGRAM}|${BATCH_CODE}|20\d\d)\s+){0,2}(?:batch|cohort))\b`,
+      "i",
+    ),
   ],
   // "I'm in YC F26", "we went through Antler", "we're both in the batch",
   // "we're both YC F26 founders", "I'm a YC F26 founder".
