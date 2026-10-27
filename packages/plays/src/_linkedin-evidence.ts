@@ -692,7 +692,7 @@ const COHORT = String.raw`(?:YC|Y\s*Combinator|Antler|Techstars|500\s+Global|Ent
 const SHARED_COHORT_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
   [
     "fellow / batchmate",
-    /\b(?:fellow\s+(?:founders?|yc|antler|techstars|batch|cohort|alums?)|batch-?mates?|cohort-?mates?|(?:our|same)\s+(?:batch|cohort))\b/i,
+    /\b(?:fellow\s+(?:founders?|yc|antler|techstars|batch|cohort|alums?)|batch-?mates?|cohort-?mates?|(?:our|same)\s+(?:(?:yc|antler|techstars|hf0|[wsfx]\d{2}|20\d\d|[a-z]+-20\d\d)\s+){0,2}(?:batch|cohort))\b/i,
   ],
   // "I'm in YC F26", "we went through Antler", "we're both in the batch",
   // "we're both YC F26 founders", "I'm a YC F26 founder".
@@ -738,12 +738,14 @@ export function lintSharedCohort(text: string, founderCohort?: string | null): s
     .filter(Boolean);
   const namesOwn = (claim: string) =>
     parts.length > 0 && parts.every((part) => alnum(claim).includes(part));
-  return SHARED_COHORT_RX.filter(([, rx]) => {
-    const m = rx.exec(text);
-    // The claim runs to the end of its sentence: "fellow YC W25 founder"
-    // matches on "fellow YC" and names its batch after.
-    return m !== null && !namesOwn(cutAt(text.slice(m.index), /[.?!\n]/));
-  }).map(([label]) =>
+  // Every claim counts: one naming the sender's own batch does not excuse a
+  // second that names another. A claim runs to the end of its sentence:
+  // "fellow YC W25 founder" matches on "fellow YC" and names its batch after.
+  return SHARED_COHORT_RX.filter(([, rx]) =>
+    [...text.matchAll(new RegExp(rx.source, `${rx.flags}g`))].some(
+      (m) => !namesOwn(cutAt(text.slice(m.index), /[.?!\n]/)),
+    ),
+  ).map(([label]) =>
     own
       ? `shared-cohort: "${label}" — claims a program other than the sender's own (${own})`
       : `shared-cohort: "${label}" — the sender is in no program; their cohort is how they were found`,

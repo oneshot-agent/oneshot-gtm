@@ -732,6 +732,7 @@ describe("lintSharedCohort", () => {
       ["Fellow YC founder here. How do you test agents?", "fellow / batchmate"],
       ["Same cohort, different problem: where does state live?", "fellow / batchmate"],
       ["We're both YC F26 founders — what are you building?", "first person in a cohort"],
+      ["Our YC F26 batch is building agents. What are you on?", "fellow / batchmate"],
       ["I'm a YC F26 founder too. How do you run evals?", "first person in a cohort"],
     ] as const) {
       expect(lintSharedCohort(text), text).toEqual(
@@ -747,6 +748,7 @@ describe("lintSharedCohort", () => {
       "Your batch is heavy on agents. How are you handling guardrails?",
       "In mid-2026 as well as now, evals are the hard part. How do you run them?",
       "In batch processing, retries pile up. How do you handle them?",
+      "Our nightly batch jobs kept timing out. How do you schedule yours?",
       "We're seeing every agent team hit state persistence. Where do you keep it?",
     ]) {
       expect(lintSharedCohort(text), text).toEqual([]);
@@ -761,6 +763,10 @@ describe("lintSharedCohort", () => {
     expect(lintSharedCohort("I'm in YC F26 too. How do you run evals?", "yc-w25")).toEqual(
       expect.arrayContaining([expect.stringMatching(/other than the sender's own \(yc-w25\)/)]),
     );
+    // A claim to the sender's own batch doesn't excuse a second to another.
+    expect(
+      lintSharedCohort("Fellow YC W25 founder here. Fellow YC F26 founder here.", "yc-w25"),
+    ).not.toEqual([]);
     // Unnamed, it can't be checked against the sender's own batch.
     expect(lintSharedCohort("Fellow YC founder here.", "yc-w25")).not.toEqual([]);
     expect(lintSharedCohort("Fellow YC founder here.", "  ")).not.toEqual([]);
