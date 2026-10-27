@@ -386,7 +386,8 @@ describe("mailbox sync", () => {
     insert.run("unclassified", "id1", "t2", "inbound", old, JSON.stringify({ id: "unclassified" }));
     const before = new Date().toISOString();
 
-    new MailboxStore(db);
+    // Opening the store runs the migration on the legacy table.
+    expect(() => new MailboxStore(db)).not.toThrow();
 
     const at = (id: string): string =>
       (
