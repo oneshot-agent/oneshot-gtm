@@ -12,14 +12,29 @@ describe("whichCommand", () => {
     process.argv[1] = argv1;
   });
 
-  it("suggests a checkout command whose entry file exists on disk", () => {
+  it("suggests a checkout command whose entry file exists from the repo root", () => {
     // The hint is meant to be copy-pasted. A hardcoded path rots silently
     // (#931 shipped `packages/cli/src/index.ts`, which never existed).
     process.argv[1] = resolve(REPO_ROOT, DEV_CLI_ENTRY);
-    const cmd = whichCommand();
+    const cmd = whichCommand(REPO_ROOT);
     expect(cmd).toBe(`bun run ${DEV_CLI_ENTRY}`);
     const entry = cmd.split(" ").at(-1) as string;
     expect(existsSync(resolve(REPO_ROOT, entry))).toBe(true);
+  });
+
+  it("names the entry file relative to the directory init was run from", () => {
+    // `bun run src/main.ts init` from apps/cli must not be told to run
+    // apps/cli/src/main.ts, which does not resolve from there.
+    const cwd = resolve(REPO_ROOT, "apps/cli");
+    process.argv[1] = resolve(REPO_ROOT, DEV_CLI_ENTRY);
+    const cmd = whichCommand(cwd);
+    expect(cmd).toBe("bun run src/main.ts");
+    expect(existsSync(resolve(cwd, cmd.split(" ").at(-1) as string))).toBe(true);
+  });
+
+  it("falls back to the repo-root entry when argv carries no script path", () => {
+    process.argv[1] = "";
+    expect(whichCommand(REPO_ROOT)).toBe(`bun run ${DEV_CLI_ENTRY}`);
   });
 
   it("suggests the linked bin name when invoked through it", () => {

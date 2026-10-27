@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import {
   llmApiKey,
   loadConfig,
@@ -281,17 +281,19 @@ export function mergeInitConfig(
 /**
  * The CLI's entry file, relative to the repo root: the `bin` target in
  * apps/cli/package.json and what the root `bun run cli` script runs. The
- * next-steps hint prints it, so it must name a file that exists on disk.
+ * next-steps hint falls back to it when argv carries no script path, so it
+ * must name a file that exists on disk.
  */
 export const DEV_CLI_ENTRY = "apps/cli/src/main.ts";
 
-export function whichCommand(): string {
+export function whichCommand(cwd: string = process.cwd()): string {
   // If someone resolved us via the linked bin or a bunx install, the basename is "oneshot-gtm".
-  // Otherwise we're being invoked from a checkout through `bun run apps/cli/src/main.ts ...`
-  // and we should suggest that form so the next steps copy-paste works.
+  // Otherwise we're being invoked from a checkout through `bun run <path to main.ts> ...`,
+  // and the hint should name that file relative to where the user is, so the next steps
+  // copy-paste from apps/cli as well as from the repo root.
   const exec = process.argv[1] ?? "";
   if (exec.endsWith("oneshot-gtm") || exec.endsWith("oneshot-gtm/index.ts")) return "oneshot-gtm";
-  return `bun run ${DEV_CLI_ENTRY}`;
+  return `bun run ${exec ? relative(cwd, exec) : DEV_CLI_ENTRY}`;
 }
 
 function defaultModel(provider: string): string {
