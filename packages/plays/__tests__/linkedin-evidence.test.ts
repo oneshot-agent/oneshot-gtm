@@ -767,6 +767,15 @@ describe("lintSharedCohort", () => {
     expect(
       lintSharedCohort("Fellow YC W25 founder here. Fellow YC F26 founder here.", "yc-w25"),
     ).not.toEqual([]);
+    // Nor does naming it later in the same sentence as another.
+    expect(
+      lintSharedCohort("Fellow YC F26 founders, although my cohort is YC W25.", "yc-w25"),
+    ).not.toEqual([]);
+    expect(lintSharedCohort("We're both in antler-2026. What are you on?", "antler-2026")).toEqual(
+      [],
+    );
+    // A subjectless match opens on the previous sentence's full stop.
+    expect(lintSharedCohort("Hey Ana. In YC W25 as well, how are evals?", "yc-w25")).toEqual([]);
     // Unnamed, it can't be checked against the sender's own batch.
     expect(lintSharedCohort("Fellow YC founder here.", "yc-w25")).not.toEqual([]);
     expect(lintSharedCohort("Fellow YC founder here.", "  ")).not.toEqual([]);

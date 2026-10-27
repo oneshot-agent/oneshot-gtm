@@ -724,6 +724,10 @@ const SHARED_COHORT_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
 
 const alnum = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
+/** A program or batch named in a sentence: "YC", "W25", "antler-2026". */
+const BATCH_NAME_RX =
+  /\b(?:yc|antler|techstars|hf0|[wsfx]\d{2}|(?!(?:mid|early|late)-)[a-z]{3,}-20\d\d|20\d\d)\b/gi;
+
 /**
  * Wording that claims the reader's batch as a shared one. A sender in no
  * program (`founderCohort` unset) may make no such claim; one who did a
@@ -736,14 +740,21 @@ export function lintSharedCohort(text: string, founderCohort?: string | null): s
     .split(/[^a-z0-9]+/i)
     .map(alnum)
     .filter(Boolean);
+  // A sentence passes when it names the sender's own batch and no other one:
+  // "fellow YC F26 founders, though mine is YC W25" names two.
   const namesOwn = (claim: string) =>
-    parts.length > 0 && parts.every((part) => alnum(claim).includes(part));
+    parts.length > 0 &&
+    parts.every((part) => alnum(claim).includes(part)) &&
+    [...claim.matchAll(BATCH_NAME_RX)].every(
+      (m) => parts.includes(alnum(m[0])) || alnum(m[0]) === alnum(own),
+    );
   // Every claim counts: one naming the sender's own batch does not excuse a
   // second that names another. A claim runs to the end of its sentence:
   // "fellow YC W25 founder" matches on "fellow YC" and names its batch after.
   return SHARED_COHORT_RX.filter(([, rx]) =>
     [...text.matchAll(new RegExp(rx.source, `${rx.flags}g`))].some(
-      (m) => !namesOwn(cutAt(text.slice(m.index), /[.?!\n]/)),
+      // A match can open on the previous sentence's delimiter: skip it.
+      (m) => !namesOwn(cutAt(text.slice(m.index).replace(/^[.?!\n\s]+/, ""), /[.?!\n]/)),
     ),
   ).map(([label]) =>
     own
