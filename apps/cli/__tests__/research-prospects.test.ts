@@ -4,7 +4,6 @@ import {
   hasSignal,
   parseScopes,
   researchUrl,
-  resolveCap,
 } from "../src/commands/research-prospects.ts";
 
 // Pure helpers for the paid dossier backfill. Every one of these guards spend:
@@ -25,19 +24,6 @@ describe("parseScopes", () => {
     // Dropping a typo'd scope would quietly change which rows a paid run buys.
     expect(() => parseScopes("active,activve")).toThrow(/unknown --scope/);
     expect(() => parseScopes("everything")).toThrow(/Valid: active, replied, unjudged, all/);
-  });
-});
-
-describe("resolveCap", () => {
-  it("passes a sane limit through and floors it", () => {
-    expect(resolveCap(250)).toBe(250);
-    expect(resolveCap(7.9)).toBe(7);
-  });
-
-  it("never WIDENS a paid run on bad input", () => {
-    expect(resolveCap(undefined)).toBeUndefined();
-    expect(resolveCap(Number.NaN)).toBe(0);
-    expect(resolveCap(-5)).toBe(0);
   });
 });
 

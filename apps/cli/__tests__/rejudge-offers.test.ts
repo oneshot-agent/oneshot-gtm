@@ -37,13 +37,18 @@ vi.mock("@oneshot-gtm/plays", async () => {
     ensureOfferSet: writerMock,
   };
 });
-vi.mock("../src/output.ts", () => ({
-  c: { dim: (s: string) => s },
-  header: () => {},
-  note: () => {},
-  ok: () => {},
-  warn: () => {},
-}));
+vi.mock("../src/output.ts", async (importOriginal) => {
+  // The command's `--limit` cap is the real one; only the printers are stubbed.
+  const { resolveCap } = await importOriginal<typeof import("../src/output.ts")>();
+  return {
+    c: { dim: (s: string) => s },
+    header: () => {},
+    note: () => {},
+    ok: () => {},
+    resolveCap,
+    warn: () => {},
+  };
+});
 
 const { Ledger: RealLedger } = await import("@oneshot-gtm/core");
 const { offerHoldsSend } = await import("@oneshot-gtm/plays");

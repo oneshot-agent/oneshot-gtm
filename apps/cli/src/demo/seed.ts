@@ -1,16 +1,13 @@
 import { Database } from "bun:sqlite";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
-import { backfillDecisionProvenance, Ledger, workspaceNameForHome } from "@oneshot-gtm/core";
+import { join } from "node:path";
+import {
+  backfillDecisionProvenance,
+  canonicalPath,
+  Ledger,
+  workspaceNameForHome,
+} from "@oneshot-gtm/core";
 import { buildDemoDataset, type DemoDataset } from "./dataset.ts";
 
 /** Written into every demo home. `demo reset` refuses to delete a dir without it. */
@@ -27,20 +24,11 @@ function realHome(): string {
  * Resolve a path with symlinks followed, not just lexically: `resolve()`
  * alone would let a symlinked `--home` (or a symlinked parent) slip past the
  * guards below and write into the real install. Nonexistent paths canonicalize
- * via the nearest existing ancestor plus the remainder.
+ * via the nearest existing ancestor plus the remainder. This is core's
+ * `canonicalPath`, re-exported under the name the demo guards and `demo.ts`
+ * use.
  */
-export function canonicalize(p: string): string {
-  let base = resolve(p);
-  const tail: string[] = [];
-  while (!existsSync(base)) {
-    const parent = dirname(base);
-    if (parent === base) break;
-    tail.unshift(basename(base));
-    base = parent;
-  }
-  const real = existsSync(base) ? realpathSync(base) : base;
-  return tail.length > 0 ? join(real, ...tail) : real;
-}
+export const canonicalize = canonicalPath;
 
 export class DemoSeedError extends Error {}
 

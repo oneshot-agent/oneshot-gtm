@@ -25,7 +25,7 @@ import {
   safeScorePriority,
   valueTagToRank,
 } from "@oneshot-gtm/find";
-import { c, header, note, ok } from "../output.ts";
+import { c, header, note, ok, resolveCap } from "../output.ts";
 
 /**
  * Backfill shadow priority scores from persisted finder payloads without network calls.
@@ -63,13 +63,6 @@ export function parseScope(raw: string | undefined): string {
     throw new Error(`unknown --scope value: ${scope}. Valid: all, ${valid.join(", ")}`);
   }
   return scope;
-}
-
-/** Mirrors research-prospects: a bad `--limit` collapses to 0, never widens. */
-export function resolveCap(limit: number | undefined): number | undefined {
-  if (limit === undefined) return undefined;
-  if (!Number.isFinite(limit)) return 0;
-  return Math.max(0, Math.floor(limit));
 }
 
 /**
