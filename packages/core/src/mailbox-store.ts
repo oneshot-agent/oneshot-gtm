@@ -187,15 +187,16 @@ export class MailboxStore {
     ).map((r) => JSON.parse(r.data));
   }
 
-  /** Includes unprocessed old matches even after a newer global poll watermark. */
   /** Read only potential delivery notices, including legacy rows awaiting classification. */
-  bounceCandidates(since?: string): MailboxMessage[] {
+  bounceCandidates(identityIds: string[], since?: string): MailboxMessage[] {
+    if (!identityIds.length) return [];
     return (
       this.db
         .query(`SELECT data FROM mailbox_messages WHERE direction='inbound'
+      AND identity_id IN (${identityIds.map(() => "?").join(",")})
       AND (? IS NULL OR at >= ?) AND (json_extract(data, '$.bounces') IS NULL
       OR json_array_length(data, '$.bounces') > 0)`)
-        .all(since ?? null, since ?? null) as { data: string }[]
+        .all(...identityIds, since ?? null, since ?? null) as { data: string }[]
     ).map((row) => JSON.parse(row.data));
   }
 

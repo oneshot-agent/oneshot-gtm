@@ -30,7 +30,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
-    listBounces: async () => ({ bounces, failedSources }),
+    listBounces: vi.fn(async () => ({ bounces, failedSources })),
     getLedger: () => ({
       findDirectMail: () => null,
       findProspectByEmail: (email: string) =>
@@ -75,6 +75,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 const { pollInboxBounces } = await import("../src/_cadence.ts");
+const { listBounces } = await import("@oneshot-gtm/core");
 
 function bounce(over: Partial<Bounce> = {}): Bounce {
   return {
@@ -102,7 +103,13 @@ beforeEach(() => {
 describe("pollInboxBounces", () => {
   it("stops the cadence on a hard bounce and logs the step that failed", async () => {
     bounces = [bounce()];
+    const before = Date.now();
     const out = await pollInboxBounces();
+    const since = vi.mocked(listBounces).mock.lastCall?.[0]?.since;
+    expect(since).toBeDefined();
+    const windowStart = Date.parse(since!);
+    expect(windowStart).toBeGreaterThanOrEqual(before - 30 * 86_400_000);
+    expect(windowStart).toBeLessThanOrEqual(Date.now() - 30 * 86_400_000);
 
     expect(out).toMatchObject({ polled: 1, recorded: 1, cadencesStopped: 1 });
     // current_step is the most recently SENT touch. That's what bounced.

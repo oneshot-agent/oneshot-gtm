@@ -2268,7 +2268,8 @@ export interface BounceListResult {
 }
 
 /**
- * Delivery failures across the sender pool. Gmail identities only. A DSN
+ * Delivery failures across Gmail and Smartlead mailboxes, defaulting to the
+ * last 30 days. An explicit since can request older history. A DSN
  * returns to the envelope sender, and OneShot's return path belongs to the
  * platform. The receiving mailbox IS the sending mailbox, so attribution
  * needs no join. Per-source try/catch, and unlike listInbox this NEVER
@@ -2279,6 +2280,10 @@ export async function listBounces(opts?: {
   since?: string;
   limit?: number;
 }): Promise<BounceListResult> {
+  const window = {
+    ...opts,
+    since: opts?.since ?? new Date(Date.now() - 30 * 86_400_000).toISOString(),
+  };
   const identities = resolveIdentities(loadConfig()).filter((i) => i.provider === "gmail");
   const failedSources: string[] = [];
   const results = await parallelMap(identities, 3, async (identity) => {
@@ -2290,7 +2295,7 @@ export async function listBounces(opts?: {
     }
     try {
       const bounces = await withDeadline(
-        listGmailBounces(opts, account),
+        listGmailBounces(window, account),
         INBOX_SOURCE_TIMEOUT_MS,
         `bounce source '${identity.id}'`,
       );
@@ -2306,7 +2311,7 @@ export async function listBounces(opts?: {
       return [];
     }
   });
-  const mailbox = listMailboxBounces(opts);
+  const mailbox = listMailboxBounces(window);
   return {
     bounces: [...results.flat(), ...mailbox.bounces],
     failedSources: [...failedSources, ...mailbox.failedSources],
