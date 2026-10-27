@@ -125,6 +125,8 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
         company: research.currentRole.company,
         recent_posts: [],
       });
+      // The company's description has its own field; it is not the person's summary.
+      expect(entry!.result.result).not.toHaveProperty("summary");
     }
     expect(Object.keys(fixture)).toHaveLength(researched.length);
   });

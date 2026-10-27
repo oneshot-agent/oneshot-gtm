@@ -129,6 +129,19 @@ describe("buildQueueDossier", () => {
       expect(core.readPaidCache("research.person", { socialMediaUrl: LI })).toBeNull();
       writeFileSync(fixturePath, "invalid json");
       expect(buildQueueDossier(payload).status).toBe("summary-only");
+      // Parseable, matching, but with an unusable timestamp: skipped, not thrown on.
+      writeFileSync(
+        fixturePath,
+        JSON.stringify({
+          [core.paidCacheKey("research.person", { email: payload.email })]: {
+            status: "ok",
+            result: JSON.parse(research()),
+            fetchedAt: "not-a-date",
+            costUsd: 0,
+          },
+        }),
+      );
+      expect(buildQueueDossier(payload).status).toBe("summary-only");
     } finally {
       if (oldDemo === undefined) delete process.env["ONESHOT_GTM_DEMO"];
       else process.env["ONESHOT_GTM_DEMO"] = oldDemo;

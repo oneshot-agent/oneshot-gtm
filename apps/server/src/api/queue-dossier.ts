@@ -57,6 +57,9 @@ function cachedResearch(
           ]
         : readPaidCache("research.person", input, { maxAgeMs: Infinity });
       if (cached?.status !== "ok") continue;
+      // A seeded fixture is unvalidated JSON: a bad timestamp would throw in
+      // toISOString below rather than leave the dossier summary-only.
+      if (!Number.isFinite(Date.parse(cached.fetchedAt))) continue;
       const result = record(record(cached.result)?.["result"]);
       if (result) return { result, fetchedAt: new Date(cached.fetchedAt).toISOString() };
     }

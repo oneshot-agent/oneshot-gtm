@@ -1955,9 +1955,10 @@ function outcomeValueTag(outcome: NonNullable<DemoPerson["outcome"]>): unknown {
  * place of the paid cache, which refuses demo reads to protect real workspaces;
  * without it every demo dossier shows only its bounded summary.
  *
- * Built from the research each row already carries (its role, organizations
- * and company), so the dossier shows nothing the row does not already claim.
- * No posts: the dataset has none to give.
+ * Built from the research each row already carries (its role and
+ * organizations), so the dossier shows nothing the row does not already claim.
+ * No person summary: the dataset has no bio for these people, and the company's
+ * description already has its own field. No posts: the dataset has none to give.
  */
 function buildResearchPersonFixture(
   queue: Array<{ payloadJson: string }>,
@@ -1978,7 +1979,6 @@ function buildResearchPersonFixture(
           full_name: String(payload["name"] ?? payload["founderName"] ?? ""),
           title: research.currentRole?.title,
           company: research.currentRole?.company,
-          summary: research.company?.description,
           emails: [email],
           experience: (research.organizations ?? []).map((o) => ({
             title: o.title,
