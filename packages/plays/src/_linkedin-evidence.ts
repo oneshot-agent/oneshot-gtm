@@ -678,6 +678,61 @@ export function lintAlreadyConnected(text: string): string[] {
   );
 }
 
+/**
+ * An accelerator, a batch code (W26, F26) or a program slug ("antler-2026"):
+ * what a sentence names when it puts someone in a cohort.
+ */
+const COHORT = String.raw`(?:YC|Y\s*Combinator|Antler|Techstars|500\s+Global|Entrepreneur\s+First|South\s+Park\s+Commons|HF0|speedrun|[WSFX]\d{2}|(?!(?:mid|early|late)-)[a-z]{3,}-20\d\d|(?:the|same|this)\s+(?:batch|cohort|accelerator))\b`;
+
+/**
+ * Wording that puts the sender inside the reader's program. The reader's
+ * cohort is how they were found, never a room the sender was in; to them a
+ * claimed shared batch is a lie checked in one click.
+ */
+const SHARED_COHORT_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
+  [
+    "fellow / batchmate",
+    /\b(?:fellow\s+(?:founders?|yc|antler|techstars|batch|cohort|alums?)|batch-?mates?|cohort-?mates?|(?:our|same)\s+(?:batch|cohort))\b/i,
+  ],
+  // "I'm in YC F26", "we went through Antler", "we're both in the batch".
+  [
+    "first person in a cohort",
+    new RegExp(
+      String.raw`\b(?:(?:i'?m|i\s+am|we'?re|we\s+are|i\s+was|we\s+were|both)\b[^.?!\n]{0,20}\b(?:in|through|from|part\s+of)|(?:i|we)\s+(?:did|joined|went\s+through))\s+(?:the\s+)?${COHORT}`,
+      "i",
+    ),
+  ],
+  // "in antler-2026 as well", "in YC F26 too": the "too" is the sender.
+  [
+    "in it too",
+    new RegExp(
+      String.raw`\bin\s+(?:the\s+)?${COHORT}[^.?!\n]{0,15}\b(?:as\s+well|too|also)\b`,
+      "i",
+    ),
+  ],
+  // A sentence with no subject that opens on the cohort ("Hey Vinod, in YC
+  // F26 currently.") reads as the sender's own status.
+  [
+    "subjectless cohort",
+    new RegExp(
+      String.raw`(?:^|[.!?\n])\s*(?:(?:hey|hi|hello)\s+[^,.!?\n]{1,40}[,!]\s*)?(?:currently\s+|also\s+)?in\s+(?:the\s+)?${COHORT}`,
+      "i",
+    ),
+  ],
+];
+
+/**
+ * For a sender in no program (`founderCohort` unset): wording that claims the
+ * reader's batch as a shared one. Off when the sender really did a program.
+ */
+export function lintSharedCohort(text: string, founderCohort?: string | null): string[] {
+  if (founderCohort?.trim()) return [];
+  return SHARED_COHORT_RX.filter(([, rx]) => rx.test(text)).map(
+    ([label]) =>
+      `shared-cohort: "${label}" — the sender is in no program; their cohort is how they were found`,
+  );
+}
+
 const clean = (s: string) => s.trim().replace(/^"|"$/g, "");
 
 const SAW_YOU_RX = /\b(?:saw|noticed|spotted|seen)\s+(?:that\s+)?you\b/gi;

@@ -38,6 +38,7 @@ const {
   lintLinkedInClose,
   lintLinkedInFirstMessage,
   lintLinkedInNote,
+  lintSharedCohort,
   profileViewReader,
   readerRole,
   storedFounderCompany,
@@ -713,5 +714,47 @@ describe("lintAlreadyConnected", () => {
     ]) {
       expect(lintAlreadyConnected(text), text).toEqual([]);
     }
+  });
+});
+
+describe("lintSharedCohort", () => {
+  it("flags wording that puts the sender in the reader's program", () => {
+    for (const [text, label] of [
+      [
+        "Hey Vinod, in YC F26 currently. How are you handling tool guardrails?",
+        "subjectless cohort",
+      ],
+      ["Hey Sparsh, in antler-2026 as well. Where does access policy live?", "in it too"],
+      ["Hey Ana, in YC F26 with Acme. Where does state live?", "subjectless cohort"],
+      ["I'm in YC W26 too, so figured I'd ask.", "first person in a cohort"],
+      ["We went through Antler last year. How do you run evals?", "first person in a cohort"],
+      ["We're both in the batch, so how do you handle state?", "first person in a cohort"],
+      ["Fellow YC founder here. How do you test agents?", "fellow / batchmate"],
+      ["Same cohort, different problem: where does state live?", "fellow / batchmate"],
+    ] as const) {
+      expect(lintSharedCohort(text), text).toEqual(
+        expect.arrayContaining([expect.stringMatching(new RegExp(`^shared-cohort: "${label}"`))]),
+      );
+    }
+  });
+
+  it("leaves the reader's own cohort, said about them, alone", () => {
+    for (const text of [
+      "Hey Aziz, you're in YC F26 with Acme. Is the integration the drag?",
+      "Hey Ram, found you in the YC F26 list. Where does state live when tasks drag out?",
+      "Your batch is heavy on agents. How are you handling guardrails?",
+      "In mid-2026 as well as now, evals are the hard part. How do you run them?",
+      "In batch processing, retries pile up. How do you handle them?",
+      "We're seeing every agent team hit state persistence. Where do you keep it?",
+    ]) {
+      expect(lintSharedCohort(text), text).toEqual([]);
+    }
+  });
+
+  it("is off when the sender really did a program", () => {
+    expect(lintSharedCohort("Fellow YC founder here. How do you test agents?", "yc-w25")).toEqual(
+      [],
+    );
+    expect(lintSharedCohort("Fellow YC founder here.", "  ")).not.toEqual([]);
   });
 });

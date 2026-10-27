@@ -16,7 +16,12 @@ import {
 } from "@oneshot-gtm/core";
 import { loadPrompt } from "@oneshot-gtm/intel";
 import { enrollInCadence } from "./_cadence.ts";
-import { agedEvidence, draftWithRepair, lintLinkedInNote } from "./_linkedin-evidence.ts";
+import {
+  agedEvidence,
+  draftWithRepair,
+  lintLinkedInNote,
+  lintSharedCohort,
+} from "./_linkedin-evidence.ts";
 import { learningBlock, stampLearningInput, voiceBlock } from "./_lib.ts";
 import { offerCandidatesOf, offerOf, playMakesOffer } from "./_prospect-offer.ts";
 
@@ -162,6 +167,7 @@ export async function draftLinkedInNote(
   ];
   const input = [
     `FOUNDER: ${cfg.founderName ?? ""}`,
+    ...(cfg.founderCohort?.trim() ? [`SENDER_COHORT: ${cfg.founderCohort.trim()}`] : []),
     `PRODUCT: ${cfg.productOneLiner ?? ""}`,
     "PERSON:",
     ...person.map((l) => `  ${l}`),
@@ -187,7 +193,10 @@ export async function draftLinkedInNote(
   const drafted = await draftWithRepair({
     system: loadPrompt("linkedin-invite-note"),
     context: input,
-    lint: (text) => lintLinkedInNote(text, maxChars),
+    lint: (text) => [
+      ...lintLinkedInNote(text, maxChars),
+      ...lintSharedCohort(text, cfg.founderCohort),
+    ],
     maxTokens: 600,
   });
   const body = drafted.text;

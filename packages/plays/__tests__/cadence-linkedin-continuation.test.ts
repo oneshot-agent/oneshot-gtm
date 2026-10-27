@@ -1091,6 +1091,16 @@ describe("already connected: the messages are written knowing it", () => {
     expect(section).toMatch(/every rule for the first and last message below still holds\./);
     expect(section).not.toMatch(/one open question|no pitch/);
   });
+
+  it("both LinkedIn prompts say the founder is in no program unless SENDER_COHORT says so", () => {
+    for (const name of ["linkedin-message.md", "linkedin-invite-note.md"]) {
+      const prompt = readFileSync(join(import.meta.dirname, "..", "..", "prompts", name), "utf8");
+      expect(prompt, name).toMatch(/^- `SENDER_COHORT` \(optional, usually absent\): /m);
+      const section = prompt.split("## You are in no program")[1]!.split("\n## ")[0]!;
+      expect(section, name).toMatch(/never a program the founder is in/);
+      expect(section, name).toMatch(/no subject/);
+    }
+  });
 });
 
 describe("continueCadencesOntoLinkedIn: cadences enrolled before the setting", () => {
