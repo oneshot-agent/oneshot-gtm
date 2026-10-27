@@ -38,6 +38,7 @@ import {
   isDudDomain,
   portableQueuePayload,
   rankPendingRows,
+  type RankableRow,
   rederiveQueueRow,
   resolveQueueTarget,
   CLICK_RESEARCH_WAIT_MS,
@@ -407,6 +408,42 @@ function prospectHasReplied(ledger: ReturnType<typeof getLedger>, prospectId: nu
   );
 }
 
+/** `forProspectSteps`' key for a sequence event. */
+function stepKey(ev: { play_name: string; step_index: number }): string {
+  return `${ev.play_name}|${ev.step_index}`;
+}
+
+/**
+ * Delivery checks for a prospect's sequence events, keyed by event id. One
+ * read for the prospect (`forProspectSteps`, keyed play|step) rather than one
+ * per event (issue #929). A play|step that two of the prospect's events share
+ * (a re-run cadence) is ambiguous in that map, so those events keep the
+ * per-event read and the attribution a per-event read makes.
+ */
+function deliveriesForEvents(
+  ledger: ReturnType<typeof getLedger>,
+  prospectId: number,
+  events: ReadonlyArray<{ id: number; play_name: string; step_index: number }>,
+): Map<number, SendDeliveryView> {
+  const out = new Map<number, SendDeliveryView>();
+  if (events.length === 0) return out;
+  const eventsPerKey = new Map<string, number>();
+  for (const ev of events) eventsPerKey.set(stepKey(ev), (eventsPerKey.get(stepKey(ev)) ?? 0) + 1);
+  try {
+    const byStep = ledger.sendDelivery.forProspectSteps(prospectId);
+    for (const ev of events) {
+      const d =
+        eventsPerKey.get(stepKey(ev)) === 1
+          ? byStep.get(stepKey(ev))
+          : ledger.sendDelivery.forSequenceEvent(ev.id);
+      if (d) out.set(ev.id, d);
+    }
+  } catch {
+    // A ledger without the delivery table reads as no checks.
+  }
+  return out;
+}
+
 /**
  * GET /api/queue/:id. The /prospects detail drawer. The queue row, the
  * prospect it resolved to, and everything recorded against that prospect.
@@ -439,15 +476,9 @@ export function queueRowDetailRoute(req: Request, params: Record<string, string>
 
   const cadences = prospect ? viewsForRows(ledger.listCadencesForProspect(prospect.id)) : [];
   const sequenceEvents = prospect ? ledger.listAllSequenceEventsForProspect(prospect.id) : [];
-  const deliveries = new Map<number, SendDeliveryView>();
-  for (const ev of sequenceEvents) {
-    try {
-      const d = ledger.sendDelivery.forSequenceEvent(ev.id);
-      if (d) deliveries.set(ev.id, d);
-    } catch {
-      // A ledger without the delivery table reads as no checks.
-    }
-  }
+  const deliveries = prospect
+    ? deliveriesForEvents(ledger, prospect.id, sequenceEvents)
+    : new Map<number, SendDeliveryView>();
   const timeline = buildProspectTimeline({
     row,
     sequenceEvents,
@@ -489,9 +520,48 @@ export function queueRowDetailRoute(req: Request, params: Record<string, string>
 /**
  * Rank a wider pending window in memory, then slice the page. Ranking uses
  * interleaving, scores within each finder, and exploration (find/_rank.ts).
- * Rows beyond the window are excluded.
+ * Rows beyond the window are excluded. The window is read as the ranking
+ * columns alone (issue #929: a thousand full payloads and drafts were read
+ * to use six fields), and the page's rows are then read in full by id.
  */
 const RANK_WINDOW = 1000;
+/** What `rankPendingRows` reads; `event_city` is Luma's city, projected in SQL by the store. */
+const RANK_COLUMNS: readonly string[] = [
+  "id",
+  "play_name",
+  "dedupe_key",
+  "found_at",
+  "priority_json",
+  "event_city",
+];
+
+/**
+ * `Ledger.listQueue` options plus the store's `columns` projection (issue
+ * #929). The facade forwards its options object verbatim, so a projection
+ * set here reaches `QueueStore.listQueue`, which validates the names.
+ */
+interface QueueListArgs {
+  playName?: string;
+  status?: QueueStatus;
+  limit?: number;
+  ids?: number[];
+  columns?: readonly string[];
+}
+
+/** The ranked page: rank the projected window, keep `limit` ids, read those rows in full, in rank order. */
+function rankedPage(
+  ledger: ReturnType<typeof getLedger>,
+  window: RankableRow[],
+  limit: number,
+): QueueRow[] {
+  const ids = rankPendingRows(window)
+    .slice(0, limit)
+    .map((row) => row.id);
+  if (ids.length === 0) return [];
+  const byId = ledger.getQueueRowsByIds(ids);
+  // A row deleted between the two reads is gone, as it would be from one later read.
+  return ids.flatMap((id) => byId.get(id) ?? []);
+}
 
 export function listQueueRoute(req: Request): Response {
   const url = new URL(req.url);
@@ -511,17 +581,15 @@ export function listQueueRoute(req: Request): Response {
   // Ranked order exists for ONE surface: the pending review list. Explicit id
   // picks and every other status keep chronological order.
   const ranked = requestedOrder === "ranked" && status === "pending" && !ids;
-  const filterArgs: {
-    playName?: string;
-    status?: QueueStatus;
-    limit?: number;
-    ids?: number[];
-  } = { limit: ranked ? RANK_WINDOW : ids ? Math.max(limit, ids.length) : limit };
+  const filterArgs: QueueListArgs = {
+    limit: ranked ? RANK_WINDOW : ids ? Math.max(limit, ids.length) : limit,
+  };
   if (playName) filterArgs.playName = playName;
   if (status) filterArgs.status = status;
   if (ids) filterArgs.ids = ids;
+  if (ranked) filterArgs.columns = RANK_COLUMNS;
   const rows = ledger.listQueue(filterArgs);
-  const ordered = ranked ? rankPendingRows(rows).slice(0, limit) : rows;
+  const ordered = ranked ? rankedPage(ledger, rows, limit) : rows;
   const counts: QueueCounts = ledger.queueCounts();
   // Unfiltered on purpose. The drain button needs per-play approved counts
   // regardless of the page's current filter.
@@ -1145,9 +1213,9 @@ export async function approveAllRoute(req: Request): Promise<Response> {
   // The bulk UPDATE returns a count, not ids: take the pending ids first so
   // the rows it approves get their posts captured (in the background; the
   // capture re-checks each row is still approved).
-  const pendingIds = ledger
-    .listQueue({ status: "pending", limit: 100_000, ...(body.play ? { playName: body.play } : {}) })
-    .map((row) => row.id);
+  const pendingArgs: QueueListArgs = { status: "pending", limit: 100_000, columns: ["id"] };
+  if (body.play) pendingArgs.playName = body.play;
+  const pendingIds = ledger.listQueue(pendingArgs).map((row) => row.id);
   const n = ledger.approveAllPending(body.play ? { playName: body.play } : {});
   if (n > 0) scheduleNewsfeedOnApproval(pendingIds);
   return jsonResponse({ approved: n }, 200, req);

@@ -8,6 +8,32 @@ const queueRows = new Map<number, Record<string, unknown>>();
 const prospectsByEmail = new Map<string, { id: number }>();
 const prospectsById = new Map<number, Record<string, unknown>>();
 const statusCalls: Array<Record<string, unknown>> = [];
+/** Every delivery read, in order: `steps:<prospectId>` or `event:<sequenceEventId>`. */
+const deliveryCalls: string[] = [];
+let stepDeliveries = new Map<string, Record<string, unknown>>();
+let eventDeliveries = new Map<number, Record<string, unknown>>();
+const sameStepEvents = [
+  {
+    id: 7,
+    prospect_id: 45,
+    play_name: "show-hn",
+    step_index: 0,
+    channel: "email",
+    status: "sent",
+    metadata_json: null,
+    created_at: "2026-09-02 09:00:00",
+  },
+  {
+    id: 8,
+    prospect_id: 45,
+    play_name: "show-hn",
+    step_index: 0,
+    channel: "email",
+    status: "sent",
+    metadata_json: null,
+    created_at: "2026-09-09 09:00:00",
+  },
+];
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -23,31 +49,43 @@ vi.mock("@oneshot-gtm/core", async () => {
       // The conversation view's filtered getter; the approve guard reads it.
       listSequenceEventsForProspect: () => [],
       // The history reads every status, including the bounced step.
+      sendDelivery: {
+        forProspectSteps: (id: number) => {
+          deliveryCalls.push(`steps:${id}`);
+          return stepDeliveries;
+        },
+        forSequenceEvent: (id: number) => {
+          deliveryCalls.push(`event:${id}`);
+          return eventDeliveries.get(id) ?? null;
+        },
+      },
       listAllSequenceEventsForProspect: (id: number) =>
-        id === 44
-          ? [
-              {
-                id: 2,
-                prospect_id: 44,
-                play_name: "show-hn",
-                step_index: 1,
-                channel: "email",
-                status: "bounced",
-                metadata_json: JSON.stringify({ subject: "following up" }),
-                created_at: "2026-09-04 09:00:00",
-              },
-              {
-                id: 1,
-                prospect_id: 44,
-                play_name: "show-hn",
-                step_index: 0,
-                channel: "email",
-                status: "sent",
-                metadata_json: JSON.stringify({ subject: "quick one", label: "intro" }),
-                created_at: "2026-09-02 09:00:00",
-              },
-            ]
-          : [],
+        id === 45
+          ? sameStepEvents
+          : id === 44
+            ? [
+                {
+                  id: 2,
+                  prospect_id: 44,
+                  play_name: "show-hn",
+                  step_index: 1,
+                  channel: "email",
+                  status: "bounced",
+                  metadata_json: JSON.stringify({ subject: "following up" }),
+                  created_at: "2026-09-04 09:00:00",
+                },
+                {
+                  id: 1,
+                  prospect_id: 44,
+                  play_name: "show-hn",
+                  step_index: 0,
+                  channel: "email",
+                  status: "sent",
+                  metadata_json: JSON.stringify({ subject: "quick one", label: "intro" }),
+                  created_at: "2026-09-02 09:00:00",
+                },
+              ]
+            : [],
       listInboxRepliesForProspect: (id: number) =>
         id === 44
           ? [
@@ -163,6 +201,77 @@ describe("queueRowDetailRoute", () => {
     expect(timeline[1]).toMatchObject({ label: "reply · interested", detail: "Re: quick one" });
     expect((body["flags"] as Record<string, unknown>)["replied"]).toBe(true);
     expect(JSON.stringify(body)).not.toContain("SECRET BODY TEXT");
+  });
+
+  it("reads the prospect's delivery checks once, not once per sequence event (#929)", async () => {
+    queueRows.set(9, row({}));
+    prospectsByEmail.set("grace@x.example", { id: 44 });
+    prospectsById.set(44, { id: 44, name: "Grace H", email: "grace@x.example" });
+    const duplicate = {
+      status: "duplicate",
+      expected: 1,
+      observed: 2,
+      deliveredAt: ["2026-09-02T09:00:05.000Z", "2026-09-02T09:00:09.000Z"],
+      sentAt: "2026-09-02T09:00:00.000Z",
+      checkedAt: "2026-09-02T09:10:00.000Z",
+      transport: "gmail",
+      identity: "me@x.example",
+      error: null,
+      keyed: true,
+    };
+    stepDeliveries = new Map([["show-hn|0", duplicate]]);
+    deliveryCalls.length = 0;
+    try {
+      const { body } = await detail("9");
+      expect(deliveryCalls).toEqual(["steps:44"]);
+      const timeline = body["timeline"] as Array<Record<string, unknown>>;
+      const notes = timeline.filter((e) => e["label"] === "delivered 2× by the mail provider");
+      // Attributed to step 1 (event 1): the one check, dated by its last delivery.
+      expect(notes).toEqual([
+        {
+          at: "2026-09-02T09:00:09.000Z",
+          kind: "sequence",
+          label: "delivered 2× by the mail provider",
+          detail: "09:00:05, 09:00:09 UTC",
+          playName: "show-hn",
+        },
+      ]);
+    } finally {
+      stepDeliveries = new Map();
+    }
+  });
+
+  it("falls back to the per-event read for a play|step two of the prospect's events share (#929)", async () => {
+    queueRows.set(13, row({ id: 13, payload_json: JSON.stringify({ email: "two@x.example" }) }));
+    prospectsByEmail.set("two@x.example", { id: 45 });
+    prospectsById.set(45, { id: 45, name: "Two Steps", email: "two@x.example" });
+    const duplicate = {
+      status: "duplicate",
+      expected: 1,
+      observed: 2,
+      deliveredAt: ["2026-09-09T09:00:05.000Z"],
+      sentAt: "2026-09-09T09:00:00.000Z",
+      checkedAt: "2026-09-09T09:10:00.000Z",
+      transport: "gmail",
+      identity: "me@x.example",
+      error: null,
+      keyed: true,
+    };
+    // The keyed map would hand event 8's check to event 7 as well.
+    stepDeliveries = new Map([["show-hn|0", duplicate]]);
+    eventDeliveries = new Map([[8, duplicate]]);
+    deliveryCalls.length = 0;
+    try {
+      const { body } = await detail("13");
+      expect(deliveryCalls).toEqual(["steps:45", "event:7", "event:8"]);
+      const timeline = body["timeline"] as Array<Record<string, unknown>>;
+      expect(
+        timeline.filter((e) => e["label"] === "delivered 2× by the mail provider"),
+      ).toHaveLength(1);
+    } finally {
+      stepDeliveries = new Map();
+      eventDeliveries = new Map();
+    }
   });
 
   it("reads the ICP verdict off the payload when the row never became a prospect", async () => {

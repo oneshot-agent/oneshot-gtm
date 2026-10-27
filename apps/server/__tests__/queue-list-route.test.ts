@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 // status/play filters (the button has to work from the default `pending` view).
 
 const listQueueCalls: Array<Record<string, unknown>> = [];
+/** Ids handed to `getQueueRowsByIds`, one array per read. */
+const rowReads: number[][] = [];
 let nextRows: unknown[] = [];
 let triggerConfig = JSON.stringify({ yourEdge: "current trigger edge" });
 let configOrder: "ranked" | "newest" = "newest";
@@ -20,7 +22,20 @@ vi.mock("@oneshot-gtm/core", async () => {
       getTrigger: () => ({ config_json: triggerConfig }),
       listQueue: (args: Record<string, unknown>) => {
         listQueueCalls.push(args);
-        return nextRows;
+        const columns = args["columns"] as string[] | undefined;
+        if (!columns) return nextRows;
+        // The store honours the projection: a window row carries only those keys.
+        return (nextRows as Array<Record<string, unknown>>).map((r) =>
+          Object.fromEntries(columns.map((c) => [c, c === "event_city" ? null : r[c]])),
+        );
+      },
+      getQueueRowsByIds: (ids: number[]) => {
+        rowReads.push([...ids]);
+        return new Map(
+          (nextRows as Array<{ id: number }>)
+            .filter((r) => ids.includes(r.id))
+            .map((r) => [r.id, r]),
+        );
       },
       queueCounts: () => ({ pending: 0, approved: 220, rejected: 0, sent: 0, expired: 0 }),
       approvedCountsByPlay: () => ({ "luma-events": 145, "repo-interest": 35 }),
@@ -208,6 +223,7 @@ describe("listQueueRoute — ranked review order", () => {
 
   it("?order=ranked interleaves finders on the pending view and echoes the mode", async () => {
     listQueueCalls.length = 0;
+    rowReads.length = 0;
     nextRows = [pendingRow(1, "aaa", 90), pendingRow(2, "aaa", 80), pendingRow(3, "zzz", 85)];
     try {
       const { ids, order } = await idsOf("http://x/api/queue?status=pending&order=ranked");
@@ -215,8 +231,29 @@ describe("listQueueRoute — ranked review order", () => {
       // zzz interleaves at slot 2 despite the lower (incomparable) total;
       // aaa's 80 is the bottom decile here and rotates to the exploration tail.
       expect(ids).toEqual([1, 3, 2]);
-      // Ranked mode reads the wider window, not the page limit.
-      expect(listQueueCalls[0]).toMatchObject({ status: "pending", limit: 1000 });
+      // Ranked mode reads the wider window, not the page limit, and only the
+      // ranking columns of it (#929); the page's rows are then read in full.
+      expect(listQueueCalls[0]).toMatchObject({
+        status: "pending",
+        limit: 1000,
+        columns: ["id", "play_name", "dedupe_key", "found_at", "priority_json", "event_city"],
+      });
+      expect(rowReads).toEqual([[1, 3, 2]]);
+    } finally {
+      nextRows = [];
+    }
+  });
+
+  it("reads in full only the rows that make the page, in rank order (#929)", async () => {
+    rowReads.length = 0;
+    nextRows = [pendingRow(1, "aaa", 90), pendingRow(2, "aaa", 80), pendingRow(3, "zzz", 85)];
+    try {
+      const out = await body("http://x/api/queue?status=pending&order=ranked&limit=2");
+      const rows = out["rows"] as Array<Record<string, unknown>>;
+      expect(rows.map((r) => r["id"])).toEqual([1, 3]);
+      expect(rowReads).toEqual([[1, 3]]);
+      // The wire rows come from the full read, not the projected window.
+      expect(rows[0]).toMatchObject({ payload: { name: "Ada" }, dedupeKey: "k1" });
     } finally {
       nextRows = [];
     }

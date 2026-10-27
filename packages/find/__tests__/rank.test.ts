@@ -92,6 +92,23 @@ describe("rankPendingRows", () => {
     expect(ranked.map((r) => r.id)).toEqual([ny.id, sf1.id, sf2.id, junk.id]);
   });
 
+  it("ranks a window projected to the ranking columns (event_city, no payload) like the full rows (#929)", () => {
+    const sf1 = row("luma-events", 80, { eventCity: "San Francisco" });
+    const sf2 = row("luma-events", 79, { eventCity: "San Francisco" });
+    const ny = row("luma-events", 78, { eventCity: "New York" });
+    const noCity = row("luma-events", 77, {});
+    const full = [sf1, sf2, ny, noCity];
+    const projected = full.map(({ payload_json, ...rest }) => ({
+      ...rest,
+      event_city: (JSON.parse(payload_json) as { eventCity?: string }).eventCity ?? null,
+    }));
+    const expected = rankPendingRows(full, { explorationInterval: 100 }).map((r) => r.id);
+    expect(expected).toEqual([ny.id, sf1.id, sf2.id, noCity.id]);
+    expect(rankPendingRows(projected, { explorationInterval: 100 }).map((r) => r.id)).toEqual(
+      expected,
+    );
+  });
+
   it("hands every Kth slot to the exploration pool (unscored rows get eyes)", () => {
     const rows = [
       ...Array.from({ length: 8 }, (_, i) => row("solo", 60 + i)),
