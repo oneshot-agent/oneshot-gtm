@@ -1,5 +1,6 @@
 import { personResearchRows } from "../../web/src/lib/queueCase.ts";
 import { fitReasonFor } from "../../web/src/lib/queueRationale.ts";
+import { paidCacheKey } from "@oneshot-gtm/core";
 import { lintEmail } from "@oneshot-gtm/plays";
 import { Database } from "bun:sqlite";
 import {
@@ -91,9 +92,43 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
       "rocs-by-goal.json",
       "domains.json",
       "balance.json",
+      "research-person.json",
     ]) {
       expect(existsSync(join(home, "demo", f))).toBe(true);
     }
+  });
+
+  it("seeds full research for every researched queue row, keyed the way the dossier reads it", () => {
+    seedDemoHome({ home, anchor: ANCHOR });
+    const fixture = JSON.parse(
+      readFileSync(join(home, "demo", "research-person.json"), "utf8"),
+    ) as Record<string, { status: string; result: { result: Record<string, unknown> } }>;
+    const db = new Database(join(home, "ledger.sqlite"), { readonly: true });
+    const researched = (
+      db.query("SELECT payload_json FROM target_queue").all() as { payload_json: string }[]
+    )
+      .map((r) => JSON.parse(r.payload_json) as Record<string, unknown>)
+      .filter(
+        (p) => (p["personResearch"] as { status?: string } | undefined)?.status === "complete",
+      );
+    db.close();
+
+    expect(researched.length).toBeGreaterThan(0);
+    for (const row of researched) {
+      const email = String(row["email"] ?? row["founderEmail"]);
+      const entry = fixture[paidCacheKey("research.person", { email })];
+      expect(entry?.status, email).toBe("ok");
+      // Built only from what the row already claims, and no invented posts.
+      const research = row["personResearch"] as { currentRole: { title: string; company: string } };
+      expect(entry!.result.result).toMatchObject({
+        title: research.currentRole.title,
+        company: research.currentRole.company,
+        recent_posts: [],
+      });
+      // The company's description has its own field; it is not the person's summary.
+      expect(entry!.result.result).not.toHaveProperty("summary");
+    }
+    expect(Object.keys(fixture)).toHaveLength(researched.length);
   });
 
   it("seeds LinkedIn conversations with matched, unmatched and paused states", () => {

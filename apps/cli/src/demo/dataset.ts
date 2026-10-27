@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { buildLinkedInDemo } from "./linkedin.ts";
-import { cadenceGoalId, type PersonResearchDossier } from "@oneshot-gtm/core";
+import {
+  cadenceGoalId,
+  paidCacheKey,
+  type PaidCacheEntry,
+  type PersonResearchDossier,
+} from "@oneshot-gtm/core";
 import { lintEmail } from "@oneshot-gtm/plays";
 
 /**
@@ -1345,6 +1350,7 @@ export interface DemoDataset {
     "rocs-by-goal.json": unknown;
     "domains.json": unknown;
     "balance.json": unknown;
+    "research-person.json": Record<string, PaidCacheEntry>;
   };
 }
 
@@ -1567,6 +1573,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
     }
   });
 
+  const queue = buildQueue(anchor, prospects);
   return {
     config: buildConfig(),
     secrets: DEMO_SECRETS,
@@ -1575,7 +1582,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
     sequenceEvents,
     cadences,
     outcomes,
-    queue: buildQueue(anchor, prospects),
+    queue,
     learning: buildLearning(anchor, prospects, buildTriggers(anchor)),
     triggers: buildTriggers(anchor),
     runs: buildRuns(anchor, receipts),
@@ -1594,6 +1601,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
       // holding $41.86 could not have paid for $2,002.27 of calls, and the
       // Today page prints both.
       "balance.json": { balance: "997.73 USDC", raw: "997.73 USDC" },
+      "research-person.json": buildResearchPersonFixture(queue),
     },
   };
 }
@@ -1941,6 +1949,48 @@ function outcomeValueTag(outcome: NonNullable<DemoPerson["outcome"]>): unknown {
 
 // Queue
 
+/**
+ * Full person research for the demo's researched queue rows, as the paid cache
+ * would hold it, keyed the way the dossier looks it up. Demo mode reads it in
+ * place of the paid cache, which refuses demo reads to protect real workspaces;
+ * without it every demo dossier shows only its bounded summary.
+ *
+ * Built from the research each row already carries (its role and
+ * organizations), so the dossier shows nothing the row does not already claim.
+ * No person summary: the dataset has no bio for these people, and the company's
+ * description already has its own field. No posts: the dataset has none to give.
+ */
+function buildResearchPersonFixture(
+  queue: Array<{ payloadJson: string }>,
+): Record<string, PaidCacheEntry> {
+  const out: Record<string, PaidCacheEntry> = {};
+  for (const row of queue) {
+    const payload = JSON.parse(row.payloadJson) as Record<string, unknown>;
+    const research = payload["personResearch"] as PersonResearchDossier | undefined;
+    const email = String(payload["email"] ?? payload["founderEmail"] ?? "");
+    if (!research || research.status !== "complete" || !email) continue;
+    out[paidCacheKey("research.person", { email })] = {
+      status: "ok",
+      fetchedAt: research.researchedAt,
+      costUsd: 0,
+      result: {
+        status: "completed",
+        result: {
+          full_name: String(payload["name"] ?? payload["founderName"] ?? ""),
+          title: research.currentRole?.title,
+          company: research.currentRole?.company,
+          emails: [email],
+          experience: (research.organizations ?? []).map((o) => ({
+            title: o.title,
+            company: o.name,
+          })),
+          recent_posts: [],
+        },
+      },
+    };
+  }
+  return out;
+}
 function buildQueue(anchor: Date, prospects: DemoProspectRow[]): DemoDataset["queue"] {
   // Fictional research and letters for the demo cast, never a paid lookup.
   // Keep the stored payload shape identical to the real post-finder pipeline.
