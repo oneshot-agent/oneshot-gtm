@@ -46,6 +46,10 @@ describe("renderLinkedInTemplate", () => {
     expect(renderLinkedInTemplate("{first_name}: quick one.", none)).toEqual({
       text: "Quick one.",
     });
+    // A possessive is not a greeting: it can't be dropped either.
+    expect(renderLinkedInTemplate("Hi {first_name}'s team, hello.", none)).toEqual({
+      missing: ["first_name"],
+    });
     // A name used past the greeting can't be dropped.
     expect(renderLinkedInTemplate("Saw {evidence}, {first_name}.", none)).toEqual({
       missing: ["first_name"],

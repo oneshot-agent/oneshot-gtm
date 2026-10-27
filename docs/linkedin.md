@@ -79,7 +79,7 @@ A step on a channel the person has no address for is skipped, in any cadence.
 
 ## Templates
 
-Every note and message is a template with the person's details filled in. No model writes them, so the same facts always give the same text. Set your own wording on **Setup → LinkedIn templates**; a step you leave blank uses the default.
+Every note and message is a template with the person's details filled in. No model writes them, so the same facts always give the same text. Set your own wording on **Setup → LinkedIn copy**; a step you leave blank uses the default.
 
 | Step                                    | Used when                                                             | Default                                                                                                                                            |
 | --------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |

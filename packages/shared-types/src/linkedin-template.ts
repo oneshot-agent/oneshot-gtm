@@ -153,8 +153,9 @@ function clean(name: string, value: string | null | undefined): string | null {
 }
 
 // The opening greeting a missing name can be dropped from: a short word or
-// none ("Hi ", "hey ", ""), the name, then a comma, dash or colon.
-const GREETING_RX = /^\s*(?:[A-Za-z]{1,8}\s+)?\{first_name\}(?:\s*[,:]|\s+[-–—])?\s*/;
+// none ("Hi ", "hey ", ""), the name ending there (not "{first_name}'s"),
+// then a comma, dash or colon.
+const GREETING_RX = /^\s*(?:[A-Za-z]{1,8}\s+)?\{first_name\}(?=[\s,:]|$)(?:\s*[,:]|\s+[-–—])?\s*/;
 
 /**
  * Fill a template. Without a usable first name the opening greeting is
