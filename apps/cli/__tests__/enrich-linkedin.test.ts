@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  cleanCompanyToken,
-  looksLikeRealName,
-  resolveCap,
-} from "../src/commands/enrich-linkedin.ts";
+import { cleanCompanyToken, looksLikeRealName } from "../src/commands/enrich-linkedin.ts";
+import { resolveCap } from "../src/output.ts";
 
 describe("looksLikeRealName", () => {
   it("accepts ordinary two-token names", () => {
@@ -84,6 +81,8 @@ describe("cleanCompanyToken", () => {
   });
 });
 
+// The one `--limit` cap shared by every paid command (output.ts). This is the
+// single test block for it.
 describe("resolveCap", () => {
   it("passes through an ordinary limit", () => {
     expect(resolveCap(5)).toBe(5);

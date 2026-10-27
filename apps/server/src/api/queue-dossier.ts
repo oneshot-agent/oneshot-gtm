@@ -1,9 +1,13 @@
 import {
+  demoFixture,
+  demoMode,
   getCachedNewsfeed,
   getLedger,
   type NewsfeedPost,
   newsfeedPostsFrom,
+  paidCacheKey,
   readPaidCache,
+  type PaidCacheEntry,
 } from "@oneshot-gtm/core";
 import { organizationsFromResearch } from "@oneshot-gtm/find";
 import type {
@@ -45,8 +49,17 @@ function cachedResearch(
   for (const c of candidates) {
     for (const input of [{ socialMediaUrl: c.url ?? undefined }, { email: c.email ?? undefined }]) {
       if (!input.socialMediaUrl?.trim() && !input.email?.trim()) continue;
-      const cached = readPaidCache("research.person", input, { maxAgeMs: Infinity });
+      // Demo captures read only research seeded under their own home. The
+      // paid cache deliberately refuses demo reads to protect real workspaces.
+      const cached = demoMode()
+        ? demoFixture<Record<string, PaidCacheEntry>>("research-person.json")?.[
+            paidCacheKey("research.person", input)
+          ]
+        : readPaidCache("research.person", input, { maxAgeMs: Infinity });
       if (cached?.status !== "ok") continue;
+      // A seeded fixture is unvalidated JSON: a bad timestamp would throw in
+      // toISOString below rather than leave the dossier summary-only.
+      if (!Number.isFinite(Date.parse(cached.fetchedAt))) continue;
       const result = record(record(cached.result)?.["result"]);
       if (result) return { result, fetchedAt: new Date(cached.fetchedAt).toISOString() };
     }

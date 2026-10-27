@@ -22,17 +22,21 @@ vi.mock("@oneshot-gtm/find", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/find")>("@oneshot-gtm/find");
   return { ...actual, generateFitReason: generateMock };
 });
-vi.mock("../src/output.ts", () => ({
-  c: { dim: (s: string) => s },
-  header: () => {},
-  note: () => {},
-  ok: () => {},
-  warn: () => {},
-}));
+vi.mock("../src/output.ts", async (importOriginal) => {
+  // The command's `--limit` cap is the real one; only the printers are stubbed.
+  const { resolveCap } = await importOriginal<typeof import("../src/output.ts")>();
+  return {
+    c: { dim: (s: string) => s },
+    header: () => {},
+    note: () => {},
+    ok: () => {},
+    resolveCap,
+    warn: () => {},
+  };
+});
 
 const { Ledger: RealLedger } = await import("@oneshot-gtm/core");
-const { commandBackfillFitReason, resolveCap } =
-  await import("../src/commands/backfill-fit-reason.ts");
+const { commandBackfillFitReason } = await import("../src/commands/backfill-fit-reason.ts");
 
 let dbPath: string;
 beforeEach(() => {
@@ -80,14 +84,6 @@ const payloadOf = (id: number) =>
   JSON.parse(ledger.getQueueRow(id)!.payload_json) as Record<string, unknown>;
 
 const R = "Early-stage vertical SaaS using AI for document intelligence, fitting the ICP.";
-
-describe("resolveCap", () => {
-  it("never widens a run on a bad limit", () => {
-    expect(resolveCap(undefined)).toBeUndefined();
-    expect(resolveCap(Number.NaN)).toBe(0);
-    expect(resolveCap(3.7)).toBe(3);
-  });
-});
 
 describe("commandBackfillFitReason", () => {
   it("dry run resolves through the ladder but writes nothing", async () => {

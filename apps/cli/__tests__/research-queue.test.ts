@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   parseQueueStatuses,
-  resolveQueueCap,
   ROW_COST_ESTIMATE_USD,
   selectCandidates,
   type CandidateRow,
@@ -53,15 +52,6 @@ describe("parseQueueStatuses", () => {
 
   it("rejects an unknown status rather than silently widening a paid run", () => {
     expect(() => parseQueueStatuses("sent")).toThrow(/unknown --status/);
-  });
-});
-
-describe("resolveQueueCap", () => {
-  it("floors a sane limit and never widens on bad input", () => {
-    expect(resolveQueueCap(undefined)).toBeUndefined();
-    expect(resolveQueueCap(7.9)).toBe(7);
-    expect(resolveQueueCap(Number.NaN)).toBe(0);
-    expect(resolveQueueCap(-3)).toBe(0);
   });
 });
 
