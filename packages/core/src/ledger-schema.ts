@@ -413,6 +413,17 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    version: 18,
+    name: "queue-lookup-indexes",
+    up: (db) => {
+      // Existing versioned ledgers do not re-run the baseline DDL below.
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_queue_status_found ON target_queue(status, found_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_queue_prospect ON target_queue(prospect_id);
+      `);
+    },
+  },
 ];
 
 /**
@@ -952,6 +963,8 @@ export function migrateLedgerSchema(db: Database): void {
       -- The /queue page filters by (status, play) together; the composite
       -- serves that pair without falling back to a single-column scan.
       CREATE INDEX IF NOT EXISTS idx_queue_status_play ON target_queue(status, play_name);
+      CREATE INDEX IF NOT EXISTS idx_queue_status_found ON target_queue(status, found_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_queue_prospect ON target_queue(prospect_id);
 
       CREATE TABLE IF NOT EXISTS triggers (
         name TEXT PRIMARY KEY,
