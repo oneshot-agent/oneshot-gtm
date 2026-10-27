@@ -117,6 +117,23 @@ it("seeks the latest row for a prospect after upgrading, preserving the id tiebr
   }
 });
 
+it("drains equal-timestamp rows in FIFO order with the status/date index present", () => {
+  const ledger = existingLedger();
+  try {
+    const ids = seedQueue(ledger);
+    for (const id of ids) ledger.setQueueStatus({ id, status: "approved" });
+    expect(ledger.dequeueApproved({ playName: "intro", limit: 2 }).map((row) => row.id)).toEqual([
+      ids[1],
+      ids[0],
+    ]);
+    expect(ledger.dequeueApproved({ playName: "intro", limit: 2 }).map((row) => row.id)).toEqual([
+      ids[2],
+    ]);
+  } finally {
+    ledger.close();
+  }
+});
+
 it("avoids per-touch schema probes while seeing identities added after SharedDb construction", () => {
   const path = join(root, "shared.sqlite");
   const shared = new SharedDb(path);
