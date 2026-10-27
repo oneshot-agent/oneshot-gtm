@@ -401,6 +401,18 @@ describe("the connection request", () => {
     expect(calls).toEqual([]);
   });
 
+  it("holds a note that still puts the founder in the reader's batch after repair", async () => {
+    noteText = "Hey Dana, in YC F26 as well. How are you handling review?";
+    emailCadenceRunOut();
+    const preview = await previewCadenceStep({ prospectId, playName: PLAY });
+    if ("waiting" in preview || "skipped" in preview)
+      throw new Error("the invite step never waits");
+    expect(preview.flags).toContainEqual(expect.stringMatching(/^shared-cohort: /));
+    const out = await run(inviteOk());
+    expect(out.action).toBe("skipped");
+    expect(calls).toEqual([]);
+  });
+
   it("stores on the invite whether its note carried an evidence clause, as drafted (#792)", async () => {
     // Email intro with a repo signal: the note is drafted with a clause.
     ledger.recordSequenceEvent({
