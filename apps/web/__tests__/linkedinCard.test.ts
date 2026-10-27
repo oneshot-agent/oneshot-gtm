@@ -67,7 +67,7 @@ describe("linkedinCardView", () => {
       cookieSet: false,
       accounts: [],
       step: null,
-      liveUrl: null,
+      setupUrl: null,
     });
     expect(v.primary).toBe("connect");
     expect(v.connectRuns).toEqual(["messaging", "research"]);
@@ -83,7 +83,7 @@ describe("linkedinCardView", () => {
       cookieSet: false,
       accounts: [account()],
       step: null,
-      liveUrl: null,
+      setupUrl: null,
     });
     expect(onlyResearch.connectRuns).toEqual(["research"]);
     expect(onlyResearch.messaging).toMatchObject({ ok: true, text: "Connected as J. Nicolas" });
@@ -93,7 +93,7 @@ describe("linkedinCardView", () => {
       cookieSet: false,
       accounts: [],
       step: null,
-      liveUrl: null,
+      setupUrl: null,
     });
     expect(onlyMessaging.connectRuns).toEqual(["messaging"]);
     expect(onlyMessaging.research.ok).toBe(true);
@@ -106,7 +106,7 @@ describe("linkedinCardView", () => {
       cookieSet: false,
       accounts: [account()],
       step: null,
-      liveUrl: null,
+      setupUrl: null,
     });
     expect(v.primary).toBeNull();
     expect(v.connectRuns).toEqual([]);
@@ -119,7 +119,7 @@ describe("linkedinCardView", () => {
       cookieSet: false,
       accounts: [],
       step: "messaging",
-      liveUrl: null,
+      setupUrl: null,
     });
     expect(v.primary).toBeNull();
     expect(v.waiting).toMatch(/OneShot confirms the connection on its own/);
@@ -132,18 +132,18 @@ describe("linkedinCardView", () => {
       cookieSet: false,
       accounts: [account()],
       step: "research",
-      liveUrl: "https://live.example/x",
+      setupUrl: "https://setup.example/x",
     });
     expect(here.primary).toBe("done");
     expect(here.research.text).toBe("Signing in…");
-    expect(here.waiting).toMatch(/then click Done/);
+    expect(here.waiting).toMatch(/then press Done on that page/);
 
     const resumed = linkedinCardView({
       cfg: { ...researchOff, linkedinPendingProfileId: "prof_pending" },
       cookieSet: false,
       accounts: [account()],
       step: null,
-      liveUrl: null,
+      setupUrl: null,
     });
     expect(resumed.primary).toBe("done");
     expect(resumed.connectRuns).toEqual([]);
@@ -155,7 +155,7 @@ describe("linkedinCardView", () => {
       cookieSet: false,
       accounts: null,
       step: null,
-      liveUrl: null,
+      setupUrl: null,
     });
     expect(loading.messaging).toEqual({ state: "unknown", ok: false, text: "Checking…" });
     expect(loading.connectRuns).toEqual(["research"]);
@@ -165,7 +165,7 @@ describe("linkedinCardView", () => {
       accounts: null,
       accountsError: "replies unavailable",
       step: null,
-      liveUrl: null,
+      setupUrl: null,
     });
     expect(failed.messaging.text).toBe("Couldn't check — replies unavailable");
     expect(failed.connectRuns).toEqual([]);
@@ -178,7 +178,7 @@ describe("linkedinCardView", () => {
       cookieSet: false,
       accounts: [account({ status: "reconnect_required" })],
       step: null,
-      liveUrl: null,
+      setupUrl: null,
     });
     expect(v.messaging).toEqual({ state: "attention", ok: false, text: "Needs attention" });
     expect(v.connectRuns).toEqual([]);
@@ -191,7 +191,7 @@ describe("linkedinCardView", () => {
       cookieSet: false,
       accounts: [account()],
       step: null,
-      liveUrl: null,
+      setupUrl: null,
     });
     expect(expired.research.text).toBe("LinkedIn signed you out");
     expect(expired.primary).toBe("connect");
@@ -200,7 +200,7 @@ describe("linkedinCardView", () => {
       cookieSet: true,
       accounts: [account()],
       step: null,
-      liveUrl: null,
+      setupUrl: null,
     });
     expect(cookie.research.text).toBe("A cookie is saved, not connected yet");
   });
@@ -221,7 +221,7 @@ describe("linkedinCardView: reads through the account", () => {
       cookieSet: false,
       accounts: [account()],
       step: null,
-      liveUrl: null,
+      setupUrl: null,
       reads: reads(),
     });
     expect(v.research).toMatchObject({
@@ -245,7 +245,7 @@ describe("linkedinCardView: reads through the account", () => {
         cookieSet: true,
         accounts: [account()],
         step: null,
-        liveUrl: "https://live.example/x",
+        setupUrl: "https://setup.example/x",
         reads: reads(),
       });
       expect(v.research.ok).toBe(true);
@@ -262,7 +262,7 @@ describe("linkedinCardView: reads through the account", () => {
       cookieSet: false,
       accounts: [],
       step: null,
-      liveUrl: null,
+      setupUrl: null,
       reads: reads(),
     });
     expect(v.connectRuns).toEqual(["messaging"]);
@@ -273,7 +273,7 @@ describe("linkedinCardView: reads through the account", () => {
       cookieSet: false,
       accounts: [],
       step: "messaging",
-      liveUrl: null,
+      setupUrl: null,
       reads: reads(),
     });
     expect(signing.waiting).toMatch(/OneShot confirms the connection on its own\.$/);
@@ -296,7 +296,7 @@ describe("linkedinCardView: reads through the account", () => {
         cookieSet: false,
         accounts: [account()],
         step: null,
-        liveUrl: null,
+        setupUrl: null,
         reads: r,
       });
       expect(v.research).toMatchObject({ ok: false, viaAccount: false, text: "Not connected" });
@@ -309,7 +309,7 @@ describe("linkedinCardView: reads through the account", () => {
       cookieSet: false,
       accounts: [account()],
       step: "research",
-      liveUrl: "https://live.example/x",
+      setupUrl: "https://setup.example/x",
       reads: reads({ via: "browser" }),
     });
     expect(signingIn.primary).toBe("done");

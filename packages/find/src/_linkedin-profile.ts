@@ -22,7 +22,7 @@ import {
   deleteBrowserProfile,
   countPaidResultsSince,
   DEFAULT_LINKEDIN_READS_PER_DAY,
-  finishBrowserProfileSetup,
+  createBrowserProfileSetupLink,
   getBrowserProfileSetup,
   getLedger,
   getLinkedInInboxStore,
@@ -69,7 +69,8 @@ const READ_SPACING_MS = 15_000;
 /** A charged read that returned no usable profile: counted toward the day's reads, never a result. */
 const INCOMPLETE_PREFIX = "linkedin-profile:incomplete:";
 const LOGIN_READY_STATUSES = new Set(["idle", "ready"]);
-const LOGIN_FAILED_RX = /fail|error|expired|closed|cancel/i;
+/** A setup state that ended the login before Done: a failed boot, an expiry, a stop. */
+const LOGIN_FAILED_RX = /fail|error|expired|closed|cancel|stopped|no_setup/i;
 const LOGIN_POLL_MS = 2_000;
 const LOGIN_READY_TIMEOUT_MS = 90_000;
 /** The platform stopped the task on its own budget: nothing about the page is known, so never negative-cache it. */
@@ -462,26 +463,60 @@ export async function connectLinkedInWithCookie(
 
 export interface LinkedInLoginStart {
   profileId: string;
-  /** The hosted browser to log in through; a credential, never logged. */
-  liveUrl: string | null;
+  /** The single-use OneShot sign-in page; a credential, never logged or stored. */
+  setupUrl: string;
+  /** When `setupUrl` stops opening (ten minutes after it was minted). */
+  setupUrlExpiresAt: string | null;
   status: string;
+  /** When the login itself expires (fifteen minutes after start). */
   expiresAt: string | null;
 }
 
 /**
  * Interactive connect, step one: open a hosted browser on the LinkedIn login
- * page in a fresh profile. The founder completes the login (and 2FA) through
- * `liveUrl`, then calls `finishLinkedInLogin`. The session expires after
- * fifteen minutes; $0.30 platform allowance per login.
+ * page in a fresh profile. The founder opens `setupUrl` (once; it stops
+ * opening after ten minutes), signs in (and 2FA), and presses Done on that
+ * page; `finishLinkedInLogin` then checks and verifies. The login expires
+ * after fifteen minutes; $0.30 platform allowance per login.
  */
 export async function startLinkedInLogin(
   ctx: CallContext,
   opts: { readyTimeoutMs?: number } = {},
 ): Promise<LinkedInLoginStart> {
   const profileId = await createPendingLoginProfile(ctx);
-  let state = await startBrowserProfileSetup(profileId, LINKEDIN_LOGIN_URL, ctx);
-  // The hosted browser reports `created` / `running` while it boots and
-  // `idle` once the login page is up; hand the founder a URL that is ready.
+  const minted = await startBrowserProfileSetup(profileId, LINKEDIN_LOGIN_URL, ctx);
+  return loginLinkWhenReady(profileId, minted, ctx, opts);
+}
+
+/**
+ * A fresh sign-in link for the login in progress, for a link that expired,
+ * was already opened, or was lost to a reload: the earlier link (and any page
+ * it opened) stops working. When the platform no longer holds an open setup
+ * (it expired, or Done was pressed before the sign-in finished), this starts
+ * a new one on the same pending profile.
+ */
+export async function newLinkedInLoginLink(
+  ctx: CallContext,
+  opts: { readyTimeoutMs?: number } = {},
+): Promise<LinkedInLoginStart> {
+  const profileId = loadConfig().linkedinPendingProfileId;
+  if (!profileId) throw new Error("no LinkedIn login in progress — start one first");
+  const minted = await createBrowserProfileSetupLink(profileId, ctx, LINKEDIN_LOGIN_URL);
+  return loginLinkWhenReady(profileId, minted, ctx, opts);
+}
+
+/**
+ * The hosted browser reports `created` / `running` while it boots and `idle`
+ * once the login page is up; hand the founder a link that is ready. A status
+ * read mints no link, so the URL is the one `minted` carried.
+ */
+async function loginLinkWhenReady(
+  profileId: string,
+  minted: BrowserProfileSetupState,
+  ctx: CallContext,
+  opts: { readyTimeoutMs?: number },
+): Promise<LinkedInLoginStart> {
+  let state = minted;
   const deadline = Date.now() + (opts.readyTimeoutMs ?? LOGIN_READY_TIMEOUT_MS);
   while (!LOGIN_READY_STATUSES.has(state.status) && Date.now() < deadline) {
     if (LOGIN_FAILED_RX.test(state.status)) break;
@@ -491,30 +526,36 @@ export async function startLinkedInLogin(
   if (LOGIN_FAILED_RX.test(state.status)) {
     throw new Error(`the platform could not open the login browser (status ${state.status})`);
   }
-  if (!state.liveUrl) {
+  if (!minted.setupUrl) {
     throw new Error(`the platform opened no login browser (status ${state.status})`);
   }
-  return { profileId, liveUrl: state.liveUrl, status: state.status, expiresAt: state.expiresAt };
+  return {
+    profileId,
+    setupUrl: minted.setupUrl,
+    setupUrlExpiresAt: minted.setupUrlExpiresAt,
+    status: state.status,
+    expiresAt: state.expiresAt ?? minted.expiresAt,
+  };
 }
 
 /**
- * Interactive connect, step two: save the logged-in state into the profile
- * and verify it. Without an `li_at` cookie among the stored ones the login
- * did not complete, and the session is marked invalid without spending on a
- * verify task.
+ * Interactive connect, step two: once the founder pressed Done on the
+ * sign-in page (the platform saved the session and set `completedAt`),
+ * verify the pending profile. Before Done, or when the stored cookies hold no
+ * `li_at`, the login did not complete and nothing is spent on a verify task.
  */
 export async function finishLinkedInLogin(ctx: CallContext): Promise<LinkedInSessionResult> {
   const cfg = loadConfig();
   const profileId = cfg.linkedinPendingProfileId;
   if (!profileId) throw new Error("no LinkedIn login in progress — start one first");
-  // The platform, not this process, decides what happened in the hosted
-  // browser. Nothing below touches the working session until the pending
-  // profile's own feed shows a signed-in member: a Done click before the
-  // sign-in finished, a closed tab, or a platform hiccup leaves the founder
-  // exactly where they were, with the pending login still there to retry.
+  // The platform, not this process, decides what happened on the sign-in
+  // page. Nothing below touches the working session until the pending
+  // profile's own feed shows a signed-in member: a check before Done, a
+  // closed tab, or a platform hiccup leaves the founder exactly where they
+  // were, with the pending login still there to retry.
   let state: BrowserProfileSetupState;
   try {
-    state = await finishBrowserProfileSetup(profileId, ctx);
+    state = await getBrowserProfileSetup(profileId, ctx);
   } catch (err) {
     logEvent(
       "linkedin_profile.login_finish_failed",
@@ -523,15 +564,31 @@ export async function finishLinkedInLogin(ctx: CallContext): Promise<LinkedInSes
     );
     throw err;
   }
-  const hasSession = state.storedCookies.some((c) => c.name === "li_at");
-  if (!hasSession) {
-    logEvent("linkedin_profile.login_not_signed_in", {}, "warn");
+  if (!state.completedAt) {
+    const ended = LOGIN_FAILED_RX.test(state.status);
+    logEvent("linkedin_profile.login_not_signed_in", { status: state.status }, "warn");
     return {
       loggedIn: false,
       name: null,
       profileId,
       costUsd: 0,
-      reason: "not signed in yet — finish signing in in the LinkedIn tab, then click Done",
+      reason: ended
+        ? "the sign-in page closed before Done was pressed — get a new link and sign in again"
+        : "not signed in yet — sign in to LinkedIn on the page that opened, then press Done there",
+    };
+  }
+  // The platform lists cookie names when it reports them; an empty list says
+  // nothing either way, so the feed check decides.
+  const cookies = state.storedCookies;
+  if (cookies.length > 0 && !cookies.some((c) => c.name === "li_at")) {
+    logEvent("linkedin_profile.login_not_signed_in", { status: state.status }, "warn");
+    return {
+      loggedIn: false,
+      name: null,
+      profileId,
+      costUsd: 0,
+      reason:
+        "Done was pressed before the LinkedIn sign-in finished — get a new link and sign in again",
     };
   }
   const verified = await verifyLinkedInSession(profileId, ctx, { record: false });
@@ -573,16 +630,18 @@ export async function cancelLinkedInLogin(ctx: CallContext): Promise<{ cancelled
 }
 
 /**
- * The hosted login's current state, for a page that reloaded mid-login: the
- * live URL to send the founder back to, or nothing when no login is pending.
+ * The hosted login's current state, polled while a login is pending:
+ * `completedAt` once the founder pressed Done on the sign-in page, or
+ * nothing when no login is pending. It carries no link (a status read mints
+ * none); a page that lost its link asks `newLinkedInLoginLink` for one.
  */
 export async function linkedinLoginState(ctx: CallContext): Promise<
   | { pending: false }
   | {
       pending: true;
       profileId: string;
-      liveUrl: string | null;
       status: string;
+      completedAt: string | null;
       expiresAt: string | null;
     }
 > {
@@ -592,8 +651,8 @@ export async function linkedinLoginState(ctx: CallContext): Promise<
   return {
     pending: true,
     profileId: pending,
-    liveUrl: state.liveUrl,
     status: state.status,
+    completedAt: state.completedAt,
     expiresAt: state.expiresAt,
   };
 }

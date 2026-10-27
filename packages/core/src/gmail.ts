@@ -1,4 +1,4 @@
-import type { InboxEmail, InboxListResult } from "@oneshot-agent/sdk";
+import type { InboxEmail, InboxListResult } from "./oneshot.ts";
 import { htmlToText } from "./html-text.ts";
 import { parallelMap, withDeadline } from "./parallel.ts";
 import type { AuthVerdict, BounceKind, GmailPlacement } from "./types.ts";

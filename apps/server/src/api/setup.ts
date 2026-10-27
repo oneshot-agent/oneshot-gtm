@@ -44,7 +44,9 @@ import type {
 import {
   connectLinkedInWithCookie,
   finishLinkedInLogin,
+  newLinkedInLoginLink,
   startLinkedInLogin,
+  type LinkedInLoginStart,
   type LinkedInSessionResult,
   cancelLinkedInLogin,
   linkedinLoginState,
@@ -261,12 +263,17 @@ export async function getSetupStatus(req: Request): Promise<Response> {
 }
 
 /**
- * The three LinkedIn connect routes. Two ways in, one outcome shape:
+ * The LinkedIn connect routes. Two ways in, one outcome shape:
  *  - POST /api/setup/linkedin-login/start: open a hosted browser on the
  *    LinkedIn login page in a fresh OneShot browser profile and return its
- *    live URL (a credential: shown to the founder, never logged);
- *  - POST /api/setup/linkedin-login/finish: save the logged-in state into
- *    the profile and verify it;
+ *    single-use sign-in link (a credential: shown to the founder, never
+ *    logged); the founder signs in and presses Done on that page;
+ *  - POST /api/setup/linkedin-login/link: a fresh link for the login in
+ *    progress, when the first one expired, was opened, or was lost;
+ *  - GET /api/setup/linkedin-login/state: polled until `completedAt` says
+ *    Done was pressed;
+ *  - POST /api/setup/linkedin-login/finish: verify the profile once Done
+ *    was pressed;
  *  - POST /api/setup/linkedin-session: import the stored `li_at`
  *    cookie into a fresh profile and verify it (no browser login needed).
  * The cookie never appears in a response or a log; only the outcome does.
@@ -311,23 +318,40 @@ export async function linkedinSessionRoute(req: Request): Promise<Response> {
   }
 }
 
+function loginLinkResponse(started: LinkedInLoginStart, req: Request): Response {
+  return jsonResponse(
+    {
+      ok: true,
+      profileId: started.profileId,
+      setupUrl: started.setupUrl,
+      setupUrlExpiresAt: started.setupUrlExpiresAt,
+      status: started.status,
+      expiresAt: started.expiresAt,
+    },
+    200,
+    req,
+  );
+}
+
 export async function linkedinLoginStartRoute(req: Request): Promise<Response> {
   try {
     const started = await startLinkedInLogin({
       playName: "setup",
       memo: "connect linkedin session (login)",
     });
-    return jsonResponse(
-      {
-        ok: true,
-        profileId: started.profileId,
-        liveUrl: started.liveUrl,
-        status: started.status,
-        expiresAt: started.expiresAt,
-      },
-      200,
-      req,
-    );
+    return loginLinkResponse(started, req);
+  } catch (err) {
+    return platformFailure(err, req);
+  }
+}
+
+export async function linkedinLoginLinkRoute(req: Request): Promise<Response> {
+  try {
+    const minted = await newLinkedInLoginLink({
+      playName: "setup",
+      memo: "new linkedin sign-in link",
+    });
+    return loginLinkResponse(minted, req);
   } catch (err) {
     return platformFailure(err, req);
   }

@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // wall invalidates the session, reads are serialized from the founder's
 // account, and failures are negative-cached only when they are not transient.
 // Connecting: a pasted cookie is imported into a fresh profile (never into a
-// task), the hosted login flow is start → live URL → finish → verify.
+// task), the hosted login flow is start → single-use sign-in link → Done on
+// that page (completedAt) → finish → verify; a lost link is replaced by a new one.
 
 const calls = {
   browser: 0,
@@ -13,9 +14,12 @@ const calls = {
   delete: 0,
   setupStart: 0,
   setupStatus: 0,
-  setupFinish: 0,
+  setupLink: 0,
 };
 let setupStatuses: string[] = [];
+/** What a status read reports: Done pressed (an ISO time) or not yet (null). */
+let setupCompletedAt: string | null = null;
+let setupLinkStartUrls: Array<string | undefined> = [];
 const cache = new Map<string, { result_json: string; fetched_at: string; status: string | null }>();
 let readsToday = 0;
 let cfg: Record<string, unknown> = {};
@@ -91,24 +95,38 @@ vi.mock("@oneshot-gtm/core", async () => {
       return {
         profileId,
         status: setupStatuses.shift() ?? "idle",
-        liveUrl: "https://live.example/session-secret",
+        setupUrl: "https://setup.example/session-secret",
+        setupUrlExpiresAt: "2026-09-14T10:10:00.000Z",
+        completedAt: null,
         expiresAt: "2026-09-14T10:15:00.000Z",
         storedCookies: [],
       };
     },
+    createBrowserProfileSetupLink: async (profileId: string, _ctx: unknown, startUrl?: string) => {
+      calls.setupLink++;
+      setupLinkStartUrls.push(startUrl);
+      return {
+        profileId,
+        status: setupStatuses.shift() ?? "idle",
+        setupUrl: "https://setup.example/fresh-secret",
+        setupUrlExpiresAt: "2026-09-14T10:20:00.000Z",
+        completedAt: null,
+        expiresAt: "2026-09-14T10:25:00.000Z",
+        storedCookies: [],
+      };
+    },
+    // A status read mints no link; it reports Done and the stored cookie names.
     getBrowserProfileSetup: async (profileId: string) => {
       calls.setupStatus++;
       return {
         profileId,
         status: setupStatuses.shift() ?? "idle",
-        liveUrl: "https://live.example/session-secret",
+        setupUrl: null,
+        setupUrlExpiresAt: null,
+        completedAt: setupCompletedAt,
         expiresAt: "2026-09-14T10:15:00.000Z",
-        storedCookies: [],
+        storedCookies: setupCompletedAt ? storedCookies : [],
       };
-    },
-    finishBrowserProfileSetup: async (profileId: string) => {
-      calls.setupFinish++;
-      return { profileId, status: "finished", liveUrl: null, expiresAt: null, storedCookies };
     },
     browserTask: (input: Record<string, unknown>) => browserTaskImpl(input),
   };
@@ -121,6 +139,7 @@ const {
   cancelLinkedInLogin,
   finishLinkedInLogin,
   linkedinProfileCacheKey,
+  newLinkedInLoginLink,
   linkedinSessionState,
   readLinkedInProfile,
   startLinkedInLogin,
@@ -149,8 +168,12 @@ beforeEach(() => {
     calls.create =
     calls.delete =
     calls.setupStart =
-    calls.setupFinish =
+    calls.setupStatus =
+    calls.setupLink =
       0;
+  setupStatuses = [];
+  setupCompletedAt = null;
+  setupLinkStartUrls = [];
   cache.clear();
   _resetPaidCache();
   saved.length = 0;
@@ -292,7 +315,8 @@ describe("startLinkedInLogin / finishLinkedInLogin", () => {
     const started = await startLinkedInLogin(ctx);
     expect(started).toEqual({
       profileId: "prof_new_1",
-      liveUrl: "https://live.example/session-secret",
+      setupUrl: "https://setup.example/session-secret",
+      setupUrlExpiresAt: "2026-09-14T10:10:00.000Z",
       status: "idle",
       expiresAt: "2026-09-14T10:15:00.000Z",
     });
@@ -316,7 +340,10 @@ describe("startLinkedInLogin / finishLinkedInLogin", () => {
     setupStatuses = ["created", "running", "idle"];
     const started = startLinkedInLogin(ctx);
     await vi.advanceTimersByTimeAsync(5_000);
-    expect((await started).status).toBe("idle");
+    const ready = await started;
+    expect(ready.status).toBe("idle");
+    // Status reads carry no link: the one start minted is handed out.
+    expect(ready.setupUrl).toBe("https://setup.example/session-secret");
     expect(calls.setupStatus).toBe(2);
 
     setupStatuses = ["created", "failed"];
@@ -329,12 +356,13 @@ describe("startLinkedInLogin / finishLinkedInLogin", () => {
     await failed;
   });
 
-  it("finish verifies the pending profile and promotes it, dropping the replaced one", async () => {
+  it("finish after Done verifies the pending profile and promotes it, dropping the replaced one", async () => {
     await startLinkedInLogin(ctx);
+    setupCompletedAt = "2026-09-14T10:05:00.000Z";
     browserOutput = { loggedIn: true, name: "Founder Name" };
     const r = await finishLinkedInLogin(ctx);
     await vi.advanceTimersByTimeAsync(0);
-    expect(calls.setupFinish).toBe(1);
+    expect(calls.setupStatus).toBe(1);
     expect(r).toMatchObject({ loggedIn: true, name: "Founder Name", profileId: "prof_new_1" });
     expect(cfg["linkedinBrowserProfileId"]).toBe("prof_new_1");
     expect(cfg["linkedinPendingProfileId"]).toBeNull();
@@ -350,16 +378,55 @@ describe("startLinkedInLogin / finishLinkedInLogin", () => {
       linkedinSessionName: "Kept",
     };
     await startLinkedInLogin(ctx);
-    storedCookies = [{ name: "bcookie", domain: ".linkedin.com", path: "/" }];
+    // Done not pressed yet.
     const r = await finishLinkedInLogin(ctx);
     expect(r.loggedIn).toBe(false);
-    expect(r.reason).toMatch(/not signed in yet/);
+    expect(r.reason).toMatch(/not signed in yet.*press Done there/);
     expect(calls.browser).toBe(0);
     // The verified session and the pending login both survive for a retry.
     expect(linkedinSessionState()).toBe("ok");
     expect(cfg["linkedinSessionName"]).toBe("Kept");
     expect(cfg["linkedinPendingProfileId"]).toBe("prof_new_1");
     expect(calls.delete).toBe(0);
+  });
+
+  it("Done pressed without a LinkedIn session cookie spends nothing and asks for a new link", async () => {
+    await startLinkedInLogin(ctx);
+    setupCompletedAt = "2026-09-14T10:05:00.000Z";
+    storedCookies = [{ name: "bcookie", domain: ".linkedin.com", path: "/" }];
+    const r = await finishLinkedInLogin(ctx);
+    expect(r.loggedIn).toBe(false);
+    expect(r.reason).toMatch(/Done was pressed before the LinkedIn sign-in finished.*new link/);
+    expect(calls.browser).toBe(0);
+    expect(cfg["linkedinPendingProfileId"]).toBe("prof_new_1");
+  });
+
+  it("a setup that ended before Done asks for a new link and spends nothing", async () => {
+    await startLinkedInLogin(ctx);
+    setupStatuses = ["expired"];
+    const r = await finishLinkedInLogin(ctx);
+    expect(r.loggedIn).toBe(false);
+    expect(r.reason).toMatch(/closed before Done.*new link/);
+    expect(calls.browser).toBe(0);
+  });
+
+  it("a new link replaces the used one on the pending profile, starting a setup when none is open", async () => {
+    await expect(newLinkedInLoginLink(ctx)).rejects.toThrow(/start one first/);
+    await startLinkedInLogin(ctx);
+    const fresh = await newLinkedInLoginLink(ctx);
+    expect(fresh).toEqual({
+      profileId: "prof_new_1",
+      setupUrl: "https://setup.example/fresh-secret",
+      setupUrlExpiresAt: "2026-09-14T10:20:00.000Z",
+      status: "idle",
+      expiresAt: "2026-09-14T10:25:00.000Z",
+    });
+    expect(calls.setupLink).toBe(1);
+    // The login URL rides along so an expired setup is restarted, not a 409.
+    expect(setupLinkStartUrls).toEqual(["https://www.linkedin.com/login"]);
+    // Same pending profile: no new one created, nothing deleted.
+    expect(calls.create).toBe(1);
+    expect(cfg["linkedinPendingProfileId"]).toBe("prof_new_1");
   });
 
   it("a pending profile whose feed shows no member is reported, not recorded", async () => {
@@ -369,6 +436,7 @@ describe("startLinkedInLogin / finishLinkedInLogin", () => {
       linkedinSessionName: "Kept",
     };
     await startLinkedInLogin(ctx);
+    setupCompletedAt = "2026-09-14T10:05:00.000Z";
     browserOutput = { loggedIn: false };
     const r = await finishLinkedInLogin(ctx);
     expect(r.loggedIn).toBe(false);
@@ -378,6 +446,7 @@ describe("startLinkedInLogin / finishLinkedInLogin", () => {
 
   it("a sign-in cancelled or replaced while being checked is never promoted", async () => {
     await startLinkedInLogin(ctx);
+    setupCompletedAt = "2026-09-14T10:05:00.000Z";
     browserOutput = { loggedIn: true, name: "Founder Name" };
     // The verify task "takes long enough" for a fresh start to replace the pending login.
     const original = browserTaskImpl;
