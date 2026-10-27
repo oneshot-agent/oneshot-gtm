@@ -510,6 +510,13 @@ describe("/cadences preview", () => {
     );
     expect(input).not.toContain("accepted the connection request");
     expect(input).not.toContain("STEP 0");
+    // The prompt says not to thank them for connecting; the returned draft is held
+    // to it. This mock answers "Thanks for connecting — …", so the draft is flagged.
+    expect((preview as { flags?: string[] }).flags).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^already-connected: "thanks for connecting"/),
+      ]),
+    );
   });
 
   it("an invite recorded before the kind marker existed still loses its undelivered note", async () => {

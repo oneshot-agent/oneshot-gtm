@@ -62,6 +62,7 @@ import {
   agedEvidence,
   companyTheyRun,
   draftWithRepair,
+  lintAlreadyConnected,
   lintLinkedInClose,
   lintLinkedInFirstMessage,
   profileViewReader,
@@ -3825,10 +3826,14 @@ async function buildLinkedInMessage(
   const drafted = await draftWithRepair({
     system: loadPrompt("linkedin-message"),
     context: input,
-    lint:
-      which === "first"
-        ? (text) => lintLinkedInFirstMessage(text, { clause })
-        : (text) => lintLinkedInClose(text, { context: input, clause }),
+    lint: (text) => [
+      ...(which === "first"
+        ? lintLinkedInFirstMessage(text, { clause })
+        : lintLinkedInClose(text, { context: input, clause })),
+      // The prompt tells the model not to thank them for connecting; this holds
+      // it to that, through a repair round, on the already-connected path only.
+      ...(alreadyConnected ? lintAlreadyConnected(text) : []),
+    ],
     maxTokens: 700,
   });
   const text = drafted.text;
