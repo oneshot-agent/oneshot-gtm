@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { DEFAULT_LINKEDIN_TEMPLATES } from "@oneshot-gtm/shared-types";
 import { loadPrompt } from "../src/prompts.ts";
 
 const promptsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "prompts");
@@ -71,6 +72,14 @@ describe("no prompt carries one founder's product", () => {
     it(`${file} names nothing founder-specific`, () => {
       const body = readFileSync(join(promptsDir, file), "utf8");
       for (const rx of FOUNDER_SPECIFIC) expect(body, `${file} matches ${rx}`).not.toMatch(rx);
+    });
+  }
+});
+
+describe("the shipped LinkedIn templates carry no founder's product", () => {
+  for (const [step, text] of Object.entries(DEFAULT_LINKEDIN_TEMPLATES)) {
+    it(`${step} names nothing founder-specific`, () => {
+      for (const rx of FOUNDER_SPECIFIC) expect(text, `${step} matches ${rx}`).not.toMatch(rx);
     });
   }
 });

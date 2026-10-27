@@ -23,6 +23,7 @@ import {
   lintSharedCohort,
 } from "./_linkedin-evidence.ts";
 import { learningBlock, stampLearningInput, voiceBlock } from "./_lib.ts";
+import { templatedLinkedIn } from "./_linkedin-template.ts";
 import { offerCandidatesOf, offerOf, playMakesOffer } from "./_prospect-offer.ts";
 
 /**
@@ -148,6 +149,19 @@ export async function draftLinkedInNote(
   const name = str(row.payload, "name") ?? "them";
   const now = new Date();
   const evidence = agedEvidence(row.payload, { contactedAt: opts.contactedAt ?? now, now });
+  // The note never makes the offer, so a template gets none.
+  const templated = templatedLinkedIn("note", cfg, { name: str(row.payload, "name"), evidence });
+  if (templated) {
+    return {
+      subject: `LinkedIn invite → ${name}`,
+      body: templated.text,
+      flags: noteFlags(row, templated.text, maxChars, []),
+      voiceKey: null,
+      learningKey: null,
+      // Recorded for the funnel: whether the note sent actually names why.
+      evidenceClause: templated.usesEvidence,
+    };
+  }
   const voice = voiceBlock("intro");
   const learned = learningBlock({
     channel: "linkedin",
@@ -201,19 +215,29 @@ export async function draftLinkedInNote(
   });
   const body = drafted.text;
   if (!body) throw new Error("empty note from the model");
-  const flags: string[] = [...drafted.flags];
-  if (body.length > maxChars && !flags.some((f) => f.startsWith("note-too-long")))
-    flags.push(`note-too-long: ${body.length}/${maxChars} characters`);
-  if (!linkedInProfileOf(row.payload))
-    flags.push("no-linkedin: this row has no LinkedIn profile URL");
   return {
     subject: `LinkedIn invite → ${name}`,
     body,
-    flags,
+    flags: noteFlags(row, body, maxChars, drafted.flags),
     voiceKey: voice?.key ?? null,
     learningKey: learned?.key ?? null,
     evidenceClause: Boolean(evidence),
   };
+}
+
+/** A note's review flags: its own, the length target, and a missing profile. */
+function noteFlags(
+  row: LinkedInFirstTouchRow,
+  body: string,
+  maxChars: number,
+  drafted: string[],
+): string[] {
+  const flags = [...drafted];
+  if (body.length > maxChars && !flags.some((f) => f.startsWith("note-too-long")))
+    flags.push(`note-too-long: ${body.length}/${maxChars} characters`);
+  if (!linkedInProfileOf(row.payload))
+    flags.push("no-linkedin: this row has no LinkedIn profile URL");
+  return flags;
 }
 
 /**

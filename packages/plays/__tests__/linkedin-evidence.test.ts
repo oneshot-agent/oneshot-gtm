@@ -31,6 +31,7 @@ vi.mock("@oneshot-gtm/intel", () => ({
 
 const {
   agedEvidence,
+  evidenceWithSubject,
   companyTheyRun,
   draftWithRepair,
   isFounderTitle,
@@ -788,5 +789,26 @@ describe("lintSharedCohort", () => {
     // Unnamed, it can't be checked against the sender's own batch.
     expect(lintSharedCohort("Fellow YC founder here.", "yc-w25")).not.toEqual([]);
     expect(lintSharedCohort("Fellow YC founder here.", "  ")).not.toEqual([]);
+  });
+});
+
+describe("evidenceWithSubject", () => {
+  it("gives every agedEvidence form its subject", () => {
+    const cases: Array<[string, string]> = [
+      ["starred acme/widgets", "you starred acme/widgets"],
+      ["signed up for Build Night", "you signed up for Build Night"],
+      ["were at Build Night", "you were at Build Night"],
+      ["running Playwright and Twilio", "you're running Playwright and Twilio"],
+      ["were running Playwright", "you were running Playwright"],
+      ["in YC F26", "you're in YC F26"],
+      ["went through YC W25", "you went through YC W25"],
+      ["Acme Ventures led your seed round", "Acme Ventures led your seed round"],
+      ["just raised a seed round", "you just raised a seed round"],
+      ["joined Acme as CTO", "you joined Acme as CTO"],
+      ["hiring an SDR", "you're hiring an SDR"],
+    ];
+    for (const [clause, out] of cases) expect(evidenceWithSubject(clause)).toBe(out);
+    expect(evidenceWithSubject(undefined)).toBeNull();
+    expect(evidenceWithSubject("  ")).toBeNull();
   });
 });

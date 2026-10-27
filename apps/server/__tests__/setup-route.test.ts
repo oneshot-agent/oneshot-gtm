@@ -567,3 +567,33 @@ describe("POST /api/setup — offerJudge", () => {
     expect(savedCfg().offerJudge).toBeUndefined();
   });
 });
+
+describe("POST /api/setup — LinkedIn templates", () => {
+  it("saves a template next to invitesPerDay, with no warnings when it fits", async () => {
+    current = { ...current, linkedin: { invitesPerDay: 12 } };
+    const res = await setup(req({ linkedin: { templates: { note: "Hi {first_name}." } } }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(savedCfg().linkedin).toEqual({
+      invitesPerDay: 12,
+      templates: { note: "Hi {first_name}." },
+    });
+  });
+
+  it("saves a note that can run long, and says so in warnings", async () => {
+    const note = `Hi {first_name}, saw {evidence}. ${"a".repeat(200)}`;
+    const res = await setup(req({ linkedin: { templates: { note } } }));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean; warnings?: string[] };
+    expect(json.ok).toBe(true);
+    expect(json.warnings).toEqual([expect.stringMatching(/^Connection request: up to \d+/)]);
+    expect(savedCfg().linkedin?.templates?.note).toBe(note);
+  });
+
+  it("an unusable placeholder is a 400 and writes nothing", async () => {
+    const res = await post({ linkedin: { templates: { noteFallback: "Hi {offer}" } } });
+    expect(res.status).toBe(400);
+    expect(res.error).toMatch(/^Connection request, no evidence: \{offer\} can't be used/);
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+});

@@ -9,12 +9,18 @@ const upserts: Array<Record<string, unknown>> = [];
 const events: Array<Record<string, unknown>> = [];
 const enrollments: Array<Record<string, unknown>> = [];
 let failReceipt = false;
+// The prompt tests pin the model writer; the template tests set their own.
+let linkedinCfg: Record<string, unknown> = { writer: "model" };
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
-    loadConfig: () => ({ founderName: "Founder", productOneLiner: "a GTM workspace" }),
+    loadConfig: () => ({
+      founderName: "Founder",
+      productOneLiner: "a GTM workspace",
+      linkedin: linkedinCfg,
+    }),
     logEvent: () => {},
     getLedger: () => ({
       upsertProspect: (input: Record<string, unknown>) => {
@@ -88,6 +94,7 @@ beforeEach(() => {
   events.length = 0;
   enrollments.length = 0;
   failReceipt = false;
+  linkedinCfg = { writer: "model" };
 });
 
 describe("draftLinkedInNote", () => {
@@ -126,6 +133,22 @@ describe("draftLinkedInNote", () => {
     expect(note.flags).toEqual(
       expect.arrayContaining([expect.stringMatching(/^shared-cohort: "in it too"/)]),
     );
+  });
+
+  it("with templates, fills the note from the row's evidence and calls no model", async () => {
+    linkedinCfg = {};
+    const note = await draftLinkedInNote(row({ repo: "acme/widgets" }));
+    expect(note.body).toBe("Hi Dana, saw you starred acme/widgets. Would be good to connect.");
+    expect(note).toMatchObject({ flags: [], voiceKey: null, evidenceClause: true });
+    expect(completeInputs).toEqual([]);
+  });
+
+  it("with templates, a row with no evidence gets the fallback and the usual flags", async () => {
+    linkedinCfg = { templates: { noteFallback: "hey {first_name}, would be good to connect." } };
+    const note = await draftLinkedInNote(row({ linkedinUrl: "https://acme.com" }));
+    expect(note.body).toBe("hey Dana, would be good to connect.");
+    expect(note.evidenceClause).toBe(false);
+    expect(note.flags).toEqual(["no-linkedin: this row has no LinkedIn profile URL"]);
   });
 });
 

@@ -85,7 +85,7 @@ const invites = (calls: Array<{ kind: string }>) => calls.filter((c) => c.kind =
 beforeEach(() => {
   process.env["ONESHOT_GTM_SHARED"] = mkdtempSync(join(tmpdir(), "linkedin-friend-play-"));
   core._resetInviteLimitsCacheForTests();
-  core.saveConfig({ ...core.loadConfig(), linkedin: undefined });
+  core.saveConfig({ ...core.loadConfig(), linkedin: { writer: "model" } });
   modelNote = "We traded emails last week. Connecting here so the next hello isn't cold.";
   completeInputs.length = 0;
 });
@@ -256,7 +256,7 @@ describe("sendFriendInvite", () => {
   });
 
   it("counts against the workspace's invite share and is deferred when it is used up", async () => {
-    core.saveConfig({ ...core.loadConfig(), linkedin: { invitesPerDay: 1 } });
+    core.saveConfig({ ...core.loadConfig(), linkedin: { invitesPerDay: 1, writer: "model" } });
     core._resetInviteLimitsCacheForTests();
     const { sender: s, calls } = sender();
     const first = await sendFriendInvite({

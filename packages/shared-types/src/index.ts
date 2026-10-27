@@ -1,4 +1,5 @@
 import type { DecisionReason } from "./learning.ts";
+import type { LinkedInTemplateStep } from "./linkedin-template.ts";
 export * from "./reply-email-view.ts";
 export * from "./linkedin-reads.ts";
 export * from "./code-answers.ts";
@@ -517,6 +518,22 @@ export interface SetupRequest {
   /** How much an answer from the code may say. Blank = the default (behaviour only). */
   codeAnswerDisclosure?: string;
   founderVoice?: string;
+  /**
+   * LinkedIn copy. `invitesPerDay` is never touched by a save.
+   * - `writer`: `template` (the default) fills fixed text per step; `model`
+   *   has the model write each note and message. `undefined` = leave
+   *   unchanged; `null` = clear (back to templates); anything else is a 400.
+   * - `templates`: text per step. `undefined` = leave all unchanged; `null` =
+   *   clear all. Per step: absent keeps it, blank removes it (the shipped
+   *   default applies), text sets it (trimmed). An unknown step, an unknown
+   *   placeholder or one the step can't use is a 400. A template that can
+   *   run past its step's limit once filled is saved, with a line in the
+   *   response's `warnings`.
+   */
+  linkedin?: {
+    templates?: Partial<Record<LinkedInTemplateStep, string>> | null;
+    writer?: "template" | "model" | null;
+  };
   /** When true, signature appends a literal "Sent from my iPhone" line. */
   mobileSignature?: boolean;
   /** Slack incoming-webhook URL for reply/bounce/daily-summary notifications. Empty string clears it (feature off). */
@@ -2164,6 +2181,7 @@ export function isQueueImportInProgress(row: {
 export * from "./onboarding.ts";
 export * from "./linkedin-measure.ts";
 export * from "./offer-similarity.ts";
+export * from "./linkedin-template.ts";
 
 /** GET /api/linkedin/invites: LinkedIn invites left today (workspace share and account). */
 export interface LinkedInInviteQuotaView {

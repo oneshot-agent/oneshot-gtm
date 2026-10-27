@@ -7,6 +7,7 @@ import type {
   LinkedInFriendSendView,
   LinkedInFriendView,
   LinkedInInviteQuotaView,
+  LinkedInTemplateStep,
   LinkedInTouchedImportView,
   LinkedInTouchedView,
 } from "@oneshot-gtm/shared-types";
@@ -414,6 +415,11 @@ export const api = {
         linkedinSessionName?: string | null;
         linkedinSessionInvalidAt?: string | null;
         linkedinReadsPerDay?: number;
+        linkedin?: {
+          invitesPerDay?: number;
+          writer?: "template" | "model";
+          templates?: Partial<Record<LinkedInTemplateStep, string>>;
+        };
       };
       secretsPath: string;
       sources: Record<string, "env" | "file" | null>;
@@ -428,7 +434,9 @@ export const api = {
    * refines it from this route.
    */
   setupDomains: () => getJson<{ provisionedDomains: DomainPoolView[] }>("/setup/domains"),
-  setup: (req: SetupRequest) => postJson<{ ok: boolean }>("/setup", req),
+  // `warnings`: saved, but worth a look (a LinkedIn template that can run
+  // past its step's limit once filled).
+  setup: (req: SetupRequest) => postJson<{ ok: boolean; warnings?: string[] }>("/setup", req),
   setupCalendars: (identityId: string) =>
     getJson<{ calendars: CalendarPickerEntry[] }>(
       `/setup/calendars?identityId=${encodeURIComponent(identityId)}`,

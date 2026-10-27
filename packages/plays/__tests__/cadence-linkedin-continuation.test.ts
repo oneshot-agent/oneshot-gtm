@@ -12,6 +12,8 @@ import type { Ledger as LedgerType } from "@oneshot-gtm/core";
 let ledger: LedgerType;
 let dbPath: string;
 let continuationOn = true;
+// The prompt-input tests pin the model writer; the templates block sets its own.
+let linkedinCfg: Record<string, unknown> = { writer: "model" };
 let noteText = "Hi Dana, good to see another person working on review. How is it going?";
 const promptNames: string[] = [];
 const modelInputs: string[] = [];
@@ -26,6 +28,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       founderName: "Founder",
       productOneLiner: "a GTM workspace",
       linkedinContinuation: continuationOn,
+      linkedin: linkedinCfg,
     }),
     linkedInConversationFor: () => null,
     linkedInOutreachAccount: () => ({ workspace: "alpha", accountId: "acct-1" }),
@@ -191,6 +194,7 @@ beforeEach(() => {
   process.env["ONESHOT_GTM_SHARED"] = mkdtempSync(join(tmpdir(), "li-continuation-"));
   _resetInviteLimitsCacheForTests();
   continuationOn = true;
+  linkedinCfg = { writer: "model" };
   noteText = "Hi Dana, good to see another person working on review. How is it going?";
   promptNames.length = 0;
   modelInputs.length = 0;
@@ -1218,5 +1222,147 @@ describe("continueCadencesOntoLinkedIn: cadences enrolled before the setting", (
     expect(Object.values(result.skipped).reduce((a, b) => a + b, 0)).toBe(3);
     for (const id of [prospectId, noProfile, touched])
       expect(ledger.getCadence(id, PLAY)!.status).toBe("completed");
+  });
+});
+
+describe("templates: the default writer", () => {
+  const OFFER = "get every host's follow-ups sent the same day.";
+
+  /** The email intro went out with this evidence (and offer); the invite step is due. */
+  function started(metadata: Record<string, unknown>, offer?: string): void {
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: PLAY,
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "hello", body: "hello", ...metadata },
+    });
+    enrollInCadence({
+      prospectId,
+      playName: PLAY,
+      ...(offer ? { offer: { offer, steps: "drafts them" }, offerOrigin: "derived" as const } : {}),
+    });
+    ledger.advanceCadence({
+      prospectId,
+      playName: PLAY,
+      newStep: 1,
+      nextDueAt: "2000-01-01T00:00:00.000Z",
+    });
+  }
+
+  async function shown() {
+    const preview = await previewCadenceStep({ prospectId, playName: PLAY });
+    if ("waiting" in preview || "skipped" in preview) throw new Error("nothing to draft");
+    return preview;
+  }
+
+  /** The invite goes out with the shown note and is answered `status`; a `sent` one is accepted. */
+  async function invite(note: string, status: "sent" | "already_connected"): Promise<void> {
+    noteText = note;
+    await sendInvite(inviteOk(status));
+    if (status === "sent") {
+      await sweepLinkedInInvitations({
+        linkedIn: caller({
+          invitations: () => ({
+            invitations: [
+              { invitation_id: "inv-1", status: "accepted", accepted_at: "2026-10-01T09:00:00Z" },
+            ],
+          }),
+        }),
+      });
+    }
+    makeDue();
+  }
+
+  /** The shown message goes out as is; the next step is due. */
+  async function send(preview: Awaited<ReturnType<typeof shown>>): Promise<void> {
+    const li = caller({ message: () => ({ status: "sent", conversation_id: "conv-1" }) });
+    await run(li, { persistedPayload: preview.payload });
+    makeDue();
+  }
+
+  beforeEach(async () => {
+    linkedinCfg = {};
+    const { _resetLinkedInLiveReads } = await import("../src/index.ts");
+    _resetLinkedInLiveReads();
+  });
+
+  it("with nothing set, every step is the shipped default, filled, with no model call", async () => {
+    started({ repo: "acme/widgets" }, OFFER);
+    const note = await shown();
+    expect(note.body).toBe("Hi Dana, saw you starred acme/widgets. Would be good to connect.");
+    expect(note.payload).toMatchObject({ kind: "linkedin_invite", evidenceClause: true });
+    await invite(note.body, "sent");
+    const first = await shown();
+    expect(first.body).toBe("Hi Dana, thanks for connecting. What are you working on right now?");
+    await send(first);
+    const last = await shown();
+    expect(last.body).toBe(
+      "Hi Dana, last one from me, no reply needed. One thing I'd like to do for you: get every host's follow-ups sent the same day. Want me to run a small version? A no is fine too.",
+    );
+    expect(modelInputs).toEqual([]);
+  });
+
+  it("the workspace's own text wins, and a step without its value uses its fallback", async () => {
+    linkedinCfg = {
+      templates: {
+        note: "hey {first_name} - saw {evidence}. working on the same thing.",
+        noteFallback: "hey {first_name} - would be good to connect.",
+        firstMessageConnected: "hey {first_name}, so what are you building right now?",
+        lastMessage: "hey {first_name}, the one I'd run for you: {offer}.",
+        lastMessageFallback: "hey {first_name}, last one from me.",
+      },
+    };
+    started({});
+    const note = await shown();
+    expect(note.body).toBe("hey Dana - would be good to connect.");
+    expect(note.payload).toMatchObject({ evidenceClause: false });
+    await invite(note.body, "already_connected");
+    const first = await shown();
+    expect(first.body).toBe("hey Dana, so what are you building right now?");
+    await send(first);
+    expect((await shown()).body).toBe("hey Dana, last one from me.");
+    expect(modelInputs).toEqual([]);
+  });
+
+  it("a step the workspace leaves unset uses the shipped default", async () => {
+    // Mid-batch, so the cohort reads "in YC F26", not "went through".
+    vi.useFakeTimers({ now: new Date("2026-10-15T12:00:00Z"), toFake: ["Date"] });
+    try {
+      linkedinCfg = { templates: { note: "hey {first_name} - saw {evidence}." } };
+      started({ prospectCohort: "yc-f26" }, OFFER);
+      const note = await shown();
+      expect(note.body).toBe("hey Dana - saw you're in YC F26.");
+      await invite(note.body, "already_connected");
+      expect((await shown()).body).toBe("Hi Dana, what are you working on right now?");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an over-long message carries its length flag on the payload, so the send holds", async () => {
+    linkedinCfg = { templates: { firstMessageConnected: `hey {first_name}, ${"x".repeat(420)}` } };
+    started({});
+    const note = await shown();
+    expect(note.payload).not.toHaveProperty("flags");
+    await invite(note.body, "already_connected");
+    const first = await shown();
+    expect(first.payload).toMatchObject({ flags: ["too-long: 430/400 characters"] });
+    expect(first.flags).toEqual(["too-long: 430/400 characters"]);
+  });
+
+  it("with no usable first name the greeting is dropped, never left empty", async () => {
+    sql(`UPDATE prospects SET name = 'wanghley' WHERE id = ${prospectId}`);
+    linkedinCfg = { templates: { note: "hey {first_name} - saw {evidence}. Good to connect." } };
+    started({ repo: "acme/widgets" });
+    expect((await shown()).body).toBe("Saw you starred acme/widgets. Good to connect.");
+  });
+
+  it("writer model keeps the prompt-written path", async () => {
+    linkedinCfg = { writer: "model", templates: { note: "hey {first_name}." } };
+    started({ repo: "acme/widgets" });
+    expect((await shown()).body).toBe(noteText);
+    expect(modelInputs).toHaveLength(1);
   });
 });

@@ -622,11 +622,21 @@ export interface OneShotConfig {
    */
   linkedinReadsPerDay?: number;
   /**
-   * LinkedIn outreach settings. `invitesPerDay`: this workspace's share of the
-   * LinkedIn account's daily invite cap (positive integer, UTC day). Unset =
-   * no share; only OneShot's account cap applies.
+   * LinkedIn outreach settings.
+   * - `invitesPerDay`: this workspace's share of the LinkedIn account's daily
+   *   invite cap (positive integer, UTC day). Unset = no share; only
+   *   OneShot's account cap applies.
+   * - `writer`: who writes the notes and messages. `"template"` (the default)
+   *   fills fixed text per step; `"model"` has the model write each one from
+   *   the `linkedin-invite-note` and `linkedin-message` prompts.
+   * - `templates`: this workspace's text per step. A step left unset uses the
+   *   shipped default (`DEFAULT_LINKEDIN_TEMPLATES` in shared-types).
    */
-  linkedin?: { invitesPerDay?: number };
+  linkedin?: {
+    invitesPerDay?: number;
+    writer?: LinkedInWriter;
+    templates?: LinkedInTemplates;
+  };
   /**
    * Outreach channels finders may queue people on, in order of preference
    * ("email", "linkedin", "x"). A trigger's own `channels` overrides it.
@@ -862,3 +872,32 @@ export interface TriggerRow {
    */
   company_batch_seq: number;
 }
+
+/** Who writes LinkedIn notes and messages: fixed templates (default) or the model. */
+export type LinkedInWriter = "template" | "model";
+
+/** The steps a LinkedIn template can be set for. */
+export const LINKEDIN_TEMPLATE_SLOTS = [
+  "note",
+  "noteFallback",
+  "firstMessage",
+  "firstMessageConnected",
+  "lastMessage",
+  "lastMessageFallback",
+  "friendNote",
+] as const;
+
+export type LinkedInTemplateSlot = (typeof LINKEDIN_TEMPLATE_SLOTS)[number];
+
+/**
+ * LinkedIn copy per step, with placeholders `{first_name}`, `{evidence}` (why
+ * they surfaced, as a clause with its subject: "you starred acme/widgets") and
+ * `{offer}` (the offer made to this prospect).
+ * - `note`: connection request when there is evidence; `noteFallback` when not.
+ * - `firstMessage`: first message after they accept; `firstMessageConnected`
+ *   when you were already connected before the sequence.
+ * - `lastMessage`: the close when the prospect has an offer;
+ *   `lastMessageFallback` when not.
+ * - `friendNote`: warm connection request to someone who replied by email.
+ */
+export type LinkedInTemplates = Partial<Record<LinkedInTemplateSlot, string>>;

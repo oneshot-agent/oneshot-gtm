@@ -12,7 +12,13 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { CALENDAR_READONLY_SCOPE } from "./gmail.ts";
 import { safeParseJsonRecord } from "./json.ts";
-import type { OfferAnchor, OneShotConfig } from "./types.ts";
+import {
+  LINKEDIN_TEMPLATE_SLOTS,
+  type LinkedInTemplates,
+  type LinkedInWriter,
+  type OfferAnchor,
+  type OneShotConfig,
+} from "./types.ts";
 
 // Data dir for config.json, .env, ledger.sqlite, events.jsonl, gmail-tokens.json.
 // `ONESHOT_GTM_HOME` overrides the default: tests redirect data-dir I/O to a temp
@@ -88,6 +94,29 @@ export function offerExclusionsOf(cfg: { offerExclusions?: unknown }): string[] 
  */
 export function offerAnchorOf(cfg: { offerAnchor?: unknown }): OfferAnchor {
   return cfg.offerAnchor === "prefer-product" ? "prefer-product" : "either";
+}
+
+/**
+ * The workspace's LinkedIn templates as the drafters read them: known slots
+ * only, each a non-blank string. Anything else reads as unset, so that step
+ * uses the shipped default.
+ */
+export function linkedinTemplatesOf(cfg: { linkedin?: unknown }): LinkedInTemplates {
+  const raw = (cfg.linkedin as { templates?: unknown } | undefined)?.templates;
+  const out: LinkedInTemplates = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const slot of LINKEDIN_TEMPLATE_SLOTS) {
+    const value = (raw as Record<string, unknown>)[slot];
+    if (typeof value === "string" && value.trim()) out[slot] = value.trim();
+  }
+  return out;
+}
+
+/** Who writes LinkedIn copy: only the exact string `model` turns templates off. */
+export function linkedinWriterOf(cfg: { linkedin?: unknown }): LinkedInWriter {
+  return (cfg.linkedin as { writer?: unknown } | undefined)?.writer === "model"
+    ? "model"
+    : "template";
 }
 
 const DEFAULTS: OneShotConfig = {

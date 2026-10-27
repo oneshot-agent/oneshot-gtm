@@ -71,6 +71,7 @@ import {
   type ReaderRole,
 } from "./_linkedin-evidence.ts";
 import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
+import { templatedLinkedIn } from "./_linkedin-template.ts";
 import {
   offerBlock,
   playMakesOffer,
@@ -3763,6 +3764,24 @@ async function buildLinkedInMessage(
   const first = firstTouch(events, playName, ctx.prospect.id);
   const now = new Date();
   const clause = agedEvidence(first.metadata, { contactedAt: first.contactedAt, now });
+  const templated = templatedLinkedIn(which, ctx.cfg, {
+    name: ctx.prospect.name,
+    evidence: clause,
+    offer: playMakesOffer(playName) ? (sequenceOffer(ctx.prospect, playName)?.offer ?? null) : null,
+    alreadyConnected,
+  });
+  if (templated) {
+    // Carried on the payload, as a drafted message's lint flag is, so an
+    // over-long template holds the send outside the preview too.
+    const over = templated.text.length > LINKEDIN_MESSAGE_MAX_CHARS;
+    return {
+      kind: "linkedin_message",
+      text: templated.text,
+      ...(over
+        ? { flags: [`too-long: ${templated.text.length}/${LINKEDIN_MESSAGE_MAX_CHARS} characters`] }
+        : {}),
+    };
+  }
   const title = ctx.prospect.title?.trim() || personTitle(ctx.prospect.dossier_json);
   const role = readerRole(title);
   const company = await companyTheyRun({

@@ -67,7 +67,7 @@ Mail goes out through a pool of your own mailboxes and OneShot domains. A prospe
 
 ### LinkedIn
 
-Connect your account once on Setup. Invites, messages and replies go through OneShot's API from that account, never a browser bot. [LinkedIn](./docs/linkedin.md) has the limits and the guard that runs before each invite.
+Connect your account once on Setup. Invites, messages and replies go through OneShot's API from that account, never a browser bot. Notes and messages are your templates with each person's details filled in. [LinkedIn](./docs/linkedin.md) has the templates, the limits and the guard that runs before each invite.
 
 ### Direct mail
 
