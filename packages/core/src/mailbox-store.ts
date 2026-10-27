@@ -71,11 +71,15 @@ export class MailboxStore {
     addColumnIfMissing(db, "mailbox_messages", "needs_processing", "INTEGER NOT NULL DEFAULT 1");
     // When this workspace stored the row, as opposed to `at`, the message's own
     // date. The bounce poll windows on this, so a delivery notice imported by a
-    // backfill long after it was sent is still read. Rows from before the column
-    // take their message date: the unbounded poll that ran until then already
-    // read every one of them.
+    // backfill long after it was sent is still read. A row from before the column
+    // whose bounces are already classified takes its message date: the unbounded
+    // poll that ran until then has read it. One still unclassified takes now, so
+    // the next poll classifies it rather than leaving it outside the window.
     addColumnIfMissing(db, "mailbox_messages", "stored_at", "TEXT");
-    db.exec("UPDATE mailbox_messages SET stored_at=at WHERE stored_at IS NULL");
+    db.query(
+      `UPDATE mailbox_messages SET stored_at=CASE WHEN json_extract(data, '$.bounces') IS NULL
+       THEN ? ELSE at END WHERE stored_at IS NULL`,
+    ).run(new Date().toISOString());
     db.exec(
       "CREATE INDEX IF NOT EXISTS mailbox_messages_bounce ON mailbox_messages(identity_id, direction, stored_at)",
     );
@@ -343,15 +347,20 @@ export class MailboxStore {
   /** Persist an updated reply classification and parsed bounce details. */
   reclassify(message: MailboxMessage, kind: ReplyKind, bounces?: ParsedBounce[]): void {
     if (message.kind === kind && message.bounces != null) return;
+    // Bounces attached late re-stamp the row, as in `put`, so the bounce poll's
+    // window still covers it however long ago it was stored.
+    const lateBounces = message.bounces == null && bounces != null;
     this.db
       .transaction(() => {
         this.db
           .query(
-            "UPDATE mailbox_messages SET data=?,needs_processing=CASE WHEN ? THEN 1 ELSE needs_processing END WHERE id=?",
+            "UPDATE mailbox_messages SET data=?,needs_processing=CASE WHEN ? THEN 1 ELSE needs_processing END,stored_at=CASE WHEN ? THEN ? ELSE stored_at END WHERE id=?",
           )
           .run(
             JSON.stringify({ ...message, kind, bounces: bounces ?? message.bounces }),
             message.kind !== kind ? 1 : 0,
+            lateBounces ? 1 : 0,
+            new Date().toISOString(),
             message.id,
           );
         this.db.query("UPDATE inbox_replies SET kind=? WHERE id=?").run(kind, message.id);

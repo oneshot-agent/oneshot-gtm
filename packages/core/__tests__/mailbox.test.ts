@@ -3,6 +3,7 @@ import { Ledger } from "../src/ledger.ts";
 import { simpleParser } from "mailparser";
 import { Database } from "bun:sqlite";
 import { listBounces } from "../src/oneshot.ts";
+import { MailboxStore } from "../src/mailbox-store.ts";
 
 const mocks = vi.hoisted(() => ({
   identities: [
@@ -360,6 +361,61 @@ describe("mailbox sync", () => {
 
     expect(read() > old).toBe(true);
     expect(ledger.mailboxes.get(message.id)?.bounces?.[0]?.kind).toBe("hard");
+  });
+
+  it("migrates a pre-column mailbox: unclassified rows land inside the window, classified ones keep their date", () => {
+    // A workspace from before `stored_at`: the table as it was, with one notice
+    // the old poll already classified and one it had not reached yet.
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE mailbox_messages (
+      id TEXT PRIMARY KEY, identity_id TEXT NOT NULL, thread_key TEXT NOT NULL,
+      message_id TEXT, prospect_id INTEGER, direction TEXT NOT NULL,
+      at TEXT NOT NULL, data TEXT NOT NULL, is_read INTEGER NOT NULL DEFAULT 0)`);
+    const old = "2026-08-01T00:00:00.000Z";
+    const insert = db.query(
+      "INSERT INTO mailbox_messages(id,identity_id,thread_key,direction,at,data) VALUES(?,?,?,?,?,?)",
+    );
+    insert.run(
+      "classified",
+      "id1",
+      "t1",
+      "inbound",
+      old,
+      JSON.stringify({ id: "classified", bounces: [] }),
+    );
+    insert.run("unclassified", "id1", "t2", "inbound", old, JSON.stringify({ id: "unclassified" }));
+    const before = new Date().toISOString();
+
+    new MailboxStore(db);
+
+    const at = (id: string): string =>
+      (
+        db.query("SELECT stored_at FROM mailbox_messages WHERE id=?").get(id) as {
+          stored_at: string;
+        }
+      ).stored_at;
+    expect(at("classified")).toBe(old);
+    // Old message date, but the migration stamps it now so the next poll classifies it.
+    expect(at("unclassified") >= before).toBe(true);
+  });
+
+  it("re-stamps a row when reclassify attaches its bounces late", async () => {
+    const message = { ...(await parsed("reclassified-dsn")), bounces: undefined };
+    ledger.mailboxes.put(message);
+    const old = "2026-01-01T00:00:00.000Z";
+    storedAt(message.id, old);
+    const stored = ledger.mailboxes.get(message.id)!;
+
+    ledger.mailboxes.reclassify(stored, stored.kind, [
+      { recipient: "p@example.org", kind: "hard", statusCode: null, diagnostic: null },
+    ]);
+
+    const now = (
+      (ledger.mailboxes as unknown as { db: Database }).db
+        .query("SELECT stored_at FROM mailbox_messages WHERE id=?")
+        .get(message.id) as { stored_at: string }
+    ).stored_at;
+    expect(now > old).toBe(true);
   });
 
   it("serves the bounce window from its index, not a scan of all mail", () => {
