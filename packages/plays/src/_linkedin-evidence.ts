@@ -649,7 +649,12 @@ export function lintLinkedInFirstMessage(
  * connect things, and "we connect agents to your tools" is not a violation.
  */
 const ALREADY_CONNECTED_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
-  ["thanks for connecting", /\bthank(?:s|\s+you)\b[^.?!\n]{0,30}\b(?:connect|accept)/i],
+  // Thanks for any act of joining their network: connecting, accepting, or
+  // adding ("thanks for adding me", "thanks for the add"). "address" does not match.
+  [
+    "thanks for connecting",
+    /\bthank(?:s|\s+you)\b[^.?!\n]{0,40}\b(?:connect|accept|add(?:ing|ed)?\b|the\s+add\b)/i,
+  ],
   ["connection request", /\bconnection\s+request/i],
   // Any form of the word: to someone already connected there was no invite to
   // mention, and listing the phrasings ("an invite", "a connection invite",

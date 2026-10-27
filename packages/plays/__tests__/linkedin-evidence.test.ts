@@ -681,6 +681,8 @@ describe("lintAlreadyConnected", () => {
     for (const [text, label] of [
       ["Thanks for connecting — how is review going?", "thanks for connecting"],
       ["Thank you for accepting. What are you shipping?", "thanks for connecting"],
+      ["Thanks for adding me on LinkedIn — what are you building?", "thanks for connecting"],
+      ["Thanks for the add! What are you shipping these days?", "thanks for connecting"],
       ["Saw you got my connection request a while back.", "connection request"],
       ["Following up on my invite: what is the team building?", "invite"],
       ["I sent an invite last week. What are you shipping?", "invite"],
@@ -707,6 +709,7 @@ describe("lintAlreadyConnected", () => {
       "Northwind's workers stay connected to the queue under backpressure, right?",
       "How do you connect a run's retries into one trace today?",
       "What are you building at Brightkiln right now?",
+      "Thanks — what address does the team ship invoices from?",
     ]) {
       expect(lintAlreadyConnected(text), text).toEqual([]);
     }
