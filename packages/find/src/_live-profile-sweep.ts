@@ -176,11 +176,25 @@ function triedRecently(research: Record<string, unknown>, now: number): boolean 
   return Number.isFinite(at) && now - at < RETRY_AFTER_MS;
 }
 
-/** A dossier's `liveProfile` marker is older than `maxAgeMs`. A marker with no usable date counts as fresh, as it did before reads aged. */
+/** A live-read marker (`{ readAt }`) is older than `maxAgeMs`. A marker with no usable date counts as fresh, as it did before reads aged. */
 function readOlderThan(marker: unknown, maxAgeMs: number, now: number): boolean {
   const at =
     isRecord(marker) && typeof marker["readAt"] === "string" ? Date.parse(marker["readAt"]) : NaN;
   return Number.isFinite(at) && now - at >= maxAgeMs;
+}
+
+/**
+ * The live-read marker a prospect's person half carries, in the shape
+ * `readOlderThan` ages. `personRecordFromResearch` flattens the read to
+ * `liveProfileReadAt` when it writes the half, so that is the key a prospect
+ * has; a `liveProfile: { url, readAt }` object, the queue payload's shape, is
+ * accepted too. Null when the half carries no read.
+ */
+function prospectLiveReadMarker(half: Record<string, unknown>): Record<string, unknown> | null {
+  const readAt = half["liveProfileReadAt"];
+  if (typeof readAt === "string" && readAt.trim() !== "") return { readAt };
+  const live = half["liveProfile"];
+  return isRecord(live) ? live : null;
 }
 
 export interface CadenceRefreshCandidate {
@@ -214,8 +228,8 @@ export function selectCadenceRefreshCandidates(
     if (!seed?.url || !isLinkedInProfileUrl(seed.url)) continue;
     const half = readPersonHalf(prospect.dossier_json);
     if (isRecord(half)) {
-      const live = half["liveProfile"];
-      if (isRecord(live) && !readOlderThan(live, CADENCE_REFRESH_MS, now)) continue;
+      const live = prospectLiveReadMarker(half);
+      if (live && !readOlderThan(live, CADENCE_REFRESH_MS, now)) continue;
       if (triedRecently(half, now)) continue;
     }
     out.push({ prospect, seed, playName: c.play_name });

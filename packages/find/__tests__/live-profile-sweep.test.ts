@@ -262,6 +262,24 @@ describe("selectCadenceRefreshCandidates", () => {
     ]);
     expect(picked[1]?.seed.url).toBe("https://linkedin.com/in/p1");
   });
+
+  it("ages the prospect half's flattened liveProfileReadAt: a read within 14 days is skipped, an older one is taken", () => {
+    const people: Record<number, ReturnType<typeof prospect>> = {
+      1: prospect(1, { status: "complete", liveProfileReadAt: daysAgo(3) }),
+      2: prospect(2, { status: "complete", liveProfileReadAt: daysAgo(15) }),
+      3: prospect(3, { status: "complete", liveProfileReadAt: "not a date" }),
+    };
+    const picked = selectCadenceRefreshCandidates(
+      [
+        { prospect_id: 1, play_name: "luma-events", enrolled_at: "2026-10-01" },
+        { prospect_id: 2, play_name: "luma-events", enrolled_at: "2026-10-02" },
+        { prospect_id: 3, play_name: "luma-events", enrolled_at: "2026-10-03" },
+      ],
+      (id) => people[id] ?? null,
+      now,
+    );
+    expect(picked.map((c) => c.prospect.id)).toEqual([2]);
+  });
 });
 
 describe("sweepLiveProfiles", () => {

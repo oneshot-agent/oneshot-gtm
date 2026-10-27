@@ -1201,8 +1201,15 @@ export async function researchNewQueueRowPeople(input: {
   // in-flight sweep (`sweepInFlightNewsfeeds`).
 }
 
-function hasLiveProfile(half: unknown): boolean {
-  return isRecord(half) && isRecord(half["liveProfile"]);
+/**
+ * The person half carries a live LinkedIn read. A prospect half stores it
+ * flattened as `liveProfileReadAt` (`personRecordFromResearch`); a
+ * `liveProfile` object, the queue payload's shape, counts too.
+ */
+export function hasLiveProfile(half: unknown): boolean {
+  if (!isRecord(half)) return false;
+  const readAt = half["liveProfileReadAt"];
+  return (typeof readAt === "string" && readAt.trim() !== "") || isRecord(half["liveProfile"]);
 }
 // Apply to an existing prospect
 export interface ProspectForResearch {
