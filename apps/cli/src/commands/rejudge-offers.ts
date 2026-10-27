@@ -1,6 +1,7 @@
 import {
   getLedger,
   loadConfig,
+  offerAnchorOf,
   offerExclusionsOf,
   parallelMap,
   safeParseJsonRecord,
@@ -228,7 +229,16 @@ export async function commandRejudgeOffers(opts: RejudgeOffersOpts): Promise<Rej
         typeof active.weakApprovedAt === "string" &&
         !!active.weakApprovedAt.trim() &&
         verdict.excluded !== true;
-      const first = approved ? -1 : next.findIndex((_, i) => verdicts[i]?.pass === true);
+      // Under `prefer-product` a passing product-anchored candidate is taken
+      // ahead of an earlier passing firm-anchored one. Candidates written
+      // before the writer emitted `anchor` carry none, so those rows fall
+      // back to the first passing one exactly as before.
+      const passing = next.map((_, i) => i).filter((i) => verdicts[i]?.pass === true);
+      const preferred =
+        offerAnchorOf(cfg) === "prefer-product"
+          ? passing.find((i) => next[i]!.anchor === "product")
+          : undefined;
+      const first = approved ? -1 : (preferred ?? passing[0] ?? -1);
       if (first >= 0) {
         // Its angles if it has them; none leaves the key unset and drafting
         // writes them. An approval belongs to the offer it was given on.

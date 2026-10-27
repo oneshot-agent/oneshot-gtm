@@ -591,9 +591,11 @@ export function mergeSetupConfig(
     sourceRepo: _sourceRepo,
     codeAnswerDisclosure: _disclosure,
     offerExclusions: _exclusions,
+    offerAnchor: _anchor,
     ...kept
   } = current;
   const offerExclusions = mergeOfferExclusions(body.offerExclusions, current.offerExclusions);
+  const offerAnchor = mergeOfferAnchor(body.offerAnchor, current.offerAnchor);
   const sourceRepo = mergeSourceRepo(body.sourceRepo, current.sourceRepo);
   const codeAnswerDisclosure = mergeDisclosure(
     body.codeAnswerDisclosure,
@@ -604,6 +606,7 @@ export function mergeSetupConfig(
     ...(sourceRepo ? { sourceRepo } : {}),
     ...(codeAnswerDisclosure ? { codeAnswerDisclosure } : {}),
     ...(offerExclusions ? { offerExclusions } : {}),
+    ...(offerAnchor ? { offerAnchor } : {}),
     walletMode,
     llmProvider,
     llmModel: body.llmModel ?? current.llmModel,
@@ -814,6 +817,29 @@ export function mergeOfferExclusions(
     );
   }
   return list.length > 0 ? list : undefined;
+}
+
+const OFFER_ANCHORS: ReadonlyArray<NonNullable<OneShotConfig["offerAnchor"]>> = [
+  "prefer-product",
+  "either",
+];
+
+/**
+ * `offerAnchor` merge: `undefined` keeps the stored value, `null` clears it
+ * (back to `either`, the default). Anything outside `OFFER_ANCHORS` is a 400
+ * rather than a silent fall back to the default, so a misspelling is caught
+ * at the save instead of quietly turning the preference off.
+ */
+export function mergeOfferAnchor(
+  incoming: SetupRequest["offerAnchor"],
+  current: OneShotConfig["offerAnchor"],
+): OneShotConfig["offerAnchor"] {
+  if (incoming === undefined) return current;
+  if (incoming === null) return undefined;
+  if (!OFFER_ANCHORS.includes(incoming as NonNullable<OneShotConfig["offerAnchor"]>)) {
+    throw new SetupValidationError(`offerAnchor must be one of ${OFFER_ANCHORS.join(", ")}`);
+  }
+  return incoming as OneShotConfig["offerAnchor"];
 }
 
 /** Offer-judge merge: the same rules as the reply classifier's. */

@@ -1,7 +1,7 @@
 You write FIVE offers a founder could make to this prospect, ranked by what each returns to the prospect's firm. Each offer is a goal of that firm the founder's product would carry to completion over weeks (see The bar). The first one is used: every outreach message opens with it, so it is the whole reason they reply. The other four are alternatives the founder can switch to.
 
 Return JSON only:
-{"offers": [{"offer": "...", "return": "...", "fit": "...", "steps": "...", "evidence": ["...", "..."], "stage": "...", "level": "researched" | "role"}, ... five, best return first]}
+{"offers": [{"offer": "...", "return": "...", "fit": "...", "anchor": "product" | "firm", "steps": "...", "evidence": ["...", "..."], "stage": "...", "level": "researched" | "role"}, ... five, best return first]}
 or {"skip": true, "why": "..."}
 
 ## Inputs
@@ -9,6 +9,7 @@ or {"skip": true, "why": "..."}
 - PRODUCT, PRODUCT BRIEF: what the founder's product does. The ONLY source of what it can deliver.
 - OFFER TERMS (optional): the founder's general terms (a pilot, a trial, a partnership, a service). They set the size and shape of the offer; never repeat them inside it.
 - NEVER OFFER (optional): kinds of goal the founder never takes on for a prospect.
+- ANCHOR (optional): which of the two anchors below to prefer when RESEARCH allows a choice.
 - PLAY: how this prospect was found.
 - PROSPECT, TITLE, COMPANY: who they are.
 - RESEARCH: everything known about them and their firm: the row the finder wrote, their own repositories, person research, their own pages, firm research, recent posts, enrichment.
@@ -49,7 +50,9 @@ Every offer rests on at least one of these two:
 - **Their product:** a job their product could finish for its own customers with the founder's product inside it. It needs to know what their product does (their own pages, the row, firm research).
 - **Their firm:** a job inside a firm of this stage and size that this person's role owns or is close to. It needs to know the firm's stage and the person's role.
 
-An offer that rests on neither is not an offer for this prospect, however well it reads.
+An offer that rests on neither is not an offer for this prospect, however well it reads. `anchor` names the one it rests on, `product` or `firm`: the same thing `fit` says in prose, so the two always agree.
+
+With `ANCHOR: prefer their product`, read RESEARCH for what their own product does before anything else. Where it says so, the strongest offers are goals that product would carry to completion for its own users, and the best of those is first; a firm-anchored offer still belongs among the five. Where RESEARCH says nothing about their product, firm-anchored offers are right and lose nothing by being so. The preference never licenses an invented fact about their product: with no evidence for one, write the firm.
 
 ## Relevance rules
 

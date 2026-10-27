@@ -498,6 +498,13 @@ export interface SetupRequest {
    * trimmed and blanks dropped; a non-string entry is a 400.
    */
   offerExclusions?: string[] | null;
+  /**
+   * Which anchor an offer should rest on where the research allows a choice:
+   * `prefer-product` leads with a goal of the prospect's own product,
+   * `either` has no preference. `undefined` = leave unchanged; `null` =
+   * clear (back to `either`); anything else is a 400.
+   */
+  offerAnchor?: "prefer-product" | "either" | null;
   /** Product facts + canonical links replies may cite. Links absent from this brief are never sent. */
   productBrief?: string;
   /**

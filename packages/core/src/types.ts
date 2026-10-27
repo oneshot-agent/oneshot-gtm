@@ -359,6 +359,9 @@ export interface OfferJudgeConfig {
   minConfidence?: number;
 }
 
+/** Which anchor an offer rests on where the research allows a choice. */
+export type OfferAnchor = "prefer-product" | "either";
+
 export interface OneShotConfig {
   walletMode: "cdp" | "private-key";
   llmProvider: "openrouter" | "openai" | "anthropic";
@@ -478,6 +481,19 @@ export interface OneShotConfig {
    * `find rejudge-offers`. Absent or empty: no exclusions.
    */
   offerExclusions?: string[];
+  /**
+   * Which anchor an offer should rest on where the research allows a choice.
+   * `prefer-product`: the writer leads with a goal of the prospect's own
+   * product wherever the research supports one, the judge rates a
+   * firm-anchored offer `weak` where it plainly did, and the passing
+   * product-anchored offers lead. A firm-anchored offer is still written and
+   * still used when the research says nothing about their product.
+   * `either` (the default, and anything unrecognized): no preference, the
+   * behaviour before this setting existed. Read through `offerAnchorOf`. Not
+   * part of an offer's input hash: stored offers are swept with
+   * `find rejudge-offers`.
+   */
+  offerAnchor?: OfferAnchor;
   /**
    * What an organization's members get when it offers the founder's product
    * to them (credits, setup, an extended trial), in the founder's own words.

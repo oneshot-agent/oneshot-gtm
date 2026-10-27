@@ -7,6 +7,7 @@ import {
   DEFAULT_LLM_MODEL,
   llmApiKey,
   loadConfig,
+  offerAnchorOf,
   offerExclusionsOf,
   oneshotEnvReady,
   SECRET_KEYS,
@@ -229,5 +230,20 @@ describe("offerExclusionsOf", () => {
     expect(offerExclusionsOf({ offerExclusions: " legal advice " })).toEqual(["legal advice"]);
     expect(offerExclusionsOf({})).toEqual([]);
     expect(offerExclusionsOf({ offerExclusions: { a: 1 } })).toEqual([]);
+  });
+});
+
+describe("offerAnchorOf", () => {
+  it("turns the preference on for the exact value only", () => {
+    expect(offerAnchorOf({ offerAnchor: "prefer-product" })).toBe("prefer-product");
+  });
+
+  it("reads absent, `either` and anything unrecognized as `either`", () => {
+    expect(offerAnchorOf({})).toBe("either");
+    expect(offerAnchorOf({ offerAnchor: "either" })).toBe("either");
+    // A misspelling must not silently half-apply: it is the default.
+    expect(offerAnchorOf({ offerAnchor: "prefer_product" })).toBe("either");
+    expect(offerAnchorOf({ offerAnchor: "product" })).toBe("either");
+    expect(offerAnchorOf({ offerAnchor: 3 })).toBe("either");
   });
 });

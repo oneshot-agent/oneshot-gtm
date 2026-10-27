@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { CALENDAR_READONLY_SCOPE } from "./gmail.ts";
 import { safeParseJsonRecord } from "./json.ts";
-import type { OneShotConfig } from "./types.ts";
+import type { OfferAnchor, OneShotConfig } from "./types.ts";
 
 // Data dir for config.json, .env, ledger.sqlite, events.jsonl, gmail-tokens.json.
 // `ONESHOT_GTM_HOME` overrides the default: tests redirect data-dir I/O to a temp
@@ -78,6 +78,16 @@ export function offerExclusionsOf(cfg: { offerExclusions?: unknown }): string[] 
     if (text && !out.includes(text)) out.push(text);
   }
   return out;
+}
+
+/**
+ * The workspace's `offerAnchor` as the writer and judge read it. Only the
+ * exact string `prefer-product` turns the preference on; absent, misspelled
+ * or any other value reads as `either`, which is the behaviour from before
+ * the setting existed.
+ */
+export function offerAnchorOf(cfg: { offerAnchor?: unknown }): OfferAnchor {
+  return cfg.offerAnchor === "prefer-product" ? "prefer-product" : "either";
 }
 
 const DEFAULTS: OneShotConfig = {
