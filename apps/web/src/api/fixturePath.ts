@@ -1,9 +1,10 @@
 /**
  * The one function that decides where a captured API response lives on disk.
  *
- * Both halves of the demo depend on agreeing about this: `scripts/capture-fixtures.ts`
- * writes the tree with it, and `demo.ts` reads the tree with it in a browser. It
- * therefore imports nothing: no node, no vite, no DOM.
+ * Both halves of the demo depend on agreeing about this:
+ * `apps/web/scripts/capture-fixtures.ts` writes the tree with it, and `demo.ts`
+ * reads the tree with it in a browser. It therefore imports nothing: no node, no
+ * vite, no DOM.
  *
  *   /home                        → home/index.json
  *   /receipts/12                 → receipts/12/index.json

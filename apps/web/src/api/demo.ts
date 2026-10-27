@@ -9,13 +9,13 @@
  * one unfakeable claim is that it does not deal in those.
  *
  * The fixtures are captured from a real `demo ui` server running against the
- * seeded home (see scripts/capture-fixtures.ts). Everything in them is a
+ * seeded home (see apps/web/scripts/capture-fixtures.ts). Everything in them is a
  * response that server actually returned.
  *
  * Writes are refused HERE, at the transport, and not by disabling buttons alone.
  * A disabled button is a courtesy that a determined click can walk around; this
- * is the guarantee. `main.tsx` turns the throw into one consistent toast, so all
- * 36 mutation sites in the app report the same thing without knowing about demo
+ * is the guarantee. `main.tsx` turns the throw into one consistent toast, so every
+ * mutation site in the app reports the same thing without knowing about demo
  * mode at all.
  */
 

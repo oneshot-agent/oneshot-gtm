@@ -101,7 +101,7 @@ const BASE = "/api";
  *
  * Every read in this file goes through getJson and every write through
  * postJson, so these two branches are the entire seam: the api object below,
- * the 36 mutation sites behind it and all nine routes stay untouched. That is
+ * every mutation site behind it and every route stay untouched. That is
  * why the seam is worth keeping narrow.
  */
 /**
