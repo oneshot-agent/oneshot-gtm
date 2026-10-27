@@ -1,6 +1,6 @@
 /**
  * `prospects.angle_json`. The per-prospect synthesis this file's callers
- * (packages/plays/src/angle.ts, apps/cli synthesize-angles) produce and
+ * (packages/find/src/angle.ts, apps/cli synthesize-angles) produce and
  * persist via `Ledger.setProspectAngle` (issue #355).
  *
  * `relationship` answers WHAT they build (their own account of it);

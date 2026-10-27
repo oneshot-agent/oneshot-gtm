@@ -5,11 +5,12 @@ import { configDir } from "./config.ts";
 
 // Demo mode exists for one reason: capturing a screenshot or a video of a
 // populated dashboard without a real ledger full of real prospects. It is a
-// READ-ONLY seam. Four calls the dashboard makes at request time can't be
+// READ-ONLY seam. Some calls the dashboard makes at request time can't be
 // populated by seeding SQLite, because they fetch from the network rather than
-// the ledger. The reply list, the platform RoCS rollup, the provisioned-domain
-// pool, and the wallet balance. In demo mode those four read a JSON fixture
-// written by `demo seed` instead.
+// the ledger: reply lists, the platform RoCS rollup, the provisioned-domain
+// pool, the wallet balance, meetings, paid research. In demo mode each of those
+// reads a JSON fixture written by `demo seed` instead. The `demoFixture` call
+// sites, not this paragraph, are the authoritative list.
 //
 // Nothing that sends, drafts, spends or writes is faked. The demo home carries
 // placeholder credentials, so a stray click on Run or Send fails at auth, which

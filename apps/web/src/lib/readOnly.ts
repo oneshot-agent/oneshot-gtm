@@ -4,8 +4,8 @@ import { IS_DEMO } from "../api/demo.ts";
  * Props for a control that writes, so the vendored demo can grey it out.
  *
  * The refusal itself lives in the transport (src/api/demo.ts) and the report
- * lives in main.tsx's mutation cache, which between them already cover all 29
- * mutation sites. This is the courtesy on top: the buttons a visitor reaches
+ * lives in main.tsx's mutation cache, which between them already cover every
+ * mutation site. This is the courtesy on top: the buttons a visitor reaches
  * first should look unavailable before they are clicked, rather than accepting
  * the click and answering with a toast.
  *

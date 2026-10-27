@@ -169,7 +169,7 @@ export interface ProspectRecord {
    * a prose brief + hook plus a fixed evidence/relationship/valueMode schema.
    * Distinct from `dossier_json` (raw research input) and from `yourEdge`
    * (founder config, identical across every target in a run). NULL = never
-   * synthesized. See `packages/plays/src/angle.ts` for the shape.
+   * synthesized. See `packages/core/src/angle.ts` for the shape.
    */
   angle_json: string | null;
   /** ISO timestamp of the last `angle_json` write. NULL alongside it. */
