@@ -278,13 +278,20 @@ export function mergeInitConfig(
   };
 }
 
-function whichCommand(): string {
+/**
+ * The CLI's entry file, relative to the repo root: the `bin` target in
+ * apps/cli/package.json and what the root `bun run cli` script runs. The
+ * next-steps hint prints it, so it must name a file that exists on disk.
+ */
+export const DEV_CLI_ENTRY = "apps/cli/src/main.ts";
+
+export function whichCommand(): string {
   // If someone resolved us via the linked bin or a bunx install, the basename is "oneshot-gtm".
-  // Otherwise we're being invoked through `bun run packages/cli/src/index.ts ...` and we should
-  // suggest that form so the next steps copy-paste works.
+  // Otherwise we're being invoked from a checkout through `bun run apps/cli/src/main.ts ...`
+  // and we should suggest that form so the next steps copy-paste works.
   const exec = process.argv[1] ?? "";
   if (exec.endsWith("oneshot-gtm") || exec.endsWith("oneshot-gtm/index.ts")) return "oneshot-gtm";
-  return "bun run packages/cli/src/index.ts";
+  return `bun run ${DEV_CLI_ENTRY}`;
 }
 
 function defaultModel(provider: string): string {

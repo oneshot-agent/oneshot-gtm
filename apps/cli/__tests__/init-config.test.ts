@@ -1,6 +1,32 @@
-import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import type { OneShotConfig } from "@oneshot-gtm/core";
-import { mergeInitConfig } from "../src/commands/init.ts";
+import { DEV_CLI_ENTRY, mergeInitConfig, whichCommand } from "../src/commands/init.ts";
+
+const REPO_ROOT = resolve(import.meta.dirname, "../../..");
+
+describe("whichCommand", () => {
+  const argv1 = process.argv[1] as string;
+  afterEach(() => {
+    process.argv[1] = argv1;
+  });
+
+  it("suggests a checkout command whose entry file exists on disk", () => {
+    // The hint is meant to be copy-pasted. A hardcoded path rots silently
+    // (#931 shipped `packages/cli/src/index.ts`, which never existed).
+    process.argv[1] = resolve(REPO_ROOT, DEV_CLI_ENTRY);
+    const cmd = whichCommand();
+    expect(cmd).toBe(`bun run ${DEV_CLI_ENTRY}`);
+    const entry = cmd.split(" ").at(-1) as string;
+    expect(existsSync(resolve(REPO_ROOT, entry))).toBe(true);
+  });
+
+  it("suggests the linked bin name when invoked through it", () => {
+    process.argv[1] = "/usr/local/bin/oneshot-gtm";
+    expect(whichCommand()).toBe("oneshot-gtm");
+  });
+});
 
 const current = {
   walletMode: "cdp",
