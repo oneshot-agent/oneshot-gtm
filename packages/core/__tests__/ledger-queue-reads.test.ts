@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Database } from "bun:sqlite";
-import { QueueStore } from "../src/ledger-queue.ts";
+import { prospectHasReplied, QueueStore } from "../src/ledger-queue.ts";
 import { runLedgerMigrations } from "../src/ledger-schema.ts";
 
 /*
@@ -197,5 +197,58 @@ describe("listQueue({ columns }) (#929)", () => {
       store.listQueue({ columns: ["id", "payload_json; DROP TABLE target_queue"] }),
     ).toThrow(/unknown column/);
     expect(() => store.listQueue({ columns: [] })).toThrow(/at least one column/);
+  });
+});
+
+describe("prospectHasReplied (#929)", () => {
+  function reply(prospectId: number, kind: string | null): void {
+    db.prepare(
+      `INSERT INTO inbox_replies (id, thread_key, prospect_id, play_name, from_email, body, received_at, kind)
+       VALUES (?, 't', ?, 'show-hn', 'p@x.example', 'thanks', '2026-09-03T12:00:00.000Z', ?)`,
+    ).run(`m-${prospectId}-${kind ?? "null"}`, prospectId, kind);
+  }
+
+  it("is one statement of existence probes, never a read of the collections", () => {
+    const id = prospect("Ada", "ada@x.example");
+    reply(id, "human");
+    statements = [];
+    expect(prospectHasReplied(db, id)).toBe(true);
+    expect(statements).toHaveLength(1);
+    const [sql] = statements;
+    expect(sql).toMatch(/SELECT \(EXISTS \(SELECT 1 FROM inbox_replies/);
+    expect(sql).toContain("EXISTS (SELECT 1 FROM channel_events");
+    expect(sql).toContain("EXISTS (SELECT 1 FROM sequence_events");
+    expect(sql).not.toMatch(/SELECT \* FROM/);
+  });
+
+  it("answers as the three collections did: a human or unkinded email reply, a LinkedIn reply, a replied step", () => {
+    const human = prospect("H", "h@x.example");
+    const unkinded = prospect("U", "u@x.example");
+    const auto = prospect("A", "a@x.example");
+    const linkedin = prospect("L", "l@x.example");
+    const legacy = prospect("S", "s@x.example");
+    const quiet = prospect("Q", "q@x.example");
+    reply(human, "human");
+    reply(unkinded, null);
+    reply(auto, "auto");
+    db.prepare(
+      `INSERT INTO channel_events (source, external_event_id, prospect_id, channel, event_type, occurred_at)
+       VALUES ('linkedin', 'e-reply', ?, 'linkedin', 'reply', '2026-09-03T12:00:00.000Z')`,
+    ).run(linkedin);
+    db.prepare(
+      `INSERT INTO channel_events (source, external_event_id, prospect_id, channel, event_type, occurred_at)
+       VALUES ('linkedin', 'e-accepted', ?, 'linkedin', 'accepted', '2026-09-03T12:00:00.000Z')`,
+    ).run(quiet);
+    db.prepare(
+      `INSERT INTO sequence_events (prospect_id, play_name, step_index, channel, status)
+       VALUES (?, 'show-hn', 0, 'email', 'replied')`,
+    ).run(legacy);
+    db.prepare(
+      `INSERT INTO sequence_events (prospect_id, play_name, step_index, channel, status)
+       VALUES (?, 'show-hn', 0, 'email', 'sent')`,
+    ).run(quiet);
+    expect(
+      [human, unkinded, auto, linkedin, legacy, quiet].map((id) => prospectHasReplied(db, id)),
+    ).toEqual([true, true, false, true, true, false]);
   });
 });

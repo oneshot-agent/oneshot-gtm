@@ -302,8 +302,11 @@ describe("run-form queue hydration", () => {
     try {
       const plain = await body("http://x/api/queue");
       const resolved = await body("http://x/api/queue?forRun=1");
-      expect((plain.rows as Array<{ payload: unknown }>)[0]?.payload).toMatchObject({
-        yourEdge: "old edge",
+      // The plain list carries the keys the page renders (#929); `yourEdge`
+      // is the run form's alone, which `forRun=1` resolves afresh below.
+      expect((plain.rows as Array<{ payload: unknown }>)[0]?.payload).toEqual({
+        name: "Ada",
+        email: "ada@example.com",
       });
       expect((resolved.rows as Array<{ payload: unknown }>)[0]?.payload).toMatchObject({
         email: "ada@example.com",
@@ -351,6 +354,72 @@ describe("listQueueRoute — channel", () => {
       const rows = (await body("http://x/api/queue"))["rows"] as Array<Record<string, unknown>>;
       const byId = Object.fromEntries(rows.map((r) => [r["id"], [r["channel"], r["sender"]]]));
       expect(byId).toEqual({ 1: ["email", "api"], 2: ["x", "manual"], 3: ["email", "api"] });
+    } finally {
+      nextRows = [];
+    }
+  });
+});
+
+describe("list payload trim (#929)", () => {
+  it("carries only the keys the list renders; the run form's read keeps the whole target", async () => {
+    const row = queueRow(null);
+    row.payload_json = JSON.stringify({
+      name: "Ada",
+      email: "ada@example.com",
+      eventTitle: "Demo night",
+      personResearch: { status: "complete", facts: ["x"] },
+      offerCandidates: [{ goal: "g" }],
+      dossier: "a long dossier the list never shows",
+      rawEvent: { html: "<p>…</p>" },
+      yourEdge: "old edge",
+    });
+    nextRows = [row];
+    try {
+      const plain = await body("http://x/api/queue");
+      expect((plain.rows as Array<{ payload: unknown }>)[0]?.payload).toEqual({
+        name: "Ada",
+        email: "ada@example.com",
+        eventTitle: "Demo night",
+        personResearch: { status: "complete", facts: ["x"] },
+        offerCandidates: [{ goal: "g" }],
+      });
+      const resolved = await body("http://x/api/queue?forRun=1");
+      expect((resolved.rows as Array<{ payload: unknown }>)[0]?.payload).toMatchObject({
+        dossier: "a long dossier the list never shows",
+        rawEvent: { html: "<p>…</p>" },
+      });
+    } finally {
+      nextRows = [];
+    }
+  });
+
+  it("derives the row's views from the whole payload before trimming, and leaves a non-object payload alone", async () => {
+    const skipped = queueRow(null);
+    skipped.payload_json = JSON.stringify({
+      name: "Ada",
+      email: "ada@example.com",
+      // The writer's stored skip: the page reads the derived `offerSkip` view, never the key.
+      offerSkip: {
+        why: "nothing to offer a hobby project",
+        version: "v1",
+        inputHash: "in",
+        productHash: "prod",
+        skippedAt: "2026-09-02T09:00:00.000Z",
+      },
+    });
+    const broken = queueRow(null);
+    broken.id = 2;
+    broken.dedupe_key = "k2";
+    broken.payload_json = "not json";
+    nextRows = [skipped, broken];
+    try {
+      const rows = (await body("http://x/api/queue")).rows as Array<Record<string, unknown>>;
+      expect(rows[0]?.["offerSkip"]).toEqual({
+        why: "nothing to offer a hobby project",
+        at: "2026-09-02T09:00:00.000Z",
+      });
+      expect(rows[0]?.["payload"]).toEqual({ name: "Ada", email: "ada@example.com" });
+      expect(rows[1]?.["payload"]).toBe("not json");
     } finally {
       nextRows = [];
     }

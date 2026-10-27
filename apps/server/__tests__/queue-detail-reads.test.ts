@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Ledger } from "../../../packages/core/src/ledger.ts";
 
-// GET /api/queue/:id against a real ledger (issue #929): the prospect's
-// delivery checks are read once for every sequence event, not once per event,
-// and each check still lands on its own step; the `replied` flag is answered
-// from the history the timeline already read, not from three more reads.
+// GET /api/queue/:id and POST /api/queue/:id/approve against a real ledger
+// (issue #929): the delivery checks of every sequence event are read once,
+// not once per event, and each check still lands on its own event; the
+// detail's `replied` flag is answered from the history the timeline already
+// read, and the approve guard's from one existence probe, not three
+// collections read in full.
 
 let ledger: Ledger;
 
@@ -14,7 +16,7 @@ vi.mock("@oneshot-gtm/core", async () => ({
   logEvent: () => {},
 }));
 
-const { queueRowDetailRoute } = await import("../src/api/queue.ts");
+const { approveQueueRoute, queueRowDetailRoute } = await import("../src/api/queue.ts");
 
 const PLAY = "queue-detail-reads-play";
 
@@ -94,19 +96,22 @@ afterEach(() => {
 });
 
 describe("GET /api/queue/:id delivery checks", () => {
-  it("reads the prospect's checks once and lands each on its own step", async () => {
+  it("reads every event's check in one read and lands each on its own step", async () => {
     const { id, prospectId } = rowFor();
     const [s0, s1, s2] = [step(prospectId, 0), step(prospectId, 1), step(prospectId, 2)];
     check(prospectId, s0, "ok", ["2026-09-02T09:00:05.000Z"]);
     check(prospectId, s1, "duplicate", ["2026-09-04T09:00:05.000Z", "2026-09-04T09:00:09.000Z"]);
     check(prospectId, s2, "not_found", []);
-    const perStep = vi.spyOn(ledger.sendDelivery, "forProspectSteps");
+    const batched = vi.spyOn(ledger.sendDelivery, "forSequenceEvents");
     const perEvent = vi.spyOn(ledger.sendDelivery, "forSequenceEvent");
+    const perStep = vi.spyOn(ledger.sendDelivery, "forProspectSteps");
 
     const notes = deliveryNotes(await detail(id));
 
-    expect(perStep).toHaveBeenCalledTimes(1);
+    expect(batched).toHaveBeenCalledTimes(1);
+    expect(batched.mock.calls[0]?.[0]?.toSorted()).toEqual([s0, s1, s2]);
     expect(perEvent).not.toHaveBeenCalled();
+    expect(perStep).not.toHaveBeenCalled();
     // Exactly what a per-event read says for each step, dated by its own delivery.
     expect(notes.toSorted((a, b) => a.label.localeCompare(b.label))).toEqual([
       { at: "2026-09-04T09:00:09.000Z", label: "delivered 2× by the mail provider" },
@@ -114,7 +119,7 @@ describe("GET /api/queue/:id delivery checks", () => {
     ]);
   });
 
-  it("keeps the per-event read for a play|step two events share, which the per-prospect map folds into one", async () => {
+  it("gives each of two events on one play|step its own check, in the same one read", async () => {
     const { id, prospectId } = rowFor();
     const first = step(prospectId, 0);
     const rerun = step(prospectId, 0);
@@ -122,22 +127,96 @@ describe("GET /api/queue/:id delivery checks", () => {
     check(prospectId, first, "ok", ["2026-09-02T09:00:05.000Z"]);
     check(prospectId, rerun, "duplicate", ["2026-09-09T09:00:05.000Z", "2026-09-09T09:00:09.000Z"]);
     check(prospectId, other, "ok", ["2026-09-04T09:00:05.000Z"]);
-    // Why the fallback: the map is keyed play|step, so the two events share one
-    // entry (the newest check), and nothing in it says which event it belongs to.
+    // What a play|step-keyed read would lose: the two events share one entry.
     const folded = ledger.sendDelivery.forProspectSteps(prospectId);
     expect([...folded.keys()]).toEqual([`${PLAY}|0`, `${PLAY}|1`]);
-    expect(folded.get(`${PLAY}|0`)?.status).toBe("duplicate");
-    const perStep = vi.spyOn(ledger.sendDelivery, "forProspectSteps");
+    const batched = vi.spyOn(ledger.sendDelivery, "forSequenceEvents");
     const perEvent = vi.spyOn(ledger.sendDelivery, "forSequenceEvent");
 
     const notes = deliveryNotes(await detail(id));
 
-    expect(perStep).toHaveBeenCalledTimes(1);
-    expect(perEvent.mock.calls.map(([eventId]) => eventId).toSorted()).toEqual([first, rerun]);
+    expect(batched).toHaveBeenCalledTimes(1);
+    expect(perEvent).not.toHaveBeenCalled();
+    // The read answers per event id, as a per-event read did for each.
+    const byEvent = batched.mock.results[0]!.value as Map<number, { status: string }>;
+    expect([first, rerun, other].map((e) => byEvent.get(e)?.status)).toEqual([
+      "ok",
+      "duplicate",
+      "ok",
+    ]);
     // The duplicate is the re-run's alone: one note, not one per sharing event.
     expect(notes).toEqual([
       { at: "2026-09-09T09:00:09.000Z", label: "delivered 2× by the mail provider" },
     ]);
+  });
+});
+
+describe("POST /api/queue/:id/approve replied guard", () => {
+  async function approve(id: number): Promise<Response> {
+    return approveQueueRoute(
+      new Request(`http://localhost/api/queue/${id}/approve`, { method: "POST" }),
+      { id: String(id) },
+    );
+  }
+
+  it("probes the ledger once and never reads the three collections", async () => {
+    const { id, prospectId } = rowFor();
+    ledger.setQueueStatus({ id, status: "expired" });
+    step(prospectId, 0, "replied");
+    const probe = vi.spyOn(ledger, "prospectHasReplied");
+    const replies = vi.spyOn(ledger, "listInboxRepliesForProspect");
+    const channel = vi.spyOn(ledger, "listChannelEventsForProspect");
+    const conversation = vi.spyOn(ledger, "listSequenceEventsForProspect");
+
+    const res = await approve(id);
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toMatch(/replied/);
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(probe).toHaveBeenCalledWith(prospectId);
+    expect(replies).not.toHaveBeenCalled();
+    expect(channel).not.toHaveBeenCalled();
+    expect(conversation).not.toHaveBeenCalled();
+    expect(ledger.getQueueRow(id)?.status).toBe("expired");
+  });
+
+  it("refuses on a human email reply, approves past an automatic one", async () => {
+    const human = rowFor();
+    const auto = rowFor();
+    for (const [row, kind] of [
+      [human, "human"],
+      [auto, "auto"],
+    ] as const) {
+      ledger.setQueueStatus({ id: row.id, status: "expired" });
+      ledger.recordInboxReply({
+        id: `m-${row.prospectId}`,
+        threadKey: `t-${row.prospectId}`,
+        prospectId: row.prospectId,
+        playName: PLAY,
+        fromEmail: row.email,
+        body: "thanks",
+        receivedAt: "2026-09-03T12:00:00.000Z",
+        kind,
+      });
+    }
+    expect((await approve(human.id)).status).toBe(409);
+    expect((await approve(auto.id)).status).toBe(200);
+    expect(ledger.getQueueRow(auto.id)?.status).toBe("approved");
+  });
+
+  it("refuses on a LinkedIn reply, approves a prospect with no answer on any channel", async () => {
+    const linkedin = rowFor();
+    const quiet = rowFor();
+    ledger.setQueueStatus({ id: linkedin.id, status: "rejected" });
+    ledger.setQueueStatus({ id: quiet.id, status: "rejected" });
+    ledger.recordLinkedInReply({
+      prospectId: linkedin.prospectId,
+      source: "linkedin",
+      externalEventId: `e-${linkedin.prospectId}`,
+      occurredAt: "2026-09-03T12:00:00.000Z",
+    });
+    expect((await approve(linkedin.id)).status).toBe(409);
+    expect((await approve(quiet.id)).status).toBe(200);
   });
 });
 

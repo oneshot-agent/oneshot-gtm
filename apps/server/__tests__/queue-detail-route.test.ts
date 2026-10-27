@@ -8,10 +8,11 @@ const queueRows = new Map<number, Record<string, unknown>>();
 const prospectsByEmail = new Map<string, { id: number }>();
 const prospectsById = new Map<number, Record<string, unknown>>();
 const statusCalls: Array<Record<string, unknown>> = [];
-/** Every delivery read, in order: `steps:<prospectId>` or `event:<sequenceEventId>`. */
+/** Every delivery read, in order: `events:<sequenceEventIds>`. */
 const deliveryCalls: string[] = [];
-let stepDeliveries = new Map<string, Record<string, unknown>>();
 let eventDeliveries = new Map<number, Record<string, unknown>>();
+/** Every reply probe the approve guard made, by prospect id. */
+const repliedProbes: number[] = [];
 const sameStepEvents = [
   {
     id: 7,
@@ -50,14 +51,17 @@ vi.mock("@oneshot-gtm/core", async () => {
       listSequenceEventsForProspect: () => [],
       // The history reads every status, including the bounced step.
       sendDelivery: {
-        forProspectSteps: (id: number) => {
-          deliveryCalls.push(`steps:${id}`);
-          return stepDeliveries;
+        forSequenceEvents: (ids: number[]) => {
+          deliveryCalls.push(`events:${ids.join(",")}`);
+          return new Map(
+            ids.flatMap((id) => (eventDeliveries.has(id) ? [[id, eventDeliveries.get(id)]] : [])),
+          );
         },
-        forSequenceEvent: (id: number) => {
-          deliveryCalls.push(`event:${id}`);
-          return eventDeliveries.get(id) ?? null;
-        },
+      },
+      // The approve guard's one-read probe (#929); prospect 44 has the human reply below.
+      prospectHasReplied: (id: number) => {
+        repliedProbes.push(id);
+        return id === 44;
       },
       listAllSequenceEventsForProspect: (id: number) =>
         id === 45
@@ -203,7 +207,7 @@ describe("queueRowDetailRoute", () => {
     expect(JSON.stringify(body)).not.toContain("SECRET BODY TEXT");
   });
 
-  it("reads the prospect's delivery checks once, not once per sequence event (#929)", async () => {
+  it("reads the delivery checks of every sequence event in one read, not one per event (#929)", async () => {
     queueRows.set(9, row({}));
     prospectsByEmail.set("grace@x.example", { id: 44 });
     prospectsById.set(44, { id: 44, name: "Grace H", email: "grace@x.example" });
@@ -219,11 +223,12 @@ describe("queueRowDetailRoute", () => {
       error: null,
       keyed: true,
     };
-    stepDeliveries = new Map([["show-hn|0", duplicate]]);
+    eventDeliveries = new Map([[1, duplicate]]);
     deliveryCalls.length = 0;
     try {
       const { body } = await detail("9");
-      expect(deliveryCalls).toEqual(["steps:44"]);
+      // Both of prospect 44's events (ids 2 and 1, newest first), one read.
+      expect(deliveryCalls).toEqual(["events:2,1"]);
       const timeline = body["timeline"] as Array<Record<string, unknown>>;
       const notes = timeline.filter((e) => e["label"] === "delivered 2× by the mail provider");
       // Attributed to step 1 (event 1): the one check, dated by its last delivery.
@@ -237,11 +242,11 @@ describe("queueRowDetailRoute", () => {
         },
       ]);
     } finally {
-      stepDeliveries = new Map();
+      eventDeliveries = new Map();
     }
   });
 
-  it("falls back to the per-event read for a play|step two of the prospect's events share (#929)", async () => {
+  it("keeps each event's own check when two of the prospect's events share a play|step (#929)", async () => {
     queueRows.set(13, row({ id: 13, payload_json: JSON.stringify({ email: "two@x.example" }) }));
     prospectsByEmail.set("two@x.example", { id: 45 });
     prospectsById.set(45, { id: 45, name: "Two Steps", email: "two@x.example" });
@@ -257,19 +262,18 @@ describe("queueRowDetailRoute", () => {
       error: null,
       keyed: true,
     };
-    // The keyed map would hand event 8's check to event 7 as well.
-    stepDeliveries = new Map([["show-hn|0", duplicate]]);
+    // A play|step-keyed map would hand event 8's check to event 7 as well;
+    // the read is keyed by event id, so the duplicate is the re-run's alone.
     eventDeliveries = new Map([[8, duplicate]]);
     deliveryCalls.length = 0;
     try {
       const { body } = await detail("13");
-      expect(deliveryCalls).toEqual(["steps:45", "event:7", "event:8"]);
+      expect(deliveryCalls).toEqual(["events:7,8"]);
       const timeline = body["timeline"] as Array<Record<string, unknown>>;
       expect(
         timeline.filter((e) => e["label"] === "delivered 2× by the mail provider"),
       ).toHaveLength(1);
     } finally {
-      stepDeliveries = new Map();
       eventDeliveries = new Map();
     }
   });
@@ -311,6 +315,7 @@ describe("queueRowDetailRoute", () => {
 
 describe("approveQueueRoute status transitions", () => {
   beforeEach(() => {
+    repliedProbes.length = 0;
     statusCalls.length = 0;
   });
   it("records a fit judgment when the body carries one, none otherwise, and refuses an unknown reason (#813)", async () => {
@@ -380,6 +385,8 @@ describe("approveQueueRoute status transitions", () => {
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: string }).error).toMatch(/replied/);
     expect(statusCalls).toEqual([]);
+    // One probe of the ledger (#929), not three collections read in full.
+    expect(repliedProbes).toEqual([44]);
   });
 
   it("approves an expired row when the prospect has not replied", async () => {

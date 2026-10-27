@@ -270,6 +270,28 @@ export class SendDeliveryStore {
     return row ? toView(row) : null;
   }
 
+  /**
+   * The check for each of several sequence events, keyed by event id: what
+   * `forSequenceEvent` answers for each, in one read (issue #929: the row
+   * detail asked once per event). The newest check wins per event, as there;
+   * an event with no check is absent.
+   */
+  forSequenceEvents(sequenceEventIds: ReadonlyArray<number>): Map<number, SendDeliveryView> {
+    const ids = [...new Set(sequenceEventIds.filter((n) => Number.isInteger(n)))];
+    const out = new Map<number, SendDeliveryView>();
+    if (ids.length === 0) return out;
+    const rows = this.db
+      .query<CheckRow, number[]>(
+        `SELECT ${CHECK_COLS} FROM send_delivery_checks c WHERE sequence_event_id IN (${ids.map(() => "?").join(",")}) ORDER BY checked_at DESC`,
+      )
+      .all(...ids);
+    for (const row of rows) {
+      if (row.sequence_event_id != null && !out.has(row.sequence_event_id))
+        out.set(row.sequence_event_id, toView(row));
+    }
+    return out;
+  }
+
   /** Every check against one prospect's sequence events, keyed `${playName}|${stepIndex}`. */
   forProspectSteps(prospectId: number): Map<string, SendDeliveryView> {
     const rows = this.db

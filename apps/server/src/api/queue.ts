@@ -413,54 +413,22 @@ function hasReplied(history: {
 }
 
 /**
- * `hasReplied` read from the ledger, for the approve guard, which has read
- * nothing else about the prospect. The detail route answers it from the
- * history it already holds (issue #929: it read the same three tables
- * twice). A `SELECT 1 … LIMIT 1` probe needs a method on the ledger facade,
- * which this change does not own.
- */
-function prospectHasReplied(ledger: ReturnType<typeof getLedger>, prospectId: number): boolean {
-  return (
-    ledger.listInboxRepliesForProspect(prospectId).some((r) => (r.kind ?? "human") === "human") ||
-    ledger.listChannelEventsForProspect(prospectId).some((e) => e.event_type === "reply") ||
-    ledger.listSequenceEventsForProspect(prospectId).some((e) => e.status === "replied")
-  );
-}
-
-/** `forProspectSteps`' key for a sequence event. */
-function stepKey(ev: { play_name: string; step_index: number }): string {
-  return `${ev.play_name}|${ev.step_index}`;
-}
-
-/**
- * Delivery checks for a prospect's sequence events, keyed by event id. One
- * read for the prospect (`forProspectSteps`, keyed play|step) rather than one
- * per event (issue #929). A play|step that two of the prospect's events share
- * (a re-run cadence) is ambiguous in that map, so those events keep the
- * per-event read and the attribution a per-event read makes.
+ * Delivery checks for a prospect's sequence events, keyed by event id: one
+ * read for all of them (`forSequenceEvents`) rather than one per event
+ * (issue #929), with the attribution a per-event read makes, so two events
+ * on the same play|step (a re-run cadence) each keep their own check.
  */
 function deliveriesForEvents(
   ledger: ReturnType<typeof getLedger>,
-  prospectId: number,
-  events: ReadonlyArray<{ id: number; play_name: string; step_index: number }>,
+  events: ReadonlyArray<{ id: number }>,
 ): Map<number, SendDeliveryView> {
-  const out = new Map<number, SendDeliveryView>();
-  if (events.length === 0) return out;
-  const eventsPerKey = new Map<string, number>();
-  for (const ev of events) eventsPerKey.set(stepKey(ev), (eventsPerKey.get(stepKey(ev)) ?? 0) + 1);
+  if (events.length === 0) return new Map();
   try {
-    const byStep = ledger.sendDelivery.forProspectSteps(prospectId);
-    for (const ev of events) {
-      const d =
-        eventsPerKey.get(stepKey(ev)) === 1
-          ? byStep.get(stepKey(ev))
-          : ledger.sendDelivery.forSequenceEvent(ev.id);
-      if (d) out.set(ev.id, d);
-    }
+    return ledger.sendDelivery.forSequenceEvents(events.map((ev) => ev.id));
   } catch {
     // A ledger without the delivery table reads as no checks.
+    return new Map();
   }
-  return out;
 }
 
 /**
@@ -496,7 +464,7 @@ export function queueRowDetailRoute(req: Request, params: Record<string, string>
   const cadences = prospect ? viewsForRows(ledger.listCadencesForProspect(prospect.id)) : [];
   const sequenceEvents = prospect ? ledger.listAllSequenceEventsForProspect(prospect.id) : [];
   const deliveries = prospect
-    ? deliveriesForEvents(ledger, prospect.id, sequenceEvents)
+    ? deliveriesForEvents(ledger, sequenceEvents)
     : new Map<number, SendDeliveryView>();
   const replies = prospect ? ledger.listInboxRepliesForProspect(prospect.id) : [];
   const channelEvents = prospect ? ledger.listChannelEventsForProspect(prospect.id) : [];
@@ -558,17 +526,117 @@ const RANK_COLUMNS: readonly string[] = [
   "event_city",
 ];
 
-/**
- * `Ledger.listQueue` options plus the store's `columns` projection (issue
- * #929). The facade forwards its options object verbatim, so a projection
- * set here reaches `QueueStore.listQueue`, which validates the names.
- */
+/** `Ledger.listQueue` options; `columns` projects the read (issue #929). */
 interface QueueListArgs {
   playName?: string;
   status?: QueueStatus;
   limit?: number;
   ids?: number[];
   columns?: readonly string[];
+}
+
+/**
+ * The top-level payload keys the queue list renders (apps/web/src/routes/queue.tsx
+ * and the helpers it reads a row's payload through: payloadIdentity,
+ * queueEvidence, queueCase, queueRationale, rejectReason, channels, liveRead,
+ * ProspectOffer, ProductResearch, and the home page's SignalFeed). The list
+ * response carries these alone (issue #929: a page of 200 pending rows was
+ * 2.66 MB because every row shipped its whole payload); the page reads the
+ * raw JSON from the row-detail route when a row is opened. `?forRun=1` is
+ * not trimmed: the run form fills itself from every key of the target.
+ */
+const LIST_PAYLOAD_KEYS: ReadonlySet<string> = new Set([
+  "agency",
+  "agendaItemTitle",
+  "amount",
+  "amountUsd",
+  "angle",
+  "authorUrl",
+  "businessType",
+  "buyerType",
+  "city",
+  "classification",
+  "cohort",
+  "cohortLabel",
+  "company",
+  "companyAtFinder",
+  "companyFacts",
+  "competitor",
+  "currentRole",
+  "daysCold",
+  "dmOpen",
+  "email",
+  "episodeTitle",
+  "eventCity",
+  "eventDate",
+  "eventTitle",
+  "eventUrl",
+  "fitReason",
+  "followers",
+  "founderEmail",
+  "founderName",
+  "githubUrl",
+  "handle",
+  "icpVerdict",
+  "icpVerdictReason",
+  "jobTitle",
+  "leadInvestor",
+  "linkedinUrl",
+  "matchedDateIso",
+  "mode",
+  "movedFrom",
+  "name",
+  "newCompany",
+  "newRole",
+  "offer",
+  "offerCandidates",
+  "personResearch",
+  "phone",
+  "platform",
+  "podcast",
+  "podcastName",
+  "postTitle",
+  "postUrl",
+  "previousCompany",
+  "productResearch",
+  "profileUrl",
+  "publishedAt",
+  "repo",
+  "repoLabel",
+  "repoUrl",
+  "role",
+  "round",
+  "seedHandle",
+  "signal",
+  "signalVerified",
+  "sourceLabel",
+  "sourceProfileUrl",
+  "subjectType",
+  "supportingText",
+  "title",
+  "titleAtFinder",
+  "tweetUrl",
+  "twitterUrl",
+  "vendorStack",
+  "xUrl",
+  "xUserId",
+  "yourEdgeSource",
+]);
+
+/**
+ * A list row with its payload cut to `LIST_PAYLOAD_KEYS`. Applied after
+ * `toView`, which derives `sendHold` and `offerSkip` from the whole payload.
+ * A payload that is not a plain object (an unparsable string, an array) is
+ * left as it is: the page shows those as they are.
+ */
+export function trimListPayload(view: QueueRowView): QueueRowView {
+  const { payload } = view;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return view;
+  const kept: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
+    if (LIST_PAYLOAD_KEYS.has(key)) kept[key] = value;
+  }
+  return { ...view, payload: kept };
 }
 
 /** The ranked page: rank the projected window, keep `limit` ids, read those rows in full, in rank order. */
@@ -625,7 +693,7 @@ export function listQueueRoute(req: Request): Response {
         ? Object.assign(toView(row, sequenceOffers.get(row.id)), {
             payload: resolveQueueTarget(row),
           })
-        : toView(row, sequenceOffers.get(row.id)),
+        : trimListPayload(toView(row, sequenceOffers.get(row.id))),
     );
   } catch (error) {
     return jsonResponse({ error: (error as Error).message }, 400, req);
@@ -668,7 +736,8 @@ export async function approveQueueRoute(
   // "prospect replied", and nothing downstream of `approved` checks that.
   if (row.status !== "pending") {
     const prospectId = resolveProspectId(ledger, row);
-    if (prospectId != null && prospectHasReplied(ledger, prospectId)) {
+    // Three existence probes in one read (issue #929), not three collections.
+    if (prospectId != null && ledger.prospectHasReplied(prospectId)) {
       return jsonResponse(
         { error: "prospect has replied; approving would email them mid-conversation" },
         409,

@@ -1297,7 +1297,7 @@ export function QueueRow({
                   </Disclosure>
                 </>
               )}
-              <PayloadJson value={row.payload} />
+              <RowPayloadJson row={row} />
             </CaseSection>
           }
           theLetter={
@@ -1321,6 +1321,23 @@ export function QueueRow({
       )}
     </>
   );
+}
+
+/**
+ * The row's raw payload, read from the row-detail route when the row is open.
+ * The list carries only the keys the page renders (issue #929); the whole
+ * JSON lives on GET /api/queue/:id. Until it arrives, or if the read fails,
+ * the disclosure shows the keys the list has. Privacy mode reads nothing:
+ * `PayloadJson` hides the payload whole.
+ */
+export function RowPayloadJson({ row }: { row: Pick<QueueRowView, "id" | "payload"> }) {
+  const { masked } = usePrivacy();
+  const detail = useQuery({
+    queryKey: ["queue", "row", row.id],
+    queryFn: () => api.queueRowDetail(row.id),
+    enabled: !masked,
+  });
+  return <PayloadJson value={detail.data?.row.payload ?? row.payload} />;
 }
 
 /**

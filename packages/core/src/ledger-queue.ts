@@ -1686,3 +1686,26 @@ export class QueueStore {
       .run(`expired: ${reason}`, `expired: ${reason}`, prospectId, `prospect:${prospectId}`);
   }
 }
+
+/**
+ * Has this prospect answered, on any channel? A human email reply
+ * (`inbox_replies`, where a missing `kind` is a human one), a LinkedIn reply
+ * (`channel_events`), or a step whose status flipped to `replied` (legacy
+ * rows that predate `inbox_replies`). One statement of three existence
+ * probes (issue #929): the approve guard asks this of a row that already
+ * left `pending`, and it used to read all three collections in full to run
+ * `.some()` over each. Same answer as `hasReplied` over those collections.
+ */
+export function prospectHasReplied(db: Database, prospectId: number): boolean {
+  const row = db
+    .query<{ replied: number }, [number, number, number]>(
+      `SELECT (EXISTS (SELECT 1 FROM inbox_replies
+                        WHERE prospect_id = ? AND COALESCE(kind, 'human') = 'human' LIMIT 1)
+            OR EXISTS (SELECT 1 FROM channel_events
+                        WHERE prospect_id = ? AND event_type = 'reply' LIMIT 1)
+            OR EXISTS (SELECT 1 FROM sequence_events
+                        WHERE prospect_id = ? AND status = 'replied' LIMIT 1)) AS replied`,
+    )
+    .get(prospectId, prospectId, prospectId);
+  return row?.replied === 1;
+}
