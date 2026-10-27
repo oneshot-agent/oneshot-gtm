@@ -22,7 +22,13 @@ import { XApiEngine } from "./_x-api.ts";
 import { TwitterApiIoEngine } from "./_x-twitterapiio.ts";
 import { harvestReposters } from "./_x-harvest.ts";
 import { splitSlots } from "./_x-lanes.ts";
-import { dropReason, lanesFor, scoreCandidate } from "./_x-score.ts";
+import {
+  DEFAULT_X_LANE_KEYWORDS,
+  dropReason,
+  lanesFor,
+  scoreCandidate,
+  type XLaneKeywords,
+} from "./_x-score.ts";
 import type { XCandidate, XScoredCandidate, XSeed } from "./_x-types.ts";
 import { resolveIcp, qualifyPerson } from "./_filter.ts";
 import { persistRoleRejection, qualifyPreSpend } from "./_qualify.ts";
@@ -42,6 +48,8 @@ export interface XRepostersFinderOpts extends RunOpts {
   maxSpendPerRun?: number;
   /** Share of `limit` reserved for the founder lane. Default 0.5. */
   laneSplit?: number;
+  /** Bio vocabulary per lane. Default: none, so the lane gates leave fit to the ICP gate. */
+  laneKeywords?: XLaneKeywords;
   /** ISO launch date, stamped onto amplifier payloads. */
   launchDate?: string;
   /** Our own handles. Never contacted. */
@@ -109,9 +117,10 @@ function grounding(s: XScoredCandidate) {
 
 /**
  * x-reposters finder: people who reposted/quoted a watched X account's recent
- * tweets → prospects, in two lanes. The founder lane (bio + real site say they
- * build things) routes to `x-repost-intro`. A normal email play behind the
- * person-ICP gate. The amplifier lane (dev/AI audience with reach) routes to
+ * tweets → prospects, in two lanes. The founder lane (a real site, plus the
+ * configured founder keywords when set) routes to `x-repost-intro`. A normal
+ * email play behind the person-ICP gate. The amplifier lane (reach, plus the
+ * configured amplifier keywords when set) routes to
  * `x-amplify` when research finds an email, else `x-amplify-dm`. A manual
  * hand-send draft. Ported from the x-amplifiers pack: same engines, cost
  * meter, hard drops, lane scoring and slot split; the Obsidian side is
@@ -124,6 +133,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
   const knobs: HarvestKnobs = { ...DEFAULT_KNOBS[engineName], ...opts.knobs };
   const maxSpend = opts.maxSpendPerRun ?? DEFAULT_MAX_SPEND[engineName];
   const laneSplit = opts.laneSplit ?? 0.5;
+  const laneKeywords = opts.laneKeywords ?? DEFAULT_X_LANE_KEYWORDS;
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
   const now = new Date();
@@ -243,9 +253,9 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
   // Step 3: lanes + score + reserved slot split. Lanes rank within themselves
   // only: their weights differ, so scores are not comparable across lanes.
   const scored = survivors
-    .map((c) => ({ c, lanes: lanesFor(c.user) }))
+    .map((c) => ({ c, lanes: lanesFor(c.user, laneKeywords) }))
     .filter((x) => x.lanes.length > 0)
-    .map((x) => scoreCandidate(x.c, x.lanes));
+    .map((x) => scoreCandidate(x.c, x.lanes, laneKeywords));
   // Everyone the finder's own thresholds shed: hard drops + lane-gate misses.
   result.droppedLowSignal = result.candidates - scored.length;
   const picks = splitSlots(scored, limit, laneSplit);
@@ -254,10 +264,17 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     result.costUsd = meter.total;
     result.sdkCostUsd = 0;
     if (!result.halted) {
+      const keywordGates =
+        laneKeywords.founderKeywords.some((k) => k.trim()) ||
+        laneKeywords.amplifierKeywords.some((k) => k.trim());
       result.halted =
         result.candidates === 0
           ? "no reposters harvested — check seeds, or every fresh tweet was already harvested"
-          : "no candidates cleared the lane gates — widen seeds whose reposters build things";
+          : survivors.length === 0
+            ? "every reposter hit a hard drop (seed or own account, protected, bot, follow-farm) — widen seeds"
+            : keywordGates
+              ? "no candidates cleared the lane gates — widen seeds, or loosen founderKeywords/amplifierKeywords"
+              : "no candidates cleared the lane gates (follower floors; founders need a real site in the bio) — widen seeds";
     }
     logEvent("finder.done", {
       name: PLAY_NAME,

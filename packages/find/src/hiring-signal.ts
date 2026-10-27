@@ -37,7 +37,7 @@ export const DEFAULT_JOB_SITES: readonly string[] = [
 const ATS_DOMAIN_HINTS = [...DEFAULT_JOB_SITES, "ashbyhq.com", JOB_BOARD_HOSTS.workatastartup];
 
 export interface HiringSignalFinderOpts extends RunOpts {
-  /** Roles to scan for. Default: ["Staff Engineer","ML Engineer","Solutions Engineer"]. */
+  /** Roles to scan for: titles whose opening means a need for the product. Required; no default list. */
   roles?: string[];
   /** Optional company-name filter to bias results. */
   companies?: string[];
@@ -74,8 +74,6 @@ export interface HiringSignalFinderOpts extends RunOpts {
   buyerType?: string;
 }
 
-const DEFAULT_ROLES = ["Staff Engineer", "ML Engineer", "Solutions Engineer"];
-
 interface SearchHit {
   url: string;
   title: string;
@@ -88,7 +86,9 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
   const system = loadPrompt("hiring-signal-extract");
-  const roles = opts.roles && opts.roles.length > 0 ? opts.roles : DEFAULT_ROLES;
+  const roles = (opts.roles ?? []).filter(
+    (r): r is string => typeof r === "string" && r.trim().length > 0,
+  );
   const sites = normalizeSites(opts.sites);
   // No hardcoded fallback claim. A generic one would assert a product capability
   // the founder may not have. The trigger's readiness gate blocks the scheduled
@@ -107,6 +107,11 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
     costUsd: 0,
   };
 
+  // Same for roles: which openings signal a need depends on the product.
+  if (roles.length === 0) {
+    result.halted = "set `roles` in the hiring-signal config";
+    return result;
+  }
   if (!yourClaim) {
     result.halted = "set `yourClaim` in the hiring-signal config";
     return result;

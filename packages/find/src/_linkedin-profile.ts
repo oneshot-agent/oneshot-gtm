@@ -1010,7 +1010,7 @@ function monthYear(value: unknown): string | undefined {
 /**
  * The view's `profile.experience` as the read's Experience list. A position
  * with a start and no end is current whatever the view's own `current` says:
- * the view marks open positions `current: false` (tormine/oneshot#1801).
+ * the view marks open positions `current: false` (an upstream SDK issue).
  */
 export function experienceFromAccountView(raw: unknown): LiveExperience[] {
   if (!Array.isArray(raw)) return [];

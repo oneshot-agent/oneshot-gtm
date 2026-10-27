@@ -117,7 +117,7 @@ export function ProductBriefSection({ cfg, onDirtyChange }: SectionProps) {
         <Textarea
           value={s.values.productBrief}
           onChange={(e) => s.set("productBrief", e.target.value)}
-          placeholder="How it works: … settled per call in USDC on Base …\nPricing: …\nLinks:\nhttps://docs.yourproduct.com/payments"
+          placeholder="How it works: … what a customer does in the first week …\nPricing: …\nLinks:\nhttps://docs.yourproduct.com/getting-started"
           rows={8}
         />
       </Field>

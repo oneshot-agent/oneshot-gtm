@@ -41,7 +41,8 @@ describe("PACKS — trigger names stay in sync with the registry", () => {
 });
 
 describe("PACKS — no pack writes a founder-voice field", () => {
-  const FOUNDER_VOICE_KEYS = ["yourEdge", "yourClaim"];
+  // `vendors` is not voice, but it depends on the founder's product the same way.
+  const FOUNDER_VOICE_KEYS = ["yourEdge", "yourClaim", "vendors"];
 
   it("never sets yourEdge/yourClaim inside a trigger patch", () => {
     for (const pack of PACKS) {
@@ -105,7 +106,7 @@ describe.each(REAL_PACK_IDS)("pack: %s", (id) => {
 
   it("passes checkReadiness once every pack.requires key is supplied", () => {
     const founderVoice = Object.fromEntries(
-      pack.requires.map((k) => [k, "a concrete founder pitch"]),
+      pack.requires.map((k) => [k, k === "vendors" ? ["acme-api"] : "a concrete founder pitch"]),
     );
     for (const [triggerName, patch] of Object.entries(pack.triggers)) {
       const spec = TRIGGERS.find((t) => t.name === triggerName)!;
@@ -143,4 +144,17 @@ it("vertical-ai-startups narrows accelerator-batch through accelerators, not coh
   expect(patch["accelerators"]).toEqual([{ id: "yc", recent: 2 }, { id: "ai-grant" }]);
   // An explicit empty list, so applying the pack clears cohorts pinned earlier.
   expect(patch["cohorts"]).toEqual([]);
+});
+
+it("vertical-ai-startups leaves github-topics vendors to the founder", () => {
+  const pack = PACKS.find((p) => p.id === "vertical-ai-startups")!;
+  const spec = TRIGGERS.find((t) => t.name === "github-topics")!;
+  const patch = pack.triggers["github-topics"] as Record<string, unknown>;
+  expect(patch).not.toHaveProperty("vendors");
+  expect(pack.requires).toContain("vendors");
+  const fresh = checkReadiness(spec, { ...spec.defaultConfig, ...patch, yourEdge: "x" });
+  expect(fresh).toEqual({ ready: false, reason: expect.stringMatching(/^set `vendors`/) });
+  // A list already stored survives the merge.
+  const stored = { ...spec.defaultConfig, vendors: ["acme-api"], yourEdge: "x" };
+  expect(checkReadiness(spec, { ...stored, ...patch })).toEqual({ ready: true });
 });

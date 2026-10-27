@@ -78,7 +78,7 @@ export function validateTimeZone(raw: string): string | null {
     Intl.DateTimeFormat("en-US", { timeZone: v }).format(0);
     return null;
   } catch {
-    return "unknown time zone — use an IANA name like Europe/Vienna";
+    return "unknown time zone — use an IANA name like America/New_York";
   }
 }
 

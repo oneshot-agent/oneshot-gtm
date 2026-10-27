@@ -2,13 +2,20 @@ import { describe, expect, test } from "vitest";
 import {
   dropReason,
   habitScore,
-  lanesFor,
+  lanesFor as lanesForConfig,
   reachScore,
   reciprocityScore,
-  scoreCandidate,
-  topicHits,
+  scoreCandidate as scoreCandidateForConfig,
+  topicHits as topicHitsForConfig,
 } from "../src/_x-score.ts";
-import type { XCandidate, XHit, XUser } from "../src/_x-types.ts";
+import type { XCandidate, XHit, XLane, XUser } from "../src/_x-types.ts";
+import { DEV_TOOL_X_LANE_KEYWORDS as KW } from "./fixtures/x-lane-keywords.ts";
+
+// These cases exercise the lane mechanics through one configured vocabulary
+// (a developer-tool launch); x-score-config.test.ts covers the empty default.
+const lanesFor = (u: XUser) => lanesForConfig(u, KW);
+const topicHits = (bio: string, lane: XLane) => topicHitsForConfig(bio, lane, KW);
+const scoreCandidate = (c: XCandidate, lanes: XLane[]) => scoreCandidateForConfig(c, lanes, KW);
 
 const NOW = new Date("2026-08-27T09:00:00Z");
 

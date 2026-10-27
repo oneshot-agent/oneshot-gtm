@@ -29,7 +29,7 @@ export interface ReceiptRecord {
  * gmail-tokens.json store, keyed by `id`. Never in this config).
  */
 export interface EmailIdentity {
-  /** Stable key, e.g. "legacy-oneshot", "gmail:jn@freebutter.ai". Referenced by sender_assignments rows. Never rename a live id. */
+  /** Stable key, e.g. "legacy-oneshot", "gmail:you@yourcompany.com". Referenced by sender_assignments rows. Never rename a live id. */
   id: string;
   provider: "oneshot" | "gmail" | "smartlead";
   label?: string | null;
@@ -591,7 +591,7 @@ export interface OneShotConfig {
    */
   dailySpendCeilingUsd: number | null;
   /**
-   * The Gmail identity (pool `id`, e.g. `gmail:jn@freebutter.ai`) whose
+   * The Gmail identity (pool `id`, e.g. `gmail:you@yourcompany.com`) whose
    * calendar the scheduler polls for past meetings needing an outcome
    * (issue #577). Null = feature off, entirely inert: no poll, no logging,
    * no `meetings` writes. Must be a `provider: 'gmail'` identity carrying

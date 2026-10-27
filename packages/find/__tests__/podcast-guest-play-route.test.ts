@@ -105,6 +105,8 @@ vi.mock("../src/_linkedin.ts", () => ({
 
 const { runPodcastGuestFinder } = await import("../src/podcast-guest.ts");
 
+const PODCASTS = ["The Practice Owners Show"];
+
 beforeEach(() => {
   enqueued.length = 0;
   dedupeChecks.length = 0;
@@ -116,6 +118,7 @@ describe("runPodcastGuestFinder — routed to design-partner-loi (#705)", () => 
   it("persists play_name=design-partner-loi with a payload the play's own guard accepts, `company` from guestCompany, `yourEdge` from the trigger's own yourEdge", async () => {
     const out = await runPodcastGuestFinder({
       dryRun: false,
+      podcasts: PODCASTS,
       yourEdge: "we cut deploy time in half",
       play: "design-partner-loi",
       buyerType: "hardware",
@@ -143,7 +146,7 @@ describe("runPodcastGuestFinder — routed to design-partner-loi (#705)", () => 
   });
 
   it("with the routing key absent, persists podcast-guest's own unchanged shape under podcast-guest's own play", async () => {
-    const out = await runPodcastGuestFinder({ dryRun: false });
+    const out = await runPodcastGuestFinder({ dryRun: false, podcasts: PODCASTS });
     expect(out.enqueued).toBe(1);
     const row = enqueued[0]!;
     expect(row.playName).toBe("podcast-guest");
@@ -152,15 +155,22 @@ describe("runPodcastGuestFinder — routed to design-partner-loi (#705)", () => 
   });
 
   it("checks queue dedupe against BOTH podcast-guest and design-partner-loi regardless of routing", async () => {
-    await runPodcastGuestFinder({ dryRun: false });
+    await runPodcastGuestFinder({ dryRun: false, podcasts: PODCASTS });
     const checkedPlays = new Set(dedupeChecks.map((c) => c.playName));
     expect(checkedPlays.has("podcast-guest")).toBe(true);
     expect(checkedPlays.has("design-partner-loi")).toBe(true);
   });
 
+  it("halts before any search when no podcasts are set", async () => {
+    const out = await runPodcastGuestFinder({ dryRun: false });
+    expect(out.halted).toMatch(/podcasts/);
+    expect(out.candidates).toBe(0);
+    expect(enqueued).toHaveLength(0);
+  });
+
   it("drops a candidate already queued under the OTHER play — dedupe survives a `play` toggle", async () => {
     queueDuplicateFor = new Set(["design-partner-loi"]);
-    const out = await runPodcastGuestFinder({ dryRun: false });
+    const out = await runPodcastGuestFinder({ dryRun: false, podcasts: PODCASTS });
     expect(out.enqueued).toBe(0);
     expect(out.droppedDuplicate).toBe(1);
     expect(enqueued).toHaveLength(0);

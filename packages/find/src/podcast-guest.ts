@@ -14,7 +14,7 @@ const PLAY_NAME = "podcast-guest";
 const SOURCE = "find:podcast-guest";
 
 export interface PodcastGuestFinderOpts extends RunOpts {
-  /** Podcasts to search. Default a small set of YC-adjacent shows. */
+  /** Podcasts to search: shows your buyers listen to. Required; no default list. */
   podcasts?: string[];
   /** Days back to bias the search query. Default 21. */
   sinceDays?: number;
@@ -37,14 +37,6 @@ export interface PodcastGuestFinderOpts extends RunOpts {
   buyerType?: string;
 }
 
-const DEFAULT_PODCASTS = [
-  "Latent Space",
-  "Lenny's Podcast",
-  "20VC",
-  "Acquired",
-  "Invest Like the Best",
-];
-
 interface SearchHit {
   url: string;
   title: string;
@@ -57,7 +49,9 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
   const system = loadPrompt("podcast-guest-extract");
-  const podcasts = opts.podcasts && opts.podcasts.length > 0 ? opts.podcasts : DEFAULT_PODCASTS;
+  const podcasts = (opts.podcasts ?? []).filter(
+    (p): p is string => typeof p === "string" && p.trim().length > 0,
+  );
   const route = resolvePlayRoute(opts);
   const dedupeScope = dedupePlayNames(PLAY_NAME);
 
@@ -70,6 +64,14 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
     enqueued: 0,
     costUsd: 0,
   };
+
+  // No built-in show list: which podcasts reach a founder's buyers is their
+  // call. The trigger's readiness gate blocks the scheduled path; this guards
+  // a direct caller.
+  if (podcasts.length === 0) {
+    result.halted = "set `podcasts` in the podcast-guest config";
+    return result;
+  }
 
   const seen = new Set<string>();
   const hits: SearchHit[] = [];

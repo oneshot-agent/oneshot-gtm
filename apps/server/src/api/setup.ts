@@ -1039,7 +1039,7 @@ function mergeTimeZone(incoming: string | null | undefined, current: string | nu
   const zone = incoming.trim();
   if (!isValidTimeZone(zone)) {
     throw new SetupValidationError(
-      `invalid timezone '${zone}' — must be an IANA zone such as Europe/Vienna, or blank to use this machine's zone`,
+      `invalid timezone '${zone}' — must be an IANA zone such as America/New_York, or blank to use this machine's zone`,
     );
   }
   return zone;

@@ -120,8 +120,8 @@ export interface ListPageOpts extends RunOpts {
   /** The angles for design-partner-loi (`//`-separated). */
   yourEdge?: string;
   /**
-   * Titles to look for at each company, most wanted first (e.g. "Head of AI
-   * Platform", "VP Platform Engineering"). Set: one people search per company
+   * Titles to look for at each company, most wanted first (e.g. "VP Platform
+   * Engineering", "Director of Patient Access", "CISO"). Set: one people search per company
    * scoped to these titles, candidates tried in this order. Empty: the
    * domain-only pick of any senior title (which at a large company can land
    * on PR or recruiting).
