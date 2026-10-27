@@ -34,7 +34,15 @@ export interface RankableRow {
   dedupe_key: string;
   found_at: string;
   priority_json: string | null;
-  payload_json: string;
+  /**
+   * The full payload: only Luma's `eventCity` is read from it, and only when
+   * `event_city` is absent. A ranking window read as the ranking columns
+   * alone (`listQueue({ columns })`, issue #929) carries `event_city` and no
+   * payload.
+   */
+  payload_json?: string;
+  /** Luma's `$.eventCity` when it is a string, projected in SQL; null otherwise. */
+  event_city?: string | null;
 }
 
 export interface RankOptions {
@@ -59,11 +67,15 @@ function totalOf(row: RankableRow): number | null {
 function bucketKeyOf(row: RankableRow): string {
   if (row.play_name !== "luma-events") return row.play_name;
   let city = "";
-  try {
-    const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
-    if (typeof payload["eventCity"] === "string") city = payload["eventCity"];
-  } catch {
-    // malformed payload → default bucket
+  if ("event_city" in row) {
+    if (typeof row.event_city === "string") city = row.event_city;
+  } else if (typeof row.payload_json === "string") {
+    try {
+      const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+      if (typeof payload["eventCity"] === "string") city = payload["eventCity"];
+    } catch {
+      // malformed payload → default bucket
+    }
   }
   return `luma-events::${city}`;
 }
@@ -102,7 +114,9 @@ export function rankPendingRows<T extends RankableRow>(rows: T[], opts: RankOpti
   for (const row of rows) {
     if (poolIds.has(row.id)) continue;
     const key = bucketKeyOf(row);
-    buckets.set(key, [...(buckets.get(key) ?? []), row]);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(row);
+    else buckets.set(key, [row]);
   }
   const orderedBuckets = new Map(
     [...buckets.entries()]

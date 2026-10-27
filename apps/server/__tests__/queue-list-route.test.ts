@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { personResearchRows } from "../../web/src/lib/queueCase.ts";
 
 // GET /api/queue carries `approvedByPlay`: whole-queue approved counts per
 // play: alongside the filtered `rows`. /queue's drain button reads it, so the
@@ -6,6 +7,8 @@ import { describe, expect, it, vi } from "vitest";
 // status/play filters (the button has to work from the default `pending` view).
 
 const listQueueCalls: Array<Record<string, unknown>> = [];
+/** Ids handed to `getQueueRowsByIds`, one array per read. */
+const rowReads: number[][] = [];
 let nextRows: unknown[] = [];
 let triggerConfig = JSON.stringify({ yourEdge: "current trigger edge" });
 let configOrder: "ranked" | "newest" = "newest";
@@ -20,7 +23,20 @@ vi.mock("@oneshot-gtm/core", async () => {
       getTrigger: () => ({ config_json: triggerConfig }),
       listQueue: (args: Record<string, unknown>) => {
         listQueueCalls.push(args);
-        return nextRows;
+        const columns = args["columns"] as string[] | undefined;
+        if (!columns) return nextRows;
+        // The store honours the projection: a window row carries only those keys.
+        return (nextRows as Array<Record<string, unknown>>).map((r) =>
+          Object.fromEntries(columns.map((c) => [c, c === "event_city" ? null : r[c]])),
+        );
+      },
+      getQueueRowsByIds: (ids: number[]) => {
+        rowReads.push([...ids]);
+        return new Map(
+          (nextRows as Array<{ id: number }>)
+            .filter((r) => ids.includes(r.id))
+            .map((r) => [r.id, r]),
+        );
       },
       queueCounts: () => ({ pending: 0, approved: 220, rejected: 0, sent: 0, expired: 0 }),
       approvedCountsByPlay: () => ({ "luma-events": 145, "repo-interest": 35 }),
@@ -208,6 +224,7 @@ describe("listQueueRoute — ranked review order", () => {
 
   it("?order=ranked interleaves finders on the pending view and echoes the mode", async () => {
     listQueueCalls.length = 0;
+    rowReads.length = 0;
     nextRows = [pendingRow(1, "aaa", 90), pendingRow(2, "aaa", 80), pendingRow(3, "zzz", 85)];
     try {
       const { ids, order } = await idsOf("http://x/api/queue?status=pending&order=ranked");
@@ -215,8 +232,29 @@ describe("listQueueRoute — ranked review order", () => {
       // zzz interleaves at slot 2 despite the lower (incomparable) total;
       // aaa's 80 is the bottom decile here and rotates to the exploration tail.
       expect(ids).toEqual([1, 3, 2]);
-      // Ranked mode reads the wider window, not the page limit.
-      expect(listQueueCalls[0]).toMatchObject({ status: "pending", limit: 1000 });
+      // Ranked mode reads the wider window, not the page limit, and only the
+      // ranking columns of it (#929); the page's rows are then read in full.
+      expect(listQueueCalls[0]).toMatchObject({
+        status: "pending",
+        limit: 1000,
+        columns: ["id", "play_name", "dedupe_key", "found_at", "priority_json", "event_city"],
+      });
+      expect(rowReads).toEqual([[1, 3, 2]]);
+    } finally {
+      nextRows = [];
+    }
+  });
+
+  it("reads in full only the rows that make the page, in rank order (#929)", async () => {
+    rowReads.length = 0;
+    nextRows = [pendingRow(1, "aaa", 90), pendingRow(2, "aaa", 80), pendingRow(3, "zzz", 85)];
+    try {
+      const out = await body("http://x/api/queue?status=pending&order=ranked&limit=2");
+      const rows = out["rows"] as Array<Record<string, unknown>>;
+      expect(rows.map((r) => r["id"])).toEqual([1, 3]);
+      expect(rowReads).toEqual([[1, 3]]);
+      // The wire rows come from the full read, not the projected window.
+      expect(rows[0]).toMatchObject({ payload: { name: "Ada" }, dedupeKey: "k1" });
     } finally {
       nextRows = [];
     }
@@ -265,8 +303,11 @@ describe("run-form queue hydration", () => {
     try {
       const plain = await body("http://x/api/queue");
       const resolved = await body("http://x/api/queue?forRun=1");
-      expect((plain.rows as Array<{ payload: unknown }>)[0]?.payload).toMatchObject({
-        yourEdge: "old edge",
+      // The plain list carries the keys the page renders (#929); `yourEdge`
+      // is the run form's alone, which `forRun=1` resolves afresh below.
+      expect((plain.rows as Array<{ payload: unknown }>)[0]?.payload).toEqual({
+        name: "Ada",
+        email: "ada@example.com",
       });
       expect((resolved.rows as Array<{ payload: unknown }>)[0]?.payload).toMatchObject({
         email: "ada@example.com",
@@ -314,6 +355,109 @@ describe("listQueueRoute — channel", () => {
       const rows = (await body("http://x/api/queue"))["rows"] as Array<Record<string, unknown>>;
       const byId = Object.fromEntries(rows.map((r) => [r["id"], [r["channel"], r["sender"]]]));
       expect(byId).toEqual({ 1: ["email", "api"], 2: ["x", "manual"], 3: ["email", "api"] });
+    } finally {
+      nextRows = [];
+    }
+  });
+});
+
+describe("list payload trim (#929)", () => {
+  it("carries only the keys the list renders; the run form's read keeps the whole target", async () => {
+    const row = queueRow(null);
+    row.payload_json = JSON.stringify({
+      name: "Ada",
+      email: "ada@example.com",
+      eventTitle: "Demo night",
+      personResearch: { status: "complete", facts: ["x"] },
+      offerCandidates: [{ goal: "g" }],
+      dossier: "a long dossier the list never shows",
+      rawEvent: { html: "<p>…</p>" },
+      yourEdge: "old edge",
+    });
+    nextRows = [row];
+    try {
+      const plain = await body("http://x/api/queue");
+      expect((plain.rows as Array<{ payload: unknown }>)[0]?.payload).toEqual({
+        name: "Ada",
+        email: "ada@example.com",
+        eventTitle: "Demo night",
+        personResearch: { status: "complete", facts: ["x"] },
+        offerCandidates: [{ goal: "g" }],
+      });
+      const resolved = await body("http://x/api/queue?forRun=1");
+      expect((resolved.rows as Array<{ payload: unknown }>)[0]?.payload).toMatchObject({
+        dossier: "a long dossier the list never shows",
+        rawEvent: { html: "<p>…</p>" },
+      });
+    } finally {
+      nextRows = [];
+    }
+  });
+
+  it("keeps every person-research field the open row's Profile history reads (formerRoles was dropped once)", async () => {
+    // What a researched row carries after `_person-research.ts` stamps it:
+    // the trimmed list payload must still yield every history row the page
+    // renders through `personResearchRows`, not only the ones a fixture had.
+    const row = queueRow(null);
+    row.payload_json = JSON.stringify({
+      name: "Ada",
+      email: "ada@example.com",
+      personResearch: {
+        version: 1,
+        status: "complete",
+        researchedAt: "2026-09-11T20:00:00.000Z",
+        organizations: [],
+      },
+      currentRole: "Founder at WildMuse since Mar 2026",
+      companyFacts: "WildMuse · Software · 1-10 employees",
+      titleAtFinder: "Curious Explorer",
+      companyAtFinder: "L'eto Group",
+      formerRoles: "Head of Product at L'ETO Group (Nov 2024–Oct 2025)",
+      dossier: "not shown by the list",
+    });
+    nextRows = [row];
+    try {
+      const listed = await body("http://x/api/queue");
+      const payload = (listed.rows as Array<{ payload: unknown }>)[0]?.payload;
+      expect(payload).not.toHaveProperty("dossier");
+      expect(personResearchRows(payload)).toEqual([
+        { key: "now", value: "Founder at WildMuse since Mar 2026" },
+        { key: "company", value: "WildMuse · Software · 1-10 employees" },
+        { key: "listed as", value: "Curious Explorer · L'eto Group" },
+        { key: "formerly", value: "Head of Product at L'ETO Group (Nov 2024–Oct 2025)" },
+      ]);
+    } finally {
+      nextRows = [];
+    }
+  });
+
+  it("derives the row's views from the whole payload before trimming, and leaves a non-object payload alone", async () => {
+    const skipped = queueRow(null);
+    skipped.payload_json = JSON.stringify({
+      name: "Ada",
+      email: "ada@example.com",
+      // The writer's stored skip: the page reads the derived `offerSkip` view, never the key.
+      offerSkip: {
+        why: "nothing to offer a hobby project",
+        version: "v1",
+        inputHash: "in",
+        productHash: "prod",
+        skippedAt: "2026-09-02T09:00:00.000Z",
+      },
+    });
+    const broken = queueRow(null);
+    broken.id = 2;
+    broken.dedupe_key = "k2";
+    broken.payload_json = "not json";
+    nextRows = [skipped, broken];
+    try {
+      const rows = (await body("http://x/api/queue")).rows as Array<Record<string, unknown>>;
+      expect(rows[0]?.["offerSkip"]).toEqual({
+        why: "nothing to offer a hobby project",
+        at: "2026-09-02T09:00:00.000Z",
+      });
+      expect(rows[0]?.["payload"]).toEqual({ name: "Ada", email: "ada@example.com" });
+      expect(rows[1]?.["payload"]).toBe("not json");
     } finally {
       nextRows = [];
     }

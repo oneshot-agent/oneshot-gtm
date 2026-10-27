@@ -137,6 +137,61 @@ function likePatternsFor(term: string): string[] {
 /** Best display name for a queue row: the prospect record, then the payload. */
 const QUEUE_SEARCH_NAME_EXPR = `COALESCE(NULLIF(p.name, ''), NULLIF(json_extract(b.payload_json, '$.name'), ''), NULLIF(json_extract(b.payload_json, '$.founderName'), ''))`;
 
+/** The `QueueSearchRow` select list over `queueSearchJoin`'s `b` (queue row) and `p` (prospect). */
+const QUEUE_SEARCH_SELECT = `SELECT b.*, p.id AS p_id, p.name AS p_name, p.email AS p_email, p.company AS p_company,
+                p.title AS p_title,
+                p.icp_verdict AS p_icp_verdict, p.icp_verdict_reason AS p_icp_verdict_reason,
+                (p.dossier_json IS NOT NULL AND TRIM(p.dossier_json) != '') AS p_has_dossier,
+                (b.prospect_id IS NULL AND p.id IS NOT NULL) AS p_linked_by_email`;
+
+/** Every real `target_queue` column `listQueue({ columns })` may project. */
+const QUEUE_COLUMNS: ReadonlySet<string> = new Set<keyof QueueRow>([
+  "id",
+  "play_name",
+  "channel",
+  "payload_json",
+  "dedupe_key",
+  "source",
+  "status",
+  "found_at",
+  "reviewed_at",
+  "sent_at",
+  "notes",
+  "prospect_id",
+  "last_draft_json",
+  "last_drafted_at",
+  "send_started_at",
+  "drain_claimed_at",
+  "priority_json",
+  "decision",
+  "decided_at",
+  "decided_by",
+  "decision_reason",
+]);
+
+/**
+ * Luma's `$.eventCity` as the ranker reads it (find/_rank.ts): the value
+ * when it is a JSON string, else NULL (an invalid payload, a missing key or
+ * a non-string value all bucket as the empty city, exactly as the parsed
+ * path does). Other plays never read it.
+ */
+const EVENT_CITY_SQL = `CASE WHEN play_name = 'luma-events' AND json_valid(payload_json)
+    AND json_type(payload_json, '$.eventCity') = 'text'
+  THEN json_extract(payload_json, '$.eventCity') END AS event_city`;
+
+/** `SELECT` list for `listQueue`: `*`, or the validated projection. */
+function queueSelectList(columns: readonly string[] | undefined): string {
+  if (!columns) return "*";
+  if (columns.length === 0) throw new Error("listQueue: columns must name at least one column");
+  return columns
+    .map((column) => {
+      if (column === "event_city") return EVENT_CITY_SQL;
+      if (!QUEUE_COLUMNS.has(column)) throw new Error(`listQueue: unknown column ${column}`);
+      return column;
+    })
+    .join(", ");
+}
+
 /** How long a drain claim (`drain_claimed_at`) holds a row before it counts as expired. */
 const DRAIN_LEASE_SECONDS = 900;
 
@@ -343,8 +398,23 @@ export class QueueStore {
     );
   }
 
+  /**
+   * Queue rows, newest first. `columns` projects the read: a caller that
+   * ranks, counts or collects ids must not pull every row's `payload_json`
+   * and `last_draft_json` (issue #929). A projected row carries only the
+   * named keys; the return type stays `QueueRow` for the facade's sake.
+   * `event_city` is a virtual column: Luma's `$.eventCity` when it is a JSON
+   * string, read in SQL so the ranker never parses the payload. An unknown
+   * column name throws rather than reaching the SQL.
+   */
   listQueue(
-    opts: { playName?: string; status?: QueueStatus; limit?: number; ids?: number[] } = {},
+    opts: {
+      playName?: string;
+      status?: QueueStatus;
+      limit?: number;
+      ids?: number[];
+      columns?: readonly string[];
+    } = {},
   ): QueueRow[] {
     const where: string[] = [];
     const args: unknown[] = [];
@@ -366,7 +436,7 @@ export class QueueStore {
       args.push(...opts.ids);
     }
     const sql = `
-      SELECT * FROM target_queue
+      SELECT ${queueSelectList(opts.columns)} FROM target_queue
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY found_at DESC
       LIMIT ?
@@ -418,42 +488,37 @@ export class QueueStore {
   }
 
   /**
-   * FROM + WHERE shared by `searchQueue` (rows and total) and
-   * `searchQueueStatusCounts`. The prospect is resolved with a scalar
-   * subquery (`LIMIT 1`) rather than an OR-join so one queue row can never
-   * fan out into two: two prospects sharing an email would otherwise
-   * inflate `total` and shift every OFFSET. Filters that only need the queue
-   * row (status, play, decided_by) go inside the derived table so the
-   * existing status/play indexes still prune before the prospect lookup;
-   * the free-text terms need the joined prospect and stay outside.
+   * The two halves of a search filter. `inner` only needs the queue row
+   * (status, play, decided_by), unqualified so it applies to `target_queue`
+   * under any alias and the status/play indexes prune first; `terms` are
+   * the free-text words, which need the joined prospect (`queueSearchJoin`).
    */
-  private queueSearchParts(
+  private queueSearchFilters(
     opts: Pick<QueueSearchOpts, "q" | "statuses" | "playName" | "decidedBy">,
     withStatus: boolean,
-  ): { sql: string; args: unknown[] } {
+  ): { inner: string[]; innerArgs: unknown[]; terms: string[] } {
     const inner: string[] = [];
-    const outer: string[] = [];
-    const args: unknown[] = [];
+    const innerArgs: unknown[] = [];
     // De-duplicated: `?status=sent,sent,sent,sent,sent` is one status, not
     // "all five". The length guard below must see distinct values.
     const statuses = [...new Set((opts.statuses ?? []).filter((s) => QUEUE_STATUSES.includes(s)))];
     if (withStatus && statuses.length > 0 && statuses.length < QUEUE_STATUSES.length) {
-      inner.push(`q.status IN (${statuses.map(() => "?").join(",")})`);
-      args.push(...statuses);
+      inner.push(`status IN (${statuses.map(() => "?").join(",")})`);
+      innerArgs.push(...statuses);
     }
     if (opts.playName) {
-      inner.push("q.play_name = ?");
-      args.push(opts.playName);
+      inner.push("play_name = ?");
+      innerArgs.push(opts.playName);
     }
     switch (opts.decidedBy) {
       case "human":
-        inner.push("q.decided_by IN ('human', 'human_bulk')");
+        inner.push("decided_by IN ('human', 'human_bulk')");
         break;
       case "machine":
-        inner.push("q.decided_by = 'machine'");
+        inner.push("decided_by = 'machine'");
         break;
       case "none":
-        inner.push("q.decided_by IS NULL");
+        inner.push("decided_by IS NULL");
         break;
       default:
         break;
@@ -462,6 +527,26 @@ export class QueueStore {
       .split(/\s+/)
       .map((t) => t.trim())
       .filter((t) => t.length > 0);
+    return { inner, innerArgs, terms };
+  }
+
+  /**
+   * FROM + WHERE over the queue row joined to its prospect, for a free-text
+   * search (every term reads the prospect) and for the page of a plain
+   * browse (`inner` is then the page's ids). The prospect is resolved with a
+   * scalar subquery (`LIMIT 1`) rather than an OR-join so one queue row can
+   * never fan out into two: two prospects sharing an email would otherwise
+   * inflate `total` and shift every OFFSET. The row-only filters go inside
+   * the derived table so the existing status/play indexes still prune
+   * before the prospect lookup; the free-text terms stay outside.
+   */
+  private queueSearchJoin(
+    inner: readonly string[],
+    innerArgs: readonly unknown[],
+    terms: readonly string[],
+  ): { sql: string; args: unknown[] } {
+    const outer: string[] = [];
+    const args: unknown[] = [...innerArgs];
     for (const term of terms) {
       const patterns = likePatternsFor(term);
       outer.push(
@@ -488,8 +573,14 @@ export class QueueStore {
    * and paged. `q` is a deliberate full scan (LIKE over json_extract can use
    * no index): measured at ~50 ms on 9k rows. Past ~100k rows an FTS5
    * external-content table is the upgrade path; nothing here would change
-   * shape. Without `q` the derived table is pruned by the status/play
-   * indexes like `listQueue`.
+   * shape.
+   *
+   * Without `q` the prospect join is pure cost (issue #929: the correlated
+   * email lookup ran over every row to decorate the fifty returned), so the
+   * page is taken from `target_queue` alone, pruned by the status/play
+   * indexes like `listQueue`, and only the returned ids are joined. The name
+   * sort is the exception: it orders by the joined prospect's name, so it
+   * keeps the join over every row.
    */
   searchQueue(opts: QueueSearchOpts): { rows: QueueSearchRow[]; total: number | null } {
     const limit = Math.max(1, Math.min(200, Math.floor(opts.limit)));
@@ -510,24 +601,44 @@ export class QueueStore {
         orderSql = `b.found_at ${dir}, b.id ${dir}`;
         break;
     }
-    const { sql, args } = this.queueSearchParts(opts, true);
-    const rows = this.db
-      .query(
-        `SELECT b.*, p.id AS p_id, p.name AS p_name, p.email AS p_email, p.company AS p_company,
-                p.title AS p_title,
-                p.icp_verdict AS p_icp_verdict, p.icp_verdict_reason AS p_icp_verdict_reason,
-                (p.dossier_json IS NOT NULL AND TRIM(p.dossier_json) != '') AS p_has_dossier,
-                (b.prospect_id IS NULL AND p.id IS NOT NULL) AS p_linked_by_email
-         ${sql}
-         ORDER BY ${orderSql}
-         LIMIT ? OFFSET ?`,
-      )
-      .all(...(args as never[]), limit, offset) as QueueSearchRow[];
+    const { inner, innerArgs, terms } = this.queueSearchFilters(opts, true);
+    if (terms.length > 0 || opts.sort === "name") {
+      const { sql, args } = this.queueSearchJoin(inner, innerArgs, terms);
+      const rows = this.db
+        .query(`${QUEUE_SEARCH_SELECT} ${sql} ORDER BY ${orderSql} LIMIT ? OFFSET ?`)
+        .all(...(args as never[]), limit, offset) as QueueSearchRow[];
+      if (opts.withTotal === false) return { rows, total: null };
+      const total = (
+        this.db.query(`SELECT COUNT(*) AS n ${sql}`).get(...(args as never[])) as {
+          n: number;
+        }
+      ).n;
+      return { rows, total };
+    }
+    const whereSql = inner.length ? `WHERE ${inner.join(" AND ")}` : "";
+    const ids = (
+      this.db
+        .query(`SELECT b.id FROM target_queue b ${whereSql} ORDER BY ${orderSql} LIMIT ? OFFSET ?`)
+        .all(...(innerArgs as never[]), limit, offset) as Array<{ id: number }>
+    ).map((r) => r.id);
+    let rows: QueueSearchRow[] = [];
+    if (ids.length > 0) {
+      // The same select list and join as the searched path, over the page's
+      // ids only, re-ordered by the same keys: the order needs no prospect.
+      const { sql, args } = this.queueSearchJoin(
+        [`id IN (${ids.map(() => "?").join(",")})`],
+        ids,
+        [],
+      );
+      rows = this.db
+        .query(`${QUEUE_SEARCH_SELECT} ${sql} ORDER BY ${orderSql}`)
+        .all(...(args as never[])) as QueueSearchRow[];
+    }
     if (opts.withTotal === false) return { rows, total: null };
     const total = (
-      this.db.query(`SELECT COUNT(*) AS n ${sql}`).get(...(args as never[])) as {
-        n: number;
-      }
+      this.db
+        .query(`SELECT COUNT(*) AS n FROM target_queue ${whereSql}`)
+        .get(...(innerArgs as never[])) as { n: number }
     ).n;
     return { rows, total };
   }
@@ -535,15 +646,28 @@ export class QueueStore {
   /**
    * Per-status counts for the /prospects filter chips under the current
    * search/play/decided filters. The status filter itself is left out so a
-   * chip can show how many rows it would reveal.
+   * chip can show how many rows it would reveal. Without free text the
+   * counts never read the prospect, so they come from a plain `GROUP BY`
+   * over `target_queue` (issue #929: 1 ms instead of 26 ms on 12k rows).
    */
   searchQueueStatusCounts(
     opts: Pick<QueueSearchOpts, "q" | "playName" | "decidedBy">,
   ): Record<QueueStatus, number> {
-    const { sql, args } = this.queueSearchParts(opts, false);
-    const rows = this.db
-      .query(`SELECT b.status AS status, COUNT(*) AS n ${sql} GROUP BY b.status`)
-      .all(...(args as never[])) as Array<{ status: QueueStatus; n: number }>;
+    const { inner, innerArgs, terms } = this.queueSearchFilters(opts, false);
+    let rows: Array<{ status: QueueStatus; n: number }>;
+    if (terms.length > 0) {
+      const { sql, args } = this.queueSearchJoin(inner, innerArgs, terms);
+      rows = this.db
+        .query(`SELECT b.status AS status, COUNT(*) AS n ${sql} GROUP BY b.status`)
+        .all(...(args as never[])) as Array<{ status: QueueStatus; n: number }>;
+    } else {
+      rows = this.db
+        .query(
+          `SELECT status, COUNT(*) AS n FROM target_queue
+           ${inner.length ? `WHERE ${inner.join(" AND ")}` : ""} GROUP BY status`,
+        )
+        .all(...(innerArgs as never[])) as Array<{ status: QueueStatus; n: number }>;
+    }
     const out: Record<QueueStatus, number> = {
       pending: 0,
       approved: 0,
@@ -1561,4 +1685,27 @@ export class QueueStore {
       )
       .run(`expired: ${reason}`, `expired: ${reason}`, prospectId, `prospect:${prospectId}`);
   }
+}
+
+/**
+ * Has this prospect answered, on any channel? A human email reply
+ * (`inbox_replies`, where a missing `kind` is a human one), a LinkedIn reply
+ * (`channel_events`), or a step whose status flipped to `replied` (legacy
+ * rows that predate `inbox_replies`). One statement of three existence
+ * probes (issue #929): the approve guard asks this of a row that already
+ * left `pending`, and it used to read all three collections in full to run
+ * `.some()` over each. Same answer as `hasReplied` over those collections.
+ */
+export function prospectHasReplied(db: Database, prospectId: number): boolean {
+  const row = db
+    .query<{ replied: number }, [number, number, number]>(
+      `SELECT (EXISTS (SELECT 1 FROM inbox_replies
+                        WHERE prospect_id = ? AND COALESCE(kind, 'human') = 'human' LIMIT 1)
+            OR EXISTS (SELECT 1 FROM channel_events
+                        WHERE prospect_id = ? AND event_type = 'reply' LIMIT 1)
+            OR EXISTS (SELECT 1 FROM sequence_events
+                        WHERE prospect_id = ? AND status = 'replied' LIMIT 1)) AS replied`,
+    )
+    .get(prospectId, prospectId, prospectId);
+  return row?.replied === 1;
 }

@@ -8,6 +8,33 @@ const queueRows = new Map<number, Record<string, unknown>>();
 const prospectsByEmail = new Map<string, { id: number }>();
 const prospectsById = new Map<number, Record<string, unknown>>();
 const statusCalls: Array<Record<string, unknown>> = [];
+/** Every delivery read, in order: `events:<sequenceEventIds>`. */
+const deliveryCalls: string[] = [];
+let eventDeliveries = new Map<number, Record<string, unknown>>();
+/** Every reply probe the approve guard made, by prospect id. */
+const repliedProbes: number[] = [];
+const sameStepEvents = [
+  {
+    id: 7,
+    prospect_id: 45,
+    play_name: "show-hn",
+    step_index: 0,
+    channel: "email",
+    status: "sent",
+    metadata_json: null,
+    created_at: "2026-09-02 09:00:00",
+  },
+  {
+    id: 8,
+    prospect_id: 45,
+    play_name: "show-hn",
+    step_index: 0,
+    channel: "email",
+    status: "sent",
+    metadata_json: null,
+    created_at: "2026-09-09 09:00:00",
+  },
+];
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -23,31 +50,46 @@ vi.mock("@oneshot-gtm/core", async () => {
       // The conversation view's filtered getter; the approve guard reads it.
       listSequenceEventsForProspect: () => [],
       // The history reads every status, including the bounced step.
+      sendDelivery: {
+        forSequenceEvents: (ids: number[]) => {
+          deliveryCalls.push(`events:${ids.join(",")}`);
+          return new Map(
+            ids.flatMap((id) => (eventDeliveries.has(id) ? [[id, eventDeliveries.get(id)]] : [])),
+          );
+        },
+      },
+      // The approve guard's one-read probe (#929); prospect 44 has the human reply below.
+      prospectHasReplied: (id: number) => {
+        repliedProbes.push(id);
+        return id === 44;
+      },
       listAllSequenceEventsForProspect: (id: number) =>
-        id === 44
-          ? [
-              {
-                id: 2,
-                prospect_id: 44,
-                play_name: "show-hn",
-                step_index: 1,
-                channel: "email",
-                status: "bounced",
-                metadata_json: JSON.stringify({ subject: "following up" }),
-                created_at: "2026-09-04 09:00:00",
-              },
-              {
-                id: 1,
-                prospect_id: 44,
-                play_name: "show-hn",
-                step_index: 0,
-                channel: "email",
-                status: "sent",
-                metadata_json: JSON.stringify({ subject: "quick one", label: "intro" }),
-                created_at: "2026-09-02 09:00:00",
-              },
-            ]
-          : [],
+        id === 45
+          ? sameStepEvents
+          : id === 44
+            ? [
+                {
+                  id: 2,
+                  prospect_id: 44,
+                  play_name: "show-hn",
+                  step_index: 1,
+                  channel: "email",
+                  status: "bounced",
+                  metadata_json: JSON.stringify({ subject: "following up" }),
+                  created_at: "2026-09-04 09:00:00",
+                },
+                {
+                  id: 1,
+                  prospect_id: 44,
+                  play_name: "show-hn",
+                  step_index: 0,
+                  channel: "email",
+                  status: "sent",
+                  metadata_json: JSON.stringify({ subject: "quick one", label: "intro" }),
+                  created_at: "2026-09-02 09:00:00",
+                },
+              ]
+            : [],
       listInboxRepliesForProspect: (id: number) =>
         id === 44
           ? [
@@ -165,6 +207,77 @@ describe("queueRowDetailRoute", () => {
     expect(JSON.stringify(body)).not.toContain("SECRET BODY TEXT");
   });
 
+  it("reads the delivery checks of every sequence event in one read, not one per event (#929)", async () => {
+    queueRows.set(9, row({}));
+    prospectsByEmail.set("grace@x.example", { id: 44 });
+    prospectsById.set(44, { id: 44, name: "Grace H", email: "grace@x.example" });
+    const duplicate = {
+      status: "duplicate",
+      expected: 1,
+      observed: 2,
+      deliveredAt: ["2026-09-02T09:00:05.000Z", "2026-09-02T09:00:09.000Z"],
+      sentAt: "2026-09-02T09:00:00.000Z",
+      checkedAt: "2026-09-02T09:10:00.000Z",
+      transport: "gmail",
+      identity: "me@x.example",
+      error: null,
+      keyed: true,
+    };
+    eventDeliveries = new Map([[1, duplicate]]);
+    deliveryCalls.length = 0;
+    try {
+      const { body } = await detail("9");
+      // Both of prospect 44's events (ids 2 and 1, newest first), one read.
+      expect(deliveryCalls).toEqual(["events:2,1"]);
+      const timeline = body["timeline"] as Array<Record<string, unknown>>;
+      const notes = timeline.filter((e) => e["label"] === "delivered 2× by the mail provider");
+      // Attributed to step 1 (event 1): the one check, dated by its last delivery.
+      expect(notes).toEqual([
+        {
+          at: "2026-09-02T09:00:09.000Z",
+          kind: "sequence",
+          label: "delivered 2× by the mail provider",
+          detail: "09:00:05, 09:00:09 UTC",
+          playName: "show-hn",
+        },
+      ]);
+    } finally {
+      eventDeliveries = new Map();
+    }
+  });
+
+  it("keeps each event's own check when two of the prospect's events share a play|step (#929)", async () => {
+    queueRows.set(13, row({ id: 13, payload_json: JSON.stringify({ email: "two@x.example" }) }));
+    prospectsByEmail.set("two@x.example", { id: 45 });
+    prospectsById.set(45, { id: 45, name: "Two Steps", email: "two@x.example" });
+    const duplicate = {
+      status: "duplicate",
+      expected: 1,
+      observed: 2,
+      deliveredAt: ["2026-09-09T09:00:05.000Z"],
+      sentAt: "2026-09-09T09:00:00.000Z",
+      checkedAt: "2026-09-09T09:10:00.000Z",
+      transport: "gmail",
+      identity: "me@x.example",
+      error: null,
+      keyed: true,
+    };
+    // A play|step-keyed map would hand event 8's check to event 7 as well;
+    // the read is keyed by event id, so the duplicate is the re-run's alone.
+    eventDeliveries = new Map([[8, duplicate]]);
+    deliveryCalls.length = 0;
+    try {
+      const { body } = await detail("13");
+      expect(deliveryCalls).toEqual(["events:7,8"]);
+      const timeline = body["timeline"] as Array<Record<string, unknown>>;
+      expect(
+        timeline.filter((e) => e["label"] === "delivered 2× by the mail provider"),
+      ).toHaveLength(1);
+    } finally {
+      eventDeliveries = new Map();
+    }
+  });
+
   it("reads the ICP verdict off the payload when the row never became a prospect", async () => {
     queueRows.set(
       12,
@@ -202,6 +315,7 @@ describe("queueRowDetailRoute", () => {
 
 describe("approveQueueRoute status transitions", () => {
   beforeEach(() => {
+    repliedProbes.length = 0;
     statusCalls.length = 0;
   });
   it("records a fit judgment when the body carries one, none otherwise, and refuses an unknown reason (#813)", async () => {
@@ -271,6 +385,8 @@ describe("approveQueueRoute status transitions", () => {
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: string }).error).toMatch(/replied/);
     expect(statusCalls).toEqual([]);
+    // One probe of the ledger (#929), not three collections read in full.
+    expect(repliedProbes).toEqual([44]);
   });
 
   it("approves an expired row when the prospect has not replied", async () => {

@@ -11,7 +11,13 @@ import { ProspectOffer } from "../components/queue/ProspectOffer.tsx";
 import { ProductResearch } from "../components/queue/ProductResearch.tsx";
 import { SentRowSequenceOffer } from "../components/queue/SequenceOffer.tsx";
 import { Explain } from "../components/primitives/Explain.tsx";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   Check,
@@ -294,7 +300,7 @@ function QueuePage() {
   const queueQuery = useQuery({
     queryKey: ["queue", statusFilter, playFilter, orderOverride],
     queryFn: () => api.queue(queueRequest({ statusFilter, playFilter, orderOverride })),
-    refetchInterval: 20_000,
+    refetchInterval: QUEUE_POLL_MS,
   });
   // Live reads exist on this install (`/setup` says what they go through):
   // only then does opening a row read it, or the list mark a row unread.
@@ -1297,7 +1303,7 @@ export function QueueRow({
                   </Disclosure>
                 </>
               )}
-              <PayloadJson value={row.payload} />
+              <RowPayloadJson row={row} />
             </CaseSection>
           }
           theLetter={
@@ -1321,6 +1327,39 @@ export function QueueRow({
       )}
     </>
   );
+}
+
+/** How often the list polls; an open row's full read follows the same cadence. */
+export const QUEUE_POLL_MS = 20_000;
+
+/**
+ * The open row's full read from the row-detail route, keyed on the list row
+ * itself: a poll that changes what the list shows of the row (its payload,
+ * draft, status) reads the detail again, and one that changes nothing reuses
+ * the cached read. The read also polls at the list's cadence, so a change the
+ * trimmed list payload cannot show (issue #929) still reaches the page while
+ * the row is open. The previous JSON stays up until the new read lands.
+ */
+export function rowDetailQuery(row: QueueRowView) {
+  return queryOptions({
+    queryKey: ["queue", "row", row.id, row],
+    queryFn: () => api.queueRowDetail(row.id),
+    placeholderData: keepPreviousData,
+    refetchInterval: QUEUE_POLL_MS,
+  });
+}
+
+/**
+ * The row's raw payload, read from the row-detail route when the row is open.
+ * The list carries only the keys the page renders (issue #929); the whole
+ * JSON lives on GET /api/queue/:id. Until it arrives, or if the read fails,
+ * the disclosure shows the keys the list has. Privacy mode reads nothing:
+ * `PayloadJson` hides the payload whole.
+ */
+export function RowPayloadJson({ row }: { row: QueueRowView }) {
+  const { masked } = usePrivacy();
+  const detail = useQuery({ ...rowDetailQuery(row), enabled: !masked });
+  return <PayloadJson value={detail.data?.row.payload ?? row.payload} />;
 }
 
 /**

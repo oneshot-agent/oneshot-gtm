@@ -38,6 +38,7 @@ import {
   isDudDomain,
   portableQueuePayload,
   rankPendingRows,
+  type RankableRow,
   rederiveQueueRow,
   resolveQueueTarget,
   CLICK_RESEARCH_WAIT_MS,
@@ -399,12 +400,35 @@ function resolveProspectId(ledger: ReturnType<typeof getLedger>, row: QueueRow):
  * replies, or a step whose status flipped to `replied` (legacy rows that
  * predate `inbox_replies`). Overrides must not email past this.
  */
-function prospectHasReplied(ledger: ReturnType<typeof getLedger>, prospectId: number): boolean {
+function hasReplied(history: {
+  replies: ReadonlyArray<{ kind?: string | null }>;
+  channelEvents: ReadonlyArray<{ event_type: string }>;
+  sequenceEvents: ReadonlyArray<{ status: string }>;
+}): boolean {
   return (
-    ledger.listInboxRepliesForProspect(prospectId).some((r) => (r.kind ?? "human") === "human") ||
-    ledger.listChannelEventsForProspect(prospectId).some((e) => e.event_type === "reply") ||
-    ledger.listSequenceEventsForProspect(prospectId).some((e) => e.status === "replied")
+    history.replies.some((r) => (r.kind ?? "human") === "human") ||
+    history.channelEvents.some((e) => e.event_type === "reply") ||
+    history.sequenceEvents.some((e) => e.status === "replied")
   );
+}
+
+/**
+ * Delivery checks for a prospect's sequence events, keyed by event id: one
+ * read for all of them (`forSequenceEvents`) rather than one per event
+ * (issue #929), with the attribution a per-event read makes, so two events
+ * on the same play|step (a re-run cadence) each keep their own check.
+ */
+function deliveriesForEvents(
+  ledger: ReturnType<typeof getLedger>,
+  events: ReadonlyArray<{ id: number }>,
+): Map<number, SendDeliveryView> {
+  if (events.length === 0) return new Map();
+  try {
+    return ledger.sendDelivery.forSequenceEvents(events.map((ev) => ev.id));
+  } catch {
+    // A ledger without the delivery table reads as no checks.
+    return new Map();
+  }
 }
 
 /**
@@ -439,20 +463,16 @@ export function queueRowDetailRoute(req: Request, params: Record<string, string>
 
   const cadences = prospect ? viewsForRows(ledger.listCadencesForProspect(prospect.id)) : [];
   const sequenceEvents = prospect ? ledger.listAllSequenceEventsForProspect(prospect.id) : [];
-  const deliveries = new Map<number, SendDeliveryView>();
-  for (const ev of sequenceEvents) {
-    try {
-      const d = ledger.sendDelivery.forSequenceEvent(ev.id);
-      if (d) deliveries.set(ev.id, d);
-    } catch {
-      // A ledger without the delivery table reads as no checks.
-    }
-  }
+  const deliveries = prospect
+    ? deliveriesForEvents(ledger, sequenceEvents)
+    : new Map<number, SendDeliveryView>();
+  const replies = prospect ? ledger.listInboxRepliesForProspect(prospect.id) : [];
+  const channelEvents = prospect ? ledger.listChannelEventsForProspect(prospect.id) : [];
   const timeline = buildProspectTimeline({
     row,
     sequenceEvents,
-    replies: prospect ? ledger.listInboxRepliesForProspect(prospect.id) : [],
-    channelEvents: prospect ? ledger.listChannelEventsForProspect(prospect.id) : [],
+    replies,
+    channelEvents,
     outcomes: prospect ? ledger.listDealOutcomesForProspect(prospect.id) : [],
     deliveries,
   });
@@ -471,7 +491,9 @@ export function queueRowDetailRoute(req: Request, params: Record<string, string>
     cadences,
     timeline,
     flags: {
-      replied: prospect ? prospectHasReplied(ledger, prospect.id) : false,
+      // From the history above: `sequenceEvents` is every non-queued step,
+      // a superset of the conversation view's, so a `replied` step is in it.
+      replied: prospect ? hasReplied({ replies, channelEvents, sequenceEvents }) : false,
       bounced: flagEmail ? ledger.suppressionFor(flagEmail) != null : false,
       contactSuppressed: contactSuppressed?.kind ?? null,
       breakupHold: flagEmail ? ledger.breakupReviveHoldFor(flagEmail) != null : false,
@@ -489,9 +511,149 @@ export function queueRowDetailRoute(req: Request, params: Record<string, string>
 /**
  * Rank a wider pending window in memory, then slice the page. Ranking uses
  * interleaving, scores within each finder, and exploration (find/_rank.ts).
- * Rows beyond the window are excluded.
+ * Rows beyond the window are excluded. The window is read as the ranking
+ * columns alone (issue #929: a thousand full payloads and drafts were read
+ * to use six fields), and the page's rows are then read in full by id.
  */
 const RANK_WINDOW = 1000;
+/** What `rankPendingRows` reads; `event_city` is Luma's city, projected in SQL by the store. */
+const RANK_COLUMNS: readonly string[] = [
+  "id",
+  "play_name",
+  "dedupe_key",
+  "found_at",
+  "priority_json",
+  "event_city",
+];
+
+/** `Ledger.listQueue` options; `columns` projects the read (issue #929). */
+interface QueueListArgs {
+  playName?: string;
+  status?: QueueStatus;
+  limit?: number;
+  ids?: number[];
+  columns?: readonly string[];
+}
+
+/**
+ * The top-level payload keys the queue list renders (apps/web/src/routes/queue.tsx
+ * and the helpers it reads a row's payload through: payloadIdentity,
+ * queueEvidence, queueCase, queueRationale, rejectReason, channels, liveRead,
+ * ProspectOffer, ProductResearch, and the home page's SignalFeed). The list
+ * response carries these alone (issue #929: a page of 200 pending rows was
+ * 2.66 MB because every row shipped its whole payload); the page reads the
+ * raw JSON from the row-detail route when a row is opened. `?forRun=1` is
+ * not trimmed: the run form fills itself from every key of the target.
+ */
+const LIST_PAYLOAD_KEYS: ReadonlySet<string> = new Set([
+  "agency",
+  "agendaItemTitle",
+  "amount",
+  "amountUsd",
+  "angle",
+  "authorUrl",
+  "businessType",
+  "buyerType",
+  "city",
+  "classification",
+  "cohort",
+  "cohortLabel",
+  "company",
+  "companyAtFinder",
+  "companyFacts",
+  "competitor",
+  "currentRole",
+  "daysCold",
+  "dmOpen",
+  "email",
+  "episodeTitle",
+  "eventCity",
+  "eventDate",
+  "eventTitle",
+  "eventUrl",
+  "fitReason",
+  "followers",
+  "formerRoles",
+  "founderEmail",
+  "founderName",
+  "githubUrl",
+  "handle",
+  "icpVerdict",
+  "icpVerdictReason",
+  "jobTitle",
+  "leadInvestor",
+  "linkedinUrl",
+  "matchedDateIso",
+  "mode",
+  "movedFrom",
+  "name",
+  "newCompany",
+  "newRole",
+  "offer",
+  "offerCandidates",
+  "personResearch",
+  "phone",
+  "platform",
+  "podcast",
+  "podcastName",
+  "postTitle",
+  "postUrl",
+  "previousCompany",
+  "productResearch",
+  "profileUrl",
+  "publishedAt",
+  "repo",
+  "repoLabel",
+  "repoUrl",
+  "role",
+  "round",
+  "seedHandle",
+  "signal",
+  "signalVerified",
+  "sourceLabel",
+  "sourceProfileUrl",
+  "subjectType",
+  "supportingText",
+  "title",
+  "titleAtFinder",
+  "tweetUrl",
+  "twitterUrl",
+  "vendorStack",
+  "xUrl",
+  "xUserId",
+  "yourEdgeSource",
+]);
+
+/**
+ * A list row with its payload cut to `LIST_PAYLOAD_KEYS`. Applied after
+ * `toView`, which derives `sendHold` and `offerSkip` from the whole payload.
+ * A payload that is not a plain object (an unparsable string, an array) is
+ * left as it is: the page shows those as they are.
+ */
+export function trimListPayload(view: QueueRowView): QueueRowView {
+  const { payload } = view;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return view;
+  const kept: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
+    if (LIST_PAYLOAD_KEYS.has(key)) kept[key] = value;
+  }
+  return { ...view, payload: kept };
+}
+
+/** The ranked page: rank the projected window, keep `limit` ids, read those rows in full, in rank order. */
+function rankedPage(
+  ledger: ReturnType<typeof getLedger>,
+  window: RankableRow[],
+  limit: number,
+): QueueRow[] {
+  const ids = rankPendingRows(window)
+    .slice(0, limit)
+    .map((row) => row.id);
+  if (ids.length === 0) return [];
+  const byId = ledger.getQueueRowsByIds(ids);
+  // A row deleted between the two reads is gone, as it would be from one later read.
+  return ids.flatMap((id) => byId.get(id) ?? []);
+}
 
 export function listQueueRoute(req: Request): Response {
   const url = new URL(req.url);
@@ -511,17 +673,15 @@ export function listQueueRoute(req: Request): Response {
   // Ranked order exists for ONE surface: the pending review list. Explicit id
   // picks and every other status keep chronological order.
   const ranked = requestedOrder === "ranked" && status === "pending" && !ids;
-  const filterArgs: {
-    playName?: string;
-    status?: QueueStatus;
-    limit?: number;
-    ids?: number[];
-  } = { limit: ranked ? RANK_WINDOW : ids ? Math.max(limit, ids.length) : limit };
+  const filterArgs: QueueListArgs = {
+    limit: ranked ? RANK_WINDOW : ids ? Math.max(limit, ids.length) : limit,
+  };
   if (playName) filterArgs.playName = playName;
   if (status) filterArgs.status = status;
   if (ids) filterArgs.ids = ids;
+  if (ranked) filterArgs.columns = RANK_COLUMNS;
   const rows = ledger.listQueue(filterArgs);
-  const ordered = ranked ? rankPendingRows(rows).slice(0, limit) : rows;
+  const ordered = ranked ? rankedPage(ledger, rows, limit) : rows;
   const counts: QueueCounts = ledger.queueCounts();
   // Unfiltered on purpose. The drain button needs per-play approved counts
   // regardless of the page's current filter.
@@ -534,7 +694,7 @@ export function listQueueRoute(req: Request): Response {
         ? Object.assign(toView(row, sequenceOffers.get(row.id)), {
             payload: resolveQueueTarget(row),
           })
-        : toView(row, sequenceOffers.get(row.id)),
+        : trimListPayload(toView(row, sequenceOffers.get(row.id))),
     );
   } catch (error) {
     return jsonResponse({ error: (error as Error).message }, 400, req);
@@ -577,7 +737,8 @@ export async function approveQueueRoute(
   // "prospect replied", and nothing downstream of `approved` checks that.
   if (row.status !== "pending") {
     const prospectId = resolveProspectId(ledger, row);
-    if (prospectId != null && prospectHasReplied(ledger, prospectId)) {
+    // Three existence probes in one read (issue #929), not three collections.
+    if (prospectId != null && ledger.prospectHasReplied(prospectId)) {
       return jsonResponse(
         { error: "prospect has replied; approving would email them mid-conversation" },
         409,
@@ -1145,9 +1306,9 @@ export async function approveAllRoute(req: Request): Promise<Response> {
   // The bulk UPDATE returns a count, not ids: take the pending ids first so
   // the rows it approves get their posts captured (in the background; the
   // capture re-checks each row is still approved).
-  const pendingIds = ledger
-    .listQueue({ status: "pending", limit: 100_000, ...(body.play ? { playName: body.play } : {}) })
-    .map((row) => row.id);
+  const pendingArgs: QueueListArgs = { status: "pending", limit: 100_000, columns: ["id"] };
+  if (body.play) pendingArgs.playName = body.play;
+  const pendingIds = ledger.listQueue(pendingArgs).map((row) => row.id);
   const n = ledger.approveAllPending(body.play ? { playName: body.play } : {});
   if (n > 0) scheduleNewsfeedOnApproval(pendingIds);
   return jsonResponse({ approved: n }, 200, req);
