@@ -888,7 +888,7 @@ export class QueueStore {
           `SELECT * FROM target_queue
            WHERE play_name = ? AND status = 'approved' AND sent_at IS NULL
              AND (drain_claimed_at IS NULL OR drain_claimed_at < ?)
-           ORDER BY found_at ASC
+           ORDER BY found_at ASC, id ASC
            LIMIT ?`,
         )
         .all(opts.playName, cutoff, limit) as QueueRow[];
