@@ -679,11 +679,11 @@ export function lintAlreadyConnected(text: string): string[] {
 }
 
 /**
- * An accelerator, a batch code (W26, F26) or a program slug ("antler-2026"):
+ * An accelerator, a batch code (W26, F26, P25) or a program slug ("antler-2026"):
  * what a sentence names when it puts someone in a cohort.
  */
 const PROGRAM = String.raw`YC|Y\s*Combinator|Antler|Techstars|500\s+Global|Entrepreneur\s+First|South\s+Park\s+Commons|HF0|speedrun`;
-const BATCH_CODE = String.raw`[WSFX]\d{2}|(?!(?:mid|early|late)-)[a-z]{3,}-20\d\d`;
+const BATCH_CODE = String.raw`[WSFXP]\d{2}|(?!(?:mid|early|late)-)[a-z]{3,}-20\d\d`;
 const COHORT = String.raw`(?:${PROGRAM}|${BATCH_CODE}|(?:the|same|this)\s+(?:batch|cohort|accelerator))\b`;
 
 /**
@@ -724,7 +724,12 @@ const SHARED_COHORT_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
   ],
 ];
 
-const alnum = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+/** Lowercase letters and digits, with "Y Combinator" spelled as its "YC". */
+const alnum = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .replace(/ycombinator/g, "yc");
 
 /** A program or batch named in a sentence: "YC", "W25", "antler-2026". */
 const BATCH_NAME_RX = new RegExp(String.raw`\b(?:${PROGRAM}|${BATCH_CODE}|20\d\d)\b`, "gi");
