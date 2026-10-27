@@ -1335,6 +1335,17 @@ describe("templates: the default writer", () => {
     expect((await shown()).body).toBe("Hi Dana, what are you working on right now?");
   });
 
+  it("an over-long message carries its length flag on the payload, so the send holds", async () => {
+    linkedinCfg = { templates: { firstMessageConnected: `hey {first_name}, ${"x".repeat(420)}` } };
+    started({});
+    const note = await shown();
+    expect(note.payload).not.toHaveProperty("flags");
+    await invite(note.body, "already_connected");
+    const first = await shown();
+    expect(first.payload).toMatchObject({ flags: ["too-long: 430/400 characters"] });
+    expect(first.flags).toEqual(["too-long: 430/400 characters"]);
+  });
+
   it("with no usable first name the greeting is dropped, never left empty", async () => {
     sql(`UPDATE prospects SET name = 'wanghley' WHERE id = ${prospectId}`);
     linkedinCfg = { templates: { note: "hey {first_name} - saw {evidence}. Good to connect." } };

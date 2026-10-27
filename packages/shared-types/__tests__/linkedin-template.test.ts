@@ -69,6 +69,17 @@ describe("templateProblems", () => {
     expect(templateProblems("friendNote", "x".repeat(601))).toEqual(["longer than 600 characters"]);
   });
 
+  it("refuses a mistyped placeholder instead of passing it through as text", () => {
+    expect(templateProblems("note", "Hi {First_Name}")).toEqual([
+      "unknown placeholder {First_Name}",
+    ]);
+    expect(templateProblems("note", "Hi {name2}, {first-name}")).toEqual([
+      "unknown placeholder {name2}",
+      "unknown placeholder {first-name}",
+    ]);
+    expect(renderLinkedInTemplate("Hi {First_Name}", dana)).toEqual({ missing: ["First_Name"] });
+  });
+
   it("lists placeholders once, in order", () => {
     expect(templatePlaceholders("{offer} {first_name} {offer}")).toEqual(["offer", "first_name"]);
   });

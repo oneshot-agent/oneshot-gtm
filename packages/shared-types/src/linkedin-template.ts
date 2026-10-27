@@ -101,7 +101,9 @@ export const DEFAULT_LINKEDIN_TEMPLATES: Readonly<Record<LinkedInTemplateStep, s
   friendNote: "Hi {first_name}, we traded emails, so connecting here so the next hello isn't cold.",
 };
 
-const PLACEHOLDER_RX = /\{([a-z_]+)\}/g;
+// Any brace-wrapped name, so a mistyped one ({First_Name}, {name2}) is
+// refused on save and never sent as literal braces.
+const PLACEHOLDER_RX = /\{([A-Za-z0-9_-]+)\}/g;
 const KNOWN: ReadonlySet<string> = new Set<LinkedInTemplatePlaceholder>([
   "first_name",
   "evidence",

@@ -3770,8 +3770,18 @@ async function buildLinkedInMessage(
     offer: playMakesOffer(playName) ? (sequenceOffer(ctx.prospect, playName)?.offer ?? null) : null,
     alreadyConnected,
   });
-  // Length is judged in the preview, like a drafted message.
-  if (templated) return { kind: "linkedin_message", text: templated.text };
+  if (templated) {
+    // Carried on the payload, as a drafted message's lint flag is, so an
+    // over-long template holds the send outside the preview too.
+    const over = templated.text.length > LINKEDIN_MESSAGE_MAX_CHARS;
+    return {
+      kind: "linkedin_message",
+      text: templated.text,
+      ...(over
+        ? { flags: [`too-long: ${templated.text.length}/${LINKEDIN_MESSAGE_MAX_CHARS} characters`] }
+        : {}),
+    };
+  }
   const title = ctx.prospect.title?.trim() || personTitle(ctx.prospect.dossier_json);
   const role = readerRole(title);
   const company = await companyTheyRun({
