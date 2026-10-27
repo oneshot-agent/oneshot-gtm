@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import {
   llmApiKey,
   loadConfig,
@@ -278,13 +278,29 @@ export function mergeInitConfig(
   };
 }
 
-function whichCommand(): string {
+/**
+ * The CLI's entry file, relative to the repo root: the `bin` target in
+ * apps/cli/package.json and what the root `bun run cli` script runs. The
+ * next-steps hint falls back to it when argv carries no script path, so it
+ * must name a file that exists on disk.
+ */
+export const DEV_CLI_ENTRY = "apps/cli/src/main.ts";
+
+export function whichCommand(cwd: string = process.cwd()): string {
   // If someone resolved us via the linked bin or a bunx install, the basename is "oneshot-gtm".
-  // Otherwise we're being invoked through `bun run packages/cli/src/index.ts ...` and we should
-  // suggest that form so the next steps copy-paste works.
+  // Otherwise we're being invoked from a checkout through `bun run <path to main.ts> ...`,
+  // and the hint should name that file relative to where the user is, so the next steps
+  // copy-paste from apps/cli as well as from the repo root. The path is one shell word:
+  // a checkout under `/tmp/one shot` must not be told to run `one` with the rest as arguments.
   const exec = process.argv[1] ?? "";
   if (exec.endsWith("oneshot-gtm") || exec.endsWith("oneshot-gtm/index.ts")) return "oneshot-gtm";
-  return "bun run packages/cli/src/index.ts";
+  return `bun run ${shellWord(exec ? relative(cwd, exec) : DEV_CLI_ENTRY)}`;
+}
+
+/** A path as one shell word: left bare when it is plain, single-quoted otherwise. */
+function shellWord(path: string): string {
+  if (/^[A-Za-z0-9_/.:@%+=,-]+$/.test(path)) return path;
+  return `'${path.replaceAll("'", "'\\''")}'`;
 }
 
 function defaultModel(provider: string): string {

@@ -1,6 +1,6 @@
 import { getLedger, parallelMap } from "@oneshot-gtm/core";
 import { findLinkedInUrl, isCircuitOpen, looksLikeOrgName } from "@oneshot-gtm/find";
-import { c, header, note, ok, warn } from "../output.ts";
+import { c, header, note, ok, resolveCap, warn } from "../output.ts";
 
 /**
  * Backfill LinkedIn URLs onto existing prospects. `upsertProspect` is
@@ -65,17 +65,6 @@ export function cleanCompanyToken(company: string | null | undefined): string | 
   // Still a sentence rather than a name → not a usable exact-match constraint.
   if (s.split(/\s+/).length > 4) return null;
   return s.length >= 2 ? s : null;
-}
-
-/**
- * How many candidates this run may search, or undefined for "no cap". A bad
- * `--limit` must never widen the paid run: negative values would slice() to
- * nearly the whole ledger, and NaN collapses to 0.
- */
-export function resolveCap(limit: number | undefined): number | undefined {
-  if (limit === undefined) return undefined;
-  if (!Number.isFinite(limit)) return 0;
-  return Math.max(0, Math.floor(limit));
 }
 
 export async function commandEnrichLinkedIn(opts: EnrichLinkedInOpts): Promise<void> {

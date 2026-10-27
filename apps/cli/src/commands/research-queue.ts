@@ -10,7 +10,7 @@ import {
   researchPerson,
   type PersonSeed,
 } from "@oneshot-gtm/find";
-import { c, header, note, ok, warn } from "../output.ts";
+import { c, header, note, ok, resolveCap, warn } from "../output.ts";
 import {
   dedupeItems,
   hasFreshPointer,
@@ -87,13 +87,6 @@ export function parseQueueStatuses(raw: string | undefined): Array<"pending" | "
     throw new Error(`unknown --status value: ${value}. Valid: ${STATUSES.join(", ")}`);
   }
   return value === "live" ? ["pending", "approved"] : [value as "pending" | "approved"];
-}
-
-/** Mirrors research-prospects' resolveCap: a bad `--limit` never widens a paid run. */
-export function resolveQueueCap(limit: number | undefined): number | undefined {
-  if (limit === undefined) return undefined;
-  if (!Number.isFinite(limit)) return 0;
-  return Math.max(0, Math.floor(limit));
 }
 
 export type CandidateRow = Pick<
@@ -214,7 +207,7 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
     refresh: opts.refresh,
     explicit: opts.id !== undefined,
   });
-  const cap = resolveQueueCap(opts.limit);
+  const cap = resolveCap(opts.limit);
   const candidates = cap === undefined ? selection.candidates : selection.candidates.slice(0, cap);
 
   process.stdout.write(
@@ -422,7 +415,7 @@ async function newsfeedOnly(rows: CandidateRow[], opts: ResearchQueueOpts): Prom
     }
     items.push({ kind: "queue", id: row.id, playName: row.play_name, url });
   }
-  const cap = resolveQueueCap(opts.limit);
+  const cap = resolveCap(opts.limit);
   const deduped = dedupeItems(items);
   const selected = cap === undefined ? deduped : deduped.slice(0, cap);
   process.stdout.write(

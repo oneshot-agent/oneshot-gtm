@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
@@ -88,6 +88,35 @@ function caller(replies: Partial<Record<string, Reply>>) {
   };
 }
 const kinds = () => calls.map((c) => c.kind);
+// What message 1 and the close of an accepted continuation were told before
+// already-connected people were written for, captured from main as it stood: a
+// stranger's input must not change by a byte.
+const ACCEPTED_FIRST_INPUT = [
+  "FOUNDER: Founder",
+  "PRODUCT: a GTM workspace",
+  "PERSON: Dana Lee",
+  "PRIOR_CONTACT: they were emailed on this and did not reply. Don't re-pitch and don't refer to the unanswered email.",
+  "MESSAGE: first message after they accepted the connection request",
+  "PRIOR TOUCHES:",
+  "  STEP 2: Hi Dana, good to see another person working on review. How is it going?",
+  "PRODUCT: a GTM workspace",
+  "MAX_CHARS: 400",
+].join("\n");
+const ACCEPTED_LAST_INPUT = [
+  "FOUNDER: Founder",
+  "PRODUCT: a GTM workspace",
+  "PRODUCT_BRIEF: (none)",
+  "PERSON: Dana Lee",
+  "READER_ROLE: unknown",
+  "PRIOR_CONTACT: they were emailed on this and did not reply. Don't re-pitch and don't refer to the unanswered email.",
+  "MESSAGE: last message — a short, graceful close",
+  "READER_ROLE is unknown: make the OFFER when one is given; otherwise describe the product in one sentence. End with the easy out.",
+  "PRIOR TOUCHES:",
+  "  STEP 2: Hi Dana, good to see another person working on review. How is it going?",
+  "  STEP 3: Dana, what are you building right now?",
+  "PRODUCT: a GTM workspace",
+  "MAX_CHARS: 400",
+].join("\n");
 const inviteOk = (status = "sent") =>
   caller({
     account: accountOk,
@@ -929,6 +958,138 @@ describe("evidence-aware prompts (#790)", () => {
     expect(unknown).toContain("READER_ROLE: unknown");
     expect(unknown).toMatch(/otherwise describe the product in one sentence/);
     expect(unknown).not.toMatch(/name one concrete outcome/);
+  });
+});
+
+describe("already connected: the messages are written knowing it", () => {
+  const ALREADY = "ALREADY_CONNECTED:";
+  const ALREADY_LINE =
+    "ALREADY_CONNECTED: you were already connected on LinkedIn before this sequence; no connection request was sent or accepted.";
+  const ACCEPTED_MESSAGE = "MESSAGE: first message after they accepted the connection request";
+  const note = "Hi Dana, good to see another person working on review. How is it going?";
+
+  async function preview(linkedIn?: ReturnType<typeof caller>) {
+    const shown = await previewCadenceStep({
+      prospectId,
+      playName: PLAY,
+      ...(linkedIn ? { linkedIn } : {}),
+    });
+    if ("waiting" in shown || "skipped" in shown) throw new Error("nothing to draft");
+    return shown;
+  }
+
+  /** The invite went out as `status` answered it; a `sent` one is then accepted. linkedin:1 is due. */
+  async function invited(status: "sent" | "already_connected"): Promise<void> {
+    emailCadenceRunOut();
+    await sendInvite(inviteOk(status));
+    if (status === "sent") {
+      await sweepLinkedInInvitations({
+        linkedIn: caller({
+          invitations: () => ({
+            invitations: [
+              { invitation_id: "inv-1", status: "accepted", accepted_at: "2026-10-01T09:00:00Z" },
+            ],
+          }),
+        }),
+      });
+    }
+    makeDue();
+  }
+
+  /** linkedin:1 goes out as drafted (`text`) and linkedin:2 is due. */
+  async function firstSent(text: string): Promise<void> {
+    noteText = text;
+    const li = caller({ message: () => ({ status: "sent", conversation_id: "conv-1" }) });
+    const first = await preview(li);
+    await run(li, { persistedPayload: first.payload });
+    noteText = note;
+    makeDue();
+  }
+
+  beforeEach(async () => {
+    const { _resetLinkedInLiveReads } = await import("../src/index.ts");
+    _resetLinkedInLiveReads();
+  });
+
+  it("an accepted invite: message 1's input is byte for byte what it was before (regression)", async () => {
+    await invited("sent");
+    await preview();
+    const input = modelInputs.at(-1)!;
+    expect(input).not.toContain(ALREADY);
+    expect(input).toContain(`\n${ACCEPTED_MESSAGE}\n`);
+    expect(input).toContain(`PRIOR TOUCHES:\n  STEP 2: ${note}\n`);
+    expect(input).toBe(ACCEPTED_FIRST_INPUT);
+  });
+
+  it("an accepted invite: the close's input is byte for byte what it was before (regression)", async () => {
+    await invited("sent");
+    await firstSent("Dana, what are you building right now?");
+    await preview();
+    const input = modelInputs.at(-1)!;
+    expect(input).not.toContain(ALREADY);
+    expect(input).toContain(`STEP 2: ${note}`);
+    expect(input).toBe(ACCEPTED_LAST_INPUT);
+  });
+
+  it("already connected: message 1 says so, drops the request framing and the undelivered note", async () => {
+    await invited("already_connected");
+    await preview();
+    const input = modelInputs.at(-1)!;
+    expect(input).toContain(
+      `\n${ALREADY_LINE}\nMESSAGE: first message on LinkedIn — you were already connected\n`,
+    );
+    expect(input).not.toContain(ACCEPTED_MESSAGE);
+    expect(input).not.toContain(note);
+    expect(input).toContain("PRIOR TOUCHES:\n  (none recorded)\n");
+  });
+
+  it("already connected: message 1 is otherwise the input an accepted invite gets", async () => {
+    await invited("already_connected");
+    await preview();
+    const expected = ACCEPTED_FIRST_INPUT.replace(
+      ACCEPTED_MESSAGE,
+      `${ALREADY_LINE}\nMESSAGE: first message on LinkedIn — you were already connected`,
+    ).replace(`  STEP 2: ${note}`, "  (none recorded)");
+    expect(modelInputs.at(-1)).toBe(expected);
+  });
+
+  it("already connected: the close says so too, with its own MESSAGE line and message 1 but not the note", async () => {
+    await invited("already_connected");
+    const first = "Dana, what are you building right now?";
+    await firstSent(first);
+    await preview();
+    const input = modelInputs.at(-1)!;
+    expect(input).toContain(`\n${ALREADY_LINE}\nMESSAGE: last message — a short, graceful close\n`);
+    expect(input).toContain(`PRIOR TOUCHES:\n  STEP 3: ${first}\n`);
+    expect(input).not.toContain(note);
+    const expected = ACCEPTED_LAST_INPUT.replace(
+      "MESSAGE: last message",
+      `${ALREADY_LINE}\nMESSAGE: last message`,
+    ).replace(`  STEP 2: ${note}\n`, "");
+    expect(input).toBe(expected);
+  });
+
+  it("the prompt documents ALREADY_CONNECTED and keeps its opening line for strangers", () => {
+    const prompt = readFileSync(
+      join(import.meta.dirname, "..", "..", "prompts", "linkedin-message.md"),
+      "utf8",
+    );
+    expect(prompt.split("\n")[0]).toBe(
+      "You write one LinkedIn message from the founder to a person who accepted their connection request.",
+    );
+    expect(prompt).toMatch(/^- `ALREADY_CONNECTED` \(optional\): /m);
+    const section = prompt.split("## Already connected")[1]!.split("\n## ")[0]!;
+    expect(section).toMatch(/Never thank them for connecting/);
+    expect(section).toMatch(/never mention a connection request/);
+    expect(section).toMatch(/Don't claim to know them or imply familiarity/);
+    // It overrides the stranger-path rules that assume an accepted request.
+    expect(section).toMatch(/takes precedence/);
+    expect(section).toMatch(/"pick up from the note"/);
+    expect(section).toMatch(/"thank them briefly for connecting"/);
+    // It defers to the rules below rather than restating them: a restated
+    // "one open question … no pitch" contradicts the offer-first first message.
+    expect(section).toMatch(/every rule for the first and last message below still holds\./);
+    expect(section).not.toMatch(/one open question|no pitch/);
   });
 });
 
