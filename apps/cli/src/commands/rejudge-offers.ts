@@ -26,7 +26,7 @@ import {
   type OfferJudgement,
   type ProspectOffer,
 } from "@oneshot-gtm/plays";
-import { c, header, note, ok, warn } from "../output.ts";
+import { c, header, note, ok, resolveCap, warn } from "../output.ts";
 
 /**
  * Re-judge the offers stored on unsent queue rows with the workspace's
@@ -96,13 +96,6 @@ function rejudged(offer: ProspectOffer, j: OfferJudgement): ProspectOffer {
   const next: Record<string, unknown> = { ...offer };
   for (const key of RELEVANCE_KEYS) delete next[key];
   return { ...(next as unknown as ProspectOffer), ...judgementFields(j) };
-}
-
-/** A bad `--limit` never widens a run: NaN collapses to 0. */
-function resolveCap(limit: number | undefined): number | undefined {
-  if (limit === undefined) return undefined;
-  if (!Number.isFinite(limit)) return 0;
-  return Math.max(0, Math.floor(limit));
 }
 
 interface Eligible {

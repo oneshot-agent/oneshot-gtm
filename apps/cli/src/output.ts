@@ -143,3 +143,15 @@ export function box(title: string, body: string): void {
   const line = c.dim("─".repeat(Math.max(title.length + 2, 40)));
   human(`\n${line}\n${c.bold(title)}\n${line}\n${body}\n${line}\n\n`);
 }
+
+/**
+ * How many rows a `--limit` lets a run touch, or undefined for "no cap". A bad
+ * flag value must never WIDEN a paid run: a negative limit would slice() to
+ * nearly the whole ledger, and NaN or Infinity collapse to 0 rather than to
+ * "everything". Shared by every command that takes `--limit`.
+ */
+export function resolveCap(limit: number | undefined): number | undefined {
+  if (limit === undefined) return undefined;
+  if (!Number.isFinite(limit)) return 0;
+  return Math.max(0, Math.floor(limit));
+}

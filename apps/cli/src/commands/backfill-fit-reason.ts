@@ -12,7 +12,7 @@ import {
   normalizeFitReason,
   parseReasonFromNotes,
 } from "@oneshot-gtm/find";
-import { c, header, note, ok, warn } from "../output.ts";
+import { c, header, note, ok, resolveCap, warn } from "../output.ts";
 
 /**
  * Backfill `fitReason` onto queue rows enqueued before finders stamped it
@@ -59,13 +59,6 @@ export interface BackfillFitReasonSummary {
   written: number;
   estimatedCostUsd: number;
   byPlay: Record<string, { eligible: number; resolved: number }>;
-}
-
-/** A bad `--limit` must never WIDEN a run: NaN collapses to 0, not to the whole ledger. */
-export function resolveCap(limit: number | undefined): number | undefined {
-  if (limit === undefined) return undefined;
-  if (!Number.isFinite(limit)) return 0;
-  return Math.max(0, Math.floor(limit));
 }
 
 function existingFitReason(payload: Record<string, unknown>): string | null {
