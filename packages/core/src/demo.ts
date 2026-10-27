@@ -8,8 +8,10 @@ import { configDir } from "./config.ts";
 // READ-ONLY seam. Some calls the dashboard makes at request time can't be
 // populated by seeding SQLite, because they fetch from the network rather than
 // the ledger: reply lists, the platform RoCS rollup, the provisioned-domain
-// pool, the wallet balance, meetings, paid research. In demo mode each of those
-// reads a JSON fixture written by `demo seed` instead. The `demoFixture` call
+// pool, the wallet balance, paid research. In demo mode each of those reads a
+// JSON fixture written by `demo seed` instead. The meetings list takes the same
+// seam, but `demo seed` writes no fixture for it: the route serves an optional
+// hand-written override and renders empty without one. The `demoFixture` call
 // sites, not this paragraph, are the authoritative list.
 //
 // Nothing that sends, drafts, spends or writes is faked. The demo home carries
