@@ -610,6 +610,12 @@ export interface OneShotConfig {
    * working session; it is promoted only once its feed verifies.
    */
   linkedinPendingProfileId?: string | null;
+  /**
+   * `<profileId>:<completedAt>` of the Done a check already ran for. Setup
+   * starts a check by itself only for a Done not yet checked, so a reload or
+   * a second tab never repeats a paid verify; a check by hand still runs.
+   */
+  linkedinPendingCheckedFor?: string | null;
   /** When the session was last confirmed logged in, and as whom. */
   linkedinSessionCheckedAt?: string | null;
   linkedinSessionName?: string | null;

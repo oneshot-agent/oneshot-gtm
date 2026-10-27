@@ -478,6 +478,8 @@ export const api = {
           profileId: string;
           status: string;
           completedAt: string | null;
+          /** A check already ran for this Done (on any page); only "Check sign-in" runs another. */
+          checked: boolean;
           expiresAt: string | null;
         }
     >("/setup/linkedin-login/state"),

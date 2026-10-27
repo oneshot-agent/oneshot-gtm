@@ -577,6 +577,8 @@ export async function finishLinkedInLogin(ctx: CallContext): Promise<LinkedInSes
         : "not signed in yet — sign in to LinkedIn on the page that opened, then press Done there",
     };
   }
+  // This Done has a check now: the page never starts another for it.
+  saveConfig({ ...loadConfig(), linkedinPendingCheckedFor: `${profileId}:${state.completedAt}` });
   // The platform lists cookie names when it reports them; an empty list says
   // nothing either way, so the feed check decides.
   const cookies = state.storedCookies;
@@ -642,6 +644,8 @@ export async function linkedinLoginState(ctx: CallContext): Promise<
       profileId: string;
       status: string;
       completedAt: string | null;
+      /** A check already ran for this Done; only a check by hand runs another. */
+      checked: boolean;
       expiresAt: string | null;
     }
 > {
@@ -653,6 +657,9 @@ export async function linkedinLoginState(ctx: CallContext): Promise<
     profileId: pending,
     status: state.status,
     completedAt: state.completedAt,
+    checked:
+      state.completedAt !== null &&
+      loadConfig().linkedinPendingCheckedFor === `${pending}:${state.completedAt}`,
     expiresAt: state.expiresAt,
   };
 }

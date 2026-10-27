@@ -138,6 +138,7 @@ const {
   ensureLinkedInProfile,
   cancelLinkedInLogin,
   finishLinkedInLogin,
+  linkedinLoginState,
   linkedinProfileCacheKey,
   newLinkedInLoginLink,
   linkedinSessionState,
@@ -442,6 +443,18 @@ describe("startLinkedInLogin / finishLinkedInLogin", () => {
     expect(r.loggedIn).toBe(false);
     expect(linkedinSessionState()).toBe("ok");
     expect(cfg["linkedinBrowserProfileId"]).toBe("prof_existing");
+  });
+
+  it("a Done already checked is reported as checked, so Setup never re-runs the paid check by itself", async () => {
+    await startLinkedInLogin(ctx);
+    setupCompletedAt = "2026-09-14T10:05:00.000Z";
+    expect(await linkedinLoginState(ctx)).toMatchObject({ pending: true, checked: false });
+    browserOutput = { loggedIn: false };
+    expect((await finishLinkedInLogin(ctx)).loggedIn).toBe(false);
+    expect(await linkedinLoginState(ctx)).toMatchObject({ pending: true, checked: true });
+    // A second Done on the same profile is a new completion: unchecked again.
+    setupCompletedAt = "2026-09-14T10:09:00.000Z";
+    expect(await linkedinLoginState(ctx)).toMatchObject({ pending: true, checked: false });
   });
 
   it("a sign-in cancelled or replaced while being checked is never promoted", async () => {

@@ -360,15 +360,17 @@ export function LinkedInConnect({
   };
 
   // Done pressed on the sign-in page: verify once per Done, unless a check
-  // is already running.
+  // is already running or one already ran for it (the server remembers, so a
+  // reload or a second tab never repeats a paid check).
   const completedAt = pendingState?.completedAt ?? null;
+  const checked = pendingState?.checked === true;
   useEffect(() => {
-    if (!completedAt || finishedFor.current === completedAt || done.isPending) return;
+    if (!completedAt || checked || finishedFor.current === completedAt || done.isPending) return;
     finishedFor.current = completedAt;
     done.mutate();
     // done is stable; only a new Done starts a check.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [completedAt]);
+  }, [completedAt, checked]);
 
   const busy =
     start.isPending ||
