@@ -401,6 +401,18 @@ describe("the connection request", () => {
     expect(calls).toEqual([]);
   });
 
+  it("holds a note that still puts the founder in the reader's batch after repair", async () => {
+    noteText = "Hey Dana, in YC F26 as well. How are you handling review?";
+    emailCadenceRunOut();
+    const preview = await previewCadenceStep({ prospectId, playName: PLAY });
+    if ("waiting" in preview || "skipped" in preview)
+      throw new Error("the invite step never waits");
+    expect(preview.flags).toContainEqual(expect.stringMatching(/^shared-cohort: /));
+    const out = await run(inviteOk());
+    expect(out.action).toBe("skipped");
+    expect(calls).toEqual([]);
+  });
+
   it("stores on the invite whether its note carried an evidence clause, as drafted (#792)", async () => {
     // Email intro with a repo signal: the note is drafted with a clause.
     ledger.recordSequenceEvent({
@@ -1090,6 +1102,16 @@ describe("already connected: the messages are written knowing it", () => {
     // "one open question … no pitch" contradicts the offer-first first message.
     expect(section).toMatch(/every rule for the first and last message below still holds\./);
     expect(section).not.toMatch(/one open question|no pitch/);
+  });
+
+  it("both LinkedIn prompts say the founder is in no program unless SENDER_COHORT says so", () => {
+    for (const name of ["linkedin-message.md", "linkedin-invite-note.md"]) {
+      const prompt = readFileSync(join(import.meta.dirname, "..", "..", "prompts", name), "utf8");
+      expect(prompt, name).toMatch(/^- `SENDER_COHORT` \(optional, usually absent\): /m);
+      const section = prompt.split("## You are in no program")[1]!.split("\n## ")[0]!;
+      expect(section, name).toMatch(/never a program the founder is in/);
+      expect(section, name).toMatch(/no subject/);
+    }
   });
 });
 

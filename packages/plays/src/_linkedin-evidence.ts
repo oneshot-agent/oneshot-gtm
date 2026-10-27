@@ -678,6 +678,107 @@ export function lintAlreadyConnected(text: string): string[] {
   );
 }
 
+/**
+ * An accelerator, a batch code (W26, F26, P25) or a program slug ("antler-2026"):
+ * what a sentence names when it puts someone in a cohort.
+ */
+const PROGRAM = String.raw`YC|Y\s*Combinator|Antler|Techstars|500\s+Global|Entrepreneur\s+First|South\s+Park\s+Commons|HF0|speedrun`;
+const BATCH_CODE = String.raw`[WSFXP]\d{2}|(?!(?:mid|early|late)-)[a-z]{3,}-20\d\d`;
+const COHORT = String.raw`(?:${PROGRAM}|${BATCH_CODE}|(?:the|same|this)\s+(?:batch|cohort|accelerator))\b`;
+
+/**
+ * Wording that puts the sender inside the reader's program. The reader's
+ * cohort is how they were found, never a room the sender was in; to them a
+ * claimed shared batch is a lie checked in one click.
+ */
+const SHARED_COHORT_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
+  [
+    "fellow / batchmate",
+    // Built from the same program and batch lists as COHORT, so the two never drift.
+    new RegExp(
+      String.raw`\b(?:fellow\s+(?:founders?|${PROGRAM}|batch|cohort|alums?)|batch-?mates?|cohort-?mates?|(?:our|same)\s+(?:(?:${PROGRAM}|${BATCH_CODE}|20\d\d)\s+){0,2}(?:batch|cohort))\b`,
+      "i",
+    ),
+  ],
+  // "I'm in YC F26", "we went through Antler", "we're both in the batch",
+  // "we're both YC F26 founders", "I'm a YC F26 founder".
+  [
+    "first person in a cohort",
+    new RegExp(
+      String.raw`\b(?:(?:i'?m|i\s+am|we'?re|we\s+are|i\s+was|we\s+were|both)\b[^.?!\n]{0,20}\b(?:in|through|from|part\s+of)|(?:i|we)\s+(?:did|joined|went\s+through)|(?:i'?m|i\s+am|we'?re|we\s+are|i\s+was|we\s+were)(?:\s+(?:both|also|an?))*)\s+(?:the\s+)?${COHORT}`,
+      "i",
+    ),
+  ],
+  // "in antler-2026 as well", "in YC F26 too": the "too" is the sender.
+  [
+    "in it too",
+    new RegExp(
+      String.raw`\bin\s+(?:the\s+)?${COHORT}[^.?!\n]{0,15}\b(?:as\s+well|too|also)\b`,
+      "i",
+    ),
+  ],
+  // A sentence with no subject that opens on the cohort ("Hey Vinod, in YC
+  // F26 currently.") reads as the sender's own status.
+  [
+    "subjectless cohort",
+    new RegExp(
+      String.raw`(?:^|[.!?\n])\s*(?:(?:hey|hi|hello)\s+[^,.!?\n]{1,40}[,!]\s*)?(?:currently\s+|also\s+)?in\s+(?:the\s+)?${COHORT}`,
+      "i",
+    ),
+  ],
+];
+
+/** Lowercase letters and digits, with "Y Combinator" spelled as its "YC". */
+const alnum = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .replace(/ycombinator/g, "yc");
+
+/** A program or batch named in a sentence: "YC", "W25", "antler-2026". */
+const BATCH_NAME_RX = new RegExp(String.raw`\b(?:${PROGRAM}|${BATCH_CODE}|20\d\d)\b`, "gi");
+
+/** The whole sentence holding `index`; a delimiter at `index` ends the sentence before. */
+function sentenceAt(text: string, index: number): string {
+  const from = /[.?!\n]/.test(text[index] ?? "") ? index + 1 : index;
+  const start = Math.max(...[".", "?", "!", "\n"].map((d) => text.lastIndexOf(d, from - 1))) + 1;
+  return cutAt(text.slice(start), /[.?!\n]/);
+}
+
+/**
+ * Wording that claims the reader's batch as a shared one. A sender in no
+ * program (`founderCohort` unset) may make no such claim; one who did a
+ * program may claim only that one, named so it can be checked: "I'm in YC F26
+ * too" is still flagged for a W25 alum, and so is an unnamed "fellow YC".
+ */
+export function lintSharedCohort(text: string, founderCohort?: string | null): string[] {
+  const own = founderCohort?.trim() ?? "";
+  const parts = own
+    .split(/[^a-z0-9]+/i)
+    .map(alnum)
+    .filter(Boolean);
+  // A sentence passes when it names the sender's own batch and no other one:
+  // "fellow YC F26 founders, though mine is YC W25" names two.
+  const namesOwn = (claim: string) =>
+    parts.length > 0 &&
+    parts.every((part) => alnum(claim).includes(part)) &&
+    [...claim.matchAll(BATCH_NAME_RX)].every(
+      (m) => parts.includes(alnum(m[0])) || alnum(m[0]) === alnum(own),
+    );
+  // Every claim counts, judged on its whole sentence: "fellow YC W25 founder"
+  // matches on "fellow YC" and names its batch after, and "you're in YC F26
+  // and I'm in YC W25 too" names another before.
+  return SHARED_COHORT_RX.filter(([, rx]) =>
+    [...text.matchAll(new RegExp(rx.source, `${rx.flags}g`))].some(
+      (m) => !namesOwn(sentenceAt(text, m.index)),
+    ),
+  ).map(([label]) =>
+    own
+      ? `shared-cohort: "${label}" — claims a program other than the sender's own (${own})`
+      : `shared-cohort: "${label}" — the sender is in no program; their cohort is how they were found`,
+  );
+}
+
 const clean = (s: string) => s.trim().replace(/^"|"$/g, "");
 
 const SAW_YOU_RX = /\b(?:saw|noticed|spotted|seen)\s+(?:that\s+)?you\b/gi;

@@ -117,6 +117,16 @@ describe("draftLinkedInNote", () => {
     expect(completeInputs.at(-1)).not.toContain("EVIDENCE_CLAUSE");
     expect(without.evidenceClause).toBe(false);
   });
+
+  it("holds a note that puts the founder in the reader's batch, after one repair turn", async () => {
+    modelNote = "Hey Dana, in YC F26 as well. How are you handling review?";
+    const note = await draftLinkedInNote(row());
+    expect(completeInputs).toHaveLength(2);
+    expect(completeInputs[0]).not.toContain("SENDER_COHORT");
+    expect(note.flags).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^shared-cohort: "in it too"/)]),
+    );
+  });
 });
 
 describe("sendLinkedInInvite", () => {

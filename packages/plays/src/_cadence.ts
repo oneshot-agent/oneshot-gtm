@@ -64,6 +64,7 @@ import {
   lintAlreadyConnected,
   lintLinkedInClose,
   lintLinkedInFirstMessage,
+  lintSharedCohort,
   profileViewReader,
   readerRole,
   type LiveProfileReader,
@@ -3786,6 +3787,7 @@ async function buildLinkedInMessage(
   });
   const lines = [
     `FOUNDER: ${ctx.cfg.founderName ?? ""}`,
+    ...(ctx.cfg.founderCohort?.trim() ? [`SENDER_COHORT: ${ctx.cfg.founderCohort.trim()}`] : []),
     `PRODUCT: ${ctx.cfg.productOneLiner ?? ""}`,
     ...(which === "last" ? [`PRODUCT_BRIEF: ${productBriefText(ctx.cfg) ?? "(none)"}`] : []),
     ...(offerLines ? [offerLines] : []),
@@ -3832,6 +3834,7 @@ async function buildLinkedInMessage(
       // The prompt tells the model not to thank them for connecting; this holds
       // it to that, through a repair round, on the already-connected path only.
       ...(alreadyConnected ? lintAlreadyConnected(text) : []),
+      ...lintSharedCohort(text, ctx.cfg.founderCohort),
     ],
     maxTokens: 700,
   });

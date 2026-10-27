@@ -38,6 +38,7 @@ const {
   lintLinkedInClose,
   lintLinkedInFirstMessage,
   lintLinkedInNote,
+  lintSharedCohort,
   profileViewReader,
   readerRole,
   storedFounderCompany,
@@ -713,5 +714,79 @@ describe("lintAlreadyConnected", () => {
     ]) {
       expect(lintAlreadyConnected(text), text).toEqual([]);
     }
+  });
+});
+
+describe("lintSharedCohort", () => {
+  it("flags wording that puts the sender in the reader's program", () => {
+    for (const [text, label] of [
+      [
+        "Hey Vinod, in YC F26 currently. How are you handling tool guardrails?",
+        "subjectless cohort",
+      ],
+      ["Hey Sparsh, in antler-2026 as well. Where does access policy live?", "in it too"],
+      ["Hey Ana, in YC F26 with Acme. Where does state live?", "subjectless cohort"],
+      ["I'm in YC W26 too, so figured I'd ask.", "first person in a cohort"],
+      ["We went through Antler last year. How do you run evals?", "first person in a cohort"],
+      ["We're both in the batch, so how do you handle state?", "first person in a cohort"],
+      ["Fellow YC founder here. How do you test agents?", "fellow / batchmate"],
+      ["Same cohort, different problem: where does state live?", "fellow / batchmate"],
+      ["We're both YC F26 founders — what are you building?", "first person in a cohort"],
+      ["Our YC F26 batch is building agents. What are you on?", "fellow / batchmate"],
+      ["Our YC P25 batch is building agents. What are you on?", "fellow / batchmate"],
+      ["Fellow speedrun founder here. How do you run evals?", "fellow / batchmate"],
+      ["I'm a YC F26 founder too. How do you run evals?", "first person in a cohort"],
+    ] as const) {
+      expect(lintSharedCohort(text), text).toEqual(
+        expect.arrayContaining([expect.stringMatching(new RegExp(`^shared-cohort: "${label}"`))]),
+      );
+    }
+  });
+
+  it("leaves the reader's own cohort, said about them, alone", () => {
+    for (const text of [
+      "Hey Aziz, you're in YC F26 with Acme. Is the integration the drag?",
+      "Hey Ram, found you in the YC F26 list. Where does state live when tasks drag out?",
+      "Your batch is heavy on agents. How are you handling guardrails?",
+      "In mid-2026 as well as now, evals are the hard part. How do you run them?",
+      "In batch processing, retries pile up. How do you handle them?",
+      "Our nightly batch jobs kept timing out. How do you schedule yours?",
+      "We're seeing every agent team hit state persistence. Where do you keep it?",
+    ]) {
+      expect(lintSharedCohort(text), text).toEqual([]);
+    }
+  });
+
+  it("lets a sender who did a program claim that one, by name, and no other", () => {
+    expect(
+      lintSharedCohort("Fellow YC W25 founder here. How do you test agents?", "yc-w25"),
+    ).toEqual([]);
+    expect(lintSharedCohort("I did YC W25 as well. How do you run evals?", "yc-w25")).toEqual([]);
+    expect(lintSharedCohort("I'm in YC F26 too. How do you run evals?", "yc-w25")).toEqual(
+      expect.arrayContaining([expect.stringMatching(/other than the sender's own \(yc-w25\)/)]),
+    );
+    // A claim to the sender's own batch doesn't excuse a second to another.
+    expect(
+      lintSharedCohort("Fellow YC W25 founder here. Fellow YC F26 founder here.", "yc-w25"),
+    ).not.toEqual([]);
+    // Nor does naming it later in the same sentence as another.
+    expect(
+      lintSharedCohort("Fellow YC F26 founders, although my cohort is YC W25.", "yc-w25"),
+    ).not.toEqual([]);
+    expect(lintSharedCohort("We're both in antler-2026. What are you on?", "antler-2026")).toEqual(
+      [],
+    );
+    // Every program the lint knows counts, and the whole sentence is read.
+    expect(lintSharedCohort("I'm in YC W25 and also in speedrun.", "yc-w25")).not.toEqual([]);
+    expect(lintSharedCohort("You're in YC F26 and I'm in YC W25 too.", "yc-w25")).not.toEqual([]);
+    expect(
+      lintSharedCohort("We're both YC P25 founders, but I'm in YC W25.", "yc-w25"),
+    ).not.toEqual([]);
+    expect(lintSharedCohort("I'm in Y Combinator W25 as well.", "yc-w25")).toEqual([]);
+    // A subjectless match opens on the previous sentence's full stop.
+    expect(lintSharedCohort("Hey Ana. In YC W25 as well, how are evals?", "yc-w25")).toEqual([]);
+    // Unnamed, it can't be checked against the sender's own batch.
+    expect(lintSharedCohort("Fellow YC founder here.", "yc-w25")).not.toEqual([]);
+    expect(lintSharedCohort("Fellow YC founder here.", "  ")).not.toEqual([]);
   });
 });
