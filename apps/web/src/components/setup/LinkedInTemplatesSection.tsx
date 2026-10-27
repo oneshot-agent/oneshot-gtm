@@ -78,7 +78,10 @@ export function LinkedInTemplatesSection({ cfg, onDirtyChange }: SectionProps) {
               </div>
             ) : (
               <div className="font-mono text-[11px] text-[color:var(--ink-blocked-2)]">
-                can't fill {example.missing.map((m) => `{${m}}`).join(", ")}
+                can't fill{" "}
+                {example.missing
+                  .map((m) => (m === "braces" ? "a stray { or }" : `{${m}}`))
+                  .join(", ")}
               </div>
             )}
           </div>

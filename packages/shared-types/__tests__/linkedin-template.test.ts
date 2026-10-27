@@ -83,6 +83,13 @@ describe("templateProblems", () => {
       "unknown placeholder {first.name}",
     ]);
     expect(renderLinkedInTemplate("Hi {First_Name}", dana)).toEqual({ missing: ["First_Name"] });
+    // Anything else brace-wrapped, or a lone brace, is refused and never sent.
+    for (const text of ["Hi {first name}", "Hi {first_name", "Hi first_name}", "Hi {}"]) {
+      expect(templateProblems("note", text), text).toEqual([
+        "a { or } that isn't part of a placeholder such as {first_name}",
+      ]);
+      expect(renderLinkedInTemplate(text, dana), text).toEqual({ missing: ["braces"] });
+    }
   });
 
   it("lists placeholders once, in order", () => {

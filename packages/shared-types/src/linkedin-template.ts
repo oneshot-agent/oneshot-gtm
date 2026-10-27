@@ -120,6 +120,11 @@ export function templatePlaceholders(template: string): string[] {
 }
 
 /** Why a workspace's text for a step can't be saved, or nothing. */
+/** A brace left once every well-formed `{name}` is taken out: a mistyped placeholder. */
+function strayBrace(template: string): boolean {
+  return /[{}]/.test(template.replace(PLACEHOLDER_RX, ""));
+}
+
 export function templateProblems(step: LinkedInTemplateStep, template: string): string[] {
   const field = LINKEDIN_TEMPLATE_FIELDS.find((f) => f.step === step);
   if (!field) return [`unknown step ${step}`];
@@ -131,6 +136,8 @@ export function templateProblems(step: LinkedInTemplateStep, template: string): 
     else if (!field.placeholders.includes(name as LinkedInTemplatePlaceholder))
       problems.push(`{${name}} can't be used in "${field.label}"`);
   }
+  if (strayBrace(template))
+    problems.push("a { or } that isn't part of a placeholder such as {first_name}");
   return problems;
 }
 
@@ -182,6 +189,8 @@ export function renderLinkedInTemplate(
     return value;
   });
   if (missing.length > 0) return { missing };
+  // Never send braces: a mistyped placeholder ({first name}) leaves the template unfilled.
+  if (strayBrace(text)) return { missing: ["braces"] };
   const out = filled.trim();
   return out ? { text: out } : { missing: ["text"] };
 }
