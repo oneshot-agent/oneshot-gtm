@@ -17,8 +17,8 @@ import {
   type BusinessFindResult,
   type BusinessResolveResult,
   type RecordSolicitationsFindResult,
-  type InboxEmail,
-  type InboxListResult,
+  type InboxEmail as SdkInboxEmail,
+  type InboxListResult as SdkInboxListResult,
   type PersonFindResult as PeopleSearchResult,
   type PersonPostsResult as PersonNewsfeedResult,
   type ResearchResult,
@@ -2003,6 +2003,27 @@ async function listOneShotInbox(opts?: {
 }
 
 /**
+ * The SDK's provenance fields on a OneShot-mailbox read (SDK 0.61): bodies
+ * filtered of hidden content (`hidden_removed` counts what went),
+ * `authenticated`, and the `untrusted_content` marker. Gmail and keyed
+ * mailboxes do not report them, so GTM's inbox shapes carry them optionally.
+ */
+type InboxProvenance = "hidden_removed" | "authenticated" | "untrusted_content";
+
+/** One inbound email from any source (OneShot mailbox, Gmail, keyed mailbox). */
+export type InboxEmail = Omit<SdkInboxEmail, InboxProvenance> &
+  Partial<Pick<SdkInboxEmail, InboxProvenance>>;
+
+/** A page of inbound email from any source; see `InboxEmail`. */
+export type InboxListResult = Omit<
+  SdkInboxListResult,
+  "emails" | "hidden_removed" | "untrusted_content"
+> &
+  Partial<Pick<SdkInboxListResult, "hidden_removed" | "untrusted_content">> & {
+    emails: InboxEmail[];
+  };
+
+/**
  * InboxEmail plus local-only annotations: `message_id` (RFC 2822, Gmail
  * sources only: needed for In-Reply-To on a threaded reply) and
  * `source_identity_id` (which sender identity's mailbox received it. A reply
@@ -2018,7 +2039,7 @@ export type AnnotatedInboxEmail = InboxEmail & {
   auto_submitted?: boolean;
 };
 
-export interface AnnotatedInboxListResult extends InboxListResult {
+export type AnnotatedInboxListResult = Omit<InboxListResult, "emails"> & {
   emails: AnnotatedInboxEmail[];
   /**
    * Sources that errored this fetch (multi-source only; a lone source throws).
@@ -2026,7 +2047,7 @@ export interface AnnotatedInboxListResult extends InboxListResult {
    * or the failed mailbox's replies fall into a gap the next poll skips.
    */
   failed_sources?: string[];
-}
+};
 
 /**
  * Ensure an inbound email has a readable `body`, falling back to a de-tagged
@@ -2496,18 +2517,25 @@ export interface BrowserProfile {
 export type BrowserCookie = SdkBrowserCookie;
 
 /**
- * An interactive login session on a profile: `liveUrl` is a private hosted
- * browser the founder logs in through (2FA included); treat it as a
- * credential and never log it. `status` is `created` / `running` / `idle`
- * (ready for the login) or a failure state; the session expires after
- * fifteen minutes.
+ * An interactive login session on a profile. `setupUrl` is a single-use
+ * OneShot page for the account's owner: it opens once and stops opening ten
+ * minutes after it was minted (`setupUrlExpiresAt`); treat it as a credential
+ * and never log or persist it. Only start and a fresh link return one; a
+ * status read never does. The owner signs in (2FA included) and presses Done
+ * on that page, which saves the session and sets `completedAt`. `status` is
+ * `created` / `running` / `idle` (ready for the login), or a state that ended
+ * the setup (`expired`, `no_setup`, `stopped`, a failure); the setup itself
+ * expires fifteen minutes after start (`expiresAt`).
  */
 export interface BrowserProfileSetupState {
   profileId: string;
   status: string;
-  liveUrl: string | null;
+  setupUrl: string | null;
+  setupUrlExpiresAt: string | null;
+  /** Set once the owner pressed Done on the setup page; null while the setup is open. */
+  completedAt: string | null;
   expiresAt: string | null;
-  /** After finish: the cookie names the platform stored for the profile. */
+  /** The cookie names the platform stored for the profile, when it reports them. */
   storedCookies: Array<{ name: string; domain: string; path: string }>;
 }
 
@@ -2515,9 +2543,23 @@ function setupState(s: BrowserProfileSetup): BrowserProfileSetupState {
   return {
     profileId: s.profile_id,
     status: s.status,
-    liveUrl: s.live_url ?? null,
+    setupUrl: s.setup_url ?? null,
+    setupUrlExpiresAt: s.setup_url_expires_at ?? null,
+    completedAt: s.completed_at ?? null,
     expiresAt: s.expires_at ?? null,
     storedCookies: s.stored_cookies ?? [],
+  };
+}
+
+function demoSetupState(profileId: string, status: string): BrowserProfileSetupState {
+  return {
+    profileId,
+    status,
+    setupUrl: null,
+    setupUrlExpiresAt: null,
+    completedAt: null,
+    expiresAt: null,
+    storedCookies: [],
   };
 }
 
@@ -2559,7 +2601,8 @@ export function browserTaskCost(result: BrowserResult): number | undefined {
 
 /**
  * Browser profiles: create / list / delete, plus the interactive login flow
- * (start → the founder logs in through `liveUrl` → finish). Signed reads on
+ * (start → the owner signs in on `setupUrl` and presses Done there → poll
+ * status until `completedAt`). Signed reads on
  * the platform, no quote and no receipt, so they are logged as events
  * instead. A profile created with `cookies` starts logged in wherever those
  * cookies are valid; the values never appear in task prompts or receipts.
@@ -2598,14 +2641,14 @@ export async function deleteBrowserProfile(profileId: string, ctx: CallContext):
   logEvent("browser.profile.deleted", { play: ctx.playName, profile_id: profileId });
 }
 
-/** Open a hosted browser on `startUrl` for the founder to log in through ($0.30 allowance per login). */
+/** Open a hosted browser on `startUrl` for the owner to sign in through ($0.30 allowance per login). */
 export async function startBrowserProfileSetup(
   profileId: string,
   startUrl: string,
   ctx: CallContext,
 ): Promise<BrowserProfileSetupState> {
   if (demoMode()) {
-    return { profileId, status: "idle", liveUrl: null, expiresAt: null, storedCookies: [] };
+    return demoSetupState(profileId, "idle");
   }
   const agent = await getAgent();
   const state = setupState(await agent.startBrowserProfileSetup(profileId, startUrl));
@@ -2623,19 +2666,44 @@ export async function getBrowserProfileSetup(
 ): Promise<BrowserProfileSetupState> {
   void ctx;
   if (demoMode()) {
-    return { profileId, status: "idle", liveUrl: null, expiresAt: null, storedCookies: [] };
+    return demoSetupState(profileId, "idle");
   }
   const agent = await getAgent();
   return setupState(await agent.getBrowserProfileSetup(profileId));
 }
 
-/** Close the login session and save its state into the profile; call after the login (and 2FA) is done. */
+/**
+ * Mint a fresh single-use `setupUrl` for the profile's open setup; the earlier
+ * link and any page it opened stop working. With no open setup, `startUrl`
+ * starts one; without it the platform answers 409 `no_setup`.
+ */
+export async function createBrowserProfileSetupLink(
+  profileId: string,
+  ctx: CallContext,
+  startUrl?: string,
+): Promise<BrowserProfileSetupState> {
+  if (demoMode()) return demoSetupState(profileId, "idle");
+  const agent = await getAgent();
+  const state = setupState(await agent.createBrowserProfileSetupLink(profileId, startUrl));
+  logEvent("browser.profile.setup_link", {
+    play: ctx.playName,
+    profile_id: profileId,
+    status: state.status,
+  });
+  return state;
+}
+
+/**
+ * Close the login session and save its state into the profile on the owner's
+ * behalf. Not needed when the owner pressed Done on the setup page, which
+ * saves the session itself.
+ */
 export async function finishBrowserProfileSetup(
   profileId: string,
   ctx: CallContext,
 ): Promise<BrowserProfileSetupState> {
   if (demoMode()) {
-    return { profileId, status: "finished", liveUrl: null, expiresAt: null, storedCookies: [] };
+    return demoSetupState(profileId, "finished");
   }
   const agent = await getAgent();
   const state = setupState(await agent.finishBrowserProfileSetup(profileId));
@@ -2648,15 +2716,7 @@ export async function finishBrowserProfileSetup(
   return state;
 }
 
-export type {
-  BrowserResult,
-  InboxEmail,
-  InboxListResult,
-  SmsSendResult,
-  VoiceCallResult,
-  WebReadResult,
-  WebSearchResult,
-};
+export type { BrowserResult, SmsSendResult, VoiceCallResult, WebReadResult, WebSearchResult };
 
 export function receiptUrlForId(receiptId: number): string {
   return `local://receipt/${receiptId}`;

@@ -10,8 +10,9 @@ import { linkedInConnectionView } from "./linkedinConnection.ts";
  * can view profiles (`reads.via === "account"`): one sign-in covers both,
  * and the line counts today's reads against the daily cap. Without such an
  * account, reads fall back to a browser session per workspace, a second
- * sign-in that ends with the founder's Done. Connect runs whichever sign-ins
- * are missing, messaging first because it completes on its own.
+ * sign-in that ends when the founder presses Done on the sign-in page.
+ * Connect runs whichever sign-ins are missing, messaging first because it
+ * completes on its own.
  *
  * Kept pure so the copy is testable; the component only wires the calls.
  */
@@ -76,7 +77,8 @@ export function linkedinCardView(args: {
   /** Why the list failed to load, when it did. */
   accountsError?: string | null;
   step: CardStep;
-  liveUrl: string | null;
+  /** The sign-in link this page minted, while its login is open. */
+  setupUrl: string | null;
   /** What reads go through, from `/setup`; `null` from a server that predates it. */
   reads?: LinkedInReadsView | null;
 }): LinkedInCardView {
@@ -86,7 +88,7 @@ export function linkedinCardView(args: {
   const r = linkedinView(
     args.cfg,
     args.cookieSet,
-    Boolean(args.liveUrl) || args.step === "research",
+    Boolean(args.setupUrl) || args.step === "research",
   );
 
   const messaging = {

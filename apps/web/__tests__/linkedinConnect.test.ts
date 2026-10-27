@@ -51,12 +51,21 @@ describe("linkedinView", () => {
 });
 
 describe("doneFailureCopy", () => {
-  it("keeps the server's 'not signed in yet' sentence and adds the next step otherwise", () => {
+  it("keeps the server's sentence when it already says what to do, and adds the next step otherwise", () => {
     expect(
-      doneFailureCopy("not signed in yet — finish signing in in the LinkedIn tab, then click Done"),
-    ).toBe("not signed in yet — finish signing in in the LinkedIn tab, then click Done.");
+      doneFailureCopy(
+        "not signed in yet — sign in to LinkedIn on the page that opened, then press Done there",
+      ),
+    ).toBe(
+      "not signed in yet — sign in to LinkedIn on the page that opened, then press Done there.",
+    );
+    expect(
+      doneFailureCopy(
+        "the sign-in page closed before Done was pressed — get a new link and sign in again",
+      ),
+    ).toBe("the sign-in page closed before Done was pressed — get a new link and sign in again.");
     expect(doneFailureCopy("LinkedIn showed the login page")).toContain(
-      "click Done again, or start over",
+      "Get a new sign-in link, sign in and press Done on that page, or start over",
     );
     expect(doneFailureCopy(null)).toContain("no signed-in member");
   });

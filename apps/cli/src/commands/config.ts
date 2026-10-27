@@ -13,8 +13,11 @@ import {
   connectLinkedInWithCookie,
   finishLinkedInLogin,
   linkedinCookie,
+  linkedinLoginState,
   linkedinSessionState,
+  newLinkedInLoginLink,
   startLinkedInLogin,
+  type LinkedInLoginStart,
 } from "@oneshot-gtm/find";
 import { withXEngine, type XEngine } from "@oneshot-gtm/shared-types";
 import prompts from "prompts";
@@ -324,9 +327,10 @@ export async function configXEngine(engineArg?: string): Promise<void> {
  * `config linkedin-session`: connect the founder's LinkedIn session to a
  * OneShot browser profile so person research can read live profiles. With
  * `LINKEDIN_SESSION_COOKIE` set the cookie is imported into a fresh profile;
- * otherwise the platform opens a hosted browser on the login page, the
- * founder logs in there (2FA included) and confirms here, and the session
- * is saved into the profile. Either way the session is then verified.
+ * otherwise the platform opens a hosted browser on the login page behind a
+ * single-use sign-in link, the founder signs in there (2FA included) and
+ * presses Done on that page, which saves the session into the profile.
+ * Either way the session is then verified.
  */
 export async function configLinkedInSession(opts: { login?: boolean } = {}): Promise<void> {
   header("LinkedIn session (live profile reads)");
@@ -360,26 +364,45 @@ export async function configLinkedInSession(opts: { login?: boolean } = {}): Pro
       return;
     }
     note(c.dim("opening a hosted browser on the LinkedIn login page ($0.30 platform allowance)…"));
-    const started = await startLinkedInLogin(ctx);
-    note(
-      `Log in to LinkedIn (2FA included) in this private browser:\n  ${c.cyan(started.liveUrl ?? "")}`,
-    );
-    if (started.expiresAt) note(c.dim(`the login browser closes at ${started.expiresAt}`));
+    const showLink = (link: LinkedInLoginStart) => {
+      note(
+        `Sign in to LinkedIn (2FA included) on this page, then press Done there:\n  ${c.cyan(link.setupUrl)}`,
+      );
+      note(
+        c.dim(
+          `the link opens once${link.setupUrlExpiresAt ? ` and stops opening at ${link.setupUrlExpiresAt}` : ""}${link.expiresAt ? `; the login closes at ${link.expiresAt}` : ""}`,
+        ),
+      );
+    };
+    showLink(await startLinkedInLogin(ctx));
     // The open login belongs to this profile; a rerun would start another
     // billed one, so stay here until it is done or given up.
     for (;;) {
       const { next } = await prompts({
         type: "select",
         name: "next",
-        message: "Finished logging in?",
+        message: "Pressed Done on the sign-in page?",
         choices: [
-          { title: "Yes — save the session", value: "done" },
+          { title: "Yes — check the session", value: "done" },
           { title: "Not yet — ask me again", value: "wait" },
+          { title: "Send me a new link (the old one stops working)", value: "link" },
           { title: "Give up this login", value: "abandon" },
         ],
         initial: 0,
       });
-      if (next === "done") break;
+      if (next === "done") {
+        const state = await linkedinLoginState(ctx);
+        if (state.pending && state.completedAt) break;
+        note(
+          "OneShot has not seen Done yet — sign in on the page, press Done there, or ask for a new link",
+        );
+        continue;
+      }
+      if (next === "link") {
+        note(c.dim("minting a new sign-in link…"));
+        showLink(await newLinkedInLoginLink(ctx));
+        continue;
+      }
       if (next !== "wait") {
         note(
           "login abandoned — the hosted browser closes on its own; run this again to start a new one",
@@ -387,7 +410,7 @@ export async function configLinkedInSession(opts: { login?: boolean } = {}): Pro
         return;
       }
     }
-    note(c.dim("saving the session into the profile and checking the feed… about a minute"));
+    note(c.dim("checking the saved session's feed… about a minute"));
     report(await finishLinkedInLogin(ctx));
   } catch (err) {
     note(

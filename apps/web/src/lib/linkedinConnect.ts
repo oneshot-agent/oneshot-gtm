@@ -26,8 +26,8 @@ export interface LinkedInView {
 }
 
 /**
- * `pendingHere`. A sign-in this page started (the live URL is in memory);
- * the server's pending id also counts, so a reload mid-login resumes with
+ * `pendingHere`. A sign-in this page started (its link is in memory); the
+ * server's pending id also counts, so a reload mid-login resumes waiting for
  * Done instead of starting over.
  */
 export function linkedinView(
@@ -40,7 +40,8 @@ export function linkedinView(
   if (pending) {
     return {
       phase: "signing-in",
-      headline: "Sign in to LinkedIn in the tab that opened, then click Done.",
+      headline:
+        "Sign in to LinkedIn in the tab that opened, then press Done on that page. This card picks it up on its own.",
       primary: "done",
       ok: verified && !cfg.linkedinSessionInvalidAt,
     };
@@ -73,13 +74,13 @@ export function linkedinView(
 }
 
 /**
- * What to tell the founder after a Done click that did not verify. The
+ * What to tell the founder after a sign-in check that did not verify. The
  * server's reason is already a sentence; keep it, and add the one thing
- * they can do about it.
+ * they can do about it when the reason does not already say it.
  */
 export function doneFailureCopy(reason: string | null): string {
   const base = reason ?? "LinkedIn showed no signed-in member";
-  return /not signed in yet/i.test(base)
+  return /not signed in yet|new link/i.test(base)
     ? `${base}.`
-    : `${base}. Finish signing in in the LinkedIn tab and click Done again, or start over.`;
+    : `${base}. Get a new sign-in link, sign in and press Done on that page, or start over.`;
 }

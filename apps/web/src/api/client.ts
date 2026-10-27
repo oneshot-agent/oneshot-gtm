@@ -156,6 +156,16 @@ export interface LinkedInSessionOutcome {
   checkedAt: string;
 }
 
+/** A single-use LinkedIn sign-in link: opens once, stops opening at `setupUrlExpiresAt`. */
+export interface LinkedInLoginLink {
+  ok: boolean;
+  profileId: string;
+  setupUrl: string;
+  setupUrlExpiresAt: string | null;
+  status: string;
+  expiresAt: string | null;
+}
+
 export const api = {
   onboarding: () => getJson<OnboardingStatus>("/onboarding"),
   deferOnboarding: () => postJson<OnboardingStatus>("/onboarding/defer", {}),
@@ -448,18 +458,14 @@ export const api = {
   /**
    * Connect LinkedIn for live profile reads. Two ways in: import the stored
    * li_at cookie into a fresh OneShot browser profile, or open a hosted
-   * browser on the login page (the returned liveUrl is a credential: shown
-   * to the founder, never logged) and finish once the login is done.
+   * browser on the login page behind a single-use sign-in link (a
+   * credential: shown to the founder, never logged). The founder presses
+   * Done on that page; the state poll sees `completedAt`, then finish
+   * verifies. `newLinkedInLoginLink` replaces a link that expired or was used.
    */
   connectLinkedInSession: () => postJson<LinkedInSessionOutcome>("/setup/linkedin-session", {}),
-  startLinkedInLogin: () =>
-    postJson<{
-      ok: boolean;
-      profileId: string;
-      liveUrl: string | null;
-      status: string;
-      expiresAt: string | null;
-    }>("/setup/linkedin-login/start", {}),
+  startLinkedInLogin: () => postJson<LinkedInLoginLink>("/setup/linkedin-login/start", {}),
+  newLinkedInLoginLink: () => postJson<LinkedInLoginLink>("/setup/linkedin-login/link", {}),
   finishLinkedInLogin: () => postJson<LinkedInSessionOutcome>("/setup/linkedin-login/finish", {}),
   cancelLinkedInLogin: () =>
     postJson<{ ok: boolean; cancelled: boolean }>("/setup/linkedin-login/cancel", {}),
@@ -470,8 +476,10 @@ export const api = {
           ok: boolean;
           pending: true;
           profileId: string;
-          liveUrl: string | null;
           status: string;
+          completedAt: string | null;
+          /** A check already ran for this Done (on any page); only "Check sign-in" runs another. */
+          checked: boolean;
           expiresAt: string | null;
         }
     >("/setup/linkedin-login/state"),

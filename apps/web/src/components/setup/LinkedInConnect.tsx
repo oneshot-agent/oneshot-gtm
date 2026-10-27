@@ -23,7 +23,7 @@ import { Button } from "../primitives/Button.tsx";
  * The tab that will hold the hosted sign-in, opened during the click and
  * given a waiting page while the platform boots the browser. Same-origin
  * `about:blank`, so writing into it is allowed; the later navigation to the
- * live URL replaces it.
+ * sign-in link replaces it.
  */
 function openWaitingTab(): Window | null {
   try {
@@ -33,8 +33,8 @@ function openWaitingTab(): Window | null {
       "<!doctype html><title>Opening LinkedIn sign-in…</title>" +
         '<body style="font:15px/1.5 system-ui,sans-serif;color:#1c2128;background:#f5f6f3;margin:0;display:grid;place-items:center;height:100vh">' +
         '<div style="max-width:32rem;padding:24px"><p><strong>Opening the LinkedIn sign-in…</strong></p>' +
-        "<p>The hosted browser takes up to a minute to start. Keep this tab open; it will show LinkedIn's login page when it is ready.</p>" +
-        "<p>If nothing appears after a minute, go back to the setup page and use <em>Open the sign-in tab</em>.</p></div></body>",
+        "<p>The hosted browser takes up to a minute to start. Keep this tab open; it will show the sign-in page when it is ready. Sign in there, then press Done on that page.</p>" +
+        "<p>If nothing appears after a minute, go back to the setup page and use <em>New sign-in link</em>.</p></div></body>",
     );
     w.document.close();
     return w;
@@ -43,17 +43,27 @@ function openWaitingTab(): Window | null {
   }
 }
 
-/** Reuse the tab we hold when it is still open; otherwise open a fresh one. */
-function navigateTab(tab: { current: Window | null }, url: string): void {
+/**
+ * Reuse the tab we hold when it is still open; otherwise open a fresh one.
+ * False when no tab took the URL (a popup blocker), so the caller can offer
+ * it as a link instead.
+ */
+function navigateTab(tab: { current: Window | null }, url: string): boolean {
   if (tab.current && !tab.current.closed) {
     tab.current.location.href = url;
     tab.current.focus();
-  } else {
-    // The waiting tab was closed (or never opened): try once more, and the
-    // "Open the sign-in tab" button is the fallback.
-    tab.current = window.open(url, "_blank");
+    return true;
   }
+  // The waiting tab was closed (or never opened): try once more, and the
+  // "Open the sign-in tab" link is the fallback.
+  tab.current = window.open(url, "_blank");
+  return Boolean(tab.current);
 }
+
+/** A setup state that ended the login before Done was pressed. */
+const SETUP_ENDED_RX = /fail|error|expired|closed|cancel|stopped|no_setup/i;
+/** How often the card asks whether Done was pressed on the sign-in page. */
+const DONE_POLL_MS = 5000;
 
 function StatusLine({
   label,
@@ -88,13 +98,16 @@ function StatusLine({
  *
  *   nothing connected  → [Connect LinkedIn]  messaging sign-in, then the profile session
  *   messaging step     → waiting line · open the tab again · cancel   (OneShot confirms by itself)
- *   profile step       → [Done: I've signed in] · open the tab again · cancel
+ *   profile step       → waiting line · [Check sign-in] · new sign-in link · cancel
  *   both connected     → ✓ Messaging · ✓ Profile reads · reconnect
  *
  * The messaging sign-in is a platform intent polled until it completes;
- * the profile session is the two-step hosted login (start, then finish
- * once the founder has signed in), kept on a PENDING profile until its feed
- * verifies, so a Done click before the sign-in completed changes nothing.
+ * the profile session is the hosted login behind a single-use link: the
+ * founder signs in and presses Done on that page, the card polls the login
+ * state until `completedAt` is set, then finish verifies. The login stays on
+ * a PENDING profile until its feed verifies, so a check before the sign-in
+ * completed changes nothing. A used or expired link is never shown again:
+ * "new sign-in link" mints a fresh one (the earlier one stops working).
  * Accounts that need a reconnect or a permission are managed on Replies.
  * The cookie paste lives behind "advanced".
  */
@@ -115,7 +128,11 @@ export function LinkedInConnect({
   const viaAccount = reads?.via === "account";
   const qc = useQueryClient();
   const [error, setError] = useState<string | null>(null);
-  const [liveUrl, setLiveUrl] = useState<string | null>(null);
+  const [setupUrl, setSetupUrl] = useState<string | null>(null);
+  // The minted link no tab took (a popup blocker): offered once as a link.
+  const [unopenedUrl, setUnopenedUrl] = useState<string | null>(null);
+  // The `completedAt` a finish already ran for, so the poll starts one per Done.
+  const finishedFor = useRef<string | null>(null);
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
   const [intentId, setIntentId] = useState<string | null>(() => readIntent());
   const [step, setStep] = useState<CardStep>(() => (readIntent() ? "messaging" : null));
@@ -131,16 +148,19 @@ export function LinkedInConnect({
     select: (r) => r.accounts,
   });
 
-  // A page that reloaded mid-profile-login: ask the server where it stands.
-  const resume = useQuery({
+  // A profile login in progress (started here, or before a reload): poll its
+  // state until the founder pressed Done on the sign-in page.
+  const loginState = useQuery({
     queryKey: ["linkedin-login-state"],
     queryFn: api.linkedinLoginState,
-    enabled: Boolean(cfg.linkedinPendingProfileId) && !liveUrl && !viaAccount,
-    staleTime: 30_000,
+    enabled:
+      (Boolean(cfg.linkedinPendingProfileId) || step === "research") && !viaAccount && !IS_DEMO,
+    refetchInterval: DONE_POLL_MS,
   });
-  useEffect(() => {
-    if (resume.data?.pending && resume.data.liveUrl) setLiveUrl(resume.data.liveUrl);
-  }, [resume.data]);
+  const pendingState = loginState.data?.pending ? loginState.data : null;
+  const setupEnded = Boolean(
+    pendingState && !pendingState.completedAt && SETUP_ENDED_RX.test(pendingState.status),
+  );
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["setup"] });
@@ -165,15 +185,15 @@ export function LinkedInConnect({
       if (!tab.current || tab.current.closed) tab.current = openWaitingTab();
     },
     onSuccess: (r) => {
-      if (!r.liveUrl) {
+      if (!r.setupUrl) {
         dropTab();
         setStep(null);
         setError(`The platform opened no sign-in browser (status ${r.status}). Try again.`);
         return;
       }
-      setLiveUrl(r.liveUrl);
+      setSetupUrl(r.setupUrl);
       setStep("research");
-      navigateTab(tab, r.liveUrl);
+      setUnopenedUrl(navigateTab(tab, r.setupUrl) ? null : r.setupUrl);
       refresh();
     },
     onError: (err: Error) => {
@@ -182,12 +202,31 @@ export function LinkedInConnect({
       setError(err.message);
     },
   });
+  // The link opens once: a used, expired or lost one is replaced, never re-shown.
+  const newLink = useMutation({
+    mutationFn: api.newLinkedInLoginLink,
+    onMutate: () => {
+      setError(null);
+      if (!tab.current || tab.current.closed) tab.current = openWaitingTab();
+    },
+    onSuccess: (r) => {
+      setSetupUrl(r.setupUrl);
+      setStep("research");
+      setUnopenedUrl(navigateTab(tab, r.setupUrl) ? null : r.setupUrl);
+      refresh();
+    },
+    onError: (err: Error) => {
+      dropTab();
+      setError(err.message);
+    },
+  });
   const done = useMutation({
     mutationFn: api.finishLinkedInLogin,
     onMutate: () => setError(null),
     onSuccess: (r) => {
       if (r.loggedIn) {
-        setLiveUrl(null);
+        setSetupUrl(null);
+        setUnopenedUrl(null);
         setStep(null);
         tab.current = null;
       } else {
@@ -200,7 +239,8 @@ export function LinkedInConnect({
   const cancel = useMutation({
     mutationFn: api.cancelLinkedInLogin,
     onSuccess: () => {
-      setLiveUrl(null);
+      setSetupUrl(null);
+      setUnopenedUrl(null);
       setStep(null);
       setError(null);
       dropTab();
@@ -257,7 +297,7 @@ export function LinkedInConnect({
     accounts: IS_DEMO ? [] : accounts.isSuccess ? accounts.data : null,
     accountsError: accounts.error?.message ?? null,
     step,
-    liveUrl,
+    setupUrl,
     reads,
   });
   const researchMissing = view.connectRuns.includes("research");
@@ -319,13 +359,27 @@ export function LinkedInConnect({
     dropTab();
   };
 
+  // Done pressed on the sign-in page: verify once per Done, unless a check
+  // is already running or one already ran for it (the server remembers, so a
+  // reload or a second tab never repeats a paid check).
+  const completedAt = pendingState?.completedAt ?? null;
+  const checked = pendingState?.checked === true;
+  useEffect(() => {
+    if (!completedAt || checked || finishedFor.current === completedAt || done.isPending) return;
+    finishedFor.current = completedAt;
+    done.mutate();
+    // done is stable; only a new Done starts a check.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [completedAt, checked]);
+
   const busy =
     start.isPending ||
+    newLink.isPending ||
     done.isPending ||
     cancel.isPending ||
     cookie.isPending ||
     messaging.isPending;
-  const openUrl = step === "messaging" ? connectUrl : liveUrl;
+  const openUrl = step === "messaging" ? connectUrl : unopenedUrl;
 
   return (
     <div className="clear-both flex flex-col gap-2">
@@ -376,7 +430,7 @@ export function LinkedInConnect({
             onClick={() => done.mutate()}
             {...readOnly}
           >
-            {done.isPending ? "checking… ~1 min" : "Done — I've signed in"}
+            {done.isPending ? "checking… ~1 min" : "Check sign-in"}
           </Button>
         )}
         {(view.primary === "done" || step === "messaging") && (
@@ -386,10 +440,25 @@ export function LinkedInConnect({
                 href={openUrl}
                 target="_blank"
                 rel="noreferrer"
+                onClick={() => {
+                  if (step !== "messaging") setUnopenedUrl(null);
+                }}
                 className="inline-flex items-center gap-1 rounded border border-ink-rule/60 px-2 py-1 text-[12px] text-ink-cream-2 underline-offset-2 hover:underline"
               >
                 Open the sign-in tab <ExternalLink size={11} />
               </a>
+            )}
+            {view.primary === "done" && (
+              <button
+                type="button"
+                className="text-[12px] text-ink-faint underline underline-offset-2"
+                disabled={busy}
+                title="The sign-in link opens once; a new one replaces it and the old page stops working"
+                onClick={() => newLink.mutate()}
+                {...readOnly}
+              >
+                {newLink.isPending ? "minting a new link…" : "new sign-in link"}
+              </button>
             )}
             <button
               type="button"
@@ -411,7 +480,9 @@ export function LinkedInConnect({
       </div>
       {view.waiting && (
         <p className="text-[12px] text-ink-muted">
-          {view.waiting}
+          {setupEnded
+            ? "The sign-in page closed before Done was pressed. Get a new sign-in link to try again."
+            : view.waiting}
           {step === "messaging" && connection.error ? ` · ${connection.error.message}` : ""}
         </p>
       )}
