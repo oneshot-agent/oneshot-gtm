@@ -7,7 +7,6 @@ import {
   isBreakupStepAt,
   nextStepInfo,
   playFollowupCount,
-  receiptUrlsForCadence,
   registerSequence,
   type CadenceContext,
   type Sequence,
@@ -148,16 +147,6 @@ describe("buildVoiceStep", () => {
     });
     const out = await builder(makeCtx());
     expect(out).toMatchObject({ kind: "voice", context: "at Acme" });
-  });
-});
-
-describe("receiptUrlsForCadence", () => {
-  it("maps receipt ids to local receipt URLs", () => {
-    expect(receiptUrlsForCadence([1, 42])).toEqual(["local://receipt/1", "local://receipt/42"]);
-  });
-
-  it("returns an empty array for no receipts", () => {
-    expect(receiptUrlsForCadence([])).toEqual([]);
   });
 });
 

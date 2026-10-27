@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Ledger } from "../src/ledger.ts";
 import { simpleParser } from "mailparser";
+import { Database } from "bun:sqlite";
+import { listBounces } from "../src/oneshot.ts";
+import { MailboxStore } from "../src/mailbox-store.ts";
 
 const mocks = vi.hoisted(() => ({
   identities: [
@@ -115,7 +118,10 @@ beforeEach(() => {
   mocks.smtp.verify.mockResolvedValue(true);
   mocks.smtp.sendMail.mockResolvedValue({ accepted: ["prospect@example.org"] });
 });
-afterEach(() => ledger.close());
+afterEach(() => {
+  vi.restoreAllMocks();
+  ledger.close();
+});
 
 describe("durable mailbox threads", () => {
   it.each(["delivered", "replied"] as const)(
@@ -249,7 +255,223 @@ describe("durable mailbox threads", () => {
   });
 });
 
+/** Pin when the workspace stored a row (`stored_at`), which the bounce window reads. */
+function storedAt(id: string, iso: string): void {
+  (ledger.mailboxes as unknown as { db: Database }).db
+    .query("UPDATE mailbox_messages SET stored_at=? WHERE id=?")
+    .run(iso, id);
+}
+
 describe("mailbox sync", () => {
+  it("bounds no-argument listBounces to 30 days of stored mail and filters identities in SQL", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-27T12:00:00.000Z"));
+    const since = "2026-09-27T12:00:00.000Z";
+    const prospectId = ledger.upsertProspect({ email: "prospect@example.org" });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "outreach",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    const message = {
+      ...(await parsed("bounded-dsn")),
+      at: since,
+      bounces: [
+        {
+          recipient: "prospect@example.org",
+          kind: "hard" as const,
+          statusCode: "5.1.1",
+          diagnostic: "No such user",
+        },
+      ],
+    };
+    ledger.mailboxes.put(message);
+    ledger.mailboxes.put({ ...message, id: "old-dsn", at: "2026-09-27T11:59:59.999Z" });
+    ledger.mailboxes.put({ ...message, id: "removed-dsn", identityId: "removed" });
+    storedAt(message.id, since);
+    storedAt("old-dsn", "2026-09-27T11:59:59.999Z");
+    storedAt("removed-dsn", since);
+    const query = vi.spyOn(Database.prototype, "query");
+    const candidates = vi.spyOn(ledger.mailboxes, "bounceCandidates");
+
+    const result = await listBounces();
+
+    expect(result.bounces.map((b) => b.messageId)).toEqual([message.id]);
+    expect(candidates).toHaveBeenCalledWith([identityId], since);
+    expect(
+      query.mock.calls.some(
+        ([sql]) => /identity_id\s+IN\s*\(\?\)/i.test(sql) && /stored_at\s*>=\s*\?/.test(sql),
+      ),
+    ).toBe(true);
+    expect(candidates.mock.results[0]?.value.map((m: { id: string }) => m.id)).toEqual([
+      message.id,
+    ]);
+  });
+
+  it("reads a notice a backfill stores today although its own date is older than the window", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-27T12:00:00.000Z"));
+    const prospectId = ledger.upsertProspect({ email: "prospect@example.org" });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "outreach",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    // Sent 45 days ago; imported by a backfill an hour ago. Windowing on the
+    // message's own date skipped it on every poll, so the address kept getting mail.
+    const backfilled = {
+      ...(await parsed("backfilled-dsn")),
+      at: "2026-09-12T08:00:00.000Z",
+      bounces: [
+        {
+          recipient: "prospect@example.org",
+          kind: "hard" as const,
+          statusCode: "5.1.1",
+          diagnostic: "No such user",
+        },
+      ],
+    };
+    ledger.mailboxes.put(backfilled);
+    storedAt(backfilled.id, "2026-10-27T11:00:00.000Z");
+
+    const result = await listBounces();
+
+    expect(result.bounces.map((b) => b.messageId)).toEqual([backfilled.id]);
+    expect(result.bounces[0]?.bouncedAt).toBe(backfilled.at);
+  });
+
+  it("re-stamps a stored row when its bounces are classified late", async () => {
+    const message = { ...(await parsed("late-dsn")), bounces: undefined };
+    ledger.mailboxes.put(message);
+    const old = "2026-01-01T00:00:00.000Z";
+    storedAt(message.id, old);
+    const read = (): string =>
+      (
+        (ledger.mailboxes as unknown as { db: Database }).db
+          .query("SELECT stored_at FROM mailbox_messages WHERE id=?")
+          .get(message.id) as { stored_at: string }
+      ).stored_at;
+
+    ledger.mailboxes.put({
+      ...message,
+      bounces: [{ recipient: "p@example.org", kind: "hard", statusCode: null, diagnostic: null }],
+    });
+
+    expect(read() > old).toBe(true);
+    expect(ledger.mailboxes.get(message.id)?.bounces?.[0]?.kind).toBe("hard");
+  });
+
+  it("migrates a pre-column mailbox: unclassified rows land inside the window, classified ones keep their date", () => {
+    // A workspace from before `stored_at`: the table as it was, with one notice
+    // the old poll already classified and one it had not reached yet.
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE mailbox_messages (
+      id TEXT PRIMARY KEY, identity_id TEXT NOT NULL, thread_key TEXT NOT NULL,
+      message_id TEXT, prospect_id INTEGER, direction TEXT NOT NULL,
+      at TEXT NOT NULL, data TEXT NOT NULL, is_read INTEGER NOT NULL DEFAULT 0)`);
+    const old = "2026-08-01T00:00:00.000Z";
+    const insert = db.query(
+      "INSERT INTO mailbox_messages(id,identity_id,thread_key,direction,at,data) VALUES(?,?,?,?,?,?)",
+    );
+    insert.run(
+      "classified",
+      "id1",
+      "t1",
+      "inbound",
+      old,
+      JSON.stringify({ id: "classified", bounces: [] }),
+    );
+    insert.run("unclassified", "id1", "t2", "inbound", old, JSON.stringify({ id: "unclassified" }));
+    const before = new Date().toISOString();
+
+    // Opening the store runs the migration on the legacy table.
+    expect(() => new MailboxStore(db)).not.toThrow();
+
+    const at = (id: string): string =>
+      (
+        db.query("SELECT stored_at FROM mailbox_messages WHERE id=?").get(id) as {
+          stored_at: string;
+        }
+      ).stored_at;
+    expect(at("classified")).toBe(old);
+    // Old message date, but the migration stamps it now so the next poll classifies it.
+    expect(at("unclassified") >= before).toBe(true);
+  });
+
+  it("re-stamps a row when reclassify attaches its bounces late", async () => {
+    const message = { ...(await parsed("reclassified-dsn")), bounces: undefined };
+    ledger.mailboxes.put(message);
+    const old = "2026-01-01T00:00:00.000Z";
+    storedAt(message.id, old);
+    const stored = ledger.mailboxes.get(message.id)!;
+
+    ledger.mailboxes.reclassify(stored, stored.kind, [
+      { recipient: "p@example.org", kind: "hard", statusCode: null, diagnostic: null },
+    ]);
+
+    const now = (
+      (ledger.mailboxes as unknown as { db: Database }).db
+        .query("SELECT stored_at FROM mailbox_messages WHERE id=?")
+        .get(message.id) as { stored_at: string }
+    ).stored_at;
+    expect(now > old).toBe(true);
+  });
+
+  it("serves the bounce window from its index, not a scan of all mail", () => {
+    const plan = (
+      (ledger.mailboxes as unknown as { db: Database }).db
+        .query(`EXPLAIN QUERY PLAN SELECT data FROM mailbox_messages WHERE direction='inbound'
+          AND identity_id IN (?) AND (? IS NULL OR stored_at >= ?)`)
+        .all("id", "2026-09-27T12:00:00.000Z", "2026-09-27T12:00:00.000Z") as { detail: string }[]
+    )
+      .map((r) => r.detail)
+      .join("\n");
+    expect(plan).toContain("mailbox_messages_bounce");
+    expect(plan).not.toMatch(/SCAN mailbox_messages\b(?! USING)/);
+  });
+
+  it("preserves explicit windows, legacy parsing and multiple active identities", async () => {
+    const secondId = "smartlead:o'hara@example.com";
+    mocks.identities.push({ id: secondId, address: "o'hara@example.com", provider: "smartlead" });
+    const prospectId = ledger.upsertProspect({ email: "prospect@example.org" });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "outreach",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    const message = {
+      ...(await parsed("legacy-dsn")),
+      from: "mailer-daemon@example.com",
+      body: "Delivery failed for prospect@example.org: 550 5.1.1 No such user",
+      at: "2026-01-01T00:00:00.000Z",
+      bounces: undefined,
+    };
+    ledger.mailboxes.put(message);
+    for (const kind of ["soft", "block"] as const) {
+      ledger.mailboxes.put({
+        ...message,
+        id: kind,
+        identityId: secondId,
+        bounces: [{ recipient: "prospect@example.org", kind, statusCode: null, diagnostic: null }],
+      });
+    }
+    ledger.mailboxes.put({ ...message, id: "ordinary", bounces: [] });
+    ledger.mailboxes.put({ ...message, id: "outbound", direction: "outbound" });
+    const candidates = vi.spyOn(ledger.mailboxes, "bounceCandidates");
+    const result = await listBounces({ since: message.at });
+    expect(result.bounces.map((b) => b.kind).toSorted()).toEqual(["block", "hard", "soft"]);
+    expect(candidates.mock.results[0]?.value).toHaveLength(3);
+    expect(ledger.mailboxes.get(message.id)?.bounces?.[0]?.kind).toBe("hard");
+    mocks.identities = [];
+    candidates.mockClear();
+    expect((await listBounces()).bounces).toEqual([]);
+    expect(candidates).not.toHaveBeenCalled();
+  });
+
   it("extracts structured delivery failures and exposes them to the bounce pipeline", async () => {
     const prospectId = ledger.upsertProspect({ email: "prospect@example.org" });
     ledger.recordSequenceEvent({
