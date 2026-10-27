@@ -234,8 +234,20 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_queue_prospect",
+      "sql": "CREATE INDEX idx_queue_prospect ON target_queue(prospect_id)",
+      "tbl_name": "target_queue",
+      "type": "index",
+    },
+    {
       "name": "idx_queue_status",
       "sql": "CREATE INDEX idx_queue_status ON target_queue(status)",
+      "tbl_name": "target_queue",
+      "type": "index",
+    },
+    {
+      "name": "idx_queue_status_found",
+      "sql": "CREATE INDEX idx_queue_status_found ON target_queue(status, found_at DESC)",
       "tbl_name": "target_queue",
       "type": "index",
     },
