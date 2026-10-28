@@ -238,7 +238,7 @@ const compactKey = (name: string): string => name.toLowerCase().replace(/[^\p{L}
 
 const SECOND_LEVEL = new Set(["co", "com", "org", "net", "ac", "gov", "edu"]);
 
-/** The registrable label of a domain: `usesoren` for `usesoren.com`, `acme` for `acme.co.uk`. */
+/** The registrable label of a domain: `getacme` for `getacme.com`, `acme` for `acme.co.uk`. */
 function domainLabel(domain: string): string | null {
   const host = cutAt(
     domain

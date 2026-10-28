@@ -17,7 +17,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function post(name: string, status: string | null, body: string, style = "taleb-aphoristic") {
+function post(name: string, status: string | null, body: string, style = "terse-aphoristic") {
   const fm = status ? `---\ntitle: "${name}"\nstatus: ${status}\nstyle: ${style}\n---\n` : "";
   writeFileSync(
     join(dir, name),
@@ -26,7 +26,7 @@ function post(name: string, status: string | null, body: string, style = "taleb-
 }
 
 const BODY = (n: number) =>
-  `free tools make reckless agents number ${n}. when every call costs nothing, nobody learns restraint. cost is information.`;
+  `an open calendar books itself number ${n}. when every slot looks free, nobody learns to say no. a full week is a choice.`;
 
 describe("loadVoiceCorpus", () => {
   it("ranks posted work first, strips frontmatter, headings and trailers, and skips stubs", () => {
@@ -46,14 +46,14 @@ describe("loadVoiceCorpus", () => {
     expect(items[0]!.text).not.toContain("---");
     expect(items[0]!.text).not.toContain("METADATA");
     expect(items[0]!.text).not.toContain("# posted.md");
-    expect(items[0]!.text).toContain("cost is information.");
+    expect(items[0]!.text).toContain("a full week is a choice.");
   });
 
   it("reads --messages files as sent messages: each fenced block, or the whole body, ranked first", () => {
     mkdirSync(join(dir, "sent"));
     writeFileSync(
       join(dir, "sent", "outreach.md"),
-      "## Person\n\n```\nwe shipped an MIT GTM agent that prints signed receipts for every call. does this match how you measure spend?\n```\n\n```\nshort\n```\n",
+      "## Person\n\n```\nwe shipped an open-source scheduler that logs every booking. does this match how you measure no-shows?\n```\n\n```\nshort\n```\n",
     );
     writeFileSync(
       join(dir, "sent", "plain.txt"),
@@ -87,7 +87,7 @@ describe("loadVoiceCorpus", () => {
     expect(corpus.guide).toContain("lowercase by default");
     const prompt = voiceCorpusPrompt(corpus);
     expect(prompt).toMatch(/^GUIDE:\n/);
-    expect(prompt).toContain("POSTS (1):\n1. free tools");
+    expect(prompt).toContain("POSTS (1):\n1. an open calendar");
     expect(prompt).toContain("DMS (0):\n(none)");
   });
 

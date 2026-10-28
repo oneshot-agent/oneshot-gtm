@@ -20,9 +20,9 @@ function row(over: Partial<CandidateRow> & { payload?: Record<string, unknown> }
     notes: null,
     payload_json: JSON.stringify(
       payload ?? {
-        name: "Julia Zabrodska",
-        email: "julia@letocaffe.com",
-        linkedinUrl: "https://www.linkedin.com/in/julia-zabrodska-akinci-cv",
+        name: "Nora Halloran",
+        email: "nora@dorocafe.example",
+        linkedinUrl: "https://www.linkedin.com/in/nora-halloran-vey-cv",
       },
     ),
     status: "approved",
@@ -101,8 +101,8 @@ describe("selectCandidates", () => {
 
   it("carries the seed the research call is handed", () => {
     const s = selectCandidates([row({ id: 8 })], { refresh: false });
-    expect(s.candidates[0]!.seed.url).toBe("https://linkedin.com/in/julia-zabrodska-akinci-cv");
-    expect(s.candidates[0]!.seed.name).toBe("Julia Zabrodska");
+    expect(s.candidates[0]!.seed.url).toBe("https://linkedin.com/in/nora-halloran-vey-cv");
+    expect(s.candidates[0]!.seed.name).toBe("Nora Halloran");
   });
 
   it("estimates a row at person research plus the company lookup", () => {

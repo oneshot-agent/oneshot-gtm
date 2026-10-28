@@ -282,7 +282,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
     // Tier 3 of the standard LinkedIn chain (see post-funding.ts for the
     // canonical shape). GitHub's user API carries no LinkedIn field, so without
     // this a stargazer the SDK can't enrich by email has no LinkedIn path at
-    // all, which is why this finder produced 17 of 334.
+    // all, and most stargazers would reach no LinkedIn step.
     // The login is a strong disambiguator: many devs use the same handle on
     // both platforms.
     let linkedinUrl: string | null = enr.linkedinUrl;

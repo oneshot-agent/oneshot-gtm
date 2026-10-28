@@ -424,25 +424,25 @@ describe("identities list --json", () => {
   // human line reports the shared domain usage and the JSON carries
   // domainSentToday alongside each identity's own count.
   const ONESHOT_A: EmailIdentity = {
-    id: "oneshot:jn@tracepoint.email",
+    id: "oneshot:mira@tracepoint.email",
     provider: "oneshot",
     sendingDomain: "tracepoint.email",
-    mailbox: "jn",
+    mailbox: "mira",
     maxPerDay: 50,
     warmup: null,
   };
   const ONESHOT_B: EmailIdentity = {
-    id: "oneshot:nic@tracepoint.email",
+    id: "oneshot:noor@tracepoint.email",
     provider: "oneshot",
     sendingDomain: "tracepoint.email",
-    mailbox: "nic",
+    mailbox: "noor",
     maxPerDay: 50,
     warmup: null,
   };
   const GMAIL: EmailIdentity = {
-    id: "gmail:jn@freebutter.ai",
+    id: "gmail:mira@tracepoint.dev",
     provider: "gmail",
-    address: "jn@freebutter.ai",
+    address: "mira@tracepoint.dev",
     maxPerDay: null,
     warmup: null,
   };
@@ -537,7 +537,7 @@ describe("identities list --json", () => {
     // Human headers/rows should be on stderr
     expect(stderr).toContain("Sender identities");
     expect(stderr).toContain("Provisioned domains");
-    expect(stderr).toContain("jn@tracepoint.email");
+    expect(stderr).toContain("mira@tracepoint.email");
   });
 
   it("includes all identity and domain fields in JSON payload", async () => {
@@ -551,24 +551,24 @@ describe("identities list --json", () => {
 
     expect(parsed.identities).toHaveLength(3);
     expect(parsed.identities[0]).toMatchObject({
-      id: "oneshot:jn@tracepoint.email",
+      id: "oneshot:mira@tracepoint.email",
       provider: "oneshot",
-      address: "jn@tracepoint.email",
+      address: "mira@tracepoint.email",
       sentToday: 6,
       capToday: 50,
       domainSentToday: 9,
       legacy: true,
     });
     expect(parsed.identities[1]).toMatchObject({
-      address: "nic@tracepoint.email",
+      address: "noor@tracepoint.email",
       sentToday: 3,
       domainSentToday: 9,
     });
     // Uncapped identity: Infinity isn't JSON, so capToday is null.
     expect(parsed.identities[2]).toMatchObject({
-      id: "gmail:jn@freebutter.ai",
+      id: "gmail:mira@tracepoint.dev",
       provider: "gmail",
-      address: "jn@freebutter.ai",
+      address: "mira@tracepoint.dev",
       sentToday: 2,
       capToday: null,
       legacy: true,
@@ -716,12 +716,12 @@ describe("workspace list --json", () => {
     default: "alpha",
     workspaces: {
       default: { home: "/home/default", port: 3030, createdAt: "" },
-      alpha: { home: "/home/alpha", port: 3031, createdAt: "2026-08-01T00:00:00.000Z" },
+      alpha: { home: "/home/alpha", port: 4031, createdAt: "2026-08-01T00:00:00.000Z" },
     },
   };
   const ROWS: Array<[string, WorkspaceEntryLike]> = [
     ["default", { home: "/home/default", port: 3030, createdAt: "" }],
-    ["alpha", { home: "/home/alpha", port: 3031, createdAt: "2026-08-01T00:00:00.000Z" }],
+    ["alpha", { home: "/home/alpha", port: 4031, createdAt: "2026-08-01T00:00:00.000Z" }],
   ];
 
   beforeEach(() => {
@@ -777,7 +777,7 @@ describe("workspace list --json", () => {
     });
     expect(parsed.workspaces[1]).toMatchObject({
       name: "alpha",
-      port: 3031,
+      port: 4031,
       home: "/home/alpha",
       isCurrent: true,
       isDefault: true,

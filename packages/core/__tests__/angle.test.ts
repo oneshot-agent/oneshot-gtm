@@ -29,7 +29,7 @@ describe("parseProspectAngle", () => {
   it("parses a well-formed angle end to end", () => {
     const angle = parseProspectAngle(
       {
-        brief: "They build agent infra.",
+        brief: "They run scheduling for dental groups.",
         hook: "Shipped a new SDK release yesterday.",
         relationship: "builder",
         evidence: [{ claim: "Shipped agent-loop v2", source: "https://github.com/x/agent-loop" }],
@@ -44,7 +44,7 @@ describe("parseProspectAngle", () => {
       GROUNDED,
     );
     expect(angle).toEqual({
-      brief: "They build agent infra.",
+      brief: "They run scheduling for dental groups.",
       hook: "Shipped a new SDK release yesterday.",
       relationship: "builder",
       evidence: [{ claim: "Shipped agent-loop v2", source: "https://github.com/x/agent-loop" }],

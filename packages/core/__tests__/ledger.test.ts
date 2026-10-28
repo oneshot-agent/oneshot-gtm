@@ -171,17 +171,17 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     // reply comes in normalized to lowercase (cadence inbox poll), and we must
     // not create a duplicate row for the same address in a different case.
     const id = ledger.upsertProspect({
-      name: "Sophia",
-      email: "Sophia@AgenticArchitect.AI",
+      name: "Dana",
+      email: "Dana@Halyard.EXAMPLE",
       source: "t",
     });
-    expect(ledger.findProspectByEmail("sophia@agenticarchitect.ai")?.id).toBe(id);
-    expect(ledger.findProspectByEmail("SOPHIA@AGENTICARCHITECT.AI")?.id).toBe(id);
-    expect(ledger.getProspectByEmail("sophia@agenticarchitect.ai")?.id).toBe(id);
+    expect(ledger.findProspectByEmail("dana@halyard.example")?.id).toBe(id);
+    expect(ledger.findProspectByEmail("DANA@HALYARD.EXAMPLE")?.id).toBe(id);
+    expect(ledger.getProspectByEmail("dana@halyard.example")?.id).toBe(id);
     // Re-upsert under yet another casing → same row, no duplicate.
     const again = ledger.upsertProspect({
-      name: "Sophia",
-      email: "sophia@AGENTICARCHITECT.ai",
+      name: "Dana",
+      email: "dana@HALYARD.example",
       source: "t",
     });
     expect(again).toBe(id);

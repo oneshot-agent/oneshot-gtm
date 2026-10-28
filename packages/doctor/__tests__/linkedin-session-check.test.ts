@@ -75,7 +75,7 @@ describe("doctor: linkedin session", () => {
     process.env["LINKEDIN_SESSION_COOKIE"] = "AQEDx";
     cfgOverride = {
       linkedinSessionCheckedAt: "2026-09-01T10:00:00.000Z",
-      linkedinSessionName: "J. Nicolas",
+      linkedinSessionName: "Mira Chen",
       linkedinSessionInvalidAt: "2026-09-11T10:00:00.000Z",
     };
     const check = await linkedinCheck();
@@ -88,12 +88,12 @@ describe("doctor: linkedin session", () => {
     cfgOverride = {
       linkedinBrowserProfileId: "prof_1",
       linkedinSessionCheckedAt: "2026-09-11T10:00:00.000Z",
-      linkedinSessionName: "J. Nicolas",
+      linkedinSessionName: "Mira Chen",
       linkedinSessionInvalidAt: null,
     };
     const check = await linkedinCheck();
     expect(check.severity).toBe("ok");
-    expect(check.message).toContain("logged in as J. Nicolas");
+    expect(check.message).toContain("logged in as Mira Chen");
     expect(check.message).toContain("via cookie");
   });
 
@@ -106,7 +106,7 @@ describe("doctor: linkedin session", () => {
     cfgOverride = {
       linkedinBrowserProfileId: "prof_1",
       linkedinSessionCheckedAt: "2026-09-14T10:00:00.000Z",
-      linkedinSessionName: "J. Nicolas",
+      linkedinSessionName: "Mira Chen",
       linkedinSessionInvalidAt: null,
     };
     const verified = await linkedinCheck();

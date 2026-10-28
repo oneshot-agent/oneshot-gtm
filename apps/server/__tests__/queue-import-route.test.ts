@@ -76,7 +76,7 @@ vi.mock("@oneshot-gtm/find", async () => {
 const { importQueueRowRoute, importRederiveSettled } = await import("../src/api/queue.ts");
 
 const req = (body: unknown) =>
-  new Request("http://127.0.0.1:3031/api/queue/import", {
+  new Request("http://127.0.0.1:4031/api/queue/import", {
     method: "POST",
     body: typeof body === "string" ? body : JSON.stringify(body),
   });

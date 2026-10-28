@@ -664,7 +664,7 @@ describe("runLocalRegistryFinder — fmcsa knownEmail skip", () => {
         name: "Slack Truck Line Inc",
         source: "fmcsa",
         sourceLabel: "FMCSA Company Census",
-        knownEmail: "dispatch@slacktruck.com",
+        knownEmail: "dispatch@slacktruck.example",
       }),
     ];
     const out = await runLocalRegistryFinder({
@@ -681,7 +681,7 @@ describe("runLocalRegistryFinder — fmcsa knownEmail skip", () => {
     // github-stars/luma's knownEmail (a scraped/surfaced address) which still
     // verifies.
     expect(verifyEmailCalls).toBe(0);
-    expect(enqueued[0]?.payload["email"]).toBe("dispatch@slacktruck.com");
+    expect(enqueued[0]?.payload["email"]).toBe("dispatch@slacktruck.example");
     expect(enqueued[0]?.payload["source"]).toBe("fmcsa");
   });
 
@@ -691,7 +691,7 @@ describe("runLocalRegistryFinder — fmcsa knownEmail skip", () => {
         name: "Slack Truck Line Inc",
         source: "fmcsa",
         sourceLabel: "FMCSA Company Census",
-        knownEmail: "dispatch@slacktruck.com",
+        knownEmail: "dispatch@slacktruck.example",
       }),
     ];
     const out = await runLocalRegistryFinder({

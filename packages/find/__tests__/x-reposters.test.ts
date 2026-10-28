@@ -151,7 +151,7 @@ vi.mock("@oneshot-gtm/intel", () => ({
       company: "Acme",
       role: "CTO",
       email: extractedEmail,
-      angle: "ships agent infra",
+      angle: "ships a scheduling app for clinics",
     }),
   }),
   tryParseJsonObject: <T>(s: string, fallback: T): T => {
@@ -248,12 +248,12 @@ describe("runXRepostersFinder — lane → play routing", () => {
 
   it("routes an amplifier with a findable email to x-amplify, stamping the launch date", async () => {
     harvestCandidates = [amplifierCandidate("amp")];
-    emailsByHandle = { amp: "amp@dev.io" };
+    emailsByHandle = { amp: "amp@dev.example" };
     await runXRepostersFinder({ dryRun: false, seeds: SEEDS, launchDate: "2026-09-23" });
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]!.playName).toBe("x-amplify");
     expect(enqueued[0]!.payload["launchDate"]).toBe("2026-09-23");
-    expect(enqueued[0]!.payload["email"]).toBe("amp@dev.io");
+    expect(enqueued[0]!.payload["email"]).toBe("amp@dev.example");
   });
 
   it("routes an amplifier without an email to the manual x-amplify-dm draft", async () => {
@@ -269,8 +269,8 @@ describe("runXRepostersFinder — lane → play routing", () => {
   });
 
   it("a research failure on an amplifier falls through to the manual DM draft", async () => {
-    // Observed on the first live run: deepResearchPerson "Could not find data
-    // for this person" killed the only pick. The DM path needs no email and no
+    // deepResearchPerson can answer "Could not find data
+    // for this person", which used to kill the only pick. The DM path needs no email and no
     // dossier (the repost is the hook) so the amplifier must survive.
     harvestCandidates = [amplifierCandidate("ghost")];
     researchFailsFor = new Set(["ghost"]);

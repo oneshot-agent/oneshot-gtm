@@ -6,10 +6,10 @@ describe("stripQuotedChain", () => {
     const body = [
       "Hey, fair point on the opener.",
       "",
-      "On Sat, Jun 13, 2026 at 2:44 AM JN Nicolas <jn@freebutter.ai> wrote:",
+      "On Sat, Jun 13, 2026 at 2:44 AM Mira Chen <mira@tracepoint.dev> wrote:",
       "",
-      "> Hey Vicente,",
-      "> TrustClaw's approach to remote tool execution is solid.",
+      "> Hey Sam,",
+      "> Beacon's approach to job scheduling is solid.",
     ].join("\n");
     expect(stripQuotedChain(body)).toBe("Hey, fair point on the opener.");
   });

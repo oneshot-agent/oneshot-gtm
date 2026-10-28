@@ -391,7 +391,7 @@ describe("parseBounce — Gmail nests the report in a child part", () => {
           mimeType: "message/delivery-status",
           parts: [{ mimeType: "text/plain", body: { data: b64(report) } }],
         },
-        { mimeType: "message/global-headers", body: { data: b64("To: s.zhu@pnptc.com") } },
+        { mimeType: "message/global-headers", body: { data: b64("To: s.zhu@harborline.example") } },
       ],
     },
   });
@@ -399,7 +399,7 @@ describe("parseBounce — Gmail nests the report in a child part", () => {
   it("reads a hard bounce out of the nested text/plain child", () => {
     const out = parseBounce(
       nested(
-        "Final-Recipient: rfc822; s.zhu@pnptc.com\n" +
+        "Final-Recipient: rfc822; s.zhu@harborline.example\n" +
           "Action: failed\n" +
           "Status: 5.1.3\n" +
           "Diagnostic-Code: smtp; The email account that you tried to reach does not exist.\n" +
@@ -407,14 +407,14 @@ describe("parseBounce — Gmail nests the report in a child part", () => {
       ),
     );
     expect(out).toHaveLength(1);
-    expect(out[0]?.recipient).toBe("s.zhu@pnptc.com");
+    expect(out[0]?.recipient).toBe("s.zhu@harborline.example");
     expect(out[0]?.kind).toBe("hard");
     expect(out[0]?.statusCode).toBe("5.1.3");
   });
 
   it("still classifies a nested soft bounce as soft", () => {
     const out = parseBounce(
-      nested("Final-Recipient: rfc822; aurelien@getcargoapp.com\nAction: failed\nStatus: 4.4.1\n"),
+      nested("Final-Recipient: rfc822; remy@cargoline.example\nAction: failed\nStatus: 4.4.1\n"),
     );
     expect(out[0]?.kind).toBe("soft");
   });

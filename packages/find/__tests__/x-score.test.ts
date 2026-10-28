@@ -52,7 +52,7 @@ function candidate(over: Partial<XCandidate> = {}): XCandidate {
   return { user: user(), hits: [tweet()], modes: ["retweet"], ...over };
 }
 
-const ctx = { seeds: new Set(["iamdevloper"]), blocked: new Set(["nclsjrry"]) };
+const ctx = { seeds: new Set(["iamdevloper"]), blocked: new Set(["mira_tracepoint"]) };
 
 describe("dropReason", () => {
   test("keeps a plausible amplifier", () => {
@@ -64,7 +64,7 @@ describe("dropReason", () => {
   });
 
   test("drops our own handles", () => {
-    expect(dropReason(user({ username: "nclsjrry" }), ctx, NOW)).toMatch(/our own/);
+    expect(dropReason(user({ username: "mira_tracepoint" }), ctx, NOW)).toMatch(/our own/);
   });
 
   test("drops empty bios", () => {

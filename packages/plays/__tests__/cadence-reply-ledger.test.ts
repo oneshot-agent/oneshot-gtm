@@ -71,7 +71,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
 
 const { pollInboxReplies } = await import("../src/_cadence.ts");
 
-const STORED_EMAIL = "sophia@agenticarchitect.ai";
+const STORED_EMAIL = "dana@halyard.example";
 
 beforeEach(() => {
   ledger = new Ledger(":memory:");
@@ -87,7 +87,7 @@ afterEach(() => {
 describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger (#663)", () => {
   it("persists unsubscribed cadence state and a matching sequence event, WITHOUT also recording an ordinary reply", async () => {
     const prospectId = ledger.upsertProspect({
-      name: "Sophia",
+      name: "Dana",
       email: STORED_EMAIL,
       source: "stack-consolidation",
     });
@@ -110,7 +110,7 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
     // only, so the unsubscribe branch expires the row itself.
     const reviveRowId = ledger.enqueueTarget({
       playName: "breakup-revive",
-      payload: { email: STORED_EMAIL, name: "Sophia" },
+      payload: { email: STORED_EMAIL, name: "Dana" },
       dedupeKey: `prospect:${prospectId}`,
       source: "breakup-revive",
     });
@@ -123,7 +123,7 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
     inboxEmails = [
       {
         id: "m1",
-        from: `Sophia <${STORED_EMAIL}>`,
+        from: `Dana <${STORED_EMAIL}>`,
         subject: "Re: your agent stack",
         body: "This isn't relevant to our team, please don't send any more of these.",
         received_at: "2026-08-20T09:00:00.000Z",
@@ -162,7 +162,7 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
 
   it("does not resurrect a terminal (breakup) cadence, and still skips the ordinary-reply path", async () => {
     const prospectId = ledger.upsertProspect({
-      name: "Sophia",
+      name: "Dana",
       email: STORED_EMAIL,
       source: "stack-consolidation",
     });
@@ -176,7 +176,7 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
     inboxEmails = [
       {
         id: "m1",
-        from: `Sophia <${STORED_EMAIL}>`,
+        from: `Dana <${STORED_EMAIL}>`,
         subject: "Re: your agent stack",
         body: "Please stop reaching out.",
         received_at: "2026-08-20T09:00:00.000Z",
@@ -202,7 +202,7 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
   // through to `recordProspectReply`/`tagOutcomeValue` for a second time.
   it("vetoes recordProspectReply on a repeated pass over an already-triaged unsubscribe reply", async () => {
     const prospectId = ledger.upsertProspect({
-      name: "Sophia",
+      name: "Dana",
       email: STORED_EMAIL,
       source: "stack-consolidation",
     });
@@ -223,7 +223,7 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
     inboxEmails = [
       {
         id: "m1",
-        from: `Sophia <${STORED_EMAIL}>`,
+        from: `Dana <${STORED_EMAIL}>`,
         subject: "Re: your agent stack",
         body: "This isn't relevant to our team, please don't send any more of these.",
         received_at: "2026-08-20T09:00:00.000Z",
@@ -264,7 +264,7 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
   // `pending: true` for exactly this window.
   it("skips reply bookkeeping entirely for a concurrent claim-loss while triage is still in flight", async () => {
     const prospectId = ledger.upsertProspect({
-      name: "Sophia",
+      name: "Dana",
       email: STORED_EMAIL,
       source: "stack-consolidation",
     });
@@ -285,7 +285,7 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
     inboxEmails = [
       {
         id: "m1",
-        from: `Sophia <${STORED_EMAIL}>`,
+        from: `Dana <${STORED_EMAIL}>`,
         subject: "Re: your agent stack",
         body: "This isn't relevant to our team, please don't send any more of these.",
         received_at: "2026-08-20T09:00:00.000Z",

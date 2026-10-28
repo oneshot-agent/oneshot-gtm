@@ -367,8 +367,8 @@ describe("runLumaFinder — city-page discovery", () => {
     };
     // The host's linkedin enrichment surfaces a work email directly → no findEmail.
     enrichByLinkedinUrl["https://www.linkedin.com/in/dana"] = {
-      best_work_email: "dana@org.com",
-      company_domain: "org.com",
+      best_work_email: "dana@org.example",
+      company_domain: "org.example",
     };
 
     const out = await runLumaFinder(baseConfig);
@@ -377,7 +377,7 @@ describe("runLumaFinder — city-page discovery", () => {
     expect(out.enqueued).toBe(2);
     expect(enqueued).toHaveLength(2);
     const dana = enqueued.find((r) => r.payload["name"] === "Dana Host");
-    expect(dana?.payload["email"]).toBe("dana@org.com");
+    expect(dana?.payload["email"]).toBe("dana@org.example");
     // Role surfaces in the payload (queue review) and flips the notes verb.
     expect(dana?.payload["role"]).toBe("Host");
     expect(dana?.notes).toContain("hosting");
@@ -733,8 +733,8 @@ describe("runLumaFinder — happy path", () => {
         ],
       };
       enrichByLinkedinUrl["https://www.linkedin.com/in/dana"] = {
-        best_work_email: "dana@org.com",
-        company_domain: "org.com",
+        best_work_email: "dana@org.example",
+        company_domain: "org.example",
       };
       await runLumaFinder(baseConfig);
       expect(enqueued[0]?.payload["eventTimezone"]).toBe("America/Los_Angeles");
@@ -1120,7 +1120,7 @@ describe("runLumaFinder — person-level ICP gate", () => {
       websiteUrl: "https://alice.dev",
       linkedinUrl: null,
       twitterUrl: null,
-      bio: "GTM @AhaCreator",
+      bio: "GTM @Northwind",
       role: "Guest",
     },
     {
@@ -1219,8 +1219,8 @@ describe("luma-events personGate", () => {
       ],
     };
     enrichByLinkedinUrl["https://www.linkedin.com/in/dana"] = {
-      best_work_email: "dana@org.com",
-      company_domain: "org.com",
+      best_work_email: "dana@org.example",
+      company_domain: "org.example",
     };
   }
 
@@ -1308,7 +1308,7 @@ describe("luma-events channels", () => {
       ],
     };
     // Enrichment by LinkedIn gives a company domain but no email, and findEmail misses.
-    enrichByLinkedinUrl["https://www.linkedin.com/in/dana"] = { company_domain: "org.com" };
+    enrichByLinkedinUrl["https://www.linkedin.com/in/dana"] = { company_domain: "org.example" };
     findEmailReturn = { found: false, email: null };
 
     await withFinderChannels(["email", "linkedin"], () => runLumaFinder(baseConfig));

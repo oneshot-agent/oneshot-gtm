@@ -25,7 +25,7 @@ const CARD = [
   "NEVER",
   "- hedges, hype, exclamation marks",
   "EXEMPLARS",
-  "- cost is not friction. cost is information.",
+  "- a full calendar is not a busy week. it is a choice.",
 ].join("\n");
 
 beforeEach(() => {
@@ -77,7 +77,7 @@ describe("voiceBlock", () => {
   it("keeps the directive platform-generic: the card is the only founder-specific text", () => {
     cfgOverride = { founderVoice: "MOVES\n- x" };
     const out = voiceBlock("intro")!.text;
-    for (const rx of [/oneshot/i, /taleb/i, /agent/i, /founder's name/i])
+    for (const rx of [/oneshot/i, /in the style of/i, /writes like/i, /agent/i, /founder's name/i])
       expect(out).not.toMatch(rx);
   });
 

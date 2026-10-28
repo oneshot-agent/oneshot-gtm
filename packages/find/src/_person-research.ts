@@ -822,7 +822,7 @@ export function dossierFromProviderResult(
 const COMPANY_SUFFIX =
   /\b(?:group|inc|incorporated|llc|ltd|limited|co|corp|corporation|gmbh|sas|srl|plc|ag|the)\b/g;
 
-/** "L'eto Group" ≡ "L'ETO Group" ≡ "L'ETO": case, punctuation and legal suffixes never count as a change. */
+/** "D'oro Group" ≡ "D'ORO Group" ≡ "D'ORO": case, punctuation and legal suffixes never count as a change. */
 export function normalizeCompany(value: string | null | undefined): string {
   return (value ?? "")
     .toLowerCase()

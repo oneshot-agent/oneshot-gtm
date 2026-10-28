@@ -176,15 +176,15 @@ describe("suggestRejectReasonRoute", () => {
       id: 8,
       play_name: "luma-events",
       status: "approved",
-      payload_json: JSON.stringify({ email: "bruno@magna.so", company: "Magna" }),
+      payload_json: JSON.stringify({ email: "rui@corvane.example", company: "Corvane" }),
       prospect_id: null,
-      notes: "Bruno going to a founders breakfast",
+      notes: "Rui going to a founders breakfast",
     });
     enrichMock.mockResolvedValue({
       result: {
         status: "ok",
         company: {
-          name: "Magna",
+          name: "Corvane",
           employee_count: 80,
           funding_stage: "series_b",
           founded_year: 2014,
@@ -205,7 +205,7 @@ describe("suggestRejectReasonRoute", () => {
       researched: true,
     });
     expect(enrichMock).toHaveBeenCalledWith(
-      { domain: "magna.so", timeoutMs: expect.any(Number) },
+      { domain: "corvane.example", timeoutMs: expect.any(Number) },
       expect.objectContaining({ playName: "luma-events" }),
     );
     expect(generateMock).toHaveBeenCalledWith(
@@ -256,7 +256,7 @@ describe("suggestRejectReasonRoute", () => {
   });
 
   it("rejectLookupDomain prefers the address domain and falls back to the payload's own", () => {
-    expect(rejectLookupDomain({ email: "A@Magna.so" })).toBe("magna.so");
+    expect(rejectLookupDomain({ email: "A@Corvane.example" })).toBe("corvane.example");
     expect(rejectLookupDomain({ companyDomain: "https://www.acme.dev/about" })).toBe("acme.dev");
     expect(rejectLookupDomain({ companyDomain: " HTTPS://WWW.Acme.dev?ref=x " })).toBe("acme.dev");
     expect(rejectLookupDomain({ domain: "acme.dev#team" })).toBe("acme.dev");

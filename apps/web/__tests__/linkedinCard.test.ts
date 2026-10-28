@@ -17,7 +17,7 @@ import {
 const account = (over: Partial<LinkedInAccountView> = {}): LinkedInAccountView => ({
   key: "wallet:acc_1",
   id: "acc_1",
-  name: "J. Nicolas",
+  name: "Mira Chen",
   workspace: "alpha",
   status: "connected",
   syncState: "partial",
@@ -33,7 +33,7 @@ const account = (over: Partial<LinkedInAccountView> = {}): LinkedInAccountView =
 const researchOn = {
   linkedinBrowserProfileId: "prof_a",
   linkedinSessionCheckedAt: new Date(Date.now() - 3 * 3600_000).toISOString(),
-  linkedinSessionName: "J. Nicolas",
+  linkedinSessionName: "Mira Chen",
   linkedinSessionInvalidAt: null,
   linkedinPendingProfileId: null,
 };
@@ -49,7 +49,7 @@ describe("messagingState", () => {
   it("is unknown until the list has loaded, none without accounts, connected with a working one, attention otherwise", () => {
     expect(messagingState(null)).toEqual({ state: "unknown", name: null });
     expect(messagingState([])).toEqual({ state: "none", name: null });
-    expect(messagingState([account()])).toEqual({ state: "connected", name: "J. Nicolas" });
+    expect(messagingState([account()])).toEqual({ state: "connected", name: "Mira Chen" });
     expect(messagingState([account({ status: "reconnect_required" })]).state).toBe("attention");
     expect(messagingState([account({ canResolve: false })]).state).toBe("attention");
     // One working account is enough, whatever the others need.
@@ -86,7 +86,7 @@ describe("linkedinCardView", () => {
       setupUrl: null,
     });
     expect(onlyResearch.connectRuns).toEqual(["research"]);
-    expect(onlyResearch.messaging).toMatchObject({ ok: true, text: "Connected as J. Nicolas" });
+    expect(onlyResearch.messaging).toMatchObject({ ok: true, text: "Connected as Mira Chen" });
 
     const onlyMessaging = linkedinCardView({
       cfg: researchOn,
@@ -97,7 +97,7 @@ describe("linkedinCardView", () => {
     });
     expect(onlyMessaging.connectRuns).toEqual(["messaging"]);
     expect(onlyMessaging.research.ok).toBe(true);
-    expect(onlyMessaging.research.text).toMatch(/^Connected as J\. Nicolas · checked 3h ago$/);
+    expect(onlyMessaging.research.text).toMatch(/^Connected as Mira Chen · checked 3h ago$/);
   });
 
   it("both connected: two check lines and no button", () => {

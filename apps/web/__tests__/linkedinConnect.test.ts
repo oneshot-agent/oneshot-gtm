@@ -7,7 +7,7 @@ import { doneFailureCopy, linkedinView } from "../src/lib/linkedinConnect.ts";
 const verified = {
   linkedinBrowserProfileId: "prof_a",
   linkedinSessionCheckedAt: new Date(Date.now() - 3 * 3600_000).toISOString(),
-  linkedinSessionName: "J. Nicolas",
+  linkedinSessionName: "Mira Chen",
   linkedinSessionInvalidAt: null,
   linkedinPendingProfileId: null,
 };
@@ -18,7 +18,7 @@ describe("linkedinView", () => {
     expect(v.phase).toBe("connected");
     expect(v.primary).toBeNull();
     expect(v.ok).toBe(true);
-    expect(v.headline).toMatch(/^Connected as J\. Nicolas · checked 3h ago$/);
+    expect(v.headline).toMatch(/^Connected as Mira Chen · checked 3h ago$/);
   });
 
   it("signing in wins over every other state and keeps the session usable meanwhile", () => {

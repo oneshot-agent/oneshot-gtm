@@ -115,8 +115,8 @@ vi.mock("@oneshot-gtm/core", async () => {
       telemetryEnabled: false,
       founderName: null,
       founderEmail: null,
-      productOneLiner: "TestProduct SDK",
-      icpOneLiner: "Engineers building agents",
+      productOneLiner: "TestProduct — scheduling and invoicing for field-service teams",
+      icpOneLiner: "B2B fintech founders",
       clientId: "test",
     }),
     findEmail: async (input: { companyDomain: string }) => {
@@ -295,7 +295,7 @@ const baseOpts = {
   dryRun: false as const,
   topics: ["llm-agents"],
   vendors: ["langchain", "twilio"],
-  yourEdge: "TestProduct bundles every vendor into one signed action.",
+  yourEdge: "TestProduct replaces three scheduling tools with one calendar.",
   limit: 25,
   maxCostUsd: 5,
 };
@@ -616,7 +616,7 @@ describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichPr
     // LinkedIn capture is a first-class output, so the webSearch runs for every
     // candidate. It used to be gated on `!companyForGate`, which meant the best
     // candidates (the ones that already had a company) never got a LinkedIn
-    // URL at all (11 of 80 in production).
+    // URL at all.
     expect(calls2.webSearch).toBe(1);
     // The $0.005 enrichProfile stays gated: its only job is recovering a company
     // for Path C's identifier gate, and we already have one.

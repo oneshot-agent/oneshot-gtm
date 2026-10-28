@@ -30,7 +30,7 @@ function toolError(): Error {
   e.responseBody = JSON.stringify({
     error: "domain_not_owned",
     message: "Domain is owned by a different agent.",
-    domain: "oneshotagent.com",
+    domain: "acme.email",
   });
   return e;
 }
@@ -95,7 +95,7 @@ describe("logTargetError redaction", () => {
   it("keeps the domain and drops the local part, whatever the caller passes", () => {
     for (const [to, domain] of [
       ["pat@acme.io", "acme.io"],
-      ["ODD@Example.CO", "Example.CO"],
+      ["ODD@Example.COM", "Example.COM"],
     ] as const) {
       logged.length = 0;
       logTargetError({ playName: "show-hn", to, err: new Error("x") });

@@ -101,8 +101,8 @@ it("treats request timeout as retryable", async () => {
   expect((await fetchProfileReadmeEmail(identity)).status).toBe("unavailable");
 });
 it("serves README text and email from one fetch", async () => {
-  ready("# Pat\nI build agents.\nEmail me: pat@acme.dev");
-  expect(await fetchProfileReadmeText(identity)).toContain("I build agents.");
+  ready("# Pat\nI build payroll tools.\nEmail me: pat@acme.dev");
+  expect(await fetchProfileReadmeText(identity)).toContain("I build payroll tools.");
   expect(await fetchProfileReadmeEmail(identity)).toMatchObject({ status: "found" });
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });

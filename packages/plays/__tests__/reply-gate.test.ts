@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The reply gate: a reply must never re-introduce the founder, and must mirror
 // the sender's length. Regression suite for the draft that answered a 20-word
-// "most of it is vibe-coded" with a 110-word re-pitch that repeated the intro
+// "most of it is generated code" with a 110-word re-pitch that repeated the intro
 // email's credentials line verbatim.
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -24,9 +24,9 @@ vi.mock("@oneshot-gtm/core", async () => {
       icpOneLiner: null,
       cadenceOverrides: null,
       // Both social-proof fields set: the reply must still not carry them.
-      founderCredentials: "Built Cloudflare's experimentation platform.",
-      productPortfolio: "Previously shipped a Zoom competitor to 500k MAU.",
-      partners: "Google Cloud, LangChain",
+      founderCredentials: "Ran payments infrastructure at a public fintech.",
+      productPortfolio: "Previously shipped a scheduling app to 200k users.",
+      partners: "Northwind Cloud, Halyard",
       productBrief: null,
       founderVoice: voiceCard,
       mobileSignature: false,
@@ -57,7 +57,7 @@ function userBlocks(): string[] {
   return call.messages.filter((m) => m.role === "user").map((m) => m.content);
 }
 
-const BASE = { fromEmail: "rishi@gmail.com", subject: "Re: x", body: "tell me about payments" };
+const BASE = { fromEmail: "sam.ortiz@gmail.com", subject: "Re: x", body: "tell me about payments" };
 
 beforeEach(() => {
   completeMock.mockResolvedValue(draftReply("Short answer: yes, it settles per call."));
@@ -72,7 +72,7 @@ describe("replyWordBudget", () => {
     // The actual inbound that broke: 20 words.
     expect(
       replyWordBudget(
-        "I did indeed reach but, to be honest most of it is vibe-coded. The project idea was given by AI itself.",
+        "I did get that far but, to be honest most of it is generated code. The project idea came from AI itself.",
       ),
     ).toBe(45);
   });
@@ -86,7 +86,7 @@ describe("replyWordBudget", () => {
     const body = [
       "ok.",
       "",
-      "On Sat, Aug 29, 2026, J. Nicolas wrote:",
+      "On Sat, Aug 29, 2026, Mira Chen wrote:",
       ...Array.from({ length: 200 }, () => "> padding"),
     ].join("\n");
     expect(replyWordBudget(body)).toBe(45);
@@ -96,9 +96,9 @@ describe("replyWordBudget", () => {
 describe("repeatsPriorText", () => {
   it("catches the credentials line lifted out of the intro email", () => {
     const intro =
-      "I'm J. Nicolas, and i previously shipped a zoom competitor to 500k mau before starting oneshot.";
+      "I'm Mira Chen, and i previously shipped a scheduling app to 200k users before starting tracepoint.";
     const reply =
-      "Fair point. I'm J. Nicolas, and i previously shipped a zoom competitor to 500k mau before building oneshot.";
+      "Fair point. I'm Mira Chen, and i previously shipped a scheduling app to 200k users before building tracepoint.";
     expect(repeatsPriorText(reply, [intro])).toBe(true);
   });
 
@@ -112,7 +112,7 @@ describe("repeatsPriorText", () => {
 
   it("passes a genuinely fresh reply", () => {
     const intro =
-      "I'm J. Nicolas, and i previously shipped a zoom competitor to 500k mau before starting oneshot.";
+      "I'm Mira Chen, and i previously shipped a scheduling app to 200k users before starting tracepoint.";
     expect(repeatsPriorText("Makes sense. What broke first, auth or egress?", [intro])).toBe(false);
   });
 
@@ -154,14 +154,14 @@ describe("draftInboxReply gate", () => {
   });
 
   it("repairs a reply that repeats an email already in the thread", async () => {
-    const intro = "I'm Mira, and i previously shipped a zoom competitor to 500k mau before this.";
+    const intro = "I'm Mira, and i previously shipped a scheduling app to 200k users before this.";
     completeMock
       .mockResolvedValueOnce(draftReply(`Fair point. ${intro}`))
       .mockResolvedValueOnce(draftReply("Fair point. What broke first?"));
 
     const out = await draftInboxReply({
       ...BASE,
-      body: "most of it is vibe-coded",
+      body: "most of it is generated code",
       threadSent: [{ body: intro, sentAt: "2026-08-28" }],
     });
 

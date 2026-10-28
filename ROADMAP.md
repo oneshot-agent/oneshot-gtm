@@ -48,9 +48,6 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 - [ ] vhs terminal recording (60s), to embed in the README.
 - [ ] Dashboard demo gif (30s).
-- [ ] Launch posts — drafts maintained privately, unpublished.
-- [ ] Fireship sponsor video.
-- [ ] "Built with oneshot-gtm" badge program. The artifact shipped; this is the adoption push.
 
 ---
 
@@ -63,9 +60,7 @@ _Nothing approved and waiting._
 - **Run an SDR.** This helps you do founder-led sales. It refuses to advise a `first-ae` hire pre-PMF.
 - **Manage SPF/DKIM/DMARC.** OneShot auto-provisions and warms sending domains.
 - **Hold your customer data.** Local SQLite ledger only.
-- **Lock you into our LLM.** BYO key, swap providers freely.
-- **Auth, multi-user, hosted DB.** Local-first stays local. That's OneShot Cloud's problem.
-- **A universal cross-wrapper dashboard.** Separate future product that would aggregate receipts across `oneshot-gtm`, `oneshot-support`, etc.
-- **Extract `@oneshot/wrapper-kit`.** Deferred until a second wrapper exists.
+- **Lock you into one LLM.** BYO key, swap providers freely.
+- **Auth, multi-user, hosted DB.** Out of scope for a local-first tool.
 - **Tauri / Electron desktop wrap.** `bunx oneshot-gtm-server` opens your browser; that's enough.
 - **Adopt Effect.** Skipped for shipping speed. Plain `async`/`await` keeps the code forkable.

@@ -142,8 +142,8 @@ describe("runLocalBusinessFinder (b2b lane) — routed to design-partner-loi (#7
         full_name: "Dana Rivera",
         title: "Owner",
         company: "Rivera HVAC",
-        company_domain: "riverahvac.com",
-        best_work_email: "dana@riverahvac.com",
+        company_domain: "riverahvac.example",
+        best_work_email: "dana@riverahvac.example",
       },
     ];
     const out = await runLocalBusinessFinder({
@@ -166,7 +166,7 @@ describe("runLocalBusinessFinder (b2b lane) — routed to design-partner-loi (#7
 
     expect(p["name"]).toBe("Dana Rivera");
     expect(p["company"]).toBe("Rivera HVAC");
-    expect(p["email"]).toBe("dana@riverahvac.com");
+    expect(p["email"]).toBe("dana@riverahvac.example");
     expect(p["yourEdge"]).toBe("we cut scheduling time in half");
     expect(p["buyerType"]).toBe("enterprise");
 
@@ -180,8 +180,8 @@ describe("runLocalBusinessFinder (b2b lane) — routed to design-partner-loi (#7
         full_name: "Dana Rivera",
         title: "Owner",
         company: "Rivera HVAC",
-        company_domain: "riverahvac.com",
-        best_work_email: "dana@riverahvac.com",
+        company_domain: "riverahvac.example",
+        best_work_email: "dana@riverahvac.example",
       },
     ];
     const out = await runLocalBusinessFinder({
@@ -198,7 +198,7 @@ describe("runLocalBusinessFinder (b2b lane) — routed to design-partner-loi (#7
 
   it("checks queue dedupe against BOTH free-pilot and design-partner-loi regardless of routing", async () => {
     nextPeopleSearchResults = [
-      { full_name: "Dana Rivera", title: "Owner", best_work_email: "dana@riverahvac.com" },
+      { full_name: "Dana Rivera", title: "Owner", best_work_email: "dana@riverahvac.example" },
     ];
     await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Owner"], yourEdge: "x" });
     const checkedPlays = new Set(dedupeChecks.map((c) => c.playName));

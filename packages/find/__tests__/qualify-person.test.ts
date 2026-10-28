@@ -35,7 +35,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 
 const { qualifyPerson, hasRoleText } = await import("../src/_filter.ts");
 
-const ICP = "Technical founders and engineering leads shipping AI agents in production";
+const ICP = "Technical founders and engineering leads at B2B fintech startups";
 
 describe("qualifyPerson — verdict plumbing", () => {
   it("passes through without an LLM call when no ICP is set", async () => {

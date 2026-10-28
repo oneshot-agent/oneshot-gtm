@@ -47,9 +47,9 @@ export function replyWordBudget(inboundBody: string): number {
 
 /**
  * Longest run of words a draft may share with an email already in this thread.
- * The re-introduction that motivated this gate ("i previously shipped a zoom
- * competitor to 500k mau", lifted from the intro into the reply) walked past a
- * prose "do not re-introduce yourself" rule; an n-gram check does not care how
+ * A re-introduction lifted from the intro into the reply (the founder's
+ * credentials line, word for word) walks past a prose "do not re-introduce
+ * yourself" rule; an n-gram check does not care how
  * the model justified it.
  */
 const REPEAT_NGRAM = 8;

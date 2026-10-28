@@ -152,15 +152,15 @@ describe("bootstrapClientId", () => {
       ...baseCfg,
       founderName: "Sam",
       founderEmail: "sam@acme.dev",
-      icpOneLiner: "agent builders",
-      productOneLiner: "single SDK",
+      icpOneLiner: "B2B fintech founders",
+      productOneLiner: "invoicing API",
       llmModel: "claude-sonnet-5.5",
     };
     const { cfg } = bootstrapClientId(stored);
     expect(cfg.founderName).toBe("Sam");
     expect(cfg.founderEmail).toBe("sam@acme.dev");
-    expect(cfg.icpOneLiner).toBe("agent builders");
-    expect(cfg.productOneLiner).toBe("single SDK");
+    expect(cfg.icpOneLiner).toBe("B2B fintech founders");
+    expect(cfg.productOneLiner).toBe("invoicing API");
     expect(cfg.llmModel).toBe("claude-sonnet-5.5");
   });
 

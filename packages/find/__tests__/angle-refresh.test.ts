@@ -47,7 +47,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       llmModel: "test",
       founderName: "Founder",
       productOneLiner: "TestProduct",
-      icpOneLiner: "Engineers building agents",
+      icpOneLiner: "B2B fintech founders",
       founderCredentials: null,
       productPortfolio: null,
       founderAdmission: null,
@@ -164,7 +164,7 @@ describe("registerAngleRefreshTrigger wiring (issue #357)", () => {
   it("proposes a re-synthesized angle for review instead of writing it (#813)", async () => {
     prospect!.angle_json = JSON.stringify({ hook: "old hook" });
     llmResponse = JSON.stringify({
-      brief: "Builds agent infra.",
+      brief: "Builds scheduling software for dental groups.",
       hook: "Just corrected the record on their role.",
     });
 

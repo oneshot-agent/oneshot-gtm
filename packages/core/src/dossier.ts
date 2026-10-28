@@ -133,8 +133,7 @@ export function mergePersonDossier(current: string | null | undefined, person: u
  * `hasDossierSignal` answers "is this column worth keeping", which a product
  * dossier alone satisfies. That is the wrong question for the research
  * backlog: a row whose `person` is null still needs `deepResearchPerson`, and
- * for 531 of 684 prospects the product half alone was enough to make them look
- * done. Callers selecting research candidates want this, not the broad gate.
+ * the product half alone is enough to make it look done. Callers selecting research candidates want this, not the broad gate.
  */
 export function hasPersonSignal(stored: string | null | undefined): boolean {
   if (!stored?.trim()) return false;
@@ -314,7 +313,7 @@ function clip(text: string | undefined, max: number): string | undefined {
   return t.length <= max ? t : `${t.slice(0, max - 1).trimEnd()}…`;
 }
 
-/** "Founder & Product Owner at WildMuse.App since Mar 2026". */
+/** "Founder & Product Owner at BrightLoom.App since Mar 2026". */
 export function renderCurrentRole(r: PersonResearchDossier): string | undefined {
   const role = r.currentRole;
   if (!role) return undefined;
@@ -322,7 +321,7 @@ export function renderCurrentRole(r: PersonResearchDossier): string | undefined 
   return clip(role.since ? `${head} since ${role.since}` : head, PERSON_RESEARCH_LINE_CHARS);
 }
 
-/** "WildMuse.App · Software · 1-10 employees · founded 2026 · seed". */
+/** "BrightLoom.App · Software · 1-10 employees · founded 2026 · seed". */
 export function renderCompanyFacts(c: PersonResearchCompany | undefined): string | undefined {
   if (!c) return undefined;
   const employees =
@@ -344,7 +343,7 @@ export function renderCompanyFacts(c: PersonResearchCompany | undefined): string
   return clip(withDescription, PERSON_RESEARCH_LINE_CHARS);
 }
 
-/** "Head of Product at L'ETO Group (Nov 2024–Oct 2025); Business Consultant at Julia's Consultancy (2022–2024)". */
+/** "Head of Product at D'ORO Group (Nov 2024–Oct 2025); Business Consultant at Nora's Consultancy (2022–2024)". */
 export function renderFormerRoles(r: PersonResearchDossier, max = 3): string | undefined {
   const former = r.organizations.filter((o) => !o.current).slice(0, max);
   if (former.length === 0) return undefined;

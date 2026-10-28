@@ -134,7 +134,7 @@ describe("replySubject", () => {
     expect(replySubject("quick question")).toBe("Re: quick question");
     expect(replySubject("Re: quick question")).toBe("Re: quick question");
     expect(replySubject("RE: quick question")).toBe("RE: quick question");
-    expect(replySubject("  trustclaw stack ")).toBe("Re: trustclaw stack");
+    expect(replySubject("  beacon stack ")).toBe("Re: beacon stack");
   });
 });
 
@@ -145,7 +145,7 @@ describe("replyEmail — gmail identity", () => {
       {
         identityId: "gmail:jane@gmail.com",
         to: "pat@acme.com",
-        subject: "trustclaw stack",
+        subject: "beacon stack",
         body: "Hey Pat,\n\nfair point.",
         threadId: "t-9",
         inReplyTo: "<pat-msg-1@mail.acme.com>",
@@ -164,7 +164,7 @@ describe("replyEmail — gmail identity", () => {
         signedReceipt: expect.objectContaining({
           provider: "gmail",
           thread_id: "t-9",
-          subject: "Re: trustclaw stack",
+          subject: "Re: beacon stack",
         }),
       }),
     );
@@ -177,7 +177,7 @@ describe("replyEmail — gmail identity", () => {
     // threadId is a Message-resource field: threads our copy in the sender's mailbox.
     expect(payload.threadId).toBe("t-9");
     const mime = Buffer.from(payload.raw, "base64url").toString("utf8");
-    expect(mime).toContain("Subject: Re: trustclaw stack");
+    expect(mime).toContain("Subject: Re: beacon stack");
     expect(mime).toMatch(/^In-Reply-To: <pat-msg-1@mail\.acme\.com>$/m);
     expect(mime).toMatch(/^References: <pat-msg-1@mail\.acme\.com>$/m);
     expect(mime).toContain('From: "Jane Doe" <jane@gmail.com>');
@@ -211,7 +211,7 @@ describe("replyEmail — gmail identity", () => {
         {
           identityId: "gmail:jane@gmail.com",
           to: "pat@acme.com",
-          subject: "trustclaw stack",
+          subject: "beacon stack",
           body: "Thanks!",
           threadId: "t-9",
           inReplyTo,
@@ -243,7 +243,7 @@ describe("replyEmail — gmail identity", () => {
           identityId: "gmail:jane@gmail.com",
           sendRequestId: "req-0123456789abcdef",
           to,
-          subject: "trustclaw stack",
+          subject: "beacon stack",
           body: "fair point.",
           inReplyTo: "<pat-msg-1@mail.acme.com>",
         },
@@ -277,7 +277,7 @@ describe("replyEmail — gmail identity", () => {
           identityId: "gmail:jane@gmail.com",
           sendRequestId: "req-token-hangs-0001",
           to: "pat@acme.com",
-          subject: "trustclaw stack",
+          subject: "beacon stack",
           body: "b",
         },
         { playName: "inbox-reply" },
@@ -329,7 +329,7 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
         {
           id: "legacy-oneshot",
           provider: "oneshot",
-          sendingDomain: "oneshotagents.com",
+          sendingDomain: "acme.email",
           maxPerDay: null,
           warmup: null,
         },
@@ -343,7 +343,7 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
       {
         identityId: "legacy-oneshot",
         to: "pat@acme.com",
-        subject: "trustclaw stack",
+        subject: "beacon stack",
         body: "Hey Pat, fair point.",
         replyToEmailId: "inbox-abc",
       },
@@ -358,7 +358,7 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
     };
     expect(opts.reply_to_email_id).toBe("inbox-abc");
     expect(opts.idempotencyKey).toMatch(/^[0-9a-f]{40}$/);
-    expect(opts.from_domain).toBe("oneshotagents.com");
+    expect(opts.from_domain).toBe("acme.email");
 
     expect(out.result.request_id).toBe("os-req-1");
     expect(recordReceipt).toHaveBeenCalledWith(

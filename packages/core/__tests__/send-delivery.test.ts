@@ -89,16 +89,16 @@ describe("runDeliveryChecks with the ledger store", () => {
   const db = () => (ledger as unknown as { db: Database }).db;
 
   const smartlead: EmailIdentity = {
-    id: "smartlead:jn@mail.example",
+    id: "smartlead:mira@mail.example",
     provider: "smartlead",
-    address: "jn@mail.example",
+    address: "mira@mail.example",
     maxPerDay: 30,
     warmup: null,
   };
   const gmail: EmailIdentity = {
-    id: "gmail:jn@other.example",
+    id: "gmail:mira@other.example",
     provider: "gmail",
-    address: "jn@other.example",
+    address: "mira@other.example",
     maxPerDay: 30,
     warmup: null,
   };

@@ -70,7 +70,10 @@ describe("validateStrategistBody", () => {
 describe("validateCfgForStrategist", () => {
   it("accepts when both ICP + product are non-empty", () => {
     expect(
-      validateCfgForStrategist({ icpOneLiner: "AI agent builders", productOneLiner: "single SDK" }),
+      validateCfgForStrategist({
+        icpOneLiner: "B2B fintech founders",
+        productOneLiner: "invoicing API",
+      }),
     ).toEqual({ kind: "ok" });
   });
 
@@ -122,8 +125,8 @@ let mockCfg: {
   telemetryEnabled: true,
   founderName: null,
   founderEmail: null,
-  productOneLiner: "TestProduct — unified action API",
-  icpOneLiner: "Engineers shipping autonomous AI agents",
+  productOneLiner: "TestProduct — scheduling and invoicing for field-service teams",
+  icpOneLiner: "Operations leads at multi-site dental groups",
   clientId: "test-client-id",
 };
 
@@ -201,8 +204,8 @@ beforeEach(async () => {
     founderName: "Founder",
     productDomain: "example.com",
     founderEmail: null,
-    productOneLiner: "TestProduct — unified action API",
-    icpOneLiner: "Engineers shipping autonomous AI agents",
+    productOneLiner: "TestProduct — scheduling and invoicing for field-service teams",
+    icpOneLiner: "Operations leads at multi-site dental groups",
     clientId: "test-client-id",
   };
   mockLlmContent = "ok";

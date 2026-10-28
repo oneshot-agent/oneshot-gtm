@@ -349,9 +349,9 @@ function hasCleanDraft(row: QueueRow): boolean {
  * Resolve the prospect a queued row's send created, by email.
  *
  * Exported because `/api/run` persists sent rows through its own path
- * (`persistDraftsToQueue`) and never linked them: 680 of 681 sent queue rows
- * carried a NULL `prospect_id`, which quietly broke every join from a queued
- * target back to the person: including the one `ops/expandi-sync` reads.
+ * (`persistDraftsToQueue`) and never linked them: sent queue rows carried a
+ * NULL `prospect_id`, which quietly broke every join from a queued target
+ * back to the person.
  */
 export function backfillProspectId(row: QueueRow | null): number | null {
   if (!row) return null;

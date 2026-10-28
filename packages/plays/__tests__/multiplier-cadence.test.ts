@@ -12,7 +12,7 @@ let mailConfig: Record<string, { position: number; delayDays: number } | null> |
 let linkedinContinuation: boolean | undefined;
 let memberOffer: string | null;
 const letterInputs: string[] = [];
-const OFFER = "Up to $150 in credit for each member company, earned at milestones.";
+const OFFER = "Up to $300 in onboarding hours for each member company, earned at milestones.";
 const LETTER = `Dear Jordan,
 Here is what I would offer your cohort: ${OFFER}
 Founder`;
@@ -204,7 +204,7 @@ describe("multiplier letter", () => {
   it("proposes the member offer as the offer and its terms, not pilotOffer", async () => {
     const id = prospect();
     const text = await generateMailLetter(id, PLAY);
-    expect(text).toContain("$150");
+    expect(text).toContain("$300");
     const input = JSON.parse(letterInputs[0]!);
     expect(input.offerTerms).toBe(memberOffer);
     expect(input.offer.what).toBe(memberOffer);

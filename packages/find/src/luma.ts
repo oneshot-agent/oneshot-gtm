@@ -760,7 +760,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     // coordinator, because "attended an AI hackathon" is not a job.
     //
     // `attendeeBio` was already on the payload and used only for email copy.
-    // Judging it here rejects the clear misses (e.g. "GTM @AhaCreator")
+    // Judging it here rejects the clear misses (e.g. "GTM @Northwind")
     // before findEmail + verify + enrich are paid for. Ambiguous bios and the
     // ~31% with no bio fall through to stage B/C inside the spine.
     const preSpend = await qualifyPreSpend({

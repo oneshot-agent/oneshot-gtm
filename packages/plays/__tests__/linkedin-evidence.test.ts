@@ -181,25 +181,25 @@ describe("agedEvidence", () => {
 describe("founder-company check (stored data)", () => {
   const base = {
     title: "Co-founder & CEO",
-    company: "Soren",
+    company: "Tavora",
     email: null as string | null,
   };
 
   it("corroborated by the work-email domain, prefixed or suffixed", () => {
-    expect(storedFounderCompany({ ...base, email: "dana@usesoren.com" })).toBe("Soren");
-    expect(storedFounderCompany({ ...base, company: "Locus", email: "a@paywithlocus.com" })).toBe(
-      "Locus",
-    );
-    expect(storedFounderCompany({ ...base, email: "dana@soren.io" })).toBe("Soren");
+    expect(storedFounderCompany({ ...base, email: "dana@usetavora.example" })).toBe("Tavora");
+    expect(
+      storedFounderCompany({ ...base, company: "Quill", email: "a@paywithquill.example" }),
+    ).toBe("Quill");
+    expect(storedFounderCompany({ ...base, email: "dana@tavora.test" })).toBe("Tavora");
   });
 
   it("corroborated by the dossier company_domain", () => {
-    expect(storedFounderCompany({ ...base, dossierDomain: "getsoren.com" })).toBe("Soren");
+    expect(storedFounderCompany({ ...base, dossierDomain: "gettavora.example" })).toBe("Tavora");
   });
 
   it("corroborated by a current mention in the title or headline", () => {
-    expect(storedFounderCompany({ ...base, title: "CEO at Soren" })).toBe("Soren");
-    expect(storedFounderCompany({ ...base, headline: "Founder @ Soren | agents" })).toBe("Soren");
+    expect(storedFounderCompany({ ...base, title: "CEO at Tavora" })).toBe("Tavora");
+    expect(storedFounderCompany({ ...base, headline: "Founder @ Tavora | agents" })).toBe("Tavora");
   });
 
   it("falls back to the dossier title", () => {
@@ -208,17 +208,17 @@ describe("founder-company check (stored data)", () => {
         ...base,
         title: null,
         dossierTitle: "Founder",
-        email: "a@soren.com",
+        email: "a@tavora.example",
       }),
-    ).toBe("Soren");
+    ).toBe("Tavora");
   });
 
   it("tidies the name", () => {
-    expect(tidyCompanyName("Soren (YC F25)")).toBe("Soren");
-    expect(tidyCompanyName("Soren Yc F25")).toBe("Soren");
-    expect(tidyCompanyName("Soren, Inc.")).toBe("Soren");
-    expect(tidyCompanyName("Soren GmbH")).toBe("Soren");
-    expect(tidyCompanyName("Soren LLC")).toBe("Soren");
+    expect(tidyCompanyName("Tavora (YC F25)")).toBe("Tavora");
+    expect(tidyCompanyName("Tavora Yc F25")).toBe("Tavora");
+    expect(tidyCompanyName("Tavora, Inc.")).toBe("Tavora");
+    expect(tidyCompanyName("Tavora GmbH")).toBe("Tavora");
+    expect(tidyCompanyName("Tavora LLC")).toBe("Tavora");
   });
 
   it.each([
@@ -237,9 +237,9 @@ describe("founder-company check (stored data)", () => {
       },
     ],
     ["a university", { company: "Stanford University", headline: "Founder, Stanford University" }],
-    ["a company that is not the email domain", { company: "Soren", email: "dana@othercorp.com" }],
-    ["Founders Associate", { title: "Founders Associate", email: "a@usesoren.com" }],
-    ["a too-short company key", { company: "AB", email: "a@abacus.com" }],
+    ["a company that is not the email domain", { company: "Tavora", email: "dana@othercorp.com" }],
+    ["Founders Associate", { title: "Founders Associate", email: "a@usetavora.example" }],
+    ["a too-short company key", { company: "AB", email: "a@abacus.example" }],
   ])("rejects %s", (_label, over) => {
     expect(storedFounderCompany({ ...base, ...over })).toBeNull();
   });
@@ -255,8 +255,8 @@ describe("founder-company check (stored data)", () => {
 describe("live-read rule", () => {
   const prospect = {
     title: "CEO",
-    company: "Soren",
-    email: "dana@usesoren.com",
+    company: "Tavora",
+    email: "dana@usetavora.example",
     linkedin_url: "https://www.linkedin.com/in/dana-lee",
     dossier_json: null,
   };
@@ -277,22 +277,24 @@ describe("live-read rule", () => {
   });
 
   it("the live headline names it: company passed", async () => {
-    const read = reader({ headline: "CEO @ Soren", experience: [] });
-    expect(await companyTheyRun({ playName: "p", prospect, reader: read, now: NOW })).toBe("Soren");
+    const read = reader({ headline: "CEO @ Tavora", experience: [] });
+    expect(await companyTheyRun({ playName: "p", prospect, reader: read, now: NOW })).toBe(
+      "Tavora",
+    );
   });
 
   it("a current position names it: company passed; a past position does not", async () => {
     const now = reader({
-      experience: [{ company: "Soren", period: "Mar 2026 - Present" } as never],
+      experience: [{ company: "Tavora", period: "Mar 2026 - Present" } as never],
     });
-    expect(await companyTheyRun({ playName: "a", prospect, reader: now, now: NOW })).toBe("Soren");
+    expect(await companyTheyRun({ playName: "a", prospect, reader: now, now: NOW })).toBe("Tavora");
     clearStored();
-    const past = reader({ experience: [{ company: "Soren", period: "2020 - 2022" } as never] });
+    const past = reader({ experience: [{ company: "Tavora", period: "2020 - 2022" } as never] });
     expect(await companyTheyRun({ playName: "b", prospect, reader: past, now: NOW })).toBeNull();
   });
 
   it("no live read is made for someone who fails the stored checks", async () => {
-    const read = reader({ headline: "CEO @ Soren", experience: [] });
+    const read = reader({ headline: "CEO @ Tavora", experience: [] });
     await companyTheyRun({
       playName: "p",
       prospect: { ...prospect, title: "Founders Associate" },
@@ -303,10 +305,10 @@ describe("live-read rule", () => {
   });
 
   it("one read is reused across the note and both messages", async () => {
-    const read = reader({ headline: "CEO @ Soren", experience: [] });
+    const read = reader({ headline: "CEO @ Tavora", experience: [] });
     for (let i = 0; i < 3; i++) {
       expect(await companyTheyRun({ playName: "p", prospect, reader: read, now: NOW })).toBe(
-        "Soren",
+        "Tavora",
       );
     }
     expect(read).toHaveBeenCalledTimes(1);
@@ -314,13 +316,15 @@ describe("live-read rule", () => {
 
   it("a call with no reader (a batch preview) does not stop a later call from reading", async () => {
     expect(await companyTheyRun({ playName: "p", prospect, now: NOW })).toBeNull();
-    const read = reader({ headline: "CEO @ Soren", experience: [] });
-    expect(await companyTheyRun({ playName: "p", prospect, reader: read, now: NOW })).toBe("Soren");
+    const read = reader({ headline: "CEO @ Tavora", experience: [] });
+    expect(await companyTheyRun({ playName: "p", prospect, reader: read, now: NOW })).toBe(
+      "Tavora",
+    );
     expect(read).toHaveBeenCalledTimes(1);
   });
 
   it("a remembered read expires after a day, so a long-lived server reads again", async () => {
-    const read = reader({ headline: "CEO @ Soren", experience: [] });
+    const read = reader({ headline: "CEO @ Tavora", experience: [] });
     await companyTheyRun({ playName: "p", prospect, reader: read, now: NOW });
     clearStored();
     await companyTheyRun({
@@ -336,10 +340,10 @@ describe("live-read rule", () => {
     const flaky = vi
       .fn()
       .mockRejectedValueOnce(new Error("timeout"))
-      .mockResolvedValue({ headline: "CEO @ Soren", experience: [] });
+      .mockResolvedValue({ headline: "CEO @ Tavora", experience: [] });
     expect(await companyTheyRun({ playName: "p", prospect, reader: flaky, now: NOW })).toBeNull();
     expect(await companyTheyRun({ playName: "p", prospect, reader: flaky, now: NOW })).toBe(
-      "Soren",
+      "Tavora",
     );
     expect(flaky).toHaveBeenCalledTimes(2);
   });
@@ -349,12 +353,12 @@ describe("live-read rule", () => {
       ...prospect,
       title: "Founder",
       email: "dana@gmail.com",
-      dossier_json: JSON.stringify({ headline: "Founder at Soren" }),
+      dossier_json: JSON.stringify({ headline: "Founder at Tavora" }),
     };
-    const agrees = reader({ headline: "Founder at Soren", experience: [] });
+    const agrees = reader({ headline: "Founder at Tavora", experience: [] });
     expect(
       await companyTheyRun({ playName: "a", prospect: personal, reader: agrees, now: NOW }),
-    ).toBe("Soren");
+    ).toBe("Tavora");
     clearStored();
     const moved = reader({ headline: "Engineer at Otherco", experience: [] });
     expect(
@@ -364,13 +368,13 @@ describe("live-read rule", () => {
     // The live headline says something else, but the live current position names it.
     const position = reader({
       headline: "Building agents",
-      experience: [{ company: "Soren", period: "2025 - Present" } as never],
+      experience: [{ company: "Tavora", period: "2025 - Present" } as never],
     });
     expect(
       await companyTheyRun({ playName: "d", prospect: personal, reader: position, now: NOW }),
-    ).toBe("Soren");
+    ).toBe("Tavora");
     // Without the stored headline nothing corroborates, and no view is spent.
-    const bare = reader({ headline: "Founder at Soren", experience: [] });
+    const bare = reader({ headline: "Founder at Tavora", experience: [] });
     expect(
       await companyTheyRun({
         playName: "c",
@@ -388,12 +392,14 @@ describe("live-read rule", () => {
       key: paidCacheKey("linkedin.profile_read", { url: "https://linkedin.com/in/dana-lee" }),
       callType: "linkedin.profile_read",
       status: "ok",
-      resultJson: JSON.stringify({ headline: "Founder, Soren", experience: [] }),
+      resultJson: JSON.stringify({ headline: "Founder, Tavora", experience: [] }),
       costUsd: 0.01,
       fetchedAt: NOW.toISOString(),
     });
     const read = reader(null);
-    expect(await companyTheyRun({ playName: "p", prospect, reader: read, now: NOW })).toBe("Soren");
+    expect(await companyTheyRun({ playName: "p", prospect, reader: read, now: NOW })).toBe(
+      "Tavora",
+    );
     expect(read).not.toHaveBeenCalled();
   });
 });
@@ -405,7 +411,7 @@ const kinds = (call: ReturnType<typeof vi.fn>) =>
 
 describe("profile view reader", () => {
   const URL = "https://www.linkedin.com/in/dana-lee";
-  const PROFILE = { profile: { headline: "CEO @ Soren", current_company: "Soren" } };
+  const PROFILE = { profile: { headline: "CEO @ Tavora", current_company: "Tavora" } };
   const make = (call: ReturnType<typeof vi.fn>, waitMs = 0) =>
     profileViewReader({
       call: call as unknown as Parameters<typeof profileViewReader>[0]["call"],
@@ -430,8 +436,8 @@ describe("profile view reader", () => {
       .mockResolvedValueOnce({ status: "completed", result: PROFILE });
     expect(await make(call)(URL)).toBeNull();
     expect(await make(call)(URL)).toEqual({
-      headline: "CEO @ Soren",
-      experience: [{ company: "Soren", period: "Present" }],
+      headline: "CEO @ Tavora",
+      experience: [{ company: "Tavora", period: "Present" }],
     });
     expect(kinds(call)).toEqual(["profile", "wait"]);
     expect(call.mock.calls[1]![0]).toEqual({ kind: "wait", requestId: "job-1" });
@@ -445,7 +451,7 @@ describe("profile view reader", () => {
       .mockResolvedValueOnce({ status: "queued", request_id: "job-1" })
       .mockRejectedValueOnce(stillRunning())
       .mockResolvedValueOnce(PROFILE);
-    expect(await make(call, 5_000)(URL)).toMatchObject({ headline: "CEO @ Soren" });
+    expect(await make(call, 5_000)(URL)).toMatchObject({ headline: "CEO @ Tavora" });
     expect(kinds(call)).toEqual(["profile", "wait", "wait"]);
   });
 
@@ -459,16 +465,16 @@ describe("profile view reader", () => {
 
   it("a view that finishes at once is a read", async () => {
     expect(await make(vi.fn().mockResolvedValueOnce(PROFILE))(URL)).toEqual({
-      headline: "CEO @ Soren",
-      experience: [{ company: "Soren", period: "Present" }],
+      headline: "CEO @ Tavora",
+      experience: [{ company: "Tavora", period: "Present" }],
     });
   });
 
   it("an unfinished view is never stored as the person's profile", async () => {
     const prospect = {
       title: "CEO",
-      company: "Soren",
-      email: "dana@usesoren.com",
+      company: "Tavora",
+      email: "dana@usetavora.example",
       linkedin_url: URL,
       dossier_json: null,
     };
@@ -480,7 +486,7 @@ describe("profile view reader", () => {
     expect(first).toBeNull();
     expect(readPaidCache("linkedin.profile", { url: URL })).toBeNull();
     expect(await companyTheyRun({ playName: "p", prospect, reader: make(call), now: NOW })).toBe(
-      "Soren",
+      "Tavora",
     );
     expect(readPaidCache("linkedin.profile", { url: URL })?.status).toBe("ok");
   });

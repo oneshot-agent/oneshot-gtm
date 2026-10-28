@@ -8,7 +8,7 @@ import { Ledger } from "../../core/src/ledger.ts";
  * The finder reads from getLedger() (the singleton) but we can't swap that
  * out from a test. Instead, exercise the ledger-side contract the finder
  * depends on: listColdProspects + enqueueTarget dedupe + setQueueProspectId.
- * The full finder is tested in situ during dogfood runs.
+ * The full finder needs the live SDK and is not exercised here.
  */
 let dbPath: string;
 let ledger: Ledger;

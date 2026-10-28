@@ -6,8 +6,8 @@ import { MAX_RUN_AGE_MS, runTriggerNow } from "../src/registry.ts";
  * Direct `runTriggerNow` calls must respect the running claim. The exported
  * boundary cannot overlap same-trigger runs. Only the BLOCKED path is tested
  * here: it returns before the finder is ever invoked, so no network/SDK is
- * touched (the happy path necessarily runs a real finder and is covered by
- * dogfood runs via fireTriggerNow, which claims before delegating).
+ * touched (the happy path necessarily runs a real finder; fireTriggerNow
+ * claims before delegating to it).
  */
 describe("runTriggerNow claim guard", () => {
   it("refuses to run while another run holds the claim, leaving the claim intact", async () => {

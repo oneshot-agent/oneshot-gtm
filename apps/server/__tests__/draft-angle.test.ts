@@ -239,7 +239,7 @@ it("puts the researched person ahead of long caller research so the 600-char win
           status: "partial",
           researchedAt: "2026-09-12T00:00:00.000Z",
           seed: {},
-          currentRole: { title: "Founder", company: "WildMuse.App" },
+          currentRole: { title: "Founder", company: "BrightLoom.App" },
           organizations: [],
           costUsd: 0,
           cached: false,
@@ -249,6 +249,6 @@ it("puts the researched person ahead of long caller research so the 600-char win
   } finally {
     (plays as unknown as { describeTargetForAngle: unknown }).describeTargetForAngle = original;
   }
-  expect(seen[0]?.indexOf("WildMuse.App")).toBeGreaterThanOrEqual(0);
-  expect(seen[0]!.indexOf("WildMuse.App")).toBeLessThan(600);
+  expect(seen[0]?.indexOf("BrightLoom.App")).toBeGreaterThanOrEqual(0);
+  expect(seen[0]!.indexOf("BrightLoom.App")).toBeLessThan(600);
 });
