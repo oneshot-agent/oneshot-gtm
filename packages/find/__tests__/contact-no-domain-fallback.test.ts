@@ -259,6 +259,8 @@ describe("no-domain fallback in the contact step", () => {
     const out = await resolveVerifyEnrichQualify({ ...base, githubIdentity: { login: "ivarga" } });
     expect(out).toMatchObject({ ok: false, reason: "no-domain" });
     expect(breaker.outcomes).not.toContain(true);
+    // The backend answered, so the verdict ends any run of platform errors.
+    expect(breaker.outcomes).toContain(false);
     expect(events).toContainEqual({
       event: "finder.no_domain_fallback",
       data: expect.objectContaining({ via: "github", outcome: "miss" }),
@@ -276,6 +278,13 @@ describe("no-domain fallback in the contact step", () => {
     expect(research).toHaveBeenCalled();
     expect(breaker.outcomes).not.toContain(true);
     expect(out).not.toMatchObject({ reason: "platform-error" });
+  });
+
+  it("an enrichProfile that finds nobody ends a run of platform errors", async () => {
+    enrich.mockRejectedValue(new Error("Job failed: Could not find data for this person."));
+    const out = await resolveVerifyEnrichQualify({ ...base, linkedinUrlHint: LINKEDIN });
+    expect(out).toMatchObject({ ok: false, reason: "no-domain" });
+    expect(breaker.outcomes).toEqual([false]);
   });
 
   it("an enrichProfile that throws is a platform error, never a fall-through to the dossier", async () => {

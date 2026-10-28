@@ -308,6 +308,9 @@ export async function resolveViaProfileFallback(
         report("linkedin", { ok: false, reason: "platform-error", costUsd });
         return { ok: false, reason: "platform-error", costUsd };
       }
+      // A fresh verdict is the backend answering, so it ends a failure run. A
+      // remembered one never probed the backend and leaves the breaker alone.
+      if (!isCachedPaidFailure(err)) recordResolutionOutcome(false);
     }
     const domain = employerDomain(profile);
     if (domain) {
@@ -357,6 +360,7 @@ export async function resolveViaProfileFallback(
         report(social.via, { ok: false, reason: "platform-error", costUsd });
         return { ok: false, reason: "platform-error", costUsd };
       }
+      if (!timedOut && !isCachedPaidFailure(err)) recordResolutionOutcome(false);
     }
     if (email) {
       const resolved = await retry({ knownEmail: email });
