@@ -533,14 +533,20 @@ export function storedNetworkDistance(
   return newest;
 }
 
+/** A stored read whose Experience section LinkedIn held back: its distance counts, its empty list does not. */
+function isPartialRead(result: unknown): boolean {
+  return record(result)?.["partial"] === true;
+}
+
 /**
  * A read already bought for this profile, in the paid cache: person
- * research's full read first, else an earlier silent view.
+ * research's full read first, else an earlier silent view. A partial read is
+ * no snapshot: the silent view is made instead.
  */
 function storedLiveProfile(url: string, now: Date): LiveProfileSnapshot | null {
   for (const callType of STORED_PROFILE_READS) {
     const entry = readPaidCache(callType, { url }, { now: now.getTime() });
-    if (entry?.status !== "ok") continue;
+    if (entry?.status !== "ok" || isPartialRead(entry.result)) continue;
     const snapshot = snapshotFrom(entry.result);
     if (snapshot) return snapshot;
   }
@@ -573,10 +579,18 @@ export function liveProfileFor(
     try {
       // The paid cache keeps a finished view for the cadence's later steps,
       // across runs and workspaces; a view that did not finish is not kept.
-      const out = await withPaidCache("linkedin.profile", { url }, undefined, async () => ({
-        result: await reader(url),
-        receiptId: 0,
-      }));
+      // A partial read sits in this entry: the view replaces it (and keeps the distance).
+      const partial = readPaidCache("linkedin.profile", { url }, { now: now.getTime() });
+      const fresh = partial?.status === "ok" && isPartialRead(partial.result);
+      const out = await withPaidCache(
+        "linkedin.profile",
+        { url },
+        fresh ? { fresh } : undefined,
+        async () => ({
+          result: await reader(url),
+          receiptId: 0,
+        }),
+      );
       return snapshotFrom(out.result);
     } catch {
       return null;
