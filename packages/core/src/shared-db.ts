@@ -29,7 +29,7 @@ export const RESERVATION_TTL_MS = 10 * 60 * 1000;
 /** A LinkedIn profile already invited by a workspace, or touched by another tool. */
 export interface LinkedInTouch {
   slug: string;
-  /** `invite:<workspace>` for a GTM invite, `import:<label>` for a suppression import. */
+  /** `invite:<workspace>` for a GTM invite, `connected:<workspace>` for a known connection messaged without one, `import:<label>` for a suppression import. */
   source: string;
   touched_at: string;
   /**
@@ -726,6 +726,11 @@ export class SharedDb {
     this.db
       .prepare(`DELETE FROM linkedin_touched WHERE id = ? AND status IN ('reserved', 'dispatched')`)
       .run(id);
+  }
+
+  /** Free a profile held under exactly this source, whatever its status. */
+  releaseLinkedInTouch(slug: string, source: string): void {
+    this.db.prepare(`DELETE FROM linkedin_touched WHERE slug = ? AND source = ?`).run(slug, source);
   }
 
   /**

@@ -51,6 +51,13 @@ export * from "./_calendar.ts";
 export * from "./reply-options.ts";
 export * from "./code-answer.ts";
 export * from "./_linkedin-first-touch.ts";
+export {
+  KNOWN_CONNECTION_MAX_AGE_DAYS,
+  KNOWN_CONNECTION_SUBJECT,
+  knownConnection,
+  knownConnectionDraft,
+  type KnownConnection,
+} from "./_linkedin-connection.ts";
 export * from "./_linkedin-friend.ts";
 export * from "./_x-first-touch.ts";
 

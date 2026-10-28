@@ -35,6 +35,8 @@ A LinkedIn first touch starts a LinkedIn cadence, never an email one.
 
 Each message appears on Cadences as due. You preview it and send it. Until the invite is accepted the preview reads "waiting for acceptance". `not connected` and `rate limited` answers leave the step due; they do not fail it.
 
+**Already connected.** When a profile read from the last 14 days shows the person as a first-degree connection, no connection request is drafted or sent and no invite is used. The row reads "LinkedIn: already connected"; sending it records the connection, and the first message is due on Cadences at once. The read is checked again at send: if it has aged out or no longer shows a connection, nothing is recorded and the connection request is drafted for review instead. If LinkedIn then answers that you are not connected, the step's next preview is the connection request instead, and the message follows its acceptance.
+
 ### The invite guard
 
 Before any invite leaves, the row is checked. A refused row is never sent and never dropped: it returns to pending with the reason as its flag. Fix it and send again.
@@ -71,7 +73,7 @@ Set `linkedinContinuation: true` for the workspace or on one trigger; the trigge
 - a first message once they accept, no sooner than two days after the invite,
 - a close.
 
-Someone you were already connected with gets no request and has nothing to accept: their first message goes two days after the invite step. Both messages are written knowing you were already connected, with no thanks for connecting and no mention of a note they never received.
+Someone a recent profile read shows as a connection gets no request: the invite step's preview reads "Already connected: skipping the connection request", and sending it brings the first message forward to now. The read is checked again at send; if it no longer shows a connection, the next preview is the connection request. Someone LinkedIn reports as already connected when the invite goes out has nothing to accept either: their first message goes two days after the invite step. Both messages are written knowing you were already connected, with no thanks for connecting and no mention of a note they never received.
 
 Each step is a draft you review on Cadences. The invite passes the same guard and quota. If the guard refuses, the preview shows the refusal, the step is skipped and the cadence completes. A cadence already running keeps the steps it started with.
 
@@ -125,10 +127,10 @@ What Replies learns from your edits is a proposal you approve; see [learning](./
 
 ## LinkedIn funnel
 
-**Measure** shows invites sent, pending, accepted and withdrawn, first messages sent, and replies. The same numbers come from `oneshot-gtm measure --json` and `GET /api/measure/linkedin` (filters `sinceDays`, `play`, `stepKind`: `first-touch`, `continuation`, `friend`). `oneshot-gtm linkedin invites` lists every invite with its state. All of it is read from this workspace's ledger and inbox. None of it is a number from LinkedIn.
+**Measure** shows invites sent, pending, accepted and withdrawn, already connected, first messages sent, and replies. It shows the funnel as soon as there is an invite or a known connection in the view. The same numbers come from `oneshot-gtm measure --json` and `GET /api/measure/linkedin` (filters `sinceDays`, `play`, `stepKind`: `first-touch`, `continuation`, `friend`). `oneshot-gtm linkedin invites` lists every invite with its state. All of it is read from this workspace's ledger and inbox. None of it is a number from LinkedIn.
 
 - **Each person once.** A person counts by their newest invite.
-- **Accepted.** Counted from the recorded acceptance, else from a one-to-one conversation with the person, else from a first message having gone out. An accept nobody has messaged can be missed, so read the acceptance rate as a floor. "Already connected" is shown apart.
+- **Accepted.** Counted from the recorded acceptance, else from a one-to-one conversation with the person, else from a first message having gone out. An accept nobody has messaged can be missed, so read the acceptance rate as a floor. "Already connected" is shown apart; people a profile read showed as connected got no invite and are not counted as invites sent.
 - **Withdrawn.** `timeout` when GTM withdrew it after the wait, `manual` when you did, `unknown` when no cause was recorded.
 - **Replies.** Shown two ways: to the first message, and at any point after the invite. The same reply from two sources counts once.
 - **Evidence clause.** The funnel splits by whether the note carried an evidence clause.

@@ -46,8 +46,9 @@ export interface LinkedInFriendSendView {
 
 /**
  * Where an invite stands, as GTM detects it. `already_connected` is an invite
- * LinkedIn answered with "already connected": nobody accepted it, so it is not
- * counted as an acceptance.
+ * LinkedIn answered with "already connected", or a known connection from the
+ * profile read that got no invite: nobody accepted it, so it is not counted
+ * as an acceptance.
  */
 export type LinkedInInviteState = "pending" | "accepted" | "withdrawn" | "already_connected";
 
@@ -106,7 +107,11 @@ export interface LinkedInFunnel {
     /** Accepted over invites sent. */
     rate: number | null;
   };
-  /** Invites LinkedIn answered "already connected": not counted as accepted. */
+  /**
+   * Already connected: invites LinkedIn answered "already connected", and
+   * people the profile read showed as connections, who got no invite (they
+   * are not in `invitesSent`). Not counted as accepted.
+   */
   alreadyConnected: number;
   firstMessageSent: number;
   /** A human reply after the first message and before the next step went out (or with no next step sent). Rate over first messages sent. */
@@ -115,6 +120,14 @@ export interface LinkedInFunnel {
   repliedAtAnyPoint: LinkedInRate;
   /** Reply events recorded by two sources that were counted once. */
   repliesMerged: number;
+}
+
+/**
+ * Whether a funnel has anything to show: an invite sent, or a known
+ * connection reached without one (already connected, a first message).
+ */
+export function linkedInFunnelHasActivity(f: LinkedInFunnel): boolean {
+  return f.invitesSent > 0 || f.alreadyConnected > 0 || f.firstMessageSent > 0;
 }
 
 export interface LinkedInMeasureFilters {

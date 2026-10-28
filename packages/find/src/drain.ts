@@ -15,8 +15,12 @@ import {
   draftLinkedInNote,
   draftXDm,
   isSupportedPlay,
+  knownConnection,
+  knownConnectionDraft,
+  linkedInProfileOf,
   type LinkedInSender,
   PLAYS,
+  recordKnownConnection,
   sendLinkedInInvite,
   NO_OFFER_FLAG,
   WEAK_OFFER_FLAG,
@@ -203,6 +207,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
             ...(draft.learningKey ? { learningKey: draft.learningKey } : {}),
             ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
             ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
+            ...(draft.knownConnection ? { knownConnection: draft.knownConnection } : {}),
           },
           // Drain sends are unattended: the founder approved the row, never
           // this draft: recorded as `auto_sent`, apart from reviewed sends.
@@ -367,7 +372,10 @@ export type { ProspectRecord };
 /**
  * A LinkedIn row: the connection-request note instead of the play's email.
  * A clean note already on the row (reviewed on /queue) is sent as it stands;
- * otherwise one is drafted, and sent only when nothing flagged it.
+ * otherwise one is drafted, and sent only when nothing flagged it. Someone a
+ * recent profile read shows as already connected gets no note and no request:
+ * the row is recorded as a known connection and the first message comes up on
+ * /cadences.
  */
 async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDraft> {
   const target = await resolveQueueTargetWithOffer(row);
@@ -377,6 +385,33 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
     payload: target && typeof target === "object" ? (target as Record<string, unknown>) : {},
     notes: row.notes,
   };
+  const connection = knownConnection(linkedInProfileOf(linkedInRow.payload));
+  if (connection) {
+    const base: DrainDraft = { ...knownConnectionDraft(connection), sent: false, receiptIds: [] };
+    if (opts.dryRun) return base;
+    if (!opts.linkedIn) {
+      return {
+        ...base,
+        flags: ["linkedin-not-connected: connect LinkedIn with invite permission on /setup"],
+        needsReview: true,
+      };
+    }
+    const out = recordKnownConnection({
+      row: linkedInRow,
+      connection,
+      sender: opts.linkedIn,
+      workspace: currentWorkspaceName(),
+    });
+    if (!out.sent) {
+      return {
+        ...base,
+        flags: out.flags,
+        needsReview: true,
+        ...(out.guard ? { guard: out.guard } : {}),
+      };
+    }
+    return { ...base, sent: true, prospectId: out.prospectId };
+  }
   // Reviewed means clean: a saved note still carrying any flag is redrafted.
   const saved = hasCleanDraft(row)
     ? (JSON.parse(row.last_draft_json!) as {
@@ -384,10 +419,16 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
         body: string;
         flags?: unknown;
         evidenceClause?: unknown;
+        knownConnection?: unknown;
       })
     : null;
+  // A known-connection row whose read no longer says so was never reviewed as
+  // a note: the note drafted now waits for review.
+  const wasConnection = saved?.knownConnection != null;
   const reviewed =
-    saved && (!Array.isArray(saved.flags) || saved.flags.length === 0) ? saved : null;
+    saved && !wasConnection && (!Array.isArray(saved.flags) || saved.flags.length === 0)
+      ? saved
+      : null;
   const note = reviewed
     ? {
         subject: reviewed.subject ?? "LinkedIn invite",
@@ -410,6 +451,7 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
     ...(note.evidenceClause !== undefined ? { evidenceClause: note.evidenceClause } : {}),
   };
   if (opts.dryRun) return base;
+  if (wasConnection) return { ...base, needsReview: true };
   if (note.flags.length > 0) {
     // A row with no usable LinkedIn profile is the guard's `invalid-profile`:
     // count it per reason like every other refusal (X, GitHub and company

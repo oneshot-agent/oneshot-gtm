@@ -63,6 +63,11 @@ import {
   sendDraftedEmail,
   draftLinkedInNote,
   draftXDm,
+  type KnownConnection,
+  knownConnection,
+  knownConnectionDraft,
+  linkedInProfileOf,
+  recordKnownConnection,
   sendLinkedInInvite,
   WEAK_OFFER_FLAG,
   WEAK_OFFER_HOLD_REASON,
@@ -220,6 +225,9 @@ export function toView(
             ? { evidenceClause: parsed.evidenceClause }
             : {}),
           ...(parsed.enrichmentFailed === true ? { enrichmentFailed: true } : {}),
+          ...(typeof parsed.knownConnection?.readAt === "string"
+            ? { knownConnection: { readAt: parsed.knownConnection.readAt } }
+            : {}),
         };
       }
     } catch {
@@ -1504,6 +1512,11 @@ async function regenerateDraftInner(
       payload: target && typeof target === "object" ? (target as Record<string, unknown>) : {},
       notes: row.notes,
     };
+    // Already connected, from a recent profile read: no note to write.
+    const connection =
+      channelOf(row.channel) === "linkedin"
+        ? knownConnection(linkedInProfileOf(draftRow.payload))
+        : null;
     drafted =
       channelOf(row.channel) === "x" && row.play_name !== "x-amplify-dm"
         ? [
@@ -1516,18 +1529,9 @@ async function regenerateDraftInner(
         : channelOf(row.channel) === "linkedin"
           ? [
               {
-                ...(await draftLinkedInNote(
-                  {
-                    id: row.id,
-                    playName: row.play_name,
-                    payload:
-                      target && typeof target === "object"
-                        ? (target as Record<string, unknown>)
-                        : {},
-                    notes: row.notes,
-                  },
-                  { draftAngle: angle?.text ?? null },
-                )),
+                ...(connection
+                  ? knownConnectionDraft(connection)
+                  : await draftLinkedInNote(draftRow, { draftAngle: angle?.text ?? null })),
                 sent: false,
                 receiptIds: [],
               },
@@ -1577,6 +1581,7 @@ async function regenerateDraftInner(
     // The first-touch format arm, so outcomes split by format.
     ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
     ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
+    ...(draft.knownConnection ? { knownConnection: draft.knownConnection } : {}),
   };
   const saved = ledger.setQueueDraftIfCurrent({
     id,
@@ -1802,6 +1807,12 @@ export async function sendDraftRoute(
     if (!account) {
       ledger.clearQueueSendingMarker(id);
       return jsonResponse({ error: "connect LinkedIn on /setup before sending invites" }, 409, req);
+    }
+    // Read again at send: someone a recent profile read shows as connected
+    // gets no request, whatever the draft was.
+    const connection = knownConnection(linkedInProfileOf(payload));
+    if (connection || parsed.knownConnection) {
+      return sendKnownConnectionRow(req, { id, row, parsed, payload, account, connection });
     }
     try {
       const out = await sendLinkedInInvite({
@@ -2061,6 +2072,115 @@ export async function sendDraftRoute(
   });
 
   return done("ok", jsonResponse({ sent: true, receiptIds: result.receiptIds }, 200, req));
+}
+
+/**
+ * The send of a LinkedIn row for a known connection: no request goes out. With
+ * a recent profile read that shows the connection, it is recorded in place of
+ * the invite (same guard, same claim) and the first message comes up on
+ * /cadences, due now. A row drafted as a connection whose read no longer says
+ * so gets its connection request drafted and goes back for review: a note is
+ * never sent unseen. Called holding the row's sending marker.
+ */
+async function sendKnownConnectionRow(
+  req: Request,
+  input: {
+    id: number;
+    row: QueueRow;
+    parsed: Partial<LastDraft>;
+    payload: Record<string, unknown>;
+    account: { accountId: string; workspace: string };
+    connection: KnownConnection | null;
+  },
+): Promise<Response> {
+  const ledger = getLedger();
+  const { id, row, parsed } = input;
+  const firstTouch = { id, playName: row.play_name, payload: input.payload, notes: row.notes };
+  try {
+    if (!input.connection) {
+      const note = await draftLinkedInNote(firstTouch);
+      ledger.setQueueDraft({
+        id,
+        draft: {
+          subject: note.subject,
+          body: note.body,
+          flags: note.flags,
+          sent: false,
+          receiptIds: [],
+          dryRun: true,
+          ...(note.voiceKey ? { voiceKey: note.voiceKey } : {}),
+          ...(note.learningKey ? { learningKey: note.learningKey } : {}),
+          ...(note.evidenceClause !== undefined ? { evidenceClause: note.evidenceClause } : {}),
+        },
+        discardReason: "redraft",
+      });
+      ledger.setQueueStatus({ id, status: "pending", decidedBy: "machine" });
+      return jsonResponse(
+        {
+          error:
+            "no recent profile read shows them as connected: a connection request was drafted for review",
+        },
+        409,
+        req,
+      );
+    }
+    const out = recordKnownConnection({
+      row: firstTouch,
+      connection: input.connection,
+      sender: input.account,
+      workspace: currentWorkspaceName(),
+    });
+    if (!out.sent) {
+      if (out.guard) {
+        // As for an invite: the reason stays on the draft and the row goes
+        // back to pending, so /queue shows why.
+        ledger.setQueueDraft({
+          id,
+          draft: {
+            subject: typeof parsed.subject === "string" ? parsed.subject : "",
+            body: typeof parsed.body === "string" ? parsed.body : "",
+            flags: out.flags,
+            sent: false,
+            receiptIds: [],
+            dryRun: false,
+            ...(parsed.knownConnection ? { knownConnection: parsed.knownConnection } : {}),
+          },
+          sentBy: "human",
+        });
+        ledger.setQueueStatus({ id, status: "pending", decidedBy: "human" });
+      } else {
+        ledger.clearQueueSendingMarker(id);
+      }
+      return jsonResponse({ error: out.flags.join("; "), flags: out.flags }, 409, req);
+    }
+    try {
+      ledger.setQueueProspectId(id, out.prospectId);
+    } catch {
+      // best-effort backfill. The connection is already recorded
+    }
+    try {
+      // The row keeps what happened, whatever the draft was (a reviewed note
+      // for someone now read as connected): /queue then offers no withdraw.
+      // Stored as unattended: no text went out, so it is no writing evidence.
+      ledger.setQueueDraft({
+        id,
+        draft: {
+          ...knownConnectionDraft(input.connection),
+          sent: true,
+          receiptIds: [],
+          dryRun: false,
+        },
+        sentBy: "machine",
+      });
+    } catch {
+      // The connection is recorded either way; the draft is only its label.
+    }
+    ledger.setQueueStatus({ id, status: "sent", decidedBy: "human" });
+    return jsonResponse({ ok: true, prospectId: out.prospectId, status: out.status }, 200, req);
+  } catch (err) {
+    ledger.clearQueueSendingMarker(id);
+    return jsonResponse({ error: (err as Error).message ?? "LinkedIn send failed" }, 502, req);
+  }
 }
 
 /**

@@ -19,6 +19,8 @@ export interface DraftedView {
   formatKey?: string | null;
   /** LinkedIn note only: whether its prompt carried an evidence clause (#792). */
   evidenceClause?: boolean;
+  /** LinkedIn only: a known connection, so the draft is no note (`DraftedRow.knownConnection`). */
+  knownConnection?: { readAt: string };
   /** The offer the draft opens with (see `PlayDraft.offer`). */
   offer?: ProspectOffer;
   /** The ranked set, only when the draft wrote its offer: the run stores it on the target's queue row. */

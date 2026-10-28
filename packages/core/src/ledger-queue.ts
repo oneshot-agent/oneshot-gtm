@@ -1180,6 +1180,8 @@ export class QueueStore {
       learningKey?: string | null;
       formatKey?: string | null;
       evidenceClause?: boolean;
+      /** LinkedIn only: the row is a known connection, so no note was drafted. */
+      knownConnection?: { readAt: string };
     };
     /** Why the draft being replaced was discarded; default `redraft` (a machine re-draft, no judgment). */
     discardReason?: DraftDiscardReason;

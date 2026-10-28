@@ -125,6 +125,12 @@ export interface LiveProfile {
   headline?: string;
   location?: string;
   experience: LiveExperience[];
+  /**
+   * The account's distance to the person as the view reports it
+   * (`FIRST_DEGREE` for a connection; `isFirstDegree` reads it). Null when the
+   * read does not say: a browser read, or a cached read from before it was kept.
+   */
+  networkDistance: string | null;
 }
 
 /**
@@ -941,6 +947,7 @@ async function readLive(
         ...(str(out, "headline") ? { headline: str(out, "headline")! } : {}),
         ...(str(out, "location") ? { location: str(out, "location")! } : {}),
         experience,
+        networkDistance: null,
       };
       logEvent("linkedin_profile.read", { positions: experience.length, cost_usd: costUsd });
       // Counted before the gate opens: the paid cache stores it just after.
@@ -1186,6 +1193,7 @@ async function readThroughAccount(
     ...(text("headline") ? { headline: text("headline")! } : {}),
     ...(text("location") ? { location: text("location")! } : {}),
     experience,
+    networkDistance: text("network_distance") ?? null,
   };
   rememberSenderIdentity(account.accountId, view);
   logEvent("linkedin_profile.read", {

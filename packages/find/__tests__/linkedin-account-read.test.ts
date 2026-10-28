@@ -229,6 +229,23 @@ describe("readLinkedInProfile through the connected account", () => {
     expect(aged.profile?.experience).toHaveLength(3);
   });
 
+  it("keeps the view's network distance on the read and in the cache; a view without one is unknown", async () => {
+    const connected = view(ADA_EXPERIENCE);
+    (connected.result.profile as Record<string, unknown>)["network_distance"] = "FIRST_DEGREE";
+    script(connected);
+    const read = await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 });
+    expect(read.profile?.networkDistance).toBe("FIRST_DEGREE");
+    const entry = stored(URL_A);
+    expect(entry?.status === "ok" && (entry.result as { networkDistance?: unknown })).toMatchObject(
+      { networkDistance: "FIRST_DEGREE" },
+    );
+
+    const URL_B = "https://www.linkedin.com/in/bo-reyes";
+    script(view(ADA_EXPERIENCE));
+    const unknown = await readLinkedInProfile(URL_B, ctx, { remainingUsd: 1 });
+    expect(unknown.profile?.networkDistance).toBeNull();
+  });
+
   it("a section LinkedIn held back is not proof: nothing cached, read again later", async () => {
     script(view([], false));
     const read = await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 });

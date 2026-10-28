@@ -718,12 +718,14 @@ export function setCadenceDraft(
       payload && typeof payload === "object" && typeof payload.learningKey === "string"
         ? payload.learningKey
         : null;
-    // A LinkedIn message or connection request is a previewed non-email cadence
-    // draft; its version must not read as an email draft.
+    // A LinkedIn message, connection request or known-connection skip is a
+    // previewed non-email cadence draft; its version must not read as an email draft.
     const channel =
       payload &&
       typeof payload === "object" &&
-      (payload.kind === "linkedin_message" || payload.kind === "linkedin_invite")
+      (payload.kind === "linkedin_message" ||
+        payload.kind === "linkedin_invite" ||
+        payload.kind === "linkedin_connected")
         ? "linkedin"
         : undefined;
     drafts.open({

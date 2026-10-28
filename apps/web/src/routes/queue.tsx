@@ -1431,12 +1431,21 @@ export function DraftSection({
   // Instant spinner while mounted (isPending) OR restored-from-localStorage
   // after a remount (generating), OR offer work that ends in a redraft.
   const isGenerating = generating || regenerate.isPending || activity != null;
+  // The send answered `already_connected`: no invite went out (nothing to withdraw).
+  const [connectedOnSend, setConnectedOnSend] = useState(false);
   const send = useMutation({
     mutationFn: () => api.sendDraft(id),
-    onSuccess: () => {
+    onSuccess: (res) => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
       void qc.invalidateQueries({ queryKey: ["home"] });
-      toast.success("sent · the reviewed draft went out as-is");
+      // The server read the profile again at send: its answer, not the draft, says what happened.
+      const connected = res.status === "already_connected";
+      setConnectedOnSend(connected);
+      toast.success(
+        connected
+          ? "recorded · already connected, no request sent; the first message is on /cadences"
+          : "sent · the reviewed draft went out as-is",
+      );
     },
     onError: (err) => {
       // Refetch failed sends so rows claimed or sent elsewhere update their controls.
@@ -1455,6 +1464,10 @@ export function DraftSection({
   // before the server marker is refetched. Use it for both send and regenerate
   // controls; sent or in-flight drafts cannot be regenerated.
   const sending = send.isPending || isSending;
+  // A known connection's draft is no note: sending records the connection.
+  // The send's own answer covers the gap before the row is read again.
+  const knownConnection =
+    channel === "linkedin" && (draft?.knownConnection != null || connectedOnSend);
   const canDraft = status !== "sent" && !sending && !(draft?.sent ?? false);
   const verb = draft ? "Regenerate draft" : "Generate draft";
   const pendingVerb = draft ? "Regenerating…" : "Generating…";
@@ -1537,7 +1550,7 @@ export function DraftSection({
   const reachable = reachableChannels(payload);
   const channelButtons = (
     <>
-      {channel === "linkedin" && status === "sent" && (
+      {channel === "linkedin" && status === "sent" && !knownConnection && (
         <Button
           variant="ghost"
           size="sm"
@@ -1757,14 +1770,24 @@ export function DraftSection({
           : softHold
             ? softHoldDetail
             : cleanDraft
-              ? "Send this prospect now — sends the reviewed draft, as-is"
+              ? knownConnection
+                ? "Already connected: no request goes out; the first message comes up on /cadences"
+                : "Send this prospect now — sends the reviewed draft, as-is"
               : draft == null
                 ? "Generate a draft first, then send it"
                 : `held · ${draftHeld?.next ?? "regenerate the draft"}`
       }
     >
       {sending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
-      {sending ? "Sending…" : sendHold ? holdLabel : softHold ? "Send anyway" : "Send now"}
+      {sending
+        ? "Sending…"
+        : sendHold
+          ? holdLabel
+          : softHold
+            ? "Send anyway"
+            : knownConnection
+              ? "Skip request"
+              : "Send now"}
     </Button>
   ) : null;
 

@@ -1063,6 +1063,11 @@ export class Ledger {
     return this.db.transaction(fn).immediate();
   }
 
+  /** Run `fn`'s ledger writes as one transaction: all of them land, or none. */
+  inTransaction<T>(fn: () => T): T {
+    return this.db.transaction(fn).immediate();
+  }
+
   reserveSendSlot(groupKey: string, identityId: string, now = new Date()): number {
     return sendReserveSendSlot(this.db, groupKey, identityId, now);
   }
@@ -2241,6 +2246,8 @@ export class Ledger {
       learningKey?: string | null;
       formatKey?: string | null;
       evidenceClause?: boolean;
+      /** LinkedIn only: the row is a known connection, so no note was drafted. */
+      knownConnection?: { readAt: string };
     };
     discardReason?: DraftDiscardReason;
     sentBy?: "human" | "machine";
