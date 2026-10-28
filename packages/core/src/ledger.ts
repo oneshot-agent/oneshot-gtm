@@ -334,6 +334,7 @@ export class Ledger {
       const people = this.people;
       this.prospects.attachSharedIdentity({
         get: (id) => people.get(id),
+        getMany: (ids) => people.getMany(ids),
         resolve: (input, knownId) => people.resolve(input, knownId),
         membership: (prospectId) => people.membership(this.path, prospectId),
         link: (prospectId, personId) => people.link(this.path, prospectId, personId),
@@ -1008,17 +1009,14 @@ export class Ledger {
 
   /**
    * `getProspectById` for a set of ids at once (#935): one read per chunk of
-   * ids, then the shared-identity overlay per row. No mail address: the
-   * inbox's conversation list, the one reader, shows name, company, email
-   * and source only. A missing id has no entry.
+   * ids for the rows, one more per chunk for their shared people, then the
+   * shared-identity overlay per row in memory. No mail address: the inbox's
+   * conversation list, the one reader, shows name, company, email and source
+   * only. A missing id has no entry.
    */
   listProspectsByIds(ids: readonly number[]): Map<number, ProspectRecord> {
-    const out = new Map<number, ProspectRecord>();
-    for (const [id, row] of this.prospects.getProspectRows(ids)) {
-      const prospect = this.prospects.withSharedIdentity(row);
-      if (prospect) out.set(id, prospect);
-    }
-    return out;
+    const rows = [...this.prospects.getProspectRows(ids).values()];
+    return new Map(this.prospects.withSharedIdentities(rows).map((p) => [p.id, p]));
   }
 
   /**

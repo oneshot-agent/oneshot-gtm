@@ -1,13 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { Ledger } from "../../../packages/core/src/ledger.ts";
+import { SharedPeople } from "../../../packages/core/src/shared-people.ts";
 
 // GET /api/inbox builds every conversation from reads made once for the
 // page (#935): the prospect rows, the persisted replies and the sent steps
 // of every replying prospect, one read each. No conversation re-reads its
 // prospect, its replies or its steps, so the ledger reads of a request are
-// constant in the number of replying prospects. Real ledger, spied.
+// constant in the number of replying prospects. Real ledger with the shared
+// person registry a workspace ledger opens in production (so the prospects'
+// shared identities are part of what is counted), spied.
 
+let root: string;
 let ledger: Ledger;
 
 vi.mock("@oneshot-gtm/core", async () => ({
@@ -64,11 +71,15 @@ async function conversations(): Promise<Conversation[]> {
 }
 
 beforeEach(() => {
-  ledger = new Ledger(":memory:");
+  root = mkdtempSync(join(tmpdir(), "inbox-conversation-reads-"));
+  ledger = new Ledger(join(root, "ledger.sqlite"), {
+    sharedPeoplePath: join(root, "shared.sqlite"),
+  });
 });
 afterEach(() => {
   vi.restoreAllMocks();
   ledger.close();
+  rmSync(root, { recursive: true, force: true });
 });
 
 describe("listInboxRoute conversation reads", () => {
@@ -97,6 +108,13 @@ describe("listInboxRoute conversation reads", () => {
     expect(readsForFew).toBeGreaterThan(0);
 
     for (let i = FEW; i < MORE; i++) ids.push(replier(i));
+    // Every replier is linked to a shared person, so each conversation's
+    // identity comes from the registry: one bulk read, never one per person.
+    const personIds = ids.map((id) => ledger.getProspectById(id)!.shared_person_id!);
+    expect(new Set(personIds).size).toBe(MORE);
+    perProspect.getProspectById.mockClear();
+    const personGet = vi.spyOn(SharedPeople.prototype, "get");
+    const personGetMany = vi.spyOn(SharedPeople.prototype, "getMany");
     query.mockClear();
     const views = await conversations();
     expect(views).toHaveLength(MORE);
@@ -104,6 +122,9 @@ describe("listInboxRoute conversation reads", () => {
     expect(query.mock.calls.length).toBe(readsForFew);
 
     for (const spy of Object.values(perProspect)) expect(spy).not.toHaveBeenCalled();
+    expect(personGet).not.toHaveBeenCalled();
+    expect(personGetMany).toHaveBeenCalledTimes(1);
+    expect(personGetMany.mock.calls[0]![0].toSorted()).toEqual(personIds.toSorted());
     for (const spy of Object.values(page)) {
       expect(spy).toHaveBeenCalledTimes(2);
       expect(spy.mock.calls[1]![0]).toHaveLength(MORE);

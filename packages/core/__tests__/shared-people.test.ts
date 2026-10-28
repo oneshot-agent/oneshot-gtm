@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { SharedDb } from "../src/shared-db.ts";
 import { Ledger } from "../src/ledger.ts";
+import { SharedPeople } from "../src/shared-people.ts";
 
 let root: string;
 let beta: Ledger;
@@ -22,6 +23,32 @@ afterEach(() => {
 });
 
 describe("shared person identity with workspace memberships", () => {
+  it("listProspectsByIds (#935) overlays every row's shared person from one bulk read, same values as getProspectById", () => {
+    const ids = Array.from({ length: 5 }, (_, i) =>
+      beta.upsertProspect({ name: `Person ${i}`, email: `bulk-${i}@example.test` }),
+    );
+    // The registry learns a title beta's row never had: only the overlay shows it.
+    const person = new SharedPeople(join(root, "shared.sqlite"));
+    person.setRole(beta.getProspectById(ids[2]!)!.shared_person_id!, { title: "CTO" });
+    person.close();
+
+    const get = vi.spyOn(SharedPeople.prototype, "get");
+    const query = vi.spyOn(Database.prototype, "query");
+    const bulk = beta.listProspectsByIds(ids);
+    expect(get).not.toHaveBeenCalled();
+    // The rows, then their people: one statement each for the whole set.
+    expect(query.mock.calls.map(([sql]) => String(sql).split(" WHERE")[0])).toEqual([
+      "SELECT * FROM prospects",
+      "SELECT * FROM shared_people",
+    ]);
+    query.mockRestore();
+    get.mockRestore();
+
+    expect([...bulk.keys()].toSorted()).toEqual(ids.toSorted());
+    for (const id of ids) expect(bulk.get(id)).toEqual(beta.getProspectById(id));
+    expect(bulk.get(ids[2]!)!.title).toBe("CTO");
+  });
+
   it("reuses one person across workspaces and normalized identifiers", () => {
     const a = beta.upsertProspect({
       name: "Olga",

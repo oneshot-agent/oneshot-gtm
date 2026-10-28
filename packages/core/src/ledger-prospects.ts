@@ -37,6 +37,7 @@ export interface ProspectMailAddress {
  */
 export interface ProspectSharedIdentity {
   get(id: string): SharedPerson | null;
+  getMany(ids: readonly string[]): Map<string, SharedPerson>;
   resolve(input: Partial<ProspectRecord>, knownId?: string): SharedPerson;
   membership(prospectId: number): string | undefined;
   link(prospectId: number, personId: string): void;
@@ -151,6 +152,41 @@ export class ProspectStore {
     const person = row.shared_person_id
       ? this.sharedIdentity.get(row.shared_person_id)
       : this.bindSharedPerson(row);
+    return ProspectStore.overlaySharedPerson(row, person);
+  }
+
+  /**
+   * `withSharedIdentity` for many rows at once (#935): the linked people are
+   * read in one `getMany` per set of rows instead of one `get` per row, so
+   * the inbox's conversation list reads its prospects' identities in a
+   * constant number of statements. Rows not yet linked to a person are
+   * bound one by one, as `withSharedIdentity` does: `upsertProspect` links
+   * on write and the construction-time sweep links the rest, so none is
+   * expected on the read path. Each row's result is what `withSharedIdentity`
+   * would return for it.
+   */
+  withSharedIdentities(rows: readonly ProspectRecord[]): ProspectRecord[] {
+    const identity = this.sharedIdentity;
+    if (!identity) return [...rows];
+    const linked = [
+      ...new Set(rows.flatMap((r) => (r.shared_person_id ? [r.shared_person_id] : []))),
+    ];
+    const people = identity.getMany(linked);
+    return rows.map((row) =>
+      ProspectStore.overlaySharedPerson(
+        row,
+        row.shared_person_id
+          ? (people.get(row.shared_person_id) ?? null)
+          : this.bindSharedPerson(row),
+      ),
+    );
+  }
+
+  /** The row with its shared person's fields on top; the row alone when it has none. */
+  private static overlaySharedPerson(
+    row: ProspectRecord,
+    person: SharedPerson | null,
+  ): ProspectRecord {
     return person
       ? {
           ...row,
