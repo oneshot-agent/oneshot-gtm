@@ -89,7 +89,7 @@ describe("looksLikePersonName", () => {
     ["SWE-agent", {}],
     ["Se7en", {}],
     ["Standard Agents", {}],
-    ["Stably", { company: "Stably", email: "jinjing@stably.ai" }],
+    ["Quorly", { company: "Quorly", email: "wen@quorly.example" }],
     ["x", {}],
     ["", {}],
     [null, {}],
@@ -110,8 +110,8 @@ describe("looksLikePersonName", () => {
   });
 
   it.each([
-    ["Danny Avila", { company: "danny-avila" }],
-    ["Aurelio", { company: "Aureliolo", email: "aurelio.n@corp.com" }],
+    ["Danny Ferro", { company: "danny-ferro" }],
+    ["Lorenzo", { company: "Lorenzolo", email: "lorenzo.n@corp.com" }],
     ["Dana Lee", {}],
     ["Mary-Jane Watson", {}],
     ["Ai Tanaka", {}],
@@ -124,26 +124,26 @@ describe("looksLikePersonName", () => {
 
   it("a single-token name the company echoes needs the email local part, never the domain", () => {
     // Domain contains the name: still the company's name.
-    expect(looksLikePersonName("Stably", { company: "Stably", email: "jinjing@stably.ai" })).toBe(
+    expect(looksLikePersonName("Quorly", { company: "Quorly", email: "wen@quorly.example" })).toBe(
       false,
     );
     // Company merely contains the name, mailbox is someone else's.
-    expect(looksLikePersonName("Aurelio", { company: "Aureliolo", email: "x@aurelio.com" })).toBe(
-      false,
-    );
-    expect(looksLikePersonName("Aurelio", { company: "Aureliolo" })).toBe(false);
     expect(
-      looksLikePersonName("Aurelio", { company: "Aureliolo", email: "aurelio.n@corp.com" }),
+      looksLikePersonName("Lorenzo", { company: "Lorenzolo", email: "x@lorenzo.example" }),
+    ).toBe(false);
+    expect(looksLikePersonName("Lorenzo", { company: "Lorenzolo" })).toBe(false);
+    expect(
+      looksLikePersonName("Lorenzo", { company: "Lorenzolo", email: "lorenzo.n@corp.com" }),
     ).toBe(true);
   });
 
   it("compares with letters and digits only", () => {
-    expect(looksLikePersonName("Stably", { company: "Stab.ly Inc." })).toBe(false);
+    expect(looksLikePersonName("Quorly", { company: "Quor.ly Inc." })).toBe(false);
   });
 
   it("multi-token names skip the echo test", () => {
-    expect(looksLikePersonName("Danny Avila", { company: "Danny Avila" })).toBe(true);
-    expect(looksLikePersonName("Danny Avila", { company: "dannyavila" })).toBe(true);
+    expect(looksLikePersonName("Danny Ferro", { company: "Danny Ferro" })).toBe(true);
+    expect(looksLikePersonName("Danny Ferro", { company: "dannyferro" })).toBe(true);
   });
 
   it("'ai' is not an org word", () => {
@@ -252,9 +252,9 @@ describe("canInviteOnLinkedIn", () => {
     for (const name of ["SWE-agent", "Se7en", "Standard Agents"]) {
       expect(reasonOf(check({ name }))).toBe("not-a-person");
     }
-    expect(reasonOf(check({ name: "Stably", company: "Stably", email: "jinjing@stably.ai" }))).toBe(
-      "not-a-person",
-    );
+    expect(
+      reasonOf(check({ name: "Quorly", company: "Quorly", email: "wen@quorly.example" })),
+    ).toBe("not-a-person");
   });
 
   it("3. refuses an opted-out person (unsubscribe reply)", () => {
@@ -358,7 +358,7 @@ describe("canInviteOnLinkedIn", () => {
       join(wsRoot, "registry.json"),
       JSON.stringify({
         default: "default",
-        workspaces: { alpha: { home: alphaHome, port: 3031, createdAt: "" } },
+        workspaces: { alpha: { home: alphaHome, port: 4031, createdAt: "" } },
       }),
     );
     process.env["ONESHOT_GTM_WORKSPACES"] = wsRoot;

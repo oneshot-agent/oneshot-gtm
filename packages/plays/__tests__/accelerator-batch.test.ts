@@ -70,8 +70,8 @@ const { runAcceleratorBatch } = await import("../src/accelerator-batch.ts");
 
 const base = {
   name: "Merlin",
-  email: "m@rex.inc",
-  company: "Rex",
+  email: "m@rookhq.example",
+  company: "Rook",
   cohort: "yc-s26",
   yourEdge: "the retry boundary is where the audit trail leaves the sandbox",
 } as const;

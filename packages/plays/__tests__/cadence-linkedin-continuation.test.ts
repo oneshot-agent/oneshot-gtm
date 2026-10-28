@@ -919,22 +919,22 @@ describe("evidence-aware prompts (#790)", () => {
   });
 
   it("message 1 names the company only after a live read agrees, and reads once for message 1 and the close", async () => {
-    sql(`UPDATE prospects SET title = 'CEO', company = 'Soren', email = 'dana@usesoren.com'`);
+    sql(`UPDATE prospects SET title = 'CEO', company = 'Tavora', email = 'dana@usetavora.example'`);
     firstTouch({ buyerType: "startup" });
     await sendInvite(inviteOk("already_connected"));
     calls = [];
     const li = caller({
-      profile: profileReply("CEO at Soren"),
+      profile: profileReply("CEO at Tavora"),
       message: () => ({ status: "sent", conversation_id: "conv-1" }),
     });
     const first = await previewPayload(li);
-    expect(modelInputs.at(-1)).toContain("COMPANY_THEY_RUN: Soren");
+    expect(modelInputs.at(-1)).toContain("COMPANY_THEY_RUN: Tavora");
     expect(modelInputs.at(-1)).toContain("PRIOR_CONTACT: they were emailed");
     expect(modelInputs.at(-1)).toContain("BUYER_TYPE: startup");
     await run(li, { persistedPayload: first.payload });
     makeDue();
     await previewPayload(li);
-    expect(modelInputs.at(-1)).toContain("COMPANY_THEY_RUN: Soren");
+    expect(modelInputs.at(-1)).toContain("COMPANY_THEY_RUN: Tavora");
     expect(calls.filter((c) => c["kind"] === "profile")).toHaveLength(1);
     expect(calls.find((c) => c["kind"] === "profile")).toMatchObject({
       accountId: "acct-1",
@@ -943,7 +943,7 @@ describe("evidence-aware prompts (#790)", () => {
   });
 
   it("a live headline naming another company, or no live read, leaves the company out", async () => {
-    sql(`UPDATE prospects SET title = 'CEO', company = 'Soren', email = 'dana@usesoren.com'`);
+    sql(`UPDATE prospects SET title = 'CEO', company = 'Tavora', email = 'dana@usetavora.example'`);
     firstTouch({});
     await sendInvite(inviteOk("already_connected"));
     await previewPayload(caller({ profile: profileReply("Founder at Otherco") }));

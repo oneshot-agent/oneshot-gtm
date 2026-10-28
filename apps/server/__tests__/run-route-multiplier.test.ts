@@ -9,7 +9,7 @@ import type { RunPlayEvent } from "@oneshot-gtm/shared-types";
 
 const calls = { verify: 0, enrich: 0, blocks: [] as string[] };
 let memberOffer: string | null = null;
-const OFFER = "Up to $150 in credit for each member company, earned at milestones.";
+const OFFER = "Up to $300 in onboarding hours for each member company, earned at milestones.";
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");

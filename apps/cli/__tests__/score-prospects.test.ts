@@ -328,8 +328,8 @@ describe("buildShadowReport — human-vs-auto provenance", () => {
 
   it("expired rows are never human labels, even when reviewed_at is set", () => {
     // Reservation/expiry machinery stamps reviewed_at without any human
-    // decision. In production, 137 expired luma rows deflated the
-    // approval rate from 65% to 38% before this guard.
+    // decision. Counting expired rows as rejections deflates the approval
+    // rate of any finder whose rows expire unreviewed.
     const approved = enqueue("post-funding", FUNDING_PAYLOAD);
     ledger.setQueueStatus({ id: approved, status: "approved" });
     enqueue("post-funding", { name: "x" }, { initialStatus: "expired" });

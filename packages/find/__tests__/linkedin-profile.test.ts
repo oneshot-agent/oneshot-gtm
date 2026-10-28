@@ -148,18 +148,18 @@ const {
 
 const { _resetPaidCache, readPaidCache } = await import("@oneshot-gtm/core");
 
-const URL = "https://www.linkedin.com/in/julia-zabrodska-akinci-cv/";
+const URL = "https://www.linkedin.com/in/nora-halloran-vey-cv/";
 /** Stored reads (or negative entries) for URL in the paid cache. The gate lease lives in the ledger map. */
 const profileRows = () => (readPaidCache("linkedin.profile_read", { url: URL }) ? 1 : 0);
 const ctx = { playName: "luma-events" };
 const ok = () => ({
   loggedIn: true,
-  name: "Julia Zabrodska-Akinci",
-  headline: "Founder & Product Owner at WildMuse.App",
+  name: "Nora Halloran-Vey",
+  headline: "Founder & Product Owner at BrightLoom.App",
   location: "London",
   experience: [
-    { company: "WildMuse.App", title: "Founder & Product Owner", period: "Mar 2026 - Present" },
-    { company: "L'ETO Group", title: "Head of Product", period: "Nov 2024 - Oct 2025" },
+    { company: "BrightLoom.App", title: "Founder & Product Owner", period: "Mar 2026 - Present" },
+    { company: "D'ORO Group", title: "Head of Product", period: "Nov 2024 - Oct 2025" },
   ],
 });
 
@@ -220,10 +220,10 @@ describe("session state", () => {
 
   it("the cache key normalises host, trailing slash and query", () => {
     expect(linkedinProfileCacheKey(URL)).toBe(
-      "linkedin-profile:https://linkedin.com/in/julia-zabrodska-akinci-cv",
+      "linkedin-profile:https://linkedin.com/in/nora-halloran-vey-cv",
     );
-    expect(linkedinProfileCacheKey("https://LinkedIn.com/in/Julia-Zabrodska-Akinci-cv?trk=x")).toBe(
-      "linkedin-profile:https://linkedin.com/in/julia-zabrodska-akinci-cv",
+    expect(linkedinProfileCacheKey("https://LinkedIn.com/in/Nora-Halloran-Vey-cv?trk=x")).toBe(
+      "linkedin-profile:https://linkedin.com/in/nora-halloran-vey-cv",
     );
   });
 });
@@ -492,7 +492,7 @@ describe("readLinkedInProfile", () => {
     browserOutput = {
       ...ok(),
       experience: [
-        { company: "WildMuse.App", title: "Founder", period: "Mar 2026 - Present · 7 mos" },
+        { company: "BrightLoom.App", title: "Founder", period: "Mar 2026 - Present · 7 mos" },
       ],
     };
     const read = await readLinkedInProfile(URL, ctx, { remainingUsd: 1 });
@@ -502,7 +502,7 @@ describe("readLinkedInProfile", () => {
   it("reads the Experience section, caches it, and a second read is free", async () => {
     const first = await readLinkedInProfile(URL, ctx, { remainingUsd: 1 });
     expect(first.profile?.experience).toEqual(ok().experience);
-    expect(first.profile?.headline).toBe("Founder & Product Owner at WildMuse.App");
+    expect(first.profile?.headline).toBe("Founder & Product Owner at BrightLoom.App");
     expect(first.costUsd).toBeCloseTo(0.012, 5);
     expect(calls.browser).toBe(1);
     const second = await readLinkedInProfile(URL, ctx, { remainingUsd: 1 });

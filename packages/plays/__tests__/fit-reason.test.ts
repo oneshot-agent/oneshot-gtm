@@ -80,23 +80,23 @@ describe("generateFitReason", () => {
       icp: "founders",
       playName: "luma-events",
       payload: {
-        name: "Nico",
-        email: "n@carvuk.com",
+        name: "Tomas",
+        email: "t@shinewell.example",
         linkedinUrl: "https://linkedin.com/in/n",
-        company: "Carvuk",
+        company: "Shinewell",
         title: "CTO",
         fitReason: "old sentence",
         fitReasonSource: "notes",
         address: "12 Main St",
       },
-      dossier: "Carvuk sells car care to consumers.",
+      dossier: "Shinewell sells car care to consumers.",
     });
     const user = (completeMock.mock.calls[0]![0] as { messages: Array<{ content: string }> })
       .messages[1]!.content;
-    expect(user).toContain("company: Carvuk");
+    expect(user).toContain("company: Shinewell");
     expect(user).toContain("title: CTO");
-    expect(user).toContain("research: Carvuk sells");
-    expect(user).not.toContain("n@carvuk.com");
+    expect(user).toContain("research: Shinewell sells");
+    expect(user).not.toContain("t@shinewell.example");
     expect(user).not.toContain("linkedin");
     expect(user).not.toContain("old sentence");
     expect(user).not.toContain("12 Main St");

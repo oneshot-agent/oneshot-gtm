@@ -42,17 +42,17 @@ beforeEach(() => {
   cfgOverride = {
     emailIdentities: [
       {
-        id: "gmail:jn@x.dev",
+        id: "gmail:mira@x.dev",
         provider: "gmail",
-        address: "jn@x.dev",
+        address: "mira@x.dev",
         maxPerDay: null,
         warmup: null,
       },
       {
-        id: "oneshot:jn@mail.x.dev",
+        id: "oneshot:mira@mail.x.dev",
         provider: "oneshot",
         sendingDomain: "mail.x.dev",
-        mailbox: "jn",
+        mailbox: "mira",
         maxPerDay: 40,
         warmup: null,
       },
@@ -68,7 +68,7 @@ describe("GET /api/setup/calendars", () => {
 
   it("404s for an identityId not in the pool or not gmail", async () => {
     const res = await listCalendarsRoute(
-      req("http://localhost/api/setup/calendars?identityId=oneshot:jn@mail.x.dev"),
+      req("http://localhost/api/setup/calendars?identityId=oneshot:mira@mail.x.dev"),
     );
     expect(res.status).toBe(404);
     expect(listWritableCalendarsMock).not.toHaveBeenCalled();
@@ -86,7 +86,7 @@ describe("GET /api/setup/calendars", () => {
       null as unknown as ReturnType<typeof import("@oneshot-gtm/core").gmailAccountFor>,
     );
     const res = await listCalendarsRoute(
-      req("http://localhost/api/setup/calendars?identityId=gmail:jn@x.dev"),
+      req("http://localhost/api/setup/calendars?identityId=gmail:mira@x.dev"),
     );
     expect(res.status).toBe(404);
   });
@@ -98,7 +98,7 @@ describe("GET /api/setup/calendars", () => {
     ]);
     recentEventCountMock.mockResolvedValueOnce(5).mockResolvedValueOnce(2);
     const res = await listCalendarsRoute(
-      req("http://localhost/api/setup/calendars?identityId=gmail:jn@x.dev"),
+      req("http://localhost/api/setup/calendars?identityId=gmail:mira@x.dev"),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -120,7 +120,7 @@ describe("GET /api/setup/calendars", () => {
       new Error("Gmail API failed (401): re-auth required"),
     );
     const res = await listCalendarsRoute(
-      req("http://localhost/api/setup/calendars?identityId=gmail:jn@x.dev"),
+      req("http://localhost/api/setup/calendars?identityId=gmail:mira@x.dev"),
     );
     expect(res.status).toBe(502);
     expect((await res.json()) as { error: string }).toEqual({

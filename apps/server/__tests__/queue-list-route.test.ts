@@ -408,11 +408,11 @@ describe("list payload trim (#929)", () => {
         researchedAt: "2026-09-11T20:00:00.000Z",
         organizations: [],
       },
-      currentRole: "Founder at WildMuse since Mar 2026",
-      companyFacts: "WildMuse · Software · 1-10 employees",
+      currentRole: "Founder at BrightLoom since Mar 2026",
+      companyFacts: "BrightLoom · Software · 1-10 employees",
       titleAtFinder: "Curious Explorer",
-      companyAtFinder: "L'eto Group",
-      formerRoles: "Head of Product at L'ETO Group (Nov 2024–Oct 2025)",
+      companyAtFinder: "D'oro Group",
+      formerRoles: "Head of Product at D'ORO Group (Nov 2024–Oct 2025)",
       dossier: "not shown by the list",
     });
     nextRows = [row];
@@ -421,10 +421,10 @@ describe("list payload trim (#929)", () => {
       const payload = (listed.rows as Array<{ payload: unknown }>)[0]?.payload;
       expect(payload).not.toHaveProperty("dossier");
       expect(personResearchRows(payload)).toEqual([
-        { key: "now", value: "Founder at WildMuse since Mar 2026" },
-        { key: "company", value: "WildMuse · Software · 1-10 employees" },
-        { key: "listed as", value: "Curious Explorer · L'eto Group" },
-        { key: "formerly", value: "Head of Product at L'ETO Group (Nov 2024–Oct 2025)" },
+        { key: "now", value: "Founder at BrightLoom since Mar 2026" },
+        { key: "company", value: "BrightLoom · Software · 1-10 employees" },
+        { key: "listed as", value: "Curious Explorer · D'oro Group" },
+        { key: "formerly", value: "Head of Product at D'ORO Group (Nov 2024–Oct 2025)" },
       ]);
     } finally {
       nextRows = [];

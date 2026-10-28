@@ -14,9 +14,9 @@ vi.mock("../src/mailbox-config.ts", () => ({
   smartleadMailboxIdentities: () => [],
   resetMailboxConnections: vi.fn(),
   mailboxConnection: async () => ({
-    address: "jn@mail.example",
-    imap: { host: "imap.example.com", port: 993, secure: true, user: "jn", pass: "x" },
-    smtp: { host: "smtp.example.com", port: 465, secure: true, user: "jn", pass: "x" },
+    address: "mira@mail.example",
+    imap: { host: "imap.example.com", port: 993, secure: true, user: "mira", pass: "x" },
+    smtp: { host: "smtp.example.com", port: 465, secure: true, user: "mira", pass: "x" },
   }),
 }));
 vi.mock("imapflow", () => ({
@@ -43,9 +43,9 @@ vi.mock("imapflow", () => ({
 const { imapMessageIdReader, imapSentReader, PermanentDeliveryError } =
   await import("../src/send-delivery.ts");
 const identity: EmailIdentity = {
-  id: "smartlead:jn@mail.example",
+  id: "smartlead:mira@mail.example",
   provider: "smartlead",
-  address: "jn@mail.example",
+  address: "mira@mail.example",
   maxPerDay: null,
   warmup: null,
 };

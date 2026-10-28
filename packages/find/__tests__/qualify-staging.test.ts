@@ -46,7 +46,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 const { qualifyPreSpend, qualifyPostEnrich } = await import("../src/_qualify.ts");
 const { _resetBreaker } = await import("../src/_breaker.ts");
 
-const ICP = "Technical founders and engineering leads shipping AI agents";
+const ICP = "Technical founders and engineering leads at B2B fintech startups";
 const BASE = { icp: ICP, playName: "luma-events", fillGaps: true } as const;
 
 beforeEach(() => {
@@ -60,7 +60,7 @@ beforeEach(() => {
 describe("stage A — pre-spend", () => {
   it("rejects for free before any contact resolution", async () => {
     verdictQueue = ["reject"];
-    const r = await qualifyPreSpend({ icp: ICP, person: { roleText: "GTM @AhaCreator" } });
+    const r = await qualifyPreSpend({ icp: ICP, person: { roleText: "GTM @Northwind" } });
     expect(r.action).toBe("reject");
     expect(r.costUsd).toBe(0);
     expect(enrichCalls).toBe(0);

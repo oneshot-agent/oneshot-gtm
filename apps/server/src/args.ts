@@ -1,5 +1,5 @@
 // Command-line arguments for `oneshot-gtm-server`. The binary used to read
-// only PORT and ignore argv, so `--port 3099` silently bound 3030.
+// only PORT and ignore argv, so `--port 4099` silently bound 3030.
 
 export const SERVER_USAGE = `Usage: oneshot-gtm-server [--port <n>] [--no-browser]
 

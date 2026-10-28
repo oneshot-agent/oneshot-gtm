@@ -9,7 +9,7 @@ describe("classifyReply", () => {
   test("plain human reply is human", () => {
     expect(
       classifyReply({
-        subject: "Re: trustclaw stack",
+        subject: "Re: beacon stack",
         body: "It's too soon for me to grant payment access to an agent but thank you for the offer.",
       }),
     ).toBe("human");

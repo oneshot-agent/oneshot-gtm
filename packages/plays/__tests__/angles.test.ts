@@ -180,24 +180,24 @@ describe("describeTargetForAngle", () => {
   it("carries the person and setting, not identifiers, URLs, or the edge itself", () => {
     const d = describeTargetForAngle(
       {
-        name: "Nico",
-        email: "n@carvuk.com",
-        company: "Carvuk",
+        name: "Tomas",
+        email: "t@shinewell.example",
+        company: "Shinewell",
         title: "Co-Founder & CTO",
-        attendeeBio: "cofounder and CTO @carvuk",
-        eventTitle: "Llama Lounge 26",
+        attendeeBio: "cofounder and CTO @shinewell",
+        eventTitle: "Builders Lounge 26",
         eventUrl: "https://luma.com/x",
         linkedinUrl: "https://linkedin.com/in/n",
         yourEdge: EDGE,
         icpVerdictReason: "long reason",
       },
-      "Carvuk sells car-care subscriptions to consumers in Chile.",
+      "Shinewell sells car-care subscriptions to consumers in Portugal.",
     );
-    expect(d).toContain("company: Carvuk");
+    expect(d).toContain("company: Shinewell");
     expect(d).toContain("title: Co-Founder & CTO");
-    expect(d).toContain("eventTitle: Llama Lounge 26");
-    expect(d).toContain("research: Carvuk sells");
-    expect(d).not.toContain("n@carvuk.com");
+    expect(d).toContain("eventTitle: Builders Lounge 26");
+    expect(d).toContain("research: Shinewell sells");
+    expect(d).not.toContain("t@shinewell.example");
     expect(d).not.toContain("luma.com");
     expect(d).not.toContain("linkedin");
     expect(d).not.toContain(A1);
@@ -208,7 +208,7 @@ describe("describeTargetForAngle", () => {
     vi.setSystemTime(new Date("2026-09-25T12:00:00Z"));
     try {
       const d = describeTargetForAngle({
-        company: "Piris Labs",
+        company: "Velline Labs",
         cohort: "yc-w26",
         demoDayMonth: "2026-03",
       });
@@ -232,8 +232,8 @@ describe("angle choice and demo day", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const target = {
       name: "Ali",
-      email: "ali@piris.dev",
-      company: "Piris Labs",
+      email: "ali@velline.example",
+      company: "Velline Labs",
       cohort: "yc-w26",
       yourEdge: EDGE,
     };
@@ -260,8 +260,8 @@ describe("followUpEdgeBlock", () => {
 describe("a play's input block (accelerator-batch through runEmailPlay)", () => {
   const base = {
     name: "Merlin",
-    email: "m@rex.inc",
-    company: "Rex",
+    email: "m@rookhq.example",
+    company: "Rook",
     cohort: "yc-s26",
     productOneLiner: "scheduling for dental clinics",
   };
@@ -339,11 +339,11 @@ it("a play without an edge field still receives the selected argument", async ()
       promptName: "show-hn-email",
       maxBodyWords: 100,
       toEmail: (t: { email: string }) => t.email,
-      prospectMeta: () => ({ name: "Merlin", email: "m@rex.inc" }),
+      prospectMeta: () => ({ name: "Merlin", email: "m@rookhq.example" }),
       prepare: async () => ({ receiptIds: [], dossier: "facts" }),
       buildInputBlock: () => "PROSPECT: a founder",
     },
-    { dryRun: true, targets: [{ email: "m@rex.inc" }], draftAngle: "Grounded alternative" },
+    { dryRun: true, targets: [{ email: "m@rookhq.example" }], draftAngle: "Grounded alternative" },
   );
   expect(calls.writer[0]).toContain("SELECTED ANGLE: Grounded alternative");
   expect(calls.classifier).toHaveLength(0);
@@ -353,7 +353,13 @@ it("the custom breakup runner receives the selected argument", async () => {
   await runBreakupRevive({
     dryRun: true,
     targets: [
-      { name: "Merlin", email: "m@rex.inc", company: "Rex", daysCold: 75, lastEventAt: null },
+      {
+        name: "Merlin",
+        email: "m@rookhq.example",
+        company: "Rook",
+        daysCold: 75,
+        lastEventAt: null,
+      },
     ],
     draftAngle: "Grounded alternative",
   });

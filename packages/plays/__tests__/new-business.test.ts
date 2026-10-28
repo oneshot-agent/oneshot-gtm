@@ -62,7 +62,7 @@ const { defaultSequence: getSequence } = await import("../src/_cadence.ts");
 
 const base = {
   name: "Priya",
-  email: "priya@freshstart.dev",
+  email: "priya@freshstart.example",
   company: "Fresh Start Dental",
   businessType: "two-chair dental practice",
   licenseType: "dental practice licence",

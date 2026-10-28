@@ -38,7 +38,7 @@ const message: MailboxMessage = {
   autoSubmitted: null,
   prospectId: null,
 };
-function request(body: unknown, origin = "http://localhost:3031") {
+function request(body: unknown, origin = "http://localhost:4031") {
   return new Request("http://localhost/api/inbox/thread-state", {
     method: "POST",
     headers: { origin, "content-type": "application/json" },

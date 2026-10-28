@@ -23,7 +23,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       telemetryEnabled: false,
       founderName: "Founder",
       founderEmail: "f@x.dev",
-      productOneLiner: "TestProduct SDK",
+      productOneLiner: "TestProduct",
       icpOneLiner: "Engineers",
       clientId: "test",
     }),
@@ -109,12 +109,12 @@ describe("runCompetitorSwitch — browserTask gating", () => {
       targets: [
         {
           name: "Danny",
-          email: "danny@librechat.ai",
-          company: "danny-avila",
+          email: "danny@chatforge.example",
+          company: "danny-ferro",
           competitor: "playwright",
-          evidenceUrl: "https://github.com/danny-avila/LibreChat",
+          evidenceUrl: "https://github.com/danny-ferro/chatforge",
           evidenceText: "Their repo stitches together playwright, sse, tavily — 3 vendors.",
-          yourEdge: "x402 native",
+          yourEdge: "one bill for every vendor",
         },
       ],
     });

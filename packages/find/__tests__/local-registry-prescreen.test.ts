@@ -92,8 +92,8 @@ vi.mock("@oneshot-gtm/core", async () => {
         result: {
           id: "loc_1",
           name: "Real Restaurant",
-          domain: "realrestaurant.com",
-          website: "https://realrestaurant.com",
+          domain: "realrestaurant.example",
+          website: "https://realrestaurant.example",
           phone: null,
           operating_status: "open",
           category: null,
@@ -122,7 +122,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     findEmail: async () => {
       findEmailCalls++;
       return {
-        result: { found: true, email: "hello@realrestaurant.com", cost: 0.01 },
+        result: { found: true, email: "hello@realrestaurant.example", cost: 0.01 },
         receiptId: 1,
       };
     },
@@ -157,6 +157,6 @@ describe("runLocalRegistryFinder — real shouldSkipFindEmail prescreen (no mock
     expect(findEmailCalls).toBe(1);
     expect(out.enqueued).toBe(1);
     expect(enqueued).toHaveLength(1);
-    expect(enqueued[0]?.payload["email"]).toBe("hello@realrestaurant.com");
+    expect(enqueued[0]?.payload["email"]).toBe("hello@realrestaurant.example");
   });
 });

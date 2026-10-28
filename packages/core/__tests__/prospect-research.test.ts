@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { Ledger } from "../src/ledger.ts";
 
 // Dossier persistence + the research candidate selector. `dossier_json` was
-// read as free Tier-1 context by the reply drafter but never written by
-// anything in production, so these are the writers that close that gap.
+// read as free Tier-1 context by the reply drafter but had no writer, so
+// these are the writers that close that gap.
 
 let dbPath: string;
 let ledger: Ledger;
@@ -70,7 +70,7 @@ describe("setProspectIcpVerdict", () => {
   it("still flips between verdicts in either direction", () => {
     const id = add("e@x.dev");
     ledger.setProspectIcpVerdict(id, "unclear");
-    ledger.setProspectIcpVerdict(id, "pass", "builds agents");
+    ledger.setProspectIcpVerdict(id, "pass", "runs a dental group");
     expect(ledger.getProspectById(id)?.icp_verdict).toBe("pass");
     ledger.setProspectIcpVerdict(id, "reject", "recruiter");
     expect(ledger.getProspectById(id)?.icp_verdict).toBe("reject");
@@ -154,11 +154,11 @@ describe("listProspectsForResearch", () => {
 // `research-prospects` owns the `person` half and `research-products` owns
 // `product`. Both used to read the column, merge in memory, and write back:
 // with the read outside any transaction and minutes of latency in between.
-// The later write silently reverted the earlier one. This happened for real
-// during the feature's own dogfood run.
+// The later write silently reverted the earlier one whenever the two runs
+// overlapped.
 describe("mergeProspectDossierHalf", () => {
   it("writes one half without clobbering the other", () => {
-    const id = ledger.upsertProspect({ name: "Raunaq Bose", email: "r@example.dev" });
+    const id = ledger.upsertProspect({ name: "Rae Okafor", email: "r@example.com" });
 
     ledger.mergeProspectDossierHalf(id, "product", {
       version: 1,
@@ -178,7 +178,7 @@ describe("mergeProspectDossierHalf", () => {
   });
 
   it("re-reads inside the transaction rather than trusting a stale value", () => {
-    const id = ledger.upsertProspect({ name: "A", email: "a@example.dev" });
+    const id = ledger.upsertProspect({ name: "A", email: "a@example.com" });
 
     // Simulate the race: a caller selected the row (dossier empty), then
     // another writer landed the product half before the caller's merge ran.

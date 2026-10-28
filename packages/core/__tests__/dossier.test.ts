@@ -37,11 +37,13 @@ describe("hasDossierSignal — real payloads that must be REJECTED", () => {
   });
 
   it("rejects the role-based-mailbox placeholder — a fact about the inbox", () => {
-    expect(hasDossierSignal({ summary: "hi@niklasfrick.com is a role based email address." })).toBe(
-      false,
-    );
     expect(
-      hasDossierSignal({ enrichment: { summary: "hi@avi.mn is a role based email address." } }),
+      hasDossierSignal({ summary: "hi@kestrelworks.example is a role based email address." }),
+    ).toBe(false);
+    expect(
+      hasDossierSignal({
+        enrichment: { summary: "hi@lumen.example is a role based email address." },
+      }),
     ).toBe(false);
   });
 
@@ -73,10 +75,12 @@ describe("hasDossierSignal — payloads that must be ACCEPTED", () => {
     expect(hasDossierSignal({ title: "Graduate Teaching Assistant" })).toBe(true);
     expect(hasDossierSignal({ enrichment: { company: "Acme" } })).toBe(true);
     expect(hasDossierSignal({ profile: { title: "Staff Engineer" } })).toBe(true);
-    expect(hasDossierSignal({ result: { enrichment: { bio: "builds agent infra" } } })).toBe(true);
+    expect(
+      hasDossierSignal({ result: { enrichment: { bio: "builds scheduling software" } } }),
+    ).toBe(true);
     expect(
       hasDossierSignal({
-        product: { sources: [{ url: "https://acme.dev", excerpt: "Agent platform" }] },
+        product: { sources: [{ url: "https://acme.dev", excerpt: "Scheduling platform" }] },
       }),
     ).toBe(true);
   });
@@ -96,7 +100,7 @@ describe("hasDossierSignal — payloads that must be ACCEPTED", () => {
   });
 
   it("accepts prose a play assembled — that is genuine context, not a payload", () => {
-    expect(hasDossierSignal("Founder at Acme; ships agent infra.")).toBe(true);
+    expect(hasDossierSignal("Founder at Acme; ships scheduling software.")).toBe(true);
   });
 
   it("keeps a TRUNCATED payload rather than discarding research already paid for", () => {
@@ -114,7 +118,7 @@ describe("mergeProductDossier", () => {
         status: "complete",
         researchedAt: "2026-09-02T00:00:00.000Z",
         subject: { company: "Acme" },
-        sources: [{ url: "https://acme.dev", kind: "website", excerpt: "Agent platform" }],
+        sources: [{ url: "https://acme.dev", kind: "website", excerpt: "Scheduling platform" }],
       }),
     ) as Record<string, Record<string, unknown>>;
     expect(merged["person"]?.["title"]).toBe("Founder");
@@ -134,14 +138,14 @@ const LUMA_EMPTY_PROFILE = {
     version: 1,
     status: "partial",
     researchedAt: "2026-09-01T22:51:05.891Z",
-    subject: { name: "Raunaq Bose", company: "Taxheaven" },
+    subject: { name: "Theo Marsh", company: "Ledgerwise" },
     sources: [
       {
-        url: "https://luma.com/user/rnq",
+        url: "https://luma.com/user/tmarsh",
         kind: "website",
         excerpt:
-          "# Raunaq Bose\n\n@rnq\n\nJoined March 2026\n\n0Hosted\n\n29Attended\n\n" +
-          "### Nothing Here, Yet\n\nRaunaq Bose has no public events at this time.",
+          "# Theo Marsh\n\n@tmarsh\n\nJoined March 2026\n\n0Hosted\n\n29Attended\n\n" +
+          "### Nothing Here, Yet\n\nTheo Marsh has no public events at this time.",
       },
     ],
   },
@@ -169,7 +173,7 @@ describe("hasDossierSignal — an excerpt must be informative, not merely non-em
 
 describe("hasPersonSignal — is there PERSON research, specifically", () => {
   it("is false for the wrapper research-products writes over an unresearched row", () => {
-    // The whole bug in one assertion: 531 of 684 prospects were in this state,
+    // The whole bug in one assertion: rows in this state were common,
     // and the old backlog query (dossier_json IS NULL OR TRIM = '') read every
     // one of them as done.
     expect(hasPersonSignal(JSON.stringify(LUMA_EMPTY_PROFILE))).toBe(false);
@@ -254,28 +258,28 @@ import {
   type PersonResearchDossier,
 } from "../src/dossier.ts";
 
-const julia: PersonResearchDossier = {
+const nora: PersonResearchDossier = {
   version: 1,
   status: "complete",
   researchedAt: "2026-09-11T20:00:00.000Z",
-  seed: { url: "https://linkedin.com/in/julia-zabrodska-akinci-cv", name: "Julia Zabrodska" },
-  currentRole: { title: "Founder & Product Owner", company: "WildMuse.App", since: "Mar 2026" },
+  seed: { url: "https://linkedin.com/in/nora-halloran-vey-cv", name: "Nora Halloran" },
+  currentRole: { title: "Founder & Product Owner", company: "BrightLoom.App", since: "Mar 2026" },
   organizations: [
     {
-      name: "WildMuse.App",
+      name: "BrightLoom.App",
       title: "Founder & Product Owner",
       startDate: "Mar 2026",
       current: true,
     },
     {
-      name: "L'ETO Group",
+      name: "D'ORO Group",
       title: "Head of Product and Business Development Manager",
       startDate: "Nov 2024",
       endDate: "Oct 2025",
       current: false,
     },
     {
-      name: "Julia's Consultancy",
+      name: "Nora's Consultancy",
       title: "Business Consultant",
       startDate: "Oct 2022",
       endDate: "Nov 2024",
@@ -284,9 +288,9 @@ const julia: PersonResearchDossier = {
   ],
   bio: "Solo-built consumer wellness app from 0 to first revenue.",
   location: "London",
-  workEmail: "julia@wildmuse.app",
+  workEmail: "nora@brightloom.example",
   company: {
-    name: "WildMuse.App",
+    name: "BrightLoom.App",
     industry: "Software",
     size: "1-10",
     founded: 2026,
@@ -298,45 +302,47 @@ const julia: PersonResearchDossier = {
 
 describe("person research record", () => {
   it("renders the current role, company facts and former roles as short lines", () => {
-    expect(renderCurrentRole(julia)).toBe("Founder & Product Owner at WildMuse.App since Mar 2026");
-    expect(renderCompanyFacts(julia.company)).toBe(
-      "WildMuse.App · Software · 1-10 employees · founded 2026 — Consumer wellness app.",
+    expect(renderCurrentRole(nora)).toBe(
+      "Founder & Product Owner at BrightLoom.App since Mar 2026",
     );
-    expect(renderFormerRoles(julia)).toBe(
-      "Head of Product and Business Development Manager at L'ETO Group (Nov 2024–Oct 2025); Business Consultant at Julia's Consultancy (Oct 2022–Nov 2024)",
+    expect(renderCompanyFacts(nora.company)).toBe(
+      "BrightLoom.App · Software · 1-10 employees · founded 2026 — Consumer wellness app.",
+    );
+    expect(renderFormerRoles(nora)).toBe(
+      "Head of Product and Business Development Manager at D'ORO Group (Nov 2024–Oct 2025); Business Consultant at Nora's Consultancy (Oct 2022–Nov 2024)",
     );
   });
 
   it("builds the person record the reject describer and the signal gate read", () => {
-    const record = personRecordFromResearch(julia);
+    const record = personRecordFromResearch(nora);
     expect(record["title"]).toBe("Founder & Product Owner");
-    expect(record["company"]).toBe("WildMuse.App");
-    expect(record["summary"]).toBe(julia.bio);
+    expect(record["company"]).toBe("BrightLoom.App");
+    expect(record["summary"]).toBe(nora.bio);
     expect(record["organizations"]).toEqual([
       {
-        name: "WildMuse.App",
+        name: "BrightLoom.App",
         title: "Founder & Product Owner",
         startDate: "Mar 2026",
         is_current: true,
       },
-      expect.objectContaining({ name: "L'ETO Group", is_current: false }),
-      expect.objectContaining({ name: "Julia's Consultancy", is_current: false }),
+      expect.objectContaining({ name: "D'ORO Group", is_current: false }),
+      expect.objectContaining({ name: "Nora's Consultancy", is_current: false }),
     ]);
     expect(hasDossierSignal(record)).toBe(true);
     expect(record["linkedinUrl"]).toBeUndefined();
     expect(
-      personRecordFromResearch({ ...julia, linkedinUrl: "https://www.linkedin.com/in/jz" })[
+      personRecordFromResearch({ ...nora, linkedinUrl: "https://www.linkedin.com/in/nh" })[
         "linkedinUrl"
       ],
-    ).toBe("https://www.linkedin.com/in/jz");
-    expect(companyRecordFromResearch(julia)).toEqual({
-      name: "WildMuse.App",
+    ).toBe("https://www.linkedin.com/in/nh");
+    expect(companyRecordFromResearch(nora)).toEqual({
+      name: "BrightLoom.App",
       industry: "Software",
       size: "1-10",
       founded: 2026,
       description: "Consumer wellness app.",
     });
-    expect(companyRecordFromResearch({ ...julia, company: undefined })).toBeNull();
+    expect(companyRecordFromResearch({ ...nora, company: undefined })).toBeNull();
   });
 
   it("merges into the person half, keeps the product half and a prior enrich record, drops a failed sentinel", () => {
@@ -344,11 +350,11 @@ describe("person research record", () => {
     const withEnrich = JSON.stringify({
       person: {
         status: "completed",
-        profile: { title: "| Curious Explorer", company: "L'eto Group" },
+        profile: { title: "| Curious Explorer", company: "D'oro Group" },
       },
       product,
     });
-    const merged = JSON.parse(mergePersonResearchDossier(withEnrich, julia)) as Record<
+    const merged = JSON.parse(mergePersonResearchDossier(withEnrich, nora)) as Record<
       string,
       unknown
     >;
@@ -362,15 +368,12 @@ describe("person research record", () => {
       person: { status: "failed", profile: null, cost: 0 },
       product,
     });
-    const merged2 = JSON.parse(mergePersonResearchDossier(failed, julia)) as Record<
-      string,
-      unknown
-    >;
+    const merged2 = JSON.parse(mergePersonResearchDossier(failed, nora)) as Record<string, unknown>;
     expect((merged2["person"] as Record<string, unknown>)["enrichment"]).toBeUndefined();
     expect(merged2["product"]).toEqual(product);
 
     // A second research run replaces the researched record but keeps the enrich record it carried.
-    const again = JSON.parse(mergePersonResearchDossier(JSON.stringify(merged), julia)) as Record<
+    const again = JSON.parse(mergePersonResearchDossier(JSON.stringify(merged), nora)) as Record<
       string,
       unknown
     >;
@@ -384,29 +387,30 @@ describe("person research record", () => {
 
   it("carries the newsfeed pointer, and a refresh without one keeps the stored pointer", () => {
     const pointer = {
-      url: "https://www.linkedin.com/in/julia",
+      url: "https://www.linkedin.com/in/nora",
       fetchedAt: "2026-09-27T10:00:00.000Z",
       count: 20,
       newestAt: "2026-09-26T08:00:00.000Z",
     };
     const first = JSON.parse(
-      mergePersonResearchDossier(null, { ...julia, newsfeed: pointer }),
+      mergePersonResearchDossier(null, { ...nora, newsfeed: pointer }),
     ) as Record<string, Record<string, unknown>>;
     expect(first["person"]!["newsfeed"]).toEqual(pointer);
 
-    const refreshed = JSON.parse(
-      mergePersonResearchDossier(JSON.stringify(first), julia),
-    ) as Record<string, Record<string, unknown>>;
+    const refreshed = JSON.parse(mergePersonResearchDossier(JSON.stringify(first), nora)) as Record<
+      string,
+      Record<string, unknown>
+    >;
     expect(refreshed["person"]!["newsfeed"]).toEqual(pointer);
   });
 
   it("bounds the record at 4,000 chars without losing the current role", () => {
     const big: PersonResearchDossier = {
-      ...julia,
+      ...nora,
       bio: "x".repeat(3000),
-      company: { ...julia.company, description: "y".repeat(400) },
+      company: { ...nora.company, description: "y".repeat(400) },
       organizations: [
-        julia.organizations[0]!,
+        nora.organizations[0]!,
         ...Array.from({ length: 7 }, (_, i) => ({
           name: `Old Co ${i} ${"z".repeat(300)}`,
           current: false,
@@ -415,8 +419,8 @@ describe("person research record", () => {
     };
     const bounded = boundPersonResearch(big);
     expect(JSON.stringify(bounded).length).toBeLessThanOrEqual(4000);
-    expect(bounded.currentRole).toEqual(julia.currentRole);
-    expect(bounded.organizations[0]).toEqual(julia.organizations[0]);
+    expect(bounded.currentRole).toEqual(nora.currentRole);
+    expect(bounded.organizations[0]).toEqual(nora.organizations[0]);
     expect(isPersonResearchDossier(bounded)).toBe(true);
     expect(isPersonResearchDossier({ version: 2 })).toBe(false);
   });

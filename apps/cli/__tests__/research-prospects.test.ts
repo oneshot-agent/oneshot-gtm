@@ -42,26 +42,28 @@ describe("researchUrl", () => {
     // source_profile_url. For someone who hosts no events its whole content is
     // "Nothing Here, Yet", so deepResearchPerson burned a call and returned
     // nothing while a perfectly good LinkedIn URL sat in the next column.
-    // 68 prospects were in exactly this state.
     expect(
       researchUrl({
-        source_profile_url: "https://luma.com/user/rnq",
-        linkedin_url: "https://www.linkedin.com/in/raunaqbose",
+        source_profile_url: "https://luma.com/user/tmarsh",
+        linkedin_url: "https://www.linkedin.com/in/theomarsh",
       }),
-    ).toBe("https://www.linkedin.com/in/raunaqbose");
+    ).toBe("https://www.linkedin.com/in/theomarsh");
   });
 
   it("still returns a non-profile URL when there is nothing better", () => {
     // Worse than a social profile, but strictly more than an email alone.
     expect(
-      researchUrl({ source_profile_url: "https://luma.com/user/rnq", linkedin_url: null }),
-    ).toBe("https://luma.com/user/rnq");
+      researchUrl({ source_profile_url: "https://luma.com/user/tmarsh", linkedin_url: null }),
+    ).toBe("https://luma.com/user/tmarsh");
   });
 
   it("treats x.com and twitter.com as researchable too", () => {
     expect(
-      researchUrl({ source_profile_url: "https://x.com/rnq", linkedin_url: "https://li.com/in/x" }),
-    ).toBe("https://x.com/rnq");
+      researchUrl({
+        source_profile_url: "https://x.com/tmarsh",
+        linkedin_url: "https://li.com/in/x",
+      }),
+    ).toBe("https://x.com/tmarsh");
   });
 
   it("falls back to linkedin_url, else null", () => {
@@ -126,9 +128,11 @@ describe("hasSignal", () => {
   });
 
   it("rejects the role-based-mailbox placeholder — a fact about the inbox, not the person", () => {
-    expect(hasSignal({ summary: "hi@niklasfrick.com is a role based email address." })).toBe(false);
-    expect(hasSignal({ enrichment: { summary: "hi@avi.mn is a role based email address." } })).toBe(
+    expect(hasSignal({ summary: "hi@kestrelworks.example is a role based email address." })).toBe(
       false,
     );
+    expect(
+      hasSignal({ enrichment: { summary: "hi@lumen.example is a role based email address." } }),
+    ).toBe(false);
   });
 });

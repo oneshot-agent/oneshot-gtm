@@ -18,7 +18,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     oneshotEnvReady: () => false,
     getGmailProfile: async () => {
       if (getGmailProfileImpl) return getGmailProfileImpl();
-      return { emailAddress: "jn@x.dev" };
+      return { emailAddress: "mira@x.dev" };
     },
   };
 });
@@ -44,19 +44,19 @@ afterEach(() => {
 
 function withCalendarIdentity(scope: string | null): void {
   cfgOverride = {
-    calendarIdentityId: "gmail:jn@x.dev",
+    calendarIdentityId: "gmail:mira@x.dev",
     calendarId: "primary",
     emailIdentities: [
       {
-        id: "gmail:jn@x.dev",
+        id: "gmail:mira@x.dev",
         provider: "gmail",
-        address: "jn@x.dev",
+        address: "mira@x.dev",
         maxPerDay: 0,
         warmup: null,
       },
     ],
   };
-  saveGmailToken("gmail:jn@x.dev", { refreshToken: "rt", address: "jn@x.dev", scope });
+  saveGmailToken("gmail:mira@x.dev", { refreshToken: "rt", address: "mira@x.dev", scope });
 }
 
 describe("doctor calendar access check", () => {
@@ -85,7 +85,7 @@ describe("doctor calendar access check", () => {
     const checks = await runDoctor();
     const hit = checks.find((c) => c.name === "calendar access");
     expect(hit?.severity).toBe("ok");
-    expect(hit?.message).toContain("jn@x.dev");
+    expect(hit?.message).toContain("mira@x.dev");
     expect(hit?.message).toContain("primary");
   });
 

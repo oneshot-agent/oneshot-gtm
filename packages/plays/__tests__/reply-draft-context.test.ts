@@ -66,14 +66,14 @@ const BASE = { fromEmail: "a@b.dev", subject: "Re: x", body: "tell me about paym
 describe("draftInboxReply context assembly", () => {
   it("injects PRODUCT BRIEF and ICP when configured", async () => {
     cfgOverride = {
-      productBrief: "Settled per call in USDC on Base.\nhttps://docs.example.com/payments",
-      icpOneLiner: "seed-stage agent builders",
+      productBrief: "Invoices settle in two business days.\nhttps://docs.example.com/payments",
+      icpOneLiner: "seed-stage fintech founders",
     };
     await draftInboxReply(BASE);
     const block = lastUserBlock();
     expect(block).toContain("PRODUCT BRIEF (facts and the ONLY links you may cite):");
     expect(block).toContain("https://docs.example.com/payments");
-    expect(block).toContain("ICP: seed-stage agent builders");
+    expect(block).toContain("ICP: seed-stage fintech founders");
   });
 
   it("omits the brief/ICP blocks cleanly when unset", async () => {
@@ -84,9 +84,9 @@ describe("draftInboxReply context assembly", () => {
   });
 
   it("injects the sender dossier when research produced one", async () => {
-    await draftInboxReply({ ...BASE, dossier: "Runs x402 payments on his own site." });
+    await draftInboxReply({ ...BASE, dossier: "Runs online booking on his own site." });
     expect(lastUserBlock()).toContain(
-      "SENDER DOSSIER (research about who wrote this):\nRuns x402 payments on his own site.",
+      "SENDER DOSSIER (research about who wrote this):\nRuns online booking on his own site.",
     );
   });
 
@@ -192,13 +192,13 @@ describe("draftInboxReply context assembly", () => {
 
   it("injects hook and doNotSay from angle_json — doNotSay is what stops re-asserting a corrected premise", async () => {
     const angle = JSON.stringify({
-      hook: "Just shipped x402 support.",
+      hook: "Just shipped online booking.",
       doNotSay: ["not sure what you mean by that", "this was starred for research only"],
     });
     await draftInboxReply({ ...BASE, angleJson: angle });
     const block = lastUserBlock();
     expect(block).toContain("ANGLE");
-    expect(block).toContain("Hook: Just shipped x402 support.");
+    expect(block).toContain("Hook: Just shipped online booking.");
     expect(block).toContain("Do NOT say");
     expect(block).toContain("not sure what you mean by that");
     expect(block).toContain("this was starred for research only");

@@ -19,7 +19,7 @@ exports[`dashboard service > matches the launchd snapshot 1`] = `
     <key>ONESHOT_GTM_WORKSPACE</key>
     <string>acme</string>
     <key>PORT</key>
-    <string>3031</string>
+    <string>4031</string>
     <key>ONESHOT_GTM_NO_BROWSER</key>
     <string>1</string>
     <key>PATH</key>
@@ -43,7 +43,7 @@ exports[`dashboard service > matches the launchd snapshot 1`] = `
 
 exports[`dashboard service > matches the systemd snapshot 1`] = `
 "[Unit]
-Description=oneshot-gtm dashboard — workspace acme on port 3031
+Description=oneshot-gtm dashboard — workspace acme on port 4031
 After=network-online.target
 
 [Service]
@@ -51,7 +51,7 @@ Type=simple
 ExecStart="/opt/homebrew/bin/bun" "/Users/jo/oneshot-gtm/apps/server/src/bin.ts"
 Environment="ONESHOT_GTM_HOME=/Users/jo/.oneshot-gtm-workspaces/acme"
 Environment="ONESHOT_GTM_WORKSPACE=acme"
-Environment="PORT=3031"
+Environment="PORT=4031"
 Environment="ONESHOT_GTM_NO_BROWSER=1"
 Environment="PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 Restart=on-failure

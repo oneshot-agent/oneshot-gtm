@@ -17,8 +17,8 @@ describe("canonicalLinkedInProfileKey", () => {
 
   it("drops the locale segment LinkedIn appends to shared links", () => {
     expect(
-      canonicalLinkedInProfileKey("https://br.linkedin.com/in/thiago-menzinger-5029a42b9/en"),
-    ).toBe("linkedin.com/in/thiago-menzinger-5029a42b9");
+      canonicalLinkedInProfileKey("https://br.linkedin.com/in/tomas-mendel-5029a42b9/en"),
+    ).toBe("linkedin.com/in/tomas-mendel-5029a42b9");
     expect(canonicalLinkedInProfileKey("https://www.linkedin.com/in/ada/pt-br/")).toBe(
       "linkedin.com/in/ada",
     );

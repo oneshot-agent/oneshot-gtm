@@ -34,7 +34,7 @@ const dup: SendDeliveryView = {
   sentAt: "2026-09-29T01:59:02.000Z",
   checkedAt: "2026-09-29T02:10:00.000Z",
   transport: "smartlead",
-  identity: "smartlead:jn@mail.example",
+  identity: "smartlead:mira@mail.example",
   error: null,
 };
 

@@ -19,14 +19,14 @@ vi.mock("../src/_github-user.ts", () => ({
           email: null,
           blogDomain: null,
           company: "Acme",
-          bio: "Building agent infra",
+          bio: "Building payroll tooling",
           createdAt: "2020-01-01T00:00:00Z",
           publicRepos: 4,
           followers: 9,
         }
       : null,
   fetchTopRepos: async () =>
-    reposAvailable ? [{ name: "kit", description: "agent kit", language: "Go" }] : null,
+    reposAvailable ? [{ name: "kit", description: "payroll kit", language: "Go" }] : null,
 }));
 vi.mock("../src/_github-readme.ts", () => ({ fetchProfileReadmeText: async () => null }));
 vi.mock("../src/_filter.ts", () => ({
@@ -34,7 +34,7 @@ vi.mock("../src/_filter.ts", () => ({
   icpFilter: async (args: { candidate: { summary?: string } }) => {
     icpSummaries.push(args.candidate.summary ?? "");
     duringJudge?.();
-    return { match: icpMatch, reason: icpMatch ? "builds agents" : "not a builder" };
+    return { match: icpMatch, reason: icpMatch ? "builds payroll tooling" : "not in payroll" };
   },
   qualifyPerson: async () => ({ verdict: personVerdict, reason: "role stub" }),
 }));
@@ -92,10 +92,13 @@ describe("rejudgeGitHubStarsRows", () => {
     const id = seed("pending");
     const res = await rejudgeGitHubStarsRows({ id });
     expect(res).toMatchObject({ judged: 1, pass: 1, statusChanged: 0 });
-    expect(icpSummaries[0]).toContain("Bio: Building agent infra");
+    expect(icpSummaries[0]).toContain("Bio: Building payroll tooling");
     expect(icpSummaries[0]).toContain("Starred: org/repo");
-    expect(payload(id)).toMatchObject({ icpVerdict: "pass", icpVerdictReason: "builds agents" });
-    expect(payload(id)["githubEvidence"]).toContain("- kit (Go) — agent kit");
+    expect(payload(id)).toMatchObject({
+      icpVerdict: "pass",
+      icpVerdictReason: "builds payroll tooling",
+    });
+    expect(payload(id)["githubEvidence"]).toContain("- kit (Go) — payroll kit");
     expect(row(id).status).toBe("pending");
   });
 
@@ -104,7 +107,7 @@ describe("rejudgeGitHubStarsRows", () => {
     const id = seed("pending");
     await rejudgeGitHubStarsRows({ id });
     expect(row(id).status).toBe("rejected");
-    expect(row(id).notes).toContain("re-judged from GitHub: not a builder");
+    expect(row(id).notes).toContain("re-judged from GitHub: not in payroll");
   });
 
   it("only annotates a failing approved row unless rejectApproved is set", async () => {
@@ -112,7 +115,7 @@ describe("rejudgeGitHubStarsRows", () => {
     const kept = seed("approved");
     await rejudgeGitHubStarsRows({ id: kept });
     expect(row(kept).status).toBe("approved");
-    expect(row(kept).notes).toContain("re-judged from GitHub: not a builder");
+    expect(row(kept).notes).toContain("re-judged from GitHub: not in payroll");
 
     const moved = seed("approved");
     const res = await rejudgeGitHubStarsRows({ id: moved, rejectApproved: true });
@@ -158,7 +161,7 @@ describe("rejudgeGitHubStarsRows", () => {
     const res = await rejudgeGitHubStarsRows({ id });
     expect(res.statusChanged).toBe(0);
     expect(row(id).status).toBe("approved");
-    expect(row(id).notes).toContain("re-judged from GitHub: not a builder");
+    expect(row(id).notes).toContain("re-judged from GitHub: not in payroll");
   });
 
   it("writes nothing on a dry run", async () => {

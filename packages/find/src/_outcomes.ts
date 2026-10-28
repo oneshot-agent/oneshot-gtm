@@ -103,7 +103,7 @@ export function labelSentRow(
   const joinable = raw.joined_prospect_id !== null;
 
   // Issue #480: a reply is positive evidence by INTENT, not by mere presence.
-  // Vicente's polite decline ("It's too soon...") and Aladdin's partnership
+  // A polite decline ("It's too soon...") and a partnership
   // proposal used to carry the identical `positive` label: `find calibrate`
   // was fitting on mislabeled data.
   const replied =

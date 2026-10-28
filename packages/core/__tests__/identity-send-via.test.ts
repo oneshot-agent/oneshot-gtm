@@ -74,17 +74,17 @@ const { sendTestEmail } = await import("../src/oneshot.ts");
 const { outboundMessageId } = await import("../src/ledger-outbound.ts");
 
 const SL: EmailIdentity = {
-  id: "smartlead:jn@mail.example",
+  id: "smartlead:mira@mail.example",
   provider: "smartlead",
-  address: "jn@mail.example",
+  address: "mira@mail.example",
   maxPerDay: 40,
   warmup: { startPerDay: 10, incrementPerWeek: 10 },
 };
 const OS: EmailIdentity = {
-  id: "oneshot:jn@os.example",
+  id: "oneshot:mira@os.example",
   provider: "oneshot",
   sendingDomain: "os.example",
-  mailbox: "jn",
+  mailbox: "mira",
   maxPerDay: 50,
   warmup: null,
 };
@@ -169,11 +169,11 @@ describe("sendTestEmail", () => {
     expect(result).toBeNull();
     expect(mocks.smtp.sendMail).not.toHaveBeenCalled();
     expect(plan).toMatchObject({
-      from: "jn@mail.example",
+      from: "mira@mail.example",
       to: "me@example.com",
       smtpHost: "smtp.gmail.com",
       existing: null,
-      messageId: outboundMessageId(plan.key, "jn@mail.example"),
+      messageId: outboundMessageId(plan.key, "mira@mail.example"),
     });
     expect(ledger.outboundSends.get(plan.key)).toBeNull();
   });

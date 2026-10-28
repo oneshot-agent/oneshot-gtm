@@ -192,25 +192,25 @@ describe("fetchEventDetails", () => {
       geo_address_info: { city: "San Francisco" },
       hosts: [
         {
-          name: "Daniel G Wilson",
-          username: "danielg",
-          website: "https://danielgwilson.com",
-          linkedin_handle: "/in/danielgwilson",
-          twitter_handle: "the_danny_g",
-          bio_short: "Mental health + AI founder",
+          name: "Owen G Hart",
+          username: "oweng",
+          website: "https://owenghart.example",
+          linkedin_handle: "/in/owenghart",
+          twitter_handle: "the_owen_g",
+          bio_short: "Logistics software founder",
         },
       ],
       featured_guests: [
         {
-          name: "Carl Vincent Kho",
+          name: "Ravi Vincent Lim",
           username: null,
-          website: "https://carlkho.com/",
-          linkedin_handle: "/in/carlkho",
+          website: "https://ravilim.example/",
+          linkedin_handle: "/in/ravilim",
           twitter_handle: null,
-          bio_short: "Google GenAI Hackathon Winner.",
+          bio_short: "Regional hackathon winner.",
         },
         // Host also featured → deduped by name (Host entry wins).
-        { name: "Daniel G Wilson", linkedin_handle: "/in/danielgwilson" },
+        { name: "Owen G Hart", linkedin_handle: "/in/owenghart" },
         // Nameless entry → skipped.
         { name: "  ", linkedin_handle: "/in/ghost" },
       ],
@@ -236,17 +236,17 @@ describe("fetchEventDetails", () => {
     expect(d!.attendees).toHaveLength(2);
     const host = d!.attendees.find((a) => a.role === "Host");
     expect(host).toMatchObject({
-      name: "Daniel G Wilson",
-      linkedinUrl: "https://www.linkedin.com/in/danielgwilson",
-      websiteUrl: "https://danielgwilson.com",
-      twitterUrl: "https://x.com/the_danny_g",
-      profileUrl: "https://luma.com/user/danielg",
+      name: "Owen G Hart",
+      linkedinUrl: "https://www.linkedin.com/in/owenghart",
+      websiteUrl: "https://owenghart.example",
+      twitterUrl: "https://x.com/the_owen_g",
+      profileUrl: "https://luma.com/user/oweng",
     });
     const guest = d!.attendees.find((a) => a.role === "Guest");
     expect(guest).toMatchObject({
-      name: "Carl Vincent Kho",
-      linkedinUrl: "https://www.linkedin.com/in/carlkho",
-      websiteUrl: "https://carlkho.com/",
+      name: "Ravi Vincent Lim",
+      linkedinUrl: "https://www.linkedin.com/in/ravilim",
+      websiteUrl: "https://ravilim.example/",
       profileUrl: null,
     });
   });

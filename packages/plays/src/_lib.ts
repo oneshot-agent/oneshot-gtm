@@ -709,8 +709,8 @@ export function citesPublicRecordLeverage(body: string): boolean {
  * quotes verbatim from config (the `multiplier` play's member offer, which
  * may name credits or a trial). Each span is removed from the body before
  * those two checks run (`allowedSpanPattern`: exactly as written, across any
- * line wrapping, and never as part of a longer number, so an allowed `$150`
- * does not exempt an invented `$1500`), and a price or discount the model
+ * line wrapping, and never as part of a longer number, so an allowed `$300`
+ * does not exempt an invented `$3000`), and a price or discount the model
  * wrote anywhere else still flags. Links are never allowed.
  */
 export function hardBanFlags(body: string, allow: readonly string[] = []): string[] {
@@ -744,10 +744,10 @@ function allowedSpanPatterns(spans: readonly string[]): RegExp[] {
  * verbatim) in a draft: the founder's text exactly, in its own punctuation
  * and case, where only the whitespace between its words may differ (the
  * model's own line wrapping), and only as a whole: a span that begins or
- * ends in a word or a number is not found inside a longer one (`$150` is not
- * inside `$1500` or `$150.5`), and one that ends in a number and then a
- * period or comma is not found where that number goes on (`$150.` is not
- * inside `$150.50`, nor `$150,` inside `$150,000`). Null for a blank span.
+ * ends in a word or a number is not found inside a longer one (`$300` is not
+ * inside `$3000` or `$300.5`), and one that ends in a number and then a
+ * period or comma is not found where that number goes on (`$300.` is not
+ * inside `$300.50`, nor `$300,` inside `$300,000`). Null for a blank span.
  */
 export function allowedSpanPattern(span: string): RegExp | null {
   const words = span.split(/\s+/).filter(Boolean);

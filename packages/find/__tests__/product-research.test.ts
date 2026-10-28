@@ -59,10 +59,10 @@ const row = {
   source: "find:github-topics",
   notes: "runs tavily",
   payload_json: JSON.stringify({
-    name: "Alessandro Binda",
-    company: "S.C.A.L.A. AI",
-    email: "ale@get-scala.com",
-    evidenceUrl: "https://github.com/Alessandro114/sara",
+    name: "Alessio Bruni",
+    company: "T.I.D.E. Labs",
+    email: "ale@tidelabs.example",
+    evidenceUrl: "https://github.com/abruni-dev/tide",
   }),
 };
 
@@ -82,7 +82,7 @@ describe("product research", () => {
   it("combines first-party and quick external research and caches the dossier", async () => {
     const result = await researchQueueRowProduct(row, { remainingUsd: 1 });
     expect(result.dossier.status).toBe("complete");
-    expect(result.dossier.subject.company).toBe("S.C.A.L.A. AI");
+    expect(result.dossier.subject.company).toBe("T.I.D.E. Labs");
     expect(result.dossier.sources.some((source) => source.kind === "repository")).toBe(true);
     expect(result.costUsd).toBeCloseTo(0.07);
 
@@ -119,9 +119,9 @@ describe("product research", () => {
         id: 43,
         payload_json: JSON.stringify({
           name: "Another Founder",
-          company: "S.C.A.L.A. AI",
-          email: "other@get-scala.com",
-          evidenceUrl: "https://github.com/Alessandro114/sara",
+          company: "T.I.D.E. Labs",
+          email: "other@tidelabs.example",
+          evidenceUrl: "https://github.com/abruni-dev/tide",
         }),
       },
       { remainingUsd: 1 },
@@ -227,7 +227,7 @@ describe("the research topic", () => {
     await researchQueueRowProduct(row, { remainingUsd: 1, externalResearch: true });
     expect(topics).toHaveLength(1);
     expect(topics[0]!.length).toBeLessThanOrEqual(RESEARCH_TOPIC_MAX);
-    expect(topics[0]).toContain("name: Alessandro Binda; company: S.C.A.L.A. AI");
+    expect(topics[0]).toContain("name: Alessio Bruni; company: T.I.D.E. Labs");
   });
 
   it("drops the least telling facts first and clips long ones, keeping name and company", () => {

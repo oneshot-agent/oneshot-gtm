@@ -1,0 +1,101 @@
+{
+  "entries": [
+    {
+      "file": "README.md",
+      "rule": "identity",
+      "line": "Built by [free.butter](https://freebutter.com).",
+      "reason": "The project's credit line, kept by the maintainer's decision."
+    },
+    {
+      "file": "apps/cli/src/demo/",
+      "rule": "email-domain",
+      "reason": "The demo install's dataset: invented companies on these domains only. A new address there must use one of them or a reserved domain.",
+      "domains": [
+        "aperture-labs.dev",
+        "baseplate.dev",
+        "brightkiln.io",
+        "cascade.systems",
+        "cutter.works",
+        "driftline.ai",
+        "example-news.dev",
+        "fathomline.ai",
+        "fenwick.sh",
+        "grainline.dev",
+        "halyard.dev",
+        "keelson.io",
+        "kelp.systems",
+        "lodestar.build",
+        "northport.works",
+        "northstar.ai",
+        "northwind.dev",
+        "obsidianflow.io",
+        "pinch.dev",
+        "quarry.build",
+        "quaydb.com",
+        "relaykit.dev",
+        "ridgeline.systems",
+        "sift.works",
+        "spindrift.dev",
+        "stanchion.dev",
+        "stellar.dev",
+        "tabsummary.app",
+        "tidewater.build",
+        "trace-mail.dev",
+        "triacore.io",
+        "waypost.dev"
+      ]
+    },
+    {
+      "file": "apps/web/scripts/capture-fixtures.ts",
+      "rule": "workspace-name",
+      "line": "ONESHOT_GTM_WORKSPACE=demo",
+      "reason": "`demo ui` runs in the built-in demo workspace, which ships with the tool."
+    },
+    {
+      "file": "repo/__tests__/public-content.test.ts",
+      "rule": "email-domain",
+      "reason": "Planted lines the scanner's self-tests must flag."
+    },
+    {
+      "file": "repo/__tests__/public-content.test.ts",
+      "rule": "workspace-name",
+      "reason": "Planted lines the scanner's self-tests must flag."
+    },
+    {
+      "file": "repo/__tests__/public-content.test.ts",
+      "rule": "port",
+      "reason": "Planted lines the scanner's self-tests must flag."
+    },
+    {
+      "file": "repo/__tests__/public-content.test.ts",
+      "rule": "oneshot-host",
+      "reason": "Planted lines the scanner's self-tests must flag."
+    },
+    {
+      "file": "repo/__tests__/public-content.test.ts",
+      "rule": "pitch-phrase",
+      "reason": "Planted lines the scanner's self-tests must flag."
+    },
+    {
+      "file": "repo/__tests__/public-content.test.ts",
+      "rule": "provenance",
+      "reason": "Planted lines the scanner's self-tests must flag."
+    },
+    {
+      "file": "repo/__tests__/public-content.lib.ts",
+      "rule": "pitch-phrase",
+      "reason": "The scanner's own list of banned pitch phrases."
+    },
+    {
+      "file": "repo/__tests__/public-content.lib.ts",
+      "rule": "provenance",
+      "reason": "The scanner's own list of banned provenance markers."
+    },
+    {
+      "file": "packages/intel/__tests__/prompts-neutral.test.ts",
+      "rule": "pitch-phrase",
+      "line": "/on-chain receipts/i",
+      "reason": "The prompt guard's own denylist of product phrases."
+    }
+  ]
+}

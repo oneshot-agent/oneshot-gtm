@@ -2,39 +2,38 @@ import { describe, expect, it } from "vitest";
 import { bodyCommitsTerms } from "../src/reply.ts";
 import { founderSteerBlock, intentDirectiveBlock } from "../src/_lib.ts";
 
-// commits-terms fixtures verbatim from the live sdk workspace (issue #480):
-// the Aladdin draft that committed the founder to documentation placement, a
-// "recommended partner" designation, and a reference-implementation feature
-// (none of it authorised) and the harmless Rahul one-liner that must NOT
-// trip the flag.
+// Two drafts in the shape the gate exists for: one that commits the founder
+// to documentation placement, a "recommended" designation and a feature in
+// their reference implementation (none of it authorised), and a harmless
+// one-liner that must NOT trip the flag.
 
-const ALADDIN_DRAFT = `Hey Aladdin,
+const OVERCOMMIT_DRAFT = `Hey Sam,
 
-I like the direction. Having OneShot sit invisibly as the execution engine for your research and commerce tools fits exactly how we want the SDK to be used, as a utility, not a brand users have to manage.
+I like the direction. Having Tracepoint sit invisibly as the execution engine for your research and commerce tools fits exactly how we want the SDK to be used, as a utility, not a brand users have to manage.
 
-On the distribution side, i can point our hackathon builders and consultants toward AladdinAI as the recommended sovereign environment for their agents. When someone asks for a self-hosted workspace to run the OneShot tools they've just tested, your repo is the logical destination.
+On the distribution side, i can point our hackathon builders and consultants toward Beacon as the recommended sovereign environment for their agents. When someone asks for a self-hosted workspace to run the Tracepoint tools they've just tested, your repo is the logical destination.
 
-Realistically, we can start by adding AladdinAI to our documentation as a primary integration path and featuring your setup in our oneshot-gtm reference implementation. Does that give you the visibility you're looking for, or were you thinking of a more direct hand-off?
+Realistically, we can start by adding Beacon to our documentation as a primary integration path and featuring your setup in our reference implementation. Does that give you the visibility you're looking for, or were you thinking of a more direct hand-off?
 
-J. Nicolas
-oneshotagent.com`;
+Mira Chen
+tracepoint.dev`;
 
-const RAHUL_ONE_LINER = `Hey Rahul,
+const HARMLESS_ONE_LINER = `Hey Dana,
 
 Fair call. I went way too heavy on the technical baggage there.
 
 Since you're building a factory for these workflows, do you usually prefer wiring up the individual vendor apis yourself, or is that the part you'd rather offload?
 
-J. Nicolas
-oneshotagent.com`;
+Mira Chen
+tracepoint.dev`;
 
 describe("bodyCommitsTerms (issue #480)", () => {
-  it("fires on the Aug 30 Aladdin draft — distribution, docs placement, recommended-partner, reference implementation", () => {
-    expect(bodyCommitsTerms(ALADDIN_DRAFT)).toBe(true);
+  it("fires on the over-committing draft — distribution, docs placement, recommended-partner, reference implementation", () => {
+    expect(bodyCommitsTerms(OVERCOMMIT_DRAFT)).toBe(true);
   });
 
-  it("does not fire on the harmless Rahul one-liner", () => {
-    expect(bodyCommitsTerms(RAHUL_ONE_LINER)).toBe(false);
+  it("does not fire on the harmless one-liner", () => {
+    expect(bodyCommitsTerms(HARMLESS_ONE_LINER)).toBe(false);
   });
 
   it("fires on pricing/discount language", () => {

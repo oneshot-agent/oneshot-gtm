@@ -60,8 +60,8 @@ const research = {
   version: 1,
   status: "complete",
   researchedAt: "2026-09-11T20:00:00.000Z",
-  currentRole: { title: "Founder & Product Owner", company: "WildMuse.App", since: "Mar 2026" },
-  organizations: [{ name: "WildMuse.App", current: true }],
+  currentRole: { title: "Founder & Product Owner", company: "BrightLoom.App", since: "Mar 2026" },
+  organizations: [{ name: "BrightLoom.App", current: true }],
 };
 
 describe("personResearchRows", () => {
@@ -69,23 +69,23 @@ describe("personResearchRows", () => {
     expect(
       personResearchRows({
         personResearch: research,
-        currentRole: "Founder & Product Owner at WildMuse.App since Mar 2026",
-        companyFacts: "WildMuse.App · Software · 1-10 employees · founded 2026",
+        currentRole: "Founder & Product Owner at BrightLoom.App since Mar 2026",
+        companyFacts: "BrightLoom.App · Software · 1-10 employees · founded 2026",
         titleAtFinder: "| Curious Explorer",
-        companyAtFinder: "L'eto Group",
-        formerRoles: "Head of Product at L'ETO Group (Nov 2024–Oct 2025)",
+        companyAtFinder: "D'oro Group",
+        formerRoles: "Head of Product at D'ORO Group (Nov 2024–Oct 2025)",
       }),
     ).toEqual([
-      { key: "now", value: "Founder & Product Owner at WildMuse.App since Mar 2026" },
-      { key: "company", value: "WildMuse.App · Software · 1-10 employees · founded 2026" },
-      { key: "listed as", value: "| Curious Explorer · L'eto Group" },
-      { key: "formerly", value: "Head of Product at L'ETO Group (Nov 2024–Oct 2025)" },
+      { key: "now", value: "Founder & Product Owner at BrightLoom.App since Mar 2026" },
+      { key: "company", value: "BrightLoom.App · Software · 1-10 employees · founded 2026" },
+      { key: "listed as", value: "| Curious Explorer · D'oro Group" },
+      { key: "formerly", value: "Head of Product at D'ORO Group (Nov 2024–Oct 2025)" },
     ]);
   });
 
   it("renders the now row from the research when no string was stamped, and omits listed-as when nothing changed", () => {
     expect(personResearchRows({ personResearch: research })).toEqual([
-      { key: "now", value: "Founder & Product Owner at WildMuse.App since Mar 2026" },
+      { key: "now", value: "Founder & Product Owner at BrightLoom.App since Mar 2026" },
     ]);
   });
 

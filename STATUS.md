@@ -2,7 +2,7 @@
 
 **Assume green.** Every CLI command, play, finder and dashboard page, and the server's REST + SSE routes, are covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
 
-Last verified **2026-10-28** · Bun 1.3.13 · OneShot SDK 0.61.0 · **7236 tests / 547 files** · typecheck + oxlint + oxfmt pass (0 lint warnings, 0 errors). People a profile read from the last 14 days shows as first-degree connections (`network_distance`) get no connection request: the queue row or the cadence's request step records the connection without an invite or an invite slot, and the first message is due at once. If LinkedIn then answers `not_connected`, that record is withdrawn and the step drafts the connection request for review; the message follows its acceptance. The funnel counts these people as already connected, never as invites sent.
+Last verified **2026-10-28** · Bun 1.3.13 · OneShot SDK 0.61.0 · **7250 tests / 548 files** · typecheck + oxlint + oxfmt pass (0 lint warnings, 0 errors). People a profile read from the last 14 days shows as first-degree connections (`network_distance`) get no connection request: the queue row or the cadence's request step records the connection without an invite or an invite slot, and the first message is due at once. If LinkedIn then answers `not_connected`, that record is withdrawn and the step drafts the connection request for review; the message follows its acceptance. The funnel counts these people as already connected, never as invites sent.
 
 **What the gate covers.** `apps/web` is now inside `bun run typecheck` — the dashboard source is
 type-checked in CI, and a deliberate error under `apps/web/src` fails the root script. As of
@@ -17,87 +17,21 @@ while `reports.test.ts` covers `triageEmails`, `synthesizeInterviews`, `adviseOn
 **Dependency pins.** The root `package.json` carries `overrides` for `seroval`, `seroval-plugins`
 (CVE-2026-59940) and `ws`. Forks inherit these.
 
-The person-level ICP gate (#45) was calibrated against 84 real LinkedIn titles (all 13 known off-ICP prospects caught, zero false rejects among 44 builders) and the history audit ran live `enrichProfile` for 111 titles. The workspace switcher's auto-start was live-verified in both directions (default ↔ a named workspace).
+The person-level ICP gate (#45) was calibrated against real LinkedIn titles before it shipped, and the workspace switcher's auto-start is verified in both directions (default ↔ a named workspace).
 
-Reply detection was verified on 2026-08-23 against the real mailboxes: a sliced sweep of all four inboxes from the first send onward (4,833 inbound, every slice fully covered) found exactly the replies the live poll then recorded on restart. Since 2026-08-28 every inbound is also classified (#63) — out-of-office autoresponders, dead-mailbox notices and unsubscribes are recorded for the conversation history but never count as replies, and the latter two durably suppress the address at the send funnel.
+Reply detection was verified against real mailboxes: a sliced sweep of every inbox from the first send onward found exactly the replies the live poll recorded. Every inbound is classified (#63): out-of-office autoresponders, dead-mailbox notices and unsubscribes are kept in the conversation history but never count as replies, and the latter two durably suppress the address at the send funnel.
 
-Shadow priority score (#410): heuristic-v2 measured 2026-09-01 on 794 clean human labels — luma-events AUC 0.59-0.63 (up from v1's inverted 0.36), mean gap +1. Under the Phase 2 acceptance bar (gap ≥ +5, AUC ≥ 0.60), so the ranked review order shipped config-gated with `queueReviewOrder` defaulting to `newest` (a toggle on /queue; scores drive nothing else until richer features clear the bar).
+Shadow priority score (#410): the heuristic score is computed for every queued row but drives nothing until it clears the Phase 2 acceptance bar (gap ≥ +5, AUC ≥ 0.60). The ranked review order ships config-gated, with `queueReviewOrder` defaulting to `newest` (a toggle on /queue).
 
-Industry packs (#458, #464): `GET /api/packs` + `POST /api/packs/:id/apply` hand a founder a working starting config for their vertical in one confirmation instead of a per-trigger `apply-config` conversation — a pack merges its patches over each trigger's stored config (hand-tuned keys survive) and enables every trigger it touches; a trigger left enabled-but-not-ready (missing a `requires` key the pack deliberately left blank) is the intended end state, named in the response. Ships nine packs: the `devtools-early-adopters` placeholder plus eight real verticals (restaurants-food-service, home-services-trades, healthcare-practices, auto-services, professional-services-smb, trucking-freight, civic-gov, vertical-ai-startups). The main-street seven are wired to `local-business` and/or `local-registry`/`gov-solicitation`/`civic-agenda`; `vertical-ai-startups` is the one pack whose buyers are software companies, so it wires the company-level sources instead (`accelerator-batch` with the registry's `yc-*`/`ai-grant-*` cohorts, `post-funding-auto`, `hiring-signal`, `github-topics`) and lists both `yourEdge` and `yourClaim` in `requires`. As of 2026-09-07 every main-street pack's `local-business` runs on the SDK's places index (`engine: local`): measured one sequential run per vertical, the B2B people database returned zero matches for every main-street title × industry we ship (the #456 spike's 80% / 70% / 64% did not reproduce), while the places index produced 3/3 verified named contacts per vertical at $0.02–$0.06 each. Never writes `icpOneLiner` or any founder-voice field (`yourEdge`/`yourClaim`) — those ride back in the response / stay in `pack.requires` for the founder to fill in.
+Industry packs (#458, #464): `GET /api/packs` + `POST /api/packs/:id/apply` hand a founder a working starting config for their vertical in one confirmation instead of a per-trigger `apply-config` conversation. A pack merges its patches over each trigger's stored config (hand-tuned keys survive) and enables every trigger it touches; a trigger left enabled-but-not-ready (missing a `requires` key the pack deliberately left blank) is the intended end state, named in the response. Nine packs ship: the `devtools-early-adopters` placeholder plus eight verticals (restaurants-food-service, home-services-trades, healthcare-practices, auto-services, professional-services-smb, trucking-freight, civic-gov, vertical-ai-startups). The main-street seven are wired to `local-business` and/or `local-registry`/`gov-solicitation`/`civic-agenda`, and their `local-business` runs on the SDK's places index (`engine: local`). `vertical-ai-startups` is the one pack whose buyers are software companies, so it wires the company-level sources instead (`accelerator-batch` with the registry's `yc-*`/`ai-grant-*` cohorts, `post-funding-auto`, `hiring-signal`, `github-topics`) and sets no `vendors`. A pack never writes `icpOneLiner` or any founder-voice field (`yourEdge`/`yourClaim`); those stay in `pack.requires` for the founder to fill in.
 
-Grounding pipeline (2026-09-04). `listProspectsForResearch` filtered on `dossier_json IS NULL OR
-TRIM(...) = ''`, which silently emptied the research backlog once `research-products` began writing
-a `{person, product}` wrapper onto every row: 531 of 684 prospects held a product half and a null
-person half, read as done, and the default backlog was **5 rows**. It now filters on
-`hasPersonSignal` — the same gate `_run-play.ts` / `_reply-research.ts` / `research-prospects.ts`
-already used — and reports **536**. Four related fixes ship with it: `researchUrl` prefers a
-researchable profile (LinkedIn/X/GitHub) over a `luma.com/user/…` page that says "Nothing Here,
-Yet" (68 rows had one); `research-prospects` merges through `mergePersonDossier` instead of
-replacing the column and destroying the product half; `hasDossierSignal` no longer counts a
-profile page's own empty-state text as a sourced excerpt; and `ops/audit-icp.ts`'s `dossierRole()`
-reads `$.person`, which it had been blind to since the wrapper landed.
+Grounding pipeline. `listProspectsForResearch` selects rows on `hasPersonSignal`, the same gate `_run-play.ts` / `_reply-research.ts` / `research-prospects.ts` use, so a row holding only the product half of a `{person, product}` dossier is still researched. `researchUrl` prefers a researchable profile (LinkedIn/X/GitHub) over a `luma.com/user/…` page with no content; `research-prospects` merges through `mergePersonDossier` instead of replacing the column; and `hasDossierSignal` does not count a profile page's own empty-state text as a sourced excerpt.
 
-Person-level ICP verdicts are now written by the send path, not only by `ops/audit-icp.ts --write`.
-`QualifiedContact` carries the gate's verdict out of `_contact.ts` (it was collapsed to
-`ok/reject/platform-error` and discarded), nine finders stamp it via `icpFields`, and
-`sendDraftedEmail` both persists it and **gates step 0 on it** — that check existed only for
-follow-ups, so 65 `reject`-verdict prospects had been emailed while just 3 cadences ever went
-`off-icp`. `null` and `unclear` still fail open, per the contract at `ledger.ts:1470`.
+Person-level ICP verdicts are written by the send path. `QualifiedContact` carries the gate's verdict out of `_contact.ts`, the finders stamp it via `icpFields`, and `sendDraftedEmail` both persists it and **gates step 0 on it**, as follow-ups already were. `null` and `unclear` still fail open, per the contract in `ledger.ts`.
 
-luma-events: the event relevance gate ran on the event NAME before any fetch, to avoid paying to
-read city-page noise — but `fetchEventDetails` is free and returns the description, so the gate was
-blind for no saving ("AI Infra Kebab", the Vercel/Neon event, was rejected three days running as "a
-generic event title", then accepted on the fourth on identical input). It now gates on title +
-description after the free structured fetch, falling back to title-only before the paid `webRead`.
-Stage-A role text used `bio ?? role`, which yields `""` for Luma's empty `bio_short` rather than
-falling through. `companyDomain` is carried to the play, and `_product-research.ts` no longer seeds
-a company website from an academic/alumni email domain.
+luma-events: the event relevance gate runs on title + description after the free structured fetch (`fetchEventDetails`), falling back to title-only before the paid `webRead`, so an event with a generic name is judged on what it is about. Stage-A role text falls through Luma's empty `bio_short` to the role. `companyDomain` is carried to the play, and `_product-research.ts` does not seed a company website from an academic/alumni email domain.
 
-LinkedIn replies: `channel_events` gained a `body` column, so a recorded reply can feed the
-composer. The manual mark keyed `externalEventId` on `randomUUID()`, so `UNIQUE(source,
-external_event_id)` never fired once — it is now a hash of `(prospectId, body)`, deliberately not
-of the clock (the two real duplicates sit at 20:51:13 and 20:52:00, either side of a minute
-boundary). The affordance moved onto `/queue`: it had lived only on `/cadences`, a join on
-`cadence_state`, so all 127 emailed luma-events prospects — a one-touch play that never enrols —
-were unreachable. `/api/run`'s `persistDraftsToQueue` now links `target_queue.prospect_id`, which
-only `drain.ts` had been doing: 680 of 681 sent rows carried a NULL link.
-
-Per-prospect angle, Phase 1 (#355): `prospects.angle_json` (+ `angle_synthesized_at`) is a durable
-LLM synthesis of dossier + live GitHub work + reply history — evidence-cited (`evidence[].source`
-must trace to something real or the claim is dropped), with a separate `relationship` (what they
-build) vs. `valueMode`/`buyerStage` (could they buy, at what stage) so a warm reply from a
-one-month-old student-led GitHub org is never inflated into a buyer signal. `find synthesize-angles`
-backfills it (`--scope/--limit/--concurrency/--refresh/--cheap/--max-cost-usd/--dry-run`), reusing
-`listProspectsForResearch`'s scope semantics via a new `listProspectsForAngle` selector — unlike
-that selector, a social URL isn't required, since reply history alone is a usable evidence tier.
-`_github-user.ts` gained `fetchGitHubOrgs`/`fetchGitHubOrgProfile`/`fetchFollowNetwork` (all cached,
-GITHUB_TOKEN-authed) and `GitHubUserInfo` now carries account-maturity fields (`createdAt`,
-`publicRepos`, `followers`) — together these are what separate a funded company from a student lab
-of the same shape, the six-lookups-by-hand problem this issue exists to close. No drafting changes;
-reading the angle into drafts is #356.
-
-Per-prospect angle, Phase 2 (#356): the three draft paths now read `prospects.angle_json`.
-`angleBlockFromJson` (`packages/core/src/angle.ts`) renders a stored angle into an ANGLE block —
-`hook` to lead with, `doNotSay` (binding — a prompt rule now forbids restating any of it) plus
-`evidence`/`nextStep` when present; null/blank/unparsable JSON returns null, so a prospect with no
-synthesis yet sees byte-identical output. Wired into `buildFollowUpEmail` (`_cadence.ts`, the
-biggest win — cadence follow-ups previously read only config + name/email/company + prior bodies),
-`draftInboxReply` (`reply.ts`, threaded through `gatherReplyContext`/`_reply-research.ts` and
-`inbox.ts`'s two draft routes — free, since it rides the same prospect row the dossier tier already
-reads), and `runEmailPlay`'s `buildInputBlock` assembly (`_run-play.ts`, lowest priority — most
-outbound is first-touch with no angle yet, but a re-contact can have one).
-
-Per-prospect angle, Phase 3 (#357): the angle no longer sits frozen at backfill time. A new HUMAN
-reply (`pollInboxReplies`'s `recordInboxReply` call) and a tagged deal outcome (`tagOutcomeValue`)
-both fire-and-forget a re-synthesis through a new `triggerAngleRefresh` seam in
-`packages/core/src/angle.ts` — core can't import `@oneshot-gtm/find` back (a cycle), so find
-registers its `refreshProspectAngle` implementation onto the seam at module load instead. Debounced
-on `angle_synthesized_at`'s own freshness (6h) rather than extra state, so a reply burst or a
-reply-then-outcome pair only pays for one re-synthesis; auto-replies and unsubscribes never trigger
-it at all. Best-effort throughout: demo mode, an open circuit breaker, a missing prospect, or an
-empty LLM result all degrade to a silent no-op, never a thrown error on the hot path.
-
-Updated by hand after each dogfood run.
+LinkedIn replies: `channel_events` has a `body` column, so a recorded reply can feed the composer. The manual mark keys `externalEventId` on a hash of `(prospectId, body)`, deliberately not of the clock, so `UNIQUE(source, external_event_id)` catches a duplicate mark either side of a minute boundary. The affordance lives on `/queue`, so prospects of one-touch plays that never enrol in a cadence are reachable too. `/api/run`'s `persistDraftsToQueue` links `target_queue.prospect_id`, as `drain.ts` does.
 
 ---
 

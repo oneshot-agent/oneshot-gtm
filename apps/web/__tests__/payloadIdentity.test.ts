@@ -63,7 +63,7 @@ describe("person research readers", () => {
     version: 1,
     status: "partial",
     researchedAt: "2026-09-11T20:00:00.000Z",
-    organizations: [{ name: "WildMuse.App", current: true }],
+    organizations: [{ name: "BrightLoom.App", current: true }],
   };
   it("returns the research only when it has the stamped shape", () => {
     expect(personResearchFor({ personResearch: research })).toEqual(research);
@@ -74,7 +74,7 @@ describe("person research readers", () => {
   });
   it("reads the finder's originals, null when research never changed them", () => {
     expect(titleAtFinderFor({ titleAtFinder: "| Curious Explorer" })).toBe("| Curious Explorer");
-    expect(companyAtFinderFor({ companyAtFinder: " L'eto Group " })).toBe("L'eto Group");
+    expect(companyAtFinderFor({ companyAtFinder: " D'oro Group " })).toBe("D'oro Group");
     expect(titleAtFinderFor({ title: "CEO" })).toBeNull();
     expect(companyAtFinderFor({ companyAtFinder: "" })).toBeNull();
   });

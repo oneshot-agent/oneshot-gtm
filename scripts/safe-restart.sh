@@ -6,7 +6,7 @@
 # Usage:
 #   scripts/safe-restart.sh                 # safe-stop the server on :3030
 #   scripts/safe-restart.sh -- <cmd...>     # safe-stop, then run <cmd> to relaunch
-#   PORT=3099 scripts/safe-restart.sh       # different port
+#   PORT=4000 scripts/safe-restart.sh       # different port
 #   MAX_WAIT=180 scripts/safe-restart.sh    # wait longer for slow sends
 #   FORCE=1 scripts/safe-restart.sh         # kill even if sends never drain
 #

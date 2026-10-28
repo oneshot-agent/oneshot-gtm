@@ -146,7 +146,7 @@ describe("doctor workspace checks", () => {
     cfgOverride = {
       emailIdentities: [
         {
-          id: "oneshot:me@gtm.email",
+          id: "oneshot:me@acme-alpha.email",
           provider: "oneshot",
           sendingDomain: "alpha.email",
           maxPerDay: 50,
@@ -157,7 +157,7 @@ describe("doctor workspace checks", () => {
     otherWorkspace("beta", {
       emailIdentities: [
         {
-          id: "oneshot:me@sdk.email",
+          id: "oneshot:me@acme-beta.email",
           provider: "oneshot",
           sendingDomain: "beta.email",
           maxPerDay: 50,
@@ -191,7 +191,7 @@ describe("second-round review findings (#37)", () => {
   });
 
   it("reports a port collision even when the current workspace is the later entry", async () => {
-    // alpha (current) got :3031 in beforeEach; give beta the same port by editing the registry.
+    // alpha (current) got BASE_PORT + 1 in beforeEach; give beta the same port by editing the registry.
     const { loadRegistry, saveRegistry } = await import("@oneshot-gtm/core");
     otherWorkspace("beta", { emailIdentities: [] });
     const reg = loadRegistry();

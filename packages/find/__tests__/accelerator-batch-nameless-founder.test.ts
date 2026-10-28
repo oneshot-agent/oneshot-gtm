@@ -29,7 +29,7 @@ vi.mock("../src/_accelerator-search-adapter.ts", async () => {
   return {
     ...actual,
     fetchAcceleratorSearch: async () => ({
-      records: [record("Koladen", "https://koladen.com"), record("No Site Co", null)],
+      records: [record("Marlowe", "https://marlowe.example"), record("No Site Co", null)],
       costUsd: 0,
       diagnostic: null,
     }),
@@ -78,7 +78,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     logEvent: () => {},
     webRead: async () => ({
-      result: { cost: 0.002, markdown: "# Koladen\nLiquidity for advisors" },
+      result: { cost: 0.002, markdown: "# Marlowe\nLiquidity for advisors" },
     }),
     getLedger: () => ({ isQueueDuplicate: () => false, enqueueTarget: () => 1 }),
   };
@@ -100,7 +100,7 @@ it("hands a company with no founder on its page to the spine's domain lookup", a
   spineResult = {
     ok: true,
     channel: "email",
-    email: "dana@koladen.com",
+    email: "dana@marlowe.example",
     fullName: "Dana Founder",
     phone: null,
     linkedinUrl: null,
@@ -118,13 +118,13 @@ it("hands a company with no founder on its page to the spine's domain lookup", a
   expect(spineCalls[0]).toMatchObject({
     fullName: null,
     allowMissingFullName: true,
-    companyDomain: "koladen.com",
+    companyDomain: "marlowe.example",
   });
   expect(out.enqueued).toBe(1);
   expect(enqueued[0]?.payload).toMatchObject({
     name: "Dana Founder",
-    email: "dana@koladen.com",
-    company: "Koladen",
+    email: "dana@marlowe.example",
+    company: "Marlowe",
   });
   // The company with no domain is still dropped: nothing to search.
   expect(out.droppedEnrichment).toBe(1);

@@ -48,8 +48,8 @@ vi.mock("@oneshot-gtm/core", async () => {
       telemetryEnabled: false,
       founderName: "Founder",
       founderEmail: "f@x.dev",
-      productOneLiner: "TestProduct SDK",
-      icpOneLiner: "Engineers shipping AI agents",
+      productOneLiner: "TestProduct — scheduling and invoicing for field-service teams",
+      icpOneLiner: "Operations leads at multi-site dental groups",
       clientId: "test",
     }),
     deepResearchPerson: async () => {
@@ -256,7 +256,12 @@ describe("runProspectResearch", () => {
   it("researches, drafts, and persists the dossier + draft; clears the note when an email is found", async () => {
     resetRow({ url: "https://x.com/jane", platform: "twitter" });
     state.enrichment = { displayname: "Jane Doe", best_work_email: "jane@acme.com" };
-    state.extract = { name: "Jane Doe", company: "Acme", angle: "ships an agent SDK", email: null };
+    state.extract = {
+      name: "Jane Doe",
+      company: "Acme",
+      angle: "ships a booking widget",
+      email: null,
+    };
 
     await runProspectResearch(7);
 

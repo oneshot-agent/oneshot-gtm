@@ -1392,10 +1392,9 @@ export class Ledger {
    * any transaction. Two writers, one column, a wide window between them: the
    * later write silently reverts the earlier one.
    *
-   * Not theoretical. It happened during this feature's own dogfood run. The
-   * workspace server researched a prospect while a script held a merge in
-   * flight, and the curated person half vanished under an API one. The reads
-   * were seconds apart.
+   * The race is easy to hit: the workspace server researches a prospect
+   * while a script holds a merge in flight, and the curated person half
+   * vanishes under an API one, with the reads seconds apart.
    *
    * BEGIN IMMEDIATE via `db.transaction` takes the write lock before the
    * re-read, so the merge sees the current value and no one can interleave

@@ -2,7 +2,7 @@
 
 LinkedIn forgives little, so nothing here sends on a timer. You send each invite and each message, or you run the batch that does.
 
-OneShot holds the account connection and carries out the actions through its API. No browser automation, no webhook to set up. GTM decides who to write to, fills in the text from your [templates](#templates) and stops the cadence when someone answers.
+OneShot holds the account connection and carries out the actions through its API. No browser automation, no webhook to set up. oneshot-gtm decides who to write to, fills in the text from your [templates](#templates) and stops the cadence when someone answers.
 
 One thing runs unattended. Every 30 minutes the server checks pending invites: it records accepts, and withdraws an invite still pending after 21 days.
 
@@ -56,7 +56,7 @@ Before any invite leaves, the row is checked. A refused row is never sent and ne
 
 ### Before you turn on LinkedIn steps
 
-If the account has sent connection requests from another tool or another workspace, tell GTM first. The guard sees conversations. It cannot see a profile that was invited and has not answered. Two imports close that gap. Neither sends anything, and running one twice changes nothing.
+If the account has sent connection requests from another tool or another workspace, tell oneshot-gtm first. The guard sees conversations. It cannot see a profile that was invited and has not answered. Two imports close that gap. Neither sends anything, and running one twice changes nothing.
 
 ```bash
 oneshot-gtm linkedin import-touched invited.csv [--source <label>] [--dry-run] [--verbose]
@@ -67,7 +67,7 @@ The file is a CSV with a `profile_url`, `linkedin_url` or `url` column, or a JSO
 
 ## Continuing an email cadence on LinkedIn
 
-Set `linkedinContinuation: true` for the workspace or on one trigger; the trigger wins. For `multiplier` it is on unless the workspace or the trigger sets it to `false`: programme leads live on LinkedIn. An email cadence that ends without a reply then carries on three days later:
+Set `linkedinContinuation: true` for the workspace or on one trigger; the trigger wins. For `multiplier` it is on unless the workspace or the trigger sets it to `false`. An email cadence that ends without a reply then carries on three days later:
 
 - an invite whose note knows the person was already emailed,
 - a first message once they accept, no sooner than two days after the invite,
@@ -131,7 +131,7 @@ What Replies learns from your edits is a proposal you approve; see [learning](./
 
 - **Each person once.** A person counts by their newest invite.
 - **Accepted.** Counted from the recorded acceptance, else from a one-to-one conversation with the person, else from a first message having gone out. An accept nobody has messaged can be missed, so read the acceptance rate as a floor. "Already connected" is shown apart; people a profile read showed as connected got no invite and are not counted as invites sent.
-- **Withdrawn.** `timeout` when GTM withdrew it after the wait, `manual` when you did, `unknown` when no cause was recorded.
+- **Withdrawn.** `timeout` when oneshot-gtm withdrew it after the wait, `manual` when you did, `unknown` when no cause was recorded.
 - **Replies.** Shown two ways: to the first message, and at any point after the invite. The same reply from two sources counts once.
 - **Evidence clause.** The funnel splits by whether the note carried an evidence clause.
 - **Friend invites.** Invites to people who replied by email are their own row, outside the cold funnel.

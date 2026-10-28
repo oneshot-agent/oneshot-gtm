@@ -20,7 +20,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     // Never the real registry: the test must not stat the user's ledgers.
     listWorkspaces: () => [
       ["default", { home, port: 3030, createdAt: "" }],
-      ["other", { home: other, port: 3031, createdAt: "" }],
+      ["other", { home: other, port: 4031, createdAt: "" }],
     ],
     oneshotEnvReady: () => false,
     // A stub, so opening the ledger doesn't heal the fixture file first.

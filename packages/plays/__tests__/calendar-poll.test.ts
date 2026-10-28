@@ -63,12 +63,12 @@ beforeEach(() => {
   );
   ledgerInstance = new Ledger(dbPath);
   cfg = {
-    calendarIdentityId: "gmail:jn@x.dev",
+    calendarIdentityId: "gmail:mira@x.dev",
     calendarId: "primary",
     founderEmail: "founder@x.dev",
     timezone: "UTC",
   };
-  identities = [{ id: "gmail:jn@x.dev", provider: "gmail", address: "jn@x.dev" }];
+  identities = [{ id: "gmail:mira@x.dev", provider: "gmail", address: "mira@x.dev" }];
   calendarEventsQueue = [];
   listCalendarEventsCalls = [];
   listCalendarEventsImpl = null;
@@ -422,7 +422,7 @@ describe("pollCalendarMeetings — watermark + resync", () => {
     const mark = JSON.parse(ledgerInstance.getPollWatermark("calendar_events")!);
     expect(mark.updatedMin).toBe("2020-01-01T12:00:00Z");
     expect(mark.calendarId).toBe("primary");
-    expect(mark.identityId).toBe("gmail:jn@x.dev");
+    expect(mark.identityId).toBe("gmail:mira@x.dev");
   });
 
   it("does not advance the watermark on a failed page", async () => {
@@ -440,7 +440,7 @@ describe("pollCalendarMeetings — watermark + resync", () => {
       "calendar_events",
       JSON.stringify({
         calendarId: "OTHER-cal",
-        identityId: "gmail:jn@x.dev",
+        identityId: "gmail:mira@x.dev",
         updatedMin: "2020-01-01T00:00:00Z",
       }),
     );
@@ -454,7 +454,7 @@ describe("pollCalendarMeetings — watermark + resync", () => {
       "calendar_events",
       JSON.stringify({
         calendarId: "primary",
-        identityId: "gmail:jn@x.dev",
+        identityId: "gmail:mira@x.dev",
         updatedMin: "2020-01-01T00:00:00Z",
       }),
     );

@@ -167,26 +167,26 @@ describe("maskDeep", () => {
 
   it("masks an email under an identity key but leaves the rest of the receipt intact", () => {
     const signed = {
-      email: "mertcan.goekgoez@gokgoz.net",
-      receipt_id: "rcpt_01M07JF83W6XNNMB5NBXGRWEQX",
-      request_id: "4ecceeee-b7a9-43b7-b48a-3920272b454f",
+      email: "meredith.oakes@oakes.example",
+      receipt_id: "rcpt_01J0TESTRECEIPT00000000000",
+      request_id: "00000000-0000-4000-8000-000000000001",
       completed_at: "2026-08-17T09:57:32.756638",
       cost: 0.001,
       memo: "github-stars email.verify",
     };
     expect(maskDeep(signed, true)).toEqual({
       ...signed,
-      email: "mer•••@gokgoz.net",
+      email: "mer•••@oakes.example",
     });
   });
 
   it("masks names inside a nested enrichment dossier", () => {
     const out = maskDeep(
-      { result: { full_name: "Raden Alfaridzi", first_name: "Raden", cost: 0.05 } },
+      { result: { full_name: "Rowan Albright", first_name: "Rowan", cost: 0.05 } },
       true,
     );
-    expect(out.result.full_name).toBe("Raden A.");
-    expect(out.result.first_name).toBe("Raden");
+    expect(out.result.full_name).toBe("Rowan A.");
+    expect(out.result.first_name).toBe("Rowan");
     expect(out.result.cost).toBe(0.05);
   });
 

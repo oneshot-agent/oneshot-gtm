@@ -667,10 +667,9 @@ export class ProspectStore {
    * any transaction. Two writers, one column, a wide window between them: the
    * later write silently reverts the earlier one.
    *
-   * Not theoretical. It happened during this feature's own dogfood run. The
-   * workspace server researched a prospect while a script held a merge in
-   * flight, and the curated person half vanished under an API one. The reads
-   * were seconds apart.
+   * The race is easy to hit: the workspace server researches a prospect
+   * while a script holds a merge in flight, and the curated person half
+   * vanishes under an API one, with the reads seconds apart.
    *
    * `.immediate()` takes the write lock (`BEGIN IMMEDIATE`, a RESERVED lock)
    * BEFORE the re-read runs, not on the first write inside the transaction:
@@ -825,9 +824,9 @@ export class ProspectStore {
     // The "already researched" filter runs here, not in SQL. It used to be
     // `dossier_json IS NULL OR TRIM(...) = ''`, which silently emptied the
     // backlog the moment `research-products` began writing a
-    // `{person, product}` wrapper onto every row: 531 of 684 prospects held a
-    // product half and a null person half, looked researched to that test, and
-    // became permanently unreachable. `hasPersonSignal` asks the question the
+    // `{person, product}` wrapper onto every row: a row holding a product half
+    // and a null person half looked researched to that test and became
+    // permanently unreachable. `hasPersonSignal` asks the question the
     // caller actually means (is there PERSON research here) and matches the
     // gate every other consumer of this column already uses.
     //

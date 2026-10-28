@@ -27,17 +27,17 @@ vi.mock("../src/events.ts", async (orig) => ({
 
 const T0 = Date.parse("2026-10-01T10:00:00.000Z");
 const smtpId: EmailIdentity = {
-  id: "smartlead:jn@mail.example",
+  id: "smartlead:mira@mail.example",
   provider: "smartlead",
-  address: "jn@mail.example",
+  address: "mira@mail.example",
   maxPerDay: 30,
   warmup: null,
   sendVia: "smtp",
 };
 const gmailId: EmailIdentity = {
-  id: "gmail:jn@other.example",
+  id: "gmail:mira@other.example",
   provider: "gmail",
-  address: "jn@other.example",
+  address: "mira@other.example",
   maxPerDay: 30,
   warmup: null,
 };
@@ -251,7 +251,7 @@ describe("runOutboundConfirmations", () => {
 
   it("settles an uncertain OneShot send without reading, then gives up after the retries", async () => {
     const os: EmailIdentity = {
-      id: "oneshot:jn@os.example",
+      id: "oneshot:mira@os.example",
       provider: "oneshot",
       sendingDomain: "os.example",
       maxPerDay: null,
