@@ -18,7 +18,14 @@
  * the browser session) can no longer read, exactly where the reads themselves
  * stop.
  */
-import { demoMode, getLedger, logEvent, readPersonHalf, type QueueRow } from "@oneshot-gtm/core";
+import {
+  demoMode,
+  getLedger,
+  logEvent,
+  openLedgerDatabase,
+  readPersonHalf,
+  type QueueRow,
+} from "@oneshot-gtm/core";
 import { isLinkedInProfileUrl } from "./_linkedin.ts";
 import { LINKEDIN_READ_COST_ESTIMATE_USD, liveReadReady } from "./_linkedin-profile.ts";
 import {
@@ -30,7 +37,6 @@ import {
   researchPerson,
   type PersonSeed,
   type ProspectForResearch,
-  type ResearchableQueueRow,
 } from "./_person-research.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -58,7 +64,56 @@ export const READ_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 /** A person in an active cadence is read again when their last read is older than this. */
 export const CADENCE_REFRESH_MS = 14 * 24 * 60 * 60 * 1000;
 
-export type LiveSweepRow = ResearchableQueueRow & Pick<QueueRow, "sent_at" | "send_started_at">;
+export type LiveSweepRow = Pick<
+  QueueRow,
+  "id" | "play_name" | "payload_json" | "status" | "sent_at" | "send_started_at"
+>;
+
+// These are the URL candidates in personSeedFor, in its original payload
+// shape. Non-string values cannot be seeds, so do not materialise them.
+const textAt = (path: string) =>
+  `CASE WHEN json_type(payload_json, '${path}') = 'text'
+    THEN json_extract(payload_json, '${path}') END`;
+const urls = [
+  "linkedinUrl",
+  "sourceProfileUrl",
+  "profileUrl",
+  "authorUrl",
+  "twitterUrl",
+  "xUrl",
+  "githubUrl",
+]
+  .map((key) => `'${key}', ${textAt(`$.${key}`)}`)
+  .join(", ");
+const LIVE_READ_ROWS_SQL = `SELECT id, play_name, status, sent_at, send_started_at,
+  CASE WHEN json_valid(payload_json) THEN json_object(
+    ${urls},
+    'personResearch', json_object(
+      'liveProfile', CASE WHEN json_type(payload_json, '$.personResearch.liveProfile') = 'object'
+        THEN json_object('readAt', ${textAt("$.personResearch.liveProfile.readAt")}) END,
+      'researchedAt', ${textAt("$.personResearch.researchedAt")},
+      'warning', ${textAt("$.personResearch.warning")}
+    )
+  ) ELSE '{}' END AS payload_json
+  FROM target_queue WHERE status = ? ORDER BY found_at DESC LIMIT 100000`;
+
+/**
+ * Project only the selector inputs, never the full payload or saved draft.
+ * Keep URL precedence/normalisation in personSeedFor: a SQL LIKE predicate
+ * would change which malformed, fallback and non-LinkedIn URLs qualify.
+ * The sweep fetches the full row only when it has budget to research it.
+ */
+export function listLiveReadRows(ledger: ReturnType<typeof getLedger>): LiveSweepRow[] {
+  const db = openLedgerDatabase(ledger.filePath, { readonly: true });
+  try {
+    // Retain listQueue's per-status limit and ordering before filtering.
+    return ["approved", "pending"].flatMap(
+      (status) => db.query(LIVE_READ_ROWS_SQL).all(status) as LiveSweepRow[],
+    );
+  } finally {
+    db.close();
+  }
+}
 
 export interface LiveSweepCandidate {
   row: LiveSweepRow;
@@ -280,17 +335,15 @@ export async function sweepLiveProfiles(
   if (demoMode()) return { ran: false, reason: "demo", ...base };
   if (!liveReadReady()) return { ran: false, reason: "session", ...base };
   const ledger = getLedger();
-  const rows = [
-    ...ledger.listQueue({ status: "approved", limit: 100_000 }),
-    ...ledger.listQueue({ status: "pending", limit: 100_000 }),
-  ];
-  const candidates = selectLiveSweepCandidates(rows, liveReadOffByPlay(ledger));
+  const rows = listLiveReadRows(ledger);
+  const offForPlay = liveReadOffByPlay(ledger);
+  const candidates = selectLiveSweepCandidates(rows, offForPlay);
   const maxRows = opts.maxRows ?? DEFAULT_MAX_ROWS;
   const maxCostUsd = opts.maxCostUsd ?? DEFAULT_MAX_COST_USD;
   const result: LiveProfileSweepResult = { ran: true, ...base, candidates: candidates.length };
   const spend = { costUsd: 0 };
   const deadlineAt = opts.deadlineAt ?? Number.POSITIVE_INFINITY;
-  for (const [index, { row, seed }] of candidates.entries()) {
+  for (const [index, candidate] of candidates.entries()) {
     if (index >= maxRows) {
       result.stoppedBy = "max-rows";
       break;
@@ -309,8 +362,12 @@ export async function sweepLiveProfiles(
       result.stoppedBy = "budget";
       break;
     }
+    const row = ledger.getQueueRow(candidate.row.id);
+    if (!row) continue;
+    const live = liveReadSeedFor(row, offForPlay);
+    if (!live) continue;
     const researched = await deps.researchPerson({
-      seed,
+      seed: live.seed,
       playName: row.play_name,
       subject: { queueId: row.id },
       remainingUsd,

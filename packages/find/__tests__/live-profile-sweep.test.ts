@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Database } from "bun:sqlite";
 
 // The scheduler's live-profile sweep: only live rows with a LinkedIn seed
 // and no live read qualify, approved first; a trigger can opt its play out;
@@ -15,6 +16,39 @@ let cadences: Array<{ prospect_id: number; play_name: string; enrolled_at: strin
 let prospects: Record<number, Record<string, unknown>> = {};
 let readAccount: { workspace: string; accountId: string } | null = null;
 const events: string[] = [];
+const statements: string[] = [];
+const loadedIds: number[] = [];
+
+// Run the production projection against SQLite, with the same rows as the
+// pure selector fixtures. Every connection is isolated and closed by its caller.
+function queueDatabase(): Database {
+  const db = new Database(":memory:");
+  db.exec(`CREATE TABLE target_queue (
+    id INTEGER, play_name TEXT, status TEXT, sent_at TEXT, send_started_at TEXT,
+    payload_json TEXT, last_draft_json TEXT, found_at TEXT
+  )`);
+  const insert = db.prepare("INSERT INTO target_queue VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+  for (const row of queue) {
+    insert.run(
+      ...([
+        row["id"],
+        row["play_name"],
+        row["status"],
+        row["sent_at"],
+        row["send_started_at"],
+        row["payload_json"],
+        "unused draft",
+        "2026-10-01",
+      ] as never[]),
+    );
+  }
+  const query = db.query.bind(db);
+  db.query = ((sql: string) => {
+    statements.push(sql);
+    return query(sql);
+  }) as typeof db.query;
+  return db;
+}
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -26,8 +60,14 @@ vi.mock("@oneshot-gtm/core", async () => {
       events.push(kind);
     },
     linkedInProfileReadAccount: () => readAccount,
+    openLedgerDatabase: () => queueDatabase(),
     getLedger: () => ({
+      filePath: ":memory:",
       listTriggers: () => triggers,
+      getQueueRow: (id: number) => {
+        loadedIds.push(id);
+        return queue.find((r) => r["id"] === id) ?? null;
+      },
       listQueue: (opts: { status: string }) => queue.filter((r) => r["status"] === opts.status),
       listActiveCadences: () => cadences,
       getProspectById: (id: number) => prospects[id] ?? null,
@@ -37,10 +77,14 @@ vi.mock("@oneshot-gtm/core", async () => {
 
 const {
   countLiveReadsWaiting,
+  listLiveReadRows,
+  liveReadOffByPlay,
   selectCadenceRefreshCandidates,
   selectLiveSweepCandidates,
   sweepLiveProfiles,
 } = await import("../src/_live-profile-sweep.ts");
+
+const { getLedger } = await import("@oneshot-gtm/core");
 
 const LI = "https://www.linkedin.com/in/";
 function row(
@@ -75,6 +119,8 @@ beforeEach(() => {
   prospects = {};
   readAccount = null;
   events.length = 0;
+  statements.length = 0;
+  loadedIds.length = 0;
   queue = [
     row(1, "pending", { name: "A", linkedinUrl: `${LI}a` }),
     row(2, "approved", { name: "B", linkedinUrl: `${LI}b` }),
@@ -210,6 +256,70 @@ describe("countLiveReadsWaiting", () => {
       }),
       row(9, "rejected", { name: "I", linkedinUrl: `${LI}i` }),
     ];
+    queue = [
+      ...rows,
+      row(10, "pending", { linkedinUrl: `${LI}j` }, { send_started_at: "2026-10-01" }),
+      row(11, "pending", {}, { payload_json: "broken JSON" }),
+      row(12, "pending", {}, { payload_json: "null" }),
+      row(13, "pending", { linkedinUrl: "https://x.com/first", profileUrl: `${LI}later` }),
+      row(14, "pending", { linkedinUrl: "https://linkedin.com/company/acme" }),
+      ...[
+        "linkedinUrl",
+        "sourceProfileUrl",
+        "profileUrl",
+        "authorUrl",
+        "twitterUrl",
+        "xUrl",
+        "githubUrl",
+      ].map((key, i) => row(20 + i, "pending", { [key]: "  linkedin.com/in/Zoë?test=1#bio  " })),
+      ...[null, false, 0, "read", []].map((marker, i) =>
+        row(30 + i, "approved", {
+          linkedinUrl: `${LI}marker`,
+          personResearch: { liveProfile: marker },
+        }),
+      ),
+      row(40, "approved", { linkedinUrl: `${LI}read`, personResearch: { liveProfile: {} } }),
+      row(41, "approved", {
+        linkedinUrl: {},
+        sourceProfileUrl: `${LI}fallback`,
+        irrelevant: "x".repeat(100_000),
+      }),
+      row(42, "pending", { linkedinUrl: "http://[", sourceProfileUrl: `${LI}valid` }),
+      row(43, "pending", { email: "a@example.test", name: "Email only" }),
+      row(44, "approved", {
+        linkedinUrl: `${LI}old`,
+        personResearch: {
+          liveProfile: { readAt: "2020-01-01" },
+          researchedAt: new Date().toISOString(),
+          warning: "live profile skipped: failed",
+        },
+      }),
+      row(45, "approved", {
+        linkedinUrl: `${LI}old`,
+        personResearch: {
+          liveProfile: { readAt: "2020-01-01" },
+        },
+      }),
+    ];
+    const projected = listLiveReadRows(getLedger());
+    triggers = [
+      { name: "github-stars", config_json: JSON.stringify({ linkedinProfileRead: false }) },
+    ];
+    const off = liveReadOffByPlay(getLedger());
+    expect(countLiveReadsWaiting(projected, off)).toBe(countLiveReadsWaiting(queue as never, off));
+    expect(countLiveReadsWaiting(projected, off)).toBe(18);
+    const now = Date.now();
+    expect(selectLiveSweepCandidates(projected, off, now).map((c) => c.row.id)).toEqual(
+      selectLiveSweepCandidates(queue as never, off, now).map((c) => c.row.id),
+    );
+    expect(statements).toHaveLength(2);
+    for (const sql of statements) {
+      expect(sql).not.toMatch(/SELECT\s+\*/i);
+      expect(sql).not.toMatch(/(?:SELECT|,)\s*payload_json\s*(?:,|FROM)/i);
+      expect(sql).not.toContain("last_draft_json");
+      expect(sql).toContain("json_extract");
+    }
+    expect(JSON.stringify(projected)).not.toContain("x".repeat(100_000));
     // 1, 2, 7 and 8; 3 is read, 4 has no LinkedIn seed, 5 is sent, 6 opted out, 9 is not live.
     expect(countLiveReadsWaiting(rows as never, (play) => play === "github-stars")).toBe(4);
   });
@@ -304,6 +414,7 @@ describe("sweepLiveProfiles", () => {
       };
     },
     applyPersonResearch: async (_l: unknown, r: { id: number }) => {
+      expect(r).toEqual(queue.find((original) => original["id"] === r.id));
       applied.push(r.id);
       return { outcome: "patched", verdict: null, patch: {} };
     },
@@ -412,6 +523,9 @@ describe("sweepLiveProfiles", () => {
     expect(researched).toEqual([7, 2, 1]);
     expect(applied).toEqual([7, 2, 1]);
     expect(events).toContain("live_profile_sweep.done");
+    expect(loadedIds).toEqual([7, 2, 1]);
+    expect(statements).toHaveLength(2);
+    for (const sql of statements) expect(sql).not.toMatch(/SELECT\s+\*/i);
   });
 
   it("stops at the daily cap and on a login wall, after applying that row's provider result", async () => {
@@ -431,6 +545,7 @@ describe("sweepLiveProfiles", () => {
       researched: 1,
       stoppedBy: "max-rows",
     });
+    expect(loadedIds).toEqual([7]);
     researched.length = 0;
     const capped = await sweepLiveProfiles({ maxCostUsd: 0.02 }, deps);
     expect(capped).toMatchObject({ researched: 1, stoppedBy: "budget" });

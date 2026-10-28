@@ -51,6 +51,7 @@ import {
   cancelLinkedInLogin,
   linkedinLoginState,
   countLiveReadsWaiting,
+  listLiveReadRows,
   linkedInAccountReadsToday,
   linkedInReadsPerDay,
   linkedInReadsToday,
@@ -215,10 +216,7 @@ export function linkedInReadsView(cfg: OneShotConfig): LinkedInReadsView {
   let waiting = 0;
   try {
     const ledger = getLedger();
-    const rows = [
-      ...ledger.listQueue({ status: "approved", limit: 100_000 }),
-      ...ledger.listQueue({ status: "pending", limit: 100_000 }),
-    ];
+    const rows = listLiveReadRows(ledger);
     waiting = countLiveReadsWaiting(rows, liveReadOffByPlay(ledger));
   } catch {
     // an unreadable queue waits on nothing the counter can show
