@@ -7,6 +7,7 @@ import type { ProspectRecord } from "@oneshot-gtm/core";
 
 const llmCalls: Array<{ user: string; system: string }> = [];
 let pilotOffer: string | null = null;
+let noOfferPlays: string[] | undefined;
 
 function baseCfg() {
   return {
@@ -36,6 +37,7 @@ function baseCfg() {
     calendarIdentityId: null,
     calendarId: "primary",
     pilotOffer,
+    noOfferPlays,
   };
 }
 
@@ -115,6 +117,7 @@ const OFFER = "Four weeks building one workflow they pick, together.";
 
 beforeEach(() => {
   pilotOffer = null;
+  noOfferPlays = undefined;
   llmCalls.length = 0;
 });
 afterEach(() => vi.clearAllMocks());
@@ -143,6 +146,29 @@ describe("pilotOrBreakup", () => {
   it("sends nothing for an offer-only step when no offer is set", async () => {
     expect(await step("none")(ctx())).toBeNull();
     expect(llmCalls).toHaveLength(0);
+  });
+
+  it("closes a play the workspace lists in noOfferPlays with the breakup, never the pilot", async () => {
+    pilotOffer = OFFER;
+    noOfferPlays = ["stack-consolidation"];
+    await step("breakup")(ctx());
+    expect(llmCalls[0]!.system).toContain("system:breakup-email");
+    expect(llmCalls[0]!.user).not.toContain("OFFER TERMS");
+    llmCalls.length = 0;
+    expect(await step("none")(ctx())).toBeNull();
+    expect(llmCalls).toHaveLength(0);
+  });
+
+  it("leaves a stored sequence offer out of a listed play's follow-up", async () => {
+    noOfferPlays = ["stack-consolidation"];
+    const stored = {
+      offer: "recover three years of overbilled carrier charges",
+      steps: "files each dispute and follows up until credited",
+      angles: ["carriers rarely refund unasked"],
+    };
+    await step("breakup")({ ...ctx(), sequenceOffer: stored } as never);
+    expect(llmCalls[0]!.user).not.toContain(stored.offer);
+    expect(llmCalls[0]!.user).not.toContain(stored.angles[0]);
   });
 });
 

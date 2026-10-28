@@ -6,7 +6,9 @@ import {
   configDir,
   DEFAULT_LLM_MODEL,
   llmApiKey,
+  currentNoOfferPlays,
   loadConfig,
+  noOfferPlaysOf,
   offerAnchorOf,
   offerExclusionsOf,
   oneshotEnvReady,
@@ -230,6 +232,39 @@ describe("offerExclusionsOf", () => {
     expect(offerExclusionsOf({ offerExclusions: " legal advice " })).toEqual(["legal advice"]);
     expect(offerExclusionsOf({})).toEqual([]);
     expect(offerExclusionsOf({ offerExclusions: { a: 1 } })).toEqual([]);
+  });
+});
+
+describe("noOfferPlaysOf", () => {
+  it("trims each play name and drops blanks, repeats and non-strings", () => {
+    expect(noOfferPlaysOf({ noOfferPlays: [" repo-interest ", "", "repo-interest", 3] })).toEqual([
+      "repo-interest",
+    ]);
+  });
+
+  it("reads a lone string as one play and anything else as none", () => {
+    expect(noOfferPlaysOf({ noOfferPlays: "luma-events" })).toEqual(["luma-events"]);
+    expect(noOfferPlaysOf({})).toEqual([]);
+    expect(noOfferPlaysOf({ noOfferPlays: { a: 1 } })).toEqual([]);
+  });
+});
+
+describe("currentNoOfferPlays", () => {
+  const configFile = () => join(configDir(), "config.json");
+  afterEach(() => rmSync(configFile(), { force: true }));
+
+  it("reads none when there is no config file", () => {
+    rmSync(configFile(), { force: true });
+    expect(currentNoOfferPlays()).toEqual([]);
+  });
+
+  it("sees a hand edit to the file on the next call", () => {
+    mkdirSync(configDir(), { recursive: true });
+    writeFileSync(configFile(), JSON.stringify({ noOfferPlays: ["repo-interest"] }));
+    expect(currentNoOfferPlays()).toEqual(["repo-interest"]);
+    // A different size changes the stamp even inside one mtime tick.
+    writeFileSync(configFile(), JSON.stringify({ noOfferPlays: ["repo-interest", "luma-events"] }));
+    expect(currentNoOfferPlays()).toEqual(["repo-interest", "luma-events"]);
   });
 });
 

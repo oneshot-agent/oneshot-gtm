@@ -3144,8 +3144,11 @@ export function buildFollowUpEmail(opts: {
     // or the one the preview wrote for the sequence), with the founder's
     // terms and the product facts (_prospect-offer.ts). Its angles are this
     // touch's pool.
-    const introOffer =
-      ctx.sequenceOffer !== undefined
+    // A play the workspace lists in `noOfferPlays` carries no offer here
+    // either, nor its angles: a stored one from before the setting stays unused.
+    const introOffer = !playMakesOffer(opts.playName, ctx.cfg)
+      ? null
+      : ctx.sequenceOffer !== undefined
         ? ctx.sequenceOffer
         : sequenceOffer(ctx.prospect, opts.playName);
     const edgeSelection = await followUpEdgeSelection(ctx.prospect, opts.playName, {
@@ -3268,8 +3271,9 @@ export function hardBanHold(payload: StepPayload): string[] {
 }
 
 /**
- * The last follow-up of a builder play. With `cfg.pilotOffer` set it offers
- * the founder's pilot and closes the thread (`pilot-close-followup`, with the
+ * The last follow-up of a builder play. With `cfg.pilotOffer` set, and the
+ * play making offers (`playMakesOffer`), it offers the founder's pilot and
+ * closes the thread (`pilot-close-followup`, with the
  * prospect's company facts and the price/link hold); without it, the play's
  * plain breakup (`fallback: "breakup"`), or nothing at all, so a step that
  * exists only for the offer completes the cadence (`fallback: "none"`).
@@ -3297,7 +3301,8 @@ export function pilotOrBreakup(opts: {
         })
       : null;
   return async (ctx: CadenceContext) => {
-    if (ctx.cfg.pilotOffer?.trim()) return pilot(ctx);
+    // The pilot is an offer: a play that makes none closes with the breakup.
+    if (ctx.cfg.pilotOffer?.trim() && playMakesOffer(opts.playName, ctx.cfg)) return pilot(ctx);
     return breakup ? breakup(ctx) : null;
   };
 }
@@ -3938,7 +3943,9 @@ async function buildLinkedInMessage(
   const templated = templatedLinkedIn(which, ctx.cfg, {
     name: ctx.prospect.name,
     evidence: clause,
-    offer: playMakesOffer(playName) ? (sequenceOffer(ctx.prospect, playName)?.offer ?? null) : null,
+    offer: playMakesOffer(playName, ctx.cfg)
+      ? (sequenceOffer(ctx.prospect, playName)?.offer ?? null)
+      : null,
     alreadyConnected,
   });
   if (templated) {
