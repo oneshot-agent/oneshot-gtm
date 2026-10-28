@@ -128,9 +128,25 @@ afterEach(() => {
 describe("experienceFromAccountView", () => {
   it("writes periods the way the page shows them; an open position is current", () => {
     expect(experienceFromAccountView(ADA_EXPERIENCE)).toEqual([
-      { company: "Acme", title: "Head of Platform", period: "May 2026 - Present" },
-      { company: "Side Project", title: "Co-Founder", period: "Jan 2024 - Present" },
-      { company: "Old Co", title: "Engineer", period: "Mar 2023 - Dec 2025" },
+      {
+        company: "Acme",
+        title: "Head of Platform",
+        period: "May 2026 - Present",
+        start: "5/1/2026",
+      },
+      {
+        company: "Side Project",
+        title: "Co-Founder",
+        period: "Jan 2024 - Present",
+        start: "1/1/2024",
+      },
+      {
+        company: "Old Co",
+        title: "Engineer",
+        period: "Mar 2023 - Dec 2025",
+        start: "3/1/2023",
+        end: "12/1/2025",
+      },
     ]);
   });
 
@@ -143,7 +159,7 @@ describe("experienceFromAccountView", () => {
         null,
       ]),
     ).toEqual([
-      { company: "Gamma Labs", endDate: "Jun 2019", location: "Porto" },
+      { company: "Gamma Labs", endDate: "Jun 2019", location: "Porto", end: "6/1/2019" },
       { company: "Delta" },
     ]);
     expect(experienceFromAccountView(null)).toEqual([]);
@@ -200,7 +216,11 @@ describe("readLinkedInProfile through the connected account", () => {
       company: "Acme",
       title: "Head of Platform",
       period: "May 2026 - Present",
+      start: "5/1/2026",
     });
+    // The view's id, slug and open-profile flag stay with the read.
+    expect(read.profile).toMatchObject({ providerId: "ACoAAAda", publicIdentifier: "ada-quill" });
+    expect(read.profile?.isOpenProfile).toBeUndefined();
     expect(stored(URL_A)?.status).toBe("ok");
 
     // The second ask is the cache: no view, no charge.
@@ -246,12 +266,32 @@ describe("readLinkedInProfile through the connected account", () => {
     expect(unknown.profile?.networkDistance).toBeNull();
   });
 
+  it("keeps the open-profile flag the view reports", async () => {
+    const open = view(ADA_EXPERIENCE);
+    (open.result.profile as Record<string, unknown>)["is_open_profile"] = true;
+    script(open);
+    const read = await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 });
+    expect(read.profile?.isOpenProfile).toBe(true);
+  });
+
   it("a section LinkedIn held back is not proof: nothing cached, read again later", async () => {
-    script(view([], false));
+    const held = view([], false);
+    (held.result.profile as Record<string, unknown>)["network_distance"] = "FIRST_DEGREE";
+    script(held);
     const read = await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 });
     expect(read).toMatchObject({ profile: null, skipped: "interrupted" });
-    // Nothing cached for the profile, but the charged view counts toward the day.
+    // No Experience list is stored for the profile, but the charged view counts toward the day.
     expect(stored(URL_A)).toBeNull();
+    // The rest of the view is kept as a partial silent view: the distance and
+    // headline count, and its empty Experience list is marked as not read.
+    const partial = readPaidCache("linkedin.profile", { url: URL_A });
+    expect(partial?.status === "ok" && partial.result).toMatchObject({
+      partial: true,
+      name: "Ada Quill",
+      headline: "Builds things at Acme",
+      networkDistance: "FIRST_DEGREE",
+      experience: [],
+    });
     expect([...cache.keys()]).toEqual([expect.stringMatching(/^linkedin-profile:incomplete:/)]);
     // A row without a failure status: the kind the daily budget counts.
     expect([...cache.values()][0]!.status).toBeNull();

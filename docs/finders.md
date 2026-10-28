@@ -83,6 +83,7 @@ Bought research can trail a live profile by months. **Connect LinkedIn** on Setu
 - An hourly sweep reads the rest: approved rows first, then unread pending rows, newest first, then approved rows whose read is 30 days old.
 - A login wall marks the session invalid. `doctor` says so and Setup asks you to reconnect.
 - A row whose read failed for its own reason waits three days before another try.
+- When LinkedIn holds back the Experience section, the rest of the read (name, headline, whether you are connected) is kept and the Experience list is read again on a later pass.
 
 `config linkedin-session` does the same from the terminal. `--no-live` on a backfill skips the reads.
 
