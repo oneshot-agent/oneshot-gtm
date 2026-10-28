@@ -103,11 +103,12 @@ interface CommitPattern {
 /**
  * "Let me feature you…" / "let us make you our recommended…" offer the thing
  * directly, so they pass the affirmative gate for these two patterns only. The
- * verb must follow "let me/us" at once: "let me show you the feature" and
- * "let me point out that you are the recommended provider" offer nothing.
+ * verb must follow "let me/us" at once or after one adverb ("let me also
+ * feature"): "let me show you the feature" and "let me point out that you are
+ * the recommended provider" offer nothing.
  */
 const LET_ME_CUE =
-  /\blet (?:me|us) (?:feature|make|name|list|designate|recommend|add|include|position)\b/i;
+  /\blet (?:me|us) (?:(?:also|just|now|\w+ly)\s+)?(?:feature|make|name|list|designate|recommend|add|include|position|put|set)\b/i;
 
 /**
  * Verbs by which the founder hands the other party a designation ("we'll make

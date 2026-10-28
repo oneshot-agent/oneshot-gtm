@@ -163,6 +163,8 @@ describe("bodyCommitsTerms (issue #480)", () => {
   it("counts 'let me' / 'let us' as a commitment only for feature and endorsement offers", () => {
     expect(bodyCommitsTerms("Let me feature your integration in our docs.")).toBe(true);
     expect(bodyCommitsTerms("Let us make you our recommended provider.")).toBe(true);
+    expect(bodyCommitsTerms("Let me put you down as our preferred provider.")).toBe(true);
+    expect(bodyCommitsTerms("Let me also feature you in our newsletter.")).toBe(true);
     expect(bodyCommitsTerms("Let me explain our pricing.")).toBe(false);
     expect(bodyCommitsTerms("Let us walk you through the roadmap.")).toBe(false);
     expect(bodyCommitsTerms("Let me show you the feature in our docs.")).toBe(false);
