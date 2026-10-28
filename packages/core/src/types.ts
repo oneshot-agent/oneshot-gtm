@@ -498,6 +498,16 @@ export interface OneShotConfig {
    */
   offerAnchor?: OfferAnchor;
   /**
+   * Plays that make no offer in this workspace, beyond the plays that never
+   * make one (`NO_OFFER_PLAYS` in plays): their intros, follow-ups and letters
+   * carry no OFFER block, no offer is written or judged for their rows, and
+   * neither the `no-offer` nor the `weak-offer` hold applies to them. For an
+   * audience that answers a message about their own work rather than an
+   * offer. Play names as `/run` lists them. Read through `noOfferPlaysOf`.
+   * Absent or empty: every play that makes offers keeps making them.
+   */
+  noOfferPlays?: string[];
+  /**
    * What an organization's members get when it offers the founder's product
    * to them (credits, setup, an extended trial), in the founder's own words.
    * The `multiplier` play quotes it verbatim and refuses to draft without

@@ -24,8 +24,10 @@
  */
 import { createHash } from "node:crypto";
 import {
+  currentNoOfferPlays,
   isPersonResearchDossier,
   loadConfig,
+  noOfferPlaysOf,
   logEvent,
   offerAnchorOf,
   offerExclusionsOf,
@@ -190,7 +192,8 @@ export function isProspectOffer(value: unknown): value is ProspectOffer {
  * Plays whose message is not an offer: a learning interview, a survey, a
  * customer's onboarding call, a missed demo, a launch repost, a public reply.
  * They get no prospect offer and no OFFER block. `multiplier` pitches the
- * founder's member offer verbatim from config, never a written one.
+ * founder's member offer verbatim from config, never a written one. A
+ * workspace adds its own with `noOfferPlays` (`playMakesOffer`).
  */
 export const NO_OFFER_PLAYS: ReadonlySet<string> = new Set([
   "discovery-interview",
@@ -203,8 +206,16 @@ export const NO_OFFER_PLAYS: ReadonlySet<string> = new Set([
   "multiplier",
 ]);
 
-export function playMakesOffer(playName: string): boolean {
-  return !NO_OFFER_PLAYS.has(playName);
+/**
+ * True when rows of this play get a prospect offer: it is not one of
+ * `NO_OFFER_PLAYS` and not one of the workspace's `noOfferPlays`. `cfg` is
+ * the whole config when the caller has it; without one the config file is
+ * read as it is now (`currentNoOfferPlays`).
+ */
+export function playMakesOffer(playName: string, cfg?: { noOfferPlays?: unknown }): boolean {
+  if (NO_OFFER_PLAYS.has(playName)) return false;
+  const own = cfg ? noOfferPlaysOf(cfg) : currentNoOfferPlays();
+  return !own.includes(playName);
 }
 
 function clip(text: string, max: number): string {
@@ -1158,8 +1169,8 @@ function lintReply(
 export async function deriveOffers(
   input: DeriveOfferInput & { fetchImpl?: typeof fetch },
 ): Promise<DerivedOffers> {
-  if (!playMakesOffer(input.playName)) return { offers: [], skip: null };
   const cfg = input.cfg ?? loadConfig();
+  if (!playMakesOffer(input.playName, cfg)) return { offers: [], skip: null };
   // The steps may claim only what the product brief says the product does.
   // With no brief there is nothing to ground them in.
   if (!cfg.productBrief?.trim()) return { offers: [], skip: null };
@@ -1695,8 +1706,8 @@ export function offerCandidatesOf(payload: Record<string, unknown>): ProspectOff
 export async function ensureOfferSet(
   input: DeriveOfferInput,
 ): Promise<((OfferSet | OfferSkipped) & { changed: boolean }) | null> {
-  if (!playMakesOffer(input.playName)) return null;
   const cfg = input.cfg ?? loadConfig();
+  if (!playMakesOffer(input.playName, cfg)) return null;
   const t = input.target as JsonRecord;
   const stored = t["offer"];
   const research = offerResearchText(t, input.dossier);
@@ -1748,8 +1759,8 @@ export async function offerForDraft(input: DeriveOfferInput): Promise<ProspectOf
 export async function offerSetForDraft(
   input: DeriveOfferInput,
 ): Promise<((OfferSet | OfferSkipped) & { derived: boolean }) | null> {
-  if (!playMakesOffer(input.playName)) return null;
   const cfg = input.cfg ?? loadConfig();
+  if (!playMakesOffer(input.playName, cfg)) return null;
   const t = input.target as JsonRecord;
   const stored = t["offer"];
   if (isProspectOffer(stored) && stored.editedBy === "founder") {
@@ -1795,11 +1806,11 @@ const NO_TERMS_PLAYS: ReadonlySet<string> = new Set(["accelerator-batch"]);
  */
 export function offerBlock(
   offer: Pick<ProspectOffer, "offer" | "steps" | "return"> | null,
-  cfg: Pick<AppConfig, "pilotOffer" | "productBrief">,
+  cfg: Pick<AppConfig, "pilotOffer" | "productBrief" | "noOfferPlays">,
   playName: string,
   opts: { brief?: boolean } = {},
 ): string | null {
-  if (!playMakesOffer(playName)) return null;
+  if (!playMakesOffer(playName, cfg)) return null;
   const lines: string[] = [];
   if (offer) {
     lines.push(`OFFER (what you offer to do for them; the message opens with it): ${offer.offer}`);

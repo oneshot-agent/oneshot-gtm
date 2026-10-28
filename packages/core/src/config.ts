@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  statSync,
   writeFileSync,
   renameSync,
   unlinkSync,
@@ -95,6 +96,49 @@ export function offerExclusionsOf(cfg: { offerExclusions?: unknown }): string[] 
  */
 export function offerAnchorOf(cfg: { offerAnchor?: unknown }): OfferAnchor {
   return cfg.offerAnchor === "prefer-product" ? "prefer-product" : "either";
+}
+
+/**
+ * The workspace's `noOfferPlays` as plays read it: each play name trimmed,
+ * blanks and repeats dropped. A hand-edited lone string counts as one entry;
+ * anything else reads as none.
+ */
+export function noOfferPlaysOf(cfg: { noOfferPlays?: unknown }): string[] {
+  const raw = cfg.noOfferPlays;
+  const list = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : [];
+  const out: string[] = [];
+  for (const entry of list) {
+    if (typeof entry !== "string") continue;
+    const name = entry.trim();
+    if (name && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
+let noOfferPlaysMemo: { stamp: string; plays: string[] } | null = null;
+
+/**
+ * `noOfferPlays` from the config file as it is now, for callers with no
+ * config in hand (a check per row of a queue listing). The file is read again
+ * only when its inode, size, modification or change time moves, so any edit
+ * applies on the next call without a restart and an unchanged file costs one
+ * stat.
+ */
+export function currentNoOfferPlays(): string[] {
+  let stamp: string;
+  try {
+    // ctime moves on every write, even one that keeps mtime and size, and an
+    // atomic save (temp file + rename) changes the inode.
+    const st = statSync(CONFIG_PATH, { bigint: true });
+    stamp = `${st.ino}:${st.size}:${st.mtimeNs}:${st.ctimeNs}`;
+  } catch {
+    noOfferPlaysMemo = null;
+    return [];
+  }
+  if (noOfferPlaysMemo?.stamp === stamp) return noOfferPlaysMemo.plays;
+  const plays = noOfferPlaysOf(readConfigOrDefault());
+  noOfferPlaysMemo = { stamp, plays };
+  return plays;
 }
 
 /** The humanizer's greeting word: what `founderGreeting` reads as when unset. */

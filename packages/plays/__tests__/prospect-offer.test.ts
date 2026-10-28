@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -24,6 +24,7 @@ const cfg: {
   offerJudge?: { engine: "llm" | "decisions"; model?: string; minConfidence?: number };
   offerExclusions?: string[];
   offerAnchor?: "prefer-product" | "either";
+  noOfferPlays?: string[];
 } = {
   founderName: "Founder",
   productOneLiner: "Acme schedules field crews",
@@ -76,6 +77,7 @@ const {
   activeOfferPatch,
   OFFER_PROMPT_VERSION,
   playMakesOffer,
+  weakOfferHold,
 } = await import("../src/_prospect-offer.ts");
 
 const target = {
@@ -561,6 +563,50 @@ describe("deriveOffer", () => {
     expect(playMakesOffer("discovery-interview")).toBe(false);
     expect(await deriveOffer({ target, playName: "discovery-interview" })).toBeNull();
     expect(llm.inputs).toHaveLength(0);
+  });
+});
+
+describe("a workspace's noOfferPlays", () => {
+  afterEach(() => {
+    delete cfg.noOfferPlays;
+  });
+
+  it("turns offers off for the plays it lists and no other", () => {
+    const own = { noOfferPlays: ["repo-interest"] };
+    expect(playMakesOffer("repo-interest", own)).toBe(false);
+    expect(playMakesOffer("design-partner-loi", own)).toBe(true);
+    // The plays that never make an offer stay that way whatever it says.
+    expect(playMakesOffer("discovery-interview", { noOfferPlays: [] })).toBe(false);
+  });
+
+  it("writes no offer and asks no model for a listed play", async () => {
+    cfg.noOfferPlays = ["repo-interest"];
+    llm.replies = [];
+    llm.inputs = [];
+    const out = await deriveOffers({ target: { company: "Acme" }, playName: "repo-interest" });
+    expect(out).toEqual({ offers: [], skip: null });
+    expect(llm.inputs).toHaveLength(0);
+    expect(
+      await ensureOfferSet({ target: { company: "Acme" }, playName: "repo-interest" }),
+    ).toBeNull();
+    expect(
+      await offerSetForDraft({ target: { company: "Acme" }, playName: "repo-interest" }),
+    ).toBeNull();
+  });
+
+  it("lifts the weak-offer hold for a listed play, read from the config file", async () => {
+    const { configDir } =
+      await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+    const file = join(configDir(), "config.json");
+    const payload = { offer: { ...good, relevance: "weak" } };
+    try {
+      mkdirSync(configDir(), { recursive: true });
+      writeFileSync(file, JSON.stringify({ noOfferPlays: ["repo-interest"] }));
+      expect(weakOfferHold("repo-interest", payload)).toBe(false);
+      expect(weakOfferHold("design-partner-loi", payload)).toBe(true);
+    } finally {
+      rmSync(file, { force: true });
+    }
   });
 });
 
