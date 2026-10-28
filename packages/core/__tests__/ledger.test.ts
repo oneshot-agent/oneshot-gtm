@@ -249,6 +249,63 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     expect(rows[1]?.step_index).toBe(1);
   });
 
+  it("the inbox's bulk reads (#935) group by prospect, in the per-prospect readers' order, sends only, missing ids absent", () => {
+    const pidA = ledger.upsertProspect({ name: "A", email: "bulk-a@x.com", source: "t" });
+    const pidB = ledger.upsertProspect({ name: "B", email: "bulk-b@x.com", source: "t" });
+    // pidC: a prospect with no activity; the last id names no prospect at all.
+    const pidC = ledger.upsertProspect({ name: "C", email: "bulk-c@x.com", source: "t" });
+    const ids = [pidA, pidB, pidC, pidC + 1000];
+    const send = (
+      prospectId: number,
+      playName: string,
+      stepIndex: number,
+      status: "sent" | "replied" | "queued",
+    ) => ledger.recordSequenceEvent({ prospectId, playName, stepIndex, channel: "email", status });
+    send(pidA, "p", 1, "sent");
+    send(pidB, "p", 0, "sent");
+    send(pidA, "q", 0, "replied");
+    // A reservation, not history: filtered out like the per-prospect reader does.
+    send(pidA, "p", 2, "queued");
+    const reply = (id: string, prospectId: number, receivedAt: string) =>
+      ledger.recordInboxReply({
+        id,
+        threadKey: `t-${prospectId}`,
+        prospectId,
+        fromEmail: "someone@x.com",
+        body: id,
+        receivedAt,
+      });
+    // Inserted newest first: the read orders by received_at, then id.
+    reply("r2", pidA, "2026-10-02T00:00:00.000Z");
+    reply("r1", pidA, "2026-10-01T00:00:00.000Z");
+    reply("r3", pidB, "2026-10-03T00:00:00.000Z");
+
+    const prospects = ledger.listProspectsByIds(ids);
+    expect([...prospects.keys()].toSorted()).toEqual([pidA, pidB, pidC].toSorted());
+    for (const id of [pidA, pidB, pidC]) {
+      expect(prospects.get(id)).toEqual(ledger.getProspectById(id));
+    }
+
+    const replies = ledger.listInboxRepliesForProspects(ids);
+    expect([...replies.keys()].toSorted()).toEqual([pidA, pidB].toSorted());
+    for (const id of [pidA, pidB]) {
+      expect(replies.get(id)).toEqual(ledger.listInboxRepliesForProspect(id));
+    }
+    expect(replies.get(pidA)!.map((r) => r.id)).toEqual(["r1", "r2"]);
+
+    const events = ledger.listSequenceEventsForProspects(ids);
+    expect([...events.keys()].toSorted()).toEqual([pidA, pidB].toSorted());
+    for (const id of [pidA, pidB]) {
+      expect(events.get(id)).toEqual(ledger.listSequenceEventsForProspect(id));
+    }
+    expect(events.get(pidA)!.map((e) => `${e.play_name}:${e.step_index}`)).toEqual(["p:1", "q:0"]);
+
+    // Empty input: nothing to read, `IN ()` is never issued.
+    expect(ledger.listProspectsByIds([]).size).toBe(0);
+    expect(ledger.listInboxRepliesForProspects([]).size).toBe(0);
+    expect(ledger.listSequenceEventsForProspects([]).size).toBe(0);
+  });
+
   it("listSequenceEventsForCadences batches many pairs in one query, preserving per-key order", () => {
     const pidA = ledger.upsertProspect({ name: "A", email: "ba@x.com", source: "t" });
     const pidB = ledger.upsertProspect({ name: "B", email: "bb@x.com", source: "t" });

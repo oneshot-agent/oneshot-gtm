@@ -29,6 +29,9 @@ function canonEmail(email: string): string {
  */
 const INBOX_REPLY_TRIAGE_PENDING = "__triage_pending__";
 
+/** How many ids one `IN (...)` statement binds: well under SQLite's variable limit. */
+const IN_CHUNK = 400;
+
 /**
  * The claim sentinel is bookkeeping, not a classification: every reader of
  * `intent` gets NULL back for it (#559), so the column's `ReplyIntent | null`
@@ -507,6 +510,37 @@ export class InboxStore {
       .all(prospectId) as InboxReplyRecord[];
     for (const r of rows) if (r.intent === INBOX_REPLY_TRIAGE_PENDING) r.intent = null;
     return rows;
+  }
+
+  /**
+   * Bulk variant of listInboxRepliesForProspect (#935): every persisted
+   * reply of every listed prospect, one `IN (...)` read per chunk of ids,
+   * Map keyed by prospect id, the same (received_at ASC, id ASC) order per
+   * prospect and the same pending-triage normalization. A prospect with no
+   * reply has no entry.
+   */
+  listInboxRepliesForProspects(prospectIds: readonly number[]): Map<number, InboxReplyRecord[]> {
+    const map = new Map<number, InboxReplyRecord[]>();
+    for (let i = 0; i < prospectIds.length; i += IN_CHUNK) {
+      const part = prospectIds.slice(i, i + IN_CHUNK);
+      const rows = this.db
+        .query(
+          `SELECT * FROM inbox_replies
+            WHERE prospect_id IN (${part.map(() => "?").join(",")})
+            ORDER BY prospect_id ASC, received_at ASC, id ASC`,
+        )
+        .all(...part) as InboxReplyRecord[];
+      for (const r of rows) {
+        if (r.intent === INBOX_REPLY_TRIAGE_PENDING) r.intent = null;
+        let list = map.get(r.prospect_id);
+        if (!list) {
+          list = [];
+          map.set(r.prospect_id, list);
+        }
+        list.push(r);
+      }
+    }
+    return map;
   }
 
   /** Provider ids of every persisted reply: dedupe set for capture passes. */

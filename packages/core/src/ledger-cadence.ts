@@ -1518,6 +1518,38 @@ export function listSequenceEventsForProspect(
 }
 
 /**
+ * Bulk variant of listSequenceEventsForProspect (#935): the sent steps of
+ * every listed prospect, one `IN (...)` read per chunk of ids, Map keyed by
+ * prospect id, same sends-only status set and the same (created_at ASC,
+ * id ASC) order per prospect. A prospect with no sent step has no entry.
+ */
+export function listSequenceEventsForProspects(
+  db: Database,
+  prospectIds: readonly number[],
+): Map<number, SequenceEventRecord[]> {
+  const map = new Map<number, SequenceEventRecord[]>();
+  for (const part of chunks(prospectIds)) {
+    const rows = db
+      .query(
+        `SELECT * FROM sequence_events
+         WHERE prospect_id IN (${part.map(() => "?").join(",")})
+           AND status IN ('sent','delivered','replied')
+         ORDER BY prospect_id ASC, created_at ASC, id ASC`,
+      )
+      .all(...part) as SequenceEventRecord[];
+    for (const r of rows) {
+      let list = map.get(r.prospect_id);
+      if (!list) {
+        list = [];
+        map.set(r.prospect_id, list);
+      }
+      list.push(r);
+    }
+  }
+  return map;
+}
+
+/**
  * Every recorded step for a prospect across all plays: including bounced,
  * failed and unsubscribed ones, which `listSequenceEventsForProspect`
  * (the conversation view) filters out. `queued` rows are reservations,

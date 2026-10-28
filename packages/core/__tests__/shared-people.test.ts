@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { SharedDb } from "../src/shared-db.ts";
 import { Ledger } from "../src/ledger.ts";
+import { SharedPeople } from "../src/shared-people.ts";
 
 let root: string;
 let beta: Ledger;
@@ -22,6 +23,69 @@ afterEach(() => {
 });
 
 describe("shared person identity with workspace memberships", () => {
+  it("listProspectsByIds (#935) overlays every row's shared person from one bulk read, same values as getProspectById", () => {
+    const ids = Array.from({ length: 5 }, (_, i) =>
+      beta.upsertProspect({ name: `Person ${i}`, email: `bulk-${i}@example.test` }),
+    );
+    // The registry learns a title beta's row never had: only the overlay shows it.
+    const person = new SharedPeople(join(root, "shared.sqlite"));
+    person.setRole(beta.getProspectById(ids[2]!)!.shared_person_id!, { title: "CTO" });
+    person.close();
+
+    const get = vi.spyOn(SharedPeople.prototype, "get");
+    const query = vi.spyOn(Database.prototype, "query");
+    const bulk = beta.listProspectsByIds(ids);
+    expect(get).not.toHaveBeenCalled();
+    // The rows joined to their people: one statement for the whole set.
+    const statements = query.mock.calls.map(([sql]) => String(sql).replace(/\s+/g, " "));
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).toMatch(
+      /^SELECT p\.\*, .+ FROM prospects p LEFT JOIN \w+\.shared_people sp ON sp\.id = p\.shared_person_id WHERE p\.id IN \(\?,\?,\?,\?,\?\)$/,
+    );
+    // The chunk bound the issue states: 401 ids are two statements, not one.
+    query.mockClear();
+    expect(beta.listProspectsByIds(Array.from({ length: 401 }, (_, i) => 100_000 + i)).size).toBe(
+      0,
+    );
+    expect(query).toHaveBeenCalledTimes(2);
+    query.mockRestore();
+    get.mockRestore();
+
+    expect([...bulk.keys()].toSorted()).toEqual(ids.toSorted());
+    for (const id of ids) expect(bulk.get(id)).toEqual(beta.getProspectById(id));
+    expect(bulk.get(ids[2]!)!.title).toBe("CTO");
+
+    // A row whose person the registry no longer holds shows its own values,
+    // as getProspectById does for it.
+    const gone = beta.getProspectById(ids[3]!)!.shared_person_id!;
+    const registry = new Database(join(root, "shared.sqlite"));
+    for (const table of ["person_aliases", "person_memberships"]) {
+      registry.run(`DELETE FROM ${table} WHERE person_id = ?`, [gone]);
+    }
+    registry.run("DELETE FROM shared_people WHERE id = ?", [gone]);
+    registry.close();
+    const orphan = beta.listProspectsByIds([ids[3]!]).get(ids[3]!);
+    expect(orphan).toEqual(beta.getProspectById(ids[3]!));
+    expect(orphan).toMatchObject({ name: "Person 3", shared_person_id: gone });
+  });
+
+  it("listProspectsByIds on an anonymous ledger (#935) overlays shared people without the joined reader: no file for it to open", () => {
+    const anonymous = new Ledger(":memory:", { sharedPeoplePath: join(root, "shared.sqlite") });
+    try {
+      const ids = [0, 1].map((i) =>
+        anonymous.upsertProspect({ name: `Anon ${i}`, email: `anon-${i}@example.test` }),
+      );
+      const bulk = anonymous.listProspectsByIds(ids);
+      expect([...bulk.keys()].toSorted()).toEqual(ids.toSorted());
+      for (const id of ids) {
+        expect(bulk.get(id)).toEqual(anonymous.getProspectById(id));
+        expect(bulk.get(id)!.shared_person_id).toBeTruthy();
+      }
+    } finally {
+      anonymous.close();
+    }
+  });
+
   it("reuses one person across workspaces and normalized identifiers", () => {
     const a = beta.upsertProspect({
       name: "Olga",

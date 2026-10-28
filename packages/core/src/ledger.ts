@@ -51,6 +51,7 @@ import {
   listAllSequenceEventsForProspect as cadListAllSequenceEventsForProspect,
   listChannelEventsForProspect as cadListChannelEventsForProspect,
   listSequenceEventsForProspect as cadListSequenceEventsForProspect,
+  listSequenceEventsForProspects as cadListSequenceEventsForProspects,
   postponeCadence as cadPostponeCadence,
   listLinkedInInviteEvents as cadListLinkedInInviteEvents,
   listLinkedInInviteCadences as cadListLinkedInInviteCadences,
@@ -324,7 +325,8 @@ export class Ledger {
     const namedWorkspace =
       basename(path) === "ledger.sqlite" && dirname(dirname(resolve(path))) === workspacesDir();
     if (options.sharedPeoplePath || (!demoMode() && (path === DEFAULT_DB_PATH || namedWorkspace))) {
-      this.people = new SharedPeople(options.sharedPeoplePath ?? sharedDbPath());
+      const peoplePath = options.sharedPeoplePath ?? sharedDbPath();
+      this.people = new SharedPeople(peoplePath);
       this.prospects.ensureSharedPersonColumn();
       // Scope `SharedPeople`'s ledger-agnostic membership/link calls to this
       // ledger's own path, matching what the inline `Ledger.bindSharedPerson`
@@ -338,6 +340,9 @@ export class Ledger {
         link: (prospectId, personId) => people.link(this.path, prospectId, personId),
         version: () => people.version(),
       });
+      // The inbox's bulk prospect read joins rows to their people in one
+      // statement (#935); see ProspectStore.attachSharedPeopleReader.
+      this.prospects.attachSharedPeopleReader(path, peoplePath, LEDGER_BUSY_TIMEOUT_MS);
       this.refreshSharedPeople();
     }
     // Build stores after migration so their tables exist.
@@ -994,10 +999,26 @@ export class Ledger {
     return this.inbox.listProspectIdsWithReplies();
   }
 
+  /** @see ledger-inbox.ts#InboxStore.listInboxRepliesForProspects */
+  listInboxRepliesForProspects(prospectIds: readonly number[]): Map<number, InboxReplyRecord[]> {
+    return this.inbox.listInboxRepliesForProspects(prospectIds);
+  }
+
   /** Full prospect record by id (PK seek). Avoids loading every prospect to find one. */
   getProspectById(id: number): ProspectRecord | null {
     const prospect = this.prospects.withSharedIdentity(this.prospects.getProspectRow(id));
     return this.prospects.attachMailAddress(prospect, id);
+  }
+
+  /**
+   * `getProspectById` for a set of ids at once (#935): one statement per
+   * chunk of ids, the rows joined to their shared people, then the
+   * shared-identity overlay per row in memory. No mail address: the inbox's
+   * conversation list, the one reader, shows name, company, email and source
+   * only. A missing id has no entry.
+   */
+  listProspectsByIds(ids: readonly number[]): Map<number, ProspectRecord> {
+    return this.prospects.getProspectsByIds(ids);
   }
 
   /**
@@ -1613,6 +1634,13 @@ export class Ledger {
   /** @see ledger-cadence.ts#listSequenceEventsForProspect */
   listSequenceEventsForProspect(prospectId: number): SequenceEventRecord[] {
     return cadListSequenceEventsForProspect(this.db, prospectId);
+  }
+
+  /** @see ledger-cadence.ts#listSequenceEventsForProspects */
+  listSequenceEventsForProspects(
+    prospectIds: readonly number[],
+  ): Map<number, SequenceEventRecord[]> {
+    return cadListSequenceEventsForProspects(this.db, prospectIds);
   }
 
   /** @see ledger-cadence.ts#listSequenceEventsForCadences */
@@ -2380,6 +2408,7 @@ export class Ledger {
   }
 
   close(): void {
+    this.prospects.closeSharedPeopleReader();
     this.people?.close();
     optimizeOnClose(this.db);
     this.db.close();
