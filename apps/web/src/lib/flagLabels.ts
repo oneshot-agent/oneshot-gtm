@@ -33,6 +33,7 @@ const NAMED: Record<string, string> = {
   "contacted-elsewhere": "another workspace emailed them this week",
   ungrounded: "research found nothing on them; the draft leans on the company name",
   "email-at-former-employer": "their address is at a company they have left",
+  "email-mismatch": "the address matches none of their current companies",
   "already-enrolled": "already in a cadence",
   "already-contacted": "already contacted",
   "off-icp": "off ICP",

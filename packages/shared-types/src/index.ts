@@ -786,12 +786,14 @@ export interface SendDeliveryView {
 export interface QueueRowView {
   /**
    * Why an email row may not send yet, whatever its approval: `off-icp` (the
-   * saved fit assessment rejects the person) or `weak-offer` (the active
-   * offer was rated a weak fit, and the founder has not rewritten, replaced
-   * or approved it). A fit hold wins when both apply. Absent in older API
-   * responses.
+   * saved fit assessment rejects the person), `email-mismatch` (the address
+   * lands at none of the companies person research says they work at now,
+   * and the founder has not approved sending to it) or `weak-offer` (the
+   * active offer was rated a weak fit, and the founder has not rewritten,
+   * replaced or approved it). The first that applies wins, in that order.
+   * Absent in older API responses.
    */
-  sendHold?: { code: "off-icp" | "weak-offer"; reason: string } | null;
+  sendHold?: { code: "off-icp" | "email-mismatch" | "weak-offer"; reason: string } | null;
   /** Delivery check of the first-touch send, when one ran (sent rows only). */
   delivery?: SendDeliveryView | null;
   /**

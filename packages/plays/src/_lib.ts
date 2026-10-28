@@ -1587,6 +1587,34 @@ function parseSubjectBody(raw: string): DraftedEmail | null {
 /** The draft flag, and the queue hold code, of a send held for a weak offer (see `offerHoldsSend`). */
 export const WEAK_OFFER_FLAG = "weak-offer";
 
+/** The draft flag, and the queue hold code, of a send held for an email that matches no current company. */
+export const EMAIL_MISMATCH_FLAG = "email-mismatch";
+
+/**
+ * True when a queue payload's work email lands at none of the companies
+ * person research says they work at now (`emailMismatch`, written by find)
+ * and the founder has not approved sending to this exact address. A changed
+ * address is checked again.
+ */
+export function emailMismatchHold(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const p = payload as Record<string, unknown>;
+  const m = p["emailMismatch"];
+  if (
+    !m ||
+    typeof m !== "object" ||
+    typeof (m as { emailDomain?: unknown }).emailDomain !== "string"
+  ) {
+    return false;
+  }
+  const email = typeof p["email"] === "string" ? p["email"].trim().toLowerCase() : "";
+  const approved =
+    typeof p["emailMismatchApproved"] === "string"
+      ? p["emailMismatchApproved"].trim().toLowerCase()
+      : "";
+  return !email || approved !== email;
+}
+
 export interface SendDraftedOpts {
   playName: string;
   to: string;
@@ -1627,6 +1655,12 @@ export interface SendDraftedOpts {
    * send with the `weak-offer` flag, after the ICP gate (a fit hold wins).
    */
   weakOffer?: boolean;
+  /**
+   * The address matches none of the companies research says this person works
+   * at now and the founder has not approved it (`emailMismatchHold`). Blocks
+   * the send with the `email-mismatch` flag, after the ICP gate.
+   */
+  emailMismatch?: boolean;
   dryRun: boolean;
   /**
    * Allow a first-touch even if another play already touched the prospect.
@@ -1665,6 +1699,16 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
       opts.flags.push(WEAK_OFFER_FLAG);
     }
   }
+  if (
+    !opts.dryRun &&
+    opts.emailMismatch &&
+    opts.flags.length > 0 &&
+    !opts.flags.includes(EMAIL_MISMATCH_FLAG)
+  ) {
+    // As for a weak offer: a redraft cannot fix the address, so record it and
+    // the drain parks the row for the founder.
+    opts.flags.push(EMAIL_MISMATCH_FLAG);
+  }
   if (!opts.dryRun && opts.flags.length === 0) {
     // Pre-send dedupe: never send step-0 twice to the same (prospect, play).
     // Residual microsecond race between this read and recordSequenceEvent is
@@ -1695,6 +1739,11 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
         { play: opts.playName, to: opts.to, reason_120: why.slice(0, 120) },
         "info",
       );
+      return { receiptIds: [], sent: false };
+    }
+    if (opts.emailMismatch) {
+      opts.flags.push(EMAIL_MISMATCH_FLAG);
+      logEvent("play.skipped_email_mismatch", { play: opts.playName, to: opts.to }, "info");
       return { receiptIds: [], sent: false };
     }
     if (opts.weakOffer) {

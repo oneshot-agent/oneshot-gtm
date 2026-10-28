@@ -23,6 +23,7 @@ import {
   recordKnownConnection,
   sendLinkedInInvite,
   NO_OFFER_FLAG,
+  EMAIL_MISMATCH_FLAG,
   WEAK_OFFER_FLAG,
 } from "@oneshot-gtm/plays";
 import { resolveQueueTargetWithOffer } from "./queue-offer.ts";
@@ -46,8 +47,8 @@ type DrainDraft = DraftedRow & {
   needsReview?: boolean;
   /** The LinkedIn invite guard refused this row: counted per reason in `DrainOutcome.skipped`. */
   guard?: LinkedInGuardReason;
-  /** The send was held for the founder (a weak offer, or none): counted per code in `DrainOutcome.held`. */
-  hold?: typeof WEAK_OFFER_FLAG | typeof NO_OFFER_FLAG;
+  /** The send was held for the founder (a weak offer, none, or an address at none of their companies): counted per code in `DrainOutcome.held`. */
+  hold?: typeof WEAK_OFFER_FLAG | typeof NO_OFFER_FLAG | typeof EMAIL_MISMATCH_FLAG;
 };
 
 export interface DrainOutcome {
@@ -291,11 +292,13 @@ async function dispatchOneTarget(opts: DrainOpts, row: QueueRow): Promise<DrainD
     ...(row.play_name === "community-reply" ? { spendReserved: true } : {}),
   });
   const drafted = firstDraft(result.drafted);
-  // The send gate held it for its offer (a weak one, or none written): back
-  // to pending for the founder, or every later drain would redraft and hold
-  // it again.
+  // The send gate held it for its offer (a weak one, or none written) or its
+  // address (at none of their current companies): back to pending for the
+  // founder, or every later drain would redraft and hold it again.
   if (!drafted.sent) {
-    const hold = ([WEAK_OFFER_FLAG, NO_OFFER_FLAG] as const).find((f) => drafted.flags.includes(f));
+    const hold = ([EMAIL_MISMATCH_FLAG, WEAK_OFFER_FLAG, NO_OFFER_FLAG] as const).find((f) =>
+      drafted.flags.includes(f),
+    );
     if (hold) return { ...drafted, needsReview: true, hold };
   }
   return drafted;

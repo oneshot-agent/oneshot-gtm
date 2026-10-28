@@ -73,6 +73,8 @@ Every qualified row is researched after the finder run, never behind a click. Al
 
 Person research corrects the row's title and company and keeps the finder's originals. The result is cached for 90 days across workspaces, so a person is bought once. The person gate runs again on the researched role. A pending row that now fails is rejected with its reason. An approved row is never auto-rejected: the send is held and the reason is shown. A verified address at an employer the history says has ended is flagged `email-at-former-employer`; **Send anyway** still works.
 
+When someone holds several current roles (a job plus a board seat or a side project), the one at the company their work email belongs to is the current role. A profile that names another company while the email lands at the row's own company, with no ended role there (a LinkedIn page still saying "Stealth Startup" after a launch), leaves the row's company, title and domain alone. An address that lands at none of the person's current companies holds the send (`email-mismatch`): the row shows the email domain and the companies research found. Fix the address or the company, or choose **Send to this address anyway**, which covers that exact address only. A drain puts a held row back in pending.
+
 ### Live LinkedIn reads
 
 Bought research can trail a live profile by months. **Connect LinkedIn** on Setup signs you in twice, back to back: once for [messaging](./linkedin.md), once for a hosted browser session that reads profiles as you. Where the page lists a company, the page wins over the bought history.

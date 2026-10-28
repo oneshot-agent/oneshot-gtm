@@ -163,6 +163,11 @@ export async function commandFindDrain(opts: {
   ok(`drained ${result.drained} row(s); ${result.sent} ${opts.dryRun ? "would be sent" : "sent"}.`);
   if (result.skipped)
     note(`skipped by the LinkedIn invite guard: ${describeGuardCounts(result.skipped)}`);
+  const mismatch = result.held?.["email-mismatch"] ?? 0;
+  if (mismatch > 0)
+    note(
+      `held for an email that matches none of their current companies: ${mismatch} row(s) back to pending. Fix the address or company, or send anyway, on /queue.`,
+    );
   const weak = result.held?.["weak-offer"] ?? 0;
   if (weak > 0)
     note(

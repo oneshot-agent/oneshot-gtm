@@ -1108,7 +1108,11 @@ export function QueueRow({
             <Badge tone={statusTone(row.status)}>{row.status}</Badge>
             {row.sendHold && (
               <Badge tone="blocked">
-                {row.sendHold.code === "weak-offer" ? "held · weak offer" : "held · fit review"}
+                {row.sendHold.code === "weak-offer"
+                  ? "held · weak offer"
+                  : row.sendHold.code === "email-mismatch"
+                    ? "held · email mismatch"
+                    : "held · fit review"}
               </Badge>
             )}
             <DeliveryBadge delivery={row.delivery} />
@@ -1810,7 +1814,7 @@ export function DraftSection({
         below={
           <>
             {" "}
-            {sendHold && <SendHoldNote hold={sendHold} />} {linkedinReplyEditor}{" "}
+            {sendHold && <SendHoldNote hold={sendHold} rowId={id} />} {linkedinReplyEditor}{" "}
           </>
         }
       />
@@ -1858,7 +1862,7 @@ export function DraftSection({
       stateLine={
         hasDraftDetails ? (
           <>
-            {sendHold && <SendHoldNote hold={sendHold} />}
+            {sendHold && <SendHoldNote hold={sendHold} rowId={id} />}
             {deliveryNote && <DeliveryWarning delivery={delivery} />}
             {lineFlags.length > 0 && (
               <DraftStateLine sent={false} flags={lineFlags} hold={holdOptions} />
