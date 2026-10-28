@@ -35,7 +35,7 @@ A LinkedIn first touch starts a LinkedIn cadence, never an email one.
 
 Each message appears on Cadences as due. You preview it and send it. Until the invite is accepted the preview reads "waiting for acceptance". `not connected` and `rate limited` answers leave the step due; they do not fail it.
 
-**Already connected.** When a profile read from the last 14 days shows the person as a first-degree connection, no connection request is drafted or sent and no invite is used. The row reads "LinkedIn: already connected"; sending it records the connection, and the first message is due on Cadences at once. If LinkedIn then answers that you are not connected, the step's next preview is the connection request instead, and the message follows its acceptance.
+**Already connected.** When a profile read from the last 14 days shows the person as a first-degree connection, no connection request is drafted or sent and no invite is used. The row reads "LinkedIn: already connected"; sending it records the connection, and the first message is due on Cadences at once. The read is checked again at send: if it has aged out or no longer shows a connection, nothing is recorded and the connection request is drafted for review instead. If LinkedIn then answers that you are not connected, the step's next preview is the connection request instead, and the message follows its acceptance.
 
 ### The invite guard
 
@@ -73,7 +73,7 @@ Set `linkedinContinuation: true` for the workspace or on one trigger; the trigge
 - a first message once they accept, no sooner than two days after the invite,
 - a close.
 
-Someone a recent profile read shows as a connection gets no request: the invite step's preview reads "Already connected: skipping the connection request", and sending it brings the first message forward to now. Someone LinkedIn reports as already connected when the invite goes out has nothing to accept either: their first message goes two days after the invite step. Both messages are written knowing you were already connected, with no thanks for connecting and no mention of a note they never received.
+Someone a recent profile read shows as a connection gets no request: the invite step's preview reads "Already connected: skipping the connection request", and sending it brings the first message forward to now. The read is checked again at send; if it no longer shows a connection, the next preview is the connection request. Someone LinkedIn reports as already connected when the invite goes out has nothing to accept either: their first message goes two days after the invite step. Both messages are written knowing you were already connected, with no thanks for connecting and no mention of a note they never received.
 
 Each step is a draft you review on Cadences. The invite passes the same guard and quota. If the guard refuses, the preview shows the refusal, the step is skipped and the cadence completes. A cadence already running keeps the steps it started with.
 
