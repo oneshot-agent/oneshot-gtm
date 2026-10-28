@@ -99,6 +99,9 @@ describe("the scanner itself", () => {
   });
 
   it("flags a OneShot host that is not the docs or telemetry host", () => {
+    expect(
+      rules("packages/x/__tests__/a.test.ts", "see https://docs.oneshotagent.com.evil.example/x"),
+    ).toEqual(["oneshot-host"]);
     expect(rules("packages/x/__tests__/a.test.ts", 'sendingDomain: "oneshotagents.com"')).toEqual([
       "oneshot-host",
     ]);
@@ -129,6 +132,7 @@ describe("the scanner itself", () => {
       "~/.oneshot-gtm-workspaces/<name>/config.json",
       "the dashboard listens on http://localhost:3030",
       "see https://docs.oneshotagent.com/pricing",
+      "the docs live at docs.oneshotagent.com.",
       "import { z } from 'zod@3.23.8'",
     ]) {
       expect(rules("packages/x/__tests__/a.test.ts", line), line).toEqual([]);

@@ -151,7 +151,8 @@ export const ONESHOT_HOSTS = new Set<string>([
   "docs.oneshotagent.com",
   "telemetry.oneshotagent.com",
 ]);
-const ONESHOT_HOST = /(?:[a-z0-9-]+\.)*oneshotagents?\.com/gi;
+// Match the whole hostname, so an approved host followed by more labels is judged as itself.
+const ONESHOT_HOST = /(?:[a-z0-9-]+\.)*oneshotagents?\.com(?:\.[a-z0-9-]+)*(?![a-z0-9-])/gi;
 
 export const PITCH_PHRASES = [
   /per-call signed receipts/i,
