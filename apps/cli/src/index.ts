@@ -507,7 +507,7 @@ domains
   .action(runOrFail((opts: { json?: boolean }) => commandDomainsList(opts)));
 domains
   .command("resume <domain>")
-  .description("Resume a paused sending domain (e.g. oneshotagents.com)")
+  .description("Resume a paused sending domain (e.g. yourcompany-mail.com)")
   .action(runOrFail(commandDomainsResume));
 domains
   .command("pause <domain>")

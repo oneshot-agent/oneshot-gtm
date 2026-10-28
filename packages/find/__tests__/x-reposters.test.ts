@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { XCandidate, XUser } from "../src/_x-types.ts";
+import { DEV_TOOL_X_LANE_KEYWORDS } from "./fixtures/x-lane-keywords.ts";
 
 // Routing is the crux: a founder-lane pick → x-repost-intro, an amplifier with
 // an email → x-amplify, an amplifier without one → x-amplify-dm. Mock the
@@ -36,6 +37,8 @@ let dupHandles = new Set<string>();
 let emailsByHandle: Record<string, string> = {};
 /** handles whose deepResearchPerson call throws ("Could not find data…"). */
 let researchFailsFor = new Set<string>();
+/** The email the profile-extract LLM call returns; null = none. */
+let extractedEmail: string | null = null;
 
 function user(over: Partial<XUser> = {}): XUser {
   return {
@@ -147,7 +150,7 @@ vi.mock("@oneshot-gtm/intel", () => ({
       name: null,
       company: "Acme",
       role: "CTO",
-      email: null,
+      email: extractedEmail,
       angle: "ships agent infra",
     }),
   }),
@@ -216,6 +219,7 @@ beforeEach(() => {
   dupHandles = new Set();
   emailsByHandle = {};
   researchFailsFor = new Set();
+  extractedEmail = null;
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -330,6 +334,84 @@ describe("runXRepostersFinder — gates and bookkeeping", () => {
     expect(persisted[0]!.playName).toBe("x-repost-intro");
     expect(researchCalls).toHaveLength(0);
     expect(enqueued).toHaveLength(0);
+  });
+
+  describe("a founder-lane rejection with the amplifier lane also cleared", () => {
+    // 30k followers and a site: both lanes under the empty default vocabulary.
+    const dual = (username: string) =>
+      candidate({
+        id: `u-${username}`,
+        username,
+        name: username,
+        followers: 30_000,
+        following: 5_000,
+        description: "founder, building AI dev tools, shipping in public",
+        site: "https://example.com",
+      });
+
+    it("stage-A reject moves the pick to the amplifier lane instead of dropping it", async () => {
+      harvestCandidates = [dual("duo")];
+      emailsByHandle = { duo: "duo@x.dev" };
+      stageAAction = "reject";
+      const out = await runXRepostersFinder({ dryRun: false, seeds: SEEDS });
+      expect(out.enqueued).toBe(1);
+      expect(out.droppedRole ?? 0).toBe(0);
+      expect(persisted).toHaveLength(0);
+      expect(enqueued[0]!.playName).toBe("x-amplify");
+      expect(enqueued[0]!.dedupeKey).toBe("x-reposters:duo");
+      expect(enqueued[0]!.notes).not.toContain("also an amplifier");
+      expect(researchCalls).toEqual(["duo"]);
+    });
+
+    it("stage-B reject reuses the paid research for the amplifier row", async () => {
+      harvestCandidates = [dual("duob")];
+      stageBVerdict = "reject";
+      emailsByHandle = { duob: "duob@x.dev" };
+      const out = await runXRepostersFinder({ dryRun: false, seeds: SEEDS });
+      expect(out.enqueued).toBe(1);
+      expect(persisted).toHaveLength(0);
+      expect(enqueued[0]!.playName).toBe("x-amplify");
+      expect(researchCalls).toEqual(["duob"]);
+    });
+
+    it("stage-B fallback keeps an email only the extract found, so the row is x-amplify", async () => {
+      harvestCandidates = [dual("duoe")];
+      stageBVerdict = "reject";
+      // No email in the SDK enrichment; the profile extract finds one.
+      extractedEmail = "duoe@x.dev";
+      const out = await runXRepostersFinder({ dryRun: false, seeds: SEEDS });
+      expect(out.enqueued).toBe(1);
+      expect(enqueued[0]!.playName).toBe("x-amplify");
+      expect(enqueued[0]!.payload["email"]).toBe("duoe@x.dev");
+    });
+
+    it("stage-B fallback ignores a placeholder the extract puts in the email field", async () => {
+      harvestCandidates = [dual("duon")];
+      stageBVerdict = "reject";
+      emailsByHandle = { duon: "duon@x.dev" };
+      extractedEmail = "N/A";
+      const out = await runXRepostersFinder({ dryRun: false, seeds: SEEDS });
+      expect(out.enqueued).toBe(1);
+      expect(enqueued[0]!.playName).toBe("x-amplify");
+      expect(enqueued[0]!.payload["email"]).toBe("duon@x.dev");
+    });
+
+    it("with founder keywords configured, a rejection still drops the pick as before", async () => {
+      // The lane lists that used to be built in had no fallback: a founder-lane
+      // reject was final even when the amplifier lane also cleared.
+      harvestCandidates = [dual("kept-out")];
+      emailsByHandle = { "kept-out": "k@x.dev" };
+      stageAAction = "reject";
+      const out = await runXRepostersFinder({
+        dryRun: false,
+        seeds: SEEDS,
+        laneKeywords: DEV_TOOL_X_LANE_KEYWORDS,
+      });
+      expect(out.droppedRole).toBe(1);
+      expect(persisted).toHaveLength(1);
+      expect(enqueued).toHaveLength(0);
+      expect(researchCalls).toHaveLength(0);
+    });
   });
 
   it("stage-A defer (classifier outage) drops WITHOUT persisting, keeping the dedupeKey alive", async () => {

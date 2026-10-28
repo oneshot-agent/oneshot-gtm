@@ -43,7 +43,7 @@ const GATE_SUMMARY_SLICE = 600;
 const MAX_ATTENDEES_PER_EVENT = 30;
 
 export interface LumaFinderOpts extends RunOpts {
-  /** Topic phrases to combine with cities (e.g. ["AI", "founders"]). REQUIRED via readiness gate. */
+  /** Topic phrases to combine with cities (e.g. ["dental", "practice owners"]). REQUIRED via readiness gate. */
   topics?: string[];
   /** City names to scope each search (e.g. ["San Francisco", "New York"]). REQUIRED via readiness gate. */
   cities?: string[];

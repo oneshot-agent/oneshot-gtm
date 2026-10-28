@@ -9,7 +9,7 @@ import type { CalendarPickerEntry } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
 /**
- * GET /api/setup/calendars?identityId=gmail:jn@x.dev. The /setup calendar
+ * GET /api/setup/calendars?identityId=gmail:you@yourcompany.com. The /setup calendar
  * picker's source list. Refuses (server-side, via `listWritableCalendars`'
  * `minAccessRole=writer`) anything below writer access. A reader/
  * freeBusyReader calendar returns every event as `summary: "busy"` with no

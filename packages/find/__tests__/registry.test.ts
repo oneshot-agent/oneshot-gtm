@@ -175,6 +175,9 @@ describe("list-page verify parsing", () => {
   });
 });
 
+/** Luma sources for the readiness cases that test something else. */
+const LUMA_SOURCES = { topics: ["dental"], cities: ["Austin"] };
+
 describe("checkReadiness", () => {
   it("returns ready:true for specs without a readiness fn", () => {
     const spec: TriggerSpec = {
@@ -278,10 +281,19 @@ describe("checkReadiness", () => {
     expect(out).toEqual({ ready: true });
   });
 
-  it("luma-events is not ready with its default config (yourEdge missing)", () => {
+  it("luma-events is not ready with its default config (topics required first)", () => {
     const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
     expect(spec.readiness).toBeDefined();
+    expect(spec.defaultConfig["topics"]).toEqual([]);
+    expect(spec.defaultConfig["cities"]).toEqual([]);
     const out = checkReadiness(spec, spec.defaultConfig);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/topics/);
+  });
+
+  it("luma-events is not ready without yourEdge once topics and cities are set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
+    const out = checkReadiness(spec, { ...spec.defaultConfig, ...LUMA_SOURCES });
     expect(out.ready).toBe(false);
     if (!out.ready) expect(out.reason).toMatch(/yourEdge/);
   });
@@ -301,6 +313,7 @@ describe("checkReadiness", () => {
     const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
     const out = checkReadiness(spec, {
       ...spec.defaultConfig,
+      ...LUMA_SOURCES,
       cities: [],
       yourEdge: "a teardown",
     });
@@ -312,6 +325,7 @@ describe("checkReadiness", () => {
     const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
     const out = checkReadiness(spec, {
       ...spec.defaultConfig,
+      ...LUMA_SOURCES,
       cities: [],
       calendars: ["sftw"],
       yourEdge: "a teardown",
@@ -323,6 +337,7 @@ describe("checkReadiness", () => {
     const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
     const out = checkReadiness(spec, {
       ...spec.defaultConfig,
+      ...LUMA_SOURCES,
       calendars: ["sftw", "tech week"],
       yourEdge: "a teardown",
     });
@@ -334,6 +349,7 @@ describe("checkReadiness", () => {
     const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
     const out = checkReadiness(spec, {
       ...spec.defaultConfig,
+      ...LUMA_SOURCES,
       calendars: ["sftw", " "],
       yourEdge: "a teardown",
     });
@@ -345,6 +361,7 @@ describe("checkReadiness", () => {
     const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
     const out = checkReadiness(spec, {
       ...spec.defaultConfig,
+      ...LUMA_SOURCES,
       yourEdge: "a 30-second teardown of how X handles Y",
     });
     expect(out).toEqual({ ready: true });
@@ -369,12 +386,51 @@ describe("checkReadiness", () => {
     if (!out.ready) expect(out.reason).toMatch(/vendors/);
   });
 
+  it("github-topics is not ready when fewer distinct vendors are set than minVendors", () => {
+    const spec = TRIGGERS.find((t) => t.name === "github-topics")!;
+    const base = { ...spec.defaultConfig, topics: ["observability"], yourEdge: "an edge" };
+    // Default minVendors is 2: one vendor could never match a repo.
+    const one = checkReadiness(spec, { ...base, vendors: ["datadog"] });
+    expect(one).toEqual({
+      ready: false,
+      reason: "set at least 2 `vendors` (minVendors is 2; 1 set), or lower `minVendors`",
+    });
+    // Duplicates and blanks don't count as distinct vendors.
+    expect(checkReadiness(spec, { ...base, vendors: ["Datadog", "datadog ", " "] }).ready).toBe(
+      false,
+    );
+    // A numeric string counts as the number it spells, as it does in the run.
+    const asText = checkReadiness(spec, {
+      ...base,
+      vendors: ["datadog", "sentry"],
+      minVendors: "3",
+    });
+    expect(asText.ready).toBe(false);
+    if (!asText.ready) expect(asText.reason).toMatch(/at least 3 `vendors`/);
+    // Only blanks is the same as no vendors.
+    const blanks = checkReadiness(spec, { ...base, vendors: [" ", ""] });
+    expect(blanks.ready).toBe(false);
+    if (!blanks.ready) expect(blanks.reason).toMatch(/^set `vendors`/);
+    // The count follows a configured minVendors, which readiness never changes.
+    const three = { ...base, vendors: ["datadog", "sentry"], minVendors: 3 };
+    const out = checkReadiness(spec, three);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/at least 3 `vendors`/);
+    expect(three.minVendors).toBe(3);
+    expect(checkReadiness(spec, { ...base, vendors: ["datadog"], minVendors: 1 })).toEqual({
+      ready: true,
+    });
+    expect(checkReadiness(spec, { ...base, vendors: ["datadog", "sentry"] })).toEqual({
+      ready: true,
+    });
+  });
+
   it("github-topics is not ready when yourEdge is blank/whitespace", () => {
     const spec = TRIGGERS.find((t) => t.name === "github-topics")!;
     const out = checkReadiness(spec, {
       ...spec.defaultConfig,
       topics: ["llm-agents"],
-      vendors: ["langchain"],
+      vendors: ["langchain", "openai"],
       yourEdge: "  \t\n  ",
     });
     expect(out.ready).toBe(false);
@@ -392,27 +448,63 @@ describe("checkReadiness", () => {
     expect(out).toEqual({ ready: true });
   });
 
-  it("hiring-signal is not ready with its default config (yourClaim required first)", () => {
+  it("hiring-signal is not ready with its default config (roles required first)", () => {
     const spec = TRIGGERS.find((t) => t.name === "hiring-signal")!;
     expect(spec.readiness).toBeDefined();
+    expect(spec.defaultConfig["roles"]).toEqual([]);
     const out = checkReadiness(spec, spec.defaultConfig);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/roles/);
+  });
+
+  it("hiring-signal is not ready without yourClaim once roles are set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "hiring-signal")!;
+    const out = checkReadiness(spec, { ...spec.defaultConfig, roles: ["Compliance Analyst"] });
     expect(out.ready).toBe(false);
     if (!out.ready) expect(out.reason).toMatch(/yourClaim/);
   });
 
   it("hiring-signal is not ready when yourClaim is blank/whitespace", () => {
     const spec = TRIGGERS.find((t) => t.name === "hiring-signal")!;
-    const out = checkReadiness(spec, { ...spec.defaultConfig, yourClaim: "  \t\n " });
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      roles: ["Compliance Analyst"],
+      yourClaim: "  \t\n ",
+    });
     expect(out.ready).toBe(false);
   });
 
-  it("hiring-signal becomes ready once yourClaim is set", () => {
+  it("hiring-signal becomes ready once roles and yourClaim are set", () => {
     const spec = TRIGGERS.find((t) => t.name === "hiring-signal")!;
     const out = checkReadiness(spec, {
       ...spec.defaultConfig,
+      roles: ["Compliance Analyst"],
       yourClaim: "we cut onboarding time for new compliance hires",
     });
     expect(out).toEqual({ ready: true });
+  });
+
+  it("x-reposters ships no lane vocabulary and no dev-signal shortcut", () => {
+    const spec = TRIGGERS.find((t) => t.name === "x-reposters")!;
+    expect(spec.defaultConfig).toMatchObject({
+      founderKeywords: [],
+      amplifierKeywords: [],
+      requiresDevSignal: false,
+    });
+    expect(spec.configBrief).toContain("`founderKeywords`");
+    expect(spec.configBrief).toContain("`requiresDevSignal`");
+  });
+
+  it("podcast-guest is not ready until podcasts are set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "podcast-guest")!;
+    expect(spec.defaultConfig["podcasts"]).toEqual([]);
+    const out = checkReadiness(spec, spec.defaultConfig);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/podcasts/);
+    expect(checkReadiness(spec, { ...spec.defaultConfig, podcasts: ["  "] }).ready).toBe(false);
+    expect(
+      checkReadiness(spec, { ...spec.defaultConfig, podcasts: ["The Practice Owners Show"] }),
+    ).toEqual({ ready: true });
   });
 
   it("every registered trigger is ready with its own default config (incl. opt-in declarers)", () => {
@@ -429,6 +521,7 @@ describe("checkReadiness", () => {
       "hiring-signal",
       "accelerator-batch",
       "luma-events",
+      "podcast-guest",
       "local-business",
       "x-reposters",
       "gov-solicitation",

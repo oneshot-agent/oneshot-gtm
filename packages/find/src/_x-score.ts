@@ -35,10 +35,35 @@ export interface XLaneConfig {
   minTopicHits: number;
   /** A link in the bio that isn't a promo page. Something shipped beats something described. */
   requiresSite: boolean;
-  /** A GitHub link satisfies the topic gate on its own. It's proof, not a hint. */
-  requiresDevSignal: boolean;
-  keywords: string[];
   weights: { reach: number; reciprocity: number; habit: number; topic: number };
+}
+
+/**
+ * Who each lane is for: the founder's choice, read from the x-reposters
+ * trigger config. An empty keyword list opens that lane's topic gate, so the
+ * person-ICP gate (founder lane) and the choice of seeds (amplifier lane)
+ * decide instead.
+ */
+export interface XLaneKeywords {
+  founderKeywords: string[];
+  amplifierKeywords: string[];
+  /**
+   * A GitHub link counts as proof: it clears the amplifier lane's topic gate
+   * on its own and adds to the topic score in both lanes.
+   */
+  requiresDevSignal: boolean;
+}
+
+export const DEFAULT_X_LANE_KEYWORDS: XLaneKeywords = {
+  founderKeywords: [],
+  amplifierKeywords: [],
+  requiresDevSignal: false,
+};
+
+/** A lane's keywords, trimmed and lowercased, blanks dropped. */
+function laneKeywords(lane: XLane, kw: XLaneKeywords): string[] {
+  const raw = lane === "founder" ? kw.founderKeywords : kw.amplifierKeywords;
+  return raw.map((k) => k.trim().toLowerCase()).filter((k) => k.length > 0);
 }
 
 /**
@@ -51,90 +76,29 @@ export interface XLaneConfig {
 export const X_LANES: Record<XLane, XLaneConfig> = {
   amplifier: {
     /**
-     * The win condition is adoption by people who build, and that comes from
-     * audience composition, not follower count: measured on AI-influencer
-     * seeds: 0 of 214 reposters had a GitHub link in bio. So the floor is low
-     * and the gate moves to evidence they build things.
+     * Who boosts a launch depends on who their audience is more than on its
+     * size, so the floor is low and the bio keywords, when set, carry the gate.
      */
     minFollowers: 1_000,
     minTopicHits: 2,
     requiresSite: false,
-    requiresDevSignal: true,
-    keywords: [
-      "dev",
-      "developer",
-      "engineer",
-      "programmer",
-      "swe",
-      "backend",
-      "frontend",
-      "fullstack",
-      "devops",
-      "rust",
-      "python",
-      "typescript",
-      "javascript",
-      "golang",
-      "react",
-      "open source",
-      "oss",
-      "maintainer",
-      "contributor",
-      "cli",
-      "api",
-      "infra",
-      "agent",
-      "llm",
-      "ai",
-      "build",
-      "ship",
-      "code",
-      "coding",
-      "hacker",
-      "indie",
-      "founder",
-      "startup",
-      "saas",
-    ],
     weights: { reach: 0.2, reciprocity: 0.15, habit: 0.25, topic: 0.4 },
   },
   founder: {
     /** Low, not zero: under this the bio signal is usually aspirational. */
     minFollowers: 300,
-    /** Two hits, because "founder" alone is the most-claimed word on X. */
+    /** Two hits, because one claimed word in a bio is weak evidence. */
     minTopicHits: 2,
     requiresSite: true,
-    requiresDevSignal: false,
-    keywords: [
-      "founder",
-      "cofounder",
-      "ceo",
-      "cto",
-      "build",
-      "ship",
-      "shipping",
-      "indie",
-      "bootstrapped",
-      "solo",
-      "yc",
-      "startup",
-      "saas",
-      "dev tool",
-      "open source",
-      "oss",
-      "agent",
-      "llm",
-      "ai",
-    ],
     weights: { reach: 0.05, reciprocity: 0.15, habit: 0.2, topic: 0.6 },
   },
 };
 
 /**
  * Hosts that make a bio link worthless as a founder signal: sponsorship
- * marketplaces, promo networks, link aggregators and social profiles. Three
- * accounts in one day's harvest shared the same hyperagent.com referral link:
- * that's a promo network, not a product.
+ * marketplaces, promo networks, link aggregators and social profiles. A
+ * referral link that several accounts in one harvest share is a promo
+ * network, not a product.
  */
 export const X_SITE_DENYLIST = [
   "passionfroot.me",
@@ -208,12 +172,16 @@ export function dropReason(u: XUser, ctx: XDropContext, now: Date = new Date()):
 
 /**
  * Bio keyword hits for a lane. Each keyword is a stem: it matches with an
- * optional s/es/ing/er/ers/ed tail, so "agent" catches "agents" and "build"
+ * optional s/es/ing/er/ers/ed tail, so "plumb" catches "plumbing" and "build"
  * catches "building", while "ai" still doesn't catch "airplane".
  */
-export function topicHits(bio: string, lane: XLane): string[] {
+export function topicHits(
+  bio: string,
+  lane: XLane,
+  kw: XLaneKeywords = DEFAULT_X_LANE_KEYWORDS,
+): string[] {
   const lower = bio.toLowerCase();
-  return X_LANES[lane].keywords.filter((k) => {
+  return laneKeywords(lane, kw).filter((k) => {
     const stem = k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return new RegExp(`(^|[^a-z])${stem}(s|es|ing|er|ers|ed)?([^a-z]|$)`, "i").test(lower);
   });
@@ -236,17 +204,23 @@ export function siteIsOwnWork(site: string | undefined): boolean {
 }
 
 /** Which lanes this person qualifies for. Empty means don't contact them. */
-export function lanesFor(u: XUser): XLane[] {
+export function lanesFor(u: XUser, kw: XLaneKeywords = DEFAULT_X_LANE_KEYWORDS): XLane[] {
   const out: XLane[] = [];
   for (const lane of ["founder", "amplifier"] as XLane[]) {
     const cfg = X_LANES[lane];
     if (u.followers < cfg.minFollowers) continue;
     if (cfg.requiresSite && !siteIsOwnWork(u.site)) continue;
-    // A GitHub link clears the topic gate on its own; otherwise the bio has to.
-    const cleared =
-      (cfg.requiresDevSignal && hasGithub(u)) ||
-      topicHits(u.description, lane).length >= cfg.minTopicHits;
-    if (!cleared) continue;
+    const keywords = laneKeywords(lane, kw);
+    // No keywords: the topic gate is open. A short list can't ask for more
+    // hits than it has words.
+    if (keywords.length > 0) {
+      // With requiresDevSignal a GitHub link clears the amplifier gate on its
+      // own; otherwise the bio has to.
+      const cleared =
+        (lane === "amplifier" && kw.requiresDevSignal && hasGithub(u)) ||
+        topicHits(u.description, lane, kw).length >= Math.min(cfg.minTopicHits, keywords.length);
+      if (!cleared) continue;
+    }
     out.push(lane);
   }
   return out;
@@ -292,6 +266,7 @@ export function habitScore(c: XCandidate, prior?: { timesSeen: number }): number
 export function scoreCandidate(
   c: XCandidate,
   lanes: XLane[],
+  kw: XLaneKeywords = DEFAULT_X_LANE_KEYWORDS,
   prior?: { timesSeen: number },
 ): XScoredCandidate {
   const u = c.user;
@@ -300,9 +275,9 @@ export function scoreCandidate(
   const lane: XLane = lanes.includes("founder") ? "founder" : "amplifier";
   const w = X_LANES[lane].weights;
 
-  const hits = topicHits(u.description, lane);
-  // A GitHub link is worth more than any two bio words.
-  const topic = clamp((hits.length + (hasGithub(u) ? 2 : 0)) / 4);
+  const hits = topicHits(u.description, lane, kw);
+  // With requiresDevSignal, a GitHub link is worth more than any two bio words.
+  const topic = clamp((hits.length + (kw.requiresDevSignal && hasGithub(u) ? 2 : 0)) / 4);
   const score = Math.round(
     100 *
       (w.reach * reachScore(u.followers) +

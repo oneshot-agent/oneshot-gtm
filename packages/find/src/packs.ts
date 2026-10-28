@@ -29,12 +29,13 @@
  * it wires the company-level sources instead (`accelerator-batch`,
  * `post-funding-auto`, `hiring-signal`, `github-topics`). It is also the only
  * pack whose triggers gate on two founder-voice keys, `yourEdge` AND
- * `yourClaim`.
+ * `yourClaim`, plus `vendors`, the list only the founder's product decides.
  *
- * Every pack's `requires` lists only founder-voice keys (`yourEdge`) and
- * deliberately omits them from every trigger patch. Those words describe
- * the founder's OWN product, and a pack that guessed at them would produce
- * generic email, the exact failure mode this epic exists to avoid. A trigger
+ * Every pack's `requires` lists only founder-owned keys (`yourEdge`, and
+ * `vendors` where a pack touches github-topics) and deliberately omits them
+ * from every trigger patch. Those describe the founder's OWN product, and a
+ * pack that guessed at them would produce generic email or search someone
+ * else's market, the exact failure mode this epic exists to avoid. A trigger
  * a pack touches therefore comes out of Apply enabled but NOT ready until
  * the founder fills `yourEdge` in (via the strategist's `apply-config` or
  * `/queue`'s trigger card). The intended end state, not a bug.
@@ -61,8 +62,9 @@ export interface IndustryPack {
   /** trigger name -> config patch, merged over that trigger's STORED config (falling back to its defaultConfig). */
   triggers: Record<string, Record<string, unknown>>;
   /**
-   * Founder-voice keys the pack deliberately leaves blank (e.g. `yourEdge`,
-   * `yourClaim`) because they have to come from the founder, not a template.
+   * Keys the pack deliberately leaves blank because they have to come from the
+   * founder, not a template: founder-voice text (`yourEdge`, `yourClaim`) or
+   * a list that depends on the product (`vendors`).
    * Surfaced on the pack card so the founder knows what's left after Apply.
    */
   requires: string[];
@@ -249,7 +251,7 @@ export const PACKS: IndustryPack[] = [
     summary:
       "Founders and engineers at AI startups building agents for one industry — clinics, logistics, trades, finance.",
     buyerBrief:
-      "Founder / founding engineer / head of AI at a startup building agents for a single industry. The only pack whose buyers are themselves software companies, so none of the local-business or public-registry channels apply; every source here is a company-level signal instead. `accelerator-batch` and `post-funding-auto` are TIMING signals — fresh money, a demo-day clock, and a budget that exists for the first time. `hiring-signal` catches a build-vs-buy decision in flight: a company posting a founding or applied AI engineer role is about to build whatever it has not bought. `github-topics` catches the same decision already half-made — a repo whose manifests import several vendor SDKs is carrying the integration tax the consolidation pitch names. Accelerators are narrowed to YC and AI Grant (each at its latest cohort, resolved from the date) because those two populations skew AI-native; the generalist incubators dilute the run without raising the hit rate. `vendors` below is a starting vocabulary of the action APIs this population tends to wire up, not a claim about any founder's competitors — edit it to the landscape you actually sell against.",
+      "Founder / founding engineer / head of AI at a startup building agents for a single industry. The only pack whose buyers are themselves software companies, so none of the local-business or public-registry channels apply; every source here is a company-level signal instead. `accelerator-batch` and `post-funding-auto` are TIMING signals — fresh money, a demo-day clock, and a budget that exists for the first time. `hiring-signal` catches a build-vs-buy decision in flight: a company posting a founding or applied AI engineer role is about to build whatever it has not bought. `github-topics` catches the same decision already half-made — a repo in an agent topic whose manifests import several of the vendors your product overlaps with. Accelerators are narrowed to YC and AI Grant (each at its latest cohort, resolved from the date) because those two populations skew AI-native; the generalist incubators dilute the run without raising the hit rate. The pack sets no `vendors`: they depend on what your product does, so `github-topics` stays not ready until you set them.",
     icpOneLiner: "Founders and engineers at AI startups building agents for a single industry",
     triggers: {
       // Accelerators, not cohorts: each resolves to its latest cohort from the
@@ -278,31 +280,20 @@ export const PACKS: IndustryPack[] = [
       },
       // Slugs verified against the GitHub search API (topic:<slug> returns
       // thousands of repos each); `rag` and other retrieval-only topics are
-      // deliberately absent. This pack wants agents that act.
+      // deliberately absent. This pack wants agents that act. No `vendors`:
+      // which vendors matter depends on the founder's product, and leaving the
+      // key out keeps any list already stored instead of wiping it.
       "github-topics": {
         topics: ["ai-agents", "agentic-ai", "ai-automation", "voice-ai", "conversational-ai"],
-        vendors: [
-          "twilio",
-          "sendgrid",
-          "resend",
-          "postmark",
-          "elevenlabs",
-          "deepgram",
-          "browserbase",
-          "apollo",
-          "clearbit",
-          "hunter",
-          "tavily",
-          "exa",
-        ],
         directCompetitors: [],
         minStars: 10,
         minVendors: 2,
       },
     },
     // accelerator-batch and github-topics gate on `yourEdge`; hiring-signal
-    // gates on `yourClaim`. Both stay the founder's own words.
-    requires: ["yourEdge", "yourClaim"],
+    // gates on `yourClaim`; github-topics also gates on `vendors`. All three
+    // come from the founder.
+    requires: ["yourEdge", "yourClaim", "vendors"],
   },
 ];
 
