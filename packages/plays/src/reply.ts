@@ -96,7 +96,12 @@ export function repeatsPriorText(body: string, priorTexts: readonly string[]): b
 interface CommitPattern {
   regex: RegExp;
   requireAffirmative?: boolean;
+  /** Extra cues that satisfy the affirmative gate for this pattern only. */
+  affirmative?: RegExp;
 }
+
+/** "Let me feature you…" offers a designation; it is not a global cue ("let me explain our pricing"). */
+const LET_ME_CUE = /\blet(?: me| us)\b/i;
 
 /**
  * Verbs by which the founder hands the other party a designation ("we'll make
@@ -154,6 +159,7 @@ const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
       "i",
     ),
     requireAffirmative: true,
+    affirmative: LET_ME_CUE,
   },
   // Featuring the other party in the founder's own material: an example, a
   // case study, the website, the docs, a post. The founder must be the one
@@ -165,6 +171,7 @@ const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
       "i",
     ),
     requireAffirmative: true,
+    affirmative: LET_ME_CUE,
   },
 ];
 
@@ -234,12 +241,13 @@ function splitSentences(text: string): string[] {
  */
 export function bodyCommitsTerms(body: string): boolean {
   const sentences = splitSentences(body);
-  return COMMITS_TERMS_PATTERNS.some(({ regex, requireAffirmative }) =>
+  return COMMITS_TERMS_PATTERNS.some(({ regex, requireAffirmative, affirmative }) =>
     sentences.some((sentence) => {
       if (!regex.test(sentence)) return false;
       const negationCheckText = sentence.replace(TRAILING_HEDGE, "");
       if (NEGATION_CUE.test(negationCheckText)) return false;
-      if (requireAffirmative && (QUESTION_CUE.test(sentence) || !AFFIRMATIVE_CUE.test(sentence))) {
+      const affirmed = AFFIRMATIVE_CUE.test(sentence) || (affirmative?.test(sentence) ?? false);
+      if (requireAffirmative && (QUESTION_CUE.test(sentence) || !affirmed)) {
         return false;
       }
       return true;

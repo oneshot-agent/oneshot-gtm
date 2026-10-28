@@ -159,6 +159,13 @@ describe("bodyCommitsTerms (issue #480)", () => {
     expect(bodyCommitsTerms("Thanks for featuring us in your newsletter.")).toBe(false);
     expect(bodyCommitsTerms("It's great that you'd feature us on your blog.")).toBe(false);
   });
+
+  it("counts 'let me' / 'let us' as a commitment only for feature and endorsement offers", () => {
+    expect(bodyCommitsTerms("Let me feature your integration in our docs.")).toBe(true);
+    expect(bodyCommitsTerms("Let us make you our recommended provider.")).toBe(true);
+    expect(bodyCommitsTerms("Let me explain our pricing.")).toBe(false);
+    expect(bodyCommitsTerms("Let us walk you through the roadmap.")).toBe(false);
+  });
 });
 
 describe("intentDirectiveBlock (issue #480)", () => {

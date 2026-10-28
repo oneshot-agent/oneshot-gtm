@@ -58,7 +58,7 @@ Examples:
 
   <!--ACTION:enable:show-hn-->
   <!--ACTION:disable:github-topics-->
-  <!--ACTION:apply-config:github-topics:{"limit":25,"maxCostUsd":5,"minVendors":2,"yourEdge":"For a team building a field-service app — the first double booking usually traces to time zones: a technician's day crosses a zone line and every later slot shifts an hour. What we found: store each slot in the job site's zone. // When the buyers are dispatchers, the schedule breaks at the first same-day cancellation: the gap sits empty because nobody re-routes by hand. What we found: offer the slot to the nearest booked job that can move up.","topics":["field-service","scheduling","dispatch","route-optimization"],"vendors":["mapbox","googlemaps","nylas","cronofy","twilio"]}-->
+  <!--ACTION:apply-config:github-topics:{"limit":25,"maxCostUsd":5,"minVendors":2,"yourEdge":"For a team building a field-service app — the first double booking usually traces to time zones: a technician's day crosses a zone line and every later slot shifts an hour. What we found: store each slot in the job site's zone. // When the buyers are dispatchers, the schedule breaks at the first same-day cancellation: the gap sits empty because nobody re-routes by hand. What we found: offer the slot to the nearest booked job that can move up. // When the business runs crews across several branches, the first missed job usually comes from a technician double-listed in two branch calendars. What we found: keep one roster per technician and let each branch read from it.","topics":["field-service","scheduling","dispatch","route-optimization"],"vendors":["mapbox","googlemaps","nylas","cronofy","twilio"]}-->
   <!--ACTION:apply-pack:devtools-early-adopters-->
 
 ## Industry packs
