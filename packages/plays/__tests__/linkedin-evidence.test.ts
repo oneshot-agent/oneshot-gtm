@@ -402,6 +402,65 @@ describe("live-read rule", () => {
     );
     expect(read).not.toHaveBeenCalled();
   });
+
+  it("a partial read (Experience held back) is no snapshot: the view is made, and keeps the distance", async () => {
+    const url = "https://linkedin.com/in/dana-lee";
+    getSharedDb().setPaidCache({
+      key: paidCacheKey("linkedin.profile", { url }),
+      callType: "linkedin.profile",
+      status: "ok",
+      resultJson: JSON.stringify({
+        partial: true,
+        headline: "Founder, Tavora",
+        networkDistance: "FIRST_DEGREE",
+        experience: [],
+      }),
+      costUsd: 0,
+      fetchedAt: NOW.toISOString(),
+    });
+    const read = vi.fn(async () => ({
+      headline: "Founder, Tavora",
+      experience: [{ company: "Tavora", period: "Present" }],
+      networkDistance: "FIRST_DEGREE",
+    }));
+    expect(await companyTheyRun({ playName: "p", prospect, reader: read as never, now: NOW })).toBe(
+      "Tavora",
+    );
+    expect(read).toHaveBeenCalledTimes(1);
+    const entry = readPaidCache("linkedin.profile", { url });
+    expect(entry?.status === "ok" && entry.result).toMatchObject({
+      networkDistance: "FIRST_DEGREE",
+      experience: [{ company: "Tavora" }],
+    });
+    expect(entry?.status === "ok" && (entry.result as { partial?: unknown }).partial).toBeFalsy();
+  });
+
+  it("a view that does not report the distance keeps the partial read's, with its time", async () => {
+    const url = "https://linkedin.com/in/dana-lee";
+    const readAt = new Date(NOW.getTime() - 2 * 86_400_000).toISOString();
+    getSharedDb().setPaidCache({
+      key: paidCacheKey("linkedin.profile", { url }),
+      callType: "linkedin.profile",
+      status: "ok",
+      resultJson: JSON.stringify({
+        partial: true,
+        readAt,
+        networkDistance: "FIRST_DEGREE",
+        experience: [],
+      }),
+      costUsd: 0,
+      fetchedAt: readAt,
+    });
+    const read = vi.fn(async () => ({ headline: "Founder, Tavora", experience: [] }));
+    await companyTheyRun({ playName: "p", prospect, reader: read as never, now: NOW });
+    expect(read).toHaveBeenCalledTimes(1);
+    const entry = readPaidCache("linkedin.profile", { url });
+    expect(entry?.status === "ok" && entry.result).toMatchObject({
+      headline: "Founder, Tavora",
+      networkDistance: "FIRST_DEGREE",
+      networkDistanceReadAt: readAt,
+    });
+  });
 });
 
 const stillRunning = () =>
