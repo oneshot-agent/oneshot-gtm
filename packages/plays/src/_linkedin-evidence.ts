@@ -529,6 +529,10 @@ export function storedNetworkDistance(
     const distance = snapshotFrom(entry.result)?.networkDistance;
     if (!distance) continue;
     const at = storedDistanceReadAt(entry.result, entry.fetchedAt);
+    // A distance carried over from an older view keeps its own time: the
+    // entry being new does not make the distance new.
+    const age = opts.now.getTime() - Date.parse(at);
+    if (!Number.isFinite(age) || age >= opts.maxAgeMs) continue;
     if (!newest || Date.parse(at) > Date.parse(newest.readAt)) newest = { distance, readAt: at };
   }
   return newest;

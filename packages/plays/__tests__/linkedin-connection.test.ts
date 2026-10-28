@@ -77,6 +77,20 @@ describe("knownConnection", () => {
     expect(knownConnection(URL, NOW)).toBeNull();
   });
 
+  it("misses on a distance carried over from a view older than 14 days, in a fresh entry", () => {
+    storeRead(
+      "linkedin.profile",
+      {
+        headline: "Founder",
+        networkDistance: "FIRST_DEGREE",
+        networkDistanceReadAt: new Date(NOW.getTime() - 20 * DAY).toISOString(),
+        experience: [],
+      },
+      1,
+    );
+    expect(knownConnection(URL, NOW)).toBeNull();
+  });
+
   it("misses on a pending invitee (SECOND_DEGREE) and on a read that does not say", () => {
     storeRead("linkedin.profile_read", fullRead("SECOND_DEGREE", 1), 1);
     expect(knownConnection(URL, NOW)).toBeNull();
