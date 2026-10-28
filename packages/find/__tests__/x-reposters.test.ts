@@ -385,6 +385,17 @@ describe("runXRepostersFinder — gates and bookkeeping", () => {
       expect(enqueued[0]!.payload["email"]).toBe("duoe@x.dev");
     });
 
+    it("stage-B fallback ignores a placeholder the extract puts in the email field", async () => {
+      harvestCandidates = [dual("duon")];
+      stageBVerdict = "reject";
+      emailsByHandle = { duon: "duon@x.dev" };
+      extractedEmail = "N/A";
+      const out = await runXRepostersFinder({ dryRun: false, seeds: SEEDS });
+      expect(out.enqueued).toBe(1);
+      expect(enqueued[0]!.playName).toBe("x-amplify");
+      expect(enqueued[0]!.payload["email"]).toBe("duon@x.dev");
+    });
+
     it("with founder keywords configured, a rejection still drops the pick as before", async () => {
       // The lane lists that used to be built in had no fallback: a founder-lane
       // reject was final even when the amplifier lane also cleared.

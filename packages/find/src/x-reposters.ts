@@ -507,7 +507,13 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
       return;
     }
     const extracted = tryParseJsonObject<ExtractResult>(extractRes.content, {});
-    const email = str(extracted.email) ?? sdkEmail;
+    // A placeholder the extract fills in ("N/A", "unknown") is not an email:
+    // keep the SDK's address rather than route a play to it.
+    const extractedEmail = str(extracted.email);
+    const email =
+      extractedEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(extractedEmail)
+        ? extractedEmail
+        : sdkEmail;
     const fullName = str(extracted.name) ?? c.user.name;
     const role = str(extracted.role);
 
