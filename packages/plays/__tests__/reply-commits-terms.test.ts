@@ -165,6 +165,8 @@ describe("bodyCommitsTerms (issue #480)", () => {
     expect(bodyCommitsTerms("Let us make you our recommended provider.")).toBe(true);
     expect(bodyCommitsTerms("Let me explain our pricing.")).toBe(false);
     expect(bodyCommitsTerms("Let us walk you through the roadmap.")).toBe(false);
+    expect(bodyCommitsTerms("Let me show you the feature in our docs.")).toBe(false);
+    expect(bodyCommitsTerms("Let me point out that you are the recommended provider.")).toBe(false);
   });
 });
 

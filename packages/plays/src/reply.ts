@@ -100,8 +100,14 @@ interface CommitPattern {
   affirmative?: RegExp;
 }
 
-/** "Let me feature you…" offers a designation; it is not a global cue ("let me explain our pricing"). */
-const LET_ME_CUE = /\blet(?: me| us)\b/i;
+/**
+ * "Let me feature you…" / "let us make you our recommended…" offer the thing
+ * directly, so they pass the affirmative gate for these two patterns only. The
+ * verb must follow "let me/us" at once: "let me show you the feature" and
+ * "let me point out that you are the recommended provider" offer nothing.
+ */
+const LET_ME_CUE =
+  /\blet (?:me|us) (?:feature|make|name|list|designate|recommend|add|include|position)\b/i;
 
 /**
  * Verbs by which the founder hands the other party a designation ("we'll make
