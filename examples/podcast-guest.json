@@ -1,11 +1,11 @@
 [
   {
-    "name": "Rae Kim",
-    "email": "rae@stellar.dev",
-    "company": "Stellar",
-    "podcast": "Latent Space",
-    "episodeTitle": "The economics of agent infra",
-    "hookQuote": "Around 38:20 you said evals are the bottleneck for agent companies hitting Series A — that the eval suite is now the moat, not the model.",
-    "bridge": "We took that exact argument and built per-call signed receipts so eval costs are deterministic instead of estimated."
+    "name": "Simone Achebe",
+    "email": "simone@achebeelectric.example",
+    "company": "Achebe Electric",
+    "podcast": "The Service Call",
+    "episodeTitle": "Growing from three trucks to twelve",
+    "hookQuote": "Around 24:10 you said the first thing that broke past six trucks was not hiring but the whiteboard in the office: nobody could see the whole day anymore.",
+    "bridge": "That whiteboard is what we rebuilt: one board the office and every tech see at once, updated as jobs move."
   }
 ]

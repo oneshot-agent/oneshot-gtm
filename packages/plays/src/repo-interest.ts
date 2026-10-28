@@ -11,7 +11,7 @@ export interface RepoInterestTarget {
   company: string;
   /** "owner/name" of the repo they starred (an adjacent/category tool, not a competitor). */
   repo: string;
-  /** Display name for the repo (e.g. "MCP servers"); falls back to `repo`. */
+  /** Display name for the repo (e.g. "background job queues"); falls back to `repo`. */
   repoLabel?: string;
   /** One fact about how your product helps someone working in this space. */
   yourEdge: string;

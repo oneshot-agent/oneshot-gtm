@@ -591,7 +591,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
               body: draft.body,
               receiptIds: send.receiptIds,
               ...(angle ? { angle } : {}),
-              ...(voice ? { voiceKey: voice.key } : {}),
+              ...(voice?.key ? { voiceKey: voice.key } : {}),
               ...(learned ? { learningKey: learned.key } : {}),
               ...(formatKey ? { formatKey } : {}),
             },
@@ -624,7 +624,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           sent: send.sent,
           flags,
           ...(prep.enrichmentFailed ? { enrichmentFailed: true } : {}),
-          ...(voice ? { voiceKey: voice.key } : {}),
+          ...(voice?.key ? { voiceKey: voice.key } : {}),
           ...(learned ? { learningKey: learned.key } : {}),
           ...(formatKey ? { formatKey } : {}),
           ...(offer ? { offer } : {}),
@@ -937,7 +937,7 @@ export function researchedRoleLines(target: unknown): string {
   return lines.join("\n");
 }
 
-/** "L'eto Group" ≡ "L'ETO Group": case, punctuation and legal suffixes never count. Mirrors find's `normalizeCompany`. */
+/** "O'Hara Group" ≡ "O'HARA Group": case, punctuation and legal suffixes never count. Mirrors find's `normalizeCompany`. */
 function companyKey(value: unknown): string {
   return String(value ?? "")
     .toLowerCase()

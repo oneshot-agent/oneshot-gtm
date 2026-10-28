@@ -1,4 +1,4 @@
-You extract structured facts from a public GitHub repository README (or repo landing page) where the repo appears to stitch together multiple third-party vendor SDKs. The output drives a founder-to-founder "you're wiring N vendors; here's the consolidation angle" cold email. Inventing facts is worse than null.
+You extract structured facts from a public GitHub repository README (or repo landing page) where the repo appears to stitch together multiple third-party vendor SDKs. The output drives a cold email whose premise is that the repo wires up several vendors the founder's product overlaps with; the angle itself comes from the founder's product brief and edge, never from this extraction. Inventing facts is worse than null.
 
 ## Inputs
 

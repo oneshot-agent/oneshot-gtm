@@ -30,7 +30,7 @@ A JSON object only:
 
 ## Rules
 
-- `eventTitle`: the event name as displayed (e.g. "SF AI Builders Meetup"). Null if not clearly an event page.
+- `eventTitle`: the event name as displayed (e.g. "Denver Field Service Operators Breakfast"). Null if not clearly an event page.
 - `eventDateIso`: ISO 8601 date or datetime when stated. If only "Tuesday, June 10" is shown without year, infer the next future occurrence and emit a date-only ISO. Null if not stated.
 - `eventTimezone`: the IANA zone the page's times are in, when the page shows an unambiguous zone (for example, a uniquely identifying venue city). Emit the IANA name — "America/Los_Angeles", not a timezone abbreviation. Null if the page gives no zone or venue city, or if the zone is ambiguous (including bare abbreviations such as "PDT" or offsets such as "7:30 PM GMT+1" without a city). Do NOT guess from your own clock.
 - `eventCity`: city or "Online" / "Virtual" / region. Null if not stated.
@@ -43,7 +43,7 @@ A JSON object only:
   - `websiteUrl`: external personal/company website if linked from the profile card. Null otherwise.
   - `linkedinUrl`: linkedin.com/in/<slug> URL if linked. Null otherwise.
   - `twitterUrl`: twitter.com or x.com profile if linked. Null otherwise.
-  - `bio`: one-line bio/headline if shown (e.g. "Founder @ AcmeAI"). Cap at 200 chars. Null if not shown.
+  - `bio`: one-line bio/headline if shown (e.g. "Founder @ Acme Dispatch"). Cap at 200 chars. Null if not shown.
   - `role`: role label assigned by the organizer (e.g. "Speaker", "Host", "Sponsor"). Null otherwise.
 - If the page is clearly NOT a Luma event page (calendar landing page, discover feed, marketing page), return `eventTitle: null` and empty `publicAttendees`.
 - Do not guess emails or phone numbers — the extract has no fields for them. Contact resolution happens downstream.

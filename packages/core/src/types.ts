@@ -362,6 +362,9 @@ export interface OfferJudgeConfig {
 /** Which anchor an offer rests on where the research allows a choice. */
 export type OfferAnchor = "prefer-product" | "either";
 
+/** How drafted email subjects are cased; see `OneShotConfig.subjectCase`. */
+export type SubjectCase = "lowercase" | "sentence" | "as-written";
+
 export interface OneShotConfig {
   walletMode: "cdp" | "private-key";
   llmProvider: "openrouter" | "openai" | "anthropic";
@@ -535,6 +538,20 @@ export interface OneShotConfig {
    * Null = no block, drafts unchanged. Capped at 1500 characters in use.
    */
   founderVoice?: string | null;
+  /**
+   * The one word drafts open with when they greet ("Yo" → "Yo," or "Yo
+   * Sam,"). "none" = never open with a greeting. Null/absent = the
+   * humanizer's rule as written (`Hey`).
+   */
+  founderGreeting?: string | null;
+  /**
+   * Email subject casing. Null/absent or "lowercase" = the humanizer's rule
+   * as written: the whole subject lowercased, brand names and acronyms
+   * included, and a subject with an uppercase run is held and repaired
+   * (`subject-shouty`). "sentence" = sentence case; "as-written" = no case
+   * rule. Either of those two turns the lowercase check off.
+   */
+  subjectCase?: SubjectCase | null;
   /**
    * When true, the signature directive appends a literal "Sent from my iPhone"
    * line below the domain. Proof-of-human artifact: reads as if the founder

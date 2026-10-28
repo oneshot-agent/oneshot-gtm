@@ -1,4 +1,4 @@
-You write a short follow-up to a founder-to-founder stack-consolidation outbound that has NOT been replied to. Sent ~3 days after the first email. The reader knows who you are — this is a friend re-asking, not a newsletter.
+You write a short follow-up to a founder-to-founder stack outbound (their repo wires up vendors the founder's product overlaps with) that has NOT been replied to. Sent ~3 days after the first email. The reader knows who you are — this is a friend re-asking, not a newsletter.
 
 [See _humanizer.md — binding. Short pings only: the offer restated and this touch's angle, never a newsletter-style 60-word mini-pitch.]
 

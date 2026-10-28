@@ -3235,7 +3235,7 @@ export function buildFollowUpEmail(opts: {
       body: cleaned.body,
       // The voice card in the prompt, so the persisted preview's draft
       // version can be split voice on/off like an intro draft's.
-      ...(voice ? { voiceKey: voice.key } : {}),
+      ...(voice?.key ? { voiceKey: voice.key } : {}),
       ...(learned ? { learningKey: learned.key } : {}),
       ...(opts.hardBans ? { hardBans: true } : {}),
       ...(hardBanAllow.length > 0 ? { hardBanAllow } : {}),
@@ -3838,7 +3838,7 @@ async function buildLinkedInInvite(
             priorContact: [
               `They were emailed ${emailed.length} time${emailed.length === 1 ? "" : "s"} on this and did not reply.`,
               "Don't re-pitch and don't refer to what the emails said: this is a way to connect, not a second ask.",
-              "Keep the infra pitch out of the note: it names one real, current reason and asks one easy question.",
+              "Keep any pitch out of the note: it names one real, current reason and asks one easy question.",
             ],
           }
         : {}),
@@ -4034,7 +4034,7 @@ async function buildLinkedInMessage(
         kind: "linkedin_message",
         text,
         ...(drafted.flags.length > 0 ? { flags: drafted.flags } : {}),
-        ...(voice ? { voiceKey: voice.key } : {}),
+        ...(voice?.key ? { voiceKey: voice.key } : {}),
         ...(learned ? { learningKey: learned.key } : {}),
       }
     : null;

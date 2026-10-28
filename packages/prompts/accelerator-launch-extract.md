@@ -26,7 +26,7 @@ A JSON object only:
 ## Rules
 
 - `company`: the company / startup name. Capitalize as shown on the page. NULL if the page isn't about a single company (listicles, batch indexes, news roundups → null).
-- `companyDomain`: the company's primary website domain — bare host, no scheme, no path. e.g. `usebidflow.com`, not `https://www.usebidflow.com/about`. Strip leading `www.`. Prefer the company's own site over an accelerator profile URL. NULL if no clear company website is on the page.
+- `companyDomain`: the company's primary website domain — bare host, no scheme, no path. e.g. `getcrewplan.com`, not `https://www.getcrewplan.com/about`. Strip leading `www.`. Prefer the company's own site over an accelerator profile URL. NULL if no clear company website is on the page.
 - `oneLiner`: the 1-sentence product description. ≤140 chars. Trim trailing punctuation. NULL if not stated.
 - `founderName`: any founder / co-founder / CEO's full name explicitly attributed on the page (e.g. "Founded by …", "CEO X", a founder photo caption, a "Team" bullet that says "Alice — Co-founder"). When multiple founders are named, prefer the one with the most senior role (CEO > Founder > Co-founder & CTO > Co-founder); when role isn't stated, return the first one listed. NULL only when the page never names anyone explicitly attributed as a founder. The downstream pipeline uses this for the email salutation — any of the co-founders is a valid recipient — so don't return NULL just because there are multiple. Don't guess people who aren't on the page.
 - `founderRole`: e.g. "Founder", "CEO", "Co-founder & CTO" — matches the founder you returned. NULL when role isn't stated.

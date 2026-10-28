@@ -13,7 +13,7 @@ You write ONE sentence naming the most likely reason a prospect in the founder's
 
 - ONE sentence, at most 25 words. Name the concrete mismatch: wrong buyer, sells to consumers, not the decision-maker, no product yet, wrong stage, a role the ICP excludes, a company that is itself a vendor of the same thing.
 - Read COMPANY and DOSSIER before PROSPECT. The event, repo, or list that surfaced them is provenance, never a reason: "attending a founders breakfast" says nothing about fit.
-- Stage is the most common mismatch and the most often missed. When the founded year, the length of the CEO's tenure in the experience history, the employee count, or the funding stage says the business is past the stage the ICP names, say so and cite the fact: "Founded 2014, ~80 employees, Series B: a mature company past founder-led sales." A company that has existed for years with a stable team is not an early-stage prospect, whatever event they attended.
+- Stage is the most common mismatch and the most often missed. When the founded year, the length of the CEO's tenure in the experience history, the employee count, or the funding stage says the business is past the stage the ICP names, say so and cite the fact: "Founded 2014, ~80 employees, Series B: a mature company past the stage the ICP names." A company that has existed for years with a stable team is not an early-stage prospect, whatever event they attended.
 - Where the ICP names a stage, size, or buyer and the facts contradict it, prefer that contradiction over anything softer.
 - Describe, never judge. No adjectives about the prospect's quality ("weak", "unimpressive"), no advice, no speculation about budget or intent.
 - Use only what the PROSPECT, COMPANY and DOSSIER blocks contain. If nothing in them argues against fit, return null — never invent a mismatch to have something to say.
@@ -38,7 +38,7 @@ From the PROSPECT, COMPANY and DOSSIER blocks alone you can only establish `wron
 The founder has given the reason; your job is to state it well, not to second-guess it.
 
 - A `category` in the hint is final: return that category and write the sentence for it.
-- `words` are the founder's own shorthand ("too big", "already contacted", "not the buyer"). Keep their meaning. Expand them into one plain sentence, adding a fact from the blocks only where a fact supports what they said ("too big" + ~80 employees, Series B → "Around 80 employees and a Series B: past founder-led sales."). Then pick the category their words belong to.
+- `words` are the founder's own shorthand ("too big", "already contacted", "not the buyer"). Keep their meaning. Expand them into one plain sentence, adding a fact from the blocks only where a fact supports what they said ("too big" + ~80 employees, Series B → "Around 80 employees and a Series B: past the stage the ICP names."). Then pick the category their words belong to.
 - Never contradict the hint, and never add a fact the blocks do not contain. When the blocks have nothing to add, restate the founder's words as a clean sentence and stop.
 
 ## Output

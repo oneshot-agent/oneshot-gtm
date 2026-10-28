@@ -1,24 +1,24 @@
 [
   {
-    "organization": "Harbor Founders Program",
+    "organization": "Tradeworks Launch Program",
     "orgType": "accelerator",
-    "name": "Jordan Lee",
-    "email": "jordan@harbor-founders.example",
-    "role": "Head of Partnerships",
-    "memberDescription": "Forty pre-seed B2B software companies a year, most with a founder doing sales alone.",
-    "whyFit": "Each cohort company has to find its first twenty customers in its first six months, which is the job the product does.",
-    "memberCount": 40,
-    "orgUrl": "https://harbor-founders.example",
-    "linkedinUrl": "https://linkedin.com/in/jordan-lee-fake"
+    "name": "Carla Jensen",
+    "email": "carla@tradeworks-launch.example",
+    "role": "Program Director",
+    "memberDescription": "Thirty new trade businesses a year, mostly electricians and plumbers leaving a larger shop to run their own crew of two to five.",
+    "whyFit": "Each new owner has to book, dispatch and invoice their own jobs from day one, which is the scheduling job the product does.",
+    "memberCount": 30,
+    "orgUrl": "https://tradeworks-launch.example",
+    "linkedinUrl": "https://linkedin.com/in/carla-jensen-example"
   },
   {
-    "organization": "Regional Independent Grocers Association",
+    "organization": "Tri-County HVAC Contractors Association",
     "orgType": "association",
-    "name": "Priya Natarajan",
-    "email": "priya@riga.example",
+    "name": "Victor Huang",
+    "email": "victor@tchca.example",
     "role": "Member Services Director",
-    "memberDescription": "Independent grocery stores across three states, mostly family-owned with one to five locations.",
-    "whyFit": "Its members buy from the same regional suppliers the product already serves.",
-    "introducedBy": "Sam Ortiz"
+    "memberDescription": "Independent heating and cooling contractors across three counties, most with three to fifteen techs and one person running the phones.",
+    "whyFit": "Its members are the same small shops the product already schedules for.",
+    "introducedBy": "Dave Kowalski"
   }
 ]
