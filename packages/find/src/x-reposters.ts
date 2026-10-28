@@ -29,7 +29,7 @@ import {
   scoreCandidate,
   type XLaneKeywords,
 } from "./_x-score.ts";
-import type { XCandidate, XScoredCandidate, XSeed } from "./_x-types.ts";
+import type { XCandidate, XLane, XScoredCandidate, XSeed } from "./_x-types.ts";
 import { resolveIcp, qualifyPerson } from "./_filter.ts";
 import { persistRoleRejection, qualifyPreSpend } from "./_qualify.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
@@ -134,6 +134,8 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
   const maxSpend = opts.maxSpendPerRun ?? DEFAULT_MAX_SPEND[engineName];
   const laneSplit = opts.laneSplit ?? 0.5;
   const laneKeywords = opts.laneKeywords ?? DEFAULT_X_LANE_KEYWORDS;
+  /** No founder keyword gate: site and follower floor alone put a pick in the founder lane. */
+  const founderGateOpen = !laneKeywords.founderKeywords.some((k) => k.trim());
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
   const now = new Date();
@@ -312,9 +314,28 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     }
     const seedHandle = primaryHit(c).seed;
     const source = `find:${PLAY_NAME}:@${seedHandle}`;
+    // The lane this pick is worked in. A founder-lane pick that also cleared
+    // the amplifier lane moves there when the person gate rejects it, but only
+    // while `founderKeywords` is empty: the site and follower floor were then
+    // the only founder evidence, and the gate's verdict is the real founder
+    // test. With founder keywords set, the bio already read as a founder and
+    // a rejection drops the pick, as the built-in lane lists always did.
+    let lane: XLane = pick.lane;
+    let scored: XScoredCandidate = pick;
+    const amplifierFallback =
+      pick.lane === "founder" && pick.lanes.includes("amplifier") && founderGateOpen;
+    const fallBackToAmplifier = (reason: string) => {
+      lane = "amplifier";
+      scored = scoreCandidate(c, ["amplifier"], laneKeywords);
+      logEvent("finder.progress", {
+        name: PLAY_NAME,
+        msg: `@${c.user.username}: person gate rejected the founder lane, trying amplifier`,
+        reason: reason.slice(0, 120),
+      });
+    };
 
     // Founder lane: stage-A person gate on the bio, free, before any spend.
-    if (pick.lane === "founder") {
+    if (lane === "founder") {
       const stageA = await qualifyPreSpend({
         icp,
         person: {
@@ -323,7 +344,9 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
           evidence: `reposted @${seedHandle} on X`,
         },
       });
-      if (stageA.action === "reject") {
+      if (stageA.action === "reject" && amplifierFallback) {
+        fallBackToAmplifier(stageA.reason);
+      } else if (stageA.action === "reject") {
         result.droppedRole = (result.droppedRole ?? 0) + 1;
         persistRoleRejection({
           playName: "x-repost-intro",
@@ -360,14 +383,14 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     try {
       research = await deepResearchPerson(
         { socialMediaUrl: twitterUrl, name: c.user.name },
-        { playName: PLAY_NAME, decisionContext: { source, lane: pick.lane } },
+        { playName: PLAY_NAME, decisionContext: { source, lane } },
       );
     } catch (err) {
       logEvent("error.swallowed", {
         kind: `${PLAY_NAME}.research`,
         message: ((err as Error).message ?? "").slice(0, 120),
       });
-      if (pick.lane === "founder") {
+      if (lane === "founder") {
         result.droppedEnrichment++;
         return;
       }
@@ -400,11 +423,10 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     const sdkEmail =
       str(enrichment["best_work_email"]) ?? str(enrichment["best_personal_email"]) ?? altEmails[0];
 
-    const base = { ...grounding(pick), engine: engineName };
-
-    if (pick.lane === "amplifier") {
-      // No ICP/person gate. We never pitch amplifiers; the lane gate is the
-      // qualification. Email found → automated ask; none → manual X draft.
+    // Amplifier lane: no person gate. We never pitch amplifiers; the lane gate
+    // is the qualification. Email found → automated ask; none → manual X draft.
+    const enqueueAmplifier = async () => {
+      const base = { ...grounding(scored), engine: engineName };
       const target: XAmplifyTarget | XAmplifyDmTarget = sdkEmail
         ? {
             name: c.user.name,
@@ -438,10 +460,14 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
         source,
         fitReason,
         fitReasonSource: "generated",
-        notes: pick.why,
+        notes: scored.why,
       });
       if (id != null) result.enqueued++;
       else result.droppedDuplicate++;
+    };
+
+    if (lane === "amplifier") {
+      await enqueueAmplifier();
       return;
     }
 
@@ -501,6 +527,12 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
         evidence: `reposted @${seedHandle} on X`,
       },
     });
+    if (stageB.verdict === "reject" && amplifierFallback) {
+      // Research is already paid for, so the amplifier row reuses it.
+      fallBackToAmplifier(stageB.reason);
+      await enqueueAmplifier();
+      return;
+    }
     if (stageB.verdict === "reject") {
       result.droppedRole = (result.droppedRole ?? 0) + 1;
       persistRoleRejection({
@@ -526,7 +558,8 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
       dossier,
       angle: str(extracted.angle),
       ...researched,
-      ...base,
+      ...grounding(pick),
+      engine: engineName,
       ...(edgeBySeed.has(seedHandle.toLowerCase())
         ? { seedEdge: edgeBySeed.get(seedHandle.toLowerCase())! }
         : {}),

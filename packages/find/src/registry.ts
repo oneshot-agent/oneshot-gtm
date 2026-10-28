@@ -945,6 +945,22 @@ export const TRIGGERS: TriggerSpec[] = [
             "set `vendors` — vendors your product overlaps with (ask the strategist to propose them)",
         };
       }
+      // A repo must match `minVendors` distinct vendors, so a shorter list can
+      // never match anything. Say so here rather than run empty forever. The
+      // floor mirrors the finder's: at least 1, default 2.
+      const minVendors = Math.max(
+        1,
+        typeof cfg["minVendors"] === "number" && Number.isFinite(cfg["minVendors"])
+          ? cfg["minVendors"]
+          : 2,
+      );
+      const distinctVendors = new Set(stringList(vendors).map((v) => v.trim().toLowerCase())).size;
+      if (distinctVendors < minVendors) {
+        return {
+          ready: false,
+          reason: `set at least ${minVendors} \`vendors\` (minVendors is ${minVendors}; ${distinctVendors} set), or lower \`minVendors\``,
+        };
+      }
       const edge = cfg["yourEdge"];
       if (typeof edge !== "string" || edge.trim().length === 0) {
         return {

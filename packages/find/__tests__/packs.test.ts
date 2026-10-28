@@ -106,7 +106,10 @@ describe.each(REAL_PACK_IDS)("pack: %s", (id) => {
 
   it("passes checkReadiness once every pack.requires key is supplied", () => {
     const founderVoice = Object.fromEntries(
-      pack.requires.map((k) => [k, k === "vendors" ? ["acme-api"] : "a concrete founder pitch"]),
+      pack.requires.map((k) => [
+        k,
+        k === "vendors" ? ["acme-api", "beta-api"] : "a concrete founder pitch",
+      ]),
     );
     for (const [triggerName, patch] of Object.entries(pack.triggers)) {
       const spec = TRIGGERS.find((t) => t.name === triggerName)!;
@@ -155,6 +158,6 @@ it("vertical-ai-startups leaves github-topics vendors to the founder", () => {
   const fresh = checkReadiness(spec, { ...spec.defaultConfig, ...patch, yourEdge: "x" });
   expect(fresh).toEqual({ ready: false, reason: expect.stringMatching(/^set `vendors`/) });
   // A list already stored survives the merge.
-  const stored = { ...spec.defaultConfig, vendors: ["acme-api"], yourEdge: "x" };
+  const stored = { ...spec.defaultConfig, vendors: ["acme-api", "beta-api"], yourEdge: "x" };
   expect(checkReadiness(spec, { ...stored, ...patch })).toEqual({ ready: true });
 });

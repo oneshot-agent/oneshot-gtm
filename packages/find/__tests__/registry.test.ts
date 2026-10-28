@@ -386,12 +386,39 @@ describe("checkReadiness", () => {
     if (!out.ready) expect(out.reason).toMatch(/vendors/);
   });
 
+  it("github-topics is not ready when fewer distinct vendors are set than minVendors", () => {
+    const spec = TRIGGERS.find((t) => t.name === "github-topics")!;
+    const base = { ...spec.defaultConfig, topics: ["observability"], yourEdge: "an edge" };
+    // Default minVendors is 2: one vendor could never match a repo.
+    const one = checkReadiness(spec, { ...base, vendors: ["datadog"] });
+    expect(one).toEqual({
+      ready: false,
+      reason: "set at least 2 `vendors` (minVendors is 2; 1 set), or lower `minVendors`",
+    });
+    // Duplicates and blanks don't count as distinct vendors.
+    expect(checkReadiness(spec, { ...base, vendors: ["Datadog", "datadog ", " "] }).ready).toBe(
+      false,
+    );
+    // The count follows a configured minVendors, which readiness never changes.
+    const three = { ...base, vendors: ["datadog", "sentry"], minVendors: 3 };
+    const out = checkReadiness(spec, three);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/at least 3 `vendors`/);
+    expect(three.minVendors).toBe(3);
+    expect(checkReadiness(spec, { ...base, vendors: ["datadog"], minVendors: 1 })).toEqual({
+      ready: true,
+    });
+    expect(checkReadiness(spec, { ...base, vendors: ["datadog", "sentry"] })).toEqual({
+      ready: true,
+    });
+  });
+
   it("github-topics is not ready when yourEdge is blank/whitespace", () => {
     const spec = TRIGGERS.find((t) => t.name === "github-topics")!;
     const out = checkReadiness(spec, {
       ...spec.defaultConfig,
       topics: ["llm-agents"],
-      vendors: ["langchain"],
+      vendors: ["langchain", "openai"],
       yourEdge: "  \t\n  ",
     });
     expect(out.ready).toBe(false);
