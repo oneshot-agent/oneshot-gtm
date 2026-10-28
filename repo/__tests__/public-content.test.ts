@@ -25,21 +25,33 @@ const opts = {
   emailLocalHashes: new Set(hashes.emailLocal),
 };
 
+// The whole-repo scan reads every tracked text file once; on a loaded CI
+// runner that can pass Vitest's 5 s default, so only these two get longer.
+const SCAN_TIMEOUT_MS = 60_000;
+
 describe("public content guard", () => {
   let scan: ReturnType<typeof scanRepo> | undefined;
   const scanned = () => (scan ??= scanRepo(root, allow, opts));
 
-  it("finds nothing outside the allowlist in tracked files", () => {
-    const { findings } = scanned();
-    expect(findings, `\n${formatFindings(findings)}\n`).toEqual([]);
-  });
+  it(
+    "finds nothing outside the allowlist in tracked files",
+    () => {
+      const { findings } = scanned();
+      expect(findings, `\n${formatFindings(findings)}\n`).toEqual([]);
+    },
+    SCAN_TIMEOUT_MS,
+  );
 
-  it("every allowlist entry still matches something and gives a reason", () => {
-    const { usedAllow } = scanned();
-    const stale = allow.filter((_, i) => !usedAllow.has(i));
-    expect(stale, "stale allowlist entries").toEqual([]);
-    for (const a of allow) expect(a.reason.length, a.file).toBeGreaterThan(10);
-  });
+  it(
+    "every allowlist entry still matches something and gives a reason",
+    () => {
+      const { usedAllow } = scanned();
+      const stale = allow.filter((_, i) => !usedAllow.has(i));
+      expect(stale, "stale allowlist entries").toEqual([]);
+      for (const a of allow) expect(a.reason.length, a.file).toBeGreaterThan(10);
+    },
+    SCAN_TIMEOUT_MS,
+  );
 
   it("the identity hash lists are well-formed", () => {
     for (const h of [...hashes.identity, ...hashes.emailLocal]) {
@@ -125,6 +137,14 @@ describe("the scanner itself", () => {
 
   it("tokenises into single words and adjacent pairs", () => {
     expect(grams("Hi, Mira-Chen!")).toEqual(["hi", "mira", "chen", "hi mira", "mira chen"]);
+  });
+
+  it("the demo exception covers its listed domains and nothing else", () => {
+    const demo = "apps/cli/src/demo/dataset.ts";
+    const allowed = (line: string) =>
+      scanText(demo, line, opts).every((f) => isAllowed(f, allow, line));
+    expect(allowed('email: "ida@fenwick.sh"')).toBe(true);
+    expect(allowed('email: "ops@realstartup.ai"')).toBe(false);
   });
 
   it("applies an allowlist entry only to its file, rule and line", () => {

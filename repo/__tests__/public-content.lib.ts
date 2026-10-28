@@ -4,7 +4,7 @@
 // checked as SHA-256 hashes so this file never publishes what it guards.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export type Rule =
@@ -32,6 +32,8 @@ export interface AllowEntry {
   rule?: Rule;
   /** The line must contain this substring for the exception to apply. */
   line?: string;
+  /** email-domain only: the exception covers these domains and no others. */
+  domains?: string[];
   reason: string;
 }
 
@@ -42,12 +44,21 @@ export interface ScanOptions {
 
 export const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex");
 
+// The same tokens recur across thousands of lines; hash each one once.
+const hashMemo = new Map<string, string>();
+function memoHash(s: string): string {
+  let h = hashMemo.get(s);
+  if (h === undefined) {
+    h = sha256(s);
+    hashMemo.set(s, h);
+  }
+  return h;
+}
+const TOKEN_SPLIT = /[^\p{L}\p{N}]+/u;
+
 /** Lowercase, split on anything that is not a letter or digit. */
 export function tokens(text: string): string[] {
-  return text
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter(Boolean);
+  return text.toLowerCase().split(TOKEN_SPLIT).filter(Boolean);
 }
 
 /** Single tokens plus adjacent two-token phrases, joined by one space. */
@@ -62,7 +73,9 @@ export function grams(text: string): string[] {
 
 const EXCLUDED_DIRS = /^(?:ops|output|launch|\.claude)\//;
 const BINARY_OR_LOCK =
-  /\.(?:png|jpe?g|gif|webp|ico|icns|svg|woff2?|ttf|otf|eot|pdf|mp3|mp4|mov|wav|zip|tgz|gz|sqlite|db|wasm)$|(?:^|\/)(?:bun\.lockb?|package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$/;
+  /\.(?:png|jpe?g|gif|webp|ico|icns|svg|woff2?|ttf|otf|eot|pdf|mp3|mp4|mov|wav|zip|tgz|gz|sqlite|db|wasm)$|(?:^|\/)(?:bun\.lockb?|package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$|\.gen\.[cm]?[jt]sx?$|\.min\.(?:js|css)$|\.map$/;
+/** Larger files are generated or vendored; nobody writes prose into them. */
+export const MAX_SCANNED_BYTES = 1_000_000;
 
 export function isScanned(file: string): boolean {
   return !EXCLUDED_DIRS.test(file) && !BINARY_OR_LOCK.test(file);
@@ -158,6 +171,10 @@ function lineHas(text: string, rx: RegExp): string | null {
   return m ? m[0] : null;
 }
 
+// Cheap substring gates so most lines skip the full patterns.
+const WORKSPACE_HINT = /workspace/i;
+const ONESHOT_HINT = /oneshotagent/i;
+
 export function scanText(file: string, body: string, opts: ScanOptions = {}): Finding[] {
   const out: Finding[] = [];
   const strict = isPublicFacing(file);
@@ -166,29 +183,32 @@ export function scanText(file: string, body: string, opts: ScanOptions = {}): Fi
     out.push({ file, line: i + 1, rule, match, text: (lines[i] ?? "").trim().slice(0, 200) });
 
   lines.forEach((text, i) => {
-    for (const m of text.matchAll(EMAIL)) {
-      const domain = (m[1] ?? "").toLowerCase();
-      const local = m[0].slice(0, m[0].indexOf("@")).toLowerCase();
-      if (opts.emailLocalHashes?.has(sha256(local))) push(i, "identity-email", m[0]);
-      const ok =
-        isReservedDomain(domain) ||
-        FIXTURE_DOMAINS.some((rx) => rx.test(domain)) ||
-        INFRA_EMAIL_DOMAINS.some((rx) => rx.test(domain));
-      if (!ok) push(i, "email-domain", m[0]);
-    }
+    if (text.includes("@"))
+      for (const m of text.matchAll(EMAIL)) {
+        const domain = (m[1] ?? "").toLowerCase();
+        const local = m[0].slice(0, m[0].indexOf("@")).toLowerCase();
+        if (opts.emailLocalHashes?.has(memoHash(local))) push(i, "identity-email", m[0]);
+        const ok =
+          isReservedDomain(domain) ||
+          FIXTURE_DOMAINS.some((rx) => rx.test(domain)) ||
+          INFRA_EMAIL_DOMAINS.some((rx) => rx.test(domain));
+        if (!ok) push(i, "email-domain", m[0]);
+      }
 
-    for (const m of text.matchAll(WORKSPACE_SITES)) {
-      // `<name>`, `${ws}`, `$WS` and an empty value never match the name group.
-      const name = (m[3] ?? "").toLowerCase();
-      if (m[1] === "--workspace " && !m[2] && FLAG_PROSE.has(name)) continue;
-      if (!ALLOWED_WORKSPACES.has(name)) push(i, "workspace-name", m[0]);
-    }
+    if (WORKSPACE_HINT.test(text))
+      for (const m of text.matchAll(WORKSPACE_SITES)) {
+        // `<name>`, `${ws}`, `$WS` and an empty value never match the name group.
+        const name = (m[3] ?? "").toLowerCase();
+        if (m[1] === "--workspace " && !m[2] && FLAG_PROSE.has(name)) continue;
+        if (!ALLOWED_WORKSPACES.has(name)) push(i, "workspace-name", m[0]);
+      }
 
-    for (const m of text.matchAll(PORT)) push(i, "port", m[0]);
+    if (text.includes("30")) for (const m of text.matchAll(PORT)) push(i, "port", m[0]);
 
-    for (const m of text.matchAll(ONESHOT_HOST)) {
-      if (!ONESHOT_HOSTS.has(m[0].toLowerCase())) push(i, "oneshot-host", m[0]);
-    }
+    if (ONESHOT_HINT.test(text))
+      for (const m of text.matchAll(ONESHOT_HOST)) {
+        if (!ONESHOT_HOSTS.has(m[0].toLowerCase())) push(i, "oneshot-host", m[0]);
+      }
 
     if (strict) {
       for (const rx of PITCH_PHRASES) {
@@ -203,8 +223,8 @@ export function scanText(file: string, body: string, opts: ScanOptions = {}): Fi
 
     if (opts.identityHashes?.size) {
       for (const g of grams(text)) {
-        if (opts.identityHashes.has(sha256(g)))
-          push(i, "identity", `sha256:${sha256(g).slice(0, 12)}`);
+        const h = memoHash(g);
+        if (opts.identityHashes.has(h)) push(i, "identity", `sha256:${h.slice(0, 12)}`);
       }
     }
   });
@@ -225,12 +245,16 @@ function fileMatches(pattern: string, file: string): boolean {
   return rx.test(file);
 }
 
+const emailDomain = (email: string) => email.slice(email.indexOf("@") + 1).toLowerCase();
+
 export function isAllowed(f: Finding, allow: readonly AllowEntry[], rawLine: string): boolean {
   return allow.some(
     (a) =>
       fileMatches(a.file, f.file) &&
       (a.rule === undefined || a.rule === f.rule) &&
-      (a.line === undefined || rawLine.includes(a.line)),
+      (a.line === undefined || rawLine.includes(a.line)) &&
+      (a.domains === undefined ||
+        (f.rule === "email-domain" && a.domains.includes(emailDomain(f.match)))),
   );
 }
 
@@ -259,7 +283,9 @@ export function scanRepo(
   for (const file of trackedFiles(root)) {
     let body: string;
     try {
-      body = readFileSync(join(root, file), "utf8");
+      const path = join(root, file);
+      if (statSync(path).size > MAX_SCANNED_BYTES) continue;
+      body = readFileSync(path, "utf8");
     } catch {
       continue; // deleted in the working tree
     }
