@@ -197,31 +197,6 @@ const PERSON_RESEARCH_BRIEF =
   'personResearch (default true): after the run, each new row with a profile URL gets its current title and employer from the person\'s work history (~$0.055/row, minutes), the person gate is re-judged on it, and the facts land in the dossier; counts against maxCostUsd, and "Run now" takes longer while it completes.';
 
 /**
- * Default cohort sweep for `accelerator-batch`. Only yc-* entries hit the
- * structured yc-oss/api directory; the rest use the websearch + LLM-extract
- * adapter with spotty recall. Per-cohort failures are isolated. The run only
- * halts when EVERY cohort comes back empty.
- * Kept for configs that pin cohorts explicitly. New installs default to
- * `DEFAULT_ACCELERATORS`, which resolves the latest cohorts from the date.
- */
-export const DEFAULT_COHORTS: CohortEntry[] = [
-  { cohort: "yc-w26", cohortLabel: "YC W26" },
-  { cohort: "yc-f25", cohortLabel: "YC F25" },
-  { cohort: "techstars-spring-2026", cohortLabel: "Techstars Spring 2026" },
-  { cohort: "techstars-fall-2025", cohortLabel: "Techstars Fall 2025" },
-  { cohort: "antler-q1-2026", cohortLabel: "Antler Q1 2026" },
-  { cohort: "antler-q4-2025", cohortLabel: "Antler Q4 2025" },
-  { cohort: "500global-batch-38", cohortLabel: "500 Global Batch 38" },
-  { cohort: "500global-batch-37", cohortLabel: "500 Global Batch 37" },
-  { cohort: "ai-grant-cohort-5", cohortLabel: "AI Grant Cohort 5" },
-  { cohort: "ai-grant-cohort-4", cohortLabel: "AI Grant Cohort 4" },
-  { cohort: "spc-2026-1", cohortLabel: "South Park Commons F1 2026-1" },
-  { cohort: "spc-2025-2", cohortLabel: "South Park Commons F1 2025-2" },
-  { cohort: "neo-class-2026", cohortLabel: "Neo Class 2026" },
-  { cohort: "neo-class-2025", cohortLabel: "Neo Class 2025" },
-];
-
-/**
  * Default for new installs: every known accelerator at its most recent
  * cohort, resolved from the date at run time, so it never goes stale. YC runs
  * four batches a year, so its two most recent are searched.

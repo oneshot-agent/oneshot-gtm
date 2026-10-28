@@ -1,7 +1,7 @@
 import type { ProspectPriorityComponents, SentOutcomeRawRow } from "@oneshot-gtm/core";
 import { parseProspectPriority, sqliteToIso } from "@oneshot-gtm/core";
 import { POSITIVE_OUTCOME_INTENTS } from "@oneshot-gtm/shared-types";
-import { mannWhitneyAuc, meanOf, wilson95 } from "./_gauge.ts";
+import { mannWhitneyAuc, wilson95 } from "./_gauge.ts";
 import { SCORE_BUCKETS, bucketOf } from "./_buckets.ts";
 
 /**
@@ -205,9 +205,4 @@ export function buildOutcomeReport(labels: SentOutcomeLabel[]): FinderOutcomeRep
       };
     })
     .toSorted((a, b) => a.finder.localeCompare(b.finder));
-}
-
-/** Mean days-to-reply among positives with a parsable send time: report color. */
-export function meanDaysToReply(labels: SentOutcomeLabel[]): number | null {
-  return meanOf(labels.filter((l) => l.label === "positive").map((l) => l.daysSinceSend));
 }

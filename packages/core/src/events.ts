@@ -161,15 +161,3 @@ function resolveClientId(): string | null {
   }
   return cachedClientId;
 }
-
-/**
- * Test-only escape hatch. Lets vitest reset the cached id between cases when
- * it manipulates the underlying config file. Not exported via the package
- * barrel: import directly if you really need it.
- */
-export function _resetClientIdCacheForTests(): void {
-  cachedClientId = null;
-  clientIdResolved = false;
-  configDirEnsured = false;
-  runId = null;
-}

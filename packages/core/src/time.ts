@@ -41,9 +41,3 @@ export function toSqliteUtc(ts: string | Date): string {
   const d = toDate(ts);
   return d ? d.toISOString().slice(0, 19).replace("T", " ") : String(ts);
 }
-
-/** Any timestamp as `YYYY-MM-DDTHH:MM:SS.sssZ`; the web client's one format. */
-export function toIsoUtc(ts: string | Date): string {
-  const d = toDate(ts);
-  return d ? d.toISOString() : String(ts);
-}

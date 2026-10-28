@@ -38,7 +38,6 @@ import {
   isOfferSkipped,
   isProspectOffer,
   playMakesOffer,
-  registerOfferResearch,
   researchForOffer,
   type OfferResearch,
   type OfferSkip,
@@ -217,12 +216,8 @@ export function writeSequenceOfferSkip(record: SequenceOfferRecord, skip: OfferS
   }
 }
 
-/**
- * The company research a sequence's offer reads first: the one hook every
- * offer uses (`registerOfferResearch`), under its old name.
- */
+/** The company research a sequence's offer reads first. */
 export type SequenceOfferResearch = OfferResearch;
-export const registerSequenceOfferResearch = registerOfferResearch;
 
 /** The emails this sequence already sent, oldest first: the THREAD SO FAR an offer continues. */
 export function sequenceThread(
