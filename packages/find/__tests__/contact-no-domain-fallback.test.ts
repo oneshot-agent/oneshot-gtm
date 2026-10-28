@@ -252,6 +252,41 @@ describe("no-domain fallback in the contact step", () => {
     expect(breaker.outcomes).toContain(true);
   });
 
+  it("a dossier that finds nobody is the original no-domain miss and spares the breaker", async () => {
+    research.mockRejectedValue(
+      new Error("Job failed: Could not find data for this person or company."),
+    );
+    const out = await resolveVerifyEnrichQualify({ ...base, githubIdentity: { login: "ivarga" } });
+    expect(out).toMatchObject({ ok: false, reason: "no-domain" });
+    expect(breaker.outcomes).not.toContain(true);
+    // The backend answered, so the verdict ends any run of platform errors.
+    expect(breaker.outcomes).toContain(false);
+    expect(events).toContainEqual({
+      event: "finder.no_domain_fallback",
+      data: expect.objectContaining({ via: "github", outcome: "miss" }),
+    });
+  });
+
+  it("an enrichProfile that finds nobody falls through to the dossier", async () => {
+    enrich.mockRejectedValue(new Error("Job failed: Could not find data for this person."));
+    research.mockResolvedValue(dossier({ best_work_email: "ines@halyard.example" }));
+    const out = await resolveVerifyEnrichQualify({
+      ...base,
+      linkedinUrlHint: LINKEDIN,
+      githubIdentity: { login: "ivarga" },
+    });
+    expect(research).toHaveBeenCalled();
+    expect(breaker.outcomes).not.toContain(true);
+    expect(out).not.toMatchObject({ reason: "platform-error" });
+  });
+
+  it("an enrichProfile that finds nobody ends a run of platform errors", async () => {
+    enrich.mockRejectedValue(new Error("Job failed: Could not find data for this person."));
+    const out = await resolveVerifyEnrichQualify({ ...base, linkedinUrlHint: LINKEDIN });
+    expect(out).toMatchObject({ ok: false, reason: "no-domain" });
+    expect(breaker.outcomes).toEqual([false]);
+  });
+
   it("an enrichProfile that throws is a platform error, never a fall-through to the dossier", async () => {
     enrich.mockRejectedValue(new Error("socket hang up"));
     const out = await resolveVerifyEnrichQualify({
