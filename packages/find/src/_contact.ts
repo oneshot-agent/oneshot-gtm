@@ -5,17 +5,25 @@ import {
 } from "./_github-readme.ts";
 import {
   canonicalLinkedInProfileKey,
+  deepResearchPerson,
+  ENRICH_DEADLINE_MS,
+  enrichProfile,
   getLedger,
+  isCachedPaidFailure,
+  isFreemailDomain,
   logEvent,
   type OutreachChannel,
   type PersonResult,
+  RESEARCH_DEADLINE_MS,
+  withDeadline,
   xHandleFrom,
 } from "@oneshot-gtm/core";
 import { finderChannels } from "./_channels-context.ts";
 import { findLinkedInUrl } from "./_linkedin.ts";
 import type { CallContext, FindEmailInput } from "@oneshot-gtm/core";
+import { sanitizeCompanyDomain } from "./_accelerator-search-adapter.ts";
 import { isCircuitOpen, recordResolutionOutcome } from "./_breaker.ts";
-import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
+import { isDudDomain, shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { safeFindEmail, safePeopleSearch, safeVerifyEmail } from "./_sdk-safe.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
 import type { PersonCandidate, PersonVerdict } from "./_filter.ts";
@@ -239,6 +247,164 @@ export async function resolveAndVerifyContact(
         },
       }
     : { ...recovered, costUsd };
+}
+
+/**
+ * Second chance for a `no-domain` miss when the finder holds a profile:
+ * the LinkedIn profile's current employer domain (enrichProfile, then
+ * findEmail there), else the work email on a GitHub or X dossier. Every
+ * address found is dedupe-checked and verified like any other. A dossier
+ * timeout or empty profile is a miss (`miss` comes back, plus the spend); a
+ * lookup that throws is a platform error and feeds the breaker.
+ */
+export async function resolveViaProfileFallback(
+  args: Parameters<typeof resolveAndVerifyContact>[0] & {
+    linkedinUrlHint?: string | null;
+    xHandleHint?: string | null;
+  },
+  miss: Extract<ContactResolution, { ok: false }>,
+): Promise<ContactResolution> {
+  const ctx: CallContext = { playName: args.playName };
+  if (args.decisionContext) ctx.decisionContext = args.decisionContext;
+  let costUsd = miss.costUsd;
+  let last: ContactResolution = miss;
+  // The retry is the plain spine: no README pass (it already ran) and no
+  // trusted-email shortcut.
+  const { githubIdentity, linkedinUrlHint, xHandleHint, ...spine } = args;
+  const retry = (patch: Partial<typeof spine>) =>
+    resolveAndVerifyContact({ ...spine, knownEmail: null, skipVerify: false, ...patch });
+  const report = (via: "linkedin" | "github" | "x", r: ContactResolution) =>
+    logEvent(
+      "finder.no_domain_fallback",
+      {
+        name: args.playName,
+        via,
+        outcome: r.ok ? "resolved" : r.reason === "platform-error" ? "error" : "miss",
+        ...(r.ok ? {} : { reason: r.reason }),
+      },
+      "info",
+    );
+  const linkedinUrl = linkedinUrlHint?.trim() || null;
+  if (linkedinUrl && canonicalLinkedInProfileKey(linkedinUrl)) {
+    if (isCircuitOpen()) return { ok: false, reason: "platform-error", costUsd };
+    let profile: PersonResult | null = null;
+    try {
+      // The URL as the finder holds it: a finder that already enriched it
+      // (luma) gets a paid-cache hit, not a second purchase.
+      const live = enrichProfile({ linkedinUrl }, ctx);
+      // A deadline-abandoned promise must not surface as an unhandled rejection.
+      live.catch(() => undefined);
+      const enriched = await withDeadline(live, ENRICH_DEADLINE_MS, "enrichProfile");
+      costUsd += enriched.result.cost ?? 0;
+      recordResolutionOutcome(false);
+      profile = enriched.result.profile ?? null;
+    } catch (err) {
+      // A failure the paid cache remembers is a verdict, not an outage.
+      if (!isCachedPaidFailure(err)) {
+        swallowed(`${args.playName}.no_domain_enrich`, err);
+        recordResolutionOutcome(true);
+        report("linkedin", { ok: false, reason: "platform-error", costUsd });
+        return { ok: false, reason: "platform-error", costUsd };
+      }
+    }
+    const domain = employerDomain(profile);
+    if (domain) {
+      const resolved = await retry({
+        companyDomain: domain,
+        fullName: args.fullName?.trim() ? args.fullName : (profile?.full_name ?? null),
+      });
+      costUsd += resolved.costUsd;
+      report("linkedin", resolved);
+      if (settled(resolved)) return { ...resolved, costUsd };
+      last = resolved;
+    } else report("linkedin", miss);
+  }
+
+  const xHandle = xHandleFrom(xHandleHint);
+  const social = githubIdentity
+    ? { via: "github" as const, url: `https://github.com/${githubIdentity.login}` }
+    : xHandle
+      ? { via: "x" as const, url: `https://x.com/${xHandle}` }
+      : null;
+  if (social) {
+    if (isCircuitOpen()) return { ok: false, reason: "platform-error", costUsd };
+    let email: string | null = null;
+    try {
+      // The profile URL is the person-research cache key, so the dossier the
+      // post-finder research step would buy anyway is this one.
+      const live = deepResearchPerson(
+        {
+          socialMediaUrl: social.url,
+          ...(args.fullName?.trim() ? { name: args.fullName.trim() } : {}),
+        },
+        ctx,
+      );
+      live.catch(() => undefined);
+      const dr = await withDeadline(live, RESEARCH_DEADLINE_MS, "deepResearchPerson");
+      costUsd += dr.result.cost ?? 0;
+      recordResolutionOutcome(false);
+      email = workEmailFrom(dr.result.result?.enrichment);
+    } catch (err) {
+      // The dossier is the slowest call in the toolbox (2-5 min): running out
+      // of time is no answer, not an outage. Same for a remembered failure.
+      const timedOut = /deadline exceeded/.test(String((err as Error)?.message ?? ""));
+      if (!timedOut && !isCachedPaidFailure(err)) {
+        swallowed(`${args.playName}.no_domain_research`, err);
+        recordResolutionOutcome(true);
+        report(social.via, { ok: false, reason: "platform-error", costUsd });
+        return { ok: false, reason: "platform-error", costUsd };
+      }
+    }
+    if (email) {
+      const resolved = await retry({ knownEmail: email });
+      costUsd += resolved.costUsd;
+      report(social.via, resolved);
+      if (settled(resolved)) return { ...resolved, costUsd };
+      last = resolved;
+    } else report(social.via, miss);
+  }
+
+  return { ...last, costUsd };
+}
+
+/** A resolution that ends the fallback: an address, a known person, or an outage. */
+function settled(r: ContactResolution): boolean {
+  return r.ok || r.reason === "duplicate" || r.reason === "platform-error";
+}
+
+/**
+ * The current employer's domain off an enriched profile: `company_domain`,
+ * else the primary experience entry's website. Null for a host no company
+ * mails from (social sites, free-tier app hosts, mail providers).
+ */
+function employerDomain(profile: PersonResult | null): string | null {
+  if (!profile) return null;
+  const primary = profile.experience?.find((e) => e?.is_primary) ?? profile.experience?.[0];
+  for (const raw of [profile.company_domain, primary?.company?.website]) {
+    const domain = sanitizeCompanyDomain(raw);
+    if (domain && !isDudDomain(domain)) return domain;
+  }
+  return null;
+}
+
+/** A work address off a dossier profile; never a personal (freemail) one. */
+function workEmailFrom(enrichment: unknown): string | null {
+  if (!enrichment || typeof enrichment !== "object") return null;
+  const p = enrichment as Record<string, unknown>;
+  for (const key of ["best_work_email", "email"]) {
+    const value = typeof p[key] === "string" ? (p[key] as string).trim().toLowerCase() : "";
+    const domain = value.includes("@") ? value.slice(value.lastIndexOf("@") + 1) : "";
+    if (domain && !isFreemailDomain(domain) && !isDudDomain(domain)) return value;
+  }
+  return null;
+}
+
+function swallowed(kind: string, err: unknown): void {
+  logEvent(
+    "error.swallowed",
+    { kind, message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+    "warn",
+  );
 }
 
 /**
@@ -565,7 +731,7 @@ async function qualifyViaX(
 async function qualifyViaEmail(
   args: Parameters<typeof resolveVerifyEnrichQualify>[0],
 ): Promise<QualifiedContact> {
-  const contact = await resolveAndVerifyContact({
+  const contactArgs = {
     playName: args.playName,
     fullName: args.fullName,
     knownEmail: args.knownEmail,
@@ -575,7 +741,15 @@ async function qualifyViaEmail(
     allowMissingFullName: args.allowMissingFullName,
     skipVerify: args.skipVerify,
     githubIdentity: args.githubIdentity,
-  });
+  };
+  let contact = await resolveAndVerifyContact(contactArgs);
+  // No company domain, but a profile we hold may name one (or a work email).
+  if (!contact.ok && contact.reason === "no-domain") {
+    contact = await resolveViaProfileFallback(
+      { ...contactArgs, linkedinUrlHint: args.linkedinUrlHint, xHandleHint: args.xHandleHint },
+      contact,
+    );
+  }
   let costUsd = contact.costUsd;
   if (!contact.ok) return { ok: false, reason: contact.reason, costUsd };
 
