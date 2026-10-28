@@ -266,6 +266,32 @@ describe("readLinkedInProfile through the connected account", () => {
     expect(unknown.profile?.networkDistance).toBeNull();
   });
 
+  it("a held-back read over a stored silent view keeps what that view knew", async () => {
+    getSharedDb().setPaidCache({
+      key: paidCacheKey("linkedin.profile", { url: URL_A }),
+      callType: "linkedin.profile",
+      status: "ok",
+      resultJson: JSON.stringify({
+        headline: "Old headline",
+        networkDistance: "FIRST_DEGREE",
+        experience: [{ company: "Acme", period: "Present" }],
+      }),
+      costUsd: 0.01,
+      fetchedAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+    });
+    script(view([], false));
+    await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 });
+    const entry = readPaidCache("linkedin.profile", { url: URL_A });
+    const result = entry?.status === "ok" ? (entry.result as Record<string, unknown>) : {};
+    expect(result).toMatchObject({
+      headline: "Builds things at Acme",
+      name: "Ada Quill",
+      networkDistance: "FIRST_DEGREE",
+      experience: [{ company: "Acme", period: "Present" }],
+    });
+    expect(result["partial"]).toBeUndefined();
+  });
+
   it("keeps the open-profile flag the view reports", async () => {
     const open = view(ADA_EXPERIENCE);
     (open.result.profile as Record<string, unknown>)["is_open_profile"] = true;

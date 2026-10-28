@@ -41,6 +41,8 @@ import {
   type OneShotConfig,
   verifiedLinkedInProfileKey,
   withPaidCache,
+  mergeStoredView,
+  readPaidCache,
 } from "@oneshot-gtm/core";
 import { createHash } from "node:crypto";
 import { isLinkedInProfileUrl } from "./_linkedin.ts";
@@ -1254,8 +1256,11 @@ async function keepPartialView(url: string, view: Record<string, unknown>): Prom
       ...viewFields(view),
       experience: [],
     };
+    // Laid over what the silent view already holds, never erasing it.
+    const previous = readPaidCache("linkedin.profile", { url });
+    const result = mergeStoredView(previous?.status === "ok" ? previous : null, partial);
     await withPaidCache("linkedin.profile", { url }, { fresh: true }, async () => ({
-      result: partial,
+      result,
       receiptId: 0,
     }));
   } catch {

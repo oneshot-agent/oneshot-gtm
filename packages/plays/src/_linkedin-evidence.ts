@@ -6,6 +6,8 @@ import {
   demoDayOf,
   type LinkedInOperation,
   withPaidCache,
+  mergeStoredView,
+  storedDistanceReadAt,
 } from "@oneshot-gtm/core";
 import { complete } from "@oneshot-gtm/intel";
 
@@ -526,8 +528,7 @@ export function storedNetworkDistance(
     if (entry?.status !== "ok") continue;
     const distance = snapshotFrom(entry.result)?.networkDistance;
     if (!distance) continue;
-    const readAt = record(entry.result)?.["readAt"];
-    const at = typeof readAt === "string" && readAt ? readAt : entry.fetchedAt;
+    const at = storedDistanceReadAt(entry.result, entry.fetchedAt);
     if (!newest || Date.parse(at) > Date.parse(newest.readAt)) newest = { distance, readAt: at };
   }
   return newest;
@@ -579,17 +580,21 @@ export function liveProfileFor(
     try {
       // The paid cache keeps a finished view for the cadence's later steps,
       // across runs and workspaces; a view that did not finish is not kept.
-      // A partial read sits in this entry: the view replaces it (and keeps the distance).
-      const partial = readPaidCache("linkedin.profile", { url }, { now: now.getTime() });
-      const fresh = partial?.status === "ok" && isPartialRead(partial.result);
+      // A partial read sits in this entry: the view replaces it, laid over it
+      // so a distance the view does not report is not lost.
+      const held = readPaidCache("linkedin.profile", { url }, { now: now.getTime() });
+      const partial = held?.status === "ok" && isPartialRead(held.result) ? held : null;
       const out = await withPaidCache(
         "linkedin.profile",
         { url },
-        fresh ? { fresh } : undefined,
-        async () => ({
-          result: await reader(url),
-          receiptId: 0,
-        }),
+        partial ? { fresh: true } : undefined,
+        async () => {
+          const view = await reader(url);
+          return {
+            result: view && partial ? mergeStoredView(partial, { ...view }) : view,
+            receiptId: 0,
+          };
+        },
       );
       return snapshotFrom(out.result);
     } catch {
