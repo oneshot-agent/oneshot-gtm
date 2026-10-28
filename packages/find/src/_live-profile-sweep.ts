@@ -343,8 +343,10 @@ export async function sweepLiveProfiles(
   const result: LiveProfileSweepResult = { ran: true, ...base, candidates: candidates.length };
   const spend = { costUsd: 0 };
   const deadlineAt = opts.deadlineAt ?? Number.POSITIVE_INFINITY;
-  for (const [index, candidate] of candidates.entries()) {
-    if (index >= maxRows) {
+  for (const candidate of candidates) {
+    // Counted in reads started, not candidates seen: a row skipped below (gone,
+    // or no longer readable) must not use up a slot a later row could have.
+    if (result.researched >= maxRows) {
       result.stoppedBy = "max-rows";
       break;
     }

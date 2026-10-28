@@ -15,6 +15,8 @@ let queue: Array<Record<string, unknown>> = [];
 let cadences: Array<{ prospect_id: number; play_name: string; enrolled_at: string }> = [];
 let prospects: Record<number, Record<string, unknown>> = {};
 let readAccount: { workspace: string; accountId: string } | null = null;
+/** Queue rows that vanish between candidate selection and the per-row load. */
+let goneIds = new Set<number>();
 const events: string[] = [];
 const statements: string[] = [];
 const loadedIds: number[] = [];
@@ -66,6 +68,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       listTriggers: () => triggers,
       getQueueRow: (id: number) => {
         loadedIds.push(id);
+        if (goneIds.has(id)) return null;
         return queue.find((r) => r["id"] === id) ?? null;
       },
       listQueue: (opts: { status: string }) => queue.filter((r) => r["status"] === opts.status),
@@ -121,6 +124,7 @@ beforeEach(() => {
   events.length = 0;
   statements.length = 0;
   loadedIds.length = 0;
+  goneIds = new Set();
   queue = [
     row(1, "pending", { name: "A", linkedinUrl: `${LI}a` }),
     row(2, "approved", { name: "B", linkedinUrl: `${LI}b` }),
@@ -550,6 +554,15 @@ describe("sweepLiveProfiles", () => {
     const capped = await sweepLiveProfiles({ maxCostUsd: 0.02 }, deps);
     expect(capped).toMatchObject({ researched: 1, stoppedBy: "budget" });
     expect(capped.costUsd).toBeLessThanOrEqual(0.02);
+  });
+
+  it("a row skipped before its read does not use up a row slot", async () => {
+    goneIds = new Set([7]);
+    expect(await sweepLiveProfiles({ maxRows: 1 }, deps)).toMatchObject({
+      researched: 1,
+      stoppedBy: "max-rows",
+    });
+    expect(loadedIds).toEqual([7, 2]);
   });
 
   it("starts no row and writes nothing after the scheduler's deadline", async () => {
