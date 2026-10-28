@@ -1,8 +1,9 @@
-import type {
-  LinkedInFunnel,
-  LinkedInInviteRow,
-  LinkedInRate,
-  LinkedInStepKind,
+import {
+  type LinkedInFunnel,
+  type LinkedInInviteRow,
+  type LinkedInRate,
+  type LinkedInStepKind,
+  linkedInFunnelHasActivity,
 } from "@oneshot-gtm/shared-types";
 import { getLedger, readLinkedInMeasure } from "@oneshot-gtm/core";
 import { c, emitJson, header, note, setJsonMode } from "../output.ts";
@@ -104,7 +105,7 @@ export async function commandMeasure(opts: MeasureOptions = {}): Promise<void> {
     view.filters.stepKind ? view.filters.stepKind : null,
   ].filter((f): f is string => f !== null);
   if (filters.length > 0) note(c.dim(`filters: ${filters.join(" · ")}`));
-  if (view.funnel.invitesSent === 0 && view.friend.invitesSent === 0) {
+  if (!linkedInFunnelHasActivity(view.funnel) && !linkedInFunnelHasActivity(view.friend)) {
     note("No LinkedIn invites sent in this view.");
     return;
   }
@@ -113,11 +114,11 @@ export async function commandMeasure(opts: MeasureOptions = {}): Promise<void> {
   renderFunnel("note with an evidence clause", view.variants.withEvidence);
   note("");
   renderFunnel("note without one", view.variants.withoutEvidence);
-  if (view.variants.unrecorded.invitesSent > 0) {
+  if (linkedInFunnelHasActivity(view.variants.unrecorded)) {
     note("");
-    renderFunnel("sent before the clause was recorded", view.variants.unrecorded);
+    renderFunnel("no evidence clause recorded", view.variants.unrecorded);
   }
-  if (view.friend.invitesSent > 0) {
+  if (linkedInFunnelHasActivity(view.friend)) {
     note("");
     renderFunnel(
       "friend invites (replied to an email; left out of the funnels above)",

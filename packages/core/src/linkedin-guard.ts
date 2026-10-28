@@ -306,6 +306,10 @@ export function canInviteOnLinkedIn(
 }
 
 function touchedReason(held: LinkedInTouch): [LinkedInGuardReason, string] {
+  if (held.source.startsWith("connected:")) {
+    const who = held.source.slice("connected:".length);
+    return ["already-touched", `workspace '${who}' is messaging this connection`];
+  }
   if (held.source.startsWith("invite:")) {
     const who = held.source.slice("invite:".length);
     return [
@@ -382,6 +386,8 @@ type ProfileClaimStore = Pick<
 export function claimLinkedInProfile(input: {
   profile: NormalizedLinkedInProfile;
   workspace: string;
+  /** `connected`: a known connection taken without an invite, freed again by `releaseKnownConnection`. */
+  as?: "invite" | "connected";
   shared?: ProfileClaimStore;
 }): { ok: true; claim: LinkedInProfileClaim } | Extract<LinkedInGuardVerdict, { ok: false }> {
   if (demoMode())
@@ -396,7 +402,7 @@ export function claimLinkedInProfile(input: {
     const db = input.shared ?? getSharedDb();
     const res = db.claimLinkedInProfile({
       slug: input.profile.key,
-      source: `invite:${input.workspace}`,
+      source: `${input.as ?? "invite"}:${input.workspace}`,
     });
     if ("held" in res) {
       const [reason, detail] = touchedReason(res.held);
@@ -425,5 +431,33 @@ export function claimLinkedInProfile(input: {
       reason: "guard-unavailable",
       detail: "the shared invite record is unavailable",
     };
+  }
+}
+
+/**
+ * Free a known connection's claim (`claimLinkedInProfile` with `as:
+ * "connected"`): LinkedIn said they are not connected after all, so the
+ * connection request that replaces it must be able to claim the profile.
+ * Never touches an invite's claim. False when the shared file can't be used.
+ */
+export function releaseKnownConnection(input: {
+  profile: NormalizedLinkedInProfile;
+  workspace: string;
+  shared?: Pick<SharedDb, "releaseLinkedInTouch">;
+}): boolean {
+  if (demoMode()) return true;
+  try {
+    (input.shared ?? getSharedDb()).releaseLinkedInTouch(
+      input.profile.key,
+      `connected:${input.workspace}`,
+    );
+    return true;
+  } catch (err) {
+    logEvent(
+      "shared_db.write_failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+    return false;
   }
 }

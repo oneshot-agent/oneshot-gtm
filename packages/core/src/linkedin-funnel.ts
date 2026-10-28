@@ -10,6 +10,7 @@ import {
   type LinkedInWithdrawnBy,
 } from "@oneshot-gtm/shared-types";
 import { LINKEDIN_INVITE_KIND } from "./ledger-cadence.ts";
+import { KNOWN_CONNECTION_VIA } from "./linkedin-connection.ts";
 import type {
   FunnelEventRow,
   FunnelReplyRow,
@@ -23,6 +24,9 @@ import { sqliteToIso } from "./time.ts";
  * definitions below are the only thing this file decides.
  *
  *  - An invite is a `sent` invite event (a failed or never-sent one is not).
+ *    A known connection recorded from the profile read (`via: "profile-read"`)
+ *    sent no invite: it counts as already connected and never as an invite
+ *    sent; one LinkedIn later said was not a connection is left out.
  *  - A person counts once per row of the funnel: their newest invite inside
  *    the filters.
  *  - Accepted: the invite event's `acceptedAt` (the invitation's own status,
@@ -128,6 +132,8 @@ interface Unit {
   firstMessageAtMs: number | null;
   /** When the step after the first message went out. */
   nextStepAtMs: number | null;
+  /** A known connection taken without an invite: never counted as an invite sent. */
+  noInvite: boolean;
 }
 
 function variantOf(meta: Record<string, unknown>): LinkedInEvidenceVariant {
@@ -162,6 +168,9 @@ function buildUnits(input: LinkedInFunnelInput): Unit[] {
         (j) => j > i && j < end && events[j]!.status === "withdrawn",
       );
       const withdrawMeta = withdrawnAt !== undefined ? metas[withdrawnAt]! : {};
+      const noInvite = meta["via"] === KNOWN_CONNECTION_VIA;
+      // LinkedIn said they were not connected: neither an invite nor a connection.
+      if (noInvite && withdrawnAt !== undefined) continue;
 
       // What this invite led to: the steps after it in the same play, up to a re-invite.
       const after: number[] = [];
@@ -206,6 +215,7 @@ function buildUnits(input: LinkedInFunnelInput): Unit[] {
       const acceptedAtMs = acceptedAt ? Date.parse(acceptedAt) : Number.NaN;
 
       units.push({
+        noInvite,
         sentAtMs,
         acceptedAtMs: Number.isFinite(acceptedAtMs) ? acceptedAtMs : null,
         firstMessageAtMs:
@@ -262,6 +272,9 @@ function funnelOf(units: Unit[], replies: PersonReplies): LinkedInFunnel {
     if (!have || u.sentAtMs >= have.sentAtMs) newest.set(u.row.prospectId, u);
   }
   const people = [...newest.values()];
+  // Known connections reached without an invite are in the funnel's later
+  // rows (already connected, first message), never in its invite counts.
+  const invited = people.filter((u) => !u.noInvite);
 
   const count = (state: LinkedInInviteState) => people.filter((u) => u.row.state === state).length;
   const withdrawn = people.filter((u) => u.row.state === "withdrawn");
@@ -279,7 +292,7 @@ function funnelOf(units: Unit[], replies: PersonReplies): LinkedInFunnel {
       (r) => r.at >= u.firstMessageAtMs! && (u.nextStepAtMs === null || r.at < u.nextStepAtMs),
     ),
   );
-  const repliedAny = people.filter((u) =>
+  const repliedAny = invited.filter((u) =>
     (replies.get(u.row.prospectId)?.replies ?? []).some((r) => r.at >= u.sentAtMs),
   );
   const repliesMerged = people.reduce(
@@ -288,7 +301,7 @@ function funnelOf(units: Unit[], replies: PersonReplies): LinkedInFunnel {
   );
 
   return {
-    invitesSent: people.length,
+    invitesSent: invited.length,
     pending: count("pending"),
     withdrawn: {
       total: withdrawn.length,
@@ -302,12 +315,12 @@ function funnelOf(units: Unit[], replies: PersonReplies): LinkedInFunnel {
       viaConversation: accepted.filter((u) => u.row.acceptedVia === "conversation").length,
       medianDaysToAccept: med === null ? null : round1(med),
       daysKnown: days.length,
-      rate: people.length > 0 ? accepted.length / people.length : null,
+      rate: invited.length > 0 ? accepted.length / invited.length : null,
     },
     alreadyConnected: count("already_connected"),
     firstMessageSent: withMessage.length,
     repliedToFirstMessage: rate(repliedFirst.length, withMessage.length),
-    repliedAtAnyPoint: rate(repliedAny.length, people.length),
+    repliedAtAnyPoint: rate(repliedAny.length, invited.length),
     repliesMerged,
   };
 }

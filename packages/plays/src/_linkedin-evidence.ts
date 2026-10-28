@@ -290,6 +290,8 @@ export function mentionsCompany(text: string | null | undefined, company: string
 export interface LiveProfileSnapshot {
   headline?: string;
   experience: Array<{ company: string; title?: string; period?: string }>;
+  /** The view's `network_distance`, when it reported one (`isFirstDegree` reads it). */
+  networkDistance?: string;
 }
 
 /** Whether a live read names `company` in its headline or a current position. */
@@ -469,9 +471,11 @@ export function profileViewReader(input: {
     if (!record(done?.["profile"])) return null;
     const headline = findString(done, ["headline"]);
     const company = findString(done, ["current_company", "company_name"]);
+    const networkDistance = findString(done, ["network_distance"]);
     return {
       ...(headline ? { headline } : {}),
       experience: company ? [{ company, period: "Present" }] : [],
+      ...(networkDistance ? { networkDistance } : {}),
     };
   };
 }
@@ -492,10 +496,41 @@ function snapshotFrom(value: unknown): LiveProfileSnapshot | null {
     })
     .filter((e) => e.company);
   const headline = p["headline"];
+  const distance = p["networkDistance"];
   return {
     ...(typeof headline === "string" && headline ? { headline } : {}),
     experience,
+    ...(typeof distance === "string" && distance ? { networkDistance: distance } : {}),
   };
+}
+
+/** The paid-cache entries a profile read is kept under: person research's full read, then the silent view. */
+const STORED_PROFILE_READS = ["linkedin.profile_read", "linkedin.profile"] as const;
+
+/**
+ * The newest stored read of this profile that reports a network distance, no
+ * older than `maxAgeMs`, with when it was read. Reads the paid cache only.
+ * A read stored before the distance was kept says nothing either way.
+ */
+export function storedNetworkDistance(
+  url: string,
+  opts: { now: Date; maxAgeMs: number },
+): { distance: string; readAt: string } | null {
+  let newest: { distance: string; readAt: string } | null = null;
+  for (const callType of STORED_PROFILE_READS) {
+    const entry = readPaidCache(
+      callType,
+      { url },
+      { now: opts.now.getTime(), maxAgeMs: opts.maxAgeMs },
+    );
+    if (entry?.status !== "ok") continue;
+    const distance = snapshotFrom(entry.result)?.networkDistance;
+    if (!distance) continue;
+    const readAt = record(entry.result)?.["readAt"];
+    const at = typeof readAt === "string" && readAt ? readAt : entry.fetchedAt;
+    if (!newest || Date.parse(at) > Date.parse(newest.readAt)) newest = { distance, readAt: at };
+  }
+  return newest;
 }
 
 /**
@@ -503,7 +538,7 @@ function snapshotFrom(value: unknown): LiveProfileSnapshot | null {
  * research's full read first, else an earlier silent view.
  */
 function storedLiveProfile(url: string, now: Date): LiveProfileSnapshot | null {
-  for (const callType of ["linkedin.profile_read", "linkedin.profile"] as const) {
+  for (const callType of STORED_PROFILE_READS) {
     const entry = readPaidCache(callType, { url }, { now: now.getTime() });
     if (entry?.status !== "ok") continue;
     const snapshot = snapshotFrom(entry.result);

@@ -1,4 +1,8 @@
-import type { LinkedInFunnel, LinkedInRate } from "@oneshot-gtm/shared-types";
+import {
+  type LinkedInFunnel,
+  type LinkedInRate,
+  linkedInFunnelHasActivity,
+} from "@oneshot-gtm/shared-types";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../api/client.ts";
@@ -44,6 +48,7 @@ const ROWS: FunnelRow[] = [
         ? "n/a"
         : `${f.accepted.medianDaysToAccept} (over ${f.accepted.daysKnown})`,
   },
+  { label: "Already connected", value: (f) => formatCount(f.alreadyConnected) },
   { label: "First message sent", value: (f) => formatCount(f.firstMessageSent) },
   {
     label: "Replied to the first message",
@@ -73,10 +78,12 @@ export function LinkedInFunnelSection({ sinceDays }: { sinceDays: number | undef
         { label: "All", funnel: view.funnel },
         { label: "With evidence clause", funnel: view.variants.withEvidence },
         { label: "Without", funnel: view.variants.withoutEvidence },
-        ...(view.variants.unrecorded.invitesSent > 0
-          ? [{ label: "Before it was recorded", funnel: view.variants.unrecorded }]
+        ...(linkedInFunnelHasActivity(view.variants.unrecorded)
+          ? [{ label: "No clause recorded", funnel: view.variants.unrecorded }]
           : []),
-        ...(view.friend.invitesSent > 0 ? [{ label: "Friend invites", funnel: view.friend }] : []),
+        ...(linkedInFunnelHasActivity(view.friend)
+          ? [{ label: "Friend invites", funnel: view.friend }]
+          : []),
       ]
     : [];
 
@@ -118,7 +125,8 @@ export function LinkedInFunnelSection({ sinceDays }: { sinceDays: number | undef
       </div>
       {q.isLoading ? (
         Array.from({ length: 4 }, (_, i) => <SkeletonRow key={i} />)
-      ) : !view || (view.funnel.invitesSent === 0 && view.friend.invitesSent === 0) ? (
+      ) : !view ||
+        (!linkedInFunnelHasActivity(view.funnel) && !linkedInFunnelHasActivity(view.friend)) ? (
         <div className="px-6 pb-6">
           <EmptyNote note="No LinkedIn invites sent in this view yet. Once invites go out, the funnel lands here." />
         </div>

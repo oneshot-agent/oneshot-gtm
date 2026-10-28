@@ -290,6 +290,53 @@ describe("LinkedIn funnel", () => {
     expect(view.funnel.withdrawn.total).toBe(2); // D and E; C's newest invite is pending
   });
 
+  it("counts a known connection from the profile read as already connected, never as an invite sent", () => {
+    const kim = person("Kim Fixture");
+    const known = {
+      inviteStatus: "already_connected",
+      via: "profile-read",
+      invitationId: undefined,
+    };
+    invite(kim, LUMA, at(4), known);
+    message(kim, LUMA, 1, at(4, 1));
+    reply(kim, "oneshot-linkedin", "acct:m9", at(3), "Good to hear from you");
+    const f = compute().view.funnel;
+    expect(f.invitesSent).toBe(7); // unchanged: no invite went to Kim
+    expect(f.pending).toBe(1);
+    expect(f.alreadyConnected).toBe(2); // H, and Kim
+    expect(f.accepted.total).toBe(3);
+    expect(f.accepted.rate).toBeCloseTo(3 / 7);
+    expect(f.firstMessageSent).toBe(3); // A, B, Kim
+    expect(f.repliedToFirstMessage).toEqual({ count: 2, of: 3, rate: 2 / 3 });
+    expect(f.repliedAtAnyPoint.of).toBe(7);
+    const row = compute().rows.find((r) => r.prospectId === kim)!;
+    expect(row.state).toBe("already_connected");
+  });
+
+  it("leaves out a known connection LinkedIn said was not one, and counts the invite that replaced it", () => {
+    const kim = person("Kim Fixture");
+    invite(kim, LUMA, at(6), { inviteStatus: "already_connected", via: "profile-read" });
+    const id = ledger.recordLinkedInInviteEvent({
+      prospectId: kim,
+      playName: LUMA,
+      stepIndex: 0,
+      status: "withdrawn",
+      metadata: { reason: "not-connected" },
+    });
+    stamp("sequence_events", id, at(5));
+    let f = compute().view.funnel;
+    expect(f.invitesSent).toBe(7);
+    expect(f.alreadyConnected).toBe(1);
+    expect(f.withdrawn.total).toBe(2);
+    expect(compute().rows.some((r) => r.prospectId === kim)).toBe(false);
+
+    invite(kim, LUMA, at(4), { evidenceClause: true });
+    f = compute().view.funnel;
+    expect(f.invitesSent).toBe(8);
+    expect(f.pending).toBe(2);
+    expect(f.withdrawn.total).toBe(2);
+  });
+
   it("reads rates over a zero denominator as null, not zero", () => {
     const view = computeLinkedInFunnel({
       source: { events: [], prospects: [], replies: [] },

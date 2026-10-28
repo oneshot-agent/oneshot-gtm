@@ -5,6 +5,7 @@ import {
   claimLinkedInProfile,
   getLedger,
   guardFlag,
+  KNOWN_CONNECTION_VIA,
   normalizeLinkedInProfile,
   type LinkedInGuardReason,
   loadConfig,
@@ -23,6 +24,11 @@ import {
   lintSharedCohort,
 } from "./_linkedin-evidence.ts";
 import { learningBlock, stampLearningInput, voiceBlock } from "./_lib.ts";
+import {
+  type KnownConnection,
+  KNOWN_CONNECTION_SUBJECT,
+  knownConnectionDay,
+} from "./_linkedin-connection.ts";
 import { templatedLinkedIn } from "./_linkedin-template.ts";
 import { offerCandidatesOf, offerOf, playMakesOffer } from "./_prospect-offer.ts";
 
@@ -457,4 +463,119 @@ export async function sendLinkedInInvite(input: {
   }
   logEvent("linkedin.invite_sent", { play: input.row.playName, status });
   return { sent: true, status, invitationId: result.invitation_id, prospectId };
+}
+
+export type KnownConnectionOutcome =
+  | { sent: true; status: "already_connected"; prospectId: number }
+  | { sent: false; flags: string[]; guard?: LinkedInGuardReason };
+
+/**
+ * The sibling of `sendLinkedInInvite` for a known connection
+ * (`knownConnection`): the same guard and the same profile claim, but no
+ * invite slot and no invite call, since nothing goes to LinkedIn. It records
+ * the LinkedIn touch the invite would have, marked `via: "profile-read"` and
+ * `already_connected`, so the cadence's first message goes ahead without
+ * waiting on an acceptance. Off a queue row it enrolls the LinkedIn sequence
+ * with its first message due now; with `continuation` it is the email
+ * cadence's connection-request step and enrolls nothing.
+ */
+export function recordKnownConnection(input: {
+  row: LinkedInFirstTouchRow;
+  connection: KnownConnection;
+  /** The account the first message will go out from. */
+  sender: { accountId: string; workspace?: string };
+  workspace: string;
+  continuation?: { prospectId: number; stepIndex: number };
+}): KnownConnectionOutcome {
+  const p = input.row.payload;
+  const profile = linkedInProfileOf(p);
+  const target = normalizeLinkedInProfile(profile);
+  const override = p["icpOverride"];
+  const verdict = canInviteOnLinkedInNow({
+    ...(input.continuation ? { prospectId: input.continuation.prospectId } : {}),
+    name: str(p, "name"),
+    company: str(p, "company"),
+    email: str(p, "email", "founderEmail"),
+    linkedinUrl: str(p, "linkedinUrl"),
+    icpVerdict: str(p, "icpVerdict"),
+    icpOverridden: typeof override === "object" && override !== null,
+  });
+  if (!verdict.ok) return { sent: false, flags: [guardFlag(verdict)], guard: verdict.reason };
+  if (!target || !profile) {
+    return {
+      sent: false,
+      flags: ["invalid-profile: the LinkedIn URL is not a personal profile"],
+      guard: "invalid-profile",
+    };
+  }
+  // Held like an invite, so no other workspace starts on them; freed again
+  // only if LinkedIn says they are not connected (`voidKnownConnection`).
+  const claimed = claimLinkedInProfile({
+    profile: target,
+    workspace: input.workspace,
+    as: "connected",
+  });
+  if (!claimed.ok) return { sent: false, flags: [guardFlag(claimed)], guard: claimed.reason };
+  const ledger = getLedger();
+  // The record, the prospect and the cadence land together or not at all:
+  // nothing went out, so a failed write frees the claim and the row can be
+  // sent again without a second record.
+  let prospectId: number;
+  try {
+    prospectId = ledger.inTransaction(() => {
+      const id =
+        input.continuation?.prospectId ??
+        ledger.upsertProspect({
+          name: str(p, "name"),
+          email: null,
+          company: str(p, "company"),
+          title: str(p, "title", "currentRole"),
+          linkedin_url: profile,
+          source: input.row.playName,
+          source_profile_url: str(p, "sourceProfileUrl") ?? profile,
+        });
+      ledger.recordLinkedInInviteEvent({
+        prospectId: id,
+        playName: input.row.playName,
+        stepIndex: input.continuation?.stepIndex ?? 0,
+        status: "sent",
+        metadata: {
+          // What the cadence timeline shows. No `note`: nothing was sent, and
+          // the message prompts leave this record out of their prior touches.
+          subject: KNOWN_CONNECTION_SUBJECT,
+          body: `Already connected on LinkedIn (profile read ${knownConnectionDay(input.connection)}): no connection request sent.`,
+          label: "already connected",
+          inviteStatus: "already_connected",
+          via: KNOWN_CONNECTION_VIA,
+          readAt: input.connection.readAt,
+          accountId: input.sender.accountId,
+          ...(input.sender.workspace ? { accountWorkspace: input.sender.workspace } : {}),
+        },
+      });
+      if (!input.continuation) {
+        const offer = offerOf(p);
+        enrollInCadence({
+          prospectId: id,
+          playName: input.row.playName,
+          channel: "linkedin",
+          firstStepDueNow: true,
+          ...(input.row.id > 0 ? { queueId: input.row.id } : {}),
+          ...(offer
+            ? {
+                offer,
+                offerCandidates: offerCandidatesOf(p),
+                offerOrigin: "derived" as const,
+              }
+            : {}),
+        });
+      }
+      return id;
+    });
+  } catch (err) {
+    claimed.claim.release();
+    throw err;
+  }
+  claimed.claim.confirm();
+  logEvent("linkedin.known_connection_recorded", { play: input.row.playName });
+  return { sent: true, status: "already_connected", prospectId };
 }

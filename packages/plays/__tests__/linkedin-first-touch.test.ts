@@ -27,6 +27,7 @@ vi.mock("@oneshot-gtm/core", async () => {
         upserts.push(input);
         return 42;
       },
+      inTransaction: <T>(fn: () => T): T => fn(),
       recordLinkedInInviteEvent: (input: Record<string, unknown>) => {
         if (failReceipt) throw new Error("receipt store down");
         events.push(input);
@@ -49,7 +50,8 @@ vi.mock("@oneshot-gtm/intel", () => ({
   },
 }));
 
-const { draftLinkedInNote, sendLinkedInInvite } = await import("../src/_linkedin-first-touch.ts");
+const { draftLinkedInNote, recordKnownConnection, sendLinkedInInvite } =
+  await import("../src/_linkedin-first-touch.ts");
 const { isSendDeferred, _resetInviteLimitsCacheForTests } = await import("@oneshot-gtm/core");
 
 function row(payload: Record<string, unknown> = {}) {
@@ -592,5 +594,121 @@ describe("sendLinkedInInvite", () => {
     });
     expect(out).toMatchObject({ sent: false, guard: "invalid-profile" });
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("recordKnownConnection", () => {
+  const connection = { readAt: "2026-10-20T09:00:00.000Z" };
+  const acct = { accountId: "acct-1", workspace: "alpha" };
+
+  it("records the connection in place of an invite: no invite call, no slot, the profile claimed", async () => {
+    const { getSharedDb } = await import("@oneshot-gtm/core");
+    const out = recordKnownConnection({ row: row(), connection, sender: acct, workspace: "alpha" });
+    expect(out).toEqual({ sent: true, status: "already_connected", prospectId: 42 });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      prospectId: 42,
+      stepIndex: 0,
+      status: "sent",
+      metadata: {
+        subject: "LinkedIn: already connected",
+        label: "already connected",
+        inviteStatus: "already_connected",
+        via: "profile-read",
+        readAt: connection.readAt,
+        accountId: "acct-1",
+        accountWorkspace: "alpha",
+      },
+    });
+    // Nothing was sent, so no note is recorded as one.
+    expect((events[0]!["metadata"] as Record<string, unknown>)["note"]).toBeUndefined();
+    expect(
+      getSharedDb().inviteSlotsUsed("acct-1", "alpha", new Date().toISOString().slice(0, 10)),
+    ).toBe(0);
+    // Held like an invite: no other workspace starts on them.
+    expect(getSharedDb().linkedInTouch("dana-lee")).toMatchObject({
+      source: "connected:alpha",
+      status: "confirmed",
+    });
+    const { sender: s, calls } = sender({ invitation_id: "inv-1", status: "sent" });
+    const other = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "two" });
+    expect(other).toMatchObject({ sent: false, guard: "already-touched" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("enrolls the LinkedIn sequence with its first message due now", () => {
+    const before = Date.now();
+    recordKnownConnection({ row: row(), connection, sender: acct, workspace: "alpha" });
+    expect(enrollments[0]).toMatchObject({
+      prospectId: 42,
+      playName: "luma-events",
+      channel: "linkedin",
+      queueId: 7,
+    });
+    const due = Date.parse(String(enrollments[0]!["nextDueAt"]));
+    expect(due).toBeGreaterThanOrEqual(before - 1000);
+    expect(due).toBeLessThanOrEqual(Date.now() + 1000);
+  });
+
+  it("as an email cadence's request step, records at that step for its prospect and enrolls nothing", () => {
+    const out = recordKnownConnection({
+      row: { ...row(), id: 0 },
+      connection,
+      sender: acct,
+      workspace: "alpha",
+      continuation: { prospectId: 9, stepIndex: 4 },
+    });
+    expect(out).toMatchObject({ sent: true, prospectId: 9 });
+    expect(upserts).toHaveLength(0);
+    expect(events[0]).toMatchObject({ prospectId: 9, stepIndex: 4 });
+    expect(enrollments).toHaveLength(0);
+  });
+
+  it("passes the invite guard: an ICP reject, a non-person and a suppressed profile are refused", async () => {
+    expect(
+      recordKnownConnection({
+        row: row({ icpVerdict: "reject" }),
+        connection,
+        sender: acct,
+        workspace: "alpha",
+      }),
+    ).toMatchObject({ sent: false, guard: "icp-rejected" });
+    expect(
+      recordKnownConnection({
+        row: row({ name: "SWE-agent" }),
+        connection,
+        sender: acct,
+        workspace: "alpha",
+      }),
+    ).toMatchObject({ sent: false, guard: "not-a-person" });
+    const { getSharedDb } = await import("@oneshot-gtm/core");
+    getSharedDb().markLinkedInTouched({ slug: "dana-lee", source: "import:previous-tool" });
+    expect(
+      recordKnownConnection({ row: row(), connection, sender: acct, workspace: "alpha" }),
+    ).toMatchObject({ sent: false, guard: "already-touched" });
+    expect(events).toHaveLength(0);
+    expect(enrollments).toHaveLength(0);
+  });
+
+  it("frees the claim when the record cannot be written", async () => {
+    failReceipt = true;
+    expect(() =>
+      recordKnownConnection({ row: row(), connection, sender: acct, workspace: "alpha" }),
+    ).toThrow("receipt store down");
+    const { getSharedDb } = await import("@oneshot-gtm/core");
+    expect(getSharedDb().linkedInTouch("dana-lee")).toBeNull();
+  });
+
+  it("releaseKnownConnection frees only the connection's claim, never an invite's", async () => {
+    const { getSharedDb, normalizeLinkedInProfile, releaseKnownConnection } =
+      await import("@oneshot-gtm/core");
+    recordKnownConnection({ row: row(), connection, sender: acct, workspace: "alpha" });
+    const profile = normalizeLinkedInProfile("https://www.linkedin.com/in/dana-lee")!;
+    expect(releaseKnownConnection({ profile, workspace: "alpha" })).toBe(true);
+    expect(getSharedDb().linkedInTouch("dana-lee")).toBeNull();
+    const { sender: s } = sender({ invitation_id: "inv-1", status: "sent" });
+    await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "alpha" });
+    releaseKnownConnection({ profile, workspace: "alpha" });
+    expect(getSharedDb().linkedInTouch("dana-lee")).toMatchObject({ source: "invite:alpha" });
   });
 });
