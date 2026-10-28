@@ -24,7 +24,7 @@ A JSON object only:
 
 **`pass`** — the role clearly is, or clearly does the work of, the person the ICP describes. When the ICP says what qualifies, that is the test: an ICP that says "capability, not seniority" passes anyone who does the work whatever their title; an ICP about people who OWN a function passes whoever owns it, whatever their level.
 
-**Founder-class titles pass on their own only when being a founder, owner or operator IS the ICP's criterion** — `Founder`, `Co-Founder`, `Owner`, `CEO`, `Fundador`, `Building X` against "founders and owner-operators of clinic groups who run patient booking and acquisition". Do not downgrade them to `unclear` for lacking detail there: a founder decides without a committee, which is what such an ICP selects for. When the ICP adds a further constraint the title does not meet on its own — a capability ("technical founders who build"), a stage, an industry, a function they must own — a bare founder title is `unclear` until something in the input meets it: `Founder` against "technical founders building payment integrations" is `unclear`, `Founder of a card-issuing API startup` is `pass`, `Founder of a recruiting agency` is `reject`. When the ICP targets a specific non-founder role ("staff security engineers"), a bare founder title is `unclear`, never an automatic pass.
+**Founder-class titles pass on their own only when being a founder, owner or operator IS the ICP's criterion** — `Founder`, `Co-Founder`, `Owner`, `CEO`, `Fundador`, `Building X` against "founders and owner-operators who run how their business wins and books customers". Do not downgrade them to `unclear` for lacking detail there: a founder decides without a committee, which is what such an ICP selects for. When the ICP adds a further constraint the title does not meet on its own — a capability ("technical founders who build"), a stage, an industry, a function they must own — a bare founder title is `unclear` until something in the input meets it: `Founder` against "technical founders building payment integrations" is `unclear`, `Founder of a card-issuing API startup` is `pass`, `Founder of a recruiting agency` is `reject`. When the ICP targets a specific non-founder role ("staff security engineers"), a bare founder title is `unclear`, never an automatic pass.
 
 **`reject`** — the role is clearly a different job function from the one the ICP describes, so this person would not be the one to use, run or decide on what the founder offers. Only an explicit, unambiguous employer job function earns a reject.
 
@@ -44,10 +44,10 @@ Against an ICP of "technical founders and platform engineers building payment in
 - `reject`: `Account Executive`, `Head of Growth`, `VP of Marketing and Product`, `Senior Product Designer`, `Talent Acquisition`, `Early stage VC investor` — when nothing else suggests they build.
 - `unclear`: bare `Founder` (technical is a constraint the title alone does not meet), `Manager`, `Consultant`, `COO at a 12-person startup`, `Club Snowboard Team Event Coordinator` at a payments company.
 
-Against an ICP of "founders, owner-operators and lean teams at dental and veterinary clinic groups who own patient booking and acquisition":
-- `pass`: `Owner, Harborview Dental`, `Head of Growth at a 9-location dental group`, `Co-founder & Practice Director`, `Managing partner, 3-vet practice`, `Founder` of any clinic group.
+Against an ICP of "founders, owner-operators and lean teams who own how a business that takes bookings wins and books its customers":
+- `pass`: `Owner, Harborview Dental`, `Head of Growth at a 9-location dental group`, `Co-founder & Practice Director`, `Managing partner, 3-vet practice`, `Founder` of anything that takes bookings.
 - `reject`: `Backend Engineer` with no booking or acquisition ownership, `Angel Investor`, `Undergraduate student` with no venture, `Executive Medical Coder`.
-- `unclear`: `Consultant`, `Director`, `Founder of a wellness brand` (a clinic group not evident), `Regional Manager` (may own booking across locations).
+- `unclear`: `Consultant`, `Director`, `Founder of a wellness brand` (bookings not evident), `Regional Manager` (may own booking across locations).
 
 `Head of Growth` is a reject in the first set and a pass in the second. The ICP decides, not the title.
 

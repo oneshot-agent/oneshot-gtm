@@ -98,6 +98,16 @@ interface CommitPattern {
   requireAffirmative?: boolean;
 }
 
+/**
+ * Verbs by which the founder hands the other party a designation ("we'll make
+ * you our recommended provider", "point our users toward you as the preferred
+ * option"). Perception verbs (see, understand, get) are not among them.
+ */
+const FOUNDER_ACTION = String.raw`(?:name|list|make|designat|position|mark|treat|point|recommend|promot|call|feature|featuring|add|put|includ|set up|offer)\w*\b`;
+
+/** The founder as the one acting: "I"/"we" (any contraction), or a subjectless "happy to" / "let me". */
+const FOUNDER_SUBJECT = String.raw`(?:\b(?:i|we)(?:['’](?:ll|d|re|m|ve))?\b|\b(?:happy|glad) to\b|\blet(?:['’]s| me| us)\b)`;
+
 const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
   // Pricing, discounts, free tiers. Bare mentions ("our pricing is public")
   // are common in ordinary, harmless replies. Only count it when the same
@@ -134,18 +144,27 @@ const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
     regex: /\b(?:add(?:ing)?|list(?:ing)?)\b[^.]{0,60}\b(?:documentation|docs)\b/i,
     requireAffirmative: true,
   },
-  // Endorsing the other party: a "recommended" or "preferred" designation
-  // for whatever they are (a partner, a provider, a platform, a tool).
+  // Endorsing the other party: the founder ("I"/"we") acting to give them a
+  // "recommended" or "preferred" designation, whatever they are (a partner, a
+  // provider, a platform, a tool). The founder and an action verb are both
+  // required: "I can see why it's your preferred platform" designates nothing.
   {
-    regex:
-      /\b(?:recommended|preferred)\b[^.]{0,40}\b(?:partner|environment|integration|provider|option|vendor|choice|solution|platform|tool|supplier)\b/i,
+    regex: new RegExp(
+      String.raw`${FOUNDER_SUBJECT}[^.]{0,80}\b${FOUNDER_ACTION}[^.]{0,80}\b(?:recommended|preferred)\b[^.]{0,40}\b(?:partner|environment|integration|provider|option|vendor|choice|solution|platform|tool|supplier)\b`,
+      "i",
+    ),
     requireAffirmative: true,
   },
-  // Featuring the other party in the founder's own material: an example,
-  // a case study, the website, the docs, a post.
+  // Featuring the other party in the founder's own material: an example, a
+  // case study, the website, the docs, a post. The founder must be the one
+  // featuring, and the one featured is not the founder: "thanks for featuring
+  // us in your newsletter" is gratitude, not a promise.
   {
-    regex:
-      /\bfeatur(?:e|ing)\b[^.]{0,60}\b(?:reference implementation|example|case stud(?:y|ies)|website|repo|documentation|docs|blog|newsletter)\b/i,
+    regex: new RegExp(
+      String.raw`${FOUNDER_SUBJECT}[^.]{0,100}\bfeatur(?:e|ing)\s+(?!us\b|me\b)[^.]{0,60}\b(?:reference implementation|example|case stud(?:y|ies)|website|repo|documentation|docs|blog|newsletter)\b`,
+      "i",
+    ),
+    requireAffirmative: true,
   },
 ];
 

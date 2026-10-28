@@ -117,6 +117,8 @@ describe("voiceBlock with overrides", () => {
     expect(out.text).toContain("GREETING: Hi");
     expect(out.text).toContain("SUBJECT CASE: sentence");
     expect(out.text).not.toContain("VOICE BUDGET");
+    // No card: its drafts count as voice off, not as a card of their own.
+    expect(out.key).toBeNull();
   });
 
   it("puts the overrides after the card and keys on the card alone", () => {

@@ -1016,17 +1016,18 @@ export function voiceOverrideLines(
  * exactly as before. The card controls tone and rhythm; factual, audience,
  * channel and lint constraints still apply. The shared structure is
  * flexible. Platform-generic on purpose: no founder name, no product, no
- * influence named. Keyed on the card when there is one, so an override does
- * not split a card's outcomes.
+ * influence named. Keyed on the card alone: an override does not split a
+ * card's outcomes, and an override with no card keys null, so its drafts
+ * count as voice off.
  */
-export function voiceBlock(surface: VoiceSurface): { text: string; key: string } | null {
+export function voiceBlock(surface: VoiceSurface): { text: string; key: string | null } | null {
   const cfg = loadConfig();
   const card = cfg.founderVoice?.trim();
   const overrides = voiceOverrideLines(cfg);
   if (!card) {
     if (overrides.length === 0) return null;
     return {
-      key: voiceKey(overrides.join("\n")),
+      key: null,
       text: ["VOICE (the founder's style settings; they bind):", ...overrides].join("\n"),
     };
   }

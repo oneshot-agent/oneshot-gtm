@@ -130,6 +130,35 @@ describe("bodyCommitsTerms (issue #480)", () => {
   it("still catches a refusal that follows a comma in the same sentence", () => {
     expect(bodyCommitsTerms("We can review pricing, but cannot offer a discount.")).toBe(false);
   });
+
+  // A designation or a feature counts only when the founder makes it: naming
+  // the other party's preferred tool, or thanking them for featuring us, is not.
+  it("fires when the founder designates the other party recommended or preferred", () => {
+    expect(bodyCommitsTerms("We can make you our recommended provider for new customers.")).toBe(
+      true,
+    );
+    expect(
+      bodyCommitsTerms(
+        "i can point our users toward Beacon as the recommended environment for their work.",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not fire on a recommended or preferred label the founder does not give", () => {
+    expect(bodyCommitsTerms("I can see why it's your preferred platform.")).toBe(false);
+    expect(bodyCommitsTerms("I understand it's the preferred option for your team.")).toBe(false);
+    expect(bodyCommitsTerms("We would love to be your preferred vendor.")).toBe(false);
+  });
+
+  it("fires when the founder offers to feature the other party", () => {
+    expect(bodyCommitsTerms("We'll feature your setup in our newsletter next month.")).toBe(true);
+    expect(bodyCommitsTerms("Happy to feature your integration in our docs.")).toBe(true);
+  });
+
+  it("does not fire when the other party featured the founder", () => {
+    expect(bodyCommitsTerms("Thanks for featuring us in your newsletter.")).toBe(false);
+    expect(bodyCommitsTerms("It's great that you'd feature us on your blog.")).toBe(false);
+  });
 });
 
 describe("intentDirectiveBlock (issue #480)", () => {

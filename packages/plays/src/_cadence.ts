@@ -3235,7 +3235,7 @@ export function buildFollowUpEmail(opts: {
       body: cleaned.body,
       // The voice card in the prompt, so the persisted preview's draft
       // version can be split voice on/off like an intro draft's.
-      ...(voice ? { voiceKey: voice.key } : {}),
+      ...(voice?.key ? { voiceKey: voice.key } : {}),
       ...(learned ? { learningKey: learned.key } : {}),
       ...(opts.hardBans ? { hardBans: true } : {}),
       ...(hardBanAllow.length > 0 ? { hardBanAllow } : {}),
@@ -4034,7 +4034,7 @@ async function buildLinkedInMessage(
         kind: "linkedin_message",
         text,
         ...(drafted.flags.length > 0 ? { flags: drafted.flags } : {}),
-        ...(voice ? { voiceKey: voice.key } : {}),
+        ...(voice?.key ? { voiceKey: voice.key } : {}),
         ...(learned ? { learningKey: learned.key } : {}),
       }
     : null;
