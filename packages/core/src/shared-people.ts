@@ -39,9 +39,6 @@ export function personAliases(input: Partial<Omit<SharedPerson, "id">>): string[
   return [...new Set(keys)];
 }
 
-/** How many ids one `IN (...)` statement binds: well under SQLite's variable limit. */
-const IN_CHUNK = 400;
-
 export class SharedPeople {
   private db: Database;
   constructor(path: string) {
@@ -75,21 +72,6 @@ export class SharedPeople {
   }
   get(id: string): SharedPerson | null {
     return this.db.query("SELECT * FROM shared_people WHERE id=?").get(id) as SharedPerson | null;
-  }
-  /**
-   * `get` for a set of ids at once (#935): one `IN (...)` read per chunk of
-   * ids, Map keyed by id. An unknown id has no entry.
-   */
-  getMany(ids: readonly string[]): Map<string, SharedPerson> {
-    const map = new Map<string, SharedPerson>();
-    for (let i = 0; i < ids.length; i += IN_CHUNK) {
-      const part = ids.slice(i, i + IN_CHUNK);
-      const rows = this.db
-        .query(`SELECT * FROM shared_people WHERE id IN (${part.map(() => "?").join(",")})`)
-        .all(...part) as SharedPerson[];
-      for (const row of rows) map.set(row.id, row);
-    }
-    return map;
   }
   find(input: Partial<Omit<SharedPerson, "id">>): SharedPerson | null {
     const ids = new Set(

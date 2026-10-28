@@ -325,7 +325,8 @@ export class Ledger {
     const namedWorkspace =
       basename(path) === "ledger.sqlite" && dirname(dirname(resolve(path))) === workspacesDir();
     if (options.sharedPeoplePath || (!demoMode() && (path === DEFAULT_DB_PATH || namedWorkspace))) {
-      this.people = new SharedPeople(options.sharedPeoplePath ?? sharedDbPath());
+      const peoplePath = options.sharedPeoplePath ?? sharedDbPath();
+      this.people = new SharedPeople(peoplePath);
       this.prospects.ensureSharedPersonColumn();
       // Scope `SharedPeople`'s ledger-agnostic membership/link calls to this
       // ledger's own path, matching what the inline `Ledger.bindSharedPerson`
@@ -334,12 +335,14 @@ export class Ledger {
       const people = this.people;
       this.prospects.attachSharedIdentity({
         get: (id) => people.get(id),
-        getMany: (ids) => people.getMany(ids),
         resolve: (input, knownId) => people.resolve(input, knownId),
         membership: (prospectId) => people.membership(this.path, prospectId),
         link: (prospectId, personId) => people.link(this.path, prospectId, personId),
         version: () => people.version(),
       });
+      // The inbox's bulk prospect read joins rows to their people in one
+      // statement (#935); see ProspectStore.attachSharedPeopleReader.
+      this.prospects.attachSharedPeopleReader(path, peoplePath, LEDGER_BUSY_TIMEOUT_MS);
       this.refreshSharedPeople();
     }
     // Build stores after migration so their tables exist.
@@ -1008,15 +1011,14 @@ export class Ledger {
   }
 
   /**
-   * `getProspectById` for a set of ids at once (#935): one read per chunk of
-   * ids for the rows, one more per chunk for their shared people, then the
+   * `getProspectById` for a set of ids at once (#935): one statement per
+   * chunk of ids, the rows joined to their shared people, then the
    * shared-identity overlay per row in memory. No mail address: the inbox's
    * conversation list, the one reader, shows name, company, email and source
    * only. A missing id has no entry.
    */
   listProspectsByIds(ids: readonly number[]): Map<number, ProspectRecord> {
-    const rows = [...this.prospects.getProspectRows(ids).values()];
-    return new Map(this.prospects.withSharedIdentities(rows).map((p) => [p.id, p]));
+    return this.prospects.getProspectsByIds(ids);
   }
 
   /**
@@ -2400,6 +2402,7 @@ export class Ledger {
   }
 
   close(): void {
+    this.prospects.closeSharedPeopleReader();
     this.people?.close();
     optimizeOnClose(this.db);
     this.db.close();

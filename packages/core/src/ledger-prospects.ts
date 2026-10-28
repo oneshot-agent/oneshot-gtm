@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 import type { PostalAddress } from "./direct-mail.ts";
 import { hasPersonSignal, mergePersonDossier, mergeProductDossier } from "./dossier.ts";
 import type { ProductResearchDossier } from "./dossier.ts";
@@ -7,6 +7,22 @@ import type { ProspectRecord } from "./types.ts";
 
 /** How many ids one `IN (...)` statement binds: well under SQLite's variable limit. */
 const IN_CHUNK = 400;
+
+/** Schema name the shared person registry is attached under on the joined reader (#935). */
+const PEOPLE_DB = "people_db";
+/** Prefix of a shared person's columns in a joined prospect row, so none shadows a prospect column. */
+const PERSON_PREFIX = "person__";
+/** Every column of a shared person row: what `SharedPeople.get`'s `SELECT *` returns, as a join's select list. */
+const PERSON_COLUMNS = Object.keys({
+  id: 0,
+  name: 0,
+  email: 0,
+  phone: 0,
+  company: 0,
+  linkedin_url: 0,
+  source_profile_url: 0,
+  title: 0,
+} satisfies Record<keyof SharedPerson, 0>) as Array<keyof SharedPerson>;
 
 /**
  * Prospect persistence, dossier updates, ICP verdicts, AND shared-person
@@ -37,7 +53,6 @@ export interface ProspectMailAddress {
  */
 export interface ProspectSharedIdentity {
   get(id: string): SharedPerson | null;
-  getMany(ids: readonly string[]): Map<string, SharedPerson>;
   resolve(input: Partial<ProspectRecord>, knownId?: string): SharedPerson;
   membership(prospectId: number): string | undefined;
   link(prospectId: number, personId: string): void;
@@ -101,6 +116,8 @@ export type ProspectSharedIdentityField =
 export class ProspectStore {
   private sharedIdentity: ProspectSharedIdentity | null = null;
   private peopleVersion = "";
+  /** Read-only connection joining prospects to the attached shared person registry (#935). */
+  private peopleReader: Database | null = null;
 
   constructor(
     private readonly db: Database,
@@ -156,30 +173,97 @@ export class ProspectStore {
   }
 
   /**
-   * `withSharedIdentity` for many rows at once (#935): the linked people are
-   * read in one `getMany` per set of rows instead of one `get` per row, so
-   * the inbox's conversation list reads its prospects' identities in a
-   * constant number of statements. Rows not yet linked to a person are
-   * bound one by one, as `withSharedIdentity` does: `upsertProspect` links
-   * on write and the construction-time sweep links the rest, so none is
-   * expected on the read path. Each row's result is what `withSharedIdentity`
-   * would return for it.
+   * Open the reader `getProspectsByIds` joins prospects to their shared
+   * people with (#935): a second, read-only connection to this ledger's
+   * file with the shared person registry attached, so a set of rows and
+   * their people come back in one statement per chunk of ids. A separate
+   * connection on purpose: a database attached to the main connection joins
+   * its `BEGIN IMMEDIATE` transactions, which would hold the registry's
+   * write lock while `bindSharedPerson` writes to the registry through
+   * `SharedPeople`'s own connection, a deadlock. A connection that never
+   * writes takes no lock a WAL writer waits on. An anonymous (`:memory:`)
+   * ledger has no file a second connection could open, so it keeps the
+   * per-row `get`.
    */
-  withSharedIdentities(rows: readonly ProspectRecord[]): ProspectRecord[] {
-    const identity = this.sharedIdentity;
-    if (!identity) return [...rows];
-    const linked = [
-      ...new Set(rows.flatMap((r) => (r.shared_person_id ? [r.shared_person_id] : []))),
-    ];
-    const people = identity.getMany(linked);
-    return rows.map((row) =>
-      ProspectStore.overlaySharedPerson(
-        row,
-        row.shared_person_id
-          ? (people.get(row.shared_person_id) ?? null)
-          : this.bindSharedPerson(row),
-      ),
-    );
+  attachSharedPeopleReader(ledgerPath: string, peoplePath: string, busyTimeoutMs: number): void {
+    if (ledgerPath === ":memory:") return;
+    const reader = new Database(ledgerPath, { readonly: true });
+    reader.exec(`PRAGMA busy_timeout = ${Math.trunc(busyTimeoutMs)}`);
+    reader.run(`ATTACH DATABASE ? AS ${PEOPLE_DB}`, [peoplePath]);
+    this.peopleReader = reader;
+  }
+
+  /** Close the joined reader; `Ledger.close` calls this before the main connection closes. */
+  closeSharedPeopleReader(): void {
+    this.peopleReader?.close();
+    this.peopleReader = null;
+  }
+
+  /**
+   * `withSharedIdentity(getProspectRow(id))` for a set of ids at once
+   * (#935), Map keyed by id, a missing id absent. With the registry
+   * attached, the rows and their linked people come from one `LEFT JOIN`
+   * statement per chunk of ids and are overlaid in memory, so the inbox's
+   * conversation list reads its prospects' identities in one statement per
+   * chunk, not one per row; each row's result is what `withSharedIdentity`
+   * returns for it. Rows not yet linked to a person are bound one by one, as
+   * `withSharedIdentity` does: `upsertProspect` links on write and the
+   * construction-time sweep links the rest, so none is expected on the read
+   * path.
+   */
+  getProspectsByIds(ids: readonly number[]): Map<number, ProspectRecord> {
+    if (!this.sharedIdentity) return this.getProspectRows(ids);
+    const reader = this.peopleReader;
+    if (!reader) {
+      return new Map(
+        [...this.getProspectRows(ids)].map(([id, row]) => [
+          id,
+          this.withSharedIdentity(row) ?? row,
+        ]),
+      );
+    }
+    const map = new Map<number, ProspectRecord>();
+    for (let i = 0; i < ids.length; i += IN_CHUNK) {
+      const part = ids.slice(i, i + IN_CHUNK);
+      const rows = reader
+        .query(
+          `SELECT p.*, ${PERSON_COLUMNS.map((c) => `sp.${c} AS ${PERSON_PREFIX}${c}`).join(", ")}
+             FROM prospects p
+             LEFT JOIN ${PEOPLE_DB}.shared_people sp ON sp.id = p.shared_person_id
+            WHERE p.id IN (${part.map(() => "?").join(",")})`,
+        )
+        .all(...part) as Array<Record<string, unknown>>;
+      for (const joined of rows) {
+        const { row, person } = ProspectStore.splitSharedPerson(joined);
+        map.set(
+          row.id,
+          ProspectStore.overlaySharedPerson(
+            row,
+            row.shared_person_id ? person : this.bindSharedPerson(row),
+          ),
+        );
+      }
+    }
+    return map;
+  }
+
+  /**
+   * A joined row's prospect columns and, when the registry still holds the
+   * person it is linked to, that person; `null` otherwise, as `get` returns
+   * for an unknown id.
+   */
+  private static splitSharedPerson(joined: Record<string, unknown>): {
+    row: ProspectRecord;
+    person: SharedPerson | null;
+  } {
+    const row: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(joined)) {
+      if (!key.startsWith(PERSON_PREFIX)) row[key] = value;
+    }
+    const person = Object.fromEntries(
+      PERSON_COLUMNS.map((c) => [c, joined[PERSON_PREFIX + c] ?? null]),
+    ) as unknown as SharedPerson;
+    return { row: row as unknown as ProspectRecord, person: person.id ? person : null };
   }
 
   /** The row with its shared person's fields on top; the row alone when it has none. */
@@ -370,8 +454,8 @@ export class ProspectStore {
   /**
    * Raw prospect rows for a set of ids at once (#935): one `IN (...)` read
    * per chunk of ids, Map keyed by id, no mail address and no
-   * shared-identity resolution (`Ledger.listProspectsByIds` adds the
-   * latter, as `getProspectById` does for one row). A missing id has no entry.
+   * shared-identity resolution (`getProspectsByIds` adds the latter, as
+   * `getProspectById` does for one row). A missing id has no entry.
    */
   getProspectRows(ids: readonly number[]): Map<number, ProspectRecord> {
     const map = new Map<number, ProspectRecord>();

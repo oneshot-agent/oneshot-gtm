@@ -97,10 +97,37 @@ describe("listInboxRoute conversation reads", () => {
       listInboxRepliesForProspect: vi.spyOn(ledger, "listInboxRepliesForProspect"),
       listSequenceEventsForProspect: vi.spyOn(ledger, "listSequenceEventsForProspect"),
     };
+    // The budget the issue states (#935): one `IN (...)` statement per page
+    // reader per chunk of up to 400 ids, a prospect's shared person joined
+    // into its row. Each reader is wrapped to count the statements it issues.
+    const statementsIn: Record<string, number> = {};
+    const counted =
+      <A extends unknown[], R>(name: string, read: (...args: A) => R) =>
+      (...args: A): R => {
+        const before = query.mock.calls.length;
+        const out = read(...args);
+        statementsIn[name] = query.mock.calls.length - before;
+        return out;
+      };
+    const real = {
+      listProspectsByIds: ledger.listProspectsByIds.bind(ledger),
+      listInboxRepliesForProspects: ledger.listInboxRepliesForProspects.bind(ledger),
+      listSequenceEventsForProspects: ledger.listSequenceEventsForProspects.bind(ledger),
+    };
     const page = {
-      listProspectsByIds: vi.spyOn(ledger, "listProspectsByIds"),
-      listInboxRepliesForProspects: vi.spyOn(ledger, "listInboxRepliesForProspects"),
-      listSequenceEventsForProspects: vi.spyOn(ledger, "listSequenceEventsForProspects"),
+      listProspectsByIds: vi
+        .spyOn(ledger, "listProspectsByIds")
+        .mockImplementation(counted("listProspectsByIds", real.listProspectsByIds)),
+      listInboxRepliesForProspects: vi
+        .spyOn(ledger, "listInboxRepliesForProspects")
+        .mockImplementation(
+          counted("listInboxRepliesForProspects", real.listInboxRepliesForProspects),
+        ),
+      listSequenceEventsForProspects: vi
+        .spyOn(ledger, "listSequenceEventsForProspects")
+        .mockImplementation(
+          counted("listSequenceEventsForProspects", real.listSequenceEventsForProspects),
+        ),
     };
 
     expect(await conversations()).toHaveLength(FEW);
@@ -109,22 +136,27 @@ describe("listInboxRoute conversation reads", () => {
 
     for (let i = FEW; i < MORE; i++) ids.push(replier(i));
     // Every replier is linked to a shared person, so each conversation's
-    // identity comes from the registry: one bulk read, never one per person.
+    // identity comes from the registry: joined into the prospect read, never
+    // one statement per person.
     const personIds = ids.map((id) => ledger.getProspectById(id)!.shared_person_id!);
     expect(new Set(personIds).size).toBe(MORE);
     perProspect.getProspectById.mockClear();
     const personGet = vi.spyOn(SharedPeople.prototype, "get");
-    const personGetMany = vi.spyOn(SharedPeople.prototype, "getMany");
     query.mockClear();
     const views = await conversations();
     expect(views).toHaveLength(MORE);
     // The whole point (#935): the same number of reads for five times the prospects.
     expect(query.mock.calls.length).toBe(readsForFew);
+    // The absolute budget: three statements inside the three readers for a
+    // page of 15 ids (one chunk), the prospects' people included.
+    expect(statementsIn).toEqual({
+      listProspectsByIds: 1,
+      listInboxRepliesForProspects: 1,
+      listSequenceEventsForProspects: 1,
+    });
 
     for (const spy of Object.values(perProspect)) expect(spy).not.toHaveBeenCalled();
     expect(personGet).not.toHaveBeenCalled();
-    expect(personGetMany).toHaveBeenCalledTimes(1);
-    expect(personGetMany.mock.calls[0]![0].toSorted()).toEqual(personIds.toSorted());
     for (const spy of Object.values(page)) {
       expect(spy).toHaveBeenCalledTimes(2);
       expect(spy.mock.calls[1]![0]).toHaveLength(MORE);
