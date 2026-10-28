@@ -91,6 +91,29 @@ describe("knownConnection", () => {
     expect(knownConnection(URL, NOW)).toBeNull();
   });
 
+  it("misses on a distance dated in the future, past clock skew", () => {
+    storeRead(
+      "linkedin.profile",
+      {
+        networkDistance: "FIRST_DEGREE",
+        networkDistanceReadAt: new Date(NOW.getTime() + DAY).toISOString(),
+        experience: [],
+      },
+      0,
+    );
+    expect(knownConnection(URL, NOW)).toBeNull();
+    storeRead(
+      "linkedin.profile",
+      {
+        networkDistance: "FIRST_DEGREE",
+        networkDistanceReadAt: new Date(NOW.getTime() + 60_000).toISOString(),
+        experience: [],
+      },
+      0,
+    );
+    expect(knownConnection(URL, NOW)).not.toBeNull();
+  });
+
   it("misses on a pending invitee (SECOND_DEGREE) and on a read that does not say", () => {
     storeRead("linkedin.profile_read", fullRead("SECOND_DEGREE", 1), 1);
     expect(knownConnection(URL, NOW)).toBeNull();

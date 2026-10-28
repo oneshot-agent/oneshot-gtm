@@ -506,6 +506,9 @@ function snapshotFrom(value: unknown): LiveProfileSnapshot | null {
   };
 }
 
+/** How far ahead of now a stored read time may sit and still count (clock skew between writers). */
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
+
 /** The paid-cache entries a profile read is kept under: person research's full read, then the silent view. */
 const STORED_PROFILE_READS = ["linkedin.profile_read", "linkedin.profile"] as const;
 
@@ -531,8 +534,9 @@ export function storedNetworkDistance(
     const at = storedDistanceReadAt(entry.result, entry.fetchedAt);
     // A distance carried over from an older view keeps its own time: the
     // entry being new does not make the distance new.
+    // A time ahead of now (beyond clock skew) is no evidence of a recent read.
     const age = opts.now.getTime() - Date.parse(at);
-    if (!Number.isFinite(age) || age >= opts.maxAgeMs) continue;
+    if (!Number.isFinite(age) || age >= opts.maxAgeMs || age < -CLOCK_SKEW_MS) continue;
     if (!newest || Date.parse(at) > Date.parse(newest.readAt)) newest = { distance, readAt: at };
   }
   return newest;
