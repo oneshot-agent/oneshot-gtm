@@ -929,9 +929,14 @@ function CadencesPage() {
                         ? "Sending…"
                         : c.nextStepIsBreakup
                           ? "Send breakup"
-                          : c.nextStepChannel === "linkedin" && c.nextStepLabel?.includes("request")
-                            ? "Send invite"
-                            : "Send now"}
+                          : c.nextStepChannel === "linkedin" &&
+                              draft?.subject === "LinkedIn: already connected"
+                            ? "Skip request"
+                            : c.nextStepChannel === "linkedin" &&
+                                (c.nextStepLabel?.includes("request") ||
+                                  draft?.subject.startsWith("LinkedIn connection request"))
+                              ? "Send invite"
+                              : "Send now"}
                     </Button>
                   ) : null;
                 const letter =

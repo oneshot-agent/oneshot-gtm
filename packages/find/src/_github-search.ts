@@ -59,7 +59,7 @@ export async function searchTopicRepos(args: {
       : [];
     const repos = items.map(parseSearchItem).filter((r): r is GitHubSearchRepo => r !== null);
     // Detect GitHub's silent soft-block: 200 OK + empty items + total_count
-    // reported as 0 even on slugs that should match (e.g. `langchain`). When
+    // reported as 0 even on slugs that should match (e.g. `kubernetes`). When
     // the unauth IP gets flagged for abuse, this is the failure mode: no
     // 429, just 0 hits forever for an hour or two. Surface a hint so the
     // caller can stop hammering and the operator can act (set GITHUB_TOKEN).

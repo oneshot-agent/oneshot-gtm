@@ -29,7 +29,7 @@ function tokenResponse(token = "at-1", expiresIn = 3600): Response {
   });
 }
 
-const ACCOUNT = { id: "gmail:jn@x.dev", refreshToken: "rt-1" };
+const ACCOUNT = { id: "gmail:mira@x.dev", refreshToken: "rt-1" };
 
 describe("listCalendarEvents", () => {
   it("requests the exact request shape the card specifies", async () => {

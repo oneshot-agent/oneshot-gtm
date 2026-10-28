@@ -15,8 +15,8 @@ import {
 
 describe("playMetadata — lookup by play name", () => {
   it("produces the evidence key from a raw queue payload", () => {
-    expect(playMetadata("repo-interest", { repo: "ComposioHQ/trustclaw", name: "Ada" })).toEqual({
-      repo: "ComposioHQ/trustclaw",
+    expect(playMetadata("repo-interest", { repo: "beacon-labs/beacon", name: "Ada" })).toEqual({
+      repo: "beacon-labs/beacon",
     });
     expect(
       playMetadata("luma-events", {

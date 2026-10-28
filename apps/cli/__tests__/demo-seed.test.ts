@@ -40,11 +40,11 @@ const ANCHOR = new Date("2026-08-17T09:00:00.000Z");
  * that happened to cross the line first. These are not five-second unit tests
  * and should not be held to that budget.
  *
- * Measured on the dev-runner host 2026-10-11 (#785 round 3): with six agent
- * workers and two sandboxed verifies sharing 16 cores (load 25-48), the full
- * suite took 302s instead of 71s and the double-seed test took 9.4s at
- * moderate load, so 15s/30s expired on a branch that does not touch seeding.
- * The budget is sized for that host, not for a quiet laptop.
+ * On a CI host shared by several parallel jobs the full suite can run four
+ * times slower than on a quiet laptop, and the double-seed test alone can
+ * take most of ten seconds, so a 15s/30s budget expires on branches that do
+ * not touch seeding.
+ * The budget is sized for the loaded host, not for a quiet laptop.
  */
 const SEED_TIMEOUT_MS = 60_000;
 

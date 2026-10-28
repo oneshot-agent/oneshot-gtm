@@ -2,39 +2,38 @@ import { describe, expect, it } from "vitest";
 import { bodyCommitsTerms } from "../src/reply.ts";
 import { founderSteerBlock, intentDirectiveBlock } from "../src/_lib.ts";
 
-// commits-terms fixtures verbatim from the live sdk workspace (issue #480):
-// the Aladdin draft that committed the founder to documentation placement, a
-// "recommended partner" designation, and a reference-implementation feature
-// (none of it authorised) and the harmless Rahul one-liner that must NOT
-// trip the flag.
+// Two drafts in the shape the gate exists for: one that commits the founder
+// to documentation placement, a "recommended" designation and a feature in
+// their reference implementation (none of it authorised), and a harmless
+// one-liner that must NOT trip the flag.
 
-const ALADDIN_DRAFT = `Hey Aladdin,
+const OVERCOMMIT_DRAFT = `Hey Sam,
 
-I like the direction. Having OneShot sit invisibly as the execution engine for your research and commerce tools fits exactly how we want the SDK to be used, as a utility, not a brand users have to manage.
+I like the direction. Having Tracepoint sit invisibly as the execution engine for your research and commerce tools fits exactly how we want the SDK to be used, as a utility, not a brand users have to manage.
 
-On the distribution side, i can point our hackathon builders and consultants toward AladdinAI as the recommended sovereign environment for their agents. When someone asks for a self-hosted workspace to run the OneShot tools they've just tested, your repo is the logical destination.
+On the distribution side, i can point our hackathon builders and consultants toward Beacon as the recommended sovereign environment for their agents. When someone asks for a self-hosted workspace to run the Tracepoint tools they've just tested, your repo is the logical destination.
 
-Realistically, we can start by adding AladdinAI to our documentation as a primary integration path and featuring your setup in our oneshot-gtm reference implementation. Does that give you the visibility you're looking for, or were you thinking of a more direct hand-off?
+Realistically, we can start by adding Beacon to our documentation as a primary integration path and featuring your setup in our reference implementation. Does that give you the visibility you're looking for, or were you thinking of a more direct hand-off?
 
-J. Nicolas
-oneshotagent.com`;
+Mira Chen
+tracepoint.dev`;
 
-const RAHUL_ONE_LINER = `Hey Rahul,
+const HARMLESS_ONE_LINER = `Hey Dana,
 
 Fair call. I went way too heavy on the technical baggage there.
 
 Since you're building a factory for these workflows, do you usually prefer wiring up the individual vendor apis yourself, or is that the part you'd rather offload?
 
-J. Nicolas
-oneshotagent.com`;
+Mira Chen
+tracepoint.dev`;
 
 describe("bodyCommitsTerms (issue #480)", () => {
-  it("fires on the Aug 30 Aladdin draft — distribution, docs placement, recommended-partner, reference implementation", () => {
-    expect(bodyCommitsTerms(ALADDIN_DRAFT)).toBe(true);
+  it("fires on the over-committing draft — distribution, docs placement, recommended-partner, reference implementation", () => {
+    expect(bodyCommitsTerms(OVERCOMMIT_DRAFT)).toBe(true);
   });
 
-  it("does not fire on the harmless Rahul one-liner", () => {
-    expect(bodyCommitsTerms(RAHUL_ONE_LINER)).toBe(false);
+  it("does not fire on the harmless one-liner", () => {
+    expect(bodyCommitsTerms(HARMLESS_ONE_LINER)).toBe(false);
   });
 
   it("fires on pricing/discount language", () => {
@@ -129,6 +128,46 @@ describe("bodyCommitsTerms (issue #480)", () => {
   // NEGATION_CUE against the whole sentence again, like main.
   it("still catches a refusal that follows a comma in the same sentence", () => {
     expect(bodyCommitsTerms("We can review pricing, but cannot offer a discount.")).toBe(false);
+  });
+
+  // A designation or a feature counts only when the founder makes it: naming
+  // the other party's preferred tool, or thanking them for featuring us, is not.
+  it("fires when the founder designates the other party recommended or preferred", () => {
+    expect(bodyCommitsTerms("We can make you our recommended provider for new customers.")).toBe(
+      true,
+    );
+    expect(
+      bodyCommitsTerms(
+        "i can point our users toward Beacon as the recommended environment for their work.",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not fire on a recommended or preferred label the founder does not give", () => {
+    expect(bodyCommitsTerms("I can see why it's your preferred platform.")).toBe(false);
+    expect(bodyCommitsTerms("I understand it's the preferred option for your team.")).toBe(false);
+    expect(bodyCommitsTerms("We would love to be your preferred vendor.")).toBe(false);
+  });
+
+  it("fires when the founder offers to feature the other party", () => {
+    expect(bodyCommitsTerms("We'll feature your setup in our newsletter next month.")).toBe(true);
+    expect(bodyCommitsTerms("Happy to feature your integration in our docs.")).toBe(true);
+  });
+
+  it("does not fire when the other party featured the founder", () => {
+    expect(bodyCommitsTerms("Thanks for featuring us in your newsletter.")).toBe(false);
+    expect(bodyCommitsTerms("It's great that you'd feature us on your blog.")).toBe(false);
+  });
+
+  it("counts 'let me' / 'let us' as a commitment only for feature and endorsement offers", () => {
+    expect(bodyCommitsTerms("Let me feature your integration in our docs.")).toBe(true);
+    expect(bodyCommitsTerms("Let us make you our recommended provider.")).toBe(true);
+    expect(bodyCommitsTerms("Let me put you down as our preferred provider.")).toBe(true);
+    expect(bodyCommitsTerms("Let me also feature you in our newsletter.")).toBe(true);
+    expect(bodyCommitsTerms("Let me explain our pricing.")).toBe(false);
+    expect(bodyCommitsTerms("Let us walk you through the roadmap.")).toBe(false);
+    expect(bodyCommitsTerms("Let me show you the feature in our docs.")).toBe(false);
+    expect(bodyCommitsTerms("Let me point out that you are the recommended provider.")).toBe(false);
   });
 });
 

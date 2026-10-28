@@ -24,6 +24,13 @@ The card sets warmth, bluntness, rhythm and register. Facts, audience, channel l
 - The register applies to body prose. The greeting, names, the product name and the signature stay as given.
 - An asymmetry is a plain statement ("the hard part is X"), never "X isn't A, it's B". The lint flags that shape however much it sounds like you.
 
+## Greeting and subject case
+
+Two config settings change the draft rules' defaults. Unset, drafts are as before. Both reach the drafts that carry the card, with or without a card.
+
+- `founderGreeting`: the word a draft greets with when it greets. Unset: `Hey`. `"Hi"` gives "Hi," or "Hi Sam,"; `"none"` means no greeting.
+- `subjectCase`: unset or `"lowercase"`: the whole subject lowercased, acronyms included, and a subject with two capitals in a row (`API`, `URGENT`) is held and rewritten; a single capital (`Hello Sam`) passes. `"sentence"`: sentence case. `"as-written"`: no case rule. Either of those two turns the hold off.
+
 Each draft records which card it was written with. The trigger editor splits sent, regenerated and rotated counts into **voice on** and **voice off**. Judge the card by that split after a week.
 
 ## Writing one by hand
@@ -48,27 +55,27 @@ One founder's card, derived from their posts and messages and then edited. It sh
 
 ```
 MOVES
-- a concrete fact first, the mechanism under it second, one flat line that closes it
-- say what something is not, then stop; no "but rather"
-- one long build, then a short blunt sentence that lands the point
-- confess what I don't know instead of faking certainty; it lands harder
-- the aphorism is earned by the mechanism above it, never the opener
+- open on the thing I noticed in their setup, then what it costs them, then stop
+- one worked number from their side of the table, never mine
+- name the trade-off I chose and the one I did not
+- admit the rough edge before they find it
+- end on a question they can answer in one line
 
 SENTENCES
-- short declaratives, average eight words; a long one only to set up a short one
-- lowercase body; a single word in caps for emphasis, rarely
-- commas and periods; semicolons in the essayistic line
-- paragraphs of one to three sentences
+- plain declaratives, ten to fourteen words; a fragment only to close
+- lowercase except names and acronyms; no bold, no caps for emphasis
+- commas and full stops; parentheses for the aside an engineer would want
+- paragraphs of two sentences, three at most
 
 NEVER
-- a moral about whether something is good or bad; observe the mechanism instead
-- pleasantries, sign-offs, flattery about the reader's company
-- faking certainty; when unsure, say so and stop
-- a promise of a doc, a deck, a call; the email is the whole offer
+- a compliment about their company before I have said anything useful
+- a feature list; one capability, the one that fits what I saw
+- urgency, scarcity, "quick call"
+- guessing at their numbers; I ask instead
 
 EXEMPLARS
-- cost is not friction. cost is information.
-- the dashboard was always a crutch. the crutch is being removed.
-- we're using it in production. it works.
-- does this match how you actually measure spend on inference and tools?
+- the migration took a weekend. the rollback plan took a month.
+- we cut the nightly job from forty minutes to six. nobody noticed, which was the point.
+- i would rather ship the boring version first.
+- how are you handling retries when the upstream API times out?
 ```

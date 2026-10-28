@@ -11,7 +11,7 @@ import {
 describe("classifyGmailReadError", () => {
   it.each([
     "Gmail credentials missing (refresh token) — run: bun run cli -- gmail auth",
-    "Gmail auth expired or revoked for gmail:jn@x.example — run: bun run cli -- gmail auth",
+    "Gmail auth expired or revoked for gmail:mira@x.example — run: bun run cli -- gmail auth",
     "Gmail auth rejected (401) — run: bun run cli -- gmail auth",
     "Gmail API failed (403): PERMISSION_DENIED insufficient scope [/messages]",
   ])("lost authorization is permanent: %s", (msg) => {

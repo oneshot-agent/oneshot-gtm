@@ -54,6 +54,7 @@ import {
   replySubject,
   gmailSentMessageIdFor,
   type EmailThread,
+  isKnownConnectionMarker,
   productBriefText,
 } from "@oneshot-gtm/core";
 import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
@@ -86,8 +87,16 @@ import {
 import {
   draftLinkedInNote,
   LINKEDIN_NOTE_HARD_LIMIT,
+  recordKnownConnection,
   sendLinkedInInvite,
 } from "./_linkedin-first-touch.ts";
+import {
+  connectionVoided,
+  KNOWN_CONNECTION_SUBJECT,
+  knownConnection,
+  knownConnectionDay,
+  voidKnownConnection,
+} from "./_linkedin-connection.ts";
 import {
   LINKEDIN_INVITE_TIMEOUT_DAYS,
   linkedInSenderFor,
@@ -191,6 +200,12 @@ export type StepPayload =
       /** Whether the note was written with an evidence clause (#792). */
       evidenceClause?: boolean;
     }
+  /**
+   * The connection-request step for someone the profile read shows as already
+   * connected: nothing is sent. Sending it records the connection and moves on
+   * to the first message, due at once.
+   */
+  | { kind: "linkedin_connected"; readAt: string }
   | {
       kind: "voice";
       objective: string;
@@ -742,6 +757,8 @@ export function enrollInCadence(input: {
   offerCandidates?: ProspectOffer[];
   /** `intro` (default): the first message carried the offer. `derived`: it did not. */
   offerOrigin?: "intro" | "derived";
+  /** The first step is due now, not after its day offset (a known connection has no invite to wait out). */
+  firstStepDueNow?: boolean;
 }): void {
   // An email cadence takes its trigger's `linkedinContinuation` over the workspace's.
   const continuation =
@@ -764,7 +781,9 @@ export function enrollInCadence(input: {
   if (!seq || seq.steps.length === 0) return;
   const next = seq.steps[0];
   if (!next) return;
-  const dueAt = new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString();
+  const dueAt = new Date(
+    Date.now() + (input.firstStepDueNow ? 0 : next.dayOffset * 24 * 3600 * 1000),
+  ).toISOString();
   getLedger().enrollCadence({
     prospectId: input.prospectId,
     playName: input.playName,
@@ -1845,6 +1864,30 @@ export async function runCadenceStepForProspect(
           note: "LinkedIn connection request awaits review on /cadences",
         };
       }
+    } else if (connectionVoided(liveLinkedInInvite(opts.prospectId, opts.playName))) {
+      // A known connection LinkedIn said is not one: the connection request
+      // goes out at this step first, under the same guard, and only as a
+      // draft reviewed on /cadences. The message waits for its acceptance.
+      const verdict = continuationInviteVerdict(opts.prospectId);
+      if (!verdict.ok) {
+        if (verdict.reason === "guard-unavailable") {
+          return {
+            action: "skipped",
+            payload: null,
+            receiptIds: [],
+            note: `${verdict.detail} — will retry`,
+          };
+        }
+        return skipContinuation(opts, seq, stepEntryIndex, step, guardFlag(verdict));
+      }
+      if (opts.persistedPayload?.kind !== "linkedin_invite") {
+        return {
+          action: "skipped",
+          payload: null,
+          receiptIds: [],
+          note: "not connected on LinkedIn: the connection request awaits review on /cadences",
+        };
+      }
     } else {
       // Accepted from OneShot's invitation status; a synced conversation is the fallback.
       const invite = await resolveLinkedInInvite({
@@ -2048,6 +2091,26 @@ export async function runCadenceStepForProspect(
     receiptIds.push(...channelOutcome.receiptIds);
   }
 
+  // A connection request sent in place of a message (a known connection
+  // LinkedIn said is not one): the message is still this step's, sent once
+  // the request is accepted, so the cadence stays where it is.
+  if (built.kind === "linkedin_invite" && step.id !== CONTINUATION_INVITE_ID) {
+    if (!opts.dryRun) {
+      ledger.clearCadenceDraft({ prospectId: opts.prospectId, playName: opts.playName });
+      ledger.postponeCadence({
+        prospectId: opts.prospectId,
+        playName: opts.playName,
+        nextDueAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+      });
+    }
+    return {
+      action: "step-sent",
+      payload: built,
+      receiptIds,
+      note: "LinkedIn connection request sent; the message waits for acceptance",
+    };
+  }
+
   if (isBreakupStepAt(seq, stepEntryIndex)) {
     ledger.setCadenceStatus({
       prospectId: opts.prospectId,
@@ -2069,7 +2132,11 @@ export async function runCadenceStepForProspect(
     nextDueAt: next
       ? step.channel === "direct_mail"
         ? mailFollowupDueAt(next.dayOffset)
-        : new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString()
+        : // A known connection has no acceptance to wait for: the first message is due now.
+          new Date(
+            Date.now() +
+              (built.kind === "linkedin_connected" ? 0 : next.dayOffset * 24 * 3600 * 1000),
+          ).toISOString()
       : null,
   });
   if (!next) {
@@ -2196,8 +2263,40 @@ export async function previewCadenceStep(input: {
       );
       return { skipped: true, message: done.note ?? "LinkedIn steps skipped" };
     }
+    // Already connected, from a recent profile read: no request to draft.
+    // Sending this records the connection and brings the first message forward.
+    const connection = knownConnection(cadence.prospect_linkedin_url);
+    if (connection) {
+      return storePreview(input, seq, stepEntryIndex, step, {
+        subject: KNOWN_CONNECTION_SUBJECT,
+        body: `Already connected: skipping the connection request (profile read ${knownConnectionDay(connection)}). The first message comes next.`,
+        flags: [],
+        payload: { kind: "linkedin_connected", readAt: connection.readAt },
+      });
+    }
   }
-  if (step.channel === "linkedin" && step.id !== CONTINUATION_INVITE_ID) {
+  // A known connection LinkedIn said is not one: this step drafts the
+  // connection request first, under the invite guard, and its message
+  // follows the acceptance.
+  const reinvite =
+    step.channel === "linkedin" &&
+    step.id !== CONTINUATION_INVITE_ID &&
+    connectionVoided(liveLinkedInInvite(input.prospectId, input.playName));
+  if (reinvite) {
+    const verdict = continuationInviteVerdict(input.prospectId);
+    if (!verdict.ok) {
+      if (verdict.reason === "guard-unavailable") throw new Error(`${verdict.detail} — will retry`);
+      const done = skipContinuation(
+        { prospectId: input.prospectId, playName: input.playName, dryRun: false },
+        seq,
+        stepEntryIndex,
+        step,
+        guardFlag(verdict),
+      );
+      return { skipped: true, message: done.note ?? "LinkedIn steps skipped" };
+    }
+  }
+  if (step.channel === "linkedin" && step.id !== CONTINUATION_INVITE_ID && !reinvite) {
     const since = linkedInWaitingSince({
       prospectId: input.prospectId,
       playName: input.playName,
@@ -2245,9 +2344,12 @@ export async function previewCadenceStep(input: {
   const intro = mailDraft
     ? null
     : await introThreadForStep(seq, stepEntryIndex, input.prospectId, input.playName);
+  const builder = reinvite
+    ? (ctx: CadenceContext) => buildLinkedInInvite(ctx, input.playName)
+    : step.builder;
   const drafted: StepPayload | null = mailDraft
     ? { kind: "direct_mail", draftId: mailDraft.id }
-    : await step.builder({
+    : await builder({
         prospect,
         cfg,
         metadata: input.rotateAngle ? { rotateFrom: currentPreviewAngle(input) } : {},
@@ -2600,9 +2702,17 @@ async function dispatchStepImpl(input: {
     const prospect = loadProspect(input.prospectId);
     if (!prospect) return { receiptIds, skipReason: "prospect not found" };
     const linkedIn = input.linkedIn;
+    // In place of a message, after a known connection LinkedIn said is not
+    // one: recorded where that connection was, so the message keeps its step.
+    const replaces =
+      input.step.id === CONTINUATION_INVITE_ID
+        ? null
+        : liveLinkedInInvite(input.prospectId, input.playName);
+    const stepIndex =
+      replaces && connectionVoided(replaces) ? replaces.event.step_index : input.stepIndex;
     // The invite guard, the profile claim and the quota share (#786, #787) all
     // run inside; a deferral throws and leaves the step due. Recorded at this
-    // step with the invite marker, never at step 0.
+    // step with the invite marker, never at step 0 of an email cadence.
     const out = await sendLinkedInInvite({
       row: continuationInviteRow(prospect, input.playName),
       note: input.payload.note,
@@ -2612,7 +2722,7 @@ async function dispatchStepImpl(input: {
         call: (operation) => linkedIn(account.workspace, operation),
       },
       workspace: currentWorkspaceName(),
-      continuation: { prospectId: input.prospectId, stepIndex: input.stepIndex },
+      continuation: { prospectId: input.prospectId, stepIndex },
       evidenceClause: input.payload.evidenceClause,
     });
     if (!out.sent) {
@@ -2620,6 +2730,38 @@ async function dispatchStepImpl(input: {
         ? { receiptIds, guardRefusal: out.flags[0] ?? out.guard }
         : { receiptIds, skipReason: out.flags.join(", ") };
     }
+    return { receiptIds };
+  }
+  if (input.payload.kind === "linkedin_connected") {
+    const prospect = loadProspect(input.prospectId);
+    if (!prospect) return { receiptIds, skipReason: "prospect not found" };
+    // Read again at send: a read that aged out or changed since the preview
+    // gets the connection request drafted instead.
+    const connection = knownConnection(prospect.linkedin_url);
+    if (!connection) {
+      ledger.clearCadenceDraft({ prospectId: input.prospectId, playName: input.playName });
+      return {
+        receiptIds,
+        skipReason:
+          "no recent profile read shows them as connected: preview again to draft the connection request",
+      };
+    }
+    const account = linkedInOutreachAccount();
+    if (!account) return { receiptIds, skipReason: "no LinkedIn account connected" };
+    const out = recordKnownConnection({
+      row: continuationInviteRow(prospect, input.playName),
+      connection,
+      sender: account,
+      workspace: currentWorkspaceName(),
+      continuation: { prospectId: input.prospectId, stepIndex: input.stepIndex },
+    });
+    if (!out.sent) {
+      return out.guard
+        ? { receiptIds, guardRefusal: out.flags[0] ?? out.guard }
+        : { receiptIds, skipReason: out.flags.join(", ") };
+    }
+    // Nothing was written or sent: the preview is no draft version to learn from.
+    ledger.clearCadenceDraft({ prospectId: input.prospectId, playName: input.playName });
     return { receiptIds };
   }
   if (input.payload.kind === "linkedin_message") {
@@ -2664,6 +2806,27 @@ async function dispatchStepImpl(input: {
       } catch (err) {
         // Not connected yet, or over the daily limit: the step stays due.
         const deferral = linkedInMessageDeferral(err);
+        const invite =
+          deferral === "not_connected"
+            ? liveLinkedInInvite(input.prospectId, input.playName)
+            : null;
+        if (invite?.knownConnection && !invite.withdrawn) {
+          // No invite went out because the profile read showed a connection,
+          // so there is nothing to wait for: the request is drafted next. A
+          // void that can't free the profile throws: the runner records the
+          // send error, the step and its preview stay, and Send retries.
+          voidKnownConnection({
+            prospectId: input.prospectId,
+            playName: input.playName,
+            invite,
+            linkedinUrl: input.prospectLinkedinUrl ?? null,
+          });
+          return {
+            receiptIds,
+            skipReason:
+              "LinkedIn says you are not connected: preview again to draft the connection request",
+          };
+        }
         if (deferral) throw new SendDeferredError(`LinkedIn message deferred (${deferral})`);
         throw err;
       }
@@ -3072,7 +3235,7 @@ export function buildFollowUpEmail(opts: {
       body: cleaned.body,
       // The voice card in the prompt, so the persisted preview's draft
       // version can be split voice on/off like an intro draft's.
-      ...(voice ? { voiceKey: voice.key } : {}),
+      ...(voice?.key ? { voiceKey: voice.key } : {}),
       ...(learned ? { learningKey: learned.key } : {}),
       ...(opts.hardBans ? { hardBans: true } : {}),
       ...(hardBanAllow.length > 0 ? { hardBanAllow } : {}),
@@ -3652,7 +3815,9 @@ function skipContinuation(
 /**
  * The connection note for a person an email cadence got no reply from. The
  * `linkedin-invite-note` prompt, told that they were emailed already, so the
- * note is a way to connect and never a second pitch.
+ * note is a way to connect and never a second pitch. Also the request a
+ * LinkedIn cadence drafts when a known connection turns out not to be one:
+ * nobody was emailed then, and the note is the plain first touch.
  */
 async function buildLinkedInInvite(
   ctx: CadenceContext,
@@ -3668,11 +3833,15 @@ async function buildLinkedInInvite(
   const draft = await draftLinkedInNote(
     { ...row, payload: { ...row.payload, ...first.metadata } },
     {
-      priorContact: [
-        `They were emailed ${emailed.length} time${emailed.length === 1 ? "" : "s"} on this and did not reply.`,
-        "Don't re-pitch and don't refer to what the emails said: this is a way to connect, not a second ask.",
-        "Keep the infra pitch out of the note: it names one real, current reason and asks one easy question.",
-      ],
+      ...(emailed.length > 0
+        ? {
+            priorContact: [
+              `They were emailed ${emailed.length} time${emailed.length === 1 ? "" : "s"} on this and did not reply.`,
+              "Don't re-pitch and don't refer to what the emails said: this is a way to connect, not a second ask.",
+              "Keep any pitch out of the note: it names one real, current reason and asks one easy question.",
+            ],
+          }
+        : {}),
       contactedAt: first.contactedAt,
       buyerType: first.buyerType,
     },
@@ -3747,6 +3916,8 @@ async function buildLinkedInMessage(
   const alreadyConnected = invite?.alreadyConnected === true;
   const prior = events
     .filter((e) => e.channel === "linkedin" && e.status === "sent")
+    // A known connection's record sent nothing, whatever LinkedIn later said.
+    .filter((e) => !isKnownConnectionMarker(e.metadata_json))
     .filter((e) => !(alreadyConnected && undeliveredInviteNote(e, invite!.event.id)))
     .map((e) => {
       try {
@@ -3863,7 +4034,7 @@ async function buildLinkedInMessage(
         kind: "linkedin_message",
         text,
         ...(drafted.flags.length > 0 ? { flags: drafted.flags } : {}),
-        ...(voice ? { voiceKey: voice.key } : {}),
+        ...(voice?.key ? { voiceKey: voice.key } : {}),
         ...(learned ? { learningKey: learned.key } : {}),
       }
     : null;

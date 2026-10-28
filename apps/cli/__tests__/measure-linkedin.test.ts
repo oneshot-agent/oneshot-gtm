@@ -116,6 +116,24 @@ describe("measure --json", () => {
     expect(out).toContain("replied to the first message");
     expect(out).toContain("note with an evidence clause");
   });
+
+  it("prints the funnel when the view holds only known connections, and says so when it holds nothing", async () => {
+    const db = new Database(`${process.env["ONESHOT_GTM_HOME"]}/ledger.sqlite`);
+    db.exec("DELETE FROM sequence_events;");
+    db.close();
+    await commandMeasure({});
+    expect(out).toContain("No LinkedIn invites sent in this view.");
+    out = "";
+    invite("Sol", 2, {
+      invitationId: undefined,
+      inviteStatus: "already_connected",
+      via: "profile-read",
+    });
+    await commandMeasure({});
+    expect(out).not.toContain("No LinkedIn invites sent in this view.");
+    expect(out).toMatch(/invites sent\s+0/);
+    expect(out).toMatch(/already connected\s+1/);
+  });
 });
 
 describe("linkedin invites", () => {

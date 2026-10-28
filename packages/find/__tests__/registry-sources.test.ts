@@ -412,7 +412,7 @@ describe("mapFmcsaRows — canned payload", () => {
   const rows = [
     {
       legal_name: "Slack Truck Line Inc",
-      email_address: "Dispatch@SlackTruck.com",
+      email_address: "Dispatch@SlackTruck.example",
       add_date: NOW_STR,
       phy_street: "7th and Gibbon Rd",
       phy_city: "Gibbon",
@@ -423,7 +423,7 @@ describe("mapFmcsaRows — canned payload", () => {
     // Old registration: dropped by the freshness window.
     {
       legal_name: "Old Hauling Co",
-      email_address: "old@hauling.com",
+      email_address: "old@hauling.example",
       add_date: OLD_STR,
     },
     // No email on file: dropped (fmcsa never falls through to findEmail).
@@ -437,7 +437,7 @@ describe("mapFmcsaRows — canned payload", () => {
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({
       name: "Slack Truck Line Inc",
-      knownEmail: "dispatch@slacktruck.com",
+      knownEmail: "dispatch@slacktruck.example",
       city: "Gibbon",
       state: "NE",
       phone: "3083802037",
@@ -458,7 +458,7 @@ describe("fmcsaSource.fetch", () => {
     stubFetch(async () => [
       {
         legal_name: "Slack Truck Line Inc",
-        email_address: "dispatch@slacktruck.com",
+        email_address: "dispatch@slacktruck.example",
         add_date: new Date(NOW).toISOString().slice(0, 10).replace(/-/g, ""),
         phy_state: "NE",
       },
@@ -466,7 +466,7 @@ describe("fmcsaSource.fetch", () => {
     const out = await fmcsaSource.fetch({ sinceDays: 30, limit: 25, entityTypes: ["carrier"] });
     expect(out.costUsd).toBe(0);
     expect(out.records).toHaveLength(1);
-    expect(out.records[0]?.knownEmail).toBe("dispatch@slacktruck.com");
+    expect(out.records[0]?.knownEmail).toBe("dispatch@slacktruck.example");
     expect(out.perSource[0]?.records).toBe(1);
   });
 

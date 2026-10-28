@@ -32,7 +32,7 @@ describe("lintEdge", () => {
 
   it("flags the landing-page shape the strategist used to write", () => {
     const w = lintEdge(
-      "OneShot GTM connects prospect discovery, research, outreach review, follow-ups, and replies in one workspace, so a founder or lean team can run customer acquisition with less manual coordination.",
+      "TestProduct connects scheduling, dispatch, invoicing, reminders, and reviews in one workspace, so an owner or small office team can run the field crew with less manual coordination.",
     );
     expect(w).toContain("reads-as-pitch:1");
     expect(w).toContain("no-routing-clause:1");

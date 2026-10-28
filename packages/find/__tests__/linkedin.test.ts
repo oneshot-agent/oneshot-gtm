@@ -196,42 +196,42 @@ describe("findLinkedInUrl — built-in name verification", () => {
     // stranger, not a blank field.
     nextResults = [
       {
-        url: "https://ph.linkedin.com/in/menchie-chua-uy",
-        title: "Menchie Chua Uy - Bluelambda | LinkedIn",
+        url: "https://ph.linkedin.com/in/lia-corral-uy",
+        title: "Lia Corral Uy - Quillstone | LinkedIn",
         description: "",
       },
       {
-        url: "https://www.linkedin.com/in/fteo",
-        title: "Francis Teo - Bluelambda | LinkedIn",
+        url: "https://www.linkedin.com/in/ftan",
+        title: "Felix Tan - Quillstone | LinkedIn",
         description: "",
       },
     ];
     const mismatches: string[] = [];
     const url = await findLinkedInUrl({
-      fullName: "Francis Teo",
+      fullName: "Felix Tan",
       accumCost: () => {},
       errKindPrefix: "test",
       onTitleMismatch: (r) => mismatches.push(r.url),
     });
-    expect(url).toBe("https://www.linkedin.com/in/fteo");
-    expect(mismatches).toEqual(["https://ph.linkedin.com/in/menchie-chua-uy"]);
+    expect(url).toBe("https://www.linkedin.com/in/ftan");
+    expect(mismatches).toEqual(["https://ph.linkedin.com/in/lia-corral-uy"]);
   });
 
   it("accepts a vanity slug when the title confirms the person", async () => {
     // The whole reason the check reads the title and not the URL.
     nextResults = [
       {
-        url: "https://il.linkedin.com/in/hackingonstuff",
-        title: "Elad Ben-Israel - Wing | LinkedIn",
+        url: "https://il.linkedin.com/in/tinkeringalways",
+        title: "Omri Ben-David - Kestrel | LinkedIn",
         description: "",
       },
     ];
     const url = await findLinkedInUrl({
-      fullName: "Elad Ben-Israel",
+      fullName: "Omri Ben-David",
       accumCost: () => {},
       errKindPrefix: "test",
     });
-    expect(url).toBe("https://il.linkedin.com/in/hackingonstuff");
+    expect(url).toBe("https://il.linkedin.com/in/tinkeringalways");
   });
 
   it("does not search an org name at all", async () => {
@@ -418,7 +418,7 @@ describe("nameMatchesTitle", () => {
   it("accepts the vanity slugs an URL-based check wrongly rejected", () => {
     // Every one of these is a real profile the slug heuristic threw away. The
     // slug is member-chosen text; the title is LinkedIn's own display name.
-    expect(nameMatchesTitle("Elad Ben-Israel - Wing | LinkedIn", "Elad Ben-Israel")).toBe(true);
+    expect(nameMatchesTitle("Omri Ben-David - Kestrel | LinkedIn", "Omri Ben-David")).toBe(true);
     expect(nameMatchesTitle("Gaurav Tewari - Founder | LinkedIn", "Gaurav Tewari")).toBe(true);
     expect(nameMatchesTitle("Travis Fischer - Agentic | LinkedIn", "Travis Fischer")).toBe(true);
   });
@@ -451,10 +451,10 @@ describe("nameMatchesTitle", () => {
   });
 
   it("rejects a different person", () => {
-    // This one really was wrong: searching "Francis Teo" returned Menchie Chua
+    // This one really was wrong: searching "Felix Tan" returned Menchie Chua
     // Uy's profile, and writing it would put a connection request in front of
     // someone who never starred anything.
-    expect(nameMatchesTitle("Menchie Chua Uy - Bluelambda", "Francis Teo")).toBe(false);
+    expect(nameMatchesTitle("Lia Corral Uy - Quillstone", "Felix Tan")).toBe(false);
     expect(nameMatchesTitle("Tingting Zeng - ByteDance", "Greg Doig")).toBe(false);
   });
 
@@ -484,7 +484,7 @@ describe("looksLikeOrgName", () => {
 
   it("leaves ordinary people alone", () => {
     expect(looksLikeOrgName("Greg Doig")).toBe(false);
-    expect(looksLikeOrgName("Elad Ben-Israel")).toBe(false);
+    expect(looksLikeOrgName("Omri Ben-David")).toBe(false);
     expect(looksLikeOrgName(null)).toBe(false);
   });
 

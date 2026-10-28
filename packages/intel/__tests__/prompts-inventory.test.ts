@@ -21,7 +21,7 @@ const repoRoot = join(here, "..", "..", "..");
 // Every entry needs a one-line reason so the gate stays honest. An unexplained
 // orphan is exactly the fork-editing-a-dead-file bug this test exists to catch.
 const ALLOWED_ORPHANS: Record<string, string> = {
-  "agent-builder-extract":
+  "vendor-stack-extract":
     "Repo-README vendor extractor for an unshipped GitHub-stack email; superseded by the stack-consolidation play. Kept as a drafted prompt, wired to no caller yet.",
 };
 

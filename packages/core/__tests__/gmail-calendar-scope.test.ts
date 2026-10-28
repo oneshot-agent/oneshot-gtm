@@ -18,13 +18,13 @@ describe("GmailTokenEntry.scope (issue #577)", () => {
   });
 
   it("round-trips a persisted scope string", () => {
-    saveGmailToken("gmail:jn@x.dev", {
+    saveGmailToken("gmail:mira@x.dev", {
       refreshToken: "rt",
-      address: "jn@x.dev",
+      address: "mira@x.dev",
       scope: `https://www.googleapis.com/auth/gmail.send ${CALENDAR_READONLY_SCOPE}`,
     });
     const all = loadGmailTokens();
-    expect(all["gmail:jn@x.dev"]?.scope).toContain(CALENDAR_READONLY_SCOPE);
+    expect(all["gmail:mira@x.dev"]?.scope).toContain(CALENDAR_READONLY_SCOPE);
   });
 });
 
@@ -61,13 +61,13 @@ describe("hasCalendarScope", () => {
 
 describe("clearGmailTokenScope", () => {
   it("clears the scope without touching the refresh token", () => {
-    saveGmailToken("gmail:jn@x.dev", {
+    saveGmailToken("gmail:mira@x.dev", {
       refreshToken: "rt-keep-me",
-      address: "jn@x.dev",
+      address: "mira@x.dev",
       scope: CALENDAR_READONLY_SCOPE,
     });
-    clearGmailTokenScope("gmail:jn@x.dev");
-    const entry = loadGmailTokens()["gmail:jn@x.dev"];
+    clearGmailTokenScope("gmail:mira@x.dev");
+    const entry = loadGmailTokens()["gmail:mira@x.dev"];
     expect(entry?.refreshToken).toBe("rt-keep-me");
     expect(entry?.scope ?? null).toBeNull();
   });

@@ -98,9 +98,9 @@ it("does not lint blank options or judge a set the founder is still filling in",
   // Two written options that read the same are still a duplicate pair.
   const pair = lintLinkedInDrafts(
     {
-      direct: "Payments settle through Stripe or x402 under a spend cap.",
+      direct: "Payments settle through Stripe under a spend cap.",
       technical: "",
-      warm: "Payments settle through Stripe or x402 under a spend cap.",
+      warm: "Payments settle through Stripe under a spend cap.",
     },
     { direct: "answer", warm: "ask" },
     input,

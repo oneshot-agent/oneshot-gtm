@@ -97,7 +97,7 @@ describe("resolveAndVerifyContact — no person on the record (SDK 0.32 needs on
   const domainOnly = {
     playName: "t",
     fullName: null,
-    companyDomain: "riverafamilydental.com",
+    companyDomain: "riverafamilydental.example",
     allowMissingFullName: true,
   };
 
@@ -105,9 +105,12 @@ describe("resolveAndVerifyContact — no person on the record (SDK 0.32 needs on
     nextPeople = [{ full_name: "Dana Rivera", title: "Owner" }];
     const res = await resolveAndVerifyContact(domainOnly);
     expect(peopleCalls).toHaveLength(1);
-    expect(peopleCalls[0]).toMatchObject({ companyDomains: ["riverafamilydental.com"], limit: 10 });
+    expect(peopleCalls[0]).toMatchObject({
+      companyDomains: ["riverafamilydental.example"],
+      limit: 10,
+    });
     expect(findInputs[0]).toMatchObject({
-      companyDomain: "riverafamilydental.com",
+      companyDomain: "riverafamilydental.example",
       fullName: "Dana Rivera",
     });
     expect(res).toMatchObject({ ok: true, email: "found@acme.dev", title: "Owner" });
@@ -116,14 +119,18 @@ describe("resolveAndVerifyContact — no person on the record (SDK 0.32 needs on
 
   it("skips findEmail when the database already has a work email for the person, and still verifies", async () => {
     nextPeople = [
-      { full_name: "Dana Rivera", title: "Owner", best_work_email: "dana@riverafamilydental.com" },
+      {
+        full_name: "Dana Rivera",
+        title: "Owner",
+        best_work_email: "dana@riverafamilydental.example",
+      },
     ];
     const res = await resolveAndVerifyContact(domainOnly);
     expect(findCalls).toBe(0);
     expect(verifyCalls).toBe(1);
     expect(res).toMatchObject({
       ok: true,
-      email: "dana@riverafamilydental.com",
+      email: "dana@riverafamilydental.example",
       fullName: "Dana Rivera",
     });
   });

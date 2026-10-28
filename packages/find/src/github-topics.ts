@@ -25,9 +25,9 @@ import { looksLikeNoiseRepo, normalizeRepoUrl } from "./_repo-utils.ts";
 const SOURCE = "find:github-topics";
 
 export interface GitHubTopicsFinderOpts extends RunOpts {
-  /** GitHub topic slugs, e.g. ["llm-agents", "ai-agent", "langchain"]. */
+  /** GitHub topic slugs, e.g. ["observability", "kubernetes", "payments"]. */
   topics: string[];
-  /** Canonical vendor names handed to the LLM extract for stack detection. */
+  /** Vendors your product overlaps with (canonical names), handed to the LLM extract for stack detection. */
   vendors: string[];
   /**
    * Subset of `vendors` the founder competes with head-on. When a candidate's
@@ -44,7 +44,10 @@ export interface GitHubTopicsFinderOpts extends RunOpts {
   maxAgeDays?: number;
   /** Max in-flight candidate workers. Default 3. */
   concurrency?: number;
-  /** Min vendors detected in README. Default 2. */
+  /**
+   * Min distinct `vendors` (ones your product overlaps with) detected in the
+   * repo's manifests. Default 2: one is a library choice, two is a stack.
+   */
   minVendors?: number;
   /** Last-resort deepResearchPerson fallback. Default true. */
   useDeepResearch?: boolean;

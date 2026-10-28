@@ -30,7 +30,7 @@ A JSON object only:
 - `company`: their CURRENT company (the most recent / `is_current` organization). Null if unclear.
 - `role`: their current title. Strip filler. Null if unclear.
 - `email`: a deliverable address for THIS person if the dossier contains one (prefer a work email, then personal). Null if none — do not guess or construct one from a domain.
-- `angle`: ONE specific, true hook this outreach should lead with, drawn from the dossier and relevant to the founder's PRODUCT/ICP — e.g. "recently moved from Stripe to lead payments at Acme", "posts weekly about scaling on-call", "just shipped an open-source agent SDK". Name the concrete signal. NEVER fabricate a funding round, a launch, or a post that isn't in the dossier. Null if the dossier is too thin for any honest hook.
+- `angle`: ONE specific, true hook this outreach should lead with, drawn from the dossier and relevant to the founder's PRODUCT/ICP — e.g. "recently moved from a regional bank to lead payments at Acme", "posts weekly about scaling on-call", "just opened a third clinic location". Name the concrete signal. NEVER fabricate a funding round, a launch, or a post that isn't in the dossier. Null if the dossier is too thin for any honest hook.
 - `icpFit`: `strong` if the person clearly matches the ICP; `weak` if plausibly adjacent; `none` if they don't fit or the ICP is empty and you can't tell. Tie-breakers go DOWN, not up.
 - `reasoning`: ONE short sentence (≤ 25 words) naming the signal that set the angle and fit. Specific over abstract.
 - Judge fit from the supplied ICP, including non-technical roles and industries. Never require a founder title, software product or technical skill unless the ICP does.

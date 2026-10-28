@@ -5,9 +5,9 @@
  * whole thing is testable without an LLM call; `reply-worker.ts` is the only
  * caller that talks to the model.
  *
- * Why this exists (2026-09-11): the three variants were tone variants of one
- * answer, and that answer affirmed a prospect's framing of the product because
- * nothing separated "what the brief says" from "what they just said". Moves
+ * Why this exists: left alone, the three variants are tone variants of one
+ * answer, and that answer affirms a prospect's framing of the product when
+ * nothing separates "what the brief says" from "what they just said". Moves
  * force three different positions; the claim-grounding block and the lint
  * gate keep the product description inside the brief.
  */
@@ -166,7 +166,7 @@ ${moves}
 - When they share a project and there is no honest, specific product fit, use peer for at least one option: engage with what they built using only sourced dossier or thread facts, name one detail that is actually interesting, and ask about their priorities or what is next. Never twist their project into a product pitch. A good peer conversation with no product mention is a successful outcome.
 
 CLAIM GROUNDING (binding):
-- PRODUCT BRIEF is the only source of product facts. Describe the product in the brief's own terms or in plain words. Never describe it using the prospect's architecture vocabulary from the thread (their words for stores, logs, layers, replay, truth, projections, or anything else), even when it sounds like a fit.
+- PRODUCT BRIEF is the only source of product facts. Describe the product in the brief's own terms or in plain words. Never describe it using the prospect's own architecture terms from the thread (their names for its parts, layers, data or behaviour, or anything else), even when it sounds like a fit.
 - If they ask whether the product does or is X and PRODUCT BRIEF does not establish X, do not say yes. Say what it does do and where the boundary is.
 - If they make a correct point that PRODUCT BRIEF does not refute, concede it plainly. "you're right on the split" beats any defence.
 - No war stories, no "saved us from", no customer anecdotes, no incidents, no numbers, no roadmap, unless PRODUCT BRIEF states them.
@@ -175,12 +175,12 @@ CLAIM GROUNDING (binding):
 
 CAPABILITY VS MECHANISM (binding):
 - PRODUCT BRIEF establishes what the product does. It almost never establishes how a behaviour works: what blocks versus queues, what happens when a limit is reached, ordering, retries, failure modes, or what is synchronous. A capability the brief names is not a mechanism you may describe.
-- Composing two brief phrases into a mechanism is an invention even though every phrase is quoted. "Requests human approval when needed" next to "enforces budgets" does not establish what happens when a budget is exceeded mid-run.
+- Composing two brief phrases into a mechanism is an invention even though every phrase is quoted. "Sends appointment reminders" next to "syncs with your calendar" does not establish what happens when an appointment moves after its reminder went out.
 - When their latest message asks a mechanism question and PRODUCT BRIEF only names the capability, use check for at least one option. Telling an engineer you would confirm the detail is a strong answer; a confident wrong mechanism ends the thread.
 - Never settle an either/or mechanism question ("is it X or Y") by picking a side PRODUCT BRIEF does not state.
 
 LEDGER GROUNDING (present only when the input carries it):
-- ICP GATE is a title-based verdict made before this conversation, with its reason. The thread outranks it: if they show they build, run, or buy agent systems, treat the gate as stale and say nothing about it. A reject means stay at peer or ask moves and mention the product only when they ask. A pass never licenses a pitch.
+- ICP GATE is a title-based verdict made before this conversation, with its reason. The thread outranks it: if the thread shows they are the person the ICP describes, treat the gate as stale and say nothing about it. A reject means stay at peer or ask moves and mention the product only when they ask. A pass never licenses a pitch.
 - FIRST TOUCH is the argument the opening email already made. Never re-run that argument or its wording on LinkedIn; every option must add something the email did not say.
 - ANGLE is a synthesized read on this prospect. Its "Do NOT say" list is binding: never restate one of those premises, even rephrased. Its Hook is material for a specific opener only when it fits what they actually wrote.
 

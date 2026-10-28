@@ -47,9 +47,9 @@ export function replyWordBudget(inboundBody: string): number {
 
 /**
  * Longest run of words a draft may share with an email already in this thread.
- * The re-introduction that motivated this gate ("i previously shipped a zoom
- * competitor to 500k mau", lifted from the intro into the reply) walked past a
- * prose "do not re-introduce yourself" rule; an n-gram check does not care how
+ * A re-introduction lifted from the intro into the reply (the founder's
+ * credentials line, word for word) walks past a prose "do not re-introduce
+ * yourself" rule; an n-gram check does not care how
  * the model justified it.
  */
 const REPEAT_NGRAM = 8;
@@ -96,7 +96,29 @@ export function repeatsPriorText(body: string, priorTexts: readonly string[]): b
 interface CommitPattern {
   regex: RegExp;
   requireAffirmative?: boolean;
+  /** Extra cues that satisfy the affirmative gate for this pattern only. */
+  affirmative?: RegExp;
 }
+
+/**
+ * "Let me feature you…" / "let us make you our recommended…" offer the thing
+ * directly, so they pass the affirmative gate for these two patterns only. The
+ * verb must follow "let me/us" at once or after one adverb ("let me also
+ * feature"): "let me show you the feature" and "let me point out that you are
+ * the recommended provider" offer nothing.
+ */
+const LET_ME_CUE =
+  /\blet (?:me|us) (?:(?:also|just|now|\w+ly)\s+)?(?:feature|make|name|list|designate|recommend|add|include|position|put|set)\b/i;
+
+/**
+ * Verbs by which the founder hands the other party a designation ("we'll make
+ * you our recommended provider", "point our users toward you as the preferred
+ * option"). Perception verbs (see, understand, get) are not among them.
+ */
+const FOUNDER_ACTION = String.raw`(?:name|list|make|designat|position|mark|treat|point|recommend|promot|call|feature|featuring|add|put|includ|set up|offer)\w*\b`;
+
+/** The founder as the one acting: "I"/"we" (any contraction), or a subjectless "happy to" / "let me". */
+const FOUNDER_SUBJECT = String.raw`(?:\b(?:i|we)(?:['’](?:ll|d|re|m|ve))?\b|\b(?:happy|glad) to\b|\blet(?:['’]s| me| us)\b)`;
 
 const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
   // Pricing, discounts, free tiers. Bare mentions ("our pricing is public")
@@ -106,7 +128,9 @@ const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
     regex: /\b(?:pric(?:e|es|ing)|discount(?:s|ed)?|% off|free tier|for free)\b/i,
     requireAffirmative: true,
   },
-  // Distribution / traffic promises ("point our builders toward X", "route users to Y").
+  // Distribution / traffic promises: sending the founder's own users,
+  // customers or community to the other party ("point our users toward X",
+  // "route customers to Y").
   // Round-2 correction (#480): a bare mention ("we read about your distribution
   // model") is as common as an actual promise: same affirmative-cue gate as pricing.
   {
@@ -127,21 +151,34 @@ const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
   // Headcount / hiring commitments. Round-2 correction (#480): "how is your
   // hiring going this quarter?" is small talk, not a commitment.
   { regex: /\bheadcount\b|\bhir(?:e|ing)\b/i, requireAffirmative: true },
-  // Documentation placement ("adding X to our documentation").
+  // Placement in the founder's own docs ("adding X to our documentation").
   {
     regex: /\b(?:add(?:ing)?|list(?:ing)?)\b[^.]{0,60}\b(?:documentation|docs)\b/i,
     requireAffirmative: true,
   },
-  // "Recommended / preferred partner" (or environment/integration/provider) designations.
+  // Endorsing the other party: the founder ("I"/"we") acting to give them a
+  // "recommended" or "preferred" designation, whatever they are (a partner, a
+  // provider, a platform, a tool). The founder and an action verb are both
+  // required: "I can see why it's your preferred platform" designates nothing.
   {
-    regex:
-      /\b(?:recommended|preferred)\b[^.]{0,40}\b(?:partner|environment|integration|provider|option|vendor|choice)\b/i,
+    regex: new RegExp(
+      String.raw`${FOUNDER_SUBJECT}[^.]{0,80}\b${FOUNDER_ACTION}[^.]{0,80}\b(?:recommended|preferred)\b[^.]{0,40}\b(?:partner|environment|integration|provider|option|vendor|choice|solution|platform|tool|supplier)\b`,
+      "i",
+    ),
     requireAffirmative: true,
+    affirmative: LET_ME_CUE,
   },
-  // Featuring the sender in a reference implementation / case study / website.
+  // Featuring the other party in the founder's own material: an example, a
+  // case study, the website, the docs, a post. The founder must be the one
+  // featuring, and the one featured is not the founder: "thanks for featuring
+  // us in your newsletter" is gratitude, not a promise.
   {
-    regex:
-      /\bfeatur(?:e|ing)\b[^.]{0,60}\b(?:reference implementation|case study|website|repo|documentation)\b/i,
+    regex: new RegExp(
+      String.raw`${FOUNDER_SUBJECT}[^.]{0,100}\bfeatur(?:e|ing)\s+(?!us\b|me\b)[^.]{0,60}\b(?:reference implementation|example|case stud(?:y|ies)|website|repo|documentation|docs|blog|newsletter)\b`,
+      "i",
+    ),
+    requireAffirmative: true,
+    affirmative: LET_ME_CUE,
   },
 ];
 
@@ -211,12 +248,13 @@ function splitSentences(text: string): string[] {
  */
 export function bodyCommitsTerms(body: string): boolean {
   const sentences = splitSentences(body);
-  return COMMITS_TERMS_PATTERNS.some(({ regex, requireAffirmative }) =>
+  return COMMITS_TERMS_PATTERNS.some(({ regex, requireAffirmative, affirmative }) =>
     sentences.some((sentence) => {
       if (!regex.test(sentence)) return false;
       const negationCheckText = sentence.replace(TRAILING_HEDGE, "");
       if (NEGATION_CUE.test(negationCheckText)) return false;
-      if (requireAffirmative && (QUESTION_CUE.test(sentence) || !AFFIRMATIVE_CUE.test(sentence))) {
+      const affirmed = AFFIRMATIVE_CUE.test(sentence) || (affirmative?.test(sentence) ?? false);
+      if (requireAffirmative && (QUESTION_CUE.test(sentence) || !affirmed)) {
         return false;
       }
       return true;
@@ -314,8 +352,8 @@ function bodyFrom(raw: string): string {
  * Sentences the founder already asked in this thread ("does that work for
  * you?", "what's the actual proposal here?"): extracted from every reply
  * already sent, so `draftInboxReply` can tell the model never to restate an
- * outstanding ask (issue #480, the Aladdin Aug 26/27 exchange: three
- * discovery questions in a row with no named purpose). A crude sentence
+ * outstanding ask (issue #480: a thread where three discovery questions in a
+ * row went out with no named purpose). A crude sentence
  * split on `.`/`?`/`!` is enough. This feeds a "don't repeat" instruction,
  * not a structured parse.
  */
@@ -384,8 +422,8 @@ export interface DraftInboxReplyInput {
   /**
    * The ICP gate's call on this prospect (`prospects.icp_verdict` + reason):
    * title-based and made before the conversation. Rendered with the caveat
-   * that the thread outranks it. A reject whose reply shows they build
-   * agent systems is a stale verdict, not a reason to disengage. Missing or
+   * that the thread outranks it. A reject whose reply shows they are the
+   * person the ICP describes is a stale verdict, not a reason to disengage. Missing or
    * null verdict → no line, unchanged output.
    */
   icp?: { verdict: string | null; reason: string | null } | null;
@@ -440,7 +478,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
 
   // ASKS ALREADY MADE (issue #480): outstanding questions from your own prior
   // replies. An ask you've already made must be answered or waited on, never
-  // restated. This is the "circling" half of the Aladdin failure.
+  // restated: a reply that re-asks reads as circling.
   const asks = input.threadSent ? priorAsks(input.threadSent) : [];
   const asksBlock =
     asks.length > 0

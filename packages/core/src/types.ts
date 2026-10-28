@@ -29,7 +29,7 @@ export interface ReceiptRecord {
  * gmail-tokens.json store, keyed by `id`. Never in this config).
  */
 export interface EmailIdentity {
-  /** Stable key, e.g. "legacy-oneshot", "gmail:jn@freebutter.ai". Referenced by sender_assignments rows. Never rename a live id. */
+  /** Stable key, e.g. "legacy-oneshot", "gmail:you@yourcompany.com". Referenced by sender_assignments rows. Never rename a live id. */
   id: string;
   provider: "oneshot" | "gmail" | "smartlead";
   label?: string | null;
@@ -362,6 +362,9 @@ export interface OfferJudgeConfig {
 /** Which anchor an offer rests on where the research allows a choice. */
 export type OfferAnchor = "prefer-product" | "either";
 
+/** How drafted email subjects are cased; see `OneShotConfig.subjectCase`. */
+export type SubjectCase = "lowercase" | "sentence" | "as-written";
+
 export interface OneShotConfig {
   walletMode: "cdp" | "private-key";
   llmProvider: "openrouter" | "openai" | "anthropic";
@@ -536,6 +539,20 @@ export interface OneShotConfig {
    */
   founderVoice?: string | null;
   /**
+   * The one word drafts open with when they greet ("Yo" → "Yo," or "Yo
+   * Sam,"). "none" = never open with a greeting. Null/absent = the
+   * humanizer's rule as written (`Hey`).
+   */
+  founderGreeting?: string | null;
+  /**
+   * Email subject casing. Null/absent or "lowercase" = the humanizer's rule
+   * as written: the whole subject lowercased, brand names and acronyms
+   * included, and a subject with an uppercase run is held and repaired
+   * (`subject-shouty`). "sentence" = sentence case; "as-written" = no case
+   * rule. Either of those two turns the lowercase check off.
+   */
+  subjectCase?: SubjectCase | null;
+  /**
    * When true, the signature directive appends a literal "Sent from my iPhone"
    * line below the domain. Proof-of-human artifact: reads as if the founder
    * forgot to disable the default. Default false.
@@ -574,7 +591,7 @@ export interface OneShotConfig {
    */
   dailySpendCeilingUsd: number | null;
   /**
-   * The Gmail identity (pool `id`, e.g. `gmail:jn@freebutter.ai`) whose
+   * The Gmail identity (pool `id`, e.g. `gmail:you@yourcompany.com`) whose
    * calendar the scheduler polls for past meetings needing an outcome
    * (issue #577). Null = feature off, entirely inert: no poll, no logging,
    * no `meetings` writes. Must be a `provider: 'gmail'` identity carrying

@@ -48,8 +48,8 @@ describe("recentIcpDecisions", () => {
     const approved = ledger.enqueueTarget({
       playName: "show-hn",
       payload: {
-        title: "Agent builders",
-        url: "https://example.com/agent-builders",
+        title: "Dental group operators",
+        url: "https://example.com/dental-operators",
         email: "private@example.com",
         phone: "+43 555 0100",
         linkedinUrl: "https://linkedin.com/in/private",
@@ -88,8 +88,8 @@ describe("recentIcpDecisions", () => {
       },
       {
         candidate: {
-          title: "Agent builders",
-          url: "https://example.com/agent-builders",
+          title: "Dental group operators",
+          url: "https://example.com/dental-operators",
         },
         decision: true,
         decisionReason: null,

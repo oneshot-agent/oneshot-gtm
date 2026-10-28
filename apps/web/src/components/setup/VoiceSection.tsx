@@ -9,12 +9,11 @@ const VOICE_CARD_MAX_CHARS = 1500;
 
 const PLACEHOLDER = [
   "MOVES",
-  "- a concrete fact, then the mechanism under it, then one flat line that closes it",
-  "- say what something is not, and stop",
+  "- (how you open, how you make a point, how you close)",
   "SENTENCES",
-  "- short declaratives; one long build, then a blunt one; lowercase body; no em dashes",
+  "- (length and rhythm, case, the punctuation you use or avoid)",
   "NEVER",
-  "- hedges, hype, exclamation marks, corporate uplift, three-item lists",
+  "- (words and habits you never want written in your name)",
   "EXEMPLARS",
   "- (a few short lines copied from your own writing)",
 ].join("\n");

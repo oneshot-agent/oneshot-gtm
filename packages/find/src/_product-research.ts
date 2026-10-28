@@ -94,15 +94,6 @@ export function queueRowCompanyDomain(payload: JsonRecord): string | null {
   return emailDomain(str(payload, "email", "founderEmail", "guestEmail"));
 }
 
-/** True when the row carries text read from the company's own pages. */
-export function hasCompanyPages(payload: JsonRecord): boolean {
-  const research = payload["productResearch"];
-  if (!isRecord(research) || !Array.isArray(research["sources"])) return false;
-  return (research["sources"] as unknown[]).some(
-    (s) => isRecord(s) && typeof s["excerpt"] === "string" && s["excerpt"].trim().length > 0,
-  );
-}
-
 /** Plays whose rows never get company research. */
 export function productResearchSkipsPlay(playName: string): boolean {
   return EXCLUDED_PLAYS.has(playName);

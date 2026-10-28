@@ -46,6 +46,8 @@ const runXAmplifyDmMock = vi.fn();
 const draftLinkedInNoteMock = vi.fn();
 const draftXDmMock = vi.fn();
 const sendLinkedInInviteMock = vi.fn();
+const knownConnectionMock = vi.fn<(url: string | null) => { readAt: string } | null>(() => null);
+const recordKnownConnectionMock = vi.fn();
 
 vi.mock("@oneshot-gtm/core", async () => ({
   getLedger: () => ledgerStub,
@@ -91,6 +93,16 @@ vi.mock("@oneshot-gtm/plays", () => {
     draftLinkedInNote: (...args: unknown[]) => draftLinkedInNoteMock(...args),
     draftXDm: (...args: unknown[]) => draftXDmMock(...args),
     sendLinkedInInvite: (...args: unknown[]) => sendLinkedInInviteMock(...args),
+    knownConnection: (url: string | null) => knownConnectionMock(url),
+    knownConnectionDraft: (c: { readAt: string }) => ({
+      subject: "LinkedIn: already connected",
+      body: `Already connected (profile read ${c.readAt.slice(0, 10)}): no connection request.`,
+      flags: [],
+      knownConnection: c,
+    }),
+    linkedInProfileOf: (p: Record<string, unknown>) =>
+      typeof p["linkedinUrl"] === "string" ? p["linkedinUrl"] : null,
+    recordKnownConnection: (...args: unknown[]) => recordKnownConnectionMock(...args),
     MANUAL_PLAYS: { "x-amplify-dm": { channel: "x" } },
     isSupportedPlay: (name: string) => Object.prototype.hasOwnProperty.call(PLAYS, name),
     // Prospect offers are covered in queue-offer.test.ts; here no row gets one.
@@ -487,6 +499,12 @@ describe("drainQueue LinkedIn rows", () => {
   beforeEach(() => {
     draftLinkedInNoteMock.mockReset();
     sendLinkedInInviteMock.mockReset();
+    knownConnectionMock.mockReset().mockReturnValue(null);
+    recordKnownConnectionMock.mockReset().mockReturnValue({
+      sent: true,
+      status: "already_connected",
+      prospectId: 78,
+    });
     draftLinkedInNoteMock.mockResolvedValue({
       subject: "LinkedIn invite → Sam",
       body: "fresh note",
@@ -523,6 +541,84 @@ describe("drainQueue LinkedIn rows", () => {
     });
     expect(out.sent).toBe(1);
     expect(ledgerStub.setQueueProspectId).toHaveBeenCalledWith(30, 77);
+  });
+
+  it("a known connection is recorded, never drafted a note or sent an invite", async () => {
+    knownConnectionMock.mockReturnValue({ readAt: "2026-10-20T09:00:00.000Z" });
+    ledgerStub.dequeueApproved.mockReturnValue([linkedInRow()]);
+    const out = await drainQueue({
+      playName: "stack-consolidation",
+      dryRun: false,
+      linkedIn: sender,
+    });
+    expect(knownConnectionMock).toHaveBeenCalledWith("https://www.linkedin.com/in/dana");
+    expect(draftLinkedInNoteMock).not.toHaveBeenCalled();
+    expect(sendLinkedInInviteMock).not.toHaveBeenCalled();
+    expect(recordKnownConnectionMock.mock.calls[0]![0]).toMatchObject({
+      connection: { readAt: "2026-10-20T09:00:00.000Z" },
+      sender,
+      workspace: "alpha",
+    });
+    expect(out.sent).toBe(1);
+    expect(ledgerStub.setQueueProspectId).toHaveBeenCalledWith(30, 78);
+    const saved = ledgerStub.setQueueDraft.mock.calls.at(-1)![0] as {
+      draft: { subject: string; flags: string[]; knownConnection?: unknown };
+    };
+    expect(saved.draft).toMatchObject({
+      subject: "LinkedIn: already connected",
+      flags: [],
+      knownConnection: { readAt: "2026-10-20T09:00:00.000Z" },
+    });
+  });
+
+  it("a known connection the guard refuses goes back to pending with its reason", async () => {
+    knownConnectionMock.mockReturnValue({ readAt: "2026-10-20T09:00:00.000Z" });
+    recordKnownConnectionMock.mockReturnValue({
+      sent: false,
+      flags: ["opted-out: they opted out of contact"],
+      guard: "opted-out",
+    });
+    ledgerStub.dequeueApproved.mockReturnValue([linkedInRow()]);
+    const out = await drainQueue({
+      playName: "stack-consolidation",
+      dryRun: false,
+      linkedIn: sender,
+    });
+    expect(out.sent).toBe(0);
+    expect(out.skipped).toEqual({ "opted-out": 1 });
+    expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({
+      id: 30,
+      status: "pending",
+      decidedBy: "machine",
+    });
+  });
+
+  it("a row drafted as a known connection whose read no longer says so gets a note for review, unsent", async () => {
+    const stale = linkedInRow({
+      last_draft_json: JSON.stringify({
+        subject: "LinkedIn: already connected",
+        body: "Already connected (profile read 2026-09-01): no connection request.",
+        flags: [],
+        knownConnection: { readAt: "2026-09-01T09:00:00.000Z" },
+      }),
+    });
+    ledgerStub.dequeueApproved.mockReturnValue([stale]);
+    const out = await drainQueue({
+      playName: "stack-consolidation",
+      dryRun: false,
+      linkedIn: sender,
+    });
+    expect(draftLinkedInNoteMock).toHaveBeenCalledTimes(1);
+    expect(sendLinkedInInviteMock).not.toHaveBeenCalled();
+    expect(recordKnownConnectionMock).not.toHaveBeenCalled();
+    expect(out.sent).toBe(0);
+    const saved = ledgerStub.setQueueDraft.mock.calls.at(-1)![0] as { draft: { body: string } };
+    expect(saved.draft.body).toBe("fresh note");
+    expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({
+      id: 30,
+      status: "pending",
+      decidedBy: "machine",
+    });
   });
 
   it("drafts a note when the row has none, and never sends without a LinkedIn account", async () => {

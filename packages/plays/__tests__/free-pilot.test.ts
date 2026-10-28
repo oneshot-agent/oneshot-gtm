@@ -61,7 +61,7 @@ const { defaultSequence: getSequence } = await import("../src/_cadence.ts");
 
 const base = {
   name: "Dave",
-  email: "dave@kowalski.dev",
+  email: "dave@kowalskiplumbing.example",
   company: "Kowalski Plumbing",
   businessType: "two-truck plumbing company",
   yourEdge: "cuts no-show appointments with text reminders",

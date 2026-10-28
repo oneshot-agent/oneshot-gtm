@@ -59,7 +59,7 @@ let rows: Row[] = [];
 // Stub ledger mirrors the REAL ledger's case-insensitive lookup: it canonicalizes
 // the arg the same way ledger.findProspectByEmail now does, so a prospect stored
 // lowercase is found from any-cased inbound address.
-const STORED_EMAIL = "sophia@agenticarchitect.ai";
+const STORED_EMAIL = "dana@halyard.example";
 
 const notifySlackReplyReceivedMock = vi.fn(async () => {});
 const notifySlackBounceRecordedMock = vi.fn(async () => {});
@@ -324,9 +324,7 @@ afterEach(() => {
 
 describe("advanceCadence — reply detection", () => {
   it("a mixed-case inbound reply marks the cadence replied and skips the due step", async () => {
-    inboxEmails = [
-      { from: "Sophia Stein <Sophia@AgenticArchitect.AI>", subject: "re: your agent stack" },
-    ];
+    inboxEmails = [{ from: "Dana Reyes <Dana@Halyard.EXAMPLE>", subject: "re: your agent stack" }];
 
     const result = await advanceCadence({ dryRun: false });
 
@@ -350,7 +348,7 @@ describe("advanceCadence — reply detection", () => {
   });
 
   it("dry-run does not poll the inbox", async () => {
-    inboxEmails = [{ from: "Sophia Stein <Sophia@AgenticArchitect.AI>", subject: "re" }];
+    inboxEmails = [{ from: "Dana Reyes <Dana@Halyard.EXAMPLE>", subject: "re" }];
     rows[0]!.next_due_at = "2999-01-01T00:00:00.000Z";
 
     const result = await advanceCadence({ dryRun: true });
@@ -367,7 +365,7 @@ describe("advanceCadence — reply detection", () => {
     // eventsByPlay's replied_at note), not the day this poll happened to run.
     inboxEmails = [
       {
-        from: "Sophia Stein <Sophia@AgenticArchitect.AI>",
+        from: "Dana Reyes <Dana@Halyard.EXAMPLE>",
         subject: "re: your agent stack",
         received_at: "2026-08-20T09:00:00.000Z",
       },
@@ -405,7 +403,7 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
     expect(calls.sendEmail).toBe(0);
   });
   it("flips a matching active cadence to replied and records the reply event", async () => {
-    inboxEmails = [{ from: "Sophia <sophia@agenticarchitect.ai>", subject: "re: stack" }];
+    inboxEmails = [{ from: "Dana <dana@halyard.example>", subject: "re: stack" }];
 
     const result = await pollInboxReplies();
 
@@ -423,7 +421,7 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
 
   // Issue #357: a genuinely new human reply refreshes the per-prospect angle.
   it("triggers an angle refresh for a new human reply", async () => {
-    inboxEmails = [{ id: "m1", from: "sophia@agenticarchitect.ai", subject: "re: stack" }];
+    inboxEmails = [{ id: "m1", from: "dana@halyard.example", subject: "re: stack" }];
 
     await pollInboxReplies();
 
@@ -431,7 +429,7 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
   });
 
   it("does not trigger an angle refresh for a re-swept already-recorded reply", async () => {
-    inboxEmails = [{ id: "m1", from: "sophia@agenticarchitect.ai", subject: "re: stack" }];
+    inboxEmails = [{ id: "m1", from: "dana@halyard.example", subject: "re: stack" }];
 
     await pollInboxReplies();
     angleRefreshCalls = [];
@@ -444,7 +442,7 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
 
   it("persists every matched inbound (body included) into inbox_replies", async () => {
     inboxEmails = [
-      { id: "m1", from: "Sophia <sophia@agenticarchitect.ai>", subject: "re: stack" },
+      { id: "m1", from: "Dana <dana@halyard.example>", subject: "re: stack" },
       { id: "m2", from: "Someone Else <nobody@elsewhere.com>", subject: "spam" },
     ];
 
@@ -460,15 +458,13 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
     // A later reply on the same (already-replied) thread is stored too. The
     // per-(prospect, play) reply transition being idempotent must not stop
     // the message capture.
-    inboxEmails = [
-      { id: "m3", from: "Sophia <sophia@agenticarchitect.ai>", subject: "re: re: stack" },
-    ];
+    inboxEmails = [{ id: "m3", from: "Dana <dana@halyard.example>", subject: "re: re: stack" }];
     await pollInboxReplies();
     expect(persistedReplies.map((r) => r.id)).toEqual(["m1", "m3"]);
   });
 
   it("fires a Slack reply-received notification on first sight only (background poll path)", async () => {
-    inboxEmails = [{ id: "m1", from: "Sophia <sophia@agenticarchitect.ai>", subject: "re: stack" }];
+    inboxEmails = [{ id: "m1", from: "Dana <dana@halyard.example>", subject: "re: stack" }];
 
     await pollInboxReplies();
 
@@ -491,7 +487,7 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
     // next poll still records the event (it's new to the metrics), but there
     // was no active cadence to stop.
     rows[0]!.status = "replied";
-    inboxEmails = [{ from: "sophia@agenticarchitect.ai", subject: "re" }];
+    inboxEmails = [{ from: "dana@halyard.example", subject: "re" }];
 
     const result = await pollInboxReplies();
 
@@ -502,7 +498,7 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
 
   it("records the reply for a terminal (breakup) cadence without resurrecting it", async () => {
     rows[0]!.status = "breakup";
-    inboxEmails = [{ from: "sophia@agenticarchitect.ai", subject: "re" }];
+    inboxEmails = [{ from: "dana@halyard.example", subject: "re" }];
 
     const result = await pollInboxReplies();
 
@@ -515,7 +511,7 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
   it("records a reply to a one-touch play that never enrolled a cadence", async () => {
     rows = []; // luma-events leaves no cadence_state row
     latestSentPlay = "luma-events";
-    inboxEmails = [{ from: "sophia@agenticarchitect.ai", subject: "re: the meetup" }];
+    inboxEmails = [{ from: "dana@halyard.example", subject: "re: the meetup" }];
 
     const result = await pollInboxReplies();
 
@@ -528,7 +524,7 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
   });
 
   it("is idempotent across polls — the same inbound email is not recounted", async () => {
-    inboxEmails = [{ from: "sophia@agenticarchitect.ai", subject: "re" }];
+    inboxEmails = [{ from: "dana@halyard.example", subject: "re" }];
 
     expect((await pollInboxReplies()).repliesDetected).toBe(1);
     expect((await pollInboxReplies()).repliesDetected).toBe(0);
@@ -540,7 +536,7 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
   // already recorded (and triaged) by a prior poll must not be re-sent to
   // the paid triageEmails call every time it's re-examined.
   it("does not re-triage a human reply already recorded by a prior poll", async () => {
-    inboxEmails = [{ id: "m1", from: "sophia@agenticarchitect.ai", subject: "re: stack" }];
+    inboxEmails = [{ id: "m1", from: "dana@halyard.example", subject: "re: stack" }];
 
     await pollInboxReplies();
     expect(triageEmailsMock).toHaveBeenCalledTimes(1);
@@ -561,7 +557,7 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
   // of them actually call the paid triageEmails. A bare re-check of `intent`
   // would let both through since neither has written back yet.
   it("does not double-triage the same reply across two overlapping polls", async () => {
-    inboxEmails = [{ id: "m1", from: "sophia@agenticarchitect.ai", subject: "re: stack" }];
+    inboxEmails = [{ id: "m1", from: "dana@halyard.example", subject: "re: stack" }];
     // Simulate the first poll's triage call being slow (still in flight)
     // when the second, overlapping poll starts.
     let resolveFirst: (() => void) | null = null;
@@ -627,7 +623,7 @@ describe("pollInboxReplies — watermark", () => {
     inboxEmails = [
       { from: "nobody@elsewhere.com", subject: "noise", received_at: "2026-08-20T13:00:00.000Z" },
     ];
-    failedSources = ["gmail:jn@example.com"];
+    failedSources = ["gmail:mira@example.com"];
 
     await pollInboxReplies();
 
@@ -651,7 +647,7 @@ describe("pollInboxReplies — watermark", () => {
       { from: "b@elsewhere.com", subject: "noise", received_at: at(14) },
       { from: "c@elsewhere.com", subject: "noise", received_at: at(13) },
       { from: "d@elsewhere.com", subject: "noise", received_at: at(12) },
-      { from: "sophia@agenticarchitect.ai", subject: "re: stack", received_at: at(11) },
+      { from: "dana@halyard.example", subject: "re: stack", received_at: at(11) },
     ];
 
     const result = await pollInboxReplies({ pageSize: 2 });
@@ -674,7 +670,7 @@ describe("pollInboxReplies — watermark", () => {
         received_at: "2026-08-20T13:00:00.000Z",
       },
       { id: "y", from: "b@elsewhere.com", subject: "noise", received_at: t },
-      { id: "z", from: "sophia@agenticarchitect.ai", subject: "re: stack", received_at: t },
+      { id: "z", from: "dana@halyard.example", subject: "re: stack", received_at: t },
     ];
 
     const result = await pollInboxReplies({ pageSize: 2 });
@@ -688,7 +684,7 @@ describe("pollInboxReplies — watermark", () => {
       { from: "a@elsewhere.com", subject: "noise", received_at: at(16) },
       { from: "b@elsewhere.com", subject: "noise", received_at: at(15) },
       { from: "c@elsewhere.com", subject: "noise", received_at: at(14) },
-      { from: "sophia@agenticarchitect.ai", subject: "re: stack", received_at: at(13) },
+      { from: "dana@halyard.example", subject: "re: stack", received_at: at(13) },
     ];
 
     // Budget of one page of two: sees 16:00 and 15:00, parks (floor, 15:00].
@@ -712,7 +708,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
   it("an OOO autoresponder is stored but is NOT a reply: cadence stays active", async () => {
     inboxEmails = [
       {
-        from: "Sophia Stein <sophia@agenticarchitect.ai>",
+        from: "Dana Reyes <dana@halyard.example>",
         subject: "Automatic reply: your agent stack",
       },
     ];
@@ -736,7 +732,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
   it("a dead-mailbox autoresponder stops the cadence as bounced, not replied", async () => {
     inboxEmails = [
       {
-        from: "sophia@agenticarchitect.ai",
+        from: "dana@halyard.example",
         subject: "out of office Re: your agent stack",
         // The real 2026-08-27 payload shape: retired, address dead.
         body: "Retired October 2025. No longer using this email.",
@@ -789,7 +785,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     inboxEmails = [
       {
         id: "dead-mailbox-1",
-        from: "sophia@agenticarchitect.ai",
+        from: "dana@halyard.example",
         subject: "out of office Re: your agent stack",
         body: "Retired October 2025. No longer using this email.",
         received_at: "2026-08-27T16:07:46.000Z",
@@ -812,7 +808,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
   it("an unsubscribe request stops the cadence as unsubscribed", async () => {
     inboxEmails = [
       {
-        from: "sophia@agenticarchitect.ai",
+        from: "dana@halyard.example",
         subject: "Re: your agent stack",
         body: "Please remove me from your list.",
       },
@@ -851,7 +847,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     inboxEmails = [
       {
         id: "m1",
-        from: "sophia@agenticarchitect.ai",
+        from: "dana@halyard.example",
         subject: "Re: your agent stack",
         body: "This isn't relevant to our team, please don't send any more of these.",
       },
@@ -890,7 +886,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
   // A human reply triaged with any other intent (e.g. genuine interest) must
   // not be treated as an opt-out. Only intent='unsubscribe' does.
   it("a human reply triaged intent=interested stops the cadence as replied, not unsubscribed", async () => {
-    inboxEmails = [{ id: "m1", from: "sophia@agenticarchitect.ai", subject: "re: stack" }];
+    inboxEmails = [{ id: "m1", from: "dana@halyard.example", subject: "re: stack" }];
     // Default triageEmailsMock already returns category 'interested'.
 
     const result = await pollInboxReplies();
@@ -907,7 +903,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     rows[0]!.status = "completed";
     inboxEmails = [
       {
-        from: "sophia@agenticarchitect.ai",
+        from: "dana@halyard.example",
         subject: "Automatic reply: gone",
         body: "I have retired and am no longer using this email.",
       },
@@ -923,7 +919,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
   it("a Gmail header verdict (auto_submitted) suppresses the reply even with a human-looking body", async () => {
     inboxEmails = [
       {
-        from: "sophia@agenticarchitect.ai",
+        from: "dana@halyard.example",
         subject: "Re: your agent stack",
         body: "Thanks for your email, I will get back to you.",
         auto_submitted: true,

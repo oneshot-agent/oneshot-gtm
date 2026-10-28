@@ -27,17 +27,17 @@ vi.mock("../src/events.ts", async (orig) => ({
 
 const T0 = Date.parse("2026-10-01T10:00:00.000Z");
 const smtpId: EmailIdentity = {
-  id: "smartlead:jn@mail.example",
+  id: "smartlead:mira@mail.example",
   provider: "smartlead",
-  address: "jn@mail.example",
+  address: "mira@mail.example",
   maxPerDay: 30,
   warmup: null,
   sendVia: "smtp",
 };
 const gmailId: EmailIdentity = {
-  id: "gmail:jn@other.example",
+  id: "gmail:mira@other.example",
   provider: "gmail",
-  address: "jn@other.example",
+  address: "mira@other.example",
   maxPerDay: 30,
   warmup: null,
 };
@@ -179,6 +179,35 @@ describe("runOutboundConfirmations", () => {
     expect(retry.send.messageId).toBe(s.messageId);
   });
 
+  it.each([
+    [smtpId, "<retry@mail.example>", "a retry reuses the same Message-ID"],
+    [gmailId, null, "a retry sends a new message with a new Message-ID on Gmail"],
+    [gmailId, "gm-retry", "a retry sends a new message with a new Message-ID on Gmail"],
+  ])(
+    "reports the retry Message-ID behavior for %j with id %s (#906)",
+    async (identity, messageId, reason) => {
+      const key = "retry-reason";
+      ledger.outboundSends.claim({
+        ...claimOf2(key, identity),
+        transport: identity.provider === "gmail" ? "gmail" : "smtp",
+        sentEvidence: true,
+        messageId,
+        now: new Date(T0),
+      });
+      ledger.outboundSends.mark(key, "uncertain", { now: new Date(T0) });
+      expect(ledger.outboundSends.get(key)?.messageId).toBe(messageId);
+
+      const out = await sweep(T0 + UNCERTAIN_SETTLE_MS, readers({}));
+      const error = `not found in Sent after the send was interrupted; ${reason}`;
+      expect(out[0]).toMatchObject({ after: "failed", observed: 0, error });
+      expect(ledger.outboundSends.get(key)).toMatchObject({
+        status: "failed",
+        observed: 0,
+        error,
+      });
+    },
+  );
+
   it("never resends an uncertain SMTP send whose server keeps no Sent copy", async () => {
     const s = keyed("nocopy", "uncertain", smtpId, false, false);
     await sweep(T0 + UNCERTAIN_SETTLE_MS, readers({}));
@@ -222,7 +251,7 @@ describe("runOutboundConfirmations", () => {
 
   it("settles an uncertain OneShot send without reading, then gives up after the retries", async () => {
     const os: EmailIdentity = {
-      id: "oneshot:jn@os.example",
+      id: "oneshot:mira@os.example",
       provider: "oneshot",
       sendingDomain: "os.example",
       maxPerDay: null,

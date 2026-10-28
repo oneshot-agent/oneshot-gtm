@@ -68,9 +68,9 @@ describe("buildGitHubEvidence", () => {
       },
     ];
     const out = await buildGitHubEvidence(
-      user({ bio: "Founder, building agent infra", location: "Berlin" }),
+      user({ bio: "Founder, building payroll tooling", location: "Berlin" }),
     );
-    expect(out.text).toContain("Bio: Founder, building agent infra");
+    expect(out.text).toContain("Bio: Founder, building payroll tooling");
     expect(out.text).toContain("Location: Berlin");
     expect(out.text).toContain(
       "- agent-kit (TypeScript, ★12, pushed 2026-08) — tools for agents that send email",

@@ -23,7 +23,6 @@ export function isResearchableUrl(url: string | null | undefined): boolean {
  * `luma.com/user/<handle>` page: for someone who hosts no events its entire
  * content is "Nothing Here, Yet", so the call burned a slot and returned
  * nothing while a perfectly good `linkedin_url` sat unused in the next column.
- * 68 prospects were in exactly that state.
  *
  * So: prefer whichever column holds a researchable profile, `source_profile_url`
  * first when both qualify. Fall back to a non-researchable `source_profile_url`

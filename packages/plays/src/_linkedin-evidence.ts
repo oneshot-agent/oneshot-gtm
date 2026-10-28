@@ -6,6 +6,8 @@ import {
   demoDayOf,
   type LinkedInOperation,
   withPaidCache,
+  mergeStoredView,
+  storedDistanceReadAt,
 } from "@oneshot-gtm/core";
 import { complete } from "@oneshot-gtm/intel";
 
@@ -238,7 +240,7 @@ const compactKey = (name: string): string => name.toLowerCase().replace(/[^\p{L}
 
 const SECOND_LEVEL = new Set(["co", "com", "org", "net", "ac", "gov", "edu"]);
 
-/** The registrable label of a domain: `usesoren` for `usesoren.com`, `acme` for `acme.co.uk`. */
+/** The registrable label of a domain: `getacme` for `getacme.com`, `acme` for `acme.co.uk`. */
 function domainLabel(domain: string): string | null {
   const host = cutAt(
     domain
@@ -290,6 +292,8 @@ export function mentionsCompany(text: string | null | undefined, company: string
 export interface LiveProfileSnapshot {
   headline?: string;
   experience: Array<{ company: string; title?: string; period?: string }>;
+  /** The view's `network_distance`, when it reported one (`isFirstDegree` reads it). */
+  networkDistance?: string;
 }
 
 /** Whether a live read names `company` in its headline or a current position. */
@@ -469,9 +473,11 @@ export function profileViewReader(input: {
     if (!record(done?.["profile"])) return null;
     const headline = findString(done, ["headline"]);
     const company = findString(done, ["current_company", "company_name"]);
+    const networkDistance = findString(done, ["network_distance"]);
     return {
       ...(headline ? { headline } : {}),
       experience: company ? [{ company, period: "Present" }] : [],
+      ...(networkDistance ? { networkDistance } : {}),
     };
   };
 }
@@ -492,20 +498,64 @@ function snapshotFrom(value: unknown): LiveProfileSnapshot | null {
     })
     .filter((e) => e.company);
   const headline = p["headline"];
+  const distance = p["networkDistance"];
   return {
     ...(typeof headline === "string" && headline ? { headline } : {}),
     experience,
+    ...(typeof distance === "string" && distance ? { networkDistance: distance } : {}),
   };
+}
+
+/** How far ahead of now a stored read time may sit and still count (clock skew between writers). */
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+/** The paid-cache entries a profile read is kept under: person research's full read, then the silent view. */
+const STORED_PROFILE_READS = ["linkedin.profile_read", "linkedin.profile"] as const;
+
+/**
+ * The newest stored read of this profile that reports a network distance, no
+ * older than `maxAgeMs`, with when it was read. Reads the paid cache only.
+ * A read stored before the distance was kept says nothing either way.
+ */
+export function storedNetworkDistance(
+  url: string,
+  opts: { now: Date; maxAgeMs: number },
+): { distance: string; readAt: string } | null {
+  let newest: { distance: string; readAt: string } | null = null;
+  for (const callType of STORED_PROFILE_READS) {
+    const entry = readPaidCache(
+      callType,
+      { url },
+      { now: opts.now.getTime(), maxAgeMs: opts.maxAgeMs },
+    );
+    if (entry?.status !== "ok") continue;
+    const distance = snapshotFrom(entry.result)?.networkDistance;
+    if (!distance) continue;
+    const at = storedDistanceReadAt(entry.result, entry.fetchedAt);
+    // A distance carried over from an older view keeps its own time: the
+    // entry being new does not make the distance new.
+    // A time ahead of now (beyond clock skew) is no evidence of a recent read.
+    const age = opts.now.getTime() - Date.parse(at);
+    if (!Number.isFinite(age) || age >= opts.maxAgeMs || age < -CLOCK_SKEW_MS) continue;
+    if (!newest || Date.parse(at) > Date.parse(newest.readAt)) newest = { distance, readAt: at };
+  }
+  return newest;
+}
+
+/** A stored read whose Experience section LinkedIn held back: its distance counts, its empty list does not. */
+function isPartialRead(result: unknown): boolean {
+  return record(result)?.["partial"] === true;
 }
 
 /**
  * A read already bought for this profile, in the paid cache: person
- * research's full read first, else an earlier silent view.
+ * research's full read first, else an earlier silent view. A partial read is
+ * no snapshot: the silent view is made instead.
  */
 function storedLiveProfile(url: string, now: Date): LiveProfileSnapshot | null {
-  for (const callType of ["linkedin.profile_read", "linkedin.profile"] as const) {
+  for (const callType of STORED_PROFILE_READS) {
     const entry = readPaidCache(callType, { url }, { now: now.getTime() });
-    if (entry?.status !== "ok") continue;
+    if (entry?.status !== "ok" || isPartialRead(entry.result)) continue;
     const snapshot = snapshotFrom(entry.result);
     if (snapshot) return snapshot;
   }
@@ -538,10 +588,22 @@ export function liveProfileFor(
     try {
       // The paid cache keeps a finished view for the cadence's later steps,
       // across runs and workspaces; a view that did not finish is not kept.
-      const out = await withPaidCache("linkedin.profile", { url }, undefined, async () => ({
-        result: await reader(url),
-        receiptId: 0,
-      }));
+      // A partial read sits in this entry: the view replaces it, laid over it
+      // so a distance the view does not report is not lost.
+      const held = readPaidCache("linkedin.profile", { url }, { now: now.getTime() });
+      const partial = held?.status === "ok" && isPartialRead(held.result) ? held : null;
+      const out = await withPaidCache(
+        "linkedin.profile",
+        { url },
+        partial ? { fresh: true } : undefined,
+        async () => {
+          const view = await reader(url);
+          return {
+            result: view && partial ? mergeStoredView(partial, { ...view }) : view,
+            receiptId: 0,
+          };
+        },
+      );
       return snapshotFrom(out.result);
     } catch {
       return null;
@@ -597,7 +659,7 @@ export async function companyTheyRun(input: {
     company,
     email: prospect.email,
     dossierDomain,
-    // The stored headline corroborates like a domain does ("Founder at Soren"
+    // The stored headline corroborates like a domain does ("Founder at Beacon"
     // on a personal mailbox); the live read below still has to agree.
     headline: findString(half, ["headline"]),
   };
@@ -660,7 +722,7 @@ export function lintLinkedInFirstMessage(
  * The framing an already-connected reader must not get: thanks for connecting,
  * a request, an invite, an acceptance, or "glad we connected". Each pattern names
  * the social connection, not the verb: these messages talk about products that
- * connect things, and "we connect agents to your tools" is not a violation.
+ * connect things, and "we connect your booking page to your CRM" is not a violation.
  */
 const ALREADY_CONNECTED_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
   // Thanks for any act of joining their network: connecting, accepting, or
@@ -723,7 +785,7 @@ const SHARED_COHORT_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
       "i",
     ),
   ],
-  // "in antler-2026 as well", "in YC F26 too": the "too" is the sender.
+  // "in techstars-2026 as well", "in YC F26 too": the "too" is the sender.
   [
     "in it too",
     new RegExp(
@@ -731,7 +793,7 @@ const SHARED_COHORT_RX: ReadonlyArray<[label: string, rx: RegExp]> = [
       "i",
     ),
   ],
-  // A sentence with no subject that opens on the cohort ("Hey Vinod, in YC
+  // A sentence with no subject that opens on the cohort ("Hey Sam, in YC
   // F26 currently.") reads as the sender's own status.
   [
     "subjectless cohort",

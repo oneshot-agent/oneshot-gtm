@@ -192,8 +192,8 @@ describe("importLedgerInvites (--from-ledgers)", () => {
       JSON.stringify({
         default: "alpha",
         workspaces: {
-          alpha: { home: alphaHome, port: 3031, createdAt: "" },
-          beta: { home: betaHome, port: 3032, createdAt: "" },
+          alpha: { home: alphaHome, port: 4031, createdAt: "" },
+          beta: { home: betaHome, port: 4032, createdAt: "" },
         },
       }),
     );

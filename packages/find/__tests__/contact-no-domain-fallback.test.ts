@@ -80,7 +80,7 @@ beforeEach(() => {
     costUsd: 0,
   });
   find.mockResolvedValue({
-    result: { status: "completed", found: true, email: "ines@quillworks.io", cost: 0.01 },
+    result: { status: "completed", found: true, email: "ines@quillworks.example", cost: 0.01 },
     receiptId: 1,
   });
   verify.mockResolvedValue({
@@ -92,18 +92,18 @@ beforeEach(() => {
 
 describe("no-domain fallback in the contact step", () => {
   it("LinkedIn: the profile's employer domain feeds findEmail, then verify", async () => {
-    enrich.mockResolvedValue(profile({ company_domain: "https://www.Quillworks.io/" }));
+    enrich.mockResolvedValue(profile({ company_domain: "https://www.Quillworks.example/" }));
     const out = await resolveVerifyEnrichQualify({ ...base, linkedinUrlHint: LINKEDIN });
-    expect(out).toMatchObject({ ok: true, channel: "email", email: "ines@quillworks.io" });
+    expect(out).toMatchObject({ ok: true, channel: "email", email: "ines@quillworks.example" });
     expect(enrich).toHaveBeenCalledWith(
       { linkedinUrl: "https://www.linkedin.com/in/ines-varga" },
       expect.objectContaining({ playName: "podcast-guest" }),
     );
     expect(find).toHaveBeenCalledWith(
-      { companyDomain: "quillworks.io", fullName: "Ines Varga" },
+      { companyDomain: "quillworks.example", fullName: "Ines Varga" },
       expect.anything(),
     );
-    expect(verify).toHaveBeenCalledWith({ email: "ines@quillworks.io" }, expect.anything());
+    expect(verify).toHaveBeenCalledWith({ email: "ines@quillworks.example" }, expect.anything());
     expect(research).not.toHaveBeenCalled();
     expect(out.costUsd).toBeCloseTo(0.04);
     expect(fallbackEvents()).toEqual([
@@ -118,7 +118,7 @@ describe("no-domain fallback in the contact step", () => {
         company_domain: null,
         experience: [
           { company: { website: "https://old-employer.com" } },
-          { is_primary: true, company: { website: "https://quillworks.io/about" } },
+          { is_primary: true, company: { website: "https://quillworks.example/about" } },
         ],
       }),
     );
@@ -127,30 +127,37 @@ describe("no-domain fallback in the contact step", () => {
       fullName: null,
       linkedinUrlHint: LINKEDIN,
     });
-    expect(out).toMatchObject({ ok: true, email: "ines@quillworks.io", fullName: "Ines Varga" });
+    expect(out).toMatchObject({
+      ok: true,
+      email: "ines@quillworks.example",
+      fullName: "Ines Varga",
+    });
     expect(find).toHaveBeenCalledWith(
-      { companyDomain: "quillworks.io", fullName: "Ines Varga" },
+      { companyDomain: "quillworks.example", fullName: "Ines Varga" },
       expect.anything(),
     );
   });
 
   it("GitHub only: the dossier's work email is verified and queued", async () => {
     research.mockResolvedValue(
-      dossier({ best_work_email: "Ines@Quillworks.io", best_personal_email: "ines@gmail.com" }),
+      dossier({
+        best_work_email: "Ines@Quillworks.example",
+        best_personal_email: "ines@gmail.com",
+      }),
     );
     const out = await resolveVerifyEnrichQualify({
       ...base,
       playName: "repo-interest",
       githubIdentity: { login: "ivarga", accountType: "User" },
     });
-    expect(out).toMatchObject({ ok: true, channel: "email", email: "ines@quillworks.io" });
+    expect(out).toMatchObject({ ok: true, channel: "email", email: "ines@quillworks.example" });
     expect(research).toHaveBeenCalledWith(
       { socialMediaUrl: "https://github.com/ivarga", name: "Ines Varga" },
       expect.objectContaining({ playName: "repo-interest" }),
     );
     // The free README pass runs first.
     expect(readme.mock.invocationCallOrder[0]).toBeLessThan(research.mock.invocationCallOrder[0]!);
-    expect(verify).toHaveBeenCalledWith({ email: "ines@quillworks.io" }, expect.anything());
+    expect(verify).toHaveBeenCalledWith({ email: "ines@quillworks.example" }, expect.anything());
     expect(find).not.toHaveBeenCalled();
     expect(enrich).not.toHaveBeenCalled();
     expect(out.costUsd).toBeCloseTo(0.06);
@@ -160,9 +167,9 @@ describe("no-domain fallback in the contact step", () => {
   });
 
   it("X only: the handle becomes an x.com profile URL for the dossier", async () => {
-    research.mockResolvedValue(dossier({ best_work_email: "ines@quillworks.io" }));
+    research.mockResolvedValue(dossier({ best_work_email: "ines@quillworks.example" }));
     const out = await resolveVerifyEnrichQualify({ ...base, xHandleHint: "@ivarga_builds" });
-    expect(out).toMatchObject({ ok: true, email: "ines@quillworks.io" });
+    expect(out).toMatchObject({ ok: true, email: "ines@quillworks.example" });
     expect(research).toHaveBeenCalledWith(
       expect.objectContaining({ socialMediaUrl: "https://x.com/ivarga_builds" }),
       expect.anything(),
@@ -210,13 +217,13 @@ describe("no-domain fallback in the contact step", () => {
 
   it("an empty LinkedIn profile falls through to the dossier when a GitHub identity exists", async () => {
     enrich.mockResolvedValue(profile({ company_domain: null }));
-    research.mockResolvedValue(dossier({ best_work_email: "ines@quillworks.io" }));
+    research.mockResolvedValue(dossier({ best_work_email: "ines@quillworks.example" }));
     const out = await resolveVerifyEnrichQualify({
       ...base,
       linkedinUrlHint: LINKEDIN,
       githubIdentity: { login: "ivarga" },
     });
-    expect(out).toMatchObject({ ok: true, email: "ines@quillworks.io" });
+    expect(out).toMatchObject({ ok: true, email: "ines@quillworks.example" });
     expect(out.costUsd).toBeCloseTo(0.08);
     expect(fallbackEvents().map((e) => [e.via, e.outcome])).toEqual([
       ["linkedin", "miss"],
@@ -245,6 +252,41 @@ describe("no-domain fallback in the contact step", () => {
     expect(breaker.outcomes).toContain(true);
   });
 
+  it("a dossier that finds nobody is the original no-domain miss and spares the breaker", async () => {
+    research.mockRejectedValue(
+      new Error("Job failed: Could not find data for this person or company."),
+    );
+    const out = await resolveVerifyEnrichQualify({ ...base, githubIdentity: { login: "ivarga" } });
+    expect(out).toMatchObject({ ok: false, reason: "no-domain" });
+    expect(breaker.outcomes).not.toContain(true);
+    // The backend answered, so the verdict ends any run of platform errors.
+    expect(breaker.outcomes).toContain(false);
+    expect(events).toContainEqual({
+      event: "finder.no_domain_fallback",
+      data: expect.objectContaining({ via: "github", outcome: "miss" }),
+    });
+  });
+
+  it("an enrichProfile that finds nobody falls through to the dossier", async () => {
+    enrich.mockRejectedValue(new Error("Job failed: Could not find data for this person."));
+    research.mockResolvedValue(dossier({ best_work_email: "ines@halyard.example" }));
+    const out = await resolveVerifyEnrichQualify({
+      ...base,
+      linkedinUrlHint: LINKEDIN,
+      githubIdentity: { login: "ivarga" },
+    });
+    expect(research).toHaveBeenCalled();
+    expect(breaker.outcomes).not.toContain(true);
+    expect(out).not.toMatchObject({ reason: "platform-error" });
+  });
+
+  it("an enrichProfile that finds nobody ends a run of platform errors", async () => {
+    enrich.mockRejectedValue(new Error("Job failed: Could not find data for this person."));
+    const out = await resolveVerifyEnrichQualify({ ...base, linkedinUrlHint: LINKEDIN });
+    expect(out).toMatchObject({ ok: false, reason: "no-domain" });
+    expect(breaker.outcomes).toEqual([false]);
+  });
+
   it("an enrichProfile that throws is a platform error, never a fall-through to the dossier", async () => {
     enrich.mockRejectedValue(new Error("socket hang up"));
     const out = await resolveVerifyEnrichQualify({
@@ -264,7 +306,7 @@ describe("no-domain fallback in the contact step", () => {
   });
 
   it("the duplicate check applies to the address the fallback found", async () => {
-    research.mockResolvedValue(dossier({ best_work_email: "ines@quillworks.io" }));
+    research.mockResolvedValue(dossier({ best_work_email: "ines@quillworks.example" }));
     const seen: string[] = [];
     const out = await resolveVerifyEnrichQualify({
       ...base,
@@ -275,12 +317,12 @@ describe("no-domain fallback in the contact step", () => {
       },
     });
     expect(out).toMatchObject({ ok: false, reason: "duplicate" });
-    expect(seen).toEqual(["ines@quillworks.io"]);
+    expect(seen).toEqual(["ines@quillworks.example"]);
     expect(verify).not.toHaveBeenCalled();
   });
 
   it("an undeliverable fallback address is a miss the channel walk moves past", async () => {
-    enrich.mockResolvedValue(profile({ company_domain: "quillworks.io" }));
+    enrich.mockResolvedValue(profile({ company_domain: "quillworks.example" }));
     verify.mockResolvedValue({
       result: { status: "completed", deliverable: false, cost: 0.01 },
       receiptId: 2,

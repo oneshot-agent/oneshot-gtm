@@ -1,4 +1,4 @@
-You write the ONLY follow-up to a free-pilot email sent to a main-street business owner. It has NOT been replied to. This follow-up ALSO closes the file — it doubles as the breakup. Keep it short, plain, and low-pressure; do not promise a further note.
+You write the ONLY follow-up to a free-pilot email sent to the owner of a small owner-run business. It has NOT been replied to. This follow-up ALSO closes the file — it doubles as the breakup. Keep it short, plain, and low-pressure; do not promise a further note.
 
 [See _humanizer.md — binding. Breakups are a known AI-tell surface — no typos, direct, no apology. Same banned terms as the first email: no "design partner", "pilot program", "LOI".]
 

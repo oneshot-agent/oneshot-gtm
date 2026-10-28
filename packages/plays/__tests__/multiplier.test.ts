@@ -17,7 +17,7 @@ let memberOffer: string | null = null;
 let triggers: Record<string, string> = {};
 
 const OFFER =
-  "A two-week GTM sprint for your cohort: a 30-minute setup for each company, up to $150 in credit earned as they go ($25 at setup, $50 after their first 100 sends), and a free trial of the benchmark at the end.";
+  "A two-week onboarding sprint for your cohort: a 30-minute setup for each company, up to $300 in onboarding hours earned as they go ($40 at setup, $80 after their first ten booked jobs), and a free trial of the reporting add-on at the end.";
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -178,7 +178,9 @@ describe("runMultiplier — the member offer", () => {
     expect(paraphrased.drafted[0]!.flags).toContain("multiplier:offer-missing");
     expect(paraphrased.drafted[0]!.sent).toBe(false);
 
-    calls.replies.push(quoting().replace("up to $150 in credit", "up to $1500 in credit"));
+    calls.replies.push(
+      quoting().replace("up to $300 in onboarding hours", "up to $3000 in onboarding hours"),
+    );
     const embellished = await runMultiplier({ dryRun: false, targets: [base] });
     expect(embellished.drafted[0]!.flags).toEqual(
       expect.arrayContaining(["multiplier:offer-missing", "hard-ban:price"]),
@@ -350,21 +352,21 @@ describe("runMultiplier — the member offer", () => {
   });
 
   it("an offer ending in a number does not exempt a larger invented amount that begins with it", async () => {
-    memberOffer = "A credit of $150";
-    expect(hardBanFlags("A credit of $1500 for each member.", [memberOffer])).toEqual([
+    memberOffer = "A credit of $300";
+    expect(hardBanFlags("A credit of $3000 for each member.", [memberOffer])).toEqual([
       "hard-ban:price",
     ]);
-    expect(hardBanFlags("A credit of $150.50 for each member.", [memberOffer])).toEqual([
+    expect(hardBanFlags("A credit of $300.50 for each member.", [memberOffer])).toEqual([
       "hard-ban:price",
     ]);
-    expect(hardBanFlags("A credit of $150. For each member.", [memberOffer])).toEqual([]);
-    expect(multiplierDraftFlags("A credit of $1500 for each member.", memberOffer)).toEqual([
+    expect(hardBanFlags("A credit of $300. For each member.", [memberOffer])).toEqual([]);
+    expect(multiplierDraftFlags("A credit of $3000 for each member.", memberOffer)).toEqual([
       "multiplier:offer-missing",
     ]);
     // The model keeps the embellished figure on the repair turn too.
     const embellished = JSON.stringify({
       subject: "for your cohort",
-      body: "I would offer: A credit of $1500 for each member.",
+      body: "I would offer: A credit of $3000 for each member.",
     });
     calls.replies.push(embellished, embellished);
     const { drafted } = await runMultiplier({ dryRun: false, targets: [base] });
@@ -375,22 +377,22 @@ describe("runMultiplier — the member offer", () => {
   });
 
   it("an offer ending in a number and a period or comma does not exempt the number going on past it", async () => {
-    memberOffer = "A credit of $150.";
+    memberOffer = "A credit of $300.";
     expect(
-      hardBanFlags("I would offer: A credit of $150.50 for each member.", [memberOffer]),
+      hardBanFlags("I would offer: A credit of $300.50 for each member.", [memberOffer]),
     ).toEqual(["hard-ban:price"]);
-    expect(hardBanFlags("A credit of $150. For each member.", [memberOffer])).toEqual([]);
+    expect(hardBanFlags("A credit of $300. For each member.", [memberOffer])).toEqual([]);
     expect(
-      multiplierDraftFlags("I would offer: A credit of $150.50 for each member.", memberOffer),
+      multiplierDraftFlags("I would offer: A credit of $300.50 for each member.", memberOffer),
     ).toEqual(["multiplier:offer-missing"]);
-    expect(hardBanFlags("A credit of $150,000 a year.", ["A credit of $150,"])).toEqual([
+    expect(hardBanFlags("A credit of $300,000 a year.", ["A credit of $300,"])).toEqual([
       "hard-ban:price",
     ]);
-    expect(hardBanFlags("A credit of $150, paid monthly.", ["A credit of $150,"])).toEqual([]);
+    expect(hardBanFlags("A credit of $300, paid monthly.", ["A credit of $300,"])).toEqual([]);
     // The model keeps the embellished figure on the repair turn too.
     const embellished = JSON.stringify({
       subject: "for your cohort",
-      body: "I would offer: A credit of $150.50 for each member.",
+      body: "I would offer: A credit of $300.50 for each member.",
     });
     calls.replies.push(embellished, embellished);
     const { drafted } = await runMultiplier({ dryRun: false, targets: [base] });

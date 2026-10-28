@@ -41,6 +41,8 @@ import {
   type OneShotConfig,
   verifiedLinkedInProfileKey,
   withPaidCache,
+  mergeStoredView,
+  readPaidCache,
 } from "@oneshot-gtm/core";
 import { createHash } from "node:crypto";
 import { isLinkedInProfileUrl } from "./_linkedin.ts";
@@ -116,6 +118,9 @@ export interface LiveExperience {
   location?: string;
   /** An end with no start, which a period cannot carry ("- Jan 2020" reads as a start). */
   endDate?: string;
+  /** The start and end as the account view gives them, before `period` shortens them to month and year. */
+  start?: string;
+  end?: string;
 }
 
 export interface LiveProfile {
@@ -125,6 +130,17 @@ export interface LiveProfile {
   headline?: string;
   location?: string;
   experience: LiveExperience[];
+  /**
+   * The account's distance to the person as the view reports it
+   * (`FIRST_DEGREE` for a connection; `isFirstDegree` reads it). Null when the
+   * read does not say: a browser read, or a cached read from before it was kept.
+   */
+  networkDistance: string | null;
+  /** The person accepts messages from anyone (an open profile), as the account view reports it. */
+  isOpenProfile?: boolean;
+  /** LinkedIn's own id and the profile's slug, as the account view reports them. */
+  providerId?: string;
+  publicIdentifier?: string;
 }
 
 /**
@@ -941,6 +957,7 @@ async function readLive(
         ...(str(out, "headline") ? { headline: str(out, "headline")! } : {}),
         ...(str(out, "location") ? { location: str(out, "location")! } : {}),
         experience,
+        networkDistance: null,
       };
       logEvent("linkedin_profile.read", { positions: experience.length, cost_usd: costUsd });
       // Counted before the gate opens: the paid cache stores it just after.
@@ -1003,7 +1020,7 @@ function monthYear(value: unknown): string | undefined {
 /**
  * The view's `profile.experience` as the read's Experience list. A position
  * with a start and no end is current whatever the view's own `current` says:
- * the view marks open positions `current: false` (tormine/oneshot#1801).
+ * the view marks open positions `current: false` (an upstream SDK issue).
  */
 export function experienceFromAccountView(raw: unknown): LiveExperience[] {
   if (!Array.isArray(raw)) return [];
@@ -1021,6 +1038,8 @@ export function experienceFromAccountView(raw: unknown): LiveExperience[] {
     if (start) item.period = `${start} - ${end ?? "Present"}`;
     else if (end) item.endDate = end;
     if (location) item.location = location;
+    if (typeof e["start"] === "string" && e["start"].trim()) item.start = e["start"].trim();
+    if (typeof e["end"] === "string" && e["end"].trim()) item.end = e["end"].trim();
     out.push(item);
   }
   return out;
@@ -1161,6 +1180,10 @@ async function readThroughAccount(
       { via: "account", complete: view?.["experience_complete"] ?? null },
       "warn",
     );
+    // What did come back (name, headline, distance) is kept as a profile
+    // view without its Experience section; only the Experience list waits
+    // for a later read.
+    if (view) await keepPartialView(url, view);
     // The view was made and charged: it counts toward the day's reads even
     // though nothing is cached for the profile. The budget counts rows
     // without a failure status, so the marker is a plain row of its own.
@@ -1174,23 +1197,16 @@ async function readThroughAccount(
     }
     return { profile: null, skipped: "interrupted", costUsd, cached: false };
   }
-  const experience = experienceFromAccountView(view["experience"]);
-  const text = (field: string): string | undefined => {
-    const v = view[field];
-    return typeof v === "string" && v.trim() ? v.trim() : undefined;
-  };
   const profile: LiveProfile = {
     url,
     readAt: new Date().toISOString(),
-    ...(text("name") ? { name: text("name")! } : {}),
-    ...(text("headline") ? { headline: text("headline")! } : {}),
-    ...(text("location") ? { location: text("location")! } : {}),
-    experience,
+    ...viewFields(view),
+    experience: experienceFromAccountView(view["experience"]),
   };
   rememberSenderIdentity(account.accountId, view);
   logEvent("linkedin_profile.read", {
     via: "account",
-    positions: experience.length,
+    positions: profile.experience.length,
     cost_usd: costUsd,
   });
   // Counted before the gate opens: the paid cache stores it just after.
@@ -1203,6 +1219,55 @@ async function readThroughAccount(
  * from them arrives with and is matched by. Saving it now means their first
  * reply matches without a separate lookup. Best-effort.
  */
+/** The account view's fields other than the Experience list. */
+function viewFields(
+  view: Record<string, unknown>,
+): Omit<LiveProfile, "url" | "readAt" | "experience"> {
+  const text = (field: string): string | undefined => {
+    const v = view[field];
+    return typeof v === "string" && v.trim() ? v.trim() : undefined;
+  };
+  const open = view["is_open_profile"];
+  const providerId = text("external_id") ?? text("provider_id");
+  return {
+    ...(text("name") ? { name: text("name")! } : {}),
+    ...(text("headline") ? { headline: text("headline")! } : {}),
+    ...(text("location") ? { location: text("location")! } : {}),
+    networkDistance: text("network_distance") ?? null,
+    ...(typeof open === "boolean" ? { isOpenProfile: open } : {}),
+    ...(providerId ? { providerId } : {}),
+    ...(text("public_identifier") ? { publicIdentifier: text("public_identifier")! } : {}),
+  };
+}
+
+/**
+ * An account view whose Experience section came back incomplete still read
+ * the rest of the profile. That part is kept under the silent view's entry
+ * (`linkedin.profile`), the one that never carries an Experience list, marked
+ * `partial`: the connection check reads its distance, and nothing takes its
+ * empty list for what the person lists. Best-effort.
+ */
+async function keepPartialView(url: string, view: Record<string, unknown>): Promise<void> {
+  try {
+    const partial = {
+      url,
+      readAt: new Date().toISOString(),
+      partial: true,
+      ...viewFields(view),
+      experience: [],
+    };
+    // Laid over what the silent view already holds, never erasing it.
+    const previous = readPaidCache("linkedin.profile", { url });
+    const result = mergeStoredView(previous?.status === "ok" ? previous : null, partial);
+    await withPaidCache("linkedin.profile", { url }, { fresh: true }, async () => ({
+      result,
+      receiptId: 0,
+    }));
+  } catch {
+    // the full read is retried on a later pass either way
+  }
+}
+
 function rememberSenderIdentity(accountId: string, view: Record<string, unknown>): void {
   try {
     const providerId = view["provider_id"] ?? view["external_id"];

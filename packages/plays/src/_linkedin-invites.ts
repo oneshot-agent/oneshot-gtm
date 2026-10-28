@@ -2,6 +2,7 @@ import {
   currentWorkspaceName,
   getLedger,
   isWithdrawnStatus,
+  KNOWN_CONNECTION_VIA,
   linkedInConversationFor,
   linkedInOutreachAccount,
   logEvent,
@@ -76,8 +77,14 @@ export interface LiveLinkedInInvite {
   sentBy: { workspace: string; accountId: string } | null;
   /** When the person accepted, once recorded. */
   acceptedAt: string | null;
-  /** The invite answered `already_connected`: there is nothing to wait for. */
+  /**
+   * The invite answered `already_connected`, or no invite was sent because
+   * the profile read showed a connection: there is nothing to wait for.
+   * False once LinkedIn has said a known connection is not one.
+   */
   alreadyConnected: boolean;
+  /** Recorded from the profile read in place of an invite (`via: "profile-read"`): no request was sent. */
+  knownConnection: boolean;
   /** The last status OneShot reported for it, once read. */
   invitationStatus: string | null;
   /** The invite was closed out (timed out undeclared, or its cadence ended): nothing left to poll. */
@@ -113,13 +120,16 @@ export function liveLinkedInInvite(
   const meta = parseMeta(event.metadata_json);
   const accountId = str(meta.accountId);
   const accountWorkspace = str(meta.accountWorkspace);
+  const withdrawn = events.slice(at + 1).some((e) => e.status === "withdrawn");
+  const knownConnection = meta.via === KNOWN_CONNECTION_VIA;
   return {
     event,
-    withdrawn: events.slice(at + 1).some((e) => e.status === "withdrawn"),
+    withdrawn,
     invitationId: str(meta.invitationId),
     sentBy: accountId && accountWorkspace ? { workspace: accountWorkspace, accountId } : null,
     acceptedAt: str(meta.acceptedAt),
-    alreadyConnected: meta.inviteStatus === "already_connected",
+    alreadyConnected: meta.inviteStatus === "already_connected" && !(knownConnection && withdrawn),
+    knownConnection,
     invitationStatus: str(meta.invitationStatus),
     endedAt: str(meta.endedAt),
     invitedAtMs: Date.parse(sqliteToIso(event.created_at)),
@@ -179,8 +189,10 @@ export function linkedInAcceptedLocally(input: {
 
 /**
  * Null when a LinkedIn message may be drafted (the invite is recorded as
- * accepted, or a conversation exists); otherwise the date the wait began.
- * Reads local state only: the unattended status sweep records acceptances.
+ * accepted, or a conversation exists), or when nothing was sent to wait on (a
+ * known connection LinkedIn said is not one: the request is drafted next);
+ * otherwise the date the wait began. Reads local state only: the unattended
+ * status sweep records acceptances.
  */
 export function linkedInWaitingSince(input: {
   prospectId: number;
@@ -189,6 +201,7 @@ export function linkedInWaitingSince(input: {
 }): string | null {
   if (linkedInAcceptedLocally(input)) return null;
   const invite = liveLinkedInInvite(input.prospectId, input.playName);
+  if (invite?.knownConnection && invite.withdrawn) return null;
   const at = invite && Number.isFinite(invite.invitedAtMs) ? invite.invitedAtMs : Date.now();
   return new Date(at).toISOString().slice(0, 10);
 }

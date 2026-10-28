@@ -43,7 +43,7 @@ const GATE_SUMMARY_SLICE = 600;
 const MAX_ATTENDEES_PER_EVENT = 30;
 
 export interface LumaFinderOpts extends RunOpts {
-  /** Topic phrases to combine with cities (e.g. ["AI", "founders"]). REQUIRED via readiness gate. */
+  /** Topic phrases to combine with cities (e.g. ["dental", "practice owners"]). REQUIRED via readiness gate. */
   topics?: string[];
   /** City names to scope each search (e.g. ["San Francisco", "New York"]). REQUIRED via readiness gate. */
   cities?: string[];
@@ -760,7 +760,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     // coordinator, because "attended an AI hackathon" is not a job.
     //
     // `attendeeBio` was already on the payload and used only for email copy.
-    // Judging it here rejects the clear misses (e.g. "GTM @AhaCreator")
+    // Judging it here rejects the clear misses (e.g. "GTM @Northwind")
     // before findEmail + verify + enrich are paid for. Ambiguous bios and the
     // ~31% with no bio fall through to stage B/C inside the spine.
     const preSpend = await qualifyPreSpend({

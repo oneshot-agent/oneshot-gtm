@@ -20,7 +20,7 @@ const ledger = {
   dismissMeetingMatch: dismissMeetingMatchMock,
 };
 
-let cfgOverride: Record<string, unknown> = { calendarIdentityId: "gmail:jn@x.dev" };
+let cfgOverride: Record<string, unknown> = { calendarIdentityId: "gmail:mira@x.dev" };
 let demoModeOverride = false;
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -63,7 +63,7 @@ const BASE_ROW = {
   starts_at: "2024-01-01T10:00:00Z",
   ends_at: "2024-01-01T10:30:00Z",
   event_timezone: null,
-  organizer_email: "jn@x.dev",
+  organizer_email: "mira@x.dev",
   self_response: null,
   external_attendee_count: 1,
   external_attendees_json: JSON.stringify(["pat@acme.com"]),
@@ -84,7 +84,7 @@ const BASE_ROW = {
 };
 
 beforeEach(() => {
-  cfgOverride = { calendarIdentityId: "gmail:jn@x.dev" };
+  cfgOverride = { calendarIdentityId: "gmail:mira@x.dev" };
   demoModeOverride = false;
   vi.clearAllMocks();
   listPendingOutcomeMeetingsMock.mockReturnValue([]);

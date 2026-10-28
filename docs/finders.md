@@ -28,6 +28,10 @@ Each finder is a trigger with its own schedule and spend cap. All of them start 
 
 Enable a finder from **Queue**, or apply an industry pack. A trigger missing required config reads **not ready**: the toggle and Run button are disabled with the reason, and the API answers `409`.
 
+Lists that depend on who you sell to ship empty: `podcasts` on `podcast-guest`, `roles` on `hiring-signal`, `topics` and `cities` on `luma-events`, `vendors` on `github-topics`. The strategist proposes them from your ICP.
+
+`x-reposters` sorts reposters into a founder lane (a real site in the bio) and an amplifier lane (1,000+ followers). `founderKeywords` and `amplifierKeywords` add a bio-word gate to each lane, and `requiresDevSignal: true` lets a GitHub link count as proof. All three are off by default: the person gate judges founders, and your choice of seeds decides who amplifies.
+
 A finder you keep rejecting pauses itself. When fewer than 10% of its reviewed rows were approved over 30 days, with at least 100 reviewed, scheduled runs skip it. `find watch --ignore-approval-rate` runs it anyway.
 
 ## The gates
@@ -79,6 +83,7 @@ Bought research can trail a live profile by months. **Connect LinkedIn** on Setu
 - An hourly sweep reads the rest: approved rows first, then unread pending rows, newest first, then approved rows whose read is 30 days old.
 - A login wall marks the session invalid. `doctor` says so and Setup asks you to reconnect.
 - A row whose read failed for its own reason waits three days before another try.
+- When LinkedIn holds back the Experience section, the rest of the read (name, headline, whether you are connected) is kept and the Experience list is read again on a later pass.
 
 `config linkedin-session` does the same from the terminal. `--no-live` on a backfill skips the reads.
 

@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Person research on queue rows and prospects: the current role from the
 // LinkedIn history, the finder's originals kept, the gate re-judged on real
-// facts, guarded writes. The Julia fixture is row #9144 (2026-09-11): guest
-// list said "| Curious Explorer" at L'eto Group; LinkedIn said Founder &
-// Product Owner at WildMuse.App since Mar 2026, L'ETO ended Oct 2025.
+// facts, guarded writes. The Nora fixture: the guest
+// list said "| Curious Explorer" at D'oro Group; LinkedIn said Founder &
+// Product Owner at BrightLoom.App since Mar 2026, D'ORO ended Oct 2025.
 
 const calls = { research: 0, company: 0, classify: 0, webRead: 0, browser: 0 };
 let lastClassifierInput = "";
@@ -22,34 +22,34 @@ let researchStatus = "completed";
 /** What the provider names the person for a URL seed / an email seed (null = no name field). */
 let providerNameByUrl: string | null = null;
 let providerNameByEmail: string | null = null;
-let liveName = "Julia Zabrodska-Akinci";
+let liveName = "Nora Halloran-Vey";
 let pendingRows: unknown[] = [];
 /** The provider's top-level `linkedin_url` (null = the field is absent). */
 let providerLinkedIn: string | null = null;
 
-const juliaResearch = {
+const noraResearch = {
   status: "completed",
   result: {
     enrichment: {
       bio: "Solo-built consumer wellness app from 0 to first revenue.",
       location: "London",
-      best_work_email: "julia@wildmuse.app",
+      best_work_email: "nora@brightloom.example",
       organizations: [
         {
-          name: "Julia's Consultancy",
+          name: "Nora's Consultancy",
           title: "Business Consultant",
           startDate: "Oct 2022",
           endDate: "Nov 2024",
           endDate_formatted: { is_current: false },
         },
         {
-          name: "WildMuse.App",
+          name: "BrightLoom.App",
           title: "Founder & Product Owner",
           startDate: "Mar 2026",
           endDate_formatted: { is_current: true },
         },
         {
-          name: "L'ETO Group",
+          name: "D'ORO Group",
           title: "Head of Product and Business Development Manager",
           startDate: "Nov 2024",
           endDate: "Oct 2025",
@@ -114,10 +114,10 @@ vi.mock("@oneshot-gtm/core", async () => {
         const name = input.socialMediaUrl ? providerNameByUrl : providerNameByEmail;
         return {
           result: {
-            ...juliaResearch,
+            ...noraResearch,
             status: researchStatus,
             result: {
-              ...juliaResearch.result,
+              ...noraResearch.result,
               ...(name ? { full_name: name } : {}),
               ...(providerLinkedIn ? { linkedin_url: providerLinkedIn } : {}),
             },
@@ -136,8 +136,8 @@ vi.mock("@oneshot-gtm/core", async () => {
           result: {
             status: "completed",
             company: {
-              name: "WildMuse.App",
-              domain: "wildmuse.app",
+              name: "BrightLoom.App",
+              domain: "brightloom.example",
               industry: "Software",
               employee_count: 3,
               founded: 2026,
@@ -155,15 +155,15 @@ vi.mock("@oneshot-gtm/core", async () => {
           output: {
             loggedIn: true,
             name: liveName,
-            headline: "Founder & Product Owner at WildMuse.App",
+            headline: "Founder & Product Owner at BrightLoom.App",
             experience: [
               {
-                company: "WildMuse.App",
+                company: "BrightLoom.App",
                 title: "Founder & Product Owner",
                 period: "Mar 2026 - Present",
               },
               {
-                company: "L'ETO Group",
+                company: "D'ORO Group",
                 title: "Head of Product and Business Development Manager",
                 period: "Nov 2024 - Oct 2025",
               },
@@ -244,11 +244,11 @@ const {
 const { _resetLinkedInReadGate } = await import("../src/_linkedin-profile.ts");
 const { _resetPaidCache, getSharedDb, paidCacheKey } = await import("@oneshot-gtm/core");
 
-const JULIA_URL = "https://www.linkedin.com/in/julia-zabrodska-akinci-cv";
-const JULIA_EMAIL = "julia.zabrodska@letocaffe.com";
-/** A research.person entry in the paid cache for Julia, under her profile URL and her email. */
+const NORA_URL = "https://www.linkedin.com/in/nora-halloran-vey-cv";
+const NORA_EMAIL = "nora.halloran@dorocafe.example";
+/** A research.person entry in the paid cache for Nora, under her profile URL and her email. */
 function seedResearch(resultJson: string, status: "ok" | "failed" = "ok"): void {
-  for (const input of [{ socialMediaUrl: JULIA_URL }, { email: JULIA_EMAIL }]) {
+  for (const input of [{ socialMediaUrl: NORA_URL }, { email: NORA_EMAIL }]) {
     getSharedDb().setPaidCache({
       key: paidCacheKey("research.person", input),
       callType: "research.person",
@@ -259,15 +259,15 @@ function seedResearch(resultJson: string, status: "ok" | "failed" = "ok"): void 
   }
 }
 
-const juliaPayload = {
-  name: "Julia Zabrodska",
-  email: "julia.zabrodska@letocaffe.com",
-  company: "L'eto Group",
-  companyDomain: "letocaffe.com",
+const noraPayload = {
+  name: "Nora Halloran",
+  email: "nora.halloran@dorocafe.example",
+  company: "D'oro Group",
+  companyDomain: "dorocafe.example",
   title: "| Curious Explorer",
   attendeeBio: "Newbie in InfoSec.",
-  linkedinUrl: "https://www.linkedin.com/in/julia-zabrodska-akinci-cv/",
-  eventTitle: "AI Pilled [Builder] #03",
+  linkedinUrl: "https://www.linkedin.com/in/nora-halloran-vey-cv/",
+  eventTitle: "Builders Night #03",
   icpVerdict: "unclear",
   icpVerdictReason: "unclear-after-enrich: Role text is a personal-brand slogan.",
   fitReason: "Role text is a personal-brand slogan rather than a job function.",
@@ -278,8 +278,8 @@ const row = (id: number, status: "pending" | "approved") => ({
   id,
   play_name: "luma-events",
   source: "find:luma-events",
-  notes: "Julia Zabrodska going to AI Pilled [Builder] #03",
-  payload_json: JSON.stringify(juliaPayload),
+  notes: "Nora Halloran going to Builders Night #03",
+  payload_json: JSON.stringify(noraPayload),
   status,
   prospect_id: null,
 });
@@ -299,14 +299,14 @@ beforeEach(() => {
   researchStatus = "completed";
   providerNameByUrl = null;
   providerNameByEmail = null;
-  liveName = "Julia Zabrodska-Akinci";
+  liveName = "Nora Halloran-Vey";
   pendingRows = [];
   providerLinkedIn = null;
 });
 
 const result = (linkedin_url: string) => ({
   status: "completed",
-  result: { full_name: "Julia Zabrodska-Akinci", linkedin_url },
+  result: { full_name: "Nora Halloran-Vey", linkedin_url },
 });
 
 describe("reconcileOrganizations", () => {
@@ -368,43 +368,43 @@ describe("organizationsFromResearch", () => {
       status: "completed",
       result: {
         title: "| Curious Explorer",
-        company: "L'eto Group",
+        company: "D'oro Group",
         experience: [
           {
             title: "Head of Product and Business Development Manager",
-            company: "L'eto Group",
+            company: "D'oro Group",
             period: "Nov 2024 - Present",
-            company_website: "https://letocaffe.com",
+            company_website: "https://dorocafe.example",
           },
           {
             title: "Business Consultant",
-            company: "Julia's Consultancy",
+            company: "Nora's Consultancy",
             period: "Oct 2022 - Nov 2024",
           },
         ],
         enrichment: {
           title: "| Curious Explorer",
-          company: "L'eto Group",
+          company: "D'oro Group",
           experience: [
             {
               title: "Head of Product and Business Development Manager",
-              company: "L'eto Group",
+              company: "D'oro Group",
               period: "Nov 2024 - Present",
             },
           ],
-          organizations: [{ name: "L'eto Group", title: "| Curious Explorer" }],
+          organizations: [{ name: "D'oro Group", title: "| Curious Explorer" }],
         },
       },
     });
     expect(orgs).toEqual([
       {
-        name: "L'eto Group",
+        name: "D'oro Group",
         title: "Head of Product and Business Development Manager",
         startDate: "Nov 2024",
         current: true,
       },
       {
-        name: "Julia's Consultancy",
+        name: "Nora's Consultancy",
         title: "Business Consultant",
         startDate: "Oct 2022",
         endDate: "Nov 2024",
@@ -425,15 +425,13 @@ describe("organizationsFromResearch", () => {
 
 describe("normalizeCompany / personSeedFor", () => {
   it("ignores case, punctuation and legal suffixes", () => {
-    expect(normalizeCompany("L'eto Group")).toBe(normalizeCompany("L'ETO"));
+    expect(normalizeCompany("D'oro Group")).toBe(normalizeCompany("D'ORO"));
     expect(normalizeCompany("Acme, Inc.")).toBe(normalizeCompany("ACME"));
-    expect(normalizeCompany("WildMuse.App")).not.toBe(normalizeCompany("L'ETO Group"));
+    expect(normalizeCompany("BrightLoom.App")).not.toBe(normalizeCompany("D'ORO Group"));
   });
 
   it("seeds from a normalised LinkedIn URL, else email + name, else nothing", () => {
-    expect(personSeedFor(juliaPayload)?.url).toBe(
-      "https://linkedin.com/in/julia-zabrodska-akinci-cv",
-    );
+    expect(personSeedFor(noraPayload)?.url).toBe("https://linkedin.com/in/nora-halloran-vey-cv");
     expect(personSeedFor({ email: "a@b.dev", name: "Ann" })).toMatchObject({
       url: null,
       email: "a@b.dev",
@@ -446,13 +444,13 @@ describe("normalizeCompany / personSeedFor", () => {
 
   it("seeds an X-sourced row from its twitterUrl (x-reposters, x-amplify-dm)", () => {
     expect(
-      personSeedFor({ name: "Nick", handle: "Dayhaysoos", twitterUrl: "https://x.com/Dayhaysoos" })
+      personSeedFor({ name: "Nick", handle: "nick_ships", twitterUrl: "https://x.com/nick_ships" })
         ?.url,
-    ).toBe("https://x.com/Dayhaysoos");
+    ).toBe("https://x.com/nick_ships");
     expect(
       personSeedFor({
         name: "Nick",
-        twitterUrl: "https://x.com/Dayhaysoos",
+        twitterUrl: "https://x.com/nick_ships",
         linkedinUrl: "https://www.linkedin.com/in/nick",
       })?.url,
     ).toBe("https://linkedin.com/in/nick");
@@ -473,7 +471,7 @@ describe("namesAgree", () => {
     expect(namesAgree("Filip Kozera", "Rafael Lopez")).toBe(false);
     expect(namesAgree("Edvard Bakken", "Miriam Cameron")).toBe(false);
     expect(namesAgree("ability.ai", "Eugene Vyborov")).toBe(true);
-    expect(namesAgree("Julia", "Rafael Lopez")).toBe(true);
+    expect(namesAgree("Nora", "Rafael Lopez")).toBe(true);
     expect(namesAgree("Filip Kozera", null)).toBe(true);
   });
 });
@@ -481,9 +479,9 @@ describe("namesAgree", () => {
 describe("researchPerson: the record must be about the person on the row", () => {
   it("retries by email when the profile URL's record names someone else, and uses that result", async () => {
     providerNameByUrl = "Rafael Lopez";
-    providerNameByEmail = "Julia Zabrodska-Akinci";
+    providerNameByEmail = "Nora Halloran-Vey";
     const { dossier, costUsd } = await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: Number.POSITIVE_INFINITY,
@@ -491,14 +489,14 @@ describe("researchPerson: the record must be about the person on the row", () =>
     });
     expect(calls.research).toBe(2);
     expect(dossier.status).toBe("complete");
-    expect(dossier.currentRole?.company).toBe("WildMuse.App");
+    expect(dossier.currentRole?.company).toBe("BrightLoom.App");
     expect(costUsd).toBeGreaterThan(0.05);
   });
 
   it("stops without a patch when the URL names someone else and there is no email to fall back on", async () => {
     providerNameByUrl = "Rafael Lopez";
     const { dossier } = await researchPerson({
-      seed: personSeedFor({ ...juliaPayload, email: undefined }),
+      seed: personSeedFor({ ...noraPayload, email: undefined }),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: Number.POSITIVE_INFINITY,
@@ -514,13 +512,13 @@ describe("researchPerson: the record must be about the person on the row", () =>
     expect(
       seedNamesABusiness({ name: "Ridgeway Plumbing Ltd", company: "Ridgeway Plumbing, Ltd." }),
     ).toBe(true);
-    expect(seedNamesABusiness({ name: "Julia Zabrodska", company: "L'eto Group" })).toBe(false);
+    expect(seedNamesABusiness({ name: "Nora Halloran", company: "D'oro Group" })).toBe(false);
     providerNameByUrl = "Rafael Lopez";
     const business = await researchPerson({
       seed: personSeedFor({
         name: "Ridgeway Plumbing Ltd",
         company: "Ridgeway Plumbing Ltd",
-        linkedinUrl: "https://www.linkedin.com/in/rafaell0pez/",
+        linkedinUrl: "https://www.linkedin.com/in/rafa-lopes-x1/",
       }),
       playName: "local-business",
       subject: { queueId: 1 },
@@ -532,7 +530,7 @@ describe("researchPerson: the record must be about the person on the row", () =>
 
     calls.research = 0;
     const capped = await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: 0.06,
@@ -547,7 +545,7 @@ describe("researchPerson: the record must be about the person on the row", () =>
     liveSession = true;
     liveName = "Rafael Lopez";
     const { dossier, liveSkipped } = await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: Number.POSITIVE_INFINITY,
@@ -563,7 +561,7 @@ describe("researchPerson: the record must be about the person on the row", () =>
 describe("researchPerson + personPayloadPatch", () => {
   it("resolves the current role, buys the company record, and corrects the row while keeping the finder's originals", async () => {
     const { dossier, costUsd } = await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: Number.POSITIVE_INFINITY,
@@ -571,49 +569,49 @@ describe("researchPerson + personPayloadPatch", () => {
     expect(dossier.status).toBe("complete");
     expect(dossier.currentRole).toEqual({
       title: "Founder & Product Owner",
-      company: "WildMuse.App",
+      company: "BrightLoom.App",
       since: "Mar 2026",
     });
     expect(dossier.organizations.map((o) => o.name)).toEqual([
-      "WildMuse.App",
-      "L'ETO Group",
-      "Julia's Consultancy",
+      "BrightLoom.App",
+      "D'ORO Group",
+      "Nora's Consultancy",
     ]);
     expect(dossier.company).toMatchObject({
-      domain: "wildmuse.app",
+      domain: "brightloom.example",
       employeeCount: 3,
       founded: 2026,
     });
-    expect(dossier.workEmail).toBe("julia@wildmuse.app");
+    expect(dossier.workEmail).toBe("nora@brightloom.example");
     expect(costUsd).toBeCloseTo(0.055, 5);
     expect(calls).toMatchObject({ research: 1, company: 1 });
 
-    const patch = personPayloadPatch(juliaPayload, dossier);
+    const patch = personPayloadPatch(noraPayload, dossier);
     expect(patch.title).toBe("Founder & Product Owner");
     expect(patch.titleAtFinder).toBe("| Curious Explorer");
-    expect(patch.company).toBe("WildMuse.App");
-    expect(patch.companyAtFinder).toBe("L'eto Group");
-    expect(patch.companyDomain).toBe("wildmuse.app");
-    expect(patch.companyDomainAtFinder).toBe("letocaffe.com");
+    expect(patch.company).toBe("BrightLoom.App");
+    expect(patch.companyAtFinder).toBe("D'oro Group");
+    expect(patch.companyDomain).toBe("brightloom.example");
+    expect(patch.companyDomainAtFinder).toBe("dorocafe.example");
     expect(patch.productResearch).toBeNull();
-    expect(patch.currentRole).toBe("Founder & Product Owner at WildMuse.App since Mar 2026");
+    expect(patch.currentRole).toBe("Founder & Product Owner at BrightLoom.App since Mar 2026");
     expect(patch.companyFacts).toContain("founded 2026");
-    expect(patch.formerRoles).toContain("L'ETO Group (Nov 2024–Oct 2025)");
+    expect(patch.formerRoles).toContain("D'ORO Group (Nov 2024–Oct 2025)");
   });
 
   it("a case-only company difference is not a change, and originals are never overwritten on refresh", async () => {
     const { dossier } = await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: 1,
     });
     const same = personPayloadPatch(
       {
-        ...juliaPayload,
-        company: "WILDMUSE.APP",
+        ...noraPayload,
+        company: "BRIGHTLOOM.APP",
         title: "Founder & Product Owner",
-        companyDomain: "wildmuse.app",
+        companyDomain: "brightloom.example",
       },
       dossier,
     );
@@ -621,7 +619,7 @@ describe("researchPerson + personPayloadPatch", () => {
     expect(same.title).toBeUndefined();
     expect(same.companyAtFinder).toBeUndefined();
     const refreshed = personPayloadPatch(
-      { ...juliaPayload, titleAtFinder: "the original", companyAtFinder: "the original co" },
+      { ...noraPayload, titleAtFinder: "the original", companyAtFinder: "the original co" },
       dossier,
     );
     expect(refreshed.title).toBe("Founder & Product Owner");
@@ -631,7 +629,7 @@ describe("researchPerson + personPayloadPatch", () => {
 
   it("the cost cap stops the paid call before it starts; a cache hit is free", async () => {
     const capped = await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: 0.01,
@@ -640,9 +638,9 @@ describe("researchPerson + personPayloadPatch", () => {
     expect(capped.dossier.warning).toContain("cost cap");
     expect(calls.research).toBe(0);
 
-    seedResearch(JSON.stringify(juliaResearch));
+    seedResearch(JSON.stringify(noraResearch));
     const cached = await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: 1,
@@ -657,25 +655,25 @@ describe("researchPerson + personPayloadPatch", () => {
   it("a failed research call is unavailable, not a row change", async () => {
     researchStatus = "failed";
     const { dossier } = await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: 1,
     });
     expect(dossier.status).toBe("unavailable");
-    expect(personPayloadPatch(juliaPayload, dossier)).toEqual({ personResearch: dossier });
+    expect(personPayloadPatch(noraPayload, dossier)).toEqual({ personResearch: dossier });
   });
 });
 
 describe("live LinkedIn tier", () => {
   const providerSaysLeto = {
-    ...juliaResearch,
+    ...noraResearch,
     result: {
       enrichment: {
-        ...juliaResearch.result.enrichment,
+        ...noraResearch.result.enrichment,
         organizations: [
           {
-            name: "L'ETO Group",
+            name: "D'ORO Group",
             title: "Head of Product and Business Development Manager",
             startDate: "Nov 2024",
             endDate_formatted: { is_current: true },
@@ -697,7 +695,7 @@ describe("live LinkedIn tier", () => {
     liveSession = true;
     seedResearch(JSON.stringify(providerSaysLeto));
     const { dossier, costUsd } = await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: 1,
@@ -705,15 +703,15 @@ describe("live LinkedIn tier", () => {
     expect(calls.browser).toBe(1);
     expect(dossier.currentRole).toEqual({
       title: "Founder & Product Owner",
-      company: "WildMuse.App",
+      company: "BrightLoom.App",
       since: "Mar 2026",
     });
     expect(dossier.organizations.map((o) => `${o.name}:${o.current}`)).toEqual([
-      "WildMuse.App:true",
-      "L'ETO Group:false",
+      "BrightLoom.App:true",
+      "D'ORO Group:false",
       "Old Co:false",
     ]);
-    expect(dossier.liveProfile?.url).toContain("linkedin.com/in/julia-zabrodska-akinci-cv");
+    expect(dossier.liveProfile?.url).toContain("linkedin.com/in/nora-halloran-vey-cv");
     expect(costUsd).toBeCloseTo(0.012 + 0.005, 5);
     // The provider's bio stays; the page headline only fills a gap.
     expect(dossier.bio).toBe("Solo-built consumer wellness app from 0 to first revenue.");
@@ -723,7 +721,7 @@ describe("live LinkedIn tier", () => {
     process.env["LINKEDIN_SESSION_COOKIE"] = "cookie";
     liveSession = false; // cookie stored, never checked
     const { dossier } = await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: 1,
@@ -735,13 +733,13 @@ describe("live LinkedIn tier", () => {
 
   it("with no history from the provider, a skipped live read is the reason on record", async () => {
     const nothingKnown = {
-      ...juliaResearch,
+      ...noraResearch,
       result: { enrichment: { organizations: [] } },
     };
     const research = async () => {
       seedResearch(JSON.stringify(nothingKnown));
       const { dossier } = await researchPerson({
-        seed: personSeedFor(juliaPayload),
+        seed: personSeedFor(noraPayload),
         playName: "luma-events",
         subject: { queueId: 1 },
         remainingUsd: 1,
@@ -764,7 +762,7 @@ describe("live LinkedIn tier", () => {
     process.env["LINKEDIN_SESSION_COOKIE"] = "cookie";
     liveSession = true;
     await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: 1,
@@ -772,9 +770,9 @@ describe("live LinkedIn tier", () => {
     });
     await researchPerson({
       seed: personSeedFor({
-        ...juliaPayload,
+        ...noraPayload,
         linkedinUrl: undefined,
-        sourceProfileUrl: "https://github.com/julia",
+        sourceProfileUrl: "https://github.com/nora",
       }),
       playName: "luma-events",
       subject: { queueId: 1 },
@@ -788,13 +786,13 @@ describe("live LinkedIn tier", () => {
     liveSession = true;
     researchStatus = "failed";
     const { dossier } = await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: 1,
     });
     expect(dossier.status).not.toBe("unavailable");
-    expect(dossier.currentRole?.company).toBe("WildMuse.App");
+    expect(dossier.currentRole?.company).toBe("BrightLoom.App");
   });
 
   it("a current role read off the live page is complete research without the company record", async () => {
@@ -802,7 +800,7 @@ describe("live LinkedIn tier", () => {
     liveSession = true;
     const run = (liveProfile: boolean) =>
       researchPerson({
-        seed: personSeedFor(juliaPayload),
+        seed: personSeedFor(noraPayload),
         playName: "luma-events",
         subject: { queueId: 1 },
         remainingUsd: 1,
@@ -817,15 +815,15 @@ describe("live LinkedIn tier", () => {
 describe("rejudgePerson", () => {
   it("re-judges on the researched role and refreshes the fit line on pass", async () => {
     const { dossier } = await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: 1,
     });
-    const patch = personPayloadPatch(juliaPayload, dossier);
+    const patch = personPayloadPatch(noraPayload, dossier);
     const judged = await rejudgePerson({
       playName: "luma-events",
-      payload: juliaPayload,
+      payload: noraPayload,
       patch,
       icp,
     });
@@ -839,7 +837,7 @@ describe("rejudgePerson", () => {
   });
 
   it("re-judges an affinity-mode row in affinity mode", async () => {
-    const payload = { ...juliaPayload, icpAffinity: true };
+    const payload = { ...noraPayload, icpAffinity: true };
     const { dossier } = await researchPerson({
       seed: personSeedFor(payload),
       playName: "luma-events",
@@ -857,18 +855,18 @@ describe("rejudgePerson", () => {
 
   it("skips the classifier when the verdict was already pass and nothing changed", async () => {
     const { dossier } = await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: 1,
     });
     calls.classify = 0;
     const settled = {
-      ...juliaPayload,
+      ...noraPayload,
       icpVerdict: "pass",
       title: "Founder & Product Owner",
-      company: "WildMuse.App",
-      companyDomain: "wildmuse.app",
+      company: "BrightLoom.App",
+      companyDomain: "brightloom.example",
     };
     const judged = await rejudgePerson({
       playName: "luma-events",
@@ -884,7 +882,7 @@ describe("rejudgePerson", () => {
 describe("applyPersonResearch (queue rows)", () => {
   async function dossierFor() {
     const { dossier } = await researchPerson({
-      seed: personSeedFor(juliaPayload),
+      seed: personSeedFor(noraPayload),
       playName: "luma-events",
       subject: { queueId: 1 },
       remainingUsd: 1,
@@ -912,7 +910,7 @@ describe("applyPersonResearch (queue rows)", () => {
       }),
     });
     expect(priorities).toHaveLength(1);
-    // Second patch: the product research re-run for wildmuse.app.
+    // Second patch: the product research re-run for brightloom.example.
     expect(calls.webRead).toBeGreaterThan(0);
     expect(patches[1]?.patch["productResearch"]).toMatchObject({ version: 1 });
     expect(statuses).toHaveLength(0);
@@ -989,7 +987,7 @@ describe("researchNewQueueRowPeople", () => {
       {
         ...row(2, "pending"),
         payload_json: JSON.stringify({
-          ...juliaPayload,
+          ...noraPayload,
           personResearch: {
             version: 1,
             status: "partial",
@@ -1049,12 +1047,12 @@ describe("applyPersonResearchToProspect", () => {
   it("writes the person half, corrects title and company, and re-judges the stored verdict", async () => {
     const prospect = {
       id: 611,
-      name: "Julia Zabrodska",
-      company: "L'eto Group",
-      email: "julia.zabrodska@letocaffe.com",
+      name: "Nora Halloran",
+      company: "D'oro Group",
+      email: "nora.halloran@dorocafe.example",
       source: "luma-events",
       source_profile_url: null,
-      linkedin_url: "https://www.linkedin.com/in/julia-zabrodska-akinci-cv",
+      linkedin_url: "https://www.linkedin.com/in/nora-halloran-vey-cv",
       dossier_json: JSON.stringify({
         person: { status: "completed", profile: { title: "| Curious Explorer" } },
         product: { version: 1, status: "partial", researchedAt: "x", subject: {}, sources: [] },
@@ -1085,7 +1083,7 @@ describe("applyPersonResearchToProspect", () => {
     expect((half["enrichment"] as Record<string, unknown>)["status"]).toBe("completed");
     expect(prospectWrites.find((w) => w["kind"] === "role")).toMatchObject({
       id: 611,
-      patch: { title: "Founder & Product Owner", company: "WildMuse.App" },
+      patch: { title: "Founder & Product Owner", company: "BrightLoom.App" },
     });
     expect(prospectWrites.find((w) => w["kind"] === "verdict")).toMatchObject({ verdict: "pass" });
   });
@@ -1133,9 +1131,9 @@ describe("hasLiveProfile", () => {
 
 describe("the provider's linkedin_url", () => {
   const githubSeed = {
-    url: "https://github.com/jzabrodska",
+    url: "https://github.com/nhalloran",
     email: null,
-    name: "Julia Zabrodska",
+    name: "Nora Halloran",
     company: null,
     title: null,
     domain: null,
@@ -1143,30 +1141,30 @@ describe("the provider's linkedin_url", () => {
 
   it("is canonicalised to a /in/ profile and dropped when it is not one", async () => {
     const { providerLinkedInUrl } = await import("../src/_person-research.ts");
-    expect(providerLinkedInUrl(result("http://linkedin.com/in/Julia-Z/?trk=x"), githubSeed)).toBe(
-      "https://www.linkedin.com/in/julia-z",
+    expect(providerLinkedInUrl(result("http://linkedin.com/in/Nora-Z/?trk=x"), githubSeed)).toBe(
+      "https://www.linkedin.com/in/nora-z",
     );
-    expect(providerLinkedInUrl(result("www.linkedin.com/in/julia-z"), githubSeed)).toBe(
-      "https://www.linkedin.com/in/julia-z",
+    expect(providerLinkedInUrl(result("www.linkedin.com/in/nora-z"), githubSeed)).toBe(
+      "https://www.linkedin.com/in/nora-z",
     );
     expect(
       providerLinkedInUrl(
         {
           status: "completed",
           result: {
-            enrichment: { full_name: "Julia Zabrodska", linkedin_url: "linkedin.com/in/jz" },
+            enrichment: { full_name: "Nora Halloran", linkedin_url: "linkedin.com/in/nh" },
           },
         },
         githubSeed,
       ),
-    ).toBe("https://www.linkedin.com/in/jz");
+    ).toBe("https://www.linkedin.com/in/nh");
     expect(
       providerLinkedInUrl(result("https://www.linkedin.com/company/acme"), githubSeed),
     ).toBeNull();
     expect(providerLinkedInUrl(result(""), githubSeed)).toBeNull();
     expect(
       providerLinkedInUrl(
-        { status: "failed", result: { linkedin_url: "linkedin.com/in/jz" } },
+        { status: "failed", result: { linkedin_url: "linkedin.com/in/nh" } },
         githubSeed,
       ),
     ).toBeNull();
@@ -1174,15 +1172,15 @@ describe("the provider's linkedin_url", () => {
 
   it("needs the first and last name to match: a shared surname or no record name is not enough", async () => {
     const { providerLinkedInUrl, namesIdentify } = await import("../src/_person-research.ts");
-    expect(namesIdentify("Julia Smith", "Marcus Smith")).toBe(false);
-    expect(namesIdentify("Julia Smith", "Julia Smith-Jones")).toBe(true);
+    expect(namesIdentify("Nora Smith", "Marcus Smith")).toBe(false);
+    expect(namesIdentify("Nora Smith", "Nora Smith-Jones")).toBe(true);
     expect(namesIdentify("Matúš Kováč", "Matus Kovac")).toBe(true);
-    expect(namesIdentify("Julia", "Julia Smith")).toBe(false);
-    expect(namesIdentify(null, "Julia Smith")).toBe(false);
+    expect(namesIdentify("Nora", "Nora Smith")).toBe(false);
+    expect(namesIdentify(null, "Nora Smith")).toBe(false);
     const url = "https://linkedin.com/in/x";
     expect(
       providerLinkedInUrl(
-        { status: "completed", result: { full_name: "Marcus Zabrodska", linkedin_url: url } },
+        { status: "completed", result: { full_name: "Marcus Halloran", linkedin_url: url } },
         githubSeed,
       ),
     ).toBeNull();
@@ -1208,15 +1206,15 @@ describe("the provider's linkedin_url", () => {
   });
 
   it("a GitHub-seeded research lands it on the dossier", async () => {
-    providerLinkedIn = "https://www.linkedin.com/in/julia-zabrodska-akinci-cv/";
-    providerNameByUrl = "Julia Zabrodska-Akinci";
+    providerLinkedIn = "https://www.linkedin.com/in/nora-halloran-vey-cv/";
+    providerNameByUrl = "Nora Halloran-Vey";
     const { dossier } = await researchPerson({
       seed: githubSeed,
       playName: "github-stars",
       subject: { queueId: 1 },
       remainingUsd: 1,
     });
-    expect(dossier.linkedinUrl).toBe("https://www.linkedin.com/in/julia-zabrodska-akinci-cv");
+    expect(dossier.linkedinUrl).toBe("https://www.linkedin.com/in/nora-halloran-vey-cv");
   });
 
   it("fills an empty payload linkedinUrl and never replaces one the finder set", async () => {
@@ -1226,12 +1224,12 @@ describe("the provider's linkedin_url", () => {
       researchedAt: "2026-09-27T00:00:00.000Z",
       seed: {},
       organizations: [],
-      linkedinUrl: "https://www.linkedin.com/in/jz",
+      linkedinUrl: "https://www.linkedin.com/in/nh",
       costUsd: 0,
       cached: true,
     };
-    expect(personPayloadPatch({ name: "Julia Zabrodska" }, dossier).linkedinUrl).toBe(
-      "https://www.linkedin.com/in/jz",
+    expect(personPayloadPatch({ name: "Nora Halloran" }, dossier).linkedinUrl).toBe(
+      "https://www.linkedin.com/in/nh",
     );
     expect(
       personPayloadPatch({ linkedinUrl: "https://www.linkedin.com/in/finder-pick" }, dossier)
@@ -1243,15 +1241,15 @@ describe("the provider's linkedin_url", () => {
   });
 
   it("fills a prospect's linkedin_url through the write-once identity update", async () => {
-    providerLinkedIn = "https://linkedin.com/in/julia-zabrodska-akinci-cv";
-    providerNameByUrl = "Julia Zabrodska-Akinci";
+    providerLinkedIn = "https://linkedin.com/in/nora-halloran-vey-cv";
+    providerNameByUrl = "Nora Halloran-Vey";
     const prospect = {
       id: 612,
-      name: "Julia Zabrodska",
-      company: "L'eto Group",
-      email: "julia.zabrodska@letocaffe.com",
+      name: "Nora Halloran",
+      company: "D'oro Group",
+      email: "nora.halloran@dorocafe.example",
       source: "github-stars",
-      source_profile_url: "https://github.com/jzabrodska",
+      source_profile_url: "https://github.com/nhalloran",
       linkedin_url: null,
       dossier_json: null,
       title: null,
@@ -1268,37 +1266,37 @@ describe("the provider's linkedin_url", () => {
     expect(prospectWrites.find((w) => w["kind"] === "identity")).toEqual({
       kind: "identity",
       id: 612,
-      patch: { linkedin_url: "https://www.linkedin.com/in/julia-zabrodska-akinci-cv" },
+      patch: { linkedin_url: "https://www.linkedin.com/in/nora-halloran-vey-cv" },
     });
   });
 
   it("dossierFromProviderResult carries it for a finder that already paid", async () => {
     const { dossierFromProviderResult } = await import("../src/_person-research.ts");
     const dossier = dossierFromProviderResult(
-      { url: "https://x.com/jz", email: null, name: "Julia Zabrodska", company: null },
+      { url: "https://x.com/nh", email: null, name: "Nora Halloran", company: null },
       {
-        ...juliaResearch,
+        ...noraResearch,
         result: {
-          ...juliaResearch.result,
-          full_name: "Julia Zabrodska",
-          linkedin_url: "linkedin.com/in/jz",
+          ...noraResearch.result,
+          full_name: "Nora Halloran",
+          linkedin_url: "linkedin.com/in/nh",
         },
       },
       { costUsd: 0.05, billed: true },
     );
-    expect(dossier?.linkedinUrl).toBe("https://www.linkedin.com/in/jz");
-    expect(dossier?.currentRole?.company).toBe("WildMuse.App");
+    expect(dossier?.linkedinUrl).toBe("https://www.linkedin.com/in/nh");
+    expect(dossier?.currentRole?.company).toBe("BrightLoom.App");
   });
 });
 
 describe("researchPerson cacheOnly", () => {
   const seed = {
-    url: "https://www.linkedin.com/in/julia-zabrodska-akinci-cv",
-    email: "julia.zabrodska@letocaffe.com",
-    name: "Julia Zabrodska",
-    company: "L'eto Group",
+    url: "https://www.linkedin.com/in/nora-halloran-vey-cv",
+    email: "nora.halloran@dorocafe.example",
+    name: "Nora Halloran",
+    company: "D'oro Group",
     title: null,
-    domain: "letocaffe.com",
+    domain: "dorocafe.example",
   };
 
   it("with nothing cached, buys nothing and says so", async () => {
@@ -1318,11 +1316,11 @@ describe("researchPerson cacheOnly", () => {
     liveSession = true;
     seedResearch(
       JSON.stringify({
-        ...juliaResearch,
+        ...noraResearch,
         result: {
-          ...juliaResearch.result,
-          full_name: "Julia Zabrodska",
-          linkedin_url: "linkedin.com/in/jz",
+          ...noraResearch.result,
+          full_name: "Nora Halloran",
+          linkedin_url: "linkedin.com/in/nh",
         },
       }),
     );
@@ -1335,8 +1333,8 @@ describe("researchPerson cacheOnly", () => {
     });
     expect(out.notCached).toBeUndefined();
     expect(out.costUsd).toBe(0);
-    expect(out.dossier.currentRole?.company).toBe("WildMuse.App");
-    expect(out.dossier.linkedinUrl).toBe("https://www.linkedin.com/in/jz");
+    expect(out.dossier.currentRole?.company).toBe("BrightLoom.App");
+    expect(out.dossier.linkedinUrl).toBe("https://www.linkedin.com/in/nh");
     expect(calls).toMatchObject({ research: 0, company: 0, browser: 0 });
   });
 
@@ -1356,8 +1354,8 @@ describe("researchPerson cacheOnly", () => {
   it("a cached record that names someone else is not retried by email with a paid call", async () => {
     seedResearch(
       JSON.stringify({
-        ...juliaResearch,
-        result: { ...juliaResearch.result, full_name: "Marcus Brandt" },
+        ...noraResearch,
+        result: { ...noraResearch.result, full_name: "Marcus Brandt" },
       }),
     );
     const out = await researchPerson({

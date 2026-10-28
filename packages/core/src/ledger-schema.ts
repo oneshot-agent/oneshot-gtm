@@ -183,7 +183,7 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
     // the caller derives from what the email is (workspace, play, recipient or
     // prospect, step), never from its text. The key is the claim: a second
     // attempt for the same key is refused or replayed instead of sent, and a
-    // retry after a definite failure reuses the same Message-ID. The confirm
+    // retry reuses the Message-ID on SMTP, but gets a new one on Gmail. The confirm
     // sweep moves submitted/uncertain rows to confirmed, failed or not_found
     // by finding the send in the mailbox's Sent folder.
     version: 10,

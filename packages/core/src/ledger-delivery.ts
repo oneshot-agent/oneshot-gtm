@@ -22,7 +22,7 @@ export interface DeliveryCandidate {
   queueId: number | null;
   prospectId: number | null;
   transport: DeliveryTransport;
-  /** `receipts.sender_identity`, e.g. `smartlead:jn@example.com`. */
+  /** `receipts.sender_identity`, e.g. `smartlead:you@example.com`. */
   identity: string;
   recipient: string;
   subject: string;

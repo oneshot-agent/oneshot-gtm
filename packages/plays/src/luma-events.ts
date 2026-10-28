@@ -216,9 +216,9 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
       `PRODUCT: ${cfg.productOneLiner}`,
       `PROSPECT: ${t.name}${t.company ? ` at ${t.company}` : ""}`,
       // Both, because they come from different places and either can be empty.
-      // `attendeeBio` is Luma's self-written headline: absent on 168 of 432
-      // rows. `title` is what the person-level ICP gate resolved via a PAID
-      // enrichProfile, and it was persisted to prospects.title and then never
+      // `attendeeBio` is Luma's self-written headline, often absent. `title`
+      // is what the person-level ICP gate resolved via a PAID enrichProfile,
+      // and it was persisted to prospects.title and then never
       // shown to the model: the one hard fact about what this person does was
       // bought and thrown away at the prompt boundary.
       `TITLE: ${t.title ?? "(unknown)"}`,

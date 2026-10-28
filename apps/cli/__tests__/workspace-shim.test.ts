@@ -60,9 +60,9 @@ describe("workspace bootstrap shim", () => {
   });
 
   it("an unknown workspace fails fast with exit 2 and a legible message", () => {
-    const r = run(["--workspace", "nope", "doctor"]);
+    const r = run(["--workspace", "gamma", "doctor"]);
     expect(r.code).toBe(2);
-    expect(r.stderr).toContain("no workspace named 'nope'");
+    expect(r.stderr).toContain("no workspace named 'gamma'");
   });
 
   it("an explicit ONESHOT_GTM_HOME wins, and conflicts with --workspace", () => {

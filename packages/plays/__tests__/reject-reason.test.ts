@@ -184,17 +184,17 @@ describe("reject evidence", () => {
   it("renders the company facts a stage judgment turns on, in a fixed order", () => {
     expect(
       describeCompanyForReject({
-        name: "Magna",
+        name: "Corvane",
         industry: "Insurance",
         founded_year: 2014,
         employee_count: 80,
         funding_stage: "series_b",
         description: "AI-native insurance for startups.",
-        linkedin_url: "https://linkedin.com/company/magna",
+        linkedin_url: "https://linkedin.com/company/corvane",
       }),
     ).toBe(
       [
-        "company: Magna",
+        "company: Corvane",
         "industry: Insurance",
         "founded: 2014",
         "employees: 80",
@@ -209,23 +209,23 @@ describe("reject evidence", () => {
     const dossier = JSON.stringify({
       status: "completed",
       result: {
-        full_name: "Bruno F",
+        full_name: "Rui F",
         title: "Co-Founder & CEO",
-        company: "Magna",
+        company: "Corvane",
         summary: "Building insurance infrastructure.",
         experience: [
-          { title: "Co-Founder & CEO", company: "Magna", period: "Jan 2014 - Present" },
+          { title: "Co-Founder & CEO", company: "Corvane", period: "Jan 2014 - Present" },
           { title: "Engineer", company: "Big Co", period: "2010 - 2013" },
         ],
-        emails: ["bruno@magna.so"],
+        emails: ["rui@corvane.example"],
       },
     });
     const text = describeDossierForReject(dossier);
     expect(text).toContain("title: Co-Founder & CEO");
     expect(text).toContain(
-      "experience: Co-Founder & CEO at Magna (Jan 2014 - Present); Engineer at Big Co (2010 - 2013)",
+      "experience: Co-Founder & CEO at Corvane (Jan 2014 - Present); Engineer at Big Co (2010 - 2013)",
     );
-    expect(text).not.toContain("bruno@magna.so");
+    expect(text).not.toContain("rui@corvane.example");
   });
 
   it("passes plain-text research through, bounded", () => {
@@ -240,11 +240,11 @@ describe("reject evidence", () => {
     await generateRejectReason({
       playName: "luma-events",
       payload,
-      dossier: JSON.stringify({ result: { title: "CEO", company: "Magna" } }),
-      company: { name: "Magna", employee_count: 80 },
+      dossier: JSON.stringify({ result: { title: "CEO", company: "Corvane" } }),
+      company: { name: "Corvane", employee_count: 80 },
     });
     const user = completeMock.mock.calls[0]![0].messages[1].content as string;
-    expect(user).toContain("COMPANY:\ncompany: Magna\nemployees: 80");
-    expect(user).toContain("DOSSIER:\ntitle: CEO\ncompany: Magna");
+    expect(user).toContain("COMPANY:\ncompany: Corvane\nemployees: 80");
+    expect(user).toContain("DOSSIER:\ntitle: CEO\ncompany: Corvane");
   });
 });

@@ -1,4 +1,4 @@
-You write a Monday morning narrative review for a founder doing founder-led GTM. The output is paste-able into a YC group chat, an investor update, or a "what shipped this week" tweet. Brevity beats completeness.
+You write a Monday morning narrative review for a founder doing founder-led GTM. The output is paste-able into a cofounder or advisor chat, an investor update, or a "what shipped this week" post. Brevity beats completeness.
 
 [See _humanizer.md — every rule applies. The founder will share this artifact publicly. AI-shaped phrasing kills the share.]
 
@@ -28,7 +28,7 @@ Use markdown but keep it tight. Sentence case headings. No emojis. No bold mid-s
 ### Next week
 {2-3 numbered bullets. Concrete actions, not aspirations.}
 
-{Optional: one signed-receipt URL pasted as proof of a real cost number.}
+{Optional, only when the inputs carry one: one receipt URL as proof of a real cost number.}
 ```
 
 ## Voice rules

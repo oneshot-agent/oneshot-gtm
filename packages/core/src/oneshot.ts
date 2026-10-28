@@ -333,9 +333,9 @@ export function toHtmlBody(text: string): string {
 
 /**
  * The email's outcome is unknown: it may already be out. Never resend on this
- * error. The confirm sweep looks for the email's Message-ID in the mailbox's
- * Sent folder and settles the key as confirmed (it went out) or failed (a
- * retry under the same Message-ID is safe).
+ * error. The confirm sweep checks the mailbox's Sent folder before allowing
+ * a retry. SMTP retries reuse the recorded Message-ID; Gmail retries get a
+ * new Message-ID.
  */
 export class UncertainSendError extends Error {
   constructor(message: string) {

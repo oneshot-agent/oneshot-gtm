@@ -70,7 +70,7 @@ describe("loadPrompt — humanizer inlining", () => {
 
   it("leaves prompts without a humanizer reference unchanged", () => {
     _resetPromptCache();
-    const out = loadPrompt("agent-builder-extract");
+    const out = loadPrompt("vendor-stack-extract");
     // Sanity: the extract prompt doesn't include any humanizer content.
     expect(out).not.toMatch(/Anti-AI-slop rules/);
     expect(out).not.toMatch(/Banned vocabulary/);
@@ -87,21 +87,21 @@ describe("loadPrompt — humanizer inlining", () => {
 describe("loadPrompt — per-prompt memoization", () => {
   it("hits the disk once per prompt; repeat calls are served from cache", () => {
     _resetPromptCache();
-    loadPrompt("agent-builder-extract");
+    loadPrompt("vendor-stack-extract");
     const after1 = fsReads.count;
     expect(after1).toBeGreaterThan(0);
-    const a = loadPrompt("agent-builder-extract");
-    const b = loadPrompt("agent-builder-extract");
+    const a = loadPrompt("vendor-stack-extract");
+    const b = loadPrompt("vendor-stack-extract");
     expect(fsReads.count).toBe(after1);
     expect(a).toEqual(b);
   });
 
   it("_resetPromptCache forces a re-read", () => {
     _resetPromptCache();
-    loadPrompt("agent-builder-extract");
+    loadPrompt("vendor-stack-extract");
     const after1 = fsReads.count;
     _resetPromptCache();
-    loadPrompt("agent-builder-extract");
+    loadPrompt("vendor-stack-extract");
     expect(fsReads.count).toBeGreaterThan(after1);
   });
 

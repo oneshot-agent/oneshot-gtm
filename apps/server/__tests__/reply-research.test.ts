@@ -64,11 +64,11 @@ beforeEach(() => {
   ledger.getInboxThreads.mockReturnValue(new Map());
   ledger.latestMeetingOutcomeFor.mockReturnValue(null);
   safeEnrichMock.mockResolvedValue({
-    result: { status: "completed", profile: { name: "Aladdin" }, cost: 0.05 },
+    result: { status: "completed", profile: { name: "Sam Ortiz" }, cost: 0.05 },
     receiptId: 42,
   });
   webReadMock.mockResolvedValue({
-    result: { markdown: "x402 payments, live on my site", cost: 0.01 },
+    result: { markdown: "usage-based billing, live on my site", cost: 0.01 },
     receiptId: 43,
   });
 });
@@ -107,13 +107,15 @@ describe("gatherReplyContext", () => {
     expect(safeEnrichMock).not.toHaveBeenCalled();
   });
   it("uses the stored prospect dossier for free — no paid calls", async () => {
-    ledger.getProspectById.mockReturnValue({ dossier_json: '{"title":"CTO","hook":"x402"}' });
+    ledger.getProspectById.mockReturnValue({
+      dossier_json: '{"title":"CTO","hook":"usage-based billing"}',
+    });
     const ctx = await gatherReplyContext({
-      fromEmail: "aladdin@aliyev.site",
+      fromEmail: "sam@beacon.example",
       prospectId: 7,
       threadKey: null,
     });
-    expect(ctx.dossier).toContain("x402");
+    expect(ctx.dossier).toContain("usage-based billing");
     expect(ctx.costUsd).toBe(0);
     expect(ctx.researched).toBe(false);
     expect(safeEnrichMock).not.toHaveBeenCalled();
@@ -123,21 +125,21 @@ describe("gatherReplyContext", () => {
   it("surfaces the prospect's angle_json verbatim, for free, alongside the dossier (issue #356)", async () => {
     ledger.getProspectById.mockReturnValue({
       dossier_json: '{"title":"CTO"}',
-      angle_json: '{"hook":"shipped x402 support"}',
+      angle_json: '{"hook":"shipped usage-based billing"}',
     });
     const ctx = await gatherReplyContext({
-      fromEmail: "aladdin@aliyev.site",
+      fromEmail: "sam@beacon.example",
       prospectId: 7,
       threadKey: null,
     });
-    expect(ctx.angleJson).toBe('{"hook":"shipped x402 support"}');
+    expect(ctx.angleJson).toBe('{"hook":"shipped usage-based billing"}');
     expect(ctx.costUsd).toBe(0);
   });
 
   it("angleJson is null when the prospect has none, or there is no prospect", async () => {
     ledger.getProspectById.mockReturnValue({ dossier_json: '{"title":"CTO"}', angle_json: null });
     const withProspect = await gatherReplyContext({
-      fromEmail: "aladdin@aliyev.site",
+      fromEmail: "sam@beacon.example",
       prospectId: 7,
       threadKey: null,
     });
@@ -159,7 +161,7 @@ describe("gatherReplyContext", () => {
       summary: "Intro call",
     });
     const ctx = await gatherReplyContext({
-      fromEmail: "aladdin@aliyev.site",
+      fromEmail: "sam@beacon.example",
       prospectId: 7,
       threadKey: null,
     });
@@ -175,7 +177,7 @@ describe("gatherReplyContext", () => {
   it("meeting is null when the prospect has none, or there is no prospect id", async () => {
     ledger.getProspectById.mockReturnValue({ dossier_json: '{"title":"CTO"}' });
     const withProspect = await gatherReplyContext({
-      fromEmail: "aladdin@aliyev.site",
+      fromEmail: "sam@beacon.example",
       prospectId: 7,
       threadKey: null,
     });
@@ -193,20 +195,20 @@ describe("gatherReplyContext", () => {
 
   it("researches an unknown sender on a real domain: enrich + site read, cost summed", async () => {
     const ctx = await gatherReplyContext({
-      fromEmail: "aladdin@aliyev.site",
+      fromEmail: "sam@beacon.example",
       prospectId: null,
       threadKey: null,
     });
     expect(safeEnrichMock).toHaveBeenCalledWith(
-      { email: "aladdin@aliyev.site" },
+      { email: "sam@beacon.example" },
       expect.objectContaining({ playName: "inbox-reply" }),
     );
     expect(webReadMock).toHaveBeenCalledWith(
-      { url: "https://aliyev.site" },
+      { url: "https://beacon.example" },
       expect.objectContaining({ playName: "inbox-reply" }),
     );
-    expect(ctx.dossier).toContain("Aladdin");
-    expect(ctx.dossier).toContain("x402 payments");
+    expect(ctx.dossier).toContain("Sam Ortiz");
+    expect(ctx.dossier).toContain("usage-based billing");
     expect(ctx.costUsd).toBeCloseTo(0.06);
     expect(ctx.researched).toBe(true);
   });
@@ -225,25 +227,25 @@ describe("gatherReplyContext", () => {
 
   it("a cached enrich (receiptId 0) reports $0 and researched=false", async () => {
     safeEnrichMock.mockResolvedValue({
-      result: { status: "completed", profile: { name: "Aladdin" }, cost: 0.05 },
+      result: { status: "completed", profile: { name: "Sam Ortiz" }, cost: 0.05 },
       receiptId: 0,
     });
     webReadMock.mockRejectedValue(new Error("site down"));
     const ctx = await gatherReplyContext({
-      fromEmail: "aladdin@aliyev.site",
+      fromEmail: "sam@beacon.example",
       prospectId: null,
       threadKey: null,
     });
-    expect(ctx.dossier).toContain("Aladdin");
+    expect(ctx.dossier).toContain("Sam Ortiz");
     expect(ctx.costUsd).toBe(0);
     expect(ctx.researched).toBe(false);
   });
 
   it("serves the site read from cache without a second spend", async () => {
     // Two days old: past a finder page's half-day, inside a sender page's 30 days.
-    seedRead("https://aliyev.site", "cached site text", 2 * DAY);
+    seedRead("https://beacon.example", "cached site text", 2 * DAY);
     const ctx = await gatherReplyContext({
-      fromEmail: "aladdin@aliyev.site",
+      fromEmail: "sam@beacon.example",
       prospectId: null,
       threadKey: null,
     });
@@ -260,7 +262,7 @@ describe("gatherReplyContext", () => {
     });
     webReadMock.mockRejectedValue(new Error("unreachable"));
     const ctx = await gatherReplyContext({
-      fromEmail: "aladdin@aliyev.site",
+      fromEmail: "sam@beacon.example",
       prospectId: null,
       threadKey: null,
     });
@@ -290,10 +292,10 @@ describe("dud-domain senders fall back to the finder's profile URL", () => {
   it("reads source_profile_url when the email domain is a dud", async () => {
     ledger.getProspectById.mockReturnValue({
       dossier_json: null,
-      source_profile_url: "https://github.com/rishibanota",
+      source_profile_url: "https://github.com/samortiz-dev",
     });
     webReadMock.mockResolvedValue({
-      result: { markdown: "remembrandt — local agent memory", cost: 0.01 },
+      result: { markdown: "lanternkit — local note search", cost: 0.01 },
       receiptId: 43,
     });
 
@@ -304,11 +306,11 @@ describe("dud-domain senders fall back to the finder's profile URL", () => {
     });
 
     expect(webReadMock).toHaveBeenCalledWith(
-      { url: "https://github.com/rishibanota" },
+      { url: "https://github.com/samortiz-dev" },
       expect.objectContaining({ playName: "inbox-reply" }),
     );
-    expect(ctx.dossier).toContain("PROFILE (https://github.com/rishibanota)");
-    expect(ctx.dossier).toContain("remembrandt");
+    expect(ctx.dossier).toContain("PROFILE (https://github.com/samortiz-dev)");
+    expect(ctx.dossier).toContain("lanternkit");
     expect(ctx.costUsd).toBe(0.01);
     // The dud domain still buys no enrich. This is one page read, not a tier.
     expect(safeEnrichMock).not.toHaveBeenCalled();
@@ -329,7 +331,7 @@ describe("dud-domain senders fall back to the finder's profile URL", () => {
   it("skips the profile read for non-human inbound (skipPaid)", async () => {
     ledger.getProspectById.mockReturnValue({
       dossier_json: null,
-      source_profile_url: "https://github.com/rishibanota",
+      source_profile_url: "https://github.com/samortiz-dev",
     });
     const ctx = await gatherReplyContext({
       fromEmail: "someone@gmail.com",
@@ -346,7 +348,7 @@ describe("dud-domain senders fall back to the finder's profile URL", () => {
       // Carries real signal (a title), so it is a genuine Tier-1 hit. The
       // shape the demo seeder and the research backfill both write.
       dossier_json: '{"title":"CTO","company":"Acme","hook":"already known"}',
-      source_profile_url: "https://github.com/rishibanota",
+      source_profile_url: "https://github.com/samortiz-dev",
     });
     const ctx = await gatherReplyContext({
       fromEmail: "someone@gmail.com",
@@ -362,10 +364,10 @@ describe("dud-domain senders fall back to the finder's profile URL", () => {
     // Tier-1 hit would hand the drafter no facts AND skip the tier that has some.
     ledger.getProspectById.mockReturnValue({
       dossier_json: JSON.stringify({ status: "failed", profile: null, cost: 0 }),
-      source_profile_url: "https://github.com/rishibanota",
+      source_profile_url: "https://github.com/samortiz-dev",
     });
     webReadMock.mockResolvedValue({
-      result: { markdown: "remembrandt — local agent memory", cost: 0.01 },
+      result: { markdown: "lanternkit — local note search", cost: 0.01 },
       receiptId: 43,
     });
 
@@ -376,15 +378,17 @@ describe("dud-domain senders fall back to the finder's profile URL", () => {
     });
 
     expect(webReadMock).toHaveBeenCalled();
-    expect(ctx.dossier).toContain("remembrandt");
+    expect(ctx.dossier).toContain("lanternkit");
     expect(ctx.dossier).not.toContain("failed");
   });
 
   it("profileUrlFor rejects anything that isn't a fetchable profile page", () => {
-    expect(profileUrlFor("https://github.com/rishibanota")).toBe("https://github.com/rishibanota");
+    expect(profileUrlFor("https://github.com/samortiz-dev")).toBe(
+      "https://github.com/samortiz-dev",
+    );
     expect(profileUrlFor(null)).toBeNull();
     expect(profileUrlFor("   ")).toBeNull();
-    expect(profileUrlFor("rishibanota")).toBeNull();
+    expect(profileUrlFor("samortiz-dev")).toBeNull();
     expect(profileUrlFor("mailto:a@b.com")).toBeNull();
     // A bare host is the finder's fallback, not a person's profile.
     expect(profileUrlFor("https://github.com")).toBeNull();
@@ -408,29 +412,29 @@ describe("review-finding regressions (#35)", () => {
   it("siteDomainFor strips only well-known mail labels", () => {
     expect(siteDomainFor("mail.acme.com")).toBe("acme.com");
     expect(siteDomainFor("smtp.acme.co")).toBe("acme.co");
-    expect(siteDomainFor("aliyev.site")).toBe("aliyev.site");
+    expect(siteDomainFor("beacon.example")).toBe("beacon.example");
     // Not a mail label. A real subdomain company site passes through.
     expect(siteDomainFor("labs.acme.com")).toBe("labs.acme.com");
   });
 
   it("a site read older than 30 days is bought again", async () => {
-    seedRead("https://aliyev.site", "stale site text", 31 * DAY);
+    seedRead("https://beacon.example", "stale site text", 31 * DAY);
     const ctx = await gatherReplyContext({
-      fromEmail: "aladdin@aliyev.site",
+      fromEmail: "sam@beacon.example",
       prospectId: null,
       threadKey: null,
     });
     expect(webReadMock).toHaveBeenCalledTimes(1);
-    expect(ctx.dossier).toContain("x402 payments");
+    expect(ctx.dossier).toContain("usage-based billing");
     expect(ctx.dossier).not.toContain("stale site text");
   });
 
   it("a remembered genuine failure is not read again and does not block the draft", async () => {
     webReadMock.mockRejectedValue(new Error("page not found"));
-    const first = { fromEmail: "aladdin@aliyev.site", prospectId: null, threadKey: null };
+    const first = { fromEmail: "sam@beacon.example", prospectId: null, threadKey: null };
     await gatherReplyContext(first);
     const ctx = await gatherReplyContext(first);
     expect(webReadMock).toHaveBeenCalledTimes(1);
-    expect(ctx.dossier).toContain("Aladdin");
+    expect(ctx.dossier).toContain("Sam Ortiz");
   });
 });

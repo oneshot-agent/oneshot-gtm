@@ -93,7 +93,9 @@ describe("setTriggerConfigRoute", () => {
 describe("setTriggerConfigRoute — edge warnings (issue #585)", () => {
   it("warns on a single flat pitch and still saves", async () => {
     const res = await setTriggerConfigRoute(
-      req({ config: { yourEdge: "single SDK + on-chain receipts cuts vendor sprawl" } }),
+      req({
+        config: { yourEdge: "TestProduct replaces three scheduling tools with one calendar" },
+      }),
       { name: "github-topics" },
     );
     expect(res.status).toBe(200);

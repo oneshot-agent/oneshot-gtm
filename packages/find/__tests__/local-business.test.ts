@@ -165,7 +165,7 @@ const basePerson: StubPerson = {
   full_name: "Dana Rivera",
   title: "Owner",
   company: "Rivera HVAC",
-  company_domain: "riverahvac.com",
+  company_domain: "riverahvac.example",
   linkedin_url: "https://www.linkedin.com/in/dana-rivera",
 };
 
@@ -191,7 +191,7 @@ afterEach(() => vi.clearAllMocks());
 
 describe("runLocalBusinessFinder — lane routing on best_work_email", () => {
   it("skips findEmail/verifyEmail entirely when best_work_email is present (lane 1)", async () => {
-    nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.com" }];
+    nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.example" }];
     const out = await runLocalBusinessFinder({
       dryRun: false,
       jobTitles: ["Owner"],
@@ -203,7 +203,7 @@ describe("runLocalBusinessFinder — lane routing on best_work_email", () => {
     expect(out.enqueued).toBe(1);
     const row = enqueued[0]!;
     expect(row.playName).toBe("free-pilot");
-    expect(row.payload["email"]).toBe("dana@riverahvac.com");
+    expect(row.payload["email"]).toBe("dana@riverahvac.example");
     expect(row.payload["businessType"]).toBeTruthy();
     expect(typeof row.payload["fitReason"]).toBe("string"); // #592
     expect(row.payload["fitReasonSource"]).toBe("company-gate");
@@ -242,7 +242,7 @@ describe("runLocalBusinessFinder — lane routing on best_work_email", () => {
       yourEdge: "free setup",
     });
 
-    expect(findEmailCalls).toEqual(["riverahvac.com"]);
+    expect(findEmailCalls).toEqual(["riverahvac.example"]);
     expect(verifyEmailCalls).toEqual(["resolved@acme.dev"]);
     expect(out.enqueued).toBe(1);
     expect(enqueued[0]?.payload["email"]).toBe("resolved@acme.dev");
@@ -445,7 +445,7 @@ describe("runLocalBusinessFinder — paging past people it already has", () => {
 
 describe("runLocalBusinessFinder — name-only rows", () => {
   it("tells a complete row from a name-only one", () => {
-    expect(isContactable({ full_name: "Dana Rivera", company_domain: "riverahvac.com" })).toBe(
+    expect(isContactable({ full_name: "Dana Rivera", company_domain: "riverahvac.example" })).toBe(
       true,
     );
     expect(
@@ -642,7 +642,7 @@ describe("runLocalBusinessFinder — a search with no one new", () => {
 
 describe("runLocalBusinessFinder — channel order", () => {
   it("a LinkedIn-first run queues on LinkedIn even when the search carries an email", async () => {
-    nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.com" }];
+    nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.example" }];
     const out = await withFinderChannels(["linkedin", "email"], () =>
       runLocalBusinessFinder({ dryRun: false, jobTitles: ["Owner"], yourEdge: "free setup" }),
     );
@@ -656,7 +656,7 @@ describe("runLocalBusinessFinder — channel order", () => {
 describe("runLocalBusinessFinder — business-shaped targeting", () => {
   it("runs companySearch first and feeds company_domains into peopleSearch when industries is set and jobTitles is empty", async () => {
     nextCompanySearchResults = [
-      { name: "Smile Dental", domain: "smiledental.com", industry: "Dental Practices" },
+      { name: "Smile Dental", domain: "smiledental.example", industry: "Dental Practices" },
       { name: "Bright Teeth", domain: "brightteeth.com", industry: "Dental Practices" },
     ];
     nextPeopleSearchResults = [
@@ -664,8 +664,8 @@ describe("runLocalBusinessFinder — business-shaped targeting", () => {
         full_name: "Pat Lee",
         title: "Practice Manager",
         company: "Smile Dental",
-        company_domain: "smiledental.com",
-        best_work_email: "pat@smiledental.com",
+        company_domain: "smiledental.example",
+        best_work_email: "pat@smiledental.example",
       },
     ];
     const out = await runLocalBusinessFinder({
@@ -678,7 +678,7 @@ describe("runLocalBusinessFinder — business-shaped targeting", () => {
     expect(companySearchCalls[0]?.["industry"]).toEqual(["Dental Practices"]);
     expect(peopleSearchCalls).toHaveLength(1);
     expect(peopleSearchCalls[0]?.["companyDomains"]).toEqual([
-      "smiledental.com",
+      "smiledental.example",
       "brightteeth.com",
     ]);
     // Pass resolved domains to peopleSearch instead of industry targeting.
@@ -701,10 +701,14 @@ describe("runLocalBusinessFinder — business-shaped targeting", () => {
 
   it("halts before peopleSearch when companySearch alone already hit maxCostUsd (finding PRRT_kwDOSKzrBs6ewrQT)", async () => {
     nextCompanySearchResults = [
-      { name: "Smile Dental", domain: "smiledental.com", industry: "Dental Practices" },
+      { name: "Smile Dental", domain: "smiledental.example", industry: "Dental Practices" },
     ];
     nextPeopleSearchResults = [
-      { ...basePerson, company_domain: "smiledental.com", best_work_email: "dana@smiledental.com" },
+      {
+        ...basePerson,
+        company_domain: "smiledental.example",
+        best_work_email: "dana@smiledental.example",
+      },
     ];
     const out = await runLocalBusinessFinder({
       dryRun: false,
@@ -725,7 +729,7 @@ describe("runLocalBusinessFinder — business-shaped targeting", () => {
 describe("runLocalBusinessFinder — ICP gate and limits", () => {
   it("persists a rejected row instead of a target when the ICP filter misses", async () => {
     icpMatch = false;
-    nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.com" }];
+    nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.example" }];
     await runLocalBusinessFinder({
       dryRun: false,
       jobTitles: ["Owner"],
@@ -738,7 +742,7 @@ describe("runLocalBusinessFinder — ICP gate and limits", () => {
 
   it("does NOT persist a rejected row when the classifier is transiently unavailable (match=null)", async () => {
     icpMatch = null;
-    nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.com" }];
+    nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.example" }];
     await runLocalBusinessFinder({
       dryRun: false,
       jobTitles: ["Owner"],
@@ -766,7 +770,7 @@ describe("runLocalBusinessFinder — ICP gate and limits", () => {
 
   it("persists a rejected row instead of a target when the person-level role gate rejects", async () => {
     personVerdict = "reject";
-    nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.com" }];
+    nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.example" }];
     const out = await runLocalBusinessFinder({
       dryRun: false,
       jobTitles: ["Owner"],
@@ -783,15 +787,15 @@ describe("runLocalBusinessFinder — `local` engine (SDK localSearch)", () => {
   const baseBiz: StubLocal = {
     id: "loc_abc",
     name: "Rivera Family Dental",
-    domain: "riverafamilydental.com",
-    website: "https://riverafamilydental.com",
+    domain: "riverafamilydental.example",
+    website: "https://riverafamilydental.example",
     phone: "+1 512 555 0142",
     category: "dental practice",
     address: "100 Congress Ave, Austin, TX",
   };
 
   it("never calls localSearch when engine is absent — the B2B path is unchanged by default", async () => {
-    nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.com" }];
+    nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.example" }];
     await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Owner"], yourEdge: "x" });
     expect(localSearchCalls).toHaveLength(0);
     expect(peopleSearchCalls).toHaveLength(1);
@@ -818,7 +822,7 @@ describe("runLocalBusinessFinder — `local` engine (SDK localSearch)", () => {
     // Every peopleSearch the local engine causes is the spine's lookup of a
     // person at one business's domain. Never a jobTitles/industry search.
     for (const call of peopleSearchCalls) {
-      expect(call).toMatchObject({ companyDomains: ["riverafamilydental.com"] });
+      expect(call).toMatchObject({ companyDomains: ["riverafamilydental.example"] });
       expect(call).not.toHaveProperty("jobTitles");
       expect(call).not.toHaveProperty("industry");
     }
@@ -839,8 +843,8 @@ describe("runLocalBusinessFinder — `local` engine (SDK localSearch)", () => {
     });
     // No owner name on a places result: the spine found one at the domain,
     // then findEmail ran against it.
-    expect(peopleSearchCalls[0]).toMatchObject({ companyDomains: ["riverafamilydental.com"] });
-    expect(findEmailCalls).toEqual(["riverafamilydental.com"]);
+    expect(peopleSearchCalls[0]).toMatchObject({ companyDomains: ["riverafamilydental.example"] });
+    expect(findEmailCalls).toEqual(["riverafamilydental.example"]);
     const row = enqueued[0]!;
     expect(row.playName).toBe("free-pilot");
     expect(row.dedupeKey).toBe("free-pilot:local:loc_abc");

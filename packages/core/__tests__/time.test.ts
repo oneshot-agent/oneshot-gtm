@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sqliteToIso, toIsoUtc, toSqliteUtc } from "../src/time.ts";
+import { sqliteToIso, toSqliteUtc } from "../src/time.ts";
 
 describe("sqliteToIso", () => {
   it("converts SQLite datetime('now') form to ISO with a Z suffix", () => {
@@ -34,23 +34,9 @@ describe("toSqliteUtc", () => {
 
   it("reads a zone-less ISO date-time as UTC, not local time", () => {
     expect(toSqliteUtc("2026-09-08T10:00:00")).toBe("2026-09-08 10:00:00");
-    expect(toIsoUtc("2026-09-08T10:00:00.5")).toBe("2026-09-08T10:00:00.500Z");
   });
 
   it("returns unparseable input as-is instead of throwing", () => {
     expect(toSqliteUtc("not a date")).toBe("not a date");
-  });
-});
-
-describe("toIsoUtc", () => {
-  it("normalizes every accepted form to toISOString() form", () => {
-    for (const input of [
-      "2026-09-08 10:00:00",
-      "2026-09-08T10:00:00Z",
-      "2026-09-08T03:00:00-07:00",
-      new Date("2026-09-08T10:00:00Z"),
-    ]) {
-      expect(toIsoUtc(input)).toBe("2026-09-08T10:00:00.000Z");
-    }
   });
 });

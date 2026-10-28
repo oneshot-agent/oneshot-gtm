@@ -3,7 +3,7 @@ import type { WorkspaceInfo } from "@oneshot-gtm/shared-types";
 import { moveTargets, movedRowUrl } from "../src/lib/moveTargets.ts";
 
 const info = (workspaces: WorkspaceInfo["workspaces"]): WorkspaceInfo => ({
-  current: { name: "beta", home: "/h/beta", port: 3032 },
+  current: { name: "beta", home: "/h/beta", port: 4032 },
   workspaces,
 });
 const ws = (
@@ -26,22 +26,22 @@ describe("moveTargets", () => {
       moveTargets(
         info([
           ws("default", 3030, { isDefault: true }),
-          ws("beta", 3032, { isCurrent: true, running: true }),
-          ws("alpha", 3031, { running: true }),
+          ws("beta", 4032, { isCurrent: true, running: true }),
+          ws("alpha", 4031, { running: true }),
         ]),
       ),
     ).toEqual([
       { name: "default", port: 3030, running: false },
-      { name: "alpha", port: 3031, running: true },
+      { name: "alpha", port: 4031, running: true },
     ]);
   });
 
   it("is empty with no roster or a single workspace, so the button never shows", () => {
     expect(moveTargets(undefined)).toEqual([]);
-    expect(moveTargets(info([ws("beta", 3032, { isCurrent: true, running: true })]))).toEqual([]);
+    expect(moveTargets(info([ws("beta", 4032, { isCurrent: true, running: true })]))).toEqual([]);
   });
 
   it("points at the destination's pending queue on loopback", () => {
-    expect(movedRowUrl(3031)).toBe("http://127.0.0.1:3031/queue?status=pending");
+    expect(movedRowUrl(4031)).toBe("http://127.0.0.1:4031/queue?status=pending");
   });
 });

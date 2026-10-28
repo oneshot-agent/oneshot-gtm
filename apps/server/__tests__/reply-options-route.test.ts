@@ -139,7 +139,7 @@ beforeEach(() => {
   );
   saveConfig({
     ...loadConfig(),
-    productBrief: "OneShot provides tools with payments.",
+    productBrief: "TestProduct schedules and invoices field-service jobs.",
     founderVoice: "Plain and direct",
   });
   generate.mockReset().mockResolvedValue({
@@ -311,7 +311,7 @@ describe("reply options API", () => {
       expect.objectContaining({
         channel: "email",
         steer: "No meeting ask",
-        primaryBrief: "OneShot provides tools with payments.",
+        primaryBrief: "TestProduct schedules and invoices field-service jobs.",
       }),
     );
     expect(review.get(t.key)?.drafts).toEqual(saved);

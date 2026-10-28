@@ -22,8 +22,8 @@ export class SendDeferredError extends Error {
 export function isSendDeferred(err: unknown): boolean {
   // An unknown send outcome (UncertainSendError, oneshot.ts) defers too: the
   // work stays queued with its draft intact until the confirm sweep settles
-  // the key. The next attempt then replays the send or retries it under the
-  // same Message-ID. Name-based for the same cross-module reason.
+  // the key. The next attempt then replays the send or retries it (SMTP reuses
+  // the Message-ID; Gmail assigns a new one). Name-based for the same cross-module reason.
   return (
     err instanceof Error && (err.name === "SendDeferredError" || err.name === "UncertainSendError")
   );
@@ -122,7 +122,7 @@ export function isTransientToolError(err: unknown): boolean {
     /\b(5[0-9]{2}|429)\b/.test(msg) || // any 5xx / rate-limit HTTP statuses (520 from an edge, too)
     // The wallet, not the person: an empty or unfunded wallet refuses every
     // paid call at the payment rail. A top-up fixes it; a 3-day negative
-    // cache on the person would not (2026-09-15: 46 rows stuck that way).
+    // cache on the person would not.
     msg.includes("payment rejected") ||
     msg.includes("insufficient credits") ||
     msg.includes("insufficient funds") ||

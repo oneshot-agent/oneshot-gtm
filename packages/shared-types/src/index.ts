@@ -1153,6 +1153,11 @@ export interface LastDraft {
   formatKey?: string | null;
   /** LinkedIn note only: whether its prompt carried an evidence clause (#792). */
   evidenceClause?: boolean;
+  /**
+   * LinkedIn only: a recent profile read shows them already connected, so no
+   * note was drafted and sending records the connection instead of an invite.
+   */
+  knownConnection?: { readAt: string };
 }
 
 /**

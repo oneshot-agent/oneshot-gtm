@@ -108,6 +108,8 @@ vi.mock("../src/_linkedin.ts", () => ({
 
 const { runHiringSignalFinder } = await import("../src/hiring-signal.ts");
 
+const ROLES = ["Staff Engineer"];
+
 beforeEach(() => {
   enqueued.length = 0;
   dedupeChecks.length = 0;
@@ -119,6 +121,7 @@ describe("runHiringSignalFinder — routed to design-partner-loi (#705)", () => 
   it("persists play_name=design-partner-loi with `yourEdge` fed from `yourClaim` (the non-obvious mapping), and `company` from the finder's extract", async () => {
     const out = await runHiringSignalFinder({
       dryRun: false,
+      roles: ROLES,
       yourClaim: "we cut onboarding time in half",
       play: "design-partner-loi",
       buyerType: "government",
@@ -148,7 +151,14 @@ describe("runHiringSignalFinder — routed to design-partner-loi (#705)", () => 
   });
 
   it("with the routing key absent, persists hiring-signal's own unchanged shape under hiring-signal's own play", async () => {
-    const out = await runHiringSignalFinder({ dryRun: false, yourClaim: "the claim" });
+    const noRoles = await runHiringSignalFinder({ dryRun: false, yourClaim: "the claim" });
+    expect(noRoles.halted).toMatch(/roles/);
+    expect(enqueued).toHaveLength(0);
+    const out = await runHiringSignalFinder({
+      dryRun: false,
+      roles: ROLES,
+      yourClaim: "the claim",
+    });
     expect(out.enqueued).toBe(1);
     const row = enqueued[0]!;
     expect(row.playName).toBe("hiring-signal");
@@ -158,7 +168,7 @@ describe("runHiringSignalFinder — routed to design-partner-loi (#705)", () => 
   });
 
   it("checks queue dedupe against BOTH hiring-signal and design-partner-loi regardless of routing", async () => {
-    await runHiringSignalFinder({ dryRun: false, yourClaim: "x" });
+    await runHiringSignalFinder({ dryRun: false, roles: ROLES, yourClaim: "x" });
     const checkedPlays = new Set(dedupeChecks.map((c) => c.playName));
     expect(checkedPlays.has("hiring-signal")).toBe(true);
     expect(checkedPlays.has("design-partner-loi")).toBe(true);
@@ -166,7 +176,7 @@ describe("runHiringSignalFinder — routed to design-partner-loi (#705)", () => 
 
   it("drops a candidate already queued under the OTHER play — dedupe survives a `play` toggle", async () => {
     queueDuplicateFor = new Set(["design-partner-loi"]);
-    const out = await runHiringSignalFinder({ dryRun: false, yourClaim: "x" });
+    const out = await runHiringSignalFinder({ dryRun: false, roles: ROLES, yourClaim: "x" });
     expect(out.enqueued).toBe(0);
     expect(out.droppedDuplicate).toBe(1);
     expect(enqueued).toHaveLength(0);

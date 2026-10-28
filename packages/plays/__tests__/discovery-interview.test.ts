@@ -61,7 +61,7 @@ const { runDiscoveryInterview } = await import("../src/discovery-interview.ts");
 
 const base = {
   name: "Maria",
-  email: "maria@lacocina.dev",
+  email: "maria@lacocina.example",
   company: "La Cocina Taqueria",
   businessType: "family-owned taqueria",
   topic: "how they schedule staff shifts",

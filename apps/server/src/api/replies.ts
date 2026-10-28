@@ -10,6 +10,7 @@ import {
   getLinkedInInboxStore,
   getReplyReviewStore,
   humanReplyIds,
+  isKnownConnectionMarker,
   linkedInMatches,
   loadConfig,
   logEvent,
@@ -165,7 +166,8 @@ export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsCon
   const outreach = p
     ? ledger
         .listSequenceEventsForProspect(p.id)
-        .filter((e) => e.status === "sent")
+        // A known connection's record stands in for an invite: nothing was sent.
+        .filter((e) => e.status === "sent" && !isKnownConnectionMarker(e.metadata_json))
         .flatMap((e) => {
           try {
             const data = JSON.parse(e.metadata_json ?? "{}");

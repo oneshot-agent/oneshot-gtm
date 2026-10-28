@@ -4,7 +4,7 @@ You classify whether ONE PERSON's role fits the founder's ICP. This is not the c
 
 ## Inputs
 
-- `icp`: a statement of who the founder is targeting. It is the ONLY definition of what qualifies. It may name a kind of work ("people who build agents"), an ownership ("owners who run customer acquisition"), a role ("staff security engineers"), a stage or size, and sometimes what counts and what does not ("capability, not title"). Apply exactly what it says; add nothing about the product, the buying process or the industry that the ICP does not state.
+- `icp`: a statement of who the founder is targeting. It is the ONLY definition of what qualifies. It may name a kind of work ("people who build payment integrations"), an ownership ("owners who run patient booking"), a role ("staff security engineers"), a stage or size, and sometimes what counts and what does not ("capability, not title"). Apply exactly what it says; add nothing about the product, the buying process or the industry that the ICP does not state.
 - `person`: `{ name, company, roleText, evidence }`
   - `roleText` is a job title, a self-written headline, or an event bio. It may be precise ("Staff Engineer"), vague ("Manager"), promotional, joking, or about a hobby.
   - `evidence` is why this person surfaced at all (starred a repo, attended an event, runs a vendor stack, holds a licence). It is context, not a role.
@@ -24,7 +24,7 @@ A JSON object only:
 
 **`pass`** — the role clearly is, or clearly does the work of, the person the ICP describes. When the ICP says what qualifies, that is the test: an ICP that says "capability, not seniority" passes anyone who does the work whatever their title; an ICP about people who OWN a function passes whoever owns it, whatever their level.
 
-**Founder-class titles pass on their own only when being a founder, owner or operator IS the ICP's criterion** — `Founder`, `Co-Founder`, `Owner`, `CEO`, `Fundador`, `Building X` against "founders and owner-operators who run customer acquisition". Do not downgrade them to `unclear` for lacking detail there: a founder decides without a committee, which is what such an ICP selects for. When the ICP adds a further constraint the title does not meet on its own — a capability ("technical founders who build"), a stage, an industry, a function they must own — a bare founder title is `unclear` until something in the input meets it: `Founder` against "technical founders shipping AI agents" is `unclear`, `Founder of an agent-tooling startup` is `pass`, `Founder of a recruiting agency` is `reject`. When the ICP targets a specific non-founder role ("staff security engineers"), a bare founder title is `unclear`, never an automatic pass.
+**Founder-class titles pass on their own only when being a founder, owner or operator IS the ICP's criterion** — `Founder`, `Co-Founder`, `Owner`, `CEO`, `Fundador`, `Building X` against "founders and owner-operators who run how their business wins and books customers". Do not downgrade them to `unclear` for lacking detail there: a founder decides without a committee, which is what such an ICP selects for. When the ICP adds a further constraint the title does not meet on its own — a capability ("technical founders who build"), a stage, an industry, a function they must own — a bare founder title is `unclear` until something in the input meets it: `Founder` against "technical founders building payment integrations" is `unclear`, `Founder building a card-issuing API` is `pass`, `Founder of a recruiting agency` is `reject`. When the ICP targets a specific non-founder role ("staff security engineers"), a bare founder title is `unclear`, never an automatic pass.
 
 **`reject`** — the role is clearly a different job function from the one the ICP describes, so this person would not be the one to use, run or decide on what the founder offers. Only an explicit, unambiguous employer job function earns a reject.
 
@@ -39,15 +39,15 @@ A JSON object only:
 
 ## Worked examples: the same title flips with the ICP
 
-Against an ICP of "technical founders and engineering leads shipping AI agents — what qualifies is capability to build, not title or seniority":
-- `pass`: `Founder of assistant-ui`, `Founder of an agent-tooling startup`, `CTO`, `co-founder / chief technology officer`, `Senior Software Engineer - Developer Relations`, `ai engineer`, `AI transformation consultant who builds client systems`, `CS student shipping a hackathon agent`.
+Against an ICP of "technical founders and platform engineers building payment integrations at fintechs — what qualifies is capability to build, not title or seniority":
+- `pass`: `Founder of ledgerkit`, `Founder building a card-issuing API`, `CTO`, `co-founder / chief technology officer`, `Senior Software Engineer - Developer Relations`, `payments engineer`, `fintech consultant who builds client integrations`, `CS student shipping a hackathon checkout`.
 - `reject`: `Account Executive`, `Head of Growth`, `VP of Marketing and Product`, `Senior Product Designer`, `Talent Acquisition`, `Early stage VC investor` — when nothing else suggests they build.
-- `unclear`: bare `Founder` (technical is a constraint the title alone does not meet), `Manager`, `Consultant`, `COO at a 12-person startup`, `Club Snowboard Team Event Coordinator` at a software company.
+- `unclear`: bare `Founder` (technical is a constraint the title alone does not meet), `Manager`, `Consultant`, `COO at a 12-person startup`, `Club Snowboard Team Event Coordinator` at a payments company.
 
-Against an ICP of "founders, owner-operators and lean teams who own business customer acquisition":
-- `pass`: `Owner, Ridgeway Plumbing`, `Head of Growth at a seed-stage SaaS`, `Co-founder & Sales`, `Managing partner, 4-person design agency`, `Founder` of anything with business customers.
-- `reject`: `Backend Engineer` with no acquisition ownership, `Angel Investor`, `Undergraduate student` with no venture, `Executive Medical Coder`.
-- `unclear`: `Consultant`, `Director`, `Founder of a cafe` (business customers not evident), `Product Manager` (may own acquisition at a small company).
+Against an ICP of "founders, owner-operators and lean teams who own how a business that takes bookings wins and books its customers":
+- `pass`: `Owner, Harborview Dental`, `Head of Growth at a 9-location dental group`, `Co-founder & Practice Director`, `Managing partner, 3-vet practice`, `Founder` of anything that takes bookings.
+- `reject`: `Backend Engineer` with no booking or acquisition ownership, `Angel Investor`, `Undergraduate student` with no venture, `Executive Medical Coder`.
+- `unclear`: `Consultant`, `Director`, `Founder of a wellness brand` (bookings not evident), `Regional Manager` (may own booking across locations).
 
 `Head of Growth` is a reject in the first set and a pass in the second. The ICP decides, not the title.
 
@@ -58,7 +58,7 @@ Against an ICP of "founders, owner-operators and lean teams who own business cus
 - Seniority alone is not a `pass`. "VP" of the wrong function is `reject`.
 - Students and interns are judged like everyone else: on whether they do, or can clearly do, what the ICP describes. A student whose field suggests the described work but whose title is thin may be TIPPED to `pass` by evidence (a hackathon, a client project, a licence). Evidence never rescues a clearly excluded role — "judge the ROLE, not the evidence" still wins.
 - Do not infer a role from a company name.
-- **A hybrid title mixing two functions is judged on the half the ICP cares about.** `GTM Strategy & AI Transformation`, `Automation Strategist & Builder`, `fractional CTO`, `Growth Engineer` — if the half the ICP describes clearly does that work, `pass`; if it is vague, `unclear`. `reject` only when EVERY function the title names is clearly excluded by the ICP (`Recruiting & Payroll Lead` against a builders ICP).
+- **A hybrid title mixing two functions is judged on the half the ICP cares about.** `Operations Strategy & Systems`, `Integration Strategist & Builder`, `fractional CTO`, `Growth Engineer` — if the half the ICP describes clearly does that work, `pass`; if it is vague, `unclear`. `reject` only when EVERY function the title names is clearly excluded by the ICP (`Recruiting & Payroll Lead` against a builders ICP).
 - Consultants and agencies: when they do the described work themselves, or the ICP names them, `pass`. A pure advisory role with no sign of doing the work → `unclear`.
 - The `roleText` may contain several labelled sources (a self-written headline, an employer record, an event bio) that disagree. A stale or off-function employer record does not cancel a concrete headline that fits the ICP — judge on the strongest evidence present, and when that evidence clearly establishes the role, return `pass` (do not force `unclear` and burn a paid lookup). A conflict only lands `unclear` when no single source settles it. Conflicting sources never produce `reject`.
 - When torn between `pass` and `reject`, return `unclear`. When torn between `unclear` and `reject`, return `unclear`. Only return `reject` when the job function is unambiguous.
@@ -68,7 +68,7 @@ Against an ICP of "founders, owner-operators and lean teams who own business cus
 When `person.affinity` is `true`, the founder chose this trigger because its topic IS what they offer: the event, repo or feed is about the problem the ICP describes. Showing up there is a real signal of fit, so for this person:
 
 - `evidence` counts. The rule "Never let `evidence` alone produce a `pass`" does not apply.
-- `pass` anyone who could plausibly use, champion or bring in what the ICP describes, whatever their title or seniority: practitioners in the function (sales, growth, marketing, revenue operations, community, the engineers who build it), their managers, founders and operators.
+- `pass` anyone who could plausibly use, champion or bring in what the ICP describes, whatever their title or seniority: practitioners in the function the ICP names, the people who build or run the tools that function uses, their managers, founders and operators.
 - `reject` only when the role shows this person could not plausibly use or champion it at all: a student or researcher in an unrelated field with no business activity, or a role wholly outside business (a clinician, a teacher) with nothing tying them to the topic.
 - When torn, `pass`. `unclear` is still right when there is no role text at all.
 

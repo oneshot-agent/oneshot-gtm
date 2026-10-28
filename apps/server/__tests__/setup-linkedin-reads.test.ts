@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Database } from "bun:sqlite";
 
 // GET /api/setup carries the live-read counter: what reads go through (the
 // connected account, else a verified browser session, else nothing), today's
@@ -8,6 +9,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   cfg: {} as Record<string, unknown>,
+  statements: [] as string[],
+  listQueue: vi.fn(),
   account: null as null | { workspace: string; accountId: string },
   accountThrows: false,
   queue: [] as Array<Record<string, unknown>>,
@@ -27,9 +30,37 @@ vi.mock("@oneshot-gtm/core", async () => {
       if (state.accountThrows) throw new Error("inbox store unreadable");
       return state.account;
     },
+    openLedgerDatabase: (_path: string, opts: { readonly: boolean }) => {
+      expect(opts).toEqual({ readonly: true });
+      const db = new Database(":memory:");
+      db.exec(`CREATE TABLE target_queue (
+        id INTEGER, play_name TEXT, status TEXT, sent_at TEXT, send_started_at TEXT,
+        payload_json TEXT, found_at TEXT
+      )`);
+      const insert = db.prepare("INSERT INTO target_queue VALUES (?, ?, ?, ?, ?, ?, ?)");
+      for (const row of state.queue) {
+        insert.run(
+          ...([
+            row["id"],
+            row["play_name"],
+            row["status"],
+            row["sent_at"],
+            row["send_started_at"],
+            row["payload_json"],
+            "2026-10-01",
+          ] as never[]),
+        );
+      }
+      const query = db.query.bind(db);
+      db.query = ((sql: string) => {
+        state.statements.push(sql);
+        return query(sql);
+      }) as typeof db.query;
+      return db;
+    },
     getLedger: () => ({
-      listQueue: (opts: { status: string }) =>
-        state.queue.filter((r) => r["status"] === opts.status),
+      filePath: ":memory:",
+      listQueue: state.listQueue,
       listTriggers: () => state.triggers,
       countCachedEnrichmentSince: (_prefix: string, since: string) => state.countSince(since),
     }),
@@ -61,6 +92,12 @@ beforeEach(() => {
     linkedinSessionCheckedAt: null,
     linkedinSessionInvalidAt: null,
   };
+  state.statements.length = 0;
+  state.listQueue
+    .mockReset()
+    .mockImplementation((opts: { status: string }) =>
+      state.queue.filter((r) => r["status"] === opts.status),
+    );
   state.account = null;
   state.accountThrows = false;
   state.triggers = [];
@@ -95,6 +132,14 @@ describe("linkedInReadsView", () => {
       // 1 and 2: 3 is read, 4 has no LinkedIn seed, 5 is sending, 6 opted out.
       waiting: 2,
     });
+    expect(state.listQueue).not.toHaveBeenCalled();
+    expect(state.statements).toHaveLength(2);
+    for (const sql of state.statements) {
+      expect(sql).not.toMatch(/SELECT\s+\*/i);
+      expect(sql).not.toMatch(/(?:SELECT|,)\s*payload_json\s*(?:,|FROM)/i);
+      expect(sql).not.toContain("last_draft_json");
+      expect(sql).toContain("json_extract");
+    }
   });
 
   it("falls back to a verified browser session, counted over the local day, with the configured cap", () => {

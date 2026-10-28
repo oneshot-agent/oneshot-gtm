@@ -15,14 +15,6 @@ import { enrolledMemberOffer } from "./_member-offer.ts";
 /** The kinds of organization that serve many of a founder's buyers at once. */
 export type MultiplierOrgType = "accelerator" | "association" | "agency" | "community" | "other";
 
-export const MULTIPLIER_ORG_TYPES: readonly MultiplierOrgType[] = [
-  "accelerator",
-  "association",
-  "agency",
-  "community",
-  "other",
-];
-
 export interface MultiplierTarget {
   /** The organization that serves the founder's buyers. */
   organization: string;
@@ -109,8 +101,8 @@ export const EMPTY_OFFER_MESSAGE =
 /**
  * The deterministic checks on a multiplier draft, besides the hard bans. The
  * member offer is founder truth the prompt quotes whole: a body that omits it,
- * shortens it, paraphrases it, changes a figure in it or extends one (`$1500`
- * for `$150`) is held rather than sent, and nothing rewrites the offer into
+ * shortens it, paraphrases it, changes a figure in it or extends one (`$3000`
+ * for `$300`) is held rather than sent, and nothing rewrites the offer into
  * the draft in its place. The offer is matched the way the hard-ban span is
  * (`quotesSpan`): verbatim, in the founder's own punctuation and case (the
  * draft pipeline keeps it so; see `humanizeDraft`), across the model's own

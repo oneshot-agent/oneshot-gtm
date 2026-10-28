@@ -15,12 +15,16 @@ The model knows only what you put in config, and each field reaches some drafts 
 | `icpOneLiner`                                        | no [^icp]                   | no                        | yes                               |
 | `productBrief`                                       | yes [^offer]                | yes [^offer]              | yes, and the only source of links |
 | `founderVoice`, the [voice card](./voice.md)         | yes                         | yes                       | yes                               |
+| `founderGreeting` [^style]                           | yes                         | yes                       | yes                               |
+| `subjectCase` [^style]                               | yes                         | yes                       | no (a reply has no subject)       |
 | Earlier emails on the thread                         | no                          | yes                       | yes                               |
 | `founderCohort`                                      | `accelerator-batch` only    | no                        | no                                |
 | A meeting outcome and your notes                     | no                          | no                        | yes                               |
 | Approved [learned guidance](./learning.md)           | yes                         | yes                       | yes                               |
 
 [^icp]: `add-prospect`, `profile-intro` and `x-repost-intro` pass it themselves.
+
+[^style]: Only when set to something other than the default (`Hey`, lowercase subjects). See [Greeting and subject case](./voice.md#greeting-and-subject-case).
 
 [^offer]: With the prospect offer, below. Plays that make no offer (`discovery-interview`, `pmf-survey`, `demo-no-show`, `x-amplify`, `community-reply`, `multiplier`) do not get it.
 
@@ -50,7 +54,7 @@ Config is source material. No field can force a sentence into an email; every pr
 
 `memberOffer` is what an organization's members get when it offers your product to them: credits, setup, an extended trial, in your own words, prices and conditions included. Only `multiplier` reads it. The email quotes it whole, the letter proposes it as its offer and its terms, and the model never writes, shortens or extends it: a draft that does not contain the offer verbatim is held (`multiplier:offer-missing`), nothing rewrites the offer into it, and a price or discount the model adds outside the quoted offer is held too. With it empty the play refuses before any paid call. Set it in `config.json` for the workspace or as `memberOffer` on one trigger; the trigger wins. Example, in a founder's words:
 
-> A two-week GTM sprint for your cohort: a live kickoff, a 30-minute setup for each company, up to $150 in OneShot credit earned as they go ($25 at setup, $50 after their first 100 sends, $75 at their first booked meeting), and a private benchmark at the end showing each company's reply rate and cost per meeting against the anonymized cohort.
+> Six weeks of the Pro plan free for every company in the cohort, a 20-minute onboarding call for each, and a shared Slack channel with our engineers until the programme ends. After that, 30% off the first year for any company that stays.
 
 ## The prospect offer
 

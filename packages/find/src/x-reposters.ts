@@ -22,8 +22,14 @@ import { XApiEngine } from "./_x-api.ts";
 import { TwitterApiIoEngine } from "./_x-twitterapiio.ts";
 import { harvestReposters } from "./_x-harvest.ts";
 import { splitSlots } from "./_x-lanes.ts";
-import { dropReason, lanesFor, scoreCandidate } from "./_x-score.ts";
-import type { XCandidate, XScoredCandidate, XSeed } from "./_x-types.ts";
+import {
+  DEFAULT_X_LANE_KEYWORDS,
+  dropReason,
+  lanesFor,
+  scoreCandidate,
+  type XLaneKeywords,
+} from "./_x-score.ts";
+import type { XCandidate, XLane, XScoredCandidate, XSeed } from "./_x-types.ts";
 import { resolveIcp, qualifyPerson } from "./_filter.ts";
 import { persistRoleRejection, qualifyPreSpend } from "./_qualify.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
@@ -42,6 +48,8 @@ export interface XRepostersFinderOpts extends RunOpts {
   maxSpendPerRun?: number;
   /** Share of `limit` reserved for the founder lane. Default 0.5. */
   laneSplit?: number;
+  /** Bio vocabulary per lane. Default: none, so the lane gates leave fit to the ICP gate. */
+  laneKeywords?: XLaneKeywords;
   /** ISO launch date, stamped onto amplifier payloads. */
   launchDate?: string;
   /** Our own handles. Never contacted. */
@@ -109,9 +117,10 @@ function grounding(s: XScoredCandidate) {
 
 /**
  * x-reposters finder: people who reposted/quoted a watched X account's recent
- * tweets → prospects, in two lanes. The founder lane (bio + real site say they
- * build things) routes to `x-repost-intro`. A normal email play behind the
- * person-ICP gate. The amplifier lane (dev/AI audience with reach) routes to
+ * tweets → prospects, in two lanes. The founder lane (a real site, plus the
+ * configured founder keywords when set) routes to `x-repost-intro`. A normal
+ * email play behind the person-ICP gate. The amplifier lane (reach, plus the
+ * configured amplifier keywords when set) routes to
  * `x-amplify` when research finds an email, else `x-amplify-dm`. A manual
  * hand-send draft. Ported from the x-amplifiers pack: same engines, cost
  * meter, hard drops, lane scoring and slot split; the Obsidian side is
@@ -124,6 +133,9 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
   const knobs: HarvestKnobs = { ...DEFAULT_KNOBS[engineName], ...opts.knobs };
   const maxSpend = opts.maxSpendPerRun ?? DEFAULT_MAX_SPEND[engineName];
   const laneSplit = opts.laneSplit ?? 0.5;
+  const laneKeywords = opts.laneKeywords ?? DEFAULT_X_LANE_KEYWORDS;
+  /** No founder keyword gate: site and follower floor alone put a pick in the founder lane. */
+  const founderGateOpen = !laneKeywords.founderKeywords.some((k) => k.trim());
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
   const now = new Date();
@@ -243,9 +255,9 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
   // Step 3: lanes + score + reserved slot split. Lanes rank within themselves
   // only: their weights differ, so scores are not comparable across lanes.
   const scored = survivors
-    .map((c) => ({ c, lanes: lanesFor(c.user) }))
+    .map((c) => ({ c, lanes: lanesFor(c.user, laneKeywords) }))
     .filter((x) => x.lanes.length > 0)
-    .map((x) => scoreCandidate(x.c, x.lanes));
+    .map((x) => scoreCandidate(x.c, x.lanes, laneKeywords));
   // Everyone the finder's own thresholds shed: hard drops + lane-gate misses.
   result.droppedLowSignal = result.candidates - scored.length;
   const picks = splitSlots(scored, limit, laneSplit);
@@ -254,10 +266,17 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     result.costUsd = meter.total;
     result.sdkCostUsd = 0;
     if (!result.halted) {
+      const keywordGates =
+        laneKeywords.founderKeywords.some((k) => k.trim()) ||
+        laneKeywords.amplifierKeywords.some((k) => k.trim());
       result.halted =
         result.candidates === 0
           ? "no reposters harvested — check seeds, or every fresh tweet was already harvested"
-          : "no candidates cleared the lane gates — widen seeds whose reposters build things";
+          : survivors.length === 0
+            ? "every reposter hit a hard drop (seed or own account, protected, bot, follow-farm) — widen seeds"
+            : keywordGates
+              ? "no candidates cleared the lane gates — widen seeds, or loosen founderKeywords/amplifierKeywords"
+              : "no candidates cleared the lane gates (follower floors; founders need a real site in the bio) — widen seeds";
     }
     logEvent("finder.done", {
       name: PLAY_NAME,
@@ -295,9 +314,28 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     }
     const seedHandle = primaryHit(c).seed;
     const source = `find:${PLAY_NAME}:@${seedHandle}`;
+    // The lane this pick is worked in. A founder-lane pick that also cleared
+    // the amplifier lane moves there when the person gate rejects it, but only
+    // while `founderKeywords` is empty: the site and follower floor were then
+    // the only founder evidence, and the gate's verdict is the real founder
+    // test. With founder keywords set, the bio already read as a founder and
+    // a rejection drops the pick, as the built-in lane lists always did.
+    let lane: XLane = pick.lane;
+    let scored: XScoredCandidate = pick;
+    const amplifierFallback =
+      pick.lane === "founder" && pick.lanes.includes("amplifier") && founderGateOpen;
+    const fallBackToAmplifier = (reason: string) => {
+      lane = "amplifier";
+      scored = scoreCandidate(c, ["amplifier"], laneKeywords);
+      logEvent("finder.progress", {
+        name: PLAY_NAME,
+        msg: `@${c.user.username}: person gate rejected the founder lane, trying amplifier`,
+        reason: reason.slice(0, 120),
+      });
+    };
 
     // Founder lane: stage-A person gate on the bio, free, before any spend.
-    if (pick.lane === "founder") {
+    if (lane === "founder") {
       const stageA = await qualifyPreSpend({
         icp,
         person: {
@@ -306,7 +344,9 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
           evidence: `reposted @${seedHandle} on X`,
         },
       });
-      if (stageA.action === "reject") {
+      if (stageA.action === "reject" && amplifierFallback) {
+        fallBackToAmplifier(stageA.reason);
+      } else if (stageA.action === "reject") {
         result.droppedRole = (result.droppedRole ?? 0) + 1;
         persistRoleRejection({
           playName: "x-repost-intro",
@@ -343,14 +383,14 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     try {
       research = await deepResearchPerson(
         { socialMediaUrl: twitterUrl, name: c.user.name },
-        { playName: PLAY_NAME, decisionContext: { source, lane: pick.lane } },
+        { playName: PLAY_NAME, decisionContext: { source, lane } },
       );
     } catch (err) {
       logEvent("error.swallowed", {
         kind: `${PLAY_NAME}.research`,
         message: ((err as Error).message ?? "").slice(0, 120),
       });
-      if (pick.lane === "founder") {
+      if (lane === "founder") {
         result.droppedEnrichment++;
         return;
       }
@@ -383,15 +423,14 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     const sdkEmail =
       str(enrichment["best_work_email"]) ?? str(enrichment["best_personal_email"]) ?? altEmails[0];
 
-    const base = { ...grounding(pick), engine: engineName };
-
-    if (pick.lane === "amplifier") {
-      // No ICP/person gate. We never pitch amplifiers; the lane gate is the
-      // qualification. Email found → automated ask; none → manual X draft.
-      const target: XAmplifyTarget | XAmplifyDmTarget = sdkEmail
+    // Amplifier lane: no person gate. We never pitch amplifiers; the lane gate
+    // is the qualification. Email found → automated ask; none → manual X draft.
+    const enqueueAmplifier = async (amplifierEmail: string | undefined) => {
+      const base = { ...grounding(scored), engine: engineName };
+      const target: XAmplifyTarget | XAmplifyDmTarget = amplifierEmail
         ? {
             name: c.user.name,
-            email: sdkEmail,
+            email: amplifierEmail,
             ...(dossier ? { dossier } : {}),
             ...researched,
             ...base,
@@ -407,24 +446,28 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
       // fit line (#592); the prompt says plainly when nothing connects.
       const fitReason = await generateFitReason({
         icp,
-        playName: sdkEmail ? "x-amplify" : "x-amplify-dm",
+        playName: amplifierEmail ? "x-amplify" : "x-amplify-dm",
         payload: target,
       });
       // One small LLM call whenever an ICP is set. It counts against the
       // same SDK/LLM ceiling as research, sentence or not.
       if (icp) sdkCost += FIT_REASON_COST_ESTIMATE_USD;
       const id = enqueueScoredTarget(ledger, {
-        playName: sdkEmail ? "x-amplify" : "x-amplify-dm",
-        channel: sdkEmail ? "email" : "x",
+        playName: amplifierEmail ? "x-amplify" : "x-amplify-dm",
+        channel: amplifierEmail ? "email" : "x",
         payload: target,
         dedupeKey,
         source,
         fitReason,
         fitReasonSource: "generated",
-        notes: pick.why,
+        notes: scored.why,
       });
       if (id != null) result.enqueued++;
       else result.droppedDuplicate++;
+    };
+
+    if (lane === "amplifier") {
+      await enqueueAmplifier(sdkEmail);
       return;
     }
 
@@ -464,7 +507,13 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
       return;
     }
     const extracted = tryParseJsonObject<ExtractResult>(extractRes.content, {});
-    const email = str(extracted.email) ?? sdkEmail;
+    // A placeholder the extract fills in ("N/A", "unknown") is not an email:
+    // keep the SDK's address rather than route a play to it.
+    const extractedEmail = str(extracted.email);
+    const email =
+      extractedEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(extractedEmail)
+        ? extractedEmail
+        : sdkEmail;
     const fullName = str(extracted.name) ?? c.user.name;
     const role = str(extracted.role);
 
@@ -484,6 +533,13 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
         evidence: `reposted @${seedHandle} on X`,
       },
     });
+    if (stageB.verdict === "reject" && amplifierFallback) {
+      // Research is already paid for, so the amplifier row reuses it, with the
+      // email the extract found when the SDK enrichment had none.
+      fallBackToAmplifier(stageB.reason);
+      await enqueueAmplifier(email);
+      return;
+    }
     if (stageB.verdict === "reject") {
       result.droppedRole = (result.droppedRole ?? 0) + 1;
       persistRoleRejection({
@@ -509,7 +565,8 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
       dossier,
       angle: str(extracted.angle),
       ...researched,
-      ...base,
+      ...grounding(pick),
+      engine: engineName,
       ...(edgeBySeed.has(seedHandle.toLowerCase())
         ? { seedEdge: edgeBySeed.get(seedHandle.toLowerCase())! }
         : {}),

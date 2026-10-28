@@ -306,7 +306,7 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         label: "Podcast",
         type: "text",
         required: true,
-        placeholder: "Latent Space",
+        placeholder: "e.g. The Practice Owners Show",
       },
       { key: "episodeTitle", label: "Episode title", type: "text", required: true },
       {
@@ -378,7 +378,7 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
   },
   "stack-consolidation": {
     description:
-      "Consolidation-honesty pitch to a developer whose repo wires up several separate API vendors. One SDK collapses the sprawl; cites the detected stack and one yourEdge fact.",
+      "Pitch to a developer whose repo wires up several vendors your product overlaps with. Cites the detected stack; the angle comes from your product brief and one yourEdge fact.",
     fields: [
       { key: "name", label: "Prospect name", type: "text", required: true },
       { key: "email", label: "Prospect email", type: "email", required: true },
@@ -389,14 +389,14 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         type: "textarea",
         required: true,
         placeholder: "e.g. auth0, stripe, sendgrid, datadog",
-        hint: "API vendors detected in their repo. Comma-separated.",
+        hint: "Vendors your product overlaps with, detected in their repo. Comma-separated.",
       },
       {
         key: "yourEdge",
         label: "Your edge (one sentence)",
         type: "textarea",
         required: true,
-        hint: "One specific way you collapse the sprawl. e.g. 'one integration replaces three separate vendors'.",
+        hint: "One specific thing your product does for a team running that stack. e.g. 'the alerts from all three land in one place'.",
       },
       {
         key: "evidenceUrl",
@@ -428,14 +428,14 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         label: "Repo they starred (owner/name)",
         type: "text",
         required: true,
-        placeholder: "e.g. modelcontextprotocol/servers",
+        placeholder: "e.g. calcom/cal.com",
       },
       {
         key: "yourEdge",
         label: "Your edge (one sentence)",
         type: "textarea",
         required: true,
-        hint: "How your product helps someone working in this space. e.g. 'one SDK for the tools they're already wiring up'.",
+        hint: "How your product helps someone working in this space. e.g. 'it works with the tool they already chose'.",
       },
       {
         key: "evidenceUrl",
@@ -466,14 +466,14 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         key: "attendeeBio",
         label: "Attendee bio / role (optional)",
         type: "text",
-        placeholder: 'e.g. "Founder @ AcmeAI"',
+        placeholder: 'e.g. "Practice owner @ Bright Smile Dental"',
       },
       {
         key: "eventTitle",
         label: "Event title",
         type: "text",
         required: true,
-        placeholder: "e.g. SF AI Builders Meetup",
+        placeholder: "e.g. Austin Practice Owners Mixer",
       },
       {
         key: "eventDate",

@@ -602,8 +602,17 @@ export const api = {
   ) => postJson<{ offer: { offer: string; steps: string } }>(`/queue/${id}/offer`, body),
   // Send the row's already-reviewed draft verbatim (no LLM re-roll). Requires
   // a clean, not-yet-sent persisted draft; marks the row sent on success.
+  // An email answers `sent`/`receiptIds`; a LinkedIn row answers its `status`
+  // (`already_connected` when a known connection was recorded and no invite went out).
   sendDraft: (id: number) =>
-    postJson<{ sent: boolean; receiptIds: number[] }>(`/queue/${id}/send-draft`, {}),
+    postJson<{
+      sent?: boolean;
+      receiptIds?: number[];
+      ok?: boolean;
+      prospectId?: number;
+      invitationId?: string;
+      status?: string;
+    }>(`/queue/${id}/send-draft`, {}),
   // Record a hand-sent manual-play draft (x-amplify-dm): writes the channel:"x"
   // sequence event + prospect and flips the row to sent. No transport.
   markSent: (id: number) =>

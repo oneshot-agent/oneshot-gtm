@@ -6,6 +6,7 @@ import type { ProspectRecord } from "@oneshot-gtm/core";
 
 const llmCalls: Array<{ user: string; system: string }> = [];
 let voiceCard: string | null = null;
+let styleOverrides: Record<string, unknown> = {};
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -38,6 +39,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       dailySpendCeilingUsd: null,
       calendarIdentityId: null,
       calendarId: "primary",
+      ...styleOverrides,
     }),
     getLedger: () => ({
       findDirectMail: () => null,
@@ -142,6 +144,7 @@ function ctx(prospectId = 42, angleJson: string | null = null) {
 
 beforeEach(() => {
   voiceCard = null;
+  styleOverrides = {};
   llmCalls.length = 0;
   nextLlmContent = null;
   llmQueue.length = 0;
@@ -195,6 +198,18 @@ describe("buildFollowUpEmail — VOICE block", () => {
     });
     const out = await builder(ctx());
     expect(llmCalls[0]!.user).not.toContain("VOICE");
+    expect(out).toEqual({ kind: "email", subject: "ok", body: "ok body" });
+  });
+
+  it("carries a greeting override without a card, and stamps no key: the draft is voice off", async () => {
+    styleOverrides = { founderGreeting: "Hi" };
+    const builder = buildFollowUpEmail({
+      playName: "stack-consolidation",
+      promptName: "stack-consolidation-followup",
+      contextLines: ["PLAY: stack-consolidation."],
+    });
+    const out = await builder(ctx());
+    expect(llmCalls[0]!.user).toContain("GREETING: Hi");
     expect(out).toEqual({ kind: "email", subject: "ok", body: "ok body" });
   });
 });

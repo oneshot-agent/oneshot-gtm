@@ -29,7 +29,7 @@ const DASHBOARD = {
   serverEntry: "/Users/jo/oneshot-gtm/apps/server/src/bin.ts",
   home: "/Users/jo/.oneshot-gtm-workspaces/acme",
   workspace: "acme",
-  port: 3031,
+  port: 4031,
 };
 
 describe("renderLaunchdPlist", () => {
@@ -215,7 +215,7 @@ describe("dashboard service", () => {
       "<key>ONESHOT_GTM_HOME</key>\n    <string>/Users/jo/.oneshot-gtm-workspaces/acme</string>",
     );
     expect(plist).toContain("<key>ONESHOT_GTM_WORKSPACE</key>\n    <string>acme</string>");
-    expect(plist).toContain("<key>PORT</key>\n    <string>3031</string>");
+    expect(plist).toContain("<key>PORT</key>\n    <string>4031</string>");
     // A login must not open a browser tab.
     expect(plist).toContain("<key>ONESHOT_GTM_NO_BROWSER</key>\n    <string>1</string>");
     expect(plist).toContain(

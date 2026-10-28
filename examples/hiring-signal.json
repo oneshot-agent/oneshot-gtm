@@ -1,10 +1,10 @@
 [
   {
-    "name": "Sam Builder",
-    "email": "sam@beacon.run",
-    "company": "Beacon",
-    "jobTitle": "Founding GTM Engineer",
-    "jobPostUrl": "https://jobs.lever.co/example-beacon/founding-gtm",
-    "yourClaim": "Cuts the 6-week new-GTM-hire ramp to 2 weeks by handing them a working set of 10 named plays + per-play CAC dashboards on day 1."
+    "name": "Owen Fitzgerald",
+    "email": "owen@fitzgeraldmechanical.example",
+    "company": "Fitzgerald Mechanical",
+    "jobTitle": "Dispatch Coordinator",
+    "jobPostUrl": "https://jobs.example/fitzgerald-mechanical/dispatch-coordinator",
+    "yourClaim": "Gets a new dispatcher running the board in their first week instead of their second month, because job history, tech skills and service areas are already on screen."
   }
 ]

@@ -144,7 +144,7 @@ const FIXTURES: Record<(typeof SCORED_PLAYS)[number], Record<string, unknown>> =
   },
   "free-pilot": {
     name: "Dana",
-    email: "dana@riverahvac.com",
+    email: "dana@riverahvac.example",
     company: "Rivera HVAC",
     businessType: "HVAC contractor",
     yourEdge: "free scheduling setup",
@@ -233,7 +233,7 @@ const FIXTURES: Record<(typeof SCORED_PLAYS)[number], Record<string, unknown>> =
   },
   "new-business": {
     name: "Rae's Dental",
-    email: "rae@raesdental.com",
+    email: "rae@raesdental.example",
     company: "Rae's Dental",
     source: "nppes",
     sourceLabel: "NPPES Dentist (NY)",

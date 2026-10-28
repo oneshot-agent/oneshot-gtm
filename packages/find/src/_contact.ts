@@ -11,6 +11,7 @@ import {
   getLedger,
   isCachedPaidFailure,
   isFreemailDomain,
+  isTransientToolError,
   logEvent,
   type OutreachChannel,
   type PersonResult,
@@ -299,13 +300,17 @@ export async function resolveViaProfileFallback(
       recordResolutionOutcome(false);
       profile = enriched.result.profile ?? null;
     } catch (err) {
-      // A failure the paid cache remembers is a verdict, not an outage.
-      if (!isCachedPaidFailure(err)) {
+      // Only a transient failure is an outage. A verdict ("could not find
+      // data"), fresh or remembered by the paid cache, is a miss.
+      if (isTransientToolError(err) && !isCachedPaidFailure(err)) {
         swallowed(`${args.playName}.no_domain_enrich`, err);
         recordResolutionOutcome(true);
         report("linkedin", { ok: false, reason: "platform-error", costUsd });
         return { ok: false, reason: "platform-error", costUsd };
       }
+      // A fresh verdict is the backend answering, so it ends a failure run. A
+      // remembered one never probed the backend and leaves the breaker alone.
+      if (!isCachedPaidFailure(err)) recordResolutionOutcome(false);
     }
     const domain = employerDomain(profile);
     if (domain) {
@@ -346,14 +351,16 @@ export async function resolveViaProfileFallback(
       email = workEmailFrom(dr.result.result?.enrichment);
     } catch (err) {
       // The dossier is the slowest call in the toolbox (2-5 min): running out
-      // of time is no answer, not an outage. Same for a remembered failure.
+      // of time is no answer, not an outage. Neither is a verdict ("could not
+      // find data"), fresh or remembered: only a transient failure is.
       const timedOut = /deadline exceeded/.test(String((err as Error)?.message ?? ""));
-      if (!timedOut && !isCachedPaidFailure(err)) {
+      if (!timedOut && isTransientToolError(err) && !isCachedPaidFailure(err)) {
         swallowed(`${args.playName}.no_domain_research`, err);
         recordResolutionOutcome(true);
         report(social.via, { ok: false, reason: "platform-error", costUsd });
         return { ok: false, reason: "platform-error", costUsd };
       }
+      if (!timedOut && !isCachedPaidFailure(err)) recordResolutionOutcome(false);
     }
     if (email) {
       const resolved = await retry({ knownEmail: email });

@@ -247,7 +247,7 @@ describe("inbox route — persisted drafts & sent replies", () => {
       emails: [
         {
           id: "auto-permanent-1",
-          from: "retired@ghostco.com",
+          from: "retired@ghostco.example",
           subject: "Delivery has failed",
           received_at: "2026-06-10T01:00:00Z",
           body: "This person is no longer with the company.",
@@ -261,7 +261,7 @@ describe("inbox route — persisted drafts & sent replies", () => {
       expect(res.status).toBe(200);
       expect(notifySlackBounceRecordedMock).toHaveBeenCalledTimes(1);
       expect(notifySlackBounceRecordedMock).toHaveBeenCalledWith({
-        recipient: "retired@ghostco.com",
+        recipient: "retired@ghostco.example",
         kind: "auto_permanent",
         status_code: null,
       });
@@ -287,7 +287,7 @@ describe("inbox route — persisted drafts & sent replies", () => {
       emails: [
         {
           id: "auto-permanent-2",
-          from: "retired2@ghostco.com",
+          from: "retired2@ghostco.example",
           subject: "Delivery has failed",
           received_at: "2026-06-10T01:00:00Z",
           body: "This person is no longer with the company.",
@@ -632,7 +632,7 @@ describe("inbox route — research-grounded drafting", () => {
   it("passes research context into draftInboxReply and reports the spend", async () => {
     const res = await draftReplyRoute(
       post("/api/inbox/draft-reply", {
-        fromEmail: "aladdin@aliyev.site",
+        fromEmail: "sam@beacon.example",
         subject: "Re: x",
         body: "tell me about payments",
         id: "e1",
@@ -656,7 +656,7 @@ describe("inbox route — research-grounded drafting", () => {
       needsDecision: false,
     });
     expect(gatherReplyContextMock).toHaveBeenCalledWith({
-      fromEmail: "aladdin@aliyev.site",
+      fromEmail: "sam@beacon.example",
       prospectId: null,
       threadKey: "t1",
       excludeId: "e1",
@@ -857,7 +857,7 @@ describe("archive origin validation", () => {
       expect(restoreConversationMock).not.toHaveBeenCalled();
     },
   );
-  it.each(["http://localhost:3032", "http://127.0.0.1:5173", "http://[::1]:3032"])(
+  it.each(["http://localhost:4032", "http://127.0.0.1:5173", "http://[::1]:4032"])(
     "allows dashboard origin %s",
     async (origin) => {
       const req = new Request("http://localhost/api/inbox/archive", {

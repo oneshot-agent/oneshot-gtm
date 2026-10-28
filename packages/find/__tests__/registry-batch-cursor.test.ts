@@ -75,6 +75,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 const { runTriggerNow, runDueTriggers, TRIGGERS } = await import("../src/registry.ts");
 
 const HIRING_SIGNAL_CONFIG = {
+  roles: ["Engineer"],
   companies: ["Acme"],
   yourClaim: "we cut onboarding time in half",
   sinceDays: 14,

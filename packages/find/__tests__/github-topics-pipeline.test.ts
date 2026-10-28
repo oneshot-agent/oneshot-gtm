@@ -66,8 +66,8 @@ vi.mock("@oneshot-gtm/core", async () => {
       telemetryEnabled: false,
       founderName: null,
       founderEmail: null,
-      productOneLiner: "TestProduct SDK",
-      icpOneLiner: "Engineers building agents",
+      productOneLiner: "TestProduct — scheduling and invoicing for field-service teams",
+      icpOneLiner: "B2B fintech founders",
       clientId: "test",
     }),
     findEmail: async () => {
@@ -215,7 +215,7 @@ const baseOpts = {
   dryRun: false as const,
   topics: ["llm-agents", "ai-agent"],
   vendors: ["langchain", "openai", "anthropic", "twilio", "stripe"],
-  yourEdge: "TestProduct bundles every vendor into one signed action.",
+  yourEdge: "TestProduct replaces three scheduling tools with one calendar.",
   limit: 25,
   maxCostUsd: 5,
 };

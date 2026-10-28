@@ -137,12 +137,12 @@ describe("fetchGitHubUser", () => {
     mockFetchOnceJson(200, {
       login: "ada",
       type: "User",
-      bio: "  Building agent infra at a payments startup  ",
+      bio: "  Building payroll tooling at a payments startup  ",
       location: "",
       blog: "acme.dev",
     });
     const out = await fetchGitHubUser("ada");
-    expect(out?.bio).toBe("Building agent infra at a payments startup");
+    expect(out?.bio).toBe("Building payroll tooling at a payments startup");
     expect(out?.location).toBeNull();
     expect(out?.blogUrl).toBe("acme.dev");
   });

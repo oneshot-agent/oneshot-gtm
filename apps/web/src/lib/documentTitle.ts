@@ -13,7 +13,7 @@ import { IS_DEMO } from "../api/demo.ts";
 export const SUFFIX = "oneshot·gtm";
 
 /**
- * `Queue · sdk · oneshot·gtm`.
+ * `Queue · acme · oneshot·gtm`.
  *
  * The workspace segment is dropped for `default` and for the demo: matching
  * WorkspaceSwitcher's dot, which also treats the default install as the

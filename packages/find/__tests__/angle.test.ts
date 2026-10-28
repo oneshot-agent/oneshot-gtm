@@ -44,7 +44,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       llmModel: "test",
       founderName: "Founder",
       productOneLiner: "TestProduct",
-      icpOneLiner: "Engineers building agents",
+      icpOneLiner: "B2B fintech founders",
       founderCredentials: null,
       productPortfolio: null,
       founderAdmission: null,
@@ -335,11 +335,11 @@ describe("gatherAngleEvidence", () => {
   it("prefers a researchable linkedin_url over a non-researchable source_profile_url", async () => {
     // Reuses research-prospects.ts's researchUrl: a luma.com/user/<handle> page
     // has no content ("Nothing Here, Yet") while linkedin_url is a real profile.
-    prospect!.source_profile_url = "https://luma.com/user/rnq";
-    prospect!.linkedin_url = "https://www.linkedin.com/in/raunaqbose";
+    prospect!.source_profile_url = "https://luma.com/user/raeo";
+    prospect!.linkedin_url = "https://www.linkedin.com/in/raeokafor";
     webReadResult = { markdown: "LinkedIn bio content", cost: 0.01 };
     const out = await gatherAngleEvidence(1);
-    expect(webReadCalls).toEqual(["https://www.linkedin.com/in/raunaqbose"]);
+    expect(webReadCalls).toEqual(["https://www.linkedin.com/in/raeokafor"]);
     expect(out?.webReadText).toContain("LinkedIn bio content");
   });
 });
@@ -347,7 +347,7 @@ describe("gatherAngleEvidence", () => {
 describe("synthesizePersonAngle", () => {
   it("parses a valid LLM response into a ProspectAngle", async () => {
     llmResponse = JSON.stringify({
-      brief: "Builds agent infra.",
+      brief: "Builds scheduling software for dental groups.",
       hook: "Shipped agent-loop yesterday.",
       relationship: "builder",
       evidence: [{ claim: "shipped agent-loop", source: "https://github.com/ada/agent-loop" }],
@@ -538,7 +538,7 @@ describe("synthesizePersonAngle", () => {
     // "replies:2" is never in `sources`. Both must be dropped by the
     // anti-fabrication gate even though both are non-blank strings.
     llmResponse = JSON.stringify({
-      brief: "Builds agent infra.",
+      brief: "Builds scheduling software for dental groups.",
       hook: "Shipped agent-loop yesterday.",
       evidence: [
         { claim: "made this up", source: "https://not-real.example/nowhere" },
