@@ -172,6 +172,35 @@ function stringList(value: unknown): string[] {
     : [];
 }
 
+/**
+ * github-topics `vendors` as readiness counts them and the run matches them:
+ * trimmed, blanks dropped, one entry per name ignoring case (the first
+ * spelling kept). Matching is case-insensitive, so case adds nothing.
+ */
+export function githubTopicsVendors(cfg: Record<string, unknown>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of stringList(cfg["vendors"])) {
+    const name = v.trim();
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
+}
+
+/**
+ * github-topics `minVendors` for both readiness and the run: a number or a
+ * numeric string, rounded down, at least 1; anything else is the default 2.
+ */
+export function githubTopicsMinVendors(cfg: Record<string, unknown>): number {
+  const raw = cfg["minVendors"];
+  const n =
+    typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
+  return Number.isFinite(n) ? Math.max(1, Math.floor(n)) : 2;
+}
+
 /** Evaluate a spec's readiness fn (defaulting to ready when absent). */
 export function checkReadiness(spec: TriggerSpec, config: Record<string, unknown>): Readiness {
   if (!spec.readiness) return { ready: true };
@@ -937,8 +966,7 @@ export const TRIGGERS: TriggerSpec[] = [
           reason: "set `topics` (one or more GitHub topic slugs, e.g. 'observability')",
         };
       }
-      const vendors = cfg["vendors"];
-      if (!Array.isArray(vendors) || vendors.length === 0) {
+      if (githubTopicsVendors(cfg).length === 0) {
         return {
           ready: false,
           reason:
@@ -946,15 +974,9 @@ export const TRIGGERS: TriggerSpec[] = [
         };
       }
       // A repo must match `minVendors` distinct vendors, so a shorter list can
-      // never match anything. Say so here rather than run empty forever. The
-      // floor mirrors the finder's: at least 1, default 2.
-      const minVendors = Math.max(
-        1,
-        typeof cfg["minVendors"] === "number" && Number.isFinite(cfg["minVendors"])
-          ? cfg["minVendors"]
-          : 2,
-      );
-      const distinctVendors = new Set(stringList(vendors).map((v) => v.trim().toLowerCase())).size;
+      // never match anything. Say so here rather than run empty forever.
+      const minVendors = githubTopicsMinVendors(cfg);
+      const distinctVendors = githubTopicsVendors(cfg).length;
       if (distinctVendors < minVendors) {
         return {
           ready: false,
@@ -974,9 +996,7 @@ export const TRIGGERS: TriggerSpec[] = [
       const topics = Array.isArray(cfg["topics"])
         ? (cfg["topics"] as unknown[]).filter((t): t is string => typeof t === "string")
         : [];
-      const vendors = Array.isArray(cfg["vendors"])
-        ? (cfg["vendors"] as unknown[]).filter((v): v is string => typeof v === "string")
-        : [];
+      const vendors = githubTopicsVendors(cfg);
       const directCompetitors = Array.isArray(cfg["directCompetitors"])
         ? (cfg["directCompetitors"] as unknown[]).filter((v): v is string => typeof v === "string")
         : [];
@@ -989,7 +1009,7 @@ export const TRIGGERS: TriggerSpec[] = [
         yourEdge,
         minStars: (cfg["minStars"] as number) ?? 5,
         maxAgeDays: (cfg["maxAgeDays"] as number) ?? 90,
-        minVendors: (cfg["minVendors"] as number) ?? 2,
+        minVendors: githubTopicsMinVendors(cfg),
         concurrency: (cfg["concurrency"] as number) ?? 3,
         useDeepResearch: cfg["useDeepResearch"] !== false,
         limit: (cfg["limit"] as number) ?? 25,

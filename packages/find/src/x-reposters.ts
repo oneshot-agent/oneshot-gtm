@@ -425,12 +425,12 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
 
     // Amplifier lane: no person gate. We never pitch amplifiers; the lane gate
     // is the qualification. Email found → automated ask; none → manual X draft.
-    const enqueueAmplifier = async () => {
+    const enqueueAmplifier = async (amplifierEmail: string | undefined) => {
       const base = { ...grounding(scored), engine: engineName };
-      const target: XAmplifyTarget | XAmplifyDmTarget = sdkEmail
+      const target: XAmplifyTarget | XAmplifyDmTarget = amplifierEmail
         ? {
             name: c.user.name,
-            email: sdkEmail,
+            email: amplifierEmail,
             ...(dossier ? { dossier } : {}),
             ...researched,
             ...base,
@@ -446,15 +446,15 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
       // fit line (#592); the prompt says plainly when nothing connects.
       const fitReason = await generateFitReason({
         icp,
-        playName: sdkEmail ? "x-amplify" : "x-amplify-dm",
+        playName: amplifierEmail ? "x-amplify" : "x-amplify-dm",
         payload: target,
       });
       // One small LLM call whenever an ICP is set. It counts against the
       // same SDK/LLM ceiling as research, sentence or not.
       if (icp) sdkCost += FIT_REASON_COST_ESTIMATE_USD;
       const id = enqueueScoredTarget(ledger, {
-        playName: sdkEmail ? "x-amplify" : "x-amplify-dm",
-        channel: sdkEmail ? "email" : "x",
+        playName: amplifierEmail ? "x-amplify" : "x-amplify-dm",
+        channel: amplifierEmail ? "email" : "x",
         payload: target,
         dedupeKey,
         source,
@@ -467,7 +467,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     };
 
     if (lane === "amplifier") {
-      await enqueueAmplifier();
+      await enqueueAmplifier(sdkEmail);
       return;
     }
 
@@ -528,9 +528,10 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
       },
     });
     if (stageB.verdict === "reject" && amplifierFallback) {
-      // Research is already paid for, so the amplifier row reuses it.
+      // Research is already paid for, so the amplifier row reuses it, with the
+      // email the extract found when the SDK enrichment had none.
       fallBackToAmplifier(stageB.reason);
-      await enqueueAmplifier();
+      await enqueueAmplifier(email);
       return;
     }
     if (stageB.verdict === "reject") {

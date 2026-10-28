@@ -37,6 +37,8 @@ let dupHandles = new Set<string>();
 let emailsByHandle: Record<string, string> = {};
 /** handles whose deepResearchPerson call throws ("Could not find data…"). */
 let researchFailsFor = new Set<string>();
+/** The email the profile-extract LLM call returns; null = none. */
+let extractedEmail: string | null = null;
 
 function user(over: Partial<XUser> = {}): XUser {
   return {
@@ -148,7 +150,7 @@ vi.mock("@oneshot-gtm/intel", () => ({
       name: null,
       company: "Acme",
       role: "CTO",
-      email: null,
+      email: extractedEmail,
       angle: "ships agent infra",
     }),
   }),
@@ -217,6 +219,7 @@ beforeEach(() => {
   dupHandles = new Set();
   emailsByHandle = {};
   researchFailsFor = new Set();
+  extractedEmail = null;
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -369,6 +372,17 @@ describe("runXRepostersFinder — gates and bookkeeping", () => {
       expect(persisted).toHaveLength(0);
       expect(enqueued[0]!.playName).toBe("x-amplify");
       expect(researchCalls).toEqual(["duob"]);
+    });
+
+    it("stage-B fallback keeps an email only the extract found, so the row is x-amplify", async () => {
+      harvestCandidates = [dual("duoe")];
+      stageBVerdict = "reject";
+      // No email in the SDK enrichment; the profile extract finds one.
+      extractedEmail = "duoe@x.dev";
+      const out = await runXRepostersFinder({ dryRun: false, seeds: SEEDS });
+      expect(out.enqueued).toBe(1);
+      expect(enqueued[0]!.playName).toBe("x-amplify");
+      expect(enqueued[0]!.payload["email"]).toBe("duoe@x.dev");
     });
 
     it("with founder keywords configured, a rejection still drops the pick as before", async () => {

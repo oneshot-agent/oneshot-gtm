@@ -399,6 +399,18 @@ describe("checkReadiness", () => {
     expect(checkReadiness(spec, { ...base, vendors: ["Datadog", "datadog ", " "] }).ready).toBe(
       false,
     );
+    // A numeric string counts as the number it spells, as it does in the run.
+    const asText = checkReadiness(spec, {
+      ...base,
+      vendors: ["datadog", "sentry"],
+      minVendors: "3",
+    });
+    expect(asText.ready).toBe(false);
+    if (!asText.ready) expect(asText.reason).toMatch(/at least 3 `vendors`/);
+    // Only blanks is the same as no vendors.
+    const blanks = checkReadiness(spec, { ...base, vendors: [" ", ""] });
+    expect(blanks.ready).toBe(false);
+    if (!blanks.ready) expect(blanks.reason).toMatch(/^set `vendors`/);
     // The count follows a configured minVendors, which readiness never changes.
     const three = { ...base, vendors: ["datadog", "sentry"], minVendors: 3 };
     const out = checkReadiness(spec, three);
