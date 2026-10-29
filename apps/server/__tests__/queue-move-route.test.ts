@@ -204,11 +204,20 @@ describe("POST /api/queue/:id/move", () => {
     _setLaunchSpawn(() => {
       /* never comes up */
     });
-    const res = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
-    expect(res.status).toBe(503);
-    expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "pending"]);
-    expect(noteCalls).toEqual([{ id: 746, notes: "" }]);
-  }, 20_000);
+    // #978 readiness now accommodates cold-boot cleanup; advance that wait
+    // without making the rollback regression test spend 150s in real time.
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    try {
+      const moving = moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
+      await vi.runAllTimersAsync();
+      const res = await moving;
+      expect(res.status).toBe(503);
+      expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "pending"]);
+      expect(noteCalls).toEqual([{ id: 746, notes: "" }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("refuses a row the drain has leased in the last 15 minutes", async () => {
     row!.status = "approved";

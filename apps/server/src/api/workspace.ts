@@ -187,8 +187,12 @@ export function resolveOtherWorkspace(
   return { ok: true, entry };
 }
 
-/** How long a just-spawned workspace gets to answer /api/health before a move gives up. */
-const LAUNCH_WAIT_MS = 15_000;
+/**
+ * Cold boot awaits two 60s cleanup retry windows, each of which can overrun
+ * by SQLite's 5s busy timeout (boot-cleanup.ts). Allow 20s more for startup
+ * and HTTP binding before a queue move gives up on the destination.
+ */
+const LAUNCH_WAIT_MS = 150_000;
 const LAUNCH_POLL_MS = 500;
 
 /**

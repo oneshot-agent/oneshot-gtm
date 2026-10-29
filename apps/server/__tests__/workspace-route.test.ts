@@ -28,7 +28,8 @@ const fetchMock = vi.fn(async () => {
 });
 vi.stubGlobal("fetch", fetchMock);
 
-const { workspaceInfo, workspaceLaunch, _setLaunchSpawn } = await import("../src/api/workspace.ts");
+const { workspaceInfo, workspaceLaunch, ensureWorkspaceRunning, _setLaunchSpawn } =
+  await import("../src/api/workspace.ts");
 
 afterAll(() => {
   rmSync(tmp, { recursive: true, force: true });
@@ -113,6 +114,43 @@ describe("POST /api/workspace/launch", () => {
     expect(out.status).toBe("already-running");
     expect(spawns).toHaveLength(0);
   });
+});
+
+describe("workspace readiness for queue moves", () => {
+  it.each([true, false])(
+    "waits through cold-boot cleanup; eventually healthy: %s",
+    async (recovers) => {
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      const startedAt = Date.now();
+      const spawn = vi.fn();
+      _setLaunchSpawn(spawn);
+      // Two 60s cleanup budgets, each possibly overrun by a 5s SQLite wait,
+      // followed by HTTP binding. A permanently dead child must still time out.
+      fetchMock.mockImplementation(async () => {
+        if (recovers && Date.now() - startedAt >= 130_500) {
+          return new Response("{}", { status: 200 }) as never;
+        }
+        throw new Error("down");
+      });
+      try {
+        const starting = ensureWorkspaceRunning("alpha");
+        await vi.runAllTimersAsync();
+        const result = await starting;
+        expect(spawn).toHaveBeenCalledOnce();
+        if (recovers) {
+          expect(result).toEqual({ ok: true, port: 3999, started: true });
+          expect(Date.now() - startedAt).toBe(130_500);
+        } else {
+          expect(result).toMatchObject({ ok: false, status: 503 });
+          expect(Date.now() - startedAt).toBe(150_000);
+        }
+      } finally {
+        vi.useRealTimers();
+        fetchMock.mockReset();
+        _setLaunchSpawn();
+      }
+    },
+  );
 });
 
 const req = (body: unknown) =>
