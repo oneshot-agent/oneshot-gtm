@@ -54,6 +54,7 @@ import {
   listSequenceEventsForProspects as cadListSequenceEventsForProspects,
   postponeCadence as cadPostponeCadence,
   listLinkedInInviteEvents as cadListLinkedInInviteEvents,
+  listLinkedInInviteEventsForProspects as cadListLinkedInInviteEventsForProspects,
   listLinkedInInviteCadences as cadListLinkedInInviteCadences,
   updateLinkedInInviteEvent as cadUpdateLinkedInInviteEvent,
   recordLinkedInInviteEvent as cadRecordLinkedInInviteEvent,
@@ -535,6 +536,11 @@ export class Ledger {
    */
   listLinkedInInviteEvents(prospectId: number, playName: string): SequenceEventRecord[] {
     return cadListLinkedInInviteEvents(this.db, prospectId, playName);
+  }
+
+  /** LinkedIn invite events for many prospects, every play, in one query: see listLinkedInInviteEventsForProspects. */
+  listLinkedInInviteEventsForProspects(prospectIds: number[]): SequenceEventRecord[] {
+    return cadListLinkedInInviteEventsForProspects(this.db, prospectIds);
   }
 
   /** Active cadences with a sent LinkedIn invite: see listLinkedInInviteCadences. */

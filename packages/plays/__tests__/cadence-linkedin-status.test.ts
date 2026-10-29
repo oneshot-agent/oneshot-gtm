@@ -727,6 +727,90 @@ describe("unattended status sweep", () => {
     expect(calls).toEqual([]);
   });
 
+  it("a failed withdraw is tried once, then not again for a day", async () => {
+    inviteSent({ daysAgo: 22 });
+    const li = caller({
+      invitations: () => ({ invitations: [] }),
+      invitation: () => ({ invitation_id: "i", status: "pending", accepted_at: null }),
+      withdraw: () => {
+        throw new Error("Tool request failed");
+      },
+    });
+    const first = await sweepLinkedInInvitations({ linkedIn: li });
+    expect(first).toMatchObject({ withdrawn: 0, stopped: 0 });
+    expect(kinds()).toEqual(["invitations", "invitation", "withdraw"]);
+    expect(inviteMeta()).toMatchObject({ withdrawAttempts: 1 });
+    expect(ledger.getCadence(prospectId, PLAY)!.status).toBe("active");
+
+    calls = [];
+    await sweepLinkedInInvitations({ linkedIn: li, now: new Date(Date.now() + 23 * 3600_000) });
+    expect(kinds()).toEqual(["invitations"]);
+
+    calls = [];
+    await sweepLinkedInInvitations({ linkedIn: li, now: new Date(Date.now() + 25 * 3600_000) });
+    expect(kinds()).toEqual(["invitations", "invitation", "withdraw"]);
+    expect(inviteMeta()).toMatchObject({ withdrawAttempts: 2 });
+  });
+
+  it("a failed withdraw is retried within the day when the invitation changed", async () => {
+    inviteSent({ daysAgo: 22 });
+    ledger.updateLinkedInInviteEvent({
+      id: ledger.listLinkedInInviteEvents(prospectId, PLAY).at(-1)!.id,
+      metadata: { lastWithdrawAttemptAt: new Date().toISOString(), withdrawAttempts: 1 },
+    });
+    const li = caller({
+      invitations: () => ({
+        invitations: [{ invitation_id: `inv-${prospectId}`, status: "pending", accepted_at: null }],
+      }),
+      withdraw: () => ({ status: "withdrawn" }),
+    });
+    const out = await sweepLinkedInInvitations({ linkedIn: li });
+    expect(kinds()).toEqual(["invitations", "withdraw"]);
+    expect(out).toMatchObject({ withdrawn: 1, stopped: 1 });
+  });
+
+  it("counts an invite withdrawn elsewhere as stopped, not as a withdrawal it made", async () => {
+    inviteSent({ daysAgo: 22 });
+    const li = caller({
+      invitations: () => ({ invitations: [] }),
+      invitation: () => ({ invitation_id: "i", status: "withdrawn", accepted_at: null }),
+    });
+    const out = await sweepLinkedInInvitations({ linkedIn: li });
+    expect(out).toMatchObject({ withdrawn: 0, stopped: 1 });
+    expect(kinds()).not.toContain("withdraw");
+    expect(ledger.getCadence(prospectId, PLAY)!.status).toBe("stopped");
+  });
+
+  it("withdraws at the workspace's linkedin.inviteTimeoutDays", async () => {
+    const core = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+    const saved = core.loadConfig();
+    core.saveConfig({ ...saved, linkedin: { inviteTimeoutDays: 7 } });
+    try {
+      inviteSent({ daysAgo: 8 });
+      const young = ledger.upsertProspect({
+        name: "Sam Roe",
+        email: null,
+        linkedin_url: "https://www.linkedin.com/in/sam-roe",
+        source: PLAY,
+      });
+      inviteSent({ daysAgo: 6, prospect: young });
+      const li = caller({
+        invitations: () => ({ invitations: [] }),
+        invitation: () => ({ invitation_id: "i", status: "pending", accepted_at: null }),
+        withdraw: () => ({ status: "withdrawn" }),
+      });
+      const out = await sweepLinkedInInvitations({ linkedIn: li });
+      expect(out).toMatchObject({ pending: 2, withdrawn: 1, stopped: 1 });
+      expect(calls.filter((c) => c.kind === "withdraw")).toEqual([
+        expect.objectContaining({ invitationId: `inv-${prospectId}` }),
+      ]);
+      expect(ledger.getCadence(prospectId, PLAY)!.status).toBe("stopped");
+      expect(ledger.getCadence(young, PLAY)!.status).toBe("active");
+    } finally {
+      core.saveConfig(saved);
+    }
+  });
+
   it("asks once per account, however many invites it sent", async () => {
     inviteSent();
     const second = ledger.upsertProspect({

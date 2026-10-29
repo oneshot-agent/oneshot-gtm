@@ -25,6 +25,9 @@ const statusCalls: Array<Record<string, unknown>> = [];
 const channelCalls: Array<[number, string]> = [];
 let channelBusy = false;
 const linkedInCalls: Array<Record<string, unknown>> = [];
+const stopCalls: Array<Record<string, unknown>> = [];
+let stopResult = true;
+const inviteUpdates: Array<Record<string, unknown>> = [];
 let linkedInResult: unknown = { invitation_id: "inv-1", status: "sent" };
 let accountResult: unknown = {};
 let accountSeq = 0;
@@ -59,6 +62,14 @@ vi.mock("@oneshot-gtm/core", async () => {
       getCadencePlan: () => null,
       saveCadencePlan: () => {},
       listLinkedInInviteEvents: () => seqEvents,
+      stopCadence: (input: Record<string, unknown>) => {
+        stopCalls.push(input);
+        return stopResult;
+      },
+      updateLinkedInInviteEvent: (input: Record<string, unknown>) => {
+        inviteUpdates.push(input);
+        return true;
+      },
       setQueueChannel: (id: number, channel: string) => {
         channelCalls.push([id, channel]);
         return row.status === "sent" ? "sent" : channelBusy ? "busy" : "changed";
@@ -113,6 +124,9 @@ beforeEach(() => {
   channelCalls.length = 0;
   channelBusy = false;
   linkedInCalls.length = 0;
+  stopCalls.length = 0;
+  stopResult = true;
+  inviteUpdates.length = 0;
   linkedInResult = { invitation_id: "inv-1", status: "sent" };
   accountResult = {};
   _resetInviteLimitsCacheForTests();
@@ -250,6 +264,7 @@ describe("withdraw-invite", () => {
     row.prospect_id = 42;
     seqEvents = [
       {
+        id: 7,
         channel: "linkedin",
         step_index: 0,
         status: "sent",
@@ -257,6 +272,49 @@ describe("withdraw-invite", () => {
       },
     ];
     linkedInResult = { status: "withdrawn" };
+  });
+
+  it("stops the cadence and marks the invite ended once withdrawn", async () => {
+    const res = await withdrawInviteRoute(post(), { id: "1" });
+    expect(res.status).toBe(200);
+    // A Stop click, not the send worker: a send in flight keeps the cadence.
+    expect(stopCalls).toEqual([
+      expect.objectContaining({
+        prospectId: 42,
+        playName: "luma-events",
+        note: "LinkedIn invite withdrawn by hand",
+        holdingSendingMarker: false,
+      }),
+    ]);
+    expect(inviteUpdates).toEqual([
+      { id: 7, metadata: expect.objectContaining({ endedAt: expect.any(String) }) },
+    ]);
+  });
+
+  it("still answers 200 when the cadence was not stopped: the withdrawal is recorded", async () => {
+    stopResult = false;
+    const res = await withdrawInviteRoute(post(), { id: "1" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, status: "withdrawn" });
+    expect(recorded[0]).toMatchObject({ status: "withdrawn" });
+  });
+
+  it("refuses a row whose invite a later row replaced", async () => {
+    seqEvents[0]!.metadata_json = JSON.stringify({ invitationId: "inv-9", queueId: 2 });
+    const res = await withdrawInviteRoute(post(), { id: "1" });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      "a later invite replaced this row's",
+    );
+    expect(linkedInCalls).toHaveLength(0);
+    expect(recorded).toHaveLength(0);
+  });
+
+  it("withdraws the row's own invite when it carries this row's id", async () => {
+    seqEvents[0]!.metadata_json = JSON.stringify({ invitationId: "inv-1", queueId: 1 });
+    const res = await withdrawInviteRoute(post(), { id: "1" });
+    expect(res.status).toBe(200);
+    expect(linkedInCalls[0]).toMatchObject({ kind: "withdraw", invitationId: "inv-1" });
   });
 
   it("withdraws through OneShot and records a withdrawn step-0 event", async () => {

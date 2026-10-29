@@ -4,7 +4,7 @@ LinkedIn forgives little, so nothing here sends on a timer. You send each invite
 
 OneShot holds the account connection and carries out the actions through its API. No browser automation, no webhook to set up. oneshot-gtm decides who to write to, fills in the text from your [templates](#templates) and stops the cadence when someone answers.
 
-One thing runs unattended. Every 30 minutes the server checks pending invites: it records accepts, and withdraws an invite still pending after 21 days.
+One thing runs unattended. Every 30 minutes the server checks pending invites: it records accepts, and withdraws an invite still pending after 21 days (`config linkedin-invite-timeout <days>`, `off` for the default). A withdrawal that fails is tried again a day later.
 
 ## Connecting
 
@@ -21,7 +21,7 @@ A queue row on the LinkedIn channel gets a connection note from the [templates](
 - **Daily limit.** OneShot enforces the account's invite limit, 25 per UTC day by default, across every tool that uses the account. At the limit the batch stops and the rows stay approved.
 - **Workspace share.** `config linkedin-invites <count>` gives this workspace a share of that limit, so the first workspace to send does not spend the day. `off` removes it. The share never raises the account's limit.
 - **What is left.** Queue, Cadences and Setup show it: `LinkedIn invites today: 4 of 12 left · account 9 left`.
-- **Withdraw.** **Withdraw invite** on the row. It never removes an accepted connection.
+- **Withdraw.** **Withdraw invite** on the row, while its invite is pending; otherwise the row says whether it was accepted, withdrawn or ended. Withdrawing ends the person's LinkedIn cadence. It never removes an accepted connection.
 - **Switch channel.** An unsent row can move to another channel the person has an address on. Its draft is dropped; Regenerate writes a new one.
 
 A LinkedIn first touch starts a LinkedIn cadence, never an email one.

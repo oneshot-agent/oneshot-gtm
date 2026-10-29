@@ -1,6 +1,7 @@
 import {
   getLedger,
   dailySpendStatus,
+  DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS,
   loadConfig,
   saveConfig,
   saveSecrets,
@@ -264,6 +265,44 @@ export async function configLinkedInInvites(valueArg?: string): Promise<void> {
   ok(
     `this workspace may send ${count} LinkedIn invites per UTC day (the account cap still applies)`,
   );
+}
+
+/**
+ * Show or set `linkedin.inviteTimeoutDays`: days an unaccepted invite waits
+ * before it is withdrawn and its cadence ends. `off` clears it (the default
+ * applies). Must be a positive integer; anything else is refused.
+ */
+export async function configLinkedInInviteTimeout(valueArg?: string): Promise<void> {
+  header("LinkedIn invite timeout");
+  const cfg = loadConfig();
+  const current = cfg.linkedin?.inviteTimeoutDays;
+
+  if (valueArg === undefined) {
+    note(
+      current === undefined
+        ? `${DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS} days (the default) before an unaccepted invite is withdrawn`
+        : `${current} days before an unaccepted invite is withdrawn`,
+    );
+    note(c.dim("set with: oneshot-gtm config linkedin-invite-timeout <days|off>"));
+    return;
+  }
+
+  if (valueArg === "off") {
+    const { inviteTimeoutDays: _removed, ...rest } = cfg.linkedin ?? {};
+    saveConfig({ ...cfg, linkedin: rest });
+    ok(
+      `invite timeout cleared — the default of ${DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS} days applies`,
+    );
+    return;
+  }
+
+  // Number(), not parseInt: "14abc" must not save as 14.
+  const days = Number(valueArg);
+  if (!Number.isInteger(days) || days <= 0) {
+    throw new Error(`invalid days '${valueArg}' — pass a positive whole number, or 'off'`);
+  }
+  saveConfig({ ...cfg, linkedin: { ...cfg.linkedin, inviteTimeoutDays: days } });
+  ok(`an invite not accepted after ${days} days is withdrawn and its cadence ends`);
 }
 
 const X_TRIGGER = "x-reposters";

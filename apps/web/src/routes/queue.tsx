@@ -1320,6 +1320,7 @@ export function QueueRow({
               sendHold={row.sendHold}
               offerSkip={row.offerSkip ?? null}
               delivery={row.delivery ?? null}
+              linkedinInvite={row.linkedinInvite}
               draft={row.lastDraft}
               draftedAt={row.lastDraftedAt}
               generating={generating}
@@ -1366,6 +1367,16 @@ export function RowPayloadJson({ row }: { row: QueueRowView }) {
   return <PayloadJson value={detail.data?.row.payload ?? row.payload} />;
 }
 
+/** What a sent LinkedIn row shows in place of Withdraw once its invite is no longer pending. */
+function inviteStateLabel(invite: NonNullable<QueueRowView["linkedinInvite"]>): string {
+  if (invite.state === "withdrawn") {
+    return invite.withdrawnBy === "timeout"
+      ? "invite withdrawn after the wait"
+      : "invite withdrawn";
+  }
+  return invite.state === "accepted" ? "invite accepted" : "invite ended";
+}
+
 /**
  * Persisted draft with receipt links, send state, and generate/regenerate actions.
  * Draft actions use the preview-only endpoint and never send. Each finder
@@ -1385,6 +1396,7 @@ export function DraftSection({
   sendHold,
   offerSkip = null,
   delivery,
+  linkedinInvite,
 }: {
   id: number;
   channel: QueueRowView["channel"];
@@ -1396,6 +1408,8 @@ export function DraftSection({
   offerSkip?: QueueRowView["offerSkip"] | null;
   /** Sent-folder delivery check of this row's send, when one ran. */
   delivery?: QueueRowView["delivery"];
+  /** A sent LinkedIn row's invite state; absent means the server did not say. */
+  linkedinInvite?: QueueRowView["linkedinInvite"];
   draft: QueueRowView["lastDraft"];
   draftedAt: string | null;
   generating: boolean;
@@ -1539,13 +1553,15 @@ export function DraftSection({
   // channel its person has an address on (its draft is then rewritten).
   const withdrawInvite = useMutation({
     mutationFn: () => api.withdrawInvite(id),
-    onSuccess: (res) => {
+    onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
-      toast.success(
-        `invite ${res.status === "not_pending" ? "already accepted or closed" : "withdrawn"}`,
-      );
+      toast.success("invite withdrawn");
     },
-    onError: (err) => toast.error(`couldn't withdraw · ${err.message}`),
+    // A refusal usually means the invite moved on: read the row's state again.
+    onError: (err) => {
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      toast.error(`couldn't withdraw · ${err.message}`);
+    },
   });
   const switchChannel = useMutation({
     mutationFn: (next: QueueRowView["channel"]) => api.setQueueChannel(id, next),
@@ -1558,18 +1574,25 @@ export function DraftSection({
   const reachable = reachableChannels(payload);
   const channelButtons = (
     <>
-      {channel === "linkedin" && status === "sent" && !knownConnection && (
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={withdrawInvite.isPending}
-          onClick={() => withdrawInvite.mutate()}
-          {...readOnly}
-          title="Withdraw the connection request (never removes an accepted connection)"
-        >
-          {withdrawInvite.isPending ? "Withdrawing…" : "Withdraw invite"}
-        </Button>
-      )}
+      {channel === "linkedin" &&
+        status === "sent" &&
+        !knownConnection &&
+        (linkedinInvite && linkedinInvite.state !== "pending" ? (
+          <span className="font-mono text-[11px] text-ink-muted">
+            {inviteStateLabel(linkedinInvite)}
+          </span>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={withdrawInvite.isPending}
+            onClick={() => withdrawInvite.mutate()}
+            {...readOnly}
+            title="Withdraw the connection request (never removes an accepted connection)"
+          >
+            {withdrawInvite.isPending ? "Withdrawing…" : "Withdraw invite"}
+          </Button>
+        ))}
       {status !== "sent" && reachable.length > 1 && (
         <select
           aria-label="Channel"

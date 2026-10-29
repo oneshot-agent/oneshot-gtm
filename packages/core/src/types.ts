@@ -664,9 +664,13 @@ export interface OneShotConfig {
    *   the `linkedin-invite-note` and `linkedin-message` prompts.
    * - `templates`: this workspace's text per step. A step left unset uses the
    *   shipped default (`DEFAULT_LINKEDIN_TEMPLATES` in shared-types).
+   * - `inviteTimeoutDays`: days an unaccepted invite waits before it is
+   *   withdrawn and its cadence ends (positive integer). Unset =
+   *   `DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS` (21).
    */
   linkedin?: {
     invitesPerDay?: number;
+    inviteTimeoutDays?: number;
     writer?: LinkedInWriter;
     templates?: LinkedInTemplates;
   };

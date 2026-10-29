@@ -1288,6 +1288,29 @@ export function listLinkedInInviteEvents(
 }
 
 /**
+ * listLinkedInInviteEvents for many prospects in one query, every play,
+ * oldest first: group by prospect_id and play_name.
+ */
+export function listLinkedInInviteEventsForProspects(
+  db: Database,
+  prospectIds: number[],
+): SequenceEventRecord[] {
+  if (prospectIds.length === 0) return [];
+  return db
+    .query(
+      `SELECT * FROM sequence_events
+       WHERE prospect_id IN (SELECT value FROM json_each(?)) AND channel = 'linkedin'
+         AND (
+           step_index = 0
+           OR CASE WHEN json_valid(metadata_json)
+                   THEN json_extract(metadata_json, '$.kind') END = ?
+         )
+       ORDER BY id ASC`,
+    )
+    .all(JSON.stringify(prospectIds), LINKEDIN_INVITE_KIND) as SequenceEventRecord[];
+}
+
+/**
  * Record a LinkedIn invite send (or its withdrawal) with the invite marker, so
  * `listLinkedInInviteEvents` finds it at any step. A first-touch invite is
  * step 0; a continuation invite takes the step after the cadence's current one

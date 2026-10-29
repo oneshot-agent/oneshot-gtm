@@ -38,6 +38,7 @@ import {
   configSlackWebhook,
   configSpendCeiling,
   configLinkedInInvites,
+  configLinkedInInviteTimeout,
   configTelemetry,
   configXEngine,
   configLinkedInSession,
@@ -365,6 +366,12 @@ config
     "Show or set this workspace's share of the LinkedIn account's daily invite cap (positive integer per UTC day; 'off' clears it)",
   )
   .action(runOrFail((count?: string) => configLinkedInInvites(count)));
+config
+  .command("linkedin-invite-timeout [days]")
+  .description(
+    "Show or set the days an unaccepted LinkedIn invite waits before it is withdrawn (positive integer; 'off' restores the default of 21)",
+  )
+  .action(runOrFail((days?: string) => configLinkedInInviteTimeout(days)));
 
 const linkedin = program.command("linkedin").description("LinkedIn outreach safety");
 linkedin
