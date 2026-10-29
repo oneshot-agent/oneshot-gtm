@@ -293,6 +293,8 @@ describe("lintOffer", () => {
       "put into production the system that books every leeds job into an open slot",
       "Put it into production across the leeds depot crews",
       "ship the system that re-plans leeds crew routes before peak season",
+      "put the booking system into production for every leeds depot",
+      "deploy a system that books every leeds job into an open slot",
     ]) {
       expect(lintOffer({ ...good, level: "researched", offer }, research)).toContain(
         "offer-names-the-system",
@@ -851,7 +853,7 @@ describe("offer fit", () => {
   });
 
   it("bumps the prompt version so unedited offers re-derive", () => {
-    expect(OFFER_PROMPT_VERSION).toBe("offer-v7");
+    expect(OFFER_PROMPT_VERSION).toBe("offer-v8");
   });
 });
 
@@ -1922,7 +1924,7 @@ describe("the offer bar", () => {
       {
         "irrelevant": "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.",
         "relevant": "A goal this firm at its stage would put on its plan and this person is measured on, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), resting on a specific fact about them: a piece their own product is missing to finish its job for its customers (never the job it already does), or a goal their own firm visibly has outside its core product.",
-        "weak": "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on (a collecting, recovering, reconciling or re-planning job offered bare to a technology, engineering, data or AI leader, whose goal is the system that does it, shipped into a named workflow of theirs), a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.",
+        "weak": "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on (a collecting, recovering, reconciling or re-planning job offered bare to a technology, engineering, data or AI leader, whose goal is one named workflow of theirs that their own software carries to its end state), a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.",
       }
     `);
     // The llm judge's labels say the same as the decisions criteria.
