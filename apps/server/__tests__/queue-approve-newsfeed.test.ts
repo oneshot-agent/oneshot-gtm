@@ -107,12 +107,14 @@ describe("approve schedules the newsfeed capture", () => {
     expect(await res.json()).toEqual({ approved: 2 });
     expect(order).toEqual(["bulk", "newsfeed"]);
     expect(scheduled).toEqual([[1, 3]]);
-    // An id-only read (#929): the ids are all the bulk path uses.
+    // An id-only read (#929): the ids are all the bulk path uses. Rows with
+    // no strong offer stay pending, so they are not read either.
     expect(listQueueArgs.at(-1)).toEqual({
       status: "pending",
       limit: 100_000,
       playName: "show-hn",
       columns: ["id"],
+      offerSkip: { mode: "exclude", noOfferPlays: expect.arrayContaining(["pmf-survey"]) },
     });
   });
 

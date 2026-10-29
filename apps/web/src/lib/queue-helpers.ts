@@ -1,6 +1,11 @@
-import type { QueueRowView, QueueStatusView } from "@oneshot-gtm/shared-types";
+import type { QueueListResponse, QueueRowView, QueueStatusView } from "@oneshot-gtm/shared-types";
 
-export type QueueStatusFilter = QueueStatusView | "all";
+/**
+ * A /queue status chip. `no-offer` is not a status: it is the pending rows
+ * whose offer writer found no strong offer, which the `pending` review list
+ * leaves out.
+ */
+export type QueueStatusFilter = QueueStatusView | "all" | "no-offer";
 
 /** Build the queue request without leaking UI-only `all`/null sentinel values. */
 export function queueRequest(input: {
@@ -10,16 +15,38 @@ export function queueRequest(input: {
   limit?: number;
 }): {
   status?: QueueStatusView;
+  offerSkip?: "only" | "exclude";
   play?: string;
   order?: "ranked" | "newest";
   limit: number;
 } {
+  const { statusFilter } = input;
+  const status =
+    statusFilter === "all"
+      ? {}
+      : statusFilter === "no-offer"
+        ? { status: "pending" as const, offerSkip: "only" as const }
+        : statusFilter === "pending"
+          ? { status: "pending" as const, offerSkip: "exclude" as const }
+          : { status: statusFilter };
   return {
-    ...(input.statusFilter !== "all" ? { status: input.statusFilter } : {}),
+    ...status,
     ...(input.playFilter !== "all" ? { play: input.playFilter } : {}),
     ...(input.orderOverride ? { order: input.orderOverride } : {}),
     limit: input.limit ?? 200,
   };
+}
+
+/**
+ * Pending rows split the way /queue shows them: `review` is the pending list
+ * (rows with no strong offer left out), `noOffer` is those rows.
+ */
+export function pendingSplit(
+  data: Pick<QueueListResponse, "counts" | "noStrongOffer"> | undefined,
+): { review: number; noOffer: number } {
+  const pending = data?.counts.pending ?? 0;
+  const noOffer = Math.min(pending, Math.max(0, data?.noStrongOffer ?? 0));
+  return { review: pending - noOffer, noOffer };
 }
 
 export function isQueueFilterActive(statusFilter: QueueStatusFilter, playFilter: string): boolean {

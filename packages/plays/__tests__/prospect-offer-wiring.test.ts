@@ -143,7 +143,7 @@ describe("prospect offer in a play run", () => {
     expect(JSON.stringify(step0)).toContain(OFFER.offer);
   });
 
-  it("holds the send on a weak-fit offer until the founder approves it", async () => {
+  it("writes a stored weak offer again before the draft, and sends one the founder approved", async () => {
     const { offerProductHash, OFFER_PROMPT_VERSION } = await import("../src/_prospect-offer.ts");
     const weak = {
       productHash: offerProductHash({
@@ -152,49 +152,34 @@ describe("prospect offer in a play run", () => {
         pilotOffer: "a month on one team",
       }),
       ...OFFER,
+      offer: "the weak one",
       relevance: "weak",
       version: OFFER_PROMPT_VERSION,
       inputHash: "h",
       derivedAt: "",
     };
-    const held = await runDesignPartnerLoi({
+    const rewritten = await runDesignPartnerLoi({
       dryRun: false,
       targets: [{ ...base, offer: weak } as typeof base],
     });
-    expect(held.drafted[0]).toMatchObject({ sent: false, flags: ["weak-offer"] });
-    expect(calls.events).toHaveLength(0);
+    // Never drafted from: the writer was asked again and the draft opens on its offer.
+    expect(calls.inputs.some((i) => i.startsWith("prospect-offer\n"))).toBe(true);
+    const draft = calls.inputs.find((i) => i.startsWith("design-partner-loi-email"))!;
+    expect(draft).toContain(`: ${OFFER.offer}`);
+    expect(draft).not.toContain("the weak one");
+    expect(rewritten.drafted[0]).toMatchObject({ sent: true, offer: { offer: OFFER.offer } });
 
+    calls.inputs = [];
+    const approvedOffer = { ...weak, weakApprovedAt: "2026-10-19T00:00:00Z" };
     const approved = await runDesignPartnerLoi({
       dryRun: false,
-      targets: [
-        { ...base, offer: { ...weak, weakApprovedAt: "2026-10-19T00:00:00Z" } } as typeof base,
-      ],
+      targets: [{ ...base, offer: approvedOffer } as typeof base],
     });
-    expect(approved.drafted[0]).toMatchObject({ sent: true, flags: [] });
-  });
-
-  it("holds a lint-flagged draft on its weak-fit offer as well", async () => {
-    const { offerProductHash, OFFER_PROMPT_VERSION } = await import("../src/_prospect-offer.ts");
-    calls.body = `I can ${OFFER.offer}. Let me delve into it and leverage a robust tapestry. Worth it?`;
-    const weak = {
-      productHash: offerProductHash({
-        productOneLiner: "thing",
-        productBrief: "Thing drafts quotes, checks price lists and sends them for approval.",
-        pilotOffer: "a month on one team",
-      }),
-      ...OFFER,
-      relevance: "weak",
-      version: OFFER_PROMPT_VERSION,
-      inputHash: "h",
-      derivedAt: "",
-    };
-    const out = await runDesignPartnerLoi({
-      dryRun: false,
-      targets: [{ ...base, offer: weak } as typeof base],
+    expect(calls.inputs.some((i) => i.startsWith("prospect-offer\n"))).toBe(false);
+    expect(approved.drafted[0]).toMatchObject({
+      sent: true,
+      flags: [],
+      offer: { offer: "the weak one" },
     });
-    const flags = out.drafted[0]!.flags;
-    expect(flags.length).toBeGreaterThan(1);
-    expect(flags.at(-1)).toBe("weak-offer");
-    expect(out.drafted[0]!.sent).toBe(false);
   });
 });

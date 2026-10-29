@@ -35,6 +35,7 @@ import { useKeyboard } from "../components/shell/useKeyboard.ts";
 import { cn } from "../lib/cn.ts";
 import { useDocumentTitle } from "../lib/documentTitle.ts";
 import { applyWorkspaceFavicon } from "../lib/favicon.ts";
+import { pendingSplit } from "../lib/queue-helpers.ts";
 import { PrivacyProvider } from "../lib/privacy.tsx";
 
 interface RootContext {
@@ -165,7 +166,8 @@ function RootLayout() {
   }, [workspace?.name]);
 
   const alerts: Record<NonNullable<NavItem["alert"]>, boolean> = {
-    "queue-pending": (queueQuery.data?.counts.pending ?? 0) > 0,
+    // Rows with no strong offer are pending but out of review: no dot for those alone.
+    "queue-pending": pendingSplit(queueQuery.data).review > 0,
     "doctor-fail": (doctor.data?.checks ?? []).some((c) => c.severity === "fail"),
     // `awaitingReply` clears when the founder replies or records a deal outcome.
     // A bare intent check would keep the alert lit after the reply was handled.

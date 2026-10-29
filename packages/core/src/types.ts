@@ -813,6 +813,17 @@ export interface QueueRow {
 export type QueueSearchDecidedBy = "human" | "machine" | "none";
 export type QueueSearchSort = "found_at" | "decided_at" | "name";
 
+/**
+ * The rows whose offer writer found no strong offer: a valid
+ * `payload.offerSkip`, no usable `payload.offer`, and a play that makes offers
+ * (`noOfferPlays` names the ones that do not: the built-in list plus the
+ * workspace's own). `only` keeps those rows, `exclude` drops them.
+ */
+export interface QueueOfferSkipFilter {
+  mode: "only" | "exclude";
+  noOfferPlays: readonly string[];
+}
+
 /** Filters for `Ledger.searchQueue`. The /prospects browse view. */
 export interface QueueSearchOpts {
   /** Free text; whitespace-split terms are AND-ed, each a case-insensitive substring. */

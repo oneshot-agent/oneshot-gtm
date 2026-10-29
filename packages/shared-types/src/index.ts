@@ -1824,6 +1824,13 @@ export interface QueueListResponse {
    * approved are omitted.
    */
   approvedByPlay: Record<string, number>;
+  /**
+   * Pending rows across the whole queue whose offer writer found no strong
+   * offer (`QueueRowView.offerSkip`), unaffected by the filters. They are
+   * part of `counts.pending`, but the review list (`?offerSkip=exclude`)
+   * leaves them out and `?offerSkip=only` lists them. Absent from older servers.
+   */
+  noStrongOffer?: number;
   /** Absent when the capacity computation failed: pages skip the figure. */
   sendsToday?: SendsToday;
   /**

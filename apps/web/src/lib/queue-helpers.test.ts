@@ -8,6 +8,7 @@ import {
   drainButtonState,
   drainSelectionState,
   isQueueFilterActive,
+  pendingSplit,
   queuePlayList,
   queueRequest,
   queueSelectionState,
@@ -35,6 +36,26 @@ describe("queue filtering", () => {
       "gamma",
     ]);
     expect(isQueueFilterActive("pending", "alpha")).toBe(true);
+  });
+});
+
+describe("pending rows with no strong offer", () => {
+  it("leaves them out of the pending request and lists them on their own", () => {
+    expect(
+      queueRequest({ statusFilter: "pending", playFilter: "all", orderOverride: null }),
+    ).toEqual({ status: "pending", offerSkip: "exclude", limit: 200 });
+    expect(
+      queueRequest({ statusFilter: "no-offer", playFilter: "alpha", orderOverride: null }),
+    ).toEqual({ status: "pending", offerSkip: "only", play: "alpha", limit: 200 });
+    expect(isQueueFilterActive("no-offer", "all")).toBe(true);
+  });
+
+  it("splits the pending count into review and no strong offer", () => {
+    const counts = { pending: 12, approved: 0, rejected: 0, sent: 0, expired: 0 };
+    expect(pendingSplit({ counts, noStrongOffer: 5 })).toEqual({ review: 7, noOffer: 5 });
+    // An older server sends no count: every pending row is in review.
+    expect(pendingSplit({ counts })).toEqual({ review: 12, noOffer: 0 });
+    expect(pendingSplit(undefined)).toEqual({ review: 0, noOffer: 0 });
   });
 });
 

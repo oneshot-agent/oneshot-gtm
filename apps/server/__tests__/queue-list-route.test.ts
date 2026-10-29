@@ -40,6 +40,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       },
       queueCounts: () => ({ pending: 0, approved: 220, rejected: 0, sent: 0, expired: 0 }),
       approvedCountsByPlay: () => ({ "luma-events": 145, "repo-interest": 35 }),
+      countPendingOfferSkips: () => 0,
     }),
   };
 });

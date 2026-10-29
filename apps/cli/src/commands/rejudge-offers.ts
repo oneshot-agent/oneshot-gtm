@@ -20,6 +20,7 @@ import {
   offerHoldsSend,
   offerOf,
   offerResearchText,
+  offerSkipPatch,
   playMakesOffer,
   prospectOfferInput,
   sequenceOfferOf,
@@ -320,8 +321,10 @@ export async function commandRejudgeOffers(opts: RejudgeOffersOpts): Promise<Rej
  * anyway. Active sequences the same, except an offer the first email
  * carried (it is fixed). The new set replaces the old whole
  * (`activeOfferPatch`), guarded on the active offer read here, and the
- * letter written around the old one is dropped. A dry run makes no model or
- * research call: it lists what would be rewritten.
+ * letter written around the old one is dropped. When no new offer passes
+ * either, the weak set is deleted and the writer's skip takes its place
+ * (`offerSkipPatch`): the row or sequence is held `no-offer`. A dry run
+ * makes no model or research call: it lists what would be rewritten.
  */
 export interface RewriteWeakSummary {
   /** Queue rows and sequences whose every offer is weak. */
@@ -332,6 +335,8 @@ export interface RewriteWeakSummary {
   passing: string[];
   /** Rewritten, still weak: held as before. */
   weak: string[];
+  /** No new offer passed: the weak set was replaced by the skip, held `no-offer`. */
+  noOffer: string[];
   /** Nothing written: the writer declined, wrote nothing, or the row or sequence moved on. */
   unchanged: string[];
   errors: number;
@@ -439,6 +444,7 @@ export async function commandRewriteWeakOffers(
     ).length,
     passing: [],
     weak: [],
+    noOffer: [],
     unchanged: [],
     errors: 0,
     costUsd: 0,
@@ -460,7 +466,7 @@ export async function commandRewriteWeakOffers(
   };
   await parallelMap(work, opts.concurrency ?? 3, async (item) => {
     const avoid = item.candidates.map((o) => o.offer);
-    let outcome: "passing" | "weak" | "unchanged" = "unchanged";
+    let outcome: "passing" | "weak" | "noOffer" | "unchanged" = "unchanged";
     let text = "";
     try {
       if (item.kind === "row") {
@@ -472,14 +478,16 @@ export async function commandRewriteWeakOffers(
           onCost,
           cfg,
         });
-        if (set && !isOfferSkipped(set)) {
+        if (set) {
           const prior = (key: keyof ProspectOffer): string | null => {
             const v = item.active[key];
             return typeof v === "string" ? v : null;
           };
           const written = ledger.patchLiveQueuePayload({
             id: item.row.id,
-            patch: activeOfferPatch(item.active, set.offer, set.candidates),
+            patch: isOfferSkipped(set)
+              ? offerSkipPatch(item.active, set.skipped)
+              : activeOfferPatch(item.active, set.offer, set.candidates),
             // The letter was written around the old offer.
             discardDraft: true,
             // Not the whole payload: the rewrite may have saved company research on it.
@@ -492,7 +500,10 @@ export async function commandRewriteWeakOffers(
               { path: "$.offer.weakApprovedAt", value: null },
             ],
           });
-          if (written) {
+          if (written && isOfferSkipped(set)) {
+            outcome = "noOffer";
+            text = set.skipped.why;
+          } else if (written && !isOfferSkipped(set)) {
             outcome = offerHoldsSend(set.offer) ? "weak" : "passing";
             text = set.offer.offer;
           }
@@ -515,6 +526,14 @@ export async function commandRewriteWeakOffers(
           });
           outcome = offerHoldsSend(out.offer) ? "weak" : "passing";
           text = out.offer.offer;
+        } else if (out.status === "none" && out.reason === "skipped" && !out.record.offer) {
+          ledger.discardCadenceDraft({
+            prospectId: item.prospectId,
+            playName: item.playName,
+            reason: "regenerate",
+          });
+          outcome = "noOffer";
+          text = out.skip.why;
         }
       }
     } catch (err) {
@@ -529,10 +548,11 @@ export async function commandRewriteWeakOffers(
   });
   ok(
     `rewritten ${summary.passing.length + summary.weak.length} · now passing ${summary.passing.length}` +
-      ` · still weak ${summary.weak.length} · unchanged ${summary.unchanged.length}` +
+      ` · still weak ${summary.weak.length} · no offer ${summary.noOffer.length}` +
+      ` · unchanged ${summary.unchanged.length}` +
       ` · errors ${summary.errors} · cost $${summary.costUsd.toFixed(3)}`,
   );
-  if (summary.passing.length + summary.weak.length > 0) {
+  if (summary.passing.length + summary.weak.length + summary.noOffer.length > 0) {
     note("Rewritten rows' letters were dropped: they are drafted again around the new offer.");
   }
   return summary;

@@ -43,6 +43,7 @@ import {
   type PackApplyResult,
   type DecisionReason,
   type QueueRowView,
+  type QueueCounts,
   type QueueStatusView,
   type TriggerView,
 } from "@oneshot-gtm/shared-types";
@@ -77,11 +78,13 @@ import {
   drainSelectionState,
   isQueueFilterActive,
   mergeRowMeta,
+  pendingSplit,
   queuePlayList,
   queueRequest,
   queueSelectionState,
   selectVisibleQueueRows,
   toggleQueueSelection,
+  type QueueStatusFilter,
   type RowMeta,
 } from "../lib/queue-helpers.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
@@ -167,14 +170,76 @@ const EMPTY_ROWS: QueueRowView[] = [];
  */
 const ROW_CAP = 50;
 
-const STATUSES: Array<QueueStatusView | "all"> = [
+const STATUSES: QueueStatusFilter[] = [
   "all",
   "pending",
+  "no-offer",
   "approved",
   "rejected",
   "sent",
   "expired",
 ];
+
+/**
+ * The status chips. "No strong offer" sits beside Pending while it holds
+ * rows: the pending rows whose offer writer found no strong offer, which the
+ * Pending list leaves out, so Pending counts the rest.
+ */
+export function QueueStatusChips({
+  statusFilter,
+  counts,
+  noStrongOffer,
+  onSelect,
+}: {
+  statusFilter: QueueStatusFilter;
+  counts: QueueCounts;
+  noStrongOffer: number | undefined;
+  onSelect: (status: QueueStatusFilter) => void;
+}) {
+  const pending = pendingSplit({ counts, noStrongOffer });
+  const countOf = (status: QueueStatusFilter): number | null => {
+    if (status === "all") return null;
+    if (status === "pending") return pending.review;
+    if (status === "no-offer") return pending.noOffer;
+    return counts[status];
+  };
+  return (
+    <div
+      className="flex flex-wrap items-center gap-1 px-6 pt-3"
+      role="group"
+      aria-label="Queue status"
+    >
+      {STATUSES.map((status) => {
+        const count = countOf(status);
+        // Shown only while it holds rows, or while it is the open view.
+        if (status === "no-offer" && count === 0 && statusFilter !== "no-offer") return null;
+        return (
+          <Button
+            key={status}
+            variant={statusFilter === status ? "secondary" : "ghost"}
+            size="sm"
+            aria-pressed={statusFilter === status}
+            {...(status === "no-offer"
+              ? { title: "Pending rows the offer writer found no strong offer for" }
+              : {})}
+            onClick={() => onSelect(status)}
+          >
+            {status === "no-offer" ? (
+              <span>No strong offer</span>
+            ) : (
+              <span className="capitalize">{status}</span>
+            )}
+            {count != null && (
+              <span className="ml-1 font-mono text-[10px] text-ink-muted">
+                {formatCount(count)}
+              </span>
+            )}
+          </Button>
+        );
+      })}
+    </div>
+  );
+}
 
 function statusTone(
   status: QueueStatusView,
@@ -235,13 +300,13 @@ function QueuePage() {
   // Filters live in the URL; a bare /queue restores the last set (see queueSearch.ts).
   const search = Route.useSearch();
   const queueNavigate = Route.useNavigate();
-  const statusFilter: QueueStatusView | "all" = search.status ?? "pending";
+  const statusFilter: QueueStatusFilter = search.status ?? "pending";
   const playFilter = search.play ?? "all";
   const orderOverride = search.order ?? null;
   const setFilters = (patch: QueueSearch): void => {
     void queueNavigate({ search: (prev) => ({ ...prev, ...patch }), replace: true });
   };
-  const setStatusFilter = (status: QueueStatusView | "all"): void =>
+  const setStatusFilter = (status: QueueStatusFilter): void =>
     setFilters({ status: status === "pending" ? undefined : status });
   const setPlayFilter = (play: string): void =>
     setFilters({ play: play === "all" ? undefined : play });
@@ -478,6 +543,8 @@ function QueuePage() {
     sent: 0,
     expired: 0,
   };
+  // Rows with no strong offer are pending but out of review, and "Approve pending" leaves them.
+  const pendingReview = pendingSplit(queueQuery.data).review;
   // Keep the fetched array's identity around: `?? []` allocates a fresh array
   // every render, which would re-fire the rowMeta effect on each one.
   const fetchedRows = queueQuery.data?.rows;
@@ -562,32 +629,16 @@ function QueuePage() {
       <TriggersCard queueEmpty={queueQuery.isLoading ? null : rows.length === 0} />
 
       <section>
-        <div
-          className="flex flex-wrap items-center gap-1 px-6 pt-3"
-          role="group"
-          aria-label="Queue status"
-        >
-          {STATUSES.map((status) => (
-            <Button
-              key={status}
-              variant={statusFilter === status ? "secondary" : "ghost"}
-              size="sm"
-              aria-pressed={statusFilter === status}
-              onClick={() => {
-                setStatusFilter(status);
-                setShowAllRows(false);
-                setExpanded(null);
-              }}
-            >
-              <span className="capitalize">{status}</span>
-              {status !== "all" && (
-                <span className="ml-1 font-mono text-[10px] text-ink-muted">
-                  {formatCount(counts[status])}
-                </span>
-              )}
-            </Button>
-          ))}
-        </div>
+        <QueueStatusChips
+          statusFilter={statusFilter}
+          counts={counts}
+          noStrongOffer={queueQuery.data?.noStrongOffer}
+          onSelect={(status) => {
+            setStatusFilter(status);
+            setShowAllRows(false);
+            setExpanded(null);
+          }}
+        />
         <div className="flex flex-wrap items-center gap-3 border-b border-ink-rule/60 px-6 py-3">
           <Select
             aria-label="Filter by play"
@@ -626,11 +677,11 @@ function QueuePage() {
             <Button
               variant="secondary"
               size="sm"
-              disabled={approveAll.isPending || counts.pending === 0}
+              disabled={approveAll.isPending || pendingReview === 0}
               title={
                 playFilter === "all"
-                  ? "Approve all pending prospects"
-                  : `Approve pending prospects in ${playFilter}`
+                  ? "Approve all pending prospects; rows with no strong offer stay pending"
+                  : `Approve pending prospects in ${playFilter}; rows with no strong offer stay pending`
               }
               onClick={() => approveAll.mutate(playFilter === "all" ? undefined : playFilter)}
               {...readOnly}

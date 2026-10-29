@@ -222,6 +222,7 @@ import type {
   ProspectPriority,
   ProspectRecord,
   SentOutcomeRawRow,
+  QueueOfferSkipFilter,
   QueueRow,
   QueueSearchOpts,
   QueueSearchRow,
@@ -499,11 +500,12 @@ export class Ledger {
     return cadSetCadenceOffer(this.db, input);
   }
 
-  /** Keep the offer writer's refusal on an active cadence with no offer (ledger-cadence.ts). */
+  /** Keep the offer writer's refusal on an active cadence with no offer, or in place of a weak one (ledger-cadence.ts). */
   setCadenceOfferSkip(input: {
     prospectId: number;
     playName: string;
     skip: Record<string, unknown>;
+    replacing?: string;
   }): boolean {
     return cadSetCadenceOfferSkip(this.db, input);
   }
@@ -1905,6 +1907,7 @@ export class Ledger {
       limit?: number;
       ids?: number[];
       columns?: readonly string[];
+      offerSkip?: QueueOfferSkipFilter;
     } = {},
   ): QueueRow[] {
     return this.queue.listQueue(opts);
@@ -2043,7 +2046,8 @@ export class Ledger {
     return this.queue.sweepStaleQueueSends(input);
   }
 
-  approveAllPending(opts: { playName?: string } = {}): number {
+  /** @see ledger-queue.ts#QueueStore.approveAllPending */
+  approveAllPending(opts: { playName?: string; offerSkip?: QueueOfferSkipFilter } = {}): number {
     return this.queue.approveAllPending(opts);
   }
 
@@ -2054,6 +2058,11 @@ export class Ledger {
 
   expirePendingOlderThan(days: number): number {
     return this.queue.expirePendingOlderThan(days);
+  }
+
+  /** @see ledger-queue.ts#QueueStore.countPendingOfferSkips */
+  countPendingOfferSkips(noOfferPlays: readonly string[]): number {
+    return this.queue.countPendingOfferSkips(noOfferPlays);
   }
 
   queueCounts(): Record<QueueStatus, number> {

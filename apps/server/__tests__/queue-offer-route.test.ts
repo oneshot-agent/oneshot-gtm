@@ -155,7 +155,7 @@ describe("queueOfferRoute", () => {
     });
   });
 
-  it("keeps a writer skip on the row and answers 422 with its why, leaving the offer", async () => {
+  it("keeps a writer skip on the row and answers 422 with its why, deleting a stale offer", async () => {
     state.skipped = {
       why: "They left the firm in October",
       version: "offer-v4",
@@ -168,6 +168,29 @@ describe("queueOfferRoute", () => {
     const body = (await res.json()) as Record<string, unknown>;
     expect(body["error"]).toBe("No offer: They left the firm in October");
     expect(body["offerSkip"]).toEqual(state.skipped);
+    // The row's offer predates today's prompt: it goes, and the row is held no-offer.
+    expect(state.written).toEqual([
+      { id: 5, patch: { offerSkip: state.skipped, offer: null, offerCandidates: null } },
+    ]);
+  });
+
+  it("a skip after New offers leaves an offer that stands: the founder's own", async () => {
+    state.skipped = {
+      why: "no offer passed the relevance check after 3 rewrites",
+      version: "offer-v7",
+      inputHash: "h",
+      productHash: "p",
+      skippedAt: "2026-10-29T00:00:00.000Z",
+    };
+    state.row = {
+      ...state.row!,
+      payload_json: JSON.stringify({
+        name: "Dana",
+        offer: { offer: "mine", steps: "", editedBy: "founder", version: "offer-v4" },
+      }),
+    };
+    const res = await queueOfferRoute(post({ regenerate: true }), { id: "5" });
+    expect(res.status).toBe(422);
     expect(state.written).toEqual([{ id: 5, patch: { offerSkip: state.skipped } }]);
   });
 

@@ -485,6 +485,26 @@ describe("the writer's skip", () => {
     const offer = (await deriveOffer({ target, playName: "new-business" }))!;
     expect(activeOfferPatch(null, offer, [offer]).offerSkip).toBeNull();
   });
+
+  it("kept on a row, deletes a weak or stale offer with it, never one that stands", async () => {
+    const { offerSkipPatch } = await import("../src/_prospect-offer.ts");
+    llm.replies = [JSON.stringify({ skip: true, why })];
+    const { skip } = await deriveOffers({ target, playName: "new-business" });
+    const stored = { ...good, level: "researched" as const, inputHash: "h", derivedAt: "" };
+    const cleared = { offerSkip: skip, offer: null, offerCandidates: null };
+    expect(offerSkipPatch({ ...stored, version: "offer-v6" }, skip!)).toEqual(cleared);
+    expect(
+      offerSkipPatch({ ...stored, version: OFFER_PROMPT_VERSION, relevance: "weak" }, skip!),
+    ).toEqual(cleared);
+    expect(offerSkipPatch(null, skip!)).toEqual(cleared);
+    for (const standing of [
+      { ...stored, version: OFFER_PROMPT_VERSION, relevance: "relevant" as const },
+      { ...stored, version: "offer-v6", editedBy: "founder" as const },
+      { ...stored, version: "offer-v6", relevance: "weak" as const, weakApprovedAt: "2026-10-01" },
+    ]) {
+      expect(offerSkipPatch(standing, skip!)).toEqual({ offerSkip: skip });
+    }
+  });
 });
 
 describe("deriveOfferSet", () => {
@@ -714,8 +734,8 @@ describe("opensOnObservation", async () => {
 
 // Relevance: each written offer rests on an anchor (their product, their
 // firm) and is judged before it is kept. The judge drops what it does not
-// pass, one replacement round asks for the missing count, and the five are
-// made up with weak ones, never irrelevant ones.
+// pass and one replacement round asks for the missing count. Only offers
+// that pass are kept: a set is one to five, never made up with weak ones.
 
 const third = {
   ...good,
@@ -797,7 +817,7 @@ describe("offer fit", () => {
   });
 
   it("bumps the prompt version so unedited offers re-derive", () => {
-    expect(OFFER_PROMPT_VERSION).toBe("offer-v6");
+    expect(OFFER_PROMPT_VERSION).toBe("offer-v7");
   });
 });
 
@@ -1010,12 +1030,47 @@ describe("judgeOffers pass rule (decisions)", () => {
     );
     expect(out?.[0]?.pass).toBe(false);
   });
+
+  it("passes a weak top label whose P(relevant) clears the bar, never an irrelevant one", async () => {
+    const { judgeOffers } = await import("../src/_prospect-offer.ts");
+    process.env["OPENROUTER_API_KEY"] = "test-key";
+    const fetchImpl = vi.fn(async () =>
+      decisionsRaw([
+        // Weak on top at P(relevant) 0.41: one the founder would send.
+        { choice: "weak", confidence: 0.5, probabilities: { weak: 0.5, relevant: 0.41 } },
+        // Under the bar: fails.
+        { choice: "weak", confidence: 0.6, probabilities: { weak: 0.66, relevant: 0.3 } },
+        // A job the firm does not have: fails whatever P(relevant) says.
+        {
+          choice: "irrelevant",
+          confidence: 0.4,
+          probabilities: { irrelevant: 0.42, relevant: 0.4, weak: 0.18 },
+        },
+      ]),
+    );
+    const out = await judgeOffers(
+      [good, second, third],
+      research,
+      target,
+      {
+        ...cfg,
+        offerJudge: { engine: "decisions", model: "test/decisions-model", minConfidence: 0.35 },
+      } as never,
+      { fetchImpl: fetchImpl as never },
+    );
+    expect(out?.map((j) => [j?.label, j?.pass])).toEqual([
+      ["weak", true],
+      ["weak", false],
+      ["irrelevant", false],
+    ]);
+  });
 });
 
 describe("storedRelevance", () => {
-  it("keeps the judge's label, and stores a relevant under the bar as weak", async () => {
+  it("stores a pass as relevant whatever its top label, and every miss as weak", async () => {
     const { storedRelevance } = await import("../src/_prospect-offer.ts");
     expect(storedRelevance({ label: "relevant", pass: true })).toBe("relevant");
+    expect(storedRelevance({ label: "weak", pass: true })).toBe("relevant");
     expect(storedRelevance({ label: "weak", pass: false })).toBe("weak");
     expect(storedRelevance({ label: "relevant", pass: false })).toBe("weak");
     expect(storedRelevance({ label: "irrelevant", pass: false })).toBe("weak");
@@ -1051,16 +1106,14 @@ describe("deriveOffers with the relevance judge", () => {
     // The replacement that fails lint never reaches the judge.
     expect(llm.judgeInputs[1]).toContain(replacement.offer);
     expect(llm.judgeInputs[1]).not.toContain(bad.offer);
-    // Passing offers in the model's order, the replacement next, a weak one
-    // making up the five; the irrelevant one is gone.
+    // Passing offers in the model's order, the replacement next; the weak
+    // and the irrelevant one are gone, and nothing makes up the five.
     expect(offers.map((o) => [o.offer, o.relevance])).toEqual([
       [good.offer, "relevant"],
       [second.offer, "relevant"],
       [third.offer, "relevant"],
       [replacement.offer, "relevant"],
-      [fourth.offer, "weak"],
     ]);
-    expect(offers[4]?.relevanceWhy).toBe("would fit any trade business");
     expect(offers[0]?.relevanceClassifier).toMatch(/^llm:/);
   });
 
@@ -1095,7 +1148,7 @@ describe("deriveOffers with the relevance judge", () => {
     ]);
   });
 
-  it("fills with the best-scored weak offers, never an irrelevant one", async () => {
+  it("returns only the offers that pass: 2 of 5 passing is a set of those 2", async () => {
     process.env["OPENROUTER_API_KEY"] = "test-key";
     cfg.offerJudge = { engine: "decisions", model: "test/decisions-model" };
     llm.replies = [
@@ -1128,19 +1181,16 @@ describe("deriveOffers with the relevance judge", () => {
     const second_ = JSON.parse(String((fetchImpl.mock.calls[1] as [string, RequestInit])[1].body));
     expect(Object.keys(second_.questions)).toEqual(["offer_1", "offer_2"]);
     expect(llm.inputs[1]).toContain("Write exactly 3 new offers");
+    // Two passed, so no rescue round runs.
+    expect(llm.inputs).toHaveLength(2);
     expect(offers.map((o) => [o.offer, o.relevance, o.relevanceScore])).toEqual([
       [good.offer, "relevant", 0.9],
       [second.offer, "relevant", 0.8],
-      [fourth.offer, "weak", 0.45],
-      [third.offer, "weak", 0.3],
-      [replacement.offer, "weak", 0.2],
     ]);
-    expect(offers.some((o) => o.offer === fifth.offer || o.offer === replacementTwo.offer)).toBe(
-      false,
-    );
+    expect(offers.some((o) => o.relevance !== "relevant")).toBe(false);
   });
 
-  it("fill keeps the judge's labels; a relevant under the bar is tagged weak", async () => {
+  it("drops a relevant under the bar as it drops a weak one", async () => {
     process.env["OPENROUTER_API_KEY"] = "test-key";
     cfg.offerJudge = { engine: "decisions", model: "test/decisions-model" };
     llm.replies = [
@@ -1152,7 +1202,7 @@ describe("deriveOffers with the relevance judge", () => {
         // Confidence 0.3, P(relevant) 0.66: passes (the old rule dropped it).
         { choice: "relevant", confidence: 0.3, probabilities: { relevant: 0.66, weak: 0.3 } },
         { choice: "relevant", confidence: 0.8, probabilities: { relevant: 0.8, weak: 0.15 } },
-        // Relevant on top, under the bar: a filler, stored weak.
+        // Relevant on top, under the bar: not passed, so dropped.
         {
           choice: "relevant",
           confidence: 0.4,
@@ -1170,15 +1220,13 @@ describe("deriveOffers with the relevance judge", () => {
     expect(offers.map((o) => [o.offer, o.relevance, o.relevanceScore])).toEqual([
       [good.offer, "relevant", 0.66],
       [second.offer, "relevant", 0.8],
-      [third.offer, "weak", 0.45],
-      [fourth.offer, "weak", 0.3],
     ]);
-    // The judge's own verdict stays readable on each filler.
-    expect(offers[2]?.relevanceWhy).toBe("relevant 0.45, weak 0.40, irrelevant 0.15");
-    expect(offers[3]?.relevanceWhy).toBe("weak 0.60, relevant 0.30");
+    // The replacement round was told the judge's own verdict on each.
+    expect(llm.inputs[1]).toContain("relevant 0.45, weak 0.40, irrelevant 0.15");
+    expect(llm.inputs[1]).toContain("weak 0.60, relevant 0.30");
   });
 
-  it("an llm filler keeps the judge's weak label and reason", async () => {
+  it("an llm weak verdict is dropped, never kept to make up the set", async () => {
     llm.replies = [JSON.stringify({ offers: [good, second] }), JSON.stringify({ offers: [] })];
     llm.judge = [
       judgeReply([
@@ -1189,7 +1237,6 @@ describe("deriveOffers with the relevance judge", () => {
     const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(offers.map((o) => [o.relevance, o.relevanceWhy])).toEqual([
       ["relevant", "the second depot"],
-      ["weak", "would fit any trade business"],
     ]);
   });
 
@@ -1217,7 +1264,9 @@ describe("deriveOffers with the relevance judge", () => {
 
 // The rescue: a set the judge passed none of is written once more, after
 // the firm's research is read when the row has none complete, with the
-// rejected offers and what the judge means by weak.
+// rejected offers and what the judge means by weak; when that passes none,
+// once more from the person's role. Nothing passing after all three
+// rewrites is a skip, never a weak set.
 
 describe("rescue of a set the judge passed none of", () => {
   const five = JSON.stringify({ offers: [good, second, third, fourth, fifth] });
@@ -1234,8 +1283,8 @@ describe("rescue of a set the judge passed none of", () => {
     registerOfferResearch(null);
   });
 
-  it("writes once more, with the rejected offers and what weak means, and leads with what passes", async () => {
-    const { offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
+  it("writes once more, with the rejected offers and what weak means, and keeps only what passes", async () => {
+    const { offerRelevanceCriteria, OFFER_ROLE_RESCUE } = await import("../src/_prospect-offer.ts");
     llm.replies = [
       five,
       JSON.stringify({ offers: [] }),
@@ -1248,8 +1297,9 @@ describe("rescue of a set the judge passed none of", () => {
         ["weak", "generic"],
       ]),
     ];
-    const { offers } = await deriveOffers({ target, playName: "new-business" });
-    // First write, the replacement round, exactly one rescue.
+    const { offers, skip } = await deriveOffers({ target, playName: "new-business" });
+    // First write, the replacement round, exactly one rescue: it passed one,
+    // so the rounds stop there.
     expect(llm.inputs).toHaveLength(3);
     expect(llm.temperatures).toEqual([0.4, 0.4, 0.7]);
     const rescue = llm.inputs[2]!;
@@ -1258,30 +1308,109 @@ describe("rescue of a set the judge passed none of", () => {
     expect(rescue).toContain(`What the check means by weak: ${offerRelevanceCriteria().weak}`);
     expect(rescue).toContain("list the most specific facts RESEARCH holds");
     expect(rescue).not.toContain("{{");
-    // The passing rescue offer leads; the five are made up with the weak
-    // ones of the earlier round first on a tie, then the rescue's own.
-    expect(offers.map((o) => [o.offer, o.relevance])).toEqual([
-      [replacement.offer, "relevant"],
-      [good.offer, "weak"],
-      [second.offer, "weak"],
-      [third.offer, "weak"],
-      [fourth.offer, "weak"],
-    ]);
+    expect(rescue).not.toContain(OFFER_ROLE_RESCUE);
+    // The passing rescue offer alone: no weak one makes up the five.
+    expect(offers.map((o) => [o.offer, o.relevance])).toEqual([[replacement.offer, "relevant"]]);
+    expect(skip).toBeNull();
   });
 
-  it("keeps the weak set, held, when nothing in the rescue passes", async () => {
-    llm.replies = [five, JSON.stringify({ offers: [] }), JSON.stringify({ offers: [replacement] })];
-    llm.judge = [allWeak, judgeReply([["irrelevant", "not their job"]])];
+  it("runs a third round from the person's role only when the first two passed none, told every rejected offer", async () => {
+    const { registerOfferResearch, OFFER_ROLE_RESCUE } = await import("../src/_prospect-offer.ts");
+    const research = vi.fn(async ({ target: t }: { target: Record<string, unknown> }) => ({
+      target: {
+        ...t,
+        productResearch: {
+          version: 1,
+          status: "complete",
+          sources: [],
+          external: { answer: "Northside runs a fleet of vans from two depots" },
+        },
+      },
+      researched: true,
+      costUsd: 0.01,
+    }));
+    registerOfferResearch(research);
+    llm.replies = [
+      five,
+      JSON.stringify({ offers: [] }),
+      JSON.stringify({ offers: [replacement] }),
+      JSON.stringify({ offers: [replacementTwo] }),
+    ];
+    llm.judge = [
+      allWeak,
+      judgeReply([["weak", "still any trade business"]]),
+      judgeReply([["relevant", "the depot manager's friday utilisation"]]),
+    ];
+    const { offers, skip } = await deriveOffers({
+      target,
+      playName: "new-business",
+      research: { queueRowId: 7, source: "find:x" },
+    });
+    // First write, replacement, rescue, role rescue.
+    expect(llm.inputs).toHaveLength(4);
+    expect(llm.temperatures).toEqual([0.4, 0.4, 0.7, 0.7]);
+    // The research is read once, by the first rescue.
+    expect(research).toHaveBeenCalledTimes(1);
+    expect(llm.inputs[2]).toContain("New research about this firm was read.");
+    expect(llm.inputs[2]).not.toContain(OFFER_ROLE_RESCUE);
+    const role = llm.inputs[3]!;
+    expect(role).not.toContain("New research about this firm was read.");
+    expect(role).toContain(OFFER_ROLE_RESCUE);
+    expect(role).not.toContain("{{");
+    // Every offer rejected so far: the first five and the first rescue's.
+    for (const o of [good, second, third, fourth, fifth])
+      expect(role).toContain(`- "${o.offer}": weak`);
+    expect(role).toContain(`- "${replacement.offer}": weak, still any trade business`);
+    expect(offers.map((o) => [o.offer, o.relevance])).toEqual([[replacementTwo.offer, "relevant"]]);
+    expect(skip).toBeNull();
+  });
+
+  it("refuses a role-round offer that repeats one an earlier rescue wrote", async () => {
+    llm.replies = [
+      five,
+      JSON.stringify({ offers: [] }),
+      JSON.stringify({ offers: [replacement] }),
+      JSON.stringify({ offers: [replacement] }),
+    ];
+    llm.judge = [allWeak, judgeReply([["weak", "generic"]])];
     const { offers } = await deriveOffers({ target, playName: "new-business" });
-    expect(llm.inputs).toHaveLength(3);
-    expect(offers.map((o) => o.offer)).toEqual([
-      good.offer,
-      second.offer,
-      third.offer,
-      fourth.offer,
-      fifth.offer,
-    ]);
-    expect(offers.every((o) => o.relevance === "weak")).toBe(true);
+    // The repeat never reaches the judge: no third verdict was asked for.
+    expect(llm.judgeInputs).toHaveLength(2);
+    expect(offers).toEqual([]);
+  });
+
+  it("all three rounds failing is no offer and a skip with its why, never a weak set", async () => {
+    const { noStrongOfferWhy } = await import("../src/_prospect-offer.ts");
+    llm.replies = [
+      five,
+      JSON.stringify({ offers: [] }),
+      JSON.stringify({ offers: [replacement] }),
+      JSON.stringify({ offers: [replacementTwo] }),
+    ];
+    llm.judge = [
+      allWeak,
+      judgeReply([["irrelevant", "not their job"]]),
+      judgeReply([["weak", "generic"]]),
+    ];
+    const { offers, skip } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs).toHaveLength(4);
+    expect(offers).toEqual([]);
+    expect(skip).toMatchObject({
+      why: "no offer passed the relevance check after 3 rewrites",
+      version: OFFER_PROMPT_VERSION,
+      inputHash: offerInputHash(offerResearchText(target), cfg),
+      productHash: offerProductHash(cfg),
+    });
+    expect(noStrongOfferWhy(3)).toBe(skip?.why);
+
+    // Kept on the row, it answers the next pass with no writer call.
+    const calls = llm.inputs.length;
+    const again = await ensureOfferSet({
+      target: { ...target, offerSkip: skip },
+      playName: "new-business",
+    });
+    expect(isOfferSkipped(again) && again.changed).toBe(false);
+    expect(llm.inputs.length).toBe(calls);
   });
 
   it("is not run when any offer passes, or when the judge gave no verdict", async () => {
@@ -1362,8 +1491,8 @@ describe("rescue of a set the judge passed none of", () => {
     llm.judge = [allWeak];
     await deriveOffers({ target, playName: "new-business" });
     expect(research).not.toHaveBeenCalled();
-    // Both still got their one rescue.
-    expect(llm.inputs).toHaveLength(6);
+    // Both still got both rescues.
+    expect(llm.inputs).toHaveLength(8);
   });
 });
 
@@ -1467,8 +1596,8 @@ describe("the offer bar", () => {
     expect(criteria).toMatchInlineSnapshot(`
       {
         "irrelevant": "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.",
-        "relevant": "A goal this firm at its stage would put on its plan, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), owned by or one step from this person, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
-        "weak": "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome this person owns or is one step from, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.",
+        "relevant": "A goal this firm at its stage would put on its plan and this person is measured on, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), resting on a specific fact about them: a piece their own product is missing to finish its job for its customers (never the job it already does), or a goal their own firm visibly has outside its core product.",
+        "weak": "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on (a collecting, recovering, reconciling or re-planning job offered bare to a technology, engineering, data or AI leader, whose goal is the system that does it, shipped into a named workflow of theirs), a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.",
       }
     `);
     // The llm judge's labels say the same as the decisions criteria.
@@ -1477,6 +1606,21 @@ describe("the offer bar", () => {
     expect(label("relevant").toLowerCase()).toBe(criteria.relevant.toLowerCase());
     expect(label("weak").toLowerCase()).toBe(criteria.weak.toLowerCase());
     expect(criteria.weak).toContain(checkPass);
+  });
+
+  // An offer that does their product's own job reads as a competitor's pitch,
+  // and a goal another leader owns is not this person's: writer, judge and
+  // criteria carry both.
+  it("their product's own job and another leader's goal are weak everywhere", async () => {
+    const { offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
+    const { weak } = offerRelevanceCriteria();
+    for (const text of [writer, judge, weak]) {
+      expect(text).toContain("homepage headline");
+      expect(text).toContain("another leader owns");
+    }
+    expect(writer).toContain("a piece their product is missing to finish its job");
+    expect(writer).toContain("What does this person's own leadership review them on this quarter");
+    expect(writer).toContain("Specific in the sentence itself, not only in `evidence`");
   });
 
   // How they were found is a signal, not their project: the writer, the judge
@@ -1550,6 +1694,50 @@ describe("the prompt version bump", () => {
       );
     }
     expect(llm.inputs).toHaveLength(0);
+  });
+
+  it("never drafts from a stored weak offer nobody approved, of any version: it is written again", async () => {
+    const weakFields = { relevance: "weak" as const, relevanceWhy: "would fit any trade business" };
+    // A legacy filler, and one of today's version a re-judge rated weak.
+    const legacy = { ...old, ...weakFields };
+    const current = {
+      ...old,
+      ...weakFields,
+      version: OFFER_PROMPT_VERSION,
+      inputHash: offerInputHash(research, cfg),
+    };
+    for (const offer of [legacy, current]) {
+      llm.replies = [JSON.stringify({ offers: [good] }), JSON.stringify({ angles: [] })];
+      const draft = await offerSetForDraft({
+        target: { ...target, offer, offerCandidates: [offer] },
+        playName: "new-business",
+      });
+      if (!draft || isOfferSkipped(draft)) throw new Error("expected offers");
+      expect(draft.derived).toBe(true);
+      expect(draft.offer.offer).toBe(good.offer);
+      expect(draft.candidates.map((c) => c.relevance)).not.toContain("weak");
+      llm.replies = [JSON.stringify({ offers: [good] }), JSON.stringify({ angles: [] })];
+      const row = await ensureOfferSet({
+        target: { ...target, offer, offerCandidates: [offer] },
+        playName: "new-business",
+      });
+      if (!row || isOfferSkipped(row)) throw new Error("expected offers");
+      expect(row.changed).toBe(true);
+      expect(row.offer.offer).toBe(good.offer);
+    }
+    // The founder's edit of a weak one, or their approval, still stands.
+    for (const offer of [
+      { ...current, editedBy: "founder" as const },
+      { ...current, weakApprovedAt: "2026-10-01T00:00:00Z" },
+    ]) {
+      const calls = llm.inputs.length;
+      expect(await offerForDraft({ target: { ...target, offer }, playName: "new-business" })).toBe(
+        offer,
+      );
+      const row = await ensureOfferSet({ target: { ...target, offer }, playName: "new-business" });
+      expect(row && !isOfferSkipped(row) && row.offer).toBe(offer);
+      expect(llm.inputs.length).toBe(calls);
+    }
   });
 
   it("keeps an edited or approved offer when this version reads its GitHub record", async () => {

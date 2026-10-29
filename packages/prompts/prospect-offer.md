@@ -28,8 +28,8 @@ The thread is context, not evidence. It is our own writing, not a fact about the
 
 1. How does this firm make money? What does it sell, to whom, how does it deliver, what does it depend on (suppliers, regulators, channels, data, people)?
 2. What stage is it at? Pre-product, early startup, scaling startup, established company, enterprise, public body, or a local business. The same title means different work at each.
-3. What is this person accountable for in that firm, given their title and what the research says they do?
-4. What are the firm's two or three most valuable outcomes this quarter, in its own numbers when RESEARCH has them: revenue to bring in, customers to win or keep, a launch to ship, a contract cycle to close, a cost line to cut, a program to finish? Look in two places (the anchors below): what their own product has to deliver for its customers, and what their own firm has to get done.
+3. What does this person's own leadership review them on this quarter, at this firm? Name it from their title and RESEARCH, and make every offer move that result. A technology or AI leader is measured on systems shipped and running that pay back; a sales leader on signed revenue; an operations leader on cost and throughput; a finance leader on cash and close; a founder on the firm's own top goal.
+4. What are the firm's two or three most valuable outcomes this quarter, in its own numbers when RESEARCH has them: revenue to bring in, customers to win or keep, a launch to ship, a contract cycle to close, a cost line to cut, a program to finish? Look in two places (the anchors below): a piece their own product is missing to finish its job for its customers, and a goal their own firm has outside its core product.
 5. Which of those take weeks of work to reach? The work can be done by machine (long multi-step work: processing thousands of documents or records, optimizing routes, allocations or schedules, forecasting or simulating to change a plan, building or migrating software, working through a browser), with outside parties (customers, suppliers, partners, agencies, regulators, candidates), or both.
 6. Which of those can the product carry to the end, using only what PRODUCT BRIEF says it does? The product's own kind of work is how it gets there, never the goal itself.
 7. Rank them by direct return to THIS firm: money brought in, money not spent, something signed, closed, launched or shipped, a risk closed out, hours given back. The return must be something they could count when the goal is reached. Rank across both anchors together and keep the five with the highest return, best first.
@@ -40,27 +40,28 @@ The thread is context, not evidence. It is our own writing, not a fact about the
 - The weeks of work can be done by machine: long multi-step work such as processing thousands of documents or records, optimizing routes, allocations or schedules, forecasting or simulating to change a plan, building or migrating software, or working through a browser. They can run through outside parties: customers, suppliers, partners, agencies, regulators, candidates. Or both. Neither is required; what makes it an offer is a long piece of work that ends in a counted result: "re-plan every delivery route before peak season", "migrate the codebase off a deprecated platform before its cutoff", "sign three new distributors this quarter".
 - A single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching is a STEP, never the offer. The offer is what that work, however long or machine-heavy, wins: a contract renegotiated, money recovered, a deal signed, a launch shipped, every new supplier onboarded in time for next quarter's contracts. "recover overbilled charges from three years of carrier invoices" is an offer; "audit carrier invoices" is a step. The whole path to that result is still work PRODUCT BRIEF says the product does: when the brief gives a check no path to a counted result for this firm, choose another goal rather than claim work the brief does not name. This holds when checking is all the product does: the offer names what the checking wins, and the check goes in STEPS. An offer never opens with vet, verify, validate, screen, scan, audit or check.
 - A forecast, a model or an analysis on its own is insight, never the offer. The offer is the plan changed on it and what that wins: stock reordered before the peak, crews rescheduled, a budget moved.
-- The person owns the goal or is one step from it. When the biggest goal in the firm belongs to someone far from this person, write the biggest one this person owns.
+- The person owns the goal: it moves the result their own leadership reviews them on (step 3). When the biggest goal in the firm belongs to another leader, write the biggest one this person owns.
 - No offer, in any wording, is a goal of a kind listed in NEVER OFFER, however much RESEARCH says the firm needs it. Pick another goal.
 
 ## Each offer rests on an anchor
 
 Every offer rests on at least one of these two:
 
-- **Their product:** a job their product could finish for its own customers with the founder's product inside it. It needs to know what their product does (their own pages, the row, firm research).
-- **Their firm:** a job inside a firm of this stage and size that this person's role owns or is close to. It needs to know the firm's stage and the person's role.
+- **Their product:** a piece their product is missing to finish its job for its own customers, named as a piece: a step it cannot do itself today (work outside their software, with outside parties, or long compute work), which the founder's product supplies inside theirs. For a collections portal, "collect overdue accounts" is their own job; "printed letters and calls for the cases your portal can't close" is a piece. Never the job their product already does or sells (see the homepage test below). It needs to know what their product does (their own pages, the row, firm research).
+- **Their firm:** a goal of their own firm outside its core product, at this stage and size, that this person is measured on. It needs to know the firm's stage and the person's role.
 
 An offer that rests on neither is not an offer for this prospect, however well it reads. `anchor` names the one it rests on, `product` or `firm`: the same thing `fit` says in prose, so the two always agree.
 
-With `ANCHOR: prefer their product`, read RESEARCH for what their own product does before anything else. Where it says so, the strongest offers are goals that product would carry to completion for its own users, and the best of those is first; a firm-anchored offer still belongs among the five. Where RESEARCH says nothing about their product, firm-anchored offers are right and lose nothing by being so. The preference never licenses an invented fact about their product: with no evidence for one, write the firm.
+With `ANCHOR: prefer their product`, read RESEARCH for what their own product does before anything else. Where it says so, the strongest offers supply a piece that product is missing to finish its job for its own customers, and the best of those is first; a firm-anchored offer still belongs among the five. Where RESEARCH says nothing about their product, firm-anchored offers are right and lose nothing by being so. The preference never licenses an invented fact about their product, nor an offer that does their product's own job: with no evidence for a missing piece, write the firm.
 
 ## Relevance rules
 
 - A market the firm sells into is not a need of the firm. "They serve healthcare" does not mean they have healthcare compliance work; "they sell to banks" does not mean they reconcile bank statements. Never build an offer from an industry, sector or customer word alone. A market word can shape an offer only when it rests on an anchor: their product doing something for customers in that market, or work their own firm does there.
 - Stage realism: no job a firm of this size and stage does not have. A small early team has no procurement department, no vendor onboarding program and no back office of its own; an enterprise has more of each. When RESEARCH gives headcount, funding or stage, use it; when it does not, judge from what the firm visibly is.
-- The person's role: a firm-anchored offer is a goal this person owns or is one step from. A research lead does not own invoice reconciliation; an operations lead may. A board director does not own a team's day-to-day backlog.
+- The person's role: a goal another leader owns is the wrong offer however good the job is. Delivery routes belong to the operations leader; for a technology leader write the version they own: the system that re-plans routes, shipped and running, counted by what it returns. A research lead does not own invoice reconciliation; an operations lead may. A board director does not own a team's day-to-day backlog.
 - When RESEARCH says little about what their product does, prefer firm-anchored offers built from the role and stage, and say so in `fit`.
 - How they were found (a repository they starred or follow, an event they joined, a post they reacted to, a tool they use) says what they are looking at, not what they own or run. A third party's project is never their firm or their project: never an offer to build, ship, improve, test or run it. It can shape an offer only when it rests on an anchor (their own product or their firm), for example as a hint of what they are building.
+- Homepage test: an offer that does the job their own product already does or sells reads as a competitor's pitch. If the offer could be their own homepage headline, write the piece their product is missing instead, or a goal of their firm outside its product.
 - An offer whose goal is the product's own capability (what PRODUCT BRIEF says the product does, restated as something to ship or run) is a restatement of the brief, not a goal of theirs. The goal is their product's or their firm's; the product's work belongs in STEPS.
 
 ## Each offer is an execution with a return
@@ -73,11 +74,12 @@ With `ANCHOR: prefer their product`, read RESEARCH for what their own product do
 
 - An outcome for their firm, in their own business's terms: what is true for their business when it is done. Not a feature, not a task list, not a meeting.
 - The outcome only, never how the product works: no wording from PRODUCT or PRODUCT BRIEF in the offer, and no mechanism words (checks, policies, verification, guardrails, runtimes). Name what is true for their business when it is done; how it gets done belongs in STEPS. The offer ends at the outcome: never a tail of "with…", "through…", "via…" or "using…" saying how. Check: would this firm want the sentence on its own roadmap if it had never heard of the product? If not, it is a pitch, not an offer.
-- As specific as the research allows: name their product, their market, their customers, their suppliers, their regulator, their locations, their backlog, whatever RESEARCH supports. If it would fit another firm in their industry unchanged, it is not specific enough.
+- When the person leads technology, engineering, data or AI, every offer is a system they ship and run, never the operations job itself: name one workflow of their own firm or their own product, the system that carries it to its end state in production, and what it returns ("put into production the system that works every denied claim in their provider networks to a decision"). Collecting, recovering, reconciling or re-planning offered bare to them is another leader's goal. A system named only in general terms ("agent execution", "automation pipelines") with no workflow of theirs is not specific enough.
+- Specific in the sentence itself, not only in `evidence`: every offer names a fact from RESEARCH: their product by name, a customer, a site, a market they operate in themselves, their regulator, a number. If it would fit another firm in their industry unchanged, it is not specific enough.
 - Imperative, lowercase, no trailing period, at most 140 characters.
 - Numbers only when the same number appears in RESEARCH. Otherwise write counts as words or leave them out.
 - Say nothing about them that RESEARCH does not support. A reasonable inference from what they sell or do is fine; an invented fact is not.
-- Never their company name (the message names it), never the product's name, never a price, a link, a guarantee, or an observation about them ("saw", "noticed", "you mentioned", "congrats").
+- Never their company name (the message names it; name their product, programme, sites or customers instead), never the founder's product's name, never a price, a link, a guarantee, or an observation about them ("saw", "noticed", "you mentioned", "congrats").
 
 ## Return
 
@@ -87,7 +89,7 @@ With `ANCHOR: prefer their product`, read RESEARCH for what their own product do
 
 ## Fit
 
-- One sentence naming the anchor ("their product" or "their firm") and the specific fact it rests on: "their product: their scheduling app books jobs for trade businesses, so the booking can finish inside it", "their firm: a ten-person team with one operations lead who runs supplier renewals by hand".
+- One sentence naming the anchor ("their product" or "their firm") and the specific fact it rests on: "their product: their scheduling app books jobs for trade businesses but cannot chase the deposit, so that piece runs inside it", "their firm: a ten-person team with one operations lead who runs supplier renewals by hand".
 - At most 160 characters, no trailing period. Numbers only when the same number appears in RESEARCH.
 
 ## Steps

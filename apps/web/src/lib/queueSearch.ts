@@ -1,4 +1,4 @@
-import type { LearningKind, QueueStatusView } from "@oneshot-gtm/shared-types";
+import type { LearningKind } from "@oneshot-gtm/shared-types";
 import type { QueueStatusFilter } from "./queue-helpers.ts";
 import { isLearningKind } from "./learning.ts";
 
@@ -17,9 +17,10 @@ export interface QueueSearch {
   prospectId?: number;
 }
 
-const STATUS_VALUES: ReadonlySet<string> = new Set<QueueStatusView | "all">([
+const STATUS_VALUES: ReadonlySet<string> = new Set<QueueStatusFilter>([
   "all",
   "pending",
+  "no-offer",
   "approved",
   "rejected",
   "sent",

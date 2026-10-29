@@ -57,7 +57,7 @@ type AppConfig = ReturnType<typeof loadConfig>;
 type JsonRecord = Record<string, unknown>;
 
 /** Bump when the prompt or the lint changes: unedited offers re-derive. */
-export const OFFER_PROMPT_VERSION = "offer-v6";
+export const OFFER_PROMPT_VERSION = "offer-v7";
 
 export const OFFER_MAX = {
   offer: 140,
@@ -101,8 +101,9 @@ export interface ProspectOffer {
    */
   anchor?: OfferAnchorKind;
   /**
-   * The relevance judge's label (see `judgeOffers`). A `weak` offer is kept
-   * only to make up the five when too few were judged relevant.
+   * The relevance judge's label (see `judgeOffers`). A fresh set keeps only
+   * offers that passed (from offer-v7): `weak` is on offers written before
+   * that, kept to make up the five, and on a re-judge of stored offers.
    */
   relevance?: OfferRelevance;
   /** 0–1: the probability of `relevant`, when the judge gives one. */
@@ -652,7 +653,10 @@ export interface OfferSet {
   candidates: ProspectOffer[];
 }
 
-/** No offer, because the writer declined: its reason, for the caller to keep and show. */
+/**
+ * No offer, because the writer declined or no offer passed the judge in any
+ * round: its reason, for the caller to keep and show.
+ */
 export interface OfferSkipped {
   skipped: OfferSkip;
 }
@@ -660,7 +664,7 @@ export interface OfferSkipped {
 /** What one writer run gave: the offers that passed, or, when none came back, the writer's skip. */
 export interface DerivedOffers {
   offers: ProspectOffer[];
-  /** Set only when the writer declined and no offer came back. */
+  /** Set only when no offer came back: the writer declined, or none passed (`noStrongOfferWhy`). */
   skip: OfferSkip | null;
 }
 
@@ -718,8 +722,8 @@ function anchorBlock(anchor: OfferAnchor): string[] {
   return anchor === "prefer-product"
     ? [
         "ANCHOR: prefer their product. Where RESEARCH says what their own product does, " +
-          "the strongest offers are goals it would carry to completion for its own users, " +
-          "and the best of those leads. Where RESEARCH says nothing about their product, " +
+          "the strongest offers supply a piece their product is missing to finish its job " +
+          "for its own users, never the job it already does, and the best of those leads. Where RESEARCH says nothing about their product, " +
           "a firm-anchored offer is right and is not penalised.",
       ]
     : [];
@@ -779,12 +783,12 @@ export function offerRelevanceCriteria(
   // was, so the preference never turns into a hold on rows that know little.
   const preferProduct =
     anchor === "prefer-product"
-      ? " Also weak: an offer resting on their firm where RESEARCH plainly says what their own product does and a goal of that product was available instead."
+      ? " Also weak: an offer resting on their firm where RESEARCH plainly says what their own product does and a missing piece of that product was available instead."
       : "";
   return {
     relevant:
-      "A goal this firm at its stage would put on its plan, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), owned by or one step from this person, resting on a specific fact about them: what their own product does for its customers, or work their own firm visibly has.",
-    weak: `Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome this person owns or is one step from, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.${preferProduct}`,
+      "A goal this firm at its stage would put on its plan and this person is measured on, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), resting on a specific fact about them: a piece their own product is missing to finish its job for its customers (never the job it already does), or a goal their own firm visibly has outside its core product.",
+    weak: `Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on (a collecting, recovering, reconciling or re-planning job offered bare to a technology, engineering, data or AI leader, whose goal is the system that does it, shipped into a named workflow of theirs), a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.${preferProduct}`,
     irrelevant: `A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.${excluded}`,
   };
 }
@@ -920,7 +924,11 @@ async function judgeWithDecisions(
       score,
       why: topDecisionLabels(a.probabilities) || label,
       classifier,
-      pass: label === "relevant" && (score ?? 0) >= min,
+      // P(relevant) is the bar, whatever the top label: graded by the founder
+      // (2026-10-29, 24 sdk offers), offers the judge labelled weak at
+      // P(relevant) 0.37–0.46 were ones they would send. A job the firm does
+      // not have (top label irrelevant) never passes.
+      pass: label !== "irrelevant" && (score ?? 0) >= min,
     };
   });
 }
@@ -1051,19 +1059,16 @@ export async function judgeOffers(
 }
 
 /**
- * The label an offer is stored with after a verdict. A passing offer is
- * `relevant` and one the judge labelled `weak` is `weak`: the judge's own
- * label. Two cases are stored `weak` although the judge said otherwise,
- * because `weak` is the label that holds a send for the founder
- * (`offerHoldsSend`) and neither offer passed:
- * - a `relevant` whose P(relevant) is under `offerJudge.minConfidence`. Stored
- *   as `relevant` it would go out unreviewed although the judge did not pass it.
- * - an `irrelevant` one, only in a re-judge of stored offers (which keeps
- *   every candidate). A fresh set never keeps an irrelevant offer.
- * The judge's own label stays readable in `relevanceWhy`.
+ * The label an offer is stored with after a verdict: `relevant` when it
+ * passed, else `weak`, the label that holds a send for the founder
+ * (`offerHoldsSend`). A pass rests on P(relevant), so a `weak` top label
+ * at or over `offerJudge.minConfidence` is stored `relevant`, and a
+ * `relevant` one under it `weak`. An `irrelevant` one is stored `weak` only
+ * in a re-judge of stored offers (which keeps every candidate); a fresh set
+ * never keeps one. The judge's own label stays readable in `relevanceWhy`.
  */
 export function storedRelevance(j: Pick<OfferJudgement, "label" | "pass">): OfferRelevance {
-  return j.pass ? j.label : "weak";
+  return j.pass ? "relevant" : "weak";
 }
 
 /** The judge's fields for an offer: `relevance`, its score, why and classifier. */
@@ -1157,14 +1162,16 @@ function lintReply(
  * its own; the ones that fail get one repair round together. The ones that
  * pass are judged for relevance (`judgeOffers`): those the judge does not
  * pass are dropped, and one replacement round asks for as many new ones,
- * told why the dropped ones failed. Passing offers keep the model's order.
- * When still short of five, the best-scored `weak` ones fill the places,
- * tagged weak; an `irrelevant` or lint-failing offer never does. When the
- * judge passed none, one rescue round (`rescueWeakSet`) reads the firm's
- * research if the row has none complete and writes five again another way.
- * No offers when there is no brief, the model skips, or nothing passes; a
- * skip with nothing else kept comes back as `skip`, with the writer's why
- * and the input hash it read.
+ * told why the dropped ones failed. Passing offers keep the model's order,
+ * and only they are returned: a set holds one to five, never a weak one to
+ * make up the count. When the judge still passed none, a rescue round
+ * (`rescueWeakSet`) reads the firm's research if the row has none complete
+ * and writes five again another way; when that passes none either, a last
+ * one writes from what the person's title is measured on. The rounds stop
+ * at the first that passes an offer. No offers when there is no brief, the
+ * model skips, or nothing lints; a skip with nothing else kept comes back
+ * as `skip`, with the writer's why and the input hash it read, and so does
+ * a set every round was judged and none passed (`NO_STRONG_OFFER_WHY`).
  */
 export async function deriveOffers(
   input: DeriveOfferInput & { fetchImpl?: typeof fetch },
@@ -1186,6 +1193,8 @@ export async function deriveOffers(
   const seen = new Set<string>(avoidList(input));
   let lastReply = "";
   let skipWhy: string | null = null;
+  // Set when every rewrite round ran and the judge passed none.
+  let failedRounds: number | null = null;
   const spend = (usd: number | undefined): void => {
     if (typeof usd === "number" && Number.isFinite(usd) && usd > 0) input.onCost?.(usd);
   };
@@ -1230,6 +1239,7 @@ export async function deriveOffers(
         input,
         cfg,
         research,
+        target: input.target as JsonRecord,
         product,
         oneLiner,
         seen,
@@ -1239,10 +1249,25 @@ export async function deriveOffers(
       };
       const judged = await judgeAndReplace(kept, ctx);
       kept = judged.offers;
-      if (judged.rejected.length > 0 && kept.every((o) => o.relevance === "weak")) {
-        const rescued = await rescueWeakSet(kept, judged.rejected, ctx);
+      // Every offer the judge did not pass, from every round: the last
+      // rescue is told them all.
+      const rejected = [...judged.rejected];
+      let rounds = 1;
+      for (const fromRole of [false, true]) {
+        if (kept.length > 0 || rejected.length === 0) break;
+        const rescued = await rescueWeakSet(rejected, ctx, { fromRole });
         kept = rescued.offers;
-        research = rescued.research;
+        rejected.push(...rescued.rejected);
+        rounds++;
+      }
+      research = ctx.research;
+      if (kept.length === 0 && rejected.length > 0) {
+        failedRounds = rounds;
+        logEvent("prospect_offer.no_strong_offer", {
+          play: input.playName,
+          rounds,
+          rejected: rejected.length,
+        });
       }
     }
   } catch (err) {
@@ -1271,15 +1296,15 @@ export async function deriveOffers(
       play: input.playName,
       count: offers.length,
       level: offers[0]!.level,
-      weak: offers.filter((o) => o.relevance === "weak").length,
       offer_120: offers[0]!.offer.slice(0, 120),
     });
   }
   // A skip after a round that kept offers is no skip: those offers stand.
+  const why = skipWhy ?? (failedRounds !== null ? noStrongOfferWhy(failedRounds) : null);
   const skip: OfferSkip | null =
-    offers.length === 0 && skipWhy !== null
+    offers.length === 0 && why !== null
       ? {
-          why: skipWhy,
+          why,
           version: OFFER_PROMPT_VERSION,
           inputHash,
           productHash,
@@ -1289,11 +1314,38 @@ export async function deriveOffers(
   return { offers, skip };
 }
 
+/**
+ * The skip's why when every round was judged and none passed: the row is
+ * held `no-offer` and not written again until its research, the brief or
+ * the prompt version changes (`offerSkipIsCurrent`).
+ */
+export function noStrongOfferWhy(rounds: number): string {
+  return clip(
+    `no offer passed the relevance check after ${rounds} ${rounds === 1 ? "rewrite" : "rewrites"}`,
+    OFFER_SKIP_WHY_MAX,
+  );
+}
+
+/**
+ * The last rescue's ask, product-neutral: written from what the person's
+ * title is measured on, when every offer written from the firm was weak.
+ */
+export const OFFER_ROLE_RESCUE =
+  "Every offer so far was rated weak. Start from what this person's title is measured on " +
+  "at this firm, not from what the firm does: name the result their own leadership reviews " +
+  "them on this quarter, and write each offer as a goal that moves that result, resting on " +
+  "a fact in RESEARCH. A technology, engineering, data or AI leader is measured on " +
+  "systems shipped and running: write the system that carries one named workflow of " +
+  "their own firm or product to its end state, never the operations job itself.";
+
 /** What the judge and replacement rounds share with the writer's first round. */
 interface OfferRoundContext {
   input: DeriveOfferInput & { fetchImpl?: typeof fetch };
   cfg: AppConfig;
+  /** RESEARCH as the writer reads it now: a rescue that read the firm's replaces it. */
   research: string;
+  /** The target the judge reads, with any research a rescue read. */
+  target: JsonRecord;
   product: string;
   oneLiner: string;
   seen: Set<string>;
@@ -1304,7 +1356,7 @@ interface OfferRoundContext {
   spend: (usd: number | undefined) => void;
 }
 
-/** One offer the judge did not pass, with its score for the fill. */
+/** One offer the judge did not pass, with the verdict the next round is told. */
 interface Rejected {
   offer: DraftOffer;
   judgement: OfferJudgement;
@@ -1312,9 +1364,9 @@ interface Rejected {
 
 /**
  * The judge's pass over the linted offers, and the one replacement round.
- * Offers the judge gave no verdict are kept as they are: a judge outage
- * never empties a row. `rejected` lists every offer the judge did not pass,
- * irrelevant ones included, from both rounds.
+ * Only offers that pass come back. Offers the judge gave no verdict are kept
+ * as they are: a judge outage never empties a row. `rejected` lists every
+ * offer the judge did not pass, irrelevant ones included, from both rounds.
  */
 async function judgeAndReplace(
   kept: DraftOffer[],
@@ -1325,10 +1377,9 @@ async function judgeAndReplace(
     ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
     onCost: ctx.spend,
   };
-  const verdicts = await judgeOffers(kept, research, input.target, cfg, judgeOpts);
+  const verdicts = await judgeOffers(kept, research, ctx.target, cfg, judgeOpts);
   if (!verdicts) return { offers: kept, rejected: [] };
   const passing: DraftOffer[] = [];
-  const fill: Array<{ offer: DraftOffer; score: number | null }> = [];
   const rejected: Rejected[] = [];
   const dropped: string[] = [];
   kept.forEach((o, i) => {
@@ -1340,7 +1391,6 @@ async function judgeAndReplace(
     }
     rejected.push({ offer: judged, judgement: j });
     dropped.push(`"${o.offer}": ${j.label}, ${j.why}`);
-    if (j.label !== "irrelevant") fill.push({ offer: judged, score: j.score });
   });
   if (dropped.length > 0) {
     logEvent("prospect_offer.judge_dropped", {
@@ -1382,16 +1432,12 @@ async function judgeAndReplace(
         });
       }
       if (fresh.length > 0) {
-        const more = await judgeOffers(fresh, research, input.target, cfg, judgeOpts);
+        const more = await judgeOffers(fresh, research, ctx.target, cfg, judgeOpts);
         fresh.forEach((o, i) => {
           const j = more?.[i] ?? null;
           const judged = withJudgement(o, j);
-          if (!j || j.pass) {
-            passing.push(judged);
-            return;
-          }
-          rejected.push({ offer: judged, judgement: j });
-          if (j.label !== "irrelevant") fill.push({ offer: judged, score: j.score });
+          if (!j || j.pass) passing.push(judged);
+          else rejected.push({ offer: judged, judgement: j });
         });
       }
     } catch (err) {
@@ -1406,57 +1452,41 @@ async function judgeAndReplace(
       );
     }
   }
-  return { offers: withFillers(passing, fill), rejected };
+  return { offers: passing.slice(0, OFFER_COUNT), rejected };
 }
 
 /**
- * The passing offers, then the best-scored ones that did not pass up to
- * five; equal (or no) scores keep the order written. Each filler carries the
- * label `withJudgement` stored (`storedRelevance`): `weak` as the judge
- * labelled it, or a `relevant` under the bar stored `weak`, so every filler
- * holds its send.
- */
-function withFillers(
-  passing: DraftOffer[],
-  fill: ReadonlyArray<{ offer: DraftOffer; score: number | null }>,
-): DraftOffer[] {
-  if (passing.length >= OFFER_COUNT) return passing.slice(0, OFFER_COUNT);
-  const fillers = fill
-    .toSorted((a, b) => (b.score ?? -1) - (a.score ?? -1))
-    .slice(0, OFFER_COUNT - passing.length)
-    .map(({ offer }) => offer);
-  return [...passing, ...fillers];
-}
-
-/**
- * The rescue round, for a set the judge passed none of. The writer had the
+ * A rescue round, for a set the judge passed none of. The writer had the
  * facts it had, and the judge says only how weak each offer was, so a plain
- * retry writes the same offers again. First, when the row's company research
- * is missing or lacks its outside half, it is read once (the registered
- * `OfferResearch`, within find's per-row cap). Then the writer is asked again
- * in the same conversation (`prospect-offer-rescue`): the rejected offers,
- * what the judge means by weak, and a different approach, built on the most
- * specific facts RESEARCH holds. Passing offers lead; the rest of the five
- * are the best-scored weak ones of every round. When nothing passes the set
- * stays as it was. Never throws.
+ * retry writes the same offers again. The writer is asked again in the same
+ * conversation (`prospect-offer-rescue`): the rejected offers, what the judge
+ * means by weak, and a different approach, built on the most specific facts
+ * RESEARCH holds. Only offers that pass come back (or, when the judge gave no
+ * verdict, unjudged ones); none when nothing passes. Never throws.
+ *
+ * The first rescue (round 2) reads the row's company research once, when it
+ * is missing or lacks its outside half (the registered `OfferResearch`,
+ * within find's per-row cap), and leaves it on `ctx` for the rounds after.
+ * `fromRole` (round 3) reads nothing new, is told every offer rejected so
+ * far, and writes from what the person's title is measured on
+ * (`OFFER_ROLE_RESCUE`).
  */
 async function rescueWeakSet(
-  weak: DraftOffer[],
   rejected: ReadonlyArray<Rejected>,
   ctx: OfferRoundContext,
-): Promise<{ offers: DraftOffer[]; research: string }> {
+  opts: { fromRole?: boolean } = {},
+): Promise<{ offers: DraftOffer[]; rejected: Rejected[] }> {
   const { input, cfg } = ctx;
-  let research = ctx.research;
+  const round = opts.fromRole ? 3 : 2;
   let cost = 0;
   const spend = (usd: number | undefined): void => {
     if (typeof usd === "number" && Number.isFinite(usd) && usd > 0) cost += usd;
     ctx.spend(usd);
   };
-  let target = input.target as JsonRecord;
   let researched = false;
-  if (input.research && !hasCompleteResearch(target)) {
+  if (!opts.fromRole && input.research && !hasCompleteResearch(ctx.target)) {
     const out = await researchForOffer({
-      target,
+      target: ctx.target,
       playName: input.playName,
       queueRowId: input.research.queueRowId,
       source: input.research.source,
@@ -1465,11 +1495,12 @@ async function rescueWeakSet(
     spend(out.costUsd);
     if (out.researched) {
       const next = offerResearchText(out.target, input.dossier);
-      researched = next !== research;
-      target = out.target;
-      research = next;
+      researched = next !== ctx.research;
+      ctx.target = out.target;
+      ctx.research = next;
     }
   }
+  const research = ctx.research;
   const criteria = offerRelevanceCriteria();
   const content = loadPrompt("prospect-offer-rescue")
     .replace("{{rejected}}", () =>
@@ -1480,21 +1511,25 @@ async function rescueWeakSet(
     .replace("{{weak}}", () => criteria.weak)
     .replace("{{research}}", () =>
       researched ? `New research about this firm was read. RESEARCH is now:\n${research}\n\n` : "",
-    );
+    )
+    .replace("{{role}}", () => (opts.fromRole ? `${OFFER_ROLE_RESCUE}\n` : ""));
   if (ctx.messages.at(-1)?.role !== "assistant") {
     ctx.messages.push({ role: "assistant", content: ctx.lastReply });
   }
   ctx.messages.push({ role: "user", content });
-  let offers = weak;
-  let passed = 0;
+  const offers: DraftOffer[] = [];
+  const failed: Rejected[] = [];
   try {
     const res = await complete({ messages: ctx.messages, temperature: 0.7, maxTokens: 3000 });
     spend(res.costUsd);
+    // The next rescue answers in the same conversation, after this reply.
+    ctx.lastReply = res.content;
     const out = lintReply(res.content, research, ctx.product, ctx.oneLiner, ctx.seen);
     if (out.failed.length > 0) {
       logEvent("prospect_offer.lint_failed", {
         play: input.playName,
         round: "rescue",
+        rescue_round: round,
         kept: out.kept.length,
         flags_200: out.failed.join("; ").slice(0, 200),
       });
@@ -1505,23 +1540,14 @@ async function rescueWeakSet(
         ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
         onCost: spend,
       };
-      const verdicts = await judgeOffers(fresh, research, target, cfg, judgeOpts);
-      if (verdicts) {
-        const passing: DraftOffer[] = [];
-        // The earlier rounds' weak offers keep their scores and come first
-        // on a tie: they were written first.
-        const fill = weak.map((o) => ({ offer: o, score: o.relevanceScore ?? null }));
-        fresh.forEach((o, i) => {
-          const j = verdicts[i] ?? null;
-          // No verdict: unknown, so it never takes a place from a judged offer.
-          if (!j) return;
-          const judged = withJudgement(o, j);
-          if (j.pass) passing.push(judged);
-          else if (j.label !== "irrelevant") fill.push({ offer: judged, score: j.score });
-        });
-        passed = passing.length;
-        offers = withFillers(passing, fill);
-      }
+      const verdicts = await judgeOffers(fresh, research, ctx.target, cfg, judgeOpts);
+      fresh.forEach((o, i) => {
+        // No verdict (or no judge at all): kept unjudged, as the first round keeps it.
+        const j = verdicts?.[i] ?? null;
+        const judged = withJudgement(o, j);
+        if (!j || j.pass) offers.push(judged);
+        else failed.push({ offer: judged, judgement: j });
+      });
     }
   } catch (err) {
     logEvent(
@@ -1536,11 +1562,12 @@ async function rescueWeakSet(
   }
   logEvent("prospect_offer.rescue", {
     play: input.playName,
+    round,
     researched,
-    passed,
+    passed: offers.length,
     cost_micros: Math.round(cost * 1_000_000),
   });
-  return { offers, research };
+  return { offers, rejected: failed };
 }
 
 /** Flags for one written angle, keyed on its text alone. */
@@ -1665,9 +1692,9 @@ export function offerAnglesWritten(offer: Pick<ProspectOffer, "angles">): boolea
 }
 
 /**
- * Five ranked offers and the first one's angles. `skipped` when the writer
- * declined, with its why; null when no offer can be written otherwise: no
- * brief, or nothing passes lint.
+ * Up to five ranked offers that passed, and the first one's angles.
+ * `skipped` when the writer declined or none passed, with its why; null when
+ * no offer can be written otherwise: no brief, or nothing passes lint.
  */
 export async function deriveOfferSet(
   input: DeriveOfferInput,
@@ -1697,8 +1724,9 @@ export function offerCandidatesOf(payload: Record<string, unknown>): ProspectOff
 
 /**
  * The offers a queue row should carry: the stored set when its active offer
- * is current (or the founder's), with angles written if they are missing,
- * else a fresh set. A writer skip stored on the target (`offerSkip`) that is
+ * is current (or the founder's) and holds no send, with angles written if
+ * they are missing, else a fresh set. A stored weak offer nobody approved
+ * (written before sets kept only passing offers) is written again. A writer skip stored on the target (`offerSkip`) that is
  * current stands in for a fresh set: the writer would read the same input,
  * so it is not asked again. `changed` says whether the caller has anything
  * to persist (a fresh set, or a fresh skip).
@@ -1712,7 +1740,10 @@ export async function ensureOfferSet(
   const stored = t["offer"];
   const research = offerResearchText(t, input.dossier);
   const inputHash = offerInputHash(research, cfg);
-  if (offerIsCurrent(stored, inputHash) || approvedOfferStands(stored, t, input.dossier, cfg)) {
+  if (
+    (offerIsCurrent(stored, inputHash) && !offerHoldsSend(stored)) ||
+    approvedOfferStands(stored, t, input.dossier, cfg)
+  ) {
     const candidates = offerCandidatesOf(t);
     if (offerAnglesWritten(stored) || !cfg.productBrief?.trim()) {
       return { offer: stored, candidates, changed: false };
@@ -1742,7 +1773,8 @@ export async function ensureOffer(input: DeriveOfferInput): Promise<ProspectOffe
  * never saw: re-deriving on every draft would change the offer under the
  * founder's feet. A change to the product config is different: the offer's
  * claims rest on the brief, so it is written again. A founder's own offer is
- * always kept. With no brief there is no offer.
+ * always kept. A stored weak offer the founder did not approve is never
+ * drafted from: it is written again. With no brief there is no offer.
  */
 export async function offerForDraft(input: DeriveOfferInput): Promise<ProspectOffer | null> {
   return activeOf(await offerSetForDraft(input));
@@ -1771,9 +1803,11 @@ export async function offerSetForDraft(
   // added (see `offerForDraft`). An approved one of an older version is kept
   // only while it answers to the research it was written from: the row's own
   // (as `ensureOfferSet` writes it) or the row's with this dossier (as a
-  // draft that wrote it did). A prompt bump alone never rewrites it.
+  // draft that wrote it did). A prompt bump alone never rewrites it. A weak
+  // one nobody approved never stands, whatever its version.
   if (
     isProspectOffer(stored) &&
+    !offerHoldsSend(stored) &&
     (stored.version === OFFER_PROMPT_VERSION ||
       approvedOfferStands(stored, t, null, cfg) ||
       approvedOfferStands(stored, t, input.dossier, cfg)) &&
@@ -1842,8 +1876,8 @@ export const WEAK_OFFER_HOLD_REASON =
 
 /**
  * True when this offer must not go out as it stands: the relevance judge
- * rated it `weak` (kept only to make up the five), the founder did not write
- * it, and the founder has not approved it anyway. Rewriting it, picking
+ * rated it `weak` (on a set written before offer-v7, or a re-judge), the
+ * founder did not write it, and the founder has not approved it anyway. Rewriting it, picking
  * another or approving it releases the send; redrafting the letter does not.
  */
 export function offerHoldsSend(offer: unknown): boolean {
@@ -1901,6 +1935,26 @@ export function activeOfferPatch(
     for (const key of Object.keys(previous)) if (next[key] === undefined) next[key] = null;
   }
   return { offer: next, offerCandidates: candidates, offerSkip: null };
+}
+
+/**
+ * The payload patch that keeps a writer skip on a row (a JSON merge patch,
+ * as `activeOfferPatch`). The row's stored offer and its candidates are
+ * deleted with it, unless that offer still stands: the founder's own, one
+ * the founder approved, or a passing one of today's prompt version (a draft
+ * would use it, `offerSetForDraft`). Otherwise a weak or stale set would stay
+ * on screen beside a row held `no-offer`.
+ */
+export function offerSkipPatch(
+  previous: unknown,
+  skip: OfferSkip,
+): { offerSkip: OfferSkip; offer?: null; offerCandidates?: null } {
+  const stands =
+    isProspectOffer(previous) &&
+    (previous.editedBy === "founder" ||
+      offerWeakApproved(previous) ||
+      (previous.version === OFFER_PROMPT_VERSION && !offerHoldsSend(previous)));
+  return stands ? { offerSkip: skip } : { offerSkip: skip, offer: null, offerCandidates: null };
 }
 
 /**
