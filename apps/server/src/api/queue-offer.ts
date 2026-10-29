@@ -1,4 +1,4 @@
-import { getLedger, safeParseJsonRecord, type QueueRow } from "@oneshot-gtm/core";
+import { getLedger, loadConfig, safeParseJsonRecord, type QueueRow } from "@oneshot-gtm/core";
 import { CLICK_RESEARCH_WAIT_MS, offerResearchRow } from "@oneshot-gtm/find";
 import {
   activeOfferPatch,
@@ -7,6 +7,7 @@ import {
   isOfferSkipped,
   isProspectOffer,
   offerCandidatesOf,
+  offerProductHash,
   offerSkipPatch,
   playMakesOffer,
   type OfferSkip,
@@ -31,8 +32,10 @@ import {
  *   writer declines, or none of the new offers passes the relevance check,
  *   the reason is kept on the row (`offerSkip`) and the answer is 422 with
  *   it (`offerSkip.why`). When a new one passes, the row's previous strong
- *   offers (the founder's, or passing ones of today's prompt version) follow
- *   the new ones in the candidates, up to five in all (`mergeKeptOffers`). An offer the row had stays only while it stands
+ *   offers (the founder's, or passing ones of today's prompt version and
+ *   product brief) follow the new ones in the candidates, up to five in all
+ *   (`mergeKeptOffers`); the founder's own always stay, in place of the
+ *   lowest-ranked new ones if need be. An offer the row had stays only while it stands
  *   (the founder's, approved, or a passing one of today's prompt version:
  *   `offerSkipPatch`); a weak or stale one is deleted with its candidates.
  * - `{ select: i }` makes the row's i-th offer (0-based) active, writing its
@@ -168,7 +171,12 @@ export async function regenerateQueueRowOffer(
   }
   const previous = storedOffer(row.payload_json);
   const candidates = opts.keepStrong
-    ? mergeKeptOffers(set.candidates, previous, storedCandidates(row.payload_json))
+    ? mergeKeptOffers(
+        set.candidates,
+        previous,
+        storedCandidates(row.payload_json),
+        offerProductHash(loadConfig()),
+      )
     : set.candidates;
   // The new offer replaces the stored one whole: an approval or judge label
   // the old one carried must not survive the JSON merge patch.

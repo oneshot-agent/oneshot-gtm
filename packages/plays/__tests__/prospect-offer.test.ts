@@ -10,6 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // reply is unreadable and the offers are kept unjudged.
 /** A writer reply that makes the mocked call throw instead. */
 const WRITER_FAILS = "<writer fails>";
+/** A fallback model id every call naming it fails on (as an unknown id would). */
+const BROKEN_MODEL = "fallback/no-such-model";
 const llm = {
   replies: [] as string[],
   inputs: [] as string[],
@@ -21,6 +23,8 @@ const llm = {
   /** The `model` each judge call named. */
   judgeModels: [] as Array<string | undefined>,
 };
+/** Every event the code under test logged, in order. */
+const logs: Array<{ name: string; fields: Record<string, unknown> }> = [];
 const cfg: {
   founderName: string;
   productOneLiner: string;
@@ -42,7 +46,14 @@ const cfg: {
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
-  return { ...actual, loadConfig: () => cfg, logEvent: () => {}, getCachedNewsfeed: () => null };
+  return {
+    ...actual,
+    loadConfig: () => cfg,
+    logEvent: (name: string, fields: Record<string, unknown> = {}) => {
+      logs.push({ name, fields });
+    },
+    getCachedNewsfeed: () => null,
+  };
 });
 
 vi.mock("@oneshot-gtm/intel", async () => {
@@ -68,6 +79,8 @@ vi.mock("@oneshot-gtm/intel", async () => {
       const reply = llm.replies.shift() ?? "{}";
       // A provider failure on this call.
       if (reply === WRITER_FAILS) throw new Error("provider 503");
+      // A model id the provider does not know: every call naming it fails.
+      if (input.model === BROKEN_MODEL) throw new Error(`unknown model ${BROKEN_MODEL}`);
       // As the real client answers: the model the call named, else the workspace's.
       return { content: reply, provider: "t", model: input.model ?? "main/writer", costUsd: 0.002 };
     },
@@ -119,6 +132,7 @@ beforeEach(() => {
   llm.judgeInputs = [];
   llm.models = [];
   llm.judgeModels = [];
+  logs.length = 0;
   delete cfg.offerJudge;
   delete cfg.offerWriter;
   delete cfg.offerExclusions;
@@ -1772,10 +1786,206 @@ describe("offerWriter rounds and fallback model", () => {
     const { offers } = await deriveOffers({ target, playName: "new-business" });
     expect(offers.map((o) => o.writtenBy)).toEqual(["main/writer"]);
   });
+
+  it("a fallback model that fails asks the same round again on the workspace's model, and stays there", async () => {
+    cfg.offerWriter = { fallbackOnWeak: true, fallbackModel: BROKEN_MODEL };
+    llm.replies = [
+      five,
+      JSON.stringify({ offers: [replacement] }),
+      JSON.stringify({ offers: [replacementTwo] }),
+      JSON.stringify({ offers: [renewals] }),
+    ];
+    llm.judge = [
+      allWeak,
+      judgeReply([["weak", "generic"]]),
+      judgeReply([["weak", "generic"]]),
+      judgeReply([["weak", "generic"]]),
+    ];
+    const { offers, skip } = await deriveOffers({ target, playName: "new-business" });
+    // The replacement round fails on the fallback, then runs on the workspace's
+    // model; the two rescues never try the fallback again.
+    expect(llm.models).toEqual([undefined, BROKEN_MODEL, undefined, undefined, undefined]);
+    expect(llm.inputs[1]).toBe(llm.inputs[2]);
+    expect(offers).toEqual([]);
+    expect(skip?.why).toBe("no offer passed the relevance check after 3 rewrites");
+    const failed = logs.filter((l) => l.name === "prospect_offer.fallback_failed");
+    expect(failed).toEqual([
+      {
+        name: "prospect_offer.fallback_failed",
+        fields: {
+          play: "new-business",
+          model: BROKEN_MODEL,
+          message_120: `unknown model ${BROKEN_MODEL}`,
+        },
+      },
+    ]);
+    const noStrong = logs.find((l) => l.name === "prospect_offer.no_strong_offer");
+    expect(noStrong?.fields["model"]).not.toBe(BROKEN_MODEL);
+  });
+
+  it("a fallback that fails in a rescue round keeps the offer the workspace's model writes then", async () => {
+    cfg.offerWriter = { fallbackOnWeak: true, fallbackModel: "fallback/strong-writer" };
+    llm.replies = [
+      five,
+      JSON.stringify({ offers: [replacement] }),
+      WRITER_FAILS,
+      JSON.stringify({ offers: [replacementTwo] }),
+    ];
+    llm.judge = [
+      allWeak,
+      judgeReply([["weak", "generic"]]),
+      judgeReply([["relevant", "their friday slots"]]),
+    ];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.models).toEqual([
+      undefined,
+      "fallback/strong-writer",
+      "fallback/strong-writer",
+      undefined,
+    ]);
+    expect(offers.map((o) => [o.offer, o.writtenBy])).toEqual([
+      [replacementTwo.offer, "main/writer"],
+    ]);
+    expect(logs.filter((l) => l.name === "prospect_offer.fallback_failed")).toHaveLength(1);
+  });
+
+  it("no_strong_offer names the fallback only when a rewrite round ran on it", async () => {
+    const noStrongModel = (): unknown =>
+      logs.find((l) => l.name === "prospect_offer.no_strong_offer")?.fields["model"];
+    cfg.llmModel = "main/writer";
+    try {
+      cfg.offerWriter = {
+        rounds: 0,
+        fallbackOnWeak: true,
+        fallbackModel: "fallback/strong-writer",
+      };
+      llm.replies = [five];
+      llm.judge = [allWeak];
+      await deriveOffers({ target, playName: "new-business" });
+      expect(llm.models).toEqual([undefined]);
+      expect(noStrongModel()).toBe("main/writer");
+
+      logs.length = 0;
+      cfg.offerWriter = {
+        rounds: 1,
+        fallbackOnWeak: true,
+        fallbackModel: "fallback/strong-writer",
+      };
+      llm.replies = [five, JSON.stringify({ offers: [replacement] })];
+      llm.judge = [allWeak, judgeReply([["weak", "generic"]])];
+      await deriveOffers({ target, playName: "new-business" });
+      expect(noStrongModel()).toBe("fallback/strong-writer");
+    } finally {
+      delete cfg.llmModel;
+    }
+  });
+});
+
+// A no-strong-offer skip rests on the writer settings its rounds ran under:
+// new rounds or a fallback model write the held row again.
+
+describe("a held row and the writer settings", () => {
+  const five = JSON.stringify({ offers: [good, second, third, fourth, fifth] });
+  const allWeak = judgeReply([
+    ["weak", "generic"],
+    ["weak", "generic"],
+    ["weak", "generic"],
+    ["weak", "generic"],
+    ["weak", "generic"],
+  ]);
+  const heldSkip = async () => {
+    cfg.offerWriter = { rounds: 0 };
+    llm.replies = [five];
+    llm.judge = [allWeak];
+    const { skip } = await deriveOffers({ target, playName: "new-business" });
+    if (!skip) throw new Error("expected a skip");
+    llm.inputs = [];
+    return skip;
+  };
+
+  it("records the writer settings on a no-strong-offer skip, not on the writer's refusal", async () => {
+    const { offerWriterHash } = await import("../src/_prospect-offer.ts");
+    const skip = await heldSkip();
+    expect(skip.writerHash).toBe(offerWriterHash({ offerWriter: { rounds: 0 } }));
+    expect(skip.writerHash).not.toBe(offerWriterHash({}));
+    llm.replies = [JSON.stringify({ skip: true, why: "They left the firm." })];
+    const refusal = await deriveOffers({ target, playName: "new-business" });
+    expect(refusal.skip?.writerHash).toBeUndefined();
+  });
+
+  it("stands while the settings are the same, and is written again when the fallback is turned on", async () => {
+    const skip = await heldSkip();
+    const held = { ...target, offerSkip: skip };
+    const same = await ensureOfferSet({ target: held, playName: "new-business" });
+    expect(isOfferSkipped(same) && same.changed).toBe(false);
+    const draft = await offerSetForDraft({ target: held, playName: "new-business" });
+    expect(isOfferSkipped(draft) && draft.derived).toBe(false);
+    expect(llm.inputs).toHaveLength(0);
+
+    cfg.offerWriter = { rounds: 0, fallbackOnWeak: true, fallbackModel: "fallback/strong-writer" };
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    llm.judge = [judgeReply([["relevant", "the second depot"]])];
+    const retried = await ensureOfferSet({ target: held, playName: "new-business" });
+    // The writer was asked again (its angles too).
+    expect(llm.inputs.length).toBeGreaterThan(0);
+    expect(retried && !isOfferSkipped(retried) && retried.offer.offer).toBe(good.offer);
+  });
+
+  it("is written again for a draft when the rounds go up", async () => {
+    const skip = await heldSkip();
+    cfg.offerWriter = { rounds: 2 };
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    llm.judge = [judgeReply([["relevant", "the second depot"]])];
+    const draft = await offerSetForDraft({
+      target: { ...target, offerSkip: skip },
+      playName: "new-business",
+    });
+    expect(llm.inputs.length).toBeGreaterThan(0);
+    expect(draft && !isOfferSkipped(draft) && draft.derived).toBe(true);
+  });
+
+  it("a no-strong-offer skip from before the field stands only under the default settings", async () => {
+    const { writerHash: _made, ...old } = await heldSkip();
+    const held = { ...target, offerSkip: old };
+    delete cfg.offerWriter;
+    const kept = await ensureOfferSet({ target: held, playName: "new-business" });
+    expect(isOfferSkipped(kept) && kept.changed).toBe(false);
+    cfg.offerWriter = { rounds: 3 };
+    expect(isOfferSkipped(await ensureOfferSet({ target: held, playName: "new-business" }))).toBe(
+      true,
+    );
+    expect(llm.inputs).toHaveLength(0);
+
+    cfg.offerWriter = { fallbackOnWeak: true, fallbackModel: "fallback/strong-writer" };
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    llm.judge = [judgeReply([["relevant", "the second depot"]])];
+    const retried = await ensureOfferSet({ target: held, playName: "new-business" });
+    // The writer was asked again (its angles too).
+    expect(llm.inputs.length).toBeGreaterThan(0);
+    expect(retried && !isOfferSkipped(retried)).toBe(true);
+  });
+
+  it("the writer's own refusal stands whatever the writer settings", async () => {
+    llm.replies = [JSON.stringify({ skip: true, why: "They left the firm in October." })];
+    const { skip } = await deriveOffers({ target, playName: "new-business" });
+    cfg.offerWriter = { rounds: 5, fallbackOnWeak: true, fallbackModel: "fallback/strong-writer" };
+    const held = { ...target, offerSkip: skip };
+    const kept = await ensureOfferSet({ target: held, playName: "new-business" });
+    expect(isOfferSkipped(kept) && kept.changed).toBe(false);
+    const draft = await offerSetForDraft({ target: held, playName: "new-business" });
+    expect(isOfferSkipped(draft)).toBe(true);
+    expect(llm.inputs).toHaveLength(1);
+  });
 });
 
 describe("mergeKeptOffers", () => {
-  const stamp = { version: OFFER_PROMPT_VERSION, inputHash: "h", derivedAt: "2026-10-29" };
+  const today = offerProductHash(cfg);
+  const stamp = {
+    version: OFFER_PROMPT_VERSION,
+    inputHash: "h",
+    productHash: today,
+    derivedAt: "2026-10-29",
+  };
   const strong = (o: typeof good) => ({
     ...o,
     ...stamp,
@@ -1799,15 +2009,12 @@ describe("mergeKeptOffers", () => {
     const stale = { ...strong(fifth), version: "offer-v6" };
     const unjudged = { ...good, ...stamp, level: "researched" as const, offer: "never judged" };
     const repeat = strong({ ...replacement, offer: `  ${replacement.offer.toUpperCase()} ` });
-    const merged = mergeKeptOffers([strong(replacement), strong(replacementTwo)], founders, [
-      strong(second),
-      weak,
-      approvedWeak,
-      stale,
-      unjudged,
-      repeat,
+    const merged = mergeKeptOffers(
+      [strong(replacement), strong(replacementTwo)],
       founders,
-    ]);
+      [strong(second), weak, approvedWeak, stale, unjudged, repeat, founders],
+      today,
+    );
     expect(merged.map((o) => o.offer)).toEqual([
       replacement.offer,
       replacementTwo.offer,
@@ -1819,8 +2026,79 @@ describe("mergeKeptOffers", () => {
   it("holds at most five, and nothing old when the new set is full", async () => {
     const { mergeKeptOffers, OFFER_COUNT } = await import("../src/_prospect-offer.ts");
     const fresh = [good, second, third, fourth, fifth].map(strong);
-    expect(mergeKeptOffers(fresh, strong(replacement), [strong(replacementTwo)])).toEqual(fresh);
+    expect(mergeKeptOffers(fresh, strong(replacement), [strong(replacementTwo)], today)).toEqual(
+      fresh,
+    );
     expect(OFFER_COUNT).toBe(5);
+  });
+
+  it("keeps the founder's own offer when five new ones pass, in place of the lowest-ranked new one", async () => {
+    const { mergeKeptOffers } = await import("../src/_prospect-offer.ts");
+    const founders = {
+      ...good,
+      offer: "a founder's own words",
+      version: "offer-v3",
+      inputHash: "",
+      productHash: "an older brief",
+      derivedAt: "2026-01-01",
+      level: "researched" as const,
+      editedBy: "founder" as const,
+    };
+    const fresh = [good, second, third, fourth, fifth].map(strong);
+    const asActive = mergeKeptOffers(fresh, founders, [strong(replacement)], today);
+    expect(asActive.map((o) => o.offer)).toEqual([
+      good.offer,
+      second.offer,
+      third.offer,
+      fourth.offer,
+      founders.offer,
+    ]);
+    // Kept from the candidates too, and two founder offers take two places.
+    const another = { ...founders, offer: "another of the founder's" };
+    const asCandidates = mergeKeptOffers(fresh, strong(replacement), [founders, another], today);
+    expect(asCandidates.map((o) => o.offer)).toEqual([
+      good.offer,
+      second.offer,
+      third.offer,
+      founders.offer,
+      another.offer,
+    ]);
+  });
+
+  it("never lets founder offers push out the new active offer", async () => {
+    const { mergeKeptOffers } = await import("../src/_prospect-offer.ts");
+    const mine = (text: string) => ({
+      ...good,
+      offer: text,
+      version: "offer-v3",
+      inputHash: "",
+      derivedAt: "2026-01-01",
+      level: "researched" as const,
+      editedBy: "founder" as const,
+    });
+    const ownSix = ["one", "two", "three", "four", "five", "six"].map((n) => mine(`mine ${n}`));
+    const merged = mergeKeptOffers([strong(replacement)], null, ownSix, today);
+    expect(merged.map((o) => o.offer)).toEqual([
+      replacement.offer,
+      "mine one",
+      "mine two",
+      "mine three",
+      "mine four",
+    ]);
+  });
+
+  it("drops an old passing offer written from another product brief", async () => {
+    const { mergeKeptOffers } = await import("../src/_prospect-offer.ts");
+    const otherBrief = { ...strong(second), productHash: "an older brief" };
+    const noHash = { ...strong(third) } as Partial<ReturnType<typeof strong>>;
+    delete noHash.productHash;
+    const merged = mergeKeptOffers(
+      [strong(replacement)],
+      otherBrief,
+      [noHash, strong(fourth)],
+      today,
+    );
+    expect(merged.map((o) => o.offer)).toEqual([replacement.offer, fourth.offer]);
   });
 });
 
