@@ -138,6 +138,15 @@ export async function safePeopleSearch(
 }
 
 /**
+ * Hard ceiling on one companySearch or enrichCompany, for the same reason as
+ * peopleSearch: the SDK's request has no end-to-end deadline of its own
+ * (measured 2026-10-29: an sdk list-page run sat 57 minutes after its last
+ * event, during an afternoon of company_search authentication failures, until
+ * a restart killed it).
+ */
+const COMPANY_LOOKUP_DEADLINE_MS = 120_000;
+
+/**
  * companySearch that never throws. A failure resolves to an empty result
  * set instead of aborting the whole finder run.
  */
@@ -147,7 +156,11 @@ export async function safeCompanySearch(
   cache?: PaidCacheOptions,
 ): Promise<Awaited<ReturnType<typeof companySearch>>> {
   try {
-    return await companySearch(input, ctx, cache);
+    return await withDeadline(
+      companySearch(input, ctx, cache),
+      COMPANY_LOOKUP_DEADLINE_MS,
+      "companySearch",
+    );
   } catch (err) {
     swallow(ctx, "company_search", err);
     return { result: { status: "error", results: [], total_found: 0, cost: 0 }, receiptId: 0 };
@@ -164,7 +177,11 @@ export async function safeEnrichCompany(
   cache?: PaidCacheOptions,
 ): Promise<Awaited<ReturnType<typeof enrichCompany>>> {
   try {
-    return await enrichCompany(input, ctx, cache);
+    return await withDeadline(
+      enrichCompany(input, ctx, cache),
+      COMPANY_LOOKUP_DEADLINE_MS,
+      "enrichCompany",
+    );
   } catch (err) {
     swallow(ctx, "enrich_company", err);
     return { result: { status: "error", company: {}, cost: 0 }, receiptId: 0 };
