@@ -223,6 +223,17 @@ export class SharedDb {
       .run(email, resultJson, new Date().toISOString());
   }
 
+  /** Write the row only when no row has the key: true for the one caller that wrote it. */
+  claimCachedEnrichment(email: string, resultJson: string): boolean {
+    const res = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO enrichment_cache(email, result_json, fetched_at, status)
+         VALUES(?, ?, ?, NULL)`,
+      )
+      .run(email, resultJson, new Date().toISOString());
+    return res.changes > 0;
+  }
+
   setCachedEnrichmentFailure(email: string, message: string): void {
     this.db
       .prepare(

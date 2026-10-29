@@ -70,6 +70,15 @@ const VERIFY_MAX_COST_USD = 0.1;
 const READ_SPACING_MS = 15_000;
 /** A charged read that returned no usable profile: counted toward the day's reads, never a result. */
 const INCOMPLETE_PREFIX = "linkedin-profile:incomplete:";
+/**
+ * A profile the account already asked for today (`<prefix><hash>:<utc day>`).
+ * The view's idempotency key is per profile and day, and OneShot refuses a
+ * key it has seen ("This Idempotency-Key was already used"), so a second
+ * try the same day cannot succeed: 15 of 20 failed reads on 2026-10-29.
+ */
+const TRIED_PREFIX = "linkedin-profile:tried:";
+/** Reads kept back each day for rows the founder opens; a quarter of a smaller cap. */
+const OPENED_READ_RESERVE = 20;
 const LOGIN_READY_STATUSES = new Set(["idle", "ready"]);
 /** A setup state that ended the login before Done: a failed boot, an expiry, a stop. */
 const LOGIN_FAILED_RX = /fail|error|expired|closed|cancel|stopped|no_setup/i;
@@ -233,6 +242,17 @@ export function linkedInReadsPerDay(
   cfg: Pick<OneShotConfig, "linkedinReadsPerDay"> = loadConfig(),
 ): number {
   return cfg.linkedinReadsPerDay ?? DEFAULT_LINKEDIN_READS_PER_DAY;
+}
+
+/**
+ * Reads the sweep and the post-finder pass may have made by `now`: the cap
+ * less the reserve for opened rows, released hour by hour from 00:00 UTC.
+ * Unpaced, the first sweeps after the reset spent all 95 by 01:57 UTC on
+ * 2026-10-29, and nothing found or opened later that day could be read.
+ */
+export function backgroundReadAllowance(now: Date, perDay: number): number {
+  const background = perDay - Math.min(OPENED_READ_RESERVE, Math.floor(perDay / 4));
+  return Math.ceil((background * (now.getUTCHours() + 1)) / 24);
 }
 
 /** The profile's identity in the view's idempotency key (the key the old per-site cache used). */
@@ -795,6 +815,8 @@ export async function readLinkedInProfile(
     now?: Date;
     /** A cached read older than this is read again (default: the 30-day cache expiry). */
     maxAgeMs?: number;
+    /** The founder opened the row: the whole day's cap, not the paced background share. */
+    opened?: boolean;
   },
 ): Promise<LiveProfileRead> {
   if (!isLinkedInProfileUrl(url))
@@ -834,13 +856,17 @@ export async function readLinkedInProfile(
 async function readLive(
   url: string,
   ctx: CallContext,
-  opts: { remainingUsd: number; now?: Date },
+  opts: { remainingUsd: number; now?: Date; opened?: boolean },
 ): Promise<LiveProfileRead> {
   const key = linkedinProfileCacheKey(url);
   const now = opts.now ?? new Date();
   const account = readAccount();
   if (account) {
-    if (linkedInAccountReadsToday(now) >= linkedInReadsPerDay(loadConfig())) {
+    const limit = (at: Date) => {
+      const perDay = linkedInReadsPerDay(loadConfig());
+      return opts.opened ? perDay : backgroundReadAllowance(at, perDay);
+    };
+    if (linkedInAccountReadsToday(now) >= limit(now)) {
       return { profile: null, skipped: "daily-limit", costUsd: 0, cached: false };
     }
     if (opts.remainingUsd < LINKEDIN_READ_COST_ESTIMATE_USD) {
@@ -849,7 +875,8 @@ async function readLive(
     return serializedAccountRead(async () => {
       // Re-checked inside the gate: a read that queued behind others may
       // find the day's cap spent by them.
-      if (linkedInAccountReadsToday(new Date()) >= linkedInReadsPerDay(loadConfig())) {
+      const at = opts.now ?? new Date();
+      if (linkedInAccountReadsToday(at) >= limit(at)) {
         return { profile: null, skipped: "daily-limit", costUsd: 0, cached: false };
       }
       return readThroughAccount(url, key, account, ctx);
@@ -1098,7 +1125,17 @@ async function readThroughAccount(
   const call = (operation: LinkedInOperation) => linkedInCall(account.workspace, operation);
   // The key allows only [A-Za-z0-9_.:-], so the profile is named by a hash.
   const profileHash = createHash("sha256").update(key).digest("hex").slice(0, 32);
-  const idempotencyKey = `gtm:profile-read:${profileHash}:${utcDayKey(new Date())}`;
+  const day = utcDayKey(new Date());
+  const idempotencyKey = `gtm:profile-read:${profileHash}:${day}`;
+  const triedKey = `${TRIED_PREFIX}${profileHash}:${day}`;
+  // Claimed in one statement, so two servers cannot both send today's key.
+  let claimed = true;
+  try {
+    claimed = ledger.claimCachedEnrichment(triedKey, JSON.stringify({ tried: true }));
+  } catch {
+    // best-effort: without it a second try today is refused by OneShot, as before
+  }
+  if (!claimed) return skip("interrupted");
   const deadline = Date.now() + ACCOUNT_READ_WAIT_MS;
   let requestId: string | null = null;
   let done: Record<string, unknown> | null = null;

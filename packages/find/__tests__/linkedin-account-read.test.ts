@@ -30,6 +30,11 @@ vi.mock("@oneshot-gtm/core", async () => {
       getCachedEnrichment: (key: string) => cache.get(key) ?? null,
       setCachedEnrichment: (key: string, json: string) =>
         cache.set(key, { result_json: json, fetched_at: new Date().toISOString(), status: null }),
+      claimCachedEnrichment: (key: string, json: string) => {
+        if (cache.has(key)) return false;
+        cache.set(key, { result_json: json, fetched_at: new Date().toISOString(), status: null });
+        return true;
+      },
       setCachedEnrichmentFailure: (key: string, message: string) =>
         cache.set(key, {
           result_json: JSON.stringify({ failed: true, message }),
@@ -51,6 +56,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 
 const {
   _setLinkedInCall,
+  backgroundReadAllowance,
   experienceFromAccountView,
   liveReadConfigured,
   liveReadReady,
@@ -90,6 +96,12 @@ const ADA_EXPERIENCE = [
   { company: "Old Co", title: "Engineer", start: "3/1/2023", end: "12/1/2025", current: false },
   { company: "", title: "dropped: no company" },
 ];
+
+/** Forget which profiles were asked for today, as if each step ran on a new day. */
+const forgetTries = () => {
+  for (const key of cache.keys()) if (key.startsWith("linkedin-profile:tried:")) cache.delete(key);
+};
+const untried = () => [...cache.keys()].filter((k) => !k.startsWith("linkedin-profile:tried:"));
 
 let ops: Array<{ workspace: string; operation: Record<string, unknown> }> = [];
 let answers: Array<unknown> = [];
@@ -318,9 +330,9 @@ describe("readLinkedInProfile through the connected account", () => {
       networkDistance: "FIRST_DEGREE",
       experience: [],
     });
-    expect([...cache.keys()]).toEqual([expect.stringMatching(/^linkedin-profile:incomplete:/)]);
+    expect(untried()).toEqual([expect.stringMatching(/^linkedin-profile:incomplete:/)]);
     // A row without a failure status: the kind the daily budget counts.
-    expect([...cache.values()][0]!.status).toBeNull();
+    expect(cache.get(untried()[0]!)!.status).toBeNull();
   });
 
   it("sorts failures: reconnect, out of views, this profile (negative-cached), try again", async () => {
@@ -328,6 +340,7 @@ describe("readLinkedInProfile through the connected account", () => {
     expect((await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 })).skipped).toBe(
       "session-invalid",
     );
+    forgetTries();
     script({
       status: "failed",
       error: "Daily profile-view limit reached",
@@ -336,13 +349,15 @@ describe("readLinkedInProfile through the connected account", () => {
     expect((await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 })).skipped).toBe(
       "daily-limit",
     );
+    forgetTries();
     script(fail({ statusCode: 500, message: "Tool execution failed" }));
     expect((await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 })).skipped).toBe(
       "interrupted",
     );
-    expect(cache.size).toBe(0);
+    expect(untried()).toEqual([]);
     expect(stored(URL_A)).toBeNull();
 
+    forgetTries();
     script(fail({ statusCode: 404, code: "profile_not_found" }));
     expect((await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 })).skipped).toBe("failed");
     expect(stored(URL_A)?.status).toBe("failed");
@@ -363,8 +378,11 @@ describe("readLinkedInProfile through the connected account", () => {
       return view(ADA_EXPERIENCE);
     }, 0);
     const [a, b] = await Promise.all([
-      readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 }),
-      readLinkedInProfile("https://www.linkedin.com/in/bo-quill", ctx, { remainingUsd: 1 }),
+      readLinkedInProfile(URL_A, ctx, { remainingUsd: 1, opened: true }),
+      readLinkedInProfile("https://www.linkedin.com/in/bo-quill", ctx, {
+        remainingUsd: 1,
+        opened: true,
+      }),
     ]);
     expect([a.skipped ?? "read", b.skipped ?? "read"].toSorted()).toEqual(["daily-limit", "read"]);
     expect(ops).toHaveLength(1);
@@ -383,5 +401,51 @@ describe("readLinkedInProfile through the connected account", () => {
       "cost-cap",
     );
     expect(ops).toEqual([]);
+  });
+
+  it("asks for a profile once a day: OneShot refuses a second view under the same key", async () => {
+    script(view([], false), view(ADA_EXPERIENCE));
+    expect((await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 })).skipped).toBe(
+      "interrupted",
+    );
+    expect((await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 })).skipped).toBe(
+      "interrupted",
+    );
+    expect(ops).toHaveLength(1);
+    // The next UTC day's key is a new one.
+    forgetTries();
+    expect((await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 })).profile?.name).toBe(
+      "Ada Quill",
+    );
+  });
+
+  it("releases the background reads hour by hour, keeping 20 for rows the founder opens", async () => {
+    expect(backgroundReadAllowance(new Date("2026-10-29T00:36:00Z"), 95)).toBe(4);
+    expect(backgroundReadAllowance(new Date("2026-10-29T12:05:00Z"), 95)).toBe(41);
+    expect(backgroundReadAllowance(new Date("2026-10-29T23:59:00Z"), 95)).toBe(75);
+    // A small cap keeps a quarter back, never all of it.
+    expect(backgroundReadAllowance(new Date("2026-10-29T23:59:00Z"), 12)).toBe(9);
+
+    cfg["linkedinReadsPerDay"] = 95;
+    const now = new Date("2026-10-29T00:36:00Z");
+    readsToday = 4;
+    script(view(ADA_EXPERIENCE));
+    expect((await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1, now })).skipped).toBe(
+      "daily-limit",
+    );
+    expect(ops).toEqual([]);
+    // An opened row may use the rest of the day's cap.
+    const opened = await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1, now, opened: true });
+    expect(opened.profile?.name).toBe("Ada Quill");
+    readsToday = 95;
+    expect(
+      (
+        await readLinkedInProfile("https://www.linkedin.com/in/bo-quill", ctx, {
+          remainingUsd: 1,
+          now,
+          opened: true,
+        })
+      ).skipped,
+    ).toBe("daily-limit");
   });
 });

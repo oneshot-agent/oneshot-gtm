@@ -43,6 +43,16 @@ describe("SharedDb caches", () => {
     expect(db.getCachedLinkedIn("k2")).toMatchObject({ status: "miss", url: null });
     db.close();
   });
+
+  it("claims a row once across handles: the second claimant gets false and the first row stands", () => {
+    const a = new SharedDb(join(dir, "claim.sqlite"));
+    const b = new SharedDb(join(dir, "claim.sqlite"));
+    expect(a.claimCachedEnrichment("tried:k", '{"by":"a"}')).toBe(true);
+    expect(b.claimCachedEnrichment("tried:k", '{"by":"b"}')).toBe(false);
+    expect(b.getCachedEnrichment("tried:k")?.result_json).toBe('{"by":"a"}');
+    a.close();
+    b.close();
+  });
 });
 
 describe("contact touches", () => {

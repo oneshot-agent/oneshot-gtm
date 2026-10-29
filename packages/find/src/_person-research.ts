@@ -508,6 +508,8 @@ export interface ResearchPersonInput {
   liveProfile?: boolean;
   /** A cached live read older than this is read again (default: the read cache's 30 days). */
   liveMaxAgeMs?: number;
+  /** The founder opened the row: the live read may use the day's whole cap. */
+  liveReadOpened?: boolean;
   /**
    * Re-derive from the shared research cache only: no paid call of any kind
    * (no provider call, no retry by email, no live read, no company lookup
@@ -678,6 +680,7 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
         {
           remainingUsd: Math.max(0, input.remainingUsd - costUsd),
           ...(input.liveMaxAgeMs !== undefined ? { maxAgeMs: input.liveMaxAgeMs } : {}),
+          ...(input.liveReadOpened ? { opened: true } : {}),
         },
       );
       costUsd += live.costUsd;

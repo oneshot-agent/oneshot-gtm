@@ -109,6 +109,7 @@ async function readRowProfile(row: QueueRow): Promise<ReadProfileResult> {
     subject: { queueId: row.id },
     remainingUsd: READ_PROFILE_BUDGET_USD,
     liveProfile: true,
+    liveReadOpened: true,
   });
   const read = Boolean(researched.dossier.liveProfile);
   const skip: LiveReadSkipView | null = read ? null : (researched.liveSkipped ?? "failed");
