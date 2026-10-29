@@ -288,6 +288,23 @@ describe("lintOffer", () => {
       );
     }
   });
+  it("flags an offer that names the system instead of the result", () => {
+    for (const offer of [
+      "put into production the system that books every leeds job into an open slot",
+      "Put it into production across the leeds depot crews",
+      "ship the system that re-plans leeds crew routes before peak season",
+    ]) {
+      expect(lintOffer({ ...good, level: "researched", offer }, research)).toContain(
+        "offer-names-the-system",
+      );
+    }
+    expect(
+      lintOffer(
+        { ...good, level: "researched", offer: "every leeds job booked into an open slot" },
+        research,
+      ),
+    ).not.toContain("offer-names-the-system");
+  });
   it("passes a goal that leads with what the work wins, a check named later included", () => {
     for (const offer of [
       "renegotiate the leeds depot's van leases after auditing what each van costs",

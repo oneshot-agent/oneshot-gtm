@@ -443,6 +443,17 @@ const AWARENESS_ANYWHERE = /\b(?:visibility|insights?|dashboards?|alerts?|alerti
  */
 const CHECK_LEAD = /^(?:vet|verify|validate|screen|scan|audit|check)\b/i;
 
+/**
+ * An offer that names the system instead of the result: "put into production
+ * the system that…". The founder (2026-10-29): saying that in an offer is
+ * wrong; the offer is what is true for their firm when the goal is reached.
+ */
+const SYSTEM_WRAPPER = /\b(?:put\s+(?:\w+\s+)?into\s+production|the\s+system\s+that)\b/i;
+
+export function isSystemWrapperOffer(offer: string): boolean {
+  return SYSTEM_WRAPPER.test(offer);
+}
+
 export function isCheckOffer(offer: string): boolean {
   return CHECK_LEAD.test(offer.trim());
 }
@@ -483,6 +494,7 @@ export function lintOffer(
   if (fit.length > OFFER_MAX.fit) flags.push("fit-too-long");
   if (isAwarenessOffer(offer)) flags.push("offer-not-execution");
   if (isCheckOffer(offer)) flags.push("offer-is-a-check");
+  if (isSystemWrapperOffer(offer)) flags.push("offer-names-the-system");
   if (parts.level === "researched" && !ret) flags.push("no-return");
   const both = `${offer} ${steps} ${ret}`;
   for (const [flag, pattern] of BANNED) if (pattern.test(both)) flags.push(flag);
@@ -1115,6 +1127,10 @@ const OFFER_FLAG_HINTS: ReadonlyArray<[flag: string, hint: string]> = [
     "offer-is-a-check",
     "the offer is one pass of checking; name the multi-week goal that checking wins, with a counted return, and put the check in steps",
   ],
+  [
+    "offer-names-the-system",
+    'the offer names the system ("put into production", "the system that"); name the result for their firm instead, e.g. "work every denied claim on their claims platform across their provider networks to a decision"',
+  ],
 ];
 
 /** The repair round's explanation of the flags in `failed`; empty when none needs one. */
@@ -1365,8 +1381,9 @@ export const OFFER_ROLE_RESCUE =
   "at this firm, not from what the firm does: name the result their own leadership reviews " +
   "them on this quarter, and write each offer as a goal that moves that result, resting on " +
   "a fact in RESEARCH. A technology, engineering, data or AI leader is measured on " +
-  "systems shipped and running: write the system that carries one named workflow of " +
-  "their own firm or product to its end state, never the operations job itself.";
+  "what their software carries to an end state: name one workflow of their own firm or " +
+  "product and that end state, never the operations job bare, and never as " +
+  '"put into production" or "the system that".';
 
 /** What the judge and replacement rounds share with the writer's first round. */
 interface OfferRoundContext {
