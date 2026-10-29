@@ -568,6 +568,65 @@ describe("POST /api/setup — offerJudge", () => {
   });
 });
 
+// How offers are rewritten: rounds 0–5, a fallback model and its toggle. A
+// body's offerWriter is the whole setting, not a patch of the stored one.
+describe("POST /api/setup — offerWriter", () => {
+  it("saves rounds, a trimmed fallback model and the toggle", async () => {
+    const body = {
+      offerWriter: { rounds: 5, fallbackModel: " vendor/strong-writer ", fallbackOnWeak: true },
+    };
+    expect(await post(body)).toEqual({ status: 200 });
+    expect(savedCfg().offerWriter).toEqual({
+      rounds: 5,
+      fallbackModel: "vendor/strong-writer",
+      fallbackOnWeak: true,
+    });
+    saveConfigMock.mockClear();
+    expect(await post({ offerWriter: { rounds: 0 } })).toEqual({ status: 200 });
+    expect(savedCfg().offerWriter).toEqual({ rounds: 0 });
+  });
+
+  it("refuses rounds outside 0–5 or not whole, a blank, long or non-text model, and a non-boolean toggle", async () => {
+    for (const offerWriter of [
+      { rounds: -1 },
+      { rounds: 6 },
+      { rounds: 2.5 },
+      { rounds: "3" },
+      { fallbackModel: "   " },
+      { fallbackModel: "m".repeat(201) },
+      { fallbackModel: 7 },
+      { fallbackOnWeak: "yes" },
+      { fallbackOnWeak: true },
+      "three",
+    ]) {
+      const res = await post({ offerWriter });
+      expect(res.status).toBe(400);
+      expect(res.error).toMatch(/offerWriter/);
+    }
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("an offerWriter without fallbackModel clears the stored model", async () => {
+    current = {
+      ...current,
+      offerWriter: { rounds: 3, fallbackModel: "vendor/strong-writer", fallbackOnWeak: true },
+    };
+    expect(await post({ offerWriter: { rounds: 2, fallbackOnWeak: false } })).toEqual({
+      status: 200,
+    });
+    expect(savedCfg().offerWriter).toEqual({ rounds: 2, fallbackOnWeak: false });
+  });
+
+  it("null clears it; absent leaves it as stored", async () => {
+    current = { ...current, offerWriter: { rounds: 1 } };
+    expect(await post({ founderName: "Janet" })).toEqual({ status: 200 });
+    expect(savedCfg().offerWriter).toEqual({ rounds: 1 });
+    saveConfigMock.mockClear();
+    expect(await post({ offerWriter: null })).toEqual({ status: 200 });
+    expect(savedCfg().offerWriter).toBeUndefined();
+  });
+});
+
 describe("POST /api/setup — LinkedIn templates", () => {
   it("saves a template next to invitesPerDay, with no warnings when it fits", async () => {
     current = { ...current, linkedin: { invitesPerDay: 12 } };

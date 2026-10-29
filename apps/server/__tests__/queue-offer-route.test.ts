@@ -12,6 +12,8 @@ const state = vi.hoisted(() => ({
   dbPayload: null as null | Record<string, unknown>,
   live: true,
   derived: null as null | Record<string, unknown>,
+  /** The fresh set's candidates; null: `derived` and a second one. */
+  derivedCandidates: null as null | Array<Record<string, unknown>>,
   /** The writer declines with this skip (wins over `derived`). */
   skipped: null as null | Record<string, unknown>,
   brief: "Acme books crews into open slots.",
@@ -55,7 +57,10 @@ vi.mock("@oneshot-gtm/plays", async () => ({
     state.deriveInputs.push(input);
     if (state.skipped) return { skipped: state.skipped };
     return state.derived
-      ? { offer: state.derived, candidates: [state.derived, { offer: "second" }] }
+      ? {
+          offer: state.derived,
+          candidates: state.derivedCandidates ?? [state.derived, { offer: "second" }],
+        }
       : null;
   },
   // Angles are written for whichever offer becomes active.
@@ -90,6 +95,7 @@ beforeEach(() => {
   state.dbPayload = null;
   state.live = true;
   state.derived = null;
+  state.derivedCandidates = null;
   state.skipped = null;
   state.brief = "Acme books crews into open slots.";
   state.deriveInputs = [];
@@ -137,6 +143,78 @@ describe("queueOfferRoute", () => {
     expect(state.patched[0]!.patch["offerCandidates"]).toEqual([
       state.derived,
       { offer: "second" },
+    ]);
+  });
+
+  it("New offers keeps the row's strong offers after the new ones, dropping weak and stale ones", async () => {
+    const { OFFER_PROMPT_VERSION } = await import("@oneshot-gtm/plays");
+    const offer = (text: string, extra: Record<string, unknown> = {}) => ({
+      offer: text,
+      steps: "books jobs, texts customers",
+      evidence: [],
+      stage: "startup",
+      level: "researched",
+      version: OFFER_PROMPT_VERSION,
+      relevance: "relevant",
+      ...extra,
+    });
+    const strongActive = offer("refill the depot's cancelled slots");
+    const strongOther = offer("book the boiler renewals before they lapse");
+    const weak = offer("tidy the depot's spreadsheets", { relevance: "weak" });
+    const stale = offer("an offer from an old prompt", { version: "offer-v1" });
+    state.row = {
+      ...state.row!,
+      payload_json: JSON.stringify({
+        name: "Dana",
+        offer: strongActive,
+        offerCandidates: [strongActive, weak, strongOther, stale],
+      }),
+    };
+    const lead = offer("win back customers whose jobs were cancelled");
+    const next = offer("fill the empty friday afternoons");
+    state.derived = lead;
+    state.derivedCandidates = [lead, next];
+    const res = await queueOfferRoute(post({ regenerate: true }), { id: "5" });
+    expect(res.status).toBe(200);
+    const patch = state.patched[0]!.patch;
+    expect((patch["offer"] as Record<string, unknown>)["offer"]).toBe(lead.offer);
+    expect((patch["offerCandidates"] as Array<{ offer: string }>).map((o) => o.offer)).toEqual([
+      lead.offer,
+      next.offer,
+      strongActive.offer,
+      strongOther.offer,
+    ]);
+    const body = (await res.json()) as { candidates: Array<{ offer: string }> };
+    expect(body.candidates).toHaveLength(4);
+  });
+
+  it("New offers keeps at most five, the new ones first", async () => {
+    const { OFFER_PROMPT_VERSION } = await import("@oneshot-gtm/plays");
+    const offer = (text: string) => ({
+      offer: text,
+      steps: "books jobs",
+      evidence: [],
+      stage: "startup",
+      level: "researched",
+      version: OFFER_PROMPT_VERSION,
+      relevance: "relevant",
+    });
+    const old = ["old one", "old two", "old three"].map(offer);
+    state.row = {
+      ...state.row!,
+      payload_json: JSON.stringify({ name: "Dana", offer: old[0], offerCandidates: old }),
+    };
+    const fresh = ["new one", "new two", "new three"].map(offer);
+    state.derived = fresh[0]!;
+    state.derivedCandidates = fresh;
+    await queueOfferRoute(post({ regenerate: true }), { id: "5" });
+    const kept = state.patched[0]!.patch["offerCandidates"] as Array<{ offer: string }>;
+    expect(kept.map((o) => o.offer)).toEqual([
+      "new one",
+      "new two",
+      "new three",
+      "old one",
+      "old two",
     ]);
   });
 

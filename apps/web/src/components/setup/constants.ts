@@ -82,6 +82,7 @@ export const SECTIONS = [
   { id: "linkedin-copy", eyebrow: "04.6 · LinkedIn copy", label: "LinkedIn copy" },
   { id: "llm", eyebrow: "05 · LLM provider", label: "LLM provider" },
   { id: "replies", eyebrow: "05.5 · Reply labels", label: "Reply labels" },
+  { id: "offers", eyebrow: "05.6 · Offers", label: "Offers" },
   { id: "wallet", eyebrow: "06 · Wallet & spend", label: "Wallet & spend" },
   { id: "notifications", eyebrow: "06.5 · Notifications", label: "Notifications" },
   { id: "x", eyebrow: "07 · X / Twitter", label: "X / Twitter" },

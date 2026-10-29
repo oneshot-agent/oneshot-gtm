@@ -416,6 +416,11 @@ export const api = {
           model?: string;
           minConfidence?: number;
         };
+        offerWriter?: {
+          rounds?: number;
+          fallbackModel?: string;
+          fallbackOnWeak?: boolean;
+        } | null;
         timezone?: string | null;
         calendarIdentityId?: string | null;
         calendarId?: string;

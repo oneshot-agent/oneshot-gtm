@@ -3,6 +3,7 @@ import { CLICK_RESEARCH_WAIT_MS, offerResearchRow } from "@oneshot-gtm/find";
 import {
   activeOfferPatch,
   deriveOfferSet,
+  mergeKeptOffers,
   isOfferSkipped,
   isProspectOffer,
   offerCandidatesOf,
@@ -29,7 +30,9 @@ import {
  *   first becomes active, with its angles. When the
  *   writer declines, or none of the new offers passes the relevance check,
  *   the reason is kept on the row (`offerSkip`) and the answer is 422 with
- *   it (`offerSkip.why`). An offer the row had stays only while it stands
+ *   it (`offerSkip.why`). When a new one passes, the row's previous strong
+ *   offers (the founder's, or passing ones of today's prompt version) follow
+ *   the new ones in the candidates, up to five in all (`mergeKeptOffers`). An offer the row had stays only while it stands
  *   (the founder's, approved, or a passing one of today's prompt version:
  *   `offerSkipPatch`); a weak or stale one is deleted with its candidates.
  * - `{ select: i }` makes the row's i-th offer (0-based) active, writing its
@@ -65,6 +68,7 @@ export async function queueOfferRoute(
   if (body.regenerate === true) {
     const out = await regenerateQueueRowOffer(row, {
       avoidCurrent: true,
+      keepStrong: true,
       researchWaitMs: CLICK_RESEARCH_WAIT_MS,
     });
     if (out === "bad-payload") {
@@ -129,7 +133,9 @@ export async function queueOfferRoute(
  * place of a set (`skipped`), leaving an offer it had only while that offer
  * stands (`offerSkipPatch`). `avoidCurrent`
  * (the founder's New offers) asks for jobs other than the row's current
- * ones. A set the judge passes none of reads the row's company research
+ * ones, and `keepStrong` (also New offers) keeps the row's previous strong
+ * offers after the new ones (`mergeKeptOffers`). The read-on-open route
+ * passes neither: a moved role makes the old offers about another job. A set the judge passes none of reads the row's company research
  * first, waiting at most `researchWaitMs` (default none: the read lands on
  * the row when it finishes). The founder's click passes
  * `CLICK_RESEARCH_WAIT_MS`; the read-on-open route, which the UI awaits,
@@ -137,7 +143,7 @@ export async function queueOfferRoute(
  */
 export async function regenerateQueueRowOffer(
   row: QueueRow,
-  opts: { avoidCurrent?: boolean; researchWaitMs?: number } = {},
+  opts: { avoidCurrent?: boolean; keepStrong?: boolean; researchWaitMs?: number } = {},
 ): Promise<
   | { offer: ProspectOffer; candidates: ProspectOffer[] }
   | { skipped: OfferSkip }
@@ -160,11 +166,15 @@ export async function regenerateQueueRowOffer(
     if (!getLedger().patchLiveQueuePayload({ id: row.id, patch })) return "not-live";
     return { skipped: set.skipped };
   }
+  const previous = storedOffer(row.payload_json);
+  const candidates = opts.keepStrong
+    ? mergeKeptOffers(set.candidates, previous, storedCandidates(row.payload_json))
+    : set.candidates;
   // The new offer replaces the stored one whole: an approval or judge label
   // the old one carried must not survive the JSON merge patch.
-  const patch = activeOfferPatch(storedOffer(row.payload_json), set.offer, set.candidates);
+  const patch = activeOfferPatch(previous, set.offer, candidates);
   if (!getLedger().patchLiveQueuePayload({ id: row.id, patch })) return "not-live";
-  return { offer: set.offer, candidates: set.candidates };
+  return { offer: set.offer, candidates };
 }
 
 /** The row's written offers and its active one, as stored: what New offers replaces. */
@@ -177,6 +187,12 @@ function currentOfferTexts(payloadJson: string): string[] {
     ...(isProspectOffer(active) ? [active.offer] : []),
   ];
   return [...new Set(texts)];
+}
+
+/** The row's stored candidates, as written. */
+function storedCandidates(payloadJson: string): ProspectOffer[] {
+  const payload = safeParseJsonRecord(payloadJson);
+  return payload ? offerCandidatesOf(payload) : [];
 }
 
 /** The active offer as stored on the row, before any overlay. */

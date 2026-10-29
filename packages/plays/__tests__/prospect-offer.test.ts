@@ -16,6 +16,10 @@ const llm = {
   temperatures: [] as number[],
   judge: [] as string[],
   judgeInputs: [] as string[],
+  /** The `model` each writer call named (undefined = the workspace's). */
+  models: [] as Array<string | undefined>,
+  /** The `model` each judge call named. */
+  judgeModels: [] as Array<string | undefined>,
 };
 const cfg: {
   founderName: string;
@@ -27,6 +31,7 @@ const cfg: {
   offerExclusions?: string[];
   offerAnchor?: "prefer-product" | "either";
   noOfferPlays?: string[];
+  offerWriter?: { rounds?: number; fallbackModel?: string; fallbackOnWeak?: boolean };
 } = {
   founderName: "Founder",
   productOneLiner: "Acme schedules field crews",
@@ -50,17 +55,21 @@ vi.mock("@oneshot-gtm/intel", async () => {
     complete: async (input: {
       messages: Array<{ role: string; content: string }>;
       temperature?: number;
+      model?: string;
     }) => {
       if (input.messages[0]?.content === "prospect-offer-judge") {
         llm.judgeInputs.push(input.messages.at(-1)?.content ?? "");
+        llm.judgeModels.push(input.model);
         return { content: llm.judge.shift() ?? "{}", provider: "t", model: "t", costUsd: 0.001 };
       }
       llm.inputs.push(input.messages.at(-1)?.content ?? "");
       llm.temperatures.push(input.temperature ?? -1);
+      llm.models.push(input.model);
       const reply = llm.replies.shift() ?? "{}";
       // A provider failure on this call.
       if (reply === WRITER_FAILS) throw new Error("provider 503");
-      return { content: reply, provider: "t", model: "t", costUsd: 0.002 };
+      // As the real client answers: the model the call named, else the workspace's.
+      return { content: reply, provider: "t", model: input.model ?? "main/writer", costUsd: 0.002 };
     },
   };
 });
@@ -108,7 +117,10 @@ beforeEach(() => {
   llm.temperatures = [];
   llm.judge = [];
   llm.judgeInputs = [];
+  llm.models = [];
+  llm.judgeModels = [];
   delete cfg.offerJudge;
+  delete cfg.offerWriter;
   delete cfg.offerExclusions;
   delete cfg.offerAnchor;
   // Judge paths must not depend on a key in the developer's or CI's environment.
@@ -1525,6 +1537,270 @@ describe("rescue of a set the judge passed none of", () => {
     expect(research).not.toHaveBeenCalled();
     // Both still got both rescues.
     expect(llm.inputs).toHaveLength(8);
+  });
+});
+
+// `offerWriter`: how many rewrite rounds follow the first set, and the model
+// that writes them when the first set passed none.
+
+describe("offerWriter rounds and fallback model", () => {
+  const five = JSON.stringify({ offers: [good, second, third, fourth, fifth] });
+  const allWeak = judgeReply([
+    ["weak", "generic"],
+    ["weak", "generic"],
+    ["weak", "generic"],
+    ["weak", "generic"],
+    ["weak", "generic"],
+  ]);
+  const renewals = {
+    ...good,
+    offer: "book the leeds depot's boiler service renewals before each contract lapses",
+    return: "service contracts renewed, counted per contract",
+  };
+  const lateVans = {
+    ...good,
+    offer: "route the leeds vans so each crew reaches its last call of the day on time",
+    return: "late arrivals avoided, counted per job",
+  };
+
+  it("rounds 0 runs no rewrite: a first set with none passing is the skip", async () => {
+    const { noStrongOfferWhy } = await import("../src/_prospect-offer.ts");
+    cfg.offerWriter = { rounds: 0 };
+    llm.replies = [five, JSON.stringify({ offers: [replacement] })];
+    llm.judge = [allWeak];
+    const { offers, skip } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs).toHaveLength(1);
+    expect(offers).toEqual([]);
+    expect(skip?.why).toBe(noStrongOfferWhy(0));
+    expect(skip?.why).toBe("no offer passed the relevance check, with rewrites turned off");
+  });
+
+  it("rounds 0 keeps the passing offers of the first set without a replacement round", async () => {
+    cfg.offerWriter = { rounds: 0 };
+    llm.replies = [five, JSON.stringify({ offers: [replacement] })];
+    llm.judge = [
+      judgeReply([
+        ["relevant", "the second depot"],
+        ["weak", "generic"],
+        ["weak", "generic"],
+        ["weak", "generic"],
+        ["weak", "generic"],
+      ]),
+    ];
+    const { offers, skip } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs).toHaveLength(1);
+    expect(offers.map((o) => o.offer)).toEqual([good.offer]);
+    expect(skip).toBeNull();
+  });
+
+  it("rounds 1 runs the replacement round alone, and the skip names one rewrite", async () => {
+    cfg.offerWriter = { rounds: 1 };
+    llm.replies = [five, JSON.stringify({ offers: [replacement] }), JSON.stringify({ offers: [] })];
+    llm.judge = [allWeak, judgeReply([["weak", "generic"]])];
+    const { offers, skip } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs).toHaveLength(2);
+    expect(llm.inputs[1]).toContain("Write exactly 5 new offers");
+    expect(offers).toEqual([]);
+    expect(skip?.why).toBe("no offer passed the relevance check after 1 rewrite");
+  });
+
+  it("rounds 1 stores no skip when the replacement round's writer failed", async () => {
+    cfg.offerWriter = { rounds: 1 };
+    llm.replies = [five, WRITER_FAILS];
+    llm.judge = [allWeak];
+    const { offers, skip } = await deriveOffers({ target, playName: "new-business" });
+    expect(offers).toEqual([]);
+    expect(skip).toBeNull();
+  });
+
+  it("rounds 5 runs five rewrites, the last three from the role, each told every rejected offer", async () => {
+    const { OFFER_ROLE_RESCUE } = await import("../src/_prospect-offer.ts");
+    cfg.offerWriter = { rounds: 5 };
+    llm.replies = [
+      five,
+      JSON.stringify({ offers: [replacement] }),
+      JSON.stringify({ offers: [replacementTwo] }),
+      JSON.stringify({ offers: [renewals] }),
+      JSON.stringify({ offers: [lateVans] }),
+      JSON.stringify({ offers: [] }),
+    ];
+    llm.judge = [
+      allWeak,
+      judgeReply([["weak", "round one"]]),
+      judgeReply([["weak", "round two"]]),
+      judgeReply([["weak", "round three"]]),
+      judgeReply([["weak", "round four"]]),
+    ];
+    const { offers, skip } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs).toHaveLength(6);
+    expect(llm.temperatures).toEqual([0.4, 0.4, 0.7, 0.7, 0.7, 0.7]);
+    expect(llm.inputs[2]).not.toContain(OFFER_ROLE_RESCUE);
+    for (const i of [3, 4, 5]) expect(llm.inputs[i]).toContain(OFFER_ROLE_RESCUE);
+    // The fifth round is told the offers every earlier round had rejected.
+    const last = llm.inputs[5]!;
+    for (const o of [good, fifth]) expect(last).toContain(`- "${o.offer}": weak`);
+    expect(last).toContain(`- "${replacement.offer}": weak, round one`);
+    expect(last).toContain(`- "${renewals.offer}": weak, round three`);
+    expect(last).toContain(`- "${lateVans.offer}": weak, round four`);
+    expect(offers).toEqual([]);
+    expect(skip?.why).toBe("no offer passed the relevance check after 5 rewrites");
+  });
+
+  it("clamps rounds over 5 to five rewrites", async () => {
+    cfg.offerWriter = { rounds: 9 };
+    llm.replies = [
+      five,
+      JSON.stringify({ offers: [] }),
+      JSON.stringify({ offers: [] }),
+      JSON.stringify({ offers: [] }),
+      JSON.stringify({ offers: [] }),
+      JSON.stringify({ offers: [] }),
+      JSON.stringify({ offers: [] }),
+    ];
+    llm.judge = [allWeak];
+    const { skip } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs).toHaveLength(6);
+    expect(skip?.why).toBe("no offer passed the relevance check after 5 rewrites");
+  });
+
+  it("with no offerWriter runs three rewrites, every call on the workspace's model", async () => {
+    llm.replies = [
+      five,
+      JSON.stringify({ offers: [replacement] }),
+      JSON.stringify({ offers: [replacementTwo] }),
+      JSON.stringify({ offers: [renewals] }),
+    ];
+    llm.judge = [
+      allWeak,
+      judgeReply([["weak", "generic"]]),
+      judgeReply([["weak", "generic"]]),
+      judgeReply([["weak", "generic"]]),
+    ];
+    const { skip } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.inputs).toHaveLength(4);
+    expect(llm.models).toEqual([undefined, undefined, undefined, undefined]);
+    expect(llm.judgeModels.every((m) => m === undefined)).toBe(true);
+    expect(skip?.why).toBe("no offer passed the relevance check after 3 rewrites");
+  });
+
+  it("writes every rewrite round on the fallback model when the first set passed none; the judge stays on its own", async () => {
+    cfg.offerWriter = { fallbackOnWeak: true, fallbackModel: "fallback/strong-writer" };
+    llm.replies = [
+      five,
+      JSON.stringify({ offers: [replacement] }),
+      JSON.stringify({ offers: [replacementTwo] }),
+    ];
+    llm.judge = [
+      allWeak,
+      judgeReply([["weak", "generic"]]),
+      judgeReply([["relevant", "their friday slots"]]),
+    ];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    // First set on the workspace's model; the replacement and the rescue on the fallback.
+    expect(llm.models).toEqual([undefined, "fallback/strong-writer", "fallback/strong-writer"]);
+    expect(llm.judgeModels).toEqual([undefined, undefined, undefined]);
+    expect(offers.map((o) => [o.offer, o.writtenBy])).toEqual([
+      [replacementTwo.offer, "fallback/strong-writer"],
+    ]);
+  });
+
+  it("keeps the workspace's model for the rewrites when any first-set offer passed", async () => {
+    cfg.offerWriter = { fallbackOnWeak: true, fallbackModel: "fallback/strong-writer" };
+    llm.replies = [five, JSON.stringify({ offers: [replacement] })];
+    llm.judge = [
+      judgeReply([
+        ["relevant", "the second depot"],
+        ["weak", "generic"],
+        ["weak", "generic"],
+        ["weak", "generic"],
+        ["weak", "generic"],
+      ]),
+      judgeReply([["relevant", "their cancelled jobs"]]),
+    ];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    expect(llm.models).toEqual([undefined, undefined]);
+    expect(offers.map((o) => [o.offer, o.writtenBy])).toEqual([
+      [good.offer, "main/writer"],
+      [replacement.offer, "main/writer"],
+    ]);
+  });
+
+  it("never uses the fallback with the toggle off, or with no model named", async () => {
+    for (const writer of [
+      { fallbackOnWeak: false, fallbackModel: "fallback/strong-writer" },
+      { fallbackModel: "fallback/strong-writer" },
+      { fallbackOnWeak: true },
+      { fallbackOnWeak: true, fallbackModel: "  " },
+    ]) {
+      cfg.offerWriter = writer;
+      llm.models = [];
+      llm.replies = [
+        five,
+        JSON.stringify({ offers: [] }),
+        JSON.stringify({ offers: [] }),
+        JSON.stringify({ offers: [] }),
+      ];
+      llm.judge = [allWeak];
+      await deriveOffers({ target, playName: "new-business" });
+      expect(llm.models).toEqual([undefined, undefined, undefined, undefined]);
+    }
+  });
+
+  it("records the workspace's model on offers the first set kept", async () => {
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    llm.judge = [judgeReply([["relevant", "the second depot"]])];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    expect(offers.map((o) => o.writtenBy)).toEqual(["main/writer"]);
+  });
+});
+
+describe("mergeKeptOffers", () => {
+  const stamp = { version: OFFER_PROMPT_VERSION, inputHash: "h", derivedAt: "2026-10-29" };
+  const strong = (o: typeof good) => ({
+    ...o,
+    ...stamp,
+    level: "researched" as const,
+    relevance: "relevant" as const,
+  });
+
+  it("puts the new offers first, then the old strong ones, without weak, stale or repeated ones", async () => {
+    const { mergeKeptOffers } = await import("../src/_prospect-offer.ts");
+    const founders = {
+      ...good,
+      offer: "a founder's own words",
+      version: "offer-v2",
+      inputHash: "",
+      derivedAt: "2026-01-01",
+      level: "researched" as const,
+      editedBy: "founder" as const,
+    };
+    const weak = { ...strong(third), relevance: "weak" as const };
+    const approvedWeak = { ...weak, offer: fourth.offer, weakApprovedAt: "2026-10-28" };
+    const stale = { ...strong(fifth), version: "offer-v6" };
+    const unjudged = { ...good, ...stamp, level: "researched" as const, offer: "never judged" };
+    const repeat = strong({ ...replacement, offer: `  ${replacement.offer.toUpperCase()} ` });
+    const merged = mergeKeptOffers([strong(replacement), strong(replacementTwo)], founders, [
+      strong(second),
+      weak,
+      approvedWeak,
+      stale,
+      unjudged,
+      repeat,
+      founders,
+    ]);
+    expect(merged.map((o) => o.offer)).toEqual([
+      replacement.offer,
+      replacementTwo.offer,
+      founders.offer,
+      second.offer,
+    ]);
+  });
+
+  it("holds at most five, and nothing old when the new set is full", async () => {
+    const { mergeKeptOffers, OFFER_COUNT } = await import("../src/_prospect-offer.ts");
+    const fresh = [good, second, third, fourth, fifth].map(strong);
+    expect(mergeKeptOffers(fresh, strong(replacement), [strong(replacementTwo)])).toEqual(fresh);
+    expect(OFFER_COUNT).toBe(5);
   });
 });
 
