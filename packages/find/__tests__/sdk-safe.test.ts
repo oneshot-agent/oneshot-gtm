@@ -10,6 +10,8 @@ let verifyThrow = false;
 let peopleSearchThrow = false;
 let companySearchThrow = false;
 let enrichCompanyThrow = false;
+// When set, companySearch/enrichCompany never settle (a request that hangs).
+let companyHang = false;
 // When set, findEmail/verifyEmail reject with this instead (the paid cache's own answers).
 let cacheError: Error | null = null;
 const cacheArgs: unknown[] = [];
@@ -58,6 +60,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       };
     },
     companySearch: async () => {
+      if (companyHang) return new Promise(() => {});
       if (companySearchThrow) throw new Error("Job 035ebe1e timed out after 121");
       return {
         result: {
@@ -70,6 +73,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       };
     },
     enrichCompany: async () => {
+      if (companyHang) return new Promise(() => {});
       if (enrichCompanyThrow) throw new Error("Job 035ebe1e timed out after 121");
       return {
         result: { status: "ok", company: { name: "Acme", domain: "acme.com" }, cost: 0.005 },
@@ -167,6 +171,28 @@ describe("safeEnrichCompany", () => {
     expect(out.result.company).toEqual({});
     expect(out.result.cost).toBe(0);
     expect(out.receiptId).toBe(0);
+  });
+});
+
+describe("a company lookup that never answers", () => {
+  it("gives up after two minutes with the empty sentinel instead of stalling the run", async () => {
+    vi.useFakeTimers();
+    companyHang = true;
+    try {
+      const search = safeCompanySearch({ domain: "acme.com" }, { playName: "t" });
+      const enrich = safeEnrichCompany({ domain: "acme.com" }, { playName: "t" });
+      await vi.advanceTimersByTimeAsync(120_000);
+      const searched = await search;
+      const enriched = await enrich;
+      expect(searched.result.results).toEqual([]);
+      expect(enriched.result.company).toEqual({});
+      // Still running and maybe charged: the run's cap counts the list price.
+      expect(searched.result.cost).toBe(0.01);
+      expect(enriched.result.cost).toBe(0.005);
+    } finally {
+      companyHang = false;
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -5,6 +5,7 @@ import { sanitizeCompanyDomain } from "./_accelerator-search-adapter.ts";
 import { icpFields, type QualifiedContact, resolveVerifyEnrichQualify } from "./_contact.ts";
 import { isDuplicate } from "./_dedupe.ts";
 import { resolveIcp } from "./_filter.ts";
+import { looksLikeUserHandle } from "./_findemail-prescreen.ts";
 import { buildDesignPartnerLoiPayload, dedupePlayNames, resolvePlayRoute } from "./_play-route.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection } from "./_qualify.ts";
@@ -535,9 +536,16 @@ async function findOwner(args: {
   );
   let costUsd = search.result.cost ?? 0;
   if (search.result.status === "error") return { contact: null, costUsd, noMatch: false };
-  const ranked = rankByTitles((search.result.results ?? []) as PersonResult[], jobTitles).filter(
+  const titled = rankByTitles((search.result.results ?? []) as PersonResult[], jobTitles).filter(
     (p) => jobTitles.some((wanted) => titleMatches(p.title, wanted)),
   );
+  // People search often returns a first name only, with no profile or email.
+  // findEmail refuses those, and the loop below stops at that refusal, so a
+  // full name further down would never be tried: those go first. A known work
+  // email needs no lookup, so it keeps its place whatever the name.
+  const reachable = (p: PersonResult) =>
+    Boolean(p.best_work_email?.trim()) || !looksLikeUserHandle(personName(p));
+  const ranked = [...titled.filter(reachable), ...titled.filter((p) => !reachable(p))];
   if (ranked.length === 0) return { contact: null, costUsd, noMatch: true };
   let last: QualifiedContact | null = null;
   for (const person of ranked.slice(0, MAX_OWNER_ATTEMPTS)) {

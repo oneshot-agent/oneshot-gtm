@@ -761,7 +761,11 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
       },
       cacheOnly ? { cacheOnly: true } : input.fresh ? { fresh: true } : undefined,
     );
-    if (enriched.receiptId !== 0) costUsd += enriched.result.cost ?? 0;
+    // A cache hit has no receipt and costs nothing; an error sentinel carries a
+    // cost only when the lookup ran past its deadline and may still be charged.
+    if (enriched.receiptId !== 0 || enriched.result.status === "error") {
+      costUsd += enriched.result.cost ?? 0;
+    }
     if (enriched.result.status !== "error" && isRecord(enriched.result.company)) {
       company = companyFromRecord(enriched.result.company as JsonRecord) ?? undefined;
     }
