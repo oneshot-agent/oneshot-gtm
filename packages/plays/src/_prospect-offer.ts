@@ -1253,15 +1253,19 @@ export async function deriveOffers(
       // rescue is told them all.
       const rejected = [...judged.rejected];
       let rounds = 1;
+      // A round whose writer or judge failed passed nothing because it never
+      // ran: no skip rests on it, so the row is written again next pass.
+      let errored = false;
       for (const fromRole of [false, true]) {
         if (kept.length > 0 || rejected.length === 0) break;
         const rescued = await rescueWeakSet(rejected, ctx, { fromRole });
         kept = rescued.offers;
         rejected.push(...rescued.rejected);
+        errored ||= rescued.errored;
         rounds++;
       }
       research = ctx.research;
-      if (kept.length === 0 && rejected.length > 0) {
+      if (kept.length === 0 && rejected.length > 0 && !errored) {
         failedRounds = rounds;
         logEvent("prospect_offer.no_strong_offer", {
           play: input.playName,
@@ -1475,7 +1479,7 @@ async function rescueWeakSet(
   rejected: ReadonlyArray<Rejected>,
   ctx: OfferRoundContext,
   opts: { fromRole?: boolean } = {},
-): Promise<{ offers: DraftOffer[]; rejected: Rejected[] }> {
+): Promise<{ offers: DraftOffer[]; rejected: Rejected[]; errored: boolean }> {
   const { input, cfg } = ctx;
   const round = opts.fromRole ? 3 : 2;
   let cost = 0;
@@ -1519,6 +1523,7 @@ async function rescueWeakSet(
   ctx.messages.push({ role: "user", content });
   const offers: DraftOffer[] = [];
   const failed: Rejected[] = [];
+  let errored = false;
   try {
     const res = await complete({ messages: ctx.messages, temperature: 0.7, maxTokens: 3000 });
     spend(res.costUsd);
@@ -1550,6 +1555,7 @@ async function rescueWeakSet(
       });
     }
   } catch (err) {
+    errored = true;
     logEvent(
       "error.swallowed",
       {
@@ -1567,7 +1573,7 @@ async function rescueWeakSet(
     passed: offers.length,
     cost_micros: Math.round(cost * 1_000_000),
   });
-  return { offers, rejected: failed };
+  return { offers, rejected: failed, errored };
 }
 
 /** Flags for one written angle, keyed on its text alone. */

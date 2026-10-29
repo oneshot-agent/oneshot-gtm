@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Judge calls (the prospect-offer-judge prompt) take their own replies, so a
 // test of the writer is not shifted by them. With none queued the judge's
 // reply is unreadable and the offers are kept unjudged.
+/** A writer reply that makes the mocked call throw instead. */
+const WRITER_FAILS = "<writer fails>";
 const llm = {
   replies: [] as string[],
   inputs: [] as string[],
@@ -55,7 +57,10 @@ vi.mock("@oneshot-gtm/intel", async () => {
       }
       llm.inputs.push(input.messages.at(-1)?.content ?? "");
       llm.temperatures.push(input.temperature ?? -1);
-      return { content: llm.replies.shift() ?? "{}", provider: "t", model: "t", costUsd: 0.002 };
+      const reply = llm.replies.shift() ?? "{}";
+      // A provider failure on this call.
+      if (reply === WRITER_FAILS) throw new Error("provider 503");
+      return { content: reply, provider: "t", model: "t", costUsd: 0.002 };
     },
   };
 });
@@ -1411,6 +1416,20 @@ describe("rescue of a set the judge passed none of", () => {
     });
     expect(isOfferSkipped(again) && again.changed).toBe(false);
     expect(llm.inputs.length).toBe(calls);
+  });
+
+  it("stores no skip when a rescue round failed rather than judged its offers", async () => {
+    llm.replies = [
+      five,
+      JSON.stringify({ offers: [] }),
+      WRITER_FAILS,
+      JSON.stringify({ offers: [] }),
+    ];
+    llm.judge = [allWeak];
+    const { offers, skip } = await deriveOffers({ target, playName: "new-business" });
+    expect(offers).toEqual([]);
+    // The row was never fully judged: it is written again on the next pass.
+    expect(skip).toBeNull();
   });
 
   it("is not run when any offer passes, or when the judge gave no verdict", async () => {
