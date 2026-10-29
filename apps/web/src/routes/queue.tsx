@@ -1461,6 +1461,10 @@ export function DraftSection({
             ? "Send held for fit review. Review the saved assessment before sending."
             : err.message,
         );
+      else if (err.message.startsWith("Send held: The address"))
+        toast.error(
+          masked ? "Send held: the address matches none of their current companies." : err.message,
+        );
       else toast.error(`couldn't send · ${err.message}`);
     },
   });
@@ -1745,12 +1749,19 @@ export function DraftSection({
         : "Held for review (event has passed) — send the reviewed draft as-is";
   const showSend = sender === "api" && status === "approved" && !(draft?.sent ?? false);
   const weakOffer = sendHold?.code === "weak-offer";
-  const holdLabel = weakOffer ? "Held · weak offer" : "Held · fit review";
+  const emailMismatch = sendHold?.code === "email-mismatch";
+  const holdLabel = weakOffer
+    ? "Held · weak offer"
+    : emailMismatch
+      ? "Held · email mismatch"
+      : "Held · fit review";
   const holdTitle = weakOffer
     ? `${holdLabel}: ${flagAdvice("weak-offer")}; regenerating will not clear this hold`
-    : "Review this person’s fit before sending; regenerating will not clear this hold";
-  // The held line's flags and advice. The weak-offer hold says its own
-  // piece in `SendHoldNote`, so its flag is not repeated here.
+    : emailMismatch
+      ? "Fix the address or the company, or send to this address anyway, before sending; regenerating will not clear this hold"
+      : "Review this person’s fit before sending; regenerating will not clear this hold";
+  // The held line's flags and advice. The weak-offer and email-mismatch holds
+  // say their own piece in `SendHoldNote`, so their flags are not repeated here.
   const holdOptions: HeldOptions = {
     offerSkipped: !masked && !!offerSkip,
     offerHeld: weakOffer,
@@ -1759,7 +1770,11 @@ export function DraftSection({
       sender !== "api" || sendHold ? "regenerate" : status === "approved" ? "send" : "approve",
   };
   const lineFlags =
-    draft && !draft.sent ? draft.flags.filter((f) => !(weakOffer && f === "weak-offer")) : [];
+    draft && !draft.sent
+      ? draft.flags.filter(
+          (f) => !(weakOffer && f === "weak-offer") && !(emailMismatch && f === "email-mismatch"),
+        )
+      : [];
   const draftHeld = heldSummary(lineFlags, holdOptions);
   const sendButton = showSend ? (
     <Button
