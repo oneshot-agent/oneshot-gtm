@@ -19,6 +19,8 @@ let liveRows = new Set<number>([1, 2]);
 let icp: string | null = "founders who own their own customer acquisition";
 let verdict = '{"verdict":"pass","reason":"Founder of a consumer app, owns acquisition."}';
 let researchStatus = "completed";
+// When set, the company lookup never answers.
+let companyHang = false;
 /** What the provider names the person for a URL seed / an email seed (null = no name field). */
 let providerNameByUrl: string | null = null;
 let providerNameByEmail: string | null = null;
@@ -132,6 +134,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     ) =>
       actual.withPaidCache("enrich.company", input, cache, async () => {
         calls.company++;
+        if (companyHang) return new Promise<never>(() => {});
         return {
           result: {
             status: "completed",
@@ -289,6 +292,7 @@ const row = (id: number, status: "pending" | "approved") => ({
 
 beforeEach(() => {
   calls.research = calls.company = calls.classify = calls.webRead = calls.browser = 0;
+  companyHang = false;
   liveSession = false;
   delete process.env["LINKEDIN_SESSION_COOKIE"];
   _resetLinkedInReadGate();
@@ -757,6 +761,26 @@ describe("researchPerson + personPayloadPatch", () => {
     expect(patch.currentRole).toBe("Founder & Product Owner at BrightLoom.App since Mar 2026");
     expect(patch.companyFacts).toContain("founded 2026");
     expect(patch.formerRoles).toContain("D'ORO Group (Nov 2024–Oct 2025)");
+  });
+
+  it("counts a company lookup that ran past its deadline against the budget", async () => {
+    companyHang = true;
+    vi.useFakeTimers();
+    try {
+      const pending = researchPerson({
+        seed: personSeedFor(noraPayload),
+        playName: "luma-events",
+        subject: { queueId: 1 },
+        remainingUsd: Number.POSITIVE_INFINITY,
+      });
+      await vi.advanceTimersByTimeAsync(120_000);
+      const { dossier, costUsd } = await pending;
+      expect(dossier.company).toBeUndefined();
+      // Research plus the lookup's list price: it may still be charged.
+      expect(costUsd).toBeCloseTo(0.055, 5);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a case-only company difference is not a change, and originals are never overwritten on refresh", async () => {
