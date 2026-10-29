@@ -58,7 +58,7 @@ type AppConfig = ReturnType<typeof loadConfig>;
 type JsonRecord = Record<string, unknown>;
 
 /** Bump when the prompt or the lint changes: unedited offers re-derive. */
-export const OFFER_PROMPT_VERSION = "offer-v7";
+export const OFFER_PROMPT_VERSION = "offer-v8";
 
 export const OFFER_MAX = {
   offer: 140,
@@ -443,6 +443,18 @@ const AWARENESS_ANYWHERE = /\b(?:visibility|insights?|dashboards?|alerts?|alerti
  */
 const CHECK_LEAD = /^(?:vet|verify|validate|screen|scan|audit|check)\b/i;
 
+/**
+ * An offer that names the system instead of the result: "put into production
+ * the system that…". The founder (2026-10-29): saying that in an offer is
+ * wrong; the offer is what is true for their firm when the goal is reached.
+ */
+const SYSTEM_WRAPPER =
+  /\b(?:put\s+(?:[\w'’-]+\s+){0,6}into\s+production|the\s+system\s+that|deploy(?:s|ed|ing)?\s+(?:a|the)\s+system)\b/i;
+
+export function isSystemWrapperOffer(offer: string): boolean {
+  return SYSTEM_WRAPPER.test(offer);
+}
+
 export function isCheckOffer(offer: string): boolean {
   return CHECK_LEAD.test(offer.trim());
 }
@@ -483,6 +495,7 @@ export function lintOffer(
   if (fit.length > OFFER_MAX.fit) flags.push("fit-too-long");
   if (isAwarenessOffer(offer)) flags.push("offer-not-execution");
   if (isCheckOffer(offer)) flags.push("offer-is-a-check");
+  if (isSystemWrapperOffer(offer)) flags.push("offer-names-the-system");
   if (parts.level === "researched" && !ret) flags.push("no-return");
   const both = `${offer} ${steps} ${ret}`;
   for (const [flag, pattern] of BANNED) if (pattern.test(both)) flags.push(flag);
@@ -796,7 +809,7 @@ export function offerRelevanceCriteria(
   return {
     relevant:
       "A goal this firm at its stage would put on its plan and this person is measured on, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), resting on a specific fact about them: a piece their own product is missing to finish its job for its customers (never the job it already does), or a goal their own firm visibly has outside its core product.",
-    weak: `Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on (a collecting, recovering, reconciling or re-planning job offered bare to a technology, engineering, data or AI leader, whose goal is the system that does it, shipped into a named workflow of theirs), a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.${preferProduct}`,
+    weak: `Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on (a collecting, recovering, reconciling or re-planning job offered bare to a technology, engineering, data or AI leader, whose goal is one named workflow of theirs that their own software carries to its end state), a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.${preferProduct}`,
     irrelevant: `A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.${excluded}`,
   };
 }
@@ -1115,6 +1128,10 @@ const OFFER_FLAG_HINTS: ReadonlyArray<[flag: string, hint: string]> = [
     "offer-is-a-check",
     "the offer is one pass of checking; name the multi-week goal that checking wins, with a counted return, and put the check in steps",
   ],
+  [
+    "offer-names-the-system",
+    'the offer names the system ("put into production", "the system that", "deploy a system"); name the result for their firm instead, e.g. "work every denied claim on their claims platform across their provider networks to a decision"',
+  ],
 ];
 
 /** The repair round's explanation of the flags in `failed`; empty when none needs one. */
@@ -1365,8 +1382,9 @@ export const OFFER_ROLE_RESCUE =
   "at this firm, not from what the firm does: name the result their own leadership reviews " +
   "them on this quarter, and write each offer as a goal that moves that result, resting on " +
   "a fact in RESEARCH. A technology, engineering, data or AI leader is measured on " +
-  "systems shipped and running: write the system that carries one named workflow of " +
-  "their own firm or product to its end state, never the operations job itself.";
+  "what their software carries to an end state: name one workflow of their own firm or " +
+  "product and that end state, never the operations job bare, and never as " +
+  '"put into production", "the system that" or "deploy a system".';
 
 /** What the judge and replacement rounds share with the writer's first round. */
 interface OfferRoundContext {

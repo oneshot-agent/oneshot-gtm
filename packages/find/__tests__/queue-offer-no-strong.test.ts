@@ -112,7 +112,7 @@ describe("a row no offer passes for", () => {
     expect(payload).not.toHaveProperty("offerCandidates");
     expect(payload["offerSkip"]).toMatchObject({
       why: "no offer passed the relevance check after 3 rewrites",
-      version: "offer-v7",
+      version: "offer-v8",
     });
     // Held: the draft reads the skip, not an offer, and is not written again.
     expect(offerMissingHoldsSend(PLAY, offerOf(payload), cfg)).toBe(true);

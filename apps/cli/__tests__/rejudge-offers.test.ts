@@ -493,7 +493,7 @@ describe("commandRewriteWeakOffers", () => {
     ledger.setQueueDraft({ id, draft: draft("written for A") });
     const skip = {
       why: "no offer passed the relevance check after 3 rewrites",
-      version: "offer-v7",
+      version: "offer-v8",
       inputHash: "h",
       productHash: "p",
       skippedAt: "2026-10-29T00:00:00.000Z",
