@@ -1432,6 +1432,19 @@ describe("rescue of a set the judge passed none of", () => {
     expect(skip).toBeNull();
   });
 
+  it("stores no skip when the replacement round failed before its offers were judged", async () => {
+    llm.replies = [
+      five,
+      WRITER_FAILS,
+      JSON.stringify({ offers: [] }),
+      JSON.stringify({ offers: [] }),
+    ];
+    llm.judge = [allWeak];
+    const { offers, skip } = await deriveOffers({ target, playName: "new-business" });
+    expect(offers).toEqual([]);
+    expect(skip).toBeNull();
+  });
+
   it("is not run when any offer passes, or when the judge gave no verdict", async () => {
     llm.replies = [five, JSON.stringify({ offers: [] })];
     llm.judge = [

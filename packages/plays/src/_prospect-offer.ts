@@ -1255,7 +1255,7 @@ export async function deriveOffers(
       let rounds = 1;
       // A round whose writer or judge failed passed nothing because it never
       // ran: no skip rests on it, so the row is written again next pass.
-      let errored = false;
+      let errored = judged.errored;
       for (const fromRole of [false, true]) {
         if (kept.length > 0 || rejected.length === 0) break;
         const rescued = await rescueWeakSet(rejected, ctx, { fromRole });
@@ -1375,15 +1375,17 @@ interface Rejected {
 async function judgeAndReplace(
   kept: DraftOffer[],
   ctx: OfferRoundContext,
-): Promise<{ offers: DraftOffer[]; rejected: Rejected[] }> {
+): Promise<{ offers: DraftOffer[]; rejected: Rejected[]; errored: boolean }> {
   const { input, cfg, research } = ctx;
   const judgeOpts = {
     ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
     onCost: ctx.spend,
   };
   const verdicts = await judgeOffers(kept, research, ctx.target, cfg, judgeOpts);
-  if (!verdicts) return { offers: kept, rejected: [] };
+  if (!verdicts) return { offers: kept, rejected: [], errored: false };
   const passing: DraftOffer[] = [];
+  // The replacement round threw: nothing it wrote was judged.
+  let errored = false;
   const rejected: Rejected[] = [];
   const dropped: string[] = [];
   kept.forEach((o, i) => {
@@ -1445,6 +1447,7 @@ async function judgeAndReplace(
         });
       }
     } catch (err) {
+      errored = true;
       logEvent(
         "error.swallowed",
         {
@@ -1456,7 +1459,7 @@ async function judgeAndReplace(
       );
     }
   }
-  return { offers: passing.slice(0, OFFER_COUNT), rejected };
+  return { offers: passing.slice(0, OFFER_COUNT), rejected, errored };
 }
 
 /**
