@@ -79,6 +79,10 @@ export class LedgerCache {
     this.shared().setCachedEnrichment(email, resultJson);
   }
 
+  claimCachedEnrichment(email: string, resultJson: string): boolean {
+    return this.shared().claimCachedEnrichment(email, resultJson);
+  }
+
   setCachedEnrichmentFailure(email: string, message: string): void {
     this.shared().setCachedEnrichmentFailure(email, message);
   }

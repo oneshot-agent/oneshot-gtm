@@ -1128,12 +1128,14 @@ async function readThroughAccount(
   const day = utcDayKey(new Date());
   const idempotencyKey = `gtm:profile-read:${profileHash}:${day}`;
   const triedKey = `${TRIED_PREFIX}${profileHash}:${day}`;
-  if (ledger.getCachedEnrichment(triedKey)) return skip("interrupted");
+  // Claimed in one statement, so two servers cannot both send today's key.
+  let claimed = true;
   try {
-    ledger.setCachedEnrichment(triedKey, JSON.stringify({ tried: true }));
+    claimed = ledger.claimCachedEnrichment(triedKey, JSON.stringify({ tried: true }));
   } catch {
     // best-effort: without it a second try today is refused by OneShot, as before
   }
+  if (!claimed) return skip("interrupted");
   const deadline = Date.now() + ACCOUNT_READ_WAIT_MS;
   let requestId: string | null = null;
   let done: Record<string, unknown> | null = null;

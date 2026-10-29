@@ -30,6 +30,11 @@ vi.mock("@oneshot-gtm/core", async () => {
       getCachedEnrichment: (key: string) => cache.get(key) ?? null,
       setCachedEnrichment: (key: string, json: string) =>
         cache.set(key, { result_json: json, fetched_at: new Date().toISOString(), status: null }),
+      claimCachedEnrichment: (key: string, json: string) => {
+        if (cache.has(key)) return false;
+        cache.set(key, { result_json: json, fetched_at: new Date().toISOString(), status: null });
+        return true;
+      },
       setCachedEnrichmentFailure: (key: string, message: string) =>
         cache.set(key, {
           result_json: JSON.stringify({ failed: true, message }),

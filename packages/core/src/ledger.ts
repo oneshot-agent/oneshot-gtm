@@ -1052,6 +1052,11 @@ export class Ledger {
     this.cache.setCachedEnrichment(email, resultJson);
   }
 
+  /** Write the row only when none has the key, across processes: true for the caller that wrote it. */
+  claimCachedEnrichment(email: string, resultJson: string): boolean {
+    return this.cache.claimCachedEnrichment(email, resultJson);
+  }
+
   setCachedEnrichmentFailure(email: string, message: string): void {
     this.cache.setCachedEnrichmentFailure(email, message);
   }
