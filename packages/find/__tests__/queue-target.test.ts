@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getTrigger = vi.fn();
+const noOfferPlays = new Set<string>();
+vi.mock("@oneshot-gtm/plays", async () => ({
+  ...(await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays")),
+  playMakesOffer: (play: string) => !noOfferPlays.has(play),
+}));
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return { ...actual, getLedger: () => ({ getTrigger }) };
@@ -11,7 +16,10 @@ const payload_json = JSON.stringify({
   yourEdge: "old comparison",
   dossier: "facts",
 });
-beforeEach(() => getTrigger.mockReset());
+beforeEach(() => {
+  getTrigger.mockReset();
+  noOfferPlays.clear();
+});
 
 it("refreshes edges on each generation while preserving saved facts and payload", () => {
   const row = { source: "find:luma-events", payload_json };
@@ -152,5 +160,37 @@ describe("a row moved in from another workspace", () => {
       "yourEdge",
       "",
     );
+  });
+});
+
+describe("a stored offer", () => {
+  const withOffer = JSON.stringify({
+    email: "a@example.com",
+    yourEdge: "trigger edge",
+    offer: { offer: "clear every stale issue", steps: "s", angles: ["angle one", "angle two"] },
+    offerCandidates: [{ offer: "clear every stale issue", steps: "s" }],
+  });
+
+  it("supplies the angle pool for a play that makes offers", () => {
+    getTrigger.mockReturnValue(null);
+    const t = resolveQueueTarget({
+      source: "find:github-stars",
+      payload_json: withOffer,
+      play_name: "repo-interest",
+    }) as Record<string, unknown>;
+    expect(t["yourEdge"]).toBe("angle one // angle two");
+  });
+
+  it("is dropped, angles and all, for a play the workspace lists in noOfferPlays", () => {
+    getTrigger.mockReturnValue(null);
+    noOfferPlays.add("repo-interest");
+    const t = resolveQueueTarget({
+      source: "find:github-stars",
+      payload_json: withOffer,
+      play_name: "repo-interest",
+    }) as Record<string, unknown>;
+    expect(t["yourEdge"]).toBe("trigger edge");
+    expect(t).not.toHaveProperty("offer");
+    expect(t).not.toHaveProperty("offerCandidates");
   });
 });
