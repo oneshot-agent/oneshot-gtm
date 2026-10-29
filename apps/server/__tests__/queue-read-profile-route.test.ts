@@ -188,6 +188,8 @@ describe("POST /api/queue/:id/read-profile", () => {
       playName: "luma-events",
       subject: { queueId: 5 },
       liveProfile: true,
+      // An opened row reads on the whole day's cap, not the sweep's paced share.
+      liveReadOpened: true,
     });
     expect(state.applyCalls).toEqual([{ id: 5, opts: expect.objectContaining({ rejudge: true }) }]);
     expect(state.offerCalls).toEqual([]);
