@@ -163,6 +163,13 @@ export interface OfferSkip {
   inputHash: string;
   /** Hash of the product config alone (`offerProductHash`). */
   productHash: string;
+  /**
+   * On a skip because no offer passed (`noStrongOfferWhy`): the writer
+   * settings its rounds ran under (`offerWriterHash`). New rounds or a
+   * fallback model ask again. Absent on the writer's own refusal, and on a
+   * no-strong-offer skip from before the field, which reads as the defaults.
+   */
+  writerHash?: string;
   skippedAt: string;
 }
 
@@ -178,10 +185,59 @@ export function isOfferSkip(value: unknown): value is OfferSkip {
   );
 }
 
-/** True when a stored skip still answers to today's inputs: the writer would read the same. */
-export function offerSkipIsCurrent(stored: unknown, inputHash: string): stored is OfferSkip {
+/**
+ * Hash of the offer writer settings a no-strong-offer skip rests on: the
+ * rewrite rounds and the fallback model when it is on (`offerWriterOf`).
+ */
+export function offerWriterHash(cfg: { offerWriter?: unknown }): string {
+  const w = offerWriterOf(cfg);
+  return createHash("sha256")
+    .update([String(w.rounds), w.fallbackModel ?? ""].join("\u0000"))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+
+/** The start every `noStrongOfferWhy` shares; the writer's own refusal is free text. */
+const NO_STRONG_OFFER_WHY = /^no offer passed the relevance check\b/;
+
+/**
+ * True when the skip is not the writer's refusal but a set no round passed
+ * (`noStrongOfferWhy`): it rests on the writer settings those rounds ran
+ * under as well as on the research.
+ */
+export function isNoStrongOfferSkip(skip: OfferSkip): boolean {
+  return NO_STRONG_OFFER_WHY.test(skip.why);
+}
+
+/**
+ * True when a skip's writer settings are today's. The writer's own refusal
+ * came before any rewrite round, so it rests on none and always is. A
+ * no-strong-offer skip is while its `writerHash` matches; one from before
+ * the field ran under the defaults.
+ */
+function skipWriterIsCurrent(skip: OfferSkip, cfg: { offerWriter?: unknown }): boolean {
+  if (!isNoStrongOfferSkip(skip)) return true;
+  // A skip from before the field ran under no `offerWriter`: three rounds, no fallback.
+  const made = typeof skip.writerHash === "string" ? skip.writerHash : offerWriterHash({});
+  return made === offerWriterHash(cfg);
+}
+
+/**
+ * True when a stored skip still answers to today's inputs: the writer would
+ * read the same, and a no-strong-offer skip's rounds would run the same
+ * (`skipWriterIsCurrent`).
+ */
+export function offerSkipIsCurrent(
+  stored: unknown,
+  inputHash: string,
+  cfg: { offerWriter?: unknown },
+): stored is OfferSkip {
   return (
-    isOfferSkip(stored) && stored.version === OFFER_PROMPT_VERSION && stored.inputHash === inputHash
+    isOfferSkip(stored) &&
+    stored.version === OFFER_PROMPT_VERSION &&
+    stored.inputHash === inputHash &&
+    skipWriterIsCurrent(stored, cfg)
   );
 }
 
@@ -1198,7 +1254,9 @@ function lintReply(
  * `offerWriter.rounds` (default 3, 0–5) caps the rewrite rounds; they stop
  * at the first that passes an offer. With `offerWriter.fallbackOnWeak` and a
  * `fallbackModel`, a first set that passed none has every rewrite round
- * written on that model; the judge never is. Each kept offer records its
+ * written on that model; the judge never is. A call on it that throws is
+ * asked again on the workspace's model, which writes the rounds after
+ * (`completeRewrite`). Each kept offer records its
  * model in `writtenBy`. No offers when there is no brief, the model skips,
  * or nothing lints; a skip with nothing else kept comes back as `skip`, with
  * the writer's why and the input hash it read, and so does a set every round
@@ -1312,7 +1370,8 @@ export async function deriveOffers(
           play: input.playName,
           rounds,
           rejected: rejected.length,
-          model: ctx.rewriteModel ?? cfg.llmModel,
+          // The fallback only when a rewrite round was written on it.
+          model: ctx.fallbackRan && writer.fallbackModel ? writer.fallbackModel : cfg.llmModel,
         });
       }
     }
@@ -1354,6 +1413,8 @@ export async function deriveOffers(
           version: OFFER_PROMPT_VERSION,
           inputHash,
           productHash,
+          // Rounds ran: the skip rests on the settings they ran under.
+          ...(skipWhy === null ? { writerHash: offerWriterHash(cfg) } : {}),
           skippedAt: derivedAt,
         }
       : null;
@@ -1362,8 +1423,9 @@ export async function deriveOffers(
 
 /**
  * The skip's why when every round was judged and none passed: the row is
- * held `no-offer` and not written again until its research, the brief or
- * the prompt version changes (`offerSkipIsCurrent`).
+ * held `no-offer` and not written again until its research, the brief, the
+ * prompt version or the workspace's `offerWriter` changes
+ * (`offerSkipIsCurrent`). Every such why starts the same (`isNoStrongOfferSkip`).
  */
 export function noStrongOfferWhy(rounds: number): string {
   if (rounds <= 0) return "no offer passed the relevance check, with rewrites turned off";
@@ -1404,9 +1466,47 @@ interface OfferRoundContext {
   spend: (usd: number | undefined) => void;
   /**
    * The model the rewrite rounds write on, when it is not `llmModel`:
-   * `offerWriter.fallbackModel`, set once the first set passed none.
+   * `offerWriter.fallbackModel`, set once the first set passed none, and
+   * cleared when a call on it throws (`completeRewrite`).
    */
   rewriteModel?: string;
+  /** True once a rewrite round's writer call answered on `rewriteModel`. */
+  fallbackRan?: boolean;
+}
+
+/**
+ * One rewrite round's writer call, on `ctx.rewriteModel` when set. When the
+ * call on that model throws (an unknown id, a provider error), the same
+ * round is asked once more on the workspace's own model, and the rounds
+ * after it stay there: a broken fallback never leaves a row unwritten.
+ * `model` is the one that answered, for the logs. Throws only when the
+ * workspace's own model does.
+ */
+async function completeRewrite(
+  ctx: OfferRoundContext,
+  params: { temperature: number; maxTokens: number },
+): Promise<{ res: Awaited<ReturnType<typeof complete>>; model: string }> {
+  const fallback = ctx.rewriteModel;
+  if (fallback) {
+    try {
+      const res = await complete({ messages: ctx.messages, ...params, model: fallback });
+      ctx.fallbackRan = true;
+      return { res, model: fallback };
+    } catch (err) {
+      logEvent(
+        "prospect_offer.fallback_failed",
+        {
+          play: ctx.input.playName,
+          model: fallback,
+          message_120: ((err as Error).message ?? "").slice(0, 120),
+        },
+        "warn",
+      );
+      delete ctx.rewriteModel;
+    }
+  }
+  const res = await complete({ messages: ctx.messages, ...params });
+  return { res, model: ctx.cfg.llmModel };
 }
 
 /** One offer the judge did not pass, with the verdict the next round is told. */
@@ -1481,13 +1581,7 @@ async function judgeAndReplace(
       },
     );
     try {
-      const model = ctx.rewriteModel ?? cfg.llmModel;
-      const res = await complete({
-        messages: ctx.messages,
-        temperature: 0.4,
-        maxTokens: 3000,
-        ...(ctx.rewriteModel ? { model: ctx.rewriteModel } : {}),
-      });
+      const { res, model } = await completeRewrite(ctx, { temperature: 0.4, maxTokens: 3000 });
       ctx.spend(res.costUsd);
       ctx.lastReply = res.content;
       const out = lintReply(
@@ -1557,7 +1651,7 @@ async function rescueWeakSet(
 ): Promise<{ offers: DraftOffer[]; rejected: Rejected[]; errored: boolean }> {
   const { input, cfg } = ctx;
   const round = opts.round ?? (opts.fromRole ? 3 : 2);
-  const model = ctx.rewriteModel ?? cfg.llmModel;
+  let model = ctx.rewriteModel ?? cfg.llmModel;
   let cost = 0;
   const spend = (usd: number | undefined): void => {
     if (typeof usd === "number" && Number.isFinite(usd) && usd > 0) cost += usd;
@@ -1601,12 +1695,9 @@ async function rescueWeakSet(
   const failed: Rejected[] = [];
   let errored = false;
   try {
-    const res = await complete({
-      messages: ctx.messages,
-      temperature: 0.7,
-      maxTokens: 3000,
-      ...(ctx.rewriteModel ? { model: ctx.rewriteModel } : {}),
-    });
+    const call = await completeRewrite(ctx, { temperature: 0.7, maxTokens: 3000 });
+    const res = call.res;
+    model = call.model;
     spend(res.costUsd);
     // The next rescue answers in the same conversation, after this reply.
     ctx.lastReply = res.content;
@@ -1848,7 +1939,7 @@ export async function ensureOfferSet(
     return { offer, candidates, changed: offer !== stored };
   }
   const skip = t["offerSkip"];
-  if (cfg.productBrief?.trim() && offerSkipIsCurrent(skip, inputHash)) {
+  if (cfg.productBrief?.trim() && offerSkipIsCurrent(skip, inputHash, cfg)) {
     return { skipped: skip, changed: false };
   }
   const fresh = await deriveOfferSet({ ...input, cfg });
@@ -1915,7 +2006,8 @@ export async function offerSetForDraft(
   if (
     isOfferSkip(skip) &&
     skip.version === OFFER_PROMPT_VERSION &&
-    skip.productHash === offerProductHash(cfg)
+    skip.productHash === offerProductHash(cfg) &&
+    skipWriterIsCurrent(skip, cfg)
   ) {
     return { skipped: skip, derived: false };
   }
@@ -2035,14 +2127,18 @@ export function activeOfferPatch(
 
 /**
  * True when a row's stored offer is strong enough to keep beside a new set:
- * the founder's own, or one of today's prompt version the judge passed.
- * A weak one (approved or not) and one of an older version are not.
+ * the founder's own, or one the judge passed under today's prompt version
+ * and today's product config (`productHash`: its claims rest on the brief).
+ * A weak one (approved or not), one of an older version and one written
+ * from another brief are not.
  */
-function offerIsStrong(offer: unknown): offer is ProspectOffer {
+function offerIsStrong(offer: unknown, productHash: string): offer is ProspectOffer {
   return (
     isProspectOffer(offer) &&
     (offer.editedBy === "founder" ||
-      (offer.version === OFFER_PROMPT_VERSION && offer.relevance === "relevant"))
+      (offer.version === OFFER_PROMPT_VERSION &&
+        offer.relevance === "relevant" &&
+        offer.productHash === productHash))
   );
 }
 
@@ -2054,9 +2150,12 @@ function keptOfferKey(o: ProspectOffer): string {
 /**
  * The candidates a row keeps after New offers wrote `fresh`: the new ones
  * first, in their order (the first is the new active offer), then the row's
- * previous strong offers (`offerIsStrong`: its active one, then its
- * candidates), so a click never throws away an offer that would have gone
- * out. Weak and stale old ones are dropped. Repeats by offer text
+ * previous strong offers (`offerIsStrong` against today's `productHash`:
+ * its active one, then its candidates), so a click never throws away an
+ * offer that would have gone out. The founder's own offers are always kept:
+ * each takes the place of the lowest-ranked new offer when the five are
+ * full, though never the new active one. Other old strong offers fill what
+ * room is left; weak and stale ones are dropped. Repeats by offer text
  * (whitespace and case aside) are kept once, the first seen; at most
  * OFFER_COUNT in all.
  */
@@ -2064,18 +2163,23 @@ export function mergeKeptOffers(
   fresh: readonly ProspectOffer[],
   previousActive: unknown,
   previousCandidates: readonly unknown[],
+  productHash: string,
 ): ProspectOffer[] {
-  const out: ProspectOffer[] = [];
   const seen = new Set<string>();
-  const add = (o: ProspectOffer): void => {
+  const unseen = (o: ProspectOffer): boolean => {
     const k = keptOfferKey(o);
-    if (out.length >= OFFER_COUNT || seen.has(k)) return;
+    if (seen.has(k)) return false;
     seen.add(k);
-    out.push(o);
+    return true;
   };
-  fresh.forEach(add);
-  [previousActive, ...previousCandidates].filter(offerIsStrong).forEach(add);
-  return out;
+  const previous = [previousActive, ...previousCandidates].filter((o): o is ProspectOffer =>
+    offerIsStrong(o, productHash),
+  );
+  const newOnes = fresh.filter(unseen);
+  const founders = previous.filter((o) => o.editedBy === "founder").filter(unseen);
+  const others = previous.filter((o) => o.editedBy !== "founder").filter(unseen);
+  const kept = founders.slice(0, OFFER_COUNT - Math.min(1, newOnes.length));
+  return [...newOnes.slice(0, OFFER_COUNT - kept.length), ...kept, ...others].slice(0, OFFER_COUNT);
 }
 
 /**

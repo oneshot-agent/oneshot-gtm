@@ -68,6 +68,12 @@ vi.mock("@oneshot-gtm/plays", async () => ({
 }));
 
 const { queueOfferRoute } = await import("../src/api/queue-offer.ts");
+const { offerProductHash } = await import("@oneshot-gtm/plays");
+
+/** `offerProductHash` of a workspace whose only product config is this brief (as `loadConfig` here). */
+function briefHash(brief: string): string {
+  return offerProductHash({ productBrief: brief } as Parameters<typeof offerProductHash>[0]);
+}
 
 function post(body: unknown): Request {
   return new Request("http://x/api/queue/5/offer", { method: "POST", body: JSON.stringify(body) });
@@ -156,6 +162,7 @@ describe("queueOfferRoute", () => {
       level: "researched",
       version: OFFER_PROMPT_VERSION,
       relevance: "relevant",
+      productHash: briefHash(state.brief),
       ...extra,
     });
     const strongActive = offer("refill the depot's cancelled slots");
@@ -198,6 +205,7 @@ describe("queueOfferRoute", () => {
       level: "researched",
       version: OFFER_PROMPT_VERSION,
       relevance: "relevant",
+      productHash: briefHash(state.brief),
     });
     const old = ["old one", "old two", "old three"].map(offer);
     state.row = {
@@ -216,6 +224,72 @@ describe("queueOfferRoute", () => {
       "old one",
       "old two",
     ]);
+  });
+
+  it("New offers keeps the founder's own offer when five new ones pass", async () => {
+    const { OFFER_PROMPT_VERSION } = await import("@oneshot-gtm/plays");
+    const offer = (text: string) => ({
+      offer: text,
+      steps: "books jobs",
+      evidence: [],
+      stage: "startup",
+      level: "researched",
+      version: OFFER_PROMPT_VERSION,
+      relevance: "relevant",
+      productHash: briefHash(state.brief),
+    });
+    const mine = {
+      offer: "call every customer the depot lost in march",
+      steps: "",
+      editedBy: "founder",
+      version: "offer-v4",
+    };
+    state.row = {
+      ...state.row!,
+      payload_json: JSON.stringify({ name: "Dana", offer: mine, offerCandidates: [mine] }),
+    };
+    const fresh = ["new one", "new two", "new three", "new four", "new five"].map(offer);
+    state.derived = fresh[0]!;
+    state.derivedCandidates = fresh;
+    expect((await queueOfferRoute(post({ regenerate: true }), { id: "5" })).status).toBe(200);
+    const kept = state.patched[0]!.patch["offerCandidates"] as Array<{ offer: string }>;
+    expect(kept.map((o) => o.offer)).toEqual([
+      "new one",
+      "new two",
+      "new three",
+      "new four",
+      mine.offer,
+    ]);
+  });
+
+  it("New offers drops an old passing offer written from another product brief", async () => {
+    const { OFFER_PROMPT_VERSION } = await import("@oneshot-gtm/plays");
+    const offer = (text: string, brief: string) => ({
+      offer: text,
+      steps: "books jobs",
+      evidence: [],
+      stage: "startup",
+      level: "researched",
+      version: OFFER_PROMPT_VERSION,
+      relevance: "relevant",
+      productHash: briefHash(brief),
+    });
+    const before = offer("refill the cancelled slots", "Acme used to sell route maps.");
+    const today = offer("book the boiler renewals", state.brief);
+    state.row = {
+      ...state.row!,
+      payload_json: JSON.stringify({
+        name: "Dana",
+        offer: before,
+        offerCandidates: [before, today],
+      }),
+    };
+    const lead = offer("fill the empty friday afternoons", state.brief);
+    state.derived = lead;
+    state.derivedCandidates = [lead];
+    await queueOfferRoute(post({ regenerate: true }), { id: "5" });
+    const kept = state.patched[0]!.patch["offerCandidates"] as Array<{ offer: string }>;
+    expect(kept.map((o) => o.offer)).toEqual([lead.offer, today.offer]);
   });
 
   it("asks for jobs other than the ones on screen, and lets a weak set read the firm first", async () => {
