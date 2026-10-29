@@ -449,7 +449,7 @@ const CHECK_LEAD = /^(?:vet|verify|validate|screen|scan|audit|check)\b/i;
  * wrong; the offer is what is true for their firm when the goal is reached.
  */
 const SYSTEM_WRAPPER =
-  /\b(?:put\s+(?:\w+\s+){0,3}into\s+production|the\s+system\s+that|deploy(?:s|ed|ing)?\s+(?:a|the)\s+system)\b/i;
+  /\b(?:put\s+(?:[\w'’-]+\s+){0,6}into\s+production|the\s+system\s+that|deploy(?:s|ed|ing)?\s+(?:a|the)\s+system)\b/i;
 
 export function isSystemWrapperOffer(offer: string): boolean {
   return SYSTEM_WRAPPER.test(offer);

@@ -294,6 +294,7 @@ describe("lintOffer", () => {
       "Put it into production across the leeds depot crews",
       "ship the system that re-plans leeds crew routes before peak season",
       "put the booking system into production for every leeds depot",
+      "put the leeds depot's booking system into production before peak season",
       "deploy a system that books every leeds job into an open slot",
     ]) {
       expect(lintOffer({ ...good, level: "researched", offer }, research)).toContain(
