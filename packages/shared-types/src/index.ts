@@ -107,6 +107,8 @@ export interface CadenceOfferChoice {
   relevance?: "relevant" | "weak" | "irrelevant";
   /** 0–1: the judge's probability that it is relevant. */
   relevanceScore?: number;
+  /** The model that wrote it, when recorded. */
+  writtenBy?: string;
 }
 
 /**
@@ -580,6 +582,22 @@ export interface SetupRequest {
     engine: "llm" | "decisions";
     model?: string;
     minConfidence?: number;
+  } | null;
+  /**
+   * How offers are rewritten when none of the first set passes the check.
+   * `undefined` = leave unchanged; `null` = clear it back to the defaults
+   * (3 rounds, no fallback). An object replaces the stored setting whole: a
+   * field left out goes back to its default (no `fallbackModel` clears it).
+   * `rounds` must be an integer 0–5, `fallbackModel` text of at most 200
+   * characters, `fallbackOnWeak` a boolean; anything else is a 400.
+   */
+  offerWriter?: {
+    /** Rewrite rounds after the first set, 0–5. Default 3. */
+    rounds?: number;
+    /** Model for the rewrite rounds when the first set had no strong offer, on the same provider. */
+    fallbackModel?: string;
+    /** Use fallbackModel when the first set had no strong offer. Default false. */
+    fallbackOnWeak?: boolean;
   } | null;
   /**
    * Install-wide IANA time zone (issue #451 surfaced it: no other writer

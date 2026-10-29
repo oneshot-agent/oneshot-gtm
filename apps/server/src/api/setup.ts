@@ -15,6 +15,7 @@ import {
   listSendingDomains,
   loadConfig,
   loadGmailTokens,
+  MAX_OFFER_WRITER_ROUNDS,
   offerExclusionsOf,
   parseSendVia,
   registerOneShotIdentity,
@@ -696,6 +697,15 @@ export function mergeSetupConfig(
               : validateOfferJudge(body.offerJudge),
         }
       : {}),
+    // A body's offerWriter replaces the stored one whole; null clears it.
+    ...(body.offerWriter !== undefined || current.offerWriter !== undefined
+      ? {
+          offerWriter:
+            body.offerWriter === undefined
+              ? current.offerWriter
+              : validateOfferWriter(body.offerWriter),
+        }
+      : {}),
     timezone: mergeTimeZone(body.timezone, current.timezone),
     dailySpendCeilingUsd:
       body.dailySpendCeilingUsd === undefined
@@ -983,6 +993,68 @@ export function mergeOfferAnchor(
 /** Offer-judge merge: the same rules as the reply classifier's. */
 export function validateOfferJudge(value: SetupRequest["offerJudge"]): OneShotConfig["offerJudge"] {
   return validateEngineConfig("offerJudge", value);
+}
+
+const MAX_FALLBACK_MODEL_CHARS = 200;
+
+/**
+ * `offerWriter` from a setup body. `null`, or an object with nothing set,
+ * clears it (stored as absent: three rounds, no fallback). An object is the
+ * whole setting, not a patch: a field it leaves out is not kept from the
+ * stored one, so a body without `fallbackModel` clears the model. `rounds`
+ * must be an integer 0–5, `fallbackModel` non-blank text of at most 200
+ * characters, `fallbackOnWeak` a boolean (`true` needs a `fallbackModel`);
+ * anything else is a 400.
+ */
+export function validateOfferWriter(
+  value: SetupRequest["offerWriter"],
+): OneShotConfig["offerWriter"] {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new SetupValidationError("offerWriter must be an object, or null to clear it");
+  }
+  const { rounds, fallbackModel, fallbackOnWeak } = value;
+  if (
+    rounds !== undefined &&
+    (typeof rounds !== "number" ||
+      !Number.isInteger(rounds) ||
+      rounds < 0 ||
+      rounds > MAX_OFFER_WRITER_ROUNDS)
+  ) {
+    throw new SetupValidationError(
+      `invalid offerWriter.rounds '${String(rounds)}' — must be a whole number from 0 to ${MAX_OFFER_WRITER_ROUNDS}`,
+    );
+  }
+  let model: string | undefined;
+  if (fallbackModel !== undefined) {
+    if (typeof fallbackModel !== "string") {
+      throw new SetupValidationError("offerWriter.fallbackModel must be a model id");
+    }
+    model = fallbackModel.trim();
+    if (!model) {
+      throw new SetupValidationError(
+        "offerWriter.fallbackModel is blank — name a model, or leave it out to clear it",
+      );
+    }
+    if (model.length > MAX_FALLBACK_MODEL_CHARS) {
+      throw new SetupValidationError(
+        `offerWriter.fallbackModel is at most ${MAX_FALLBACK_MODEL_CHARS} characters`,
+      );
+    }
+  }
+  if (fallbackOnWeak !== undefined && typeof fallbackOnWeak !== "boolean") {
+    throw new SetupValidationError("offerWriter.fallbackOnWeak must be true or false");
+  }
+  // A toggle with no model to switch to would silently do nothing.
+  if (fallbackOnWeak === true && !model) {
+    throw new SetupValidationError("offerWriter.fallbackOnWeak needs a fallbackModel");
+  }
+  const out = {
+    ...(rounds !== undefined ? { rounds } : {}),
+    ...(model ? { fallbackModel: model } : {}),
+    ...(fallbackOnWeak !== undefined ? { fallbackOnWeak } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function validateEngineConfig(

@@ -38,6 +38,7 @@ const FULL_CFG: OneShotConfig = {
   dailySpendCeilingUsd: null,
   calendarIdentityId: null,
   calendarId: "primary",
+  offerWriter: { rounds: 2, fallbackModel: "vendor/strong-writer", fallbackOnWeak: true },
 };
 
 describe("publicCfg — privacy boundary", () => {
@@ -56,6 +57,12 @@ describe("publicCfg — privacy boundary", () => {
     expect(view.founderEmail).toBe("jane@acme.dev");
     expect(view.productOneLiner).toBe("x");
     expect(view.icpOneLiner).toBe("y");
+    // GET /api/setup reads offerWriter from here.
+    expect(view.offerWriter).toEqual({
+      rounds: 2,
+      fallbackModel: "vendor/strong-writer",
+      fallbackOnWeak: true,
+    });
     // Every remaining field, so a new OneShotConfig key can't silently vanish.
     const { clientId: _dropped, ...rest } = FULL_CFG;
     expect(view).toEqual(rest);

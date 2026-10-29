@@ -27,6 +27,11 @@ export interface LlmCompleteInput {
   timeoutMs?: number;
   /** Total attempts including the first. Clamped to >= 1. */
   maxAttempts?: number;
+  /**
+   * Model for this call, on the configured provider. Absent or blank =
+   * `cfg.llmModel`, the model every other call uses.
+   */
+  model?: string;
 }
 
 const DEFAULT_MAX_ATTEMPTS = 3;
@@ -216,11 +221,12 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
   const timeoutMs =
     input.timeoutMs === undefined ? undefined : Math.max(MIN_TIMEOUT_MS, input.timeoutMs);
   const maxAttempts = Math.max(1, input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
+  const model = input.model?.trim() || cfg.llmModel;
 
   const startedAt = Date.now();
   logEvent("llm.start", {
     provider: cfg.llmProvider,
-    model: cfg.llmModel,
+    model,
     message_count: expanded.messages.length,
     max_tokens: expanded.maxTokens ?? null,
     max_attempts: maxAttempts,
@@ -235,7 +241,7 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
   for (let attempt = 1; ; attempt++) {
     try {
       input.onAttempt?.();
-      result = await dispatch(cfg.llmProvider, cfg.llmModel, key, expanded, timeoutMs);
+      result = await dispatch(cfg.llmProvider, model, key, expanded, timeoutMs);
       attempts = attempt;
       break;
     } catch (err) {
@@ -251,7 +257,7 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
         retryAfterMs > MAX_RETRY_AFTER_MS;
       const ctx = {
         provider: cfg.llmProvider,
-        model: cfg.llmModel,
+        model,
         duration_ms: Date.now() - startedAt,
         error_class: (err as Error).constructor.name,
         message_120: ((err as Error).message ?? "").slice(0, 120),
@@ -282,7 +288,7 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
 
   logEvent("llm.done", {
     provider: cfg.llmProvider,
-    model: cfg.llmModel,
+    model,
     duration_ms: Date.now() - startedAt,
     response_chars: result.content.length,
     attempts,

@@ -57,6 +57,7 @@ function offerChoice(o: SequenceOfferValue | ProspectOffer): CadenceOfferChoice 
     ...(typeof r.relevanceScore === "number" && Number.isFinite(r.relevanceScore)
       ? { relevanceScore: r.relevanceScore }
       : {}),
+    ...(nonEmpty(r.writtenBy) ? { writtenBy: r.writtenBy! } : {}),
   };
 }
 
