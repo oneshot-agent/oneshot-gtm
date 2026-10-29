@@ -197,7 +197,6 @@ export function offerWriterHash(cfg: { offerWriter?: unknown }): string {
     .slice(0, 16);
 }
 
-
 /** The start every `noStrongOfferWhy` shares; the writer's own refusal is free text. */
 const NO_STRONG_OFFER_WHY = /^no offer passed the relevance check\b/;
 
