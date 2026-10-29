@@ -200,12 +200,36 @@ export function setCadenceOffer(
  * one statement guarded as `setCadenceOffer` is (active, no send holding
  * it), and only while `offer_json` holds no offer: a skip never stands
  * beside one. A cadence with no `offer_json` gets `{offer: null,
- * candidates: [], origin: 'derived', skip}`. False when nothing was written.
+ * candidates: [], origin: 'derived', skip}`. With `replacing` (the stored
+ * offer's text), a derived offer of that text is deleted with its
+ * candidates and the skip takes its place: a weak offer written for the
+ * sequence that a rewrite could not replace. Never the intro's own offer.
+ * False when nothing was written.
  */
 export function setCadenceOfferSkip(
   db: Database,
-  input: { prospectId: number; playName: string; skip: Record<string, unknown> },
+  input: {
+    prospectId: number;
+    playName: string;
+    skip: Record<string, unknown>;
+    replacing?: string;
+  },
 ): boolean {
+  if (input.replacing !== undefined) {
+    const r = db
+      .prepare(
+        `UPDATE cadence_state
+            SET offer_json = json_object('offer', json('null'), 'candidates', json('[]'),
+                                         'origin', 'derived', 'skip', json(?))
+          WHERE prospect_id = ? AND play_name = ? AND status = 'active'
+            AND sending_started_at IS NULL
+            AND json_valid(offer_json)
+            AND json_extract(offer_json, '$.origin') IS NOT 'intro'
+            AND json_extract(offer_json, '$.offer.offer') IS ?`,
+      )
+      .run(JSON.stringify(input.skip), input.prospectId, input.playName, input.replacing);
+    return r.changes === 1;
+  }
   const r = db
     .prepare(
       `UPDATE cadence_state

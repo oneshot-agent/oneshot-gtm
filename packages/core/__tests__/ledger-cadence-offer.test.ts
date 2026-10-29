@@ -178,6 +178,25 @@ describe("Ledger.setCadenceOfferSkip", () => {
     expect(stored(c)).toBeNull();
   });
 
+  it("with `replacing`, takes the place of that derived offer and its candidates, never the intro's", () => {
+    const c = enrolled({ offer, candidates: [offer, other] });
+    // Bound to the offer read: another text leaves it.
+    expect(ledger.setCadenceOfferSkip({ ...c, skip, replacing: other.offer })).toBe(false);
+    expect(ledger.setCadenceOfferSkip({ ...c, skip, replacing: offer.offer })).toBe(true);
+    expect(stored(c)).toEqual({ offer: null, candidates: [], origin: "derived", skip });
+
+    ledger.close();
+    ledger = new Ledger(":memory:");
+    const intro = enrolled();
+    ledger.enrollCadence({
+      ...intro,
+      nextDueAt: "2026-11-01T00:00:00Z",
+      offer: { offer, candidates: [], origin: "intro" },
+    });
+    expect(ledger.setCadenceOfferSkip({ ...intro, skip, replacing: offer.offer })).toBe(false);
+    expect(stored(intro)).toEqual({ offer, candidates: [], origin: "intro" });
+  });
+
   it("a re-enrolment that brings an offer replaces a skip; one that brings none keeps it", () => {
     const c = enrolled();
     ledger.setCadenceOfferSkip({ ...c, skip });

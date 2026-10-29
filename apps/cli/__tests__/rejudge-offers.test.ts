@@ -488,6 +488,26 @@ describe("commandRewriteWeakOffers", () => {
     expect(payloadOf(moved).offer.offer).toBe("picked");
   });
 
+  it("replaces a weak set no new offer passes for with the skip: held no-offer, its letter dropped", async () => {
+    const id = enqueue({ offer: weak(A), offerCandidates: [weak(A), weak(B)] });
+    ledger.setQueueDraft({ id, draft: draft("written for A") });
+    const skip = {
+      why: "no offer passed the relevance check after 3 rewrites",
+      version: "offer-v7",
+      inputHash: "h",
+      productHash: "p",
+      skippedAt: "2026-10-29T00:00:00.000Z",
+    };
+    writerMock.mockResolvedValue({ skipped: skip });
+    const s = await commandRewriteWeakOffers({ dryRun: false });
+    expect(s).toMatchObject({ noOffer: [`#${id}`], passing: [], weak: [], unchanged: [] });
+    const p = JSON.parse(ledger.getQueueRow(id)!.payload_json) as Record<string, unknown>;
+    expect(p).not.toHaveProperty("offer");
+    expect(p).not.toHaveProperty("offerCandidates");
+    expect(p["offerSkip"]).toEqual(skip);
+    expect(ledger.getQueueRow(id)!.last_draft_json).toBeNull();
+  });
+
   it("selects active sequences whose every offer is weak, never one the first email carried", () => {
     const items = selectAllWeakSequences(
       [

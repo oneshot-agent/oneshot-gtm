@@ -369,15 +369,22 @@ describe("a sequence that started before prospect offers", () => {
 });
 
 describe("a sequence that can't get an offer", () => {
-  it("when the judge rules out every offer, is held no-offer and never drafted from the terms", async () => {
-    llm.judge = "irrelevant";
-    const { id, rowId } = preOfferSequence();
-    const out = await preview(id);
-    expect(out).toMatchObject({ subject: "", body: "", flags: ["no-offer"] });
-    expect(llm.inputs.get("seq-followup")).toBeUndefined();
-    expect(cadenceOffer(id)).toBeNull();
-    expect(rowPayload(rowId!)["offer"]).toBeUndefined();
-    await expect(sendCadenceStep({ prospectId: id, playName: PLAY })).rejects.toThrow(/no-offer/);
+  it("when the judge passes no offer in any round, is held no-offer with the skip, never a weak offer", async () => {
+    for (const label of ["irrelevant", "weak"] as const) {
+      llm.judge = label;
+      const { id, rowId } = preOfferSequence();
+      const out = await preview(id);
+      expect(out).toMatchObject({ subject: "", body: "", flags: ["no-offer"] });
+      expect(llm.inputs.get("seq-followup")).toBeUndefined();
+      // The skip is kept on the cadence, so the next preview does not pay again.
+      expect(cadenceOffer(id)).toMatchObject({
+        offer: null,
+        candidates: [],
+        skip: { why: "no offer passed the relevance check after 3 rewrites" },
+      });
+      expect(rowPayload(rowId!)["offer"]).toBeUndefined();
+      await expect(sendCadenceStep({ prospectId: id, playName: PLAY })).rejects.toThrow(/no-offer/);
+    }
   });
 
   it("with no product brief, is held no-offer", async () => {
@@ -487,24 +494,63 @@ describe("a sequence the writer declines", () => {
 });
 
 describe("weak-fit sequence offers", () => {
-  it("hold the follow-up for the founder, until the offer is approved", async () => {
-    llm.judge = "weak";
-    const { id } = preOfferSequence();
-    const held = await preview(id);
-    expect(held.flags).toEqual(["weak-offer"]);
-    expect(held.body.startsWith("I can ")).toBe(true);
+  const weakOffer = {
+    ...good,
+    offer: "get every depot's vans washed before the morning run",
+    level: "researched" as const,
+    relevance: "weak" as const,
+    relevanceWhy: "would fit any trade business",
+    version: "offer-v6",
+    inputHash: "h",
+    derivedAt: "",
+  };
 
-    // The founder approves it (stamped on the stored offer, bound to it).
+  it("a weak one written for the sequence earlier is written again at the next preview", async () => {
+    const { id } = preOfferSequence();
     const record = sequenceOfferRecord({ prospectId: id, playName: PLAY });
-    expect(
-      writeSequenceOffer({
-        record,
-        offer: { weakApprovedAt: "2026-10-21T00:00:00Z" },
-        merge: true,
-        expect: { offer: record.offer!.offer, relevance: "weak" },
-      }),
-    ).toBe(true);
-    expect((await preview(id)).flags).toEqual([]);
+    expect(writeSequenceOffer({ record, offer: weakOffer, offerCandidates: [weakOffer] })).toBe(
+      true,
+    );
+    const out = await preview(id);
+    expect(out.flags).toEqual([]);
+    expect(llm.inputs.get("prospect-offer")).toHaveLength(1);
+    expect(out.body.startsWith(`I can ${good.offer}`)).toBe(true);
+    expect(cadenceOffer(id)).toMatchObject({
+      offer: { offer: good.offer, relevance: "relevant" },
+      candidates: [{ relevance: "relevant" }, { relevance: "relevant" }],
+    });
+  });
+
+  it("a weak one nothing replaces is deleted, the step held no-offer with the skip", async () => {
+    const { id } = preOfferSequence();
+    const record = sequenceOfferRecord({ prospectId: id, playName: PLAY });
+    writeSequenceOffer({ record, offer: weakOffer, offerCandidates: [weakOffer] });
+    llm.judge = "weak";
+    const held = await preview(id);
+    expect(held).toMatchObject({ subject: "", body: "", flags: ["no-offer"] });
+    expect(cadenceOffer(id)).toMatchObject({
+      offer: null,
+      candidates: [],
+      skip: { why: "no offer passed the relevance check after 3 rewrites" },
+    });
+    expect(sequenceOfferRecord({ prospectId: id, playName: PLAY })).toMatchObject({
+      offer: null,
+      offerCandidates: [],
+    });
+  });
+
+  it("one the founder approved stands, and the follow-up is not held", async () => {
+    const { id } = preOfferSequence();
+    const record = sequenceOfferRecord({ prospectId: id, playName: PLAY });
+    writeSequenceOffer({
+      record,
+      offer: { ...weakOffer, weakApprovedAt: "2026-10-21T00:00:00Z" },
+      offerCandidates: [weakOffer],
+    });
+    const out = await preview(id);
+    expect(out.flags).toEqual([]);
+    expect(llm.inputs.get("prospect-offer")).toBeUndefined();
+    expect(out.body.startsWith(`I can ${weakOffer.offer}`)).toBe(true);
   });
 
   it("never hold a follow-up for the offer the intro already sent", async () => {

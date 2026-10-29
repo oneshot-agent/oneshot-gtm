@@ -512,6 +512,8 @@ export const api = {
     forRun?: boolean;
     play?: string;
     status?: QueueStatusView;
+    /** With `status: "pending"`: leave out (`exclude`) or list only (`only`) rows with no strong offer. */
+    offerSkip?: "only" | "exclude";
     limit?: number;
     /** Review-order override; omit to use the configured default. */
     order?: "ranked" | "newest";
@@ -522,6 +524,7 @@ export const api = {
     if (opts?.forRun) q.set("forRun", "1");
     if (opts?.play) q.set("play", opts.play);
     if (opts?.status) q.set("status", opts.status);
+    if (opts?.offerSkip) q.set("offerSkip", opts.offerSkip);
     if (opts?.limit != null) q.set("limit", String(opts.limit));
     if (opts?.order) q.set("order", opts.order);
     // Note the `!= null`, not a length check: an empty array is an explicit

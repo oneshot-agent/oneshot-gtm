@@ -37,6 +37,7 @@ import {
   isOfferSkip,
   isOfferSkipped,
   isProspectOffer,
+  offerHoldsSend,
   playMakesOffer,
   researchForOffer,
   type OfferResearch,
@@ -191,16 +192,22 @@ export function writeSequenceOffer(input: {
 }
 
 /**
- * Keep the writer's refusal on the cadence, while it has no offer. Guarded
- * as `writeSequenceOffer` is (active, no send holding it). False when
- * nothing was written.
+ * Keep the writer's refusal on the cadence, while it has no offer, or, with
+ * `replacing` (the stored offer's text), in place of the weak offer a
+ * rewrite could not replace. Guarded as `writeSequenceOffer` is (active, no
+ * send holding it). False when nothing was written.
  */
-export function writeSequenceOfferSkip(record: SequenceOfferRecord, skip: OfferSkip): boolean {
+export function writeSequenceOfferSkip(
+  record: SequenceOfferRecord,
+  skip: OfferSkip,
+  replacing?: string,
+): boolean {
   try {
     return getLedger().setCadenceOfferSkip({
       prospectId: record.prospectId,
       playName: record.playName,
       skip: { ...skip },
+      ...(replacing !== undefined ? { replacing } : {}),
     });
   } catch (err) {
     logEvent(
@@ -319,9 +326,12 @@ export type DeriveSequenceOfferResult =
  * sent, and stores them on the cadence (`writeSequenceOffer`), which a send
  * holding the cadence refuses (`not-stored`). An offer that could not be
  * stored is not returned: the next touch would not see it. A writer skip
- * (`skipped`) is kept on a cadence with no offer; while the research it
- * read is unchanged, the stored one is answered without a writer call,
- * except with `force`. Never throws.
+ * (`skipped`, also when no offer passed the judge) is kept on a cadence with
+ * no offer; while the research it read is unchanged, the stored one is
+ * answered without a writer call, except with `force`. A weak offer written
+ * for the sequence that nobody approved (from before sets kept only passing
+ * offers) is never restated: it is written again, and a skip takes its
+ * place when nothing passes. Never throws.
  */
 export async function deriveSequenceOffer(input: {
   prospectId: number;
@@ -339,7 +349,8 @@ export async function deriveSequenceOffer(input: {
   cfg?: AppConfig;
 }): Promise<DeriveSequenceOfferResult> {
   const record = sequenceOfferRecord(input);
-  if (record.offer && (!input.force || record.introCarriedOffer)) {
+  const weakHeld = !!record.offer && !record.introCarriedOffer && offerHoldsSend(record.offer);
+  if (record.offer && !weakHeld && (!input.force || record.introCarriedOffer)) {
     return { status: "existing", record, offer: record.offer };
   }
   if (!playMakesOffer(input.playName)) return { status: "none", record, reason: "no-play-offer" };
@@ -394,9 +405,13 @@ export async function deriveSequenceOffer(input: {
       return { status: "none", record, reason: "nothing-derived" };
     }
     if (isOfferSkipped(set)) {
-      // A fresh skip is kept only while the sequence has no offer: New
-      // offers over one that stands leaves it standing.
-      const stored = set.changed && !record.offer && writeSequenceOfferSkip(record, set.skipped);
+      // A fresh skip is kept only while the sequence has no offer, or in
+      // place of a weak one: New offers over one that stands leaves it standing.
+      const stored =
+        set.changed &&
+        (!record.offer
+          ? writeSequenceOfferSkip(record, set.skipped)
+          : weakHeld && writeSequenceOfferSkip(record, set.skipped, record.offer.offer));
       logEvent("sequence_offer.none", {
         play: input.playName,
         prospect_id: input.prospectId,
@@ -407,7 +422,9 @@ export async function deriveSequenceOffer(input: {
       });
       return {
         status: "none",
-        record: stored ? { ...record, skip: set.skipped } : record,
+        record: stored
+          ? { ...record, offer: null, offerCandidates: [], skip: set.skipped }
+          : record,
         reason: "skipped",
         skip: set.skipped,
       };

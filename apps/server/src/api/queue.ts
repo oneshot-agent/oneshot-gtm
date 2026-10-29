@@ -17,6 +17,7 @@ import {
   channelAddresses,
 } from "@oneshot-gtm/core";
 import {
+  currentNoOfferPlays,
   currentWorkspaceName,
   getLedger,
   isDraining,
@@ -27,6 +28,7 @@ import {
   parseProspectPriority,
   sqliteToIso,
   type DraftDiscardReason,
+  type QueueOfferSkipFilter,
   type QueueRow,
   type QueueSearchOpts,
   type QueueSearchRow,
@@ -55,6 +57,7 @@ import {
   enrollInCadence,
   generateRejectReason,
   logTargetError,
+  NO_OFFER_PLAYS,
   offerCandidatesOf,
   offerOf,
   offerSkipOf,
@@ -641,6 +644,15 @@ interface QueueListArgs {
   limit?: number;
   ids?: number[];
   columns?: readonly string[];
+  offerSkip?: QueueOfferSkipFilter;
+}
+
+/**
+ * The plays whose rows get no offer (`playMakesOffer` false): the built-in
+ * list and the workspace's own, for the ledger's no-strong-offer filter.
+ */
+function noOfferPlayNames(): string[] {
+  return [...new Set([...NO_OFFER_PLAYS, ...currentNoOfferPlays()])];
 }
 
 /**
@@ -788,6 +800,14 @@ export function listQueueRoute(req: Request): Response {
   if (status) filterArgs.status = status;
   if (ids) filterArgs.ids = ids;
   if (ranked) filterArgs.columns = RANK_COLUMNS;
+  // `?offerSkip=exclude|only` splits the pending review list: the rows whose
+  // writer found no strong offer leave it, and have their own view. Every
+  // other status and an explicit id pick ignore it.
+  const offerSkipParam = url.searchParams.get("offerSkip");
+  const noOfferPlays = noOfferPlayNames();
+  if ((offerSkipParam === "exclude" || offerSkipParam === "only") && status === "pending" && !ids) {
+    filterArgs.offerSkip = { mode: offerSkipParam, noOfferPlays };
+  }
   const rows = ledger.listQueue(filterArgs);
   const ordered = ranked ? rankedPage(ledger, rows, limit) : rows;
   const counts: QueueCounts = ledger.queueCounts();
@@ -813,6 +833,7 @@ export function listQueueRoute(req: Request): Response {
     rows: views,
     counts,
     approvedByPlay: ledger.approvedCountsByPlay(),
+    noStrongOffer: ledger.countPendingOfferSkips(noOfferPlays),
     order: ranked ? "ranked" : "newest",
   };
   const capacity = sendsToday();
@@ -1416,10 +1437,20 @@ export async function approveAllRoute(req: Request): Promise<Response> {
   // The bulk UPDATE returns a count, not ids: take the pending ids first so
   // the rows it approves get their posts captured (in the background; the
   // capture re-checks each row is still approved).
-  const pendingArgs: QueueListArgs = { status: "pending", limit: 100_000, columns: ["id"] };
+  // A row whose writer found no strong offer stays pending: it has no offer
+  // to send, so approving it would only count a row the drain then holds.
+  const offerSkip: QueueOfferSkipFilter = { mode: "exclude", noOfferPlays: noOfferPlayNames() };
+  const pendingArgs: QueueListArgs = {
+    status: "pending",
+    limit: 100_000,
+    columns: ["id"],
+    offerSkip,
+  };
   if (body.play) pendingArgs.playName = body.play;
   const pendingIds = ledger.listQueue(pendingArgs).map((row) => row.id);
-  const n = ledger.approveAllPending(body.play ? { playName: body.play } : {});
+  const n = ledger.approveAllPending(
+    body.play ? { playName: body.play, offerSkip } : { offerSkip },
+  );
   if (n > 0) scheduleNewsfeedOnApproval(pendingIds);
   return jsonResponse({ approved: n }, 200, req);
 }

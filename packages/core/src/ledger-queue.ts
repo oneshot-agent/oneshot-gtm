@@ -9,6 +9,7 @@ import { canonicalLinkedInProfileKey } from "./ledger-prospects.ts";
 import type {
   IcpDecisionExample,
   ProspectPriority,
+  QueueOfferSkipFilter,
   QueueRow,
   QueueSearchOpts,
   QueueSearchRow,
@@ -178,6 +179,36 @@ const QUEUE_COLUMNS: ReadonlySet<string> = new Set<keyof QueueRow>([
 const EVENT_CITY_SQL = `CASE WHEN play_name = 'luma-events' AND json_valid(payload_json)
     AND json_type(payload_json, '$.eventCity') = 'text'
   THEN json_extract(payload_json, '$.eventCity') END AS event_city`;
+
+/**
+ * SQL for "the offer writer found no strong offer" on a queue row, mirroring
+ * the server's `offerSkipView`: `payload.offerSkip` has every field
+ * `isOfferSkip` checks, `payload.offer` is not a usable offer
+ * (`isProspectOffer`: a non-blank `offer` and a string `steps`), and the play
+ * makes offers. Never NULL, so `NOT (...)` drops exactly the matching rows;
+ * a payload that is not JSON never matches.
+ */
+function offerSkipWhere(noOfferPlays: readonly string[]): { sql: string; args: string[] } {
+  const p = "payload_json";
+  const skipField = (k: string): string => `json_type(${p}, '$.offerSkip.${k}') IS 'text'`;
+  const skip = ["why", "version", "inputHash", "productHash", "skippedAt"].map(skipField);
+  const hasOffer = `(json_type(${p}, '$.offer.offer') IS 'text'
+      AND trim(json_extract(${p}, '$.offer.offer'), char(32, 9, 10, 11, 12, 13)) <> ''
+      AND json_type(${p}, '$.offer.steps') IS 'text')`;
+  const payload = `(CASE WHEN json_valid(${p}) THEN (${skip.join(" AND ")} AND NOT ${hasOffer}) ELSE 0 END)`;
+  const plays = [...new Set(noOfferPlays)];
+  if (plays.length === 0) return { sql: payload, args: [] };
+  return {
+    sql: `(${payload} AND play_name NOT IN (${plays.map(() => "?").join(",")}))`,
+    args: plays,
+  };
+}
+
+/** `offerSkipWhere` as a filter clause: the matching rows (`only`) or every other row (`exclude`). */
+function offerSkipClause(filter: QueueOfferSkipFilter): { sql: string; args: string[] } {
+  const { sql, args } = offerSkipWhere(filter.noOfferPlays);
+  return { sql: filter.mode === "only" ? sql : `NOT ${sql}`, args };
+}
 
 /** `SELECT` list for `listQueue`: `*`, or the validated projection. */
 function queueSelectList(columns: readonly string[] | undefined): string {
@@ -414,6 +445,7 @@ export class QueueStore {
       limit?: number;
       ids?: number[];
       columns?: readonly string[];
+      offerSkip?: QueueOfferSkipFilter;
     } = {},
   ): QueueRow[] {
     const where: string[] = [];
@@ -425,6 +457,11 @@ export class QueueStore {
     if (opts.status) {
       where.push("status = ?");
       args.push(opts.status);
+    }
+    if (opts.offerSkip) {
+      const clause = offerSkipClause(opts.offerSkip);
+      where.push(clause.sql);
+      args.push(...clause.args);
     }
     // Explicit row picks (the /queue "drain selected" path). An empty array
     // would compile to `IN ()` (a syntax error in SQLite) and semantically
@@ -972,7 +1009,11 @@ export class QueueStore {
     });
   }
 
-  approveAllPending(opts: { playName?: string } = {}): number {
+  /**
+   * Approve every pending row (of one play). `offerSkip` narrows the batch:
+   * `exclude` leaves the rows whose writer found no strong offer pending.
+   */
+  approveAllPending(opts: { playName?: string; offerSkip?: QueueOfferSkipFilter } = {}): number {
     // `sent_at IS NULL` is belt-and-braces alongside `status = 'pending'`:
     // a pending row should never carry a sent_at, but the invariant lives
     // here, not in the caller (#561).
@@ -981,6 +1022,11 @@ export class QueueStore {
     if (opts.playName) {
       where.push("play_name = ?");
       args.push(opts.playName);
+    }
+    if (opts.offerSkip) {
+      const clause = offerSkipClause(opts.offerSkip);
+      where.push(clause.sql);
+      args.push(...clause.args);
     }
     // decided_by='human_bulk': a human sanctioned the batch, but no per-row
     // judgment happened: evaluation code can include or exclude these
@@ -1042,6 +1088,19 @@ export class QueueStore {
       )
       .run(cutoff);
     return Number(result.changes);
+  }
+
+  /**
+   * Pending rows across the whole queue whose writer found no strong offer
+   * (`offerSkipWhere`): the /queue "No strong offer" count, which the
+   * pending review list leaves out.
+   */
+  countPendingOfferSkips(noOfferPlays: readonly string[]): number {
+    const { sql, args } = offerSkipWhere(noOfferPlays);
+    const row = this.db
+      .query(`SELECT COUNT(*) AS n FROM target_queue WHERE status = 'pending' AND ${sql}`)
+      .get(...(args as never[])) as { n: number } | null;
+    return row?.n ?? 0;
   }
 
   queueCounts(): Record<QueueStatus, number> {

@@ -6,6 +6,7 @@ import {
   isOfferSkipped,
   isProspectOffer,
   offerCandidatesOf,
+  offerSkipPatch,
   playMakesOffer,
   type OfferSkip,
   type ProspectOffer,
@@ -26,8 +27,11 @@ import {
  * - `{ regenerate: true }` writes five new offers from the row's research,
  *   ranked by return, each a different job from the ones it replaces; the
  *   first becomes active, with its angles. When the
- *   writer declines, its reason is kept on the row (`offerSkip`) and the
- *   answer is 422 with it (`offerSkip.why`); an offer the row had stays.
+ *   writer declines, or none of the new offers passes the relevance check,
+ *   the reason is kept on the row (`offerSkip`) and the answer is 422 with
+ *   it (`offerSkip.why`). An offer the row had stays only while it stands
+ *   (the founder's, approved, or a passing one of today's prompt version:
+ *   `offerSkipPatch`); a weak or stale one is deleted with its candidates.
  * - `{ select: i }` makes the row's i-th offer (0-based) active, writing its
  *   angles if it has none yet.
  * - `{ offer, steps?, return? }` saves the founder's text; it is never
@@ -122,7 +126,8 @@ export async function queueOfferRoute(
  * research, the first active with its angles, written to the live row.
  * Shared with the read-on-open route, which rewrites the offer when a fresh
  * read moved the person's role. A writer skip is written to the row in
- * place of a set (`skipped`), leaving any offer it had. `avoidCurrent`
+ * place of a set (`skipped`), leaving an offer it had only while that offer
+ * stands (`offerSkipPatch`). `avoidCurrent`
  * (the founder's New offers) asks for jobs other than the row's current
  * ones. A set the judge passes none of reads the row's company research
  * first, waiting at most `researchWaitMs` (default none: the read lands on
@@ -151,7 +156,7 @@ export async function regenerateQueueRowOffer(
   });
   if (!set) return "no-offer";
   if (isOfferSkipped(set)) {
-    const patch = { offerSkip: set.skipped };
+    const patch = offerSkipPatch(storedOffer(row.payload_json), set.skipped);
     if (!getLedger().patchLiveQueuePayload({ id: row.id, patch })) return "not-live";
     return { skipped: set.skipped };
   }

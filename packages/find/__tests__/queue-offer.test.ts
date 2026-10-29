@@ -22,6 +22,7 @@ vi.mock("@oneshot-gtm/plays", async () => {
     ensureOfferSet: (...args: unknown[]) => ensureOfferSet(...args),
     activeOfferPatch: actual.activeOfferPatch,
     isOfferSkipped: actual.isOfferSkipped,
+    offerSkipPatch: actual.offerSkipPatch,
   };
 });
 
@@ -102,9 +103,25 @@ describe("ensureQueueRowOffer", () => {
     const out = await ensureQueueRowOffer(row);
     expect(ledger.patchLiveQueuePayload).toHaveBeenCalledWith({
       id: 7,
-      patch: { offerSkip: skip },
+      patch: { offerSkip: skip, offer: null, offerCandidates: null },
     });
     expect(out.payload_json).toBe('{"stored":true}');
+  });
+
+  it("a fresh skip deletes the weak set it replaces, and the draft in hand reads no offer", async () => {
+    const weak = { offer: "old", steps: "", relevance: "weak", version: "offer-v6" };
+    ensureOfferSet.mockResolvedValue({ skipped: skip, changed: true });
+    ledger.patchLiveQueuePayload.mockReturnValueOnce(false);
+    const out = await ensureQueueRowOffer({
+      ...row,
+      payload_json: JSON.stringify({ name: "Dana", offer: weak, offerCandidates: [weak] }),
+    });
+    expect(ledger.patchLiveQueuePayload.mock.calls[0]![0].patch).toEqual({
+      offerSkip: skip,
+      offer: null,
+      offerCandidates: null,
+    });
+    expect(JSON.parse(out.payload_json)).toEqual({ name: "Dana", offerSkip: skip });
   });
 
   it("writes nothing when the stored skip still stands", async () => {

@@ -24,6 +24,11 @@ describe("validateQueueSearch", () => {
     });
   });
 
+  it("keeps the no-strong-offer view in the URL", () => {
+    expect(validateQueueSearch({ status: "no-offer" })).toEqual({ status: "no-offer" });
+    expect(hasQueueFilters({ status: "no-offer" })).toBe(true);
+  });
+
   it("drops unknown or malformed values", () => {
     expect(validateQueueSearch({ status: "bogus", play: "", order: "oldest" })).toEqual({});
     expect(validateQueueSearch({ status: 1, play: 2 })).toEqual({});

@@ -13,9 +13,11 @@
  * for that read at most `CLICK_RESEARCH_WAIT_MS` (the outside research takes
  * minutes); a read still running then lands on the row for the next pass.
  *
- * When the writer declines, its reason is kept on the payload (`offerSkip`,
- * with the hash of the research it read) and shown on the row; drafts do
- * not ask it again until that research changes.
+ * When the writer declines, or no offer passes the relevance judge in any
+ * round, the reason is kept on the payload (`offerSkip`, with the hash of
+ * the research it read) and shown on the row, and a stored offer that no
+ * longer stands is deleted with it (`offerSkipPatch`); drafts do not ask
+ * again until that research changes.
  */
 import {
   getLedger,
@@ -28,6 +30,7 @@ import {
   activeOfferPatch,
   ensureOfferSet,
   isOfferSkipped,
+  offerSkipPatch,
   playMakesOffer,
 } from "@oneshot-gtm/plays";
 import {
@@ -232,10 +235,14 @@ function offerPayloadChange(
   }
   if (!set.changed) return null;
   if (isOfferSkipped(set)) {
-    return {
-      patch: { offerSkip: set.skipped },
-      fallback: { ...payload, offerSkip: set.skipped },
-    };
+    // A stale or weak set goes with it: the row is held `no-offer`, not shown one.
+    const patch = offerSkipPatch(payload["offer"], set.skipped);
+    const fallback: JsonRecord = { ...payload, offerSkip: set.skipped };
+    if (patch.offer === null) {
+      delete fallback["offer"];
+      delete fallback["offerCandidates"];
+    }
+    return { patch, fallback };
   }
   // Replaces the old offer whole: none of its keys (an approval, a label) carry over.
   const { offerSkip: _cleared, ...rest } = payload;
