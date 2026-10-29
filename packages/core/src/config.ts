@@ -98,6 +98,35 @@ export function offerAnchorOf(cfg: { offerAnchor?: unknown }): OfferAnchor {
   return cfg.offerAnchor === "prefer-product" ? "prefer-product" : "either";
 }
 
+/** Rewrite rounds after the first offer set when `offerWriter.rounds` is not set. */
+export const DEFAULT_OFFER_WRITER_ROUNDS = 3;
+/** Most rewrite rounds `offerWriter.rounds` may ask for. */
+export const MAX_OFFER_WRITER_ROUNDS = 5;
+
+/**
+ * The workspace's `offerWriter` as the offer writer reads it: `rounds` an
+ * integer clamped to 0–5 (absent or not a number reads as 3), and
+ * `fallbackModel` the trimmed model id only when `fallbackOnWeak` is exactly
+ * `true` and a model is named, else null. Absent reads as three rounds with
+ * no fallback, the behaviour from before the setting existed.
+ */
+export function offerWriterOf(cfg: { offerWriter?: unknown }): {
+  rounds: number;
+  fallbackModel: string | null;
+} {
+  const raw =
+    cfg.offerWriter && typeof cfg.offerWriter === "object"
+      ? (cfg.offerWriter as Record<string, unknown>)
+      : {};
+  const r = raw["rounds"];
+  const rounds =
+    typeof r === "number" && Number.isFinite(r)
+      ? Math.min(MAX_OFFER_WRITER_ROUNDS, Math.max(0, Math.trunc(r)))
+      : DEFAULT_OFFER_WRITER_ROUNDS;
+  const model = typeof raw["fallbackModel"] === "string" ? raw["fallbackModel"].trim() : "";
+  return { rounds, fallbackModel: raw["fallbackOnWeak"] === true && model ? model : null };
+}
+
 /**
  * The workspace's `noOfferPlays` as plays read it: each play name trimmed,
  * blanks and repeats dropped. A hand-edited lone string counts as one entry;

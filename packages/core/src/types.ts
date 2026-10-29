@@ -359,6 +359,19 @@ export interface OfferJudgeConfig {
   minConfidence?: number;
 }
 
+/**
+ * How offers are rewritten when the judge passes too few. Absent = three
+ * rewrite rounds on `llmModel`, the behaviour from before the setting existed.
+ */
+export interface OfferWriterConfig {
+  /** Rewrite rounds after the first set, 0–5. Default 3. */
+  rounds?: number;
+  /** Model for the rewrite rounds when the first set had no strong offer, on the same provider. */
+  fallbackModel?: string;
+  /** Use fallbackModel when the first set had no strong offer. Default false. */
+  fallbackOnWeak?: boolean;
+}
+
 /** Which anchor an offer rests on where the research allows a choice. */
 export type OfferAnchor = "prefer-product" | "either";
 
@@ -441,6 +454,12 @@ export interface OneShotConfig {
    * to `llm` on any failure. Optional: absent means `{ engine: "llm" }`.
    */
   offerJudge?: OfferJudgeConfig;
+  /**
+   * How many rewrite rounds follow a first set the judge passed too few of,
+   * and which model writes them when the first set passed none. Read through
+   * `offerWriterOf`. Optional: absent means three rounds on `llmModel`.
+   */
+  offerWriter?: OfferWriterConfig;
   /** Founder's résumé / credentials. The founder-trust social-proof beat. */
   founderCredentials: string | null;
   /** Products you've shipped. The peer-founder social-proof beat. */

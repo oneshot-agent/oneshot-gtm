@@ -31,6 +31,7 @@ import {
   logEvent,
   offerAnchorOf,
   offerExclusionsOf,
+  offerWriterOf,
   productBriefText,
   type OfferAnchor,
 } from "@oneshot-gtm/core";
@@ -112,6 +113,13 @@ export interface ProspectOffer {
   relevanceWhy?: string;
   /** `<engine>:<model>` that judged it. */
   relevanceClassifier?: string;
+  /**
+   * The model that wrote it (`complete()`'s answer): the workspace's
+   * `llmModel`, or `offerWriter.fallbackModel` for an offer from a rewrite
+   * round after a first set with none strong. Absent on offers written
+   * before the field existed and on a founder's own.
+   */
+  writtenBy?: string;
   /**
    * Reasons this offer pays back, one per touch: the draft's angle pool when
    * set (see `overlayOfferAngles` in core). Written for the active offer.
@@ -1131,6 +1139,8 @@ function lintReply(
   product: string,
   oneLiner: string,
   seen: Set<string>,
+  /** The model that wrote the reply, stamped on each offer kept. */
+  writtenBy: string,
 ): { kept: DraftOffer[]; failed: string[]; skip: string | null } {
   const raws = readRawList(content);
   if (!Array.isArray(raws)) return { kept: [], failed: [], skip: raws.skip };
@@ -1152,7 +1162,7 @@ function lintReply(
       return;
     }
     seen.add(parsed.offer);
-    kept.push(parsed);
+    kept.push(writtenBy ? { ...parsed, writtenBy } : parsed);
   });
   return { kept, failed, skip: null };
 }
@@ -1161,17 +1171,22 @@ function lintReply(
  * Write OFFER_COUNT offers, ranked by return, in one call. Each is linted on
  * its own; the ones that fail get one repair round together. The ones that
  * pass are judged for relevance (`judgeOffers`): those the judge does not
- * pass are dropped, and one replacement round asks for as many new ones,
- * told why the dropped ones failed. Passing offers keep the model's order,
- * and only they are returned: a set holds one to five, never a weak one to
- * make up the count. When the judge still passed none, a rescue round
- * (`rescueWeakSet`) reads the firm's research if the row has none complete
- * and writes five again another way; when that passes none either, a last
- * one writes from what the person's title is measured on. The rounds stop
- * at the first that passes an offer. No offers when there is no brief, the
- * model skips, or nothing lints; a skip with nothing else kept comes back
- * as `skip`, with the writer's why and the input hash it read, and so does
- * a set every round was judged and none passed (`NO_STRONG_OFFER_WHY`).
+ * pass are dropped, and a replacement round (rewrite round 1) asks for as
+ * many new ones, told why the dropped ones failed. Passing offers keep the
+ * model's order, and only they are returned: a set holds one to five, never
+ * a weak one to make up the count. When the judge still passed none, a
+ * rescue round (round 2, `rescueWeakSet`) reads the firm's research if the
+ * row has none complete and writes five again another way; each round after
+ * that writes from what the person's title is measured on. The workspace's
+ * `offerWriter.rounds` (default 3, 0–5) caps the rewrite rounds; they stop
+ * at the first that passes an offer. With `offerWriter.fallbackOnWeak` and a
+ * `fallbackModel`, a first set that passed none has every rewrite round
+ * written on that model; the judge never is. Each kept offer records its
+ * model in `writtenBy`. No offers when there is no brief, the model skips,
+ * or nothing lints; a skip with nothing else kept comes back as `skip`, with
+ * the writer's why and the input hash it read, and so does a set every round
+ * was judged and none passed (`noStrongOfferWhy`), unless a round's writer
+ * or judge threw.
  */
 export async function deriveOffers(
   input: DeriveOfferInput & { fetchImpl?: typeof fetch },
@@ -1203,7 +1218,14 @@ export async function deriveOffers(
       const res = await complete({ messages, temperature: 0.4, maxTokens: 3000 });
       spend(res.costUsd);
       lastReply = res.content;
-      const out = lintReply(res.content, research, product, oneLiner, seen);
+      const out = lintReply(
+        res.content,
+        research,
+        product,
+        oneLiner,
+        seen,
+        res.model || cfg.llmModel,
+      );
       if (out.skip !== null) {
         skipWhy = out.skip;
         logEvent("prospect_offer.skipped", {
@@ -1247,18 +1269,20 @@ export async function deriveOffers(
         lastReply,
         spend,
       };
-      const judged = await judgeAndReplace(kept, ctx);
+      const writer = offerWriterOf(cfg);
+      const judged = await judgeAndReplace(kept, ctx, writer);
       kept = judged.offers;
-      // Every offer the judge did not pass, from every round: the last
-      // rescue is told them all.
+      // Every offer the judge did not pass, from every round: each rescue is
+      // told them all.
       const rejected = [...judged.rejected];
-      let rounds = 1;
+      let rounds = judged.replaced ? 1 : 0;
       // A round whose writer or judge failed passed nothing because it never
       // ran: no skip rests on it, so the row is written again next pass.
       let errored = judged.errored;
-      for (const fromRole of [false, true]) {
+      // Round 2 reads the firm's research; rounds 3 and on write from the role.
+      for (let round = 2; round <= writer.rounds; round++) {
         if (kept.length > 0 || rejected.length === 0) break;
-        const rescued = await rescueWeakSet(rejected, ctx, { fromRole });
+        const rescued = await rescueWeakSet(rejected, ctx, { fromRole: round >= 3, round });
         kept = rescued.offers;
         rejected.push(...rescued.rejected);
         errored ||= rescued.errored;
@@ -1271,6 +1295,7 @@ export async function deriveOffers(
           play: input.playName,
           rounds,
           rejected: rejected.length,
+          model: ctx.rewriteModel ?? cfg.llmModel,
         });
       }
     }
@@ -1324,6 +1349,7 @@ export async function deriveOffers(
  * the prompt version changes (`offerSkipIsCurrent`).
  */
 export function noStrongOfferWhy(rounds: number): string {
+  if (rounds <= 0) return "no offer passed the relevance check, with rewrites turned off";
   return clip(
     `no offer passed the relevance check after ${rounds} ${rounds === 1 ? "rewrite" : "rewrites"}`,
     OFFER_SKIP_WHY_MAX,
@@ -1358,6 +1384,11 @@ interface OfferRoundContext {
   /** The writer's latest reply, not yet in `messages`. */
   lastReply: string;
   spend: (usd: number | undefined) => void;
+  /**
+   * The model the rewrite rounds write on, when it is not `llmModel`:
+   * `offerWriter.fallbackModel`, set once the first set passed none.
+   */
+  rewriteModel?: string;
 }
 
 /** One offer the judge did not pass, with the verdict the next round is told. */
@@ -1367,25 +1398,29 @@ interface Rejected {
 }
 
 /**
- * The judge's pass over the linted offers, and the one replacement round.
- * Only offers that pass come back. Offers the judge gave no verdict are kept
- * as they are: a judge outage never empties a row. `rejected` lists every
- * offer the judge did not pass, irrelevant ones included, from both rounds.
+ * The judge's pass over the linted offers, and the replacement round (rewrite
+ * round 1, skipped when `offerWriter.rounds` is 0). Only offers that pass
+ * come back. Offers the judge gave no verdict are kept as they are: a judge
+ * outage never empties a row. `rejected` lists every offer the judge did not
+ * pass, irrelevant ones included, from both rounds. When the first set passed
+ * none and the workspace names a fallback writer, it is set on `ctx` here, so
+ * the replacement round and every rescue after it write on that model.
+ * `replaced` is true when the replacement round ran; `errored` when its
+ * writer or judge threw.
  */
 async function judgeAndReplace(
   kept: DraftOffer[],
   ctx: OfferRoundContext,
-): Promise<{ offers: DraftOffer[]; rejected: Rejected[]; errored: boolean }> {
+  writer: { rounds: number; fallbackModel: string | null },
+): Promise<{ offers: DraftOffer[]; rejected: Rejected[]; replaced: boolean; errored: boolean }> {
   const { input, cfg, research } = ctx;
   const judgeOpts = {
     ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
     onCost: ctx.spend,
   };
   const verdicts = await judgeOffers(kept, research, ctx.target, cfg, judgeOpts);
-  if (!verdicts) return { offers: kept, rejected: [], errored: false };
+  if (!verdicts) return { offers: kept, rejected: [], replaced: false, errored: false };
   const passing: DraftOffer[] = [];
-  // The replacement round threw: nothing it wrote was judged.
-  let errored = false;
   const rejected: Rejected[] = [];
   const dropped: string[] = [];
   kept.forEach((o, i) => {
@@ -1398,6 +1433,7 @@ async function judgeAndReplace(
     rejected.push({ offer: judged, judgement: j });
     dropped.push(`"${o.offer}": ${j.label}, ${j.why}`);
   });
+  if (passing.length === 0 && writer.fallbackModel) ctx.rewriteModel = writer.fallbackModel;
   if (dropped.length > 0) {
     logEvent("prospect_offer.judge_dropped", {
       play: input.playName,
@@ -1407,7 +1443,10 @@ async function judgeAndReplace(
     });
   }
   const missing = OFFER_COUNT - passing.length;
-  if (dropped.length > 0 && missing > 0) {
+  let replaced = false;
+  let errored = false;
+  if (writer.rounds >= 1 && dropped.length > 0 && missing > 0) {
+    replaced = true;
     const keptList = passing.map((o) => `- ${o.offer}`).join("\n");
     ctx.messages.push(
       { role: "assistant", content: ctx.lastReply },
@@ -1424,16 +1463,30 @@ async function judgeAndReplace(
       },
     );
     try {
-      const res = await complete({ messages: ctx.messages, temperature: 0.4, maxTokens: 3000 });
+      const model = ctx.rewriteModel ?? cfg.llmModel;
+      const res = await complete({
+        messages: ctx.messages,
+        temperature: 0.4,
+        maxTokens: 3000,
+        ...(ctx.rewriteModel ? { model: ctx.rewriteModel } : {}),
+      });
       ctx.spend(res.costUsd);
       ctx.lastReply = res.content;
-      const out = lintReply(res.content, research, ctx.product, ctx.oneLiner, ctx.seen);
+      const out = lintReply(
+        res.content,
+        research,
+        ctx.product,
+        ctx.oneLiner,
+        ctx.seen,
+        res.model || model,
+      );
       const fresh = out.kept.slice(0, missing);
       if (out.failed.length > 0) {
         logEvent("prospect_offer.lint_failed", {
           play: input.playName,
           round: "replacement",
           kept: fresh.length,
+          model,
           flags_200: out.failed.join("; ").slice(0, 200),
         });
       }
@@ -1459,7 +1512,7 @@ async function judgeAndReplace(
       );
     }
   }
-  return { offers: passing.slice(0, OFFER_COUNT), rejected, errored };
+  return { offers: passing.slice(0, OFFER_COUNT), rejected, replaced, errored };
 }
 
 /**
@@ -1474,17 +1527,19 @@ async function judgeAndReplace(
  * The first rescue (round 2) reads the row's company research once, when it
  * is missing or lacks its outside half (the registered `OfferResearch`,
  * within find's per-row cap), and leaves it on `ctx` for the rounds after.
- * `fromRole` (round 3) reads nothing new, is told every offer rejected so
- * far, and writes from what the person's title is measured on
- * (`OFFER_ROLE_RESCUE`).
+ * `fromRole` (rounds 3 and on, up to `offerWriter.rounds`) reads nothing new,
+ * is told every offer rejected so far, and writes from what the person's
+ * title is measured on (`OFFER_ROLE_RESCUE`). The writer runs on
+ * `ctx.rewriteModel` when set; the judge always on its own engine.
  */
 async function rescueWeakSet(
   rejected: ReadonlyArray<Rejected>,
   ctx: OfferRoundContext,
-  opts: { fromRole?: boolean } = {},
+  opts: { fromRole?: boolean; round?: number } = {},
 ): Promise<{ offers: DraftOffer[]; rejected: Rejected[]; errored: boolean }> {
   const { input, cfg } = ctx;
-  const round = opts.fromRole ? 3 : 2;
+  const round = opts.round ?? (opts.fromRole ? 3 : 2);
+  const model = ctx.rewriteModel ?? cfg.llmModel;
   let cost = 0;
   const spend = (usd: number | undefined): void => {
     if (typeof usd === "number" && Number.isFinite(usd) && usd > 0) cost += usd;
@@ -1528,16 +1583,29 @@ async function rescueWeakSet(
   const failed: Rejected[] = [];
   let errored = false;
   try {
-    const res = await complete({ messages: ctx.messages, temperature: 0.7, maxTokens: 3000 });
+    const res = await complete({
+      messages: ctx.messages,
+      temperature: 0.7,
+      maxTokens: 3000,
+      ...(ctx.rewriteModel ? { model: ctx.rewriteModel } : {}),
+    });
     spend(res.costUsd);
     // The next rescue answers in the same conversation, after this reply.
     ctx.lastReply = res.content;
-    const out = lintReply(res.content, research, ctx.product, ctx.oneLiner, ctx.seen);
+    const out = lintReply(
+      res.content,
+      research,
+      ctx.product,
+      ctx.oneLiner,
+      ctx.seen,
+      res.model || model,
+    );
     if (out.failed.length > 0) {
       logEvent("prospect_offer.lint_failed", {
         play: input.playName,
         round: "rescue",
         rescue_round: round,
+        model,
         kept: out.kept.length,
         flags_200: out.failed.join("; ").slice(0, 200),
       });
@@ -1572,6 +1640,7 @@ async function rescueWeakSet(
   logEvent("prospect_offer.rescue", {
     play: input.playName,
     round,
+    model,
     researched,
     passed: offers.length,
     cost_micros: Math.round(cost * 1_000_000),
@@ -1944,6 +2013,51 @@ export function activeOfferPatch(
     for (const key of Object.keys(previous)) if (next[key] === undefined) next[key] = null;
   }
   return { offer: next, offerCandidates: candidates, offerSkip: null };
+}
+
+/**
+ * True when a row's stored offer is strong enough to keep beside a new set:
+ * the founder's own, or one of today's prompt version the judge passed.
+ * A weak one (approved or not) and one of an older version are not.
+ */
+function offerIsStrong(offer: unknown): offer is ProspectOffer {
+  return (
+    isProspectOffer(offer) &&
+    (offer.editedBy === "founder" ||
+      (offer.version === OFFER_PROMPT_VERSION && offer.relevance === "relevant"))
+  );
+}
+
+/** An offer's text as `mergeKeptOffers` compares it: whitespace and case aside. */
+function keptOfferKey(o: ProspectOffer): string {
+  return o.offer.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
+ * The candidates a row keeps after New offers wrote `fresh`: the new ones
+ * first, in their order (the first is the new active offer), then the row's
+ * previous strong offers (`offerIsStrong`: its active one, then its
+ * candidates), so a click never throws away an offer that would have gone
+ * out. Weak and stale old ones are dropped. Repeats by offer text
+ * (whitespace and case aside) are kept once, the first seen; at most
+ * OFFER_COUNT in all.
+ */
+export function mergeKeptOffers(
+  fresh: readonly ProspectOffer[],
+  previousActive: unknown,
+  previousCandidates: readonly unknown[],
+): ProspectOffer[] {
+  const out: ProspectOffer[] = [];
+  const seen = new Set<string>();
+  const add = (o: ProspectOffer): void => {
+    const k = keptOfferKey(o);
+    if (out.length >= OFFER_COUNT || seen.has(k)) return;
+    seen.add(k);
+    out.push(o);
+  };
+  fresh.forEach(add);
+  [previousActive, ...previousCandidates].filter(offerIsStrong).forEach(add);
+  return out;
 }
 
 /**

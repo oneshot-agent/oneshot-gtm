@@ -18,6 +18,7 @@ import { VoiceSection } from "../components/setup/VoiceSection.tsx";
 import { LinkedInTemplatesSection } from "../components/setup/LinkedInTemplatesSection.tsx";
 import { ReviewQueueSection } from "../components/setup/ReviewQueueSection.tsx";
 import { ReplyClassifierSection } from "../components/setup/ReplyClassifierSection.tsx";
+import { OffersSection } from "../components/setup/OffersSection.tsx";
 import { SectionNav, jumpToSection } from "../components/setup/SectionNav.tsx";
 import { SocialProofSection } from "../components/setup/SocialProofSection.tsx";
 import { TelemetrySection } from "../components/setup/TelemetrySection.tsx";
@@ -237,6 +238,7 @@ function Sections({
       <LinkedInTemplatesSection {...common} />
       <LlmSection {...common} />
       <ReplyClassifierSection {...common} />
+      <OffersSection {...common} />
       <WalletSection {...common} homeDir={homeDir} />
       <NotificationsSection {...common} />
       <XSection sources={sources} xTrigger={xTrigger} onDirtyChange={onDirtyChange} />
