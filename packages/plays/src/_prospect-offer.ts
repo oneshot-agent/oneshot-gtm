@@ -1130,7 +1130,7 @@ const OFFER_FLAG_HINTS: ReadonlyArray<[flag: string, hint: string]> = [
   ],
   [
     "offer-names-the-system",
-    'the offer names the system ("put into production", "the system that", "deploy a system"); name the result for their firm instead, e.g. "work every denied claim on their claims platform across their provider networks to a decision"',
+    'the offer names the system ("put into production", "the system that", "deploy a system"); name the result for their firm instead, e.g. "work every failed delivery in their dispatch app to a rebooked slot"',
   ],
 ];
 
