@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import { Checkbox, Field, Input } from "../primitives/Field.tsx";
 import {
   hasPassLine,
@@ -27,7 +27,10 @@ export function OffersSection({ cfg, onDirtyChange }: SectionProps) {
     validate: offerSectionErrors,
     onDirtyChange,
   });
-  latest.current = s.values;
+  // After commit, so a save never reads values from a render that was dropped.
+  useLayoutEffect(() => {
+    latest.current = s.values;
+  }, [s.values]);
   const noModel = !s.values.fallbackModel.trim();
 
   return (
