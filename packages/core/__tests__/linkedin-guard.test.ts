@@ -349,6 +349,32 @@ describe("canInviteOnLinkedIn", () => {
     expect(shared.importLinkedInInvites("again", () => [])).toBe(0);
   });
 
+  it("6. an invite that was sent and then withdrawn still refuses a new one", () => {
+    const id = seed();
+    const claim = shared.claimLinkedInProfile({ slug: "dana-lee", source: "invite:alpha" });
+    shared.confirmLinkedInProfile((claim as { id: number }).id);
+    ledger.recordLinkedInInviteEvent({
+      prospectId: id,
+      playName: "luma-events",
+      stepIndex: 0,
+      status: "sent",
+      metadata: { invitationId: "inv-1" },
+    });
+    ledger.recordLinkedInInviteEvent({
+      prospectId: id,
+      playName: "luma-events",
+      stepIndex: 0,
+      status: "withdrawn",
+      metadata: { invitationId: "inv-1", withdrawStatus: "withdrawn", withdrawnBy: "timeout" },
+    });
+    // Withdrawn by hand, no cadence: the profile stays invited for good.
+    expect(reasonOf(check())).toBe("already-invited");
+    // Withdrawn at the timeout, which also stops the cadence: that is checked first.
+    ledger.enrollCadence({ prospectId: id, playName: "luma-events", nextDueAt: "2026-01-01" });
+    ledger.stopCadence({ prospectId: id, playName: "luma-events", reason: "other" });
+    expect(reasonOf(check())).toBe("cadence-stopped");
+  });
+
   it("7. a guard call never opens another workspace's ledger (that history arrives by import)", () => {
     const prevWs = process.env["ONESHOT_GTM_WORKSPACES"];
     const wsRoot = join(dir, "ws");

@@ -439,6 +439,8 @@ export async function sendLinkedInInvite(input: {
       // The account that sent it: a withdrawal must go to the same one.
       accountId: input.sender.accountId,
       ...(input.sender.workspace ? { accountWorkspace: input.sender.workspace } : {}),
+      // The row it went out from: that row's Withdraw acts on this invite only.
+      ...(input.row.id > 0 ? { queueId: input.row.id } : {}),
     },
   });
   // The LinkedIn sequence: a message once the invite is accepted, then a close.
@@ -550,6 +552,7 @@ export function recordKnownConnection(input: {
           readAt: input.connection.readAt,
           accountId: input.sender.accountId,
           ...(input.sender.workspace ? { accountWorkspace: input.sender.workspace } : {}),
+          ...(input.row.id > 0 ? { queueId: input.row.id } : {}),
         },
       });
       if (!input.continuation) {

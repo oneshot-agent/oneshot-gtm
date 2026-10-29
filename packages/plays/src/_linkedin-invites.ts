@@ -4,6 +4,7 @@ import {
   isWithdrawnStatus,
   KNOWN_CONNECTION_VIA,
   linkedInConversationFor,
+  linkedInInviteTimeoutDays,
   linkedInOutreachAccount,
   logEvent,
   sqliteToIso,
@@ -16,8 +17,12 @@ import type { LinkedInCaller, RunCadenceStepResult } from "./_cadence.ts";
 // LinkedIn message) and by the unattended status sweep (_linkedin-sweep.ts).
 // Nothing here drafts or sends a message.
 
-/** Days an unaccepted invite is given before it is withdrawn and the cadence stops. */
-export const LINKEDIN_INVITE_TIMEOUT_DAYS = 21;
+/**
+ * Days an unaccepted invite is given before it is withdrawn and the cadence
+ * stops, when the workspace sets no `linkedin.inviteTimeoutDays`. A re-export,
+ * not a copy, so a test that mocks core whole still loads this file.
+ */
+export { DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS as LINKEDIN_INVITE_TIMEOUT_DAYS } from "@oneshot-gtm/core";
 const DAY_MS = 24 * 3600 * 1000;
 
 export type LinkedInInvitationStatus =
@@ -90,6 +95,10 @@ export interface LiveLinkedInInvite {
   /** The invite was closed out (timed out undeclared, or its cadence ended): nothing left to poll. */
   endedAt: string | null;
   invitedAtMs: number;
+  /** The queue row that sent it; null for a continuation or friend invite, or one recorded before rows were. */
+  queueId: number | null;
+  /** When an unattended withdrawal last failed, so the sweep waits a day before trying again. */
+  lastWithdrawAttemptAt: string | null;
 }
 
 function parseMeta(json: string | null): Record<string, unknown> {
@@ -113,7 +122,11 @@ export function liveLinkedInInvite(
   prospectId: number,
   playName: string,
 ): LiveLinkedInInvite | null {
-  const events = getLedger().listLinkedInInviteEvents(prospectId, playName);
+  return liveInviteFromEvents(getLedger().listLinkedInInviteEvents(prospectId, playName));
+}
+
+/** The live invite from one prospect and play's invite events, oldest first: see liveLinkedInInvite. */
+export function liveInviteFromEvents(events: SequenceEventRecord[]): LiveLinkedInInvite | null {
   const at = events.findLastIndex((e) => e.status === "sent");
   const event = at >= 0 ? events[at] : undefined;
   if (!event) return null;
@@ -133,6 +146,8 @@ export function liveLinkedInInvite(
     invitationStatus: str(meta.invitationStatus),
     endedAt: str(meta.endedAt),
     invitedAtMs: Date.parse(sqliteToIso(event.created_at)),
+    queueId: typeof meta.queueId === "number" ? meta.queueId : null,
+    lastWithdrawAttemptAt: str(meta.lastWithdrawAttemptAt),
   };
 }
 
@@ -234,7 +249,8 @@ export type InviteResolution =
   | { state: "accepted" }
   /** No status could be read (sweep mode only). */
   | { state: "unknown" }
-  | { state: "result"; result: RunCadenceStepResult };
+  /** `withdrewNow`: this call withdrew the invite at the timeout. */
+  | { state: "result"; result: RunCadenceStepResult; withdrewNow?: boolean };
 
 export interface ResolveInviteInput {
   prospectId: number;
@@ -363,24 +379,46 @@ function endInvite(
   invite: LiveLinkedInInvite | null,
   note: string,
 ): void {
-  const ledger = getLedger();
-  ledger.stopCadence({
+  endLinkedInInvite({
     prospectId: input.prospectId,
     playName: input.playName,
-    reason: "other",
+    invite,
     note,
     holdingSendingMarker: input.mode === "cadence",
   });
-  if (invite && !invite.endedAt) {
-    ledger.updateLinkedInInviteEvent({
-      id: invite.event.id,
-      metadata: { endedAt: new Date().toISOString(), endedNote: note },
-    });
-  }
 }
 
 /**
- * Not accepted yet: wait a day, or, past LINKEDIN_INVITE_TIMEOUT_DAYS, end the
+ * Stops the cadence and marks the invite ended. False when the cadence was
+ * not stopped: none is active, or a send holds it and the caller does not.
+ * The invite is marked ended either way.
+ */
+export function endLinkedInInvite(input: {
+  prospectId: number;
+  playName: string;
+  invite: LiveLinkedInInvite | null;
+  note: string;
+  holdingSendingMarker: boolean;
+}): boolean {
+  const ledger = getLedger();
+  const stopped = ledger.stopCadence({
+    prospectId: input.prospectId,
+    playName: input.playName,
+    reason: "other",
+    note: input.note,
+    holdingSendingMarker: input.holdingSendingMarker,
+  });
+  if (input.invite && !input.invite.endedAt) {
+    ledger.updateLinkedInInviteEvent({
+      id: input.invite.event.id,
+      metadata: { endedAt: new Date().toISOString(), endedNote: input.note },
+    });
+  }
+  return stopped;
+}
+
+/**
+ * Not accepted yet: wait a day, or, past linkedInInviteTimeoutDays(), end the
  * invite: withdrawn when it is still pending, left alone when OneShot says it
  * was declined or has no status.
  */
@@ -392,7 +430,8 @@ async function waitOrTimeOut(
 ): Promise<InviteResolution> {
   const ledger = getLedger();
   const days = (Date.now() - (invite ? invite.invitedAtMs : Date.now())) / DAY_MS;
-  if (days < LINKEDIN_INVITE_TIMEOUT_DAYS) {
+  const timeoutDays = linkedInInviteTimeoutDays();
+  if (days < timeoutDays) {
     if (input.mode === "cadence" && !input.dryRun) {
       ledger.postponeCadence({
         prospectId: input.prospectId,
@@ -410,7 +449,7 @@ async function waitOrTimeOut(
       },
     };
   }
-  const note = `LinkedIn invite not accepted after ${LINKEDIN_INVITE_TIMEOUT_DAYS} days`;
+  const note = `LinkedIn invite not accepted after ${timeoutDays} days`;
   if (input.dryRun) {
     return {
       state: "result",
@@ -470,8 +509,18 @@ async function waitOrTimeOut(
         { message_120: ((err as Error).message ?? "").slice(0, 120) },
         "warn",
       );
-      // Leave the invite's cadence running and try again tomorrow: stopping
-      // here would strand the invite pending with nothing to retry it.
+      // Leave the invite's cadence running and try again in a day: stopping
+      // here would strand the invite pending with nothing to retry it. The
+      // attempt is recorded so the sweep waits the day too.
+      const prior = parseMeta(invite.event.metadata_json);
+      const attempts = typeof prior.withdrawAttempts === "number" ? prior.withdrawAttempts : 0;
+      ledger.updateLinkedInInviteEvent({
+        id: invite.event.id,
+        metadata: {
+          lastWithdrawAttemptAt: new Date().toISOString(),
+          withdrawAttempts: attempts + 1,
+        },
+      });
       if (input.mode === "cadence") {
         ledger.postponeCadence({
           prospectId: input.prospectId,
@@ -485,7 +534,7 @@ async function waitOrTimeOut(
           action: "waiting",
           payload: null,
           receiptIds: [],
-          note: `${note} — withdraw failed, retrying tomorrow`,
+          note: `${note} — withdraw failed, retrying in a day`,
         },
       };
     }
@@ -493,15 +542,18 @@ async function waitOrTimeOut(
   endInvite(input, invite, note);
   return {
     state: "result",
+    withdrewNow: isWithdrawnStatus(withdrawStatus),
     result: {
       action: "completed",
       payload: null,
       receiptIds: [],
       note: withdrawStatus
         ? `${note} — invite ${withdrawStatus}`
-        : withdraw
-          ? `${note} — withdraw it from /queue`
-          : note,
+        : !withdraw
+          ? note
+          : invite?.invitationId
+            ? `${note} — withdraw it from /queue`
+            : `${note} — no invitation id recorded; withdraw it on LinkedIn`,
     },
   };
 }

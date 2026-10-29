@@ -809,6 +809,11 @@ export interface QueueRowView {
    * offer is written; regenerating will not change it.
    */
   offerSkip?: OfferSkipView;
+  /** A sent LinkedIn row's invite as it stands now; absent for a known connection and in older API responses. */
+  linkedinInvite?: {
+    state: "pending" | "accepted" | "withdrawn" | "ended";
+    withdrawnBy?: "manual" | "timeout" | null;
+  };
   id: number;
   playName: string;
   /** Outreach channel of the first touch: email, linkedin or x. */

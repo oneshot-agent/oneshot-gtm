@@ -311,9 +311,58 @@ describe("LinkedIn cadence edge cases", () => {
       },
     });
     expect(out.action).toBe("waiting");
+    expect(out.note).toMatch(/withdraw failed, retrying in a day$/);
     const cadence = ledger.getCadence(prospectId, "luma-events")!;
     expect(cadence.status).toBe("active");
     expect(Date.parse(cadence.next_due_at!)).toBeGreaterThan(Date.now() + 23 * 3600 * 1000);
+    const meta = JSON.parse(
+      ledger.listLinkedInInviteEvents(prospectId, "luma-events")[0]!.metadata_json ?? "{}",
+    ) as Record<string, unknown>;
+    expect(meta).toMatchObject({ withdrawAttempts: 1, lastWithdrawAttemptAt: expect.any(String) });
+  });
+
+  it("at the timeout with no invitation id recorded, says to withdraw it on LinkedIn", async () => {
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "luma-events",
+      stepIndex: 0,
+      channel: "linkedin",
+      status: "sent",
+      metadata: { note: "n", body: "n" },
+    });
+    const db = new Database(dbPath);
+    db.exec(`UPDATE sequence_events SET created_at = datetime('now', '-25 days')`);
+    db.close();
+    enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
+    dueNow("luma-events");
+    const calls: string[] = [];
+    const out = await runCadenceStepForProspect({
+      prospectId,
+      playName: "luma-events",
+      dryRun: false,
+      linkedIn: async (_w, op) => {
+        calls.push(op.kind);
+        return {};
+      },
+    });
+    expect(calls).toEqual([]);
+    expect(out.action).toBe("completed");
+    expect(out.note).toBe(
+      "LinkedIn invite not accepted after 21 days — no invitation id recorded; withdraw it on LinkedIn",
+    );
+  });
+
+  it("at the timeout with an invitation id but no LinkedIn caller, says to withdraw it from /queue", async () => {
+    inviteSentDaysAgo(25);
+    enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
+    dueNow("luma-events");
+    const out = await runCadenceStepForProspect({
+      prospectId,
+      playName: "luma-events",
+      dryRun: false,
+    });
+    expect(out.action).toBe("completed");
+    expect(out.note).toBe("LinkedIn invite not accepted after 21 days — withdraw it from /queue");
   });
 
   it("flags a message over the LinkedIn limit so it can't be sent as is", async () => {

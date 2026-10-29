@@ -31,6 +31,7 @@ import {
   type QueueSearchOpts,
   type QueueSearchRow,
   type QueueStatus,
+  type SequenceEventRecord,
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
 import {
@@ -74,6 +75,8 @@ import {
   weakOfferHold,
   EMAIL_MISMATCH_FLAG,
   emailMismatchHold,
+  endLinkedInInvite,
+  liveInviteFromEvents,
 } from "@oneshot-gtm/plays";
 import { reportServerExecution } from "../telemetry.ts";
 import {
@@ -206,10 +209,84 @@ function sequenceOffersFor(
   return out;
 }
 
+type LinkedInInviteView = NonNullable<QueueRowView["linkedinInvite"]>;
+
+function eventMeta(json: string | null): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(json ?? "{}");
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * A sent row's invite state from its prospect and play's invite events,
+ * oldest first. Undefined for a known connection (no request was sent) or
+ * no invite recorded: the page then shows Withdraw as it always did.
+ */
+function linkedInInviteState(
+  rowId: number,
+  events: SequenceEventRecord[],
+): LinkedInInviteView | undefined {
+  const invite = liveInviteFromEvents(events);
+  if (!invite || invite.knownConnection) return undefined;
+  // A later row invited the person again: this row's own invite is over.
+  if (invite.queueId != null && invite.queueId !== rowId) return { state: "ended" };
+  if (invite.withdrawn) {
+    const after = events.slice(events.indexOf(invite.event) + 1);
+    const by = eventMeta(after.findLast((e) => e.status === "withdrawn")?.metadata_json ?? null)[
+      "withdrawnBy"
+    ];
+    return { state: "withdrawn", withdrawnBy: by === "manual" || by === "timeout" ? by : null };
+  }
+  if (invite.acceptedAt || invite.alreadyConnected) return { state: "accepted" };
+  if (invite.endedAt) return { state: "ended" };
+  return { state: "pending" };
+}
+
+/**
+ * Each listed sent LinkedIn row's invite state (`QueueRowView.linkedinInvite`),
+ * from one read of the page's invite events. Best-effort: a ledger that cannot
+ * answer leaves the rows without it.
+ */
+function linkedInInvitesFor(rows: ReadonlyArray<QueueRow>): Map<number, LinkedInInviteView> {
+  const out = new Map<number, LinkedInInviteView>();
+  const sent = rows.filter(
+    (r) => r.status === "sent" && r.prospect_id != null && channelOf(r.channel) === "linkedin",
+  );
+  if (sent.length === 0) return out;
+  let events: SequenceEventRecord[];
+  try {
+    events = getLedger().listLinkedInInviteEventsForProspects([
+      ...new Set(sent.map((r) => r.prospect_id!)),
+    ]);
+  } catch {
+    return out;
+  }
+  const byKey = new Map<string, SequenceEventRecord[]>();
+  for (const e of events) {
+    const key = `${e.prospect_id}:${e.play_name}`;
+    const list = byKey.get(key);
+    if (list) list.push(e);
+    else byKey.set(key, [e]);
+  }
+  for (const row of sent) {
+    const state = linkedInInviteState(
+      row.id,
+      byKey.get(`${row.prospect_id}:${row.play_name}`) ?? [],
+    );
+    if (state) out.set(row.id, state);
+  }
+  return out;
+}
+
 export function toView(
   row: QueueRow,
   /** A sent row's sequence and its offer (`sequenceOffersFor`), when the caller read it. */
   sequenceOffer?: QueueRowView["sequenceOffer"],
+  /** A sent LinkedIn row's invite state (`linkedInInvitesFor`), when the caller read it. */
+  linkedinInvite?: QueueRowView["linkedinInvite"],
 ): QueueRowView {
   let payload: unknown = null;
   try {
@@ -288,6 +365,7 @@ export function toView(
     delivery: deliveryFor(row.status, lastDraft),
     ...(sequenceOffer && row.status === "sent" ? { sequenceOffer } : {}),
     ...(offerSkip ? { offerSkip } : {}),
+    ...(linkedinInvite && row.status === "sent" ? { linkedinInvite } : {}),
   };
 }
 
@@ -717,14 +795,16 @@ export function listQueueRoute(req: Request): Response {
   // regardless of the page's current filter.
   // A sent row shows the offer its sequence carries now: one read for the page.
   const sequenceOffers = sequenceOffersFor(ordered);
+  // A sent LinkedIn row shows whether its invite can still be withdrawn: one read for the page.
+  const invites = linkedInInvitesFor(ordered);
   let views: QueueRowView[];
   try {
     views = ordered.map((row) =>
       url.searchParams.get("forRun") === "1"
-        ? Object.assign(toView(row, sequenceOffers.get(row.id)), {
+        ? Object.assign(toView(row, sequenceOffers.get(row.id), invites.get(row.id)), {
             payload: resolveQueueTarget(row),
           })
-        : trimListPayload(toView(row, sequenceOffers.get(row.id))),
+        : trimListPayload(toView(row, sequenceOffers.get(row.id), invites.get(row.id))),
     );
   } catch (error) {
     return jsonResponse({ error: (error as Error).message }, 400, req);
@@ -2242,29 +2322,21 @@ export async function withdrawInviteRoute(
   if (row.status !== "sent" || row.prospect_id == null) {
     return jsonResponse({ error: "this row's invite hasn't been sent" }, 400, req);
   }
-  // Oldest first. The newest sent invite is the live one (a person can be
-  // invited again after a withdrawal); it's withdrawn only if a withdrawal follows it.
-  const events = ledger.listLinkedInInviteEvents(row.prospect_id, row.play_name);
-  const sentAt = events.findLastIndex((e) => e.status === "sent");
-  const sent = sentAt >= 0 ? events[sentAt] : undefined;
-  if (events.slice(sentAt + 1).some((e) => e.status === "withdrawn")) {
+  // The newest sent invite is the live one (a person can be invited again
+  // after a withdrawal); it's withdrawn only if a withdrawal follows it.
+  const invite = liveInviteFromEvents(
+    ledger.listLinkedInInviteEvents(row.prospect_id, row.play_name),
+  );
+  // An invite recorded with another row's id: a later row invited the person
+  // again, and this row's own invite is gone.
+  if (invite?.queueId != null && invite.queueId !== id) {
+    return jsonResponse({ error: "a later invite replaced this row's" }, 409, req);
+  }
+  if (invite?.withdrawn) {
     return jsonResponse({ error: "invite already withdrawn" }, 409, req);
   }
-  let invitationId: string | null = null;
-  let sentBy: { workspace: string; accountId: string } | null = null;
-  try {
-    const meta = JSON.parse(sent?.metadata_json ?? "{}") as {
-      invitationId?: unknown;
-      accountId?: unknown;
-      accountWorkspace?: unknown;
-    };
-    invitationId = typeof meta.invitationId === "string" ? meta.invitationId : null;
-    if (typeof meta.accountId === "string" && typeof meta.accountWorkspace === "string") {
-      sentBy = { workspace: meta.accountWorkspace, accountId: meta.accountId };
-    }
-  } catch {
-    invitationId = null;
-  }
+  const invitationId = invite?.invitationId ?? null;
+  const sentBy = invite?.sentBy ?? null;
   if (!invitationId) {
     return jsonResponse({ error: "no OneShot invitation id recorded for this row" }, 409, req);
   }
@@ -2294,9 +2366,19 @@ export async function withdrawInviteRoute(
     ledger.recordLinkedInInviteEvent({
       prospectId: row.prospect_id,
       playName: row.play_name,
-      stepIndex: sent?.step_index ?? 0,
+      stepIndex: invite?.event.step_index ?? 0,
       status: "withdrawn",
       metadata: { invitationId, withdrawStatus: result.status ?? null, withdrawnBy: "manual" },
+    });
+    // Nothing is left to wait for: stop the cadence and close the invite. A
+    // send in flight or no active cadence leaves the cadence as it is; the
+    // withdrawal is recorded either way, so the answer is still 200.
+    endLinkedInInvite({
+      prospectId: row.prospect_id,
+      playName: row.play_name,
+      invite,
+      note: "LinkedIn invite withdrawn by hand",
+      holdingSendingMarker: false,
     });
     return jsonResponse({ ok: true, status: result.status ?? null }, 200, req);
   } catch (err) {

@@ -37,6 +37,17 @@ export function configuredInvitesPerDay(): number | null {
   return typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null;
 }
 
+/** Days an unaccepted invite waits before it is withdrawn, when none is configured. */
+export const DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS = 21;
+
+/** The configured invite timeout in days, or the default when unset or invalid. */
+export function linkedInInviteTimeoutDays(): number {
+  const v = loadConfig().linkedin?.inviteTimeoutDays;
+  return typeof v === "number" && Number.isInteger(v) && v > 0
+    ? v
+    : DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS;
+}
+
 function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }

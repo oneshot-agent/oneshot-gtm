@@ -5,8 +5,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { saveConfig, loadConfig } from "../src/config.ts";
 import {
   _resetInviteLimitsCacheForTests,
+  DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS,
   describeInviteQuota,
   linkedInInviteStatus,
+  linkedInInviteTimeoutDays,
   reserveLinkedInInvite,
 } from "../src/linkedin-invite-quota.ts";
 import { isSendDeferred } from "../src/send-routing.ts";
@@ -197,5 +199,21 @@ describe("status line", () => {
   it("shows only the account when no share is set", async () => {
     const status = await linkedInInviteStatus("acct-solo", account(9));
     expect(describeInviteQuota(status)).toBe("LinkedIn invites today: account 9 left");
+  });
+});
+
+describe("invite timeout", () => {
+  it("reads linkedin.inviteTimeoutDays, falling back to 21 when unset or invalid", () => {
+    expect(linkedInInviteTimeoutDays()).toBe(DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS);
+    expect(DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS).toBe(21);
+    for (const [value, days] of [
+      [7, 7],
+      [0, 21],
+      [-2, 21],
+      [2.5, 21],
+    ] as const) {
+      saveConfig({ ...loadConfig(), linkedin: { inviteTimeoutDays: value } });
+      expect(linkedInInviteTimeoutDays()).toBe(days);
+    }
   });
 });

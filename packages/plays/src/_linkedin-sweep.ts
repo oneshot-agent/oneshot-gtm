@@ -1,7 +1,11 @@
-import { getLedger, linkedInOutreachAccount, logEvent } from "@oneshot-gtm/core";
+import {
+  getLedger,
+  linkedInInviteTimeoutDays,
+  linkedInOutreachAccount,
+  logEvent,
+} from "@oneshot-gtm/core";
 import type { LinkedInCaller } from "./_cadence.ts";
 import {
-  LINKEDIN_INVITE_TIMEOUT_DAYS,
   liveLinkedInInvite,
   parseLinkedInInvitations,
   resolveLinkedInInvite,
@@ -30,7 +34,7 @@ const watermarkKey = (a: { workspace: string; accountId: string }): string =>
 
 /**
  * The unattended half of the LinkedIn cadence: reads invitation statuses and
- * withdraws invites that outlived LINKEDIN_INVITE_TIMEOUT_DAYS. It records
+ * withdraws invites that outlived linkedInInviteTimeoutDays(). It records
  * acceptances (`acceptedAt`) and nothing else a person would see. It never
  * drafts and never sends a message: the first message appears on /cadences
  * as due, like any follow-up, to be reviewed and sent there.
@@ -48,6 +52,7 @@ export async function sweepLinkedInInvitations(input: {
     stopped: 0,
   };
   const nowMs = (input.now ?? new Date()).getTime();
+  const timeoutMs = linkedInInviteTimeoutDays() * DAY_MS;
 
   // Pending invites, grouped by the account that sent them.
   const byAccount = new Map<
@@ -104,8 +109,13 @@ export async function sweepLinkedInInvitations(input: {
     for (const item of items) {
       const id = item.invite.invitationId!;
       const invitation = changed.get(id);
-      const overdue = nowMs - item.invite.invitedAtMs >= LINKEDIN_INVITE_TIMEOUT_DAYS * DAY_MS;
+      const overdue = nowMs - item.invite.invitedAtMs >= timeoutMs;
       if (!invitation && !overdue && !truncated) continue;
+      // A withdrawal that failed waits a day before the next try, unless the
+      // invitation changed since. The retry reads its status first, so an
+      // accept hidden past a full page is still caught then.
+      const lastTry = Date.parse(item.invite.lastWithdrawAttemptAt ?? "");
+      if (!invitation && nowMs - lastTry < DAY_MS) continue;
       // Overdue, or the list was a full page: the resolver asks for that one
       // invitation (before withdrawing anything), so neither an accept past
       // the page nor one that slipped past the watermark is skipped.
@@ -121,12 +131,9 @@ export async function sweepLinkedInInvitations(input: {
       });
       if (resolution.state === "unknown") unread = true;
       if (resolution.state === "accepted") out.accepted++;
-      else if (resolution.state === "result") {
-        const note = resolution.result.note ?? "";
-        if (resolution.result.action === "completed") {
-          out.stopped++;
-          if (/withdrawn/i.test(note)) out.withdrawn++;
-        }
+      else if (resolution.state === "result" && resolution.result.action === "completed") {
+        out.stopped++;
+        if (resolution.withdrewNow) out.withdrawn++;
       }
     }
     // Only a list we actually read, with every invite beyond a full page read
