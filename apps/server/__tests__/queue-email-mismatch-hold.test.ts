@@ -83,6 +83,7 @@ const approve = (body: unknown = { approve: true }) =>
   );
 
 beforeEach(() => {
+  state.draft = { ...state.draft, flags: [] };
   state.payload = { email: "Jo@Northwind.example", emailMismatch: mismatch };
   state.cleared = 0;
   state.emailMismatch = [];
@@ -123,6 +124,15 @@ describe("email-mismatch send hold", () => {
     });
     expect(state.emailMismatch).toEqual([true]);
     expect(state.cleared).toBe(1);
+  });
+
+  it("sends a draft the drain held for its address once that address is approved", async () => {
+    state.draft = { ...state.draft, flags: ["email-mismatch"] } as typeof state.draft;
+    state.payload = { ...state.payload, emailMismatchApproved: "jo@northwind.example" };
+    const res = await send();
+    // Not refused for the draft's flags: the send gate ran, without the hold.
+    expect(res.status).not.toBe(400);
+    expect(state.emailMismatch).toEqual([undefined]);
   });
 
   it("approves the exact address, guarded against a change underneath", async () => {

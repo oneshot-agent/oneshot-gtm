@@ -25,6 +25,12 @@ describe("blockingFlags", () => {
     expect(blockingFlags(["commits-terms", "em-dash"])).toEqual(["em-dash"]);
   });
 
+  it("treats email-mismatch as soft: the hold lives on the row, so an approved address can send", () => {
+    expect(SOFT_REVIEW_FLAGS).toContain("email-mismatch");
+    expect(blockingFlags(["email-mismatch"])).toEqual([]);
+    expect(blockingFlags(["email-mismatch", "em-dash"])).toEqual(["em-dash"]);
+  });
+
   it("keeps lint/dedup flags blocking", () => {
     expect(blockingFlags(["em-dash"])).toEqual(["em-dash"]);
     expect(blockingFlags(["already-contacted", "rule-of-three"])).toEqual([

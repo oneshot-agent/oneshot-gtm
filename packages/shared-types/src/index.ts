@@ -1200,6 +1200,10 @@ export type FitReasonSource = "company-gate" | "person-gate" | "generated" | "no
  * hold itself lives on the row (`QueueRowView.sendHold`) and is enforced at
  * send time; the flag only records why this draft did not go out, so once the
  * founder rewrites, replaces or approves the offer the reviewed draft can go.
+ * `email-mismatch`: likewise for an address that lands at none of the
+ * person's current companies. The hold lives on the row and is enforced at
+ * send time; once the founder fixes the address or approves it, the draft
+ * can go.
  */
 export const SOFT_REVIEW_FLAGS: readonly string[] = [
   "stale-event",
@@ -1208,6 +1212,7 @@ export const SOFT_REVIEW_FLAGS: readonly string[] = [
   "email-at-former-employer",
   "commits-terms",
   "weak-offer",
+  "email-mismatch",
 ];
 
 /**
