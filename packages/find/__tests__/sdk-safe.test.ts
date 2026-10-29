@@ -182,8 +182,13 @@ describe("a company lookup that never answers", () => {
       const search = safeCompanySearch({ domain: "acme.com" }, { playName: "t" });
       const enrich = safeEnrichCompany({ domain: "acme.com" }, { playName: "t" });
       await vi.advanceTimersByTimeAsync(120_000);
-      expect((await search).result.results).toEqual([]);
-      expect((await enrich).result.company).toEqual({});
+      const searched = await search;
+      const enriched = await enrich;
+      expect(searched.result.results).toEqual([]);
+      expect(enriched.result.company).toEqual({});
+      // Still running and maybe charged: the run's cap counts the list price.
+      expect(searched.result.cost).toBe(0.01);
+      expect(enriched.result.cost).toBe(0.005);
     } finally {
       companyHang = false;
       vi.useRealTimers();

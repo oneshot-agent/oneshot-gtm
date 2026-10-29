@@ -704,6 +704,22 @@ describe("jobTitles targeting", () => {
     expect(enqueued[0]?.payload["company"]).toBe("Acme");
   });
 
+  it("keeps a first-name-only match with a known work email in title order", async () => {
+    peopleSearchResult = {
+      results: [
+        {
+          first_name: "Pat",
+          full_name: "Pat",
+          title: "Head of AI Platform",
+          best_work_email: "pat@acme.example",
+        },
+        person("Robin Vale", "CTO", "robin@acme.example"),
+      ],
+    };
+    await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(contactCalls[0]).toMatchObject({ fullName: "Pat", knownEmail: "pat@acme.example" });
+  });
+
   it("remembers a company with no matching person for a while, without rejecting it", async () => {
     const none = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
     expect(contactCalls).toHaveLength(0);

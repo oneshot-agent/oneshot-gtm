@@ -541,11 +541,11 @@ async function findOwner(args: {
   );
   // People search often returns a first name only, with no profile or email.
   // findEmail refuses those, and the loop below stops at that refusal, so a
-  // full name further down would never be tried: those go first.
-  const ranked = [
-    ...titled.filter((p) => !looksLikeUserHandle(personName(p))),
-    ...titled.filter((p) => looksLikeUserHandle(personName(p))),
-  ];
+  // full name further down would never be tried: those go first. A known work
+  // email needs no lookup, so it keeps its place whatever the name.
+  const reachable = (p: PersonResult) =>
+    Boolean(p.best_work_email?.trim()) || !looksLikeUserHandle(personName(p));
+  const ranked = [...titled.filter(reachable), ...titled.filter((p) => !reachable(p))];
   if (ranked.length === 0) return { contact: null, costUsd, noMatch: true };
   let last: QualifiedContact | null = null;
   for (const person of ranked.slice(0, MAX_OWNER_ATTEMPTS)) {

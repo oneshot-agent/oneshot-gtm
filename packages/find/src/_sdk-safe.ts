@@ -147,6 +147,17 @@ export async function safePeopleSearch(
 const COMPANY_LOOKUP_DEADLINE_MS = 120_000;
 
 /**
+ * A lookup past its deadline keeps running and may still be charged, so the
+ * sentinel carries the call's list price: a run's `maxCostUsd` must not read
+ * a timeout as free.
+ */
+function chargedOnDeadline(err: unknown, label: string, priceUsd: number): number {
+  return String((err as Error)?.message ?? "").startsWith(`${label} deadline exceeded`)
+    ? priceUsd
+    : 0;
+}
+
+/**
  * companySearch that never throws. A failure resolves to an empty result
  * set instead of aborting the whole finder run.
  */
@@ -163,7 +174,8 @@ export async function safeCompanySearch(
     );
   } catch (err) {
     swallow(ctx, "company_search", err);
-    return { result: { status: "error", results: [], total_found: 0, cost: 0 }, receiptId: 0 };
+    const cost = chargedOnDeadline(err, "companySearch", 0.01);
+    return { result: { status: "error", results: [], total_found: 0, cost }, receiptId: 0 };
   }
 }
 
@@ -184,7 +196,8 @@ export async function safeEnrichCompany(
     );
   } catch (err) {
     swallow(ctx, "enrich_company", err);
-    return { result: { status: "error", company: {}, cost: 0 }, receiptId: 0 };
+    const cost = chargedOnDeadline(err, "enrichCompany", 0.005);
+    return { result: { status: "error", company: {}, cost }, receiptId: 0 };
   }
 }
 
