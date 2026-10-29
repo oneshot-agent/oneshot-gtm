@@ -1,5 +1,6 @@
 import type { QueueRowView } from "@oneshot-gtm/shared-types";
 import { flagAdvice } from "../../lib/flagLabels.ts";
+import { EmailMismatchHold } from "./EmailMismatchHold.tsx";
 import { FitHold } from "./FitHold.tsx";
 
 type SendHold = NonNullable<QueueRowView["sendHold"]>;
@@ -23,6 +24,8 @@ export function WeakOfferHold() {
 }
 
 /** The letter's note for whichever hold the row's send is under. */
-export function SendHoldNote({ hold }: { hold: SendHold }) {
-  return hold.code === "weak-offer" ? <WeakOfferHold /> : <FitHold hold={hold} />;
+export function SendHoldNote({ hold, rowId }: { hold: SendHold; rowId?: number }) {
+  if (hold.code === "weak-offer") return <WeakOfferHold />;
+  if (hold.code === "email-mismatch") return <EmailMismatchHold hold={hold} rowId={rowId} />;
+  return <FitHold hold={hold} />;
 }

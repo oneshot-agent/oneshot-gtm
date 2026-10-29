@@ -786,12 +786,14 @@ export interface SendDeliveryView {
 export interface QueueRowView {
   /**
    * Why an email row may not send yet, whatever its approval: `off-icp` (the
-   * saved fit assessment rejects the person) or `weak-offer` (the active
-   * offer was rated a weak fit, and the founder has not rewritten, replaced
-   * or approved it). A fit hold wins when both apply. Absent in older API
-   * responses.
+   * saved fit assessment rejects the person), `email-mismatch` (the address
+   * lands at none of the companies person research says they work at now,
+   * and the founder has not approved sending to it) or `weak-offer` (the
+   * active offer was rated a weak fit, and the founder has not rewritten,
+   * replaced or approved it). The first that applies wins, in that order.
+   * Absent in older API responses.
    */
-  sendHold?: { code: "off-icp" | "weak-offer"; reason: string } | null;
+  sendHold?: { code: "off-icp" | "email-mismatch" | "weak-offer"; reason: string } | null;
   /** Delivery check of the first-touch send, when one ran (sent rows only). */
   delivery?: SendDeliveryView | null;
   /**
@@ -1198,6 +1200,10 @@ export type FitReasonSource = "company-gate" | "person-gate" | "generated" | "no
  * hold itself lives on the row (`QueueRowView.sendHold`) and is enforced at
  * send time; the flag only records why this draft did not go out, so once the
  * founder rewrites, replaces or approves the offer the reviewed draft can go.
+ * `email-mismatch`: likewise for an address that lands at none of the
+ * person's current companies. The hold lives on the row and is enforced at
+ * send time; once the founder fixes the address or approves it, the draft
+ * can go.
  */
 export const SOFT_REVIEW_FLAGS: readonly string[] = [
   "stale-event",
@@ -1206,6 +1212,7 @@ export const SOFT_REVIEW_FLAGS: readonly string[] = [
   "email-at-former-employer",
   "commits-terms",
   "weak-offer",
+  "email-mismatch",
 ];
 
 /**

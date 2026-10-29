@@ -72,6 +72,8 @@ import {
   WEAK_OFFER_FLAG,
   WEAK_OFFER_HOLD_REASON,
   weakOfferHold,
+  EMAIL_MISMATCH_FLAG,
+  emailMismatchHold,
 } from "@oneshot-gtm/plays";
 import { reportServerExecution } from "../telemetry.ts";
 import {
@@ -141,6 +143,24 @@ function emailFitHold(payload: unknown): QueueRowView["sendHold"] {
             : "Saved assessment says this person does not fit the target customer profile.",
       }
     : null;
+}
+
+/**
+ * The hold an address at none of the person's current companies puts on the
+ * row's send (`emailMismatchHold`), naming the domain and those companies.
+ */
+function emailMismatchSendHold(payload: unknown): QueueRowView["sendHold"] {
+  if (!emailMismatchHold(payload)) return null;
+  const m = (payload as { emailMismatch: { emailDomain: string; companies?: unknown } })
+    .emailMismatch;
+  const companies = Array.isArray(m.companies)
+    ? m.companies.filter((c): c is string => typeof c === "string" && c.trim() !== "")
+    : [];
+  const where = companies.length > 0 ? companies.join(", ") : "another company";
+  return {
+    code: "email-mismatch",
+    reason: `The address is at ${m.emailDomain}, but person research says they work at ${where} now. Fix the address or the company, or send to this address anyway.`,
+  };
 }
 
 /** The hold a weak-fit offer puts on the row's send (`weakOfferHold`), when it applies. */
@@ -244,7 +264,9 @@ export function toView(
     // A fit hold wins over an offer hold: the person comes before the offer.
     sendHold:
       channelOf(row.channel) === "email" && row.status !== "sent" && !lastDraft?.sent
-        ? (emailFitHold(payload) ?? weakOfferSendHold(row.play_name, payload))
+        ? (emailFitHold(payload) ??
+          emailMismatchSendHold(payload) ??
+          weakOfferSendHold(row.play_name, payload))
         : null,
     dedupeKey: row.dedupe_key,
     source: row.source,
@@ -1961,6 +1983,8 @@ export async function sendDraftRoute(
       allowContactedElsewhere: true,
       // Not for a weak offer: the founder releases that on the offer itself.
       ...(weakOfferHold(row.play_name, payload) ? { weakOffer: true } : {}),
+      // Nor for an address at none of their companies: released on the row.
+      ...(emailMismatchHold(payload) ? { emailMismatch: true } : {}),
     });
   } catch (err) {
     // Release the marker so a retry needn't wait for the cold-boot sweep.
@@ -2014,6 +2038,20 @@ export async function sendDraftRoute(
             error: `Send held for fit review: ${hold?.reason ?? "Saved assessment says this person does not fit the target customer profile."} Review their fit before sending; regenerating the draft will not clear this hold.`,
             held: true,
             reason: "off-icp",
+          },
+          409,
+          req,
+        ),
+      );
+    }
+    if (sendFlags.includes(EMAIL_MISMATCH_FLAG)) {
+      return done(
+        "ok",
+        jsonResponse(
+          {
+            error: `Send held: ${emailMismatchSendHold(payload)?.reason ?? "the address matches none of their current companies."} Regenerating the draft will not clear this hold.`,
+            held: true,
+            reason: EMAIL_MISMATCH_FLAG,
           },
           409,
           req,

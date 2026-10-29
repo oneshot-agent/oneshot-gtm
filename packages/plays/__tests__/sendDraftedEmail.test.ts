@@ -48,7 +48,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
-const { sendDraftedEmail } = await import("../src/_lib.ts");
+const { emailMismatchHold, sendDraftedEmail } = await import("../src/_lib.ts");
 
 function baseOpts(overrides: Partial<Parameters<typeof sendDraftedEmail>[0]> = {}) {
   return {
@@ -299,6 +299,52 @@ describe("sendDraftedEmail person-level ICP gate", () => {
       baseOpts({ icp: { verdict: "pass" as const, reason: "enriched title says Co-Founder" } }),
     );
     expect(out.sent).toBe(true);
+  });
+});
+
+describe("sendDraftedEmail email-mismatch hold", () => {
+  it("holds the send with the email-mismatch flag", async () => {
+    const opts = baseOpts({ emailMismatch: true });
+    const out = await sendDraftedEmail(opts);
+    expect(out).toEqual({ receiptIds: [], sent: false });
+    expect(opts.flags).toEqual(["email-mismatch"]);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it("records the hold on a draft its lint flags already stop, but not in a dry run", async () => {
+    const opts = baseOpts({ emailMismatch: true, flags: ["em-dash"] });
+    await sendDraftedEmail(opts);
+    expect(opts.flags).toEqual(["em-dash", "email-mismatch"]);
+    const dry = baseOpts({ emailMismatch: true, flags: ["em-dash"], dryRun: true });
+    await sendDraftedEmail(dry);
+    expect(dry.flags).toEqual(["em-dash"]);
+  });
+});
+
+describe("emailMismatchHold", () => {
+  const m = { emailDomain: "northwind.example", companies: ["Acme"] };
+  it("holds until this exact address is approved", () => {
+    expect(emailMismatchHold({ email: "jo@northwind.example", emailMismatch: m })).toBe(true);
+    expect(
+      emailMismatchHold({
+        email: "Jo@Northwind.example",
+        emailMismatch: m,
+        emailMismatchApproved: "jo@northwind.example",
+      }),
+    ).toBe(false);
+    expect(
+      emailMismatchHold({
+        email: "jo@acme.example",
+        emailMismatch: m,
+        emailMismatchApproved: "jo@northwind.example",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not hold without a recorded mismatch", () => {
+    expect(emailMismatchHold({ email: "jo@northwind.example" })).toBe(false);
+    expect(emailMismatchHold({ email: "jo@northwind.example", emailMismatch: null })).toBe(false);
+    expect(emailMismatchHold(null)).toBe(false);
   });
 });
 

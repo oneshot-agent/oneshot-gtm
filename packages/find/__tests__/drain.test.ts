@@ -111,6 +111,7 @@ vi.mock("@oneshot-gtm/plays", () => {
     ensureOfferSet: async () => null,
     WEAK_OFFER_FLAG: "weak-offer",
     NO_OFFER_FLAG: "no-offer",
+    EMAIL_MISMATCH_FLAG: "email-mismatch",
   };
 });
 
@@ -202,6 +203,30 @@ describe("drainQueue per-target dispatch + persistence", () => {
     expect(out).toMatchObject({ drained: 1, sent: 0, errors: [], held: { "no-offer": 1 } });
     expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({
       id: 42,
+      status: "pending",
+      decidedBy: "machine",
+    });
+  });
+
+  it("holds a row the send gate stopped on its address: back to pending, counted, never sent", async () => {
+    ledgerStub.dequeueApproved.mockReturnValue([row(43)]);
+    runStackConsolidationMock.mockResolvedValueOnce({
+      drafted: [
+        {
+          subject: "hi",
+          body: "clean body",
+          flags: ["email-mismatch"],
+          sent: false,
+          receiptIds: [],
+        },
+      ],
+    });
+
+    const out = await drainQueue({ playName: "stack-consolidation", dryRun: false });
+
+    expect(out).toMatchObject({ drained: 1, sent: 0, errors: [], held: { "email-mismatch": 1 } });
+    expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({
+      id: 43,
       status: "pending",
       decidedBy: "machine",
     });

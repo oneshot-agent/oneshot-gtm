@@ -12,6 +12,7 @@ import {
   canonicalLinkedInProfileKey,
   getLedger,
   hasDossierSignal,
+  isFreemailDomain,
   isPersonResearchDossier,
   logEvent,
   mergePersonResearchDossier,
@@ -381,17 +382,53 @@ const byRecency = (
 };
 
 /**
- * The current role and the history ordered for storage: current first, then
- * most recent start. Among several current entries the latest start wins;
- * unparseable dates keep the provider's order. No current entry → no role:
- * the most recently ended job is not where someone works now.
+ * The domain of a work email: the part after "@", lowercased. Null for a
+ * free mailbox (gmail, outlook, ...), which says nothing about an employer.
  */
-export function deriveCurrentRole(orgs: PersonResearchOrganization[]): {
+export function workEmailDomain(email: string | null | undefined): string | null {
+  const domain = email?.split("@")[1]?.trim().toLowerCase();
+  if (!domain || !domain.includes(".") || isFreemailDomain(domain)) return null;
+  return domain;
+}
+
+/**
+ * True when a company name and an email domain name the same firm: the
+ * domain's first label ("northbeam" in northbeam.com)
+ * and the name with case, punctuation and legal suffixes removed contain one
+ * another. Labels and names under three characters never match.
+ */
+export function companyMatchesDomain(name: string | null | undefined, domain: string): boolean {
+  const label =
+    domain
+      .replace(/^www\./, "")
+      .split(".")[0]
+      ?.replace(/[^a-z0-9]+/g, "") ?? "";
+  const company = normalizeCompany(name);
+  if (label.length < 3 || company.length < 3) return false;
+  return company.includes(label) || label.includes(company);
+}
+
+/**
+ * The current role and the history ordered for storage: current first, then
+ * most recent start. Among several current entries, the one at the company
+ * the person's work email belongs to wins (`emailDomain`): someone can hold a
+ * board seat or a side project alongside their job, and the email says where
+ * the message lands. Otherwise the latest start wins; unparseable dates keep
+ * the provider's order. No current entry → no role: the most recently ended
+ * job is not where someone works now.
+ */
+export function deriveCurrentRole(
+  orgs: PersonResearchOrganization[],
+  opts: { emailDomain?: string | null } = {},
+): {
   current: PersonResearchOrganization | null;
   organizations: PersonResearchOrganization[];
 } {
   const indexed = orgs.map((o, i) => ({ o, i, start: dateKey(o.startDate) }));
-  const current = indexed.filter((x) => x.o.current).toSorted(byRecency);
+  const byDate = indexed.filter((x) => x.o.current).toSorted(byRecency);
+  const domain = opts.emailDomain;
+  const atEmail = domain ? byDate.find((x) => companyMatchesDomain(x.o.name, domain)) : undefined;
+  const current = atEmail ? [atEmail, ...byDate.filter((x) => x !== atEmail)] : byDate;
   const former = indexed.filter((x) => !x.o.current).toSorted(byRecency);
   const organizations = [...current, ...former].map((x) => x.o).slice(0, MAX_ORGANIZATIONS);
   return { current: current[0]?.o ?? null, organizations };
@@ -672,7 +709,9 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
     ? organizationsFromResearch({ experience: live.profile.experience })
     : [];
   const orgs = reconcileOrganizations(liveOrgs, providerOrgs);
-  const { current, organizations } = deriveCurrentRole(orgs);
+  const { current, organizations } = deriveCurrentRole(orgs, {
+    emailDomain: workEmailDomain(seed.email),
+  });
   const bio = str(enrichment, "bio", "summary", "headline") ?? live?.profile?.headline ?? undefined;
   const location = str(enrichment, "location") ?? live?.profile?.location ?? undefined;
   const workEmail = str(enrichment, "best_work_email", "email")?.toLowerCase() ?? undefined;
@@ -782,7 +821,9 @@ export function dossierFromProviderResult(
   opts: { costUsd: number; billed: boolean },
 ): PersonResearchDossier | null {
   if (!isRecord(result) || result["status"] === "failed") return null;
-  const { current, organizations } = deriveCurrentRole(organizationsFromResearch(result));
+  const { current, organizations } = deriveCurrentRole(organizationsFromResearch(result), {
+    emailDomain: workEmailDomain(seed.email),
+  });
   const inner = isRecord(result["result"]) ? (result["result"] as JsonRecord) : {};
   const enrichment = isRecord(inner["enrichment"]) ? (inner["enrichment"] as JsonRecord) : {};
   const bio = str(enrichment, "bio", "summary", "headline") ?? undefined;
@@ -852,6 +893,56 @@ export interface PersonPayloadPatch extends JsonRecord {
   productResearch?: null;
   /** Filled from research only when the row had none; never replaces a finder's URL. */
   linkedinUrl?: string;
+  /**
+   * The work email lands at none of the companies research says this person
+   * works at now (`emailMismatchOf`); null clears one from an earlier read.
+   * The row's send is held until the founder fixes the address or company, or
+   * approves sending to it anyway.
+   */
+  emailMismatch?: EmailMismatch | null;
+}
+
+export interface EmailMismatch {
+  emailDomain: string;
+  /** The current companies research found, most likely first. */
+  companies: string[];
+}
+
+const bareDomain = (d: string): string =>
+  d
+    .trim()
+    .toLowerCase()
+    .replace(/^www\./, "");
+
+function sameDomain(a: string | null | undefined, b: string): boolean {
+  return !!a && bareDomain(a) === bareDomain(b);
+}
+
+/**
+ * The email domain against where research says the person works now. Null
+ * (no mismatch) when the email is a free mailbox, research names no current
+ * role, a current company matches the domain by name or by the employer's
+ * own domain from enrichment, the row's company is at the domain (a stale
+ * profile: the row keeps it), or the domain is a company they left (the
+ * `email-at-former-employer` flag covers that).
+ */
+export function emailMismatchOf(
+  payload: JsonRecord,
+  dossier: PersonResearchDossier,
+): EmailMismatch | null {
+  if (dossier.status === "unavailable") return null;
+  const emailDomain = workEmailDomain(str(payload, "email"));
+  if (!emailDomain) return null;
+  const current = dossier.organizations.filter((o) => o.current && o.name?.trim());
+  if (current.length === 0) return null;
+  if (current.some((o) => companyMatchesDomain(o.name, emailDomain))) return null;
+  if (sameDomain(dossier.company?.domain, emailDomain)) return null;
+  if (companyMatchesDomain(str(payload, "company"), emailDomain)) return null;
+  if (sameDomain(str(payload, "companyDomain"), emailDomain)) return null;
+  if (dossier.organizations.some((o) => !o.current && companyMatchesDomain(o.name, emailDomain))) {
+    return null;
+  }
+  return { emailDomain, companies: current.map((o) => o.name).slice(0, 5) };
 }
 
 /**
@@ -866,10 +957,33 @@ export function personPayloadPatch(
 ): PersonPayloadPatch {
   const patch: PersonPayloadPatch = { personResearch: dossier };
   if (dossier.status === "unavailable") return patch;
+  const mismatch = emailMismatchOf(payload, dossier);
+  if (mismatch) patch.emailMismatch = mismatch;
+  else if (payload["emailMismatch"] != null) patch.emailMismatch = null;
   const role = dossier.currentRole;
   const existingTitle = str(payload, "title");
   const existingCompany = str(payload, "company");
   const existingDomain = str(payload, "companyDomain");
+  // The row's company is where the work email lands, the researched role is
+  // somewhere else, and the history shows no ended role there (a profile never
+  // updated after a launch, still saying "Stealth Startup"): the row keeps its
+  // company, title, domain and role line, which the person gate re-judges on.
+  // An ended role at the email's company is a job change: research wins.
+  const emailDomain = workEmailDomain(str(payload, "email"));
+  const keepRow =
+    emailDomain !== null &&
+    !!role?.company &&
+    !companyMatchesDomain(role.company, emailDomain) &&
+    companyMatchesDomain(existingCompany, emailDomain) &&
+    !dossier.organizations.some((o) => !o.current && companyMatchesDomain(o.name, emailDomain));
+  if (keepRow) {
+    const formerRoles = renderFormerRoles(dossier);
+    if (formerRoles) patch.formerRoles = formerRoles;
+    if (dossier.linkedinUrl && !str(payload, "linkedinUrl")) {
+      patch.linkedinUrl = dossier.linkedinUrl;
+    }
+    return patch;
+  }
   if (role?.title && normalizeTitle(role.title) !== normalizeTitle(existingTitle)) {
     patch.title = role.title;
     if (existingTitle && !str(payload, "titleAtFinder")) patch.titleAtFinder = existingTitle;

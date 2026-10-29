@@ -22,6 +22,7 @@ import {
 import {
   draftEmailFromPrompt,
   type DraftedEmail,
+  emailMismatchHold,
   errorDraft,
   firstNameFrom,
   hardBanFlags,
@@ -548,6 +549,8 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           ...icpFromTarget(target),
           // A weak-fit offer nobody approved holds the send (offerHoldsSend).
           ...(offerHoldsSend(offer) ? { weakOffer: true } : {}),
+          // An address that lands at none of their current companies.
+          ...(emailMismatchHold(target) ? { emailMismatch: true } : {}),
           dryRun: opts.dryRun,
         });
 

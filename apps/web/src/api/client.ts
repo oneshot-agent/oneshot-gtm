@@ -600,6 +600,10 @@ export const api = {
       | { select: number }
       | { approveWeak: true },
   ) => postJson<{ offer: { offer: string; steps: string } }>(`/queue/${id}/offer`, body),
+  // Send to the row's address although it lands at none of the companies person
+  // research says they work at now; the approval names that exact address.
+  approveEmailMismatch: (id: number) =>
+    postJson<{ ok: true; approved: string }>(`/queue/${id}/email-mismatch`, { approve: true }),
   // Send the row's already-reviewed draft verbatim (no LLM re-roll). Requires
   // a clean, not-yet-sent persisted draft; marks the row sent on success.
   // An email answers `sent`/`receiptIds`; a LinkedIn row answers its `status`

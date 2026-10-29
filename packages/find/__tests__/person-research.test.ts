@@ -228,7 +228,9 @@ vi.mock("../src/_newsfeed.ts", () => ({
 const {
   applyPersonResearch,
   applyPersonResearchToProspect,
+  companyMatchesDomain,
   deriveCurrentRole,
+  emailMismatchOf,
   hasLiveProfile,
   normalizeCompany,
   organizationsFromResearch,
@@ -240,6 +242,7 @@ const {
   rejudgePerson,
   researchNewQueueRowPeople,
   researchPerson,
+  workEmailDomain,
 } = await import("../src/_person-research.ts");
 const { _resetLinkedInReadGate } = await import("../src/_linkedin-profile.ts");
 const { _resetPaidCache, getSharedDb, paidCacheKey } = await import("@oneshot-gtm/core");
@@ -358,6 +361,163 @@ describe("deriveCurrentRole", () => {
       { name: "Second", startDate: "recently", current: true },
     ]);
     expect(current?.name).toBe("First");
+  });
+});
+
+describe("the work email decides between current roles", () => {
+  it("reads a work domain and ignores free mailboxes", () => {
+    expect(workEmailDomain("Ana.Ruiz@Northbeam.example")).toBe("northbeam.example");
+    expect(workEmailDomain("someone@gmail.com")).toBeNull();
+    expect(workEmailDomain("no-at-sign")).toBeNull();
+    expect(workEmailDomain(null)).toBeNull();
+  });
+
+  it("matches a company to its domain by name, not by suffix or case", () => {
+    expect(companyMatchesDomain("Northbeam", "northbeam.example")).toBe(true);
+    expect(companyMatchesDomain("Lumen Security", "lumen.example")).toBe(true);
+    expect(companyMatchesDomain("Kestrel Group, Inc.", "kestrelgroup.example")).toBe(true);
+    expect(companyMatchesDomain("Kestrel Group, Inc.", "northbeam.example")).toBe(false);
+    expect(companyMatchesDomain("Stealth Startup", "lumen.example")).toBe(false);
+    // Too short to tell apart: never a match.
+    expect(companyMatchesDomain("AI", "ai.example")).toBe(false);
+  });
+
+  it("a board seat started later does not displace the job at the email's company", () => {
+    const orgs = [
+      {
+        name: "Kestrel Group, Inc.",
+        title: "Director Board of Directors",
+        startDate: "Oct 2026",
+        current: true,
+      },
+      { name: "Northbeam", title: "Chief AI Officer", startDate: "Aug 2026", current: true },
+    ];
+    expect(deriveCurrentRole(orgs).current?.name).toBe("Kestrel Group, Inc.");
+    const { current, organizations } = deriveCurrentRole(orgs, {
+      emailDomain: "northbeam.example",
+    });
+    expect(current?.name).toBe("Northbeam");
+    expect(organizations.map((o) => o.name)).toEqual(["Northbeam", "Kestrel Group, Inc."]);
+  });
+
+  it("picks the email's company out of several current side roles", () => {
+    const orgs = [
+      { name: "Loopwise", startDate: "Aug 2026", current: true },
+      { name: "ByteHarbor", startDate: "Feb 2026", current: true },
+      { name: "Corvid", title: "Founder & CEO", startDate: "Nov 2025", current: true },
+    ];
+    expect(deriveCurrentRole(orgs, { emailDomain: "corvid.example" }).current?.name).toBe("Corvid");
+    // No current role at the email's company: the latest start still wins.
+    expect(deriveCurrentRole(orgs, { emailDomain: "elsewhere.example" }).current?.name).toBe(
+      "Loopwise",
+    );
+  });
+
+  const staleProfileDossier = {
+    version: 1 as const,
+    status: "complete" as const,
+    researchedAt: "2026-10-28T00:00:00.000Z",
+    seed: { email: "sam@lumen.example" },
+    currentRole: { title: "Co-founder & CEO", company: "Stealth Startup", since: "Sep 2025" },
+    organizations: [
+      { name: "Stealth Startup", title: "Co-founder & CEO", startDate: "Sep 2025", current: true },
+      {
+        name: "Earlier Co",
+        title: "VP Product",
+        startDate: "2020",
+        endDate: "2025",
+        current: false,
+      },
+    ],
+    company: { domain: "unrelated.example" },
+    costUsd: 0,
+    cached: true,
+  };
+
+  it("keeps the row's company when a stale profile names another and the email lands at the row's", () => {
+    const patch = personPayloadPatch(
+      {
+        email: "sam@lumen.example",
+        company: "Lumen Security",
+        title: "CEO and co-founder",
+      },
+      staleProfileDossier,
+    );
+    expect(patch.company).toBeUndefined();
+    expect(patch.title).toBeUndefined();
+    expect(patch.companyDomain).toBeUndefined();
+    expect(patch.currentRole).toBeUndefined();
+    expect(patch.companyFacts).toBeUndefined();
+    expect(patch.formerRoles).toContain("Earlier Co");
+  });
+
+  it("flags an email that lands at none of their current companies", () => {
+    const dossier = {
+      ...staleProfileDossier,
+      company: { domain: "acme.example" },
+      currentRole: { title: "CTO", company: "Acme" },
+      organizations: [{ name: "Acme", title: "CTO", startDate: "2026", current: true }],
+    };
+    const payload = { email: "jo@northwind.example", company: "Globex", title: "VP Engineering" };
+    expect(emailMismatchOf(payload, dossier)).toEqual({
+      emailDomain: "northwind.example",
+      companies: ["Acme"],
+    });
+    expect(personPayloadPatch(payload, dossier).emailMismatch).toEqual({
+      emailDomain: "northwind.example",
+      companies: ["Acme"],
+    });
+  });
+
+  it("does not flag a match by the employer's own domain, a free mailbox, a former employer, or unknown work", () => {
+    const meta = {
+      ...staleProfileDossier,
+      company: { domain: "www.hq-mail.example" },
+      organizations: [{ name: "Halcyon", startDate: "2024", current: true }],
+    };
+    expect(emailMismatchOf({ email: "z@hq-mail.example", company: "Halcyon" }, meta)).toBeNull();
+    expect(emailMismatchOf({ email: "z@gmail.com", company: "Halcyon" }, meta)).toBeNull();
+    const left = {
+      ...staleProfileDossier,
+      organizations: [
+        { name: "NewCo", startDate: "2026", current: true },
+        { name: "OldCo", startDate: "2020", endDate: "2025", current: false },
+      ],
+    };
+    expect(emailMismatchOf({ email: "z@oldco.example", company: "NewCo" }, left)).toBeNull();
+    const nothingCurrent = { ...staleProfileDossier, organizations: [] };
+    expect(
+      emailMismatchOf({ email: "z@elsewhere.example", company: "X" }, nothingCurrent),
+    ).toBeNull();
+  });
+
+  it("clears a mismatch an earlier read left when the new read matches", () => {
+    const patch = personPayloadPatch(
+      {
+        email: "sam@lumen.example",
+        company: "Lumen Security",
+        emailMismatch: { emailDomain: "lumen.example", companies: ["Stealth Startup"] },
+      },
+      staleProfileDossier,
+    );
+    expect(patch.emailMismatch).toBeNull();
+    expect(personPayloadPatch({ name: "x" }, staleProfileDossier)).not.toHaveProperty(
+      "emailMismatch",
+    );
+  });
+
+  it("follows a job change: an ended role at the email's company means they moved", () => {
+    const patch = personPayloadPatch(
+      { email: "sam@lumen.example", company: "Lumen Security", title: "CEO" },
+      {
+        ...staleProfileDossier,
+        organizations: [
+          ...staleProfileDossier.organizations,
+          { name: "Lumen Security", startDate: "2023", endDate: "Aug 2025", current: false },
+        ],
+      },
+    );
+    expect(patch.company).toBe("Stealth Startup");
   });
 });
 
