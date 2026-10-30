@@ -901,6 +901,19 @@ export async function approveQueueRoute(
     decidedBy: "human",
     ...(parsedReason.decisionReason ? { decisionReason: parsedReason.decisionReason } : {}),
   });
+  // The founder's approval is the latest decision on a row a move holds: it
+  // supersedes a reject made during the move, and a later move that
+  // re-reserves the row puts it back approved if every hand-over fails
+  // (#983). A note the founder typed meanwhile is kept, the marker is not.
+  const moving = activeQueueMoves.get(id);
+  if (moving) {
+    const notes = ledger.getQueueRow(id)?.notes ?? null;
+    moving.rejected = false;
+    moving.previous = {
+      status: "approved",
+      notes: notes === moving.reserved ? moving.previous.notes : notes,
+    };
+  }
   // Recent posts are bought on approval, in the background: the response
   // never waits on them, and a failed capture never fails the approval.
   scheduleNewsfeedOnApproval([id]);
@@ -1101,7 +1114,8 @@ export async function importQueueRowRoute(req: Request): Promise<Response> {
 // this map did not see, the founder's own edit) changed meanwhile (#983).
 // `rejected` is set by a founder's reject made during the move: it can leave
 // both the status and the note as the reservation wrote them, so the note
-// alone cannot tell it apart, and the restore is skipped.
+// alone cannot tell it apart, and the restore is skipped. A founder's approve
+// after it clears the flag and becomes the snapshot a later restore writes.
 const activeQueueMoves = new Map<
   number,
   {

@@ -76,6 +76,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     getLedger: () => ({
       getQueueRow: () => row,
+      findProspectByEmail: () => undefined,
       setQueueStatus: (input: Record<string, unknown>) => {
         statusCalls.push(input);
         // Mirror the write so the post-import re-read sees it.
@@ -111,8 +112,19 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
-const { moveQueueRowRoute, moveNote, rejectQueueRoute, REJECT_REASON_MAX_CHARS } =
-  await import("../src/api/queue.ts");
+// Approving buys recent posts in the background; never here.
+vi.mock("@oneshot-gtm/find", async () => ({
+  ...(await vi.importActual<typeof import("@oneshot-gtm/find")>("@oneshot-gtm/find")),
+  scheduleNewsfeedOnApproval: () => {},
+}));
+
+const {
+  approveQueueRoute,
+  moveQueueRowRoute,
+  moveNote,
+  rejectQueueRoute,
+  REJECT_REASON_MAX_CHARS,
+} = await import("../src/api/queue.ts");
 const { _setLaunchSpawn } = await import("../src/api/workspace.ts");
 
 afterAll(() => {
@@ -125,6 +137,10 @@ const req = (body: unknown) =>
     method: "POST",
     body: JSON.stringify(body),
   });
+
+/** A founder's reject/approve click on the row, with no body. */
+const decide = (action: string) =>
+  new Request(`http://127.0.0.1:3030/api/queue/746/${action}`, { method: "POST" });
 
 beforeEach(() => {
   up = true;
@@ -310,6 +326,39 @@ describe("POST /api/queue/:id/move", () => {
     expect((await moving).status).toBe(409);
     expect(restoreCalls).toEqual([]);
     expect(row).toMatchObject({ status: "rejected", notes: reservedNote });
+  });
+
+  it("keeps a founder's approve that superseded their reject when a later move re-reserves the row and every move fails", async () => {
+    let release!: (response: Response) => void;
+    const paused = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    fetchMock.mockResolvedValueOnce(new Response("{}"));
+    fetchMock.mockImplementationOnce(() => {
+      reached();
+      return paused;
+    });
+    const first = moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
+    await waiting;
+    expect((await rejectQueueRoute(decide("reject"), { id: "746" })).status).toBe(200);
+    expect((await approveQueueRoute(decide("approve"), { id: "746" })).status).toBe(200);
+    expect(row!.status).toBe("approved");
+    // A second move re-reserves the approved row; its destination refuses.
+    importReply = { status: 409, body: { error: "refused" } };
+    expect((await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" })).status).toBe(409);
+    expect(row).toMatchObject({
+      status: "rejected",
+      notes: expect.stringMatching(movedTo("alpha")),
+    });
+    release(new Response(JSON.stringify({ error: "refused" }), { status: 409 }));
+    expect((await first).status).toBe(409);
+    // The founder's last word was approve: it is what the restore writes back.
+    expect(restoreCalls).toEqual([expect.objectContaining({ status: "approved", landed: true })]);
+    expect(row).toMatchObject({ status: "approved", notes: null });
   });
 
   it("restores the row when the destination cannot be started", async () => {
