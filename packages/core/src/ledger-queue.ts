@@ -1641,11 +1641,14 @@ export class QueueStore {
    * reserves the source row as `rejected` with a per-move note
    * (`moved to <workspace> #<id>`); when every overlapping hand-over fails
    * it puts the status and notes it captured back. One compare-and-set
-   * UPDATE: the row is written only while it still carries `reservedNotes`,
-   * so an older request that lost the row to a later move, or to a founder's
-   * own edit meanwhile, leaves it alone. Returns whether the row was restored.
-   * A row that was sent meanwhile is never put back to pending/approved (the
-   * drain would re-email the person); `rejected` is a label and may land.
+   * UPDATE: the row is written only while it is still `rejected` and still
+   * carries `reservedNotes`, so an older request that lost the row to a later
+   * move, or to a founder's own edit meanwhile, leaves it alone. The status
+   * check matters on its own: approving keeps the note (the approve route
+   * passes none), so without it a founder's approval made during the move,
+   * or the send that followed it, would be written over. Returns whether the
+   * row was restored. A row that was sent meanwhile is never put back to
+   * pending/approved (the drain would re-email the person).
    */
   restoreQueueMoveIf(input: {
     id: number;
@@ -1668,7 +1671,7 @@ export class QueueStore {
         : "";
     const r = this.db
       .prepare(
-        `UPDATE target_queue SET status = $status, notes = $notes, send_started_at = NULL${decisionSql} WHERE id = $id AND notes = $reserved${sentGuard}`,
+        `UPDATE target_queue SET status = $status, notes = $notes, send_started_at = NULL${decisionSql} WHERE id = $id AND status = 'rejected' AND notes = $reserved${sentGuard}`,
       )
       .run({
         $status: input.status,

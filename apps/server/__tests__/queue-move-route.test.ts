@@ -92,13 +92,14 @@ vi.mock("@oneshot-gtm/core", async () => {
         status: string;
         notes: string | null;
       }) => {
-        // Mirror the ledger's single UPDATE: lands only while the row still
-        // carries the reservation note, never puts a sent row back live.
+        // Mirror the ledger's single UPDATE: lands only while the row is still
+        // `rejected` with the reservation note, never puts a sent row back live.
         const live = input.status === "pending" || input.status === "approved";
         const landed =
           !!row &&
+          row.status === "rejected" &&
           row.notes === input.reservedNotes &&
-          !(live && (row.status === "sent" || row.sent_at != null));
+          !(live && row.sent_at != null);
         restoreCalls.push({ ...input, landed });
         if (landed && row) {
           row.status = input.status;

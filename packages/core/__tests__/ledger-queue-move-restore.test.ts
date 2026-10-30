@@ -105,6 +105,43 @@ describe("Ledger.restoreQueueMoveIf", () => {
     });
   });
 
+  it("leaves a reservation the founder approved meanwhile alone, note and all", () => {
+    const id = reserved(null);
+    // The approve route passes no notes, so the move's marker stays on the row.
+    ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });
+    expect(
+      ledger.restoreQueueMoveIf({
+        id,
+        reservedNotes: "moved to alpha #1a2b3c4d",
+        status: "pending",
+        notes: null,
+      }),
+    ).toBe(false);
+    expect(ledger.getQueueRow(id)).toMatchObject({
+      status: "approved",
+      notes: "moved to alpha #1a2b3c4d",
+      decision: "approve",
+    });
+  });
+
+  it("never labels a row that was approved and sent meanwhile rejected again", () => {
+    const id = reserved("off-topic", "approved");
+    ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });
+    ledger.setQueueStatus({ id, status: "sent" });
+    expect(
+      ledger.restoreQueueMoveIf({
+        id,
+        reservedNotes: "off-topic · moved to alpha #1a2b3c4d",
+        status: "rejected",
+        notes: "off-topic",
+      }),
+    ).toBe(false);
+    expect(ledger.getQueueRow(id)).toMatchObject({
+      status: "sent",
+      notes: "off-topic · moved to alpha #1a2b3c4d",
+    });
+  });
+
   it("never puts a row that was sent meanwhile back to pending", () => {
     const id = reserved(null);
     ledger.setQueueStatus({ id, status: "sent" });
