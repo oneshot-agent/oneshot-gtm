@@ -1637,6 +1637,50 @@ export class QueueStore {
   }
 
   /**
+   * Undo a cross-workspace move's reservation (issue #983). The move route
+   * reserves the source row as `rejected` with a per-move note
+   * (`moved to <workspace> #<id>`); when every overlapping hand-over fails
+   * it puts the status and notes it captured back. One compare-and-set
+   * UPDATE: the row is written only while it still carries `reservedNotes`,
+   * so an older request that lost the row to a later move, or to a founder's
+   * own edit meanwhile, leaves it alone. Returns whether the row was restored.
+   * A row that was sent meanwhile is never put back to pending/approved (the
+   * drain would re-email the person); `rejected` is a label and may land.
+   */
+  restoreQueueMoveIf(input: {
+    id: number;
+    reservedNotes: string;
+    status: QueueStatus;
+    notes: string | null;
+  }): boolean {
+    const now = new Date().toISOString();
+    const decision =
+      input.status === "approved" ? "approve" : input.status === "rejected" ? "reject" : null;
+    const decisionSql =
+      input.status === "pending"
+        ? ", reviewed_at = NULL"
+        : decision
+          ? ", reviewed_at = $now, decision = $decision, decided_at = $now, decided_by = 'human', decision_reason = NULL"
+          : "";
+    const sentGuard =
+      input.status === "pending" || input.status === "approved"
+        ? " AND status != 'sent' AND sent_at IS NULL"
+        : "";
+    const r = this.db
+      .prepare(
+        `UPDATE target_queue SET status = $status, notes = $notes, send_started_at = NULL${decisionSql} WHERE id = $id AND notes = $reserved${sentGuard}`,
+      )
+      .run({
+        $status: input.status,
+        $notes: input.notes === "" ? null : input.notes,
+        $id: input.id,
+        $reserved: input.reservedNotes,
+        ...(decisionSql.includes("$now") ? { $now: now, $decision: decision } : {}),
+      });
+    return r.changes === 1;
+  }
+
+  /**
    * Overwrite a queue row's shadow priority (the `score-prospects` backfill
    * writer). Pass null to clear.
    */

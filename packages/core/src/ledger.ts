@@ -2390,6 +2390,16 @@ export class Ledger {
     this.queue.setQueueNotes(input);
   }
 
+  /** @see ledger-queue.ts#QueueStore.restoreQueueMoveIf */
+  restoreQueueMoveIf(input: {
+    id: number;
+    reservedNotes: string;
+    status: QueueStatus;
+    notes: string | null;
+  }): boolean {
+    return this.queue.restoreQueueMoveIf(input);
+  }
+
   /** @see ledger-queue.ts#QueueStore.setQueuePriority */
   setQueuePriority(id: number, priority: ProspectPriority | null): void {
     this.queue.setQueuePriority(id, priority);

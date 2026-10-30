@@ -55,7 +55,7 @@ A cached answer costs nothing and writes no receipt. A genuine failure is rememb
 
 A reject is permanent inside its workspace. A finder cannot queue that person again; only **Approve anyway** on Prospects reopens the row. Nothing carries a reject to another workspace.
 
-To hand a person to another product, use **move →** on the queue row. The destination starts if it is not running. The row arrives pending under the same play with its research, and [derives its own edge and verdict](./finders.md#rows-moved-between-workspaces). The row here is rejected with a `moved to <workspace>` note. If the destination had already rejected that person, its row is reopened.
+To hand a person to another product, use **move →** on the queue row. The destination starts if it is not running. The row arrives pending under the same play with its research, and [derives its own edge and verdict](./finders.md#rows-moved-between-workspaces). The row here is rejected with a `moved to <workspace> #<move id>` note; the id names the move that holds the row, so a move that failed after a later one succeeded leaves the row with the later move. If the destination had already rejected that person, its row is reopened.
 
 ## What `doctor` warns about
 
