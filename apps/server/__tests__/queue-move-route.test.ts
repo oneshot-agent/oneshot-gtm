@@ -111,7 +111,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
-const { moveQueueRowRoute, moveNote, REJECT_REASON_MAX_CHARS } =
+const { moveQueueRowRoute, moveNote, rejectQueueRoute, REJECT_REASON_MAX_CHARS } =
   await import("../src/api/queue.ts");
 const { _setLaunchSpawn } = await import("../src/api/workspace.ts");
 
@@ -279,6 +279,37 @@ describe("POST /api/queue/:id/move", () => {
     expect((await moving).status).toBe(409);
     expect(restoreCalls).toEqual([expect.objectContaining({ status: "pending", landed: false })]);
     expect(row).toMatchObject({ status: "rejected", notes: "wrong stage" });
+  });
+
+  it("keeps a founder's reject made during the move even when it leaves the reservation's note", async () => {
+    row!.status = "approved";
+    let release!: (response: Response) => void;
+    const paused = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    fetchMock.mockResolvedValueOnce(new Response("{}"));
+    fetchMock.mockImplementationOnce(() => {
+      reached();
+      return paused;
+    });
+    const moving = moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
+    await waiting;
+    const reservedNote = row!.notes;
+    // No reason typed: status and note stay exactly as the reservation wrote them.
+    const rejected = await rejectQueueRoute(
+      new Request("http://127.0.0.1:3030/api/queue/746/reject", { method: "POST" }),
+      { id: "746" },
+    );
+    expect(rejected.status).toBe(200);
+    expect(row).toMatchObject({ status: "rejected", notes: reservedNote });
+    release(new Response(JSON.stringify({ error: "refused" }), { status: 409 }));
+    expect((await moving).status).toBe(409);
+    expect(restoreCalls).toEqual([]);
+    expect(row).toMatchObject({ status: "rejected", notes: reservedNote });
   });
 
   it("restores the row when the destination cannot be started", async () => {

@@ -1099,11 +1099,15 @@ export async function importQueueRowRoute(req: Request): Promise<Response> {
 // `reserved` is the latest move's note (its token): the restore is a
 // compare-and-set on it, so it never lands on a row some other writer (a move
 // this map did not see, the founder's own edit) changed meanwhile (#983).
+// `rejected` is set by a founder's reject made during the move: it can leave
+// both the status and the note as the reservation wrote them, so the note
+// alone cannot tell it apart, and the restore is skipped.
 const activeQueueMoves = new Map<
   number,
   {
     pending: number;
     imported: boolean;
+    rejected: boolean;
     reserved: string;
     previous: Pick<QueueRow, "status" | "notes">;
   }
@@ -1168,6 +1172,7 @@ export async function moveQueueRowRoute(
   const moves = activeQueueMoves.get(id) ?? {
     pending: 0,
     imported: false,
+    rejected: false,
     reserved: "",
     previous: { status: row.status, notes: row.notes },
   };
@@ -1246,7 +1251,7 @@ export async function moveQueueRowRoute(
   } finally {
     if (--moves.pending === 0) {
       activeQueueMoves.delete(id);
-      if (!moves.imported) {
+      if (!moves.imported && !moves.rejected) {
         ledger.restoreQueueMoveIf({
           id,
           reservedNotes: moves.reserved,
@@ -1332,6 +1337,10 @@ export async function rejectQueueRoute(
     ...(parsedReason.decisionReason ? { decisionReason: parsedReason.decisionReason } : {}),
     ...(parsed.reason !== undefined ? { notes: parsed.reason } : {}),
   });
+  // The founder's rejection is the latest decision: a move still in flight
+  // must not put the row back when it fails (#983).
+  const moving = activeQueueMoves.get(id);
+  if (moving) moving.rejected = true;
   return jsonResponse({ ok: true }, 200, req);
 }
 
