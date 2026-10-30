@@ -1082,12 +1082,11 @@ export async function importQueueRowRoute(req: Request): Promise<Response> {
   return jsonResponse(out, 200, req);
 }
 
-// Each server owns one workspace ledger. Only the latest move request for a
-// row may restore it; a completed newer move must also invalidate older ones.
-// Carry the original snapshot forward so failed moves never restore a reservation.
+// Each server owns one workspace ledger. Overlapping moves share a reservation:
+// restore the original snapshot only after all settle and none imported the row.
 const activeQueueMoves = new Map<
   number,
-  { token: symbol; previous: Pick<QueueRow, "status" | "notes"> }
+  { pending: number; imported: boolean; previous: Pick<QueueRow, "status" | "notes"> }
 >();
 
 /**
@@ -1143,8 +1142,12 @@ export async function moveQueueRowRoute(
   // Reserve the row before anything is awaited: `rejected` is the one status
   // neither the drain (`dequeueApproved` takes `approved` only) nor send-draft
   // will touch, so nothing can send it while the destination starts up and
-  // imports. Restored if the hand-over fails and no newer move took ownership.
-  const previous = activeQueueMoves.get(id)?.previous ?? { status: row.status, notes: row.notes };
+  // imports. Restored only if every overlapping hand-over fails.
+  const moves = activeQueueMoves.get(id) ?? {
+    pending: 0,
+    imported: false,
+    previous: { status: row.status, notes: row.notes },
+  };
   const note = moveNote(row.notes, workspace);
   // A move is a routing decision, never a fit judgment about the person.
   ledger.setQueueStatus({
@@ -1154,22 +1157,12 @@ export async function moveQueueRowRoute(
     decisionReason: "other",
     notes: note,
   });
-  const moveToken = Symbol();
-  activeQueueMoves.set(id, { token: moveToken, previous });
-  const restore = (): void => {
-    if (activeQueueMoves.get(id)?.token !== moveToken) return;
-    ledger.setQueueStatus({
-      id,
-      status: previous.status,
-      ...(previous.status === "rejected" ? { decidedBy: "human" as const } : {}),
-    });
-    ledger.setQueueNotes({ id, notes: previous.notes ?? "" });
-  };
+  moves.pending++;
+  activeQueueMoves.set(id, moves);
 
   try {
     const dest = await ensureWorkspaceRunning(workspace);
     if (!dest.ok) {
-      restore();
       return jsonResponse({ error: dest.error }, dest.status, req);
     }
 
@@ -1192,16 +1185,15 @@ export async function moveQueueRowRoute(
         error?: string;
       };
       if (!res.ok || typeof out.queueId !== "number") {
-        restore();
         return jsonResponse(
           { error: `${workspace}: ${out.error ?? `import failed (${res.status})`}` },
           res.status >= 400 && res.status < 600 ? res.status : 502,
           req,
         );
       }
+      moves.imported = true;
       imported = { queueId: out.queueId, reused: out.reused === true };
     } catch (err) {
-      restore();
       return jsonResponse(
         { error: `${workspace}: could not reach its server — ${(err as Error).message}` },
         502,
@@ -1228,7 +1220,18 @@ export async function moveQueueRowRoute(
     };
     return jsonResponse(result, 200, req);
   } finally {
-    if (activeQueueMoves.get(id)?.token === moveToken) activeQueueMoves.delete(id);
+    if (--moves.pending === 0) {
+      activeQueueMoves.delete(id);
+      if (!moves.imported) {
+        const { previous } = moves;
+        ledger.setQueueStatus({
+          id,
+          status: previous.status,
+          ...(previous.status === "rejected" ? { decidedBy: "human" as const } : {}),
+        });
+        ledger.setQueueNotes({ id, notes: previous.notes ?? "" });
+      }
+    }
   }
 }
 
