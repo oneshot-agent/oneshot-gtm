@@ -1084,7 +1084,11 @@ export async function importQueueRowRoute(req: Request): Promise<Response> {
 
 // Each server owns one workspace ledger. Only the latest move request for a
 // row may restore it; a completed newer move must also invalidate older ones.
-const activeQueueMoves = new Map<number, symbol>();
+// Carry the original snapshot forward so failed moves never restore a reservation.
+const activeQueueMoves = new Map<
+  number,
+  { token: symbol; previous: Pick<QueueRow, "status" | "notes"> }
+>();
 
 /**
  * POST /api/queue/:id/move {workspace}: hand this row to another workspace.
@@ -1140,7 +1144,7 @@ export async function moveQueueRowRoute(
   // neither the drain (`dequeueApproved` takes `approved` only) nor send-draft
   // will touch, so nothing can send it while the destination starts up and
   // imports. Restored if the hand-over fails and no newer move took ownership.
-  const previous = { status: row.status, notes: row.notes };
+  const previous = activeQueueMoves.get(id)?.previous ?? { status: row.status, notes: row.notes };
   const note = moveNote(row.notes, workspace);
   // A move is a routing decision, never a fit judgment about the person.
   ledger.setQueueStatus({
@@ -1151,9 +1155,9 @@ export async function moveQueueRowRoute(
     notes: note,
   });
   const moveToken = Symbol();
-  activeQueueMoves.set(id, moveToken);
+  activeQueueMoves.set(id, { token: moveToken, previous });
   const restore = (): void => {
-    if (activeQueueMoves.get(id) !== moveToken) return;
+    if (activeQueueMoves.get(id)?.token !== moveToken) return;
     ledger.setQueueStatus({
       id,
       status: previous.status,
@@ -1224,7 +1228,7 @@ export async function moveQueueRowRoute(
     };
     return jsonResponse(result, 200, req);
   } finally {
-    if (activeQueueMoves.get(id) === moveToken) activeQueueMoves.delete(id);
+    if (activeQueueMoves.get(id)?.token === moveToken) activeQueueMoves.delete(id);
   }
 }
 
