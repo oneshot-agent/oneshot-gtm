@@ -10,6 +10,7 @@ import {
   waitForSendsToDrain,
 } from "@oneshot-gtm/core";
 import { parseServerArgs, SERVER_USAGE } from "./args.ts";
+import { retryBootCleanup } from "./boot-cleanup.ts";
 import { buildFetchHandler, SERVER_BASE_OPTS, startServer } from "./server.ts";
 import { startScheduler, type SchedulerHandle } from "./scheduler.ts";
 
@@ -63,13 +64,15 @@ if (cache.__oneshotGtmServer) {
   // continue): sweep trigger rows left marked running by a dead process.
   // `maxAgeMs: 0` is intentional and important: at cold boot any non-null
   // `running_started_at` is a zombie; applying the 4h UI freshness gate here
-  // would block re-runs with `409 already running`. Wrapped. A SQL hiccup
-  // must not take down the server.
+  // would block re-runs with `409 already running`. Await lock retries before
+  // binding HTTP or starting the scheduler; a final failure still allows boot.
   try {
-    const swept = getLedger().sweepStaleRunningTriggers({
-      now: new Date(),
-      maxAgeMs: 0,
-    });
+    const swept = await retryBootCleanup(() =>
+      getLedger().sweepStaleRunningTriggers({
+        now: new Date(),
+        maxAgeMs: 0,
+      }),
+    );
     for (const s of swept) {
       logEvent("trigger.killed_by_restart", { name: s.name, age_ms: s.ageMs }, "warn");
       process.stdout.write(`  swept stale run: ${s.name} (${Math.round(s.ageMs / 1000)}s old)\n`);
@@ -87,10 +90,12 @@ if (cache.__oneshotGtmServer) {
   // cleared whether the send landed (sequence_events row exists) or was lost
   // mid-SDK-call (draft survives for a re-click); both cases are logged.
   try {
-    const swept = getLedger().sweepStaleCadenceSends({
-      now: new Date(),
-      maxAgeMs: 0,
-    });
+    const swept = await retryBootCleanup(() =>
+      getLedger().sweepStaleCadenceSends({
+        now: new Date(),
+        maxAgeMs: 0,
+      }),
+    );
     for (const s of swept) {
       logEvent(
         s.actuallySent ? "cadence.send.cleared_marker" : "cadence.send.killed_by_restart",

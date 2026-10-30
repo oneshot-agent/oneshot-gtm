@@ -1082,6 +1082,13 @@ export async function importQueueRowRoute(req: Request): Promise<Response> {
   return jsonResponse(out, 200, req);
 }
 
+// Each server owns one workspace ledger. Overlapping moves share a reservation:
+// restore the original snapshot only after all settle and none imported the row.
+const activeQueueMoves = new Map<
+  number,
+  { pending: number; imported: boolean; previous: Pick<QueueRow, "status" | "notes"> }
+>();
+
 /**
  * POST /api/queue/:id/move {workspace}: hand this row to another workspace.
  * The destination is started if it is not running, the row is imported
@@ -1135,8 +1142,12 @@ export async function moveQueueRowRoute(
   // Reserve the row before anything is awaited: `rejected` is the one status
   // neither the drain (`dequeueApproved` takes `approved` only) nor send-draft
   // will touch, so nothing can send it while the destination starts up and
-  // imports. Restored verbatim if the hand-over fails.
-  const previous = { status: row.status, notes: row.notes };
+  // imports. Restored only if every overlapping hand-over fails.
+  const moves = activeQueueMoves.get(id) ?? {
+    pending: 0,
+    imported: false,
+    previous: { status: row.status, notes: row.notes },
+  };
   const note = moveNote(row.notes, workspace);
   // A move is a routing decision, never a fit judgment about the person.
   ledger.setQueueStatus({
@@ -1146,75 +1157,82 @@ export async function moveQueueRowRoute(
     decisionReason: "other",
     notes: note,
   });
-  const restore = (): void => {
-    ledger.setQueueStatus({
-      id,
-      status: previous.status,
-      ...(previous.status === "rejected" ? { decidedBy: "human" as const } : {}),
-    });
-    ledger.setQueueNotes({ id, notes: previous.notes ?? "" });
-  };
+  moves.pending++;
+  activeQueueMoves.set(id, moves);
 
-  const dest = await ensureWorkspaceRunning(workspace);
-  if (!dest.ok) {
-    restore();
-    return jsonResponse({ error: dest.error }, dest.status, req);
-  }
-
-  const request: ImportQueueRowRequest = {
-    playName: row.play_name,
-    dedupeKey: row.dedupe_key,
-    source: row.source ?? "manual",
-    payload: portable,
-    movedFrom: { workspace: currentWorkspaceName(), queueId: row.id },
-  };
-  let imported: ImportQueueRowResult;
   try {
-    const res = await fetch(`http://127.0.0.1:${dest.port}/api/queue/import`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(request),
-      signal: AbortSignal.timeout(10_000),
-    });
-    const out = (await res.json().catch(() => ({}))) as Partial<ImportQueueRowResult> & {
-      error?: string;
+    const dest = await ensureWorkspaceRunning(workspace);
+    if (!dest.ok) {
+      return jsonResponse({ error: dest.error }, dest.status, req);
+    }
+
+    const request: ImportQueueRowRequest = {
+      playName: row.play_name,
+      dedupeKey: row.dedupe_key,
+      source: row.source ?? "manual",
+      payload: portable,
+      movedFrom: { workspace: currentWorkspaceName(), queueId: row.id },
     };
-    if (!res.ok || typeof out.queueId !== "number") {
-      restore();
+    let imported: ImportQueueRowResult;
+    try {
+      const res = await fetch(`http://127.0.0.1:${dest.port}/api/queue/import`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(request),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const out = (await res.json().catch(() => ({}))) as Partial<ImportQueueRowResult> & {
+        error?: string;
+      };
+      if (!res.ok || typeof out.queueId !== "number") {
+        return jsonResponse(
+          { error: `${workspace}: ${out.error ?? `import failed (${res.status})`}` },
+          res.status >= 400 && res.status < 600 ? res.status : 502,
+          req,
+        );
+      }
+      moves.imported = true;
+      imported = { queueId: out.queueId, reused: out.reused === true };
+    } catch (err) {
       return jsonResponse(
-        { error: `${workspace}: ${out.error ?? `import failed (${res.status})`}` },
-        res.status >= 400 && res.status < 600 ? res.status : 502,
+        { error: `${workspace}: could not reach its server — ${(err as Error).message}` },
+        502,
         req,
       );
     }
-    imported = { queueId: out.queueId, reused: out.reused === true };
-  } catch (err) {
-    restore();
-    return jsonResponse(
-      { error: `${workspace}: could not reach its server — ${(err as Error).message}` },
-      502,
-      req,
-    );
-  }
 
-  // The destination holds the row. If a send that was already in flight
-  // landed meanwhile (the `sent` write ignores status), say so rather than
-  // pretend: the person was emailed from here AND is now queued there.
-  const after = ledger.getQueueRow(id);
-  if (after && (after.status === "sent" || after.sent_at != null)) {
-    return jsonResponse(
-      {
-        error: `sent from here while moving; ${workspace} now holds them as pending (row #${imported.queueId}) — reject it there`,
-      },
-      409,
-      req,
-    );
+    // The destination holds the row. If a send that was already in flight
+    // landed meanwhile (the `sent` write ignores status), say so rather than
+    // pretend: the person was emailed from here AND is now queued there.
+    const after = ledger.getQueueRow(id);
+    if (after && (after.status === "sent" || after.sent_at != null)) {
+      return jsonResponse(
+        {
+          error: `sent from here while moving; ${workspace} now holds them as pending (row #${imported.queueId}) — reject it there`,
+        },
+        409,
+        req,
+      );
+    }
+    const result: MoveQueueRowResult = {
+      ok: true,
+      destination: { name: workspace, port: dest.port, ...imported },
+    };
+    return jsonResponse(result, 200, req);
+  } finally {
+    if (--moves.pending === 0) {
+      activeQueueMoves.delete(id);
+      if (!moves.imported) {
+        const { previous } = moves;
+        ledger.setQueueStatus({
+          id,
+          status: previous.status,
+          ...(previous.status === "rejected" ? { decidedBy: "human" as const } : {}),
+        });
+        ledger.setQueueNotes({ id, notes: previous.notes ?? "" });
+      }
+    }
   }
-  const result: MoveQueueRowResult = {
-    ok: true,
-    destination: { name: workspace, port: dest.port, ...imported },
-  };
-  return jsonResponse(result, 200, req);
 }
 
 /**

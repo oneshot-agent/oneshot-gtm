@@ -56,6 +56,8 @@ rm ~/.config/systemd/user/oneshot-gtm-workspace-acme.service
 - After moving bun or the checkout, or changing the port, run `--write` again and reload. A restart alone keeps the old values.
 - It needs a clone. `bunx oneshot-gtm-server` has no service file.
 
+On a cold start, the dashboard clears interrupted finder runs and cadence send markers before accepting requests or starting the scheduler. If the previous process still holds the database write lock, each of these two cleanups retries for about a minute. If a lock persists, the cleanup logs one final failure and startup continues; uncleared markers remain until a later recovery.
+
 ## The watch daemon as a service
 
 `find watch --install-service` does the same for the headless daemon. Paths are written absolute, including the active workspace home, so `--workspace acme find watch --install-service` pins the service to that workspace.

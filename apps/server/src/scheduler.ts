@@ -439,8 +439,8 @@ export function startScheduler(): SchedulerHandle {
     }
   };
 
-  // Short initial delay so the HTTP server is bound and the cold-boot sweep
-  // has finished writing `killed_by_restart` summaries before the first tick.
+  // bin.ts awaits cold-boot sweeps (including lock retries) before starting
+  // HTTP and this scheduler. This short delay is not the cleanup barrier.
   timer = setTimeout(() => void tick(), FIRST_TICK_DELAY_MS);
 
   return {

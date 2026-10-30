@@ -75,9 +75,11 @@ vi.mock("@oneshot-gtm/core", async () => {
         statusCalls.push(input);
         // Mirror the write so the post-import re-read sees it.
         if (row && typeof input["status"] === "string") row.status = input["status"];
+        if (row && typeof input["notes"] === "string") row.notes = input["notes"];
       },
       setQueueNotes: (input: Record<string, unknown>) => {
         noteCalls.push(input);
+        if (row && typeof input["notes"] === "string") row.notes = input["notes"];
       },
     }),
   };
@@ -204,11 +206,125 @@ describe("POST /api/queue/:id/move", () => {
     _setLaunchSpawn(() => {
       /* never comes up */
     });
-    const res = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
-    expect(res.status).toBe(503);
-    expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "pending"]);
-    expect(noteCalls).toEqual([{ id: 746, notes: "" }]);
-  }, 20_000);
+    // #978 readiness now accommodates cold-boot cleanup; advance that wait
+    // without making the rollback regression test spend 150s in real time.
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    try {
+      const moving = moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
+      await vi.runAllTimersAsync();
+      const res = await moving;
+      expect(res.status).toBe(503);
+      expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "pending"]);
+      expect(noteCalls).toEqual([{ id: 746, notes: "" }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["startup", "refused import", "network"] as const)(
+    "does not roll back a newer successful move after an older %s failure",
+    async (failure) => {
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      let release!: (response: Response) => void;
+      let fail!: (error: Error) => void;
+      const paused = new Promise<Response>((resolve, reject) => {
+        release = resolve;
+        fail = reject;
+      });
+      let reached!: () => void;
+      const waiting = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      if (failure !== "startup") fetchMock.mockResolvedValueOnce(new Response("{}"));
+      fetchMock.mockImplementationOnce(() => {
+        reached();
+        return paused;
+      });
+      _setLaunchSpawn(() => {});
+      try {
+        const older = moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
+        await waiting;
+        // Same destination and identical notes: comparing notes cannot identify
+        // which request owns the reservation.
+        const newer = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
+        expect(newer.status).toBe(200);
+        expect(importBodies).toHaveLength(1);
+        up = false;
+        if (failure === "refused import") {
+          release(new Response(JSON.stringify({ error: "refused" }), { status: 409 }));
+        } else {
+          fail(new Error("down"));
+        }
+        await vi.runAllTimersAsync();
+        expect((await older).status).toBe(
+          failure === "startup" ? 503 : failure === "refused import" ? 409 : 502,
+        );
+        expect(row).toMatchObject({ status: "rejected", notes: "moved to alpha" });
+        expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "rejected"]);
+        expect(noteCalls).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each([
+    ["older", "neither"],
+    ["newer", "neither"],
+    ["older", "older"],
+    ["newer", "older"],
+    ["older", "newer"],
+    ["newer", "newer"],
+  ] as const)(
+    "keeps concurrent moves reserved until settled: %s finishes first, %s succeeds",
+    async (first, succeeds) => {
+      row!.status = "approved";
+      row!.notes = "looks good";
+      const pauseImport = () => {
+        let release!: (response: Response) => void;
+        const paused = new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+        let reached!: () => void;
+        const waiting = new Promise<void>((resolve) => {
+          reached = resolve;
+        });
+        fetchMock.mockResolvedValueOnce(new Response("{}"));
+        fetchMock.mockImplementationOnce(() => {
+          reached();
+          return paused;
+        });
+        const moving = moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
+        return { moving, waiting, release };
+      };
+      const older = pauseImport();
+      await older.waiting;
+      const newer = pauseImport();
+      await newer.waiting;
+      const successful = succeeds === "older" ? older : succeeds === "newer" ? newer : null;
+      const moves = first === "older" ? [older, newer] : [newer, older];
+      let statusAfterFirst: string | undefined;
+      for (const move of moves) {
+        move.release(
+          move === successful
+            ? new Response(JSON.stringify({ queueId: 77 }), { status: 201 })
+            : new Response(JSON.stringify({ error: "refused" }), { status: 409 }),
+        );
+        expect((await move.moving).status).toBe(move === successful ? 200 : 409);
+        if (move === moves[0]) statusAfterFirst = row!.status;
+      }
+      expect(statusAfterFirst).toBe("rejected");
+      if (successful) {
+        expect(row).toMatchObject({ status: "rejected", notes: "looks good · moved to alpha" });
+        expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "rejected"]);
+        expect(noteCalls).toEqual([]);
+      } else {
+        expect(row).toMatchObject({ status: "approved", notes: "looks good" });
+        expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "rejected", "approved"]);
+        expect(noteCalls).toEqual([{ id: 746, notes: "looks good" }]);
+      }
+    },
+  );
 
   it("refuses a row the drain has leased in the last 15 minutes", async () => {
     row!.status = "approved";
