@@ -75,9 +75,11 @@ vi.mock("@oneshot-gtm/core", async () => {
         statusCalls.push(input);
         // Mirror the write so the post-import re-read sees it.
         if (row && typeof input["status"] === "string") row.status = input["status"];
+        if (row && typeof input["notes"] === "string") row.notes = input["notes"];
       },
       setQueueNotes: (input: Record<string, unknown>) => {
         noteCalls.push(input);
+        if (row && typeof input["notes"] === "string") row.notes = input["notes"];
       },
     }),
   };
@@ -218,6 +220,53 @@ describe("POST /api/queue/:id/move", () => {
       vi.useRealTimers();
     }
   });
+
+  it.each(["startup", "refused import", "network"] as const)(
+    "does not roll back a newer successful move after an older %s failure",
+    async (failure) => {
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      let release!: (response: Response) => void;
+      let fail!: (error: Error) => void;
+      const paused = new Promise<Response>((resolve, reject) => {
+        release = resolve;
+        fail = reject;
+      });
+      let reached!: () => void;
+      const waiting = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      if (failure !== "startup") fetchMock.mockResolvedValueOnce(new Response("{}"));
+      fetchMock.mockImplementationOnce(() => {
+        reached();
+        return paused;
+      });
+      _setLaunchSpawn(() => {});
+      try {
+        const older = moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
+        await waiting;
+        // Same destination and identical notes: comparing notes cannot identify
+        // which request owns the reservation.
+        const newer = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
+        expect(newer.status).toBe(200);
+        expect(importBodies).toHaveLength(1);
+        up = false;
+        if (failure === "refused import") {
+          release(new Response(JSON.stringify({ error: "refused" }), { status: 409 }));
+        } else {
+          fail(new Error("down"));
+        }
+        await vi.runAllTimersAsync();
+        expect((await older).status).toBe(
+          failure === "startup" ? 503 : failure === "refused import" ? 409 : 502,
+        );
+        expect(row).toMatchObject({ status: "rejected", notes: "moved to alpha" });
+        expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "rejected"]);
+        expect(noteCalls).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("refuses a row the drain has leased in the last 15 minutes", async () => {
     row!.status = "approved";
