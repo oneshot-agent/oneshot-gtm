@@ -268,9 +268,16 @@ describe("POST /api/queue/:id/move", () => {
     },
   );
 
-  it.each(["older", "newer"] as const)(
-    "restores the original status and notes when both concurrent moves fail, %s first",
-    async (first) => {
+  it.each([
+    ["older", "neither"],
+    ["newer", "neither"],
+    ["older", "older"],
+    ["newer", "older"],
+    ["older", "newer"],
+    ["newer", "newer"],
+  ] as const)(
+    "keeps concurrent moves reserved until settled: %s finishes first, %s succeeds",
+    async (first, succeeds) => {
       row!.status = "approved";
       row!.notes = "looks good";
       const pauseImport = () => {
@@ -294,14 +301,28 @@ describe("POST /api/queue/:id/move", () => {
       await older.waiting;
       const newer = pauseImport();
       await newer.waiting;
+      const successful = succeeds === "older" ? older : succeeds === "newer" ? newer : null;
       const moves = first === "older" ? [older, newer] : [newer, older];
+      let statusAfterFirst: string | undefined;
       for (const move of moves) {
-        move.release(new Response(JSON.stringify({ error: "refused" }), { status: 409 }));
-        expect((await move.moving).status).toBe(409);
+        move.release(
+          move === successful
+            ? new Response(JSON.stringify({ queueId: 77 }), { status: 201 })
+            : new Response(JSON.stringify({ error: "refused" }), { status: 409 }),
+        );
+        expect((await move.moving).status).toBe(move === successful ? 200 : 409);
+        if (move === moves[0]) statusAfterFirst = row!.status;
       }
-      expect(row).toMatchObject({ status: "approved", notes: "looks good" });
-      expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "rejected", "approved"]);
-      expect(noteCalls).toEqual([{ id: 746, notes: "looks good" }]);
+      expect(statusAfterFirst).toBe("rejected");
+      if (successful) {
+        expect(row).toMatchObject({ status: "rejected", notes: "looks good · moved to alpha" });
+        expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "rejected"]);
+        expect(noteCalls).toEqual([]);
+      } else {
+        expect(row).toMatchObject({ status: "approved", notes: "looks good" });
+        expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "rejected", "approved"]);
+        expect(noteCalls).toEqual([{ id: 746, notes: "looks good" }]);
+      }
     },
   );
 
