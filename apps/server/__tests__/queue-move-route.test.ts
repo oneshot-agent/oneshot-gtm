@@ -268,6 +268,43 @@ describe("POST /api/queue/:id/move", () => {
     },
   );
 
+  it.each(["older", "newer"] as const)(
+    "restores the original status and notes when both concurrent moves fail, %s first",
+    async (first) => {
+      row!.status = "approved";
+      row!.notes = "looks good";
+      const pauseImport = () => {
+        let release!: (response: Response) => void;
+        const paused = new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+        let reached!: () => void;
+        const waiting = new Promise<void>((resolve) => {
+          reached = resolve;
+        });
+        fetchMock.mockResolvedValueOnce(new Response("{}"));
+        fetchMock.mockImplementationOnce(() => {
+          reached();
+          return paused;
+        });
+        const moving = moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
+        return { moving, waiting, release };
+      };
+      const older = pauseImport();
+      await older.waiting;
+      const newer = pauseImport();
+      await newer.waiting;
+      const moves = first === "older" ? [older, newer] : [newer, older];
+      for (const move of moves) {
+        move.release(new Response(JSON.stringify({ error: "refused" }), { status: 409 }));
+        expect((await move.moving).status).toBe(409);
+      }
+      expect(row).toMatchObject({ status: "approved", notes: "looks good" });
+      expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "rejected", "approved"]);
+      expect(noteCalls).toEqual([{ id: 746, notes: "looks good" }]);
+    },
+  );
+
   it("refuses a row the drain has leased in the last 15 minutes", async () => {
     row!.status = "approved";
     row!.drain_claimed_at = new Date(Date.now() - 60_000).toISOString();
