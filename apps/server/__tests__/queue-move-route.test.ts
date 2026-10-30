@@ -64,6 +64,11 @@ let row: Row | null = null;
 /** Every status/notes write, in order. The reserve/restore dance is the point. */
 const statusCalls: Array<Record<string, unknown>> = [];
 const noteCalls: Array<Record<string, unknown>> = [];
+/** Every compare-and-set restore attempt (#983), with whether it landed. */
+const restoreCalls: Array<Record<string, unknown>> = [];
+/** The per-move id is random; a move's note is `moved to <workspace> #<8 hex>`. */
+const movedTo = (workspace: string, prefix = "") =>
+  new RegExp(`^${prefix}moved to ${workspace} #[0-9a-f]{8}$`);
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -71,6 +76,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     getLedger: () => ({
       getQueueRow: () => row,
+      findProspectByEmail: () => undefined,
       setQueueStatus: (input: Record<string, unknown>) => {
         statusCalls.push(input);
         // Mirror the write so the post-import re-read sees it.
@@ -81,11 +87,44 @@ vi.mock("@oneshot-gtm/core", async () => {
         noteCalls.push(input);
         if (row && typeof input["notes"] === "string") row.notes = input["notes"];
       },
+      restoreQueueMoveIf: (input: {
+        id: number;
+        reservedNotes: string;
+        status: string;
+        notes: string | null;
+      }) => {
+        // Mirror the ledger's single UPDATE: lands only while the row is still
+        // `rejected` with the reservation note, never puts a sent row back live.
+        const live = input.status === "pending" || input.status === "approved";
+        const landed =
+          !!row &&
+          row.status === "rejected" &&
+          row.notes === input.reservedNotes &&
+          !(live && row.sent_at != null);
+        restoreCalls.push({ ...input, landed });
+        if (landed && row) {
+          row.status = input.status;
+          row.notes = input.notes === "" ? null : input.notes;
+        }
+        return landed;
+      },
     }),
   };
 });
 
-const { moveQueueRowRoute, moveNote } = await import("../src/api/queue.ts");
+// Approving buys recent posts in the background; never here.
+vi.mock("@oneshot-gtm/find", async () => ({
+  ...(await vi.importActual<typeof import("@oneshot-gtm/find")>("@oneshot-gtm/find")),
+  scheduleNewsfeedOnApproval: () => {},
+}));
+
+const {
+  approveQueueRoute,
+  moveQueueRowRoute,
+  moveNote,
+  rejectQueueRoute,
+  REJECT_REASON_MAX_CHARS,
+} = await import("../src/api/queue.ts");
 const { _setLaunchSpawn } = await import("../src/api/workspace.ts");
 
 afterAll(() => {
@@ -99,12 +138,17 @@ const req = (body: unknown) =>
     body: JSON.stringify(body),
   });
 
+/** A founder's reject/approve click on the row, with no body. */
+const decide = (action: string) =>
+  new Request(`http://127.0.0.1:3030/api/queue/746/${action}`, { method: "POST" });
+
 beforeEach(() => {
   up = true;
   importReply = { status: 201, body: { queueId: 77, reused: false } };
   importBodies.length = 0;
   statusCalls.length = 0;
   noteCalls.length = 0;
+  restoreCalls.length = 0;
   sentDuringImport = false;
   fetchMock.mockClear();
   _setLaunchSpawn();
@@ -129,11 +173,29 @@ beforeEach(() => {
 });
 
 describe("moveNote", () => {
-  it("writes the destination, appends to a human reason, replaces a machine one", () => {
-    expect(moveNote(null, "alpha")).toBe("moved to alpha");
-    expect(moveNote("wrong stage", "alpha")).toBe("wrong stage · moved to alpha");
-    expect(moveNote("wrong stage · moved to alpha", "alpha")).toBe("wrong stage · moved to alpha");
-    expect(moveNote("auto: batch too old", "alpha")).toBe("moved to alpha");
+  it("writes the destination and move id, appends to a human reason, replaces a machine one", () => {
+    expect(moveNote(null, "alpha", "a1")).toBe("moved to alpha #a1");
+    expect(moveNote("wrong stage", "alpha", "a1")).toBe("wrong stage · moved to alpha #a1");
+    expect(moveNote("auto: batch too old", "alpha", "a1")).toBe("moved to alpha #a1");
+  });
+
+  it("replaces an earlier move's marker, with or without an id, so the note names the move that holds the row", () => {
+    expect(moveNote("wrong stage · moved to alpha #a1", "alpha", "b2")).toBe(
+      "wrong stage · moved to alpha #b2",
+    );
+    expect(moveNote("moved to alpha #a1", "beta", "b2")).toBe("moved to beta #b2");
+    expect(moveNote("wrong stage · moved to alpha", "alpha", "b2")).toBe(
+      "wrong stage · moved to alpha #b2",
+    );
+    expect(moveNote("they moved to Berlin", "alpha", "b2")).toBe(
+      "they moved to Berlin · moved to alpha #b2",
+    );
+  });
+
+  it("trims a long reason to the cap and never the move marker", () => {
+    const note = moveNote("x".repeat(400), "alpha", "a1b2c3d4");
+    expect(note).toHaveLength(REJECT_REASON_MAX_CHARS);
+    expect(note.endsWith(" · moved to alpha #a1b2c3d4")).toBe(true);
   });
 });
 
@@ -159,7 +221,7 @@ describe("POST /api/queue/:id/move", () => {
         status: "rejected",
         decidedBy: "human",
         decisionReason: "other",
-        notes: "moved to alpha",
+        notes: expect.stringMatching(movedTo("alpha")),
       },
     ]);
   });
@@ -169,7 +231,7 @@ describe("POST /api/queue/:id/move", () => {
     row!.notes = "wrong industry";
     const res = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
     expect(res.status).toBe(200);
-    expect(statusCalls[0]?.["notes"]).toBe("wrong industry · moved to alpha");
+    expect(statusCalls[0]?.["notes"]).toMatch(movedTo("alpha", "wrong industry · "));
   });
 
   it("starts a stopped destination and waits for it before importing", async () => {
@@ -195,10 +257,108 @@ describe("POST /api/queue/:id/move", () => {
     const res = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: string }).error).toContain("alpha: already sent");
-    // Reserved first (nothing can drain it during the awaits), then put back.
-    expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "approved"]);
-    expect(noteCalls).toEqual([{ id: 746, notes: "looks good" }]);
+    // Reserved first (nothing can drain it during the awaits), then put back
+    // through one compare-and-set on the note the reservation wrote.
+    expect(statusCalls.map((c) => c["status"])).toEqual(["rejected"]);
+    expect(restoreCalls).toEqual([
+      {
+        id: 746,
+        reservedNotes: statusCalls[0]?.["notes"],
+        status: "approved",
+        notes: "looks good",
+        landed: true,
+      },
+    ]);
+    expect(noteCalls).toEqual([]);
+    expect(row).toMatchObject({ status: "approved", notes: "looks good" });
+  });
+
+  it("leaves the row alone when its note changed under the reservation (restore is a compare-and-set)", async () => {
+    let release!: (response: Response) => void;
+    const paused = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    fetchMock.mockResolvedValueOnce(new Response("{}"));
+    fetchMock.mockImplementationOnce(() => {
+      reached();
+      return paused;
+    });
+    const moving = moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
+    await waiting;
+    // The founder rejects the row by hand while the destination is slow.
+    row!.notes = "wrong stage";
+    release(new Response(JSON.stringify({ error: "refused" }), { status: 409 }));
+    expect((await moving).status).toBe(409);
+    expect(restoreCalls).toEqual([expect.objectContaining({ status: "pending", landed: false })]);
+    expect(row).toMatchObject({ status: "rejected", notes: "wrong stage" });
+  });
+
+  it("keeps a founder's reject made during the move even when it leaves the reservation's note", async () => {
+    row!.status = "approved";
+    let release!: (response: Response) => void;
+    const paused = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    fetchMock.mockResolvedValueOnce(new Response("{}"));
+    fetchMock.mockImplementationOnce(() => {
+      reached();
+      return paused;
+    });
+    const moving = moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
+    await waiting;
+    const reservedNote = row!.notes;
+    // No reason typed: status and note stay exactly as the reservation wrote them.
+    const rejected = await rejectQueueRoute(
+      new Request("http://127.0.0.1:3030/api/queue/746/reject", { method: "POST" }),
+      { id: "746" },
+    );
+    expect(rejected.status).toBe(200);
+    expect(row).toMatchObject({ status: "rejected", notes: reservedNote });
+    release(new Response(JSON.stringify({ error: "refused" }), { status: 409 }));
+    expect((await moving).status).toBe(409);
+    expect(restoreCalls).toEqual([]);
+    expect(row).toMatchObject({ status: "rejected", notes: reservedNote });
+  });
+
+  it("keeps a founder's approve that superseded their reject when a later move re-reserves the row and every move fails", async () => {
+    let release!: (response: Response) => void;
+    const paused = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    fetchMock.mockResolvedValueOnce(new Response("{}"));
+    fetchMock.mockImplementationOnce(() => {
+      reached();
+      return paused;
+    });
+    const first = moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
+    await waiting;
+    expect((await rejectQueueRoute(decide("reject"), { id: "746" })).status).toBe(200);
+    expect((await approveQueueRoute(decide("approve"), { id: "746" })).status).toBe(200);
     expect(row!.status).toBe("approved");
+    // A second move re-reserves the approved row; its destination refuses.
+    importReply = { status: 409, body: { error: "refused" } };
+    expect((await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" })).status).toBe(409);
+    expect(row).toMatchObject({
+      status: "rejected",
+      notes: expect.stringMatching(movedTo("alpha")),
+    });
+    release(new Response(JSON.stringify({ error: "refused" }), { status: 409 }));
+    expect((await first).status).toBe(409);
+    // The founder's last word was approve: it is what the restore writes back.
+    expect(restoreCalls).toEqual([expect.objectContaining({ status: "approved", landed: true })]);
+    expect(row).toMatchObject({ status: "approved", notes: null });
   });
 
   it("restores the row when the destination cannot be started", async () => {
@@ -214,8 +374,11 @@ describe("POST /api/queue/:id/move", () => {
       await vi.runAllTimersAsync();
       const res = await moving;
       expect(res.status).toBe(503);
-      expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "pending"]);
-      expect(noteCalls).toEqual([{ id: 746, notes: "" }]);
+      expect(statusCalls.map((c) => c["status"])).toEqual(["rejected"]);
+      expect(restoreCalls).toEqual([
+        expect.objectContaining({ id: 746, status: "pending", notes: null, landed: true }),
+      ]);
+      expect(row).toMatchObject({ status: "pending", notes: null });
     } finally {
       vi.useRealTimers();
     }
@@ -244,11 +407,15 @@ describe("POST /api/queue/:id/move", () => {
       try {
         const older = moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
         await waiting;
-        // Same destination and identical notes: comparing notes cannot identify
-        // which request owns the reservation.
+        const olderNote = row!.notes;
+        // Same destination: only the per-move id in the note tells the two
+        // reservations apart (#983).
         const newer = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
         expect(newer.status).toBe(200);
         expect(importBodies).toHaveLength(1);
+        const newerNote = row!.notes;
+        expect(newerNote).toMatch(movedTo("alpha"));
+        expect(newerNote).not.toBe(olderNote);
         up = false;
         if (failure === "refused import") {
           release(new Response(JSON.stringify({ error: "refused" }), { status: 409 }));
@@ -259,8 +426,10 @@ describe("POST /api/queue/:id/move", () => {
         expect((await older).status).toBe(
           failure === "startup" ? 503 : failure === "refused import" ? 409 : 502,
         );
-        expect(row).toMatchObject({ status: "rejected", notes: "moved to alpha" });
+        // The second move's note stays: the first's failure restored nothing.
+        expect(row).toMatchObject({ status: "rejected", notes: newerNote });
         expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "rejected"]);
+        expect(restoreCalls).toEqual([]);
         expect(noteCalls).toEqual([]);
       } finally {
         vi.useRealTimers();
@@ -315,14 +484,24 @@ describe("POST /api/queue/:id/move", () => {
       }
       expect(statusAfterFirst).toBe("rejected");
       if (successful) {
-        expect(row).toMatchObject({ status: "rejected", notes: "looks good · moved to alpha" });
+        expect(row).toMatchObject({ status: "rejected", notes: statusCalls[1]?.["notes"] });
+        expect(row!.notes).toMatch(movedTo("alpha", "looks good · "));
         expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "rejected"]);
-        expect(noteCalls).toEqual([]);
+        expect(restoreCalls).toEqual([]);
       } else {
         expect(row).toMatchObject({ status: "approved", notes: "looks good" });
-        expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "rejected", "approved"]);
-        expect(noteCalls).toEqual([{ id: 746, notes: "looks good" }]);
+        expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "rejected"]);
+        // One restore, after both settled, keyed on the latest reservation.
+        expect(restoreCalls).toEqual([
+          expect.objectContaining({
+            reservedNotes: statusCalls[1]?.["notes"],
+            status: "approved",
+            notes: "looks good",
+            landed: true,
+          }),
+        ]);
       }
+      expect(noteCalls).toEqual([]);
     },
   );
 

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { draftAngleFor, parseDraftAngle } from "./_draft-angle.ts";
 import { toDraftVersionView } from "./_draft-versions.ts";
 import {
@@ -900,6 +901,19 @@ export async function approveQueueRoute(
     decidedBy: "human",
     ...(parsedReason.decisionReason ? { decisionReason: parsedReason.decisionReason } : {}),
   });
+  // The founder's approval is the latest decision on a row a move holds: it
+  // supersedes a reject made during the move, and a later move that
+  // re-reserves the row puts it back approved if every hand-over fails
+  // (#983). A note the founder typed meanwhile is kept, the marker is not.
+  const moving = activeQueueMoves.get(id);
+  if (moving) {
+    const notes = ledger.getQueueRow(id)?.notes ?? null;
+    moving.rejected = false;
+    moving.previous = {
+      status: "approved",
+      notes: notes === moving.reserved ? moving.previous.notes : notes,
+    };
+  }
   // Recent posts are bought on approval, in the background: the response
   // never waits on them, and a failed capture never fails the approval.
   scheduleNewsfeedOnApproval([id]);
@@ -909,17 +923,28 @@ export async function approveQueueRoute(
 /** `dequeueApproved`'s default lease: a row claimed more recently than this is mid-drain. */
 const DRAIN_LEASE_MS = 15 * 60 * 1000;
 
+/** An earlier move's marker at the end of a note, with or without its id (rows moved before #983). */
+const MOVE_MARK_SUFFIX = /(?:^|\s·\s)moved to \S+(?: #[a-z0-9]+)?$/i;
+
 /**
  * The source row's note once it has been handed over: a human reason is
  * kept and the destination appended; otherwise the destination alone. Never
- * `auto:`. The founder clicked.
+ * `auto:`. The founder clicked. `token` is the per-move id (issue #983): the
+ * marker reads `moved to <workspace> #<token>`, and a later move's marker
+ * replaces an earlier one, so the note names the move that holds the row.
  */
-export function moveNote(existing: string | null | undefined, workspace: string): string {
-  const moved = `moved to ${workspace}`;
-  const prior = existing?.trim() ?? "";
+export function moveNote(
+  existing: string | null | undefined,
+  workspace: string,
+  token: string,
+): string {
+  const moved = `moved to ${workspace} #${token}`;
+  const prior = (existing?.trim() ?? "").replace(MOVE_MARK_SUFFIX, "").trim();
   if (!prior || MACHINE_PREFIX.test(prior)) return moved;
-  if (prior.includes(moved)) return prior;
-  return `${prior} · ${moved}`.slice(0, REJECT_REASON_MAX_CHARS);
+  // The cap trims the reason, never the marker: the token is what identifies
+  // this move's reservation.
+  const sep = " · ";
+  return `${prior.slice(0, REJECT_REASON_MAX_CHARS - moved.length - sep.length).trimEnd()}${sep}${moved}`;
 }
 
 function isImportRequest(body: unknown): body is ImportQueueRowRequest {
@@ -1084,16 +1109,30 @@ export async function importQueueRowRoute(req: Request): Promise<Response> {
 
 // Each server owns one workspace ledger. Overlapping moves share a reservation:
 // restore the original snapshot only after all settle and none imported the row.
+// `reserved` is the latest move's note (its token): the restore is a
+// compare-and-set on it, so it never lands on a row some other writer (a move
+// this map did not see, the founder's own edit) changed meanwhile (#983).
+// `rejected` is set by a founder's reject made during the move: it can leave
+// both the status and the note as the reservation wrote them, so the note
+// alone cannot tell it apart, and the restore is skipped. A founder's approve
+// after it clears the flag and becomes the snapshot a later restore writes.
 const activeQueueMoves = new Map<
   number,
-  { pending: number; imported: boolean; previous: Pick<QueueRow, "status" | "notes"> }
+  {
+    pending: number;
+    imported: boolean;
+    rejected: boolean;
+    reserved: string;
+    previous: Pick<QueueRow, "status" | "notes">;
+  }
 >();
 
 /**
  * POST /api/queue/:id/move {workspace}: hand this row to another workspace.
  * The destination is started if it is not running, the row is imported
  * through its own API, and only then is the row here rejected with a
- * `moved to <workspace>` note so it never drafts from this workspace again.
+ * `moved to <workspace> #<id>` note so it never drafts from this workspace
+ * again.
  * A sent or in-flight row cannot move (it is already a conversation here).
  */
 export async function moveQueueRowRoute(
@@ -1142,13 +1181,16 @@ export async function moveQueueRowRoute(
   // Reserve the row before anything is awaited: `rejected` is the one status
   // neither the drain (`dequeueApproved` takes `approved` only) nor send-draft
   // will touch, so nothing can send it while the destination starts up and
-  // imports. Restored only if every overlapping hand-over fails.
+  // imports. Restored only if every overlapping hand-over fails, and only
+  // while the row still carries the note this reservation wrote (#983).
   const moves = activeQueueMoves.get(id) ?? {
     pending: 0,
     imported: false,
+    rejected: false,
+    reserved: "",
     previous: { status: row.status, notes: row.notes },
   };
-  const note = moveNote(row.notes, workspace);
+  const note = moveNote(row.notes, workspace, randomBytes(4).toString("hex"));
   // A move is a routing decision, never a fit judgment about the person.
   ledger.setQueueStatus({
     id,
@@ -1158,6 +1200,7 @@ export async function moveQueueRowRoute(
     notes: note,
   });
   moves.pending++;
+  moves.reserved = note;
   activeQueueMoves.set(id, moves);
 
   try {
@@ -1222,14 +1265,13 @@ export async function moveQueueRowRoute(
   } finally {
     if (--moves.pending === 0) {
       activeQueueMoves.delete(id);
-      if (!moves.imported) {
-        const { previous } = moves;
-        ledger.setQueueStatus({
+      if (!moves.imported && !moves.rejected) {
+        ledger.restoreQueueMoveIf({
           id,
-          status: previous.status,
-          ...(previous.status === "rejected" ? { decidedBy: "human" as const } : {}),
+          reservedNotes: moves.reserved,
+          status: moves.previous.status,
+          notes: moves.previous.notes,
         });
-        ledger.setQueueNotes({ id, notes: previous.notes ?? "" });
       }
     }
   }
@@ -1309,6 +1351,10 @@ export async function rejectQueueRoute(
     ...(parsedReason.decisionReason ? { decisionReason: parsedReason.decisionReason } : {}),
     ...(parsed.reason !== undefined ? { notes: parsed.reason } : {}),
   });
+  // The founder's rejection is the latest decision: a move still in flight
+  // must not put the row back when it fails (#983).
+  const moving = activeQueueMoves.get(id);
+  if (moving) moving.rejected = true;
   return jsonResponse({ ok: true }, 200, req);
 }
 
