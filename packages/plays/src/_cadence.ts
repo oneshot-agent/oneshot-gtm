@@ -1,5 +1,9 @@
 import type { DraftAngleChoice } from "@oneshot-gtm/shared-types";
-import { CADENCE_SEND_UNCONFIRMED, replyIntentMeta } from "@oneshot-gtm/shared-types";
+import {
+  CADENCE_SEND_UNCONFIRMED,
+  LINKEDIN_SEND_PENDING,
+  replyIntentMeta,
+} from "@oneshot-gtm/shared-types";
 import {
   classifyReply,
   type InboxEmail,
@@ -44,6 +48,9 @@ import {
   SendDeferredError,
   linkedInMessageConversationId,
   linkedInMessageDeferral,
+  awaitLinkedInJob,
+  isLinkedInSendPending,
+  LinkedInSendPendingError,
   linkedInOutreachAccount,
   triggerConfigForSource,
   canInviteOnLinkedInNow,
@@ -1565,6 +1572,10 @@ export async function advanceCadence(
               : "deferred: daily send caps reached",
         };
       }
+      // Accepted and not finished: recorded as pending, resolved by the sweep.
+      if (isLinkedInSendPending(err)) {
+        return { action: "skipped", payload: null, receiptIds: [], note: (err as Error).message };
+      }
       throw err;
     } finally {
       if (claimed) {
@@ -1780,42 +1791,15 @@ export async function runCadenceStepForProspect(
       { prospect_id: opts.prospectId, play_name: opts.playName, step_index: nextIndex },
       "warn",
     );
-    if (isBreakupStepAt(seq, stepEntryIndex)) {
-      ledger.setCadenceStatus({
-        prospectId: opts.prospectId,
-        playName: opts.playName,
-        status: "breakup",
-      });
-      return {
-        action: "skipped",
-        payload: null,
-        receiptIds: [],
-        note: `step ${nextIndex} already sent — reconciled (breakup)`,
-      };
-    }
-    const next = seq.steps[stepEntryIndex + 1];
-    ledger.advanceCadence({
-      prospectId: opts.prospectId,
-      playName: opts.playName,
-      newStep: nextIndex,
-      nextDueAt: next
-        ? step.channel === "direct_mail"
-          ? mailFollowupDueAt(next.dayOffset)
-          : new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString()
-        : null,
-    });
-    if (!next) {
-      ledger.setCadenceStatus({
-        prospectId: opts.prospectId,
-        playName: opts.playName,
-        status: "completed",
-      });
-    }
+    const moved = advancePastSentStep(opts, seq, stepEntryIndex, step);
     return {
       action: "skipped",
       payload: null,
       receiptIds: [],
-      note: `step ${nextIndex} already sent — reconciled (advanced without re-send)`,
+      note:
+        moved === "breakup"
+          ? `step ${nextIndex} already sent — reconciled (breakup)`
+          : `step ${nextIndex} already sent — reconciled (advanced without re-send)`,
     };
   }
 
@@ -1842,7 +1826,7 @@ export async function runCadenceStepForProspect(
       // The connection request of an email cadence that carries on: the invite
       // guard (#787) decides before anything is drafted. A refusal ends the
       // cadence; a guard that can't be read leaves the step due.
-      const verdict = continuationInviteVerdict(opts.prospectId);
+      const verdict = continuationInviteVerdict(opts.prospectId, opts.playName);
       if (!verdict.ok) {
         if (verdict.reason === "guard-unavailable") {
           return {
@@ -1868,7 +1852,7 @@ export async function runCadenceStepForProspect(
       // A known connection LinkedIn said is not one: the connection request
       // goes out at this step first, under the same guard, and only as a
       // draft reviewed on /cadences. The message waits for its acceptance.
-      const verdict = continuationInviteVerdict(opts.prospectId);
+      const verdict = continuationInviteVerdict(opts.prospectId, opts.playName);
       if (!verdict.ok) {
         if (verdict.reason === "guard-unavailable") {
           return {
@@ -2065,6 +2049,8 @@ export async function runCadenceStepForProspect(
       // A daily-cap deferral isn't a failure. The step stays due for
       // tomorrow. Genuine send errors are recorded, and so is an unknown
       // outcome: it blocks every Send until Sent has been checked.
+      // A LinkedIn send OneShot accepted and had not finished is pending:
+      // the LinkedIn sweep records its outcome, and Send checks it again.
       const unconfirmed = (err as Error)?.name === "UncertainSendError";
       if (unconfirmed || !isSendDeferred(err)) {
         ledger.recordCadenceSendError({
@@ -2072,7 +2058,9 @@ export async function runCadenceStepForProspect(
           playName: opts.playName,
           error: unconfirmed
             ? CADENCE_SEND_UNCONFIRMED
-            : ((err as Error)?.message ?? "send failed"),
+            : isLinkedInSendPending(err)
+              ? LINKEDIN_SEND_PENDING
+              : ((err as Error)?.message ?? "send failed"),
         });
       }
       throw err;
@@ -2243,7 +2231,7 @@ export async function previewCadenceStep(input: {
   if (continuationInvite) {
     // The send path's guard check, run before the note is drafted: a refusal
     // shows here instead of after a clean-looking draft has been paid for.
-    const verdict = continuationInviteVerdict(input.prospectId);
+    const verdict = continuationInviteVerdict(input.prospectId, input.playName);
     if (!verdict.ok && verdict.reason === "guard-unavailable") {
       throw new Error(`${verdict.detail} — will retry`);
     }
@@ -2283,7 +2271,7 @@ export async function previewCadenceStep(input: {
     step.id !== CONTINUATION_INVITE_ID &&
     connectionVoided(liveLinkedInInvite(input.prospectId, input.playName));
   if (reinvite) {
-    const verdict = continuationInviteVerdict(input.prospectId);
+    const verdict = continuationInviteVerdict(input.prospectId, input.playName);
     if (!verdict.ok) {
       if (verdict.reason === "guard-unavailable") throw new Error(`${verdict.detail} — will retry`);
       const done = skipContinuation(
@@ -2633,6 +2621,37 @@ export async function sendCadenceStepBatch(
   return out;
 }
 
+/**
+ * The idempotency key of a cadence's LinkedIn message (or reply) at a step:
+ * one send per step, so a retry returns the original. `stepIndex` is the step
+ * the dispatch sends (`current_step + 1`).
+ */
+export function cadenceLinkedInMessageKey(
+  workspace: string,
+  prospectId: number,
+  playName: string,
+  stepIndex: number,
+): string {
+  return `gtm:${workspace}:cadence:${prospectId}:${playName}:${stepIndex}`;
+}
+
+/**
+ * The step a cadence's connection request is recorded (and keyed) at: its own
+ * step, or, sent in place of a message after a known connection LinkedIn said
+ * is not one, the step that connection was recorded at, so the message keeps
+ * its step.
+ */
+export function cadenceInviteStepIndex(
+  prospectId: number,
+  playName: string,
+  step: Pick<SequenceStep, "id">,
+  stepIndex: number,
+): number {
+  const replaces =
+    step.id === CONTINUATION_INVITE_ID ? null : liveLinkedInInvite(prospectId, playName);
+  return replaces && connectionVoided(replaces) ? replaces.event.step_index : stepIndex;
+}
+
 function dispatchStep(
   input: Parameters<typeof dispatchStepImpl>[0],
 ): ReturnType<typeof dispatchStepImpl> {
@@ -2702,14 +2721,12 @@ async function dispatchStepImpl(input: {
     const prospect = loadProspect(input.prospectId);
     if (!prospect) return { receiptIds, skipReason: "prospect not found" };
     const linkedIn = input.linkedIn;
-    // In place of a message, after a known connection LinkedIn said is not
-    // one: recorded where that connection was, so the message keeps its step.
-    const replaces =
-      input.step.id === CONTINUATION_INVITE_ID
-        ? null
-        : liveLinkedInInvite(input.prospectId, input.playName);
-    const stepIndex =
-      replaces && connectionVoided(replaces) ? replaces.event.step_index : input.stepIndex;
+    const stepIndex = cadenceInviteStepIndex(
+      input.prospectId,
+      input.playName,
+      input.step,
+      input.stepIndex,
+    );
     // The invite guard, the profile claim and the quota share (#786, #787) all
     // run inside; a deferral throws and leaves the step due. Recorded at this
     // step with the invite marker, never at step 0 of an email cadence.
@@ -2769,15 +2786,30 @@ async function dispatchStepImpl(input: {
       return { receiptIds, skipReason: "LinkedIn messages are sent from the dashboard" };
     }
     // One message per step: a retried send returns the original.
-    const idempotencyKey = `gtm:${currentWorkspaceName()}:cadence:${input.prospectId}:${input.playName}:${input.stepIndex}`;
-    const conversation =
-      linkedInConversationFor({
-        workspace: currentWorkspaceName(),
-        prospectId: input.prospectId,
-        linkedinUrl: input.prospectLinkedinUrl ?? null,
-      }) ?? storedLinkedInConversation(input.prospectId, input.playName);
+    const idempotencyKey = cadenceLinkedInMessageKey(
+      currentWorkspaceName(),
+      input.prospectId,
+      input.playName,
+      input.stepIndex,
+    );
+    // Sent before and still pending: check that job, never send again. Read
+    // first: once LinkedIn delivers it, the message's own conversation shows
+    // up in the synced inbox, and a reply into it would be a second message.
+    const pending = ledger.linkedInPending.get(idempotencyKey);
+    const conversation = pending
+      ? null
+      : (linkedInConversationFor({
+          workspace: currentWorkspaceName(),
+          prospectId: input.prospectId,
+          linkedinUrl: input.prospectLinkedinUrl ?? null,
+        }) ?? storedLinkedInConversation(input.prospectId, input.playName));
     let sentInto: { conversationId: string; accountId: string; workspace: string } | null =
       conversation;
+    // What LinkedIn received: a resumed job carries the text it was sent with,
+    // whatever the draft says now.
+    const pendingText = pending?.detail["text"];
+    const sentText =
+      typeof pendingText === "string" && pendingText ? pendingText : input.payload.text;
     if (conversation) {
       await input.linkedIn(conversation.workspace, {
         kind: "reply",
@@ -2788,22 +2820,54 @@ async function dispatchStepImpl(input: {
       });
     } else {
       // Connected, but no 1:1 conversation yet (accepting an invite does not
-      // create one): `message` opens it.
-      const sender = linkedInSenderFor(input.prospectId, input.playName);
+      // create one): `message` opens it. A pending one goes on as the
+      // account it was sent from.
+      const sender = pending
+        ? { workspace: pending.accountWorkspace, accountId: pending.accountId }
+        : linkedInSenderFor(input.prospectId, input.playName);
       if (!sender) return { receiptIds, skipReason: "no LinkedIn account connected" };
       const profile = normalizeLinkedInProfile(input.prospectLinkedinUrl)?.url;
       if (!profile) return { receiptIds, skipReason: "prospect has no LinkedIn profile" };
+      const linkedIn = input.linkedIn;
+      const call = (operation: LinkedInOperation) => linkedIn(sender.workspace, operation);
       let sent: unknown;
       try {
-        sent = await input.linkedIn(sender.workspace, {
-          kind: "message",
-          accountId: sender.accountId,
-          profile,
-          text: input.payload.text,
-          idempotencyKey,
-          playName: input.playName,
-        });
+        // OneShot paces messages per account: a send in a batch can wait
+        // minutes before it goes out. Past the wait it is pending, not failed.
+        const job = await awaitLinkedInJob(
+          pending
+            ? { status: "pending", request_id: pending.requestId }
+            : await call({
+                kind: "message",
+                accountId: sender.accountId,
+                profile,
+                text: input.payload.text,
+                idempotencyKey,
+                playName: input.playName,
+              }),
+          call,
+        );
+        if (job.state === "pending") {
+          ledger.linkedInPending.record({
+            idempotencyKey,
+            kind: "message",
+            requestId: job.requestId,
+            accountWorkspace: sender.workspace,
+            accountId: sender.accountId,
+            prospectId: input.prospectId,
+            playName: input.playName,
+            stepIndex: input.stepIndex,
+            queueId: null,
+            detail: { text: input.payload.text, label: input.label ?? null },
+          });
+          throw new LinkedInSendPendingError(job.requestId, idempotencyKey);
+        }
+        sent = job.result;
       } catch (err) {
+        if (isLinkedInSendPending(err)) throw err;
+        // A failed job is its outcome: no longer pending.
+        if (pending && (err as { name?: unknown }).name === "JobError")
+          ledger.linkedInPending.clear(idempotencyKey);
         // Not connected yet, or over the daily limit: the step stays due.
         const deferral = linkedInMessageDeferral(err);
         const invite =
@@ -2834,25 +2898,15 @@ async function dispatchStepImpl(input: {
       const conversationId = linkedInMessageConversationId(sent);
       sentInto = conversationId ? { conversationId, ...sender } : null;
     }
-    ledger.recordSequenceEvent({
+    recordLinkedInMessageSent({
       prospectId: input.prospectId,
       playName: input.playName,
       stepIndex: input.stepIndex,
-      channel: "linkedin",
-      status: "sent",
-      metadata: {
-        subject: "LinkedIn message",
-        body: input.payload.text,
-        label: input.label ?? null,
-        ...(sentInto && !conversation
-          ? {
-              conversationId: sentInto.conversationId,
-              accountId: sentInto.accountId,
-              accountWorkspace: sentInto.workspace,
-            }
-          : {}),
-      },
+      text: sentText,
+      label: input.label ?? null,
+      opened: sentInto && !conversation ? sentInto : null,
     });
+    ledger.linkedInPending.clear(idempotencyKey);
     return { receiptIds };
   }
   if (input.payload.kind === "email") {
@@ -3521,6 +3575,100 @@ function missingAddress(
   return null;
 }
 
+/**
+ * Move a cadence past a step whose send is already recorded, as a successful
+ * send would have: the breakup step ends it as `breakup`, any other advances
+ * it (completed after the last step).
+ */
+function advancePastSentStep(
+  opts: Pick<RunCadenceStepOptions, "prospectId" | "playName">,
+  seq: Sequence,
+  stepEntryIndex: number,
+  step: SequenceStep,
+): "breakup" | "advanced" | "completed" {
+  const ledger = getLedger();
+  if (isBreakupStepAt(seq, stepEntryIndex)) {
+    ledger.setCadenceStatus({
+      prospectId: opts.prospectId,
+      playName: opts.playName,
+      status: "breakup",
+    });
+    return "breakup";
+  }
+  const next = seq.steps[stepEntryIndex + 1];
+  ledger.advanceCadence({
+    prospectId: opts.prospectId,
+    playName: opts.playName,
+    newStep: stepEntryIndex + 1,
+    nextDueAt: next
+      ? step.channel === "direct_mail"
+        ? mailFollowupDueAt(next.dayOffset)
+        : new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString()
+      : null,
+  });
+  if (next) return "advanced";
+  ledger.setCadenceStatus({
+    prospectId: opts.prospectId,
+    playName: opts.playName,
+    status: "completed",
+  });
+  return "completed";
+}
+
+/**
+ * After the LinkedIn sweep recorded a pending send at `stepIndex`, move the
+ * cadence on as the send would have. A message (or an email cadence's
+ * connection-request step) advances; a connection request sent in place of a
+ * message keeps the cadence on that message, due again in a day. Only for an
+ * active cadence whose due step is `stepIndex`; anything else is left alone.
+ */
+export function settleCadenceAfterLinkedInSend(input: {
+  prospectId: number;
+  playName: string;
+  stepIndex: number;
+  kind: "message" | "invite";
+}): "breakup" | "advanced" | "completed" | "waiting" | "unchanged" {
+  const ledger = getLedger();
+  const cadence = ledger.getCadence(input.prospectId, input.playName);
+  if (!cadence || cadence.status !== "active") return "unchanged";
+  const seq = effectiveSequence(input.playName, input.prospectId);
+  const stepEntryIndex = cadence.current_step;
+  const step = seq?.steps[stepEntryIndex];
+  if (!seq || !step) return "unchanged";
+  if (input.kind === "invite" && step.id !== CONTINUATION_INVITE_ID) {
+    // In place of a message: the message still waits for the acceptance.
+    ledger.clearCadenceDraft({ prospectId: input.prospectId, playName: input.playName });
+    ledger.postponeCadence({
+      prospectId: input.prospectId,
+      playName: input.playName,
+      nextDueAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+    });
+    ledger.clearCadenceSendError({ prospectId: input.prospectId, playName: input.playName });
+    return "waiting";
+  }
+  if (cadence.current_step + 1 !== input.stepIndex) return "unchanged";
+  return advancePastSentStep(input, seq, stepEntryIndex, step);
+}
+
+/**
+ * The LinkedIn sweep proved a pending connection request never reached
+ * LinkedIn: the LinkedIn steps are skipped, as for any refused invite.
+ */
+export function skipCadenceLinkedInSteps(input: {
+  prospectId: number;
+  playName: string;
+  reason: string;
+}): boolean {
+  const ledger = getLedger();
+  const cadence = ledger.getCadence(input.prospectId, input.playName);
+  if (!cadence || cadence.status !== "active") return false;
+  const seq = effectiveSequence(input.playName, input.prospectId);
+  const step = seq?.steps[cadence.current_step];
+  if (!seq || !step) return false;
+  skipContinuation({ ...input, dryRun: false }, seq, cadence.current_step, step, input.reason);
+  return true;
+}
+
 /** Advance past the current step, completing the cadence after the last one. */
 function advanceOrComplete(
   opts: RunCadenceStepOptions,
@@ -3628,6 +3776,15 @@ export function triggerLinkedInContinuation(
   }
 }
 
+/** The row a cadence's connection request is sent as (see `continuationInviteRow`); null without the prospect. */
+export function cadenceInviteRowFor(
+  prospectId: number,
+  playName: string,
+): ReturnType<typeof continuationInviteRow> | null {
+  const prospect = loadProspect(prospectId);
+  return prospect ? continuationInviteRow(prospect, playName) : null;
+}
+
 /**
  * The queue-row shape the invite drafter and sender read, built from the
  * person an email cadence is running on: what the row the sequence started
@@ -3661,8 +3818,21 @@ function continuationInviteRow(
   };
 }
 
-/** The invite guard (#787) for the person an email cadence would invite. */
-function continuationInviteVerdict(prospectId: number): LinkedInGuardVerdict {
+/**
+ * The invite guard (#787) for the person an email cadence would invite. An
+ * invite of this cadence already sent and awaiting its outcome passes: its
+ * claim is the one the guard would see, and the send path resumes that job
+ * instead of inviting again.
+ */
+function continuationInviteVerdict(prospectId: number, playName?: string): LinkedInGuardVerdict {
+  if (
+    playName &&
+    getLedger()
+      .linkedInPending.list()
+      .some((p) => p.kind === "invite" && p.prospectId === prospectId && p.playName === playName)
+  ) {
+    return { ok: true };
+  }
   const prospect = loadProspect(prospectId);
   if (!prospect) return { ok: false, reason: "guard-unavailable", detail: "prospect not found" };
   return canInviteOnLinkedInNow({
@@ -3776,12 +3946,46 @@ export function continueCadencesOntoLinkedIn(
 }
 
 /**
+ * Record a cadence LinkedIn message as sent at its step. `opened`: the
+ * conversation a first message opened, kept so replies and the next message
+ * find it. Shared by the send and the sweep that resolves a pending one.
+ */
+export function recordLinkedInMessageSent(input: {
+  prospectId: number;
+  playName: string;
+  stepIndex: number;
+  text: string;
+  label: string | null;
+  opened: { conversationId: string; accountId: string; workspace: string } | null;
+}): void {
+  getLedger().recordSequenceEvent({
+    prospectId: input.prospectId,
+    playName: input.playName,
+    stepIndex: input.stepIndex,
+    channel: "linkedin",
+    status: "sent",
+    metadata: {
+      subject: "LinkedIn message",
+      body: input.text,
+      label: input.label,
+      ...(input.opened
+        ? {
+            conversationId: input.opened.conversationId,
+            accountId: input.opened.accountId,
+            accountWorkspace: input.opened.workspace,
+          }
+        : {}),
+    },
+  });
+}
+
+/**
  * A person the account must not (or need not) invite gets no LinkedIn
  * sequence: the invite step is recorded as skipped with the guard's reason and
  * the cadence completes.
  */
 function skipContinuation(
-  opts: RunCadenceStepOptions,
+  opts: Pick<RunCadenceStepOptions, "prospectId" | "playName" | "dryRun">,
   seq: Sequence,
   stepEntryIndex: number,
   step: SequenceStep,

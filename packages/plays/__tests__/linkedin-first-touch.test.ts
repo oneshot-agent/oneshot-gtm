@@ -9,6 +9,8 @@ const upserts: Array<Record<string, unknown>> = [];
 const events: Array<Record<string, unknown>> = [];
 const enrollments: Array<Record<string, unknown>> = [];
 let failReceipt = false;
+// Pending sends, by idempotency key (the ledger's linkedInPending store).
+const pendingSends = new Map<string, Record<string, unknown>>();
 // The prompt tests pin the model writer; the template tests set their own.
 let linkedinCfg: Record<string, unknown> = { writer: "model" };
 
@@ -39,6 +41,15 @@ vi.mock("@oneshot-gtm/core", async () => {
       getCadence: () => ({ enrolled_at: "2026-09-27 00:00:00", channel: "linkedin" }),
       getCadencePlan: () => null,
       saveCadencePlan: () => {},
+      linkedInPending: {
+        get: (key: string) => pendingSends.get(key) ?? null,
+        record: (input: Record<string, unknown>) => {
+          pendingSends.set(input["idempotencyKey"] as string, input);
+        },
+        clear: (key: string) => {
+          pendingSends.delete(key);
+        },
+      },
     }),
   };
 });
@@ -86,6 +97,34 @@ function sender(result: unknown) {
   };
 }
 
+/** An invite whose job fails `content_rejected`; the invitation reads `invitationStatus`. */
+const rejected = (invitationStatus: string | Error) => {
+  const calls: Array<Record<string, unknown>> = [];
+  return {
+    calls,
+    sender: {
+      accountId: "acct-1",
+      workspace: "alpha",
+      call: async (op: unknown) => {
+        const o = op as Record<string, unknown>;
+        calls.push(o);
+        if (o["kind"] === "account") return {};
+        if (o["kind"] === "invite") return { status: "processing", request_id: "job-1" };
+        if (o["kind"] === "invitation") {
+          if (invitationStatus instanceof Error) throw invitationStatus;
+          return { invitation_id: "inv-x", status: invitationStatus };
+        }
+        throw Object.assign(new Error("Job failed: content_rejected"), {
+          name: "JobError",
+          code: "content_rejected",
+          jobError: "content_rejected",
+          partialResult: { invitation_id: "inv-x" },
+        });
+      },
+    },
+  };
+};
+
 beforeEach(() => {
   // A fresh shared DB per test: the guard refuses a profile that was already invited.
   process.env["ONESHOT_GTM_SHARED"] = mkdtempSync(join(tmpdir(), "linkedin-first-touch-"));
@@ -96,6 +135,7 @@ beforeEach(() => {
   events.length = 0;
   enrollments.length = 0;
   failReceipt = false;
+  pendingSends.clear();
   linkedinCfg = { writer: "model" };
 });
 
@@ -569,6 +609,43 @@ describe("sendLinkedInInvite", () => {
       const retry = await again();
       expect(retry.out).toMatchObject({ sent: true });
     });
+
+    it("an invite LinkedIn refused (its invitation reads not_sent) frees the profile, with the refusal as a guard flag", async () => {
+      const r = rejected("not_sent");
+      const out = await sendLinkedInInvite({
+        row: row(),
+        note: "hi",
+        sender: r.sender,
+        workspace: "alpha",
+      });
+      expect(out).toEqual({
+        sent: false,
+        flags: ["linkedin-invite-refused: LinkedIn refused this invite (content_rejected)"],
+        guard: "linkedin-invite-refused",
+      });
+      expect(r.calls.find((c) => c["kind"] === "invitation")).toMatchObject({
+        accountId: "acct-1",
+        invitationId: "inv-x",
+      });
+      expect(events).toHaveLength(0);
+      const retry = await again();
+      expect(retry.out).toMatchObject({ sent: true });
+    });
+
+    for (const [label, status] of [
+      ["an invitation that reads pending", "pending"],
+      ["an unreadable invitation", new Error("network")],
+    ] as const) {
+      it(`a refusal without proof (${label}) keeps the profile held`, async () => {
+        const r = rejected(status);
+        await expect(
+          sendLinkedInInvite({ row: row(), note: "hi", sender: r.sender, workspace: "alpha" }),
+        ).rejects.toThrow(/content_rejected/);
+        const { out, invites } = await again();
+        expect(out).toMatchObject({ sent: false, guard: "already-invited" });
+        expect(invites).toHaveLength(0);
+      });
+    }
   });
 
   it("an X or GitHub URL is refused with the guard's invalid-profile reason", async () => {

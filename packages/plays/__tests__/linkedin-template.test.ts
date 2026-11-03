@@ -36,6 +36,10 @@ describe("templatedLinkedIn", () => {
     expect(templatedLinkedIn("first", {}, { name: "Acme Labs" })?.text).toBe(
       "Thanks for connecting. What are you working on right now?",
     );
+    // A stored username, not a name: no "hey GVillegasPM,".
+    expect(templatedLinkedIn("first", {}, { name: "GVillegasPM" })?.text).toBe(
+      "Thanks for connecting. What are you working on right now?",
+    );
   });
 
   it("is null when the workspace has the model write", () => {

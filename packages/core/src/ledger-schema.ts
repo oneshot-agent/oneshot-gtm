@@ -434,6 +434,35 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       addColumnIfMissing(db, "triggers", "outage_retries", "INTEGER NOT NULL DEFAULT 0");
     },
   },
+  {
+    // LinkedIn sends OneShot accepted whose outcome was not known when the
+    // sender stopped waiting (ledger-linkedin-pending.ts). The LinkedIn sweep
+    // resolves each one from OneShot's records; a retry checks it instead of
+    // sending again.
+    version: 20,
+    name: "linkedin-pending-sends",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS linkedin_pending_sends (
+          idempotency_key   TEXT PRIMARY KEY,
+          kind              TEXT NOT NULL,  -- 'message' | 'invite'
+          request_id        TEXT NOT NULL,
+          account_workspace TEXT NOT NULL,
+          account_id        TEXT NOT NULL,
+          prospect_id       INTEGER,
+          play_name         TEXT NOT NULL,
+          step_index        INTEGER,
+          queue_id          INTEGER,
+          detail_json       TEXT NOT NULL,
+          created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+          last_checked_at   TEXT,
+          checks            INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_linkedin_pending_cadence
+          ON linkedin_pending_sends(prospect_id, play_name);
+      `);
+    },
+  },
 ];
 
 /**

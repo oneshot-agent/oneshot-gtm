@@ -5,6 +5,7 @@ import {
   logEvent,
 } from "@oneshot-gtm/core";
 import type { LinkedInCaller } from "./_cadence.ts";
+import { sweepLinkedInPendingSends, type LinkedInPendingSweepResult } from "./_linkedin-pending.ts";
 import {
   liveLinkedInInvite,
   parseLinkedInInvitations,
@@ -27,6 +28,8 @@ export interface LinkedInInviteSweepResult {
   accepted: number;
   withdrawn: number;
   stopped: number;
+  /** Messages and invites whose outcome was pending, resolved first. */
+  pendingSends: LinkedInPendingSweepResult;
 }
 
 const watermarkKey = (a: { workspace: string; accountId: string }): string =>
@@ -37,7 +40,9 @@ const watermarkKey = (a: { workspace: string; accountId: string }): string =>
  * withdraws invites that outlived linkedInInviteTimeoutDays(). It records
  * acceptances (`acceptedAt`) and nothing else a person would see. It never
  * drafts and never sends a message: the first message appears on /cadences
- * as due, like any follow-up, to be reviewed and sent there.
+ * as due, like any follow-up, to be reviewed and sent there. First it
+ * records the outcome of sends that were still pending (_linkedin-pending.ts),
+ * which only reads OneShot's records.
  */
 export async function sweepLinkedInInvitations(input: {
   linkedIn: LinkedInCaller;
@@ -50,6 +55,7 @@ export async function sweepLinkedInInvitations(input: {
     accepted: 0,
     withdrawn: 0,
     stopped: 0,
+    pendingSends: await sweepLinkedInPendingSends({ linkedIn: input.linkedIn }),
   };
   const nowMs = (input.now ?? new Date()).getTime();
   const timeoutMs = linkedInInviteTimeoutDays() * DAY_MS;
@@ -140,6 +146,13 @@ export async function sweepLinkedInInvitations(input: {
     // one by one, moves the watermark; otherwise the same window is retried.
     if (listed && !unread) ledger.setPollWatermark(watermarkKey(account), startedAt);
   }
-  if (out.accepted + out.stopped > 0) logEvent("linkedin.invitation_sweep", { ...out });
+  if (out.accepted + out.stopped > 0)
+    logEvent("linkedin.invitation_sweep", {
+      pending: out.pending,
+      calls: out.calls,
+      accepted: out.accepted,
+      withdrawn: out.withdrawn,
+      stopped: out.stopped,
+    });
   return out;
 }

@@ -1,4 +1,8 @@
-import { CADENCE_SEND_UNCONFIRMED, type CadenceView } from "@oneshot-gtm/shared-types";
+import {
+  CADENCE_SEND_UNCONFIRMED,
+  LINKEDIN_SEND_PENDING,
+  type CadenceView,
+} from "@oneshot-gtm/shared-types";
 import { describe, expect, it } from "vitest";
 import {
   cadenceStateLabel,
@@ -83,6 +87,14 @@ describe("cadenceStateLabel", () => {
       tone: "blocked",
     });
     expect(sendErrorLabel("Job failed: Tool execution failed.")).toBe("send failed");
+  });
+
+  it("a LinkedIn send OneShot has not finished reads as pending, never as failed", () => {
+    expect(cadenceStateLabel(cadence({ lastSendError: LINKEDIN_SEND_PENDING }), now)).toEqual({
+      text: "step 2 of 4 · sent 3d ago · next in 1d · outcome pending",
+      tone: "blocked",
+    });
+    expect(sendErrorLabel(LINKEDIN_SEND_PENDING)).toBe("outcome pending");
   });
 
   it("sending in flight", () => {

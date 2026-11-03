@@ -22,7 +22,9 @@ export type LinkedInGuardReason =
   | "already-invited"
   | "already-touched"
   | "already-in-conversation"
-  | "guard-unavailable";
+  | "guard-unavailable"
+  /** Not the guard's own: LinkedIn refused the invite and nothing went out (the profile is free). */
+  | "linkedin-invite-refused";
 
 export type LinkedInGuardVerdict =
   | { ok: true }
@@ -338,6 +340,7 @@ const GUARD_REASONS: ReadonlySet<string> = new Set([
   "already-touched",
   "already-in-conversation",
   "guard-unavailable",
+  "linkedin-invite-refused",
 ]);
 
 /** The guard reason a flag carries, or null for any other flag. */
@@ -431,6 +434,38 @@ export function claimLinkedInProfile(input: {
       reason: "guard-unavailable",
       detail: "the shared invite record is unavailable",
     };
+  }
+}
+
+/**
+ * Settle an invite's claim after the call that made it has returned: the
+ * LinkedIn sweep, a resumed send or the reconcile command learns the outcome
+ * later, without the claim object. `confirm`: the invite went out. `release`:
+ * OneShot proved it did not (an invitation that reads `not_sent`). Only a
+ * claim still unsettled (`reserved` / `dispatched`) under this workspace's
+ * invite source changes. False when the shared file can't be used.
+ */
+export function settleLinkedInInviteClaim(input: {
+  profile: NormalizedLinkedInProfile;
+  workspace: string;
+  outcome: "confirm" | "release";
+  shared?: Pick<SharedDb, "settleLinkedInTouch">;
+}): boolean {
+  if (demoMode()) return true;
+  try {
+    (input.shared ?? getSharedDb()).settleLinkedInTouch(
+      input.profile.key,
+      `invite:${input.workspace}`,
+      input.outcome,
+    );
+    return true;
+  } catch (err) {
+    logEvent(
+      "shared_db.write_failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+    return false;
   }
 }
 

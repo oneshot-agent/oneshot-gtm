@@ -1,11 +1,16 @@
 import { readFileSync } from "node:fs";
 import {
+  callLinkedInAs,
   getSharedDb,
   importLedgerInvites,
   importTouchedProfiles,
   parseTouchedFile,
 } from "@oneshot-gtm/core";
-import { continueCadencesOntoLinkedIn } from "@oneshot-gtm/plays";
+import {
+  continueCadencesOntoLinkedIn,
+  reconcileLinkedInSends,
+  type LinkedInCaller,
+} from "@oneshot-gtm/plays";
 import { c, header, note } from "../output.ts";
 
 export interface ImportTouchedOptions {
@@ -86,4 +91,27 @@ export async function commandLinkedInContinueCadences(opts: {
   if (opts.verbose)
     for (const e of result.extended)
       note(`  #${e.prospectId} ${e.playName} (${e.status}) due ${e.dueAt?.slice(0, 10) ?? "-"}`);
+}
+
+/**
+ * `linkedin reconcile`: one pass over LinkedIn sends recorded as failed while
+ * OneShot was still working on them, and invite claims that never settled.
+ * Reads OneShot's records; without `--write` it only prints what it would
+ * record. Never sends a message or an invite.
+ */
+export async function commandLinkedInReconcile(
+  opts: { write?: boolean },
+  linkedIn: LinkedInCaller = (workspace, operation) => callLinkedInAs(workspace, operation),
+): Promise<void> {
+  header(`linkedin reconcile ${opts.write ? "" : c.dim("(dry-run)")}`);
+  const report = await reconcileLinkedInSends({ linkedIn, write: opts.write === true });
+  if (report.items.length === 0) {
+    note("Nothing to reconcile.");
+    return;
+  }
+  for (const i of report.items) {
+    const who = i.prospectId != null ? `#${i.prospectId} ${i.playName}` : i.key;
+    note(`${who} · ${i.kind} · ${i.state} · ${i.action}`);
+  }
+  if (!opts.write) note(c.dim("Dry run: pass --write to record these."));
 }

@@ -10,7 +10,9 @@ const {
   message,
   invitation,
   invitations,
+  route,
 } = vi.hoisted(() => ({
+  route: vi.fn(),
   account: vi.fn(),
   revoke: vi.fn(),
   tool: vi.fn(),
@@ -31,6 +33,7 @@ vi.mock("../src/oneshot.ts", () => ({
     linkedinMessage: message,
     linkedinInvitation: invitation,
     linkedinInvitations: invitations,
+    route,
   }),
   buildAuditOpts: () => ({}),
 }));
@@ -178,7 +181,7 @@ it("revokes a connection through the SDK without deleting local messages or invo
   expect(tool.mock.calls).toHaveLength(calls);
 });
 
-it("opens a conversation with linkedinMessage, keyed for a safe retry", async () => {
+it("starts a first message without waiting, keyed for a safe retry", async () => {
   account.mockResolvedValue({ status: "connected", allowed_actions: ["reply"] });
   tool.mockResolvedValueOnce({ status: "sent", conversation_id: "conv-1", cost: 0.02 });
   const result = await linkedInSdk({
@@ -195,6 +198,8 @@ it("opens a conversation with linkedinMessage, keyed for a safe retry", async ()
     profile: "https://www.linkedin.com/in/someone",
     text: "Hello",
     idempotencyKey: "stable-first",
+    // OneShot paces sends: the caller polls the job (awaitLinkedInJob).
+    wait: false,
   });
   expect(recordReceipt).toHaveBeenLastCalledWith(
     expect.objectContaining({ callType: "linkedin.message", playName: "luma-events" }),
@@ -222,7 +227,7 @@ it("refuses a first message without the reply grant, a disconnected account, or 
   expect(tool).not.toHaveBeenCalled();
 });
 
-it("sends invites and withdrawals without the SDK's rejected timeout field", async () => {
+it("starts invites and withdrawals without the SDK's rejected timeout field, or a wait", async () => {
   account.mockResolvedValue({ status: "connected", allowed_actions: ["invite"] });
   tool.mockResolvedValueOnce({ status: "sent", invitation_id: "inv-1", request_id: "invite-job" });
   await linkedInSdk({
@@ -238,6 +243,7 @@ it("sends invites and withdrawals without the SDK's rejected timeout field", asy
     profile: "https://www.linkedin.com/in/someone",
     note: "Hi",
     idempotencyKey: "stable-invite",
+    wait: false,
   });
   tool.mockResolvedValueOnce({ status: "withdrawn", request_id: "withdraw-job" });
   await linkedInSdk({
@@ -251,6 +257,7 @@ it("sends invites and withdrawals without the SDK's rejected timeout field", asy
     account_id: "account",
     invitation_id: "inv-1",
     idempotencyKey: "stable-withdraw",
+    wait: false,
   });
   expect(recordReceipt).toHaveBeenLastCalledWith(
     expect.objectContaining({ callType: "linkedin.withdraw", oneshotRequestId: "withdraw-job" }),
@@ -282,4 +289,37 @@ it("lists changed invitations, passing only the filters given", async () => {
     changedSince: "2026-10-01T00:00:00Z",
     limit: 100,
   });
+});
+
+it("reads a submission's outcome by idempotency key from the recover route, never sending", async () => {
+  tool.mockClear();
+  const completed = {
+    tool: "linkedin",
+    status: "completed",
+    linkedin: { action: "message", scheduled_for: "2026-11-03T01:48:21.125Z" },
+    receipt_id: "rcpt_1",
+    request_id: "job-1",
+  };
+  route.mockResolvedValueOnce(completed);
+  expect(
+    await linkedInSdk({
+      kind: "recover",
+      endpoint: "linkedin/message",
+      idempotencyKey: "gtm:acme:cadence:7:accelerator-batch:4",
+    }),
+  ).toMatchObject({ status: "completed", request_id: "job-1" });
+  expect(route).toHaveBeenLastCalledWith("GET", "/v1/submissions/recover", {
+    query: { endpoint: "linkedin/message", key: "gtm:acme:cadence:7:accelerator-batch:4" },
+  });
+  // An unknown key is a 404 `submission_not_found`: unknown, not failed.
+  route.mockRejectedValueOnce(
+    Object.assign(new Error("GET /v1/submissions/recover failed"), {
+      statusCode: 404,
+      responseBody: JSON.stringify({ error: "submission_not_found", acceptance: "unknown" }),
+    }),
+  );
+  expect(
+    await linkedInSdk({ kind: "recover", endpoint: "linkedin/invite", idempotencyKey: "k" }),
+  ).toEqual({ status: "unknown", acceptance: "unknown" });
+  expect(tool).not.toHaveBeenCalled();
 });

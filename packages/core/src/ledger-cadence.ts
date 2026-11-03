@@ -610,6 +610,21 @@ export function recordCadenceSendError(
   ).run(input.error.slice(0, 200), input.prospectId, input.playName);
 }
 
+/**
+ * Clear a cadence's send-failure marker, only while it still reads
+ * `onlyIf` when that is given: the LinkedIn sweep clears its own "outcome
+ * pending" note without erasing a newer failure.
+ */
+export function clearCadenceSendError(
+  db: Database,
+  input: { prospectId: number; playName: string; onlyIf?: string },
+): void {
+  db.prepare(
+    `UPDATE cadence_state SET last_send_error = NULL, last_send_error_at = NULL
+     WHERE prospect_id = ? AND play_name = ? AND (? IS NULL OR last_send_error = ?)`,
+  ).run(input.prospectId, input.playName, input.onlyIf ?? null, input.onlyIf ?? null);
+}
+
 export function setCadenceStatus(
   db: Database,
   drafts: DraftVersionStore,

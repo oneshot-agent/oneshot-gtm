@@ -20,6 +20,7 @@ export function linkedInError(error: unknown) {
     jobId?: string;
     jobError?: string;
     statusCode?: number;
+    partialResult?: unknown;
   };
   let body: Record<string, unknown> = {};
   try {
@@ -42,5 +43,18 @@ export function linkedInError(error: unknown) {
     // An async job's failure text; linkedInMessageDeferral reads not_connected /
     // rate_limited out of it when no code is set, so it must survive transport.
     ...(clean(e.jobError) !== undefined ? { jobError: clean(e.jobError) } : {}),
+    // A failed job's partial result: a refused invite names its invitation here.
+    ...(partialOf(e.partialResult) ? { partialResult: partialOf(e.partialResult) } : {}),
   };
+}
+
+/** The string, number and boolean fields of a failed job's partial result, cleaned. */
+function partialOf(value: unknown): Record<string, string | number | boolean> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const out: Record<string, string | number | boolean> = {};
+  for (const [key, v] of Object.entries(value as Record<string, unknown>).slice(0, 20)) {
+    if (typeof v === "string") out[key] = clean(v)!;
+    else if (typeof v === "number" || typeof v === "boolean") out[key] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }

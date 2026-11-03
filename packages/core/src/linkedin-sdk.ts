@@ -55,6 +55,16 @@ export type LinkedInOperation =
       limit?: number;
     }
   | { kind: "wait"; requestId: string }
+  | {
+      /**
+       * What OneShot knows about a submission by its idempotency key: a free
+       * read that never sends. Answers `{status: "unknown"}` for a key OneShot
+       * has no submission for.
+       */
+      kind: "recover";
+      endpoint: "linkedin/message" | "linkedin/invite";
+      idempotencyKey: string;
+    }
   | { kind: "account"; accountId: string }
   | {
       kind: "invite";
@@ -205,13 +215,15 @@ async function runLinkedInSdk(operation: LinkedInOperation): Promise<unknown> {
         throw new Error("LinkedIn messages must contain 1–4000 characters");
       // The SDK's linkedinMessage, linkedinInvite and linkedinWithdrawInvitation
       // put their polling `timeout` in the body, which these routes' strict
-      // schemas reject (an upstream SDK issue). The transport without it still
-      // waits for the job, as the convenience methods did.
+      // schemas reject (an upstream SDK issue). wait:false returns the job at
+      // once: OneShot paces sends per account, so a job can outlive the
+      // worker's limit, and the caller polls it with "wait" (awaitLinkedInJob).
       const result = await agent.tool("linkedin/message", {
         account_id: operation.accountId,
         profile: operation.profile,
         text: operation.text,
         idempotencyKey: operation.idempotencyKey,
+        wait: false,
         ...buildAuditOpts({ playName: operation.playName }, "linkedin.message"),
       });
       record(
@@ -236,18 +248,31 @@ async function runLinkedInSdk(operation: LinkedInOperation): Promise<unknown> {
       });
     case "wait":
       return agent.waitForResult(operation.requestId, { timeout: 2 });
+    case "recover":
+      try {
+        return await agent.route("GET", "/v1/submissions/recover", {
+          query: { endpoint: operation.endpoint, key: operation.idempotencyKey },
+        });
+      } catch (err) {
+        // `submission_not_found`: OneShot has no submission under this key.
+        // Unknown, never "failed" or "not sent".
+        if ((err as { statusCode?: unknown }).statusCode === 404)
+          return { status: "unknown", acceptance: "unknown" };
+        throw err;
+      }
     case "account":
       return agent.getLinkedInAccount(operation.accountId);
     case "invite": {
       const account = await agent.getLinkedInAccount(operation.accountId);
       if (account.status !== "connected" || !account.allowed_actions.includes("invite"))
         throw new Error("Reconnect this LinkedIn account with permission to send invitations");
-      // Without the SDK's `timeout`, as for "message".
+      // Without the SDK's `timeout`, and not waited on, as for "message".
       const result = await agent.tool("linkedin/invite", {
         account_id: operation.accountId,
         profile: operation.profile,
         ...(operation.note ? { note: operation.note } : {}),
         idempotencyKey: operation.idempotencyKey,
+        wait: false,
         ...buildAuditOpts({ playName: operation.playName }, "linkedin.invite"),
       });
       record(
@@ -259,11 +284,12 @@ async function runLinkedInSdk(operation: LinkedInOperation): Promise<unknown> {
       return result;
     }
     case "withdraw": {
-      // Without the SDK's `timeout`, as for "message".
+      // Without the SDK's `timeout`, and not waited on, as for "message".
       const result = await agent.tool("linkedin/invite/withdraw", {
         account_id: operation.accountId,
         invitation_id: operation.invitationId,
         idempotencyKey: operation.idempotencyKey,
+        wait: false,
         ...buildAuditOpts({ playName: operation.playName }, "linkedin.withdraw"),
       });
       record(
