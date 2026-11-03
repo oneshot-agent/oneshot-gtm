@@ -4,7 +4,7 @@ LinkedIn forgives little, so nothing here sends on a timer. You send each invite
 
 OneShot holds the account connection and carries out the actions through its API. No browser automation, no webhook to set up. oneshot-gtm decides who to write to, fills in the text from your [templates](#templates) and stops the cadence when someone answers.
 
-One thing runs unattended. Every 30 minutes the server checks pending invites: it records accepts, and withdraws an invite still pending after 21 days (`config linkedin-invite-timeout <days>`, `off` for the default). A withdrawal that fails is tried again a day later.
+One thing runs unattended. Every 30 minutes the server records the outcome of sends still pending and checks pending invites: it records accepts, and withdraws an invite still pending after 21 days (`config linkedin-invite-timeout <days>`, `off` for the default). A withdrawal that fails is tried again a day later.
 
 ## Connecting
 
@@ -35,6 +35,10 @@ A LinkedIn first touch starts a LinkedIn cadence, never an email one.
 
 Each message appears on Cadences as due. You preview it and send it. Until the invite is accepted the preview reads "waiting for acceptance". `not connected` and `rate limited` answers leave the step due; they do not fail it.
 
+**Sending: outcome pending.** OneShot spaces out sends from one account, so a message or invite can still be queued after three minutes. The step then reads "outcome pending", not failed. The 30-minute check records the outcome, and Send checks the same send again instead of sending twice.
+
+**LinkedIn refused this invite.** When OneShot reports that an invite was never sent, the profile is freed and the row or step carries `linkedin-invite-refused`. A cadence skips its LinkedIn steps.
+
 **Already connected.** When a profile read from the last 14 days shows the person as a first-degree connection, no connection request is drafted or sent and no invite is used. The row reads "LinkedIn: already connected"; sending it records the connection, and the first message is due on Cadences at once. The read is checked again at send: if it has aged out or no longer shows a connection, nothing is recorded and the connection request is drafted for review instead. If LinkedIn then answers that you are not connected, the step's next preview is the connection request instead, and the message follows its acceptance.
 
 ### The invite guard
@@ -53,6 +57,7 @@ Before any invite leaves, the row is checked. A refused row is never sent and ne
 | `already-touched`         | the profile is on the suppression list                      |
 | `already-in-conversation` | the inbox holds a one-to-one conversation with them         |
 | `guard-unavailable`       | the guard could not read its data, so it refused            |
+| `linkedin-invite-refused` | LinkedIn refused the invite and nothing went out            |
 
 ### Before you turn on LinkedIn steps
 
@@ -64,6 +69,8 @@ oneshot-gtm linkedin import-touched --from-ledgers [--dry-run]
 ```
 
 The file is a CSV with a `profile_url`, `linkedin_url` or `url` column, or a JSON array of URLs. `--from-ledgers` copies the invites every other workspace on this machine has recorded. **Already contacted on LinkedIn** on the Setup card takes the same file.
+
+`oneshot-gtm linkedin reconcile [--write]` checks sends that were marked failed while OneShot was still sending them, and invites LinkedIn never sent. It reads OneShot's records and prints what it would record; `--write` records it. It sends nothing.
 
 ## Continuing an email cadence on LinkedIn
 

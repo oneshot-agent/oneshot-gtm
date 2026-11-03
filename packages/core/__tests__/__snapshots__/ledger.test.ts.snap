@@ -149,6 +149,13 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_linkedin_pending_cadence",
+      "sql": "CREATE INDEX idx_linkedin_pending_cadence
+          ON linkedin_pending_sends(prospect_id, play_name)",
+      "tbl_name": "linkedin_pending_sends",
+      "type": "index",
+    },
+    {
       "name": "idx_meetings_ical_uid",
       "sql": "CREATE INDEX idx_meetings_ical_uid
         ON meetings(ical_uid) WHERE ical_uid IS NOT NULL",
@@ -755,6 +762,26 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         fetched_at TEXT NOT NULL
       )",
       "tbl_name": "linkedin_lookup_cache",
+      "type": "table",
+    },
+    {
+      "name": "linkedin_pending_sends",
+      "sql": "CREATE TABLE linkedin_pending_sends (
+          idempotency_key   TEXT PRIMARY KEY,
+          kind              TEXT NOT NULL,  -- 'message' | 'invite'
+          request_id        TEXT NOT NULL,
+          account_workspace TEXT NOT NULL,
+          account_id        TEXT NOT NULL,
+          prospect_id       INTEGER,
+          play_name         TEXT NOT NULL,
+          step_index        INTEGER,
+          queue_id          INTEGER,
+          detail_json       TEXT NOT NULL,
+          created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+          last_checked_at   TEXT,
+          checks            INTEGER NOT NULL DEFAULT 0
+        )",
+      "tbl_name": "linkedin_pending_sends",
       "type": "table",
     },
     {

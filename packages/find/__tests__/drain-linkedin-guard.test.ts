@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { getLedger } from "@oneshot-gtm/core";
+import { _setLinkedInJobTimingForTests, getLedger } from "@oneshot-gtm/core";
 import { drainQueue } from "../src/drain.ts";
 
 // Production drain dispatch against the real ledger, the real guarded sender
@@ -84,6 +84,48 @@ describe("drainQueue reaches the LinkedIn invite guard", () => {
       const draft = JSON.parse(row.last_draft_json!) as { flags: string[]; sent: boolean };
       expect(draft.sent).toBe(false);
       expect(draft.flags[0]).toMatch(/^(not-a-person|invalid-profile|already-invited):/);
+    }
+  });
+
+  it("an invite still running at the deadline keeps its reviewed draft and stays approved", async () => {
+    _setLinkedInJobTimingForTests({ deadlineMs: 0, pauseMs: 0 });
+    try {
+      const id = approve(
+        {
+          name: "Erin Park",
+          company: "Acme",
+          email: "erin@acme.example",
+          linkedinUrl: "https://www.linkedin.com/in/erin-park",
+        },
+        "k5",
+      );
+      const slow = {
+        ...sender,
+        call: async (op: Record<string, unknown>) => {
+          calls.push(op);
+          if (op["kind"] === "account") return {};
+          if (op["kind"] === "invite") return { status: "processing", request_id: "job-5" };
+          throw Object.assign(new Error("Job timed out"), { name: "JobTimeoutError" });
+        },
+      };
+      const out = await drainQueue({ playName: "luma-events", dryRun: false, linkedIn: slow });
+      expect(out.sent).toBe(0);
+      expect(out.errors).toEqual([
+        { id, message: expect.stringMatching(/^Sending: outcome pending/) },
+      ]);
+      const row = getLedger().getQueueRow(id)!;
+      expect(row.status).toBe("approved");
+      expect(JSON.parse(row.last_draft_json!)).toMatchObject({ body: "hello there", flags: [] });
+      expect(getLedger().linkedInPending.list()).toMatchObject([
+        {
+          idempotencyKey: expect.stringMatching(new RegExp(`:queue:${id}:invite$`)),
+          kind: "invite",
+          requestId: "job-5",
+          queueId: id,
+        },
+      ]);
+    } finally {
+      _setLinkedInJobTimingForTests();
     }
   });
 });

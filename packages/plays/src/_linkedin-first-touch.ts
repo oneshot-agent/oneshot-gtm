@@ -13,6 +13,11 @@ import {
   noteAccountInviteCapReached,
   reserveLinkedInInvite,
   SendDeferredError,
+  settleLinkedInInviteClaim,
+  awaitLinkedInJob,
+  isLinkedInSendPending,
+  LinkedInSendPendingError,
+  type LinkedInJobOutcome,
   type LinkedInOperation,
 } from "@oneshot-gtm/core";
 import { loadPrompt } from "@oneshot-gtm/intel";
@@ -279,17 +284,59 @@ function inviteErrorCode(err: unknown): string | null {
   return m ? m[1]! : null;
 }
 
+/** The flag (and guard reason) of an invite LinkedIn refused: nothing went out, so the profile is free. */
+export function inviteRefusedFlag(code: string): string {
+  return guardFlag({
+    ok: false,
+    reason: "linkedin-invite-refused",
+    detail: `LinkedIn refused this invite (${code})`,
+  });
+}
+
 /**
- * Send a reviewed note as a connection request, and record it as this row's
- * step-0 touch on the LinkedIn channel. Never enrolls a cadence: an email
- * sequence for someone with no address would re-draft forever.
- *
- * With `continuation` the invite is a step of an email cadence that carries on
- * onto LinkedIn: it is recorded (with the invite marker) at that step, never
- * at step 0, for the prospect the cadence already has, and it enrolls nothing:
- * the cadence it belongs to is already running.
+ * Proof that a failed invite never reached LinkedIn: the failure names its
+ * invitation (`partialResult.invitation_id`) and OneShot reads that
+ * invitation as `not_sent`. Returns the failure's code, or null without that
+ * proof (no invitation named, an unreadable invitation, any other status,
+ * or `send_unverified`, after which the invite may have gone out).
  */
-export async function sendLinkedInInvite(input: {
+export async function refusedInviteCode(
+  err: unknown,
+  sender: Pick<LinkedInSender, "accountId" | "call">,
+): Promise<string | null> {
+  const e = (err ?? {}) as { code?: unknown; jobError?: unknown; partialResult?: unknown };
+  const named = [e.code, e.jobError].find((v): v is string => typeof v === "string" && !!v);
+  if (named && /\bsend_unverified\b/.test(`${String(e.code ?? "")} ${String(e.jobError ?? "")}`))
+    return null;
+  const partial = e.partialResult as { invitation_id?: unknown } | undefined;
+  const invitationId = partial?.invitation_id;
+  if (typeof invitationId !== "string" || !invitationId) return null;
+  try {
+    const invitation = (await sender.call({
+      kind: "invitation",
+      accountId: sender.accountId,
+      invitationId,
+    })) as { status?: unknown } | null;
+    if (invitation?.status !== "not_sent") return null;
+  } catch {
+    return null;
+  }
+  return (named?.match(/[a-z][a-z_]{1,39}/)?.[0] ?? "not_sent").toLowerCase();
+}
+
+/** The invite's idempotency key: stable per row (or per cadence step), so a retry returns the original invitation. */
+export function linkedInInviteKey(input: {
+  row: Pick<LinkedInFirstTouchRow, "id" | "playName">;
+  workspace: string;
+  continuation?: { prospectId: number; stepIndex: number } | undefined;
+}): string {
+  return input.continuation
+    ? `gtm:${input.workspace}:cadence:${input.continuation.prospectId}:${input.row.playName}:${input.continuation.stepIndex}:invite`
+    : `gtm:${input.workspace}:queue:${input.row.id}:invite`;
+}
+
+/** What `sendLinkedInInvite` takes; also what a pending invite stores to finish later. */
+export interface SendLinkedInInviteInput {
   row: LinkedInFirstTouchRow;
   note: string;
   sender: LinkedInSender;
@@ -304,8 +351,58 @@ export async function sendLinkedInInvite(input: {
   friend?: boolean;
   /** Whether the note was drafted with an evidence clause in its prompt; stored on the invite so later prompt changes don't rewrite history (#792). Absent when unknown. */
   evidenceClause?: boolean | undefined;
-}): Promise<LinkedInInviteOutcome> {
+  /**
+   * Only check an invite already pending under this key; never invite. The
+   * LinkedIn sweep's mode: with nothing pending it answers NOT_PENDING_FLAG.
+   */
+  resumeOnly?: boolean;
+}
+
+/** What `sendLinkedInInvite` answers with `resumeOnly` when nothing is pending under the key. */
+export const NOT_PENDING_FLAG = "not-pending: no pending invite under this key";
+
+/**
+ * Send a reviewed note as a connection request, and record it as this row's
+ * step-0 touch on the LinkedIn channel. Never enrolls a cadence: an email
+ * sequence for someone with no address would re-draft forever.
+ *
+ * With `continuation` the invite is a step of an email cadence that carries on
+ * onto LinkedIn: it is recorded (with the invite marker) at that step, never
+ * at step 0, for the prospect the cadence already has, and it enrolls nothing:
+ * the cadence it belongs to is already running.
+ *
+ * An invite still running when the wait ends throws LinkedInSendPendingError
+ * and is kept as pending under its idempotency key. Called again with the
+ * same key it checks that job and never invites a second time; the LinkedIn
+ * sweep resolves it the same way.
+ */
+export async function sendLinkedInInvite(
+  input: SendLinkedInInviteInput,
+): Promise<LinkedInInviteOutcome> {
   const profile = linkedInProfileOf(input.row.payload);
+  const target = normalizeLinkedInProfile(profile);
+  const idempotencyKey = linkedInInviteKey(input);
+  // Already sent and still pending: check that job. The guard would refuse
+  // (the claim is ours), and a second invite call must never be made. What is
+  // recorded is the note LinkedIn received, whatever the draft says now.
+  const pending = getLedger().linkedInPending.get(idempotencyKey);
+  if (pending && target && profile) {
+    const byKey = (outcome: "confirm" | "release") => () => {
+      settleLinkedInInviteClaim({ profile: target, workspace: input.workspace, outcome });
+    };
+    const sentNote = pending.detail["note"];
+    return settleInvite(input, {
+      note: typeof sentNote === "string" ? sentNote : input.note.trim(),
+      profile,
+      idempotencyKey,
+      claim: { confirm: byKey("confirm"), release: byKey("release") },
+      // The slot was counted when the invite went pending.
+      slot: { confirm: () => {}, release: () => {} },
+      job: () =>
+        awaitLinkedInJob({ status: "pending", request_id: pending.requestId }, input.sender.call),
+    });
+  }
+  if (input.resumeOnly) return { sent: false, flags: [NOT_PENDING_FLAG] };
   // A note OneShot would refuse never leaves; the shorter draft target
   // stays a review flag, not a block.
   const note = input.note.trim();
@@ -323,7 +420,6 @@ export async function sendLinkedInInvite(input: {
   // with a guard reason (counted per reason in drain output) instead of
   // dropping out as a bare "no profile".
   const p0 = input.row.payload;
-  const target = normalizeLinkedInProfile(profile);
   const override = p0["icpOverride"];
   const verdict = canInviteOnLinkedInNow({
     ...(input.continuation ? { prospectId: input.continuation.prospectId } : {}),
@@ -373,29 +469,100 @@ export async function sendLinkedInInvite(input: {
     claim.release();
     throw err;
   }
+  return settleInvite(input, {
+    note,
+    profile,
+    idempotencyKey,
+    claim,
+    slot,
+    job: async () =>
+      awaitLinkedInJob(
+        await input.sender.call({
+          kind: "invite",
+          accountId: input.sender.accountId,
+          profile: target.url,
+          note,
+          idempotencyKey,
+          playName: input.row.playName,
+        }),
+        input.sender.call,
+      ),
+  });
+}
+
+/**
+ * The invite call (or the check of one already made) and everything after
+ * it: the outcome recorded, the claim and the slot settled. Shared by a
+ * first send and a resumed one, so both record the same way.
+ */
+async function settleInvite(
+  input: SendLinkedInInviteInput,
+  ctx: {
+    note: string;
+    profile: string;
+    idempotencyKey: string;
+    claim: { confirm: () => void; release: () => void };
+    slot: { confirm: () => void; release: () => void };
+    job: () => Promise<LinkedInJobOutcome>;
+  },
+): Promise<LinkedInInviteOutcome> {
+  const { note, profile, claim, slot } = ctx;
+  const ledger = getLedger();
+  const settled = () => ledger.linkedInPending.clear(ctx.idempotencyKey);
   let result: { invitation_id?: string; status?: string };
   try {
-    result = (await input.sender.call({
-      kind: "invite",
-      accountId: input.sender.accountId,
-      profile: target.url,
-      note,
-      // Stable per row (or per cadence step): a retry returns the original invitation.
-      idempotencyKey: input.continuation
-        ? `gtm:${input.workspace}:cadence:${input.continuation.prospectId}:${input.row.playName}:${input.continuation.stepIndex}:invite`
-        : `gtm:${input.workspace}:queue:${input.row.id}:invite`,
-      playName: input.row.playName,
-    })) as { invitation_id?: string; status?: string };
+    const job = await ctx.job();
+    if (job.state === "pending") {
+      // Accepted and still running: it may go out, so the claim stays and
+      // the slot counts. Kept under its key until its outcome is read.
+      slot.confirm();
+      ledger.linkedInPending.record({
+        idempotencyKey: ctx.idempotencyKey,
+        kind: "invite",
+        requestId: job.requestId,
+        accountWorkspace: input.sender.workspace ?? input.workspace,
+        accountId: input.sender.accountId,
+        prospectId: input.continuation?.prospectId ?? null,
+        playName: input.row.playName,
+        stepIndex: input.continuation?.stepIndex ?? null,
+        queueId: !input.continuation && input.row.id > 0 ? input.row.id : null,
+        detail: {
+          row: input.row,
+          note,
+          ...(input.continuation ? { continuation: input.continuation } : {}),
+          ...(input.friend ? { friend: true } : {}),
+          ...(input.evidenceClause !== undefined ? { evidenceClause: input.evidenceClause } : {}),
+        },
+      });
+      throw new LinkedInSendPendingError(job.requestId, ctx.idempotencyKey);
+    }
+    result = job.result as { invitation_id?: string; status?: string };
   } catch (err) {
+    if (isLinkedInSendPending(err)) throw err;
     slot.release();
     const code = inviteErrorCode(err);
     // Only a code OneShot reports for a failed job proves nothing was sent.
     if (code) claim.release();
     if (code === "rate_limited" || code === "account_send_limit") {
+      settled();
       noteAccountInviteCapReached(input.sender.accountId);
       throw new SendDeferredError(`LinkedIn invites paused for today (${code})`);
     }
-    if (code) return { sent: false, flags: [`linkedin-${code.replace(/_/g, "-")}`] };
+    if (code) {
+      settled();
+      return { sent: false, flags: [`linkedin-${code.replace(/_/g, "-")}`] };
+    }
+    // Any other failure frees the profile only on proof: the invitation it
+    // names reads `not_sent`. Then nothing reached LinkedIn, and no message
+    // waits for an acceptance that cannot come.
+    const refused = await refusedInviteCode(err, input.sender);
+    if (refused) {
+      claim.release();
+      settled();
+      return { sent: false, flags: [inviteRefusedFlag(refused)], guard: "linkedin-invite-refused" };
+    }
+    // A failed job is an outcome too: no longer pending, the claim stays.
+    if ((err as { name?: unknown }).name === "JobError") settled();
     throw err;
   }
   const status = result.status;
@@ -405,11 +572,11 @@ export async function sendLinkedInInvite(input: {
   ) {
     // The call returned, so the invite may have gone out: the claim stays.
     slot.release();
+    settled();
     throw new Error(`unexpected LinkedIn invite result: ${JSON.stringify(result).slice(0, 160)}`);
   }
   slot.confirm();
   claim.confirm();
-  const ledger = getLedger();
   const p = input.row.payload;
   const prospectId =
     input.continuation?.prospectId ??
@@ -443,6 +610,7 @@ export async function sendLinkedInInvite(input: {
       ...(input.row.id > 0 ? { queueId: input.row.id } : {}),
     },
   });
+  settled();
   // The LinkedIn sequence: a message once the invite is accepted, then a close.
   // A continuation invite belongs to the email cadence already running. The
   // sequence starts with the row's offer, which its messages make (the note

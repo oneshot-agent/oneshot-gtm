@@ -3,6 +3,7 @@ import { registerDirectMailCommand } from "./commands/direct-mail.ts";
 import {
   commandLinkedInContinueCadences,
   commandLinkedInImportTouched,
+  commandLinkedInReconcile,
 } from "./commands/linkedin.ts";
 import {
   commandLinkedInInvites,
@@ -400,6 +401,13 @@ linkedin
       ) => commandLinkedInImportTouched(file, opts),
     ),
   );
+linkedin
+  .command("reconcile")
+  .description(
+    "Record the outcome of LinkedIn sends marked failed while OneShot was still sending them, and free profiles whose invite LinkedIn never sent. Reads OneShot's records; prints only unless --write. Sends nothing.",
+  )
+  .option("--write", "record the outcomes (default: print what would be recorded)")
+  .action(runOrFail((opts: { write?: boolean }) => commandLinkedInReconcile(opts)));
 linkedin
   .command("continue-cadences")
   .description(

@@ -739,6 +739,39 @@ export class SharedDb {
       .run(id);
   }
 
+  /**
+   * Settle an invite claim still unsettled (`reserved` or `dispatched`) under
+   * exactly this source: `confirm` keeps it for good, `release` frees the
+   * profile. A confirmed record, or another source's, is left alone.
+   */
+  settleLinkedInTouch(slug: string, source: string, outcome: "confirm" | "release"): void {
+    if (outcome === "confirm") {
+      this.db
+        .prepare(
+          `UPDATE linkedin_touched SET status = 'confirmed', touched_at = ?
+           WHERE slug = ? AND source = ? AND status IN ('reserved', 'dispatched')`,
+        )
+        .run(new Date().toISOString(), slug, source);
+      return;
+    }
+    this.db
+      .prepare(
+        `DELETE FROM linkedin_touched
+         WHERE slug = ? AND source = ? AND status IN ('reserved', 'dispatched')`,
+      )
+      .run(slug, source);
+  }
+
+  /** Invite claims under this source that never settled: what the reconcile command checks. */
+  listUnsettledLinkedInTouches(source: string): LinkedInTouch[] {
+    return this.db
+      .query(
+        `SELECT slug, source, touched_at, status FROM linkedin_touched
+         WHERE source = ? AND status IN ('reserved', 'dispatched') ORDER BY touched_at`,
+      )
+      .all(source) as LinkedInTouch[];
+  }
+
   /** Free a profile held under exactly this source, whatever its status. */
   releaseLinkedInTouch(slug: string, source: string): void {
     this.db.prepare(`DELETE FROM linkedin_touched WHERE slug = ? AND source = ?`).run(slug, source);

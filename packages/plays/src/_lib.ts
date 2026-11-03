@@ -1953,7 +1953,24 @@ export function firstNameFrom(name: string | null | undefined): string | null {
   // Handle-looking inputs ("schen", "samdoe42") almost always come from
   // a finder pre-screen failure; greeting "Hey schen," is worse than no greeting.
   if (!/^[A-Z]/.test(first)) return null;
+  if (looksLikeCamelHandle(first)) return null;
   return first;
+}
+
+/**
+ * A glued handle ("GVillegasPM", "JohnDoeDev", "DanaCTO"). A name part with
+ * an inner capital is at most two capitalised words ("McDonald", "DeAndre",
+ * "MacKenzie", "LeBron"); more words, or capitals run together next to
+ * lowercase, is a username. Apostrophes and hyphens split parts ("O'Neil",
+ * "Jean-Luc"); a token with no lowercase is left to the ALL CAPS rule.
+ */
+function looksLikeCamelHandle(token: string): boolean {
+  if (!/\p{Ll}/u.test(token)) return false;
+  return token
+    .split(/['’-]/)
+    .some(
+      (part) => /\p{Ll}\p{Lu}|\p{Lu}{2}/u.test(part) && !/^\p{Lu}\p{Ll}+\p{Lu}\p{Ll}+$/u.test(part),
+    );
 }
 
 interface VerifyAndFilterResult<T> {

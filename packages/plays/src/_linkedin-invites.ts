@@ -2,6 +2,7 @@ import {
   currentWorkspaceName,
   getLedger,
   isWithdrawnStatus,
+  withdrawLinkedInInvite,
   KNOWN_CONNECTION_VIA,
   linkedInConversationFor,
   linkedInInviteTimeoutDays,
@@ -464,13 +465,17 @@ async function waitOrTimeOut(
   let withdrawStatus: string | null = null;
   if (withdraw && invite?.invitationId && account && input.linkedIn) {
     try {
-      const res = (await input.linkedIn(account.workspace, {
-        kind: "withdraw",
-        accountId: account.accountId,
-        invitationId: invite.invitationId,
-        idempotencyKey: `gtm:${currentWorkspaceName()}:cadence:${input.prospectId}:${input.playName}:withdraw:${invite.invitationId}`,
-        playName: input.playName,
-      })) as { status?: string };
+      const linkedIn = input.linkedIn;
+      const res = await withdrawLinkedInInvite(
+        (operation) => linkedIn(account.workspace, operation),
+        {
+          kind: "withdraw",
+          accountId: account.accountId,
+          invitationId: invite.invitationId,
+          idempotencyKey: `gtm:${currentWorkspaceName()}:cadence:${input.prospectId}:${input.playName}:withdraw:${invite.invitationId}`,
+          playName: input.playName,
+        },
+      );
       withdrawStatus = res.status ?? null;
       if (withdrawStatus === "not_pending") {
         // Accepted, or gone some other way: nothing was withdrawn, and the

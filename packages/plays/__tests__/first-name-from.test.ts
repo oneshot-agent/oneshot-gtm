@@ -58,6 +58,22 @@ describe("firstNameFrom", () => {
     ["  ", null],
     ["  Pat  Doe  ", "Pat"],
     ["Sarah,", "Sarah"],
+    // Glued handles: more than two capitalised words, or capitals run together.
+    ["GVillegasPM", null],
+    ["JohnDoeDev", null],
+    ["DanaCTO", null],
+    ["GVillegas", null],
+    ["GVillegasPM Smith", null],
+    // Names with an inner capital stay names.
+    ["McDonald", "McDonald"],
+    ["DeAndre Jordan", "DeAndre"],
+    ["DeAndré Jordan", "DeAndré"],
+    ["GVillegasPÉ", null],
+    ["O'Neil", "O'Neil"],
+    ["MacKenzie Scott", "MacKenzie"],
+    ["LeBron James", "LeBron"],
+    ["Jean-Luc Picard", "Jean-Luc"],
+    ["D'Angelo", "D'Angelo"],
   ];
   for (const [input, expected] of cases) {
     it(`${JSON.stringify(input)} → ${JSON.stringify(expected)}`, () => {

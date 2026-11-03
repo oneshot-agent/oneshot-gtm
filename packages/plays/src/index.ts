@@ -2,6 +2,16 @@ export * from "./_lib.ts";
 export * from "./_cadence.ts";
 export * from "./_linkedin-evidence.ts";
 export { sweepLinkedInInvitations, type LinkedInInviteSweepResult } from "./_linkedin-sweep.ts";
+export {
+  resolveLinkedInPendingSend,
+  sweepLinkedInPendingSends,
+  type LinkedInPendingSweepResult,
+} from "./_linkedin-pending.ts";
+export {
+  reconcileLinkedInSends,
+  type LinkedInReconcileItem,
+  type LinkedInReconcileReport,
+} from "./_linkedin-reconcile.ts";
 export { parseLinkedInInvitations, resolveLinkedInInvite } from "./_linkedin-invites.ts";
 export {
   endLinkedInInvite,

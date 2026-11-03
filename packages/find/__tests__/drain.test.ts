@@ -65,6 +65,8 @@ vi.mock("@oneshot-gtm/core", async () => ({
     await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core")
   ).overlayOfferAngles,
   isSendDeferred: (err: unknown) => err instanceof Error && err.name === "SendDeferredError",
+  isLinkedInSendPending: (err: unknown) =>
+    err instanceof Error && err.name === "LinkedInSendPendingError",
   DEFAULT_DRAIN_ROW_RESERVATION_USD: 2,
   // Daily spend ceiling (issue #481): the drain test suite exercises drain
   // dispatch/persistence behavior, not the ceiling gate itself (that's

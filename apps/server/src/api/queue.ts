@@ -11,6 +11,7 @@ import {
   communityProfile,
   isCommunityPlatform,
   isWithdrawnStatus,
+  withdrawLinkedInInvite,
   xHandleFrom,
   firstTouchSender,
   linkedInOutreachAccount,
@@ -2442,13 +2443,16 @@ export async function withdrawInviteRoute(
     return jsonResponse({ error: "connect LinkedIn on /setup to withdraw invites" }, 409, req);
   }
   try {
-    const result = (await callLinkedIn(account.workspace, {
-      kind: "withdraw",
-      accountId: account.accountId,
-      invitationId,
-      idempotencyKey: `gtm:${currentWorkspaceName()}:queue:${id}:withdraw:${invitationId}`,
-      playName: row.play_name,
-    })) as { status?: string };
+    const result = await withdrawLinkedInInvite(
+      (operation) => callLinkedIn(account.workspace, operation),
+      {
+        kind: "withdraw",
+        accountId: account.accountId,
+        invitationId,
+        idempotencyKey: `gtm:${currentWorkspaceName()}:queue:${id}:withdraw:${invitationId}`,
+        playName: row.play_name,
+      },
+    );
     // not_pending means the invite was accepted or is otherwise gone. Nothing
     // was withdrawn, so nothing is recorded.
     if (!isWithdrawnStatus(result.status)) {

@@ -7,6 +7,7 @@
  */
 import {
   CADENCE_SEND_UNCONFIRMED,
+  LINKEDIN_SEND_PENDING,
   type CadenceHeldElsewhere,
   type CadenceStopReason,
   type CadenceView,
@@ -16,10 +17,15 @@ import { timeAgo } from "./cn.ts";
 /**
  * Short name for a cadence's `lastSendError`: "checking sent" while a send
  * with an unknown outcome waits for the Sent-folder check (Send is refused
- * until then), "send failed" for everything else (Send retries).
+ * until then), "outcome pending" while LinkedIn has not finished a send
+ * OneShot accepted (the LinkedIn sweep records it; Send checks it again and
+ * never sends twice), "send failed" for everything else (Send retries).
  */
-export function sendErrorLabel(lastSendError: string): "checking sent" | "send failed" {
-  return lastSendError === CADENCE_SEND_UNCONFIRMED ? "checking sent" : "send failed";
+export function sendErrorLabel(
+  lastSendError: string,
+): "checking sent" | "outcome pending" | "send failed" {
+  if (lastSendError === CADENCE_SEND_UNCONFIRMED) return "checking sent";
+  return lastSendError === LINKEDIN_SEND_PENDING ? "outcome pending" : "send failed";
 }
 
 export const STOP_REASON_LABELS: Record<CadenceStopReason, string> = {

@@ -73,6 +73,7 @@ import {
   recentSentEmailBodies as cadRecentSentEmailBodies,
   recordCadenceReply as cadRecordCadenceReply,
   recordCadenceSendError as cadRecordCadenceSendError,
+  clearCadenceSendError as cadClearCadenceSendError,
   recordLinkedInReply as cadRecordLinkedInReply,
   suppressCadencesForReply,
   recordProspectReply as cadRecordProspectReply,
@@ -137,6 +138,7 @@ import { LearningStore } from "./learning-store.ts";
 import { CodeAnswerStore } from "./code-answers-store.ts";
 import { SendDeliveryStore } from "./ledger-delivery.ts";
 import { OutboundSendStore } from "./ledger-outbound.ts";
+import { LinkedInPendingSendStore } from "./ledger-linkedin-pending.ts";
 import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.ts";
 import { prospectHasReplied as queueProspectHasReplied, QueueStore } from "./ledger-queue.ts";
 import {
@@ -294,6 +296,8 @@ export class Ledger {
   readonly sendDelivery: SendDeliveryStore;
   /** One row per intended outbound email, keyed by a semantic idempotency key (ledger-outbound.ts). */
   readonly outboundSends: OutboundSendStore;
+  /** LinkedIn sends whose outcome is still pending (ledger-linkedin-pending.ts). */
+  readonly linkedInPending: LinkedInPendingSendStore;
   /**
    * Draft versions for cadence follow-ups (ledger-drafts.ts). Intro drafts
    * are versioned by `QueueStore` through its own instance. The table is the
@@ -359,6 +363,7 @@ export class Ledger {
     this.codeAnswers = new CodeAnswerStore(this.db);
     this.sendDelivery = new SendDeliveryStore(this.db);
     this.outboundSends = new OutboundSendStore(this.db);
+    this.linkedInPending = new LinkedInPendingSendStore(this.db);
   }
 
   getDirectMail(id: string): DirectMailDraft | null {
@@ -610,6 +615,11 @@ export class Ledger {
   /** @see ledger-cadence.ts#recordCadenceSendError */
   recordCadenceSendError(input: { prospectId: number; playName: string; error: string }): void {
     cadRecordCadenceSendError(this.db, input);
+  }
+
+  /** @see ledger-cadence.ts#clearCadenceSendError */
+  clearCadenceSendError(input: { prospectId: number; playName: string; onlyIf?: string }): void {
+    cadClearCadenceSendError(this.db, input);
   }
 
   setCadenceStatus(input: {

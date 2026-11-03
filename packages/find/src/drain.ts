@@ -2,6 +2,7 @@ import {
   DEFAULT_DRAIN_ROW_RESERVATION_USD,
   getLedger,
   isSendDeferred,
+  isLinkedInSendPending,
   tryReserveDailySpend,
   type LinkedInGuardReason,
   type ProspectRecord,
@@ -182,6 +183,13 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
           break;
         }
         const msg = ((err as Error).message ?? "play failed").slice(0, 200);
+        // An invite OneShot accepted and had not finished: its reviewed draft
+        // stays and the row stays approved. The LinkedIn sweep records the
+        // outcome; a later drain checks the same job and never invites twice.
+        if (isLinkedInSendPending(err)) {
+          outcome.errors.push({ id: row.id, message: msg });
+          continue;
+        }
         draft = {
           subject: "(error)",
           body: "",

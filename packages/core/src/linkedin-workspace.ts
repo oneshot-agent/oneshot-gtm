@@ -60,6 +60,7 @@ export async function callLinkedInAs<T>(
       requestId?: string;
       code?: string;
       jobError?: string;
+      partialResult?: Record<string, unknown>;
     };
     try {
       data = JSON.parse(stdout.trim());
@@ -75,6 +76,10 @@ export async function callLinkedInAs<T>(
         // An async job's failure text names not_connected / rate_limited when
         // no code does; linkedInMessageDeferral reads it, so it crosses the worker.
         ...(typeof data.jobError === "string" ? { jobError: data.jobError } : {}),
+        // A refused invite names its invitation here (sendLinkedInInvite reads it).
+        ...(data.partialResult && typeof data.partialResult === "object"
+          ? { partialResult: data.partialResult }
+          : {}),
       });
     return data.result;
   } finally {

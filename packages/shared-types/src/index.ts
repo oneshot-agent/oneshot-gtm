@@ -32,6 +32,16 @@ export type CadenceStopReason = "bad_timing" | "other" | "not_a_fit" | "do_not_c
 export const CADENCE_SEND_UNCONFIRMED =
   "may have gone out; checking the Sent folder before any retry, so Send works again about 15 minutes after the first try";
 
+/**
+ * `lastSendError` for a LinkedIn message or invite OneShot accepted and had
+ * not finished when GTM stopped waiting. It is not a failure: the LinkedIn
+ * sweep reads the outcome and records it, and Send checks the same job again
+ * instead of sending a second time. At most 120 characters (a batch result
+ * keeps that many).
+ */
+export const LINKEDIN_SEND_PENDING =
+  "Sending: outcome pending. LinkedIn has not confirmed it yet; it is checked again and never sent twice";
+
 export interface CadenceNextStepDraft {
   subject: string;
   body: string;
@@ -1260,6 +1270,7 @@ const INVITE_GUARD_REASONS: ReadonlySet<string> = new Set([
   "already-touched",
   "already-in-conversation",
   "guard-unavailable",
+  "linkedin-invite-refused",
 ]);
 
 /**
