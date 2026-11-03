@@ -658,6 +658,16 @@ export class SharedDb {
       .run(id);
   }
 
+  /**
+   * A slot kept for an invite whose outcome was unknown (a pending job, a
+   * 429), which later proved not sent: give it back, whatever its status.
+   * Ids are never reused, and only today's slots count, so freeing one from
+   * an earlier day (or one already gone) changes nothing.
+   */
+  freeInviteSlot(id: number): void {
+    this.db.prepare(`DELETE FROM linkedin_invite_slots WHERE id = ?`).run(id);
+  }
+
   /** The live record for a LinkedIn profile slug (confirmed, or an unexpired reservation), if any. */
   linkedInTouch(slug: string, now: Date = new Date()): LinkedInTouch | null {
     const cutoff = new Date(now.getTime() - RESERVATION_TTL_MS).toISOString();

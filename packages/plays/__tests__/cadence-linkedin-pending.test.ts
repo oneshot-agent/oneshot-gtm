@@ -160,6 +160,9 @@ const sendInvite = (linkedIn: ReturnType<typeof caller>) =>
   });
 const INVITE_KEY = () => `gtm:alpha:cadence:${prospectId}:${EMAIL_PLAY}:2:invite`;
 const emailState = () => ledger.getCadence(prospectId, EMAIL_PLAY)!;
+/** Invite slots this workspace holds on the account today. */
+const slotsToday = () =>
+  getSharedDb().inviteSlotsUsed("acct-1", "alpha", new Date().toISOString().slice(0, 10));
 
 beforeEach(() => {
   dbPath = join(
@@ -438,6 +441,29 @@ describe("an invite LinkedIn refused frees the profile", () => {
     expect(emailState()).toMatchObject({ status: "active", current_step: 1 });
   });
 
+  it("a pending invite whose job fails is given its slot back, the claim kept without proof", async () => {
+    emailCadenceRunOut();
+    _setLinkedInJobTimingForTests({ deadlineMs: 0, pauseMs: 0 });
+    await sendInvite(
+      caller({ account: accountOk, invite: () => accepted("job-inv"), wait: stillRunning }),
+    ).catch(() => {});
+    expect(slotsToday()).toBe(1);
+    expect(ledger.linkedInPending.get(INVITE_KEY())!.detail["slotId"]).toEqual(expect.any(Number));
+    _setLinkedInJobTimingForTests({ pauseMs: 0 });
+    const out = await sweepLinkedInInvitations({
+      linkedIn: caller({
+        recover: () => ({ tool: "linkedin", status: "failed", request_id: "job-inv" }),
+        wait: failedWith("internal_error"),
+        invitations: () => ({ invitations: [] }),
+      }),
+    });
+    expect(out.pendingSends).toMatchObject({ checked: 1, failed: 1 });
+    expect(slotsToday()).toBe(0);
+    // No proof nothing went out: the profile stays held, as on a first send.
+    expect(getSharedDb().linkedInTouch("dana-lee")?.status).toBe("dispatched");
+    expect(ledger.linkedInSendAttempts.key(INVITE_KEY())).toBe(`${INVITE_KEY()}:r1`);
+  });
+
   it("a pending invite the sweep finds refused is freed and its steps skipped, without inviting", async () => {
     emailCadenceRunOut();
     _setLinkedInJobTimingForTests({ deadlineMs: 0, pauseMs: 0 });
@@ -468,6 +494,8 @@ describe("an invite LinkedIn refused frees the profile", () => {
     expect(getSharedDb().linkedInTouch("dana-lee")).toBeNull();
     expect(emailState().status).toBe("completed");
     expect(ledger.linkedInPending.list()).toEqual([]);
+    // Nothing went out: the day's slot it held is given back.
+    expect(slotsToday()).toBe(0);
   });
 
   it("a pending invite the sweep finds sent is recorded, the claim confirmed and the cadence moved on", async () => {
@@ -500,6 +528,8 @@ describe("an invite LinkedIn refused frees the profile", () => {
       current_step: 2,
       last_send_error: null,
     });
+    // It went out: the slot stays spent, counted once.
+    expect(slotsToday()).toBe(1);
   });
 });
 

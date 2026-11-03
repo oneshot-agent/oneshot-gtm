@@ -695,6 +695,33 @@ describe("sendLinkedInInvite", () => {
       expect(inviteKeys(next.calls)).toEqual(["gtm:alpha:queue:7:invite"]);
     });
 
+    it("a 429 resend whose job fails with the cap gives the day's slot back", async () => {
+      await sendLinkedInInvite({
+        row: row(),
+        note: "hi",
+        sender: tooMany().sender,
+        workspace: "alpha",
+      }).catch(() => {});
+      expect(slots()).toBe(1);
+      _resetInviteLimitsCacheForTests();
+      const capped = sender(
+        Object.assign(new Error("Job failed: account_send_limit"), {
+          name: "JobError",
+          code: "account_send_limit",
+        }),
+      );
+      const err = await sendLinkedInInvite({
+        row: row(),
+        note: "hi",
+        sender: capped.sender,
+        workspace: "alpha",
+      }).catch((e: unknown) => e);
+      expect(isSendDeferred(err)).toBe(true);
+      expect(slots()).toBe(0);
+      expect(getSharedDb().linkedInTouch("dana-lee")).toBeNull();
+      expect(sendAttempts.get("gtm:alpha:queue:7:invite")).toBe(1);
+    });
+
     it("a 429 is kept whatever its text says", async () => {
       const limited = tooMany();
       const err = await sendLinkedInInvite({

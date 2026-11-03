@@ -20,6 +20,8 @@ import {
   LinkedInSendPendingError,
   startLinkedInSend,
   accountInviteLimits,
+  heldInviteSlot,
+  type InviteSlot,
   linkedInFailure,
   type LinkedInFailure,
   type LinkedInJobOutcome,
@@ -490,8 +492,11 @@ export async function sendLinkedInInvite(
       profile,
       idempotencyKey,
       claim: { confirm: byKey("confirm"), release: byKey("release") },
-      // The slot was counted when the invite went pending.
-      slot: { confirm: () => {}, release: () => {} },
+      // The slot was counted when the invite went pending: kept if it went
+      // out, given back if it proves not sent.
+      slot: heldInviteSlot(
+        typeof pending.detail["slotId"] === "number" ? pending.detail["slotId"] : null,
+      ),
       job: unconfirmed
         ? async () =>
             awaitLinkedInJob(
@@ -606,7 +611,7 @@ async function settleInvite(
     profile: string;
     idempotencyKey: string;
     claim: { confirm: () => void; release: () => void };
-    slot: { confirm: () => void; release: () => void };
+    slot: InviteSlot;
     job: () => Promise<LinkedInJobOutcome>;
   },
 ): Promise<LinkedInInviteOutcome> {
@@ -628,6 +633,8 @@ async function settleInvite(
       detail: {
         row: input.row,
         note,
+        // The day's slot it counts against, freed if it proves not sent.
+        ...(slot.id != null ? { slotId: slot.id } : {}),
         ...(input.continuation ? { continuation: input.continuation } : {}),
         ...(input.friend ? { friend: true } : {}),
         ...(input.evidenceClause !== undefined ? { evidenceClause: input.evidenceClause } : {}),

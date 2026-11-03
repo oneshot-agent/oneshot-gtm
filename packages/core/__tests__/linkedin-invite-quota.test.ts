@@ -85,6 +85,24 @@ describe("SharedDb invite slots", () => {
     );
   });
 
+  it("frees a kept slot by id once its invite proved not sent; an earlier day's is harmless", () => {
+    const db = freshDb();
+    const t0 = new Date("2026-10-05T12:00:00Z");
+    const old = db.reserveInviteSlot({ accountId: "a", workspace: "w", limit: 1, now: t0 });
+    if (!("id" in old)) throw new Error("expected a slot");
+    db.confirmInviteSlot(old.id);
+    const nextDay = new Date("2026-10-06T09:00:00Z");
+    const today = db.reserveInviteSlot({ accountId: "a", workspace: "w", limit: 1, now: nextDay });
+    if (!("id" in today)) throw new Error("expected a slot");
+    db.confirmInviteSlot(today.id);
+    // Yesterday's slot (already swept away) changes nothing today.
+    db.freeInviteSlot(old.id);
+    expect(db.inviteSlotsUsed("a", "w", "2026-10-06", nextDay)).toBe(1);
+    // Today's confirmed slot is given back.
+    db.freeInviteSlot(today.id);
+    expect(db.inviteSlotsUsed("a", "w", "2026-10-06", nextDay)).toBe(0);
+  });
+
   it("starts each UTC day from zero and stops counting an orphaned reservation", () => {
     const db = freshDb();
     const t0 = new Date("2026-10-05T12:00:00Z");
