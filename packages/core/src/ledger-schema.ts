@@ -424,6 +424,16 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    // A run hit by a OneShot outage is tried again soon (platform-health.ts):
+    // the time of that try and how many have been made for the current outage.
+    version: 19,
+    name: "triggers-outage-retry",
+    up: (db) => {
+      addColumnIfMissing(db, "triggers", "retry_after", "TEXT");
+      addColumnIfMissing(db, "triggers", "outage_retries", "INTEGER NOT NULL DEFAULT 0");
+    },
+  },
 ];
 
 /**

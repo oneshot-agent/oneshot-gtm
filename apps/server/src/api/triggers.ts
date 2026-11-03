@@ -100,6 +100,7 @@ export function toView(
     config,
     defaultConfig: spec ? spec.defaultConfig : null,
     lastPolledAt: row?.last_polled_at ?? null,
+    retryAfter: row?.retry_after ?? null,
     lastRunSummary: lastSummary,
     running: isTriggerRunning(name),
     runningSince: runningSinceMs != null ? new Date(runningSinceMs).toISOString() : null,

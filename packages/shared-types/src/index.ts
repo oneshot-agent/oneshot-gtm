@@ -1880,6 +1880,8 @@ export interface DrainResult {
 export interface TriggerView {
   name: string;
   lastPolledAt: string | null;
+  /** A run a OneShot outage hit is due again at this time, before its interval; null when none. */
+  retryAfter?: string | null;
   lastRunSummary: unknown | null;
   enabled: boolean;
   config: Record<string, unknown> | null;

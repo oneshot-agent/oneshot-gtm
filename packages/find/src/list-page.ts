@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { getLedger, logEvent, type PersonResult, webRead } from "@oneshot-gtm/core";
+import {
+  getLedger,
+  logEvent,
+  type PersonResult,
+  platformPauseReason,
+  webRead,
+} from "@oneshot-gtm/core";
 import { complete, LlmTruncatedError, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { sanitizeCompanyDomain } from "./_accelerator-search-adapter.ts";
 import { icpFields, type QualifiedContact, resolveVerifyEnrichQualify } from "./_contact.ts";
@@ -614,6 +620,13 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
       break;
     }
+    // OneShot is failing: every read left would fail too. The run is tried
+    // again soon (registry.ts), and these pages are read then.
+    const pausedSources = platformPauseReason();
+    if (pausedSources) {
+      result.halted = pausedSources;
+      break;
+    }
     const rowSource = `${SOURCE}:${slugify(source.signal)}`;
     const sourceLabel = listPageSourceLabel(source);
     let companies: ListPageCompany[];
@@ -681,6 +694,11 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
     }
     if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
+      return result;
+    }
+    const paused = platformPauseReason();
+    if (paused) {
+      result.halted = paused;
       return result;
     }
     worked++;

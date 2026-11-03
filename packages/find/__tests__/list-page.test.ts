@@ -390,6 +390,24 @@ describe("runListPageFinder", () => {
     expect(capped.halted).toBe("max-cost cap (0.05)");
   });
 
+  it("stops, says why, and spends nothing while OneShot is paused", async () => {
+    const core = await import("@oneshot-gtm/core");
+    const down = core.watchAgent({
+      webRead: async () => {
+        throw new Error("payment rejected: settlement_pending — expected $0.002");
+      },
+    });
+    for (let i = 0; i < 6; i++) await down.webRead().catch(() => {});
+    try {
+      const out = await runListPageFinder(base);
+      expect(out.halted).toBe("OneShot payments not settling");
+      expect(out.enqueued).toBe(0);
+      expect(contactCalls).toHaveLength(0);
+    } finally {
+      core._resetPlatformHealth();
+    }
+  });
+
   it("persists a role rejection so the company is not re-worked", async () => {
     contactResult = { ok: false, reason: "role", detail: "IC engineer", costUsd: 0.03 };
     const out = await runListPageFinder({ ...base, limit: 1 });

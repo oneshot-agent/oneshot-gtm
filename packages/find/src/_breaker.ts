@@ -1,4 +1,4 @@
-import { logEvent } from "@oneshot-gtm/core";
+import { isPlatformPaused, logEvent } from "@oneshot-gtm/core";
 
 /**
  * Process-wide circuit breaker for OneShot paid contact-resolution calls
@@ -43,8 +43,11 @@ export function recordResolutionOutcome(isPlatformError: boolean): void {
  * True while the breaker is open AND within the cooldown: callers short-circuit
  * (skip paid resolution, defer). Returns false once the cooldown elapses
  * (half-open: let the next call probe for recovery) or when fully closed.
+ * Also true while core has paused OneShot as a whole (platform-health.ts),
+ * which every SDK call feeds, not only contact resolution.
  */
 export function isCircuitOpen(): boolean {
+  if (isPlatformPaused()) return true;
   if (!open) return false;
   return Date.now() - openedAt < COOLDOWN_MS;
 }

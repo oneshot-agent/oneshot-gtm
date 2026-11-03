@@ -4,7 +4,11 @@ import {
   DEFAULT_SPEND_RESERVATION_USD,
   dailySpendStatus,
   getLedger,
+  inPlatformScope,
   logEvent,
+  newPlatformScope,
+  type PlatformScope,
+  runOutage,
   safeParseJsonRecord,
   spendCeilingReason,
   startRun,
@@ -1723,9 +1727,12 @@ export async function runTriggerNow(
   }
   const startedAt = Date.now();
   logEvent("trigger.run.start", { name, source: "ad_hoc" });
+  const scope = newPlatformScope();
   try {
-    const result = await runFinderWithProductResearch(spec, runConfig);
-    ledger.updateTriggerLastPoll({ name, summary: result });
+    const result = await inPlatformScope(scope, () =>
+      runFinderWithProductResearch(spec, runConfig),
+    );
+    const nextDueInMs = recordTriggerRun(name, result, scope, intervalMs);
     logEvent("trigger.run.done", {
       name,
       duration_ms: Date.now() - startedAt,
@@ -1738,13 +1745,15 @@ export async function runTriggerNow(
       cost_usd: result.costUsd,
       halted: result.halted ?? null,
     });
-    return { name, fired: true, result, nextDueInMs: intervalMs };
+    return { name, fired: true, result, nextDueInMs };
   } catch (err) {
     const message = (err as Error).message ?? "unknown error";
-    ledger.updateTriggerLastPoll({
+    const nextDueInMs = recordTriggerRun(
       name,
-      summary: { error: message, at: new Date().toISOString() },
-    });
+      { error: message, at: new Date().toISOString() },
+      scope,
+      intervalMs,
+    );
     logEvent(
       "trigger.run.error",
       {
@@ -1754,7 +1763,7 @@ export async function runTriggerNow(
       },
       "error",
     );
-    return { name, fired: true, error: message, nextDueInMs: intervalMs };
+    return { name, fired: true, error: message, nextDueInMs };
   } finally {
     reservation.release();
   }
@@ -1843,7 +1852,11 @@ export async function runDueTriggers(
     }
 
     const lastPolledMs = stored?.last_polled_at ? new Date(stored.last_polled_at).getTime() : 0;
-    const dueAt = lastPolledMs + intervalMs;
+    // A run a OneShot outage hit is due again at its retry time, if sooner.
+    const retryMs = stored?.retry_after ? new Date(stored.retry_after).getTime() : Number.NaN;
+    const dueAt = Number.isFinite(retryMs)
+      ? Math.min(lastPolledMs + intervalMs, retryMs)
+      : lastPolledMs + intervalMs;
     if (now < dueAt) {
       outcomes.push({ name: spec.name, fired: false, nextDueInMs: dueAt - now });
       continue;
@@ -1895,10 +1908,13 @@ export async function runDueTriggers(
 
     const startedAt = Date.now();
     logEvent("trigger.run.start", { name: spec.name, source: "watch" });
+    const scope = newPlatformScope();
     try {
-      const result = await runFinderWithProductResearch(spec, runConfig);
+      const result = await inPlatformScope(scope, () =>
+        runFinderWithProductResearch(spec, runConfig),
+      );
       const durationMs = Date.now() - startedAt;
-      ledger.updateTriggerLastPoll({ name: spec.name, summary: result });
+      const nextDueInMs = recordTriggerRun(spec.name, result, scope, intervalMs);
       logEvent("trigger.run.done", {
         name: spec.name,
         duration_ms: durationMs,
@@ -1916,15 +1932,17 @@ export async function runDueTriggers(
         fired: true,
         result,
         duration_ms: durationMs,
-        nextDueInMs: intervalMs,
+        nextDueInMs,
       });
     } catch (err) {
       const durationMs = Date.now() - startedAt;
       const message = (err as Error).message ?? "unknown error";
-      ledger.updateTriggerLastPoll({
-        name: spec.name,
-        summary: { error: message, at: new Date().toISOString() },
-      });
+      const nextDueInMs = recordTriggerRun(
+        spec.name,
+        { error: message, at: new Date().toISOString() },
+        scope,
+        intervalMs,
+      );
       logEvent(
         "trigger.run.error",
         {
@@ -1939,7 +1957,7 @@ export async function runDueTriggers(
         fired: true,
         error: message,
         duration_ms: durationMs,
-        nextDueInMs: intervalMs,
+        nextDueInMs,
       });
     } finally {
       reservation.release();
@@ -1947,6 +1965,50 @@ export async function runDueTriggers(
   }
   logEvent("watch.tick.done", { fired: outcomes.filter((o) => o.fired).length });
   return outcomes;
+}
+
+/** Waits before the early retries of a run a OneShot outage hit; then the normal interval. */
+export const OUTAGE_RETRY_WAITS_MS = [30 * 60_000, 60 * 60_000, 120 * 60_000];
+
+/**
+ * Record a finished run. A run a OneShot outage hit (platform-health.ts) says
+ * so in its summary and is tried again after the next wait in
+ * OUTAGE_RETRY_WAITS_MS instead of a whole interval later; nothing it failed
+ * was cached, so the retry redoes only that work. Returns when it is due next.
+ */
+function recordTriggerRun(
+  name: string,
+  summary: object,
+  scope: PlatformScope,
+  intervalMs: number,
+): number {
+  const ledger = getLedger();
+  const paused = runOutage(scope);
+  if (!paused) {
+    ledger.updateTriggerLastPoll({ name, summary });
+    return intervalMs;
+  }
+  const done = ledger.getTrigger(name)?.outage_retries ?? 0;
+  const wait = OUTAGE_RETRY_WAITS_MS[done];
+  if (wait === undefined || wait >= intervalMs) {
+    // Out of early retries: the normal interval, and the next outage starts over.
+    ledger.updateTriggerLastPoll({ name, summary: { ...summary, paused } });
+    logEvent("trigger.run.paused", { name, reason: paused, retry_at: null }, "warn");
+    return intervalMs;
+  }
+  const retryAt = new Date(Date.now() + wait).toISOString();
+  ledger.updateTriggerLastPoll({
+    name,
+    summary: { ...summary, paused, retryAt },
+    retryAfter: retryAt,
+    outageRetries: done + 1,
+  });
+  logEvent(
+    "trigger.run.paused",
+    { name, reason: paused, retry_at: retryAt, retry: done + 1, platform_errors: scope.errors },
+    "warn",
+  );
+  return wait;
 }
 
 export function nextSleepMs(outcomes: TriggerRunOutcome[]): number {

@@ -73,6 +73,7 @@ import {
 } from "./send-routing.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type PaidCacheOptions, withPaidCache } from "./paid-cache.ts";
+import { watchAgent } from "./platform-health.ts";
 import type { EmailIdentity } from "./types.ts";
 
 /** Re-exported so callers don't reach into the SDK for the domain-pool shape. */
@@ -236,7 +237,8 @@ async function initAgent(): Promise<OneShot> {
 }
 
 export async function getAgent(): Promise<OneShot> {
-  if (!agentSingleton) agentSingleton = await initAgent();
+  // Watched: every call reports to the outage breaker (platform-health.ts).
+  if (!agentSingleton) agentSingleton = watchAgent(await initAgent());
   return agentSingleton;
 }
 

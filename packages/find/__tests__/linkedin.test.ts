@@ -21,6 +21,7 @@ vi.mock("@oneshot-gtm/core", () => ({
     };
   },
   logEvent: () => {},
+  isPlatformPaused: () => false,
   // Real implementation. The transient/genuine split is the behaviour under
   // test, so mocking it would defeat the purpose.
   isTransientToolError: (err: unknown) => {
