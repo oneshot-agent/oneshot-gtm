@@ -14,6 +14,12 @@ it("treats not_connected and rate_limited as deferrals, whatever field carries t
   expect(linkedInMessageDeferral({ reason: "rate_limited" })).toBe("rate_limited");
   // An older answer with no code names it in its job text.
   expect(linkedInMessageDeferral({ jobError: "failed: rate_limited today" })).toBe("rate_limited");
+  expect(linkedInMessageDeferral({ jobError: "failed: recipient_not_connected" })).toBe(
+    "not_connected",
+  );
+  // Glued to a letter or digit on either side: not the code.
+  expect(linkedInMessageDeferral({ jobError: "failed: Xrate_limited" })).toBeNull();
+  expect(linkedInMessageDeferral({ jobError: "failed: not_connected2" })).toBeNull();
   // A code decides: a job's sentence never overrides it.
   expect(linkedInMessageDeferral({ code: "x", jobError: "failed: rate_limited today" })).toBeNull();
   expect(

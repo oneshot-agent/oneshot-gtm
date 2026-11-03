@@ -38,8 +38,9 @@ export function linkedInMessageDeferral(err: unknown): LinkedInMessageDeferral |
   // underscore is a word character, so `\bnot_connected` misses
   // `recipient_not_connected`.
   const jobError = typeof e?.jobError === "string" ? e.jobError : "";
-  const m = /(?<![a-z_])(recipient_not_connected|not_connected|rate_limited)(?![a-z_])/.exec(
-    jobError,
-  );
+  const m =
+    /(?<![A-Za-z0-9_])(recipient_not_connected|not_connected|rate_limited)(?![A-Za-z0-9_])/.exec(
+      jobError,
+    );
   return m ? deferralOf(m[1]!) : null;
 }
