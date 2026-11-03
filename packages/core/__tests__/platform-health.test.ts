@@ -250,6 +250,39 @@ describe("watchAgent", () => {
   });
 });
 
+describe("probes", () => {
+  it("a tool outage answering the platform probe ends the platform pause", async () => {
+    vi.useFakeTimers();
+    const raw = fakeAgent(() => true);
+    const agent = watchAgent(raw);
+    for (let i = 0; i < 6; i++) await agent.companyFind().catch(() => {});
+    vi.setSystemTime(Date.now() + PLATFORM_COOLDOWN_MS + 1);
+    await agent.personPosts().catch(() => {});
+    expect(isPlatformPaused()).toBe(false);
+  });
+
+  it("an answer about the input ends the tool pause too", async () => {
+    vi.useFakeTimers();
+    let unavailable = true;
+    const raw = {
+      personPosts: vi.fn(async () => {
+        throw new Error(
+          unavailable
+            ? "Job failed: This tool is temporarily unavailable."
+            : "Job failed: Could not find data for this person or company.",
+        );
+      }),
+    };
+    const agent = watchAgent(raw);
+    for (let i = 0; i < 6; i++) await agent.personPosts().catch(() => {});
+    vi.setSystemTime(Date.now() + PLATFORM_COOLDOWN_MS + 1);
+    unavailable = false;
+    await agent.personPosts().catch(() => {});
+    await agent.personPosts().catch(() => {});
+    expect(raw.personPosts).toHaveBeenCalledTimes(8);
+  });
+});
+
 describe("run scope", () => {
   it("marks a run hit when OneShot paused during it", async () => {
     const agent = watchAgent(fakeAgent(() => true));

@@ -291,8 +291,9 @@ function observe(method: string, args: unknown[], err: unknown | null): void {
   }
   const failed = classifyPlatformError(err);
   if (!failed) {
-    // An answer about the input: OneShot itself worked.
+    // An answer about the input: OneShot and this tool both worked.
     record("platform", null, now);
+    record(key, null, now);
     return;
   }
   const message = err instanceof Error ? err.message : String(err);
@@ -301,8 +302,17 @@ function observe(method: string, args: unknown[], err: unknown | null): void {
     { method: key, ...failed, message_500: message.slice(0, 500) },
     "warn",
   );
-  if (failed.kind === "tool") record(key, failed, now);
-  else record("platform", failed, now);
+  // Each call answers every probe it was: a tool outage says OneShot itself
+  // is up; a platform failure says nothing about the tool, so its probe slot
+  // is freed without a verdict.
+  if (failed.kind === "tool") {
+    record("platform", null, now);
+    record(key, failed, now);
+  } else {
+    record("platform", failed, now);
+    const tool = breakers.get(key);
+    if (tool) tool.probeAt = 0;
+  }
   noteScope(failed, isPlatformPaused(now));
 }
 
