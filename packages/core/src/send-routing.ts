@@ -128,7 +128,9 @@ export function isTransientToolError(err: unknown): boolean {
     msg.includes("insufficient funds") ||
     msg.includes("insufficient_funds") ||
     msg.includes("credit balance does not cover") ||
-    msg.includes("execution reverted")
+    msg.includes("execution reverted") ||
+    // Not called at all: OneShot was paused after repeated failures (platform-health.ts).
+    msg.includes("oneshot unavailable:")
   );
 }
 

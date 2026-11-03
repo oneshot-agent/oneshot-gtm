@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { demoMode } from "./demo.ts";
 import { logEvent } from "./events.ts";
 import { canonicalLinkedInProfileKey } from "./ledger-prospects.ts";
+import { classifyPlatformError } from "./platform-health.ts";
 import { isTransientToolError, rateLimitRetryAfterS } from "./send-routing.ts";
 import { getSharedDb, type SharedDb } from "./shared-db.ts";
 
@@ -409,6 +410,9 @@ function defaultStorable(result: unknown): boolean {
 export function isNegativeCacheable(err: unknown): boolean {
   if (!err || isPaidCacheMiss(err) || isCachedPaidFailure(err)) return false;
   if (isTransientToolError(err) || rateLimitRetryAfterS(err) !== null) return false;
+  // OneShot failing, not the input: "temporarily unavailable", a payment that
+  // did not settle. Remembered for days, these hid people OneShot could find.
+  if (classifyPlatformError(err)) return false;
   const e = err as { name?: unknown; statusCode?: unknown; message?: unknown };
   const name = typeof e.name === "string" ? e.name : "";
   if (/Validation|Payment|Abort|Auth/i.test(name)) return false;

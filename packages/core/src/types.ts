@@ -938,6 +938,10 @@ export interface TriggerRow {
    * index in turn before repeating, regardless of run timing.
    */
   company_batch_seq: number;
+  /** When a run hit by a OneShot outage is tried again; null when none is scheduled. */
+  retry_after?: string | null;
+  /** Early retries made for the current outage (0 after a clean run). */
+  outage_retries?: number;
 }
 
 /** Who writes LinkedIn notes and messages: fixed templates (default) or the model. */

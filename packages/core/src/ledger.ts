@@ -2186,7 +2186,7 @@ export class Ledger {
   }
 
   /** @see ledger-triggers.ts#updateTriggerLastPoll */
-  updateTriggerLastPoll(input: { name: string; summary: unknown }): void {
+  updateTriggerLastPoll(input: Parameters<typeof trgUpdateTriggerLastPoll>[1]): void {
     trgUpdateTriggerLastPoll(this.db, input);
   }
 

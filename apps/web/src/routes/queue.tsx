@@ -144,7 +144,7 @@ import {
 import { useRowActivity } from "../lib/rowActivity.ts";
 import { liveReadMissing, READING_LINKEDIN } from "../lib/liveRead.ts";
 import { ReadOnOpen } from "../components/queue/ReadOnOpen.tsx";
-import { summarizeRun } from "../lib/summarizeRun.ts";
+import { runSummaryDetail, summarizeRun } from "../lib/summarizeRun.ts";
 import { READ_ONLY, readOnly } from "../lib/readOnly.ts";
 import {
   clearTriggerRunning,
@@ -2330,6 +2330,7 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
 
   const renderTriggerRow = (t: TriggerView, i: number) => {
     const summary = summarizeRun(t.lastRunSummary);
+    const summaryDetail = runSummaryDetail(t.lastRunSummary);
     // `inProcess` covers the sub-millisecond window before the 202 lands;
     // `tracked` takes over via localStorage + server `runningSince`.
     const inProcess = runTrigger.isPending && runTrigger.variables === t.name;
@@ -2345,6 +2346,7 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
         running={running}
         elapsedMs={elapsedMs}
         summary={summary}
+        summaryDetail={summaryDetail}
         isEditing={Boolean(isEditing)}
         editing={isEditing ? editing : null}
         editError={isEditing ? editError : null}
@@ -2535,6 +2537,8 @@ interface TriggerRowProps {
   /** ms elapsed since the cross-refresh start; null when only in-process. */
   elapsedMs: number | null;
   summary: string;
+  /** Full per-source list for the summary cell's tooltip; null when the run has none. */
+  summaryDetail: string | null;
   isEditing: boolean;
   editing: EditingState | null;
   editError: string | null;
@@ -2661,17 +2665,21 @@ function TriggerRowFragment(props: TriggerRowProps) {
           {t.lastPolledAt ? timeAgo(t.lastPolledAt) : "never"}
         </td>
         <td
+          title={(!notReady && !approvalBlocked && props.summaryDetail) || undefined}
           className={cn(
             "py-2 font-mono text-[11.5px]",
             // Missing config on a DISABLED finder is dormancy, not an error:
             // only an enabled-but-unready row (or a real run failure) goes red.
+            // A OneShot outage pause is amber: it retries on its own.
             (notReady && t.enabled) ||
               props.summary.startsWith("error:") ||
               props.summary.startsWith("halted")
               ? "text-[color:var(--ink-blocked-2)]"
               : notReady
                 ? "text-ink-faint"
-                : "text-ink-muted",
+                : props.summary.startsWith("paused")
+                  ? "text-[color:var(--ink-spend-2)]"
+                  : "text-ink-muted",
           )}
         >
           {notReady

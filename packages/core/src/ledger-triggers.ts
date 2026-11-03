@@ -42,14 +42,28 @@ export function listTriggers(db: Database): TriggerRow[] {
  */
 export function updateTriggerLastPoll(
   db: Database,
-  input: { name: string; summary: unknown },
+  input: {
+    name: string;
+    summary: unknown;
+    /** A OneShot outage hit the run: try again at this time (null or omitted: none). */
+    retryAfter?: string | null;
+    /** Early retries made for the current outage; 0 clears it. */
+    outageRetries?: number;
+  },
 ): void {
   db.prepare(
     `UPDATE triggers
      SET last_polled_at = ?, last_run_summary = ?, running_started_at = NULL,
-         company_batch_seq = company_batch_seq + 1
+         company_batch_seq = company_batch_seq + 1,
+         retry_after = ?, outage_retries = ?
      WHERE name = ?`,
-  ).run(new Date().toISOString(), JSON.stringify(input.summary), input.name);
+  ).run(
+    new Date().toISOString(),
+    JSON.stringify(input.summary),
+    input.retryAfter ?? null,
+    input.outageRetries ?? 0,
+    input.name,
+  );
 }
 
 /**

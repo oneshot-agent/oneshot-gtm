@@ -6,7 +6,7 @@ import type { TriggerView } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
 import { cn, timeAgo } from "../../lib/cn.ts";
 import { humanInterval } from "../../lib/humanInterval.ts";
-import { summarizeRun } from "../../lib/summarizeRun.ts";
+import { runSummaryDetail, summarizeRun } from "../../lib/summarizeRun.ts";
 import { dueInMs, summarizeTriggers } from "../../lib/triggerSummary.ts";
 import { Badge } from "../primitives/Badge.tsx";
 import { Explain } from "../primitives/Explain.tsx";
@@ -201,7 +201,10 @@ function SchedulerRow({ row, zebra }: { row: Row; zebra: boolean }): React.React
       <td className="py-2">
         <StatePill state={state} reason={trigger.notReadyReason} />
       </td>
-      <td className="py-2 font-mono text-[11.5px] text-ink-muted">
+      <td
+        className="py-2 font-mono text-[11.5px] text-ink-muted"
+        title={runSummaryDetail(trigger.lastRunSummary) ?? undefined}
+      >
         {summarizeRun(trigger.lastRunSummary)}
         {trigger.lastRunSummary != null && <Explain concept="icpGate" />}
       </td>
