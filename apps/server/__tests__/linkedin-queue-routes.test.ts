@@ -71,6 +71,7 @@ vi.mock("@oneshot-gtm/core", async () => {
         return true;
       },
       linkedInPending: { get: () => null, record: () => {}, clear: () => {} },
+      linkedInSendAttempts: { key: (base: string) => base, noteFailed: () => false },
       setQueueChannel: (id: number, channel: string) => {
         channelCalls.push([id, channel]);
         return row.status === "sent" ? "sent" : channelBusy ? "busy" : "changed";

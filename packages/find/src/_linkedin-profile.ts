@@ -1085,15 +1085,19 @@ function classifyAccountReadError(err: unknown): "account" | "limit" | "person" 
     jobError?: unknown;
     statusCode?: unknown;
   };
-  const text = [e.message, e.code, e.jobError]
-    .filter((v) => typeof v === "string")
-    .join(" ")
-    .toLowerCase();
+  // The code decides; a failed job's `jobError` (and message) is a sentence,
+  // read only for an older answer with no code.
+  const text = (
+    typeof e.code === "string" && e.code
+      ? e.code
+      : [e.message, e.jobError].filter((v) => typeof v === "string").join(" ")
+  ).toLowerCase();
   const status = typeof e.statusCode === "number" ? e.statusCode : null;
+  // The account's `not_connected`, never a recipient's (`recipient_not_connected`).
   if (
     status === 401 ||
     status === 403 ||
-    /not_connected|not connected|reconnect|revoked|disconnected|view_profile|not granted|permission/.test(
+    /(?<!recipient[_ ])not[_ ]connected|reconnect|revoked|disconnected|view_profile|not granted|permission/.test(
       text,
     )
   )

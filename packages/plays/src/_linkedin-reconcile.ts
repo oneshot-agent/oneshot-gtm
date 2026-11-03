@@ -2,10 +2,12 @@ import {
   currentWorkspaceName,
   getLedger,
   getSharedDb,
+  linkedInFailure,
   linkedInOutreachAccount,
   normalizeLinkedInProfile,
   parseLinkedInRecovery,
   settleLinkedInInviteClaim,
+  type LinkedInFailure,
   type LinkedInPendingSend,
 } from "@oneshot-gtm/core";
 import { LINKEDIN_SEND_PENDING } from "@oneshot-gtm/shared-types";
@@ -40,7 +42,7 @@ const WORKER_STOPPED = "LinkedIn workspace worker stopped before returning a res
 export interface LinkedInReconcileItem {
   prospectId: number | null;
   playName: string | null;
-  kind: "message" | "invite" | "claim";
+  kind: "message" | "reply" | "invite" | "claim";
   /** The idempotency key asked about, or the profile slug for a claim. */
   key: string;
   /** What OneShot says: completed / failed / in_flight / unknown, or not_sent for a claim. */
@@ -152,7 +154,13 @@ export async function reconcileLinkedInSends(input: {
       const newer = (at: string | null) => !!at && Date.parse(at) > claimedAt;
       // Its own invite, when a queue row for the profile names the key.
       const row = queueRows.find((r) => inviteSlugOf(rowOf(r)) === claim.slug);
-      let proof: { state: string; code: string; own: boolean } | null = null;
+      let proof: {
+        state: string;
+        code: string;
+        own: boolean;
+        upstream?: string | null;
+        reason?: string | null;
+      } | null = null;
       if (row) {
         const own = await ownInviteRefused(call, account.accountId, row.id, workspace);
         if (own.state === "completed") {
@@ -160,7 +168,13 @@ export async function reconcileLinkedInSends(input: {
           continue;
         }
         if (own.state === "not_sent" && newer(own.updatedAt)) {
-          proof = { state: "not_sent (its own invite)", code: own.code, own: true };
+          proof = {
+            state: "not_sent (its own invite)",
+            code: own.code,
+            own: true,
+            upstream: own.upstream,
+            reason: own.reason,
+          };
         }
       }
       if (!proof && (invitations.notSent.get(claim.slug) ?? []).some(newer)) {
@@ -177,7 +191,16 @@ export async function reconcileLinkedInSends(input: {
           keep("unproven", "the claim could not be released; try again");
           continue;
         }
-        if (row && proof.own) holdQueueRow(row.id, [inviteRefusedFlag(proof.code)]);
+        if (row && proof.own) {
+          holdQueueRow(row.id, [inviteRefusedFlag(proof.code, proof.upstream, proof.reason)]);
+          // Its invite job failed: sent again, it goes under a new key.
+          ledger.linkedInSendAttempts.markFailed(
+            ledger.linkedInSendAttempts.key(
+              linkedInInviteKey({ row: { id: row.id, playName: "" }, workspace }),
+            ),
+            proof.code,
+          );
+        }
       }
       items.push({
         ...item,
@@ -258,14 +281,25 @@ async function ownInviteRefused(
   state: "completed" | "not_sent" | "unknown";
   updatedAt: string | null;
   code: string;
+  upstream: string | null;
+  reason: string | null;
 }> {
-  const unknown = { state: "unknown" as const, updatedAt: null, code: "not_sent" };
+  const unknown = {
+    state: "unknown" as const,
+    updatedAt: null,
+    code: "not_sent",
+    upstream: null,
+    reason: null,
+  };
   try {
     const recovery = parseLinkedInRecovery(
       await call({
         kind: "recover",
         endpoint: "linkedin/invite",
-        idempotencyKey: linkedInInviteKey({ row: { id: queueId, playName: "" }, workspace }),
+        // The key its latest invite went under.
+        idempotencyKey: getLedger().linkedInSendAttempts.key(
+          linkedInInviteKey({ row: { id: queueId, playName: "" }, workspace }),
+        ),
       }),
     );
     if (recovery.state === "completed") return { ...unknown, state: "completed" };
@@ -277,18 +311,21 @@ async function ownInviteRefused(
     })) as { status?: unknown; updated_at?: unknown } | null;
     if (invitation?.status !== "not_sent") return unknown;
     let code = "not_sent";
+    let failure: LinkedInFailure | null = null;
     if (recovery.requestId) {
       try {
         await call({ kind: "wait", requestId: recovery.requestId });
       } catch (err) {
-        const c = (err as { code?: unknown }).code;
-        if (typeof c === "string" && /^[a-z][a-z_]{1,39}$/.test(c)) code = c;
+        failure = linkedInFailure(err);
+        if (failure.code && /^[a-z][a-z_]{1,39}$/.test(failure.code)) code = failure.code;
       }
     }
     return {
       state: "not_sent",
       updatedAt: typeof invitation.updated_at === "string" ? invitation.updated_at : null,
       code,
+      upstream: failure?.upstream ?? null,
+      reason: failure?.reason ?? null,
     };
   } catch {
     return unknown;
@@ -342,11 +379,9 @@ function buildPending(input: {
     return {
       ...base,
       kind: "message",
-      idempotencyKey: cadenceLinkedInMessageKey(
-        workspace,
-        cadence.prospect_id,
-        cadence.play_name,
-        stepIndex,
+      // The key the latest send went under.
+      idempotencyKey: getLedger().linkedInSendAttempts.key(
+        cadenceLinkedInMessageKey(workspace, cadence.prospect_id, cadence.play_name, stepIndex),
       ),
       accountWorkspace: sender.workspace,
       accountId: sender.accountId,
@@ -360,7 +395,9 @@ function buildPending(input: {
   return {
     ...base,
     kind: "invite",
-    idempotencyKey: linkedInInviteKey({ row, workspace, continuation }),
+    idempotencyKey: getLedger().linkedInSendAttempts.key(
+      linkedInInviteKey({ row, workspace, continuation }),
+    ),
     accountWorkspace: account.workspace,
     accountId: account.accountId,
     detail: {

@@ -1,4 +1,5 @@
 import { LINKEDIN_SEND_PENDING } from "@oneshot-gtm/shared-types";
+import { linkedInError } from "./linkedin-error.ts";
 import type { LinkedInOperation } from "./linkedin-sdk.ts";
 
 /**
@@ -76,15 +77,41 @@ export async function awaitLinkedInJob(
 }
 
 /**
+ * The original request of a send whose key already ran: OneShot's 409
+ * `duplicate_request` names it. Null for any other error.
+ */
+export function linkedInDuplicateRequestId(err: unknown): string | null {
+  if (!err || typeof err !== "object") return null;
+  const e = linkedInError(err);
+  return e.statusCode === 409 && e.code === "duplicate_request" && e.requestId ? e.requestId : null;
+}
+
+/**
+ * A send's first answer. A 409 `duplicate_request` (the key already ran)
+ * becomes that original job, which the caller polls like its own: nothing
+ * is sent a second time.
+ */
+export async function startLinkedInSend(send: () => Promise<unknown>): Promise<unknown> {
+  try {
+    return await send();
+  } catch (err) {
+    const original = linkedInDuplicateRequestId(err);
+    if (original) return { status: "pending", request_id: original };
+    throw err;
+  }
+}
+
+/**
  * A withdrawal, polled like a send. Still running at the deadline it throws:
  * the callers retry later with the same idempotency key, which returns the
- * same job, so nothing is withdrawn twice.
+ * same job, so nothing is withdrawn twice. A failed job is retried under a
+ * new key (LinkedInSendAttemptStore).
  */
 export async function withdrawLinkedInInvite(
   call: (operation: LinkedInOperation) => Promise<unknown>,
   operation: Extract<LinkedInOperation, { kind: "withdraw" }>,
 ): Promise<{ status?: string }> {
-  const job = await awaitLinkedInJob(await call(operation), call);
+  const job = await awaitLinkedInJob(await startLinkedInSend(() => call(operation)), call);
   if (job.state === "pending") {
     throw new Error("LinkedIn has not finished the withdrawal yet; the next try checks it again");
   }

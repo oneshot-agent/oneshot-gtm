@@ -2,6 +2,7 @@ import {
   currentWorkspaceName,
   getLedger,
   isLinkedInSendPending,
+  linkedInFailure,
   linkedInMessageConversationId,
   logEvent,
   parseLinkedInRecovery,
@@ -42,10 +43,16 @@ export interface LinkedInPendingSweepResult {
 
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
 
-function errorText(err: unknown): string {
-  const e = (err ?? {}) as { code?: unknown; jobError?: unknown; message?: unknown };
-  const code = [e.code, e.jobError].find((v): v is string => typeof v === "string" && !!v);
-  return code ?? (typeof e.message === "string" ? e.message : "failed");
+/**
+ * A failure as the send error shows it: `(code: upstream_reason)`, then
+ * OneShot's sentence. The code, never a sentence read as one.
+ */
+function failureText(err: unknown): string {
+  const { code, reason, upstream } = linkedInFailure(err);
+  const message = (err as { message?: unknown } | null)?.message;
+  const tag = code ?? (typeof message === "string" && message ? message : "failed");
+  const tagged = upstream && upstream !== tag ? `${tag}: ${upstream}` : tag;
+  return `(${tagged})${reason && !tagged.includes(reason) ? `: ${reason}` : ""}`;
 }
 
 /** Resolve every pending send. Per-send failures are logged and left pending. */
@@ -82,7 +89,8 @@ export async function sweepLinkedInPendingSends(input: {
  * One pending send. Asks OneShot's recover endpoint (by idempotency key)
  * whether the job finished; a finished one is read with `wait` and recorded
  * the way the send would have recorded it. Unknown to OneShot, or still
- * running: left pending.
+ * running: left pending. A reply's job is read with `wait` straight away:
+ * its request id is the one the reply answered with.
  */
 export async function resolveLinkedInPendingSend(
   p: LinkedInPendingSend,
@@ -91,6 +99,10 @@ export async function resolveLinkedInPendingSend(
   const ledger = getLedger();
   const call = (operation: Parameters<LinkedInCaller>[1]) =>
     linkedIn(p.accountWorkspace, operation);
+  if (p.kind === "reply") {
+    ledger.linkedInPending.markChecked(p.idempotencyKey);
+    return resolveMessage(p, call);
+  }
   let recovery: ReturnType<typeof parseLinkedInRecovery>;
   try {
     recovery = parseLinkedInRecovery(
@@ -127,18 +139,21 @@ async function resolveMessage(
     // Only a failed job is an outcome; anything else is asked again later.
     if ((err as { name?: unknown }).name !== "JobError") return "pending";
     ledger.linkedInPending.clear(p.idempotencyKey);
+    // Send again (by hand) goes under a new key.
+    ledger.linkedInSendAttempts.noteFailed(p.idempotencyKey, err);
     if (cadence) {
       ledger.recordCadenceSendError({
         prospectId: cadence.prospectId,
         playName: cadence.playName,
-        error: `LinkedIn message not sent (${errorText(err)})`,
+        error: `LinkedIn ${p.kind} not sent ${failureText(err)}`,
       });
     }
     return "failed";
   }
   if (cadence) {
     if (!ledger.hasSentSequenceEvent(cadence.prospectId, cadence.playName, cadence.stepIndex)) {
-      const conversationId = linkedInMessageConversationId(result);
+      // A reply went into a conversation the cadence already has.
+      const conversationId = p.kind === "message" ? linkedInMessageConversationId(result) : null;
       recordLinkedInMessageSent({
         ...cadence,
         text: str(p.detail["text"]) ?? "",
@@ -158,7 +173,7 @@ async function resolveMessage(
   } else {
     ledger.linkedInPending.clear(p.idempotencyKey);
   }
-  logEvent("linkedin.pending_send.resolved", { kind: "message", outcome: "sent" });
+  logEvent("linkedin.pending_send.resolved", { kind: p.kind, outcome: "sent" });
   return "sent";
 }
 
@@ -214,7 +229,7 @@ async function resolveInvite(
       ledger.recordCadenceSendError({
         prospectId: cadence.prospectId,
         playName: row.playName,
-        error: `LinkedIn invite not sent (${errorText(err)})`,
+        error: `LinkedIn invite not sent ${failureText(err)}`,
       });
     }
     return "failed";

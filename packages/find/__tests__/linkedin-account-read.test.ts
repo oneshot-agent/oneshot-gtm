@@ -341,6 +341,12 @@ describe("readLinkedInProfile through the connected account", () => {
       "session-invalid",
     );
     forgetTries();
+    // A recipient's not-connected is no account problem.
+    script(fail({ statusCode: 422, code: "recipient_not_connected" }));
+    expect((await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 })).skipped).toBe(
+      "interrupted",
+    );
+    forgetTries();
     script({
       status: "failed",
       error: "Daily profile-view limit reached",

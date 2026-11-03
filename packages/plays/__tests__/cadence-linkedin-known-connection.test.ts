@@ -322,6 +322,33 @@ describe("LinkedIn says a known connection is not connected", () => {
     expect(modelInputs.at(-1)).toMatch(/emailed 1 time on this and did not reply/);
   });
 
+  it("recipient_not_connected (OneShot's new name) voids the known connection the same way", async () => {
+    emailCadenceRunOut();
+    profileRead("FIRST_DEGREE");
+    await shown();
+    await send(caller({}));
+    await shown();
+    const out = await send(
+      caller({
+        message: () => ({ status: "processing", request_id: "job-1" }),
+        wait: () => {
+          throw Object.assign(new Error("Job failed: recipient_not_connected"), {
+            name: "JobError",
+            code: "recipient_not_connected",
+            jobError: "recipient_not_connected",
+          });
+        },
+      }),
+    );
+    expect(out.action).toBe("skipped");
+    expect(out.note).toMatch(/not connected: preview again to draft the connection request/);
+    expect(inviteEvents().map(([step, status]) => [step, status])).toEqual([
+      [2, "sent"],
+      [2, "withdrawn"],
+    ]);
+    expect(getSharedDb().linkedInTouch("dana-lee")).toBeNull();
+  });
+
   it("frees the profile before withdrawing: when it can't, nothing is recorded and Send retries", async () => {
     emailCadenceRunOut();
     profileRead("FIRST_DEGREE");

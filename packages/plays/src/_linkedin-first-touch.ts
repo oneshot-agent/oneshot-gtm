@@ -8,6 +8,7 @@ import {
   KNOWN_CONNECTION_VIA,
   normalizeLinkedInProfile,
   type LinkedInGuardReason,
+  type LinkedInGuardVerdict,
   loadConfig,
   logEvent,
   noteAccountInviteCapReached,
@@ -17,6 +18,12 @@ import {
   awaitLinkedInJob,
   isLinkedInSendPending,
   LinkedInSendPendingError,
+  startLinkedInSend,
+  accountInviteLimits,
+  heldInviteSlot,
+  type InviteSlot,
+  linkedInFailure,
+  type LinkedInFailure,
   type LinkedInJobOutcome,
   type LinkedInOperation,
 } from "@oneshot-gtm/core";
@@ -267,30 +274,70 @@ const NOT_DELIVERED_CODES = new Set([
 
 function inviteErrorCode(err: unknown): string | null {
   const e = err as { code?: unknown; jobError?: unknown; message?: unknown };
-  if (typeof e.code === "string" && NOT_DELIVERED_CODES.has(e.code)) return e.code;
-  const jobError = typeof e.jobError === "string" ? e.jobError : "";
-  // A failed job can carry a generic code and name the real one in `jobError`,
-  // which is OneShot's own text. An error with another code and no job error
-  // is a transport or local failure: its message proves nothing.
-  const text =
-    typeof e.code === "string"
-      ? jobError
-      : `${jobError} ${typeof e.message === "string" ? e.message : ""}`;
-  if (/\bsend_unverified\b/.test(`${typeof e.code === "string" ? e.code : ""} ${text}`))
-    return null;
+  // The code decides. A failed job's `jobError` is a sentence: one that
+  // mentions a rate limit is not `rate_limited` when the code says otherwise.
+  // A transport or local code (ECONNRESET, ...) proves nothing either.
+  if (typeof e.code === "string" && e.code) return NOT_DELIVERED_CODES.has(e.code) ? e.code : null;
+  // An older answer with no code names it in `jobError` or the message.
+  const text = `${typeof e.jobError === "string" ? e.jobError : ""} ${
+    typeof e.message === "string" ? e.message : ""
+  }`;
+  if (/\bsend_unverified\b/.test(text)) return null;
   const m = text.match(
     /\b(email_required|note_limit_reached|note_too_long|rate_limited|account_send_limit)\b/,
   );
   return m ? m[1]! : null;
 }
 
-/** The flag (and guard reason) of an invite LinkedIn refused: nothing went out, so the profile is free. */
-export function inviteRefusedFlag(code: string): string {
+/** The invite caps: OneShot paused this account's invites for the day. */
+const CAP_CODES = new Set(["rate_limited", "account_send_limit"]);
+
+/**
+ * An invite that hit a cap and may have gone out anyway: a synchronous HTTP
+ * 429 (whatever its text says), or a cap code on anything but a failed job.
+ * Only a failed job (JobError) proves nothing was sent. Null otherwise; else
+ * what to show.
+ */
+function cappedMaybeSent(err: unknown): string | null {
+  const e = (err ?? {}) as { name?: unknown; statusCode?: unknown };
+  if (e.name === "JobError") return null;
+  const code = inviteErrorCode(err);
+  if (e.statusCode === 429) return code && CAP_CODES.has(code) ? code : "429";
+  return code && CAP_CODES.has(code) ? code : null;
+}
+
+/**
+ * The flag (and guard reason) of an invite LinkedIn refused: nothing went
+ * out, so the profile is free. The parentheses name the code and the
+ * provider's error type (`upstream`); `reason` is OneShot's sentence.
+ */
+export function inviteRefusedFlag(
+  code: string,
+  upstream?: string | null,
+  reason?: string | null,
+): string {
+  const tag = upstream && upstream !== code ? `${code}: ${upstream}` : code;
   return guardFlag({
     ok: false,
     reason: "linkedin-invite-refused",
-    detail: `LinkedIn refused this invite (${code})`,
+    detail: `LinkedIn refused this invite (${tag})${reason ? `: ${reason}` : ""}`,
   });
+}
+
+/** Invite codes that end the profile: nobody can be invited there, so nothing went out. */
+const UNAVAILABLE_RECIPIENT = new Set(["recipient_unavailable", "invalid_recipient"]);
+
+/**
+ * A failed invite whose recipient can't be invited (`recipient_unavailable`,
+ * or LinkedIn's `invalid_recipient`): refused, no invitation to look up.
+ * Read from the code (an older answer: a `jobError` that is the code). Null
+ * for any other error, and for `send_unverified`.
+ */
+export function unavailableRecipient(err: unknown): (LinkedInFailure & { code: string }) | null {
+  const failure = linkedInFailure(err);
+  return failure.code && UNAVAILABLE_RECIPIENT.has(failure.code)
+    ? { ...failure, code: failure.code }
+    : null;
 }
 
 /**
@@ -305,9 +352,10 @@ export async function refusedInviteCode(
   sender: Pick<LinkedInSender, "accountId" | "call">,
 ): Promise<string | null> {
   const e = (err ?? {}) as { code?: unknown; jobError?: unknown; partialResult?: unknown };
-  const named = [e.code, e.jobError].find((v): v is string => typeof v === "string" && !!v);
-  if (named && /\bsend_unverified\b/.test(`${String(e.code ?? "")} ${String(e.jobError ?? "")}`))
-    return null;
+  const { code } = linkedInFailure(err);
+  if (code === "send_unverified") return null;
+  // An older answer with no code: its job text may still say so.
+  if (!code && /\bsend_unverified\b/.test(String(e.jobError ?? ""))) return null;
   const partial = e.partialResult as { invitation_id?: unknown } | undefined;
   const invitationId = partial?.invitation_id;
   if (typeof invitationId !== "string" || !invitationId) return null;
@@ -321,7 +369,7 @@ export async function refusedInviteCode(
   } catch {
     return null;
   }
-  return (named?.match(/[a-z][a-z_]{1,39}/)?.[0] ?? "not_sent").toLowerCase();
+  return code && /^[a-z][a-z_]{1,39}$/.test(code) ? code : "not_sent";
 }
 
 /** The invite's idempotency key: stable per row (or per cadence step), so a retry returns the original invitation. */
@@ -358,6 +406,26 @@ export interface SendLinkedInInviteInput {
   resumeOnly?: boolean;
 }
 
+/** The invite guard for a row (or cadence step), as every invite runs it. */
+function inviteVerdict(
+  input: SendLinkedInInviteInput,
+  opts: { ownInviteClaim?: string } = {},
+): LinkedInGuardVerdict {
+  const p = input.row.payload;
+  const override = p["icpOverride"];
+  return canInviteOnLinkedInNow({
+    ...(input.continuation ? { prospectId: input.continuation.prospectId } : {}),
+    name: str(p, "name"),
+    company: str(p, "company"),
+    email: str(p, "email", "founderEmail"),
+    linkedinUrl: str(p, "linkedinUrl"),
+    icpVerdict: str(p, "icpVerdict"),
+    icpOverridden: typeof override === "object" && override !== null,
+    ...(input.friend ? { friend: true } : {}),
+    ...(opts.ownInviteClaim ? { ownInviteClaim: opts.ownInviteClaim } : {}),
+  });
+}
+
 /** What `sendLinkedInInvite` answers with `resumeOnly` when nothing is pending under the key. */
 export const NOT_PENDING_FLAG = "not-pending: no pending invite under this key";
 
@@ -381,7 +449,9 @@ export async function sendLinkedInInvite(
 ): Promise<LinkedInInviteOutcome> {
   const profile = linkedInProfileOf(input.row.payload);
   const target = normalizeLinkedInProfile(profile);
-  const idempotencyKey = linkedInInviteKey(input);
+  // The row's key, moved on once per invite job that failed: OneShot replays
+  // a failed job under its own key, so a retry needs a new one.
+  const idempotencyKey = getLedger().linkedInSendAttempts.key(linkedInInviteKey(input));
   // Already sent and still pending: check that job. The guard would refuse
   // (the claim is ours), and a second invite call must never be made. What is
   // recorded is the note LinkedIn received, whatever the draft says now.
@@ -391,15 +461,62 @@ export async function sendLinkedInInvite(
       settleLinkedInInviteClaim({ profile: target, workspace: input.workspace, outcome });
     };
     const sentNote = pending.detail["note"];
+    const pendingNote = typeof sentNote === "string" ? sentNote : input.note.trim();
+    // No job id: a 429 answered the invite, which may have gone out. Only the
+    // same key may try again: OneShot answers it with that invite if it was
+    // made, and makes it if not. Never from the sweep, and not while the
+    // account is paused for the day.
+    const unconfirmed = !pending.requestId;
+    if (unconfirmed) {
+      if (input.resumeOnly) return { sent: false, flags: [NOT_PENDING_FLAG] };
+      // Everything may have changed since the 429 (an opt-out, a reply, a
+      // conversation): the guard runs again, passing over only this invite's
+      // own claim. A refusal sends nothing. The claim stays either way, since
+      // the first invite may have gone out. A final refusal also ends the
+      // resend, so neither Send nor the sweep picks it up again; one that
+      // could not be checked (`guard-unavailable`) keeps it for the next try.
+      const verdict = inviteVerdict(input, { ownInviteClaim: input.workspace });
+      if (!verdict.ok) {
+        if (verdict.reason !== "guard-unavailable")
+          getLedger().linkedInPending.clear(idempotencyKey);
+        return { sent: false, flags: [guardFlag(verdict)], guard: verdict.reason };
+      }
+      const limits = await accountInviteLimits(input.sender.accountId, () =>
+        input.sender.call({ kind: "account", accountId: input.sender.accountId }),
+      );
+      if (limits && limits.remaining !== null && limits.remaining <= 0)
+        throw new SendDeferredError("LinkedIn invites paused for today (account limit reached)");
+    }
     return settleInvite(input, {
-      note: typeof sentNote === "string" ? sentNote : input.note.trim(),
+      note: pendingNote,
       profile,
       idempotencyKey,
       claim: { confirm: byKey("confirm"), release: byKey("release") },
-      // The slot was counted when the invite went pending.
-      slot: { confirm: () => {}, release: () => {} },
-      job: () =>
-        awaitLinkedInJob({ status: "pending", request_id: pending.requestId }, input.sender.call),
+      // The slot was counted when the invite went pending: kept if it went
+      // out, given back if it proves not sent.
+      slot: heldInviteSlot(
+        typeof pending.detail["slotId"] === "number" ? pending.detail["slotId"] : null,
+      ),
+      job: unconfirmed
+        ? async () =>
+            awaitLinkedInJob(
+              await startLinkedInSend(() =>
+                input.sender.call({
+                  kind: "invite",
+                  accountId: input.sender.accountId,
+                  profile: target.url,
+                  note: pendingNote,
+                  idempotencyKey,
+                  playName: input.row.playName,
+                }),
+              ),
+              input.sender.call,
+            )
+        : () =>
+            awaitLinkedInJob(
+              { status: "pending", request_id: pending.requestId },
+              input.sender.call,
+            ),
     });
   }
   if (input.resumeOnly) return { sent: false, flags: [NOT_PENDING_FLAG] };
@@ -419,18 +536,7 @@ export async function sendLinkedInInvite(
   // runs on the stored URL as is, so an X, GitHub or company URL is refused
   // with a guard reason (counted per reason in drain output) instead of
   // dropping out as a bare "no profile".
-  const p0 = input.row.payload;
-  const override = p0["icpOverride"];
-  const verdict = canInviteOnLinkedInNow({
-    ...(input.continuation ? { prospectId: input.continuation.prospectId } : {}),
-    name: str(p0, "name"),
-    company: str(p0, "company"),
-    email: str(p0, "email", "founderEmail"),
-    linkedinUrl: str(p0, "linkedinUrl"),
-    icpVerdict: str(p0, "icpVerdict"),
-    icpOverridden: typeof override === "object" && override !== null,
-    ...(input.friend ? { friend: true } : {}),
-  });
+  const verdict = inviteVerdict(input);
   if (!verdict.ok) return { sent: false, flags: [guardFlag(verdict)], guard: verdict.reason };
   if (!target || !profile) {
     return {
@@ -475,16 +581,19 @@ export async function sendLinkedInInvite(
     idempotencyKey,
     claim,
     slot,
+    // A key that already ran answers with its original job, polled here.
     job: async () =>
       awaitLinkedInJob(
-        await input.sender.call({
-          kind: "invite",
-          accountId: input.sender.accountId,
-          profile: target.url,
-          note,
-          idempotencyKey,
-          playName: input.row.playName,
-        }),
+        await startLinkedInSend(() =>
+          input.sender.call({
+            kind: "invite",
+            accountId: input.sender.accountId,
+            profile: target.url,
+            note,
+            idempotencyKey,
+            playName: input.row.playName,
+          }),
+        ),
         input.sender.call,
       ),
   });
@@ -502,47 +611,81 @@ async function settleInvite(
     profile: string;
     idempotencyKey: string;
     claim: { confirm: () => void; release: () => void };
-    slot: { confirm: () => void; release: () => void };
+    slot: InviteSlot;
     job: () => Promise<LinkedInJobOutcome>;
   },
 ): Promise<LinkedInInviteOutcome> {
   const { note, profile, claim, slot } = ctx;
   const ledger = getLedger();
   const settled = () => ledger.linkedInPending.clear(ctx.idempotencyKey);
+  /** Kept under its key until its outcome is read; `requestId` empty when none is known. */
+  const keepPending = (requestId: string) =>
+    ledger.linkedInPending.record({
+      idempotencyKey: ctx.idempotencyKey,
+      kind: "invite",
+      requestId,
+      accountWorkspace: input.sender.workspace ?? input.workspace,
+      accountId: input.sender.accountId,
+      prospectId: input.continuation?.prospectId ?? null,
+      playName: input.row.playName,
+      stepIndex: input.continuation?.stepIndex ?? null,
+      queueId: !input.continuation && input.row.id > 0 ? input.row.id : null,
+      detail: {
+        row: input.row,
+        note,
+        // The day's slot it counts against, freed if it proves not sent.
+        ...(slot.id != null ? { slotId: slot.id } : {}),
+        ...(input.continuation ? { continuation: input.continuation } : {}),
+        ...(input.friend ? { friend: true } : {}),
+        ...(input.evidenceClause !== undefined ? { evidenceClause: input.evidenceClause } : {}),
+      },
+    });
   let result: { invitation_id?: string; status?: string };
   try {
     const job = await ctx.job();
     if (job.state === "pending") {
       // Accepted and still running: it may go out, so the claim stays and
-      // the slot counts. Kept under its key until its outcome is read.
+      // the slot counts.
       slot.confirm();
-      ledger.linkedInPending.record({
-        idempotencyKey: ctx.idempotencyKey,
-        kind: "invite",
-        requestId: job.requestId,
-        accountWorkspace: input.sender.workspace ?? input.workspace,
-        accountId: input.sender.accountId,
-        prospectId: input.continuation?.prospectId ?? null,
-        playName: input.row.playName,
-        stepIndex: input.continuation?.stepIndex ?? null,
-        queueId: !input.continuation && input.row.id > 0 ? input.row.id : null,
-        detail: {
-          row: input.row,
-          note,
-          ...(input.continuation ? { continuation: input.continuation } : {}),
-          ...(input.friend ? { friend: true } : {}),
-          ...(input.evidenceClause !== undefined ? { evidenceClause: input.evidenceClause } : {}),
-        },
-      });
+      keepPending(job.requestId);
       throw new LinkedInSendPendingError(job.requestId, ctx.idempotencyKey);
     }
     result = job.result as { invitation_id?: string; status?: string };
   } catch (err) {
     if (isLinkedInSendPending(err)) throw err;
-    slot.release();
+    // A failed job: the next invite for this row goes under a new key.
+    ledger.linkedInSendAttempts.noteFailed(ctx.idempotencyKey, err);
+    const capped = cappedMaybeSent(err);
+    if (capped) {
+      // A 429 (or a cap outside a failed job) may have gone out: the claim
+      // stays, the slot counts and the key is kept, so the next try (or the
+      // sweep, once OneShot has a record) finds that invite. The account's
+      // invites pause for the day; the step or row stays due.
+      slot.confirm();
+      noteAccountInviteCapReached(input.sender.accountId);
+      keepPending("");
+      throw new SendDeferredError(`LinkedIn invites paused for today (${capped})`);
+    }
+    // The day's slot goes back only on proof that nothing went out; any other
+    // failure (unverified, a lost answer) may have sent it, so it stays counted.
+    const unavailable = unavailableRecipient(err);
+    if (unavailable) {
+      // Nobody can be invited at this profile: nothing went out.
+      slot.release();
+      claim.release();
+      settled();
+      return {
+        sent: false,
+        flags: [inviteRefusedFlag(unavailable.code, unavailable.upstream, unavailable.reason)],
+        guard: "linkedin-invite-refused",
+      };
+    }
     const code = inviteErrorCode(err);
     // Only a code OneShot reports for a failed job proves nothing was sent.
-    if (code) claim.release();
+    if (code) {
+      slot.release();
+      claim.release();
+    }
     if (code === "rate_limited" || code === "account_send_limit") {
       settled();
       noteAccountInviteCapReached(input.sender.accountId);
@@ -557,11 +700,18 @@ async function settleInvite(
     // waits for an acceptance that cannot come.
     const refused = await refusedInviteCode(err, input.sender);
     if (refused) {
+      slot.release();
       claim.release();
       settled();
-      return { sent: false, flags: [inviteRefusedFlag(refused)], guard: "linkedin-invite-refused" };
+      const { upstream, reason } = linkedInFailure(err);
+      return {
+        sent: false,
+        flags: [inviteRefusedFlag(refused, upstream, reason)],
+        guard: "linkedin-invite-refused",
+      };
     }
     // A failed job is an outcome too: no longer pending, the claim stays.
+    slot.confirm();
     if ((err as { name?: unknown }).name === "JobError") settled();
     throw err;
   }
@@ -570,8 +720,9 @@ async function settleInvite(
     !result.invitation_id ||
     (status !== "sent" && status !== "pending" && status !== "already_connected")
   ) {
-    // The call returned, so the invite may have gone out: the claim stays.
-    slot.release();
+    // The call returned, so the invite may have gone out: the claim and the
+    // day's slot stay.
+    slot.confirm();
     settled();
     throw new Error(`unexpected LinkedIn invite result: ${JSON.stringify(result).slice(0, 160)}`);
   }

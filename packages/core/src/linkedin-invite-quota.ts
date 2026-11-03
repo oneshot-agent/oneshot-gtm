@@ -101,10 +101,36 @@ function noteAccountSend(accountId: string): void {
 }
 
 export interface InviteSlot {
+  /** The reservation's id in the shared DB; null when none was taken (demo, an unusable shared file). */
+  id: number | null;
   /** The invite was accepted by OneShot. */
   confirm: () => void;
   /** The invite did not go out. */
   release: () => void;
+}
+
+/**
+ * The slot an invite of unknown outcome kept (a pending job, a 429), by the
+ * id stored with it: already counted, so `confirm` does nothing; `release`
+ * gives it back once the invite proved not sent. Null id: nothing to free.
+ */
+export function heldInviteSlot(id: number | null): InviteSlot {
+  return {
+    id,
+    confirm: () => {},
+    release: () => {
+      if (id == null || demoMode()) return;
+      try {
+        getSharedDb().freeInviteSlot(id);
+      } catch (err) {
+        logEvent(
+          "shared_db.write_failed",
+          { message_120: ((err as Error).message ?? "").slice(0, 120) },
+          "warn",
+        );
+      }
+    },
+  };
 }
 
 /**
@@ -118,7 +144,7 @@ export async function reserveLinkedInInvite(input: {
   fetchAccount: FetchAccount;
   workspace?: string;
 }): Promise<InviteSlot> {
-  const noop: InviteSlot = { confirm: () => {}, release: () => {} };
+  const noop: InviteSlot = { id: null, confirm: () => {}, release: () => {} };
   if (demoMode()) return noop;
   const perDay = configuredInvitesPerDay();
   const limits = await accountInviteLimits(input.accountId, input.fetchAccount);
@@ -162,6 +188,7 @@ export async function reserveLinkedInInvite(input: {
     }
   };
   return {
+    id: slot,
     confirm: () => {
       settle((db) => db.confirmInviteSlot(slot));
       noteAccountSend(input.accountId);

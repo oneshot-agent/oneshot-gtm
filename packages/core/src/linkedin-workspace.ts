@@ -59,6 +59,8 @@ export async function callLinkedInAs<T>(
       statusCode?: number;
       requestId?: string;
       code?: string;
+      reason?: string;
+      upstreamReason?: string;
       jobError?: string;
       partialResult?: Record<string, unknown>;
     };
@@ -73,6 +75,9 @@ export async function callLinkedInAs<T>(
         statusCode: data.statusCode,
         requestId: data.requestId,
         code: data.code,
+        // Why the job failed, and what LinkedIn's provider said.
+        ...(typeof data.reason === "string" ? { reason: data.reason } : {}),
+        ...(typeof data.upstreamReason === "string" ? { upstreamReason: data.upstreamReason } : {}),
         // An async job's failure text names not_connected / rate_limited when
         // no code does; linkedInMessageDeferral reads it, so it crosses the worker.
         ...(typeof data.jobError === "string" ? { jobError: data.jobError } : {}),

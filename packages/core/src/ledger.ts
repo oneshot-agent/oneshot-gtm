@@ -139,6 +139,7 @@ import { CodeAnswerStore } from "./code-answers-store.ts";
 import { SendDeliveryStore } from "./ledger-delivery.ts";
 import { OutboundSendStore } from "./ledger-outbound.ts";
 import { LinkedInPendingSendStore } from "./ledger-linkedin-pending.ts";
+import { LinkedInSendAttemptStore } from "./ledger-linkedin-attempts.ts";
 import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.ts";
 import { prospectHasReplied as queueProspectHasReplied, QueueStore } from "./ledger-queue.ts";
 import {
@@ -298,6 +299,8 @@ export class Ledger {
   readonly outboundSends: OutboundSendStore;
   /** LinkedIn sends whose outcome is still pending (ledger-linkedin-pending.ts). */
   readonly linkedInPending: LinkedInPendingSendStore;
+  /** Failed LinkedIn sends per key: the key a retry sends under (ledger-linkedin-attempts.ts). */
+  readonly linkedInSendAttempts: LinkedInSendAttemptStore;
   /**
    * Draft versions for cadence follow-ups (ledger-drafts.ts). Intro drafts
    * are versioned by `QueueStore` through its own instance. The table is the
@@ -364,6 +367,7 @@ export class Ledger {
     this.sendDelivery = new SendDeliveryStore(this.db);
     this.outboundSends = new OutboundSendStore(this.db);
     this.linkedInPending = new LinkedInPendingSendStore(this.db);
+    this.linkedInSendAttempts = new LinkedInSendAttemptStore(this.db);
   }
 
   getDirectMail(id: string): DirectMailDraft | null {

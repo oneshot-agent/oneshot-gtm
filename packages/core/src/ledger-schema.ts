@@ -463,6 +463,23 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    // Failed LinkedIn sends per idempotency key (ledger-linkedin-attempts.ts):
+    // OneShot never sends twice under one key, so a send whose job failed is
+    // tried again under `<base_key>:r<attempt>`.
+    version: 21,
+    name: "linkedin-send-attempts",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS linkedin_send_attempts (
+          base_key   TEXT PRIMARY KEY,
+          attempt    INTEGER NOT NULL DEFAULT 0,
+          last_code  TEXT,
+          updated_at TEXT
+        );
+      `);
+    },
+  },
 ];
 
 /**

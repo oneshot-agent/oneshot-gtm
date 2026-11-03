@@ -50,6 +50,7 @@ export * from "./product-brief.ts";
 export * from "./ledger-delivery.ts";
 export * from "./ledger-outbound.ts";
 export * from "./ledger-linkedin-pending.ts";
+export * from "./ledger-linkedin-attempts.ts";
 export * from "./send-delivery.ts";
 export * from "./linkedin-sdk.ts";
 export * from "./linkedin-job.ts";

@@ -11,6 +11,7 @@ import {
   getReplyReviewStore,
   humanReplyIds,
   isKnownConnectionMarker,
+  linkedInDuplicateRequestId,
   linkedInMatches,
   loadConfig,
   logEvent,
@@ -450,6 +451,11 @@ async function sendLinkedIn(t: ReplyThread, send: ReplySendState): Promise<Reply
     if (next.status === "sent") void refreshLinkedInInbox(true).catch(() => {});
     return next;
   } catch (e) {
+    // The send id already ran (a check after an answer that never arrived):
+    // OneShot names the original request, read instead. Nothing is resent.
+    const original = linkedInDuplicateRequestId(e);
+    if (original && original !== send.requestId)
+      return sendLinkedIn(t, { ...send, requestId: original });
     const err = e as Error & { requestId?: string; jobId?: string };
     const next: ReplySendState = {
       ...send,

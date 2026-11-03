@@ -2442,6 +2442,11 @@ export async function withdrawInviteRoute(
   if (!account) {
     return jsonResponse({ error: "connect LinkedIn on /setup to withdraw invites" }, 409, req);
   }
+  // A failed withdrawal job is replayed under its own key: Withdraw again
+  // goes under a new one.
+  const withdrawKey = ledger.linkedInSendAttempts.key(
+    `gtm:${currentWorkspaceName()}:queue:${id}:withdraw:${invitationId}`,
+  );
   try {
     const result = await withdrawLinkedInInvite(
       (operation) => callLinkedIn(account.workspace, operation),
@@ -2449,7 +2454,7 @@ export async function withdrawInviteRoute(
         kind: "withdraw",
         accountId: account.accountId,
         invitationId,
-        idempotencyKey: `gtm:${currentWorkspaceName()}:queue:${id}:withdraw:${invitationId}`,
+        idempotencyKey: withdrawKey,
         playName: row.play_name,
       },
     );
@@ -2481,6 +2486,7 @@ export async function withdrawInviteRoute(
     });
     return jsonResponse({ ok: true, status: result.status ?? null }, 200, req);
   } catch (err) {
+    ledger.linkedInSendAttempts.noteFailed(withdrawKey, err);
     return jsonResponse({ error: (err as Error).message ?? "withdraw failed" }, 502, req);
   }
 }
