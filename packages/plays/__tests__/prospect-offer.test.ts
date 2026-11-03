@@ -2255,41 +2255,67 @@ describe("the offer bar", () => {
     }
   });
 
-  it("the lint flags a listing goal whose own evidence is the listing", () => {
-    const research =
-      "FIRM RESEARCH:\nhttps://partners.example-platform.com/partners/harbor-tiles-checkout.html Harbor Tiles checkout, a certified partner";
-    const listed = {
+  describe("the already-met lint", () => {
+    const sapEntry = "https://www.sap.com/products/crm/partners/harbor-tiles-checkout.html";
+    const stripeEntry = "https://stripe.com/partners/directory/harbor-tiles-checkout";
+    const research = `FIRM RESEARCH:\n${sapEntry} Harbor Tiles checkout, a certified partner\n${stripeEntry}`;
+    const listing = (offer: string, evidence: string[]) => ({
       ...good,
       level: "researched" as const,
-      offer:
-        "take the checkout integration through partner review until it is certified and listed in the partner marketplace",
+      offer,
       return: "deals sourced through the marketplace, counted per signed contract",
-      evidence: ["https://partners.example-platform.com/partners/harbor-tiles-checkout.html"],
-    };
-    expect(lintOffer(listed, research)).toContain("offer-already-met");
-    // The same goal with evidence that is no listing page passes this check.
-    const notListed = { ...listed, evidence: ["Harbor Tiles checkout, a certified partner"] };
-    expect(lintOffer(notListed, research)).not.toContain("offer-already-met");
-    // A bare programme page names no entry: not a listing.
-    const programme = `${research}\nhttps://example-platform.com/partners/`;
-    expect(
-      lintOffer({ ...listed, evidence: ["https://example-platform.com/partners/"] }, programme),
-    ).not.toContain("offer-already-met");
-    // Their own integrations page is not a third party's listing.
-    const own = `${research}\nhttps://harbortiles.example/integrations/checkout-platform`;
-    expect(
-      lintOffer(
-        { ...listed, evidence: ["https://harbortiles.example/integrations/checkout-platform"] },
-        own,
-      ),
-    ).not.toContain("offer-already-met");
-    // A goal that is no listing never trips it, whatever the evidence.
-    expect(
-      lintOffer(
-        { ...listed, offer: "sign three new distributors for the leeds depot this quarter" },
-        research,
-      ),
-    ).not.toContain("offer-already-met");
+      evidence,
+    });
+
+    it("flags a listing goal on a platform whose own entry page is its evidence", () => {
+      const sap = listing(
+        "take the checkout integration through every partner review until it is certified and listed in the sap partner ecosystem",
+        [sapEntry],
+      );
+      expect(lintOffer(sap, research)).toContain("offer-already-met");
+    });
+
+    it("never flags an entry on another platform than the one the goal names", () => {
+      const shopify = listing(
+        "get the checkout app approved and listed in the shopify app store before the holiday season",
+        [stripeEntry],
+      );
+      expect(lintOffer(shopify, research)).not.toContain("offer-already-met");
+    });
+
+    it("never flags a goal that names no platform: the judge decides", () => {
+      const generic = listing(
+        "take the checkout integration through partner review until it is certified and listed in the partner marketplace",
+        [sapEntry],
+      );
+      expect(lintOffer(generic, research)).not.toContain("offer-already-met");
+    });
+
+    it("needs an entry page, a third party's listing and a listing goal", () => {
+      const goal =
+        "take the checkout integration through every partner review until it is certified and listed in the sap partner ecosystem";
+      // Evidence that is no listing page.
+      expect(
+        lintOffer(listing(goal, ["Harbor Tiles checkout, a certified partner"]), research),
+      ).not.toContain("offer-already-met");
+      // A bare programme page names no entry.
+      const programme = `${research}\nhttps://www.sap.com/partners/`;
+      expect(lintOffer(listing(goal, ["https://www.sap.com/partners/"]), programme)).not.toContain(
+        "offer-already-met",
+      );
+      // Their own integrations page is not a third party's listing.
+      const ownUrl = "https://harbortiles.example/integrations/sap-checkout";
+      expect(lintOffer(listing(goal, [ownUrl]), `${research}\n${ownUrl}`)).not.toContain(
+        "offer-already-met",
+      );
+      // A goal that is no listing never trips it, whatever the evidence.
+      expect(
+        lintOffer(
+          listing("sign three new sap resellers for the leeds depot this quarter", [sapEntry]),
+          research,
+        ),
+      ).not.toContain("offer-already-met");
+    });
   });
 
   // An offer that does their product's own job reads as a competitor's pitch,

@@ -508,23 +508,55 @@ const SYSTEM_WRAPPER =
 
 /**
  * An offer to get listed, certified or approved on a platform whose own
- * evidence is an entry page in that kind of platform: a partner, marketplace
- * or directory page with an entry after it ("/partners/<entry>"). Such a page
- * in the research is the listing itself, so the goal is already reached.
- * Kept narrow on purpose: both halves must hold, the page must name an entry
- * (a bare "/partners" or "/marketplace" page may be the programme), and
- * pages that are often the firm's own ("/integrations", "/apps") never count.
+ * evidence is that platform's entry page: a partner, marketplace or directory
+ * page with an entry after it ("/partners/<entry>"), on a host whose own name
+ * the offer names ("sap.com/.../partners/<entry>" for a goal on SAP). Such a
+ * page in the research is the listing itself, so the goal is already reached.
+ * Kept narrow on purpose: every part must hold. The page must name an entry
+ * (a bare "/partners" or "/marketplace" page may be the programme), pages that
+ * are often the firm's own ("/integrations", "/apps") never count, and an
+ * entry on another platform than the one the goal names never counts. When
+ * the platform cannot be matched, the evidence-aware judge decides.
  */
 const LISTING_GOAL =
   /\b(?:listed|listing|certified|certification|accredited|accreditation|approved|approval)\b/i;
 const LISTING_PLATFORM =
   /\b(?:marketplaces?|partners?|partner\s+(?:ecosystem|network|programme|program|directory)|ecosystem|directory|app\s?store|appexchange)\b/i;
 const LISTING_ENTRY_URL =
-  /https?:\/\/[^\s"'<>]+\/(?:partners?|partner-directory|marketplace|directory|listings?|appexchange|ecosystem)\/[^\s"'<>/?#]{3,}/i;
+  /https?:\/\/([^\s"'<>/?#]+)[^\s"'<>]*\/(?:partners?|partner-directory|marketplace|directory|listings?|appexchange|ecosystem)\/[^\s"'<>/?#]{3,}/gi;
+/** Host labels that name no platform: subdomains, directory words and suffixes. */
+const GENERIC_HOST_LABELS = new Set(
+  (
+    "www www2 m en us uk eu global partners partner partnerportal marketplace marketplaces apps app " +
+    "store appstore directory ecosystem listings listing solutions solution products product catalog " +
+    "community developer developers docs portal hub cloud services " +
+    "com co org net io ai dev biz info gov edu ac"
+  ).split(" "),
+);
+
+/** The labels of a host that can name its platform: "partners.sap.com" gives "sap". */
+function platformLabels(host: string): string[] {
+  const labels = host.toLowerCase().replace(/:\d+$/, "").split(".").filter(Boolean);
+  // The last label is the suffix (".com", ".de"); a bare host names nothing.
+  return labels
+    .slice(0, -1)
+    .filter((l) => l.length >= 3 && !GENERIC_HOST_LABELS.has(l) && /^[a-z0-9-]+$/.test(l));
+}
+
+/** True when the offer names this label as a word ("example-platform" also as "example platform"). */
+function offerNamesLabel(offer: string, label: string): boolean {
+  const parts = label.split("-").filter(Boolean);
+  if (parts.length === 0) return false;
+  return new RegExp(`(?:^|[^a-z0-9])${parts.join("[\\s-]?")}(?:$|[^a-z0-9])`, "i").test(offer);
+}
 
 export function isAlreadyMetOffer(offer: string, evidence: readonly string[]): boolean {
   if (!LISTING_GOAL.test(offer) || !LISTING_PLATFORM.test(offer)) return false;
-  return evidence.some((quote) => LISTING_ENTRY_URL.test(quote));
+  return evidence.some((quote) =>
+    [...quote.matchAll(LISTING_ENTRY_URL)].some((m) =>
+      platformLabels(m[1] ?? "").some((label) => offerNamesLabel(offer, label)),
+    ),
+  );
 }
 
 export function isSystemWrapperOffer(offer: string): boolean {
