@@ -2291,6 +2291,19 @@ describe("the offer bar", () => {
       expect(lintOffer(generic, research)).not.toContain("offer-already-met");
     });
 
+    it("reads a pathological URL in linear time and does not flag it", async () => {
+      const { isAlreadyMetOffer } = await import("../src/_prospect-offer.ts");
+      const goal =
+        "take the checkout integration through every partner review until it is certified and listed in the sap partner ecosystem";
+      const pathological = `http://${"!".repeat(50_000)}`;
+      const started = performance.now();
+      expect(isAlreadyMetOffer(goal, [pathological])).toBe(false);
+      expect(lintOffer(listing(goal, [pathological]), pathological)).not.toContain(
+        "offer-already-met",
+      );
+      expect(performance.now() - started).toBeLessThan(1_000);
+    });
+
     it("needs an entry page, a third party's listing and a listing goal", () => {
       const goal =
         "take the checkout integration through every partner review until it is certified and listed in the sap partner ecosystem";

@@ -522,8 +522,20 @@ const LISTING_GOAL =
   /\b(?:listed|listing|certified|certification|accredited|accreditation|approved|approval)\b/i;
 const LISTING_PLATFORM =
   /\b(?:marketplaces?|partners?|partner\s+(?:ecosystem|network|programme|program|directory)|ecosystem|directory|app\s?store|appexchange)\b/i;
-const LISTING_ENTRY_URL =
-  /https?:\/\/([^\s"'<>/?#]+)[^\s"'<>]*\/(?:partners?|partner-directory|marketplace|directory|listings?|appexchange|ecosystem)\/[^\s"'<>/?#]{3,}/gi;
+/** Path segments that open a partner, marketplace or directory entry ("/partners/<entry>"). */
+const LISTING_PATH_SEGMENTS = new Set([
+  "partner",
+  "partners",
+  "partner-directory",
+  "marketplace",
+  "directory",
+  "listing",
+  "listings",
+  "appexchange",
+  "ecosystem",
+]);
+/** Characters that end a URL inside a quote. */
+const URL_END_CHARS = new Set(['"', "'", "<", ">"]);
 /** Host labels that name no platform: subdomains, directory words and suffixes. */
 const GENERIC_HOST_LABELS = new Set(
   (
@@ -534,27 +546,74 @@ const GENERIC_HOST_LABELS = new Set(
   ).split(" "),
 );
 
+/**
+ * The URLs in a quote, parsed. Linear in the quote's length: split on
+ * whitespace, cut each token at the first "http://" or "https://" and at the
+ * first quote or angle bracket, and let `URL` parse the rest. No regular
+ * expression runs over the quote's URLs, so no input can make it slow.
+ */
+function urlsIn(quote: string): URL[] {
+  const out: URL[] = [];
+  for (const token of quote.split(/\s/)) {
+    const lower = token.toLowerCase();
+    const at = [lower.indexOf("https://"), lower.indexOf("http://")]
+      .filter((i) => i >= 0)
+      .reduce((a, b) => Math.min(a, b), Infinity);
+    if (at === Infinity) continue;
+    let end = at;
+    while (end < token.length && !URL_END_CHARS.has(token[end]!)) end++;
+    try {
+      out.push(new URL(token.slice(at, end)));
+    } catch {
+      // Not a URL after all: nothing to match.
+    }
+  }
+  return out;
+}
+
+/** True when the URL's path has a listing segment with an entry of 3+ characters after it. */
+function isListingEntry(url: URL): boolean {
+  const segments = url.pathname.split("/");
+  for (let i = 0; i + 1 < segments.length; i++) {
+    if (LISTING_PATH_SEGMENTS.has(segments[i]!.toLowerCase()) && segments[i + 1]!.length >= 3) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** The labels of a host that can name its platform: "partners.sap.com" gives "sap". */
 function platformLabels(host: string): string[] {
-  const labels = host.toLowerCase().replace(/:\d+$/, "").split(".").filter(Boolean);
+  const labels = host.toLowerCase().split(".").filter(Boolean);
   // The last label is the suffix (".com", ".de"); a bare host names nothing.
   return labels
     .slice(0, -1)
     .filter((l) => l.length >= 3 && !GENERIC_HOST_LABELS.has(l) && /^[a-z0-9-]+$/.test(l));
 }
 
-/** True when the offer names this label as a word ("example-platform" also as "example platform"). */
+/** True when the offer names this label as a word ("example-platform" also as "example platform" or "exampleplatform"). */
 function offerNamesLabel(offer: string, label: string): boolean {
   const parts = label.split("-").filter(Boolean);
   if (parts.length === 0) return false;
-  return new RegExp(`(?:^|[^a-z0-9])${parts.join("[\\s-]?")}(?:$|[^a-z0-9])`, "i").test(offer);
+  const words = offer
+    .toLowerCase()
+    .split(/[^a-z0-9]/)
+    .filter(Boolean);
+  const joined = parts.join("");
+  for (let i = 0; i < words.length; i++) {
+    if (words[i] === joined) return true;
+    if (parts.every((part, k) => words[i + k] === part)) return true;
+  }
+  return false;
 }
 
 export function isAlreadyMetOffer(offer: string, evidence: readonly string[]): boolean {
   if (!LISTING_GOAL.test(offer) || !LISTING_PLATFORM.test(offer)) return false;
   return evidence.some((quote) =>
-    [...quote.matchAll(LISTING_ENTRY_URL)].some((m) =>
-      platformLabels(m[1] ?? "").some((label) => offerNamesLabel(offer, label)),
+    urlsIn(quote).some(
+      (url) =>
+        isListingEntry(url) &&
+        platformLabels(url.hostname).some((label) => offerNamesLabel(offer, label)),
     ),
   );
 }
