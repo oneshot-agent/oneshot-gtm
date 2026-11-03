@@ -193,7 +193,7 @@ function record(key: string, failed: PlatformError | null, now: number, probeId 
 
 /**
  * The breaker if calls on `key` are paused: inside the cooldown, or while the
- * one probe after it is out. `admit` lets the caller be that probe.
+ * one probe after it is out (`admitProbe`).
  */
 function pausedBreaker(key: string, now: number): Breaker | null {
   const b = breakers.get(key);
