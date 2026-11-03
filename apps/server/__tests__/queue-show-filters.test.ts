@@ -186,8 +186,10 @@ describe("GET /api/queue sort, show, channel and offset", () => {
     const linkedin = row({ channel: "linkedin" });
     expect(ids(await list("status=pending&channel=linkedin"))).toEqual([linkedin]);
     expect(ids(await list("status=pending&channel=email"))).toEqual([email]);
-    // An unknown channel is no filter.
-    expect((await list("status=pending&channel=fax")).total).toBe(2);
+    // An unknown channel is refused, never read as no filter.
+    expect(
+      listQueueRoute(new Request("http://localhost/api/queue?status=pending&channel=fax")).status,
+    ).toBe(400);
   });
 
   it("keeps a ready page full past the rows a fit or mismatch hold drops", async () => {
@@ -300,6 +302,22 @@ describe("Approve pending with a filter on", () => {
     );
     return ((await res.json()) as { approved: number }).approved;
   }
+
+  it("refuses an unknown show or channel instead of approving every pending row", async () => {
+    const pending = row({ payload: { offer: OFFER }, draft: DRAFT });
+    for (const body of [{ show: "redy" }, { channel: "fax" }]) {
+      const res = await approveAllRoute(
+        new Request("http://localhost/api/queue/approve-all", {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+      );
+      expect(res.status).toBe(400);
+    }
+    expect(ledger.getQueueRow(pending)?.status).toBe("pending");
+    const list = await listQueueRoute(new Request("http://localhost/api/queue?show=redy"));
+    expect(list.status).toBe(400);
+  });
 
   it("approves only the rows the filtered list shows, JS holds included", async () => {
     const ready = row({ payload: { offer: OFFER }, draft: DRAFT });

@@ -954,6 +954,16 @@ export function listQueueRoute(req: Request): Response {
   }
   // `?show=` and `?channel=` narrow the list in the query, before the page is
   // cut. An explicit id pick ignores them: it is already the founder's pick.
+  // An unknown value is refused, never read as "no filter": the run page
+  // takes its batch from this list.
+  const showParam = url.searchParams.get("show");
+  const channelParam = url.searchParams.get("channel");
+  if (!ids && showParam && !isQueueShow(showParam)) {
+    return jsonResponse({ error: `unknown show filter: ${showParam}` }, 400, req);
+  }
+  if (!ids && channelParam && !isOutreachChannel(channelParam)) {
+    return jsonResponse({ error: `unknown channel: ${channelParam}` }, 400, req);
+  }
   if (!ids) {
     Object.assign(
       filters,
@@ -1683,6 +1693,13 @@ export async function approveAllRoute(req: Request): Promise<Response> {
     body = (await req.json()) as { play?: string; show?: unknown; channel?: unknown };
   } catch {
     // empty body is fine
+  }
+  // A filter the page never sends must not widen the batch to every pending row.
+  if (body.show !== undefined && body.show !== null && !isQueueShow(body.show)) {
+    return jsonResponse({ error: `unknown show filter: ${String(body.show)}` }, 400, req);
+  }
+  if (body.channel !== undefined && body.channel !== null && !isOutreachChannel(body.channel)) {
+    return jsonResponse({ error: `unknown channel: ${String(body.channel)}` }, 400, req);
   }
   const ledger = getLedger();
   // A row whose writer found no strong offer stays pending: it has no offer
