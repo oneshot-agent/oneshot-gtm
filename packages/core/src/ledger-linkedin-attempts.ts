@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { linkedInFailure } from "./linkedin-error.ts";
 
 /**
  * Send attempts per LinkedIn idempotency key. OneShot never sends twice
@@ -25,16 +26,14 @@ export function linkedInSendBaseKey(key: string): string {
  * transport or local error.
  */
 export function isFailedLinkedInSend(err: unknown): boolean {
-  const e = (err ?? {}) as {
-    name?: unknown;
-    statusCode?: unknown;
-    code?: unknown;
-    reason?: unknown;
-    jobError?: unknown;
-  };
+  const e = (err ?? {}) as { name?: unknown; statusCode?: unknown; jobError?: unknown };
   if (e.name !== "JobError" || e.statusCode === 429) return false;
-  const text = [e.code, e.reason, e.jobError].filter((v) => typeof v === "string").join(" ");
-  return !/(?<![a-z_])send_unverified(?![a-z_])/.test(text);
+  // The code decides; an older answer with no code names it in `jobError`.
+  const { code } = linkedInFailure(err);
+  if (code) return code !== "send_unverified";
+  return !/(?<![a-z_])send_unverified(?![a-z_])/.test(
+    typeof e.jobError === "string" ? e.jobError : "",
+  );
 }
 
 export class LinkedInSendAttemptStore {

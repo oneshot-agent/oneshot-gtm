@@ -35,9 +35,16 @@ describe("what counts as a failed send", () => {
     expect(isFailedLinkedInSend(failed("internal_error"))).toBe(true);
     expect(isFailedLinkedInSend(failed("rate_limited"))).toBe(true);
     expect(isFailedLinkedInSend(failed("send_unverified"))).toBe(false);
+    // An older answer with no code: its job text says so.
+    expect(isFailedLinkedInSend({ name: "JobError", jobError: "linkedin: send_unverified" })).toBe(
+      false,
+    );
+    // The code decides: a sentence never overrides it.
     expect(
-      isFailedLinkedInSend(Object.assign(failed("x"), { jobError: "linkedin: send_unverified" })),
-    ).toBe(false);
+      isFailedLinkedInSend(
+        Object.assign(failed("rate_limited"), { jobError: "Not send_unverified: rate limited." }),
+      ),
+    ).toBe(true);
     expect(isFailedLinkedInSend({ name: "ToolError", statusCode: 429 })).toBe(false);
     expect(isFailedLinkedInSend({ name: "JobTimeoutError" })).toBe(false);
     expect(isFailedLinkedInSend({ name: "LinkedInSendPendingError" })).toBe(false);

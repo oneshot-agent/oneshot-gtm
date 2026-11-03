@@ -765,3 +765,68 @@ describe("a cadence reply into the conversation it already has", () => {
     expect(ledger.linkedInPending.list()).toEqual([]);
   });
 });
+
+describe("OneShot's failed-job format and a 429 on a cadence invite", () => {
+  it("a failed job read from its code: the flag names LinkedIn's error type and OneShot's sentence", async () => {
+    emailCadenceRunOut();
+    const sentence = "This person can't be invited; LinkedIn rate limits do not apply.";
+    const out = await sendInvite(
+      caller({
+        account: accountOk,
+        invite: () => accepted("job-inv"),
+        // `jobError` is the sentence, which mentions a rate limit: the code decides.
+        wait: failedWith("recipient_unavailable", {
+          jobError: sentence,
+          partialResult: { reason: sentence, upstream_reason: "invalid_recipient" },
+        }),
+      }),
+    );
+    expect(out.action).toBe("completed");
+    expect(out.note).toContain(
+      `linkedin-invite-refused: LinkedIn refused this invite (recipient_unavailable: invalid_recipient): ${sentence}`,
+    );
+    expect(kinds()).not.toContain("invitation");
+    expect(getSharedDb().linkedInTouch("dana-lee")).toBeNull();
+  });
+
+  it("a 429 keeps the claim and defers; the next day's run sends under the same key", async () => {
+    emailCadenceRunOut();
+    const err = await sendInvite(
+      caller({
+        account: accountOk,
+        invite: () => {
+          throw Object.assign(new Error("Tool request failed"), {
+            name: "ToolError",
+            statusCode: 429,
+          });
+        },
+      }),
+    ).catch((e: unknown) => e);
+    expect((err as Error).name).toBe("SendDeferredError");
+    expect(getSharedDb().linkedInTouch("dana-lee")?.status).toBe("dispatched");
+    expect(emailState()).toMatchObject({ status: "active", current_step: 1 });
+    // The sweep finds no record under the key yet: left as it is, nothing sent.
+    calls = [];
+    const swept = await sweepLinkedInInvitations({
+      linkedIn: caller({
+        recover: () => ({ status: "unknown", acceptance: "unknown" }),
+        invitations: () => ({ invitations: [] }),
+      }),
+    });
+    expect(swept.pendingSends).toMatchObject({ checked: 1, pending: 1 });
+    expect(calls.some((c) => SENDS.has(c.kind as string))).toBe(false);
+    _resetInviteLimitsCacheForTests();
+    calls = [];
+    const out = await sendInvite(
+      caller({
+        account: accountOk,
+        invite: () => accepted("job-inv"),
+        wait: () => ({ invitation_id: "inv-1", status: "sent" }),
+      }),
+    );
+    expect(out.action).toBe("step-sent");
+    expect(sentKeys("invite")).toEqual([INVITE_KEY()]);
+    expect(getSharedDb().linkedInTouch("dana-lee")?.status).toBe("confirmed");
+    expect(ledger.linkedInPending.list()).toEqual([]);
+  });
+});

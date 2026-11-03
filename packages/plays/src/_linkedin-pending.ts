@@ -2,6 +2,7 @@ import {
   currentWorkspaceName,
   getLedger,
   isLinkedInSendPending,
+  linkedInFailure,
   linkedInMessageConversationId,
   logEvent,
   parseLinkedInRecovery,
@@ -42,22 +43,16 @@ export interface LinkedInPendingSweepResult {
 
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
 
-/** A failure's code (or text), with why it failed and what LinkedIn's provider said. */
-function errorText(err: unknown): string {
-  const e = (err ?? {}) as {
-    code?: unknown;
-    jobError?: unknown;
-    message?: unknown;
-    reason?: unknown;
-    upstreamReason?: unknown;
-  };
-  const code =
-    [e.code, e.jobError].find((v): v is string => typeof v === "string" && !!v) ??
-    (typeof e.message === "string" ? e.message : "failed");
-  const why = [e.reason, e.upstreamReason].filter(
-    (v): v is string => typeof v === "string" && !!v && !code.includes(v),
-  );
-  return why.length > 0 ? `${code}: ${why.join(": ")}` : code;
+/**
+ * A failure as the send error shows it: `(code: upstream_reason)`, then
+ * OneShot's sentence. The code, never a sentence read as one.
+ */
+function failureText(err: unknown): string {
+  const { code, reason, upstream } = linkedInFailure(err);
+  const message = (err as { message?: unknown } | null)?.message;
+  const tag = code ?? (typeof message === "string" && message ? message : "failed");
+  const tagged = upstream && upstream !== tag ? `${tag}: ${upstream}` : tag;
+  return `(${tagged})${reason && !tagged.includes(reason) ? `: ${reason}` : ""}`;
 }
 
 /** Resolve every pending send. Per-send failures are logged and left pending. */
@@ -150,7 +145,7 @@ async function resolveMessage(
       ledger.recordCadenceSendError({
         prospectId: cadence.prospectId,
         playName: cadence.playName,
-        error: `LinkedIn ${p.kind} not sent (${errorText(err)})`,
+        error: `LinkedIn ${p.kind} not sent ${failureText(err)}`,
       });
     }
     return "failed";
@@ -234,7 +229,7 @@ async function resolveInvite(
       ledger.recordCadenceSendError({
         prospectId: cadence.prospectId,
         playName: row.playName,
-        error: `LinkedIn invite not sent (${errorText(err)})`,
+        error: `LinkedIn invite not sent ${failureText(err)}`,
       });
     }
     return "failed";

@@ -37,7 +37,7 @@ Each message appears on Cadences as due. You preview it and send it. Until the i
 
 **Sending: outcome pending.** OneShot spaces out sends from one account, so a message or invite can still be queued after three minutes. The step then reads "outcome pending", not failed. The 30-minute check records the outcome, and Send checks the same send again instead of sending twice.
 
-**Send after a failure.** When OneShot reports that a message, invite or withdrawal failed, the next Send (or the next day's try) goes out as a new request. A send that may have gone out (outcome pending or unverified) is only ever checked again, never resent.
+**Send after a failure.** When OneShot reports that a message, invite or withdrawal failed, the next Send (or the next day's try) goes out as a new request. A send that may have gone out (outcome pending, unverified, or an invite answered with a rate limit) is only ever checked again under the same request, never resent as a new one; a rate-limited invite keeps the profile and pauses invites for the day.
 
 **LinkedIn refused this invite.** When OneShot reports that an invite was never sent, or that the person can't be invited (`recipient_unavailable`), the profile is freed and the row or step carries `linkedin-invite-refused` with LinkedIn's reason. A cadence skips its LinkedIn steps.
 

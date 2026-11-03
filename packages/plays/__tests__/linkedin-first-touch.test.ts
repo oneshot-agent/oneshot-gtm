@@ -76,7 +76,17 @@ vi.mock("@oneshot-gtm/intel", () => ({
 
 const { draftLinkedInNote, recordKnownConnection, sendLinkedInInvite } =
   await import("../src/_linkedin-first-touch.ts");
-const { isSendDeferred, _resetInviteLimitsCacheForTests } = await import("@oneshot-gtm/core");
+const { getSharedDb, isSendDeferred, _resetInviteLimitsCacheForTests } =
+  await import("@oneshot-gtm/core");
+
+const today = () => new Date().toISOString().slice(0, 10);
+/** Invite slots the workspace holds on the account today. */
+const slots = () => getSharedDb().inviteSlotsUsed("acct-1", "alpha", today());
+/** The idempotency keys the invite calls went under. */
+const inviteKeys = (calls: unknown[]) =>
+  calls
+    .filter((c) => (c as { kind: string }).kind === "invite")
+    .map((c) => (c as { idempotencyKey: string }).idempotencyKey);
 
 function row(payload: Record<string, unknown> = {}) {
   return {
@@ -515,13 +525,28 @@ describe("sendLinkedInInvite", () => {
     expect(isSendDeferred(err)).toBe(true);
   });
 
-  it("reads the provider's code from a failed job that carries a generic code", async () => {
-    // The job failed server-side: `jobError` is OneShot's own text, so it proves non-delivery.
+  it("a code decides: a cap named only in a failed job's text does not override it", async () => {
+    // OneShot's `jobError` is a sentence; the code says what failed.
     const capped = sender(
       Object.assign(new Error("job failed"), {
+        name: "JobError",
         code: "job_failed",
-        jobError: "account_send_limit",
+        jobError: "Paused: account_send_limit was mentioned, but this is another failure.",
       }),
+    );
+    const out = await sendLinkedInInvite({
+      row: row(),
+      note: "hi",
+      sender: capped.sender,
+      workspace: "alpha",
+    }).catch((e: unknown) => e);
+    expect(isSendDeferred(out)).toBe(false);
+    expect(getSharedDb().linkedInTouch("dana-lee")?.status).toBe("dispatched");
+  });
+
+  it("the older format (a failed job whose jobError is the code) still frees the profile", async () => {
+    const capped = sender(
+      Object.assign(new Error("job failed"), { name: "JobError", jobError: "account_send_limit" }),
     );
     const out = await sendLinkedInInvite({
       row: row(),
@@ -540,6 +565,107 @@ describe("sendLinkedInInvite", () => {
       workspace: "alpha",
     });
     expect(retry).toMatchObject({ sent: true });
+  });
+
+  describe("an invite answered by a cap", () => {
+    it("a synchronous 429 may have gone out: claim and slot kept, same key, invites paused", async () => {
+      const limited = sender(
+        Object.assign(new Error("Tool request failed: rate_limited"), {
+          name: "ToolError",
+          statusCode: 429,
+          code: "rate_limited",
+        }),
+      );
+      const err = await sendLinkedInInvite({
+        row: row(),
+        note: "hi",
+        sender: limited.sender,
+        workspace: "alpha",
+      }).catch((e: unknown) => e);
+      expect(isSendDeferred(err)).toBe(true);
+      expect((err as Error).message).toBe("LinkedIn invites paused for today (rate_limited)");
+      expect(getSharedDb().linkedInTouch("dana-lee")?.status).toBe("dispatched");
+      expect(slots()).toBe(1);
+      expect(sendAttempts.size).toBe(0);
+      // Kept under its key with no job id: the sweep never sends it.
+      expect(pendingSends.get("gtm:alpha:queue:7:invite")).toMatchObject({ requestId: "" });
+      const sweep = sender({ invitation_id: "inv-1", status: "sent" });
+      expect(
+        await sendLinkedInInvite({
+          row: row(),
+          note: "hi",
+          sender: sweep.sender,
+          workspace: "alpha",
+          resumeOnly: true,
+        }),
+      ).toMatchObject({ sent: false });
+      expect(inviteKeys(sweep.calls)).toEqual([]);
+      // Still paused today: Send again defers without calling invite.
+      const sameDay = sender({ invitation_id: "inv-1", status: "sent" });
+      const deferred = await sendLinkedInInvite({
+        row: row(),
+        note: "hi",
+        sender: sameDay.sender,
+        workspace: "alpha",
+      }).catch((e: unknown) => e);
+      expect(isSendDeferred(deferred)).toBe(true);
+      expect(inviteKeys(sameDay.calls)).toEqual([]);
+      // The next day: its own claim does not refuse it, and it goes under the
+      // same key, which OneShot answers with the first invite if it was made.
+      _resetInviteLimitsCacheForTests();
+      const next = sender({ invitation_id: "inv-1", status: "sent" });
+      expect(
+        await sendLinkedInInvite({
+          row: row(),
+          note: "hi",
+          sender: next.sender,
+          workspace: "alpha",
+        }),
+      ).toMatchObject({ sent: true });
+      expect(inviteKeys(next.calls)).toEqual(["gtm:alpha:queue:7:invite"]);
+      expect(getSharedDb().linkedInTouch("dana-lee")?.status).toBe("confirmed");
+      expect(slots()).toBe(1);
+      expect(pendingSends.size).toBe(0);
+    });
+
+    it("a 429 is kept whatever its text says", async () => {
+      const limited = sender(
+        Object.assign(new Error("Too Many Requests"), { name: "ToolError", statusCode: 429 }),
+      );
+      const err = await sendLinkedInInvite({
+        row: row(),
+        note: "hi",
+        sender: limited.sender,
+        workspace: "alpha",
+      }).catch((e: unknown) => e);
+      expect((err as Error).message).toBe("LinkedIn invites paused for today (429)");
+      expect(getSharedDb().linkedInTouch("dana-lee")?.status).toBe("dispatched");
+    });
+
+    it("a failed job with the cap proves nothing went out: claim and slot freed, the key moved on", async () => {
+      const failed = sender(
+        Object.assign(new Error("Job failed: This account reached today's invite limit."), {
+          name: "JobError",
+          code: "account_send_limit",
+          jobError: "This account reached today's invite limit.",
+          partialResult: { reason: "This account reached today's invite limit." },
+        }),
+      );
+      const err = await sendLinkedInInvite({
+        row: row(),
+        note: "hi",
+        sender: failed.sender,
+        workspace: "alpha",
+      }).catch((e: unknown) => e);
+      expect((err as Error).message).toBe("LinkedIn invites paused for today (account_send_limit)");
+      expect(getSharedDb().linkedInTouch("dana-lee")).toBeNull();
+      expect(slots()).toBe(0);
+      expect(pendingSends.size).toBe(0);
+      _resetInviteLimitsCacheForTests();
+      const next = sender({ invitation_id: "inv-1", status: "sent" });
+      await sendLinkedInInvite({ row: row(), note: "hi", sender: next.sender, workspace: "alpha" });
+      expect(inviteKeys(next.calls)).toEqual(["gtm:alpha:queue:7:invite:r1"]);
+    });
   });
 
   it("refuses a row with no LinkedIn profile without calling OneShot", async () => {

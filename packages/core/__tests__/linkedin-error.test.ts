@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { linkedInError } from "../src/linkedin-error.ts";
+import { linkedInError, linkedInFailure } from "../src/linkedin-error.ts";
 import { linkedInMessageDeferral } from "../src/linkedin-message.ts";
 it("retains safe provider detail and request ID without serializing the raw response", () => {
   const e = linkedInError({
@@ -64,7 +64,38 @@ it("keeps a failed job's reason and LinkedIn's upstream reason apart from the co
   // Already carried by the error (from the worker): kept as is.
   expect(
     linkedInError({ name: "JobError", message: "Job failed", code: "x", upstreamReason: "y" }),
-  ).toMatchObject({ code: "x", upstreamReason: "y", message: "Job failed (y)" });
+  ).toMatchObject({ code: "x", upstreamReason: "y", message: "Job failed (x: y)" });
+});
+
+it("reads OneShot's failed-job format: the code from `code`, the sentence and provider type from partialResult", () => {
+  const e = linkedInError(
+    Object.assign(new Error("Job failed: This person can't be invited right now."), {
+      name: "JobError",
+      code: "recipient_unavailable",
+      jobError: "This person can't be invited right now.",
+      partialResult: {
+        reason: "This person can't be invited right now.",
+        upstream_reason: "invalid_recipient",
+      },
+    }),
+  );
+  expect(e).toMatchObject({
+    code: "recipient_unavailable",
+    reason: "This person can't be invited right now.",
+    upstreamReason: "invalid_recipient",
+    message:
+      "Job failed: This person can't be invited right now. (recipient_unavailable: invalid_recipient)",
+  });
+  // The sentence is never a code, whatever it mentions.
+  expect(
+    linkedInFailure({ name: "JobError", jobError: "We were rate limited, try later." }),
+  ).toEqual({ code: null, reason: "We were rate limited, try later.", upstream: null });
+  // The older format: `jobError` is the code itself.
+  expect(linkedInFailure({ name: "JobError", jobError: "rate_limited" })).toEqual({
+    code: "rate_limited",
+    reason: null,
+    upstream: null,
+  });
 });
 
 it("keeps a 409 duplicate_request's status, code and original request id", () => {

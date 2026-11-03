@@ -27,13 +27,17 @@ const deferralOf = (code: string): LinkedInMessageDeferral | null =>
  */
 export function linkedInMessageDeferral(err: unknown): LinkedInMessageDeferral | null {
   const e = err as { code?: unknown; reason?: unknown; jobError?: unknown } | null;
-  for (const field of [e?.code, e?.reason]) {
-    const deferral = typeof field === "string" ? deferralOf(field) : null;
+  // The code decides: a job's `jobError` is a sentence, and one that mentions
+  // a rate limit is not `rate_limited` when the code says otherwise.
+  if (typeof e?.code === "string" && e.code) return deferralOf(e.code);
+  if (typeof e?.reason === "string") {
+    const deferral = deferralOf(e.reason);
     if (deferral) return deferral;
   }
-  const jobError = typeof e?.jobError === "string" ? e.jobError : "";
-  // Not `\b`: an underscore is a word character, so `\bnot_connected` misses
+  // An older answer with no code names it in `jobError`. Not `\b`: an
+  // underscore is a word character, so `\bnot_connected` misses
   // `recipient_not_connected`.
+  const jobError = typeof e?.jobError === "string" ? e.jobError : "";
   const m = /(?<![a-z_])(recipient_not_connected|not_connected|rate_limited)(?![a-z_])/.exec(
     jobError,
   );

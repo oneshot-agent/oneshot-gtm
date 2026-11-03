@@ -2,10 +2,12 @@ import {
   currentWorkspaceName,
   getLedger,
   getSharedDb,
+  linkedInFailure,
   linkedInOutreachAccount,
   normalizeLinkedInProfile,
   parseLinkedInRecovery,
   settleLinkedInInviteClaim,
+  type LinkedInFailure,
   type LinkedInPendingSend,
 } from "@oneshot-gtm/core";
 import { LINKEDIN_SEND_PENDING } from "@oneshot-gtm/shared-types";
@@ -152,7 +154,13 @@ export async function reconcileLinkedInSends(input: {
       const newer = (at: string | null) => !!at && Date.parse(at) > claimedAt;
       // Its own invite, when a queue row for the profile names the key.
       const row = queueRows.find((r) => inviteSlugOf(rowOf(r)) === claim.slug);
-      let proof: { state: string; code: string; own: boolean } | null = null;
+      let proof: {
+        state: string;
+        code: string;
+        own: boolean;
+        upstream?: string | null;
+        reason?: string | null;
+      } | null = null;
       if (row) {
         const own = await ownInviteRefused(call, account.accountId, row.id, workspace);
         if (own.state === "completed") {
@@ -160,7 +168,13 @@ export async function reconcileLinkedInSends(input: {
           continue;
         }
         if (own.state === "not_sent" && newer(own.updatedAt)) {
-          proof = { state: "not_sent (its own invite)", code: own.code, own: true };
+          proof = {
+            state: "not_sent (its own invite)",
+            code: own.code,
+            own: true,
+            upstream: own.upstream,
+            reason: own.reason,
+          };
         }
       }
       if (!proof && (invitations.notSent.get(claim.slug) ?? []).some(newer)) {
@@ -178,7 +192,7 @@ export async function reconcileLinkedInSends(input: {
           continue;
         }
         if (row && proof.own) {
-          holdQueueRow(row.id, [inviteRefusedFlag(proof.code)]);
+          holdQueueRow(row.id, [inviteRefusedFlag(proof.code, proof.upstream, proof.reason)]);
           // Its invite job failed: sent again, it goes under a new key.
           ledger.linkedInSendAttempts.markFailed(
             ledger.linkedInSendAttempts.key(
@@ -267,8 +281,16 @@ async function ownInviteRefused(
   state: "completed" | "not_sent" | "unknown";
   updatedAt: string | null;
   code: string;
+  upstream: string | null;
+  reason: string | null;
 }> {
-  const unknown = { state: "unknown" as const, updatedAt: null, code: "not_sent" };
+  const unknown = {
+    state: "unknown" as const,
+    updatedAt: null,
+    code: "not_sent",
+    upstream: null,
+    reason: null,
+  };
   try {
     const recovery = parseLinkedInRecovery(
       await call({
@@ -289,18 +311,21 @@ async function ownInviteRefused(
     })) as { status?: unknown; updated_at?: unknown } | null;
     if (invitation?.status !== "not_sent") return unknown;
     let code = "not_sent";
+    let failure: LinkedInFailure | null = null;
     if (recovery.requestId) {
       try {
         await call({ kind: "wait", requestId: recovery.requestId });
       } catch (err) {
-        const c = (err as { code?: unknown }).code;
-        if (typeof c === "string" && /^[a-z][a-z_]{1,39}$/.test(c)) code = c;
+        failure = linkedInFailure(err);
+        if (failure.code && /^[a-z][a-z_]{1,39}$/.test(failure.code)) code = failure.code;
       }
     }
     return {
       state: "not_sent",
       updatedAt: typeof invitation.updated_at === "string" ? invitation.updated_at : null,
       code,
+      upstream: failure?.upstream ?? null,
+      reason: failure?.reason ?? null,
     };
   } catch {
     return unknown;

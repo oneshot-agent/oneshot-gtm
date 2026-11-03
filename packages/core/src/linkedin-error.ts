@@ -8,6 +8,9 @@ const clean = (value: unknown): string | undefined =>
         .slice(0, 500)
     : undefined;
 
+/** What a failure code looks like: `rate_limited`, never a sentence. */
+const CODE = /^[a-z][a-z0-9_]{1,63}$/;
+
 const text = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim() ? value : undefined;
 
@@ -44,8 +47,9 @@ export function linkedInError(error: unknown) {
   const partial = record(e.partialResult);
   const detail = clean(nested.message ?? body.message ?? body.detail ?? body.error);
   const message = clean(e.message) ?? "LinkedIn request failed";
-  // Every failed LinkedIn job names why (`reason`) and what LinkedIn's
-  // provider said (`upstream_reason`): kept apart from the code, and shown.
+  // A failed LinkedIn job carries its code in `code`, one sentence in
+  // `partialResult.reason` (also its `jobError`), and the provider's error
+  // type in `partialResult.upstream_reason`: kept apart, and shown.
   const reason = clean(
     text(e.reason) ?? text(partial.reason) ?? text(nested.reason) ?? text(body.reason),
   );
@@ -56,16 +60,26 @@ export function linkedInError(error: unknown) {
       text(nested.upstream_reason) ??
       text(body.upstream_reason),
   );
-  const withDetail = detail && !message.includes(detail) ? `${message}: ${detail}` : message;
+  // An error's own `reason` stands in for a missing code only when it is one
+  // (a payment refusal's); a sentence never becomes a code.
+  const code = clean(
+    e.code ??
+      (CODE.test(e.reason ?? "") ? e.reason : undefined) ??
+      nested.code ??
+      body.code ??
+      text(body.error),
+  );
+  let shown = detail && !message.includes(detail) ? `${message}: ${detail}` : message;
   // A payment refusal's `reason` is its code alone; a job's is shown.
-  const why =
-    e.name === "JobError" || upstreamReason
-      ? [reason, upstreamReason].filter((v): v is string => !!v && !withDetail.includes(v))
-      : [];
+  if (e.name === "JobError" || upstreamReason) {
+    if (reason && reason !== code && !shown.includes(reason)) shown = `${shown}: ${reason}`;
+    const tags = [code, upstreamReason].filter((v): v is string => !!v && !shown.includes(v));
+    if (tags.length > 0) shown = `${shown} (${tags.join(": ")})`;
+  }
   return {
-    message: why.length > 0 ? `${withDetail} (${why.join(": ")})` : withDetail,
+    message: shown,
     name: e.name ?? "Error",
-    code: clean(e.code ?? e.reason ?? nested.code ?? body.code ?? text(body.error)),
+    code,
     requestId: clean(e.requestId ?? e.jobId ?? body.request_id ?? details.request_id),
     statusCode: e.statusCode,
     ...(reason !== undefined ? { reason } : {}),
@@ -87,4 +101,39 @@ function partialOf(value: unknown): Record<string, string | number | boolean> | 
     else if (typeof v === "number" || typeof v === "boolean") out[key] = v;
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** A LinkedIn failure, read the way GTM decides on it. */
+export interface LinkedInFailure {
+  /** OneShot's failure code. An older answer with no code: its `jobError`, when that is a code. */
+  code: string | null;
+  /** The one sentence a failed job carries (`partialResult.reason`). */
+  reason: string | null;
+  /** The provider's error type (`partialResult.upstream_reason`), when it gave one. */
+  upstream: string | null;
+}
+
+/**
+ * The code, sentence and provider error type of a failed LinkedIn call, raw
+ * from the SDK or carried across the worker. The code is `code`; a failed
+ * job's `jobError` is a sentence now, read as a code only from an older
+ * answer that has no code and whose `jobError` is one.
+ */
+export function linkedInFailure(err: unknown): LinkedInFailure {
+  const e = (err ?? {}) as {
+    code?: unknown;
+    reason?: unknown;
+    upstreamReason?: unknown;
+    jobError?: unknown;
+    partialResult?: unknown;
+  };
+  const partial = record(e.partialResult);
+  const code =
+    text(e.code) ?? (typeof e.jobError === "string" && CODE.test(e.jobError) ? e.jobError : null);
+  const sentence = (v: unknown) => (text(v) && v !== code ? (v as string) : undefined);
+  return {
+    code,
+    reason: sentence(partial.reason) ?? sentence(e.reason) ?? sentence(e.jobError) ?? null,
+    upstream: text(partial.upstream_reason) ?? text(e.upstreamReason) ?? null,
+  };
 }
