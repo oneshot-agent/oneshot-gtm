@@ -33,7 +33,10 @@ export interface TriggerSummary {
  */
 export function dueInMs(t: TriggerView, now = Date.now()): number | null {
   if (!t.enabled || t.ready === false || t.running || !t.lastPolledAt) return null;
-  return new Date(t.lastPolledAt).getTime() + t.intervalMs - now;
+  const byInterval = new Date(t.lastPolledAt).getTime() + t.intervalMs;
+  // The scheduler runs an outage retry at its own time when that is sooner.
+  const retry = t.retryAfter ? new Date(t.retryAfter).getTime() : Number.NaN;
+  return (Number.isFinite(retry) ? Math.min(byInterval, retry) : byInterval) - now;
 }
 
 export function summarizeTriggers(triggers: TriggerView[], now = Date.now()): TriggerSummary {

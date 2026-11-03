@@ -18,6 +18,13 @@ function trigger(over: Partial<TriggerView> = {}): TriggerView {
 }
 
 describe("dueInMs", () => {
+  it("uses an outage retry time when it is sooner than the interval", () => {
+    const retryAfter = new Date(NOW + 30 * 60_000).toISOString();
+    expect(dueInMs(trigger({ retryAfter }), NOW)).toBe(30 * 60_000);
+    const later = new Date(NOW + 9 * HOUR).toISOString();
+    expect(dueInMs(trigger({ retryAfter: later }), NOW)).toBe(5 * HOUR);
+  });
+
   it("counts forward from the last poll", () => {
     expect(dueInMs(trigger(), NOW)).toBe(5 * HOUR);
   });

@@ -115,6 +115,11 @@ describe("classifyPlatformError", () => {
   it("leaves answers about the input alone", () => {
     expect(
       classifyPlatformError(
+        new Error("Job failed: insufficient information to research this person"),
+      ),
+    ).toBeNull();
+    expect(
+      classifyPlatformError(
         new Error("Job failed: Could not find data for this person or company."),
       ),
     ).toBeNull();
@@ -187,6 +192,42 @@ describe("watchAgent", () => {
     failing = true;
     await agent.companyFind().catch(() => {});
     expect(isPlatformPaused()).toBe(false);
+  });
+
+  it("a success inside the cooldown does not end the pause", async () => {
+    vi.useFakeTimers();
+    const agent = watchAgent(fakeAgent(() => true));
+    for (let i = 0; i < 6; i++) await agent.companyFind().catch(() => {});
+    await agent.email();
+    expect(isPlatformPaused()).toBe(true);
+  });
+
+  it("lets one probe out after the cooldown and holds the rest until it answers", async () => {
+    vi.useFakeTimers();
+    let release: (() => void) | undefined;
+    let slow = false;
+    const raw = {
+      companyFind: vi.fn(async () => {
+        if (slow) {
+          await new Promise<void>((r) => (release = r));
+          return { results: [] };
+        }
+        throw settlementError();
+      }),
+    };
+    const agent = watchAgent(raw);
+    for (let i = 0; i < 6; i++) await agent.companyFind().catch(() => {});
+    vi.setSystemTime(Date.now() + PLATFORM_COOLDOWN_MS + 1);
+    slow = true;
+    const probe = agent.companyFind();
+    await expect(agent.companyFind()).rejects.toBeInstanceOf(PlatformUnavailableError);
+    expect(raw.companyFind).toHaveBeenCalledTimes(7);
+    release?.();
+    await probe;
+    expect(isPlatformPaused()).toBe(false);
+    slow = false;
+    await expect(agent.companyFind()).rejects.toThrow(/settlement_pending/);
+    expect(raw.companyFind).toHaveBeenCalledTimes(8);
   });
 
   it("a probe that fails pauses for another cooldown", async () => {

@@ -39,7 +39,10 @@ export class PlatformUnavailableError extends Error {
   }
 }
 
+/** A payment rejection's own reason code that means the wallet cannot pay. */
 const WALLET_REASONS = /invalid_payload|insufficient|credit balance does not cover/i;
+/** Any other error: only explicit wallet wording ("insufficient information" is an answer). */
+const WALLET_MESSAGE = /insufficient[ _](credits|funds|balance)|credit balance does not cover/i;
 
 function str(v: unknown): string | undefined {
   return typeof v === "string" && v ? v : undefined;
@@ -80,7 +83,7 @@ export function classifyPlatformError(err: unknown): PlatformError | null {
     if (network) ids.network = network;
     return { kind: WALLET_REASONS.test(reason) ? "wallet" : "payment", reason, ...ids };
   }
-  if (name === "InsufficientCreditsError" || WALLET_REASONS.test(lower)) {
+  if (name === "InsufficientCreditsError" || WALLET_MESSAGE.test(lower)) {
     return { kind: "wallet", reason: "insufficient credits" };
   }
   if (lower.includes("temporarily unavailable")) {
@@ -126,6 +129,8 @@ interface Breaker {
   outcomes: boolean[];
   open: boolean;
   openedAt: number;
+  /** When the one probe after a cooldown went out; 0 when none is in flight. */
+  probeAt: number;
   kind: PlatformErrorKind;
   reason: string;
 }
@@ -136,7 +141,7 @@ const breakers = new Map<string, Breaker>();
 function breakerFor(key: string): Breaker {
   let b = breakers.get(key);
   if (!b) {
-    b = { outcomes: [], open: false, openedAt: 0, kind: "unavailable", reason: "" };
+    b = { outcomes: [], open: false, openedAt: 0, probeAt: 0, kind: "unavailable", reason: "" };
     breakers.set(key, b);
   }
   return b;
@@ -145,11 +150,13 @@ function breakerFor(key: string): Breaker {
 function record(key: string, failed: PlatformError | null, now: number): void {
   const b = breakerFor(key);
   if (!failed) {
-    if (b.open) {
-      // A probe got through: the bad patch is over.
+    // Only a call made after the cooldown ends the pause: a send, or a lookup
+    // started before the pause, can succeed inside it.
+    if (b.open && now - b.openedAt >= PLATFORM_COOLDOWN_MS) {
       logEvent("oneshot.platform_resumed", { key, kind: b.kind, reason: b.reason });
       b.open = false;
       b.openedAt = 0;
+      b.probeAt = 0;
       b.outcomes = [];
     }
     b.outcomes.push(false);
@@ -160,6 +167,7 @@ function record(key: string, failed: PlatformError | null, now: number): void {
     if (b.open) {
       // A probe failed: wait another cooldown before the next one.
       b.openedAt = now;
+      b.probeAt = 0;
     } else if (b.outcomes.slice(-PLATFORM_WINDOW).filter(Boolean).length >= PLATFORM_TRIP) {
       b.open = true;
       b.openedAt = now;
@@ -173,9 +181,18 @@ function record(key: string, failed: PlatformError | null, now: number): void {
   if (b.outcomes.length > PLATFORM_WINDOW) b.outcomes = b.outcomes.slice(-PLATFORM_WINDOW);
 }
 
-function pausedBreaker(key: string, now: number): Breaker | null {
+/**
+ * The breaker if calls on `key` are paused: inside the cooldown, or while the
+ * one probe after it is out. `admit` lets the caller be that probe.
+ */
+function pausedBreaker(key: string, now: number, admit = false): Breaker | null {
   const b = breakers.get(key);
-  return b?.open && now - b.openedAt < PLATFORM_COOLDOWN_MS ? b : null;
+  if (!b?.open) return null;
+  if (now - b.openedAt < PLATFORM_COOLDOWN_MS) return b;
+  // A probe that never answered (a hung call) frees the slot after a cooldown.
+  if (b.probeAt && now - b.probeAt < PLATFORM_COOLDOWN_MS) return b;
+  if (admit) b.probeAt = now;
+  return null;
 }
 
 /** True while OneShot as a whole is paused (payment rail, wallet or reachability). */
@@ -306,12 +323,15 @@ export function watchAgent<T extends object>(agent: T): T {
       const fn = (...args: unknown[]): unknown => {
         if (isLookup(prop, args)) {
           const now = Date.now();
-          const paused =
-            pausedBreaker("platform", now) ?? pausedBreaker(methodKey(prop, args), now);
+          const key = methodKey(prop, args);
+          const paused = pausedBreaker("platform", now) ?? pausedBreaker(key, now);
           if (paused) {
             noteScope({ kind: paused.kind, reason: paused.reason }, true);
             return Promise.reject(new PlatformUnavailableError(paused.kind, paused.reason, prop));
           }
+          // Past a cooldown this call is the one probe; others wait for its answer.
+          pausedBreaker("platform", now, true);
+          pausedBreaker(key, now, true);
         }
         const out = (value as (...a: unknown[]) => unknown).apply(target, args);
         // Only calls that go to OneShot (they return a promise) count.
