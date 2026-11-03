@@ -111,7 +111,8 @@ describe("approve schedules the newsfeed capture", () => {
     // no strong offer stay pending, so they are not read either.
     expect(listQueueArgs.at(-1)).toEqual({
       status: "pending",
-      limit: 100_000,
+      limit: 1000,
+      offset: 0,
       playName: "show-hn",
       columns: ["id"],
       offerSkip: { mode: "exclude", noOfferPlays: expect.arrayContaining(["pmf-survey"]) },

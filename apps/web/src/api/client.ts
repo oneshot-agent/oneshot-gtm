@@ -96,6 +96,7 @@ import {
   toApiQuery,
   type ProspectsSearch,
 } from "../lib/prospects-helpers.ts";
+import { DEMO_QUEUE_LIMIT, demoQueuePage } from "../lib/queue-helpers.ts";
 
 const BASE = "/api";
 
@@ -532,6 +533,26 @@ export const api = {
     /** Explicit row pick. The "drain selected" path. */
     ids?: number[];
   }) => {
+    // The demo holds one captured document per status/order/play view; a
+    // page, Show or Channel filter of it is cut from that document here, as
+    // the prospects browse is, so no combination needs a capture of its own.
+    if (IS_DEMO && !opts?.forRun && opts?.ids == null) {
+      const { show, channel, offset, limit, ...view } = opts ?? {};
+      const q = new URLSearchParams();
+      if (view.play) q.set("play", view.play);
+      if (view.status) q.set("status", view.status);
+      if (view.offerSkip) q.set("offerSkip", view.offerSkip);
+      q.set("limit", String(DEMO_QUEUE_LIMIT));
+      if (view.order) q.set("order", view.order);
+      return demoGet<QueueListResponse>(`/queue?${q.toString()}`).then((doc) =>
+        demoQueuePage(doc, {
+          ...(show ? { show } : {}),
+          ...(channel ? { channel } : {}),
+          ...(offset ? { offset } : {}),
+          ...(limit != null ? { limit } : {}),
+        }),
+      );
+    }
     const q = new URLSearchParams();
     if (opts?.forRun) q.set("forRun", "1");
     if (opts?.play) q.set("play", opts.play);

@@ -22,7 +22,7 @@ vi.mock("@oneshot-gtm/find", async () => ({
   scheduleNewsfeedOnApproval: () => {},
 }));
 
-const { listQueueRoute, approveAllRoute, rowMatchesShow, toView } =
+const { listQueueRoute, approveAllRoute, rowMatchesShow, toView, setApproveScanWindowForTests } =
   await import("../src/api/queue.ts");
 
 const PLAY = "queue-show-filters-play";
@@ -313,5 +313,23 @@ describe("Approve pending with a filter on", () => {
     }
     expect(await approveAll({ show: "has-draft" as QueueShow })).toBe(2);
     expect(ledger.getQueueRow(noDraft)?.status).toBe("pending");
+  });
+
+  it("approves matches past the first scan window", async () => {
+    setApproveScanWindowForTests(3);
+    try {
+      // Ten ready rows, a fit-held one between each pair: the matches span
+      // every window of three, the last one past the ninth row.
+      const ready: number[] = [];
+      for (let i = 0; i < 10; i++) {
+        ready.push(row({ payload: { offer: OFFER }, draft: DRAFT }));
+        row({ payload: { offer: OFFER, icpVerdict: "reject" }, draft: DRAFT });
+      }
+      expect(await approveAll({ show: "ready" })).toBe(10);
+      for (const id of ready) expect(ledger.getQueueRow(id)?.status).toBe("approved");
+      expect(ledger.countQueue({ status: "pending" })).toBe(10);
+    } finally {
+      setApproveScanWindowForTests(1000);
+    }
   });
 });

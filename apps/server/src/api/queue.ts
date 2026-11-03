@@ -105,6 +105,7 @@ import {
   type ProspectSortKey,
   type QueueCounts,
   isQueueShow,
+  queueRowMatchesShow,
   type QueueListResponse,
   type QueueOrder,
   type QueueRowDetail,
@@ -356,6 +357,7 @@ export function toView(
           emailMismatchSendHold(payload) ??
           weakOfferSendHold(row.play_name, payload))
         : null,
+    offerReady: offerReady(row.play_name, payload),
     dedupeKey: row.dedupe_key,
     source: row.source,
     status: row.status,
@@ -663,35 +665,17 @@ function offerReady(playName: string, payload: unknown): boolean {
 }
 
 /**
- * The /queue "Show" filters (`QueueShow`) over a row and its view, as the
- * page's chips read them: DRAFT and HELD come from `lastDraft`, the held
- * badges from `sendHold`. The ledger's SQL mirrors this (exactly for
- * `offer-ready`, `has-draft` and `no-draft`, as a superset for `ready` and
- * `held`), and the route finishes `ready` and `held` with it.
+ * The /queue "Show" filters over a row and its view (`queueRowMatchesShow`).
+ * The ledger's SQL mirrors this (exactly for `offer-ready`, `has-draft` and
+ * `no-draft`, as a superset for `ready` and `held`), and the route finishes
+ * `ready` and `held` with it.
  */
 export function rowMatchesShow(
   show: QueueShow,
   row: Pick<QueueRow, "last_draft_json">,
-  view: Pick<QueueRowView, "playName" | "payload" | "lastDraft" | "sendHold">,
+  view: Pick<QueueRowView, "lastDraft" | "sendHold" | "offerReady">,
 ): boolean {
-  const draft = view.lastDraft && !view.lastDraft.sent ? view.lastDraft : null;
-  switch (show) {
-    case "offer-ready":
-      return offerReady(view.playName, view.payload);
-    case "has-draft":
-      return draft != null;
-    case "no-draft":
-      return row.last_draft_json == null;
-    case "ready":
-      return (
-        draft != null &&
-        draft.flags.length === 0 &&
-        offerReady(view.playName, view.payload) &&
-        view.sendHold == null
-      );
-    case "held":
-      return (draft != null && draft.flags.length > 0) || view.sendHold != null;
-  }
+  return queueRowMatchesShow(show, view, row.last_draft_json == null);
 }
 
 /** Rows read per step while a `ready`/`held` filter is finished in JS. */
@@ -733,23 +717,42 @@ function showPage(
   }
 }
 
+/** Pending rows read per step while "Approve pending" collects a filtered batch. */
+let approveScanWindow = 1000;
+
+/** Shrink the approve scan's step so a test can cross it with a few rows. */
+export function setApproveScanWindowForTests(rows: number): void {
+  approveScanWindow = rows;
+}
+
 /**
  * Every pending row matching the filters, ids only, finished in JS for a
  * `ready`/`held` filter: what "Approve pending" approves while a filter is on.
+ * Read a window at a time to the last row, so no batch is cut short and only
+ * one window of full rows is held at once. Nothing changes until the caller
+ * approves, so the offsets stay put.
  */
 function filteredPendingIds(
   ledger: ReturnType<typeof getLedger>,
   filters: QueueListFilters,
 ): number[] {
-  const args: QueueListArgs = { ...filters, status: "pending", limit: 100_000 };
-  if (!filters.show || queueShowIsExact(filters.show.show)) {
-    return ledger.listQueue({ ...args, columns: ["id"] }).map((row) => row.id);
+  const exact = !filters.show || queueShowIsExact(filters.show.show);
+  const show = filters.show?.show;
+  const ids: number[] = [];
+  for (let offset = 0; ; offset += approveScanWindow) {
+    const args: QueueListArgs = {
+      ...filters,
+      status: "pending",
+      limit: approveScanWindow,
+      offset,
+      ...(exact ? { columns: ["id"] } : {}),
+    };
+    const rows = ledger.listQueue(args);
+    for (const row of rows) {
+      if (exact || rowMatchesShow(show!, row, toView(row))) ids.push(row.id);
+    }
+    if (rows.length < approveScanWindow) return ids;
   }
-  const show = filters.show.show;
-  return ledger
-    .listQueue(args)
-    .filter((row) => rowMatchesShow(show, row, toView(row)))
-    .map((row) => row.id);
 }
 
 /** `?show=` and `?channel=` of a list or approve request, as the ledger reads them. */

@@ -822,6 +822,12 @@ export interface QueueRowView {
    * Absent in older API responses.
    */
   sendHold?: { code: "off-icp" | "email-mismatch" | "weak-offer"; reason: string } | null;
+  /**
+   * The row's offer is ready: the play makes no offer, or the row has a
+   * usable one that does not hold the send. What the "Offer ready" filter
+   * keeps (`queueRowMatchesShow`). Absent in older API responses.
+   */
+  offerReady?: boolean;
   /** Delivery check of the first-touch send, when one ran (sent rows only). */
   delivery?: SendDeliveryView | null;
   /**
@@ -1860,6 +1866,35 @@ export const QUEUE_SHOWS: readonly QueueShow[] = [
 ];
 export function isQueueShow(value: unknown): value is QueueShow {
   return typeof value === "string" && (QUEUE_SHOWS as readonly string[]).includes(value);
+}
+
+/**
+ * The /queue "Show" filters over a row's view, as the page's chips read
+ * them: DRAFT and HELD from `lastDraft`, the held badges from `sendHold`,
+ * the offer from `offerReady`. `draftAbsent` is whether the row was never
+ * drafted (the server knows a malformed draft from none; the view does not).
+ * The server finishes `ready` and `held` with it, and demo mode filters a
+ * captured page with it.
+ */
+export function queueRowMatchesShow(
+  show: QueueShow,
+  view: Pick<QueueRowView, "lastDraft" | "sendHold" | "offerReady">,
+  draftAbsent: boolean = view.lastDraft == null,
+): boolean {
+  const draft = view.lastDraft && !view.lastDraft.sent ? view.lastDraft : null;
+  const offerReady = view.offerReady === true;
+  switch (show) {
+    case "offer-ready":
+      return offerReady;
+    case "has-draft":
+      return draft != null;
+    case "no-draft":
+      return draftAbsent;
+    case "ready":
+      return draft != null && draft.flags.length === 0 && offerReady && view.sendHold == null;
+    case "held":
+      return (draft != null && draft.flags.length > 0) || view.sendHold != null;
+  }
 }
 
 /** /queue's sort: found time either way, or the ranker's score (pending only). */

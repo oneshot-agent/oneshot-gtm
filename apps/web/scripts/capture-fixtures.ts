@@ -36,6 +36,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fixturePath } from "../src/api/fixturePath.ts";
+import { DEMO_QUEUE_LIMIT } from "../src/lib/queue-helpers.ts";
 
 const PORT = process.env["CAPTURE_PORT"] ?? "3141";
 const API = `http://127.0.0.1:${PORT}/api`;
@@ -80,9 +81,6 @@ const SEEDS = [
   "/receipts?limit=200",
   "/receipts?limit=500",
 
-  // Queue: the table (limit 200), the Today strip (16), and the nav's alert dot.
-  "/queue?limit=16",
-
   // The queue page's LearningProposalsCard (#813): the unfiltered history
   // plus one document per kind filter, and the approved-guidance list.
   "/learning/proposals?status=all",
@@ -95,7 +93,6 @@ const SEEDS = [
   // Prospects: one document (the whole seeded ledger) and the page
   // searches, sorts and pages it client-side (client.ts `prospectSearch`).
   "/queue/search?limit=500",
-  "/queue?status=pending&limit=1",
 
   // Measure: all-time, 30d, 7d. The three range buttons.
   "/measure/cac",
@@ -116,18 +113,23 @@ const SEEDS = [
   "/measure/spend-series?sinceDays=30",
   "/measure/spend-series?sinceDays=7",
 
-  // The queue table's status and order filters, one page (QUEUE_PAGE_SIZE)
-  // each. The play options come from whatever each of these returns, which is
-  // how the UI builds them too.
+  // Queue: one document per status, pending split and order, at
+  // DEMO_QUEUE_LIMIT. Every /queue read in the demo (the table's pages, its
+  // Show and Channel filters, the Today strip, the nav's alert dot) is cut
+  // from one of these client-side (client.ts `queue`, `demoQueuePage`). The
+  // play options come from whatever each returns, which is how the UI builds
+  // them too.
   ...["", "pending", "approved", "rejected", "sent", "expired"].flatMap((status) =>
-    ["", "ranked", "newest", "oldest"].map((order) => {
-      const q = new URLSearchParams();
-      if (status) q.set("status", status);
-      if (status === "pending") q.set("offerSkip", "exclude");
-      q.set("limit", "50");
-      if (order) q.set("order", order);
-      return `/queue?${q.toString()}`;
-    }),
+    (status === "pending" ? ["", "exclude", "only"] : [""]).flatMap((offerSkip) =>
+      ["", "ranked", "newest", "oldest"].map((order) => {
+        const q = new URLSearchParams();
+        if (status) q.set("status", status);
+        if (offerSkip) q.set("offerSkip", offerSkip);
+        q.set("limit", String(DEMO_QUEUE_LIMIT));
+        if (order) q.set("order", order);
+        return `/queue?${q.toString()}`;
+      }),
+    ),
   ),
 ];
 

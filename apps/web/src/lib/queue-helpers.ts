@@ -1,9 +1,10 @@
-import type {
-  QueueListResponse,
-  QueueOrder,
-  QueueRowView,
-  QueueShow,
-  QueueStatusView,
+import {
+  queueRowMatchesShow,
+  type QueueListResponse,
+  type QueueOrder,
+  type QueueRowView,
+  type QueueShow,
+  type QueueStatusView,
 } from "@oneshot-gtm/shared-types";
 
 /**
@@ -56,6 +57,46 @@ export function queueRequest(input: {
     limit: input.limit ?? 200,
     ...(input.offset ? { offset: input.offset } : {}),
   };
+}
+
+/**
+ * Rows of one captured /queue document in demo mode: each status/order/play
+ * view is captured once at this limit (the server's cap), and every page,
+ * Show and Channel filter of it is cut from that document (`demoQueuePage`).
+ */
+export const DEMO_QUEUE_LIMIT = 500;
+
+/**
+ * A /queue page cut from a captured document, as the server would cut it:
+ * the Show and Channel filters (the chips' own predicate,
+ * `queueRowMatchesShow`), then `offset` and `limit`. Captured views carry no
+ * "never drafted" bit, so No draft reads a row with no usable draft. Ranked
+ * order filters the captured ranking rather than ranking the filtered rows.
+ */
+export function demoQueuePage(
+  doc: QueueListResponse,
+  opts: { show?: QueueShow; channel?: QueueChannelFilter; offset?: number; limit?: number },
+): QueueListResponse {
+  const { show, channel } = opts;
+  const filtered = show != null || channel != null;
+  const rows = filtered
+    ? doc.rows.filter(
+        (row) => (!show || queueRowMatchesShow(show, row)) && (!channel || row.channel === channel),
+      )
+    : doc.rows;
+  const offset = Math.max(0, opts.offset ?? 0);
+  const out: QueueListResponse = {
+    ...doc,
+    rows: rows.slice(offset, offset + (opts.limit ?? rows.length)),
+  };
+  delete out.total;
+  delete out.totalIsLowerBound;
+  // A capture that hit its limit left rows out: a count over it is a floor.
+  const cut = doc.total != null && doc.total > doc.rows.length;
+  const total = filtered ? rows.length : (doc.total ?? rows.length);
+  out.total = total;
+  if ((filtered && cut) || doc.totalIsLowerBound) out.totalIsLowerBound = true;
+  return out;
 }
 
 /** The Show filter's choices, in the order the control lists them. */
