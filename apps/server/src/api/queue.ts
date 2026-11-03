@@ -678,42 +678,89 @@ export function rowMatchesShow(
   return queueRowMatchesShow(show, view, row.last_draft_json == null);
 }
 
-/** Rows read per step while a `ready`/`held` filter is finished in JS. */
-const SHOW_SCAN_WINDOW = 200;
-/** Once the page is full, rows scanned (from the first) before the total is reported as a floor. */
-const SHOW_SCAN_BUDGET = 2000;
-/** Rows scanned at most for one page, full or not: past this the page is what was found. */
-const SHOW_SCAN_MAX = 10_000;
+/**
+ * Limits on one `ready`/`held` request's scan: rows read per step; once the
+ * page is full, candidates read (on a first page, for its total) before the
+ * total is reported as a floor; and candidates read at most, full page or not
+ * (checked after each step, so a request may read up to a step past it).
+ */
+const showScan = { window: 200, budget: 2000, max: 10_000 };
+
+/** Shrink the `ready`/`held` scan limits so a test can cross them with a few rows. */
+export function setShowScanLimitsForTests(limits: Partial<typeof showScan>): void {
+  Object.assign(showScan, limits);
+}
+
+/**
+ * One page of a list and where the next starts. `offset` and `nextOffset`
+ * are positions in the list the SQL (or the ranking) returns: for a plain or
+ * exact list that is the row's place in the result, and for `ready`/`held`
+ * it counts the candidates the JS check drops too, so a page that resumes
+ * there neither skips nor repeats one. `total` is absent on a `ready`/`held`
+ * page that did not start at the first candidate (it cannot count what came
+ * before).
+ */
+interface ListPage {
+  rows: QueueRow[];
+  total?: number;
+  lowerBound: boolean;
+  nextOffset: number;
+  hasMore: boolean;
+}
+
+/** A plain or exact page: the next starts after its rows, and there is more while the total says so. */
+function exactPage(rows: QueueRow[], offset: number, total: number, lowerBound: boolean): ListPage {
+  const nextOffset = offset + rows.length;
+  return { rows, total, lowerBound, nextOffset, hasMore: nextOffset < total || lowerBound };
+}
 
 /**
  * A `ready`/`held` page: `next` reads the SQL candidates in order, a step at
- * a time from `scanned`; each is checked with `rowMatchesShow` and the page is
- * the matches from `offset`. Reading on past a held row keeps the page full.
- * The total is exact when the scan reached the last candidate, otherwise it
- * is the matches found so far (`lowerBound`).
+ * a time from a position; each is checked with `rowMatchesShow` and the page
+ * is the first `limit` matches from candidate `offset`. Reading on past a
+ * held row keeps the page full, up to `showScan.max` candidates a request:
+ * a scan that stops there returns what it found, `hasMore` and the position
+ * to resume from. A first page reads on past a full page (up to
+ * `showScan.budget`) to count its total, exact when it reached the last
+ * candidate and otherwise a floor (`lowerBound`).
  */
 function showPage(
   show: QueueShow,
-  next: (scanned: number) => { rows: QueueRow[]; done: boolean },
+  next: (from: number) => { rows: QueueRow[]; done: boolean },
   offset: number,
   limit: number,
-): { rows: QueueRow[]; total: number; lowerBound: boolean } {
+): ListPage {
   const rows: QueueRow[] = [];
+  const counting = offset === 0;
   let matched = 0;
-  let scanned = 0;
+  let pos = offset;
+  // The candidate after the page's last row, once the page is full.
+  let filledAt: number | null = null;
   for (;;) {
-    const step = next(scanned);
-    for (const row of step.rows) {
-      if (!rowMatchesShow(show, row, toView(row))) continue;
-      if (matched >= offset && rows.length < limit) rows.push(row);
+    const step = next(pos);
+    step.rows.forEach((row, i) => {
+      if (!rowMatchesShow(show, row, toView(row))) return;
       matched++;
+      if (rows.length < limit) {
+        rows.push(row);
+        if (rows.length === limit) filledAt = pos + i + 1;
+      }
+    });
+    pos += step.rows.length;
+    const scanned = pos - offset;
+    const page = (hasMore: boolean, lowerBound: boolean): ListPage => ({
+      rows,
+      ...(counting ? { total: matched } : {}),
+      lowerBound: counting && lowerBound,
+      nextOffset: filledAt ?? pos,
+      hasMore,
+    });
+    // The last candidate: more only if a match came after the page's last row.
+    if (step.done || step.rows.length === 0) return page(matched > rows.length, false);
+    if (filledAt != null && (!counting || scanned >= showScan.budget)) {
+      return page(true, true);
     }
-    scanned += step.rows.length;
-    if (step.done || step.rows.length === 0) return { rows, total: matched, lowerBound: false };
-    const full = rows.length >= limit;
-    if ((full && scanned >= SHOW_SCAN_BUDGET) || scanned >= SHOW_SCAN_MAX) {
-      return { rows, total: matched, lowerBound: true };
-    }
+    if (scanned >= showScan.max) return page(true, true);
   }
 }
 
@@ -898,27 +945,30 @@ function rankedPage(
   show: QueueShow | undefined,
   offset: number,
   limit: number,
-): { rows: QueueRow[]; total: number; lowerBound: boolean } {
+): ListPage {
   const ids = rankPendingRows(window).map((row) => row.id);
-  // A full window may have left rows out: its count is then a floor.
+  // A full window may have left rows out: its count is then a floor. Paging
+  // ends with the window: rows past it cannot rank.
   const windowFull = window.length >= RANK_WINDOW;
   if (!show || queueShowIsExact(show)) {
-    return {
-      rows: rowsInOrder(ledger, ids.slice(offset, offset + limit)),
-      total: ids.length,
-      lowerBound: windowFull,
-    };
+    const page = exactPage(
+      rowsInOrder(ledger, ids.slice(offset, offset + limit)),
+      offset,
+      ids.length,
+      windowFull,
+    );
+    return { ...page, hasMore: page.nextOffset < ids.length };
   }
   const page = showPage(
     show,
-    (scanned) => ({
-      rows: rowsInOrder(ledger, ids.slice(scanned, scanned + SHOW_SCAN_WINDOW)),
-      done: scanned + SHOW_SCAN_WINDOW >= ids.length,
+    (from) => ({
+      rows: rowsInOrder(ledger, ids.slice(from, from + showScan.window)),
+      done: from + showScan.window >= ids.length,
     }),
     offset,
     limit,
   );
-  return { ...page, lowerBound: page.lowerBound || windowFull };
+  return { ...page, lowerBound: page.total != null && (page.lowerBound || windowFull) };
 }
 
 export function listQueueRoute(req: Request): Response {
@@ -971,36 +1021,33 @@ export function listQueueRoute(req: Request): Response {
     );
   }
   const show = filters.show?.show;
+  let page: ListPage | null = null;
   let ordered: QueueRow[];
-  let total: number | undefined;
-  let lowerBound = false;
   if (ids) {
     ordered = ledger.listQueue({ ...filters, ids, limit: Math.max(limit, ids.length) });
   } else if (ranked) {
     const window = ledger.listQueue({ ...filters, limit: RANK_WINDOW, columns: RANK_COLUMNS });
-    ({ rows: ordered, total, lowerBound } = rankedPage(ledger, window, show, offset, limit));
+    page = rankedPage(ledger, window, show, offset, limit);
+    ordered = page.rows;
   } else if (!show || queueShowIsExact(show)) {
     ordered = ledger.listQueue({ ...filters, limit, offset, dir });
-    total = ledger.countQueue(filters);
+    page = exactPage(ordered, offset, ledger.countQueue(filters), false);
   } else {
-    ({
-      rows: ordered,
-      total,
-      lowerBound,
-    } = showPage(
+    page = showPage(
       show,
-      (scanned) => {
+      (from) => {
         const rows = ledger.listQueue({
           ...filters,
           dir,
-          limit: SHOW_SCAN_WINDOW,
-          offset: scanned,
+          limit: showScan.window,
+          offset: from,
         });
-        return { rows, done: rows.length < SHOW_SCAN_WINDOW };
+        return { rows, done: rows.length < showScan.window };
       },
       offset,
       limit,
-    ));
+    );
+    ordered = page.rows;
   }
   const counts: QueueCounts = ledger.queueCounts();
   // Unfiltered on purpose. The drain button needs per-play approved counts
@@ -1032,8 +1079,12 @@ export function listQueueRoute(req: Request): Response {
     noStrongOffer: ledger.countPendingOfferSkips(noOfferPlays),
     order: ranked ? "ranked" : dir === "asc" ? "oldest" : "newest",
   };
-  if (total != null) body.total = total;
-  if (lowerBound) body.totalIsLowerBound = true;
+  if (page) {
+    if (page.total != null) body.total = page.total;
+    if (page.lowerBound) body.totalIsLowerBound = true;
+    body.nextOffset = page.nextOffset;
+    body.hasMore = page.hasMore;
+  }
   const capacity = sendsToday();
   if (capacity) body.sendsToday = capacity;
   return jsonResponse(body, 200, req);

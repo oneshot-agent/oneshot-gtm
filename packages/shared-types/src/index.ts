@@ -1906,9 +1906,19 @@ export interface QueueListResponse {
   /**
    * Rows matching the request's status, play, show and channel filters, of
    * which `rows` is the page at `?offset=`. Ranked order counts its window
-   * (the rows it can rank). Absent from older servers and on an `?ids=` pick.
+   * (the rows it can rank). Absent from older servers, on an `?ids=` pick, and
+   * on a `ready`/`held` page that does not start at the first candidate.
    */
   total?: number;
+  /**
+   * Where the next page starts (`?offset=`) and whether there is one. Offsets
+   * are positions in the server's candidate list: for a `ready` or `held`
+   * filter that counts the rows its server-side check dropped, so a page can
+   * come back short (a request reads a bounded number of candidates) while
+   * `hasMore` is still true. Absent on an `?ids=` pick and from older servers.
+   */
+  nextOffset?: number;
+  hasMore?: boolean;
   /**
    * Set when `total` is a floor: a `ready` or `held` filter finishes in the
    * server after the query (fit and email-mismatch holds), and the scan

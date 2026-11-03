@@ -69,7 +69,8 @@ export const DEMO_QUEUE_LIMIT = 500;
 /**
  * A /queue page cut from a captured document, as the server would cut it:
  * the Show and Channel filters (the chips' own predicate,
- * `queueRowMatchesShow`), then `offset` and `limit`. Captured views carry no
+ * `queueRowMatchesShow`), then `offset` and `limit`, with the server's
+ * paging contract (`nextOffset`, `hasMore`). Captured views carry no
  * "never drafted" bit, so No draft reads a row with no usable draft. Ranked
  * order filters the captured ranking rather than ranking the filtered rows.
  */
@@ -85,12 +86,13 @@ export function demoQueuePage(
       )
     : doc.rows;
   const offset = Math.max(0, opts.offset ?? 0);
-  const out: QueueListResponse = {
-    ...doc,
-    rows: rows.slice(offset, offset + (opts.limit ?? rows.length)),
-  };
+  const page = rows.slice(offset, offset + (opts.limit ?? rows.length));
+  const out: QueueListResponse = { ...doc, rows: page };
   delete out.total;
   delete out.totalIsLowerBound;
+  // The filtered rows are the candidates here: the next page starts after these.
+  out.nextOffset = offset + page.length;
+  out.hasMore = out.nextOffset < rows.length;
   // A capture that hit its limit left rows out: a count over it is a floor.
   const cut = doc.total != null && doc.total > doc.rows.length;
   const total = filtered ? rows.length : (doc.total ?? rows.length);

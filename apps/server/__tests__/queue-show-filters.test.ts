@@ -22,8 +22,14 @@ vi.mock("@oneshot-gtm/find", async () => ({
   scheduleNewsfeedOnApproval: () => {},
 }));
 
-const { listQueueRoute, approveAllRoute, rowMatchesShow, toView, setApproveScanWindowForTests } =
-  await import("../src/api/queue.ts");
+const {
+  listQueueRoute,
+  approveAllRoute,
+  rowMatchesShow,
+  toView,
+  setApproveScanWindowForTests,
+  setShowScanLimitsForTests,
+} = await import("../src/api/queue.ts");
 
 const PLAY = "queue-show-filters-play";
 const OFFER = { offer: "A one-week audit of the Acme checkout.", steps: "We run it." };
@@ -211,9 +217,13 @@ describe("GET /api/queue sort, show, channel and offset", () => {
     expect(ids(page)).toEqual(ready.toReversed().slice(0, 3));
     expect(page.total).toBe(5);
     expect(page.totalIsLowerBound).toBeUndefined();
-    expect(ids(await list("status=pending&show=ready&limit=3&offset=3"))).toEqual(
-      ready.toReversed().slice(3),
-    );
+    // The next page starts after the candidate that filled this one: the 230
+    // held rows and three ready ones.
+    expect(page.hasMore).toBe(true);
+    expect(page.nextOffset).toBe(233);
+    const rest = await list(`status=pending&show=ready&limit=3&offset=${page.nextOffset}`);
+    expect(ids(rest)).toEqual(ready.toReversed().slice(3));
+    expect(rest.hasMore).toBe(false);
     // Held lists the dropped rows and none of the ready ones.
     const held = await list("status=pending&show=held&limit=500");
     expect(held.total).toBe(230);
@@ -241,6 +251,53 @@ describe("GET /api/queue sort, show, channel and offset", () => {
     expect(page.totalIsLowerBound).toBe(true);
     expect(page.total).toBeGreaterThanOrEqual(2000);
     expect(page.total).toBeLessThan(2300);
+  });
+
+  it("resumes a scan that stopped on its budget, so every match is reached once", async () => {
+    setShowScanLimitsForTests({ window: 5, budget: 8, max: 10 });
+    try {
+      // Oldest first: 25 held, 3 ready, 12 held, 2 ready. A request reads at
+      // most ten candidates, so the first pages come back empty but not done.
+      const held = () => row({ payload: { offer: OFFER, icpVerdict: "reject" }, draft: DRAFT });
+      const ready = () => row({ payload: { offer: OFFER }, draft: DRAFT });
+      const expected: number[] = [];
+      for (let i = 0; i < 25; i++) held();
+      for (let i = 0; i < 3; i++) expected.push(ready());
+      for (let i = 0; i < 12; i++) held();
+      for (let i = 0; i < 2; i++) expected.push(ready());
+
+      const first = await list("status=pending&show=ready&order=oldest&limit=3");
+      expect(ids(first)).toEqual([]);
+      expect(first.hasMore).toBe(true);
+      expect(first.nextOffset).toBe(10);
+      expect(first.totalIsLowerBound).toBe(true);
+
+      const seen: number[] = [];
+      let page = first;
+      let requests = 1;
+      while (page.hasMore) {
+        page = await list(
+          `status=pending&show=ready&order=oldest&limit=3&offset=${page.nextOffset}`,
+        );
+        seen.push(...ids(page));
+        requests++;
+        expect(requests).toBeLessThan(20);
+      }
+      expect(seen).toEqual(expected);
+      expect(page.nextOffset).toBe(42);
+    } finally {
+      setShowScanLimitsForTests({ window: 200, budget: 2000, max: 10_000 });
+    }
+  });
+
+  it("pages a plain list by row offset, and says when it is done", async () => {
+    const all = Array.from({ length: 5 }, () => row());
+    const first = await list("status=pending&order=oldest&limit=3");
+    expect(ids(first)).toEqual(all.slice(0, 3));
+    expect(first).toMatchObject({ nextOffset: 3, hasMore: true, total: 5 });
+    const second = await list("status=pending&order=oldest&limit=3&offset=3");
+    expect(ids(second)).toEqual(all.slice(3));
+    expect(second).toMatchObject({ nextOffset: 5, hasMore: false });
   });
 
   it("filters the ranked window before ranking, and finishes ready in JS", async () => {

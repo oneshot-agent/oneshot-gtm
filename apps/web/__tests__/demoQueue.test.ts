@@ -101,6 +101,10 @@ describe("demo /queue", () => {
     expect(second.rows.map((r) => r.id)).toEqual(doc.rows.slice(50, 100).map((r) => r.id));
     expect(third.rows).toHaveLength(20);
     expect(first.total).toBe(120);
+    // The server's paging contract: where the next page starts, and whether it exists.
+    expect(first).toMatchObject({ nextOffset: 50, hasMore: true });
+    expect(third).toMatchObject({ nextOffset: 120, hasMore: false });
+    expect(ready).toMatchObject({ nextOffset: 40, hasMore: false });
 
     const both = await page({ show: "no-draft", channel: "email", offset: 10 });
     expect(both.total).toBe(doc.rows.filter((r, i) => i % 3 !== 0 && i % 4 !== 0).length);

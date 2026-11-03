@@ -414,13 +414,10 @@ function QueuePage() {
         }),
       ),
     initialPageParam: 0,
-    getNextPageParam: (last, pages) => {
-      if (last.rows.length < QUEUE_PAGE_SIZE) return undefined;
-      const loaded = pages.reduce((n, page) => n + page.rows.length, 0);
-      return last.total == null || loaded < last.total || last.totalIsLowerBound
-        ? loaded
-        : undefined;
-    },
+    // The server says where the next page starts: under Ready to send or
+    // Held a page can come back short (a request reads a bounded number of
+    // rows) and still have more after it.
+    getNextPageParam: (last) => (last.hasMore ? last.nextOffset : undefined),
     refetchInterval: QUEUE_POLL_MS,
   });
   // Counts, order and totals from the first page; every page is refetched together.
@@ -977,7 +974,7 @@ function QueuePage() {
                       ) : (
                         <ChevronDown size={11} />
                       )}
-                      {total == null || totalIsLowerBound
+                      {total == null || totalIsLowerBound || total <= rows.length
                         ? `show the next ${formatCount(QUEUE_PAGE_SIZE)}`
                         : total - rows.length <= QUEUE_PAGE_SIZE
                           ? `${formatCount(total - rows.length)} more · show them`
