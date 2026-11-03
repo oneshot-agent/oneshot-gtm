@@ -40,6 +40,8 @@ Start with a few prospects. For each, check the person, why they fit and the evi
 
 Approving a row sends nothing. It makes the row eligible. **Send** on the row sends that one; **Batch send…** sends the approved rows of a play, and defaults to a dry run.
 
+Above the table, **Sort** orders rows newest or oldest first; on Pending it can also order by highest score. **Show** narrows the list to rows whose offer is ready, rows with a draft, drafts ready to send, held rows, or rows with no draft. **Channel** keeps one channel. The count line gives the filtered total, and the page remembers your choices. While Show or Channel is on, **Approve pending** and **Batch send…** act only on the filtered rows, and the button gives their number.
+
 Watch the replies and record outcomes before you raise volume. [Sending](./sending.md) covers mailbox limits. [Finders](./finders.md) covers the gates and what research costs.
 
 ## What is not here

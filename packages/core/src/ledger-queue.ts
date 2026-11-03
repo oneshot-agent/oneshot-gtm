@@ -4,14 +4,16 @@ import { DraftVersionStore, draftVersionAngle, type DraftDiscardReason } from ".
 import { extractBusinessAddress } from "./mail-address.ts";
 import { humanDecisionWhereSql } from "./labels.ts";
 import { toSqliteUtc } from "./time.ts";
-import type { OutreachChannel } from "./channels.ts";
+import { OUTREACH_CHANNELS, type OutreachChannel } from "./channels.ts";
 import { canonicalLinkedInProfileKey } from "./ledger-prospects.ts";
 import type {
   IcpDecisionExample,
   ProspectPriority,
+  QueueListFilters,
   QueueOfferSkipFilter,
   QueueRow,
   QueueSearchOpts,
+  QueueShowFilter,
   QueueSearchRow,
   QueueStatus,
   SentOutcomeRawRow,
@@ -180,6 +182,155 @@ const EVENT_CITY_SQL = `CASE WHEN play_name = 'luma-events' AND json_valid(paylo
     AND json_type(payload_json, '$.eventCity') = 'text'
   THEN json_extract(payload_json, '$.eventCity') END AS event_city`;
 
+/** ASCII whitespace, for `trim(x, …)` standing in for JS `String.trim`. */
+const SQL_WHITESPACE = "char(32, 9, 10, 11, 12, 13)";
+
+/** `isProspectOffer(payload.offer)`: a non-blank `offer` and a string `steps`. Valid JSON only. */
+const HAS_OFFER_SQL = `(json_type(payload_json, '$.offer.offer') IS 'text'
+      AND trim(json_extract(payload_json, '$.offer.offer'), ${SQL_WHITESPACE}) <> ''
+      AND json_type(payload_json, '$.offer.steps') IS 'text')`;
+
+/**
+ * `offerHoldsSend(payload.offer)` past the usable-offer check: rated `weak`,
+ * not written by the founder, not approved anyway (a non-blank
+ * `weakApprovedAt`). Valid JSON only.
+ */
+const OFFER_HOLDS_SQL = `(json_extract(payload_json, '$.offer.relevance') IS 'weak'
+      AND json_extract(payload_json, '$.offer.editedBy') IS NOT 'founder'
+      AND NOT (json_type(payload_json, '$.offer.weakApprovedAt') IS 'text'
+        AND trim(json_extract(payload_json, '$.offer.weakApprovedAt'), ${SQL_WHITESPACE}) <> ''))`;
+
+/**
+ * The row's draft as `toView` reads it into `lastDraft`: a JSON object with a
+ * string subject and body, and not `sent: true`. Never NULL.
+ */
+const HAS_DRAFT_SQL = `(CASE WHEN json_valid(last_draft_json) THEN
+      (json_type(last_draft_json, '$.subject') IS 'text'
+        AND json_type(last_draft_json, '$.body') IS 'text'
+        AND json_type(last_draft_json, '$.sent') IS NOT 'true')
+    ELSE 0 END)`;
+
+/** The draft carries at least one flag (`flags` an array with an entry). Never NULL; malformed JSON is unflagged. */
+const DRAFT_FLAGGED_SQL = `(CASE WHEN json_valid(last_draft_json) THEN
+      (json_type(last_draft_json, '$.flags') IS 'array'
+        AND json_array_length(last_draft_json, '$.flags') > 0)
+    ELSE 0 END)`;
+
+/** No draft `toView` reads as sent (`lastDraft.sent`): none, a malformed one, or one not sent. Never NULL. */
+const DRAFT_UNSENT_SQL = `NOT (CASE WHEN json_valid(last_draft_json) THEN
+      (json_type(last_draft_json, '$.subject') IS 'text'
+        AND json_type(last_draft_json, '$.body') IS 'text'
+        AND json_type(last_draft_json, '$.sent') IS 'true')
+    ELSE 0 END)`;
+
+/**
+ * An email row's payload that may hold its send (`toView`'s `sendHold`): a
+ * fit verdict other than `pass` or `unclear` (`reject`, or none on the
+ * payload: the prospect may carry one), an email mismatch, or a weak offer.
+ * A superset: the caller decides.
+ */
+const MAY_HOLD_SEND_SQL = `(CASE WHEN json_valid(payload_json) THEN
+      (NOT (json_type(payload_json, '$.icpVerdict') IS 'text'
+          AND json_extract(payload_json, '$.icpVerdict') IN ('pass', 'unclear'))
+        OR json_type(payload_json, '$.emailMismatch.emailDomain') IS 'text'
+        OR (${HAS_OFFER_SQL} AND ${OFFER_HOLDS_SQL}))
+    ELSE 0 END)`;
+
+/**
+ * Offer ready: the play makes no offer (`noOfferPlays`), or the payload has a
+ * usable offer that does not hold the send (`offerHoldsSend`). Never NULL.
+ */
+function offerReadyWhere(noOfferPlays: readonly string[]): { sql: string; args: string[] } {
+  const payload = `(CASE WHEN json_valid(payload_json) THEN (${HAS_OFFER_SQL} AND NOT ${OFFER_HOLDS_SQL}) ELSE 0 END)`;
+  const plays = [...new Set(noOfferPlays)];
+  if (plays.length === 0) return { sql: payload, args: [] };
+  return {
+    sql: `(play_name IN (${plays.map(() => "?").join(",")}) OR ${payload})`,
+    args: plays,
+  };
+}
+
+/**
+ * The SQL half of a /queue "Show" filter, mirroring the chips `toView` feeds:
+ *
+ * - `offer-ready`, `has-draft` and `no-draft` are exact.
+ * - `ready` keeps the clean drafts (no flags) whose offer is ready. The send
+ *   hold a fit verdict or an email mismatch puts on an email row is computed
+ *   in JS (the fit verdict can live on the prospect, or in the shared people
+ *   database), so the caller drops those rows after the read.
+ * - `held` keeps every row that may be held: a flagged draft, or an unsent
+ *   email row whose payload may hold its send (`MAY_HOLD_SEND_SQL`); the
+ *   caller checks each.
+ */
+function showWhere(filter: QueueShowFilter): { sql: string; args: string[] } {
+  switch (filter.show) {
+    case "offer-ready":
+      return offerReadyWhere(filter.noOfferPlays);
+    case "has-draft":
+      return { sql: HAS_DRAFT_SQL, args: [] };
+    case "no-draft":
+      return { sql: "last_draft_json IS NULL", args: [] };
+    case "ready": {
+      const offer = offerReadyWhere(filter.noOfferPlays);
+      return {
+        sql: `(${HAS_DRAFT_SQL} AND NOT ${DRAFT_FLAGGED_SQL} AND ${offer.sql})`,
+        args: offer.args,
+      };
+    }
+    case "held": {
+      const email = channelWhere("email");
+      return {
+        sql: `((${HAS_DRAFT_SQL} AND ${DRAFT_FLAGGED_SQL})
+          OR (status <> 'sent' AND ${DRAFT_UNSENT_SQL} AND ${email.sql} AND ${MAY_HOLD_SEND_SQL}))`,
+        args: email.args,
+      };
+    }
+  }
+}
+
+/** True when `showWhere` alone decides the filter; `ready` and `held` need the caller's JS holds. */
+export function queueShowIsExact(show: QueueShowFilter["show"]): boolean {
+  return show !== "ready" && show !== "held";
+}
+
+/** Channels a stored value other than these reads as email (`channelOf`). */
+const NON_EMAIL_CHANNELS = OUTREACH_CHANNELS.filter((c) => c !== "email");
+
+/** `channelOf(channel) = ?`: email is every value that is not another channel. */
+function channelWhere(channel: string): { sql: string; args: string[] } {
+  if (channel === "email" || !(OUTREACH_CHANNELS as readonly string[]).includes(channel)) {
+    return {
+      sql: `channel NOT IN (${NON_EMAIL_CHANNELS.map(() => "?").join(",")})`,
+      args: [...NON_EMAIL_CHANNELS],
+    };
+  }
+  return { sql: "channel = ?", args: [channel] };
+}
+
+/** WHERE clauses for `listQueue`/`countQueue`: play, status, offer split, show, channel. */
+function queueListWhere(opts: QueueListFilters): { where: string[]; args: unknown[] } {
+  const where: string[] = [];
+  const args: unknown[] = [];
+  if (opts.playName) {
+    where.push("play_name = ?");
+    args.push(opts.playName);
+  }
+  if (opts.status) {
+    where.push("status = ?");
+    args.push(opts.status);
+  }
+  for (const clause of [
+    opts.offerSkip ? offerSkipClause(opts.offerSkip) : null,
+    opts.show ? showWhere(opts.show) : null,
+    opts.channel ? channelWhere(opts.channel) : null,
+  ]) {
+    if (!clause) continue;
+    where.push(clause.sql);
+    args.push(...clause.args);
+  }
+  return { where, args };
+}
+
 /**
  * SQL for "the offer writer found no strong offer" on a queue row, mirroring
  * the server's `offerSkipView`: `payload.offerSkip` has every field
@@ -192,10 +343,7 @@ function offerSkipWhere(noOfferPlays: readonly string[]): { sql: string; args: s
   const p = "payload_json";
   const skipField = (k: string): string => `json_type(${p}, '$.offerSkip.${k}') IS 'text'`;
   const skip = ["why", "version", "inputHash", "productHash", "skippedAt"].map(skipField);
-  const hasOffer = `(json_type(${p}, '$.offer.offer') IS 'text'
-      AND trim(json_extract(${p}, '$.offer.offer'), char(32, 9, 10, 11, 12, 13)) <> ''
-      AND json_type(${p}, '$.offer.steps') IS 'text')`;
-  const payload = `(CASE WHEN json_valid(${p}) THEN (${skip.join(" AND ")} AND NOT ${hasOffer}) ELSE 0 END)`;
+  const payload = `(CASE WHEN json_valid(${p}) THEN (${skip.join(" AND ")} AND NOT ${HAS_OFFER_SQL}) ELSE 0 END)`;
   const plays = [...new Set(noOfferPlays)];
   if (plays.length === 0) return { sql: payload, args: [] };
   return {
@@ -430,39 +578,29 @@ export class QueueStore {
   }
 
   /**
-   * Queue rows, newest first. `columns` projects the read: a caller that
+   * Queue rows, newest first (`dir: "asc"` for oldest first), from `offset`.
+   * `columns` projects the read: a caller that
    * ranks, counts or collects ids must not pull every row's `payload_json`
    * and `last_draft_json` (issue #929). A projected row carries only the
    * named keys; the return type stays `QueueRow` for the facade's sake.
    * `event_city` is a virtual column: Luma's `$.eventCity` when it is a JSON
    * string, read in SQL so the ranker never parses the payload. An unknown
    * column name throws rather than reaching the SQL.
+   *
+   * Ties on `found_at` (second-granularity) break on id in index order, so
+   * oldest first is exactly newest first reversed, both directions walk
+   * `idx_queue_status_found` without a sort, and offset pages never overlap.
    */
   listQueue(
-    opts: {
-      playName?: string;
-      status?: QueueStatus;
+    opts: QueueListFilters & {
       limit?: number;
+      offset?: number;
+      dir?: "asc" | "desc";
       ids?: number[];
       columns?: readonly string[];
-      offerSkip?: QueueOfferSkipFilter;
     } = {},
   ): QueueRow[] {
-    const where: string[] = [];
-    const args: unknown[] = [];
-    if (opts.playName) {
-      where.push("play_name = ?");
-      args.push(opts.playName);
-    }
-    if (opts.status) {
-      where.push("status = ?");
-      args.push(opts.status);
-    }
-    if (opts.offerSkip) {
-      const clause = offerSkipClause(opts.offerSkip);
-      where.push(clause.sql);
-      args.push(...clause.args);
-    }
+    const { where, args } = queueListWhere(opts);
     // Explicit row picks (the /queue "drain selected" path). An empty array
     // would compile to `IN ()` (a syntax error in SQLite) and semantically
     // means "nothing selected", so return early rather than silently listing
@@ -475,11 +613,41 @@ export class QueueStore {
     const sql = `
       SELECT ${queueSelectList(opts.columns)} FROM target_queue
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY found_at DESC
-      LIMIT ?
+      ORDER BY ${opts.dir === "asc" ? "found_at ASC, id DESC" : "found_at DESC, id ASC"}
+      LIMIT ? OFFSET ?
     `;
-    args.push(opts.limit ?? 200);
+    args.push(opts.limit ?? 200, Math.max(0, Math.floor(opts.offset ?? 0)));
     return this.db.query(sql).all(...(args as never[])) as QueueRow[];
+  }
+
+  /** How many rows `listQueue` would list under these filters, ignoring its limit. */
+  countQueue(opts: QueueListFilters = {}): number {
+    const { where, args } = queueListWhere(opts);
+    const row = this.db
+      .query(
+        `SELECT COUNT(*) AS n FROM target_queue ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`,
+      )
+      .get(...(args as never[])) as { n: number } | null;
+    return row?.n ?? 0;
+  }
+
+  /**
+   * Rows per play under a status (and the pending split), for /queue's play
+   * filter: every play with rows in the view, not only the plays on the page.
+   */
+  queueCountsByPlay(
+    opts: Pick<QueueListFilters, "status" | "offerSkip"> = {},
+  ): Record<string, number> {
+    const { where, args } = queueListWhere(opts);
+    const rows = this.db
+      .query(
+        `SELECT play_name, COUNT(*) AS n FROM target_queue
+         ${where.length ? `WHERE ${where.join(" AND ")}` : ""} GROUP BY play_name`,
+      )
+      .all(...(args as never[])) as Array<{ play_name: string; n: number }>;
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.play_name] = r.n;
+    return out;
   }
 
   getQueueRow(id: number): QueueRow | null {
@@ -1012,32 +1180,44 @@ export class QueueStore {
   /**
    * Approve every pending row (of one play). `offerSkip` narrows the batch:
    * `exclude` leaves the rows whose writer found no strong offer pending.
+   * `show` and `channel` narrow it as they narrow `listQueue`; a caller that
+   * finishes a `ready`/`held` filter in JS passes the rows it kept as `ids`.
    */
-  approveAllPending(opts: { playName?: string; offerSkip?: QueueOfferSkipFilter } = {}): number {
+  approveAllPending(
+    opts: Omit<QueueListFilters, "status"> & {
+      /** Only these rows (still pending, still matching the filters). */
+      ids?: readonly number[];
+    } = {},
+  ): number {
+    if (opts.ids && opts.ids.length === 0) return 0;
     // `sent_at IS NULL` is belt-and-braces alongside `status = 'pending'`:
     // a pending row should never carry a sent_at, but the invariant lives
     // here, not in the caller (#561).
-    const where: string[] = ["status = 'pending'", "sent_at IS NULL"];
-    const args: unknown[] = [];
-    if (opts.playName) {
-      where.push("play_name = ?");
-      args.push(opts.playName);
-    }
-    if (opts.offerSkip) {
-      const clause = offerSkipClause(opts.offerSkip);
-      where.push(clause.sql);
-      args.push(...clause.args);
-    }
+    const filters = queueListWhere(opts);
+    const where: string[] = ["status = 'pending'", "sent_at IS NULL", ...filters.where];
     // decided_by='human_bulk': a human sanctioned the batch, but no per-row
     // judgment happened: evaluation code can include or exclude these
     // explicitly instead of reverse-engineering shared timestamps.
     const now = new Date().toISOString();
-    const result = this.db
-      .prepare(
-        `UPDATE target_queue SET status = 'approved', reviewed_at = ?, decision = 'approve', decided_at = ?, decided_by = 'human_bulk' WHERE ${where.join(" AND ")}`,
-      )
-      .run(...([now, now, ...args] as never[]));
-    return Number(result.changes);
+    const approve = (extra: string[], extraArgs: readonly number[]): number =>
+      Number(
+        this.db
+          .prepare(
+            `UPDATE target_queue SET status = 'approved', reviewed_at = ?, decision = 'approve', decided_at = ?, decided_by = 'human_bulk' WHERE ${[...where, ...extra].join(" AND ")}`,
+          )
+          .run(...([now, now, ...filters.args, ...extraArgs] as never[])).changes,
+      );
+    const ids = opts.ids;
+    if (!ids) return approve([], []);
+    // 400 ids a statement, as `getQueueRowsByIds` reads them, in one transaction.
+    return this.db.transaction(() => {
+      let n = 0;
+      for (let i = 0; i < ids.length; i += 400) {
+        const part = ids.slice(i, i + 400);
+        n += approve([`id IN (${part.map(() => "?").join(",")})`], part);
+      }
+      return n;
+    })();
   }
 
   /**

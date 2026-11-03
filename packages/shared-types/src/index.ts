@@ -822,6 +822,12 @@ export interface QueueRowView {
    * Absent in older API responses.
    */
   sendHold?: { code: "off-icp" | "email-mismatch" | "weak-offer"; reason: string } | null;
+  /**
+   * The row's offer is ready: the play makes no offer, or the row has a
+   * usable one that does not hold the send. What the "Offer ready" filter
+   * keeps (`queueRowMatchesShow`). Absent in older API responses.
+   */
+  offerReady?: boolean;
   /** Delivery check of the first-touch send, when one ran (sent rows only). */
   delivery?: SendDeliveryView | null;
   /**
@@ -1843,9 +1849,89 @@ export interface QueueCounts {
   expired: number;
 }
 
+/**
+ * /queue's "Show" filter, applied in the server query before the page is cut.
+ * `offer-ready`: a usable offer that does not hold the send, or a play that
+ * makes none. `has-draft`: an unsent draft. `ready`: an unsent draft with no
+ * flags, offer ready and no send hold. `held`: a draft with flags or a send
+ * hold. `no-draft`: never drafted.
+ */
+export type QueueShow = "offer-ready" | "has-draft" | "ready" | "held" | "no-draft";
+export const QUEUE_SHOWS: readonly QueueShow[] = [
+  "offer-ready",
+  "has-draft",
+  "ready",
+  "held",
+  "no-draft",
+];
+export function isQueueShow(value: unknown): value is QueueShow {
+  return typeof value === "string" && (QUEUE_SHOWS as readonly string[]).includes(value);
+}
+
+/**
+ * The /queue "Show" filters over a row's view, as the page's chips read
+ * them: DRAFT and HELD from `lastDraft`, the held badges from `sendHold`,
+ * the offer from `offerReady`. `draftAbsent` is whether the row was never
+ * drafted (the server knows a malformed draft from none; the view does not).
+ * The server finishes `ready` and `held` with it, and demo mode filters a
+ * captured page with it.
+ */
+export function queueRowMatchesShow(
+  show: QueueShow,
+  view: Pick<QueueRowView, "lastDraft" | "sendHold" | "offerReady">,
+  draftAbsent: boolean = view.lastDraft == null,
+): boolean {
+  const draft = view.lastDraft && !view.lastDraft.sent ? view.lastDraft : null;
+  const offerReady = view.offerReady === true;
+  switch (show) {
+    case "offer-ready":
+      return offerReady;
+    case "has-draft":
+      return draft != null;
+    case "no-draft":
+      return draftAbsent;
+    case "ready":
+      return draft != null && draft.flags.length === 0 && offerReady && view.sendHold == null;
+    case "held":
+      return (draft != null && draft.flags.length > 0) || view.sendHold != null;
+  }
+}
+
+/** /queue's sort: found time either way, or the ranker's score (pending only). */
+export type QueueOrder = "newest" | "oldest" | "ranked";
+
 export interface QueueListResponse {
   rows: QueueRowView[];
   counts: QueueCounts;
+  /**
+   * Rows matching the request's status, play, show and channel filters, of
+   * which `rows` is the page at `?offset=`. Ranked order counts its window
+   * (the rows it can rank). Absent from older servers, on an `?ids=` pick, and
+   * on a `ready`/`held` page that does not start at the first candidate.
+   */
+  total?: number;
+  /**
+   * Where the next page starts (`?offset=`) and whether there is one. Offsets
+   * are positions in the server's candidate list: for a `ready` or `held`
+   * filter that counts the rows its server-side check dropped, so a page can
+   * come back short (a request reads a bounded number of candidates) while
+   * `hasMore` is still true. Absent on an `?ids=` pick and from older servers.
+   */
+  nextOffset?: number;
+  hasMore?: boolean;
+  /**
+   * Set when `total` is a floor: a `ready` or `held` filter finishes in the
+   * server after the query (fit and email-mismatch holds), and the scan
+   * stopped before the last row; or ranked order filled its window, so rows
+   * past it were left out. The page shows it as "N+".
+   */
+  totalIsLowerBound?: true;
+  /**
+   * Rows per play under the request's status (and pending split), unaffected
+   * by play, show and channel: the play filter lists every play with rows
+   * here, not only the plays on the page. Absent from older servers.
+   */
+  playCounts?: Record<string, number>;
   /**
    * Approved rows per play across the WHOLE queue, unaffected by the `status` /
    * `play` filters that scoped `rows`. /queue's drain button reads this so it
@@ -1865,9 +1951,9 @@ export interface QueueListResponse {
   /**
    * The order `rows` actually came back in: `?order=` param, else the
    * configured `queueReviewOrder`. "ranked" only ever applies to the pending
-   * review view; every other view is "newest" (found_at DESC).
+   * review view; every other view is "newest" (found_at DESC) or "oldest".
    */
-  order: "ranked" | "newest";
+  order: QueueOrder;
 }
 
 export interface DrainRequest {

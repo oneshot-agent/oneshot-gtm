@@ -29,9 +29,18 @@ describe("validateQueueSearch", () => {
     expect(hasQueueFilters({ status: "no-offer" })).toBe(true);
   });
 
+  it("keeps the sort, show and channel filters", () => {
+    expect(
+      validateQueueSearch({ order: "oldest", show: "offer-ready", channel: "linkedin" }),
+    ).toEqual({ order: "oldest", show: "offer-ready", channel: "linkedin" });
+    expect(hasQueueFilters({ show: "has-draft" })).toBe(true);
+    expect(hasQueueFilters({ channel: "email" })).toBe(true);
+  });
+
   it("drops unknown or malformed values", () => {
-    expect(validateQueueSearch({ status: "bogus", play: "", order: "oldest" })).toEqual({});
+    expect(validateQueueSearch({ status: "bogus", play: "", order: "oldest-ish" })).toEqual({});
     expect(validateQueueSearch({ status: 1, play: 2 })).toEqual({});
+    expect(validateQueueSearch({ show: "drafts", channel: "fax" })).toEqual({});
   });
 
   it("reports whether any filter is set", () => {
@@ -45,6 +54,27 @@ describe("queue filter memory", () => {
     const storage = memoryStorage();
     saveQueueFilters({ status: "approved", play: "luma" }, storage);
     expect(loadQueueFilters(storage)).toEqual({ status: "approved", play: "luma" });
+  });
+
+  it("remembers the sort, show and channel, never the learning deep link", () => {
+    const storage = memoryStorage();
+    saveQueueFilters(
+      {
+        status: "approved",
+        order: "oldest",
+        show: "ready",
+        channel: "email",
+        learning: "icp",
+        prospectId: 4,
+      },
+      storage,
+    );
+    expect(loadQueueFilters(storage)).toEqual({
+      status: "approved",
+      order: "oldest",
+      show: "ready",
+      channel: "email",
+    });
   });
 
   it("ignores junk and throwing storage", () => {
@@ -66,5 +96,7 @@ describe("queue filter memory", () => {
   it("keys scroll offsets by filter set", () => {
     expect(queueFiltersKey({ play: "luma" })).not.toBe(queueFiltersKey({ play: "show-hn" }));
     expect(queueFiltersKey({})).toBe(queueFiltersKey({ status: undefined }));
+    expect(queueFiltersKey({ show: "held" })).not.toBe(queueFiltersKey({ show: "ready" }));
+    expect(queueFiltersKey({ channel: "email" })).not.toBe(queueFiltersKey({}));
   });
 });

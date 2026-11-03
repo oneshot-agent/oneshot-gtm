@@ -1,4 +1,4 @@
-import { parseQueueIds } from "@oneshot-gtm/shared-types";
+import { isQueueShow, parseQueueIds, type QueueShow } from "@oneshot-gtm/shared-types";
 
 interface RunSearch {
   fromQueue?: "1";
@@ -9,6 +9,13 @@ interface RunSearch {
    * exactly these rows instead of the play's newest `limit` approved ones.
    */
   ids?: number[];
+  /**
+   * The /queue Show/Channel filters the drain was opened under: hydration
+   * loads only the approved rows they list, `order=oldest` oldest first.
+   */
+  show?: QueueShow;
+  channel?: "email" | "linkedin";
+  order?: "oldest";
   /**
    * In-progress / done / interrupted mode: fetch GET /api/runs/:runId and render
    * server-side per-target state, polling every 2s while running. Survives
@@ -35,6 +42,11 @@ export function validateRunSearch(search: Record<string, unknown>): RunSearch {
         : "",
   );
   if (ids) out.ids = ids;
+  if (isQueueShow(search["show"])) out.show = search["show"];
+  if (search["channel"] === "email" || search["channel"] === "linkedin") {
+    out.channel = search["channel"];
+  }
+  if (search["order"] === "oldest") out.order = "oldest";
   if (search["dryRun"] === "0" || search["dryRun"] === 0) out.dryRun = "0";
   if (search["dryRun"] === "1" || search["dryRun"] === 1) out.dryRun = "1";
   if (typeof search["runId"] === "number") out.runId = search["runId"];

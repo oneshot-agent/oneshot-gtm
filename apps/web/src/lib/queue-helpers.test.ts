@@ -9,6 +9,8 @@ import {
   drainSelectionState,
   isQueueFilterActive,
   pendingSplit,
+  filteredBulkState,
+  queueCountLine,
   queuePlayList,
   queueRequest,
   queueSelectionState,
@@ -36,6 +38,81 @@ describe("queue filtering", () => {
       "gamma",
     ]);
     expect(isQueueFilterActive("pending", "alpha")).toBe(true);
+  });
+});
+
+const format = (n: number): string => n.toLocaleString("en-US");
+
+describe("sort, show and channel", () => {
+  it("sends the filters and the page offset, and leaves defaults out", () => {
+    expect(
+      queueRequest({
+        statusFilter: "approved",
+        playFilter: "alpha",
+        orderOverride: "oldest",
+        show: "offer-ready",
+        channel: "linkedin",
+        limit: 50,
+        offset: 100,
+      }),
+    ).toEqual({
+      status: "approved",
+      play: "alpha",
+      order: "oldest",
+      show: "offer-ready",
+      channel: "linkedin",
+      limit: 50,
+      offset: 100,
+    });
+    expect(
+      queueRequest({
+        statusFilter: "pending",
+        playFilter: "all",
+        orderOverride: null,
+        show: null,
+        channel: null,
+        limit: 50,
+        offset: 0,
+      }),
+    ).toEqual({ status: "pending", offerSkip: "exclude", limit: 50 });
+  });
+
+  it("lists every play under the status, not only the page's", () => {
+    expect(queuePlayList([{ playName: "beta" }], {}, { alpha: 3, beta: 1 })).toEqual([
+      "alpha",
+      "beta",
+    ]);
+  });
+
+  it("states the page against the filtered total", () => {
+    expect(queueCountLine({ shown: 50, total: 312, format })).toBe("50 of 312 shown");
+    expect(queueCountLine({ shown: 12, total: 12, format })).toBe("12 shown");
+    expect(queueCountLine({ shown: 50, total: 2000, lowerBound: true, format })).toBe(
+      "50 of 2,000+ shown",
+    );
+    expect(queueCountLine({ shown: 7, total: undefined, format })).toBe("7 shown");
+  });
+
+  it("points the bulk actions at the filtered rows, on the tab they act on", () => {
+    expect(
+      filteredBulkState({ filtered: false, statusFilter: "approved", acts: "pending", total: 9 }),
+    ).toEqual({ count: null, label: null, blocked: null });
+    expect(
+      filteredBulkState({ filtered: true, statusFilter: "pending", acts: "pending", total: 12 }),
+    ).toEqual({ count: 12, label: "12", blocked: null });
+    expect(
+      filteredBulkState({
+        filtered: true,
+        statusFilter: "approved",
+        acts: "approved",
+        total: 2000,
+        lowerBound: true,
+      }).label,
+    ).toBe("2000+");
+    expect(
+      filteredBulkState({ filtered: true, statusFilter: "approved", acts: "pending", total: 4 })
+        .blocked,
+    ).toBe("open Pending to act on the filtered rows");
   });
 });
 

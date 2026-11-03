@@ -25,3 +25,11 @@ it("keeps empty or invalid selections empty", () => {
   for (const query of ["?ids=", "?ids=abc", "?ids=true", "?ids=%5B42%5D"])
     expect(validateRunSearch(defaultParseSearch(query)).ids).toEqual([]);
 });
+it("carries the queue's Show, Channel and oldest-first sort into the drain", () => {
+  expect(
+    validateRunSearch(
+      defaultParseSearch("?fromQueue=1&limit=10&show=offer-ready&channel=email&order=oldest"),
+    ),
+  ).toEqual({ fromQueue: "1", limit: 10, show: "offer-ready", channel: "email", order: "oldest" });
+  expect(validateRunSearch({ show: "bogus", channel: "fax", order: "ranked" })).toEqual({});
+});

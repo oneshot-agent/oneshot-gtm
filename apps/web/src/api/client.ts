@@ -65,6 +65,8 @@ import type {
   DomainActionResult,
   DomainPoolView,
   QueueListResponse,
+  QueueOrder,
+  QueueShow,
   QueueStatusView,
   DeriveBriefResult,
   DeriveIcpResult,
@@ -94,6 +96,7 @@ import {
   toApiQuery,
   type ProspectsSearch,
 } from "../lib/prospects-helpers.ts";
+import { DEMO_QUEUE_LIMIT, demoQueuePage } from "../lib/queue-helpers.ts";
 
 const BASE = "/api";
 
@@ -520,18 +523,46 @@ export const api = {
     /** With `status: "pending"`: leave out (`exclude`) or list only (`only`) rows with no strong offer. */
     offerSkip?: "only" | "exclude";
     limit?: number;
-    /** Review-order override; omit to use the configured default. */
-    order?: "ranked" | "newest";
+    /** Rows to skip: the next page of the same filters. */
+    offset?: number;
+    /** Order override; omit to use the configured default. */
+    order?: QueueOrder;
+    /** The Show filter, applied before the page is cut. */
+    show?: QueueShow;
+    channel?: "email" | "linkedin";
     /** Explicit row pick. The "drain selected" path. */
     ids?: number[];
   }) => {
+    // The demo holds one captured document per status/order/play view; a
+    // page, Show or Channel filter of it is cut from that document here, as
+    // the prospects browse is, so no combination needs a capture of its own.
+    if (IS_DEMO && !opts?.forRun && opts?.ids == null) {
+      const { show, channel, offset, limit, ...view } = opts ?? {};
+      const q = new URLSearchParams();
+      if (view.play) q.set("play", view.play);
+      if (view.status) q.set("status", view.status);
+      if (view.offerSkip) q.set("offerSkip", view.offerSkip);
+      q.set("limit", String(DEMO_QUEUE_LIMIT));
+      if (view.order) q.set("order", view.order);
+      return demoGet<QueueListResponse>(`/queue?${q.toString()}`).then((doc) =>
+        demoQueuePage(doc, {
+          ...(show ? { show } : {}),
+          ...(channel ? { channel } : {}),
+          ...(offset ? { offset } : {}),
+          ...(limit != null ? { limit } : {}),
+        }),
+      );
+    }
     const q = new URLSearchParams();
     if (opts?.forRun) q.set("forRun", "1");
     if (opts?.play) q.set("play", opts.play);
     if (opts?.status) q.set("status", opts.status);
     if (opts?.offerSkip) q.set("offerSkip", opts.offerSkip);
     if (opts?.limit != null) q.set("limit", String(opts.limit));
+    if (opts?.offset) q.set("offset", String(opts.offset));
     if (opts?.order) q.set("order", opts.order);
+    if (opts?.show) q.set("show", opts.show);
+    if (opts?.channel) q.set("channel", opts.channel);
     // Note the `!= null`, not a length check: an empty array is an explicit
     // "nothing picked" and must reach the server as `ids=`, or the server would
     // read it as absent and return the unscoped batch instead of no rows.
@@ -593,8 +624,16 @@ export const api = {
       ...(hint?.hint ? { hint: hint.hint } : {}),
       ...(hint?.decisionReason ? { decisionReason: hint.decisionReason } : {}),
     }),
-  approveAllQueue: (play?: string) =>
-    postJson<{ approved: number }>("/queue/approve-all", play ? { play } : {}),
+  /** Approve pending rows (of one play); `show`/`channel` narrow it to the filtered rows. */
+  approveAllQueue: (
+    play?: string,
+    filters: { show?: QueueShow; channel?: "email" | "linkedin" } = {},
+  ) =>
+    postJson<{ approved: number }>("/queue/approve-all", {
+      ...(play ? { play } : {}),
+      ...(filters.show ? { show: filters.show } : {}),
+      ...(filters.channel ? { channel: filters.channel } : {}),
+    }),
   // Re-draft a row in preview (dry-run, never sends); overwrites the persisted last_draft_json.
   regenerateDraft: (id: number, rotateAngle = false) =>
     postJson<LastDraft>(`/queue/${id}/regenerate`, { rotateAngle }),

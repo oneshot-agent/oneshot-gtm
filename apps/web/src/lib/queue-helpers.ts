@@ -1,4 +1,11 @@
-import type { QueueListResponse, QueueRowView, QueueStatusView } from "@oneshot-gtm/shared-types";
+import {
+  queueRowMatchesShow,
+  type QueueListResponse,
+  type QueueOrder,
+  type QueueRowView,
+  type QueueShow,
+  type QueueStatusView,
+} from "@oneshot-gtm/shared-types";
 
 /**
  * A /queue status chip. `no-offer` is not a status: it is the pending rows
@@ -7,18 +14,30 @@ import type { QueueListResponse, QueueRowView, QueueStatusView } from "@oneshot-
  */
 export type QueueStatusFilter = QueueStatusView | "all" | "no-offer";
 
+/** /queue's Channel filter: the channels a first touch is sent on from the queue. */
+export type QueueChannelFilter = "email" | "linkedin";
+
+/** Rows per page of the /queue table; "show more" reads the next page at `offset`. */
+export const QUEUE_PAGE_SIZE = 50;
+
 /** Build the queue request without leaking UI-only `all`/null sentinel values. */
 export function queueRequest(input: {
   statusFilter: QueueStatusFilter;
   playFilter: string;
-  orderOverride: "ranked" | "newest" | null;
+  orderOverride: QueueOrder | null;
+  show?: QueueShow | null;
+  channel?: QueueChannelFilter | null;
   limit?: number;
+  offset?: number;
 }): {
   status?: QueueStatusView;
   offerSkip?: "only" | "exclude";
   play?: string;
-  order?: "ranked" | "newest";
+  order?: QueueOrder;
+  show?: QueueShow;
+  channel?: QueueChannelFilter;
   limit: number;
+  offset?: number;
 } {
   const { statusFilter } = input;
   const status =
@@ -33,8 +52,101 @@ export function queueRequest(input: {
     ...status,
     ...(input.playFilter !== "all" ? { play: input.playFilter } : {}),
     ...(input.orderOverride ? { order: input.orderOverride } : {}),
+    ...(input.show ? { show: input.show } : {}),
+    ...(input.channel ? { channel: input.channel } : {}),
     limit: input.limit ?? 200,
+    ...(input.offset ? { offset: input.offset } : {}),
   };
+}
+
+/**
+ * Rows of one captured /queue document in demo mode: each status/order/play
+ * view is captured once at this limit (the server's cap), and every page,
+ * Show and Channel filter of it is cut from that document (`demoQueuePage`).
+ */
+export const DEMO_QUEUE_LIMIT = 500;
+
+/**
+ * A /queue page cut from a captured document, as the server would cut it:
+ * the Show and Channel filters (the chips' own predicate,
+ * `queueRowMatchesShow`), then `offset` and `limit`, with the server's
+ * paging contract (`nextOffset`, `hasMore`). Captured views carry no
+ * "never drafted" bit, so No draft reads a row with no usable draft. Ranked
+ * order filters the captured ranking rather than ranking the filtered rows.
+ */
+export function demoQueuePage(
+  doc: QueueListResponse,
+  opts: { show?: QueueShow; channel?: QueueChannelFilter; offset?: number; limit?: number },
+): QueueListResponse {
+  const { show, channel } = opts;
+  const filtered = show != null || channel != null;
+  const rows = filtered
+    ? doc.rows.filter(
+        (row) => (!show || queueRowMatchesShow(show, row)) && (!channel || row.channel === channel),
+      )
+    : doc.rows;
+  const offset = Math.max(0, opts.offset ?? 0);
+  const page = rows.slice(offset, offset + (opts.limit ?? rows.length));
+  const out: QueueListResponse = { ...doc, rows: page };
+  delete out.total;
+  delete out.totalIsLowerBound;
+  // The filtered rows are the candidates here: the next page starts after these.
+  out.nextOffset = offset + page.length;
+  out.hasMore = out.nextOffset < rows.length;
+  // A capture that hit its limit left rows out: a count over it is a floor.
+  const cut = doc.total != null && doc.total > doc.rows.length;
+  const total = filtered ? rows.length : (doc.total ?? rows.length);
+  out.total = total;
+  if ((filtered && cut) || doc.totalIsLowerBound) out.totalIsLowerBound = true;
+  return out;
+}
+
+/** The Show filter's choices, in the order the control lists them. */
+export const QUEUE_SHOW_LABELS: Record<QueueShow, string> = {
+  "offer-ready": "Offer ready",
+  "has-draft": "Has draft",
+  ready: "Ready to send",
+  held: "Held",
+  "no-draft": "No draft",
+};
+
+/** "50 of 312 shown", "312 shown", "50 of 2,000+ shown": the page against the filtered total. */
+export function queueCountLine(input: {
+  shown: number;
+  total: number | undefined;
+  lowerBound?: boolean;
+  format: (n: number) => string;
+}): string {
+  const { shown, total, format } = input;
+  if (total == null || (total <= shown && !input.lowerBound)) return `${format(shown)} shown`;
+  return `${format(shown)} of ${format(total)}${input.lowerBound ? "+" : ""} shown`;
+}
+
+/**
+ * What "Approve pending" and "Batch send…" act on while a Show or Channel
+ * filter is on: the filtered rows, which are the page's own only on the tab
+ * they act on (Pending for approve, Approved for batch send). On another tab
+ * the count is unknown, so the action waits for that tab.
+ */
+export function filteredBulkState(input: {
+  filtered: boolean;
+  statusFilter: QueueStatusFilter;
+  acts: "pending" | "approved";
+  total: number | undefined;
+  lowerBound?: boolean;
+  format?: (n: number) => string;
+}): { count: number | null; label: string | null; blocked: string | null } {
+  if (!input.filtered) return { count: null, label: null, blocked: null };
+  if (input.statusFilter !== input.acts) {
+    return {
+      count: null,
+      label: null,
+      blocked: `open ${input.acts === "pending" ? "Pending" : "Approved"} to act on the filtered rows`,
+    };
+  }
+  const count = input.total ?? 0;
+  const format = input.format ?? String;
+  return { count, label: `${format(count)}${input.lowerBound ? "+" : ""}`, blocked: null };
 }
 
 /**
@@ -53,13 +165,22 @@ export function isQueueFilterActive(statusFilter: QueueStatusFilter, playFilter:
   return statusFilter !== "pending" || playFilter !== "all";
 }
 
-/** Visible plays plus plays with approved work elsewhere in the queue. */
+/**
+ * Every play with rows under the current status (`playCounts`), plus the
+ * visible plays (an older server sends no counts) and plays with approved
+ * work elsewhere in the queue.
+ */
 export function queuePlayList(
   rows: ReadonlyArray<Pick<QueueRowView, "playName">>,
   approvedByPlay: Readonly<Record<string, number>>,
+  playCounts: Readonly<Record<string, number>> = {},
 ): string[] {
   return Array.from(
-    new Set([...rows.map((row) => row.playName), ...Object.keys(approvedByPlay)]),
+    new Set([
+      ...Object.keys(playCounts),
+      ...rows.map((row) => row.playName),
+      ...Object.keys(approvedByPlay),
+    ]),
   ).toSorted();
 }
 

@@ -141,7 +141,11 @@ import { OutboundSendStore } from "./ledger-outbound.ts";
 import { LinkedInPendingSendStore } from "./ledger-linkedin-pending.ts";
 import { LinkedInSendAttemptStore } from "./ledger-linkedin-attempts.ts";
 import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.ts";
-import { prospectHasReplied as queueProspectHasReplied, QueueStore } from "./ledger-queue.ts";
+import {
+  prospectHasReplied as queueProspectHasReplied,
+  QueueStore,
+  queueShowIsExact,
+} from "./ledger-queue.ts";
 import {
   appendRunEvent as runAppendRunEvent,
   cancelRun as runCancelRun,
@@ -225,7 +229,7 @@ import type {
   ProspectPriority,
   ProspectRecord,
   SentOutcomeRawRow,
-  QueueOfferSkipFilter,
+  QueueListFilters,
   QueueRow,
   QueueSearchOpts,
   QueueSearchRow,
@@ -248,6 +252,9 @@ export {
 
 // Re-export the profile-key helper for the Ledger public API.
 export { canonicalLinkedInProfileKey };
+
+// Re-export the /queue show-filter split (which filters the caller finishes in JS).
+export { queueShowIsExact };
 
 // Re-export cadence types for the Ledger public API.
 export type { CadenceOfferJson, CadenceWithProspect, QueueRowCadence } from "./ledger-cadence.ts";
@@ -1915,16 +1922,27 @@ export class Ledger {
 
   /** @see ledger-queue.ts#QueueStore.listQueue (`columns` projects the read, issue #929) */
   listQueue(
-    opts: {
-      playName?: string;
-      status?: QueueStatus;
+    opts: QueueListFilters & {
       limit?: number;
+      offset?: number;
+      dir?: "asc" | "desc";
       ids?: number[];
       columns?: readonly string[];
-      offerSkip?: QueueOfferSkipFilter;
     } = {},
   ): QueueRow[] {
     return this.queue.listQueue(opts);
+  }
+
+  /** @see ledger-queue.ts#QueueStore.countQueue */
+  countQueue(opts: QueueListFilters = {}): number {
+    return this.queue.countQueue(opts);
+  }
+
+  /** @see ledger-queue.ts#QueueStore.queueCountsByPlay */
+  queueCountsByPlay(
+    opts: Pick<QueueListFilters, "status" | "offerSkip"> = {},
+  ): Record<string, number> {
+    return this.queue.queueCountsByPlay(opts);
   }
 
   getQueueRow(id: number): QueueRow | null {
@@ -2061,7 +2079,9 @@ export class Ledger {
   }
 
   /** @see ledger-queue.ts#QueueStore.approveAllPending */
-  approveAllPending(opts: { playName?: string; offerSkip?: QueueOfferSkipFilter } = {}): number {
+  approveAllPending(
+    opts: Omit<QueueListFilters, "status"> & { ids?: readonly number[] } = {},
+  ): number {
     return this.queue.approveAllPending(opts);
   }
 
