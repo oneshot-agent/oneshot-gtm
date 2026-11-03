@@ -58,7 +58,7 @@ type AppConfig = ReturnType<typeof loadConfig>;
 type JsonRecord = Record<string, unknown>;
 
 /** Bump when the prompt or the lint changes: unedited offers re-derive. */
-export const OFFER_PROMPT_VERSION = "offer-v8";
+export const OFFER_PROMPT_VERSION = "offer-v9";
 
 export const OFFER_MAX = {
   offer: 140,
@@ -506,6 +506,118 @@ const CHECK_LEAD = /^(?:vet|verify|validate|screen|scan|audit|check)\b/i;
 const SYSTEM_WRAPPER =
   /\b(?:put\s+(?:[\w'’-]+\s+){0,6}into\s+production|the\s+system\s+that|deploy(?:s|ed|ing)?\s+(?:a|the)\s+system)\b/i;
 
+/**
+ * An offer to get listed, certified or approved on a platform whose own
+ * evidence is that platform's entry page: a partner, marketplace or directory
+ * page with an entry after it ("/partners/<entry>"), on a host whose own name
+ * the offer names ("sap.com/.../partners/<entry>" for a goal on SAP). Such a
+ * page in the research is the listing itself, so the goal is already reached.
+ * Kept narrow on purpose: every part must hold. The page must name an entry
+ * (a bare "/partners" or "/marketplace" page may be the programme), pages that
+ * are often the firm's own ("/integrations", "/apps") never count, and an
+ * entry on another platform than the one the goal names never counts. When
+ * the platform cannot be matched, the evidence-aware judge decides.
+ */
+const LISTING_GOAL =
+  /\b(?:listed|listing|certified|certification|accredited|accreditation|approved|approval)\b/i;
+const LISTING_PLATFORM =
+  /\b(?:marketplaces?|partners?|partner\s+(?:ecosystem|network|programme|program|directory)|ecosystem|directory|app\s?store|appexchange)\b/i;
+/** Path segments that open a partner, marketplace or directory entry ("/partners/<entry>"). */
+const LISTING_PATH_SEGMENTS = new Set([
+  "partner",
+  "partners",
+  "partner-directory",
+  "marketplace",
+  "directory",
+  "listing",
+  "listings",
+  "appexchange",
+  "ecosystem",
+]);
+/** Characters that end a URL inside a quote. */
+const URL_END_CHARS = new Set(['"', "'", "<", ">"]);
+/** Host labels that name no platform: subdomains, directory words and suffixes. */
+const GENERIC_HOST_LABELS = new Set(
+  (
+    "www www2 m en us uk eu global partners partner partnerportal marketplace marketplaces apps app " +
+    "store appstore directory ecosystem listings listing solutions solution products product catalog " +
+    "community developer developers docs portal hub cloud services " +
+    "com co org net io ai dev biz info gov edu ac"
+  ).split(" "),
+);
+
+/**
+ * The URLs in a quote, parsed. Linear in the quote's length: split on
+ * whitespace, cut each token at the first "http://" or "https://" and at the
+ * first quote or angle bracket, and let `URL` parse the rest. No regular
+ * expression runs over the quote's URLs, so no input can make it slow.
+ */
+function urlsIn(quote: string): URL[] {
+  const out: URL[] = [];
+  for (const token of quote.split(/\s/)) {
+    const lower = token.toLowerCase();
+    const at = [lower.indexOf("https://"), lower.indexOf("http://")]
+      .filter((i) => i >= 0)
+      .reduce((a, b) => Math.min(a, b), Infinity);
+    if (at === Infinity) continue;
+    let end = at;
+    while (end < token.length && !URL_END_CHARS.has(token[end]!)) end++;
+    try {
+      out.push(new URL(token.slice(at, end)));
+    } catch {
+      // Not a URL after all: nothing to match.
+    }
+  }
+  return out;
+}
+
+/** True when the URL's path has a listing segment with an entry of 3+ characters after it. */
+function isListingEntry(url: URL): boolean {
+  const segments = url.pathname.split("/");
+  for (let i = 0; i + 1 < segments.length; i++) {
+    if (LISTING_PATH_SEGMENTS.has(segments[i]!.toLowerCase()) && segments[i + 1]!.length >= 3) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The labels of a host that can name its platform: "partners.sap.com" gives "sap". */
+function platformLabels(host: string): string[] {
+  const labels = host.toLowerCase().split(".").filter(Boolean);
+  // The last label is the suffix (".com", ".de"); a bare host names nothing.
+  return labels
+    .slice(0, -1)
+    .filter((l) => l.length >= 3 && !GENERIC_HOST_LABELS.has(l) && /^[a-z0-9-]+$/.test(l));
+}
+
+/** True when the offer names this label as a word ("example-platform" also as "example platform" or "exampleplatform"). */
+function offerNamesLabel(offer: string, label: string): boolean {
+  const parts = label.split("-").filter(Boolean);
+  if (parts.length === 0) return false;
+  const words = offer
+    .toLowerCase()
+    .split(/[^a-z0-9]/)
+    .filter(Boolean);
+  const joined = parts.join("");
+  for (let i = 0; i < words.length; i++) {
+    if (words[i] === joined) return true;
+    if (parts.every((part, k) => words[i + k] === part)) return true;
+  }
+  return false;
+}
+
+export function isAlreadyMetOffer(offer: string, evidence: readonly string[]): boolean {
+  if (!LISTING_GOAL.test(offer) || !LISTING_PLATFORM.test(offer)) return false;
+  return evidence.some((quote) =>
+    urlsIn(quote).some(
+      (url) =>
+        isListingEntry(url) &&
+        platformLabels(url.hostname).some((label) => offerNamesLabel(offer, label)),
+    ),
+  );
+}
+
 export function isSystemWrapperOffer(offer: string): boolean {
   return SYSTEM_WRAPPER.test(offer);
 }
@@ -551,6 +663,7 @@ export function lintOffer(
   if (isAwarenessOffer(offer)) flags.push("offer-not-execution");
   if (isCheckOffer(offer)) flags.push("offer-is-a-check");
   if (isSystemWrapperOffer(offer)) flags.push("offer-names-the-system");
+  if (isAlreadyMetOffer(offer, parts.evidence)) flags.push("offer-already-met");
   if (parts.level === "researched" && !ret) flags.push("no-return");
   const both = `${offer} ${steps} ${ret}`;
   for (const [flag, pattern] of BANNED) if (pattern.test(both)) flags.push(flag);
@@ -864,8 +977,8 @@ export function offerRelevanceCriteria(
   return {
     relevant:
       "A goal this firm at its stage would put on its plan and this person is measured on, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), resting on a specific fact about them: a piece their own product is missing to finish its job for its customers (never the job it already does), or a goal their own firm visibly has outside its core product.",
-    weak: `Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on (a collecting, recovering, reconciling or re-planning job offered bare to a technology, engineering, data or AI leader, whose goal is one named workflow of theirs that their own software carries to its end state), a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.${preferProduct}`,
-    irrelevant: `A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.${excluded}`,
+    weak: `Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on (a collecting, recovering, reconciling or re-planning job offered bare to a technology, engineering, data or AI leader, whose goal is one named workflow of theirs that their own software carries to its end state), a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project. Their own product's job includes more of what it already sells: more records, sources or fields in the data or pages it sells.${preferProduct}`,
+    irrelevant: `A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role. Also a goal already reached: RESEARCH, or the offer's own evidence, shows the listing, certification, approval, launch, integration, signature or result it would win already exists. Also a goal that ends in paperwork (a document, credit, policy, certificate, booked test, signed compliance agreement, recertification or passed outside review the firm would file rather than count) rather than a business result. The goal is the business result the paperwork wins, such as money recovered, cases closed, contracts renewed on better terms, invoices collected or deliveries made; a review, audit or screening inside such a goal is a step.${excluded}`,
   };
 }
 
@@ -889,16 +1002,26 @@ function judgeMinConfidence(cfg: AppConfig): number {
   return typeof v === "number" && v >= 0 && v <= 1 ? v : DEFAULT_JUDGE_MIN_CONFIDENCE;
 }
 
-function describeOffer(o: Pick<ProspectOffer, "offer" | "return" | "fit">): string {
+/** An offer as the judge reads it; `evidence`, when given, is the writer's own quotes from RESEARCH. */
+export type JudgedOffer = Pick<ProspectOffer, "offer" | "return" | "fit"> & {
+  evidence?: readonly string[];
+};
+
+function describeOffer(o: JudgedOffer): string {
+  const evidence = (o.evidence ?? []).map((e) => e.trim()).filter((e) => e.length > 0);
   return [
     `offer: ${o.offer}`,
     ...(o.return?.trim() ? [`returns: ${o.return.trim()}`] : []),
     ...(o.fit?.trim() ? [`fit: ${o.fit.trim()}`] : []),
+    // So a goal its own evidence shows already reached is seen as reached.
+    ...(evidence.length > 0
+      ? [`evidence: ${evidence.map((e) => JSON.stringify(e)).join("; ")}`]
+      : []),
   ].join("\n");
 }
 
 function judgeState(
-  offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
+  offers: ReadonlyArray<JudgedOffer>,
   research: string,
   who: { company: string; title: string },
   exclusions: readonly string[],
@@ -915,7 +1038,7 @@ function judgeState(
 }
 
 async function judgeWithDecisions(
-  offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
+  offers: ReadonlyArray<JudgedOffer>,
   state: string,
   model: string,
   key: string,
@@ -937,7 +1060,10 @@ async function judgeWithDecisions(
         `Judge offer ${i + 1} in the state on its own: is it a real goal for this firm and this person? ` +
         `A market the firm sells into is not a need of the firm. A check is a step, not a goal: ` +
         `the offer should be what the check wins. How they were found is not what they own: an offer ` +
-        `about a third party's project they only follow, or one restating what the product does, is weak.` +
+        `about a third party's project they only follow, or one restating what the product does, is weak. ` +
+        `A goal RESEARCH or the offer's own evidence shows already reached is irrelevant. A goal that ends in ` +
+        `paperwork (a document, credit, policy, certificate or sign-off) rather than a business result is irrelevant; ` +
+        `a review, audit or screening inside a goal with a business result is a step.` +
         (exclusionCriteria
           ? ` A goal of a kind listed under NEVER OFFER, in any wording, is irrelevant.`
           : "") +
@@ -1010,7 +1136,7 @@ async function judgeWithDecisions(
 }
 
 async function judgeWithLlm(
-  offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
+  offers: ReadonlyArray<JudgedOffer>,
   state: string,
   cfg: AppConfig,
   exclusions: readonly string[],
@@ -1071,7 +1197,7 @@ async function judgeWithLlm(
  * ran at all: the caller keeps the offers unjudged rather than lose them.
  */
 export async function judgeOffers(
-  offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
+  offers: ReadonlyArray<JudgedOffer>,
   research: string,
   row: object,
   cfg: AppConfig,
@@ -1186,6 +1312,10 @@ const OFFER_FLAG_HINTS: ReadonlyArray<[flag: string, hint: string]> = [
   [
     "offer-names-the-system",
     'the offer names the system ("put into production", "the system that", "deploy a system"); name the result for their firm instead, e.g. "work every failed delivery in their dispatch app to a rebooked slot"',
+  ],
+  [
+    "offer-already-met",
+    "the offer's own evidence is the partner, marketplace or directory page that already lists them, so the goal is reached; write a goal not yet reached, such as what that listing now wins, counted",
   ],
 ];
 

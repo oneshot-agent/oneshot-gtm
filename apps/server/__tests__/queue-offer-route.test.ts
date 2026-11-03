@@ -329,7 +329,7 @@ describe("queueOfferRoute", () => {
   it("a skip after New offers leaves an offer that stands: the founder's own", async () => {
     state.skipped = {
       why: "no offer passed the relevance check after 3 rewrites",
-      version: "offer-v8",
+      version: "offer-v9",
       inputHash: "h",
       productHash: "p",
       skippedAt: "2026-10-29T00:00:00.000Z",

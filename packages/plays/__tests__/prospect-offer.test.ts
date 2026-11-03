@@ -868,7 +868,7 @@ describe("offer fit", () => {
   });
 
   it("bumps the prompt version so unedited offers re-derive", () => {
-    expect(OFFER_PROMPT_VERSION).toBe("offer-v8");
+    expect(OFFER_PROMPT_VERSION).toBe("offer-v9");
   });
 });
 
@@ -2201,9 +2201,9 @@ describe("the offer bar", () => {
     const criteria = offerRelevanceCriteria();
     expect(criteria).toMatchInlineSnapshot(`
       {
-        "irrelevant": "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.",
+        "irrelevant": "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role. Also a goal already reached: RESEARCH, or the offer's own evidence, shows the listing, certification, approval, launch, integration, signature or result it would win already exists. Also a goal that ends in paperwork (a document, credit, policy, certificate, booked test, signed compliance agreement, recertification or passed outside review the firm would file rather than count) rather than a business result. The goal is the business result the paperwork wins, such as money recovered, cases closed, contracts renewed on better terms, invoices collected or deliveries made; a review, audit or screening inside such a goal is a step.",
         "relevant": "A goal this firm at its stage would put on its plan and this person is measured on, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), resting on a specific fact about them: a piece their own product is missing to finish its job for its customers (never the job it already does), or a goal their own firm visibly has outside its core product.",
-        "weak": "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on (a collecting, recovering, reconciling or re-planning job offered bare to a technology, engineering, data or AI leader, whose goal is one named workflow of theirs that their own software carries to its end state), a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.",
+        "weak": "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on (a collecting, recovering, reconciling or re-planning job offered bare to a technology, engineering, data or AI leader, whose goal is one named workflow of theirs that their own software carries to its end state), a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project. Their own product's job includes more of what it already sells: more records, sources or fields in the data or pages it sells.",
       }
     `);
     // The llm judge's labels say the same as the decisions criteria.
@@ -2211,7 +2211,124 @@ describe("the offer bar", () => {
       judge.match(new RegExp(`^- \`${name}\`: (.+)$`, "m"))?.[1] ?? "";
     expect(label("relevant").toLowerCase()).toBe(criteria.relevant.toLowerCase());
     expect(label("weak").toLowerCase()).toBe(criteria.weak.toLowerCase());
+    // The judge prompt's irrelevant adds only the NEVER OFFER rule, which the
+    // decisions engine asks as its own question.
+    expect(label("irrelevant").toLowerCase().startsWith(criteria.irrelevant.toLowerCase())).toBe(
+      true,
+    );
+    expect(label("irrelevant").slice(criteria.irrelevant.length)).toMatch(
+      /^ Also an offer whose goal, in any wording, is of a kind listed in NEVER OFFER/,
+    );
     expect(criteria.weak).toContain(checkPass);
+  });
+
+  // A goal its own evidence shows already reached is no goal, and a goal that
+  // ends in paperwork is not a business result: both are irrelevant, so never
+  // sent unreviewed. Writer, judge prompt and the decisions criteria carry both.
+  it("an already-reached goal and a paperwork goal are irrelevant, everywhere", async () => {
+    const { offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
+    const criteria = offerRelevanceCriteria();
+    expect(criteria.irrelevant).toContain(
+      "Also a goal already reached: RESEARCH, or the offer's own evidence, shows the listing, certification, approval, launch, integration, signature or result it would win already exists.",
+    );
+    expect(judge).toContain("A goal already reached is no goal.");
+    expect(writer).toContain("A goal already reached is no offer.");
+    expect(writer).toContain("An offer whose own evidence shows its goal reached is never kept.");
+    const paperwork =
+      "a document, credit, policy, certificate, booked test, signed compliance agreement, recertification or passed outside review";
+    for (const text of [writer, judge, criteria.irrelevant]) {
+      expect(text).toContain(paperwork);
+      expect(text).toContain("contracts renewed on better terms");
+    }
+    expect(criteria.irrelevant).toContain(
+      "Also a goal that ends in paperwork (a document, credit, policy, certificate, booked test, signed compliance agreement, recertification or passed outside review the firm would file rather than count) rather than a business result.",
+    );
+    expect(criteria.weak).not.toContain("paperwork");
+    expect(judge).toContain("not a result it counts: `irrelevant`, however well it reads.");
+    // A review, audit or screening inside a goal with a business result stays a step.
+    expect(criteria.irrelevant).toContain(
+      "a review, audit or screening inside such a goal is a step",
+    );
+    // More of what their product sells is their product's own job.
+    for (const text of [writer, judge, criteria.weak]) {
+      expect(text).toContain("more records, sources or fields in the data or pages it sells");
+    }
+  });
+
+  describe("the already-met lint", () => {
+    const sapEntry = "https://www.sap.com/products/crm/partners/harbor-tiles-checkout.html";
+    const stripeEntry = "https://stripe.com/partners/directory/harbor-tiles-checkout";
+    const research = `FIRM RESEARCH:\n${sapEntry} Harbor Tiles checkout, a certified partner\n${stripeEntry}`;
+    const listing = (offer: string, evidence: string[]) => ({
+      ...good,
+      level: "researched" as const,
+      offer,
+      return: "deals sourced through the marketplace, counted per signed contract",
+      evidence,
+    });
+
+    it("flags a listing goal on a platform whose own entry page is its evidence", () => {
+      const sap = listing(
+        "take the checkout integration through every partner review until it is certified and listed in the sap partner ecosystem",
+        [sapEntry],
+      );
+      expect(lintOffer(sap, research)).toContain("offer-already-met");
+    });
+
+    it("never flags an entry on another platform than the one the goal names", () => {
+      const shopify = listing(
+        "get the checkout app approved and listed in the shopify app store before the holiday season",
+        [stripeEntry],
+      );
+      expect(lintOffer(shopify, research)).not.toContain("offer-already-met");
+    });
+
+    it("never flags a goal that names no platform: the judge decides", () => {
+      const generic = listing(
+        "take the checkout integration through partner review until it is certified and listed in the partner marketplace",
+        [sapEntry],
+      );
+      expect(lintOffer(generic, research)).not.toContain("offer-already-met");
+    });
+
+    it("reads a pathological URL in linear time and does not flag it", async () => {
+      const { isAlreadyMetOffer } = await import("../src/_prospect-offer.ts");
+      const goal =
+        "take the checkout integration through every partner review until it is certified and listed in the sap partner ecosystem";
+      const pathological = `http://${"!".repeat(50_000)}`;
+      const started = performance.now();
+      expect(isAlreadyMetOffer(goal, [pathological])).toBe(false);
+      expect(lintOffer(listing(goal, [pathological]), pathological)).not.toContain(
+        "offer-already-met",
+      );
+      expect(performance.now() - started).toBeLessThan(1_000);
+    });
+
+    it("needs an entry page, a third party's listing and a listing goal", () => {
+      const goal =
+        "take the checkout integration through every partner review until it is certified and listed in the sap partner ecosystem";
+      // Evidence that is no listing page.
+      expect(
+        lintOffer(listing(goal, ["Harbor Tiles checkout, a certified partner"]), research),
+      ).not.toContain("offer-already-met");
+      // A bare programme page names no entry.
+      const programme = `${research}\nhttps://www.sap.com/partners/`;
+      expect(lintOffer(listing(goal, ["https://www.sap.com/partners/"]), programme)).not.toContain(
+        "offer-already-met",
+      );
+      // Their own integrations page is not a third party's listing.
+      const ownUrl = "https://harbortiles.example/integrations/sap-checkout";
+      expect(lintOffer(listing(goal, [ownUrl]), `${research}\n${ownUrl}`)).not.toContain(
+        "offer-already-met",
+      );
+      // A goal that is no listing never trips it, whatever the evidence.
+      expect(
+        lintOffer(
+          listing("sign three new sap resellers for the leeds depot this quarter", [sapEntry]),
+          research,
+        ),
+      ).not.toContain("offer-already-met");
+    });
   });
 
   // An offer that does their product's own job reads as a competitor's pitch,
@@ -2253,6 +2370,96 @@ describe("the offer bar", () => {
     expect(judge).toContain(rule);
     const { offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
     expect(offerRelevanceCriteria().weak).toContain(rule);
+  });
+});
+
+describe("judge reads the offer's own evidence", () => {
+  const research = `${offerResearchText(target)}\nhttps://directory.example/partners/northside-plumbing`;
+  const listed = {
+    ...good,
+    offer: "get the leeds depot certified and listed in the trade partner directory",
+    return: "jobs booked through the directory, counted per booked job",
+    evidence: ["https://directory.example/partners/northside-plumbing"],
+  };
+  const paperwork = {
+    ...good,
+    offer:
+      "get a cyber liability policy bound and every supplier agreement signed for the leeds depot",
+    return: "a bound policy and signed agreements on file",
+    evidence: ["opened a second depot in Leeds"],
+  };
+
+  afterEach(() => {
+    delete process.env["OPENROUTER_API_KEY"];
+  });
+
+  it("llm engine: the evidence is in the state; an already-reached goal and paperwork never pass", async () => {
+    const { judgeOffers } = await import("../src/_prospect-offer.ts");
+    llm.judge = [
+      judgeReply([
+        ["irrelevant", "its own evidence is the directory page that already lists them"],
+        ["irrelevant", "ends in a policy and signed forms, not a counted result"],
+      ]),
+    ];
+    const out = await judgeOffers([listed, paperwork], research, target, cfg as never);
+    expect(llm.judgeInputs[0]).toContain(
+      'evidence: "https://directory.example/partners/northside-plumbing"',
+    );
+    expect(out?.map((j) => [j?.label, j?.pass])).toEqual([
+      ["irrelevant", false],
+      ["irrelevant", false],
+    ]);
+  });
+
+  it("decisions engine: same state and criteria; an irrelevant top label never passes", async () => {
+    const { judgeOffers, offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
+    process.env["OPENROUTER_API_KEY"] = "test-key";
+    const fetchImpl = vi.fn(async () =>
+      decisionsResponse([
+        // P(relevant) over minConfidence, but already reached or paperwork:
+        // an irrelevant top label never passes.
+        { choice: "irrelevant", confidence: 0.5, relevant: 0.4 },
+        { choice: "irrelevant", confidence: 0.55, relevant: 0.4 },
+      ]),
+    );
+    const out = await judgeOffers(
+      [listed, paperwork],
+      research,
+      target,
+      {
+        ...cfg,
+        offerJudge: { engine: "decisions", model: "test/decisions-model", minConfidence: 0.35 },
+      } as never,
+      { fetchImpl: fetchImpl as never },
+    );
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(init.body));
+    expect(body.state).toContain(
+      'evidence: "https://directory.example/partners/northside-plumbing"',
+    );
+    expect(body.questions.offer_1.criteria).toEqual(offerRelevanceCriteria());
+    expect(body.questions.offer_1.instructions).toContain(
+      "A goal RESEARCH or the offer's own evidence shows already reached is irrelevant.",
+    );
+    expect(body.questions.offer_2.instructions).toContain(
+      "A goal that ends in paperwork (a document, credit, policy, certificate or sign-off) rather than a business result is irrelevant",
+    );
+    expect(out?.map((j) => [j?.label, j?.pass])).toEqual([
+      ["irrelevant", false],
+      ["irrelevant", false],
+    ]);
+    // Stored with the hold label: the send waits for the founder.
+    const { judgementFields, offerHoldsSend } = await import("../src/_prospect-offer.ts");
+    const stored = {
+      ...paperwork,
+      level: "researched" as const,
+      version: OFFER_PROMPT_VERSION,
+      inputHash: "h",
+      derivedAt: "",
+      ...judgementFields(out![1]!),
+    };
+    expect(stored.relevance).toBe("weak");
+    expect(offerHoldsSend(stored)).toBe(true);
   });
 });
 
