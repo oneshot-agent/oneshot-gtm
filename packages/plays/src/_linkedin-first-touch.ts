@@ -666,10 +666,12 @@ async function settleInvite(
       keepPending("");
       throw new SendDeferredError(`LinkedIn invites paused for today (${capped})`);
     }
-    slot.release();
+    // The day's slot goes back only on proof that nothing went out; any other
+    // failure (unverified, a lost answer) may have sent it, so it stays counted.
     const unavailable = unavailableRecipient(err);
     if (unavailable) {
       // Nobody can be invited at this profile: nothing went out.
+      slot.release();
       claim.release();
       settled();
       return {
@@ -680,7 +682,10 @@ async function settleInvite(
     }
     const code = inviteErrorCode(err);
     // Only a code OneShot reports for a failed job proves nothing was sent.
-    if (code) claim.release();
+    if (code) {
+      slot.release();
+      claim.release();
+    }
     if (code === "rate_limited" || code === "account_send_limit") {
       settled();
       noteAccountInviteCapReached(input.sender.accountId);
@@ -695,6 +700,7 @@ async function settleInvite(
     // waits for an acceptance that cannot come.
     const refused = await refusedInviteCode(err, input.sender);
     if (refused) {
+      slot.release();
       claim.release();
       settled();
       const { upstream, reason } = linkedInFailure(err);
@@ -705,6 +711,7 @@ async function settleInvite(
       };
     }
     // A failed job is an outcome too: no longer pending, the claim stays.
+    slot.confirm();
     if ((err as { name?: unknown }).name === "JobError") settled();
     throw err;
   }
@@ -713,8 +720,9 @@ async function settleInvite(
     !result.invitation_id ||
     (status !== "sent" && status !== "pending" && status !== "already_connected")
   ) {
-    // The call returned, so the invite may have gone out: the claim stays.
-    slot.release();
+    // The call returned, so the invite may have gone out: the claim and the
+    // day's slot stay.
+    slot.confirm();
     settled();
     throw new Error(`unexpected LinkedIn invite result: ${JSON.stringify(result).slice(0, 160)}`);
   }

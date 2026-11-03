@@ -441,7 +441,7 @@ describe("an invite LinkedIn refused frees the profile", () => {
     expect(emailState()).toMatchObject({ status: "active", current_step: 1 });
   });
 
-  it("a pending invite whose job fails is given its slot back, the claim kept without proof", async () => {
+  it("a pending invite whose job fails without proof keeps its slot and claim, and moves its key on", async () => {
     emailCadenceRunOut();
     _setLinkedInJobTimingForTests({ deadlineMs: 0, pauseMs: 0 });
     await sendInvite(
@@ -458,8 +458,9 @@ describe("an invite LinkedIn refused frees the profile", () => {
       }),
     });
     expect(out.pendingSends).toMatchObject({ checked: 1, failed: 1 });
-    expect(slotsToday()).toBe(0);
-    // No proof nothing went out: the profile stays held, as on a first send.
+    // No proof nothing went out: the day's slot stays counted and the profile
+    // stays held, as on a first send.
+    expect(slotsToday()).toBe(1);
     expect(getSharedDb().linkedInTouch("dana-lee")?.status).toBe("dispatched");
     expect(ledger.linkedInSendAttempts.key(INVITE_KEY())).toBe(`${INVITE_KEY()}:r1`);
   });
