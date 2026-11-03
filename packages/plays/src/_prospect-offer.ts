@@ -58,7 +58,7 @@ type AppConfig = ReturnType<typeof loadConfig>;
 type JsonRecord = Record<string, unknown>;
 
 /** Bump when the prompt or the lint changes: unedited offers re-derive. */
-export const OFFER_PROMPT_VERSION = "offer-v8";
+export const OFFER_PROMPT_VERSION = "offer-v9";
 
 export const OFFER_MAX = {
   offer: 140,
@@ -506,6 +506,27 @@ const CHECK_LEAD = /^(?:vet|verify|validate|screen|scan|audit|check)\b/i;
 const SYSTEM_WRAPPER =
   /\b(?:put\s+(?:[\w'’-]+\s+){0,6}into\s+production|the\s+system\s+that|deploy(?:s|ed|ing)?\s+(?:a|the)\s+system)\b/i;
 
+/**
+ * An offer to get listed, certified or approved on a platform whose own
+ * evidence is an entry page in that kind of platform: a partner, marketplace
+ * or directory page with an entry after it ("/partners/<entry>"). Such a page
+ * in the research is the listing itself, so the goal is already reached.
+ * Kept narrow on purpose: both halves must hold, the page must name an entry
+ * (a bare "/partners" or "/marketplace" page may be the programme), and
+ * pages that are often the firm's own ("/integrations", "/apps") never count.
+ */
+const LISTING_GOAL =
+  /\b(?:listed|listing|certified|certification|accredited|accreditation|approved|approval)\b/i;
+const LISTING_PLATFORM =
+  /\b(?:marketplaces?|partners?|partner\s+(?:ecosystem|network|programme|program|directory)|ecosystem|directory|app\s?store|appexchange)\b/i;
+const LISTING_ENTRY_URL =
+  /https?:\/\/[^\s"'<>]+\/(?:partners?|partner-directory|marketplace|directory|listings?|appexchange|ecosystem)\/[^\s"'<>/?#]{3,}/i;
+
+export function isAlreadyMetOffer(offer: string, evidence: readonly string[]): boolean {
+  if (!LISTING_GOAL.test(offer) || !LISTING_PLATFORM.test(offer)) return false;
+  return evidence.some((quote) => LISTING_ENTRY_URL.test(quote));
+}
+
 export function isSystemWrapperOffer(offer: string): boolean {
   return SYSTEM_WRAPPER.test(offer);
 }
@@ -551,6 +572,7 @@ export function lintOffer(
   if (isAwarenessOffer(offer)) flags.push("offer-not-execution");
   if (isCheckOffer(offer)) flags.push("offer-is-a-check");
   if (isSystemWrapperOffer(offer)) flags.push("offer-names-the-system");
+  if (isAlreadyMetOffer(offer, parts.evidence)) flags.push("offer-already-met");
   if (parts.level === "researched" && !ret) flags.push("no-return");
   const both = `${offer} ${steps} ${ret}`;
   for (const [flag, pattern] of BANNED) if (pattern.test(both)) flags.push(flag);
@@ -864,8 +886,8 @@ export function offerRelevanceCriteria(
   return {
     relevant:
       "A goal this firm at its stage would put on its plan and this person is measured on, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), resting on a specific fact about them: a piece their own product is missing to finish its job for its customers (never the job it already does), or a goal their own firm visibly has outside its core product.",
-    weak: `Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on (a collecting, recovering, reconciling or re-planning job offered bare to a technology, engineering, data or AI leader, whose goal is one named workflow of theirs that their own software carries to its end state), a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project.${preferProduct}`,
-    irrelevant: `A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role.${excluded}`,
+    weak: `Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on (a collecting, recovering, reconciling or re-planning job offered bare to a technology, engineering, data or AI leader, whose goal is one named workflow of theirs that their own software carries to its end state), a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project. Their own product's job includes more of what it already sells: more records, sources or fields in the data or pages it sells. Also weak: a goal that ends in paperwork (a document, credit, policy, certificate, booked test, signed compliance agreement, recertification or passed outside review the firm would file rather than count) rather than a business result. The goal is the business result the paperwork wins, such as money recovered, cases closed, contracts renewed on better terms, invoices collected or deliveries made; a review, audit or screening inside such a goal is a step.${preferProduct}`,
+    irrelevant: `A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role. Also a goal already reached: RESEARCH, or the offer's own evidence, shows the listing, certification, approval, launch, integration, signature or result it would win already exists.${excluded}`,
   };
 }
 
@@ -889,16 +911,26 @@ function judgeMinConfidence(cfg: AppConfig): number {
   return typeof v === "number" && v >= 0 && v <= 1 ? v : DEFAULT_JUDGE_MIN_CONFIDENCE;
 }
 
-function describeOffer(o: Pick<ProspectOffer, "offer" | "return" | "fit">): string {
+/** An offer as the judge reads it; `evidence`, when given, is the writer's own quotes from RESEARCH. */
+export type JudgedOffer = Pick<ProspectOffer, "offer" | "return" | "fit"> & {
+  evidence?: readonly string[];
+};
+
+function describeOffer(o: JudgedOffer): string {
+  const evidence = (o.evidence ?? []).map((e) => e.trim()).filter((e) => e.length > 0);
   return [
     `offer: ${o.offer}`,
     ...(o.return?.trim() ? [`returns: ${o.return.trim()}`] : []),
     ...(o.fit?.trim() ? [`fit: ${o.fit.trim()}`] : []),
+    // So a goal its own evidence shows already reached is seen as reached.
+    ...(evidence.length > 0
+      ? [`evidence: ${evidence.map((e) => JSON.stringify(e)).join("; ")}`]
+      : []),
   ].join("\n");
 }
 
 function judgeState(
-  offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
+  offers: ReadonlyArray<JudgedOffer>,
   research: string,
   who: { company: string; title: string },
   exclusions: readonly string[],
@@ -915,7 +947,7 @@ function judgeState(
 }
 
 async function judgeWithDecisions(
-  offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
+  offers: ReadonlyArray<JudgedOffer>,
   state: string,
   model: string,
   key: string,
@@ -937,7 +969,9 @@ async function judgeWithDecisions(
         `Judge offer ${i + 1} in the state on its own: is it a real goal for this firm and this person? ` +
         `A market the firm sells into is not a need of the firm. A check is a step, not a goal: ` +
         `the offer should be what the check wins. How they were found is not what they own: an offer ` +
-        `about a third party's project they only follow, or one restating what the product does, is weak.` +
+        `about a third party's project they only follow, or one restating what the product does, is weak. ` +
+        `A goal RESEARCH or the offer's own evidence shows already reached is irrelevant. A goal that ends in ` +
+        `paperwork (a document, credit, policy, certificate or sign-off) rather than a business result is weak.` +
         (exclusionCriteria
           ? ` A goal of a kind listed under NEVER OFFER, in any wording, is irrelevant.`
           : "") +
@@ -1010,7 +1044,7 @@ async function judgeWithDecisions(
 }
 
 async function judgeWithLlm(
-  offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
+  offers: ReadonlyArray<JudgedOffer>,
   state: string,
   cfg: AppConfig,
   exclusions: readonly string[],
@@ -1071,7 +1105,7 @@ async function judgeWithLlm(
  * ran at all: the caller keeps the offers unjudged rather than lose them.
  */
 export async function judgeOffers(
-  offers: ReadonlyArray<Pick<ProspectOffer, "offer" | "return" | "fit">>,
+  offers: ReadonlyArray<JudgedOffer>,
   research: string,
   row: object,
   cfg: AppConfig,
@@ -1186,6 +1220,10 @@ const OFFER_FLAG_HINTS: ReadonlyArray<[flag: string, hint: string]> = [
   [
     "offer-names-the-system",
     'the offer names the system ("put into production", "the system that", "deploy a system"); name the result for their firm instead, e.g. "work every failed delivery in their dispatch app to a rebooked slot"',
+  ],
+  [
+    "offer-already-met",
+    "the offer's own evidence is the partner, marketplace or directory page that already lists them, so the goal is reached; write a goal not yet reached, such as what that listing now wins, counted",
   ],
 ];
 
