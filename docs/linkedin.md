@@ -37,7 +37,9 @@ Each message appears on Cadences as due. You preview it and send it. Until the i
 
 **Sending: outcome pending.** OneShot spaces out sends from one account, so a message or invite can still be queued after three minutes. The step then reads "outcome pending", not failed. The 30-minute check records the outcome, and Send checks the same send again instead of sending twice.
 
-**LinkedIn refused this invite.** When OneShot reports that an invite was never sent, the profile is freed and the row or step carries `linkedin-invite-refused`. A cadence skips its LinkedIn steps.
+**Send after a failure.** When OneShot reports that a message, invite or withdrawal failed, the next Send (or the next day's try) goes out as a new request. A send that may have gone out (outcome pending or unverified) is only ever checked again, never resent.
+
+**LinkedIn refused this invite.** When OneShot reports that an invite was never sent, or that the person can't be invited (`recipient_unavailable`), the profile is freed and the row or step carries `linkedin-invite-refused` with LinkedIn's reason. A cadence skips its LinkedIn steps.
 
 **Already connected.** When a profile read from the last 14 days shows the person as a first-degree connection, no connection request is drafted or sent and no invite is used. The row reads "LinkedIn: already connected"; sending it records the connection, and the first message is due on Cadences at once. The read is checked again at send: if it has aged out or no longer shows a connection, nothing is recorded and the connection request is drafted for review instead. If LinkedIn then answers that you are not connected, the step's next preview is the connection request instead, and the message follows its acceptance.
 

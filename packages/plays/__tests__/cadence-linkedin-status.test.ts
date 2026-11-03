@@ -550,6 +550,13 @@ describe("/cadences preview", () => {
   });
 });
 
+/** A withdrawal job that failed: nothing was withdrawn. */
+const failedWithdrawal = (): never => {
+  throw Object.assign(new Error("Job failed: internal_error"), {
+    name: "JobError",
+    code: "internal_error",
+  });
+};
 const fullPage = () => ({
   invitations: Array.from({ length: 100 }, (_, n) => ({
     invitation_id: `other-${n}`,
@@ -750,6 +757,29 @@ describe("unattended status sweep", () => {
     await sweepLinkedInInvitations({ linkedIn: li, now: new Date(Date.now() + 25 * 3600_000) });
     expect(kinds()).toEqual(["invitations", "invitation", "withdraw"]);
     expect(inviteMeta()).toMatchObject({ withdrawAttempts: 2 });
+  });
+
+  it("a failed withdraw job is retried the next day under a new key; a lost answer keeps it", async () => {
+    inviteSent({ daysAgo: 22 });
+    let answer: () => unknown = failedWithdrawal;
+    const li = caller({
+      invitations: () => ({ invitations: [] }),
+      invitation: () => ({ invitation_id: "i", status: "pending", accepted_at: null }),
+      withdraw: () => answer(),
+    });
+    const keys = () => calls.filter((c) => c.kind === "withdraw").map((c) => c.idempotencyKey);
+    const base = `gtm:alpha:cadence:${prospectId}:${PLAY}:withdraw:inv-${prospectId}`;
+    await sweepLinkedInInvitations({ linkedIn: li });
+    // OneShot replays a failed job under its key: the next try needs a new one.
+    answer = () => {
+      throw new Error("LinkedIn workspace worker stopped before returning a result");
+    };
+    await sweepLinkedInInvitations({ linkedIn: li, now: new Date(Date.now() + 25 * 3600_000) });
+    // An answer that never arrived proves nothing: the same key, which finds that job.
+    answer = () => ({ status: "withdrawn" });
+    await sweepLinkedInInvitations({ linkedIn: li, now: new Date(Date.now() + 50 * 3600_000) });
+    expect(keys()).toEqual([base, `${base}:r1`, `${base}:r1`]);
+    expect(ledger.listLinkedInInviteEvents(prospectId, PLAY).at(-1)!.status).toBe("withdrawn");
   });
 
   it("a failed withdraw is retried within the day when the invitation changed", async () => {

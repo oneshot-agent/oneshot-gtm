@@ -17,6 +17,7 @@ import {
   awaitLinkedInJob,
   isLinkedInSendPending,
   LinkedInSendPendingError,
+  startLinkedInSend,
   type LinkedInJobOutcome,
   type LinkedInOperation,
 } from "@oneshot-gtm/core";
@@ -284,13 +285,51 @@ function inviteErrorCode(err: unknown): string | null {
   return m ? m[1]! : null;
 }
 
-/** The flag (and guard reason) of an invite LinkedIn refused: nothing went out, so the profile is free. */
-export function inviteRefusedFlag(code: string): string {
+/**
+ * The flag (and guard reason) of an invite LinkedIn refused: nothing went
+ * out, so the profile is free. `upstream` is what LinkedIn's provider said.
+ */
+export function inviteRefusedFlag(code: string, upstream?: string | null): string {
   return guardFlag({
     ok: false,
     reason: "linkedin-invite-refused",
-    detail: `LinkedIn refused this invite (${code})`,
+    detail: `LinkedIn refused this invite (${code}${upstream && upstream !== code ? `: ${upstream}` : ""})`,
   });
+}
+
+/** Invite codes that end the profile: nobody can be invited there, so nothing went out. */
+const UNAVAILABLE_RECIPIENT = /(?<![a-z_])(recipient_unavailable|invalid_recipient)(?![a-z_])/;
+
+/**
+ * A failed invite whose recipient can't be invited (`recipient_unavailable`,
+ * or LinkedIn's `invalid_recipient`): refused, no invitation to look up.
+ * Null for any other error, and for `send_unverified`.
+ */
+export function unavailableRecipient(
+  err: unknown,
+): { code: string; upstream: string | null } | null {
+  const e = (err ?? {}) as {
+    code?: unknown;
+    reason?: unknown;
+    upstreamReason?: unknown;
+    jobError?: unknown;
+    partialResult?: { reason?: unknown; upstream_reason?: unknown } | null;
+  };
+  const fields = [
+    e.code,
+    e.reason,
+    e.partialResult?.reason,
+    e.jobError,
+    e.upstreamReason,
+    e.partialResult?.upstream_reason,
+  ].filter((v): v is string => typeof v === "string" && !!v);
+  if (fields.some((v) => /(?<![a-z_])send_unverified(?![a-z_])/.test(v))) return null;
+  const code = fields.map((v) => UNAVAILABLE_RECIPIENT.exec(v)?.[1]).find(Boolean);
+  if (!code) return null;
+  const upstream = [e.upstreamReason, e.partialResult?.upstream_reason].find(
+    (v): v is string => typeof v === "string" && !!v,
+  );
+  return { code, upstream: upstream ?? null };
 }
 
 /**
@@ -381,7 +420,9 @@ export async function sendLinkedInInvite(
 ): Promise<LinkedInInviteOutcome> {
   const profile = linkedInProfileOf(input.row.payload);
   const target = normalizeLinkedInProfile(profile);
-  const idempotencyKey = linkedInInviteKey(input);
+  // The row's key, moved on once per invite job that failed: OneShot replays
+  // a failed job under its own key, so a retry needs a new one.
+  const idempotencyKey = getLedger().linkedInSendAttempts.key(linkedInInviteKey(input));
   // Already sent and still pending: check that job. The guard would refuse
   // (the claim is ours), and a second invite call must never be made. What is
   // recorded is the note LinkedIn received, whatever the draft says now.
@@ -475,16 +516,19 @@ export async function sendLinkedInInvite(
     idempotencyKey,
     claim,
     slot,
+    // A key that already ran answers with its original job, polled here.
     job: async () =>
       awaitLinkedInJob(
-        await input.sender.call({
-          kind: "invite",
-          accountId: input.sender.accountId,
-          profile: target.url,
-          note,
-          idempotencyKey,
-          playName: input.row.playName,
-        }),
+        await startLinkedInSend(() =>
+          input.sender.call({
+            kind: "invite",
+            accountId: input.sender.accountId,
+            profile: target.url,
+            note,
+            idempotencyKey,
+            playName: input.row.playName,
+          }),
+        ),
         input.sender.call,
       ),
   });
@@ -539,7 +583,20 @@ async function settleInvite(
     result = job.result as { invitation_id?: string; status?: string };
   } catch (err) {
     if (isLinkedInSendPending(err)) throw err;
+    // A failed job: the next invite for this row goes under a new key.
+    ledger.linkedInSendAttempts.noteFailed(ctx.idempotencyKey, err);
     slot.release();
+    const unavailable = unavailableRecipient(err);
+    if (unavailable) {
+      // Nobody can be invited at this profile: nothing went out.
+      claim.release();
+      settled();
+      return {
+        sent: false,
+        flags: [inviteRefusedFlag(unavailable.code, unavailable.upstream)],
+        guard: "linkedin-invite-refused",
+      };
+    }
     const code = inviteErrorCode(err);
     // Only a code OneShot reports for a failed job proves nothing was sent.
     if (code) claim.release();
@@ -559,7 +616,12 @@ async function settleInvite(
     if (refused) {
       claim.release();
       settled();
-      return { sent: false, flags: [inviteRefusedFlag(refused)], guard: "linkedin-invite-refused" };
+      const upstream = (err as { upstreamReason?: unknown }).upstreamReason;
+      return {
+        sent: false,
+        flags: [inviteRefusedFlag(refused, typeof upstream === "string" ? upstream : null)],
+        guard: "linkedin-invite-refused",
+      };
     }
     // A failed job is an outcome too: no longer pending, the claim stays.
     if ((err as { name?: unknown }).name === "JobError") settled();

@@ -1090,10 +1090,11 @@ function classifyAccountReadError(err: unknown): "account" | "limit" | "person" 
     .join(" ")
     .toLowerCase();
   const status = typeof e.statusCode === "number" ? e.statusCode : null;
+  // The account's `not_connected`, never a recipient's (`recipient_not_connected`).
   if (
     status === 401 ||
     status === 403 ||
-    /not_connected|not connected|reconnect|revoked|disconnected|view_profile|not granted|permission/.test(
+    /(?<!recipient[_ ])not[_ ]connected|reconnect|revoked|disconnected|view_profile|not granted|permission/.test(
       text,
     )
   )

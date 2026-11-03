@@ -61,7 +61,7 @@ function capture(question: string, threadKey: string | null = "thread-1") {
 describe("migration v17", () => {
   it("creates code_answers at v17 and retains it in the latest schema", () => {
     expect(LEDGER_MIGRATIONS.find((m) => m.name === "code-answers")?.version).toBe(17);
-    expect(LEDGER_SCHEMA_VERSION).toBe(20);
+    expect(LEDGER_SCHEMA_VERSION).toBe(21);
     const db = new Database(dbPath);
     try {
       const cols = (

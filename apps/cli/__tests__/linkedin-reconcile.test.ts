@@ -161,6 +161,25 @@ describe("linkedin reconcile", () => {
     expect(calls.map((c) => c["kind"])).not.toContain("wait");
   });
 
+  it("asks by the key the latest send went under, after a failed job moved it on", async () => {
+    const base = `gtm:acme:cadence:${prospectId}:${PLAY}:1`;
+    getLedger().linkedInSendAttempts.noteFailed(
+      base,
+      Object.assign(new Error("Job failed: rate_limited"), {
+        name: "JobError",
+        code: "rate_limited",
+      }),
+    );
+    await commandLinkedInReconcile({ write: true }, linkedIn);
+    const asked = calls.filter(
+      (c) => c["kind"] === "recover" && String(c["idempotencyKey"]).startsWith(base),
+    );
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((c) => c["idempotencyKey"] === `${base}:r1`)).toBe(true);
+    expect(sent()).toHaveLength(1);
+    expect(getLedger().linkedInPending.list()).toEqual([]);
+  });
+
   it("--write records the message as sent, moves the cadence on and frees the profile, sending nothing", async () => {
     await commandLinkedInReconcile({ write: true }, linkedIn);
     expect(sent()).toHaveLength(1);

@@ -453,6 +453,60 @@ describe("reply options API", () => {
     expect(sdk.mock.calls[0]![1]).toMatchObject({ idempotencyKey: "1234567890123456" });
     expect(sdk.mock.calls[1]![1]).toMatchObject({ idempotencyKey: "1234567890123456" });
   });
+  it("a check whose send id already ran reads the original request instead of staying uncertain", async () => {
+    const t = seed("linkedin");
+    review.saveDrafts(t.key, drafts(), null);
+    // The first answer never arrived; the check's reply is answered 409
+    // duplicate_request (the send id already ran), naming the original.
+    sdk
+      .mockRejectedValueOnce(new Error("Network disconnected"))
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Tool request failed"), {
+          name: "ToolError",
+          statusCode: 409,
+          code: "duplicate_request",
+          requestId: "request-orig",
+        }),
+      )
+      .mockResolvedValueOnce({ status: "sent", sent_at: "2026-11-03T09:00:00Z" });
+    expect(
+      await (
+        await replySendRoute(req({ key: t.key, sendId: "1234567890123456", revision: 1 }))
+      ).json(),
+    ).toMatchObject({ status: "uncertain" });
+    const checked = await (await replySendRoute(req({ key: t.key, check: true }))).json();
+    expect(checked).toMatchObject({ status: "sent", requestId: "request-orig" });
+    expect(sdk).toHaveBeenCalledTimes(3);
+    expect(sdk.mock.calls[2]![1]).toEqual({ kind: "wait", requestId: "request-orig" });
+    expect(sdk.mock.calls.filter((c) => (c[1] as { kind: string }).kind === "reply")).toHaveLength(
+      2,
+    );
+  });
+  it("a check whose original request failed lets the composer send again", async () => {
+    const t = seed("linkedin");
+    review.saveDrafts(t.key, drafts(), null);
+    sdk
+      .mockRejectedValueOnce(new Error("Network disconnected"))
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Tool request failed"), {
+          name: "ToolError",
+          statusCode: 409,
+          code: "duplicate_request",
+          requestId: "request-orig",
+        }),
+      )
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Job failed: internal_error"), {
+          name: "JobError",
+          code: "internal_error",
+        }),
+      );
+    await replySendRoute(req({ key: t.key, sendId: "1234567890123456", revision: 1 }));
+    expect(await (await replySendRoute(req({ key: t.key, check: true }))).json()).toMatchObject({
+      status: "failed",
+      requestId: "request-orig",
+    });
+  });
   it("treats a refused payment as a definite failure and allows a fresh send", async () => {
     // 2026-10-12: an empty wallet left a reply "uncertain"; every 6-second
     // check re-ran the paid call, and the reply went out by itself once the

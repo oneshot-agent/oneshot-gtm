@@ -46,3 +46,37 @@ it("keeps an async job's error text, so a deferral named only there survives the
   ).toBeNull();
   expect(linkedInError({ message: "x" })).not.toHaveProperty("jobError");
 });
+
+it("keeps a failed job's reason and LinkedIn's upstream reason apart from the code, and shows them", () => {
+  const e = linkedInError(
+    Object.assign(new Error("Job failed: recipient_unavailable"), {
+      name: "JobError",
+      code: "recipient_unavailable",
+      partialResult: { reason: "recipient_unavailable", upstream_reason: "invalid_recipient" },
+    }),
+  );
+  expect(e).toMatchObject({
+    code: "recipient_unavailable",
+    reason: "recipient_unavailable",
+    upstreamReason: "invalid_recipient",
+    message: "Job failed: recipient_unavailable (invalid_recipient)",
+  });
+  // Already carried by the error (from the worker): kept as is.
+  expect(
+    linkedInError({ name: "JobError", message: "Job failed", code: "x", upstreamReason: "y" }),
+  ).toMatchObject({ code: "x", upstreamReason: "y", message: "Job failed (y)" });
+});
+
+it("keeps a 409 duplicate_request's status, code and original request id", () => {
+  const e = linkedInError({
+    name: "ToolError",
+    message: "Tool request failed",
+    statusCode: 409,
+    responseBody: JSON.stringify({
+      error: "duplicate_request",
+      message: "A request with this idempotency key already exists",
+      details: { request_id: "req-orig" },
+    }),
+  });
+  expect(e).toMatchObject({ statusCode: 409, code: "duplicate_request", requestId: "req-orig" });
+});

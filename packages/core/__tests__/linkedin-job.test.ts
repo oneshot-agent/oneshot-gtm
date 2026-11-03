@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   _setLinkedInJobTimingForTests,
   awaitLinkedInJob,
+  linkedInDuplicateRequestId,
   linkedInError,
   linkedInJobInFlight,
   parseLinkedInRecovery,
+  startLinkedInSend,
   withdrawLinkedInInvite,
   type LinkedInOperation,
 } from "../src/index.ts";
@@ -145,4 +147,42 @@ it("keeps a failed job's partial result across the worker, cleaned", () => {
     partialResult: { invitation_id: "inv-x", attempts: 2 },
   });
   expect(out.partialResult).not.toHaveProperty("nested");
+});
+
+describe("a send whose key already ran (409 duplicate_request)", () => {
+  const duplicate = Object.assign(new Error("Tool request failed"), {
+    name: "ToolError",
+    statusCode: 409,
+    responseBody: JSON.stringify({ error: "duplicate_request", details: { request_id: "req-1" } }),
+  });
+
+  it("names the original request, raw from the SDK or carried across the worker", () => {
+    expect(linkedInDuplicateRequestId(duplicate)).toBe("req-1");
+    expect(
+      linkedInDuplicateRequestId({
+        statusCode: 409,
+        code: "duplicate_request",
+        requestId: "req-2",
+      }),
+    ).toBe("req-2");
+    expect(linkedInDuplicateRequestId({ statusCode: 409, code: "connect_required" })).toBeNull();
+    expect(linkedInDuplicateRequestId({ statusCode: 409, code: "duplicate_request" })).toBeNull();
+    expect(linkedInDuplicateRequestId(null)).toBeNull();
+  });
+
+  it("starts as that original job, which the caller polls; any other error is thrown", async () => {
+    expect(
+      await startLinkedInSend(async () => {
+        throw duplicate;
+      }),
+    ).toEqual({ status: "pending", request_id: "req-1" });
+    await expect(
+      startLinkedInSend(async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(
+      await startLinkedInSend(async () => ({ status: "processing", request_id: "r" })),
+    ).toEqual({ status: "processing", request_id: "r" });
+  });
 });

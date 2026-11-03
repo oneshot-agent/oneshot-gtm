@@ -9,7 +9,8 @@ import type { Database } from "bun:sqlite";
  */
 export interface LinkedInPendingSend {
   idempotencyKey: string;
-  kind: "message" | "invite";
+  /** `reply`: a cadence message into a conversation it already has. */
+  kind: "message" | "reply" | "invite";
   requestId: string;
   /** The workspace that owns the account the send went out from. */
   accountWorkspace: string;
@@ -53,7 +54,7 @@ function toPending(row: Row): LinkedInPendingSend {
   }
   return {
     idempotencyKey: row.idempotency_key,
-    kind: row.kind === "invite" ? "invite" : "message",
+    kind: row.kind === "invite" || row.kind === "reply" ? row.kind : "message",
     requestId: row.request_id,
     accountWorkspace: row.account_workspace,
     accountId: row.account_id,

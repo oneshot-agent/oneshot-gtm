@@ -51,6 +51,7 @@ import {
   awaitLinkedInJob,
   isLinkedInSendPending,
   LinkedInSendPendingError,
+  startLinkedInSend,
   linkedInOutreachAccount,
   triggerConfigForSource,
   canInviteOnLinkedInNow,
@@ -2785,12 +2786,16 @@ async function dispatchStepImpl(input: {
     if (!input.linkedIn) {
       return { receiptIds, skipReason: "LinkedIn messages are sent from the dashboard" };
     }
-    // One message per step: a retried send returns the original.
-    const idempotencyKey = cadenceLinkedInMessageKey(
-      currentWorkspaceName(),
-      input.prospectId,
-      input.playName,
-      input.stepIndex,
+    // One message per step: a retried send returns the original. A send
+    // whose job failed is retried under a new key (OneShot never sends twice
+    // under one).
+    const idempotencyKey = ledger.linkedInSendAttempts.key(
+      cadenceLinkedInMessageKey(
+        currentWorkspaceName(),
+        input.prospectId,
+        input.playName,
+        input.stepIndex,
+      ),
     );
     // Sent before and still pending: check that job, never send again. Read
     // first: once LinkedIn delivers it, the message's own conversation shows
@@ -2803,108 +2808,122 @@ async function dispatchStepImpl(input: {
           prospectId: input.prospectId,
           linkedinUrl: input.prospectLinkedinUrl ?? null,
         }) ?? storedLinkedInConversation(input.prospectId, input.playName));
-    let sentInto: { conversationId: string; accountId: string; workspace: string } | null =
-      conversation;
     // What LinkedIn received: a resumed job carries the text it was sent with,
     // whatever the draft says now.
+    const text = input.payload.text;
     const pendingText = pending?.detail["text"];
-    const sentText =
-      typeof pendingText === "string" && pendingText ? pendingText : input.payload.text;
-    if (conversation) {
-      await input.linkedIn(conversation.workspace, {
-        kind: "reply",
-        accountId: conversation.accountId,
-        conversationId: conversation.conversationId,
-        text: input.payload.text,
-        idempotencyKey,
-      });
+    const sentText = typeof pendingText === "string" && pendingText ? pendingText : text;
+    // Into the conversation when there is one (`reply`). Connected, but no
+    // 1:1 conversation yet (accepting an invite does not create one):
+    // `message` opens it. A pending one goes on as the account it was sent from.
+    const kind: "message" | "reply" = pending
+      ? pending.kind === "reply"
+        ? "reply"
+        : "message"
+      : conversation
+        ? "reply"
+        : "message";
+    const sender = pending
+      ? { workspace: pending.accountWorkspace, accountId: pending.accountId }
+      : (conversation ?? linkedInSenderFor(input.prospectId, input.playName));
+    if (!sender) return { receiptIds, skipReason: "no LinkedIn account connected" };
+    const linkedIn = input.linkedIn;
+    const call = (op: LinkedInOperation) => linkedIn(sender.workspace, op);
+    // The send's first answer: a pending job's own id, or the send (a key
+    // that already ran answers with its original job, polled the same way).
+    let first: () => Promise<unknown>;
+    if (pending) {
+      first = async () => ({ status: "pending", request_id: pending.requestId });
+    } else if (conversation) {
+      first = () =>
+        startLinkedInSend(() =>
+          call({
+            kind: "reply",
+            accountId: conversation.accountId,
+            conversationId: conversation.conversationId,
+            text,
+            idempotencyKey,
+          }),
+        );
     } else {
-      // Connected, but no 1:1 conversation yet (accepting an invite does not
-      // create one): `message` opens it. A pending one goes on as the
-      // account it was sent from.
-      const sender = pending
-        ? { workspace: pending.accountWorkspace, accountId: pending.accountId }
-        : linkedInSenderFor(input.prospectId, input.playName);
-      if (!sender) return { receiptIds, skipReason: "no LinkedIn account connected" };
       const profile = normalizeLinkedInProfile(input.prospectLinkedinUrl)?.url;
       if (!profile) return { receiptIds, skipReason: "prospect has no LinkedIn profile" };
-      const linkedIn = input.linkedIn;
-      const call = (operation: LinkedInOperation) => linkedIn(sender.workspace, operation);
-      let sent: unknown;
-      try {
-        // OneShot paces messages per account: a send in a batch can wait
-        // minutes before it goes out. Past the wait it is pending, not failed.
-        const job = await awaitLinkedInJob(
-          pending
-            ? { status: "pending", request_id: pending.requestId }
-            : await call({
-                kind: "message",
-                accountId: sender.accountId,
-                profile,
-                text: input.payload.text,
-                idempotencyKey,
-                playName: input.playName,
-              }),
-          call,
-        );
-        if (job.state === "pending") {
-          ledger.linkedInPending.record({
-            idempotencyKey,
+      first = () =>
+        startLinkedInSend(() =>
+          call({
             kind: "message",
-            requestId: job.requestId,
-            accountWorkspace: sender.workspace,
             accountId: sender.accountId,
-            prospectId: input.prospectId,
+            profile,
+            text,
+            idempotencyKey,
             playName: input.playName,
-            stepIndex: input.stepIndex,
-            queueId: null,
-            detail: { text: input.payload.text, label: input.label ?? null },
-          });
-          throw new LinkedInSendPendingError(job.requestId, idempotencyKey);
-        }
-        sent = job.result;
-      } catch (err) {
-        if (isLinkedInSendPending(err)) throw err;
-        // A failed job is its outcome: no longer pending.
-        if (pending && (err as { name?: unknown }).name === "JobError")
-          ledger.linkedInPending.clear(idempotencyKey);
-        // Not connected yet, or over the daily limit: the step stays due.
-        const deferral = linkedInMessageDeferral(err);
-        const invite =
-          deferral === "not_connected"
-            ? liveLinkedInInvite(input.prospectId, input.playName)
-            : null;
-        if (invite?.knownConnection && !invite.withdrawn) {
-          // No invite went out because the profile read showed a connection,
-          // so there is nothing to wait for: the request is drafted next. A
-          // void that can't free the profile throws: the runner records the
-          // send error, the step and its preview stay, and Send retries.
-          voidKnownConnection({
-            prospectId: input.prospectId,
-            playName: input.playName,
-            invite,
-            linkedinUrl: input.prospectLinkedinUrl ?? null,
-          });
-          return {
-            receiptIds,
-            skipReason:
-              "LinkedIn says you are not connected: preview again to draft the connection request",
-          };
-        }
-        if (deferral) throw new SendDeferredError(`LinkedIn message deferred (${deferral})`);
-        throw err;
-      }
-      // Missing from the result: the next inbox sync finds the conversation.
-      const conversationId = linkedInMessageConversationId(sent);
-      sentInto = conversationId ? { conversationId, ...sender } : null;
+          }),
+        );
     }
+    let sent: unknown;
+    try {
+      // OneShot paces messages per account: a send in a batch can wait
+      // minutes before it goes out. Past the wait it is pending, not failed.
+      const job = await awaitLinkedInJob(await first(), call);
+      if (job.state === "pending") {
+        ledger.linkedInPending.record({
+          idempotencyKey,
+          kind,
+          requestId: job.requestId,
+          accountWorkspace: sender.workspace,
+          accountId: sender.accountId,
+          prospectId: input.prospectId,
+          playName: input.playName,
+          stepIndex: input.stepIndex,
+          queueId: null,
+          detail: { text: sentText, label: input.label ?? null },
+        });
+        throw new LinkedInSendPendingError(job.requestId, idempotencyKey);
+      }
+      sent = job.result;
+    } catch (err) {
+      if (isLinkedInSendPending(err)) throw err;
+      // A failed job is its outcome: no longer pending, and the next send
+      // goes under a new key.
+      if (pending && (err as { name?: unknown }).name === "JobError")
+        ledger.linkedInPending.clear(idempotencyKey);
+      ledger.linkedInSendAttempts.noteFailed(idempotencyKey, err);
+      // Not connected yet, or over the daily limit: the step stays due.
+      const deferral = linkedInMessageDeferral(err);
+      const invite =
+        deferral === "not_connected" ? liveLinkedInInvite(input.prospectId, input.playName) : null;
+      if (invite?.knownConnection && !invite.withdrawn) {
+        // No invite went out because the profile read showed a connection,
+        // so there is nothing to wait for: the request is drafted next. A
+        // void that can't free the profile throws: the runner records the
+        // send error, the step and its preview stay, and Send retries.
+        voidKnownConnection({
+          prospectId: input.prospectId,
+          playName: input.playName,
+          invite,
+          linkedinUrl: input.prospectLinkedinUrl ?? null,
+        });
+        return {
+          receiptIds,
+          skipReason:
+            "LinkedIn says you are not connected: preview again to draft the connection request",
+        };
+      }
+      if (deferral) throw new SendDeferredError(`LinkedIn ${kind} deferred (${deferral})`);
+      throw err;
+    }
+    // A first message opens a conversation; missing from the result, the
+    // next inbox sync finds it.
+    const conversationId = kind === "message" ? linkedInMessageConversationId(sent) : null;
     recordLinkedInMessageSent({
       prospectId: input.prospectId,
       playName: input.playName,
       stepIndex: input.stepIndex,
       text: sentText,
       label: input.label ?? null,
-      opened: sentInto && !conversation ? sentInto : null,
+      opened: conversationId
+        ? { conversationId, accountId: sender.accountId, workspace: sender.workspace }
+        : null,
     });
     ledger.linkedInPending.clear(idempotencyKey);
     return { receiptIds };

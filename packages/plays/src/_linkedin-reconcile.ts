@@ -40,7 +40,7 @@ const WORKER_STOPPED = "LinkedIn workspace worker stopped before returning a res
 export interface LinkedInReconcileItem {
   prospectId: number | null;
   playName: string | null;
-  kind: "message" | "invite" | "claim";
+  kind: "message" | "reply" | "invite" | "claim";
   /** The idempotency key asked about, or the profile slug for a claim. */
   key: string;
   /** What OneShot says: completed / failed / in_flight / unknown, or not_sent for a claim. */
@@ -177,7 +177,16 @@ export async function reconcileLinkedInSends(input: {
           keep("unproven", "the claim could not be released; try again");
           continue;
         }
-        if (row && proof.own) holdQueueRow(row.id, [inviteRefusedFlag(proof.code)]);
+        if (row && proof.own) {
+          holdQueueRow(row.id, [inviteRefusedFlag(proof.code)]);
+          // Its invite job failed: sent again, it goes under a new key.
+          ledger.linkedInSendAttempts.markFailed(
+            ledger.linkedInSendAttempts.key(
+              linkedInInviteKey({ row: { id: row.id, playName: "" }, workspace }),
+            ),
+            proof.code,
+          );
+        }
       }
       items.push({
         ...item,
@@ -265,7 +274,10 @@ async function ownInviteRefused(
       await call({
         kind: "recover",
         endpoint: "linkedin/invite",
-        idempotencyKey: linkedInInviteKey({ row: { id: queueId, playName: "" }, workspace }),
+        // The key its latest invite went under.
+        idempotencyKey: getLedger().linkedInSendAttempts.key(
+          linkedInInviteKey({ row: { id: queueId, playName: "" }, workspace }),
+        ),
       }),
     );
     if (recovery.state === "completed") return { ...unknown, state: "completed" };
@@ -342,11 +354,9 @@ function buildPending(input: {
     return {
       ...base,
       kind: "message",
-      idempotencyKey: cadenceLinkedInMessageKey(
-        workspace,
-        cadence.prospect_id,
-        cadence.play_name,
-        stepIndex,
+      // The key the latest send went under.
+      idempotencyKey: getLedger().linkedInSendAttempts.key(
+        cadenceLinkedInMessageKey(workspace, cadence.prospect_id, cadence.play_name, stepIndex),
       ),
       accountWorkspace: sender.workspace,
       accountId: sender.accountId,
@@ -360,7 +370,9 @@ function buildPending(input: {
   return {
     ...base,
     kind: "invite",
-    idempotencyKey: linkedInInviteKey({ row, workspace, continuation }),
+    idempotencyKey: getLedger().linkedInSendAttempts.key(
+      linkedInInviteKey({ row, workspace, continuation }),
+    ),
     accountWorkspace: account.workspace,
     accountId: account.accountId,
     detail: {

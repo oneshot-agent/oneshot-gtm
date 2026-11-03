@@ -464,6 +464,11 @@ async function waitOrTimeOut(
   }
   let withdrawStatus: string | null = null;
   if (withdraw && invite?.invitationId && account && input.linkedIn) {
+    // A failed withdrawal job is replayed under its own key: the next day's
+    // try goes under a new one.
+    const withdrawKey = ledger.linkedInSendAttempts.key(
+      `gtm:${currentWorkspaceName()}:cadence:${input.prospectId}:${input.playName}:withdraw:${invite.invitationId}`,
+    );
     try {
       const linkedIn = input.linkedIn;
       const res = await withdrawLinkedInInvite(
@@ -472,7 +477,7 @@ async function waitOrTimeOut(
           kind: "withdraw",
           accountId: account.accountId,
           invitationId: invite.invitationId,
-          idempotencyKey: `gtm:${currentWorkspaceName()}:cadence:${input.prospectId}:${input.playName}:withdraw:${invite.invitationId}`,
+          idempotencyKey: withdrawKey,
           playName: input.playName,
         },
       );
@@ -509,6 +514,7 @@ async function waitOrTimeOut(
         });
       }
     } catch (err) {
+      ledger.linkedInSendAttempts.noteFailed(withdrawKey, err);
       logEvent(
         "cadence.linkedin_withdraw_failed",
         { message_120: ((err as Error).message ?? "").slice(0, 120) },

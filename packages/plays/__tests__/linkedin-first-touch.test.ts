@@ -11,6 +11,8 @@ const enrollments: Array<Record<string, unknown>> = [];
 let failReceipt = false;
 // Pending sends, by idempotency key (the ledger's linkedInPending store).
 const pendingSends = new Map<string, Record<string, unknown>>();
+// Failed attempts per base key (the ledger's linkedInSendAttempts store).
+const sendAttempts = new Map<string, number>();
 // The prompt tests pin the model writer; the template tests set their own.
 let linkedinCfg: Record<string, unknown> = { writer: "model" };
 
@@ -48,6 +50,17 @@ vi.mock("@oneshot-gtm/core", async () => {
         },
         clear: (key: string) => {
           pendingSends.delete(key);
+        },
+      },
+      linkedInSendAttempts: {
+        key: (base: string) => actual.linkedInSendKeyAt(base, sendAttempts.get(base) ?? 0),
+        noteFailed: (key: string, err: unknown) => {
+          if (!actual.isFailedLinkedInSend(err)) return false;
+          const base = actual.linkedInSendBaseKey(key);
+          const attempt = sendAttempts.get(base) ?? 0;
+          if (actual.linkedInSendKeyAt(base, attempt) !== key) return false;
+          sendAttempts.set(base, attempt + 1);
+          return true;
         },
       },
     }),
@@ -136,6 +149,7 @@ beforeEach(() => {
   enrollments.length = 0;
   failReceipt = false;
   pendingSends.clear();
+  sendAttempts.clear();
   linkedinCfg = { writer: "model" };
 });
 
@@ -400,6 +414,94 @@ describe("sendLinkedInInvite", () => {
     const out = await sendLinkedInInvite({ row: row(), note: "hi", sender: s, workspace: "alpha" });
     expect(out).toEqual({ sent: false, flags: ["linkedin-email-required"] });
     expect(events).toHaveLength(0);
+  });
+
+  it("a note fixed after a failed invite job goes out under a new key", async () => {
+    const failed = Object.assign(new Error("Job failed: note_too_long"), {
+      name: "JobError",
+      code: "note_too_long",
+      jobError: "note_too_long",
+    });
+    const first = sender(failed);
+    expect(
+      await sendLinkedInInvite({
+        row: row(),
+        note: "hi",
+        sender: first.sender,
+        workspace: "alpha",
+      }),
+    ).toEqual({ sent: false, flags: ["linkedin-note-too-long"] });
+    // OneShot would replay the failed job under the old key, old note and all.
+    const again = sender({ invitation_id: "inv-1", status: "sent" });
+    expect(
+      await sendLinkedInInvite({
+        row: row(),
+        note: "hi again",
+        sender: again.sender,
+        workspace: "alpha",
+      }),
+    ).toMatchObject({ sent: true });
+    expect(again.calls.find((c) => (c as { kind: string }).kind === "invite")).toMatchObject({
+      note: "hi again",
+      idempotencyKey: "gtm:alpha:queue:7:invite:r1",
+    });
+  });
+
+  it("an invite that may have gone out (send_unverified) keeps its key", async () => {
+    const unverified = Object.assign(new Error("Job failed: send_unverified"), {
+      name: "JobError",
+      code: "send_unverified",
+    });
+    await sendLinkedInInvite({
+      row: row(),
+      note: "hi",
+      sender: sender(unverified).sender,
+      workspace: "alpha",
+    }).catch(() => {});
+    expect(sendAttempts.get("gtm:alpha:queue:7:invite")).toBeUndefined();
+  });
+
+  it("recipient_unavailable is refused without an invitation lookup, LinkedIn's reason in the flag", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const out = await sendLinkedInInvite({
+      row: row(),
+      note: "hi",
+      workspace: "alpha",
+      sender: {
+        accountId: "acct-1",
+        workspace: "alpha",
+        call: async (op: unknown) => {
+          const o = op as Record<string, unknown>;
+          calls.push(o);
+          if (o["kind"] === "account") return {};
+          if (o["kind"] === "invite") return { status: "processing", request_id: "job-1" };
+          throw Object.assign(new Error("Job failed: recipient_unavailable"), {
+            name: "JobError",
+            code: "recipient_unavailable",
+            upstreamReason: "invalid_recipient",
+            partialResult: { invitation_id: "inv-x" },
+          });
+        },
+      },
+    });
+    expect(out).toEqual({
+      sent: false,
+      flags: [
+        "linkedin-invite-refused: LinkedIn refused this invite (recipient_unavailable: invalid_recipient)",
+      ],
+      guard: "linkedin-invite-refused",
+    });
+    expect(calls.map((c) => c["kind"])).not.toContain("invitation");
+    expect(events).toHaveLength(0);
+    // Freed: the profile can be invited again.
+    expect(
+      await sendLinkedInInvite({
+        row: row(),
+        note: "hi",
+        sender: sender({ invitation_id: "inv-2", status: "sent" }).sender,
+        workspace: "alpha",
+      }),
+    ).toMatchObject({ sent: true });
   });
 
   it("defers the batch when the account's daily invites are used up", async () => {

@@ -19,3 +19,14 @@ it("treats not_connected and rate_limited as deferrals, whatever field carries t
   expect(linkedInMessageDeferral(new Error("not_connected mentioned in a message"))).toBeNull();
   expect(linkedInMessageDeferral(null)).toBeNull();
 });
+
+it("reads OneShot's recipient_not_connected as not_connected, in a code or a job's text", () => {
+  expect(linkedInMessageDeferral({ code: "recipient_not_connected" })).toBe("not_connected");
+  expect(linkedInMessageDeferral({ reason: "recipient_not_connected" })).toBe("not_connected");
+  // `\b` never matched after an underscore; the job's text still names it.
+  expect(
+    linkedInMessageDeferral({ code: "x", jobError: "Job failed: recipient_not_connected" }),
+  ).toBe("not_connected");
+  expect(linkedInMessageDeferral({ jobError: "recipient_not_connected_yet" })).toBeNull();
+  expect(linkedInMessageDeferral({ jobError: "xnot_connected" })).toBeNull();
+});
