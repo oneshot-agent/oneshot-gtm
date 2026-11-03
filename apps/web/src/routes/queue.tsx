@@ -14,6 +14,7 @@ import { Explain } from "../components/primitives/Explain.tsx";
 import {
   keepPreviousData,
   queryOptions,
+  useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
@@ -34,7 +35,7 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   blockingFlags,
@@ -44,8 +45,11 @@ import {
   type DecisionReason,
   type QueueRowView,
   type QueueCounts,
+  type QueueOrder,
+  type QueueShow,
   type QueueStatusView,
   type TriggerView,
+  QUEUE_SHOWS,
 } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
@@ -76,14 +80,19 @@ import {
   bulkApprovalIds,
   drainButtonState,
   drainSelectionState,
+  filteredBulkState,
   isQueueFilterActive,
   mergeRowMeta,
   pendingSplit,
+  QUEUE_PAGE_SIZE,
+  QUEUE_SHOW_LABELS,
+  queueCountLine,
   queuePlayList,
   queueRequest,
   queueSelectionState,
   selectVisibleQueueRows,
   toggleQueueSelection,
+  type QueueChannelFilter,
   type QueueStatusFilter,
   type RowMeta,
 } from "../lib/queue-helpers.ts";
@@ -162,13 +171,6 @@ export const Route = createFileRoute("/queue")({
 
 /** Stable empty page: see `fetchedRows` below. */
 const EMPTY_ROWS: QueueRowView[] = [];
-
-/**
- * Rows rendered before the "show all" disclosure. The API hands back up to 200
- * (`queue-helpers.ts`), which at ~70px each is ~14,000px of uninterrupted
- * table, and `rejected` alone holds thousands.
- */
-const ROW_CAP = 50;
 
 const STATUSES: QueueStatusFilter[] = [
   "all",
@@ -286,6 +288,31 @@ interface DrainModalState {
    * and the modal's limit field steps aside (the pick IS the limit).
    */
   ids?: number[];
+  /**
+   * The page's Show/Channel filters, when one is on: /run hydrates only the
+   * approved rows they list, in the page's order. `label` names them.
+   */
+  filter?: {
+    show?: QueueShow;
+    channel?: QueueChannelFilter;
+    order?: "oldest";
+    label: string;
+    count: string;
+  };
+}
+
+/** The Sort control's choices; Highest score ranks the pending review list only. */
+const SORT_LABELS: Record<QueueOrder, string> = {
+  newest: "Newest first",
+  oldest: "Oldest first",
+  ranked: "Highest score first",
+};
+
+/** "Offer ready · Email": the Show and Channel filters that are on, for a button or a confirm. */
+function filterLabel(show: QueueShow | null, channel: QueueChannelFilter | null): string {
+  return [show ? QUEUE_SHOW_LABELS[show] : null, channel ? CHANNEL_LABELS[channel] : null]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 interface EditingState {
@@ -303,6 +330,8 @@ function QueuePage() {
   const statusFilter: QueueStatusFilter = search.status ?? "pending";
   const playFilter = search.play ?? "all";
   const orderOverride = search.order ?? null;
+  const showFilter = search.show ?? null;
+  const channelFilter = search.channel ?? null;
   const setFilters = (patch: QueueSearch): void => {
     void queueNavigate({ search: (prev) => ({ ...prev, ...patch }), replace: true });
   };
@@ -310,7 +339,7 @@ function QueuePage() {
     setFilters({ status: status === "pending" ? undefined : status });
   const setPlayFilter = (play: string): void =>
     setFilters({ play: play === "all" ? undefined : play });
-  const setOrderOverride = (order: "ranked" | "newest"): void => setFilters({ order });
+  const setOrderOverride = (order: QueueOrder): void => setFilters({ order });
   // `settled` flips once the URL holds the filters this visit will show: at
   // once when the link carried some, else after the stored set is restored.
   const [settled, setSettled] = useState(() => hasQueueFilters(search));
@@ -330,8 +359,14 @@ function QueuePage() {
   }, []);
   useEffect(() => {
     if (!settled) return;
-    saveQueueFilters({ status: search.status, play: search.play, order: search.order });
-  }, [settled, search.status, search.play, search.order]);
+    saveQueueFilters({
+      status: search.status,
+      play: search.play,
+      order: search.order,
+      show: search.show,
+      channel: search.channel,
+    });
+  }, [settled, search.status, search.play, search.order, search.show, search.channel]);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [rejectModal, setRejectModal] = useState<RejectModalState | null>(null);
@@ -362,16 +397,39 @@ function QueuePage() {
   const [drainDryRun, setDrainDryRun] = useState(true);
   // null = follow the configured default; the server echoes what it used.
 
-  const queueQuery = useQuery({
-    queryKey: ["queue", statusFilter, playFilter, orderOverride],
-    queryFn: () => api.queue(queueRequest({ statusFilter, playFilter, orderOverride })),
+  // A page at a time: the server filters and counts before it cuts the page,
+  // and "show more" reads the next one at `offset` under the same filters.
+  const queueQuery = useInfiniteQuery({
+    queryKey: ["queue", statusFilter, playFilter, orderOverride, showFilter, channelFilter],
+    queryFn: ({ pageParam }) =>
+      api.queue(
+        queueRequest({
+          statusFilter,
+          playFilter,
+          orderOverride,
+          show: showFilter,
+          channel: channelFilter,
+          limit: QUEUE_PAGE_SIZE,
+          offset: pageParam,
+        }),
+      ),
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) => {
+      if (last.rows.length < QUEUE_PAGE_SIZE) return undefined;
+      const loaded = pages.reduce((n, page) => n + page.rows.length, 0);
+      return last.total == null || loaded < last.total || last.totalIsLowerBound
+        ? loaded
+        : undefined;
+    },
     refetchInterval: QUEUE_POLL_MS,
   });
+  // Counts, order and totals from the first page; every page is refetched together.
+  const queueData = queueQuery.data?.pages[0];
   // Live reads exist on this install (`/setup` says what they go through):
   // only then does opening a row read it, or the list mark a row unread.
   const setupQuery = useQuery({ queryKey: ["setup"], queryFn: () => api.setupStatus() });
   const liveReads = Boolean(setupQuery.data?.linkedinReads?.via);
-  const effectiveOrder = queueQuery.data?.order ?? orderOverride ?? "newest";
+  const effectiveOrder = queueData?.order ?? orderOverride ?? "newest";
 
   // Scroll position survives a round trip away from /queue, but only back onto
   // the same filters: arriving on a different view starts at the top.
@@ -461,13 +519,20 @@ function QueuePage() {
     onError: (err) => toast.error(`couldn't reject · ${err.message}`),
   });
   const approveAll = useMutation({
-    mutationFn: (play?: string) => api.approveAllQueue(play),
+    mutationFn: (vars: { play?: string; show?: QueueShow; channel?: QueueChannelFilter }) =>
+      api.approveAllQueue(vars.play, {
+        ...(vars.show ? { show: vars.show } : {}),
+        ...(vars.channel ? { channel: vars.channel } : {}),
+      }),
     onSuccess: (data) => {
+      setApproveFilteredOpen(false);
       invalidate();
       toast.success(`approved ${data.approved} pending`);
     },
     onError: (err) => toast.error(`couldn't approve all · ${err.message}`),
   });
+  // "Approve pending" under a Show/Channel filter asks first, naming the count.
+  const [approveFilteredOpen, setApproveFilteredOpen] = useState(false);
 
   // Bulk selection mutations: operate over the current `selected` set.
   const bulkApprove = useMutation({
@@ -529,6 +594,11 @@ function QueuePage() {
       dryRun: drainDryRun ? "1" : "0",
     };
     if (drainModal.ids) search["ids"] = drainModal.ids.join(",");
+    else if (drainModal.filter) {
+      if (drainModal.filter.show) search["show"] = drainModal.filter.show;
+      if (drainModal.filter.channel) search["channel"] = drainModal.filter.channel;
+      if (drainModal.filter.order) search["order"] = drainModal.filter.order;
+    }
     void navigate({
       to: "/run/$playName",
       params: { playName: drainModal.playName },
@@ -536,7 +606,7 @@ function QueuePage() {
     });
   };
 
-  const counts = queueQuery.data?.counts ?? {
+  const counts = queueData?.counts ?? {
     pending: 0,
     approved: 0,
     rejected: 0,
@@ -544,22 +614,27 @@ function QueuePage() {
     expired: 0,
   };
   // Rows with no strong offer are pending but out of review, and "Approve pending" leaves them.
-  const pendingReview = pendingSplit(queueQuery.data).review;
+  const pendingReview = pendingSplit(queueData).review;
   // Keep the fetched array's identity around: `?? []` allocates a fresh array
-  // every render, which would re-fire the rowMeta effect on each one.
-  const fetchedRows = queueQuery.data?.rows;
+  // every render, which would re-fire the rowMeta effect on each one. A row
+  // that moved between pages while they loaded is listed once.
+  const pages = queueQuery.data?.pages;
+  const fetchedRows = useMemo(() => {
+    if (!pages) return undefined;
+    if (pages.length === 1) return pages[0]!.rows;
+    const byId = new Map<number, QueueRowView>();
+    for (const page of pages)
+      for (const row of page.rows) if (!byId.has(row.id)) byId.set(row.id, row);
+    return [...byId.values()];
+  }, [pages]);
+  // Every loaded page renders; more are read on demand. A filter switch starts
+  // a new query at its first page, so "show more" never carries across it.
   const rows = fetchedRows ?? EMPTY_ROWS;
-  /*
-   * Rows render capped, with a "show all" row at the end. Deliberately NOT
-   * persisted: lifting the cap for one look at the 7,600 rejected rows should
-   * not follow you back here tomorrow. Reset whenever the filters change, so
-   * "show all" never silently carries across a filter switch.
-   */
-  const [showAllRows, setShowAllRows] = useState(false);
-  const visibleRows = showAllRows ? rows : rows.slice(0, ROW_CAP);
+  const total = queueData?.total;
+  const totalIsLowerBound = queueData?.totalIsLowerBound === true;
   // Whole-queue approved counts per play: NOT scoped to the current filters,
   // so the drain button works from the default `pending` view too.
-  const approvedByPlay = queueQuery.data?.approvedByPlay ?? {};
+  const approvedByPlay = queueData?.approvedByPlay ?? {};
   // Play/status of every row seen this session. Rows can only be selected while
   // visible, so every selected id has an entry, and it stays correct after the
   // filters hide the row. Refreshed whenever a row reappears in a fetch, so a
@@ -580,10 +655,10 @@ function QueuePage() {
     new Map(rows.map((r) => [r.id, r.lastDraftedAt])),
   );
 
-  // Plays on the visible page, plus any play holding approved rows anywhere:
+  // Every play with rows under the status, plus any play holding approved rows anywhere:
   // the chip both filters the table and scopes the drain button, so a play with
   // drainable rows must stay selectable even when the page shows none of them.
-  const playList = queuePlayList(rows, approvedByPlay);
+  const playList = queuePlayList(rows, approvedByPlay, queueData?.playCounts);
   // Keep the selected option visible while a new filter request is loading.
   if (playFilter !== "all" && !playList.includes(playFilter)) playList.push(playFilter);
   const drain = drainButtonState({ playFilter, approvedByPlay, isRunnable: isRunnablePlay });
@@ -598,9 +673,36 @@ function QueuePage() {
     isRunnable: isRunnablePlay,
   });
 
-  // Select only rendered rows; fetched rows beyond the display cap must not
+  // Select only loaded rows; rows on pages not read yet must not
   // become invisible targets of bulk approval or rejection.
-  const { someSelected, allSelected } = queueSelectionState(visibleRows, selected);
+  const { someSelected, allSelected } = queueSelectionState(rows, selected);
+
+  // Under a Show/Channel filter, "Approve pending" and "Batch send…" act on
+  // the filtered rows only, and say how many.
+  const filtered = showFilter != null || channelFilter != null;
+  const activeFilterLabel = filterLabel(showFilter, channelFilter);
+  const approveFiltered = filteredBulkState({
+    filtered,
+    statusFilter,
+    acts: "pending",
+    total,
+    lowerBound: totalIsLowerBound,
+    format: formatCount,
+  });
+  const drainFiltered = filteredBulkState({
+    filtered,
+    statusFilter,
+    acts: "approved",
+    total,
+    lowerBound: totalIsLowerBound,
+    format: formatCount,
+  });
+  const approveAllVars = {
+    ...(playFilter === "all" ? {} : { play: playFilter }),
+    ...(showFilter ? { show: showFilter } : {}),
+    ...(channelFilter ? { channel: channelFilter } : {}),
+  };
+  const resetView = (): void => setExpanded(null);
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
@@ -613,9 +715,9 @@ function QueuePage() {
         </h1>
         <div className="flex items-center gap-4">
           <InviteQuotaLine />
-          {queueQuery.data?.sendsToday && (
+          {queueData?.sendsToday && (
             <span className="font-mono text-[11px] text-ink-muted">
-              Sent today {formatSendsToday(queueQuery.data.sendsToday)}
+              Sent today {formatSendsToday(queueData.sendsToday)}
             </span>
           )}
           <Button variant="secondary" size="sm" onClick={() => setAddOpen(true)} {...readOnly}>
@@ -632,11 +734,10 @@ function QueuePage() {
         <QueueStatusChips
           statusFilter={statusFilter}
           counts={counts}
-          noStrongOffer={queueQuery.data?.noStrongOffer}
+          noStrongOffer={queueData?.noStrongOffer}
           onSelect={(status) => {
             setStatusFilter(status);
-            setShowAllRows(false);
-            setExpanded(null);
+            resetView();
           }}
         />
         <div className="flex flex-wrap items-center gap-3 border-b border-ink-rule/60 px-6 py-3">
@@ -646,62 +747,144 @@ function QueuePage() {
             value={playFilter}
             onChange={(e) => {
               setPlayFilter(e.target.value);
-              setShowAllRows(false);
-              setExpanded(null);
+              resetView();
             }}
           >
             <option value="all">All plays</option>
-            {playList.map((play) => (
-              <option key={play} value={play}>
-                {play}
+            {playList.map((play) => {
+              const n = queueData?.playCounts?.[play];
+              return (
+                <option key={play} value={play}>
+                  {n != null ? `${play} · ${formatCount(n)}` : play}
+                </option>
+              );
+            })}
+          </Select>
+          <Select
+            aria-label="Queue order"
+            className="w-auto [&>select]:h-8 [&>select]:text-[12px]"
+            value={effectiveOrder}
+            onChange={(e) => {
+              setOrderOverride(e.target.value as QueueOrder);
+              resetView();
+            }}
+          >
+            <option value="newest">{SORT_LABELS.newest}</option>
+            <option value="oldest">{SORT_LABELS.oldest}</option>
+            {statusFilter === "pending" && <option value="ranked">{SORT_LABELS.ranked}</option>}
+          </Select>
+          <Select
+            aria-label="Show"
+            className="w-auto [&>select]:h-8 [&>select]:text-[12px]"
+            value={showFilter ?? "all"}
+            onChange={(e) => {
+              setFilters({
+                show: e.target.value === "all" ? undefined : (e.target.value as QueueShow),
+              });
+              resetView();
+            }}
+          >
+            <option value="all">Show all</option>
+            {QUEUE_SHOWS.map((show) => (
+              <option key={show} value={show}>
+                {QUEUE_SHOW_LABELS[show]}
               </option>
             ))}
           </Select>
-          {statusFilter === "pending" && (
-            <Select
-              aria-label="Queue order"
-              className="w-auto [&>select]:h-8 [&>select]:text-[12px]"
-              value={effectiveOrder}
-              onChange={(e) => setOrderOverride(e.target.value as "newest" | "ranked")}
-            >
-              <option value="newest">Newest first</option>
-              <option value="ranked">Highest score first</option>
-            </Select>
-          )}
-          <span className="font-mono text-[11px] text-ink-faint">
-            {queueQuery.data
-              ? `${visibleRows.length}${visibleRows.length < rows.length ? ` of ${rows.length}` : ""} shown`
+          <Select
+            aria-label="Filter by channel"
+            className="w-auto [&>select]:h-8 [&>select]:text-[12px]"
+            value={channelFilter ?? "all"}
+            onChange={(e) => {
+              setFilters({
+                channel:
+                  e.target.value === "all" ? undefined : (e.target.value as QueueChannelFilter),
+              });
+              resetView();
+            }}
+          >
+            <option value="all">Every channel</option>
+            <option value="email">{CHANNEL_LABELS.email}</option>
+            <option value="linkedin">{CHANNEL_LABELS.linkedin}</option>
+          </Select>
+          <span className="font-mono text-[11px] text-ink-faint" data-testid="queue-count">
+            {queueData
+              ? queueCountLine({
+                  shown: rows.length,
+                  total,
+                  lowerBound: totalIsLowerBound,
+                  format: formatCount,
+                })
               : "Loading…"}
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <Button
               variant="secondary"
               size="sm"
-              disabled={approveAll.isPending || pendingReview === 0}
-              title={
-                playFilter === "all"
-                  ? "Approve all pending prospects; rows with no strong offer stay pending"
-                  : `Approve pending prospects in ${playFilter}; rows with no strong offer stay pending`
+              disabled={
+                approveAll.isPending ||
+                (filtered
+                  ? approveFiltered.blocked != null || approveFiltered.count === 0
+                  : pendingReview === 0)
               }
-              onClick={() => approveAll.mutate(playFilter === "all" ? undefined : playFilter)}
+              title={
+                filtered
+                  ? (approveFiltered.blocked ??
+                    `Approve the ${approveFiltered.label} pending rows shown under ${activeFilterLabel}${playFilter === "all" ? "" : ` in ${playFilter}`}`)
+                  : playFilter === "all"
+                    ? "Approve all pending prospects; rows with no strong offer stay pending"
+                    : `Approve pending prospects in ${playFilter}; rows with no strong offer stay pending`
+              }
+              onClick={() =>
+                filtered ? setApproveFilteredOpen(true) : approveAll.mutate(approveAllVars)
+              }
               {...readOnly}
             >
-              <Check size={12} /> Approve pending
+              <Check size={12} />
+              {filtered && approveFiltered.label != null
+                ? `Approve ${approveFiltered.label} shown`
+                : "Approve pending"}
             </Button>
             <Button
               variant="ghost"
               size="sm"
-              disabled={!drain.enabled}
-              title={drain.label}
+              disabled={
+                !drain.enabled ||
+                (filtered && (drainFiltered.blocked != null || drainFiltered.count === 0))
+              }
+              title={
+                !drain.enabled || !filtered
+                  ? drain.label
+                  : (drainFiltered.blocked ??
+                    `batch send ${playFilter} · the ${drainFiltered.label} approved rows shown under ${activeFilterLabel}, choose how many next`)
+              }
               onClick={() => {
-                if (drain.playName)
-                  setDrainModal({ playName: drain.playName, approvedCount: drain.approvedCount });
+                if (!drain.playName) return;
+                setDrainModal({
+                  playName: drain.playName,
+                  approvedCount: drain.approvedCount,
+                  ...(filtered && drainFiltered.label != null
+                    ? {
+                        filter: {
+                          ...(showFilter ? { show: showFilter } : {}),
+                          ...(channelFilter ? { channel: channelFilter } : {}),
+                          ...(effectiveOrder === "oldest" ? { order: "oldest" as const } : {}),
+                          label: activeFilterLabel,
+                          count: drainFiltered.label,
+                        },
+                      }
+                    : {}),
+                });
               }}
               {...readOnly}
             >
               {/* How many go is picked in the drain modal, so no count here:
-                  "(41)" read as "sends 41". The approved count is in the title. */}
-              <Send size={12} /> Batch send…
+                  "(41)" read as "sends 41". The approved count is in the title.
+                  Under a filter the count is of the rows it narrows to. */}
+              <Send size={12} />
+              {filtered && drainFiltered.label != null
+                ? `Batch send ${drainFiltered.label}…`
+                : "Batch send…"}
             </Button>
           </div>
         </div>
@@ -709,7 +892,9 @@ function QueuePage() {
         {queueQuery.isLoading ? (
           Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} />)
         ) : rows.length === 0 ? (
-          <EmptyQueueHelp filterActive={isQueueFilterActive(statusFilter, playFilter)} />
+          <EmptyQueueHelp
+            filterActive={isQueueFilterActive(statusFilter, playFilter) || filtered}
+          />
         ) : (
           <table className="w-full text-[13px]">
             <thead className="sticky top-0 z-10 bg-ink-bg">
@@ -725,7 +910,7 @@ function QueuePage() {
                         if (el) el.indeterminate = someSelected && !allSelected;
                       }}
                       onChange={(e) =>
-                        setSelected(new Set(selectVisibleQueueRows(visibleRows, e.target.checked)))
+                        setSelected(new Set(selectVisibleQueueRows(rows, e.target.checked)))
                       }
                       aria-label={allSelected ? "deselect all" : "select all"}
                     />
@@ -739,7 +924,7 @@ function QueuePage() {
               </tr>
             </thead>
             <tbody>
-              {visibleRows.map((row, i) => (
+              {rows.map((row, i) => (
                 <QueueRow
                   key={row.id}
                   row={row}
@@ -773,22 +958,30 @@ function QueuePage() {
                   busy={approve.isPending || reject.isPending || move.isPending}
                 />
               ))}
-              {/* The fetch returns up to 200 rows (queue-helpers.ts `limit`)
-                  and every one used to render into this tbody: ~14,000px of
-                  table. Same one-quiet-row disclosure the inactive finders use
-                  in the Triggers panel, colSpan trick included so the shared
-                  column widths hold. */}
-              {rows.length > visibleRows.length && (
+              {/* One page at a time (QUEUE_PAGE_SIZE), the next read on
+                  demand: a page of 200 at ~70px each was ~14,000px of table.
+                  Same one-quiet-row disclosure the inactive finders use in the
+                  Triggers panel, colSpan trick included so the shared column
+                  widths hold. */}
+              {queueQuery.hasNextPage && (
                 <tr className="border-b border-ink-rule/60">
                   <td colSpan={7} className="px-6 py-2">
                     <button
                       type="button"
-                      onClick={() => setShowAllRows(true)}
+                      disabled={queueQuery.isFetchingNextPage}
+                      onClick={() => void queueQuery.fetchNextPage()}
                       className="flex items-center gap-1.5 font-mono text-[11px] text-ink-faint transition-colors hover:text-ink-cream-2"
                     >
-                      <ChevronDown size={11} />
-                      {formatCount(rows.length - visibleRows.length)} more · show all{" "}
-                      {formatCount(rows.length)}
+                      {queueQuery.isFetchingNextPage ? (
+                        <Loader2 size={11} className="animate-spin" />
+                      ) : (
+                        <ChevronDown size={11} />
+                      )}
+                      {total == null || totalIsLowerBound
+                        ? `show the next ${formatCount(QUEUE_PAGE_SIZE)}`
+                        : total - rows.length <= QUEUE_PAGE_SIZE
+                          ? `${formatCount(total - rows.length)} more · show them`
+                          : `${formatCount(total - rows.length)} more · show the next ${formatCount(QUEUE_PAGE_SIZE)}`}
                     </button>
                   </td>
                 </tr>
@@ -925,12 +1118,41 @@ function QueuePage() {
       </Modal>
 
       <Modal
+        open={approveFilteredOpen}
+        onClose={() => setApproveFilteredOpen(false)}
+        title={`Approve ${approveFiltered.label ?? 0} pending ${approveFiltered.count === 1 ? "row" : "rows"}`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setApproveFilteredOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={approveAll.isPending}
+              onClick={() => approveAll.mutate(approveAllVars)}
+              {...readOnly}
+            >
+              <Check size={12} />
+              {approveAll.isPending ? "Approving…" : `Approve ${approveFiltered.label ?? 0}`}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[13px] text-ink-cream-2">
+          Approves the {approveFiltered.label} pending rows shown under {activeFilterLabel}
+          {playFilter === "all" ? "" : ` in ${playFilter}`}, not only the loaded page. Rows the
+          filter hides, and rows with no strong offer, stay pending.
+        </p>
+      </Modal>
+
+      <Modal
         open={drainModal != null}
         onClose={() => setDrainModal(null)}
         title={
           drainModal?.ids
             ? `Batch send ${drainModal.playName} (${drainModal.ids.length} selected)`
-            : `Batch send ${drainModal?.playName ?? ""} (${drainModal?.approvedCount ?? 0} approved)`
+            : drainModal?.filter
+              ? `Batch send ${drainModal.playName} (${drainModal.filter.count} approved · ${drainModal.filter.label})`
+              : `Batch send ${drainModal?.playName ?? ""} (${drainModal?.approvedCount ?? 0} approved)`
         }
         footer={
           <>
@@ -957,7 +1179,16 @@ function QueuePage() {
               {drainModal.ids.length === 1 ? "row" : "rows"} you selected — nothing else in the
               queue is touched.
             </p>
-          ) : (
+          ) : null}
+          {drainModal?.filter && (
+            <p className="text-[13px] text-ink-cream-2">
+              Only the {drainModal.filter.count} approved rows shown under {drainModal.filter.label}{" "}
+              go
+              {drainModal.filter.order === "oldest" ? ", oldest first" : ", newest first"}. The rest
+              stay approved.
+            </p>
+          )}
+          {drainModal?.ids ? null : (
             <Field label="Limit">
               <Input
                 type="number"

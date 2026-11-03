@@ -91,9 +91,21 @@ it("seeks status pages in date order after upgrading a ledger, without a tempora
       ids[1],
     ]);
     const sql = query.mock.calls[0]![0];
-    const details = plan(raw(ledger), sql, "rejected", 3);
+    const details = plan(raw(ledger), sql, "rejected", 3, 0);
     expect(details).toContain("SEARCH target_queue USING INDEX idx_queue_status_found");
     expect(details).not.toMatch(/SCAN target_queue|TEMP B-TREE/);
+    // Oldest first walks the same index backwards: the exact reverse, ties
+    // included, still without a sort, and an offset page continues it.
+    query.mockClear();
+    expect(
+      ledger.listQueue({ status: "rejected", dir: "asc", limit: 3 }).map((row) => row.id),
+    ).toEqual([ids[1], ids[2], ids[0]]);
+    const asc = plan(raw(ledger), query.mock.calls[0]![0], "rejected", 3, 0);
+    expect(asc).toContain("SEARCH target_queue USING INDEX idx_queue_status_found");
+    expect(asc).not.toMatch(/SCAN target_queue|TEMP B-TREE/);
+    expect(
+      ledger.listQueue({ status: "rejected", dir: "asc", limit: 2, offset: 1 }).map((r) => r.id),
+    ).toEqual([ids[2], ids[0]]);
   } finally {
     ledger.close();
   }

@@ -1,4 +1,10 @@
-import type { QueueListResponse, QueueRowView, QueueStatusView } from "@oneshot-gtm/shared-types";
+import type {
+  QueueListResponse,
+  QueueOrder,
+  QueueRowView,
+  QueueShow,
+  QueueStatusView,
+} from "@oneshot-gtm/shared-types";
 
 /**
  * A /queue status chip. `no-offer` is not a status: it is the pending rows
@@ -7,18 +13,30 @@ import type { QueueListResponse, QueueRowView, QueueStatusView } from "@oneshot-
  */
 export type QueueStatusFilter = QueueStatusView | "all" | "no-offer";
 
+/** /queue's Channel filter: the channels a first touch is sent on from the queue. */
+export type QueueChannelFilter = "email" | "linkedin";
+
+/** Rows per page of the /queue table; "show more" reads the next page at `offset`. */
+export const QUEUE_PAGE_SIZE = 50;
+
 /** Build the queue request without leaking UI-only `all`/null sentinel values. */
 export function queueRequest(input: {
   statusFilter: QueueStatusFilter;
   playFilter: string;
-  orderOverride: "ranked" | "newest" | null;
+  orderOverride: QueueOrder | null;
+  show?: QueueShow | null;
+  channel?: QueueChannelFilter | null;
   limit?: number;
+  offset?: number;
 }): {
   status?: QueueStatusView;
   offerSkip?: "only" | "exclude";
   play?: string;
-  order?: "ranked" | "newest";
+  order?: QueueOrder;
+  show?: QueueShow;
+  channel?: QueueChannelFilter;
   limit: number;
+  offset?: number;
 } {
   const { statusFilter } = input;
   const status =
@@ -33,8 +51,59 @@ export function queueRequest(input: {
     ...status,
     ...(input.playFilter !== "all" ? { play: input.playFilter } : {}),
     ...(input.orderOverride ? { order: input.orderOverride } : {}),
+    ...(input.show ? { show: input.show } : {}),
+    ...(input.channel ? { channel: input.channel } : {}),
     limit: input.limit ?? 200,
+    ...(input.offset ? { offset: input.offset } : {}),
   };
+}
+
+/** The Show filter's choices, in the order the control lists them. */
+export const QUEUE_SHOW_LABELS: Record<QueueShow, string> = {
+  "offer-ready": "Offer ready",
+  "has-draft": "Has draft",
+  ready: "Ready to send",
+  held: "Held",
+  "no-draft": "No draft",
+};
+
+/** "50 of 312 shown", "312 shown", "50 of 2,000+ shown": the page against the filtered total. */
+export function queueCountLine(input: {
+  shown: number;
+  total: number | undefined;
+  lowerBound?: boolean;
+  format: (n: number) => string;
+}): string {
+  const { shown, total, format } = input;
+  if (total == null || (total <= shown && !input.lowerBound)) return `${format(shown)} shown`;
+  return `${format(shown)} of ${format(total)}${input.lowerBound ? "+" : ""} shown`;
+}
+
+/**
+ * What "Approve pending" and "Batch send…" act on while a Show or Channel
+ * filter is on: the filtered rows, which are the page's own only on the tab
+ * they act on (Pending for approve, Approved for batch send). On another tab
+ * the count is unknown, so the action waits for that tab.
+ */
+export function filteredBulkState(input: {
+  filtered: boolean;
+  statusFilter: QueueStatusFilter;
+  acts: "pending" | "approved";
+  total: number | undefined;
+  lowerBound?: boolean;
+  format?: (n: number) => string;
+}): { count: number | null; label: string | null; blocked: string | null } {
+  if (!input.filtered) return { count: null, label: null, blocked: null };
+  if (input.statusFilter !== input.acts) {
+    return {
+      count: null,
+      label: null,
+      blocked: `open ${input.acts === "pending" ? "Pending" : "Approved"} to act on the filtered rows`,
+    };
+  }
+  const count = input.total ?? 0;
+  const format = input.format ?? String;
+  return { count, label: `${format(count)}${input.lowerBound ? "+" : ""}`, blocked: null };
 }
 
 /**
@@ -53,13 +122,22 @@ export function isQueueFilterActive(statusFilter: QueueStatusFilter, playFilter:
   return statusFilter !== "pending" || playFilter !== "all";
 }
 
-/** Visible plays plus plays with approved work elsewhere in the queue. */
+/**
+ * Every play with rows under the current status (`playCounts`), plus the
+ * visible plays (an older server sends no counts) and plays with approved
+ * work elsewhere in the queue.
+ */
 export function queuePlayList(
   rows: ReadonlyArray<Pick<QueueRowView, "playName">>,
   approvedByPlay: Readonly<Record<string, number>>,
+  playCounts: Readonly<Record<string, number>> = {},
 ): string[] {
   return Array.from(
-    new Set([...rows.map((row) => row.playName), ...Object.keys(approvedByPlay)]),
+    new Set([
+      ...Object.keys(playCounts),
+      ...rows.map((row) => row.playName),
+      ...Object.keys(approvedByPlay),
+    ]),
   ).toSorted();
 }
 

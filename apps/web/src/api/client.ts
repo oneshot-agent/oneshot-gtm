@@ -65,6 +65,8 @@ import type {
   DomainActionResult,
   DomainPoolView,
   QueueListResponse,
+  QueueOrder,
+  QueueShow,
   QueueStatusView,
   DeriveBriefResult,
   DeriveIcpResult,
@@ -520,8 +522,13 @@ export const api = {
     /** With `status: "pending"`: leave out (`exclude`) or list only (`only`) rows with no strong offer. */
     offerSkip?: "only" | "exclude";
     limit?: number;
-    /** Review-order override; omit to use the configured default. */
-    order?: "ranked" | "newest";
+    /** Rows to skip: the next page of the same filters. */
+    offset?: number;
+    /** Order override; omit to use the configured default. */
+    order?: QueueOrder;
+    /** The Show filter, applied before the page is cut. */
+    show?: QueueShow;
+    channel?: "email" | "linkedin";
     /** Explicit row pick. The "drain selected" path. */
     ids?: number[];
   }) => {
@@ -531,7 +538,10 @@ export const api = {
     if (opts?.status) q.set("status", opts.status);
     if (opts?.offerSkip) q.set("offerSkip", opts.offerSkip);
     if (opts?.limit != null) q.set("limit", String(opts.limit));
+    if (opts?.offset) q.set("offset", String(opts.offset));
     if (opts?.order) q.set("order", opts.order);
+    if (opts?.show) q.set("show", opts.show);
+    if (opts?.channel) q.set("channel", opts.channel);
     // Note the `!= null`, not a length check: an empty array is an explicit
     // "nothing picked" and must reach the server as `ids=`, or the server would
     // read it as absent and return the unscoped batch instead of no rows.
@@ -593,8 +603,16 @@ export const api = {
       ...(hint?.hint ? { hint: hint.hint } : {}),
       ...(hint?.decisionReason ? { decisionReason: hint.decisionReason } : {}),
     }),
-  approveAllQueue: (play?: string) =>
-    postJson<{ approved: number }>("/queue/approve-all", play ? { play } : {}),
+  /** Approve pending rows (of one play); `show`/`channel` narrow it to the filtered rows. */
+  approveAllQueue: (
+    play?: string,
+    filters: { show?: QueueShow; channel?: "email" | "linkedin" } = {},
+  ) =>
+    postJson<{ approved: number }>("/queue/approve-all", {
+      ...(play ? { play } : {}),
+      ...(filters.show ? { show: filters.show } : {}),
+      ...(filters.channel ? { channel: filters.channel } : {}),
+    }),
   // Re-draft a row in preview (dry-run, never sends); overwrites the persisted last_draft_json.
   regenerateDraft: (id: number, rotateAngle = false) =>
     postJson<LastDraft>(`/queue/${id}/regenerate`, { rotateAngle }),

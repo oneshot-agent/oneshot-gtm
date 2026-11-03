@@ -1,9 +1,14 @@
-import type { LearningKind } from "@oneshot-gtm/shared-types";
-import type { QueueStatusFilter } from "./queue-helpers.ts";
+import {
+  isQueueShow,
+  type LearningKind,
+  type QueueOrder,
+  type QueueShow,
+} from "@oneshot-gtm/shared-types";
+import type { QueueChannelFilter, QueueStatusFilter } from "./queue-helpers.ts";
 import { isLearningKind } from "./learning.ts";
 
 /**
- * /queue filters live in the URL (`?status=&play=&order=`) so back/forward and
+ * /queue filters live in the URL (`?status=&play=&order=&show=&channel=`) so back/forward and
  * reload keep them, and the last set is remembered in localStorage so a bare
  * `/queue` link (sidebar, `q`, palette) lands where the founder left off. Each
  * workspace is its own origin, so each keeps its own filters.
@@ -11,7 +16,10 @@ import { isLearningKind } from "./learning.ts";
 export interface QueueSearch {
   status?: QueueStatusFilter;
   play?: string;
-  order?: "ranked" | "newest";
+  order?: QueueOrder;
+  /** The Show filter: offer ready, has draft, ready to send, held, no draft. */
+  show?: QueueShow;
+  channel?: QueueChannelFilter;
   /** Deep link into the learning review card (#813): one kind, optionally one prospect. Never remembered. */
   learning?: LearningKind;
   prospectId?: number;
@@ -36,7 +44,11 @@ export function validateQueueSearch(search: Record<string, unknown>): QueueSearc
   const play = search["play"];
   if (typeof play === "string" && play.length > 0) out.play = play;
   const order = search["order"];
-  if (order === "ranked" || order === "newest") out.order = order;
+  if (order === "ranked" || order === "newest" || order === "oldest") out.order = order;
+  const show = search["show"];
+  if (isQueueShow(show)) out.show = show;
+  const channel = search["channel"];
+  if (channel === "email" || channel === "linkedin") out.channel = channel;
   const learning = search["learning"];
   if (isLearningKind(learning)) out.learning = learning;
   const prospectId = Number(search["prospectId"]);
@@ -45,7 +57,13 @@ export function validateQueueSearch(search: Record<string, unknown>): QueueSearc
 }
 
 export function hasQueueFilters(search: QueueSearch): boolean {
-  return search.status != null || search.play != null || search.order != null;
+  return (
+    search.status != null ||
+    search.play != null ||
+    search.order != null ||
+    search.show != null ||
+    search.channel != null
+  );
 }
 
 const STORAGE_KEY = "oneshot-gtm:queue-filters";
@@ -109,5 +127,11 @@ export function saveQueueScroll(top: number, filters: string): void {
 
 /** Stable identity of a filter set, so a scroll offset is only restored onto the view it came from. */
 export function queueFiltersKey(filters: QueueSearch): string {
-  return JSON.stringify([filters.status ?? "", filters.play ?? "", filters.order ?? ""]);
+  return JSON.stringify([
+    filters.status ?? "",
+    filters.play ?? "",
+    filters.order ?? "",
+    filters.show ?? "",
+    filters.channel ?? "",
+  ]);
 }

@@ -1,4 +1,4 @@
-import type { DecisionReason } from "@oneshot-gtm/shared-types";
+import type { DecisionReason, QueueShow } from "@oneshot-gtm/shared-types";
 export interface ReceiptRecord {
   id: number;
   play_name: string;
@@ -841,6 +841,28 @@ export type QueueSearchSort = "found_at" | "decided_at" | "name";
 export interface QueueOfferSkipFilter {
   mode: "only" | "exclude";
   noOfferPlays: readonly string[];
+}
+
+/**
+ * A /queue "Show" filter (`QueueShow`) for `listQueue`/`countQueue`.
+ * `noOfferPlays` names the plays that make no offer (as for
+ * `QueueOfferSkipFilter`): their rows count as offer ready. `ready` and
+ * `held` are narrowed here and finished by the caller, which knows the fit
+ * and email-mismatch holds (`queueShowIsExact`).
+ */
+export interface QueueShowFilter {
+  show: QueueShow;
+  noOfferPlays: readonly string[];
+}
+
+/** `listQueue`/`countQueue` filters beyond play and status. */
+export interface QueueListFilters {
+  playName?: string;
+  status?: QueueStatus;
+  offerSkip?: QueueOfferSkipFilter;
+  show?: QueueShowFilter;
+  /** An outreach channel, read as `channelOf` reads the column: an unknown value is email. */
+  channel?: string;
 }
 
 /** Filters for `Ledger.searchQueue`. The /prospects browse view. */

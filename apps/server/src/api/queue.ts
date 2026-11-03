@@ -17,6 +17,7 @@ import {
   linkedInOutreachAccount,
   isOutreachChannel,
   channelAddresses,
+  queueShowIsExact,
 } from "@oneshot-gtm/core";
 import {
   currentNoOfferPlays,
@@ -30,6 +31,7 @@ import {
   parseProspectPriority,
   sqliteToIso,
   type DraftDiscardReason,
+  type QueueListFilters,
   type QueueOfferSkipFilter,
   type QueueRow,
   type QueueSearchOpts,
@@ -61,6 +63,7 @@ import {
   logTargetError,
   NO_OFFER_PLAYS,
   offerCandidatesOf,
+  offerHoldsSend,
   offerOf,
   offerSkipOf,
   playMakesOffer,
@@ -101,8 +104,11 @@ import {
   type ProspectSearchResponse,
   type ProspectSortKey,
   type QueueCounts,
+  isQueueShow,
   type QueueListResponse,
+  type QueueOrder,
   type QueueRowDetail,
+  type QueueShow,
   type QueueRowView,
   type RunPlayRequest,
   type SendDeliveryView,
@@ -640,13 +646,121 @@ const RANK_COLUMNS: readonly string[] = [
 ];
 
 /** `Ledger.listQueue` options; `columns` projects the read (issue #929). */
-interface QueueListArgs {
-  playName?: string;
-  status?: QueueStatus;
+interface QueueListArgs extends QueueListFilters {
   limit?: number;
+  offset?: number;
+  dir?: "asc" | "desc";
   ids?: number[];
   columns?: readonly string[];
-  offerSkip?: QueueOfferSkipFilter;
+}
+
+/** True when the row's offer is ready: the play makes none, or it has one that does not hold the send. */
+function offerReady(playName: string, payload: unknown): boolean {
+  if (!playMakesOffer(playName)) return true;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const offer = offerOf(payload as Record<string, unknown>);
+  return offer != null && !offerHoldsSend(offer);
+}
+
+/**
+ * The /queue "Show" filters (`QueueShow`) over a row and its view, as the
+ * page's chips read them: DRAFT and HELD come from `lastDraft`, the held
+ * badges from `sendHold`. The ledger's SQL mirrors this (exactly for
+ * `offer-ready`, `has-draft` and `no-draft`, as a superset for `ready` and
+ * `held`), and the route finishes `ready` and `held` with it.
+ */
+export function rowMatchesShow(
+  show: QueueShow,
+  row: Pick<QueueRow, "last_draft_json">,
+  view: Pick<QueueRowView, "playName" | "payload" | "lastDraft" | "sendHold">,
+): boolean {
+  const draft = view.lastDraft && !view.lastDraft.sent ? view.lastDraft : null;
+  switch (show) {
+    case "offer-ready":
+      return offerReady(view.playName, view.payload);
+    case "has-draft":
+      return draft != null;
+    case "no-draft":
+      return row.last_draft_json == null;
+    case "ready":
+      return (
+        draft != null &&
+        draft.flags.length === 0 &&
+        offerReady(view.playName, view.payload) &&
+        view.sendHold == null
+      );
+    case "held":
+      return (draft != null && draft.flags.length > 0) || view.sendHold != null;
+  }
+}
+
+/** Rows read per step while a `ready`/`held` filter is finished in JS. */
+const SHOW_SCAN_WINDOW = 200;
+/** Once the page is full, rows scanned (from the first) before the total is reported as a floor. */
+const SHOW_SCAN_BUDGET = 2000;
+/** Rows scanned at most for one page, full or not: past this the page is what was found. */
+const SHOW_SCAN_MAX = 10_000;
+
+/**
+ * A `ready`/`held` page: `next` reads the SQL candidates in order, a step at
+ * a time from `scanned`; each is checked with `rowMatchesShow` and the page is
+ * the matches from `offset`. Reading on past a held row keeps the page full.
+ * The total is exact when the scan reached the last candidate, otherwise it
+ * is the matches found so far (`lowerBound`).
+ */
+function showPage(
+  show: QueueShow,
+  next: (scanned: number) => { rows: QueueRow[]; done: boolean },
+  offset: number,
+  limit: number,
+): { rows: QueueRow[]; total: number; lowerBound: boolean } {
+  const rows: QueueRow[] = [];
+  let matched = 0;
+  let scanned = 0;
+  for (;;) {
+    const step = next(scanned);
+    for (const row of step.rows) {
+      if (!rowMatchesShow(show, row, toView(row))) continue;
+      if (matched >= offset && rows.length < limit) rows.push(row);
+      matched++;
+    }
+    scanned += step.rows.length;
+    if (step.done || step.rows.length === 0) return { rows, total: matched, lowerBound: false };
+    const full = rows.length >= limit;
+    if ((full && scanned >= SHOW_SCAN_BUDGET) || scanned >= SHOW_SCAN_MAX) {
+      return { rows, total: matched, lowerBound: true };
+    }
+  }
+}
+
+/**
+ * Every pending row matching the filters, ids only, finished in JS for a
+ * `ready`/`held` filter: what "Approve pending" approves while a filter is on.
+ */
+function filteredPendingIds(
+  ledger: ReturnType<typeof getLedger>,
+  filters: QueueListFilters,
+): number[] {
+  const args: QueueListArgs = { ...filters, status: "pending", limit: 100_000 };
+  if (!filters.show || queueShowIsExact(filters.show.show)) {
+    return ledger.listQueue({ ...args, columns: ["id"] }).map((row) => row.id);
+  }
+  const show = filters.show.show;
+  return ledger
+    .listQueue(args)
+    .filter((row) => rowMatchesShow(show, row, toView(row)))
+    .map((row) => row.id);
+}
+
+/** `?show=` and `?channel=` of a list or approve request, as the ledger reads them. */
+function showChannelFilters(
+  show: unknown,
+  channel: unknown,
+): Pick<QueueListFilters, "show" | "channel"> {
+  const out: Pick<QueueListFilters, "show" | "channel"> = {};
+  if (isQueueShow(show)) out.show = { show, noOfferPlays: noOfferPlayNames() };
+  if (isOutreachChannel(channel)) out.channel = channel;
+  return out;
 }
 
 /**
@@ -762,19 +876,42 @@ export function trimListPayload(view: QueueRowView): QueueRowView {
   return { ...view, payload: kept };
 }
 
-/** The ranked page: rank the projected window, keep `limit` ids, read those rows in full, in rank order. */
+/** Rows by id in the given order; a row deleted between the two reads is gone, as it would be from one later read. */
+function rowsInOrder(ledger: ReturnType<typeof getLedger>, ids: number[]): QueueRow[] {
+  if (ids.length === 0) return [];
+  const byId = ledger.getQueueRowsByIds(ids);
+  return ids.flatMap((id) => byId.get(id) ?? []);
+}
+
+/**
+ * The ranked page: rank the projected window, then read the page's rows in
+ * full, in rank order. A `ready`/`held` filter reads the ranked ids a step at
+ * a time and keeps the matches. The total is the window's (what can rank).
+ */
 function rankedPage(
   ledger: ReturnType<typeof getLedger>,
   window: RankableRow[],
+  show: QueueShow | undefined,
+  offset: number,
   limit: number,
-): QueueRow[] {
-  const ids = rankPendingRows(window)
-    .slice(0, limit)
-    .map((row) => row.id);
-  if (ids.length === 0) return [];
-  const byId = ledger.getQueueRowsByIds(ids);
-  // A row deleted between the two reads is gone, as it would be from one later read.
-  return ids.flatMap((id) => byId.get(id) ?? []);
+): { rows: QueueRow[]; total: number; lowerBound: boolean } {
+  const ids = rankPendingRows(window).map((row) => row.id);
+  if (!show || queueShowIsExact(show)) {
+    return {
+      rows: rowsInOrder(ledger, ids.slice(offset, offset + limit)),
+      total: ids.length,
+      lowerBound: false,
+    };
+  }
+  return showPage(
+    show,
+    (scanned) => ({
+      rows: rowsInOrder(ledger, ids.slice(scanned, scanned + SHOW_SCAN_WINDOW)),
+      done: scanned + SHOW_SCAN_WINDOW >= ids.length,
+    }),
+    offset,
+    limit,
+  );
 }
 
 export function listQueueRoute(req: Request): Response {
@@ -786,32 +923,68 @@ export function listQueueRoute(req: Request): Response {
   // caller rows it never picked.
   const ids = parseQueueIds(url.searchParams.get("ids"));
   const limit = Math.min(500, Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200);
+  const offset = Math.max(0, Number.parseInt(url.searchParams.get("offset") ?? "0", 10) || 0);
   const ledger = getLedger();
   const orderParam = url.searchParams.get("order");
-  const requestedOrder =
-    orderParam === "ranked" || orderParam === "newest"
+  const requestedOrder: QueueOrder =
+    orderParam === "ranked" || orderParam === "newest" || orderParam === "oldest"
       ? orderParam
       : (loadConfig().queueReviewOrder ?? "newest");
   // Ranked order exists for ONE surface: the pending review list. Explicit id
   // picks and every other status keep chronological order.
   const ranked = requestedOrder === "ranked" && status === "pending" && !ids;
-  const filterArgs: QueueListArgs = {
-    limit: ranked ? RANK_WINDOW : ids ? Math.max(limit, ids.length) : limit,
-  };
-  if (playName) filterArgs.playName = playName;
-  if (status) filterArgs.status = status;
-  if (ids) filterArgs.ids = ids;
-  if (ranked) filterArgs.columns = RANK_COLUMNS;
+  const dir = requestedOrder === "oldest" && !ids ? "asc" : "desc";
+  const filters: QueueListFilters = {};
+  if (playName) filters.playName = playName;
+  if (status) filters.status = status;
   // `?offerSkip=exclude|only` splits the pending review list: the rows whose
   // writer found no strong offer leave it, and have their own view. Every
   // other status and an explicit id pick ignore it.
   const offerSkipParam = url.searchParams.get("offerSkip");
   const noOfferPlays = noOfferPlayNames();
   if ((offerSkipParam === "exclude" || offerSkipParam === "only") && status === "pending" && !ids) {
-    filterArgs.offerSkip = { mode: offerSkipParam, noOfferPlays };
+    filters.offerSkip = { mode: offerSkipParam, noOfferPlays };
   }
-  const rows = ledger.listQueue(filterArgs);
-  const ordered = ranked ? rankedPage(ledger, rows, limit) : rows;
+  // `?show=` and `?channel=` narrow the list in the query, before the page is
+  // cut. An explicit id pick ignores them: it is already the founder's pick.
+  if (!ids) {
+    Object.assign(
+      filters,
+      showChannelFilters(url.searchParams.get("show"), url.searchParams.get("channel")),
+    );
+  }
+  const show = filters.show?.show;
+  let ordered: QueueRow[];
+  let total: number | undefined;
+  let lowerBound = false;
+  if (ids) {
+    ordered = ledger.listQueue({ ...filters, ids, limit: Math.max(limit, ids.length) });
+  } else if (ranked) {
+    const window = ledger.listQueue({ ...filters, limit: RANK_WINDOW, columns: RANK_COLUMNS });
+    ({ rows: ordered, total, lowerBound } = rankedPage(ledger, window, show, offset, limit));
+  } else if (!show || queueShowIsExact(show)) {
+    ordered = ledger.listQueue({ ...filters, limit, offset, dir });
+    total = ledger.countQueue(filters);
+  } else {
+    ({
+      rows: ordered,
+      total,
+      lowerBound,
+    } = showPage(
+      show,
+      (scanned) => {
+        const rows = ledger.listQueue({
+          ...filters,
+          dir,
+          limit: SHOW_SCAN_WINDOW,
+          offset: scanned,
+        });
+        return { rows, done: rows.length < SHOW_SCAN_WINDOW };
+      },
+      offset,
+      limit,
+    ));
+  }
   const counts: QueueCounts = ledger.queueCounts();
   // Unfiltered on purpose. The drain button needs per-play approved counts
   // regardless of the page's current filter.
@@ -831,13 +1004,19 @@ export function listQueueRoute(req: Request): Response {
   } catch (error) {
     return jsonResponse({ error: (error as Error).message }, 400, req);
   }
+  const playCountArgs: Pick<QueueListFilters, "status" | "offerSkip"> = {};
+  if (filters.status) playCountArgs.status = filters.status;
+  if (filters.offerSkip) playCountArgs.offerSkip = filters.offerSkip;
   const body: QueueListResponse = {
     rows: views,
     counts,
     approvedByPlay: ledger.approvedCountsByPlay(),
+    playCounts: ledger.queueCountsByPlay(playCountArgs),
     noStrongOffer: ledger.countPendingOfferSkips(noOfferPlays),
-    order: ranked ? "ranked" : "newest",
+    order: ranked ? "ranked" : dir === "asc" ? "oldest" : "newest",
   };
+  if (total != null) body.total = total;
+  if (lowerBound) body.totalIsLowerBound = true;
   const capacity = sendsToday();
   if (capacity) body.sendsToday = capacity;
   return jsonResponse(body, 200, req);
@@ -1492,30 +1671,27 @@ export async function suggestRejectReasonRoute(
 }
 
 export async function approveAllRoute(req: Request): Promise<Response> {
-  let body: { play?: string } = {};
+  let body: { play?: string; show?: unknown; channel?: unknown } = {};
   try {
-    body = (await req.json()) as { play?: string };
+    body = (await req.json()) as { play?: string; show?: unknown; channel?: unknown };
   } catch {
     // empty body is fine
   }
   const ledger = getLedger();
-  // The bulk UPDATE returns a count, not ids: take the pending ids first so
-  // the rows it approves get their posts captured (in the background; the
-  // capture re-checks each row is still approved).
   // A row whose writer found no strong offer stays pending: it has no offer
   // to send, so approving it would only count a row the drain then holds.
   const offerSkip: QueueOfferSkipFilter = { mode: "exclude", noOfferPlays: noOfferPlayNames() };
-  const pendingArgs: QueueListArgs = {
-    status: "pending",
-    limit: 100_000,
-    columns: ["id"],
-    offerSkip,
-  };
-  if (body.play) pendingArgs.playName = body.play;
-  const pendingIds = ledger.listQueue(pendingArgs).map((row) => row.id);
-  const n = ledger.approveAllPending(
-    body.play ? { playName: body.play, offerSkip } : { offerSkip },
-  );
+  // The page's Show and Channel filters narrow the batch to the rows the
+  // page lists under them (`listQueueRoute`).
+  const filters: QueueListFilters = { offerSkip, ...showChannelFilters(body.show, body.channel) };
+  if (body.play) filters.playName = body.play;
+  // The bulk UPDATE returns a count, not ids: take the pending ids first so
+  // the rows it approves get their posts captured (in the background; the
+  // capture re-checks each row is still approved). A `ready`/`held` filter
+  // is finished in JS, so the UPDATE is then limited to those ids.
+  const pendingIds = filteredPendingIds(ledger, filters);
+  const exact = !filters.show || queueShowIsExact(filters.show.show);
+  const n = ledger.approveAllPending(exact ? filters : { ...filters, ids: pendingIds });
   if (n > 0) scheduleNewsfeedOnApproval(pendingIds);
   return jsonResponse({ approved: n }, 200, req);
 }

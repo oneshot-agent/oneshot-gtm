@@ -116,13 +116,15 @@ const SEEDS = [
   "/measure/spend-series?sinceDays=30",
   "/measure/spend-series?sinceDays=7",
 
-  // The queue table's status and order filters. The play chips come from
-  // whatever each of these returns, which is how the UI builds them too.
+  // The queue table's status and order filters, one page (QUEUE_PAGE_SIZE)
+  // each. The play options come from whatever each of these returns, which is
+  // how the UI builds them too.
   ...["", "pending", "approved", "rejected", "sent", "expired"].flatMap((status) =>
-    ["", "ranked", "newest"].map((order) => {
+    ["", "ranked", "newest", "oldest"].map((order) => {
       const q = new URLSearchParams();
       if (status) q.set("status", status);
-      q.set("limit", "200");
+      if (status === "pending") q.set("offerSkip", "exclude");
+      q.set("limit", "50");
       if (order) q.set("order", order);
       return `/queue?${q.toString()}`;
     }),
@@ -186,13 +188,16 @@ function expand(url: string, body: unknown): string[] {
   }
 
   if (url.startsWith("/queue?") && !url.includes("play=")) {
-    const { rows, approvedByPlay } = body as {
+    const { rows, approvedByPlay, playCounts } = body as {
       rows?: Array<{ playName: string }>;
       approvedByPlay?: Record<string, unknown>;
+      playCounts?: Record<string, unknown>;
     };
-    // queue.tsx builds its play chips from the rows on the page plus any play
-    // holding approved rows, so those are the chips a visitor can press.
+    // queue.tsx builds its play options from every play with rows under the
+    // status, the rows on the page, and any play holding approved rows, so
+    // those are the options a visitor can pick.
     const plays = new Set([
+      ...Object.keys(playCounts ?? {}),
       ...(rows ?? []).map((r) => r.playName),
       ...Object.keys(approvedByPlay ?? {}),
     ]);
