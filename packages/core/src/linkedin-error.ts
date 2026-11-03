@@ -67,7 +67,7 @@ export function linkedInError(error: unknown) {
       (CODE.test(e.reason ?? "") ? e.reason : undefined) ??
       nested.code ??
       body.code ??
-      text(body.error),
+      (CODE.test(text(body.error) ?? "") ? text(body.error) : undefined),
   );
   let shown = detail && !message.includes(detail) ? `${message}: ${detail}` : message;
   // A payment refusal's `reason` is its code alone; a job's is shown.

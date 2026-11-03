@@ -111,3 +111,14 @@ it("keeps a 409 duplicate_request's status, code and original request id", () =>
   });
   expect(e).toMatchObject({ statusCode: 409, code: "duplicate_request", requestId: "req-orig" });
 });
+
+it("never takes a sentence in the body's `error` for a code", () => {
+  const e = linkedInError({
+    name: "ToolError",
+    message: "Tool request failed",
+    statusCode: 400,
+    responseBody: JSON.stringify({ error: "Unrecognized key: timeout" }),
+  });
+  expect(e.code).toBeUndefined();
+  expect(linkedInMessageDeferral(e)).toBeNull();
+});
