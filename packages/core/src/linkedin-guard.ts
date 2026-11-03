@@ -50,6 +50,12 @@ export interface LinkedInInviteProspect {
    * The caller checks the reply itself (`canConnectAsFriend`).
    */
   friend?: boolean;
+  /**
+   * Resending under the same key an invite that may have gone out (a 429):
+   * the workspace whose dispatched invite claim on this profile is that
+   * invite's own. Only that claim is passed over; every other check holds.
+   */
+  ownInviteClaim?: string;
 }
 
 /** What the guard needs from the ledger. `Ledger` satisfies it. */
@@ -277,7 +283,12 @@ export function canInviteOnLinkedIn(
       ctx.ledger.backfillLinkedInTouched(shared as SharedDb);
     }
     const held = shared.linkedInTouch(profile.key);
-    if (held) return refuse(...touchedReason(held));
+    const own =
+      !!held &&
+      !!prospect.ownInviteClaim &&
+      held.source === `invite:${prospect.ownInviteClaim}` &&
+      held.status === "dispatched";
+    if (held && !own) return refuse(...touchedReason(held));
   } catch (err) {
     logEvent(
       "shared_db.read_failed",

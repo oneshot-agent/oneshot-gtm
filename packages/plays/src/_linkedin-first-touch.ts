@@ -8,6 +8,7 @@ import {
   KNOWN_CONNECTION_VIA,
   normalizeLinkedInProfile,
   type LinkedInGuardReason,
+  type LinkedInGuardVerdict,
   loadConfig,
   logEvent,
   noteAccountInviteCapReached,
@@ -403,6 +404,26 @@ export interface SendLinkedInInviteInput {
   resumeOnly?: boolean;
 }
 
+/** The invite guard for a row (or cadence step), as every invite runs it. */
+function inviteVerdict(
+  input: SendLinkedInInviteInput,
+  opts: { ownInviteClaim?: string } = {},
+): LinkedInGuardVerdict {
+  const p = input.row.payload;
+  const override = p["icpOverride"];
+  return canInviteOnLinkedInNow({
+    ...(input.continuation ? { prospectId: input.continuation.prospectId } : {}),
+    name: str(p, "name"),
+    company: str(p, "company"),
+    email: str(p, "email", "founderEmail"),
+    linkedinUrl: str(p, "linkedinUrl"),
+    icpVerdict: str(p, "icpVerdict"),
+    icpOverridden: typeof override === "object" && override !== null,
+    ...(input.friend ? { friend: true } : {}),
+    ...(opts.ownInviteClaim ? { ownInviteClaim: opts.ownInviteClaim } : {}),
+  });
+}
+
 /** What `sendLinkedInInvite` answers with `resumeOnly` when nothing is pending under the key. */
 export const NOT_PENDING_FLAG = "not-pending: no pending invite under this key";
 
@@ -446,6 +467,18 @@ export async function sendLinkedInInvite(
     const unconfirmed = !pending.requestId;
     if (unconfirmed) {
       if (input.resumeOnly) return { sent: false, flags: [NOT_PENDING_FLAG] };
+      // Everything may have changed since the 429 (an opt-out, a reply, a
+      // conversation): the guard runs again, passing over only this invite's
+      // own claim. A refusal sends nothing. The claim stays either way, since
+      // the first invite may have gone out. A final refusal also ends the
+      // resend, so neither Send nor the sweep picks it up again; one that
+      // could not be checked (`guard-unavailable`) keeps it for the next try.
+      const verdict = inviteVerdict(input, { ownInviteClaim: input.workspace });
+      if (!verdict.ok) {
+        if (verdict.reason !== "guard-unavailable")
+          getLedger().linkedInPending.clear(idempotencyKey);
+        return { sent: false, flags: [guardFlag(verdict)], guard: verdict.reason };
+      }
       const limits = await accountInviteLimits(input.sender.accountId, () =>
         input.sender.call({ kind: "account", accountId: input.sender.accountId }),
       );
@@ -498,18 +531,7 @@ export async function sendLinkedInInvite(
   // runs on the stored URL as is, so an X, GitHub or company URL is refused
   // with a guard reason (counted per reason in drain output) instead of
   // dropping out as a bare "no profile".
-  const p0 = input.row.payload;
-  const override = p0["icpOverride"];
-  const verdict = canInviteOnLinkedInNow({
-    ...(input.continuation ? { prospectId: input.continuation.prospectId } : {}),
-    name: str(p0, "name"),
-    company: str(p0, "company"),
-    email: str(p0, "email", "founderEmail"),
-    linkedinUrl: str(p0, "linkedinUrl"),
-    icpVerdict: str(p0, "icpVerdict"),
-    icpOverridden: typeof override === "object" && override !== null,
-    ...(input.friend ? { friend: true } : {}),
-  });
+  const verdict = inviteVerdict(input);
   if (!verdict.ok) return { sent: false, flags: [guardFlag(verdict)], guard: verdict.reason };
   if (!target || !profile) {
     return {

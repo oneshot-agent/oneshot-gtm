@@ -628,10 +628,75 @@ describe("sendLinkedInInvite", () => {
       expect(pendingSends.size).toBe(0);
     });
 
+    const tooMany = () =>
+      sender(Object.assign(new Error("Too Many Requests"), { name: "ToolError", statusCode: 429 }));
+
+    it("the resend runs the guard again: opted out since the 429, nothing is sent", async () => {
+      const mira = row({
+        name: "Mira Okafor",
+        linkedinUrl: "https://www.linkedin.com/in/mira-okafor",
+      });
+      await sendLinkedInInvite({
+        row: mira,
+        note: "hi",
+        sender: tooMany().sender,
+        workspace: "alpha",
+      }).catch(() => {});
+      expect(pendingSends.get("gtm:alpha:queue:7:invite")).toMatchObject({ requestId: "" });
+      // They unsubscribed in the meantime (the guard reads the workspace's own ledger).
+      const real = (
+        await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core")
+      ).getLedger();
+      const id = real.upsertProspect({
+        name: "Mira Okafor",
+        email: null,
+        linkedin_url: "https://www.linkedin.com/in/mira-okafor",
+        source: "luma-events",
+      });
+      real.enrollCadence({ prospectId: id, playName: "luma-events", nextDueAt: "2000-01-01" });
+      real.setCadenceStatus({ prospectId: id, playName: "luma-events", status: "unsubscribed" });
+      _resetInviteLimitsCacheForTests();
+      const next = sender({ invitation_id: "inv-1", status: "sent" });
+      const out = await sendLinkedInInvite({
+        row: mira,
+        note: "hi",
+        sender: next.sender,
+        workspace: "alpha",
+      });
+      expect(out).toEqual({
+        sent: false,
+        flags: ["opted-out: they opted out of contact"],
+        guard: "opted-out",
+      });
+      expect(inviteKeys(next.calls)).toEqual([]);
+      // The first invite may have gone out: the profile stays held, and the
+      // resend is over.
+      expect(getSharedDb().linkedInTouch("mira-okafor")?.status).toBe("dispatched");
+      expect(pendingSends.size).toBe(0);
+    });
+
+    it("nothing changed since the 429: the resend passes its own claim and goes under the same key", async () => {
+      await sendLinkedInInvite({
+        row: row(),
+        note: "hi",
+        sender: tooMany().sender,
+        workspace: "alpha",
+      }).catch(() => {});
+      _resetInviteLimitsCacheForTests();
+      const next = sender({ invitation_id: "inv-1", status: "sent" });
+      expect(
+        await sendLinkedInInvite({
+          row: row(),
+          note: "hi",
+          sender: next.sender,
+          workspace: "alpha",
+        }),
+      ).toMatchObject({ sent: true });
+      expect(inviteKeys(next.calls)).toEqual(["gtm:alpha:queue:7:invite"]);
+    });
+
     it("a 429 is kept whatever its text says", async () => {
-      const limited = sender(
-        Object.assign(new Error("Too Many Requests"), { name: "ToolError", statusCode: 429 }),
-      );
+      const limited = tooMany();
       const err = await sendLinkedInInvite({
         row: row(),
         note: "hi",
