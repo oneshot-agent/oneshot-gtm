@@ -1182,10 +1182,10 @@ function QueuePage() {
           ) : null}
           {drainModal?.filter && (
             <p className="text-[13px] text-ink-cream-2">
-              Only the {drainModal.filter.count} approved rows shown under {drainModal.filter.label}{" "}
-              go
-              {drainModal.filter.order === "oldest" ? ", oldest first" : ", newest first"}. The rest
-              stay approved.
+              Takes up to the limit below from the {drainModal.filter.count} approved rows under{" "}
+              {drainModal.filter.label},{" "}
+              {drainModal.filter.order === "oldest" ? "oldest first" : "newest first"}. Rows outside
+              the filter, or beyond the limit, stay approved.
             </p>
           )}
           {drainModal?.ids ? null : (

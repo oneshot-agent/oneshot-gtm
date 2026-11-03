@@ -254,6 +254,33 @@ describe("GET /api/queue sort, show, channel and offset", () => {
     expect(ready.total).toBe(1);
   });
 
+  it("reports a floor when the ranking window is full", async () => {
+    const insert = raw().prepare(
+      `INSERT INTO target_queue (play_name, payload_json, dedupe_key, source, status, last_draft_json)
+       VALUES (?, ?, ?, 'find:test', 'pending', ?)`,
+    );
+    raw().transaction(() => {
+      for (let i = 0; i < 1005; i++) {
+        insert.run(
+          PLAY,
+          JSON.stringify({ email: `r${i}@acme.example`, icpVerdict: "pass", offer: OFFER }),
+          `ranked-${i}`,
+          JSON.stringify(DRAFT),
+        );
+      }
+    })();
+    const plain = await list("status=pending&order=ranked&limit=10");
+    expect(plain.total).toBe(1000);
+    expect(plain.totalIsLowerBound).toBe(true);
+    const ready = await list("status=pending&order=ranked&show=ready&limit=10");
+    expect(ready.rows).toHaveLength(10);
+    expect(ready.totalIsLowerBound).toBe(true);
+    // A window with room left counts every row.
+    const few = await list("status=pending&order=ranked&show=no-draft");
+    expect(few.total).toBe(0);
+    expect(few.totalIsLowerBound).toBeUndefined();
+  });
+
   it("lists every play with rows under the status, whatever the page shows", async () => {
     row({ play: "alpha" });
     row({ play: "beta", draft: DRAFT });

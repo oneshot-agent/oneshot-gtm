@@ -886,7 +886,8 @@ function rowsInOrder(ledger: ReturnType<typeof getLedger>, ids: number[]): Queue
 /**
  * The ranked page: rank the projected window, then read the page's rows in
  * full, in rank order. A `ready`/`held` filter reads the ranked ids a step at
- * a time and keeps the matches. The total is the window's (what can rank).
+ * a time and keeps the matches. The total is the window's (what can rank),
+ * a floor when the window is full.
  */
 function rankedPage(
   ledger: ReturnType<typeof getLedger>,
@@ -896,14 +897,16 @@ function rankedPage(
   limit: number,
 ): { rows: QueueRow[]; total: number; lowerBound: boolean } {
   const ids = rankPendingRows(window).map((row) => row.id);
+  // A full window may have left rows out: its count is then a floor.
+  const windowFull = window.length >= RANK_WINDOW;
   if (!show || queueShowIsExact(show)) {
     return {
       rows: rowsInOrder(ledger, ids.slice(offset, offset + limit)),
       total: ids.length,
-      lowerBound: false,
+      lowerBound: windowFull,
     };
   }
-  return showPage(
+  const page = showPage(
     show,
     (scanned) => ({
       rows: rowsInOrder(ledger, ids.slice(scanned, scanned + SHOW_SCAN_WINDOW)),
@@ -912,6 +915,7 @@ function rankedPage(
     offset,
     limit,
   );
+  return { ...page, lowerBound: page.lowerBound || windowFull };
 }
 
 export function listQueueRoute(req: Request): Response {

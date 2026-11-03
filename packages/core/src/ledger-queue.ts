@@ -210,9 +210,11 @@ const HAS_DRAFT_SQL = `(CASE WHEN json_valid(last_draft_json) THEN
         AND json_type(last_draft_json, '$.sent') IS NOT 'true')
     ELSE 0 END)`;
 
-/** The draft carries at least one flag (`flags` an array with an entry). Valid JSON only. */
-const DRAFT_FLAGGED_SQL = `(json_type(last_draft_json, '$.flags') IS 'array'
-      AND json_array_length(last_draft_json, '$.flags') > 0)`;
+/** The draft carries at least one flag (`flags` an array with an entry). Never NULL; malformed JSON is unflagged. */
+const DRAFT_FLAGGED_SQL = `(CASE WHEN json_valid(last_draft_json) THEN
+      (json_type(last_draft_json, '$.flags') IS 'array'
+        AND json_array_length(last_draft_json, '$.flags') > 0)
+    ELSE 0 END)`;
 
 /** No draft `toView` reads as sent (`lastDraft.sent`): none, a malformed one, or one not sent. Never NULL. */
 const DRAFT_UNSENT_SQL = `NOT (CASE WHEN json_valid(last_draft_json) THEN

@@ -117,6 +117,13 @@ describe("listQueue show filters", () => {
     }
   });
 
+  it("never counts a malformed draft as flagged", () => {
+    const flagged = row({ payload: { icpVerdict: "pass" }, draft: { ...DRAFT, flags: ["x"] } });
+    const malformed = row({ payload: { icpVerdict: "pass" }, draft: '{"flags": ["x"]' });
+    expect(shown("held")).toEqual([flagged]);
+    expect(shown("held")).not.toContain(malformed);
+  });
+
   it("narrows held candidates by the payload's fit verdict", () => {
     const pass = row({ payload: { icpVerdict: "pass" } });
     const reject = row({ payload: { icpVerdict: "reject" } });

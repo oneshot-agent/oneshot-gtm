@@ -1877,7 +1877,8 @@ export interface QueueListResponse {
   /**
    * Set when `total` is a floor: a `ready` or `held` filter finishes in the
    * server after the query (fit and email-mismatch holds), and the scan
-   * stopped before the last row. The page shows it as "N+".
+   * stopped before the last row; or ranked order filled its window, so rows
+   * past it were left out. The page shows it as "N+".
    */
   totalIsLowerBound?: true;
   /**
