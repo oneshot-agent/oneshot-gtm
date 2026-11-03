@@ -283,6 +283,45 @@ describe("probes", () => {
   });
 });
 
+describe("probe ownership", () => {
+  it("a call that started before the pause cannot end it or free the probe slot", async () => {
+    vi.useFakeTimers();
+    let release: (() => void) | undefined;
+    let mode: "fail" | "hold" | "ok" = "fail";
+    const raw = {
+      companyFind: vi.fn(async () => {
+        if (mode === "hold") {
+          await new Promise<void>((r) => (release = r));
+          return { results: [] };
+        }
+        if (mode === "ok") return { results: [] };
+        throw settlementError();
+      }),
+    };
+    const agent = watchAgent(raw);
+    // A slow call goes out before the pause...
+    mode = "hold";
+    const stale = agent.companyFind();
+    const releaseStale = release;
+    mode = "fail";
+    for (let i = 0; i < 6; i++) await agent.companyFind().catch(() => {});
+    vi.setSystemTime(Date.now() + PLATFORM_COOLDOWN_MS + 1);
+    // ...the probe goes out after the cooldown...
+    mode = "hold";
+    const probe = agent.companyFind();
+    // ...and the stale call answers first: the pause and the slot stay.
+    releaseStale?.();
+    await stale;
+    expect(isPlatformPaused()).toBe(true);
+    await expect(agent.companyFind()).rejects.toBeInstanceOf(PlatformUnavailableError);
+    release?.();
+    await probe;
+    expect(isPlatformPaused()).toBe(false);
+    mode = "ok";
+    await expect(agent.companyFind()).resolves.toEqual({ results: [] });
+  });
+});
+
 describe("run scope", () => {
   it("marks a run hit when OneShot paused during it", async () => {
     const agent = watchAgent(fakeAgent(() => true));

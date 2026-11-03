@@ -129,8 +129,8 @@ interface Breaker {
   outcomes: boolean[];
   open: boolean;
   openedAt: number;
-  /** When the one probe after a cooldown went out; 0 when none is in flight. */
-  probeAt: number;
+  /** The one probe after a cooldown, while it is out: which call, and when it went. */
+  probe: { id: number; at: number } | null;
   kind: PlatformErrorKind;
   reason: string;
 }
@@ -141,22 +141,30 @@ const breakers = new Map<string, Breaker>();
 function breakerFor(key: string): Breaker {
   let b = breakers.get(key);
   if (!b) {
-    b = { outcomes: [], open: false, openedAt: 0, probeAt: 0, kind: "unavailable", reason: "" };
+    b = { outcomes: [], open: false, openedAt: 0, probe: null, kind: "unavailable", reason: "" };
     breakers.set(key, b);
   }
   return b;
 }
 
-function record(key: string, failed: PlatformError | null, now: number): void {
+/**
+ * Whether this call's answer decides an open breaker: it is the probe, or no
+ * probe is out and the cooldown is over. A call that started before the
+ * pause, or a send inside it, does not.
+ */
+function decides(b: Breaker, now: number, probeId: number): boolean {
+  if (b.probe) return b.probe.id === probeId;
+  return now - b.openedAt >= PLATFORM_COOLDOWN_MS;
+}
+
+function record(key: string, failed: PlatformError | null, now: number, probeId = 0): void {
   const b = breakerFor(key);
   if (!failed) {
-    // Only a call made after the cooldown ends the pause: a send, or a lookup
-    // started before the pause, can succeed inside it.
-    if (b.open && now - b.openedAt >= PLATFORM_COOLDOWN_MS) {
+    if (b.open && decides(b, now, probeId)) {
       logEvent("oneshot.platform_resumed", { key, kind: b.kind, reason: b.reason });
       b.open = false;
       b.openedAt = 0;
-      b.probeAt = 0;
+      b.probe = null;
       b.outcomes = [];
     }
     b.outcomes.push(false);
@@ -165,9 +173,11 @@ function record(key: string, failed: PlatformError | null, now: number): void {
     b.kind = failed.kind;
     b.reason = failed.reason;
     if (b.open) {
-      // A probe failed: wait another cooldown before the next one.
-      b.openedAt = now;
-      b.probeAt = 0;
+      // The probe failed: wait another cooldown before the next one.
+      if (decides(b, now, probeId)) {
+        b.openedAt = now;
+        b.probe = null;
+      }
     } else if (b.outcomes.slice(-PLATFORM_WINDOW).filter(Boolean).length >= PLATFORM_TRIP) {
       b.open = true;
       b.openedAt = now;
@@ -185,14 +195,29 @@ function record(key: string, failed: PlatformError | null, now: number): void {
  * The breaker if calls on `key` are paused: inside the cooldown, or while the
  * one probe after it is out. `admit` lets the caller be that probe.
  */
-function pausedBreaker(key: string, now: number, admit = false): Breaker | null {
+function pausedBreaker(key: string, now: number): Breaker | null {
   const b = breakers.get(key);
   if (!b?.open) return null;
   if (now - b.openedAt < PLATFORM_COOLDOWN_MS) return b;
   // A probe that never answered (a hung call) frees the slot after a cooldown.
-  if (b.probeAt && now - b.probeAt < PLATFORM_COOLDOWN_MS) return b;
-  if (admit) b.probeAt = now;
+  if (b.probe && now - b.probe.at < PLATFORM_COOLDOWN_MS) return b;
   return null;
+}
+
+let nextProbeId = 1;
+
+/** Make this call the probe of `key`'s open breaker past its cooldown; its id, or 0. */
+function admitProbe(key: string, now: number): number {
+  const b = breakers.get(key);
+  if (!b?.open || pausedBreaker(key, now)) return 0;
+  b.probe = { id: nextProbeId++, at: now };
+  return b.probe.id;
+}
+
+/** Free `key`'s probe slot without a verdict, if this call holds it. */
+function releaseProbe(key: string, probeId: number): void {
+  const b = breakers.get(key);
+  if (b?.probe && probeId && b.probe.id === probeId) b.probe = null;
 }
 
 /** True while OneShot as a whole is paused (payment rail, wallet or reachability). */
@@ -281,19 +306,24 @@ function methodKey(method: string, args: unknown[]): string {
   return method === "tool" && typeof args[0] === "string" ? `tool:${args[0]}` : method;
 }
 
-function observe(method: string, args: unknown[], err: unknown | null): void {
+interface Probes {
+  platform: number;
+  tool: number;
+}
+
+function observe(method: string, args: unknown[], err: unknown | null, probes: Probes): void {
   const now = Date.now();
   const key = methodKey(method, args);
   if (err === null) {
-    record("platform", null, now);
-    record(key, null, now);
+    record("platform", null, now, probes.platform);
+    record(key, null, now, probes.tool);
     return;
   }
   const failed = classifyPlatformError(err);
   if (!failed) {
     // An answer about the input: OneShot and this tool both worked.
-    record("platform", null, now);
-    record(key, null, now);
+    record("platform", null, now, probes.platform);
+    record(key, null, now, probes.tool);
     return;
   }
   const message = err instanceof Error ? err.message : String(err);
@@ -306,12 +336,11 @@ function observe(method: string, args: unknown[], err: unknown | null): void {
   // is up; a platform failure says nothing about the tool, so its probe slot
   // is freed without a verdict.
   if (failed.kind === "tool") {
-    record("platform", null, now);
-    record(key, failed, now);
+    record("platform", null, now, probes.platform);
+    record(key, failed, now, probes.tool);
   } else {
-    record("platform", failed, now);
-    const tool = breakers.get(key);
-    if (tool) tool.probeAt = 0;
+    record("platform", failed, now, probes.platform);
+    releaseProbe(key, probes.tool);
   }
   noteScope(failed, isPlatformPaused(now));
 }
@@ -331,6 +360,7 @@ export function watchAgent<T extends object>(agent: T): T {
       const known = wrapped.get(prop);
       if (known?.value === value) return known.fn;
       const fn = (...args: unknown[]): unknown => {
+        const probes: Probes = { platform: 0, tool: 0 };
         if (isLookup(prop, args)) {
           const now = Date.now();
           const key = methodKey(prop, args);
@@ -340,19 +370,19 @@ export function watchAgent<T extends object>(agent: T): T {
             return Promise.reject(new PlatformUnavailableError(paused.kind, paused.reason, prop));
           }
           // Past a cooldown this call is the one probe; others wait for its answer.
-          pausedBreaker("platform", now, true);
-          pausedBreaker(key, now, true);
+          probes.platform = admitProbe("platform", now);
+          probes.tool = admitProbe(key, now);
         }
         const out = (value as (...a: unknown[]) => unknown).apply(target, args);
         // Only calls that go to OneShot (they return a promise) count.
         if (!out || typeof (out as Promise<unknown>).then !== "function") return out;
         return (out as Promise<unknown>).then(
           (res) => {
-            observe(prop, args, null);
+            observe(prop, args, null, probes);
             return res;
           },
           (err: unknown) => {
-            observe(prop, args, err);
+            observe(prop, args, err, probes);
             throw err;
           },
         );
