@@ -378,6 +378,19 @@ export function textHasAddress(text: string, email: string): boolean {
   return text.toLowerCase().includes(email.trim().toLowerCase());
 }
 
+/**
+ * One `@`, no whitespace, a dotted domain. A scan, not a regex: the input is
+ * model output (CodeQL: polynomial backtracking).
+ */
+function looksLikeAddress(email: string): boolean {
+  if (email.length > 254 || /\s/.test(email)) return false;
+  const parts = email.split("@");
+  if (parts.length !== 2 || !parts[0]) return false;
+  const domain = parts[1]!;
+  const dot = domain.indexOf(".");
+  return dot > 0 && dot < domain.length - 1 && !domain.endsWith(".");
+}
+
 /** Validate a model-proposed successor against the reply text. */
 export function successorFromModel(
   text: string,
@@ -386,7 +399,7 @@ export function successorFromModel(
 ): AutoReplySuccessor | null {
   const email =
     typeof raw.email === "string" &&
-    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw.email.trim()) &&
+    looksLikeAddress(raw.email.trim()) &&
     textHasAddress(text, raw.email) &&
     !excludedAddress(raw.email.trim(), exclude)
       ? raw.email.trim().toLowerCase()
