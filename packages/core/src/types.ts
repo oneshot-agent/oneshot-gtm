@@ -88,6 +88,13 @@ export interface InboxReplyRecord {
   intent_classified_at?: string | null;
   /** 1 when the confidence was under the workspace's review threshold. */
   intent_review?: number | null;
+  /** What an automatic reply says (auto-reply.ts `AutoReplyReason`); NULL = not read yet, or not automatic. */
+  auto_reason?: string | null;
+  /** First day back an out-of-office states (YYYY-MM-DD). */
+  return_date?: string | null;
+  /** JSON `AutoReplySuccessor`: who a "left the company" reply points to. */
+  successor_json?: string | null;
+  auto_classified_at?: string | null;
   created_at: string;
 }
 
@@ -706,6 +713,18 @@ export interface OneShotConfig {
    * overrides it. Unset = off.
    */
   linkedinContinuation?: boolean;
+  /**
+   * What automatic replies and policy bounces do to a sequence (auto-reply.ts).
+   * Every key is optional; absent reads as its default.
+   * - `oooBufferDays` (2): an out-of-office with a return date holds the next
+   *   step until that date plus this many days.
+   * - `undatedDelayDays` (7): an out-of-office with no date holds it this long.
+   * - `queueSuccessor` (true): a "left the company" reply that names someone at
+   *   the same company domain queues them as a pending row on the same play.
+   * - `stopOnBlock` (true): a policy block (5.7.x bounce) stops the sequence.
+   * A "left the company" reply always stops the sequence.
+   */
+  autoReply?: import("./auto-reply.ts").AutoReplyConfig;
   /**
    * Learning-loop v2 (issue #750): minimum number of human approve/reject
    * queue decisions required before the background job will spend a model

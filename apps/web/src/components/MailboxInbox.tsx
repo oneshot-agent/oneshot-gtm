@@ -13,6 +13,7 @@ import { Input } from "./primitives/Field.tsx";
 import { Badge } from "./primitives/Badge.tsx";
 import { IntentBadge } from "./IntentBadge.tsx";
 import { timeAgo } from "../lib/cn.ts";
+import { autoReplyLabel } from "../lib/autoReplyLabel.ts";
 import { readOnly } from "../lib/readOnly.ts";
 import { IS_DEMO } from "../api/demo.ts";
 
@@ -211,13 +212,20 @@ export function MailboxThreadRow({
           {t.reply.bounceKind ? (
             <Badge tone="blocked">delivery failure · {t.reply.bounceKind}</Badge>
           ) : t.reply.kind !== "human" ? (
-            <Badge tone={t.reply.kind === "auto" ? "neutral" : "blocked"}>
-              {t.reply.kind === "unsubscribe"
-                ? "opted out"
-                : t.reply.kind === "auto_permanent"
-                  ? "mailbox unavailable"
-                  : "automatic reply"}
-            </Badge>
+            <>
+              <Badge
+                tone={
+                  t.reply.kind === "auto" && t.reply.autoReason !== "left_company"
+                    ? "neutral"
+                    : "blocked"
+                }
+              >
+                {autoReplyLabel(t.reply)}
+              </Badge>
+              {t.reply.successor?.queueId != null && (
+                <Badge tone="receipt">successor queued #{t.reply.successor.queueId}</Badge>
+              )}
+            </>
           ) : (
             <IntentBadge
               intent={t.reply.intent}

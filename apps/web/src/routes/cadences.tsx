@@ -32,7 +32,10 @@ import { cn, formatSendsToday, timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
 import {
   STOP_REASON_LABELS,
+  autoReasonBadge,
+  awayLabel,
   heldLabel,
+  isAway,
   isHeldElsewhere,
   mailWaitingRows,
   sendErrorLabel,
@@ -278,8 +281,8 @@ function CadencesPage() {
   });
 
   const sendNext = useMutation({
-    mutationFn: (vars: { prospectId: number; playName: string }) =>
-      api.sendCadenceNext(vars.prospectId, vars.playName),
+    mutationFn: (vars: { prospectId: number; playName: string; confirmHold?: boolean }) =>
+      api.sendCadenceNext(vars.prospectId, vars.playName, vars.confirmHold === true),
     onSuccess: (_data, vars) => {
       // Server returned 202: actual SDK email send is fire-and-forget in the
       // background (~2 min). We close the modal + clear expansion immediately
@@ -294,8 +297,35 @@ function CadencesPage() {
       });
       toast.success(`sending · ${vars.playName} — refreshes when complete`);
     },
-    onError: (err) => toast.error(`send failed: ${err.message}`),
+    onError: (err, vars) => {
+      // The server refused a held row the page did not know was held yet:
+      // ask, as the button would have.
+      if (/^away\b/.test(err.message) && !vars.confirmHold) {
+        void qc.invalidateQueries({ queryKey: ["cadences"] });
+        setAwayConfirm({ prospectId: vars.prospectId, playName: vars.playName, note: err.message });
+        return;
+      }
+      toast.error(`send failed: ${err.message}`);
+    },
   });
+  // Send next on a row an out-of-office holds asks first.
+  const [awayConfirm, setAwayConfirm] = useState<{
+    prospectId: number;
+    playName: string;
+    note: string;
+  } | null>(null);
+  const sendOrConfirm = (c: {
+    prospectId: number;
+    playName: string;
+    heldUntil?: string | null;
+    returnDate?: string | null;
+  }): void => {
+    if (isAway(c)) {
+      setAwayConfirm({ prospectId: c.prospectId, playName: c.playName, note: awayLabel(c) });
+      return;
+    }
+    sendNext.mutate({ prospectId: c.prospectId, playName: c.playName });
+  };
 
   const previewBatch = useMutation({
     mutationFn: (items: Array<{ prospectId: number; playName: string }>) =>
@@ -321,7 +351,12 @@ function CadencesPage() {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
       setSelected(new Set());
       setBulkSendConfirmOpen(false);
-      toast.success(`started send of ${data.accepted} — drafts will clear as each completes`);
+      const away = data.skipped?.length ?? 0;
+      toast.success(
+        `started send of ${data.accepted} — drafts will clear as each completes${
+          away > 0 ? ` · ${away} away, skipped` : ""
+        }`,
+      );
     },
     onError: (err) => toast.error(`bulk send failed: ${err.message}`),
   });
@@ -399,6 +434,7 @@ function CadencesPage() {
     stoppable: stoppableRows,
     previewable: previewableRows,
     sendable: sendableRows,
+    away: awayRows,
   } = useMemo(() => cadenceSelection(list, selected), [list, selected]);
   const mailWaiting = useMemo(() => mailWaitingRows(list), [list]);
   const allActiveSelected =
@@ -601,6 +637,14 @@ function CadencesPage() {
                 · {sendableRows.length} ready to send
               </span>
             )}
+            {awayRows.length > 0 && (
+              <span
+                className="ml-2 text-ink-muted"
+                title="An out-of-office reply holds these; send each on its own to confirm"
+              >
+                · {awayRows.length} away, skipped
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1.5">
             <Button
@@ -740,16 +784,18 @@ function CadencesPage() {
                       }
                     : held && c.heldElsewhere
                       ? { text: heldLabel(c.heldElsewhere, now.getTime()), cls: "text-ink-muted" }
-                      : c.status === "active" && c.lastSendError
-                        ? { text: sendErrorLabel(c.lastSendError), cls: "text-ink-blocked-2" }
-                        : isOverdue && c.nextDueAt
-                          ? {
-                              text: `${timeAgo(c.nextDueAt).replace(/ ago$/, "")} overdue`,
-                              cls: "text-ink-spend-2",
-                            }
-                          : c.status === "active" && c.nextDueAt
-                            ? { text: `Due ${timeAgo(c.nextDueAt)}`, cls: "text-ink-muted" }
-                            : null;
+                      : c.status === "active" && isAway(c, now.getTime())
+                        ? { text: awayLabel(c), cls: "text-ink-muted" }
+                        : c.status === "active" && c.lastSendError
+                          ? { text: sendErrorLabel(c.lastSendError), cls: "text-ink-blocked-2" }
+                          : isOverdue && c.nextDueAt
+                            ? {
+                                text: `${timeAgo(c.nextDueAt).replace(/ ago$/, "")} overdue`,
+                                cls: "text-ink-spend-2",
+                              }
+                            : c.status === "active" && c.nextDueAt
+                              ? { text: `Due ${timeAgo(c.nextDueAt)}`, cls: "text-ink-muted" }
+                              : null;
                 const open = expandedKeys.has(key);
                 const draft = c.nextStepDraft;
                 const previewPending = pendingPreviewKey === key;
@@ -787,13 +833,15 @@ function CadencesPage() {
                 const draftHeld = draft ? heldSummary(draft.flags, holdOptions) : null;
                 const sendTitle = heldTitle
                   ? heldTitle
-                  : !draft
-                    ? "generate a draft first"
-                    : draftHeld
-                      ? `held · ${draftHeld.next}`
-                      : c.nextStepIsBreakup
-                        ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
-                        : `send next step — sends now${earlyNote}`;
+                  : draft && !draftHeld && isAway(c, now.getTime())
+                    ? `${awayLabel(c)} — their out-of-office holds this step; Send asks to confirm`
+                    : !draft
+                      ? "generate a draft first"
+                      : draftHeld
+                        ? `held · ${draftHeld.next}`
+                        : c.nextStepIsBreakup
+                          ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
+                          : `send next step — sends now${earlyNote}`;
                 // The reminder: why this person was written to in the first
                 // place. The intro's signal and fit sentence, off the sent
                 // queue row (#599). Freeform, so it drops under privacy mode.
@@ -916,7 +964,7 @@ function CadencesPage() {
                       disabled={sendDisabled}
                       onClick={() => {
                         if (!draft) return;
-                        sendNext.mutate({ prospectId: c.prospectId, playName: c.playName });
+                        sendOrConfirm(c);
                       }}
                       {...readOnly}
                     >
@@ -1122,6 +1170,14 @@ function CadencesPage() {
                         >
                           <Badge tone={statusTone(c.status)}>{c.status}</Badge>
                         </span>
+                        {(() => {
+                          const auto = autoReasonBadge(c, now.getTime());
+                          return auto ? (
+                            <span className="ml-1.5">
+                              <Badge tone={auto.tone}>{auto.text}</Badge>
+                            </span>
+                          ) : null;
+                        })()}
                       </td>
                       <td className="whitespace-nowrap py-[10px] text-right font-mono text-[11px] text-ink-faint">
                         {timeAgo(c.enrolledAt)}
@@ -1217,10 +1273,7 @@ function CadencesPage() {
                                         disabled={sendDisabled}
                                         onClick={() => {
                                           if (!draft) return;
-                                          sendNext.mutate({
-                                            prospectId: c.prospectId,
-                                            playName: c.playName,
-                                          });
+                                          sendOrConfirm(c);
                                         }}
                                         {...readOnly}
                                       >
@@ -1429,6 +1482,39 @@ function CadencesPage() {
           completed when the letter was the last step. The skip is recorded as “letter skipped” in
           its history. A mailpiece already submitted to the printer is left alone; recover it in the
           mail review.
+        </div>
+      </Modal>
+
+      <Modal
+        open={awayConfirm != null}
+        onClose={() => setAwayConfirm(null)}
+        title="This person is away"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setAwayConfirm(null)}>
+              Wait
+            </Button>
+            <Button
+              onClick={() => {
+                if (!awayConfirm) return;
+                sendNext.mutate({
+                  prospectId: awayConfirm.prospectId,
+                  playName: awayConfirm.playName,
+                  confirmHold: true,
+                });
+                setAwayConfirm(null);
+              }}
+              disabled={sendNext.isPending}
+              {...readOnly}
+            >
+              Send anyway
+            </Button>
+          </>
+        }
+      >
+        <div className="text-[12px] text-ink-muted">
+          Their out-of-office reply holds this step ({awayConfirm?.note}). The step goes out on its
+          own once they are back; a batch send skips it until then.
         </div>
       </Modal>
 

@@ -1,6 +1,51 @@
 import { currentWorkspaceName, linkedInSdk } from "@oneshot-gtm/core";
-import { advanceCadence, receiptUrls } from "@oneshot-gtm/plays";
+import { advanceCadence, receiptUrls, reclassifyAutoReplies } from "@oneshot-gtm/plays";
 import { c, header, note, ok } from "../output.ts";
+
+/**
+ * `cadence reclassify-auto --since 14d [--write]`: read the stored automatic
+ * replies (and policy blocks) of the window again and print, per row, the
+ * reason, return date, successor and the action. Dry run unless `--write`.
+ */
+export async function commandCadenceReclassifyAuto(opts: {
+  since: number;
+  write: boolean;
+}): Promise<void> {
+  header(`cadence reclassify-auto --since ${opts.since}d ${opts.write ? "" : c.dim("(dry-run)")}`);
+  const sinceIso = new Date(Date.now() - opts.since * 86_400_000).toISOString();
+  const rows = await reclassifyAutoReplies({ sinceIso, write: opts.write });
+  if (rows.length === 0) {
+    note("No automatic replies or policy blocks in the window.");
+    return;
+  }
+  for (const r of rows) {
+    const who = `${r.email}${r.company ? ` (${r.company})` : ""}`;
+    const reason =
+      r.reason === "left_company"
+        ? c.yellow("left_company")
+        : r.reason === "out_of_office"
+          ? c.cyan("out_of_office")
+          : r.reason === "blocked"
+            ? c.yellow("blocked")
+            : c.dim("other");
+    const facts = [
+      r.returnDate ? `back ${r.returnDate}` : null,
+      r.successor
+        ? `successor ${[r.successor.name, r.successor.email].filter(Boolean).join(" ")}${
+            r.successorSkip ? ` (not queued: ${r.successorSkip})` : ""
+          }`
+        : null,
+    ].filter(Boolean);
+    process.stdout.write(
+      `  ${r.receivedAt.slice(0, 10)}  ${reason.padEnd(24)} ${who}${
+        facts.length ? c.dim(` · ${facts.join(" · ")}`) : ""
+      }\n    ${c.dim("→")} ${r.action}\n`,
+    );
+  }
+  process.stdout.write("\n");
+  if (opts.write) ok(`done: ${rows.length} rows.`);
+  else note(`${rows.length} rows. Nothing written; run again with --write to apply.`);
+}
 
 export async function commandCadenceAdvance(opts: { dryRun: boolean }): Promise<void> {
   header(`cadence advance ${opts.dryRun ? c.dim("(dry-run)") : ""}`);

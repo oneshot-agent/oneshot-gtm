@@ -37,6 +37,20 @@ The inbox poll reads the OneShot inbox, every authorised Gmail account and every
 
 Every inbound is classified. Out-of-office notices, dead-mailbox notices and unsubscribes are recorded and never count as replies. The last two suppress the address for good.
 
+An automatic reply is also read for what it says. Rules handle the clear cases; anything they cannot settle goes to one extraction on the workspace's model, which is skipped when no LLM is configured.
+
+- **Left the company** (left, retired, moved on, mailbox closed): the sequence stops as bounced and the address is suppressed. If the reply names someone at the same company domain who is not already a prospect or queued, they are queued on the same play as a pending row for you to review. It is never approved for you.
+- **Out of office**: the next step waits until the return date plus 2 days, or 7 days when no date is given. The due time only moves later. Cadences shows "away until Nov 9". A batch send skips the row, and Send next asks you to confirm.
+- **Anything else** (ticket receipts, "thanks for your email"): nothing changes.
+
+Set these in the workspace's `config.json`; every key is optional:
+
+```json
+"autoReply": { "oooBufferDays": 2, "undatedDelayDays": 7, "queueSuccessor": true, "stopOnBlock": true }
+```
+
+`cadence reclassify-auto --since 14d` reads the stored automatic replies and policy blocks of the window again and prints what it would do for each. Add `--write` to do it. It never sends.
+
 A human reply gets one label: `interested`, `question`, `partnership`, `meeting`, `intro`, `not_now`, `objection`, `complaint`, `not_interested`, `wrong_person`, `unsubscribe`, `pitch_back`, `auto_reply` or `other`. Only `unsubscribe` opts the contact out. The label shapes the drafted answer. **Reply labels** on Setup can route labelling to a classifier that also stores a confidence and marks a weak label "check label". `intel backfill-intent` labels older replies; it writes labels and never sends.
 
 Answering from Replies sends from the mailbox that received the message and threads correctly. Drafts are grounded: a known prospect's stored research, an unknown sender's site, and links only from your product brief. A reply whose outcome is unknown is checked against Sent and never resent on its own.
@@ -54,5 +68,5 @@ While a workspace's dashboard runs, it syncs each Smartlead mailbox about once a
 
 ## Deliverability
 
-- **Bounces.** Read from connected Gmail mailboxes every 30 minutes. A hard bounce stops the cadence and suppresses the address. A policy block (`5.7.x`) does not: it is a verdict on the message, not the mailbox. `doctor` warns above 2% per identity and fails above 5%, once an identity has 20 sends.
+- **Bounces.** Read from connected Gmail mailboxes every 30 minutes. A hard bounce stops the cadence and suppresses the address. A policy block (`5.7.x`) stops the cadence too, since the next step would be refused the same way, but does not suppress the address: it is a verdict on the message, not the mailbox. `autoReply.stopOnBlock: false` keeps blocked cadences running. `doctor` warns above 2% per identity and fails above 5%, once an identity has 20 sends.
 - **Inbox placement.** `gmail placement` sends one real message between two of your mailboxes and reports where it landed, with the SPF, DKIM and DMARC verdicts. Run it by hand and rarely; repeated canaries train the receiving filter.

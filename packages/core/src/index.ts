@@ -37,6 +37,7 @@ export * from "./run-cancel.ts";
 export * from "./types.ts";
 export { activeSendCount } from "./inflight.ts";
 export * from "./reply-classify.ts";
+export * from "./auto-reply.ts";
 export * from "./slack-notify.ts";
 export * from "./timezone.ts";
 export * from "./time.ts";

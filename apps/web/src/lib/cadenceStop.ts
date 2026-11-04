@@ -1,5 +1,5 @@
 import type { CadenceStopReason, CadenceView } from "@oneshot-gtm/shared-types";
-import { isHeldElsewhere } from "./cadenceState.ts";
+import { isAway, isHeldElsewhere } from "./cadenceState.ts";
 
 export type CadenceStopTarget = Pick<CadenceView, "prospectId" | "prospectName" | "playName">;
 export type CadenceStopInput = { reason: CadenceStopReason; note?: string };
@@ -20,11 +20,15 @@ export function cadenceSelection(
   const previewable = stoppable.filter(
     (c) => c.nextStepChannel !== "direct_mail" && c.nextStepLabel != null,
   );
-  const sendable = previewable.filter(
+  const ready = previewable.filter(
     (c) =>
       c.nextStepDraft != null && c.nextStepDraft.flags.length === 0 && !isHeldElsewhere(c, nowMs),
   );
-  return { selectable, chosen, stoppable, previewable, sendable };
+  // An out-of-office holds the step: a batch skips it (the server does too),
+  // and the selection bar says how many it skipped.
+  const away = ready.filter((c) => isAway(c, nowMs));
+  const sendable = ready.filter((c) => !isAway(c, nowMs));
+  return { selectable, chosen, stoppable, previewable, sendable, away };
 }
 
 /** Reuse the single-stop endpoint's validation, retaining individual failures for retry. */

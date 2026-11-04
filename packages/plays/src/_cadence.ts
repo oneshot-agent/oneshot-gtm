@@ -64,8 +64,10 @@ import {
   type EmailThread,
   isKnownConnectionMarker,
   productBriefText,
+  autoReplyConfigOf,
 } from "@oneshot-gtm/core";
 import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import { readAutoReply, stopLiveCadences } from "./_auto-reply.ts";
 import {
   agedEvidence,
   companyTheyRun,
@@ -1083,11 +1085,39 @@ async function walkInboxWindow(
       }
       if (kind !== "human") {
         out.autoRepliesSkipped++;
+        // What the autoresponder says: left (stop below, queue the successor
+        // it names), away (hold the next step until they are back), other
+        // (nothing). Read once per reply; a failure here never costs the poll.
+        let leftCompany = false;
+        if (kind === "auto" || kind === "auto_permanent") {
+          try {
+            const read = await readAutoReply(
+              {
+                id: e.id,
+                prospectId: prospect.id,
+                fromEmail: from,
+                subject: e.subject ?? null,
+                body: e.body ?? null,
+                receivedAt: e.received_at,
+                kind,
+                playName,
+              },
+              { write: true },
+            );
+            leftCompany = read?.reason === "left_company";
+          } catch (err) {
+            logEvent(
+              "reply.auto.read_failed",
+              { message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+              "warn",
+            );
+          }
+        }
         // A dead mailbox ("retired", "no longer at company") is a human-layer
         // hard bounce; an unsubscribe is a do-not-contact. Either way active
         // cadences stop, but with an honest status, no replied event, and no
         // bounces-table row (that would poison identity reputation stats).
-        if (kind === "auto_permanent" || kind === "unsubscribe") {
+        if (kind === "auto_permanent" || kind === "unsubscribe" || leftCompany) {
           const status = kind === "unsubscribe" ? "unsubscribed" : "bounced";
           // Notify once per newly inserted autoresponder email, not per cadence or
           // poll. The overlap window re-reads emails, so only insertedReply prevents
@@ -1100,26 +1130,20 @@ async function walkInboxWindow(
               status_code: null,
             });
           }
-          for (const cad of ledger.listCadencesForProspect(prospect.id)) {
-            if (cad.status !== "active" && cad.status !== "paused") continue;
-            ledger.recordSequenceEvent({
-              prospectId: prospect.id,
-              playName: cad.play_name,
-              stepIndex: cad.current_step,
-              channel: "email",
-              status,
-              metadata: { reason: kind === "unsubscribe" ? "unsubscribe" : "auto-reply-permanent" },
-              // Occurrence time = when the autoresponder actually landed in the
-              // mailbox, not poll time: same reasoning as the DSN-bounce path
-              // in pollInboxBounces, so the Slack daily summary's occurrence
-              // window credits this to the right UTC day. unsubscribe rows
-              // don't carry bouncedAt: it's a bounced-column semantic, and this
-              // status is only "bounced" for the auto_permanent branch.
-              ...(status === "bounced" ? { bouncedAt: e.received_at } : {}),
-            });
-            ledger.setCadenceStatus({ prospectId: prospect.id, playName: cad.play_name, status });
-            out.cadencesStopped++;
-          }
+          // Occurrence time = when the autoresponder actually landed in the
+          // mailbox, not poll time. Unsubscribe rows carry no bouncedAt: it is
+          // a bounced-column semantic.
+          out.cadencesStopped += stopLiveCadences(ledger, prospect.id, {
+            status,
+            reason:
+              kind === "unsubscribe"
+                ? "unsubscribe"
+                : leftCompany
+                  ? "left-company"
+                  : "auto-reply-permanent",
+            bouncedAt: e.received_at,
+            holdReason: leftCompany ? "left-company" : null,
+          });
         }
         if (e.id.startsWith("mailbox:")) ledger.mailboxes.acknowledge(e.id, prospect.id);
         continue;
@@ -1351,6 +1375,12 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
   const { bounces, failedSources } = await listBounces({ since });
   out.polled = bounces.length;
   out.clean = failedSources.length === 0;
+  let stopOnBlock = true;
+  try {
+    stopOnBlock = autoReplyConfigOf(loadConfig()).stopOnBlock;
+  } catch {
+    // an unreadable config keeps the default
+  }
 
   for (const b of bounces) {
     const prospect = ledger.findProspectByEmail(b.recipient);
@@ -1394,6 +1424,14 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
     }
 
     for (const cad of ledger.listCadencesForProspect(prospect.id)) {
+      // A hard bounce stops the sequence. So does a 5.7.x policy block unless
+      // `autoReply.stopOnBlock` is off: the receiving server refused this
+      // sender, so the next step would be refused too. A block judges the
+      // message or domain, not the mailbox, so the address is not suppressed
+      // for other sequences. Only `active` rows flip: a `replied` cadence
+      // proved the human is there.
+      const stops =
+        cad.status === "active" && (b.kind === "hard" || (b.kind === "block" && stopOnBlock));
       // current_step is the most recently SENT step (intro = 0; each follow-up
       // is recorded at current_step + 1 as it fires). That's the touch that
       // came back undelivered.
@@ -1408,18 +1446,23 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
           statusCode: b.statusCode,
           diagnostic: b.diagnostic,
           identityId: b.identityId,
+          ...(stops && b.kind === "block" ? { reason: "blocked" } : {}),
         },
         bouncedAt: b.bouncedAt,
       });
-      // Only a HARD bounce stops the sequence. A 5.7.x block judges the
-      // message/domain, not the mailbox (blocks surface via the doctor check).
-      // Only `active` rows flip: a `replied` cadence proved the human is there.
-      if (b.kind === "hard" && cad.status === "active") {
+      if (stops) {
         ledger.setCadenceStatus({
           prospectId: prospect.id,
           playName: cad.play_name,
           status: "bounced",
         });
+        if (b.kind === "block") {
+          ledger.setCadenceHoldReason({
+            prospectId: prospect.id,
+            playName: cad.play_name,
+            reason: "blocked",
+          });
+        }
         out.cadencesStopped++;
       }
       out.details.push({
@@ -1622,6 +1665,39 @@ export interface RunCadenceStepOptions {
    * callLinkedIn). Without it LinkedIn steps are never sent from this process.
    */
   linkedIn?: LinkedInCaller;
+  /** The founder confirmed sending through an out-of-office hold (single send only). */
+  confirmHold?: boolean;
+}
+
+/** An out-of-office hold still in force on a cadence. */
+export interface CadenceHold {
+  until: string;
+  reason: string;
+  returnDate: string | null;
+}
+
+/** The hold on a cadence row, or null when none is in force at `now`. */
+export function cadenceHold(
+  cadence: { held_until?: string | null; hold_reason?: string | null; return_date?: string | null },
+  now: number = Date.now(),
+): CadenceHold | null {
+  const until = cadence.held_until;
+  if (!until) return null;
+  const t = Date.parse(until);
+  if (!Number.isFinite(t) || t <= now) return null;
+  return {
+    until,
+    reason: cadence.hold_reason ?? "out-of-office",
+    returnDate: cadence.return_date ?? null,
+  };
+}
+
+/** "away until 2026-11-09 (out-of-office) — sends after 2026-11-11". */
+export function awayNote(hold: CadenceHold): string {
+  const after = hold.until.slice(0, 10);
+  return hold.returnDate
+    ? `away until ${hold.returnDate} (${hold.reason}) — sends after ${after}`
+    : `away (${hold.reason}, no return date) — sends after ${after}`;
 }
 
 export interface RunCadenceStepResult {
@@ -1742,6 +1818,13 @@ export async function runCadenceStepForProspect(
         note: "stopped: meeting held with founder",
       };
     }
+  }
+  // An out-of-office hold: the person said when they are back. The runner and
+  // a batch skip the step until then; only a founder's confirmed single send
+  // goes through it. Not a status change.
+  const away = cadenceHold(cadence);
+  if (away && !opts.confirmHold) {
+    return { action: "skipped", payload: null, receiptIds: [], note: awayNote(away) };
   }
   // Cross-workspace hold, same reasoning as the suppression check above:
   // decide before paying for a draft. Not a status change. The step stays
@@ -2471,6 +2554,8 @@ export async function sendCadenceStep(input: {
   playName: string;
   /** How LinkedIn steps reach OneShot (the server's callLinkedIn). */
   linkedIn?: LinkedInCaller;
+  /** Send through an out-of-office hold: the founder confirmed it. */
+  confirmHold?: boolean;
 }): Promise<RunCadenceStepResult> {
   const ledger = getLedger();
   const draft = ledger.getCadenceDraft(input);
@@ -2486,6 +2571,7 @@ export async function sendCadenceStep(input: {
     dryRun: false,
     persistedPayload: draft.payload as StepPayload,
     ...(input.linkedIn ? { linkedIn: input.linkedIn } : {}),
+    ...(input.confirmHold ? { confirmHold: true } : {}),
   });
 }
 
@@ -2539,6 +2625,8 @@ export interface BatchSendResult {
   ok: boolean;
   action?: RunCadenceStepResult["action"];
   receiptIds?: number[];
+  /** Why a step was skipped ("away until …"), when it was. */
+  note?: string;
   error?: string;
 }
 
@@ -2607,6 +2695,7 @@ export async function sendCadenceStepBatch(
         ok: true,
         action: r.action,
         receiptIds: r.receiptIds,
+        ...(r.note ? { note: r.note } : {}),
       };
     } catch (err) {
       result = {

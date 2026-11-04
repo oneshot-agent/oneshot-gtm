@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { AutoReplySuccessor } from "./auto-reply.ts";
 import type { ReplyKind } from "./reply-classify.ts";
 import type { InboxReplyIntentDetails, InboxReplyRecord } from "./types.ts";
 
@@ -39,6 +40,23 @@ const IN_CHUNK = 400;
  */
 function publicIntent(intent: string | null): string | null {
   return intent === INBOX_REPLY_TRIAGE_PENDING ? null : intent;
+}
+
+/** `inbox_replies.successor_json` read back; anything malformed reads as none. */
+export function parseSuccessor(json: string | null | undefined): AutoReplySuccessor | null {
+  if (!json) return null;
+  try {
+    const v = JSON.parse(json) as Record<string, unknown>;
+    if (!v || typeof v !== "object") return null;
+    const out: AutoReplySuccessor = {};
+    if (typeof v["name"] === "string" && v["name"]) out.name = v["name"];
+    if (typeof v["email"] === "string" && v["email"]) out.email = v["email"];
+    if (typeof v["queueId"] === "number" && Number.isInteger(v["queueId"]))
+      out.queueId = v["queueId"];
+    return out.name || out.email ? out : null;
+  } catch {
+    return null;
+  }
 }
 
 export class InboxStore {
@@ -298,9 +316,121 @@ export class InboxStore {
             row.kind ?? null,
           );
         if (res.changes > 0) this.restoreInboxConversation(row.prospectId);
+        else if (row.kind === "auto_permanent") {
+          // A reply stored as a plain autoresponder before the classifier
+          // learned its phrasing: a re-read escalates it, so the address is
+          // suppressed. Never the other way round.
+          this.db
+            .query(
+              "UPDATE inbox_replies SET kind = 'auto_permanent' WHERE id = ? AND kind = 'auto'",
+            )
+            .run(row.id);
+        }
         return res.changes > 0;
       })
       .immediate();
+  }
+
+  /**
+   * Store what an automatic reply says (auto-reply.ts). `escalate` turns an
+   * `auto` row into `auto_permanent`, so a "left the company" notice the
+   * rules missed suppresses the address like one they caught.
+   */
+  setInboxReplyAutoClassification(
+    id: string,
+    input: {
+      reason: string;
+      returnDate: string | null;
+      successor: AutoReplySuccessor | null;
+      escalate?: boolean;
+    },
+  ): void {
+    this.db
+      .query(
+        `UPDATE inbox_replies SET auto_reason = ?, return_date = ?, successor_json = ?,
+           auto_classified_at = ?,
+           kind = CASE WHEN ? = 1 AND kind = 'auto' THEN 'auto_permanent' ELSE kind END
+         WHERE id = ?`,
+      )
+      .run(
+        input.reason,
+        input.returnDate,
+        input.successor ? JSON.stringify(input.successor) : null,
+        new Date().toISOString(),
+        input.escalate ? 1 : 0,
+        id,
+      );
+  }
+
+  /** The stored reading of an automatic reply; null when the row is missing or was never read. */
+  getInboxReplyAutoClassification(id: string): {
+    reason: string;
+    returnDate: string | null;
+    successor: AutoReplySuccessor | null;
+  } | null {
+    const row = this.db
+      .query(
+        `SELECT auto_reason, return_date, successor_json FROM inbox_replies
+          WHERE id = ? AND auto_classified_at IS NOT NULL`,
+      )
+      .get(id) as {
+      auto_reason: string | null;
+      return_date: string | null;
+      successor_json: string | null;
+    } | null;
+    if (!row?.auto_reason) return null;
+    return {
+      reason: row.auto_reason,
+      returnDate: row.return_date,
+      successor: parseSuccessor(row.successor_json),
+    };
+  }
+
+  /** The stored readings of automatic replies by id; ids never read are absent. */
+  listInboxReplyAutoClassifications(
+    ids: readonly string[],
+  ): Map<
+    string,
+    { reason: string; returnDate: string | null; successor: AutoReplySuccessor | null }
+  > {
+    const out = new Map<
+      string,
+      { reason: string; returnDate: string | null; successor: AutoReplySuccessor | null }
+    >();
+    for (let i = 0; i < ids.length; i += IN_CHUNK) {
+      const part = ids.slice(i, i + IN_CHUNK);
+      const rows = this.db
+        .query(
+          `SELECT id, auto_reason, return_date, successor_json FROM inbox_replies
+            WHERE id IN (${part.map(() => "?").join(",")}) AND auto_reason IS NOT NULL`,
+        )
+        .all(...part) as Array<{
+        id: string;
+        auto_reason: string;
+        return_date: string | null;
+        successor_json: string | null;
+      }>;
+      for (const r of rows) {
+        out.set(r.id, {
+          reason: r.auto_reason,
+          returnDate: r.return_date,
+          successor: parseSuccessor(r.successor_json),
+        });
+      }
+    }
+    return out;
+  }
+
+  /** Automatic replies (`auto` / `auto_permanent`) received since `sinceIso`, oldest first. */
+  listAutoRepliesSince(sinceIso: string): InboxReplyRecord[] {
+    return this.db
+      .query(
+        `SELECT * FROM inbox_replies
+          WHERE kind IN ('auto', 'auto_permanent')
+            AND julianday(received_at) >= julianday(?)
+          ORDER BY received_at ASC`,
+      )
+      .all(sinceIso) as InboxReplyRecord[];
   }
 
   /**

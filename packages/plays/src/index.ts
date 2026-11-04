@@ -1,5 +1,6 @@
 export * from "./_lib.ts";
 export * from "./_cadence.ts";
+export * from "./_auto-reply.ts";
 export * from "./_linkedin-evidence.ts";
 export { sweepLinkedInInvitations, type LinkedInInviteSweepResult } from "./_linkedin-sweep.ts";
 export {

@@ -480,6 +480,25 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    // What an automatic reply says (auto-reply.ts): the reason ('left_company'
+    // | 'out_of_office' | 'other'), the first day back, the successor it names
+    // (JSON, with the queue row once queued), and when it was read. On the
+    // cadence: the time a hold lets the next step go (`held_until`), why
+    // ('out-of-office', or 'left-company' / 'blocked' for a sequence the
+    // reply or a policy bounce stopped), and the return date it came from.
+    version: 22,
+    name: "auto-reply-reasons",
+    up: (db) => {
+      addColumnIfMissing(db, "inbox_replies", "auto_reason", "TEXT");
+      addColumnIfMissing(db, "inbox_replies", "return_date", "TEXT");
+      addColumnIfMissing(db, "inbox_replies", "successor_json", "TEXT");
+      addColumnIfMissing(db, "inbox_replies", "auto_classified_at", "TEXT");
+      addColumnIfMissing(db, "cadence_state", "held_until", "TEXT");
+      addColumnIfMissing(db, "cadence_state", "hold_reason", "TEXT");
+      addColumnIfMissing(db, "cadence_state", "return_date", "TEXT");
+    },
+  },
 ];
 
 /**

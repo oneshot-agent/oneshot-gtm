@@ -37,6 +37,7 @@ import {
 import { isLoopbackOrigin, jsonResponse } from "../server.ts";
 import { gatherReplyContext } from "./_reply-research.ts";
 import { mailboxInboxView } from "./mailboxes.ts";
+import { autoReplyViews } from "./_auto-reply-view.ts";
 
 /**
  * Classification of the inbound being answered: the persisted kind when the
@@ -211,6 +212,10 @@ export async function listInboxRoute(req: Request): Promise<Response> {
   // background poll's triage call, read here for the badge. Absent/null =
   // not yet triaged.
   const intents = ledger.listInboxReplyIntents(emails.map((e) => e.id));
+  const autoReads = autoReplyViews(
+    ledger,
+    emails.map((e) => e.id),
+  );
 
   const replies: InboxReplyView[] = emails.map((e) => {
     const fromEmail = normalizeFrom(e.from);
@@ -240,6 +245,9 @@ export async function listInboxRoute(req: Request): Promise<Response> {
       receivedAt: e.received_at,
       body: e.body ?? "",
       kind: classifyReply({ subject: e.subject, body: e.body, autoSubmitted: e.auto_submitted }),
+      autoReason: autoReads.get(e.id)?.autoReason ?? null,
+      returnDate: autoReads.get(e.id)?.returnDate ?? null,
+      successor: autoReads.get(e.id)?.successor ?? null,
       intent: (intent?.intent as ReplyIntent | null | undefined) ?? null,
       intentReason: intent?.intentReason ?? null,
       intentConfidence: intent?.intentConfidence ?? null,

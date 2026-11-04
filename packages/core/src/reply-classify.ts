@@ -12,8 +12,9 @@
  * - `human`. A person wrote back. The only kind that counts as a
  *                      reply (metric, cadence stop, RoCS tag, friends push).
  * - `auto`: temporary autoresponder (OOO/vacation). Stored for the
- *                      conversation history; changes nothing else: follow-ups
- *                      continue as scheduled.
+ *                      conversation history, never a reply. What it says is
+ *                      read afterwards (auto-reply.ts): an out-of-office holds
+ *                      the next step until the person is back.
  * - `auto_permanent`: autoresponder saying the mailbox is dead ("retired",
  *                      "no longer with the company"). A human-layer hard
  *                      bounce: stops active cadences, never counts as a reply.
@@ -77,7 +78,8 @@ const AUTO_SUBJECT_RE = new RegExp(
 const AUTO_BODY_RE = new RegExp(
   [
     "(?<!\\bwas )(?<!\\bbeen )\\bout of (?:the )?office\\b",
-    "(?<!\\bwas )(?<!\\bbeen )\\bon (?:annual|parental|maternity|paternity|sick) leave\\b",
+    "(?<!\\bwas )(?<!\\bbeen )\\bon (?:annual|parental|maternity|paternity|sick|medical) leave\\b",
+    "(?<!\\bwas )(?<!\\bbeen )\\bout of the country\\b",
     "(?<!\\bwas )(?<!\\bbeen )\\baway from (?:my|the) (?:email|office|desk)\\b",
     "(?<!\\bwas )(?<!\\bbeen )\\bon (?:vacation|holiday)\\b",
     "\\blimited access to (?:my )?e-?mail\\b",
@@ -89,19 +91,63 @@ const AUTO_BODY_RE = new RegExp(
   "i",
 );
 
+// What follows "left"/"departed" when the absence is temporary.
+const TEMPORARY_LEAVE =
+  "(?!\\s+(?:the\\s+)?(?:office|building|desk)\\b|\\s+(?:for|on)\\s+(?:the\\s+|a\\s+|my\\s+)?(?:day|night|week|weekend|holidays?|vacation|leave|trip|break|travel))";
+
 // Escalates an `auto` to `auto_permanent`. The responder says the mailbox or
 // the person is gone for good, not on leave. Only consulted once something
 // already classified as auto: "retired" alone in a human reply must not trip.
 const PERMANENT_RE = new RegExp(
   [
-    "\\bno longer (?:with|at|using|working|employed)\\b",
-    "\\bhas left\\b",
+    "\\bno longer (?:with|at|using|working|employed|receiving)\\b",
+    "\\bno longer work(?:s|ed|ing)? (?:at|for|with)\\b",
+    "\\b(?:formerly|previously) work(?:ed)? (?:at|for)\\b",
+    "\\bdecided to move on\\b",
+    "\\bnot part of .{0,60}\\banymore\\b",
     "\\bretired\\b",
     "\\bis not with .{0,40}\\banymore\\b",
     "\\b(?:mailbox|email|address|account) (?:is )?(?:no longer|not) (?:monitored|active|in use)\\b",
   ].join("|"),
   "i",
 );
+
+// "Has left" / "departed" read as gone for good only when nothing in the same
+// text says they come back: "I have left for the Web Summit and will be back
+// on 9 November" is a trip. The lookahead also keeps the plain trips ("left
+// for vacation", "left the office for the day") temporary on their own.
+// "Left" counts only as a departure, never with a thing left behind ("I've
+// left instructions with my team"): said on its own ("Sam has left."), to
+// join or pursue something, or before a capitalised name ("has left
+// Halyard"; that one is case-sensitive on purpose).
+const LEFT_RE = new RegExp(
+  [
+    "(?:\\bhas|\\bhave|'ve) (?:left|departed|moved on)(?=\\s*(?:[.,;:!)]|$))",
+    "(?:\\bhas|\\bhave|'ve) left to (?:join|pursue|start|take)\\b",
+    "(?:\\bhas|\\bhave|'ve) (?:departed|moved on)\\b" + TEMPORARY_LEAVE,
+    "\\bdeparted (?:from|the)\\b" + TEMPORARY_LEAVE,
+  ].join("|"),
+  "im",
+);
+const LEFT_NAMED_RE = /(?:\b[Hh]as|\b[Hh]ave|'ve) left (?!The\b|For\b|On\b)[A-Z][\w&'.-]*/;
+// Leaving the company itself is a departure whatever else the text says
+// ("Sam has left the company. Contact Jane until a replacement is hired."),
+// but not leaving its premises ("left the company office for a conference").
+const LEFT_COMPANY_RE =
+  /(?:\bhas|\bhave|'ve) (?:left|departed(?: from)?) (?:the |our )?(?:company|organi[sz]ation|firm|business)\b(?!\s+(?:offices?|building|premises|campus|site|headquarters|hq)\b)/i;
+// A return cue names when they are back: "will be back", "back on …",
+// "returning on …", or until/through followed by a day or a date. A bare
+// "until" ("until a replacement is hired") is not one.
+const RETURN_CUE_RE =
+  /\b(?:(?:will|i'?ll|i will) be back|back (?:on|in|by|from|at)|return(?:ing|s)? (?:on|to|in)|(?:until|till|through) (?:the )?(?:\d|(?:mon|tues|wednes|thurs|fri|satur|sun)day|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))/i;
+
+function permanentIn(text: string): boolean {
+  return (
+    PERMANENT_RE.test(text) ||
+    LEFT_COMPANY_RE.test(text) ||
+    ((LEFT_RE.test(text) || LEFT_NAMED_RE.test(text)) && !RETURN_CUE_RE.test(text))
+  );
+}
 
 // A human asking off the list. Deliberately tight. A bare "not interested"
 // is a soft no and stays human; these are explicit removal requests. Checked
@@ -138,7 +184,7 @@ export function classifyReply(input: {
   const subject = (input.subject ?? "").replace(/[’‘]/g, "'");
   const stripped = stripQuotedChain(input.body ?? "").replace(/[’‘]/g, "'");
   const head = stripped.slice(0, BODY_HEAD_CHARS);
-  const permanent = PERMANENT_RE.test(subject) || PERMANENT_RE.test(head);
+  const permanent = permanentIn(subject) || permanentIn(`${subject}\n${head}`);
 
   // The header verdict is authoritative machine mail: no human wrote it, so
   // it can never be an unsubscribe: even if the responder's boilerplate
@@ -152,4 +198,35 @@ export function classifyReply(input: {
     return permanent ? "auto_permanent" : "auto";
   }
   return "human";
+}
+
+function headOf(subject: string | null | undefined, body: string | null | undefined) {
+  return {
+    subject: (subject ?? "").replace(/[’‘]/g, "'"),
+    head: stripQuotedChain(body ?? "")
+      .replace(/[’‘]/g, "'")
+      .slice(0, BODY_HEAD_CHARS),
+  };
+}
+
+/**
+ * Whether autoresponder text says the person or the mailbox is gone for good:
+ * the check `classifyReply` escalates `auto` to `auto_permanent` with, for mail
+ * already known to be automatic (a stored row read again by the backfill).
+ */
+export function isPermanentAutoText(
+  subject: string | null | undefined,
+  body: string | null | undefined,
+): boolean {
+  const t = headOf(subject, body);
+  return permanentIn(t.subject) || permanentIn(`${t.subject}\n${t.head}`);
+}
+
+/** Whether the subject or the head of the body reads as an autoresponder. */
+export function isAutoReplyText(
+  subject: string | null | undefined,
+  body: string | null | undefined,
+): boolean {
+  const t = headOf(subject, body);
+  return AUTO_SUBJECT_RE.test(t.subject) || AUTO_BODY_RE.test(t.head);
 }

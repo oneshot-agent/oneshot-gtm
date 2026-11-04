@@ -65,7 +65,7 @@ import {
   commandHandoffReadiness,
   commandHandoffTemplatize,
 } from "./commands/handoff.ts";
-import { commandCadenceAdvance } from "./commands/cadence.ts";
+import { commandCadenceAdvance, commandCadenceReclassifyAuto } from "./commands/cadence.ts";
 import { commandGmailAuth, commandGmailPlacement } from "./commands/gmail.ts";
 import { commandSmartleadConnect } from "./commands/smartlead.ts";
 import { commandSendsCheck } from "./commands/sends.ts";
@@ -1193,6 +1193,28 @@ cadence
   .option("--dry-run", "preview which steps would fire without sending", false)
   .description("Poll inbound for replies, then execute due follow-up steps for active cadences")
   .action(runOrFail(commandCadenceAdvance));
+cadence
+  .command("reclassify-auto")
+  .option(
+    "--since <days>",
+    "automatic replies and policy blocks from the last N days (e.g. 14 or 14d)",
+    (v: string) => {
+      const days = Number(v.replace(/d$/i, ""));
+      if (!Number.isFinite(days) || days <= 0)
+        throw new Error("--since must be a positive number of days");
+      return days;
+    },
+    14,
+  )
+  .option(
+    "--write",
+    "apply the actions (default: print what would be done). A dry run still asks the configured model about replies the rules cannot settle, so it can cost model calls, and --write asks again",
+    false,
+  )
+  .description(
+    "Read stored automatic replies again: stop sequences of people who left (queueing a named successor for review), hold out-of-office ones until they are back, and stop policy-blocked ones. Never sends. Unclear replies cost one model call each, dry run included.",
+  )
+  .action(runOrFail(commandCadenceReclassifyAuto));
 
 // These motion plays are CLI-only until their /run pages exist.
 const motion = program

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Drives pollInboxBounces: DSN → recorded bounce → (hard only) cadence stopped.
+// Drives pollInboxBounces: DSN → recorded bounce → (hard, or a policy block) cadence stopped.
 // The behaviour that decides whether the tool keeps paying to email an address
 // the receiving server has already refused.
 
@@ -21,6 +21,9 @@ let seen: Set<string>;
 let recorded: Array<{ recipient: string; kind: string; prospectId: number | null }> = [];
 let sequenceEvents: Array<{ playName: string; stepIndex: number; status: string }> = [];
 let statusWrites: Array<{ prospectId: number; playName: string; status: string }> = [];
+let holdReasons: Array<{ prospectId: number; playName: string; reason: string }> = [];
+let metadatas: Array<Record<string, unknown> | undefined> = [];
+let config: Record<string, unknown> = {};
 
 const PROSPECT_EMAIL = "jane@dead.example";
 type Row = { prospect_id: number; play_name: string; status: string; current_step: number };
@@ -31,6 +34,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   return {
     ...actual,
     listBounces: vi.fn(async () => ({ bounces, failedSources })),
+    loadConfig: () => config,
     getLedger: () => ({
       findDirectMail: () => null,
       findProspectByEmail: (email: string) =>
@@ -55,13 +59,22 @@ vi.mock("@oneshot-gtm/core", async () => {
       },
       listCadencesForProspect: (prospectId: number) =>
         rows.filter((r) => r.prospect_id === prospectId),
-      recordSequenceEvent: (input: { playName: string; stepIndex: number; status: string }) => {
+      recordSequenceEvent: (input: {
+        playName: string;
+        stepIndex: number;
+        status: string;
+        metadata?: Record<string, unknown>;
+      }) => {
+        metadatas.push(input.metadata);
         sequenceEvents.push({
           playName: input.playName,
           stepIndex: input.stepIndex,
           status: input.status,
         });
         return 1;
+      },
+      setCadenceHoldReason: (input: { prospectId: number; playName: string; reason: string }) => {
+        holdReasons.push(input);
       },
       setCadenceStatus: (input: { prospectId: number; playName: string; status: string }) => {
         statusWrites.push(input);
@@ -97,6 +110,9 @@ beforeEach(() => {
   recorded = [];
   sequenceEvents = [];
   statusWrites = [];
+  holdReasons = [];
+  metadatas = [];
+  config = {};
   rows = [{ prospect_id: 1, play_name: "post-funding", status: "active", current_step: 2 }];
 });
 
@@ -117,16 +133,31 @@ describe("pollInboxBounces", () => {
     expect(statusWrites).toEqual([{ prospectId: 1, playName: "post-funding", status: "bounced" }]);
   });
 
-  it("records a policy block WITHOUT stopping the cadence", async () => {
-    // 5.7.x is a verdict on the message or our sending domain, not the mailbox.
-    // Killing the sequence would discard a live prospect over a spam filter.
+  it("stops the cadence on a policy block (5.7.x), reason blocked", async () => {
+    // The receiving server refused this sender: the next step would be
+    // refused too. The address is not suppressed (no hard bounce).
+    bounces = [bounce({ kind: "block", statusCode: "5.7.1" })];
+    const out = await pollInboxBounces();
+
+    expect(out.recorded).toBe(1);
+    expect(out.cadencesStopped).toBe(1);
+    expect(sequenceEvents).toEqual([{ playName: "post-funding", stepIndex: 2, status: "bounced" }]);
+    expect(metadatas[0]).toMatchObject({ kind: "block", reason: "blocked" });
+    expect(statusWrites).toEqual([{ prospectId: 1, playName: "post-funding", status: "bounced" }]);
+    expect(holdReasons).toEqual([{ prospectId: 1, playName: "post-funding", reason: "blocked" }]);
+  });
+
+  it("records a policy block WITHOUT stopping the cadence when autoReply.stopOnBlock is off", async () => {
+    config = { autoReply: { stopOnBlock: false } };
     bounces = [bounce({ kind: "block", statusCode: "5.7.1" })];
     const out = await pollInboxBounces();
 
     expect(out.recorded).toBe(1);
     expect(out.cadencesStopped).toBe(0);
     expect(sequenceEvents).toHaveLength(1);
+    expect(metadatas[0]).not.toHaveProperty("reason");
     expect(statusWrites).toEqual([]);
+    expect(holdReasons).toEqual([]);
     expect(rows[0]?.status).toBe("active");
   });
 

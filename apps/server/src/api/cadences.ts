@@ -9,6 +9,8 @@ import {
   type CadencePlanStep,
 } from "@oneshot-gtm/core";
 import {
+  awayNote,
+  cadenceHold,
   getPriorStepsBulk,
   linkedInWaitingSince,
   nextStepInfo,
@@ -39,6 +41,7 @@ import { toDraftVersionView } from "./_draft-versions.ts";
 import { cadenceOfferFor } from "./cadence-offer.ts";
 import { sendsToday } from "./_capacity.ts";
 import { reportServerExecution } from "../telemetry.ts";
+import { cadenceAutoReasonOf } from "./_auto-reply-view.ts";
 
 /**
  * In-flight cadence sends are tracked on the row's `sending_started_at`
@@ -180,6 +183,23 @@ function toView(row: CadenceRow, page: PageReads): CadenceView {
     heldElsewhere: row.status === "active" ? heldElsewhereFor(row.prospect_email) : null,
     queuePayload: payloadByKey.get(cadenceKey(row)) ?? null,
     ...(offer ? { offer } : {}),
+    ...autoFieldsOf(row),
+  };
+}
+
+/** The auto-reply badge fields: the reason, and an out-of-office hold while it is in force. */
+function autoFieldsOf(
+  row: CadenceRow,
+): Pick<CadenceView, "autoReason" | "returnDate" | "heldUntil"> {
+  const hold = row.status === "active" ? cadenceHold(row) : null;
+  const reason = cadenceAutoReasonOf(row.hold_reason);
+  // A past hold is history: the row reads as a plain active cadence again.
+  if (reason === "out_of_office" && !hold)
+    return { autoReason: null, returnDate: null, heldUntil: null };
+  return {
+    autoReason: reason,
+    returnDate: hold ? hold.returnDate : null,
+    heldUntil: hold ? hold.until : null,
   };
 }
 
@@ -528,6 +548,22 @@ export async function sendCadenceStepRoute(
   }
   const parsed = parseProspectAndPlay(req, params);
   if (parsed instanceof Response) return parsed;
+  // Optional body { confirmHold?: boolean }: send through an out-of-office hold.
+  let confirmHold = false;
+  const text = await req.text();
+  if (text.trim()) {
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      return jsonResponse({ error: "body must be JSON" }, 400, req);
+    }
+    const value = (body as { confirmHold?: unknown } | null)?.confirmHold;
+    if (value !== undefined && typeof value !== "boolean") {
+      return jsonResponse({ error: "confirmHold must be a boolean" }, 400, req);
+    }
+    confirmHold = value === true;
+  }
   // 409 synchronously when no persisted draft exists, but the actual send is
   // fire-and-forget. An SDK send takes ~2 min and must not block the modal.
   const ledger = getLedger();
@@ -535,6 +571,19 @@ export async function sendCadenceStepRoute(
     const draft = ledger.getCadenceDraft(parsed);
     if (!draft) {
       return jsonResponse({ error: "no persisted preview — click Preview first" }, 409, req);
+    }
+    // The person said they are away: the founder confirms before a step goes
+    // out anyway. A batch never sends through a hold.
+    const hold = cadenceHoldFor(parsed);
+    if (hold && !confirmHold) {
+      return jsonResponse(
+        {
+          error: awayNote(hold),
+          hold: { until: hold.until, reason: hold.reason, returnDate: hold.returnDate },
+        },
+        409,
+        req,
+      );
     }
   } catch (err) {
     return jsonResponse({ error: (err as Error).message ?? "send failed" }, 500, req);
@@ -559,7 +608,11 @@ export async function sendCadenceStepRoute(
   const sendStartedAt = performance.now();
   void (async () => {
     try {
-      await sendCadenceStep({ ...parsed, linkedIn: callLinkedIn });
+      await sendCadenceStep({
+        ...parsed,
+        linkedIn: callLinkedIn,
+        ...(confirmHold ? { confirmHold: true } : {}),
+      });
       void reportServerExecution("server.cadence.send", {
         outcome: "ok",
         durationMs: performance.now() - sendStartedAt,
@@ -634,12 +687,20 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
   if (itemsOrErr instanceof Response) return itemsOrErr;
   const items = itemsOrErr;
   // Claim each row's marker atomically; unclaimable rows (already sending)
-  // are dropped, so `accepted` reflects the actual attempt count.
+  // are dropped, so `accepted` reflects the actual attempt count. A row an
+  // out-of-office holds is skipped and reported: only a single, confirmed
+  // Send goes through a hold.
   const ledger = getLedger();
   const nowIso = new Date().toISOString();
   const staleCutoffIso = new Date(Date.now() - MAX_SEND_AGE_MS).toISOString();
   const claimed: BatchItem[] = [];
+  const skipped: Array<BatchItem & { reason: string }> = [];
   for (const item of items) {
+    const hold = cadenceHoldFor(item);
+    if (hold) {
+      skipped.push({ ...item, reason: awayNote(hold) });
+      continue;
+    }
     const ok = ledger.claimCadenceSendingMarker({
       prospectId: item.prospectId,
       playName: item.playName,
@@ -650,7 +711,13 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
   }
   if (claimed.length === 0) {
     return jsonResponse(
-      { error: "no claimable rows — all selected are already sending" },
+      {
+        error:
+          skipped.length === items.length
+            ? "every selected row is away (out-of-office): send each on its own to confirm"
+            : "no claimable rows — all selected are already sending",
+        ...(skipped.length > 0 ? { skipped } : {}),
+      },
       409,
       req,
     );
@@ -696,7 +763,24 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
       );
     }
   })();
-  return jsonResponse({ accepted: claimed.length }, 202, req);
+  return jsonResponse(
+    { accepted: claimed.length, ...(skipped.length > 0 ? { skipped } : {}) },
+    202,
+    req,
+  );
+}
+
+/**
+ * The out-of-office hold on one cadence, read the way the runner reads it.
+ * Fails open (null) on a ledger that cannot answer: the runner still checks.
+ */
+function cadenceHoldFor(item: BatchItem): ReturnType<typeof cadenceHold> {
+  try {
+    const row = getLedger().getCadence(item.prospectId, item.playName);
+    return row ? cadenceHold(row) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
