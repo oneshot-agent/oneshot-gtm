@@ -55,6 +55,18 @@ describe("cadenceSelection", () => {
     expect(result.chosen).toEqual([rows[1]]);
     expect(result.sendable).toEqual([]);
   });
+  it("leaves a row an out-of-office holds out of the batch and counts it as away", () => {
+    const now = Date.parse("2026-11-04T12:00:00Z");
+    const rows = [
+      row(1),
+      row(2, { heldUntil: "2026-11-11T00:00:00.000Z", returnDate: "2026-11-09" }),
+      // A hold that has passed holds nothing.
+      row(3, { heldUntil: "2026-11-01T00:00:00.000Z" }),
+    ];
+    const result = cadenceSelection(rows, new Set(rows.map(cadenceKey)), now);
+    expect(result.sendable.map((c) => c.prospectId)).toEqual([1, 3]);
+    expect(result.away.map((c) => c.prospectId)).toEqual([2]);
+  });
 });
 
 describe("stopCadences", () => {

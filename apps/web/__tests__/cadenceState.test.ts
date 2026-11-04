@@ -5,7 +5,10 @@ import {
 } from "@oneshot-gtm/shared-types";
 import { describe, expect, it } from "vitest";
 import {
+  autoReasonBadge,
+  awayLabel,
   cadenceStateLabel,
+  isAway,
   isHeldElsewhere,
   mailWaitingRows,
   sendErrorLabel,
@@ -211,5 +214,39 @@ describe("held by another workspace's touch", () => {
     const out = cadenceSelection(rows, keys, now.getTime());
     expect(out.sendable.map((r) => r.prospectId)).toEqual([2]);
     expect(out.stoppable.map((r) => r.prospectId)).toEqual([1, 2]);
+  });
+});
+
+describe("auto-reply badges", () => {
+  it("an out-of-office hold reads as away until the return date, and ends with the hold", () => {
+    const away = cadence({
+      autoReason: "out_of_office",
+      returnDate: "2026-09-14",
+      heldUntil: daysAhead(6),
+    });
+    expect(autoReasonBadge(away, now.getTime())).toEqual({
+      text: "away until Sep 14",
+      tone: "neutral",
+    });
+    expect(cadenceStateLabel(away, now).text).toContain("away until Sep 14");
+    expect(isAway(away, now.getTime())).toBe(true);
+
+    const undated = cadence({ autoReason: "out_of_office", heldUntil: daysAhead(7) });
+    expect(awayLabel(undated)).toBe("away · sends after Sep 17");
+
+    const over = cadence({ autoReason: "out_of_office", heldUntil: daysAgo(1) });
+    expect(autoReasonBadge(over, now.getTime())).toBeNull();
+    expect(isAway(over, now.getTime())).toBe(false);
+  });
+
+  it("left the company and blocked read as such", () => {
+    expect(autoReasonBadge(cadence({ status: "bounced", autoReason: "left_company" }))).toEqual({
+      text: "left company",
+      tone: "blocked",
+    });
+    expect(autoReasonBadge(cadence({ status: "bounced", autoReason: "blocked" }))?.text).toBe(
+      "blocked",
+    );
+    expect(autoReasonBadge(cadence())).toBeNull();
   });
 });

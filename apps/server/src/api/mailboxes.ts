@@ -17,6 +17,7 @@ import type {
   ConversationItem,
 } from "@oneshot-gtm/shared-types";
 import { isLoopbackOrigin, jsonResponse } from "../server.ts";
+import { autoReplyViewOf } from "./_auto-reply-view.ts";
 
 /** Build the workspace-local mailbox health and threaded inbox view. */
 export function mailboxInboxView(): Pick<InboxResult, "mailboxes" | "mailboxThreads"> {
@@ -45,6 +46,7 @@ export function mailboxInboxView(): Pick<InboxResult, "mailboxes" | "mailboxThre
     const intents = ledger.listInboxReplyIntents(messages.map((m) => m.id));
     const draft = drafts.get(threadKey);
     const intent = intents.get(latest.id);
+    const auto = autoReplyViewOf(ledger, latest.id);
     const items: ConversationItem[] = messages.map((m) =>
       m.direction === "outbound"
         ? { kind: "sent", at: m.at, subject: m.subject, body: m.body }
@@ -83,6 +85,7 @@ export function mailboxInboxView(): Pick<InboxResult, "mailboxes" | "mailboxThre
         receivedAt: latest.at,
         body: latest.body,
         kind: latest.kind,
+        ...auto,
         intent: (intent?.intent as MailboxThreadView["reply"]["intent"]) ?? null,
         intentReason: intent?.intentReason ?? null,
         intentConfidence: intent?.intentConfidence ?? null,

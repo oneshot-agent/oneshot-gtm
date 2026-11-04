@@ -111,6 +111,11 @@ export function cadenceStateLabel(c: CadenceView, now: Date): CadenceState {
         parts.push(heldLabel(c.heldElsewhere, nowMs));
         tone = "muted";
       }
+      // An out-of-office: the step waits until they are back.
+      if (isAway(c, nowMs)) {
+        parts.push(awayLabel(c));
+        tone = "muted";
+      }
       return { text: parts.join(" · "), tone };
     }
     default:
@@ -121,6 +126,34 @@ export function cadenceStateLabel(c: CadenceView, now: Date): CadenceState {
 /** "held · emailed from sdk 1d ago · sends after Oct 12". */
 export function heldLabel(h: CadenceHeldElsewhere, nowMs: number): string {
   return `held · emailed from ${h.workspace} ${timeAgo(h.sentAt, nowMs)} · sends after ${shortDate(h.until)}`;
+}
+
+/** True while an out-of-office reply holds this cadence's next step. */
+export function isAway(c: Pick<CadenceView, "heldUntil">, nowMs: number = Date.now()): boolean {
+  return c.heldUntil != null && new Date(c.heldUntil).getTime() > nowMs;
+}
+
+/** "away until Nov 9", or "away · sends after Nov 11" when the reply gave no date. */
+export function awayLabel(c: Pick<CadenceView, "heldUntil" | "returnDate">): string {
+  if (c.returnDate) return `away until ${shortDate(`${c.returnDate}T12:00:00Z`)}`;
+  return c.heldUntil ? `away · sends after ${shortDate(c.heldUntil)}` : "away";
+}
+
+/** The badge an automatic reply or a policy bounce put on a cadence; null when none. */
+export function autoReasonBadge(
+  c: Pick<CadenceView, "autoReason" | "heldUntil" | "returnDate">,
+  nowMs: number = Date.now(),
+): { text: string; tone: "neutral" | "blocked" } | null {
+  switch (c.autoReason) {
+    case "left_company":
+      return { text: "left company", tone: "blocked" };
+    case "blocked":
+      return { text: "blocked", tone: "blocked" };
+    case "out_of_office":
+      return isAway(c, nowMs) ? { text: awayLabel(c), tone: "neutral" } : null;
+    default:
+      return null;
+  }
 }
 
 /** True while another workspace's touch holds this cadence's next send. */

@@ -245,10 +245,10 @@ export const api = {
       `/cadences/${id}/offer?play=${encodeURIComponent(playName)}`,
       body,
     ),
-  sendCadenceNext: (id: number, playName: string) =>
+  sendCadenceNext: (id: number, playName: string, confirmHold = false) =>
     postJson<{ accepted: true }>(
       `/cadences/${id}/send-next?play=${encodeURIComponent(playName)}`,
-      {},
+      confirmHold ? { confirmHold: true } : {},
     ),
   previewCadenceBatch: (items: Array<{ prospectId: number; playName: string }>) =>
     postJson<{
@@ -261,7 +261,10 @@ export const api = {
       }>;
     }>(`/cadences/preview-batch`, { items }),
   sendCadenceBatch: (items: Array<{ prospectId: number; playName: string }>) =>
-    postJson<{ accepted: number }>(`/cadences/send-batch`, { items }),
+    postJson<{
+      accepted: number;
+      skipped?: Array<{ prospectId: number; playName: string; reason: string }>;
+    }>(`/cadences/send-batch`, { items }),
   receipts: (opts?: { play?: string; sinceDays?: number; limit?: number }) => {
     const q = new URLSearchParams();
     if (opts?.play) q.set("play", opts.play);

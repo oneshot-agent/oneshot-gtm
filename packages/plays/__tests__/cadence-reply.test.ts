@@ -193,6 +193,12 @@ vi.mock("@oneshot-gtm/core", async () => {
           eventRecorded: r.eventRecorded,
         }));
       },
+      // Auto-reply reading (auto-reply.ts): the real-Ledger behaviour is
+      // covered in cadence-auto-reply.test.ts; here it only has to not throw.
+      getInboxReplyAutoClassification: () => null,
+      setInboxReplyAutoClassification: () => {},
+      holdCadence: () => true,
+      setCadenceHoldReason: () => {},
       getPollWatermark: (key: string) => pollState[key] ?? null,
       setPollWatermark: (key: string, value: string) => {
         pollState[key] = value;

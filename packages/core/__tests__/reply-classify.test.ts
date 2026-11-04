@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { classifyReply, stripQuotedChain } from "../src/reply-classify.ts";
+import {
+  classifyReply,
+  isAutoReplyText,
+  isPermanentAutoText,
+  stripQuotedChain,
+} from "../src/reply-classify.ts";
 
 describe("classifyReply", () => {
   test("explicit opt-outs with curly apostrophes and ever are unsubscribe requests", () => {
@@ -184,6 +189,62 @@ describe("classifyReply", () => {
 
   test("empty subject and body default to human", () => {
     expect(classifyReply({})).toBe("human");
+  });
+
+  // Phrasings real "left the company" responders use, which the rules used
+  // to read as a temporary out-of-office (names and companies fictional).
+  test.each([
+    ["Automatic reply: quick question", "This person no longer works at Halyard."],
+    [
+      "Automatic reply",
+      "I no longer work for Kestrelworks Oy. With any and all Kestrelworks matters please contact Aino Lehto (aino.lehto@kestrelworks.example).",
+    ],
+    ["No longer receiving email at halyard.example", ""],
+    ["Automatic reply", "After nearly 15 years of building Halyard, I decided to move on."],
+    ["Automatic reply", "I am no longer with Halyard as of 12 December 2025."],
+    ["Automatic reply", "Sam has left the company. Please write to ops@halyard.example."],
+    ["Automatic reply", "I'm not part of the Halyard team anymore."],
+    ["Automatic reply", "Dana has departed from Halyard."],
+  ])("header-verdict mail %s / %s is auto_permanent", (subject, body) => {
+    expect(classifyReply({ subject, body, autoSubmitted: true })).toBe("auto_permanent");
+  });
+
+  test("a trip is not a departure", () => {
+    for (const body of [
+      "I have left for vacation and will be back on 9 November.",
+      "I have left the office for the day.",
+      "Dana has left for the holidays.",
+    ]) {
+      expect(classifyReply({ subject: "Automatic reply", body, autoSubmitted: true })).toBe("auto");
+    }
+  });
+
+  test("medical leave and out of the country read as an autoresponder", () => {
+    expect(
+      classifyReply({ body: "I am on medical leave and will be offline until I am back." }),
+    ).toBe("auto");
+    expect(
+      classifyReply({
+        body: "I'm out of the country through November 7 with limited access to email.",
+      }),
+    ).toBe("auto");
+    // A human saying where they were is still a reply.
+    expect(
+      classifyReply({ body: "Sorry, I was out of the country last week. Happy to talk." }),
+    ).toBe("human");
+  });
+});
+
+describe("isPermanentAutoText / isAutoReplyText", () => {
+  test("read stored text the way classifyReply does", () => {
+    expect(isPermanentAutoText("Automatic reply", "This person no longer works at Halyard.")).toBe(
+      true,
+    );
+    expect(isPermanentAutoText("Automatic reply", "Out of office until 14th December.")).toBe(
+      false,
+    );
+    expect(isAutoReplyText("Out of office", "")).toBe(true);
+    expect(isAutoReplyText("Re: hello", "Sounds good, talk Monday.")).toBe(false);
   });
 });
 

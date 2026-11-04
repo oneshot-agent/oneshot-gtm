@@ -294,3 +294,27 @@ export function latestSentEmailCopy(
   }
   return null;
 }
+
+/** Bounces of one kind (e.g. `block`) recorded since `sinceIso`, oldest first. */
+export function listBouncesSince(
+  db: Database,
+  input: { kind: string; sinceIso: string },
+): Array<{
+  recipient: string;
+  prospect_id: number | null;
+  status_code: string | null;
+  bounced_at: string;
+}> {
+  return db
+    .query(
+      `SELECT recipient, prospect_id, status_code, bounced_at FROM bounces
+        WHERE kind = ? AND julianday(bounced_at) >= julianday(?)
+        ORDER BY bounced_at ASC`,
+    )
+    .all(input.kind, input.sinceIso) as Array<{
+    recipient: string;
+    prospect_id: number | null;
+    status_code: string | null;
+    bounced_at: string;
+  }>;
+}

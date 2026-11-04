@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const sendMock = vi.fn();
 const claimMarkerMock = vi.fn(() => true);
 const clearMarkerMock = vi.fn();
+let held = false;
 
 vi.mock("@oneshot-gtm/plays", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays");
@@ -22,6 +23,14 @@ vi.mock("@oneshot-gtm/core", async () => {
     getLedger: () => ({
       claimCadenceSendingMarker: claimMarkerMock,
       clearCadenceSendingMarker: clearMarkerMock,
+      getCadence: () =>
+        held
+          ? {
+              held_until: new Date(Date.now() + 86_400_000).toISOString(),
+              hold_reason: "out-of-office",
+              return_date: "2026-11-09",
+            }
+          : { held_until: null },
       getCadenceDraft: () => ({
         subject: "s",
         body: "b",
@@ -50,6 +59,7 @@ beforeEach(() => {
   claimMarkerMock.mockReset();
   claimMarkerMock.mockReturnValue(true);
   clearMarkerMock.mockReset();
+  held = false;
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -87,5 +97,40 @@ describe("sendCadenceStepRoute releases the sending marker", () => {
     expect(res.status).toBe(409);
     expect(sendMock).not.toHaveBeenCalled();
     expect(clearMarkerMock).not.toHaveBeenCalled();
+  });
+});
+
+const withBody = (body: unknown) =>
+  new Request("http://localhost/api/cadences/7/send-next?play=accelerator-batch", {
+    method: "POST",
+    headers: { host: "127.0.0.1:3030", "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+describe("sendCadenceStepRoute on a row an out-of-office holds", () => {
+  it("409s with the hold unless the founder confirms", async () => {
+    held = true;
+    const res = await sendCadenceStepRoute(withBody({}), params);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: expect.stringMatching(/^away until 2026-11-09/),
+      hold: { reason: "out-of-office", returnDate: "2026-11-09" },
+    });
+    expect(claimMarkerMock).not.toHaveBeenCalled();
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it("sends through the hold with confirmHold: true", async () => {
+    held = true;
+    sendMock.mockResolvedValue({ action: "step-sent", payload: null, receiptIds: [1] });
+    const res = await sendCadenceStepRoute(withBody({ confirmHold: true }), params);
+    expect(res.status).toBe(202);
+    await settle();
+    expect(sendMock).toHaveBeenCalledWith(expect.objectContaining({ confirmHold: true }));
+  });
+
+  it("400s on a confirmHold that is not a boolean", async () => {
+    const res = await sendCadenceStepRoute(withBody({ confirmHold: "yes" }), params);
+    expect(res.status).toBe(400);
   });
 });

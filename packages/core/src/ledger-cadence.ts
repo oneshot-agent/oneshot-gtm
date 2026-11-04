@@ -51,6 +51,12 @@ export interface CadenceWithProspect {
   offer_json: string | null;
   /** The queue row the sequence started from; null when it started from none. */
   queue_id: number | null;
+  /** An out-of-office holds the next step until this time (ISO); past = no hold. */
+  held_until?: string | null;
+  /** 'out-of-office' for a hold; 'left-company' / 'blocked' for a stop an auto-reply or a policy bounce made. */
+  hold_reason?: string | null;
+  /** The first day back the out-of-office gave (YYYY-MM-DD), when it gave one. */
+  return_date?: string | null;
   prospect_email: string | null;
   prospect_name: string | null;
   prospect_company: string | null;
@@ -123,6 +129,11 @@ export function enrollCadence(
        stopped_at = NULL,
        last_send_error = NULL,
        last_send_error_at = NULL,
+       -- A sequence that ended (left, blocked) starts over without its old
+       -- badge; a live one keeps an out-of-office hold.
+       held_until = CASE WHEN cadence_state.status = 'active' THEN cadence_state.held_until END,
+       hold_reason = CASE WHEN cadence_state.status = 'active' THEN cadence_state.hold_reason END,
+       return_date = CASE WHEN cadence_state.status = 'active' THEN cadence_state.return_date END,
        offer_json = CASE
          WHEN json_valid(cadence_state.offer_json)
               AND json_type(cadence_state.offer_json, '$.offer') = 'object'
@@ -416,6 +427,49 @@ export function postponeCadence(
       )
       .run(input.nextDueAt, input.prospectId, input.playName).changes > 0
   );
+}
+
+/**
+ * Hold an active cadence until `until` (an out-of-office): `next_due_at` and
+ * `held_until` only ever move later, never earlier, so a second, shorter
+ * notice cannot pull a step forward. `returnDate` is the date the reply gave.
+ */
+export function holdCadence(
+  db: Database,
+  input: {
+    prospectId: number;
+    playName: string;
+    until: string;
+    reason: string;
+    returnDate?: string | null;
+  },
+): boolean {
+  return (
+    db
+      .prepare(
+        `UPDATE cadence_state SET
+           next_due_at = CASE WHEN next_due_at IS NULL OR julianday(next_due_at) < julianday(?1)
+                              THEN ?1 ELSE next_due_at END,
+           return_date = CASE WHEN held_until IS NULL OR julianday(held_until) <= julianday(?1)
+                              THEN ?4 ELSE return_date END,
+           held_until = CASE WHEN held_until IS NULL OR julianday(held_until) < julianday(?1)
+                             THEN ?1 ELSE held_until END,
+           hold_reason = ?5
+         WHERE prospect_id = ?2 AND play_name = ?3 AND status = 'active'`,
+      )
+      .run(input.until, input.prospectId, input.playName, input.returnDate ?? null, input.reason)
+      .changes > 0
+  );
+}
+
+/** Why an automatic reply or bounce stopped a cadence ('left-company' | 'blocked'). */
+export function setCadenceHoldReason(
+  db: Database,
+  input: { prospectId: number; playName: string; reason: string },
+): void {
+  db.prepare(
+    "UPDATE cadence_state SET hold_reason = ? WHERE prospect_id = ? AND play_name = ?",
+  ).run(input.reason, input.prospectId, input.playName);
 }
 
 export function listActiveCadences(

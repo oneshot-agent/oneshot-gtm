@@ -4,6 +4,8 @@ const previewBatchMock = vi.fn();
 const sendBatchMock = vi.fn();
 const claimMarkerMock = vi.fn(() => true);
 const clearMarkerMock = vi.fn();
+// Cadences an out-of-office holds, by prospect id: `held_until` in the future.
+let heldIds = new Set<number>();
 
 vi.mock("@oneshot-gtm/plays", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays");
@@ -25,6 +27,14 @@ vi.mock("@oneshot-gtm/core", async () => {
     getLedger: () => ({
       claimCadenceSendingMarker: claimMarkerMock,
       clearCadenceSendingMarker: clearMarkerMock,
+      getCadence: (prospectId: number) =>
+        heldIds.has(prospectId)
+          ? {
+              held_until: new Date(Date.now() + 86_400_000).toISOString(),
+              hold_reason: "out-of-office",
+              return_date: "2026-11-09",
+            }
+          : { held_until: null },
       getCadenceDraft: () => ({
         subject: "s",
         body: "b",
@@ -60,6 +70,7 @@ beforeEach(() => {
   claimMarkerMock.mockReset();
   claimMarkerMock.mockReturnValue(true);
   clearMarkerMock.mockReset();
+  heldIds = new Set();
 });
 
 afterEach(() => {
@@ -201,5 +212,43 @@ describe("sendCadenceBatchRoute (fire-and-forget)", () => {
     // around sendBatchMock. Give the microtask queue a tick to drain.
     await new Promise((r) => setTimeout(r, 30));
     expect(sendBatchMock).toHaveBeenCalled();
+  });
+
+  it("skips a row an out-of-office holds and reports it", async () => {
+    heldIds = new Set([2]);
+    sendBatchMock.mockResolvedValue([]);
+    const res = await sendCadenceBatchRoute(
+      jsonBody({
+        items: [
+          { prospectId: 1, playName: "show-hn" },
+          { prospectId: 2, playName: "show-hn" },
+        ],
+      }),
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as {
+      accepted: number;
+      skipped: Array<{ prospectId: number; reason: string }>;
+    };
+    expect(body.accepted).toBe(1);
+    expect(body.skipped).toEqual([
+      expect.objectContaining({
+        prospectId: 2,
+        reason: expect.stringMatching(/^away until 2026-11-09/),
+      }),
+    ]);
+    // The held row is never claimed, so it never reads "sending…".
+    expect(claimMarkerMock).toHaveBeenCalledTimes(1);
+    expect(sendBatchMock.mock.calls[0]?.[0]).toEqual([{ prospectId: 1, playName: "show-hn" }]);
+  });
+
+  it("409s when every selected row is held", async () => {
+    heldIds = new Set([1]);
+    const res = await sendCadenceBatchRoute(
+      jsonBody({ items: [{ prospectId: 1, playName: "show-hn" }] }),
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: /away/, skipped: [{ prospectId: 1 }] });
+    expect(sendBatchMock).not.toHaveBeenCalled();
   });
 });

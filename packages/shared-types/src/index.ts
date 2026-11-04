@@ -229,6 +229,32 @@ export interface CadenceView {
    * makes one. Absent otherwise.
    */
   offer?: CadenceOfferView;
+  /**
+   * What an automatic reply or a bounce said about this sequence:
+   * `out_of_office` (held, see `heldUntil`), `left_company` (stopped) or
+   * `blocked` (a policy bounce stopped it). Null when neither happened.
+   */
+  autoReason?: CadenceAutoReason | null;
+  /** The first day back the out-of-office gave (YYYY-MM-DD), when it gave one. */
+  returnDate?: string | null;
+  /**
+   * While an out-of-office holds the next step: when it may go (ISO). A batch
+   * and the runner skip it until then; a single Send asks to confirm.
+   */
+  heldUntil?: string | null;
+}
+
+/** Why an automatic reply or a bounce held or stopped a sequence. */
+export type CadenceAutoReason = "out_of_office" | "left_company" | "blocked";
+
+/** A stored automatic reply's reason (core auto-reply.ts). */
+export type AutoReplyReasonView = "left_company" | "out_of_office" | "other";
+
+/** Who a "left the company" reply named, and the pending queue row created for them. */
+export interface AutoReplySuccessorView {
+  name?: string;
+  email?: string;
+  queueId?: number;
 }
 
 /**
@@ -1583,6 +1609,12 @@ export interface InboxReplyView {
   id: string;
   /** What this inbound actually is. Only `human` counts as a reply anywhere. */
   kind: InboundReplyKind;
+  /** For an automatic reply: what it says. Null when not read yet, or not automatic. */
+  autoReason?: AutoReplyReasonView | null;
+  /** First day back an out-of-office states (YYYY-MM-DD). */
+  returnDate?: string | null;
+  /** Who a "left the company" reply named; `queueId` once queued for review. */
+  successor?: AutoReplySuccessorView | null;
   /** Sentiment classification (issue #480); null = not yet triaged (or triage failed). */
   intent: ReplyIntent | null;
   intentReason: string | null;

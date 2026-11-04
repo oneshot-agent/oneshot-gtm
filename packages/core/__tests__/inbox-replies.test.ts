@@ -404,3 +404,62 @@ describe("conversation archive", () => {
     expect(ledger.archiveInboxConversation(999, ["missing"])).toBe("missing");
   });
 });
+
+describe("auto-reply readings (v22)", () => {
+  it("a re-read escalates a stored auto row to auto_permanent, never the other way", () => {
+    record({ kind: "auto" });
+    record({ kind: "auto_permanent" });
+    expect(ledger.listInboxRepliesForProspect(1)[0]!.kind).toBe("auto_permanent");
+    record({ kind: "auto" });
+    expect(ledger.listInboxRepliesForProspect(1)[0]!.kind).toBe("auto_permanent");
+  });
+
+  it("stores the reason, date and successor, and escalates a model-found departure", () => {
+    record({ kind: "auto" });
+    expect(ledger.getInboxReplyAutoClassification("msg-1")).toBeNull();
+    ledger.setInboxReplyAutoClassification("msg-1", {
+      reason: "left_company",
+      returnDate: null,
+      successor: { name: "Lee Park", email: "lee@prospect.example", queueId: 7 },
+      escalate: true,
+    });
+    expect(ledger.getInboxReplyAutoClassification("msg-1")).toEqual({
+      reason: "left_company",
+      returnDate: null,
+      successor: { name: "Lee Park", email: "lee@prospect.example", queueId: 7 },
+    });
+    expect(ledger.listInboxRepliesForProspect(1)[0]!.kind).toBe("auto_permanent");
+    expect(ledger.contactSuppressionFor("jane@prospect.example")?.kind).toBe("auto_permanent");
+    expect(ledger.listInboxReplyAutoClassifications(["msg-1", "nope"]).size).toBe(1);
+    expect(ledger.listAutoRepliesSince("2026-08-01T00:00:00.000Z").map((r) => r.id)).toEqual([
+      "msg-1",
+    ]);
+    expect(ledger.listAutoRepliesSince("2026-09-01T00:00:00.000Z")).toEqual([]);
+  });
+});
+
+describe("holdCadence", () => {
+  it("moves next_due_at and held_until only later", () => {
+    const prospectId = ledger.upsertProspect({ name: "Pat", email: "pat@x.com", source: "t" });
+    ledger.enrollCadence({ prospectId, playName: "p", nextDueAt: "2026-11-06T09:00:00.000Z" });
+    const hold = (until: string, returnDate: string | null) =>
+      ledger.holdCadence({ prospectId, playName: "p", until, reason: "out-of-office", returnDate });
+
+    expect(hold("2026-12-16T00:00:00.000Z", "2026-12-14")).toBe(true);
+    const after = () => {
+      const c = ledger.getCadence(prospectId, "p")!;
+      return [c.next_due_at, c.held_until, c.return_date];
+    };
+    expect(after()).toEqual(["2026-12-16T00:00:00.000Z", "2026-12-16T00:00:00.000Z", "2026-12-14"]);
+    hold("2026-11-20T00:00:00.000Z", "2026-11-18");
+    expect(after()).toEqual(["2026-12-16T00:00:00.000Z", "2026-12-16T00:00:00.000Z", "2026-12-14"]);
+    // A stopped cadence is never held.
+    ledger.setCadenceStatus({ prospectId, playName: "p", status: "bounced" });
+    expect(hold("2027-01-01T00:00:00.000Z", null)).toBe(false);
+    // Enrolled again, the sequence starts without the old hold or badge.
+    ledger.setCadenceHoldReason({ prospectId, playName: "p", reason: "left-company" });
+    ledger.enrollCadence({ prospectId, playName: "p", nextDueAt: "2027-02-01T09:00:00.000Z" });
+    const again = ledger.getCadence(prospectId, "p")!;
+    expect([again.status, again.held_until, again.hold_reason]).toEqual(["active", null, null]);
+  });
+});

@@ -28,6 +28,7 @@ import {
   latestCanaryResult as delivLatestCanaryResult,
   latestSentEmailCopy as delivLatestSentEmailCopy,
   listRecentBounces as delivListRecentBounces,
+  listBouncesSince as delivListBouncesSince,
   recordBounce as delivRecordBounce,
   recordCanaryResult as delivRecordCanaryResult,
   suppressionFor as delivSuppressionFor,
@@ -53,6 +54,8 @@ import {
   listSequenceEventsForProspect as cadListSequenceEventsForProspect,
   listSequenceEventsForProspects as cadListSequenceEventsForProspects,
   postponeCadence as cadPostponeCadence,
+  holdCadence as cadHoldCadence,
+  setCadenceHoldReason as cadSetCadenceHoldReason,
   listLinkedInInviteEvents as cadListLinkedInInviteEvents,
   listLinkedInInviteEventsForProspects as cadListLinkedInInviteEventsForProspects,
   listLinkedInInviteCadences as cadListLinkedInInviteCadences,
@@ -210,6 +213,7 @@ import { linkedInGuardFacts, linkedInInviteHistory } from "./ledger-linkedin-gua
 import type { LinkedInGuardFacts } from "./linkedin-guard.ts";
 import { SharedPeople } from "./shared-people.ts";
 import type { ReplyKind } from "./reply-classify.ts";
+import type { AutoReplySuccessor } from "./auto-reply.ts";
 import type {
   AuthVerdict,
   BounceKind,
@@ -596,6 +600,22 @@ export class Ledger {
     return cadPostponeCadence(this.db, input);
   }
 
+  /** @see ledger-cadence.ts#holdCadence */
+  holdCadence(input: {
+    prospectId: number;
+    playName: string;
+    until: string;
+    reason: string;
+    returnDate?: string | null;
+  }): boolean {
+    return cadHoldCadence(this.db, input);
+  }
+
+  /** @see ledger-cadence.ts#setCadenceHoldReason */
+  setCadenceHoldReason(input: { prospectId: number; playName: string; reason: string }): void {
+    cadSetCadenceHoldReason(this.db, input);
+  }
+
   listActiveCadences(opts: { dueByIso?: string } = {}): CadenceWithProspect[] {
     return cadListActiveCadences(this.db, opts);
   }
@@ -922,6 +942,44 @@ export class Ledger {
     kind?: ReplyKind | null;
   }): boolean {
     return this.inbox.recordInboxReply(row);
+  }
+
+  /** @see ledger-inbox.ts#InboxStore.setInboxReplyAutoClassification */
+  setInboxReplyAutoClassification(
+    id: string,
+    input: {
+      reason: string;
+      returnDate: string | null;
+      successor: AutoReplySuccessor | null;
+      escalate?: boolean;
+    },
+  ): void {
+    this.inbox.setInboxReplyAutoClassification(id, input);
+  }
+
+  /** @see ledger-inbox.ts#InboxStore.getInboxReplyAutoClassification */
+  getInboxReplyAutoClassification(id: string) {
+    return this.inbox.getInboxReplyAutoClassification(id);
+  }
+
+  /** @see ledger-inbox.ts#InboxStore.listInboxReplyAutoClassifications */
+  listInboxReplyAutoClassifications(ids: readonly string[]) {
+    return this.inbox.listInboxReplyAutoClassifications(ids);
+  }
+
+  /** @see ledger-inbox.ts#InboxStore.listAutoRepliesSince */
+  listAutoRepliesSince(sinceIso: string): InboxReplyRecord[] {
+    return this.inbox.listAutoRepliesSince(sinceIso);
+  }
+
+  /** Policy-block (or other kind) bounces recorded since `sinceIso`, oldest first. */
+  listBouncesSince(input: { kind: string; sinceIso: string }): Array<{
+    recipient: string;
+    prospect_id: number | null;
+    status_code: string | null;
+    bounced_at: string;
+  }> {
+    return delivListBouncesSince(this.db, input);
   }
 
   /** @see ledger-inbox.ts#InboxStore.setInboxReplyIntent */
