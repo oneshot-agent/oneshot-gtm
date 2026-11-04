@@ -29,6 +29,12 @@ import {
 import type { FitReasonSource } from "@oneshot-gtm/shared-types";
 import { qualifyPerson, resolveIcp, type PersonVerdict } from "./_filter.ts";
 import { isDudDomain } from "./_findemail-prescreen.ts";
+import {
+  cleanCompanyName,
+  isPlaceholderCompanyName,
+  isTenureLine,
+  stripTenure,
+} from "./_linkedin-positions.ts";
 import { stampFitReason } from "./_fit-reason.ts";
 import { researchQueueRowProduct } from "./_product-research.ts";
 import { isLinkedInProfileUrl } from "./_linkedin.ts";
@@ -279,7 +285,11 @@ function dateKey(value: string | undefined): number | null {
   return year ? Number(year[1]) * 12 : null;
 }
 
-/** "Nov 2024 - Present" / "2019 - 2021" / "Mar 2026 -" → start, end, current. */
+/**
+ * "Nov 2024 - Present" / "2019 - 2021" / "Mar 2026 -" → start, end, current.
+ * The tenure LinkedIn appends ("Apr 2026 - Present · 7 mos", "Jun 2023 -
+ * Oct 2023 · 4 mos") is dropped first: it is derived from the dates.
+ */
 export function parsePeriod(period: string | null | undefined): {
   startDate?: string;
   endDate?: string;
@@ -288,16 +298,14 @@ export function parsePeriod(period: string | null | undefined): {
   if (!period) return null;
   // Collapse whitespace first so the split below has no `\s*` on both sides
   // of an alternative (CodeQL: polynomial regex on provider text).
-  const parts = period
-    .replace(/\s+/g, " ")
-    .trim()
+  const parts = stripTenure(period.replace(/\s+/g, " "))
     .split(/ ?[-–—] ?| to /i)
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
   if (parts.length === 0) return null;
   const start = parts[0];
   const endRaw = parts[1] ?? "";
-  const current = endRaw === "" || /^(present|current|now|today)$/i.test(endRaw);
+  const current = endRaw === "" || /^(?:present|current|now|today)\b/i.test(endRaw);
   return {
     ...(start ? { startDate: start } : {}),
     ...(current || !endRaw ? {} : { endDate: endRaw }),
@@ -305,10 +313,45 @@ export function parsePeriod(period: string | null | undefined): {
   };
 }
 
-function orgFrom(raw: JsonRecord): PersonResearchOrganization | null {
-  const name = isRecord(raw["company"])
+/**
+ * A grouped company's header as a provider passes it on: the company in
+ * `title`, the employment type and total tenure in `company` ("Full-time ·
+ * 1 yr 9 mos"). See `_linkedin-positions.ts`.
+ */
+export function isGroupHeader(raw: JsonRecord): boolean {
+  return (
+    typeof raw["company"] === "string" &&
+    isTenureLine(raw["company"]) &&
+    cleanCompanyName(str(raw, "title")) !== null
+  );
+}
+
+/**
+ * The header as an organisation: the company, no title (the header has
+ * none; the roles under it do), and its own period when it has one. Without
+ * a period it is current only at the top of the list, where LinkedIn shows
+ * the latest position; further down, an undated header is history.
+ */
+function headerOrg(raw: JsonRecord, first: boolean): PersonResearchOrganization | null {
+  const name = cleanCompanyName(str(raw, "title"));
+  if (!name) return null;
+  const period = parsePeriod(str(raw, "period"));
+  return {
+    name,
+    ...(period?.startDate ? { startDate: period.startDate } : {}),
+    ...(period?.endDate ? { endDate: period.endDate } : {}),
+    current: period ? period.current : first,
+    grouped: true,
+  };
+}
+
+/** `group`: the company of the grouped header this entry sits under, for an entry that names none of its own. */
+function orgFrom(raw: JsonRecord, group?: string): PersonResearchOrganization | null {
+  const rawName = isRecord(raw["company"])
     ? str(raw["company"] as JsonRecord, "name")
     : (str(raw, "company") ?? str(raw, "name"));
+  const cleaned = cleanCompanyName(rawName);
+  const name = cleaned && !isPlaceholderCompanyName(cleaned) ? cleaned : group;
   if (!name) return null;
   const title = isRecord(raw["title"])
     ? str(raw["title"] as JsonRecord, "name")
@@ -317,8 +360,9 @@ function orgFrom(raw: JsonRecord): PersonResearchOrganization | null {
   const formatted = isRecord(raw["endDate_formatted"])
     ? (raw["endDate_formatted"] as JsonRecord)
     : null;
+  const rawEnd = str(raw, "endDate", "end_date");
   const startDate = period?.startDate ?? str(raw, "startDate", "start_date") ?? undefined;
-  const endDate = period?.endDate ?? str(raw, "endDate", "end_date") ?? undefined;
+  const endDate = period?.endDate ?? (rawEnd ? stripTenure(rawEnd) || undefined : undefined);
   const current =
     typeof formatted?.["is_current"] === "boolean"
       ? (formatted["is_current"] as boolean)
@@ -334,41 +378,81 @@ function orgFrom(raw: JsonRecord): PersonResearchOrganization | null {
   };
 }
 
+const dated = (o: PersonResearchOrganization): boolean => Boolean(o.startDate || o.endDate);
+
 /**
  * Read the organisation history out of a `deepResearchPerson` result. Two
  * shapes arrive: the typed `enrichment.organizations[]` (`endDate_formatted.
  * is_current`), and the enrich-style `experience[]` with a `period` string
- * ("Nov 2024 - Present") at the top level and again under `enrichment`. The
- * provider also emits a dateless `organizations` entry built from the
- * headline; a dated entry for the same company wins over it, because the
- * dates are what a current-role judgment turns on.
+ * ("Nov 2024 - Present") at the top level and again under `enrichment`.
+ * Entries keep the provider's order, which is LinkedIn's: latest first.
+ *
+ * - Company names lose the employment type LinkedIn shows beside them
+ *   ("Acme · Full-time" → "Acme").
+ * - A grouped company's header (`isGroupHeader`) becomes the company with no
+ *   title. The roles that follow it at the same company, or that name no
+ *   company of their own, belong to it and replace it when there are any.
+ * - The provider also emits a dateless entry built from the headline. A
+ *   dated entry for the same company wins over a dateless one, because the
+ *   dates are what a current-role judgment turns on. A current grouped
+ *   header gives way only to a dated entry there that is current too.
  */
 export function organizationsFromResearch(result: unknown): PersonResearchOrganization[] {
   if (!isRecord(result)) return [];
   const inner = isRecord(result["result"]) ? (result["result"] as JsonRecord) : result;
   const scopes: JsonRecord[] = [inner];
   if (isRecord(inner["enrichment"])) scopes.push(inner["enrichment"] as JsonRecord);
-  const dated: PersonResearchOrganization[] = [];
-  const undated: PersonResearchOrganization[] = [];
+  const out: PersonResearchOrganization[] = [];
   const seen = new Set<string>();
+  const add = (org: PersonResearchOrganization): void => {
+    // The cleaned name: "Acme · Full-time" and "Acme" are one company.
+    const id = `${normalizeCompany(org.name)}|${normalizeTitle(org.title)}|${org.startDate ?? ""}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push(org);
+  };
   for (const scope of scopes) {
     for (const key of ["experience", "organizations"] as const) {
-      const list = Array.isArray(scope[key]) ? scope[key] : [];
-      for (const raw of list) {
+      const list: unknown[] = Array.isArray(scope[key]) ? (scope[key] as unknown[]) : [];
+      // The grouped company the entries are under, and its header while no role has replaced it.
+      let groupName: string | undefined;
+      let header: PersonResearchOrganization | null = null;
+      for (let index = 0; index < list.length; index++) {
+        const raw = list[index];
         if (!isRecord(raw)) continue;
-        const org = orgFrom(raw);
-        if (!org) continue;
-        const id = `${normalizeCompany(org.name)}|${normalizeTitle(org.title)}|${org.startDate ?? ""}`;
-        if (seen.has(id)) continue;
-        seen.add(id);
-        (org.startDate || org.endDate ? dated : undated).push(org);
+        if (isGroupHeader(raw)) {
+          if (header) add(header);
+          header = headerOrg(raw, index === 0);
+          groupName = header?.name;
+          continue;
+        }
+        const org = orgFrom(raw, groupName);
+        if (groupName !== undefined) {
+          if (org && normalizeCompany(org.name) === normalizeCompany(groupName)) {
+            // A current header gives way only to a current role under it, not an ended one.
+            if (!header?.current || (dated(org) && org.current)) header = null;
+          } else {
+            if (header) add(header);
+            header = null;
+            groupName = undefined;
+          }
+        }
+        if (org) add(org);
       }
+      if (header) add(header);
     }
   }
-  // A dateless headline entry for a company that already has a dated entry
-  // adds nothing; keep dateless entries only for companies not seen dated.
-  const datedCompanies = new Set(dated.map((o) => normalizeCompany(o.name)));
-  return [...dated, ...undated.filter((o) => !datedCompanies.has(normalizeCompany(o.name)))];
+  const datedCompanies = new Set(out.filter(dated).map((o) => normalizeCompany(o.name)));
+  const currentDated = new Set(
+    out.filter((o) => dated(o) && o.current).map((o) => normalizeCompany(o.name)),
+  );
+  // A dateless entry for a company that already has a dated one adds nothing,
+  // except a current grouped header over an old stint at the same company.
+  return out.filter((o) => {
+    if (dated(o)) return true;
+    const company = normalizeCompany(o.name);
+    return o.grouped && o.current ? !currentDated.has(company) : !datedCompanies.has(company);
+  });
 }
 
 const byRecency = (
@@ -414,8 +498,11 @@ export function companyMatchesDomain(name: string | null | undefined, domain: st
  * the person's work email belongs to wins (`emailDomain`): someone can hold a
  * board seat or a side project alongside their job, and the email says where
  * the message lands. Otherwise the latest start wins; unparseable dates keep
- * the provider's order. No current entry → no role: the most recently ended
- * job is not where someone works now.
+ * the provider's order. A grouped company's header has no dates to compare:
+ * it wins over the latest-starting role when the provider lists it first.
+ * An entry whose name is only an employment type or a tenure line ("Full-time
+ * · 1 yr") names no company and is left out. No current entry → no role: the
+ * most recently ended job is not where someone works now.
  */
 export function deriveCurrentRole(
   orgs: PersonResearchOrganization[],
@@ -424,8 +511,18 @@ export function deriveCurrentRole(
   current: PersonResearchOrganization | null;
   organizations: PersonResearchOrganization[];
 } {
-  const indexed = orgs.map((o, i) => ({ o, i, start: dateKey(o.startDate) }));
-  const byDate = indexed.filter((x) => x.o.current).toSorted(byRecency);
+  const indexed = orgs
+    .map((o, i) => ({ o, i, start: dateKey(o.startDate) }))
+    .filter((x) => !isPlaceholderCompanyName(x.o.name));
+  const sorted = indexed.filter((x) => x.o.current).toSorted(byRecency);
+  // The grouped header listed before the role the dates picked leads instead.
+  const lead = sorted[0];
+  const header = lead
+    ? sorted
+        .filter((x) => x.o.grouped && x.i < lead.i)
+        .reduce<(typeof sorted)[number] | undefined>((a, x) => (a && a.i < x.i ? a : x), undefined)
+    : undefined;
+  const byDate = header ? [header, ...sorted.filter((x) => x !== header)] : sorted;
   const domain = opts.emailDomain;
   const atEmail = domain ? byDate.find((x) => companyMatchesDomain(x.o.name, domain)) : undefined;
   const current = atEmail ? [atEmail, ...byDate.filter((x) => x !== atEmail)] : byDate;
@@ -512,8 +609,8 @@ export interface ResearchPersonInput {
   liveReadOpened?: boolean;
   /**
    * Re-derive from the shared research cache only: no paid call of any kind
-   * (no provider call, no retry by email, no live read, no company lookup
-   * outside its cache). A seed with nothing cached comes back `notCached`.
+   * (no provider call, no retry by email, no live read or company lookup
+   * outside their caches). A seed with nothing cached comes back `notCached`.
    */
   cacheOnly?: boolean;
   /** Buy the person research and company lookup again even when cached (`--rebuy`); the live read keeps `liveMaxAgeMs`. */
@@ -661,15 +758,13 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
 
   // Live tier: the profile page itself, when the seed is a LinkedIn profile
   // and the founder's session is configured. Its Experience list wins on
-  // currency over the provider's (see reconcileOrganizations).
+  // currency over the provider's (see reconcileOrganizations). Under
+  // `cacheOnly` a stored read still counts, so a re-derive keeps what the
+  // page said; nothing is read.
   let live: LiveProfileRead | null = null;
-  if (
-    input.liveProfile !== false &&
-    !input.cacheOnly &&
-    seed.url &&
-    isLinkedInProfileUrl(seed.url)
-  ) {
-    if (liveReadConfigured()) {
+  if (input.liveProfile !== false && seed.url && isLinkedInProfileUrl(seed.url)) {
+    // A stored read needs no account or session to be used again.
+    if (input.cacheOnly || liveReadConfigured()) {
       live = await readLinkedInProfile(
         seed.url,
         {
@@ -681,6 +776,7 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
           remainingUsd: Math.max(0, input.remainingUsd - costUsd),
           ...(input.liveMaxAgeMs !== undefined ? { maxAgeMs: input.liveMaxAgeMs } : {}),
           ...(input.liveReadOpened ? { opened: true } : {}),
+          ...(input.cacheOnly ? { cacheOnly: true } : {}),
         },
       );
       costUsd += live.costUsd;
@@ -746,7 +842,8 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
   }
 
   let company: PersonResearchCompany | undefined;
-  if (current && input.enrichCompany !== false) {
+  // A name that is only an employment type or a tenure line names no company to look up.
+  if (current && input.enrichCompany !== false && !isPlaceholderCompanyName(current.name)) {
     const sameCompany =
       seed.company != null && normalizeCompany(seed.company) === normalizeCompany(current.name);
     // Past the budget (or under cacheOnly) the paid cache may still answer; it never buys.

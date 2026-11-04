@@ -16,6 +16,7 @@ import {
 } from "./_github-user.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
 import { extractFirstPhone, findLinkedInUrl } from "./_linkedin.ts";
+import { providerTopRole } from "./_linkedin-positions.ts";
 import { detectRepoStack } from "./_repo-stack.ts";
 import type { AgentBuilderExtract, FinderResult } from "./_types.ts";
 
@@ -550,7 +551,12 @@ export async function resolveContact(args: {
         domainForGate = profile.company_domain;
       }
       // 3) At minimum we may have learned a company name: feeds Path C's gate.
-      if (profile?.company) companyForGate = profile.company;
+      // "Acme · Full-time" is Acme; a grouped header's tenure line names no company.
+      const named = providerTopRole(
+        typeof profile?.title === "string" ? profile.title : null,
+        profile?.company ?? null,
+      ).company;
+      if (named) companyForGate = named;
     } catch (err) {
       if (err instanceof ContactStopped) throw err;
       logEvent(
