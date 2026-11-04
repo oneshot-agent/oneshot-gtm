@@ -116,17 +116,25 @@ const PERMANENT_RE = new RegExp(
 // text says they come back: "I have left for the Web Summit and will be back
 // on 9 November" is a trip. The lookahead also keeps the plain trips ("left
 // for vacation", "left the office for the day") temporary on their own.
+// "Left" counts only as a departure, never with a thing left behind ("I've
+// left instructions with my team"): said on its own ("Sam has left."), to
+// join or pursue something, or before a capitalised name ("has left
+// Halyard"; that one is case-sensitive on purpose).
 const LEFT_RE = new RegExp(
   [
-    "(?:\\bhas|\\bhave|'ve) (?:left|departed|moved on)\\b" + TEMPORARY_LEAVE,
+    "(?:\\bhas|\\bhave|'ve) (?:left|departed|moved on)(?=\\s*(?:[.,;:!)]|$))",
+    "(?:\\bhas|\\bhave|'ve) left to (?:join|pursue|start|take)\\b",
+    "(?:\\bhas|\\bhave|'ve) (?:departed|moved on)\\b" + TEMPORARY_LEAVE,
     "\\bdeparted (?:from|the)\\b" + TEMPORARY_LEAVE,
   ].join("|"),
-  "i",
+  "im",
 );
+const LEFT_NAMED_RE = /(?:\b[Hh]as|\b[Hh]ave|'ve) left (?!The\b|For\b|On\b)[A-Z][\w&'.-]*/;
 // Leaving the company itself is a departure whatever else the text says
-// ("Sam has left the company. Contact Jane until a replacement is hired.").
+// ("Sam has left the company. Contact Jane until a replacement is hired."),
+// but not leaving its premises ("left the company office for a conference").
 const LEFT_COMPANY_RE =
-  /(?:\bhas|\bhave|'ve) (?:left|departed(?: from)?) (?:the |our )?(?:company|organi[sz]ation|firm|business)\b/i;
+  /(?:\bhas|\bhave|'ve) (?:left|departed(?: from)?) (?:the |our )?(?:company|organi[sz]ation|firm|business)\b(?!\s+(?:offices?|building|premises|campus|site|headquarters|hq)\b)/i;
 // A return cue names when they are back: "will be back", "back on …",
 // "returning on …", or until/through followed by a day or a date. A bare
 // "until" ("until a replacement is hired") is not one.
@@ -137,7 +145,7 @@ function permanentIn(text: string): boolean {
   return (
     PERMANENT_RE.test(text) ||
     LEFT_COMPANY_RE.test(text) ||
-    (LEFT_RE.test(text) && !RETURN_CUE_RE.test(text))
+    ((LEFT_RE.test(text) || LEFT_NAMED_RE.test(text)) && !RETURN_CUE_RE.test(text))
   );
 }
 

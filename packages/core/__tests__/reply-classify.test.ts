@@ -207,6 +207,7 @@ describe("classifyReply", () => {
     ["Automatic reply", "Dana has departed from Halyard."],
     ["Automatic reply", "I’ve left the company. Please contact ops@halyard.example."],
     ["Automatic reply", "I've moved on from Halyard."],
+    ["Automatic reply", "Dana has left Halyard. Her work now sits with the ops team."],
   ])("header-verdict mail %s / %s is auto_permanent", (subject, body) => {
     expect(classifyReply({ subject, body, autoSubmitted: true })).toBe("auto_permanent");
   });
@@ -236,6 +237,10 @@ describe("classifyReply", () => {
       // Any destination, when the notice says they come back.
       "I have left for the Web Summit and will be back on 9 November.",
       "Sam has departed for Lisbon, returning on Monday.",
+      // Something left behind is not a departure.
+      "I'm on parental leave. I've left instructions with my team.",
+      // The company's premises are not the company.
+      "I've left the company office for a conference and will return on Monday.",
     ]) {
       expect(classifyReply({ subject: "Automatic reply", body, autoSubmitted: true })).toBe("auto");
     }
