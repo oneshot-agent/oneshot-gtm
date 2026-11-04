@@ -205,6 +205,8 @@ describe("classifyReply", () => {
     ["Automatic reply", "Sam has left the company. Please write to ops@halyard.example."],
     ["Automatic reply", "I'm not part of the Halyard team anymore."],
     ["Automatic reply", "Dana has departed from Halyard."],
+    ["Automatic reply", "I’ve left the company. Please contact ops@halyard.example."],
+    ["Automatic reply", "I've moved on from Halyard."],
   ])("header-verdict mail %s / %s is auto_permanent", (subject, body) => {
     expect(classifyReply({ subject, body, autoSubmitted: true })).toBe("auto_permanent");
   });

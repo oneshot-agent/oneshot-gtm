@@ -118,7 +118,7 @@ const PERMANENT_RE = new RegExp(
 // for vacation", "left the office for the day") temporary on their own.
 const LEFT_RE = new RegExp(
   [
-    "\\b(?:has|have) (?:left|departed|moved on)\\b" + TEMPORARY_LEAVE,
+    "(?:\\bhas|\\bhave|'ve) (?:left|departed|moved on)\\b" + TEMPORARY_LEAVE,
     "\\bdeparted (?:from|the)\\b" + TEMPORARY_LEAVE,
   ].join("|"),
   "i",
@@ -126,7 +126,7 @@ const LEFT_RE = new RegExp(
 // Leaving the company itself is a departure whatever else the text says
 // ("Sam has left the company. Contact Jane until a replacement is hired.").
 const LEFT_COMPANY_RE =
-  /\b(?:has|have) (?:left|departed(?: from)?) (?:the |our )?(?:company|organi[sz]ation|firm|business)\b/i;
+  /(?:\bhas|\bhave|'ve) (?:left|departed(?: from)?) (?:the |our )?(?:company|organi[sz]ation|firm|business)\b/i;
 // A return cue names when they are back: "will be back", "back on …",
 // "returning on …", or until/through followed by a day or a date. A bare
 // "until" ("until a replacement is hired") is not one.
