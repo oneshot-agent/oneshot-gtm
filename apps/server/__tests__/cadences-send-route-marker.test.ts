@@ -9,6 +9,8 @@ const sendMock = vi.fn();
 const claimMarkerMock = vi.fn(() => true);
 const clearMarkerMock = vi.fn();
 let held = false;
+// The stored preview's payload kind and config key (absent: written before keys).
+let preview: { kind: string; configKey?: string } = { kind: "" };
 
 vi.mock("@oneshot-gtm/plays", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays");
@@ -35,8 +37,9 @@ vi.mock("@oneshot-gtm/core", async () => {
         subject: "s",
         body: "b",
         flags: [],
-        payload: {},
+        payload: preview.kind ? { kind: preview.kind } : {},
         draftedAt: "now",
+        ...(preview.configKey ? { configKey: preview.configKey } : {}),
       }),
     }),
   };
@@ -60,6 +63,7 @@ beforeEach(() => {
   claimMarkerMock.mockReturnValue(true);
   clearMarkerMock.mockReset();
   held = false;
+  preview = { kind: "" };
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -131,6 +135,46 @@ describe("sendCadenceStepRoute on a row an out-of-office holds", () => {
 
   it("400s on a confirmHold that is not a boolean", async () => {
     const res = await sendCadenceStepRoute(withBody({ confirmHold: "yes" }), params);
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("sendCadenceStepRoute and a preview written under an older setup", () => {
+  const send = (body?: unknown) =>
+    sendCadenceStepRoute(
+      new Request("http://localhost/api/cadences/7/send?play=accelerator-batch", {
+        method: "POST",
+        headers: { host: "127.0.0.1:3030", "content-type": "application/json" },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      }),
+      params,
+    );
+
+  it("answers 409 stale unless the founder confirms, and claims nothing", async () => {
+    for (const configKey of [undefined, "0ld0ld0ld0ld"]) {
+      preview = { kind: "email", ...(configKey ? { configKey } : {}) };
+      const res = await send();
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        stale: true,
+        error: "stale-config: draft written under an older setup; re-preview",
+      });
+    }
+    expect(claimMarkerMock).not.toHaveBeenCalled();
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it("sends with confirmStale, and passes it on", async () => {
+    preview = { kind: "email" };
+    sendMock.mockResolvedValue({ action: "sent", payload: null, receiptIds: [1] });
+    const res = await send({ confirmStale: true });
+    expect(res.status).toBe(202);
+    await settle();
+    expect(sendMock).toHaveBeenCalledWith(expect.objectContaining({ confirmStale: true }));
+  });
+
+  it("refuses a confirmStale that is not a boolean", async () => {
+    const res = await send({ confirmStale: "yes" });
     expect(res.status).toBe(400);
   });
 });

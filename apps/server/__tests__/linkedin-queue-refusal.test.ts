@@ -24,6 +24,7 @@ vi.mock("../src/linkedin-client.ts", () => ({
 }));
 
 const { sendDraftRoute, listQueueRoute } = await import("../src/api/queue.ts");
+const { queueDraftConfigKey } = await import("@oneshot-gtm/plays");
 
 const post = () => new Request("http://localhost/api/queue/1/send", { method: "POST" });
 
@@ -45,6 +46,7 @@ function approvedRow(payload: Record<string, unknown>, key: string): number {
       sent: false,
       receiptIds: [],
       dryRun: false,
+      configKey: queueDraftConfigKey("luma-events", "linkedin"),
     },
   });
   ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });

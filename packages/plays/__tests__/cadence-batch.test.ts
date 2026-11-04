@@ -175,6 +175,15 @@ vi.mock("@oneshot-gtm/intel", async () => {
 
 const { previewCadenceStepBatch, sendCadenceStepBatch } = await import("../src/_cadence.ts");
 await import("../src/stack-consolidation.ts");
+const { draftConfigKey } = await import("../src/_draft-config.ts");
+const { loadConfig } = await import("@oneshot-gtm/core");
+/** Today's key for these follow-ups: a preview carrying it is current. */
+const KEY = (): string =>
+  draftConfigKey(
+    loadConfig(),
+    { surface: { channel: "email", stage: "follow_up" }, playName: "stack-consolidation" },
+    null,
+  );
 
 beforeEach(() => {
   calls.sendEmail = 0;
@@ -298,6 +307,7 @@ describe("sendCadenceStepBatch", () => {
       flags: [],
       payload: { kind: "email", subject: "s1", body: "b1" },
       draftedAt: new Date().toISOString(),
+      configKey: KEY(),
     });
     persistedDrafts.set(k(3, "stack-consolidation"), {
       subject: "s3",
@@ -305,6 +315,7 @@ describe("sendCadenceStepBatch", () => {
       flags: [],
       payload: { kind: "email", subject: "s3", body: "b3" },
       draftedAt: new Date().toISOString(),
+      configKey: KEY(),
     });
 
     const out = await sendCadenceStepBatch([
@@ -324,6 +335,7 @@ describe("sendCadenceStepBatch", () => {
       flags: [],
       payload: { kind: "email", subject: "s3", body: "b3" },
       draftedAt: new Date().toISOString(),
+      configKey: KEY(),
     });
 
     const out = await sendCadenceStepBatch([
@@ -335,6 +347,29 @@ describe("sendCadenceStepBatch", () => {
     expect(out[0]?.error).toMatch(/no persisted preview/);
     expect(out[1]?.ok).toBe(true);
     expect(calls.sendEmail).toBe(1);
+  });
+
+  it("refuses a preview written under an older setup, or before previews carried a key", async () => {
+    for (const configKey of ["0ld0ld0ld0ld", undefined]) {
+      calls.sendEmail = 0;
+      persistedDrafts.set(k(1, "stack-consolidation"), {
+        subject: "s1",
+        body: "b1",
+        flags: [],
+        payload: { kind: "email", subject: "s1", body: "b1" },
+        draftedAt: new Date().toISOString(),
+        ...(configKey ? { configKey } : {}),
+      });
+      const out = await sendCadenceStepBatch([{ prospectId: 1, playName: "stack-consolidation" }]);
+      expect(out[0]?.ok).toBe(false);
+      expect(out[0]?.error).toMatch(/^stale-config: draft written under an older setup/);
+      expect(calls.sendEmail).toBe(0);
+    }
+  });
+
+  it("a preview it writes carries today's key, so it sends", async () => {
+    await previewCadenceStepBatch([{ prospectId: 1, playName: "stack-consolidation" }]);
+    expect(persistedDrafts.get(k(1, "stack-consolidation"))).toMatchObject({ configKey: KEY() });
   });
 
   it("never throws", async () => {
@@ -352,6 +387,7 @@ describe("sendCadenceStepBatch", () => {
       flags: [],
       payload: { kind: "email", subject: "s1", body: "b1" },
       draftedAt: new Date().toISOString(),
+      configKey: KEY(),
     });
     persistedDrafts.set(k(3, "stack-consolidation"), {
       subject: "s3",
@@ -359,6 +395,7 @@ describe("sendCadenceStepBatch", () => {
       flags: [],
       payload: { kind: "email", subject: "s3", body: "b3" },
       draftedAt: new Date().toISOString(),
+      configKey: KEY(),
     });
 
     const settledOrder: Array<{ pid: number; ok: boolean }> = [];

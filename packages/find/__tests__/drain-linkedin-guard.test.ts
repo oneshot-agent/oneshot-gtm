@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { _setLinkedInJobTimingForTests, getLedger } from "@oneshot-gtm/core";
+import { queueDraftConfigKey } from "@oneshot-gtm/plays";
 import { drainQueue } from "../src/drain.ts";
 
 // Production drain dispatch against the real ledger, the real guarded sender
@@ -35,6 +36,8 @@ function approve(payload: Record<string, unknown>, key: string): number {
       sent: false,
       receiptIds: [],
       dryRun: false,
+      // Reviewed under today's setup: sent as it stands.
+      configKey: queueDraftConfigKey("luma-events", "linkedin"),
     },
   });
   ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });

@@ -37,6 +37,7 @@ import {
   isOfferSkip,
   isOfferSkipped,
   isProspectOffer,
+  offerConfigIsCurrent,
   offerHoldsSend,
   playMakesOffer,
   researchForOffer,
@@ -223,6 +224,43 @@ export function writeSequenceOfferSkip(
   }
 }
 
+/**
+ * True when a stored offer was written under another prompt version,
+ * product config or `offerExclusions` than today's (`offerConfigIsCurrent`)
+ * and nothing keeps it: not the founder's own text, nor one the founder
+ * approved. Whether the first email carried it is the caller's question.
+ */
+export function offerOutdated(
+  offer: SequenceOfferValue | null | undefined,
+  cfg: AppConfig = loadConfig(),
+): boolean {
+  if (!offer) return false;
+  if (offer.editedBy === "founder") return false;
+  if (typeof offer.weakApprovedAt === "string" && offer.weakApprovedAt.trim()) return false;
+  return !offerConfigIsCurrent(offer, cfg);
+}
+
+/**
+ * True when the sequence's own offer (origin `derived`) is outdated
+ * (`offerOutdated`): its next touch writes a new one (`deriveSequenceOffer`).
+ * An offer the first email carried never is: what was sent is fixed.
+ */
+export function sequenceOfferIsStale(
+  record: Pick<SequenceOfferRecord, "offer" | "introCarriedOffer">,
+  cfg: AppConfig = loadConfig(),
+): boolean {
+  return !record.introCarriedOffer && offerOutdated(record.offer, cfg);
+}
+
+/** `sequenceOfferIsStale` that never throws: a config that cannot be read reads as current. */
+function safeStale(record: SequenceOfferRecord, cfg: AppConfig | undefined): boolean {
+  try {
+    return sequenceOfferIsStale(record, cfg ?? loadConfig());
+  } catch {
+    return false;
+  }
+}
+
 /** The company research a sequence's offer reads first. */
 export type SequenceOfferResearch = OfferResearch;
 
@@ -301,6 +339,8 @@ export type DeriveSequenceOfferResult =
       status: "existing" | "stored";
       record: SequenceOfferRecord;
       offer: SequenceOfferValue;
+      /** Set when the stored offer was written under an older setup and replaced. */
+      refreshed?: boolean;
     }
   | {
       /** The writer declined: its reason, kept on the cadence when it has no offer. */
@@ -308,6 +348,8 @@ export type DeriveSequenceOfferResult =
       record: SequenceOfferRecord;
       reason: "skipped";
       skip: OfferSkip;
+      /** Set when the skip replaced an offer written under an older setup. */
+      refreshed?: boolean;
     }
   | {
       status: "none";
@@ -331,7 +373,12 @@ export type DeriveSequenceOfferResult =
  * answered without a writer call, except with `force`. A weak offer written
  * for the sequence that nobody approved (from before sets kept only passing
  * offers) is never restated: it is written again, and a skip takes its
- * place when nothing passes. Never throws.
+ * place when nothing passes. So is one written for the sequence under an
+ * older prompt version, product config or `offerExclusions`
+ * (`sequenceOfferIsStale`): never the founder's own, one the founder
+ * approved, or the one the first email carried. Replacing it, with a new
+ * offer or with the skip, drops the stored preview that restated it
+ * (`refreshed`). Never throws.
  */
 export async function deriveSequenceOffer(input: {
   prospectId: number;
@@ -350,9 +397,25 @@ export async function deriveSequenceOffer(input: {
 }): Promise<DeriveSequenceOfferResult> {
   const record = sequenceOfferRecord(input);
   const weakHeld = !!record.offer && !record.introCarriedOffer && offerHoldsSend(record.offer);
-  if (record.offer && !weakHeld && (!input.force || record.introCarriedOffer)) {
+  // Written for the sequence under an older setup: written again, like a weak one.
+  const stale = !!record.offer && !weakHeld && safeStale(record, input.cfg);
+  const replaces = weakHeld || stale;
+  if (record.offer && !replaces && (!input.force || record.introCarriedOffer)) {
     return { status: "existing", record, offer: record.offer };
   }
+  // The preview restated the outdated offer: it goes with it.
+  const dropPreview = (): void => {
+    if (!stale) return;
+    try {
+      getLedger().discardCadenceDraft({
+        prospectId: input.prospectId,
+        playName: input.playName,
+        reason: "regenerate",
+      });
+    } catch {
+      // A preview that could not be dropped is stale by its config key anyway.
+    }
+  };
   if (!playMakesOffer(input.playName)) return { status: "none", record, reason: "no-play-offer" };
   try {
     const cfg = input.cfg ?? loadConfig();
@@ -407,17 +470,20 @@ export async function deriveSequenceOffer(input: {
     if (isOfferSkipped(set)) {
       // A fresh skip is kept only while the sequence has no offer, or in
       // place of a weak one: New offers over one that stands leaves it standing.
+      // A stale offer gives way to the skip even when the skip itself is cached.
       const stored =
-        set.changed &&
+        (set.changed || stale) &&
         (!record.offer
           ? writeSequenceOfferSkip(record, set.skipped)
-          : weakHeld && writeSequenceOfferSkip(record, set.skipped, record.offer.offer));
+          : replaces && writeSequenceOfferSkip(record, set.skipped, record.offer.offer));
+      if (stored) dropPreview();
       logEvent("sequence_offer.none", {
         play: input.playName,
         prospect_id: input.prospectId,
         reason: "skipped",
         cached: !set.changed,
         stored,
+        stale,
         why_200: set.skipped.why.slice(0, 200),
       });
       return {
@@ -427,6 +493,7 @@ export async function deriveSequenceOffer(input: {
           : record,
         reason: "skipped",
         skip: set.skipped,
+        ...(stored && stale ? { refreshed: true } : {}),
       };
     }
     const stored = writeSequenceOffer({
@@ -439,10 +506,12 @@ export async function deriveSequenceOffer(input: {
       prospect_id: input.prospectId,
       queue_id: queued?.id ?? null,
       stored,
+      stale,
       relevance: set.offer.relevance ?? null,
       offer_120: set.offer.offer.slice(0, 120),
     });
     if (!stored) return { status: "none", record, reason: "not-stored" };
+    dropPreview();
     return {
       status: "stored",
       record: {
@@ -453,6 +522,7 @@ export async function deriveSequenceOffer(input: {
         skip: null,
       },
       offer: set.offer,
+      ...(stale ? { refreshed: true } : {}),
     };
   } catch (err) {
     logEvent(

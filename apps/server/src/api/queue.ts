@@ -85,6 +85,12 @@ import {
   emailMismatchHold,
   endLinkedInInvite,
   liveInviteFromEvents,
+  draftConfigKeyer,
+  draftIsStale,
+  queueDraftConfigKey,
+  queueDraftSurface,
+  STALE_DRAFT_FLAG,
+  STALE_DRAFT_REASON,
 } from "@oneshot-gtm/plays";
 import { reportServerExecution } from "../telemetry.ts";
 import {
@@ -299,6 +305,12 @@ export function toView(
   sequenceOffer?: QueueRowView["sequenceOffer"],
   /** A sent LinkedIn row's invite state (`linkedInInvitesFor`), when the caller read it. */
   linkedinInvite?: QueueRowView["linkedinInvite"],
+  /**
+   * Today's draft config keys (`draftConfigKeyer`), read once for the page:
+   * an unsent draft written under another config reads `stale`. Absent, the
+   * view does not say.
+   */
+  keyOf?: ReturnType<typeof draftConfigKeyer> | null,
 ): QueueRowView {
   let payload: unknown = null;
   try {
@@ -338,6 +350,7 @@ export function toView(
             ? { knownConnection: { readAt: parsed.knownConnection.readAt } }
             : {}),
         };
+        if (keyOf && unsentDraftIsStale(row, parsed, keyOf)) lastDraft.stale = true;
       }
     } catch {
       lastDraft = null;
@@ -380,6 +393,49 @@ export function toView(
     ...(offerSkip ? { offerSkip } : {}),
     ...(linkedinInvite && row.status === "sent" ? { linkedinInvite } : {}),
   };
+}
+
+/**
+ * True when an unsent draft that will go out as written was written under
+ * another config than today's (`draftIsStale`): no key, or another one. A
+ * known connection sends no text and never is.
+ */
+function unsentDraftIsStale(
+  row: Pick<QueueRow, "status" | "channel" | "play_name">,
+  parsed: Partial<LastDraft>,
+  keyOf: ReturnType<typeof draftConfigKeyer>,
+): boolean {
+  if (row.status === "sent" || parsed.sent === true || parsed.knownConnection) return false;
+  return draftIsStale(parsed, keyOf(queueDraftSurface(row.channel), row.play_name));
+}
+
+/**
+ * True when sending this row puts no text in front of anyone: a draft of a
+ * known connection, or a LinkedIn row a recent profile read shows connected
+ * (the send records the connection instead of an invite).
+ */
+function sendsNoText(row: Pick<QueueRow, "channel" | "payload_json">, parsed: Partial<LastDraft>) {
+  if (parsed.knownConnection) return true;
+  if (channelOf(row.channel) !== "linkedin") return false;
+  try {
+    const p: unknown = JSON.parse(row.payload_json);
+    return (
+      !!p &&
+      typeof p === "object" &&
+      knownConnection(linkedInProfileOf(p as Record<string, unknown>)) != null
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** `draftConfigKeyer` for a page, or null when the config can't be read: views then say nothing. */
+function pageKeyer(): ReturnType<typeof draftConfigKeyer> | null {
+  try {
+    return draftConfigKeyer();
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1056,14 +1112,16 @@ export function listQueueRoute(req: Request): Response {
   const sequenceOffers = sequenceOffersFor(ordered);
   // A sent LinkedIn row shows whether its invite can still be withdrawn: one read for the page.
   const invites = linkedInInvitesFor(ordered);
+  // An unsent draft written under an older setup reads stale: one key read for the page.
+  const keyOf = pageKeyer();
   let views: QueueRowView[];
   try {
     views = ordered.map((row) =>
       url.searchParams.get("forRun") === "1"
-        ? Object.assign(toView(row, sequenceOffers.get(row.id), invites.get(row.id)), {
+        ? Object.assign(toView(row, sequenceOffers.get(row.id), invites.get(row.id), keyOf), {
             payload: resolveQueueTarget(row),
           })
-        : trimListPayload(toView(row, sequenceOffers.get(row.id), invites.get(row.id))),
+        : trimListPayload(toView(row, sequenceOffers.get(row.id), invites.get(row.id), keyOf)),
     );
   } catch (error) {
     return jsonResponse({ error: (error as Error).message }, 400, req);
@@ -1897,6 +1955,9 @@ async function regenerateDraftInner(
 
   if (isCommunityPlatform(row.channel) && row.play_name !== "community-reply")
     return answer({ error: "Public replies require the community-reply play" }, 400);
+  // Read before anything is awaited (the row's offer, then the draft): a
+  // setup saved meanwhile leaves this draft stale, never current.
+  const configKey = queueDraftConfigKey(row.play_name, row.channel);
   let target: unknown;
   try {
     // The row's offer is made current first: the draft opens with it. A row
@@ -2031,6 +2092,8 @@ async function regenerateDraftInner(
     ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
     ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
     ...(draft.knownConnection ? { knownConnection: draft.knownConnection } : {}),
+    // The config it was written under: a later setup change makes it stale.
+    configKey,
   };
   const saved = ledger.setQueueDraftIfCurrent({
     id,
@@ -2165,7 +2228,9 @@ export function queueDraftVersionsRoute(req: Request, params: Record<string, str
 /**
  * Send the row's already-reviewed draft VERBATIM (no LLM re-roll) via
  * `sendDraftedEmail`, then enroll the cadence and flip the row to `sent`.
- * Requires a clean (lint-flag-free), not-yet-sent draft.
+ * Requires a clean (lint-flag-free), not-yet-sent draft. One written under
+ * an older setup (`draftIsStale`) needs `{ confirmStale: true }` (409
+ * `stale` otherwise).
  */
 export async function sendDraftRoute(
   req: Request,
@@ -2173,6 +2238,22 @@ export async function sendDraftRoute(
 ): Promise<Response> {
   const id = Number.parseInt(params["id"] ?? "", 10);
   if (!Number.isFinite(id)) return jsonResponse({ error: "bad id" }, 400, req);
+  // Optional body { confirmStale?: boolean }.
+  let confirmStale = false;
+  const text = await req.text().catch(() => "");
+  if (text.trim()) {
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      return jsonResponse({ error: "body must be JSON" }, 400, req);
+    }
+    const value = (body as { confirmStale?: unknown } | null)?.confirmStale;
+    if (value !== undefined && typeof value !== "boolean") {
+      return jsonResponse({ error: "confirmStale must be a boolean" }, 400, req);
+    }
+    confirmStale = value === true;
+  }
   // Server is draining for shutdown: don't start a new send.
   if (isDraining()) {
     return jsonResponse({ error: "server restarting — retry in a moment" }, 503, req);
@@ -2217,6 +2298,19 @@ export async function sendDraftRoute(
     );
   }
   if (parsed.sent === true) return jsonResponse({ error: "draft already sent" }, 400, req);
+  // Written under another config than today's: the founder confirms, or
+  // regenerates. A known connection sends no text, whatever the draft says.
+  if (
+    !confirmStale &&
+    !sendsNoText(row, parsed) &&
+    draftIsStale(parsed, queueDraftConfigKey(row.play_name, row.channel))
+  ) {
+    return jsonResponse(
+      { error: `${STALE_DRAFT_FLAG}: ${STALE_DRAFT_REASON}`, stale: true },
+      409,
+      req,
+    );
+  }
 
   // Atomic claim of the sending marker. Stale cutoff matches the cadence-send
   // window (5 min); past that, a fresh click can reclaim. Cleared on success
@@ -2298,6 +2392,7 @@ export async function sendDraftRoute(
                 ...(typeof parsed.evidenceClause === "boolean"
                   ? { evidenceClause: parsed.evidenceClause }
                   : {}),
+                ...(typeof parsed.configKey === "string" ? { configKey: parsed.configKey } : {}),
               },
               sentBy: "human",
             });
@@ -2563,6 +2658,8 @@ async function sendKnownConnectionRow(
   const firstTouch = { id, playName: row.play_name, payload: input.payload, notes: row.notes };
   try {
     if (!input.connection) {
+      // Read before the note is drafted: a setup saved meanwhile leaves it stale.
+      const configKey = queueDraftConfigKey(row.play_name, row.channel);
       const note = await draftLinkedInNote(firstTouch);
       ledger.setQueueDraft({
         id,
@@ -2576,6 +2673,7 @@ async function sendKnownConnectionRow(
           ...(note.voiceKey ? { voiceKey: note.voiceKey } : {}),
           ...(note.learningKey ? { learningKey: note.learningKey } : {}),
           ...(note.evidenceClause !== undefined ? { evidenceClause: note.evidenceClause } : {}),
+          configKey,
         },
         discardReason: "redraft",
       });

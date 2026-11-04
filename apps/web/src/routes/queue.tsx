@@ -1731,7 +1731,8 @@ export function DraftSection({
   // The send answered `already_connected`: no invite went out (nothing to withdraw).
   const [connectedOnSend, setConnectedOnSend] = useState(false);
   const send = useMutation({
-    mutationFn: () => api.sendDraft(id),
+    // `confirmStale`: the founder sends a draft written under an older setup as it stands.
+    mutationFn: (confirmStale: boolean = false) => api.sendDraft(id, confirmStale),
     onSuccess: (res) => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
       void qc.invalidateQueries({ queryKey: ["home"] });
@@ -1758,6 +1759,8 @@ export function DraftSection({
         toast.error(
           masked ? "Send held: the address matches none of their current companies." : err.message,
         );
+      else if (err.message.startsWith("stale-config"))
+        toast.error("Draft is stale: drafted under an older setup. Regenerate it, or Send anyway.");
       else toast.error(`couldn't send · ${err.message}`);
     },
   });
@@ -2042,6 +2045,8 @@ export function DraftSection({
   const cleanDraft = draft != null && blocking.length === 0 && !draft.sent && !sendHold;
   // Soft-flagged but otherwise sendable: held for review, founder is overriding.
   const softHold = cleanDraft && draft != null && draft.flags.length > 0;
+  // Drafted under an older setup: Send ships it as written only when clicked as Send anyway.
+  const staleDraft = draft != null && !draft.sent && draft.stale === true;
   const softHoldDetail = draft?.flags.includes("contacted-elsewhere")
     ? "Held — another workspace emailed this person in the last 7 days. Send the reviewed draft as-is to override."
     : draft?.flags.includes("weak-offer")
@@ -2083,20 +2088,22 @@ export function DraftSection({
       variant="receipt"
       size="sm"
       disabled={sending || isGenerating || !cleanDraft}
-      onClick={() => send.mutate()}
+      onClick={() => send.mutate(staleDraft)}
       {...readOnly}
       title={
         sendHold
           ? holdTitle
           : softHold
             ? softHoldDetail
-            : cleanDraft
-              ? knownConnection
-                ? "Already connected: no request goes out; the first message comes up on /cadences"
-                : "Send this prospect now — sends the reviewed draft, as-is"
-              : draft == null
-                ? "Generate a draft first, then send it"
-                : `held · ${draftHeld?.next ?? "regenerate the draft"}`
+            : cleanDraft && staleDraft
+              ? "Stale — drafted under an older setup. Regenerate the draft, or send it as written."
+              : cleanDraft
+                ? knownConnection
+                  ? "Already connected: no request goes out; the first message comes up on /cadences"
+                  : "Send this prospect now — sends the reviewed draft, as-is"
+                : draft == null
+                  ? "Generate a draft first, then send it"
+                  : `held · ${draftHeld?.next ?? "regenerate the draft"}`
       }
     >
       {sending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
@@ -2104,7 +2111,7 @@ export function DraftSection({
         ? "Sending…"
         : sendHold
           ? holdLabel
-          : softHold
+          : softHold || staleDraft
             ? "Send anyway"
             : knownConnection
               ? "Skip request"
@@ -2156,6 +2163,7 @@ export function DraftSection({
     sendHold ||
     deliveryNote ||
     lineFlags.length > 0 ||
+    staleDraft ||
     draft.receiptIds.length > 0 ||
     isStalePostSend ||
     researchWarning ||
@@ -2181,8 +2189,14 @@ export function DraftSection({
           <>
             {sendHold && <SendHoldNote hold={sendHold} rowId={id} />}
             {deliveryNote && <DeliveryWarning delivery={delivery} />}
-            {lineFlags.length > 0 && (
-              <DraftStateLine sent={false} flags={lineFlags} hold={holdOptions} />
+            {(lineFlags.length > 0 || staleDraft) && (
+              <DraftStateLine
+                sent={false}
+                flags={lineFlags}
+                hold={holdOptions}
+                stale={staleDraft}
+                staleNext="regenerate the draft"
+              />
             )}
             {softHold && <Explain concept="softHold" detail={softHoldDetail} />}
             {draft.receiptIds.map((rid) => (

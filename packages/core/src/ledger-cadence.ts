@@ -780,6 +780,8 @@ export function setCadenceDraft(
       body: string;
       flags: string[];
       payload: unknown;
+      /** The config the preview was written under (`draftConfigKey` in plays). */
+      configKey?: string;
     };
     /** Why the preview being replaced was discarded (ledger-drafts.ts); default `redraft`. */
     discardReason?: DraftDiscardReason;
@@ -845,6 +847,7 @@ export function getCadenceDraft(
   flags: string[];
   payload: unknown;
   draftedAt: string;
+  configKey?: string;
 } | null {
   const row = db
     .query(
@@ -860,6 +863,7 @@ export function getCadenceDraft(
       flags: string[];
       payload: unknown;
       draftedAt: string;
+      configKey?: string;
     };
   } catch {
     return null;

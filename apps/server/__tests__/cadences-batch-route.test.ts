@@ -6,6 +6,8 @@ const claimMarkerMock = vi.fn(() => true);
 const clearMarkerMock = vi.fn();
 // Cadences an out-of-office holds, by prospect id: `held_until` in the future.
 let heldIds = new Set<number>();
+// Email previews by prospect id, with the config key each was written under.
+let emailDrafts = new Map<number, string | undefined>();
 
 vi.mock("@oneshot-gtm/plays", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays");
@@ -35,18 +37,32 @@ vi.mock("@oneshot-gtm/core", async () => {
               return_date: "2026-11-09",
             }
           : { held_until: null },
-      getCadenceDraft: () => ({
-        subject: "s",
-        body: "b",
-        flags: [],
-        payload: {},
-        draftedAt: "now",
-      }),
+      getCadenceDraft: (item: { prospectId: number }) =>
+        emailDrafts.has(item.prospectId)
+          ? {
+              subject: "s",
+              body: "b",
+              flags: [],
+              payload: { kind: "email", subject: "s", body: "b" },
+              draftedAt: "now",
+              ...(emailDrafts.get(item.prospectId)
+                ? { configKey: emailDrafts.get(item.prospectId) }
+                : {}),
+            }
+          : { subject: "s", body: "b", flags: [], payload: {}, draftedAt: "now" },
     }),
   };
 });
 
 const { previewCadenceBatchRoute, sendCadenceBatchRoute } = await import("../src/api/cadences.ts");
+const { draftConfigKey } = await import("@oneshot-gtm/plays");
+const { loadConfig } = await import("@oneshot-gtm/core");
+/** Today's key for a show-hn follow-up. */
+const currentKey = () =>
+  draftConfigKey(loadConfig(), {
+    surface: { channel: "email", stage: "follow_up" },
+    playName: "show-hn",
+  });
 
 function jsonBody(body: unknown): Request {
   return new Request("http://localhost/api/cadences/preview-batch", {
@@ -71,6 +87,7 @@ beforeEach(() => {
   claimMarkerMock.mockReturnValue(true);
   clearMarkerMock.mockReset();
   heldIds = new Set();
+  emailDrafts = new Map();
 });
 
 afterEach(() => {
@@ -240,6 +257,50 @@ describe("sendCadenceBatchRoute (fire-and-forget)", () => {
     // The held row is never claimed, so it never reads "sending…".
     expect(claimMarkerMock).toHaveBeenCalledTimes(1);
     expect(sendBatchMock.mock.calls[0]?.[0]).toEqual([{ prospectId: 1, playName: "show-hn" }]);
+  });
+
+  it("skips a preview written under an older setup, or before previews had a key", async () => {
+    emailDrafts = new Map([
+      [1, currentKey()],
+      [2, "0ld0ld0ld0ld"],
+      [3, undefined],
+    ]);
+    sendBatchMock.mockResolvedValue([]);
+    const res = await sendCadenceBatchRoute(
+      jsonBody({
+        items: [1, 2, 3].map((prospectId) => ({ prospectId, playName: "show-hn" })),
+      }),
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as {
+      accepted: number;
+      skipped: Array<{ prospectId: number; reason: string }>;
+    };
+    expect(body.accepted).toBe(1);
+    expect(body.skipped).toEqual([
+      {
+        prospectId: 2,
+        playName: "show-hn",
+        reason: "draft written under an older setup; re-preview",
+      },
+      {
+        prospectId: 3,
+        playName: "show-hn",
+        reason: "draft written under an older setup; re-preview",
+      },
+    ]);
+    expect(claimMarkerMock).toHaveBeenCalledTimes(1);
+    expect(sendBatchMock.mock.calls[0]?.[0]).toEqual([{ prospectId: 1, playName: "show-hn" }]);
+  });
+
+  it("409s when every selected preview is stale, saying so", async () => {
+    emailDrafts = new Map([[1, "0ld0ld0ld0ld"]]);
+    const res = await sendCadenceBatchRoute(
+      jsonBody({ items: [{ prospectId: 1, playName: "show-hn" }] }),
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: /older setup/, skipped: [{ prospectId: 1 }] });
+    expect(sendBatchMock).not.toHaveBeenCalled();
   });
 
   it("409s when every selected row is held", async () => {

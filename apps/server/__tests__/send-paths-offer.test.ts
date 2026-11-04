@@ -85,7 +85,7 @@ vi.mock("../src/telemetry.ts", () => ({ reportServerExecution: () => {} }));
 
 const { runPlay, restoreQueueObjects } = await import("../src/api/run.ts");
 const { sendDraftRoute, markSentRoute } = await import("../src/api/queue.ts");
-const { sequenceOfferRecord, introQueueDedupeKey, OFFER_PROMPT_VERSION } =
+const { sequenceOfferRecord, introQueueDedupeKey, OFFER_PROMPT_VERSION, queueDraftConfigKey } =
   await import("@oneshot-gtm/plays");
 
 const PLAY = "design-partner-loi";
@@ -151,6 +151,8 @@ function approvedRow(
       sent: false,
       receiptIds: [],
       dryRun: true,
+      // Reviewed under today's setup: sent as it stands.
+      configKey: queueDraftConfigKey(PLAY, opts.channel ?? "email"),
       ...opts.draft,
     },
   });

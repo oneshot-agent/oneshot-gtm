@@ -67,6 +67,27 @@ describe("cadenceSelection", () => {
     expect(result.sendable.map((c) => c.prospectId)).toEqual([1, 3]);
     expect(result.away.map((c) => c.prospectId)).toEqual([2]);
   });
+  it("leaves a preview drafted under an older setup out of the batch and counts it as stale", () => {
+    const stale = {
+      subject: "hello",
+      body: "body",
+      flags: [],
+      draftedAt: "2026-09-14T00:00:00Z",
+      stale: true,
+    };
+    const rows = [
+      row(1),
+      row(2, { nextStepDraft: stale }),
+      row(3, { nextStepDraft: stale, heldUntil: "2099-01-01T00:00:00.000Z" }),
+    ];
+    const result = cadenceSelection(rows, new Set(rows.map(cadenceKey)));
+    expect(result.sendable.map((c) => c.prospectId)).toEqual([1]);
+    expect(result.stale.map((c) => c.prospectId)).toEqual([2]);
+    // Away first: one count per row.
+    expect(result.away.map((c) => c.prospectId)).toEqual([3]);
+    // Still previewable: Re-preview clears it.
+    expect(result.previewable.map((c) => c.prospectId)).toEqual([1, 2, 3]);
+  });
 });
 
 describe("stopCadences", () => {

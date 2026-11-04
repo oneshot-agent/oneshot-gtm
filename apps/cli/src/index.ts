@@ -100,6 +100,7 @@ import { commandResearchProducts } from "./commands/research-products.ts";
 import {
   commandListExcludedOffers,
   commandRejudgeOffers,
+  commandRejudgeSequences,
   commandRewriteWeakOffers,
 } from "./commands/rejudge-offers.ts";
 import { commandResearchQueue } from "./commands/research-queue.ts";
@@ -1004,8 +1005,13 @@ find
     "list active sequences whose offer is of a kind in offerExclusions; one judge call each, changes nothing",
     false,
   )
+  .option(
+    "--sequences",
+    "bring active sequences' offers written under an older prompt version, brief or offerExclusions up to date: keep or switch to a passing candidate, else write new offers (held with no offer when none passes); never the founder's own, an approved one or one the first email carried (listed). With --dry-run: one judge call per sequence, prints before/after, writes nothing and writes no new offers",
+    false,
+  )
   .description(
-    "Re-judge the offers stored on unsent queue rows with the workspace's offerJudge and offerExclusions; writes no new offers unless --rewrite-all-weak",
+    "Re-judge the offers stored on unsent queue rows with the workspace's offerJudge and offerExclusions; writes no new offers unless --rewrite-all-weak or --sequences",
   )
   .action(
     runOrFail(
@@ -1015,9 +1021,11 @@ find
         dryRun: boolean;
         rewriteAllWeak: boolean;
         listExcluded: boolean;
+        sequences: boolean;
       }) => {
-        if (opts.listExcluded && opts.rewriteAllWeak) {
-          throw new Error("--list-excluded and --rewrite-all-weak cannot be combined");
+        const modes = [opts.listExcluded, opts.rewriteAllWeak, opts.sequences].filter(Boolean);
+        if (modes.length > 1) {
+          throw new Error("--list-excluded, --rewrite-all-weak and --sequences cannot be combined");
         }
         if (opts.listExcluded) {
           await commandListExcludedOffers({
@@ -1026,7 +1034,11 @@ find
           });
           return;
         }
-        const run = opts.rewriteAllWeak ? commandRewriteWeakOffers : commandRejudgeOffers;
+        const run = opts.sequences
+          ? commandRejudgeSequences
+          : opts.rewriteAllWeak
+            ? commandRewriteWeakOffers
+            : commandRejudgeOffers;
         await run({
           dryRun: opts.dryRun,
           ...(opts.limit !== undefined ? { limit: opts.limit } : {}),

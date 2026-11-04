@@ -90,6 +90,7 @@ vi.mock("../src/linkedin-client.ts", () => ({
 
 const { sendDraftRoute, withdrawInviteRoute, setQueueChannelRoute } =
   await import("../src/api/queue.ts");
+const { queueDraftConfigKey } = await import("@oneshot-gtm/plays");
 
 const post = (body?: unknown) =>
   new Request("http://localhost/api/queue/1/x", {
@@ -133,6 +134,11 @@ beforeEach(() => {
   accountResult = {};
   _resetInviteLimitsCacheForTests();
   saveConfig({ ...loadConfig(), linkedin: undefined });
+  // Reviewed under today's setup: sent as it stands.
+  row.last_draft_json = JSON.stringify({
+    ...JSON.parse(row.last_draft_json!),
+    configKey: queueDraftConfigKey("luma-events", "linkedin"),
+  });
   account = { workspace: "alpha", accountId: `acct-${++accountSeq}` };
 });
 

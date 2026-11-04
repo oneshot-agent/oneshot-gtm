@@ -730,6 +730,113 @@ describe("offerForDraft", () => {
   });
 });
 
+describe("offers and skips follow the workspace's offerExclusions", () => {
+  const EXCLUDED = ["a fictional kind of goal"];
+
+  it("are stamped with the exclusions they were written under", async () => {
+    const { offerExclusionsHash } = await import("../src/_prospect-offer.ts");
+    cfg.offerExclusions = EXCLUDED;
+    llm.replies = [JSON.stringify(good)];
+    const { offers } = await deriveOffers({ target, playName: "new-business" });
+    expect(offers[0]?.exclusionsHash).toBe(offerExclusionsHash(cfg));
+    llm.replies = [JSON.stringify({ skip: true, why: "no role left" })];
+    const { skip } = await deriveOffers({ target, playName: "new-business" });
+    expect(skip?.exclusionsHash).toBe(offerExclusionsHash(cfg));
+    expect(offerExclusionsHash(cfg)).not.toBe(offerExclusionsHash({}));
+  });
+
+  it("an offer written before the exclusions changed is written again; under them, it stands", async () => {
+    llm.replies = [JSON.stringify(good)];
+    const first = await ensureOfferSet({ target, playName: "new-business" });
+    if (!first || isOfferSkipped(first)) throw new Error("expected an offer");
+    const stored = { ...target, offer: first.offer, offerCandidates: first.candidates };
+    // Same exclusions (none): kept, no writer call.
+    const calls = llm.inputs.length;
+    expect((await ensureOfferSet({ target: stored, playName: "new-business" }))?.changed).toBe(
+      false,
+    );
+    expect(await offerForDraft({ target: stored, playName: "new-business" })).toBe(first.offer);
+    expect(llm.inputs.length).toBe(calls);
+    // New exclusions: written again, on the queue and for a draft alike.
+    cfg.offerExclusions = EXCLUDED;
+    llm.replies = [JSON.stringify(second)];
+    const queued = await ensureOfferSet({ target: stored, playName: "new-business" });
+    expect(queued && !isOfferSkipped(queued) && queued.changed).toBe(true);
+    expect(queued && !isOfferSkipped(queued) && queued.offer.offer).toBe(second.offer);
+    llm.replies = [JSON.stringify(second)];
+    const drafted = await offerSetForDraft({ target: stored, playName: "new-business" });
+    expect(drafted && !isOfferSkipped(drafted) && drafted.derived).toBe(true);
+  });
+
+  it("one from before the stamp reads as written under none", async () => {
+    const stored = {
+      ...good,
+      level: "researched" as const,
+      version: OFFER_PROMPT_VERSION,
+      inputHash: "x",
+      productHash: offerProductHash(cfg),
+      derivedAt: "",
+    };
+    expect(
+      await offerForDraft({ target: { ...target, offer: stored }, playName: "new-business" }),
+    ).toBe(stored);
+    cfg.offerExclusions = EXCLUDED;
+    llm.replies = [JSON.stringify(second)];
+    const out = await offerForDraft({
+      target: { ...target, offer: stored },
+      playName: "new-business",
+    });
+    expect(out?.offer).toBe(second.offer);
+  });
+
+  it("the founder's own and an approved offer stand whatever the exclusions", async () => {
+    cfg.offerExclusions = EXCLUDED;
+    const own = {
+      ...good,
+      level: "researched" as const,
+      version: OFFER_PROMPT_VERSION,
+      inputHash: "founder",
+      derivedAt: "",
+      editedBy: "founder" as const,
+    };
+    expect(
+      await offerForDraft({ target: { ...target, offer: own }, playName: "new-business" }),
+    ).toBe(own);
+    const research = offerResearchText(target);
+    const approved = {
+      ...good,
+      level: "researched" as const,
+      version: OFFER_PROMPT_VERSION,
+      inputHash: offerInputHash(research, cfg),
+      productHash: offerProductHash(cfg),
+      relevance: "weak" as const,
+      weakApprovedAt: "2026-10-01T00:00:00Z",
+      derivedAt: "",
+    };
+    expect(
+      await offerForDraft({ target: { ...target, offer: approved }, playName: "new-business" }),
+    ).toBe(approved);
+    expect(llm.inputs).toHaveLength(0);
+  });
+
+  it("a skip written before the exclusions changed asks the writer again", async () => {
+    llm.replies = [JSON.stringify({ skip: true, why: "no role left" })];
+    const first = await ensureOfferSet({ target, playName: "new-business" });
+    if (!isOfferSkipped(first)) throw new Error("expected a skip");
+    const held = { ...target, offerSkip: first.skipped };
+    const calls = llm.inputs.length;
+    expect(isOfferSkipped(await offerSetForDraft({ target: held, playName: "new-business" }))).toBe(
+      true,
+    );
+    expect(llm.inputs.length).toBe(calls);
+    cfg.offerExclusions = EXCLUDED;
+    llm.replies = [JSON.stringify(good)];
+    const again = await ensureOfferSet({ target: held, playName: "new-business" });
+    expect(llm.inputs.length).toBeGreaterThan(calls);
+    expect(again && !isOfferSkipped(again) && again.offer.offer).toBe(good.offer);
+  });
+});
+
 describe("offerBlock", () => {
   it("gives the writer the offer, how, terms and brief", () => {
     const block = offerBlock(good, cfg, "new-business")!;

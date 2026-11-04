@@ -506,8 +506,10 @@ export interface OneShotConfig {
    * for the prospect's own open roles"). The offer writer is told never to
    * write one, and the judge rates one `irrelevant`, so it is never used.
    * Read through `offerExclusionsOf` (trimmed, blanks dropped). Not part of
-   * an offer's input hash: stored offers are swept with
-   * `find rejudge-offers`. Absent or empty: no exclusions.
+   * an offer's input hash: offers and skips carry their own `exclusionsHash`,
+   * so one written under other exclusions is written again, and sequences
+   * are brought up to date with `find rejudge-offers --sequences`. Absent or
+   * empty: no exclusions.
    */
   offerExclusions?: string[];
   /**

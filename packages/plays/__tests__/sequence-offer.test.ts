@@ -23,7 +23,7 @@ const llm = {
   dropOffer: false,
 };
 
-const cfg = {
+const cfg: Record<string, unknown> = {
   founderName: "Founder",
   productOneLiner: "Acme schedules field crews",
   productBrief:
@@ -107,6 +107,7 @@ const {
   enrollInCadence,
   previewCadenceStep,
   registerSequence,
+  runCadenceStepForProspect,
   sendCadenceStep,
 } = await import("../src/_cadence.ts");
 const { deriveSequenceOffer, sequenceOfferRecord, writeSequenceOffer } =
@@ -216,6 +217,7 @@ beforeEach(() => {
   llm.offers = JSON.stringify({ offers: [good, second] });
   llm.judge = "relevant";
   llm.dropOffer = false;
+  delete cfg["offerExclusions"];
 });
 afterEach(() => ledger.close());
 
@@ -574,5 +576,129 @@ describe("follow-up lints at preview", () => {
     const repair = llm.inputs.get("seq-followup")!.at(-1)!;
     expect(repair).toContain("thin-body");
     expect(repair).toContain("opens-without-offer");
+  });
+});
+
+describe("sequence offers written under an older setup", () => {
+  /** A sequence carrying an offer written for it now, with `over` laid on it as stored. */
+  async function derivedSequence(over: Record<string, unknown> = {}): Promise<number> {
+    const { id } = preOfferSequence();
+    const out = await deriveSequenceOffer({ prospectId: id, playName: PLAY });
+    if (out.status !== "stored") throw new Error("expected an offer written for the sequence");
+    if (Object.keys(over).length > 0) {
+      const record = sequenceOfferRecord({ prospectId: id, playName: PLAY });
+      writeSequenceOffer({ record, offer: { ...out.offer, ...over } });
+    }
+    llm.inputs = new Map();
+    llm.offers = JSON.stringify({ offers: [second] });
+    return id;
+  }
+  const storePreview = (id: number) =>
+    ledger.setCadenceDraft({
+      prospectId: id,
+      playName: PLAY,
+      draft: {
+        subject: "s",
+        body: "restates the old offer",
+        flags: [],
+        payload: { kind: "email" },
+      },
+    });
+
+  it("one written for the sequence stands while the setup is unchanged", async () => {
+    const id = await derivedSequence();
+    const again = await deriveSequenceOffer({ prospectId: id, playName: PLAY });
+    expect(again.status).toBe("existing");
+    expect(llm.inputs.get("prospect-offer")).toBeUndefined();
+  });
+
+  it("one of an older prompt version is written again, and its preview dropped", async () => {
+    const id = await derivedSequence({ version: "offer-v1" });
+    storePreview(id);
+    const out = await deriveSequenceOffer({ prospectId: id, playName: PLAY });
+    expect(out).toMatchObject({
+      status: "stored",
+      refreshed: true,
+      offer: { offer: second.offer },
+    });
+    expect(llm.inputs.get("prospect-offer")).toHaveLength(1);
+    expect(cadenceOffer(id)).toMatchObject({ offer: { offer: second.offer }, origin: "derived" });
+    expect(ledger.getCadenceDraft({ prospectId: id, playName: PLAY })).toBeNull();
+  });
+
+  it("is written again when the exclusions change, and stands once written under them", async () => {
+    const id = await derivedSequence();
+    cfg["offerExclusions"] = ["a fictional kind of goal"];
+    const out = await deriveSequenceOffer({ prospectId: id, playName: PLAY });
+    expect(out).toMatchObject({
+      status: "stored",
+      refreshed: true,
+      offer: { offer: second.offer },
+    });
+    // The writer and the judge were told the exclusion.
+    expect(llm.inputs.get("prospect-offer")![0]).toContain("a fictional kind of goal");
+    const again = await deriveSequenceOffer({ prospectId: id, playName: PLAY });
+    expect(again.status).toBe("existing");
+  });
+
+  it("one from before the exclusions stamp reads as written under none", async () => {
+    const id = await derivedSequence({ exclusionsHash: undefined });
+    const record = sequenceOfferRecord({ prospectId: id, playName: PLAY });
+    expect(record.offer?.exclusionsHash).toBeUndefined();
+    expect((await deriveSequenceOffer({ prospectId: id, playName: PLAY })).status).toBe("existing");
+    cfg["offerExclusions"] = ["a fictional kind of goal"];
+    expect(await deriveSequenceOffer({ prospectId: id, playName: PLAY })).toMatchObject({
+      status: "stored",
+      refreshed: true,
+    });
+  });
+
+  it("is written again when the product brief changes", async () => {
+    const id = await derivedSequence();
+    const brief = cfg["productBrief"];
+    cfg["productBrief"] = `${String(brief)} It also sends invoices.`;
+    try {
+      expect(await deriveSequenceOffer({ prospectId: id, playName: PLAY })).toMatchObject({
+        status: "stored",
+        refreshed: true,
+      });
+    } finally {
+      cfg["productBrief"] = brief;
+    }
+  });
+
+  it("keeps the founder's own, an approved one and the first email's, whatever the setup", async () => {
+    const old = { version: "offer-v1", exclusionsHash: "0ld" };
+    const own = await derivedSequence({ ...old, editedBy: "founder" });
+    const approved = await derivedSequence({ ...old, weakApprovedAt: "2026-10-21T00:00:00Z" });
+    const { id: intro } = preOfferSequence({ intro: { ...good, ...old, inputHash: "h" } });
+    cfg["offerExclusions"] = ["a fictional kind of goal"];
+    llm.inputs = new Map();
+    for (const id of [own, approved, intro]) {
+      storePreview(id);
+      expect((await deriveSequenceOffer({ prospectId: id, playName: PLAY })).status).toBe(
+        "existing",
+      );
+      expect(ledger.getCadenceDraft({ prospectId: id, playName: PLAY })).not.toBeNull();
+    }
+    expect(llm.inputs.get("prospect-offer")).toBeUndefined();
+  });
+
+  it("when no new offer passes, gives way to the skip: the step is held no-offer", async () => {
+    const id = await derivedSequence({ version: "offer-v1" });
+    llm.judge = "weak";
+    const held = await preview(id);
+    expect(held).toMatchObject({ subject: "", body: "", flags: ["no-offer"] });
+    expect(cadenceOffer(id)).toMatchObject({ offer: null, candidates: [], skip: {} });
+  });
+
+  it("is never restated unattended: the runner leaves the step due for a preview", async () => {
+    const id = await derivedSequence({ version: "offer-v1" });
+    const out = await runCadenceStepForProspect({ prospectId: id, playName: PLAY, dryRun: true });
+    expect(out).toMatchObject({
+      action: "skipped",
+      note: "held: offer-stale — preview it on /cadences",
+    });
+    expect(llm.inputs.get("prospect-offer")).toBeUndefined();
   });
 });

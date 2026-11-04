@@ -25,10 +25,12 @@ export function cadenceSelection(
       c.nextStepDraft != null && c.nextStepDraft.flags.length === 0 && !isHeldElsewhere(c, nowMs),
   );
   // An out-of-office holds the step: a batch skips it (the server does too),
-  // and the selection bar says how many it skipped.
+  // and the selection bar says how many it skipped. So does a draft written
+  // under an older setup: it is previewed again before it goes.
   const away = ready.filter((c) => isAway(c, nowMs));
-  const sendable = ready.filter((c) => !isAway(c, nowMs));
-  return { selectable, chosen, stoppable, previewable, sendable, away };
+  const stale = ready.filter((c) => !isAway(c, nowMs) && c.nextStepDraft?.stale === true);
+  const sendable = ready.filter((c) => !isAway(c, nowMs) && c.nextStepDraft?.stale !== true);
+  return { selectable, chosen, stoppable, previewable, sendable, away, stale };
 }
 
 /** Reuse the single-stop endpoint's validation, retaining individual failures for retry. */

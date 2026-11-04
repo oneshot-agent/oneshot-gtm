@@ -48,4 +48,21 @@ describe("DraftStateLine held advice", () => {
     expect(line(["no-offer"])).toContain("no offer could be written");
     expect(line(["no-offer"])).not.toContain("the writer found");
   });
+
+  it("says a draft is stale and what clears it, alone or beside a hold", () => {
+    const stale = (flags: string[]) =>
+      renderToStaticMarkup(
+        <DraftStateLine sent={false} flags={flags} stale staleNext="re-preview" />,
+      );
+    expect(stale([])).toContain("stale");
+    expect(stale([])).toContain("drafted under an older setup");
+    expect(stale([])).toContain("· re-preview");
+    expect(stale([])).not.toContain("no flags");
+    expect(stale(["thin-body"])).toContain("held · lint");
+    expect(stale(["thin-body"])).toContain("drafted under an older setup");
+    // A sent draft is what went out: never stale.
+    expect(renderToStaticMarkup(<DraftStateLine sent flags={[]} stale />)).not.toContain(
+      "older setup",
+    );
+  });
 });

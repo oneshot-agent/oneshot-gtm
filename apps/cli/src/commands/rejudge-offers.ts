@@ -16,16 +16,22 @@ import {
   isProspectOffer,
   judgementFields,
   judgeOffers,
+  OFFER_PROMPT_VERSION,
   offerCandidatesOf,
+  offerExclusionsHash,
   offerHoldsSend,
   offerOf,
+  offerOutdated,
+  offerProductHash,
   offerResearchText,
   offerSkipPatch,
   playMakesOffer,
   prospectOfferInput,
   sequenceOfferOf,
+  writeSequenceOffer,
   type OfferJudgement,
   type ProspectOffer,
+  type SequenceOfferRecord,
 } from "@oneshot-gtm/plays";
 import { c, header, note, ok, resolveCap, warn } from "../output.ts";
 
@@ -92,11 +98,22 @@ const RELEVANCE_KEYS = [
   "relevanceClassifier",
 ] as const;
 
-/** The offer with its stored verdict replaced by this one. */
-function rejudged(offer: ProspectOffer, j: OfferJudgement): ProspectOffer {
+/**
+ * The offer with its stored verdict replaced by this one, stamped with the
+ * `offerExclusions` the judge read (`exclusionsHash`).
+ */
+function rejudged(
+  offer: ProspectOffer,
+  j: OfferJudgement,
+  cfg: { offerExclusions?: unknown } = loadConfig(),
+): ProspectOffer {
   const next: Record<string, unknown> = { ...offer };
   for (const key of RELEVANCE_KEYS) delete next[key];
-  return { ...(next as unknown as ProspectOffer), ...judgementFields(j) };
+  return {
+    ...(next as unknown as ProspectOffer),
+    ...judgementFields(j),
+    exclusionsHash: offerExclusionsHash(cfg),
+  };
 }
 
 interface Eligible {
@@ -207,14 +224,14 @@ export async function commandRejudgeOffers(opts: RejudgeOffersOpts): Promise<Rej
     summary.judged++;
     const next = candidates.map((o, i) => {
       const j = verdicts[i] ?? null;
-      return j ? rejudged(o, j) : o;
+      return j ? rejudged(o, j, cfg) : o;
     });
     const wasHeld = offerHoldsSend(active);
     let offer: ProspectOffer;
     let outcome: RejudgeOutcome;
     if (verdict.pass) {
       // Built from the stored active offer, so its own angles stay.
-      offer = rejudged(active, verdict);
+      offer = rejudged(active, verdict, cfg);
       outcome = wasHeld ? "lifted" : "passing";
     } else {
       // A weak offer the founder approved stays theirs: it is not swapped
@@ -241,11 +258,11 @@ export async function commandRejudgeOffers(opts: RejudgeOffersOpts): Promise<Rej
         outcome = "switched";
       } else if (verdict.excluded === true) {
         // Held, and open to `--rewrite-all-weak`: the approval was not given on this verdict.
-        const { weakApprovedAt: _approval, ...held } = rejudged(active, verdict);
+        const { weakApprovedAt: _approval, ...held } = rejudged(active, verdict, cfg);
         offer = held;
         outcome = "weak";
       } else {
-        offer = rejudged(active, verdict);
+        offer = rejudged(active, verdict, cfg);
         outcome = "weak";
       }
     }
@@ -633,5 +650,321 @@ export async function commandListExcludedOffers(
     `judged ${summary.judged} · excluded ${summary.excluded.length} · errors ${summary.errors}` +
       " · nothing written: each sequence keeps its offer.",
   );
+  return summary;
+}
+
+/**
+ * `--sequences`: bring every active sequence's offer up to today's setup.
+ * An offer written for the sequence (origin `derived`) under an older prompt
+ * version, product config or `offerExclusions` (`offerOutdated`) is judged
+ * again with its candidates under today's judge and exclusions. When the
+ * active offer passes it stays, stamped as judged under today's setup; when
+ * another candidate passes, that one becomes active; otherwise new offers are
+ * written for the sequence (`deriveSequenceOffer`), and when none passes the
+ * sequence is held with no offer for the founder's review. Any change drops
+ * the stored preview, which restated the old offer.
+ *
+ * Never changed: the founder's own offer, one the founder approved, and one
+ * the first email carried (listed, since what was sent is fixed). An offer
+ * whose product config changed is written again without a judge call: its
+ * claims rest on the old brief.
+ *
+ * `--dry-run` judges (one judge call per sequence) and prints each
+ * sequence's offer before and after, writing nothing and writing no new
+ * offers; a sequence that would get new offers says so.
+ */
+export interface RejudgeSequencesSummary {
+  /** Active sequences of offer-making plays carrying an offer. */
+  active: number;
+  /** Written or judged under today's setup: nothing to do. */
+  current: number;
+  /** The founder's own offer or one the founder approved: kept as it stands. */
+  kept: number;
+  /** Outdated, but the first email carried it: listed only. */
+  intro: string[];
+  /** The active offer passes under today's setup: kept, stamped current. */
+  passing: string[];
+  /** Another candidate passes and is now active. */
+  switched: string[];
+  /** Nothing stored passes (or the product config changed): new offers written, or would be. */
+  rederive: string[];
+  /** Of `rederive`, written: the new active offer. */
+  rewritten: string[];
+  /** Of `rederive`, no new offer passed: held with no offer for the founder's review. */
+  held: string[];
+  /** Nothing written: the sequence moved on, a send held it, or the writer wrote nothing. */
+  unchanged: string[];
+  errors: number;
+  /** What the judge and writer calls cost, in USD. */
+  costUsd: number;
+}
+
+interface StaleSequence {
+  key: string;
+  prospectId: number;
+  playName: string;
+  currentStep: number;
+  record: SequenceOfferRecord;
+  offer: ProspectOffer;
+  candidates: ProspectOffer[];
+}
+
+/**
+ * The active sequences `--sequences` acts on (`stale`), and the ones it only
+ * counts or lists. No ledger read.
+ */
+export function selectStaleSequences(
+  cadences: ReadonlyArray<
+    Parameters<typeof sequenceOfferOf>[0] & { status?: string; current_step?: number }
+  >,
+  cfg: ReturnType<typeof loadConfig>,
+): { stale: StaleSequence[]; intro: string[]; kept: number; current: number; active: number } {
+  const out = {
+    stale: [] as StaleSequence[],
+    intro: [] as string[],
+    kept: 0,
+    current: 0,
+    active: 0,
+  };
+  for (const cadence of cadences) {
+    if (cadence.status !== undefined && cadence.status !== "active") continue;
+    if (!playMakesOffer(cadence.play_name, cfg)) continue;
+    const record = sequenceOfferOf(cadence);
+    const offer = record.offer;
+    if (!offer) continue;
+    out.active++;
+    const key = `sequence ${cadence.prospect_id}/${cadence.play_name}`;
+    const own =
+      offer.editedBy === "founder" ||
+      (typeof offer.weakApprovedAt === "string" && !!offer.weakApprovedAt.trim());
+    if (own) {
+      out.kept++;
+      continue;
+    }
+    // The first email carried it: fixed, so it is only listed when outdated.
+    // Only its text may be known (no version): that is never compared.
+    if (record.introCarriedOffer) {
+      if (typeof offer.version === "string" && offerOutdated(offer, cfg)) out.intro.push(key);
+      else out.current++;
+      continue;
+    }
+    if (!isProspectOffer(offer) || !offerOutdated(offer, cfg)) {
+      out.current++;
+      continue;
+    }
+    const full = offer as ProspectOffer;
+    const candidates = record.offerCandidates.some((o) => o.offer === full.offer)
+      ? record.offerCandidates
+      : [full, ...record.offerCandidates];
+    out.stale.push({
+      key,
+      prospectId: cadence.prospect_id,
+      playName: cadence.play_name,
+      currentStep: typeof cadence.current_step === "number" ? cadence.current_step : 0,
+      record,
+      offer: full,
+      candidates,
+    });
+  }
+  return out;
+}
+
+/** What a sequence's offer is judged against: its queue row, else the prospect. */
+function sequenceJudgeInput(
+  ledger: ReturnType<typeof getLedger>,
+  prospectId: number,
+  playName: string,
+): { target: Record<string, unknown>; dossier: string | null } {
+  const queued = ledger.cadenceQueueRow(prospectId, playName);
+  if (queued) return { target: queued.payload, dossier: null };
+  return prospectOfferInput(ledger.getProspectById(prospectId));
+}
+
+/** What the judge made of an outdated sequence's stored offers. */
+type SequenceVerdict =
+  | { outcome: "passing" | "switched"; offer: ProspectOffer; candidates: ProspectOffer[] }
+  | { outcome: "rederive" }
+  | { outcome: "error"; why: string };
+
+async function judgeStaleSequence(
+  ledger: ReturnType<typeof getLedger>,
+  item: StaleSequence,
+  cfg: ReturnType<typeof loadConfig>,
+  onCost: (usd: number) => void,
+): Promise<SequenceVerdict> {
+  const productHash = offerProductHash(cfg);
+  // Claims written on another brief are written again: nothing to judge.
+  if (item.offer.productHash !== productHash) return { outcome: "rederive" };
+  const input = sequenceJudgeInput(ledger, item.prospectId, item.playName);
+  const verdicts = await judgeOffers(
+    item.candidates,
+    offerResearchText(input.target, input.dossier),
+    input.target,
+    cfg,
+    { onCost },
+  );
+  if (!verdicts) return { outcome: "error", why: "no judge engine gave a verdict" };
+  const judged = item.candidates.map((o, i) => {
+    const j = verdicts[i] ?? null;
+    return j ? { ...rejudged(o, j, cfg), judgedVersion: OFFER_PROMPT_VERSION } : o;
+  });
+  // A candidate written on another brief never becomes active here.
+  const passes = (i: number): boolean =>
+    verdicts[i]?.pass === true && judged[i]!.productHash === productHash;
+  const activeIndex = item.candidates.findIndex((o) => o.offer === item.offer.offer);
+  if (activeIndex >= 0 && passes(activeIndex)) {
+    return { outcome: "passing", offer: judged[activeIndex]!, candidates: judged };
+  }
+  const passing = judged.map((_, i) => i).filter(passes);
+  if (passing.length === 0) return { outcome: "rederive" };
+  // Under `prefer-product` a passing product-anchored candidate goes first.
+  const preferred =
+    offerAnchorOf(cfg) === "prefer-product"
+      ? passing.find((i) => judged[i]!.anchor === "product")
+      : undefined;
+  // An approval belongs to the offer it was given on.
+  const { weakApprovedAt: _approval, ...chosen } = judged[preferred ?? passing[0]!]!;
+  return { outcome: "switched", offer: chosen, candidates: judged };
+}
+
+export async function commandRejudgeSequences(
+  opts: RejudgeOffersOpts,
+): Promise<RejudgeSequencesSummary> {
+  header(`rejudge-offers --sequences ${opts.dryRun ? c.dim("(dry run)") : ""}`);
+  const ledger = getLedger();
+  const cfg = loadConfig();
+  const picked = selectStaleSequences(ledger.listActiveCadences(), cfg);
+  const cap = resolveCap(opts.limit);
+  const work = cap === undefined ? picked.stale : picked.stale.slice(0, cap);
+  const summary: RejudgeSequencesSummary = {
+    active: picked.active,
+    current: picked.current,
+    kept: picked.kept,
+    intro: picked.intro.toSorted(),
+    passing: [],
+    switched: [],
+    rederive: [],
+    rewritten: [],
+    held: [],
+    unchanged: [],
+    errors: 0,
+    costUsd: 0,
+  };
+  process.stdout.write(
+    `${c.dim("active sequences with an offer:")} ${summary.active}  ${c.dim("current:")} ${summary.current}` +
+      `  ${c.dim("founder's own or approved:")} ${summary.kept}` +
+      `  ${c.dim("sent in the first email:")} ${summary.intro.length}` +
+      `  ${c.dim("outdated:")} ${picked.stale.length}  ${c.dim("to judge:")} ${work.length}\n`,
+  );
+  for (const key of summary.intro) {
+    process.stdout.write(`  ${key} ${c.dim("kept: the first email carried it")}\n`);
+  }
+  const onCost = (usd: number): void => {
+    summary.costUsd += usd;
+  };
+  await parallelMap(work, opts.concurrency ?? 3, async (item) => {
+    try {
+      const verdict = await judgeStaleSequence(ledger, item, cfg, onCost);
+      if (verdict.outcome === "error") {
+        summary.errors++;
+        warn(`${item.key}: ${verdict.why}`);
+        return;
+      }
+      if (opts.dryRun) {
+        summary[verdict.outcome].push(item.key);
+        const after =
+          verdict.outcome === "rederive"
+            ? "new offers written for the sequence (held with no offer if none passes)"
+            : `${verdict.outcome === "switched" ? "switch to" : "keep"} ${short(verdict.offer.offer)}`;
+        process.stdout.write(
+          `  ${item.key}\n    before ${short(item.offer.offer)}\n    after  ${after}\n`,
+        );
+        return;
+      }
+      if (verdict.outcome !== "rederive") {
+        const written = writeSequenceOffer({
+          record: item.record,
+          offer: verdict.offer,
+          offerCandidates: verdict.candidates,
+          // Only over the offer read here: one that changed meanwhile stands.
+          expect: {
+            offer: item.offer.offer,
+            derivedAt: typeof item.offer.derivedAt === "string" ? item.offer.derivedAt : null,
+            editedBy: null,
+          },
+        });
+        if (!written) {
+          summary.unchanged.push(item.key);
+          process.stdout.write(`  ${item.key} ${c.dim("unchanged: the sequence moved on")}\n`);
+          return;
+        }
+        // The stored preview restated the offer as it was judged before.
+        ledger.discardCadenceDraft({
+          prospectId: item.prospectId,
+          playName: item.playName,
+          reason: "regenerate",
+        });
+        summary[verdict.outcome].push(item.key);
+        process.stdout.write(
+          `  ${item.key} ${verdict.outcome.padEnd(9)} ${short(verdict.offer.offer)}\n`,
+        );
+        return;
+      }
+      summary.rederive.push(item.key);
+      // Outdated, so written again, and the preview dropped with it.
+      const out = await deriveSequenceOffer({
+        prospectId: item.prospectId,
+        playName: item.playName,
+        stepIndex: item.currentStep + 1,
+        onCost,
+        cfg,
+      });
+      if (out.status === "stored") {
+        summary.rewritten.push(item.key);
+        process.stdout.write(`  ${item.key} rewritten ${short(out.offer.offer)}\n`);
+      } else if (out.status === "none" && out.reason === "skipped" && !out.record.offer) {
+        summary.held.push(item.key);
+        process.stdout.write(
+          `  ${item.key} held      ${c.dim(`no offer: ${short(out.skip.why)}`)}\n`,
+        );
+      } else {
+        summary.unchanged.push(item.key);
+        const why = out.status === "none" ? out.reason : out.status;
+        process.stdout.write(`  ${item.key} ${c.dim(`unchanged (${why})`)}\n`);
+      }
+    } catch (err) {
+      summary.errors++;
+      warn(`${item.key}: ${((err as Error).message ?? "").slice(0, 120)}`);
+    }
+  });
+  for (const list of [
+    summary.passing,
+    summary.switched,
+    summary.rederive,
+    summary.rewritten,
+    summary.held,
+    summary.unchanged,
+  ]) {
+    list.sort();
+  }
+  ok(
+    `passing ${summary.passing.length} · switched ${summary.switched.length}` +
+      ` · ${opts.dryRun ? "would get new offers" : "new offers"} ${summary.rederive.length}` +
+      (opts.dryRun
+        ? ""
+        : ` (rewritten ${summary.rewritten.length} · held ${summary.held.length})` +
+          ` · unchanged ${summary.unchanged.length}`) +
+      ` · first-email offers listed ${summary.intro.length} · errors ${summary.errors}` +
+      ` · cost $${summary.costUsd.toFixed(3)}` +
+      (opts.dryRun ? " · dry run — nothing written, no new offers written." : ""),
+  );
+  const changed =
+    summary.passing.length +
+    summary.switched.length +
+    summary.rewritten.length +
+    summary.held.length;
+  if (!opts.dryRun && changed > 0) {
+    note("Changed sequences' previews were dropped: preview them again on /cadences.");
+  }
   return summary;
 }
