@@ -298,7 +298,15 @@ export async function readAutoReply(
   }
 
   if (facts.reason === "left_company") {
-    if (facts.successor?.email && auto.queueSuccessor) {
+    // A re-read (the backfill) keeps the row an earlier read queued.
+    const prior = opts.force ? ledger.getInboxReplyAutoClassification(row.id)?.successor : null;
+    if (
+      facts.successor?.email &&
+      prior?.queueId != null &&
+      prior.email?.toLowerCase() === facts.successor.email.toLowerCase()
+    ) {
+      out.successor = { ...facts.successor, queueId: prior.queueId };
+    } else if (facts.successor?.email && auto.queueSuccessor) {
       const queued = queueSuccessor(ledger, row, facts.successor, opts.write);
       out.successorSkip = queued.skip;
       if (queued.queueId != null) out.successor = { ...facts.successor, queueId: queued.queueId };
@@ -414,7 +422,11 @@ export async function reclassifyAutoReplies(opts: {
       successorSkip: read.successorSkip,
       action:
         read.successor?.email && read.reason === "left_company" && read.successorSkip == null
-          ? `${action} · ${verb}queue successor${read.successor.queueId != null ? ` #${read.successor.queueId}` : ""}`
+          ? `${action} · ${
+              read.successor.queueId != null
+                ? `successor queued #${read.successor.queueId}`
+                : `${verb}queue successor`
+            }`
           : action,
     });
   }

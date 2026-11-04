@@ -1,7 +1,9 @@
 import type { InboxReplyView } from "@oneshot-gtm/shared-types";
 
 function shortDay(ymd: string): string {
+  // A calendar date, not an instant: format it in UTC so no zone shifts the day.
   return new Date(`${ymd}T12:00:00Z`).toLocaleDateString("en-US", {
+    timeZone: "UTC",
     month: "short",
     day: "numeric",
   });

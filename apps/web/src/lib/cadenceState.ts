@@ -135,7 +135,15 @@ export function isAway(c: Pick<CadenceView, "heldUntil">, nowMs: number = Date.n
 
 /** "away until Nov 9", or "away · sends after Nov 11" when the reply gave no date. */
 export function awayLabel(c: Pick<CadenceView, "heldUntil" | "returnDate">): string {
-  if (c.returnDate) return `away until ${shortDate(`${c.returnDate}T12:00:00Z`)}`;
+  if (c.returnDate) {
+    // A calendar date, not an instant: format it in UTC so no zone shifts the day.
+    const day = new Date(`${c.returnDate}T12:00:00Z`).toLocaleDateString("en-US", {
+      timeZone: "UTC",
+      month: "short",
+      day: "numeric",
+    });
+    return `away until ${day}`;
+  }
   return c.heldUntil ? `away · sends after ${shortDate(c.heldUntil)}` : "away";
 }
 

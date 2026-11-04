@@ -214,6 +214,9 @@ describe("classifyReply", () => {
       "I have left for vacation and will be back on 9 November.",
       "I have left the office for the day.",
       "Dana has left for the holidays.",
+      // Any destination, when the notice says they come back.
+      "I have left for the Web Summit and will be back on 9 November.",
+      "Sam has departed for Lisbon, returning on Monday.",
     ]) {
       expect(classifyReply({ subject: "Automatic reply", body, autoSubmitted: true })).toBe("auto");
     }

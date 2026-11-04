@@ -1206,9 +1206,13 @@ cadence
     },
     14,
   )
-  .option("--write", "apply the actions (default: print what would be done)", false)
+  .option(
+    "--write",
+    "apply the actions (default: print what would be done). A dry run still asks the configured model about replies the rules cannot settle, so it can cost model calls, and --write asks again",
+    false,
+  )
   .description(
-    "Read stored automatic replies again: stop sequences of people who left (queueing a named successor for review), hold out-of-office ones until they are back, and stop policy-blocked ones. Never sends.",
+    "Read stored automatic replies again: stop sequences of people who left (queueing a named successor for review), hold out-of-office ones until they are back, and stop policy-blocked ones. Never sends. Unclear replies cost one model call each, dry run included.",
   )
   .action(runOrFail(commandCadenceReclassifyAuto));
 

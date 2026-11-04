@@ -152,6 +152,15 @@ describe("a 'left the company' auto-reply", () => {
     // The next poll re-reads the same mail: nothing is queued twice.
     await pollInboxReplies();
     expect(ledger.isQueueDuplicate(PLAY, "email:aino.lehto@halyard.example")).toBe(true);
+
+    // The backfill reading it again keeps the link to the row it queued.
+    const again = await reclassifyAutoReplies({
+      sinceIso: "2026-10-21T00:00:00.000Z",
+      write: true,
+    });
+    expect(again[0]).toMatchObject({ successorSkip: null });
+    expect(again[0]!.action).toContain(`successor queued #${row.id}`);
+    expect(ledger.getInboxReplyAutoClassification("m1")?.successor?.queueId).toBe(row.id);
   });
 
   it("does not queue a successor at another company's domain", async () => {

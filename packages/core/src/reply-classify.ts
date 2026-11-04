@@ -103,18 +103,32 @@ const PERMANENT_RE = new RegExp(
     "\\bno longer (?:with|at|using|working|employed|receiving)\\b",
     "\\bno longer work(?:s|ed|ing)? (?:at|for|with)\\b",
     "\\b(?:formerly|previously) work(?:ed)? (?:at|for)\\b",
-    // "I have left for vacation" / "has left the office for the day" is a
-    // trip, not a departure: the lookahead keeps those temporary.
-    "\\b(?:has|have) (?:left|departed|moved on)\\b" + TEMPORARY_LEAVE,
     "\\bdecided to move on\\b",
     "\\bnot part of .{0,60}\\banymore\\b",
-    "\\bdeparted (?:from|the)\\b" + TEMPORARY_LEAVE,
     "\\bretired\\b",
     "\\bis not with .{0,40}\\banymore\\b",
     "\\b(?:mailbox|email|address|account) (?:is )?(?:no longer|not) (?:monitored|active|in use)\\b",
   ].join("|"),
   "i",
 );
+
+// "Has left" / "departed" read as gone for good only when nothing in the same
+// text says they come back: "I have left for the Web Summit and will be back
+// on 9 November" is a trip. The lookahead also keeps the plain trips ("left
+// for vacation", "left the office for the day") temporary on their own.
+const LEFT_RE = new RegExp(
+  [
+    "\\b(?:has|have) (?:left|departed|moved on)\\b" + TEMPORARY_LEAVE,
+    "\\bdeparted (?:from|the)\\b" + TEMPORARY_LEAVE,
+  ].join("|"),
+  "i",
+);
+const RETURN_CUE_RE =
+  /\b(?:(?:will|i'?ll|i will) be back|back (?:on|in|by|from|at)|return(?:ing|s)? (?:on|to|in)|until|till|through)\b/i;
+
+function permanentIn(text: string): boolean {
+  return PERMANENT_RE.test(text) || (LEFT_RE.test(text) && !RETURN_CUE_RE.test(text));
+}
 
 // A human asking off the list. Deliberately tight. A bare "not interested"
 // is a soft no and stays human; these are explicit removal requests. Checked
@@ -151,7 +165,7 @@ export function classifyReply(input: {
   const subject = (input.subject ?? "").replace(/[’‘]/g, "'");
   const stripped = stripQuotedChain(input.body ?? "").replace(/[’‘]/g, "'");
   const head = stripped.slice(0, BODY_HEAD_CHARS);
-  const permanent = PERMANENT_RE.test(subject) || PERMANENT_RE.test(head);
+  const permanent = permanentIn(subject) || permanentIn(`${subject}\n${head}`);
 
   // The header verdict is authoritative machine mail: no human wrote it, so
   // it can never be an unsubscribe: even if the responder's boilerplate
@@ -186,7 +200,7 @@ export function isPermanentAutoText(
   body: string | null | undefined,
 ): boolean {
   const t = headOf(subject, body);
-  return PERMANENT_RE.test(t.subject) || PERMANENT_RE.test(t.head);
+  return permanentIn(t.subject) || permanentIn(`${t.subject}\n${t.head}`);
 }
 
 /** Whether the subject or the head of the body reads as an autoresponder. */
