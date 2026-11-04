@@ -123,11 +123,22 @@ const LEFT_RE = new RegExp(
   ].join("|"),
   "i",
 );
+// Leaving the company itself is a departure whatever else the text says
+// ("Sam has left the company. Contact Jane until a replacement is hired.").
+const LEFT_COMPANY_RE =
+  /\b(?:has|have) (?:left|departed(?: from)?) (?:the |our )?(?:company|organi[sz]ation|firm|business)\b/i;
+// A return cue names when they are back: "will be back", "back on …",
+// "returning on …", or until/through followed by a day or a date. A bare
+// "until" ("until a replacement is hired") is not one.
 const RETURN_CUE_RE =
-  /\b(?:(?:will|i'?ll|i will) be back|back (?:on|in|by|from|at)|return(?:ing|s)? (?:on|to|in)|until|till|through)\b/i;
+  /\b(?:(?:will|i'?ll|i will) be back|back (?:on|in|by|from|at)|return(?:ing|s)? (?:on|to|in)|(?:until|till|through) (?:the )?(?:\d|(?:mon|tues|wednes|thurs|fri|satur|sun)day|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))/i;
 
 function permanentIn(text: string): boolean {
-  return PERMANENT_RE.test(text) || (LEFT_RE.test(text) && !RETURN_CUE_RE.test(text));
+  return (
+    PERMANENT_RE.test(text) ||
+    LEFT_COMPANY_RE.test(text) ||
+    (LEFT_RE.test(text) && !RETURN_CUE_RE.test(text))
+  );
 }
 
 // A human asking off the list. Deliberately tight. A bare "not interested"

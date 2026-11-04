@@ -209,6 +209,23 @@ describe("classifyReply", () => {
     expect(classifyReply({ subject, body, autoSubmitted: true })).toBe("auto_permanent");
   });
 
+  test("an unrelated 'until' does not hide a departure", () => {
+    expect(
+      classifyReply({
+        subject: "Out of Office",
+        body: "Sam has left the company. Contact Jane until a replacement is hired.",
+        autoSubmitted: true,
+      }),
+    ).toBe("auto_permanent");
+    expect(
+      classifyReply({
+        subject: "Automatic reply",
+        body: "Sam has left. Please write to Jane until a replacement is hired.",
+        autoSubmitted: true,
+      }),
+    ).toBe("auto_permanent");
+  });
+
   test("a trip is not a departure", () => {
     for (const body of [
       "I have left for vacation and will be back on 9 November.",
