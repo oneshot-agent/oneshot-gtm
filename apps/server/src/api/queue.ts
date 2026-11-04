@@ -1982,6 +1982,8 @@ async function regenerateDraftInner(
     /* legacy draft */
   }
   if (previous?.sent === true) return answer({ error: "draft already sent" }, 400);
+  // Read before anything is drafted: a setup saved meanwhile leaves this draft stale.
+  const configKey = queueDraftConfigKey(row.play_name, row.channel);
   let angle: LastDraft["angle"];
   try {
     const research =
@@ -2090,7 +2092,7 @@ async function regenerateDraftInner(
     ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
     ...(draft.knownConnection ? { knownConnection: draft.knownConnection } : {}),
     // The config it was written under: a later setup change makes it stale.
-    configKey: queueDraftConfigKey(row.play_name, row.channel),
+    configKey,
   };
   const saved = ledger.setQueueDraftIfCurrent({
     id,
@@ -2655,6 +2657,8 @@ async function sendKnownConnectionRow(
   const firstTouch = { id, playName: row.play_name, payload: input.payload, notes: row.notes };
   try {
     if (!input.connection) {
+      // Read before the note is drafted: a setup saved meanwhile leaves it stale.
+      const configKey = queueDraftConfigKey(row.play_name, row.channel);
       const note = await draftLinkedInNote(firstTouch);
       ledger.setQueueDraft({
         id,
@@ -2668,7 +2672,7 @@ async function sendKnownConnectionRow(
           ...(note.voiceKey ? { voiceKey: note.voiceKey } : {}),
           ...(note.learningKey ? { learningKey: note.learningKey } : {}),
           ...(note.evidenceClause !== undefined ? { evidenceClause: note.evidenceClause } : {}),
-          configKey: queueDraftConfigKey(row.play_name, row.channel),
+          configKey,
         },
         discardReason: "redraft",
       });

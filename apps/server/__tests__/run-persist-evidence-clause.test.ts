@@ -35,6 +35,7 @@ function persist(key: string, evidenceClause?: boolean): void {
     ],
     dryRun: true,
     indexToDedupeKey: new Map([[0, key]]),
+    configKeys: new Map([["linkedin", "k-linkedin"]]),
   });
 }
 
@@ -50,8 +51,7 @@ it("a draft with no flag (an email) stores none", () => {
   expect("evidenceClause" in storedDraft("no-flag")).toBe(false);
 });
 
-it("an unsent run draft carries the config it was written under", async () => {
-  const { queueDraftConfigKey } = await import("@oneshot-gtm/plays");
+it("an unsent run draft carries the key read before the batch drafted, for its channel", () => {
   persist("keyed");
-  expect(storedDraft("keyed")["configKey"]).toBe(queueDraftConfigKey("luma-events", "linkedin"));
+  expect(storedDraft("keyed")["configKey"]).toBe("k-linkedin");
 });

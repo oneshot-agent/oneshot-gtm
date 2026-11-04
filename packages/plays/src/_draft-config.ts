@@ -67,7 +67,7 @@ function text(value: unknown): string {
  * one-liner, brief (with approved code answers) and terms, the offer
  * exclusions, whether the play makes an offer, the member offer for the
  * play that quotes it, the signature settings, and on LinkedIn the
- * workspace's templates. Pure apart from the guidance and
+ * workspace's writer and templates. Pure apart from the guidance and
  * code-answer reads (pass `ledger: null` to skip both).
  */
 export function draftConfigKey(
@@ -99,7 +99,9 @@ export function draftConfigKey(
     text(cfg.founderName),
     text(cfg.productDomain),
     cfg.mobileSignature === true ? "mobile" : "",
-    surface.channel === "linkedin" ? JSON.stringify(cfg.linkedin?.templates ?? null) : "",
+    surface.channel === "linkedin"
+      ? JSON.stringify([cfg.linkedin?.writer ?? null, cfg.linkedin?.templates ?? null])
+      : "",
   ];
   return createHash("sha256").update(parts.join("\u0000")).digest("hex").slice(0, 12);
 }
@@ -192,6 +194,22 @@ export function cadenceDraftIsStale(
   const surface = cadenceDraftSurface(draft.payload);
   if (!surface) return false;
   return draftIsStale(draft, keyOf(surface, playName));
+}
+
+/**
+ * Today's keys for a play's queue drafts, one per first-touch channel: read
+ * before a batch drafts, so a setup saved while it drafts leaves its drafts
+ * stale, never current. Look one up with `queueDraftSurface(channel).channel`.
+ */
+export function queueDraftConfigKeys(
+  playName: string,
+  cfg: AppConfig = loadConfig(),
+): ReadonlyMap<DraftSurface["channel"], string> {
+  const keyOf = draftConfigKeyer(cfg);
+  const channels: Array<DraftSurface["channel"]> = ["email", "linkedin", "x"];
+  return new Map(
+    channels.map((channel) => [channel, keyOf({ channel, stage: "first_touch" }, playName)]),
+  );
 }
 
 /** Today's key for a queue row's draft, from its play and channel. */

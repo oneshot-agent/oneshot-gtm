@@ -95,6 +95,12 @@ describe("draftConfigKey", () => {
     const otherTemplates = { ...base, linkedin: { templates: { note: "Hello {name}" } } } as Cfg;
     expect(key(otherTemplates)).toBe(key(base));
     expect(key(otherTemplates, linkedin)).not.toBe(key(base, linkedin));
+    const otherWriter = {
+      ...base,
+      linkedin: { writer: "model", templates: { note: "Hi {name}" } },
+    } as Cfg;
+    expect(key(otherWriter)).toBe(key(base));
+    expect(key(otherWriter, linkedin)).not.toBe(key(base, linkedin));
     // A play that makes no offer: its key differs from one that does.
     expect(key(base, EMAIL_FOLLOW_UP, "community-reply")).not.toBe(key(base));
     // The member offer splits the play that quotes it, and no other.

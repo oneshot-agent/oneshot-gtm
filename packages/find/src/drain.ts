@@ -172,6 +172,8 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
   try {
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r]!;
+      // Read before the row is drafted: a setup saved meanwhile leaves it stale.
+      const configKey = queueDraftConfigKey(row.play_name, row.channel);
       let draft: DrainDraft;
       try {
         draft = await dispatchOneTarget(opts, row);
@@ -220,7 +222,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
             ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
             ...(draft.knownConnection ? { knownConnection: draft.knownConnection } : {}),
             // An unsent draft carries the config it was written under.
-            ...(!draft.sent ? { configKey: queueDraftConfigKey(row.play_name, row.channel) } : {}),
+            ...(!draft.sent ? { configKey } : {}),
           },
           // Drain sends are unattended: the founder approved the row, never
           // this draft: recorded as `auto_sent`, apart from reviewed sends.

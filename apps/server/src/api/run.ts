@@ -8,7 +8,12 @@ import {
   releaseRunController,
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
-import { PLAYS, queueDraftConfigKey, verifyAndFilterTargets } from "@oneshot-gtm/plays";
+import {
+  PLAYS,
+  queueDraftConfigKeys,
+  queueDraftSurface,
+  verifyAndFilterTargets,
+} from "@oneshot-gtm/plays";
 import { backfillProspectId } from "@oneshot-gtm/find";
 import {
   isRunnablePlay,
@@ -148,6 +153,8 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         costUsd: 0,
       };
       let drafted: DraftedView[] = [];
+      // The config the batch is drafted under, read before drafting starts.
+      let configKeys: ReadonlyMap<string, string> | undefined;
 
       try {
         // Verify emails BEFORE dispatch so undeliverable rows are dropped
@@ -237,6 +244,13 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           : undefined;
 
         send({ kind: "stage", stage: body.dryRun ? "drafting" : "drafting + sending" });
+        if (indexToDedupeKey.size > 0) {
+          try {
+            configKeys = queueDraftConfigKeys(playName);
+          } catch {
+            // No snapshot: the drafts carry no key, so they read stale.
+          }
+        }
         // Per-target callback: fires draft/send events live so counters tick
         // per target instead of jumping at the end.
         drafted = await dispatchPlay(
@@ -363,6 +377,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
               drafted,
               dryRun: body.dryRun,
               indexToDedupeKey,
+              ...(configKeys ? { configKeys } : {}),
             });
           } catch (err) {
             // Guard setup as well as individual writes so terminal status,
@@ -739,12 +754,27 @@ export function restoreQueueObjects(playName: string, body: RunPlayRequest): Run
   return changed ? { ...body, targets } : body;
 }
 
+/** The key an unsent draft is stamped with, from the batch's snapshot; none without one. */
+function configKey(
+  keys: ReadonlyMap<string, string> | undefined,
+  sent: boolean,
+  channel: string | null | undefined,
+): { configKey?: string } {
+  const key = sent ? undefined : keys?.get(queueDraftSurface(channel).channel);
+  return key ? { configKey: key } : {};
+}
+
 /** Exported for its test. */
 export function persistDraftsToQueue(input: {
   playName: string;
   drafted: DraftedView[];
   dryRun: boolean;
   indexToDedupeKey: ReadonlyMap<number, string>;
+  /**
+   * The play's draft config keys per channel (`queueDraftConfigKeys`), read
+   * before drafting started. Absent: unsent drafts carry no key, so they read stale.
+   */
+  configKeys?: ReadonlyMap<string, string>;
 }): void {
   const ledger = getLedger();
   for (let i = 0; i < input.drafted.length; i++) {
@@ -772,7 +802,7 @@ export function persistDraftsToQueue(input: {
           ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
           ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
           // An unsent draft carries the config it was written under.
-          ...(!draft.sent ? { configKey: queueDraftConfigKey(input.playName, row.channel) } : {}),
+          ...configKey(input.configKeys, draft.sent, row.channel),
         },
         // A run's send is not a per-row review: the founder approved the
         // person; the draft went out unseen.
