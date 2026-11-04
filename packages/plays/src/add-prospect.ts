@@ -227,7 +227,10 @@ export async function runProspectResearch(queueId: number): Promise<void> {
       ...urlField,
     };
 
-    // 4. Draft the intro (dry-run: prepare→draft→lint, never sends).
+    // 4. Draft the intro (dry-run: prepare→draft→lint, never sends). The
+    // config it is written under is read first: a setup saved while it drafts
+    // leaves it stale, never current.
+    const configKey = queueDraftConfigKey(row.play_name, row.channel);
     const { drafted } = await runProfileIntro({ dryRun: true, targets: [target] });
     const draft = drafted[0];
     // runEmailPlay never throws per-target: an LLM/provider failure comes back
@@ -290,7 +293,7 @@ export async function runProspectResearch(queueId: number): Promise<void> {
         ...(draft.voiceKey ? { voiceKey: draft.voiceKey } : {}),
         ...(draft.learningKey ? { learningKey: draft.learningKey } : {}),
         // The config it was written under: a later setup change makes it stale.
-        configKey: queueDraftConfigKey(fresh.play_name, fresh.channel),
+        configKey,
       },
     });
     ledger.setQueueNotes({

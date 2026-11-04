@@ -65,8 +65,9 @@ function text(value: unknown): string {
  * overrides, the approved guidance for the surface, the founder's
  * admission, credentials, portfolio, partners and cohort, the product
  * one-liner, brief (with approved code answers) and terms, the offer
- * exclusions, whether the play makes an offer, the signature settings, and
- * on LinkedIn the workspace's templates. Pure apart from the guidance and
+ * exclusions, whether the play makes an offer, the member offer for the
+ * play that quotes it, the signature settings, and on LinkedIn the
+ * workspace's templates. Pure apart from the guidance and
  * code-answer reads (pass `ledger: null` to skip both).
  */
 export function draftConfigKey(
@@ -93,6 +94,8 @@ export function draftConfigKey(
     text(cfg.pilotOffer),
     offerExclusionsOf(cfg).join("\n"),
     playMakesOffer(playName, cfg) ? "offer" : "no-offer",
+    // The member-offer play quotes the workspace's member offer verbatim.
+    playName === "multiplier" ? text(cfg.memberOffer) : "",
     text(cfg.founderName),
     text(cfg.productDomain),
     cfg.mobileSignature === true ? "mobile" : "",

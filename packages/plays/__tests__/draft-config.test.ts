@@ -97,6 +97,12 @@ describe("draftConfigKey", () => {
     expect(key(otherTemplates, linkedin)).not.toBe(key(base, linkedin));
     // A play that makes no offer: its key differs from one that does.
     expect(key(base, EMAIL_FOLLOW_UP, "community-reply")).not.toBe(key(base));
+    // The member offer splits the play that quotes it, and no other.
+    const member = { ...base, memberOffer: "a fictional member credit" } as Cfg;
+    expect(key(member, EMAIL_FOLLOW_UP, "multiplier")).not.toBe(
+      key(base, EMAIL_FOLLOW_UP, "multiplier"),
+    );
+    expect(key(member)).toBe(key(base));
   });
 
   it("changes when approved guidance for the surface changes, and not for another surface", () => {
