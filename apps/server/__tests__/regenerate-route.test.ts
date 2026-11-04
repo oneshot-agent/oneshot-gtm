@@ -36,6 +36,10 @@ const dispatchAngles: Array<string | undefined> = [];
 const dispatchSources: Array<string | null | undefined> = [];
 
 const setQueueDraftCalls: Array<{ id: number; sent: boolean; discardReason?: string }> = [];
+// The config key each saved draft carried.
+const savedKeys: Array<string | undefined> = [];
+// Runs while the offer pass is awaited: a setup saved mid-regenerate.
+let duringOfferPass: (() => void) | null = null;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -47,9 +51,10 @@ vi.mock("@oneshot-gtm/core", async () => {
       getTrigger,
       setQueueDraftIfCurrent: (input: {
         id: number;
-        draft: { sent: boolean };
+        draft: { sent: boolean; configKey?: string };
         discardReason?: string;
       }) => {
+        savedKeys.push(input.draft.configKey);
         setQueueDraftCalls.push({
           id: input.id,
           sent: input.draft.sent,
@@ -85,6 +90,7 @@ vi.mock("@oneshot-gtm/find", async () => {
     ...actual,
     ensureQueueRowOffer: (r: Parameters<typeof actual.ensureQueueRowOffer>[0], opts?: unknown) => {
       offerPassOpts.push(opts);
+      duringOfferPass?.();
       return actual.ensureQueueRowOffer(r, opts as never);
     },
   };
@@ -101,6 +107,8 @@ beforeEach(() => {
     send_started_at: null,
   };
   setQueueDraftCalls.length = 0;
+  savedKeys.length = 0;
+  duringOfferPass = null;
   offerPassOpts.length = 0;
   dispatchCalls.length = 0;
   dispatchAngles.length = 0;
@@ -276,4 +284,18 @@ it("rotation passes the next angle explicitly to the writer", async () => {
   expect(row.last_draft_json).toContain("old draft");
   // The replaced draft is recorded as rotated away from, not merely redrafted.
   expect(setQueueDraftCalls.at(-1)?.discardReason).toBe("rotate");
+});
+
+it("stamps the config read before the offer pass: a setup saved meanwhile leaves the draft stale", async () => {
+  const { loadConfig, saveConfig } = await import("@oneshot-gtm/core");
+  const { draftIsStale, queueDraftConfigKey } = await import("@oneshot-gtm/plays");
+  saveConfig({ ...loadConfig(), founderAdmission: "a fictional concession" });
+  const before = queueDraftConfigKey("show-hn", "email");
+  duringOfferPass = () => saveConfig({ ...loadConfig(), founderAdmission: null });
+  const res = await regenerateDraftRoute(req(), { id: "1" });
+  expect(res.status).toBe(200);
+  expect(savedKeys).toEqual([before]);
+  expect(draftIsStale({ configKey: savedKeys[0] }, queueDraftConfigKey("show-hn", "email"))).toBe(
+    true,
+  );
 });

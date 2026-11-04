@@ -1955,6 +1955,9 @@ async function regenerateDraftInner(
 
   if (isCommunityPlatform(row.channel) && row.play_name !== "community-reply")
     return answer({ error: "Public replies require the community-reply play" }, 400);
+  // Read before anything is awaited (the row's offer, then the draft): a
+  // setup saved meanwhile leaves this draft stale, never current.
+  const configKey = queueDraftConfigKey(row.play_name, row.channel);
   let target: unknown;
   try {
     // The row's offer is made current first: the draft opens with it. A row
@@ -1982,8 +1985,6 @@ async function regenerateDraftInner(
     /* legacy draft */
   }
   if (previous?.sent === true) return answer({ error: "draft already sent" }, 400);
-  // Read before anything is drafted: a setup saved meanwhile leaves this draft stale.
-  const configKey = queueDraftConfigKey(row.play_name, row.channel);
   let angle: LastDraft["angle"];
   try {
     const research =

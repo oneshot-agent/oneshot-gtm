@@ -13,13 +13,17 @@ function storedDraft(key: string): Record<string, unknown> {
   return JSON.parse(row.last_draft_json!) as Record<string, unknown>;
 }
 
-function persist(key: string, evidenceClause?: boolean): void {
+function persist(
+  key: string,
+  evidenceClause?: boolean,
+  channel: "email" | "linkedin" = "linkedin",
+): void {
   getLedger().enqueueTarget({
     playName: "luma-events",
     payload: { name: "Dana Lee", linkedinUrl: "https://www.linkedin.com/in/dana-lee" },
     dedupeKey: key,
     source: "test",
-    channel: "linkedin",
+    channel,
   });
   persistDraftsToQueue({
     playName: "luma-events",
@@ -35,7 +39,10 @@ function persist(key: string, evidenceClause?: boolean): void {
     ],
     dryRun: true,
     indexToDedupeKey: new Map([[0, key]]),
-    configKeys: new Map([["linkedin", "k-linkedin"]]),
+    configKeys: new Map([
+      ["email", "k-email"],
+      ["linkedin", "k-linkedin"],
+    ]),
   });
 }
 
@@ -51,7 +58,14 @@ it("a draft with no flag (an email) stores none", () => {
   expect("evidenceClause" in storedDraft("no-flag")).toBe(false);
 });
 
-it("an unsent run draft carries the key read before the batch drafted, for its channel", () => {
-  persist("keyed");
-  expect(storedDraft("keyed")["configKey"]).toBe("k-linkedin");
+it("an unsent run draft carries the key read before the batch drafted", () => {
+  persist("keyed", undefined, "email");
+  expect(storedDraft("keyed")["configKey"]).toBe("k-email");
+});
+
+it("a run's email draft on a LinkedIn row carries no key, so it reads stale there", () => {
+  // The play drafts email; the row is a LinkedIn first touch. A LinkedIn key
+  // would let the drain send the email text as a reviewed connection note.
+  persist("email-on-linkedin");
+  expect("configKey" in storedDraft("email-on-linkedin")).toBe(false);
 });

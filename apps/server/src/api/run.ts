@@ -9,6 +9,7 @@ import {
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
 import {
+  MANUAL_PLAYS,
   PLAYS,
   queueDraftConfigKeys,
   queueDraftSurface,
@@ -754,13 +755,23 @@ export function restoreQueueObjects(playName: string, body: RunPlayRequest): Run
   return changed ? { ...body, targets } : body;
 }
 
-/** The key an unsent draft is stamped with, from the batch's snapshot; none without one. */
+/**
+ * The key an unsent draft is stamped with, from the batch's snapshot. A run
+ * drafts on the play's own channel (`MANUAL_PLAYS`, else email), whatever
+ * channel the row is on: a draft written for another channel than the row's
+ * gets no key, so it reads stale there and is drafted again, never sent as
+ * that channel's reviewed text. None without a snapshot.
+ */
 function configKey(
   keys: ReadonlyMap<string, string> | undefined,
   sent: boolean,
-  channel: string | null | undefined,
+  playName: string,
+  rowChannel: string | null | undefined,
 ): { configKey?: string } {
-  const key = sent ? undefined : keys?.get(queueDraftSurface(channel).channel);
+  if (sent || !keys) return {};
+  const drafted = queueDraftSurface(MANUAL_PLAYS[playName]?.channel ?? "email").channel;
+  if (queueDraftSurface(rowChannel).channel !== drafted) return {};
+  const key = keys.get(drafted);
   return key ? { configKey: key } : {};
 }
 
@@ -802,7 +813,7 @@ export function persistDraftsToQueue(input: {
           ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
           ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
           // An unsent draft carries the config it was written under.
-          ...configKey(input.configKeys, draft.sent, row.channel),
+          ...configKey(input.configKeys, draft.sent, input.playName, row.channel),
         },
         // A run's send is not a per-row review: the founder approved the
         // person; the draft went out unseen.
