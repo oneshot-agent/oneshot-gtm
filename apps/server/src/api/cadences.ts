@@ -10,7 +10,9 @@ import {
 } from "@oneshot-gtm/core";
 import {
   awayNote,
+  cadenceDraftIsStale,
   cadenceHold,
+  draftConfigKeyer,
   getPriorStepsBulk,
   linkedInWaitingSince,
   nextStepInfo,
@@ -20,6 +22,8 @@ import {
   sendCadenceStep,
   sendCadenceStepBatch,
   skipDirectMailStep,
+  STALE_DRAFT_FLAG,
+  STALE_DRAFT_REASON,
   type BatchItem,
   type LoadedCadence,
   type PriorStepRow,
@@ -83,6 +87,8 @@ interface PageReads {
   payloadByKey: Map<string, Record<string, unknown>>;
   plans: Map<string, CadencePlanStep[]> | null;
   cfg: LoadedCadence["cfg"];
+  /** Today's draft config key per surface and play (`draftConfigKey`); null when the config can't be read. */
+  keyOf: ReturnType<typeof draftConfigKeyer> | null;
 }
 
 function toView(row: CadenceRow, page: PageReads): CadenceView {
@@ -96,12 +102,15 @@ function toView(row: CadenceRow, page: PageReads): CadenceView {
       // Strip `payload` from the wire view. Only the send route reads it.
       // The angle it carries is the one field the founder reviews by.
       const angle = draftAngleChoiceOf(parsed.payload);
+      // Written under another config than today's: re-preview before it goes.
+      const stale = page.keyOf !== null && cadenceDraftIsStale(parsed, row.play_name, page.keyOf);
       nextStepDraft = {
         subject: parsed.subject,
         body: parsed.body,
         flags: parsed.flags ?? [],
         draftedAt: parsed.draftedAt,
         ...(angle ? { angle } : {}),
+        ...(stale ? { stale: true } : {}),
       };
     } catch {
       nextStepDraft = null;
@@ -294,7 +303,13 @@ export function viewsForRows(rows: ReadonlyArray<CadenceRow>): CadenceView[] {
     plans = null;
     cfg = undefined;
   }
-  const page: PageReads = { priorByKey, payloadByKey, plans, cfg };
+  let keyOf: PageReads["keyOf"];
+  try {
+    keyOf = draftConfigKeyer(cfg ?? loadConfig());
+  } catch {
+    keyOf = null;
+  }
+  const page: PageReads = { priorByKey, payloadByKey, plans, cfg, keyOf };
   return rows.map((r) => toView(r, page));
 }
 
@@ -548,8 +563,10 @@ export async function sendCadenceStepRoute(
   }
   const parsed = parseProspectAndPlay(req, params);
   if (parsed instanceof Response) return parsed;
-  // Optional body { confirmHold?: boolean }: send through an out-of-office hold.
+  // Optional body { confirmHold?: boolean, confirmStale?: boolean }: send
+  // through an out-of-office hold, or a preview written under an older setup.
   let confirmHold = false;
+  let confirmStale = false;
   const text = await req.text();
   if (text.trim()) {
     let body: unknown;
@@ -563,6 +580,11 @@ export async function sendCadenceStepRoute(
       return jsonResponse({ error: "confirmHold must be a boolean" }, 400, req);
     }
     confirmHold = value === true;
+    const stale = (body as { confirmStale?: unknown } | null)?.confirmStale;
+    if (stale !== undefined && typeof stale !== "boolean") {
+      return jsonResponse({ error: "confirmStale must be a boolean" }, 400, req);
+    }
+    confirmStale = stale === true;
   }
   // 409 synchronously when no persisted draft exists, but the actual send is
   // fire-and-forget. An SDK send takes ~2 min and must not block the modal.
@@ -581,6 +603,15 @@ export async function sendCadenceStepRoute(
           error: awayNote(hold),
           hold: { until: hold.until, reason: hold.reason, returnDate: hold.returnDate },
         },
+        409,
+        req,
+      );
+    }
+    // Written under another config than today's: the founder confirms, or
+    // re-previews. A batch never sends one.
+    if (!confirmStale && cadenceDraftIsStale(draft, parsed.playName)) {
+      return jsonResponse(
+        { error: `${STALE_DRAFT_FLAG}: ${STALE_DRAFT_REASON}`, stale: true },
         409,
         req,
       );
@@ -612,6 +643,7 @@ export async function sendCadenceStepRoute(
         ...parsed,
         linkedIn: callLinkedIn,
         ...(confirmHold ? { confirmHold: true } : {}),
+        ...(confirmStale ? { confirmStale: true } : {}),
       });
       void reportServerExecution("server.cadence.send", {
         outcome: "ok",
@@ -688,17 +720,22 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
   const items = itemsOrErr;
   // Claim each row's marker atomically; unclaimable rows (already sending)
   // are dropped, so `accepted` reflects the actual attempt count. A row an
-  // out-of-office holds is skipped and reported: only a single, confirmed
-  // Send goes through a hold.
+  // out-of-office holds is skipped and reported, and so is a preview written
+  // under an older setup: only a single, confirmed Send goes through either.
   const ledger = getLedger();
   const nowIso = new Date().toISOString();
   const staleCutoffIso = new Date(Date.now() - MAX_SEND_AGE_MS).toISOString();
   const claimed: BatchItem[] = [];
   const skipped: Array<BatchItem & { reason: string }> = [];
+  const keyOf = safeKeyer();
   for (const item of items) {
     const hold = cadenceHoldFor(item);
     if (hold) {
       skipped.push({ ...item, reason: awayNote(hold) });
+      continue;
+    }
+    if (keyOf && staleDraftFor(item, keyOf)) {
+      skipped.push({ ...item, reason: STALE_DRAFT_REASON });
       continue;
     }
     const ok = ledger.claimCadenceSendingMarker({
@@ -714,7 +751,9 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
       {
         error:
           skipped.length === items.length
-            ? "every selected row is away (out-of-office): send each on its own to confirm"
+            ? skipped.every((s) => s.reason === STALE_DRAFT_REASON)
+              ? `every selected row's ${STALE_DRAFT_REASON}`
+              : "every selected row is away or stale: re-preview, or send each on its own to confirm"
             : "no claimable rows — all selected are already sending",
         ...(skipped.length > 0 ? { skipped } : {}),
       },
@@ -768,6 +807,28 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
     202,
     req,
   );
+}
+
+/** Today's draft config keys, or null when the config can't be read (the send path still checks). */
+function safeKeyer(): ReturnType<typeof draftConfigKeyer> | null {
+  try {
+    return draftConfigKeyer(loadConfig());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when the cadence's stored preview was written under another config
+ * than today's (`cadenceDraftIsStale`). Fails open (false) on a ledger that
+ * cannot answer: `sendCadenceStep` refuses a stale preview itself.
+ */
+function staleDraftFor(item: BatchItem, keyOf: ReturnType<typeof draftConfigKeyer>): boolean {
+  try {
+    return cadenceDraftIsStale(getLedger().getCadenceDraft(item), item.playName, keyOf);
+  } catch {
+    return false;
+  }
 }
 
 /**

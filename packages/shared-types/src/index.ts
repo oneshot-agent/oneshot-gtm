@@ -49,6 +49,11 @@ export interface CadenceNextStepDraft {
   draftedAt: string;
   /** Which edge angle the follow-up was built on, when the play's edge has several. */
   angle?: DraftAngleChoice;
+  /**
+   * Written under another config than today's, or before previews carried
+   * one: a batch send skips it and a single send asks to confirm. Re-preview.
+   */
+  stale?: boolean;
 }
 
 export interface CadenceSentStep {
@@ -1225,6 +1230,13 @@ export interface LastDraft {
    * note was drafted and sending records the connection instead of an invite.
    */
   knownConnection?: { readAt: string };
+  /** The config the draft was written under (`draftConfigKey`); absent on drafts from before it. */
+  configKey?: string;
+  /**
+   * In a view only: written under another config than today's (or before
+   * drafts carried one). Send asks to confirm; regenerate to clear it.
+   */
+  stale?: boolean;
 }
 
 /**

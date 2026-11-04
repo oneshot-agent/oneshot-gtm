@@ -130,6 +130,18 @@ export interface ProspectOffer {
   inputHash: string;
   /** Hash of the product config alone (one-liner, brief, terms): its claims rest on it. */
   productHash?: string;
+  /**
+   * Hash of the workspace's `offerExclusions` it was written or last judged
+   * under (`offerExclusionsHash`). Absent on offers from before the field,
+   * which read as written under no exclusions.
+   */
+  exclusionsHash?: string;
+  /**
+   * The prompt version a re-judge passed it under (`find rejudge-offers
+   * --sequences`), when that is newer than the version it was written by. A
+   * sequence keeps such an offer as current (`offerConfigIsCurrent`).
+   */
+  judgedVersion?: string;
   /** Set when the founder wrote or edited it. Never re-derived. */
   editedBy?: "founder";
   /**
@@ -163,6 +175,8 @@ export interface OfferSkip {
   inputHash: string;
   /** Hash of the product config alone (`offerProductHash`). */
   productHash: string;
+  /** Hash of the `offerExclusions` the writer read (`offerExclusionsHash`); absent reads as none. */
+  exclusionsHash?: string;
   /**
    * On a skip because no offer passed (`noStrongOfferWhy`): the writer
    * settings its rounds ran under (`offerWriterHash`). New rounds or a
@@ -230,14 +244,40 @@ function skipWriterIsCurrent(skip: OfferSkip, cfg: { offerWriter?: unknown }): b
 export function offerSkipIsCurrent(
   stored: unknown,
   inputHash: string,
-  cfg: { offerWriter?: unknown },
+  cfg: { offerWriter?: unknown; offerExclusions?: unknown },
 ): stored is OfferSkip {
   return (
     isOfferSkip(stored) &&
     stored.version === OFFER_PROMPT_VERSION &&
     stored.inputHash === inputHash &&
-    skipWriterIsCurrent(stored, cfg)
+    skipWriterIsCurrent(stored, cfg) &&
+    offerExclusionsCurrent(stored, cfg)
   );
+}
+
+/**
+ * Hash of the workspace's `offerExclusions` as the writer and judge read
+ * them (`offerExclusionsOf`). The list's text is hashed, never read.
+ */
+export function offerExclusionsHash(cfg: { offerExclusions?: unknown }): string {
+  return createHash("sha256")
+    .update(offerExclusionsOf(cfg).join("\u0000"))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+/**
+ * True when an offer or skip was written (or judged) under today's
+ * `offerExclusions`. One from before the stamp existed reads as written
+ * under none, so a workspace with no exclusions keeps every stored offer.
+ */
+export function offerExclusionsCurrent(
+  stored: { exclusionsHash?: unknown },
+  cfg: { offerExclusions?: unknown },
+): boolean {
+  const made =
+    typeof stored.exclusionsHash === "string" ? stored.exclusionsHash : offerExclusionsHash({});
+  return made === offerExclusionsHash(cfg);
 }
 
 /** The writer's skip a queue payload carries, when it has one. */
@@ -401,11 +441,47 @@ function offerWeakApproved(offer: Pick<ProspectOffer, "weakApprovedAt">): boolea
   return typeof offer.weakApprovedAt === "string" && offer.weakApprovedAt.trim().length > 0;
 }
 
-/** True when the stored offer still answers to today's inputs, or the founder wrote it. */
-export function offerIsCurrent(stored: unknown, inputHash: string): stored is ProspectOffer {
+/**
+ * True when the stored offer still answers to today's inputs and today's
+ * `offerExclusions`, or the founder wrote it. `cfg` defaults to the config
+ * file as it is now.
+ */
+export function offerIsCurrent(
+  stored: unknown,
+  inputHash: string,
+  cfg: { offerExclusions?: unknown } = loadConfig(),
+): stored is ProspectOffer {
   if (!isProspectOffer(stored)) return false;
   if (stored.editedBy === "founder") return true;
-  return stored.version === OFFER_PROMPT_VERSION && stored.inputHash === inputHash;
+  return (
+    stored.version === OFFER_PROMPT_VERSION &&
+    stored.inputHash === inputHash &&
+    offerExclusionsCurrent(stored, cfg)
+  );
+}
+
+/**
+ * True when an offer was written, or re-judged and passed
+ * (`judgedVersion`), under today's prompt version, product config and
+ * `offerExclusions`: what a sequence's offer must be to be restated. The
+ * research it rests on is not checked (a sequence keeps its offer while the
+ * firm's research grows). Says nothing of the founder's own or approved
+ * offers, which callers keep whatever this says.
+ */
+export function offerConfigIsCurrent(
+  offer: Pick<
+    Partial<ProspectOffer>,
+    "version" | "judgedVersion" | "productHash" | "exclusionsHash"
+  >,
+  cfg: Pick<AppConfig, "productOneLiner" | "productBrief" | "pilotOffer"> & {
+    offerExclusions?: unknown;
+  },
+): boolean {
+  return (
+    (offer.version === OFFER_PROMPT_VERSION || offer.judgedVersion === OFFER_PROMPT_VERSION) &&
+    offer.productHash === offerProductHash(cfg) &&
+    offerExclusionsCurrent(offer, cfg)
+  );
 }
 
 /**
@@ -1520,11 +1596,16 @@ export async function deriveOffers(
   const inputHash = offerInputHash(research, cfg);
   const derivedAt = new Date().toISOString();
   const productHash = offerProductHash(cfg);
-  const offers: ProspectOffer[] = kept
-    .slice(0, OFFER_COUNT)
-    .map((o) =>
-      Object.assign(o, { version: OFFER_PROMPT_VERSION, inputHash, productHash, derivedAt }),
-    );
+  const exclusionsHash = offerExclusionsHash(cfg);
+  const offers: ProspectOffer[] = kept.slice(0, OFFER_COUNT).map((o) =>
+    Object.assign(o, {
+      version: OFFER_PROMPT_VERSION,
+      inputHash,
+      productHash,
+      exclusionsHash,
+      derivedAt,
+    }),
+  );
   if (offers.length > 0) {
     logEvent("prospect_offer.derived", {
       play: input.playName,
@@ -1542,6 +1623,7 @@ export async function deriveOffers(
           version: OFFER_PROMPT_VERSION,
           inputHash,
           productHash,
+          exclusionsHash,
           // Rounds ran: the skip rests on the settings they ran under.
           ...(skipWhy === null ? { writerHash: offerWriterHash(cfg) } : {}),
           skippedAt: derivedAt,
@@ -2057,7 +2139,7 @@ export async function ensureOfferSet(
   const research = offerResearchText(t, input.dossier);
   const inputHash = offerInputHash(research, cfg);
   if (
-    (offerIsCurrent(stored, inputHash) && !offerHoldsSend(stored)) ||
+    (offerIsCurrent(stored, inputHash, cfg) && !offerHoldsSend(stored)) ||
     approvedOfferStands(stored, t, input.dossier, cfg)
   ) {
     const candidates = offerCandidatesOf(t);
@@ -2121,10 +2203,12 @@ export async function offerSetForDraft(
   // (as `ensureOfferSet` writes it) or the row's with this dossier (as a
   // draft that wrote it did). A prompt bump alone never rewrites it. A weak
   // one nobody approved never stands, whatever its version.
+  // One written before the workspace's `offerExclusions` changed is written
+  // again, unless the founder approved it.
   if (
     isProspectOffer(stored) &&
     !offerHoldsSend(stored) &&
-    (stored.version === OFFER_PROMPT_VERSION ||
+    ((stored.version === OFFER_PROMPT_VERSION && offerExclusionsCurrent(stored, cfg)) ||
       approvedOfferStands(stored, t, null, cfg) ||
       approvedOfferStands(stored, t, input.dossier, cfg)) &&
     stored.productHash === offerProductHash(cfg)
@@ -2136,7 +2220,8 @@ export async function offerSetForDraft(
     isOfferSkip(skip) &&
     skip.version === OFFER_PROMPT_VERSION &&
     skip.productHash === offerProductHash(cfg) &&
-    skipWriterIsCurrent(skip, cfg)
+    skipWriterIsCurrent(skip, cfg) &&
+    offerExclusionsCurrent(skip, cfg)
   ) {
     return { skipped: skip, derived: false };
   }
@@ -2261,13 +2346,18 @@ export function activeOfferPatch(
  * A weak one (approved or not), one of an older version and one written
  * from another brief are not.
  */
-function offerIsStrong(offer: unknown, productHash: string): offer is ProspectOffer {
+function offerIsStrong(
+  offer: unknown,
+  productHash: string,
+  exclusionsHash: string,
+): offer is ProspectOffer {
   return (
     isProspectOffer(offer) &&
     (offer.editedBy === "founder" ||
       (offer.version === OFFER_PROMPT_VERSION &&
         offer.relevance === "relevant" &&
-        offer.productHash === productHash))
+        offer.productHash === productHash &&
+        (offer.exclusionsHash ?? offerExclusionsHash({})) === exclusionsHash))
   );
 }
 
@@ -2293,6 +2383,8 @@ export function mergeKeptOffers(
   previousActive: unknown,
   previousCandidates: readonly unknown[],
   productHash: string,
+  /** Today's `offerExclusionsHash`; an offer written under other exclusions is not kept. */
+  exclusionsHash: string = offerExclusionsHash(loadConfig()),
 ): ProspectOffer[] {
   const seen = new Set<string>();
   const unseen = (o: ProspectOffer): boolean => {
@@ -2302,7 +2394,7 @@ export function mergeKeptOffers(
     return true;
   };
   const previous = [previousActive, ...previousCandidates].filter((o): o is ProspectOffer =>
-    offerIsStrong(o, productHash),
+    offerIsStrong(o, productHash, exclusionsHash),
   );
   const newOnes = fresh.filter(unseen);
   const founders = previous.filter((o) => o.editedBy === "founder").filter(unseen);
@@ -2322,12 +2414,15 @@ export function mergeKeptOffers(
 export function offerSkipPatch(
   previous: unknown,
   skip: OfferSkip,
+  cfg: { offerExclusions?: unknown } = loadConfig(),
 ): { offerSkip: OfferSkip; offer?: null; offerCandidates?: null } {
   const stands =
     isProspectOffer(previous) &&
     (previous.editedBy === "founder" ||
       offerWeakApproved(previous) ||
-      (previous.version === OFFER_PROMPT_VERSION && !offerHoldsSend(previous)));
+      (previous.version === OFFER_PROMPT_VERSION &&
+        offerExclusionsCurrent(previous, cfg) &&
+        !offerHoldsSend(previous)));
   return stands ? { offerSkip: skip } : { offerSkip: skip, offer: null, offerCandidates: null };
 }
 

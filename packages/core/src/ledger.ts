@@ -680,6 +680,8 @@ export class Ledger {
       body: string;
       flags: string[];
       payload: unknown;
+      /** The config the preview was written under (`draftConfigKey` in plays). */
+      configKey?: string;
     };
     /** Why the preview being replaced was discarded (ledger-drafts.ts); default `redraft`. */
     discardReason?: DraftDiscardReason;
@@ -693,6 +695,7 @@ export class Ledger {
     flags: string[];
     payload: unknown;
     draftedAt: string;
+    configKey?: string;
   } | null {
     return cadGetCadenceDraft(this.db, input);
   }
@@ -2387,6 +2390,8 @@ export class Ledger {
       evidenceClause?: boolean;
       /** LinkedIn only: the row is a known connection, so no note was drafted. */
       knownConnection?: { readAt: string };
+      /** The config the draft was written under (`draftConfigKey` in plays); unsent drafts only. */
+      configKey?: string;
     };
     discardReason?: DraftDiscardReason;
     sentBy?: "human" | "machine";

@@ -245,11 +245,11 @@ export const api = {
       `/cadences/${id}/offer?play=${encodeURIComponent(playName)}`,
       body,
     ),
-  sendCadenceNext: (id: number, playName: string, confirmHold = false) =>
-    postJson<{ accepted: true }>(
-      `/cadences/${id}/send-next?play=${encodeURIComponent(playName)}`,
-      confirmHold ? { confirmHold: true } : {},
-    ),
+  sendCadenceNext: (id: number, playName: string, confirmHold = false, confirmStale = false) =>
+    postJson<{ accepted: true }>(`/cadences/${id}/send-next?play=${encodeURIComponent(playName)}`, {
+      ...(confirmHold ? { confirmHold: true } : {}),
+      ...(confirmStale ? { confirmStale: true } : {}),
+    }),
   previewCadenceBatch: (items: Array<{ prospectId: number; playName: string }>) =>
     postJson<{
       results: Array<{
@@ -658,7 +658,8 @@ export const api = {
   // a clean, not-yet-sent persisted draft; marks the row sent on success.
   // An email answers `sent`/`receiptIds`; a LinkedIn row answers its `status`
   // (`already_connected` when a known connection was recorded and no invite went out).
-  sendDraft: (id: number) =>
+  // A draft written under an older setup needs `confirmStale` (409 otherwise).
+  sendDraft: (id: number, confirmStale = false) =>
     postJson<{
       sent?: boolean;
       receiptIds?: number[];
@@ -666,7 +667,7 @@ export const api = {
       prospectId?: number;
       invitationId?: string;
       status?: string;
-    }>(`/queue/${id}/send-draft`, {}),
+    }>(`/queue/${id}/send-draft`, confirmStale ? { confirmStale: true } : {}),
   // Record a hand-sent manual-play draft (x-amplify-dm): writes the channel:"x"
   // sequence event + prospect and flips the row to sent. No transport.
   markSent: (id: number) =>

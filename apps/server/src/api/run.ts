@@ -8,7 +8,7 @@ import {
   releaseRunController,
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
-import { PLAYS, verifyAndFilterTargets } from "@oneshot-gtm/plays";
+import { PLAYS, queueDraftConfigKey, verifyAndFilterTargets } from "@oneshot-gtm/plays";
 import { backfillProspectId } from "@oneshot-gtm/find";
 import {
   isRunnablePlay,
@@ -771,6 +771,8 @@ export function persistDraftsToQueue(input: {
           ...(draft.learningKey ? { learningKey: draft.learningKey } : {}),
           ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
           ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
+          // An unsent draft carries the config it was written under.
+          ...(!draft.sent ? { configKey: queueDraftConfigKey(input.playName, row.channel) } : {}),
         },
         // A run's send is not a per-row review: the founder approved the
         // person; the draft went out unseen.

@@ -28,6 +28,7 @@ export * from "./_first-touch.ts";
 export * from "./_fit-reason.ts";
 export * from "./_prospect-offer.ts";
 export * from "./_sequence-offer.ts";
+export * from "./_draft-config.ts";
 export * from "./_reject-reason.ts";
 export * from "./reply.ts";
 export * from "./registry.ts";

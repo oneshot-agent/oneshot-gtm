@@ -281,8 +281,18 @@ function CadencesPage() {
   });
 
   const sendNext = useMutation({
-    mutationFn: (vars: { prospectId: number; playName: string; confirmHold?: boolean }) =>
-      api.sendCadenceNext(vars.prospectId, vars.playName, vars.confirmHold === true),
+    mutationFn: (vars: {
+      prospectId: number;
+      playName: string;
+      confirmHold?: boolean;
+      confirmStale?: boolean;
+    }) =>
+      api.sendCadenceNext(
+        vars.prospectId,
+        vars.playName,
+        vars.confirmHold === true,
+        vars.confirmStale === true,
+      ),
     onSuccess: (_data, vars) => {
       // Server returned 202: actual SDK email send is fire-and-forget in the
       // background (~2 min). We close the modal + clear expansion immediately
@@ -305,6 +315,16 @@ function CadencesPage() {
         setAwayConfirm({ prospectId: vars.prospectId, playName: vars.playName, note: err.message });
         return;
       }
+      // Written under an older setup: ask, as the button would have.
+      if (/^stale-config\b/.test(err.message) && !vars.confirmStale) {
+        void qc.invalidateQueries({ queryKey: ["cadences"] });
+        setStaleConfirm({
+          prospectId: vars.prospectId,
+          playName: vars.playName,
+          confirmHold: vars.confirmHold === true,
+        });
+        return;
+      }
       toast.error(`send failed: ${err.message}`);
     },
   });
@@ -314,14 +334,25 @@ function CadencesPage() {
     playName: string;
     note: string;
   } | null>(null);
+  // Send next on a draft written under an older setup asks first, too.
+  const [staleConfirm, setStaleConfirm] = useState<{
+    prospectId: number;
+    playName: string;
+    confirmHold: boolean;
+  } | null>(null);
   const sendOrConfirm = (c: {
     prospectId: number;
     playName: string;
     heldUntil?: string | null;
     returnDate?: string | null;
+    nextStepDraft?: { stale?: boolean } | null;
   }): void => {
     if (isAway(c)) {
       setAwayConfirm({ prospectId: c.prospectId, playName: c.playName, note: awayLabel(c) });
+      return;
+    }
+    if (c.nextStepDraft?.stale === true) {
+      setStaleConfirm({ prospectId: c.prospectId, playName: c.playName, confirmHold: false });
       return;
     }
     sendNext.mutate({ prospectId: c.prospectId, playName: c.playName });
@@ -351,11 +382,13 @@ function CadencesPage() {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
       setSelected(new Set());
       setBulkSendConfirmOpen(false);
-      const away = data.skipped?.length ?? 0;
+      const skipped = data.skipped ?? [];
+      const stale = skipped.filter((s) => s.reason.includes("older setup")).length;
+      const away = skipped.length - stale;
       toast.success(
         `started send of ${data.accepted} — drafts will clear as each completes${
           away > 0 ? ` · ${away} away, skipped` : ""
-        }`,
+        }${stale > 0 ? ` · ${stale} stale, re-preview` : ""}`,
       );
     },
     onError: (err) => toast.error(`bulk send failed: ${err.message}`),
@@ -435,6 +468,7 @@ function CadencesPage() {
     previewable: previewableRows,
     sendable: sendableRows,
     away: awayRows,
+    stale: staleRows,
   } = useMemo(() => cadenceSelection(list, selected), [list, selected]);
   const mailWaiting = useMemo(() => mailWaitingRows(list), [list]);
   const allActiveSelected =
@@ -645,6 +679,14 @@ function CadencesPage() {
                 · {awayRows.length} away, skipped
               </span>
             )}
+            {staleRows.length > 0 && (
+              <span
+                className="ml-2 text-ink-muted"
+                title="Drafted under an older setup; preview these again before sending"
+              >
+                · {staleRows.length} stale, re-preview
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1.5">
             <Button
@@ -835,13 +877,15 @@ function CadencesPage() {
                   ? heldTitle
                   : draft && !draftHeld && isAway(c, now.getTime())
                     ? `${awayLabel(c)} — their out-of-office holds this step; Send asks to confirm`
-                    : !draft
-                      ? "generate a draft first"
-                      : draftHeld
-                        ? `held · ${draftHeld.next}`
-                        : c.nextStepIsBreakup
-                          ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
-                          : `send next step — sends now${earlyNote}`;
+                    : draft && !draftHeld && draft.stale === true
+                      ? "stale — drafted under an older setup; regenerate it, or Send asks to confirm"
+                      : !draft
+                        ? "generate a draft first"
+                        : draftHeld
+                          ? `held · ${draftHeld.next}`
+                          : c.nextStepIsBreakup
+                            ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
+                            : `send next step — sends now${earlyNote}`;
                 // The reminder: why this person was written to in the first
                 // place. The intro's signal and fit sentence, off the sent
                 // queue row (#599). Freeform, so it drops under privacy mode.
@@ -1007,8 +1051,14 @@ function CadencesPage() {
                         meta={<span title={`Drafted ${timeAgo(draft.draftedAt)}`}>Draft</span>}
                         subject={draft.subject}
                         stateLine={
-                          draft.flags.length > 0 ? (
-                            <DraftStateLine sent={false} flags={draft.flags} hold={holdOptions} />
+                          draft.flags.length > 0 || draft.stale === true ? (
+                            <DraftStateLine
+                              sent={false}
+                              flags={draft.flags}
+                              hold={holdOptions}
+                              stale={draft.stale === true}
+                              staleNext="re-preview"
+                            />
                           ) : undefined
                         }
                         body={draft.body}
@@ -1515,6 +1565,54 @@ function CadencesPage() {
         <div className="text-[12px] text-ink-muted">
           Their out-of-office reply holds this step ({awayConfirm?.note}). The step goes out on its
           own once they are back; a batch send skips it until then.
+        </div>
+      </Modal>
+
+      <Modal
+        open={staleConfirm != null}
+        onClose={() => setStaleConfirm(null)}
+        title="This draft is stale"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                if (staleConfirm) {
+                  previewNext.mutate({
+                    prospectId: staleConfirm.prospectId,
+                    playName: staleConfirm.playName,
+                  });
+                }
+                setStaleConfirm(null);
+              }}
+              disabled={previewNext.isPending}
+              {...readOnly}
+            >
+              Re-preview
+            </Button>
+            <Button
+              onClick={() => {
+                if (!staleConfirm) return;
+                sendNext.mutate({
+                  prospectId: staleConfirm.prospectId,
+                  playName: staleConfirm.playName,
+                  ...(staleConfirm.confirmHold ? { confirmHold: true } : {}),
+                  confirmStale: true,
+                });
+                setStaleConfirm(null);
+              }}
+              disabled={sendNext.isPending}
+              {...readOnly}
+            >
+              Send as written
+            </Button>
+          </>
+        }
+      >
+        <div className="text-[12px] text-ink-muted">
+          This step was drafted before the setup last changed (voice, offer settings, product brief,
+          exclusions or learned preferences), so it may not follow them. Re-preview to draft it
+          again under the current setup; a batch send skips it until then.
         </div>
       </Modal>
 

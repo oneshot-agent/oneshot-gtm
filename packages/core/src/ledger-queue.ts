@@ -1421,6 +1421,8 @@ export class QueueStore {
       evidenceClause?: boolean;
       /** LinkedIn only: the row is a known connection, so no note was drafted. */
       knownConnection?: { readAt: string };
+      /** The config the draft was written under (`draftConfigKey` in plays); unsent drafts only. */
+      configKey?: string;
     };
     /** Why the draft being replaced was discarded; default `redraft` (a machine re-draft, no judgment). */
     discardReason?: DraftDiscardReason;

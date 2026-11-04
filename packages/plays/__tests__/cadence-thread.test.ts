@@ -272,7 +272,11 @@ describe("preview and send", () => {
       playName: THREE.playName,
       draft: { subject: "old subject", body: "b", flags: [], payload },
     });
-    await sendCadenceStep({ prospectId: id, playName: THREE.playName });
+    // It predates config keys too: the founder confirms sending it as it stands.
+    await expect(sendCadenceStep({ prospectId: id, playName: THREE.playName })).rejects.toThrow(
+      /^stale-config/,
+    );
+    await sendCadenceStep({ prospectId: id, playName: THREE.playName, confirmStale: true });
     expect(sends[0]).toMatchObject({ subject: "old subject" });
     expect(sends[0]?.thread).toBeUndefined();
   });

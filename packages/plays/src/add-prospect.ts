@@ -2,6 +2,7 @@ import { deepResearchPerson, getLedger, loadConfig } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { type ProfileIntroTarget, runProfileIntro } from "./profile-intro.ts";
 import { generateFitReason } from "./_fit-reason.ts";
+import { queueDraftConfigKey } from "./_draft-config.ts";
 
 const PLAY_NAME = "profile-intro";
 
@@ -288,6 +289,8 @@ export async function runProspectResearch(queueId: number): Promise<void> {
         dryRun: true,
         ...(draft.voiceKey ? { voiceKey: draft.voiceKey } : {}),
         ...(draft.learningKey ? { learningKey: draft.learningKey } : {}),
+        // The config it was written under: a later setup change makes it stale.
+        configKey: queueDraftConfigKey(fresh.play_name, fresh.channel),
       },
     });
     ledger.setQueueNotes({

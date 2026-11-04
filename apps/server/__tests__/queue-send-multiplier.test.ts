@@ -33,6 +33,7 @@ vi.mock("@oneshot-gtm/plays", async () => ({
 }));
 vi.mock("../src/telemetry.ts", () => ({ reportServerExecution: () => {} }));
 const { sendDraftRoute } = await import("../src/api/queue.ts");
+const { queueDraftConfigKey } = await import("@oneshot-gtm/plays");
 
 function row() {
   return {
@@ -49,6 +50,7 @@ function row() {
       sent: false,
       receiptIds: [],
       dryRun: true,
+      configKey: queueDraftConfigKey("multiplier", "email"),
     }),
     found_at: "2026-10-01 00:00:00",
   };

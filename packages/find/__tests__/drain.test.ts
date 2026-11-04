@@ -114,6 +114,9 @@ vi.mock("@oneshot-gtm/plays", () => {
     WEAK_OFFER_FLAG: "weak-offer",
     NO_OFFER_FLAG: "no-offer",
     EMAIL_MISMATCH_FLAG: "email-mismatch",
+    // Today's draft config key is "cfg-now"; a draft without it reads stale.
+    queueDraftConfigKey: () => "cfg-now",
+    draftIsStale: (d: { configKey?: unknown } | null, current: string) => d?.configKey !== current,
   };
 });
 
@@ -307,6 +310,8 @@ describe("drainQueue per-target dispatch + persistence", () => {
         sent: false,
         receiptIds: [],
         dryRun: false,
+        // An unsent draft carries the config it was written under.
+        configKey: "cfg-now",
       },
       sentBy: "machine",
     });
@@ -364,6 +369,7 @@ describe("drainQueue per-target dispatch + persistence", () => {
         sent: false,
         receiptIds: [],
         dryRun: false,
+        configKey: "cfg-now",
       },
       sentBy: "machine",
     });
@@ -552,6 +558,7 @@ describe("drainQueue LinkedIn rows", () => {
         subject: "LinkedIn invite → Sam",
         body: "reviewed note",
         flags: [],
+        configKey: "cfg-now",
       }),
     });
     ledgerStub.dequeueApproved.mockReturnValue([reviewed]);
@@ -568,6 +575,41 @@ describe("drainQueue LinkedIn rows", () => {
     });
     expect(out.sent).toBe(1);
     expect(ledgerStub.setQueueProspectId).toHaveBeenCalledWith(30, 77);
+  });
+
+  it("a reviewed note written under an older setup is drafted again and waits for review", async () => {
+    for (const configKey of ["cfg-old", undefined]) {
+      draftLinkedInNoteMock.mockClear();
+      sendLinkedInInviteMock.mockClear();
+      ledgerStub.setQueueStatus.mockClear();
+      ledgerStub.dequeueApproved.mockReturnValue([
+        linkedInRow({
+          last_draft_json: JSON.stringify({
+            subject: "LinkedIn invite → Sam",
+            body: "reviewed note",
+            flags: [],
+            ...(configKey ? { configKey } : {}),
+          }),
+        }),
+      ]);
+      const out = await drainQueue({
+        playName: "stack-consolidation",
+        dryRun: false,
+        linkedIn: sender,
+      });
+      expect(draftLinkedInNoteMock).toHaveBeenCalledTimes(1);
+      expect(sendLinkedInInviteMock).not.toHaveBeenCalled();
+      expect(out.sent).toBe(0);
+      expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({
+        id: 30,
+        status: "pending",
+        decidedBy: "machine",
+      });
+      const saved = ledgerStub.setQueueDraft.mock.calls.at(-1)![0] as {
+        draft: { configKey?: string; sent: boolean };
+      };
+      expect(saved.draft).toMatchObject({ sent: false, configKey: "cfg-now" });
+    }
   });
 
   it("a known connection is recorded, never drafted a note or sent an invite", async () => {

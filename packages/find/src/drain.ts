@@ -26,6 +26,8 @@ import {
   NO_OFFER_FLAG,
   EMAIL_MISMATCH_FLAG,
   WEAK_OFFER_FLAG,
+  draftIsStale,
+  queueDraftConfigKey,
 } from "@oneshot-gtm/plays";
 import { resolveQueueTargetWithOffer } from "./queue-offer.ts";
 
@@ -217,6 +219,8 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
             ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
             ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
             ...(draft.knownConnection ? { knownConnection: draft.knownConnection } : {}),
+            // An unsent draft carries the config it was written under.
+            ...(!draft.sent ? { configKey: queueDraftConfigKey(row.play_name, row.channel) } : {}),
           },
           // Drain sends are unattended: the founder approved the row, never
           // this draft: recorded as `auto_sent`, apart from reviewed sends.
@@ -436,10 +440,14 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
   // A known-connection row whose read no longer says so was never reviewed as
   // a note: the note drafted now waits for review.
   const wasConnection = saved?.knownConnection != null;
-  const reviewed =
+  // A reviewed note written under an older setup is drafted again, and the
+  // new one waits for review: the founder read the old one, not this.
+  const clean =
     saved && !wasConnection && (!Array.isArray(saved.flags) || saved.flags.length === 0)
       ? saved
       : null;
+  const stale = !!clean && draftIsStale(clean, queueDraftConfigKey(row.play_name, row.channel));
+  const reviewed = stale ? null : clean;
   const note = reviewed
     ? {
         subject: reviewed.subject ?? "LinkedIn invite",
@@ -462,7 +470,7 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
     ...(note.evidenceClause !== undefined ? { evidenceClause: note.evidenceClause } : {}),
   };
   if (opts.dryRun) return base;
-  if (wasConnection) return { ...base, needsReview: true };
+  if (wasConnection || stale) return { ...base, needsReview: true };
   if (note.flags.length > 0) {
     // A row with no usable LinkedIn profile is the guard's `invalid-profile`:
     // count it per reason like every other refusal (X, GitHub and company

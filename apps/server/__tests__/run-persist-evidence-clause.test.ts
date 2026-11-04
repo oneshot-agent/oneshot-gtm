@@ -49,3 +49,9 @@ it("a draft with no flag (an email) stores none", () => {
   persist("no-flag");
   expect("evidenceClause" in storedDraft("no-flag")).toBe(false);
 });
+
+it("an unsent run draft carries the config it was written under", async () => {
+  const { queueDraftConfigKey } = await import("@oneshot-gtm/plays");
+  persist("keyed");
+  expect(storedDraft("keyed")["configKey"]).toBe(queueDraftConfigKey("luma-events", "linkedin"));
+});

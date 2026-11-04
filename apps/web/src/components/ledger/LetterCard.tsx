@@ -139,15 +139,37 @@ export function DraftStateLine({
   flags,
   dryRun = true,
   hold = {},
+  stale = false,
+  staleNext = "regenerate it",
   children,
 }: {
   sent: boolean;
   flags: string[];
   dryRun?: boolean;
   hold?: HeldOptions;
+  /** Drafted under an older setup (the view's `stale`): says so, and what to do. */
+  stale?: boolean;
+  /** The fix named after a stale badge. */
+  staleNext?: string;
   children?: ReactNode;
 }) {
   const held = sent ? null : heldSummary(flags, hold);
+  const staleNote =
+    stale && !sent ? (
+      <>
+        <Badge tone="spend">stale</Badge>
+        <span className="text-ink-spend-2">drafted under an older setup</span>
+        <span className="text-ink-muted">· {staleNext}</span>
+      </>
+    ) : null;
+  if (staleNote && !held) {
+    return (
+      <>
+        {staleNote}
+        {children}
+      </>
+    );
+  }
   return (
     <>
       {sent ? (
@@ -163,6 +185,7 @@ export function DraftStateLine({
       ) : (
         <span className="text-ink-muted">{dryRun ? "preview" : "drafted"} · no flags</span>
       )}
+      {staleNote}
       {children}
     </>
   );

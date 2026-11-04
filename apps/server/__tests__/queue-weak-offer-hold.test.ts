@@ -43,6 +43,7 @@ vi.mock("@oneshot-gtm/plays", async () => ({
 }));
 vi.mock("../src/telemetry.ts", () => ({ reportServerExecution: () => {} }));
 const { toView, sendDraftRoute } = await import("../src/api/queue.ts");
+const { queueDraftConfigKey } = await import("@oneshot-gtm/plays");
 
 function row(over: Record<string, unknown> = {}) {
   return {
@@ -51,7 +52,11 @@ function row(over: Record<string, unknown> = {}) {
     channel: "email",
     status: "approved",
     payload_json: JSON.stringify(state.payload),
-    last_draft_json: JSON.stringify(state.draft),
+    // Written under today's setup, so only the hold under test stands in the way.
+    last_draft_json: JSON.stringify({
+      ...state.draft,
+      configKey: queueDraftConfigKey("show-hn", "email"),
+    }),
     found_at: "2026-10-19 00:00:00",
     ...over,
   } as Parameters<typeof toView>[0];

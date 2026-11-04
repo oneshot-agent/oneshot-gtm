@@ -12,6 +12,7 @@ let ledger: Ledger;
 const verdictFor = new Map<string, Partial<OfferJudgement>>();
 const judgeMock = vi.fn();
 const writerMock = vi.fn();
+const deriveSequenceOfferMock = vi.fn();
 let onJudge: (() => void) | null = null;
 let extraCfg: Record<string, unknown> = {};
 
@@ -35,6 +36,7 @@ vi.mock("@oneshot-gtm/plays", async () => {
     deriveOffers: writerMock,
     deriveOfferSet: writerMock,
     ensureOfferSet: writerMock,
+    deriveSequenceOffer: deriveSequenceOfferMock,
   };
 });
 vi.mock("../src/output.ts", async (importOriginal) => {
@@ -51,13 +53,22 @@ vi.mock("../src/output.ts", async (importOriginal) => {
 });
 
 const { Ledger: RealLedger } = await import("@oneshot-gtm/core");
-const { offerHoldsSend } = await import("@oneshot-gtm/plays");
+const {
+  offerHoldsSend,
+  offerOutdated,
+  offerProductHash,
+  OFFER_PROMPT_VERSION,
+  sequenceOfferRecord,
+} = await import("@oneshot-gtm/plays");
+const { loadConfig } = await import("@oneshot-gtm/core");
 const {
   commandListExcludedOffers,
   commandRejudgeOffers,
+  commandRejudgeSequences,
   commandRewriteWeakOffers,
   selectAllWeakRows,
   selectAllWeakSequences,
+  selectStaleSequences,
 } = await import("../src/commands/rejudge-offers.ts");
 
 function verdict(label: OfferJudgement["label"], score: number, pass: boolean): OfferJudgement {
@@ -82,6 +93,7 @@ beforeEach(() => {
   onJudge = null;
   extraCfg = {};
   writerMock.mockReset();
+  deriveSequenceOfferMock.mockReset();
   judgeMock.mockReset();
   judgeMock.mockImplementation(async (offers: Array<{ offer: string }>) => {
     onJudge?.();
@@ -647,6 +659,196 @@ describe("offer exclusions", () => {
     ] as never);
     const s = await commandListExcludedOffers({});
     expect(s).toEqual({ eligible: 0, judged: 0, excluded: [], errors: 0 });
+    expect(judgeMock).not.toHaveBeenCalled();
+  });
+});
+
+// `--sequences`: an active sequence's offer written under an older prompt
+// version, brief or offerExclusions is judged again under today's, kept or
+// switched when one passes, else written again (held with no offer when
+// nothing passes). The founder's own, an approved one and the first email's
+// are never changed. Fictional config.
+
+describe("commandRejudgeSequences", () => {
+  const EXCLUSIONS = ["a fictional kind of goal"];
+  const PLAY = "new-business";
+  /** An offer written under the current brief but before the exclusions changed. */
+  const outdated = (text: string, extra: Partial<ProspectOffer> = {}) =>
+    offer(text, {
+      version: OFFER_PROMPT_VERSION,
+      productHash: offerProductHash(loadConfig()),
+      relevance: "relevant",
+      ...extra,
+    });
+
+  function sequence(
+    offerJson: { offer: ProspectOffer | null; candidates: ProspectOffer[]; origin: string },
+    email: string,
+  ): number {
+    const id = ledger.upsertProspect({ name: "Dana Lee", email, company: "Northside Plumbing" });
+    ledger.enrollCadence({
+      prospectId: id,
+      playName: PLAY,
+      nextDueAt: new Date().toISOString(),
+      offer: offerJson as never,
+    });
+    ledger.setCadenceDraft({
+      prospectId: id,
+      playName: PLAY,
+      draft: { subject: "s", body: "restates the offer", flags: [], payload: { kind: "email" } },
+    });
+    return id;
+  }
+  const stored = (id: number) => sequenceOfferRecord({ prospectId: id, playName: PLAY });
+  const preview = (id: number) => ledger.getCadenceDraft({ prospectId: id, playName: PLAY });
+
+  beforeEach(() => {
+    extraCfg = {
+      productBrief: "Example Co books jobs into open slots.",
+      offerExclusions: EXCLUSIONS,
+    };
+  });
+
+  it("selects outdated sequences; counts current, own and approved ones; lists the first email's", () => {
+    const cfg = loadConfig();
+    const current = outdated(A, { exclusionsHash: undefined });
+    const picked = selectStaleSequences(
+      [
+        cadence({ offer: outdated(A), candidates: [outdated(A)], origin: "derived" }, 1),
+        cadence({ offer: outdated(A), candidates: [], origin: "intro" }, 2),
+        cadence({ offer: outdated(A, { editedBy: "founder" }), candidates: [] }, 3),
+        cadence({ offer: outdated(A, { weakApprovedAt: "2026-10-20" }), candidates: [] }, 4),
+        cadence({ offer: { offer: A, steps: "" }, candidates: [], origin: "intro" }, 5),
+        cadence({ skip: null }, 6),
+      ],
+      { ...cfg, offerExclusions: EXCLUSIONS },
+    );
+    expect(picked.stale.map((s) => s.key)).toEqual([`sequence 1/${PLAY}`]);
+    expect(picked.intro).toEqual([`sequence 2/${PLAY}`]);
+    expect(picked).toMatchObject({ kept: 2, current: 1, active: 5 });
+    // With no exclusions, an offer from before the stamp is current.
+    expect(offerOutdated(current, { ...cfg, offerExclusions: [] })).toBe(false);
+  });
+
+  it("--dry-run judges and prints before and after, writing nothing and writing no offers", async () => {
+    const keep = sequence(
+      { offer: outdated(A), candidates: [outdated(A), outdated(B)], origin: "derived" },
+      "keep@example.test",
+    );
+    const swap = sequence(
+      { offer: outdated(B), candidates: [outdated(B), outdated(C)], origin: "derived" },
+      "swap@example.test",
+    );
+    verdictFor.set(A, verdict("relevant", 0.8, true));
+    verdictFor.set(B, verdict("irrelevant", 0.9, false));
+    verdictFor.set(C, verdict("relevant", 0.7, true));
+    const before = [keep, swap].map((id) => ledger.getCadence(id, PLAY)!.offer_json);
+    const s = await commandRejudgeSequences({ dryRun: true });
+    expect(s).toMatchObject({
+      active: 2,
+      passing: [`sequence ${keep}/${PLAY}`],
+      switched: [`sequence ${swap}/${PLAY}`],
+      rederive: [],
+    });
+    expect([keep, swap].map((id) => ledger.getCadence(id, PLAY)!.offer_json)).toEqual(before);
+    expect(preview(keep)).not.toBeNull();
+    expect(preview(swap)).not.toBeNull();
+    expect(deriveSequenceOfferMock).not.toHaveBeenCalled();
+    expect(writerMock).not.toHaveBeenCalled();
+    const printed = vi
+      .mocked(process.stdout.write)
+      .mock.calls.map((c) => String(c[0]))
+      .join("");
+    expect(printed).toContain(`before ${B}`);
+    expect(printed).toContain(`after  switch to ${C}`);
+  });
+
+  it("keeps a passing offer stamped current, switches to a passing candidate, drops both previews", async () => {
+    const keep = sequence(
+      { offer: outdated(A), candidates: [outdated(A)], origin: "derived" },
+      "keep@example.test",
+    );
+    const swap = sequence(
+      { offer: outdated(B), candidates: [outdated(B), outdated(C)], origin: "derived" },
+      "swap@example.test",
+    );
+    verdictFor.set(A, verdict("relevant", 0.8, true));
+    verdictFor.set(B, verdict("irrelevant", 0.9, false));
+    verdictFor.set(C, verdict("relevant", 0.7, true));
+    const s = await commandRejudgeSequences({ dryRun: false });
+    expect(s).toMatchObject({
+      passing: [`sequence ${keep}/${PLAY}`],
+      switched: [`sequence ${swap}/${PLAY}`],
+    });
+    const cfg = loadConfig();
+    expect(stored(keep).offer).toMatchObject({ offer: A, judgedVersion: OFFER_PROMPT_VERSION });
+    expect(offerOutdated(stored(keep).offer, cfg)).toBe(false);
+    expect(stored(swap).offer).toMatchObject({ offer: C, relevance: "relevant" });
+    expect(offerOutdated(stored(swap).offer, cfg)).toBe(false);
+    // The judged candidates are stored with their new verdicts.
+    expect(stored(swap).offerCandidates[0]).toMatchObject({ offer: B, relevance: "weak" });
+    expect(preview(keep)).toBeNull();
+    expect(preview(swap)).toBeNull();
+    expect(deriveSequenceOfferMock).not.toHaveBeenCalled();
+  });
+
+  it("writes new offers when nothing passes or the brief changed; held when none of those pass", async () => {
+    const rewrite = sequence(
+      { offer: outdated(A), candidates: [outdated(A)], origin: "derived" },
+      "rewrite@example.test",
+    );
+    const brief = sequence(
+      {
+        offer: outdated(B, { productHash: "another-brief" }),
+        candidates: [outdated(B, { productHash: "another-brief" })],
+        origin: "derived",
+      },
+      "brief@example.test",
+    );
+    verdictFor.set(A, verdict("weak", 0.3, false));
+    deriveSequenceOfferMock.mockImplementation(async (input: { prospectId: number }) =>
+      input.prospectId === rewrite
+        ? { status: "stored", record: stored(rewrite), offer: offer(C), refreshed: true }
+        : {
+            status: "none",
+            reason: "skipped",
+            record: { ...stored(brief), offer: null },
+            skip: { why: "no offer passed the relevance check" },
+          },
+    );
+    const s = await commandRejudgeSequences({ dryRun: false });
+    expect(s).toMatchObject({
+      rewritten: [`sequence ${rewrite}/${PLAY}`],
+      held: [`sequence ${brief}/${PLAY}`],
+    });
+    expect(s.rederive.toSorted()).toEqual(
+      [`sequence ${brief}/${PLAY}`, `sequence ${rewrite}/${PLAY}`].toSorted(),
+    );
+    // The brief changed: written again without a judge call.
+    expect(judgeMock).toHaveBeenCalledTimes(1);
+    expect(deriveSequenceOfferMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never changes the founder's own, an approved one, or the first email's", async () => {
+    const ids = [
+      sequence(
+        { offer: outdated(A, { editedBy: "founder" }), candidates: [], origin: "derived" },
+        "own@example.test",
+      ),
+      sequence(
+        { offer: outdated(A, { weakApprovedAt: "2026-10-20" }), candidates: [], origin: "derived" },
+        "approved@example.test",
+      ),
+      sequence(
+        { offer: outdated(A), candidates: [outdated(A)], origin: "intro" },
+        "intro@example.test",
+      ),
+    ];
+    const before = ids.map((id) => ledger.getCadence(id, PLAY)!.offer_json);
+    const s = await commandRejudgeSequences({ dryRun: false });
+    expect(s).toMatchObject({ kept: 2, intro: [`sequence ${ids[2]}/${PLAY}`], passing: [] });
+    expect(ids.map((id) => ledger.getCadence(id, PLAY)!.offer_json)).toEqual(before);
+    expect(ids.every((id) => preview(id) !== null)).toBe(true);
     expect(judgeMock).not.toHaveBeenCalled();
   });
 });

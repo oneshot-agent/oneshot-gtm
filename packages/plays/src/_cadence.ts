@@ -91,9 +91,17 @@ import {
 } from "./_prospect-offer.ts";
 import {
   deriveSequenceOffer,
+  sequenceOfferIsStale,
   sequenceOfferRecord,
   type SequenceOfferValue,
 } from "./_sequence-offer.ts";
+import {
+  cadenceDraftIsStale,
+  cadenceDraftSurface,
+  draftConfigKey,
+  STALE_DRAFT_FLAG,
+  STALE_DRAFT_REASON,
+} from "./_draft-config.ts";
 import {
   draftLinkedInNote,
   LINKEDIN_NOTE_HARD_LIMIT,
@@ -164,6 +172,13 @@ export interface CadenceContext {
  * brief to write one from (`runEmailPlay`). Either holds the send.
  */
 export const NO_OFFER_FLAG = "no-offer";
+
+/**
+ * Note on a follow-up the unattended runner leaves due because the
+ * sequence's offer was written under an older setup (`sequenceOfferIsStale`):
+ * a preview writes it again.
+ */
+export const STALE_OFFER_FLAG = "offer-stale";
 
 export type StepPayload =
   | { kind: "direct_mail"; draftId: string }
@@ -2008,11 +2023,13 @@ export async function runCadenceStepForProspect(
   // An email touch of an offer-making play restates the sequence's offer. The
   // unattended runner never writes one (that is a reviewed preview's job, and
   // a paid one): a sequence without an offer, or whose offer is a weak fit
-  // nobody approved, stays due until it is previewed on /cadences.
+  // nobody approved, stays due until it is previewed on /cadences. A LinkedIn
+  // touch restates it too, so one written for the sequence under an older
+  // setup holds either until a preview writes it again.
   if (
     !opts.persistedPayload &&
     !mailDraft &&
-    step.channel === "email" &&
+    (step.channel === "email" || step.channel === "linkedin") &&
     playMakesOffer(opts.playName)
   ) {
     const record = sequenceOfferRecord({
@@ -2021,12 +2038,19 @@ export async function runCadenceStepForProspect(
       cadence,
     });
     const held = record.offer;
+    const email = step.channel === "email";
     // The intro already went out with its offer, which no one can change now.
-    const flag = !held
-      ? NO_OFFER_FLAG
-      : !record.introCarriedOffer && weakOfferHold(opts.playName, { offer: held })
-        ? WEAK_OFFER_FLAG
-        : null;
+    const flag =
+      email && !held
+        ? NO_OFFER_FLAG
+        : email &&
+            held &&
+            !record.introCarriedOffer &&
+            weakOfferHold(opts.playName, { offer: held })
+          ? WEAK_OFFER_FLAG
+          : sequenceOfferIsStale(record, cfg)
+            ? STALE_OFFER_FLAG
+            : null;
     if (flag) {
       return {
         action: "skipped",
@@ -2339,7 +2363,7 @@ export async function previewCadenceStep(input: {
     // Sending this records the connection and brings the first message forward.
     const connection = knownConnection(cadence.prospect_linkedin_url);
     if (connection) {
-      return storePreview(input, seq, stepEntryIndex, step, {
+      return storePreview(input, cfg, seq, stepEntryIndex, step, {
         subject: KNOWN_CONNECTION_SUBJECT,
         body: `Already connected: skipping the connection request (profile read ${knownConnectionDay(connection)}). The first message comes next.`,
         flags: [],
@@ -2391,28 +2415,41 @@ export async function previewCadenceStep(input: {
   // brief, nothing to go on, every offer judged off, a send holding the
   // cadence) is held, never drafted from the terms alone.
   const offerStep = !mailDraft && step.channel === "email" && playMakesOffer(input.playName);
-  const seqOffer = offerStep
-    ? await deriveSequenceOffer({
-        prospectId: input.prospectId,
-        playName: input.playName,
-        stepIndex: nextIndex,
-        cfg,
-      })
-    : null;
-  if (seqOffer?.status === "none") {
+  // A LinkedIn touch restates the stored offer as it stands: one written for
+  // the sequence under an older setup is written again first, and the touch
+  // is drafted with whatever that leaves (never held for want of one).
+  const refreshOnly =
+    !mailDraft &&
+    step.channel === "linkedin" &&
+    playMakesOffer(input.playName, cfg) &&
+    sequenceOfferIsStale(
+      sequenceOfferRecord({ prospectId: input.prospectId, playName: input.playName, cadence }),
+      cfg,
+    );
+  const derived =
+    offerStep || refreshOnly
+      ? await deriveSequenceOffer({
+          prospectId: input.prospectId,
+          playName: input.playName,
+          stepIndex: nextIndex,
+          cfg,
+        })
+      : null;
+  if (offerStep && derived?.status === "none") {
     logEvent("cadence.preview_no_offer", {
       play: input.playName,
       prospect_id: input.prospectId,
       step: nextIndex,
-      reason: seqOffer.reason,
+      reason: derived.reason,
     });
-    return storePreview(input, seq, stepEntryIndex, step, {
+    return storePreview(input, cfg, seq, stepEntryIndex, step, {
       subject: "",
       body: "",
       flags: [NO_OFFER_FLAG],
       payload: { kind: "email", subject: "", body: "" },
     });
   }
+  const seqOffer = derived && derived.status !== "none" && offerStep ? derived : null;
   const intro = mailDraft
     ? null
     : await introThreadForStep(seq, stepEntryIndex, input.prospectId, input.playName);
@@ -2505,7 +2542,7 @@ export async function previewCadenceStep(input: {
                 : []),
             ]
           : [];
-  return storePreview(input, seq, stepEntryIndex, step, {
+  return storePreview(input, cfg, seq, stepEntryIndex, step, {
     subject,
     body,
     flags,
@@ -2516,16 +2553,24 @@ export async function previewCadenceStep(input: {
 /** Persist a preview (`setCadenceDraft`) and return it as the route shows it. */
 function storePreview(
   input: { prospectId: number; playName: string; rotateAngle?: boolean },
+  cfg: ReturnType<typeof loadConfig>,
   seq: Sequence,
   stepEntryIndex: number,
   step: SequenceStep,
   preview: { subject: string; body: string; flags: string[]; payload: StepPayload },
 ): CadenceStepPreview {
   const ledger = getLedger();
+  // The config it was written under: a later setup change makes it stale.
+  const surface = cadenceDraftSurface(preview.payload);
   ledger.setCadenceDraft({
     prospectId: input.prospectId,
     playName: input.playName,
-    draft: preview,
+    draft: {
+      ...preview,
+      ...(surface
+        ? { configKey: draftConfigKey(cfg, { surface, playName: input.playName }, ledger) }
+        : {}),
+    },
     // The founder asking for a new draft: on the same angle the replaced
     // preview was rejected on its text (`regenerate`); with Rotate angle, on
     // its angle (`rotate`).
@@ -2556,6 +2601,8 @@ export async function sendCadenceStep(input: {
   linkedIn?: LinkedInCaller;
   /** Send through an out-of-office hold: the founder confirmed it. */
   confirmHold?: boolean;
+  /** Send a preview written under an older setup: the founder confirmed it. */
+  confirmStale?: boolean;
 }): Promise<RunCadenceStepResult> {
   const ledger = getLedger();
   const draft = ledger.getCadenceDraft(input);
@@ -2564,6 +2611,11 @@ export async function sendCadenceStep(input: {
   // direct API call cannot dispatch copy the lint held back.
   if (draft.flags.length > 0) {
     throw new Error(`draft held by lint (${draft.flags.join(", ")}) — re-preview first`);
+  }
+  // Written under another config than today's (or before drafts carried
+  // one): only a confirmed single send ships it as it stands.
+  if (!input.confirmStale && cadenceDraftIsStale(draft, input.playName)) {
+    throw new Error(`${STALE_DRAFT_FLAG}: ${STALE_DRAFT_REASON}`);
   }
   return runCadenceStepForProspect({
     prospectId: input.prospectId,
