@@ -429,7 +429,8 @@ export function organizationsFromResearch(result: unknown): PersonResearchOrgani
         const org = orgFrom(raw, groupName);
         if (groupName !== undefined) {
           if (org && normalizeCompany(org.name) === normalizeCompany(groupName)) {
-            header = null;
+            // A current header gives way only to a current role under it, not an ended one.
+            if (!header?.current || (dated(org) && org.current)) header = null;
           } else {
             if (header) add(header);
             header = null;

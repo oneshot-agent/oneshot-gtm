@@ -786,6 +786,20 @@ describe("grouped LinkedIn positions", () => {
     ]);
   });
 
+  it("a current header stays when only ended roles follow it at the same company", () => {
+    const orgs = organizationsFromResearch(
+      groupedResult([
+        { title: "Initech", company: "Full-time · 3 yrs", period: "" },
+        { title: "Analyst", company: "Initech", period: "2016 - 2017" },
+      ]),
+    );
+    expect(orgs).toEqual([
+      { name: "Initech", title: "Analyst", startDate: "2016", endDate: "2017", current: false },
+      { name: "Initech", current: true, grouped: true },
+    ]);
+    expect(deriveCurrentRole(orgs).current?.name).toBe("Initech");
+  });
+
   it("a current header survives an old dated stint at the same company", () => {
     const orgs = organizationsFromResearch(
       groupedResult([
