@@ -762,7 +762,8 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
   // page said; nothing is read.
   let live: LiveProfileRead | null = null;
   if (input.liveProfile !== false && seed.url && isLinkedInProfileUrl(seed.url)) {
-    if (liveReadConfigured()) {
+    // A stored read needs no account or session to be used again.
+    if (input.cacheOnly || liveReadConfigured()) {
       live = await readLinkedInProfile(
         seed.url,
         {

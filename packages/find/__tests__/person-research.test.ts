@@ -1909,6 +1909,12 @@ describe("researchPerson cacheOnly", () => {
       "D'ORO Group:false",
       "Nora's Consultancy:false",
     ]);
+    // The stored read is used again with no account or session connected.
+    delete process.env["LINKEDIN_SESSION_COOKIE"];
+    liveSession = false;
+    const disconnected = await run(true);
+    expect(calls.browser).toBe(1);
+    expect(disconnected.dossier.liveProfile?.url).toContain("nora-halloran-vey-cv");
   });
 
   it("a negative cache entry is not research", async () => {
