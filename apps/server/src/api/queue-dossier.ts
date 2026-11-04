@@ -9,7 +9,7 @@ import {
   readPaidCache,
   type PaidCacheEntry,
 } from "@oneshot-gtm/core";
-import { organizationsFromResearch } from "@oneshot-gtm/find";
+import { organizationsFromResearch, providerTopRole } from "@oneshot-gtm/find";
 import type {
   DossierEducationView,
   DossierPostView,
@@ -144,6 +144,8 @@ export function buildQueueDossier(payload: unknown): QueueDossierView {
   const result = full?.result ?? null;
   const inner = record(result?.["enrichment"]);
   const pick = (key: string): string | null => str(result?.[key]) ?? str(inner?.[key]);
+  // "Acme · Full-time" reads as Acme; a grouped header's tenure line holds no company.
+  const top = providerTopRole(pick("title"), pick("company"));
 
   const fromResearch = result ? organizationsFromResearch(result) : [];
   // No full research: the row's bounded summary already holds the history (≤8).
@@ -175,8 +177,8 @@ export function buildQueueDossier(payload: unknown): QueueDossierView {
     researchedAt: full?.fetchedAt ?? str(summary?.["researchedAt"]),
     person: {
       fullName: pick("full_name"),
-      title: pick("title") ?? str(record(summary?.["currentRole"])?.["title"]),
-      company: pick("company") ?? str(record(summary?.["currentRole"])?.["company"]),
+      title: top.title ?? str(record(summary?.["currentRole"])?.["title"]),
+      company: top.company ?? str(record(summary?.["currentRole"])?.["company"]),
       location: pick("location") ?? str(summary?.["location"]),
       summary: pick("summary") ?? str(summary?.["bio"]),
       linkedinUrl: pick("linkedin_url") ?? str(summary?.["linkedinUrl"]),

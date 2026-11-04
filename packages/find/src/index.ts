@@ -18,6 +18,7 @@ export * from "./github-topics.ts";
 export * from "./_product-research.ts";
 export * from "./_person-research.ts";
 export * from "./_linkedin-profile.ts";
+export * from "./_linkedin-positions.ts";
 export * from "./_live-profile-sweep.ts";
 export * from "./github-stars.ts";
 export * from "./_stargazers.ts";

@@ -164,6 +164,57 @@ describe("buildQueueDossier", () => {
     expect(d.company?.industry).toBe("Computing");
   });
 
+  it("drops LinkedIn's employment type from the company, and reads a grouped header as the company", () => {
+    seed(
+      "research.person",
+      { socialMediaUrl: LI },
+      research({ company: "Analytical Engines · Full-time" }),
+    );
+    expect(buildQueueDossier(payload).person).toMatchObject({
+      title: "Head of AI Platform",
+      company: "Analytical Engines",
+    });
+    // The header shape: the company in `title`, the tenure in `company`, no role.
+    seed(
+      "research.person",
+      { socialMediaUrl: LI },
+      research({
+        title: "Analytical Engines",
+        company: "Full-time · 1 yr 9 mos",
+        experience: [
+          { title: "Analytical Engines", company: "Full-time · 1 yr 9 mos", period: "" },
+          {
+            title: "Engineer",
+            company: "Difference Co · undefined",
+            period: "Jan 2019 - Dec 2022 · 4 yrs",
+          },
+        ],
+      }),
+    );
+    const d = buildQueueDossier({
+      ...payload,
+      personResearch: { ...payload.personResearch, currentRole: { company: "Analytical Engines" } },
+    });
+    expect(d.person.title).toBeNull();
+    expect(d.person.company).toBe("Analytical Engines");
+    expect(d.experience).toEqual([
+      {
+        company: "Analytical Engines",
+        title: null,
+        startDate: null,
+        endDate: null,
+        current: true,
+      },
+      {
+        company: "Difference Co",
+        title: "Engineer",
+        startDate: "Jan 2019",
+        endDate: "Dec 2022",
+        current: false,
+      },
+    ]);
+  });
+
   it("merges research posts with the newsfeed capture, deduped, newest first", () => {
     seed("research.person", { socialMediaUrl: LI }, research());
     seed(

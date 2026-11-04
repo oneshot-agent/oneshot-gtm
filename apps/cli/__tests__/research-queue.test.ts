@@ -4,6 +4,7 @@ import {
   ROW_COST_ESTIMATE_USD,
   selectCandidates,
   type CandidateRow,
+  wouldDropLiveRead,
 } from "../src/commands/research-queue.ts";
 
 // Pure helpers for the queue-row person research backfill. Each one guards a
@@ -107,5 +108,21 @@ describe("selectCandidates", () => {
 
   it("estimates a row at person research plus the company lookup", () => {
     expect(ROW_COST_ESTIMATE_USD).toBeCloseTo(0.055, 6);
+  });
+});
+
+describe("wouldDropLiveRead", () => {
+  const live = { url: "https://www.linkedin.com/in/nora-halloran-vey-cv", readAt: "2026-09-11" };
+  const dossier = research as unknown as Parameters<typeof wouldDropLiveRead>[1];
+
+  it("leaves a row built on a live read alone when the cache-only re-derive has none", () => {
+    const payload = { personResearch: { ...research, liveProfile: live } };
+    expect(wouldDropLiveRead(payload, dossier)).toBe(true);
+    expect(wouldDropLiveRead(payload, { ...dossier, liveProfile: live })).toBe(false);
+  });
+
+  it("re-derives a row whose research never had a live read", () => {
+    expect(wouldDropLiveRead({ personResearch: research }, dossier)).toBe(false);
+    expect(wouldDropLiveRead({}, dossier)).toBe(false);
   });
 });

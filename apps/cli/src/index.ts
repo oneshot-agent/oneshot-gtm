@@ -808,7 +808,7 @@ find
   .option("--no-live", "skip the live LinkedIn profile read")
   .option(
     "--cache-only",
-    "re-derive from cached research only: rows with nothing cached are left alone, nothing is billed",
+    "re-derive from cached research only: rows with nothing cached are left alone, nothing is billed (with --refresh for rows already researched)",
     false,
   )
   .option("--no-newsfeed", "skip capturing recent posts after the research")

@@ -1,7 +1,13 @@
-import { getLedger, parallelMap, type QueueRow } from "@oneshot-gtm/core";
+import {
+  getLedger,
+  parallelMap,
+  type PersonResearchDossier,
+  type QueueRow,
+} from "@oneshot-gtm/core";
 import {
   applyPersonResearch,
   COMPANY_RESEARCH_COST_ESTIMATE_USD,
+  hasLiveProfile,
   isCircuitOpen,
   newsfeedSeedForPayload,
   PERSON_RESEARCH_COST_ESTIMATE_USD,
@@ -63,7 +69,9 @@ export interface ResearchQueueOpts {
    * Re-derive from the shared research cache only: rows with nothing cached
    * are left alone, and no paid call runs (no provider, live, company or
    * product lookup outside its cache). The free way to pick up a new field
-   * from results already bought.
+   * or a parser fix from results already bought: with `refresh`, rows that
+   * already carry research are re-derived too. A row whose research came
+   * from a live page read no longer in the cache is left alone.
    */
   cacheOnly?: boolean;
   /** Skip capturing recent posts after the research. */
@@ -164,6 +172,19 @@ export function selectCandidates(
   return out;
 }
 
+/**
+ * Pure: a cache-only re-derive would drop the live LinkedIn read the row's
+ * research was built on. The page read expires from the cache before the
+ * provider's record does, and without it the provider's history decides the
+ * current role again; the row keeps what it has instead.
+ */
+export function wouldDropLiveRead(
+  payload: Record<string, unknown>,
+  dossier: PersonResearchDossier,
+): boolean {
+  return hasLiveProfile(personResearchOf(payload)) && !dossier.liveProfile;
+}
+
 function nameOf(payload: Record<string, unknown>): string {
   for (const key of ["name", "founderName", "guestName", "hostName"]) {
     const v = payload[key];
@@ -261,6 +282,7 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
     researched: 0,
     cached: 0,
     notCached: 0,
+    keptLive: 0,
     unavailable: 0,
     skipped: 0,
     titleUpdated: 0,
@@ -273,7 +295,7 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
   let cappedAt: number | null = null;
   const researchedRows: CandidateRow[] = [];
 
-  await parallelMap(candidates, opts.concurrency ?? 3, async ({ row, seed }, index) => {
+  await parallelMap(candidates, opts.concurrency ?? 3, async ({ row, payload, seed }, index) => {
     if (isCircuitOpen()) {
       haltedAt ??= index;
       return;
@@ -301,6 +323,10 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
     });
     if (researched.notCached) {
       tally.notCached++;
+      return;
+    }
+    if (opts.cacheOnly && wouldDropLiveRead(payload, researched.dossier)) {
+      tally.keptLive++;
       return;
     }
     spend.costUsd += researched.costUsd;
@@ -352,6 +378,9 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
   ok(
     `researched ${tally.researched}  ${c.dim("free (cached):")} ${tally.cached}  ` +
       (opts.cacheOnly ? `${c.dim("not cached, left alone:")} ${tally.notCached}  ` : "") +
+      (tally.keptLive > 0
+        ? `${c.dim("live read no longer cached, left alone:")} ${tally.keptLive}  `
+        : "") +
       `${c.dim("unavailable:")} ${tally.unavailable}  ${c.dim("not live:")} ${tally.skipped}  ` +
       `${c.dim("title updated:")} ${tally.titleUpdated}  ` +
       `${c.dim("re-judged pass:")} ${tally.pass}  ${c.dim("re-judged reject:")} ${tally.reject}` +

@@ -234,6 +234,11 @@ export interface PersonResearchOrganization {
   endDate?: string;
   /** `endDate_formatted.is_current`, else no end date. */
   current: boolean;
+  /**
+   * Read from a grouped company's header (several roles at one company):
+   * the company is known, the role under it is not, so there is no title.
+   */
+  grouped?: boolean;
 }
 
 export interface PersonResearchCompany {

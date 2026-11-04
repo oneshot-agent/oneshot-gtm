@@ -143,7 +143,10 @@ vi.mock("../src/_dedupe.ts", async () => {
     isDuplicate: () => false,
   };
 });
-vi.mock("../src/_findemail-prescreen.ts", () => ({
+vi.mock("../src/_findemail-prescreen.ts", async () => ({
+  ...(await vi.importActual<typeof import("../src/_findemail-prescreen.ts")>(
+    "../src/_findemail-prescreen.ts",
+  )),
   shouldSkipFindEmail: () => shouldSkipFindEmailResult,
 }));
 vi.mock("../src/_linkedin.ts", () => ({

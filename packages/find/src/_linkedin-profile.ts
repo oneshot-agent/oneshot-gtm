@@ -27,11 +27,14 @@ import {
   getLedger,
   getLinkedInInboxStore,
   isCachedPaidFailure,
+  isPaidCacheMiss,
   isTransientToolError,
   listBrowserProfiles,
   loadConfig,
   logEvent,
   paidLookupTtlMs,
+  PaidCacheMissError,
+  type PaidCacheOptions,
   saveConfig,
   startBrowserProfileSetup,
   withDeadline,
@@ -817,21 +820,29 @@ export async function readLinkedInProfile(
     maxAgeMs?: number;
     /** The founder opened the row: the whole day's cap, not the paced background share. */
     opened?: boolean;
+    /** A stored read only: nothing is read, and a miss is no profile with no skip. */
+    cacheOnly?: boolean;
   },
 ): Promise<LiveProfileRead> {
   if (!isLinkedInProfileUrl(url))
     return { profile: null, skipped: "not-linkedin", costUsd: 0, cached: false };
   // The read that ran in this call, if one did (a hit or a joined read runs none).
   const ran: { read?: LiveProfileRead } = {};
+  const cacheOpts: PaidCacheOptions = {
+    // Shorter than the expiry only: a caller can want a newer read, never an older one.
+    ...(opts.maxAgeMs !== undefined
+      ? { maxAgeMs: Math.min(opts.maxAgeMs, paidLookupTtlMs("linkedin.profile_read")) }
+      : {}),
+    ...(opts.cacheOnly ? { cacheOnly: true } : {}),
+  };
   try {
     const res = await withPaidCache(
       "linkedin.profile_read",
       { url: normalizeProfileUrl(url) },
-      // Shorter than the expiry only: a caller can want a newer read, never an older one.
-      opts.maxAgeMs !== undefined
-        ? { maxAgeMs: Math.min(opts.maxAgeMs, paidLookupTtlMs("linkedin.profile_read")) }
-        : undefined,
+      Object.keys(cacheOpts).length > 0 ? cacheOpts : undefined,
       async () => {
+        // Demo mode skips the cache; a cache-only caller still never reads.
+        if (opts.cacheOnly) throw new PaidCacheMissError("linkedin.profile_read");
         ran.read = await readLive(url, ctx, opts);
         return { result: ran.read.profile, receiptId: 0, costUsd: ran.read.costUsd };
       },
@@ -843,6 +854,7 @@ export async function readLinkedInProfile(
     return { profile: null, skipped: "interrupted", costUsd: 0, cached: false };
   } catch (err) {
     if (ran.read?.profile) readsAwaitingStore--;
+    if (isPaidCacheMiss(err)) return { profile: null, costUsd: 0, cached: false };
     // A profile that cannot be read, now or within the negative window.
     return { profile: null, skipped: "failed", costUsd: 0, cached: isCachedPaidFailure(err) };
   }

@@ -233,8 +233,10 @@ const {
   applyPersonResearchToProspect,
   companyMatchesDomain,
   deriveCurrentRole,
+  dossierFromProviderResult,
   emailMismatchOf,
   hasLiveProfile,
+  isGroupHeader,
   normalizeCompany,
   organizationsFromResearch,
   parsePeriod,
@@ -248,6 +250,8 @@ const {
   workEmailDomain,
 } = await import("../src/_person-research.ts");
 const { _resetLinkedInReadGate } = await import("../src/_linkedin-profile.ts");
+const { cleanCompanyName, isPlaceholderCompanyName, isTenureLine, providerTopRole } =
+  await import("../src/_linkedin-positions.ts");
 const { _resetPaidCache, getSharedDb, paidCacheKey } = await import("@oneshot-gtm/core");
 
 const NORA_URL = "https://www.linkedin.com/in/nora-halloran-vey-cv";
@@ -584,6 +588,264 @@ describe("organizationsFromResearch", () => {
       current: false,
     });
     expect(parsePeriod("Mar 2026 -")).toEqual({ startDate: "Mar 2026", current: true });
+  });
+});
+
+describe("LinkedIn position strings", () => {
+  it("parsePeriod drops the tenure and reads a Present end with anything after it as current", () => {
+    expect(parsePeriod("Apr 2026 - Present · ")).toEqual({ startDate: "Apr 2026", current: true });
+    expect(parsePeriod("Apr 2026 - Present · 7 mos")).toEqual({
+      startDate: "Apr 2026",
+      current: true,
+    });
+    expect(parsePeriod("Jun 2023 - Oct 2023 · 4 mos")).toEqual({
+      startDate: "Jun 2023",
+      endDate: "Oct 2023",
+      current: false,
+    });
+    expect(parsePeriod("2021 - 2023 · 2 yrs")).toEqual({
+      startDate: "2021",
+      endDate: "2023",
+      current: false,
+    });
+    expect(parsePeriod("Jan 2025 – Current")).toEqual({ startDate: "Jan 2025", current: true });
+  });
+
+  it.each([
+    "Full-time",
+    "Part-time",
+    "Contract",
+    "Freelance",
+    "Permanent",
+    "Self-employed",
+    "Internship",
+    "Seasonal",
+    "Apprenticeship",
+    "Temporary",
+    "Work Study",
+    "Co-op",
+    "Casual",
+    "undefined",
+    "Permanent Full-time",
+    "Contract Part-time",
+  ])("cleanCompanyName drops a trailing ' · %s'", (type) => {
+    expect(cleanCompanyName(`Acme Robotics · ${type}`)).toBe("Acme Robotics");
+  });
+
+  it("cleanCompanyName keeps real names and reads placeholders as none", () => {
+    expect(cleanCompanyName("undefined")).toBeNull();
+    expect(cleanCompanyName("Full-time · 1 yr 9 mos")).toBeNull();
+    expect(cleanCompanyName("Acme Robotics · ")).toBe("Acme Robotics");
+    // A dot inside a name is part of it.
+    expect(cleanCompanyName("Studio · Nine")).toBe("Studio · Nine");
+    expect(cleanCompanyName("Acme·Labs")).toBe("Acme·Labs");
+    // Working for yourself is somewhere to work.
+    expect(cleanCompanyName("Freelance")).toBe("Freelance");
+    expect(isPlaceholderCompanyName("Freelance")).toBe(false);
+    expect(isPlaceholderCompanyName("Self-employed")).toBe(false);
+    expect(isPlaceholderCompanyName("Full-time")).toBe(true);
+    expect(isPlaceholderCompanyName("undefined")).toBe(true);
+    expect(isPlaceholderCompanyName("Globex")).toBe(false);
+  });
+
+  it("recognises a grouped header's tenure line, and nothing else", () => {
+    for (const line of [
+      "Full-time · 1 yr 9 mos",
+      "Permanent Full-time · 3 yrs",
+      "undefined · 2 yrs 1 mo",
+      "Part-time · 5 mos",
+      "Internship · less than a year",
+      "4 mos",
+    ]) {
+      expect(isTenureLine(line)).toBe(true);
+    }
+    for (const name of ["Globex", "Acme Robotics · Full-time", "Freelance", "2 Sigma Labs"]) {
+      expect(isTenureLine(name)).toBe(false);
+    }
+    expect(isGroupHeader({ title: "Globex", company: "Full-time · 1 yr 9 mos", period: "" })).toBe(
+      true,
+    );
+    expect(isGroupHeader({ title: "", company: "Full-time · 1 yr 9 mos" })).toBe(false);
+    expect(isGroupHeader({ title: "CTO", company: "Globex · Full-time" })).toBe(false);
+  });
+
+  it("providerTopRole reads a top-level header pair as the company with no title", () => {
+    expect(providerTopRole("Globex", "Full-time · 1 yr 9 mos")).toEqual({
+      title: null,
+      company: "Globex",
+    });
+    expect(providerTopRole("CTO", "Globex · Full-time")).toEqual({
+      title: "CTO",
+      company: "Globex",
+    });
+    expect(providerTopRole("CTO", "undefined")).toEqual({ title: "CTO", company: null });
+  });
+});
+
+/** Several roles at Initech show as one header, which is all the provider passes on. */
+const groupedResult = (experience: unknown[]) => ({
+  status: "completed",
+  result: {
+    title: "Initech",
+    company: "Full-time · 1 yr 9 mos",
+    experience,
+    enrichment: { experience },
+  },
+});
+
+describe("grouped LinkedIn positions", () => {
+  const director = {
+    title: "Director of AI",
+    company: "Acme Robotics · Full-time",
+    period: "Apr 2026 - Present · ",
+  };
+  const header = { title: "Initech", company: "Full-time · 1 yr 9 mos", period: "" };
+  const globex = {
+    title: "Staff Engineer",
+    company: "Globex · undefined",
+    period: "Jun 2023 - Oct 2023 · 4 mos",
+  };
+  const freelance = { title: "Consultant", company: "Freelance", period: "2021 - 2023 · 2 yrs" };
+
+  it("a header after the current role is history under the company's own name", () => {
+    const orgs = organizationsFromResearch(groupedResult([director, header, globex, freelance]));
+    expect(orgs).toEqual([
+      { name: "Acme Robotics", title: "Director of AI", startDate: "Apr 2026", current: true },
+      { name: "Initech", current: false, grouped: true },
+      {
+        name: "Globex",
+        title: "Staff Engineer",
+        startDate: "Jun 2023",
+        endDate: "Oct 2023",
+        current: false,
+      },
+      // A bare "Freelance" with a period is a real role.
+      {
+        name: "Freelance",
+        title: "Consultant",
+        startDate: "2021",
+        endDate: "2023",
+        current: false,
+      },
+    ]);
+    const { current, organizations } = deriveCurrentRole(orgs);
+    expect(current).toMatchObject({ name: "Acme Robotics", title: "Director of AI" });
+    expect(organizations.map((o) => o.name)).toEqual([
+      "Acme Robotics",
+      "Globex",
+      "Freelance",
+      "Initech",
+    ]);
+  });
+
+  it("a header at the top is the current company; provider order decides against a later current role", () => {
+    const advisor = {
+      title: "Advisor",
+      company: "Globex · Part-time",
+      period: "Jan 2026 - Present",
+    };
+    const orgs = organizationsFromResearch(groupedResult([header, advisor, globex]));
+    expect(orgs[0]).toEqual({ name: "Initech", current: true, grouped: true });
+    expect(deriveCurrentRole(orgs).current?.name).toBe("Initech");
+    // The work email still decides between current roles.
+    expect(deriveCurrentRole(orgs, { emailDomain: "globex.example" }).current).toMatchObject({
+      name: "Globex",
+      title: "Advisor",
+    });
+    expect(deriveCurrentRole(orgs, { emailDomain: "initech.example" }).current?.name).toBe(
+      "Initech",
+    );
+  });
+
+  it("a header with its own ended period is history even at the top", () => {
+    const ended = { ...header, period: "Jan 2020 - Dec 2021 · 2 yrs" };
+    const orgs = organizationsFromResearch(groupedResult([ended, director]));
+    expect(orgs).toContainEqual({
+      name: "Initech",
+      startDate: "Jan 2020",
+      endDate: "Dec 2021",
+      current: false,
+      grouped: true,
+    });
+    expect(deriveCurrentRole(orgs).current?.name).toBe("Acme Robotics");
+  });
+
+  it("roles under a header replace it and take its company when they name none", () => {
+    const orgs = organizationsFromResearch(
+      groupedResult([
+        { title: "Initech", company: "Full-time · 3 yrs", period: "" },
+        { title: "Head of Data", company: "Initech", period: "Jan 2025 - Present · 1 yr" },
+        { title: "Data Lead", company: "undefined", period: "2023 - 2025 · 2 yrs" },
+        { title: "Analyst", company: "Globex · Contract", period: "2020 - 2023" },
+      ]),
+    );
+    expect(orgs).toEqual([
+      { name: "Initech", title: "Head of Data", startDate: "Jan 2025", current: true },
+      { name: "Initech", title: "Data Lead", startDate: "2023", endDate: "2025", current: false },
+      { name: "Globex", title: "Analyst", startDate: "2020", endDate: "2023", current: false },
+    ]);
+  });
+
+  it("a current header survives an old dated stint at the same company", () => {
+    const orgs = organizationsFromResearch(
+      groupedResult([
+        header,
+        { title: "Intern", company: "Globex", period: "2018 - 2019" },
+        { title: "Analyst", company: "Initech · Internship", period: "2016 - 2017" },
+      ]),
+    );
+    expect(orgs.map((o) => `${o.name}:${o.current}`)).toEqual([
+      "Initech:true",
+      "Globex:false",
+      "Initech:false",
+    ]);
+  });
+
+  it("never picks a role whose name is only an employment type or tenure", () => {
+    const { current, organizations } = deriveCurrentRole([
+      { name: "Full-time · 1 yr 9 mos", title: "Initech", current: true },
+      { name: "Full-time", title: "Engineer", startDate: "2026", current: true },
+      { name: "Acme Robotics", startDate: "2024", current: true },
+    ]);
+    expect(current?.name).toBe("Acme Robotics");
+    expect(organizations.map((o) => o.name)).toEqual(["Acme Robotics"]);
+  });
+
+  const dossier = (seedEmail: string) =>
+    dossierFromProviderResult(
+      { url: null, email: seedEmail, name: "Jo Park", company: null },
+      groupedResult([director, header, globex, freelance]),
+      { costUsd: 0, billed: false },
+    )!;
+
+  it("no false wrong-company hold, no title overwrite, and former roles without LinkedIn's dots", () => {
+    const d = dossier("jo@acmerobotics.example");
+    const payload = {
+      email: "jo@acmerobotics.example",
+      company: "Acme Robotics",
+      title: "Director of AI",
+      emailMismatch: { emailDomain: "acmerobotics.example", companies: ["Full-time · 1 yr 9 mos"] },
+    };
+    expect(emailMismatchOf(payload, d)).toBeNull();
+    const patch = personPayloadPatch(payload, d);
+    expect(patch.emailMismatch).toBeNull();
+    expect(patch.title).toBeUndefined();
+    expect(patch.company).toBeUndefined();
+    expect(patch.currentRole).toBe("Director of AI at Acme Robotics since Apr 2026");
+    expect(patch.formerRoles).toBe(
+      "Staff Engineer at Globex (Jun 2023–Oct 2023); Consultant at Freelance (2021–2023); Initech",
+    );
+    expect(patch.formerRoles).not.toContain("·");
+  });
+
+  it("moves a stale row to the current role, never to the header's company or tenure", () => {
+    const patch = personPayloadPatch(
+      { email: "jo@gmail.com", company: "Globex", title: "Staff Engineer" },
+      dossier("jo@gmail.com"),
+    );
+    expect(patch.title).toBe("Director of AI");
+    expect(patch.company).toBe("Acme Robotics");
+    expect(patch.titleAtFinder).toBe("Staff Engineer");
   });
 });
 
@@ -1553,6 +1815,100 @@ describe("researchPerson cacheOnly", () => {
     expect(out.costUsd).toBe(0);
     expect(out.dossier.status).toBe("unavailable");
     expect(out.dossier.warning).toContain("different person");
+  });
+
+  it("re-derives a grouped-position record already bought: title, company, role line and hold, nothing billed", async () => {
+    seedResearch(
+      JSON.stringify({
+        status: "completed",
+        result: {
+          full_name: "Nora Halloran",
+          title: "D'oro Group",
+          company: "Full-time · 1 yr",
+          experience: [
+            {
+              title: "Founder & Product Owner",
+              company: "BrightLoom.App · Full-time",
+              period: "Mar 2026 - Present · 8 mos",
+            },
+            { title: "D'oro Group", company: "Full-time · 1 yr", period: "" },
+            {
+              title: "Business Consultant",
+              company: "Nora's Consultancy · Self-employed",
+              period: "Oct 2022 - Nov 2024 · 2 yrs 2 mos",
+            },
+          ],
+        },
+        cost: 0.05,
+      }),
+    );
+    const out = await researchPerson({
+      seed,
+      playName: "research-queue",
+      subject: { queueId: 1 },
+      remainingUsd: 0,
+      cacheOnly: true,
+    });
+    expect(out.dossier.currentRole).toEqual({
+      title: "Founder & Product Owner",
+      company: "BrightLoom.App",
+      since: "Mar 2026",
+    });
+    // An earlier read held the row for a "company" that was the header's tenure line.
+    const held = {
+      ...row(1, "approved"),
+      payload_json: JSON.stringify({
+        ...noraPayload,
+        emailMismatch: { emailDomain: "dorocafe.example", companies: ["Full-time · 1 yr"] },
+      }),
+    };
+    // What research-queue --cache-only does with it: no re-judge, no budget.
+    const ledger = (await import("@oneshot-gtm/core")).getLedger();
+    const applied = await applyPersonResearch(ledger, held, out.dossier, {
+      rejudge: false,
+      remainingUsd: 0,
+    });
+    expect(applied.outcome).toBe("patched");
+    expect(applied.patch).toMatchObject({
+      title: "Founder & Product Owner",
+      company: "BrightLoom.App",
+      currentRole: "Founder & Product Owner at BrightLoom.App since Mar 2026",
+      emailMismatch: null,
+      formerRoles: "Business Consultant at Nora's Consultancy (Oct 2022–Nov 2024); D'oro Group",
+    });
+    expect(calls).toMatchObject({ research: 0, company: 0, browser: 0, classify: 0 });
+    expect(out.costUsd).toBe(0);
+  });
+
+  it("keeps a stored live read of the page; reads nothing", async () => {
+    process.env["LINKEDIN_SESSION_COOKIE"] = "cookie";
+    liveSession = true;
+    const run = (cacheOnly: boolean) =>
+      researchPerson({
+        seed: personSeedFor(noraPayload),
+        playName: "research-queue",
+        subject: { queueId: 1 },
+        remainingUsd: cacheOnly ? 0 : 1,
+        ...(cacheOnly ? { cacheOnly: true } : {}),
+      });
+    // Nothing stored for the page yet: no live profile, and no skip on record.
+    seedResearch(JSON.stringify(noraResearch));
+    const before = await run(true);
+    expect(before.dossier.liveProfile).toBeUndefined();
+    expect(before.dossier.warning).toBeUndefined();
+    expect(calls.browser).toBe(0);
+    // A paid read stores the page; the cache-only re-derive uses it again.
+    await run(false);
+    expect(calls.browser).toBe(1);
+    const after = await run(true);
+    expect(calls.browser).toBe(1);
+    expect(after.costUsd).toBe(0);
+    expect(after.dossier.liveProfile?.url).toContain("nora-halloran-vey-cv");
+    expect(after.dossier.organizations.map((o) => `${o.name}:${o.current}`)).toEqual([
+      "BrightLoom.App:true",
+      "D'ORO Group:false",
+      "Nora's Consultancy:false",
+    ]);
   });
 
   it("a negative cache entry is not research", async () => {

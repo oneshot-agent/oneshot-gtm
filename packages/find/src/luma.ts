@@ -11,6 +11,8 @@ import {
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { LumaEventsTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
+import { isDudDomain } from "./_findemail-prescreen.ts";
+import { providerTopRole } from "./_linkedin-positions.ts";
 import { resolveVerifyEnrichQualify, icpFields } from "./_contact.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { roundRobin } from "./_rank.ts";
@@ -932,10 +934,19 @@ async function resolveAndEnqueueLumaAttendee(
         );
         costSink(enr.result.cost ?? 0);
         const profile = enr.result.profile;
-        companyDomain = profile?.company_domain ?? null;
-        resolvedCompany = profile?.company ?? null;
+        // A LinkedIn page is not the employer's domain: the website below decides instead.
+        companyDomain = isDudDomain(profile?.company_domain)
+          ? null
+          : (profile?.company_domain ?? null);
+        // "Acme · Full-time" is Acme; a grouped header's "Full-time · 1 yr" puts
+        // the company in the title and names no title.
+        const role = providerTopRole(
+          typeof profile?.title === "string" ? profile.title : null,
+          profile?.company ?? null,
+        );
+        resolvedCompany = role.company;
         // Free title: this call is already paid for above.
-        profileTitle = typeof profile?.title === "string" ? profile.title.trim() : null;
+        profileTitle = role.title;
         // The paid cache files this result under the surfaced email too, so
         // the later by-email enrich of the same person is free.
         surfacedEmail = profile?.best_work_email ?? profile?.email ?? null;
