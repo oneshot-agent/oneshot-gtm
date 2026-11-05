@@ -131,6 +131,12 @@ describe("agedEvidence", () => {
     expect(on(2000)).toBe("went through YC S26");
   });
 
+  it("accelerator cohort: names any cohort the way a sentence does, never as its slug", () => {
+    expect(at({ prospectCohort: "a16z-speedrun-2026" }, 0)).toBe("in a16z speedrun");
+    expect(at({ prospectCohort: "spc-2026-1" }, 0)).toBe("in South Park Commons");
+    expect(at({ prospectCohort: "foo-labs-2026" }, 0)).toBe("in Foo Labs");
+  });
+
   it.each([
     [0, "Sequoia led your Seed", "Sequoia"],
     [200, undefined, "Sequoia"],
@@ -802,6 +808,10 @@ describe("lintSharedCohort", () => {
       ["Our YC P25 batch is building agents. What are you on?", "fellow / batchmate"],
       ["Fellow speedrun founder here. How do you run evals?", "fellow / batchmate"],
       ["I'm a YC F26 founder too. How do you run evals?", "first person in a cohort"],
+      // A cohort as the evidence clause names it, not only as its slug.
+      ["Hey Ana, in a16z speedrun as well. Where does state live?", "in it too"],
+      ["We went through AI Grant last year. How do you run evals?", "first person in a cohort"],
+      ["Fellow South Park Commons founder here.", "fellow / batchmate"],
     ] as const) {
       expect(lintSharedCohort(text), text).toEqual(
         expect.arrayContaining([expect.stringMatching(new RegExp(`^shared-cohort: "${label}"`))]),
@@ -813,6 +823,7 @@ describe("lintSharedCohort", () => {
     for (const text of [
       "Hey Aziz, you're in YC F26 with Acme. Is the integration the drag?",
       "Hey Ram, found you in the YC F26 list. Where does state live when tasks drag out?",
+      "Hey Ana, found you in the a16z speedrun list. How do you handle retries?",
       "Your batch is heavy on agents. How are you handling guardrails?",
       "In mid-2026 as well as now, evals are the hard part. How do you run them?",
       "In batch processing, retries pile up. How do you handle them?",

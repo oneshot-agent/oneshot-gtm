@@ -1,3 +1,5 @@
+// The subpath, not the index: the registry reads it at load.
+import { ACCELERATOR_NAMES } from "@oneshot-gtm/core/accelerator-names";
 import type { StructuredSource } from "./_accelerator-structured.ts";
 import type { CohortEntry } from "./accelerator-batch.ts";
 
@@ -16,6 +18,7 @@ const SEASON_LETTER: Record<Season, string> = { winter: "w", spring: "p", summer
 
 export interface Accelerator {
   id: string;
+  /** Display name, from core so copy written from a cohort id reads the same name. */
   name: string;
   /** `seasonal`: four batches a year (YC). `yearly`: one cohort id per year. */
   cadence: "seasonal" | "yearly";
@@ -32,10 +35,10 @@ export interface Accelerator {
 }
 
 export const ACCELERATORS: readonly Accelerator[] = [
-  { id: "yc", name: "Y Combinator", cadence: "seasonal", listingUrls: [] },
+  { id: "yc", name: ACCELERATOR_NAMES["yc"], cadence: "seasonal", listingUrls: [] },
   {
     id: "spc",
-    name: "South Park Commons",
+    name: ACCELERATOR_NAMES["spc"],
     programName: "South Park Commons Founder Fellowship",
     cadence: "yearly",
     listingUrls: ["https://www.southparkcommons.com/companies"],
@@ -53,7 +56,7 @@ export const ACCELERATORS: readonly Accelerator[] = [
   },
   {
     id: "neo",
-    name: "Neo",
+    name: ACCELERATOR_NAMES["neo"],
     programName: "Neo Accelerator",
     cadence: "yearly",
     listingUrls: ["https://neo.com/companies"],
@@ -62,7 +65,7 @@ export const ACCELERATORS: readonly Accelerator[] = [
   },
   {
     id: "antler",
-    name: "Antler",
+    name: ACCELERATOR_NAMES["antler"],
     cadence: "yearly",
     listingUrls: ["https://www.antler.co/portfolio"],
     // Investment year on every card; the list runs to ~35 pages, read in full.
@@ -74,13 +77,13 @@ export const ACCELERATORS: readonly Accelerator[] = [
   },
   {
     id: "techstars",
-    name: "Techstars",
+    name: ACCELERATOR_NAMES["techstars"],
     cadence: "yearly",
     listingUrls: ["https://www.techstars.com/portfolio"],
   },
   {
     id: "500-global",
-    name: "500 Global",
+    name: ACCELERATOR_NAMES["500-global"],
     cadence: "yearly",
     listingUrls: ["https://500.co/companies"],
     // The portfolio table's own feed; the earliest investment date is the year.
@@ -100,17 +103,23 @@ export const ACCELERATORS: readonly Accelerator[] = [
   },
   {
     id: "ai-grant",
-    name: "AI Grant",
+    name: ACCELERATOR_NAMES["ai-grant"],
     cadence: "yearly",
     listingUrls: ["https://aigrant.com"],
     // Lists companies by batch number only, with no dates.
     structured: null,
   },
   // Publishes batch facts (S25, W25), not a company list.
-  { id: "hf0", name: "HF0", cadence: "yearly", listingUrls: [], structured: null },
+  {
+    id: "hf0",
+    name: ACCELERATOR_NAMES["hf0"],
+    cadence: "yearly",
+    listingUrls: [],
+    structured: null,
+  },
   {
     id: "a16z-speedrun",
-    name: "a16z speedrun",
+    name: ACCELERATOR_NAMES["a16z-speedrun"],
     cadence: "yearly",
     listingUrls: ["https://speedrun.a16z.com/companies"],
     // The companies page's API. Cohorts are numbered: SR001 in 2023, then two

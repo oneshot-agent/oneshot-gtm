@@ -12,7 +12,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./workspaces": "./src/workspaces.ts",
-    "./time": "./src/time.ts"
+    "./time": "./src/time.ts",
+    "./accelerator-names": "./src/accelerator-names.ts"
   },
   "dependencies": {
     "@oneshot-agent/sdk": "0.61.0",
