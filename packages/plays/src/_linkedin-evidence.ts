@@ -9,6 +9,12 @@ import {
   mergeStoredView,
   storedDistanceReadAt,
 } from "@oneshot-gtm/core";
+// The subpath, not the index: the lint's patterns are built from it at load.
+import {
+  ACCELERATOR_NAMES,
+  cohortAcceleratorId,
+  cohortDisplayName,
+} from "@oneshot-gtm/core/accelerator-names";
 import { complete } from "@oneshot-gtm/intel";
 
 /**
@@ -79,11 +85,6 @@ function listOf(value: string): string {
 
 const article = (word: string): string => (/^[aeiou]/i.test(word) ? "an" : "a");
 
-function cohortLabel(cohort: string): string {
-  const m = /^yc[-\s]?([wpxsf])(\d{2})$/i.exec(cohort.trim());
-  return m ? `YC ${m[1]!.toUpperCase()}${m[2]}` : cohort.trim();
-}
-
 /** When a cohort ends (its demo day), or null when the schedule is unknown. */
 function cohortEnd(meta: Record<string, unknown>, cohort: string, now: Date): Date | null {
   const day = demoDayOf(
@@ -136,7 +137,7 @@ export function agedEvidence(
 
   const cohort = str(metadata, "prospectCohort");
   if (cohort) {
-    const label = cohortLabel(cohort);
+    const label = cohortDisplayName(cohort);
     const end = cohortEnd(metadata, cohort, now);
     const over = end ? now.getTime() - end.getTime() > 60 * DAY : false;
     candidates.push(over ? `went through ${label}` : `in ${label}`);
@@ -758,7 +759,14 @@ export function lintAlreadyConnected(text: string): string[] {
  * An accelerator, a batch code (W26, F26, P25) or a program slug ("antler-2026"):
  * what a sentence names when it puts someone in a cohort.
  */
-const PROGRAM = String.raw`YC|Y\s*Combinator|Antler|Techstars|500\s+Global|Entrepreneur\s+First|South\s+Park\s+Commons|HF0|speedrun`;
+const PROGRAM = [
+  // Every name the finder's registry renders a cohort as ("a16z speedrun"), so
+  // a cohort written into copy by name is caught like its slug.
+  ...Object.values(ACCELERATOR_NAMES).map((name) =>
+    name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, String.raw`\s+`),
+  ),
+  String.raw`YC|Y\s*Combinator|Entrepreneur\s+First|speedrun`,
+].join("|");
 const BATCH_CODE = String.raw`[WSFXP]\d{2}|(?!(?:mid|early|late)-)[a-z]{3,}-20\d\d`;
 const COHORT = String.raw`(?:${PROGRAM}|${BATCH_CODE}|(?:the|same|this)\s+(?:batch|cohort|accelerator))\b`;
 
@@ -829,17 +837,31 @@ function sentenceAt(text: string, index: number): string {
  */
 export function lintSharedCohort(text: string, founderCohort?: string | null): string[] {
   const own = founderCohort?.trim() ?? "";
-  const parts = own
-    .split(/[^a-z0-9]+/i)
-    .map(alnum)
-    .filter(Boolean);
+  // The sender's cohort as its id spells it, and with the registry id read as
+  // the program's name (`spc-2026` is "South Park Commons 2026" too).
+  const acc = cohortAcceleratorId(own);
+  const spellings =
+    acc && acc !== "yc" ? [own, `${ACCELERATOR_NAMES[acc]}${own.slice(acc.length)}`] : [own];
+  const owns = spellings.map((spelling) => {
+    const parts = spelling
+      .split(/[^a-z0-9]+/i)
+      .map(alnum)
+      .filter(Boolean);
+    // Every run of consecutive parts, so a program named in several words
+    // ("a16z speedrun" for `a16z-speedrun-2025`) is the sender's own too.
+    const names = new Set(
+      parts.flatMap((_, i) => parts.slice(i).map((__, j) => parts.slice(i, i + j + 1).join(""))),
+    );
+    return { parts, names };
+  });
   // A sentence passes when it names the sender's own batch and no other one:
   // "fellow YC F26 founders, though mine is YC W25" names two.
   const namesOwn = (claim: string) =>
-    parts.length > 0 &&
-    parts.every((part) => alnum(claim).includes(part)) &&
-    [...claim.matchAll(BATCH_NAME_RX)].every(
-      (m) => parts.includes(alnum(m[0])) || alnum(m[0]) === alnum(own),
+    owns.some(
+      ({ parts, names }) =>
+        parts.length > 0 &&
+        parts.every((part) => alnum(claim).includes(part)) &&
+        [...claim.matchAll(BATCH_NAME_RX)].every((m) => names.has(alnum(m[0]))),
     );
   // Every claim counts, judged on its whole sentence: "fellow YC W25 founder"
   // matches on "fellow YC" and names its batch after, and "you're in YC F26

@@ -1,5 +1,6 @@
 import type { DraftAngle } from "@oneshot-gtm/shared-types";
 import { loadConfig } from "@oneshot-gtm/core";
+import { cohortDisplayName } from "@oneshot-gtm/core/accelerator-names";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
 import { acceleratorBatchMetadata } from "./_metadata.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
@@ -87,7 +88,7 @@ export function runAcceleratorBatch(
         ...(!dryRun && t.launchUrl
           ? {
               research: {
-                topic: `Recent public work and decisions by ${t.name} at ${t.company} (${t.cohort}). Pull launch context from ${t.launchUrl}.`,
+                topic: `Recent public work and decisions by ${t.name} at ${t.company} (${cohortDisplayName(t.cohort)}). Pull launch context from ${t.launchUrl}.`,
               },
             }
           : {}),
@@ -108,7 +109,9 @@ export function runAcceleratorBatch(
         // "(unspecified)" placeholder is an invitation to improvise one.
         ...(founderCohort ? [`SENDER COHORT: ${founderCohort}`] : []),
         `PROSPECT: ${t.name} at ${t.company}`,
-        `PROSPECT COHORT: ${t.cohort}`,
+        // The name a sentence uses, never the slug: "a16z speedrun", not
+        // "a16z-speedrun-2026".
+        `PROSPECT COHORT: ${cohortDisplayName(t.cohort)}`,
         `PROSPECT PRODUCT: ${t.productOneLiner ?? "(unknown)"}`,
         `LAUNCH URL: ${t.launchUrl ?? "(none)"}`,
         `DOSSIER:\n${prep.dossier || "(dry-run; rely on the public cohort record only)"}`,

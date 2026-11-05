@@ -50,6 +50,7 @@ import {
   resolveQueueTarget,
   CLICK_RESEARCH_WAIT_MS,
   ensureQueueRowOffer,
+  onlyResearchWritesSince,
   safeEnrichCompany,
   scheduleNewsfeedOnApproval,
   type MovedFrom,
@@ -2095,10 +2096,18 @@ async function regenerateDraftInner(
     // The config it was written under: a later setup change makes it stale.
     configKey,
   };
+  // The payload the save compares against. A company research read that
+  // outlived its wait above goes on and writes the row when it lands, often
+  // mid-generation on a row never researched before: that write adds
+  // evidence and changes nothing the draft was written from, so the payload
+  // it left counts as current. Any other change still refuses the save.
+  const previousPayload = onlyResearchWritesSince(id, row.payload_json, fresh.payload_json)
+    ? fresh.payload_json
+    : row.payload_json;
   const saved = ledger.setQueueDraftIfCurrent({
     id,
     previousDraft: row.last_draft_json ?? null,
-    previousPayload: row.payload_json,
+    previousPayload,
     previousChannel: row.channel,
     draft: out,
     // What the founder said about the draft this replaces: rotate = the

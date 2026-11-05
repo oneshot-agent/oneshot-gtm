@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   deepResearch,
   getLedger,
@@ -431,8 +432,87 @@ export function writeLiveQueueProductResearch(
   dossier: ProductResearchDossier,
 ): boolean {
   const ledger = getLedger();
-  if (!ledger.patchLiveQueuePayload({ id, patch: { productResearch: null } })) return false;
-  return ledger.patchLiveQueuePayload({ id, patch: { productResearch: dossier } });
+  // Both reads and both writes hold the write lock together, so no writer in
+  // this process or another lands in between: `before` → `after` is this write.
+  const write = (): { written: boolean; before: string | null; after: string | null } => {
+    const before = payloadOf(ledger, id);
+    if (!ledger.patchLiveQueuePayload({ id, patch: { productResearch: null } }))
+      return { written: false, before, after: null };
+    const written = ledger.patchLiveQueuePayload({ id, patch: { productResearch: dossier } });
+    return { written, before, after: written ? payloadOf(ledger, id) : null };
+  };
+  // A test double without transactions runs the steps as they are.
+  const out = typeof ledger.inTransaction === "function" ? ledger.inTransaction(write) : write();
+  // Recorded once committed: a rolled-back write must not count.
+  if (out.before !== null && out.after !== null) recordResearchWrite(id, out.before, out.after);
+  return out.written;
+}
+
+/** The row's payload text as stored, or null when it cannot be read. */
+function payloadOf(ledger: ReturnType<typeof getLedger>, id: number): string | null {
+  try {
+    const json = ledger.getQueueRow(id)?.payload_json;
+    return typeof json === "string" ? json : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Company research written onto a live row, as payload hashes before and
+ * after each write, newest last. A draft generated while a research read
+ * lands (a read that outlived its wait goes on and writes the row) compares
+ * the row's payload before saving; research added meanwhile is not a change
+ * to what the draft was written from, so `onlyResearchWritesSince` lets the
+ * save through. Bounded: a few writes per row, a few hundred rows.
+ */
+const researchWrites = new Map<number, Array<{ before: string; after: string }>>();
+const RESEARCH_WRITES_PER_ROW = 8;
+const RESEARCH_WRITE_ROWS = 500;
+
+/** A payload text's fingerprint, so the log never holds whole payloads. */
+const payloadHash = (json: string): string => createHash("sha256").update(json).digest("hex");
+
+/** Log one research write on a row, keeping the log within its bounds. */
+function recordResearchWrite(id: number, before: string, after: string): void {
+  const log = researchWrites.get(id) ?? [];
+  log.push({ before: payloadHash(before), after: payloadHash(after) });
+  if (log.length > RESEARCH_WRITES_PER_ROW) log.splice(0, log.length - RESEARCH_WRITES_PER_ROW);
+  // Re-inserted so the map's order is least recently written first.
+  researchWrites.delete(id);
+  researchWrites.set(id, log);
+  if (researchWrites.size > RESEARCH_WRITE_ROWS) {
+    researchWrites.delete(researchWrites.keys().next().value!);
+  }
+}
+
+/**
+ * True when a row's payload went from `fromJson` to `currentJson` by company
+ * research writes alone (`writeLiveQueueProductResearch`, in this process),
+ * each one landing on the payload the last left. Any other write in between
+ * (an edited offer, a person research write, a write from another process) breaks
+ * the chain, and the answer is false.
+ */
+export function onlyResearchWritesSince(
+  id: number,
+  fromJson: string,
+  currentJson: string,
+): boolean {
+  if (fromJson === currentJson) return true;
+  const log = researchWrites.get(id);
+  if (!log) return false;
+  const target = payloadHash(currentJson);
+  let at = payloadHash(fromJson);
+  for (const write of log) {
+    if (write.before === at) at = write.after;
+    if (at === target) return true;
+  }
+  return false;
+}
+
+/** Tests only: forget every recorded research write. */
+export function _resetResearchWrites(): void {
+  researchWrites.clear();
 }
 
 /** Enrich only rows produced by the just-finished finder run. */

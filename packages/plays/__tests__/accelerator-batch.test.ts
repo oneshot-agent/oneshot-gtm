@@ -88,6 +88,22 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("runAcceleratorBatch — the cohort reaches the draft by name, never as its slug", () => {
+  it.each([
+    ["yc-f26", "YC F26"],
+    ["techstars-2026", "Techstars"],
+    ["a16z-speedrun-2026", "a16z speedrun"],
+    ["foo-labs-2026", "Foo Labs"],
+  ])("%s → %s", async (cohort, name) => {
+    await runAcceleratorBatch({ dryRun: true, targets: [{ ...base, cohort }] });
+    const block = calls.llmInputBlocks[0]!;
+    expect(block).toContain(`PROSPECT COHORT: ${name}\n`);
+    // The provenance clause ("found you in the {cohort label} list") is
+    // written from this block: the slug must not be in it to copy.
+    expect(block).not.toContain(cohort);
+  });
+});
+
 describe("runAcceleratorBatch — demo day is a fact judged at draft time", () => {
   const at = (iso: string) => {
     vi.useFakeTimers({ toFake: ["Date"] });
