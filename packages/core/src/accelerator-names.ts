@@ -19,6 +19,8 @@ export const ACCELERATOR_NAMES = {
 export type AcceleratorId = keyof typeof ACCELERATOR_NAMES;
 
 const YC_BATCH_RX = /^yc[-\s]?([wpxsf])(\d{2})$/i;
+/** The long forms the finder also accepts: `yc-spring-26`, `yc-winter-2026`, `yc-w-2026`. */
+const YC_LONG_BATCH_RX = /^yc[-\s]?(winter|spring|summer|fall|[wpxsf])[-\s]?(?:20)?(\d{2})$/i;
 
 /** Registry ids, longest first, so `a16z-speedrun-2026` is never read as a shorter id. */
 const IDS_LONGEST_FIRST = (Object.keys(ACCELERATOR_NAMES) as AcceleratorId[]).toSorted(
@@ -26,7 +28,7 @@ const IDS_LONGEST_FIRST = (Object.keys(ACCELERATOR_NAMES) as AcceleratorId[]).to
 );
 
 /**
- * A cohort id as a sentence names it: `yc-s26` → "YC S26", `a16z-speedrun-2026`
+ * A cohort id as a sentence names it: `yc-s26` (or `yc-summer-2026`) → "YC S26", `a16z-speedrun-2026`
  * → "a16z speedrun", `spc-2026-1` → "South Park Commons". An id that starts
  * with a registry id reads as that accelerator's name, whatever year or batch
  * suffix follows. Any other id is humanised: hyphens become spaces, lowercase
@@ -36,8 +38,13 @@ const IDS_LONGEST_FIRST = (Object.keys(ACCELERATOR_NAMES) as AcceleratorId[]).to
 export function cohortDisplayName(cohort: string): string {
   const id = cohort.trim();
   if (!id) return "";
-  const yc = YC_BATCH_RX.exec(id);
-  if (yc) return `YC ${yc[1]!.toUpperCase()}${yc[2]}`;
+  const yc = YC_BATCH_RX.exec(id) ?? YC_LONG_BATCH_RX.exec(id);
+  if (yc) {
+    // Spring is P, as YC writes it ("YC P25"); every other season is its initial.
+    const season = yc[1]!.toLowerCase();
+    const letter = season === "spring" ? "P" : season[0]!.toUpperCase();
+    return `YC ${letter}${yc[2]}`;
+  }
   const key = id.toLowerCase();
   const known = IDS_LONGEST_FIRST.find((a) => key === a || key.startsWith(`${a}-`));
   if (known) return known === "yc" ? "YC" : ACCELERATOR_NAMES[known];

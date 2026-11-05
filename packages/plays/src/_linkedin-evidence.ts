@@ -837,14 +837,17 @@ export function lintSharedCohort(text: string, founderCohort?: string | null): s
     .split(/[^a-z0-9]+/i)
     .map(alnum)
     .filter(Boolean);
+  // Every run of consecutive parts, so a program named in several words
+  // ("a16z speedrun" for `a16z-speedrun-2025`) is the sender's own too.
+  const ownNames = new Set(
+    parts.flatMap((_, i) => parts.slice(i).map((__, j) => parts.slice(i, i + j + 1).join(""))),
+  );
   // A sentence passes when it names the sender's own batch and no other one:
   // "fellow YC F26 founders, though mine is YC W25" names two.
   const namesOwn = (claim: string) =>
     parts.length > 0 &&
     parts.every((part) => alnum(claim).includes(part)) &&
-    [...claim.matchAll(BATCH_NAME_RX)].every(
-      (m) => parts.includes(alnum(m[0])) || alnum(m[0]) === alnum(own),
-    );
+    [...claim.matchAll(BATCH_NAME_RX)].every((m) => ownNames.has(alnum(m[0])));
   // Every claim counts, judged on its whole sentence: "fellow YC W25 founder"
   // matches on "fellow YC" and names its batch after, and "you're in YC F26
   // and I'm in YC W25 too" names another before.

@@ -6,6 +6,11 @@ describe("cohortDisplayName", () => {
     expect(cohortDisplayName("yc-s26")).toBe("YC S26");
     expect(cohortDisplayName("YC W25")).toBe("YC W25");
     expect(cohortDisplayName("ycp25")).toBe("YC P25");
+    // The long forms the finder accepts keep their batch, never a bare "YC".
+    expect(cohortDisplayName("yc-spring-26")).toBe("YC P26");
+    expect(cohortDisplayName("yc-winter-2026")).toBe("YC W26");
+    expect(cohortDisplayName("yc-f-2025")).toBe("YC F25");
+    expect(cohortDisplayName("yc-2026")).toBe("YC");
   });
 
   it("reads a registry id, with or without a year or batch suffix, as its display name", () => {

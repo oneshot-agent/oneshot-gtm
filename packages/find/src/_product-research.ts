@@ -432,14 +432,20 @@ export function writeLiveQueueProductResearch(
   dossier: ProductResearchDossier,
 ): boolean {
   const ledger = getLedger();
-  // Both reads and both writes run in one synchronous stretch, so nothing in
-  // this process writes the row in between: `before` → `after` is this write.
-  const before = payloadOf(ledger, id);
-  if (!ledger.patchLiveQueuePayload({ id, patch: { productResearch: null } })) return false;
-  const written = ledger.patchLiveQueuePayload({ id, patch: { productResearch: dossier } });
-  const after = written ? payloadOf(ledger, id) : null;
-  if (before !== null && after !== null) recordResearchWrite(id, before, after);
-  return written;
+  // Both reads and both writes hold the write lock together, so no writer in
+  // this process or another lands in between: `before` → `after` is this write.
+  const write = (): { written: boolean; before: string | null; after: string | null } => {
+    const before = payloadOf(ledger, id);
+    if (!ledger.patchLiveQueuePayload({ id, patch: { productResearch: null } }))
+      return { written: false, before, after: null };
+    const written = ledger.patchLiveQueuePayload({ id, patch: { productResearch: dossier } });
+    return { written, before, after: written ? payloadOf(ledger, id) : null };
+  };
+  // A test double without transactions runs the steps as they are.
+  const out = typeof ledger.inTransaction === "function" ? ledger.inTransaction(write) : write();
+  // Recorded once committed: a rolled-back write must not count.
+  if (out.before !== null && out.after !== null) recordResearchWrite(id, out.before, out.after);
+  return out.written;
 }
 
 function payloadOf(ledger: ReturnType<typeof getLedger>, id: number): string | null {
