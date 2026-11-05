@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { ACCELERATOR_NAMES, cohortDisplayName } from "../src/accelerator-names.ts";
+import {
+  ACCELERATOR_NAMES,
+  cohortAcceleratorId,
+  cohortDisplayName,
+} from "../src/accelerator-names.ts";
 
 describe("cohortDisplayName", () => {
   it("keeps YC batch codes in their canonical form", () => {
@@ -20,6 +24,12 @@ describe("cohortDisplayName", () => {
     expect(cohortDisplayName("500-global-2025")).toBe("500 Global");
     expect(cohortDisplayName("AI-Grant-2026")).toBe("AI Grant");
     expect(cohortDisplayName(" antler-2026 ")).toBe("Antler");
+  });
+
+  it("names the registry id a cohort starts with, the longest that fits", () => {
+    expect(cohortAcceleratorId("a16z-speedrun-2026")).toBe("a16z-speedrun");
+    expect(cohortAcceleratorId("SPC-2026-1")).toBe("spc");
+    expect(cohortAcceleratorId("neon-labs-2026")).toBeNull();
   });
 
   it("never matches a shorter id inside a longer word", () => {

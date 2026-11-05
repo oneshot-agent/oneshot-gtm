@@ -10,7 +10,11 @@ import {
   storedDistanceReadAt,
 } from "@oneshot-gtm/core";
 // The subpath, not the index: the lint's patterns are built from it at load.
-import { ACCELERATOR_NAMES, cohortDisplayName } from "@oneshot-gtm/core/accelerator-names";
+import {
+  ACCELERATOR_NAMES,
+  cohortAcceleratorId,
+  cohortDisplayName,
+} from "@oneshot-gtm/core/accelerator-names";
 import { complete } from "@oneshot-gtm/intel";
 
 /**
@@ -833,21 +837,32 @@ function sentenceAt(text: string, index: number): string {
  */
 export function lintSharedCohort(text: string, founderCohort?: string | null): string[] {
   const own = founderCohort?.trim() ?? "";
-  const parts = own
-    .split(/[^a-z0-9]+/i)
-    .map(alnum)
-    .filter(Boolean);
-  // Every run of consecutive parts, so a program named in several words
-  // ("a16z speedrun" for `a16z-speedrun-2025`) is the sender's own too.
-  const ownNames = new Set(
-    parts.flatMap((_, i) => parts.slice(i).map((__, j) => parts.slice(i, i + j + 1).join(""))),
-  );
+  // The sender's cohort as its id spells it, and with the registry id read as
+  // the program's name (`spc-2026` is "South Park Commons 2026" too).
+  const acc = cohortAcceleratorId(own);
+  const spellings =
+    acc && acc !== "yc" ? [own, `${ACCELERATOR_NAMES[acc]}${own.slice(acc.length)}`] : [own];
+  const owns = spellings.map((spelling) => {
+    const parts = spelling
+      .split(/[^a-z0-9]+/i)
+      .map(alnum)
+      .filter(Boolean);
+    // Every run of consecutive parts, so a program named in several words
+    // ("a16z speedrun" for `a16z-speedrun-2025`) is the sender's own too.
+    const names = new Set(
+      parts.flatMap((_, i) => parts.slice(i).map((__, j) => parts.slice(i, i + j + 1).join(""))),
+    );
+    return { parts, names };
+  });
   // A sentence passes when it names the sender's own batch and no other one:
   // "fellow YC F26 founders, though mine is YC W25" names two.
   const namesOwn = (claim: string) =>
-    parts.length > 0 &&
-    parts.every((part) => alnum(claim).includes(part)) &&
-    [...claim.matchAll(BATCH_NAME_RX)].every((m) => ownNames.has(alnum(m[0])));
+    owns.some(
+      ({ parts, names }) =>
+        parts.length > 0 &&
+        parts.every((part) => alnum(claim).includes(part)) &&
+        [...claim.matchAll(BATCH_NAME_RX)].every((m) => names.has(alnum(m[0]))),
+    );
   // Every claim counts, judged on its whole sentence: "fellow YC W25 founder"
   // matches on "fellow YC" and names its batch after, and "you're in YC F26
   // and I'm in YC W25 too" names another before.

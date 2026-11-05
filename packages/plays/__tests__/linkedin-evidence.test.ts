@@ -863,6 +863,11 @@ describe("lintSharedCohort", () => {
     expect(
       lintSharedCohort("I did AI Grant 2025 as well. How do you run evals?", "a16z-speedrun-2025"),
     ).not.toEqual([]);
+    // A registry id is the program's name: `spc-2026` is South Park Commons.
+    expect(lintSharedCohort("I'm in South Park Commons 2026 as well.", "spc-2026")).toEqual([]);
+    expect(lintSharedCohort("I'm in spc-2026 as well.", "spc-2026")).toEqual([]);
+    expect(lintSharedCohort("I'm in South Park Commons 2025 as well.", "spc-2026")).not.toEqual([]);
+    expect(lintSharedCohort("I'm in Antler 2026 as well.", "spc-2026")).not.toEqual([]);
     // Every program the lint knows counts, and the whole sentence is read.
     expect(lintSharedCohort("I'm in YC W25 and also in speedrun.", "yc-w25")).not.toEqual([]);
     expect(lintSharedCohort("You're in YC F26 and I'm in YC W25 too.", "yc-w25")).not.toEqual([]);

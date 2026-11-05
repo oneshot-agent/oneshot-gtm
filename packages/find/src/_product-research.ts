@@ -448,6 +448,7 @@ export function writeLiveQueueProductResearch(
   return out.written;
 }
 
+/** The row's payload text as stored, or null when it cannot be read. */
 function payloadOf(ledger: ReturnType<typeof getLedger>, id: number): string | null {
   try {
     const json = ledger.getQueueRow(id)?.payload_json;
@@ -469,8 +470,10 @@ const researchWrites = new Map<number, Array<{ before: string; after: string }>>
 const RESEARCH_WRITES_PER_ROW = 8;
 const RESEARCH_WRITE_ROWS = 500;
 
+/** A payload text's fingerprint, so the log never holds whole payloads. */
 const payloadHash = (json: string): string => createHash("sha256").update(json).digest("hex");
 
+/** Log one research write on a row, keeping the log within its bounds. */
 function recordResearchWrite(id: number, before: string, after: string): void {
   const log = researchWrites.get(id) ?? [];
   log.push({ before: payloadHash(before), after: payloadHash(after) });

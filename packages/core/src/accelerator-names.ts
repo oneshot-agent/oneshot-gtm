@@ -28,6 +28,16 @@ const IDS_LONGEST_FIRST = (Object.keys(ACCELERATOR_NAMES) as AcceleratorId[]).to
 );
 
 /**
+ * The registry id a cohort id starts with (`a16z-speedrun-2026` →
+ * `a16z-speedrun`), the longest that fits; null when none does. An id only
+ * matches whole or before a hyphen, so `neon-labs` is not `neo`.
+ */
+export function cohortAcceleratorId(cohort: string): AcceleratorId | null {
+  const key = cohort.trim().toLowerCase();
+  return IDS_LONGEST_FIRST.find((a) => key === a || key.startsWith(`${a}-`)) ?? null;
+}
+
+/**
  * A cohort id as a sentence names it: `yc-s26` (or `yc-summer-2026`) → "YC S26", `a16z-speedrun-2026`
  * → "a16z speedrun", `spc-2026-1` → "South Park Commons". An id that starts
  * with a registry id reads as that accelerator's name, whatever year or batch
@@ -45,8 +55,7 @@ export function cohortDisplayName(cohort: string): string {
     const letter = season === "spring" ? "P" : season[0]!.toUpperCase();
     return `YC ${letter}${yc[2]}`;
   }
-  const key = id.toLowerCase();
-  const known = IDS_LONGEST_FIRST.find((a) => key === a || key.startsWith(`${a}-`));
+  const known = cohortAcceleratorId(id);
   if (known) return known === "yc" ? "YC" : ACCELERATOR_NAMES[known];
   const words = id
     .split(/[-_\s]+/)
