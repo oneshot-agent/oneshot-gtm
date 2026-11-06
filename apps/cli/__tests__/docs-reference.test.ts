@@ -100,6 +100,26 @@ describe("CLI documentation", () => {
   );
 
   it(
+    "describes user outcomes without queue, prompt or cache internals (#1000)",
+    async () => {
+      process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
+      const { program } = await import("../src/index.ts");
+      const internalWording =
+        /\b(?:queue|queued|queueing|enqueue\w*|cached?|prompt version|current-version|payloads?|shadow(?:-mode)?|offerJudge|offerExclusions|fitReason|person-gate)\b/;
+      function check(cmd: Command) {
+        // Command/flag names stay compatible; "Queue" is the dashboard page.
+        expect(cmd.description(), cmd.name()).not.toMatch(internalWording);
+        for (const option of cmd.options) {
+          expect(option.description, `${cmd.name()} ${option.flags}`).not.toMatch(internalWording);
+        }
+        for (const child of cmd.commands) check(child);
+      }
+      check(program);
+    },
+    LIVE_TREE_TIMEOUT_MS,
+  );
+
+  it(
     "covers every command and flag in the live tree",
     async () => {
       process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";

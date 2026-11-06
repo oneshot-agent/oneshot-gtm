@@ -158,7 +158,7 @@ program
   .action(runOrFail((opts: { json?: boolean }) => commandDoctor(opts)));
 program
   .command("compact-receipts")
-  .description("Shrink the local data file by trimming old receipt payloads")
+  .description("Shrink the local data file by trimming details from old receipts")
   .option("--apply", "write the trim; without it the run is a dry run", false)
   .option("--no-vacuum", "trim only; skip shrinking the data file")
   .action(
@@ -533,21 +533,27 @@ domains
 // Find: scheduled / cron-able only. Ad-hoc finder runs are in the dashboard.
 const find = program
   .command("find")
-  .description("Scheduled discovery (daemon + drain). Ad-hoc runs live in the dashboard.");
+  .description(
+    "Find prospects on a schedule and contact approved prospects. Ad-hoc runs live in the dashboard.",
+  );
 find
   .command("import")
   .requiredOption("--csv <file>", "CSV file to import")
-  .requiredOption("--play <name>", "play to enqueue imported prospects into")
+  .requiredOption("--play <name>", "play to add imported prospects to for review")
   .option(
     "--map <column=field>",
     "override a header mapping (field: email, name, company, title); repeatable",
     (value: string, previous: string[]) => [...previous, value],
     [],
   )
-  .option("--dry-run", "print mapping and row count without ICP checks or enqueueing", false)
+  .option(
+    "--dry-run",
+    "print mapping and row count without checking fit or importing prospects",
+    false,
+  )
   .option("--fail-on-empty", "exit 2 when zero rows are imported", false)
   .option("--json", "emit {imported, skipped, errors[]}")
-  .description("Import a CSV cohort through admission, ICP filtering, and queue dedupe")
+  .description("Import prospects from a CSV, check their fit and skip duplicates")
   .action(
     runOrFail(
       async (opts: {
@@ -586,10 +592,10 @@ find
   )
   .option(
     "--fail-on-empty",
-    "with --once: exit 2 (not 0) when the run queued no candidates, so cron can spot a dry run",
+    "with --once: exit 2 (not 0) when no new prospects were added for review",
     false,
   )
-  .description("Daemon: continuously poll registered triggers and enqueue new candidates")
+  .description("Continuously find prospects from your configured sources and add them for review")
   .action(
     runOrFail(
       (opts: {
@@ -624,7 +630,7 @@ find
   .option("--days <n>", "window in days (default 7)", (v) => Number.parseInt(v, 10), 7)
   .option("--json", "output as JSON")
   .description(
-    "Per call type: paid lookups the shared cache answered, dollars saved and purchases, all workspaces",
+    "Show research reused, spending avoided and purchases by lookup type across all workspaces",
   )
   .action(
     runOrFail((opts: { days: number; json?: boolean }) =>
@@ -633,15 +639,17 @@ find
   );
 find
   .command("drain <play>")
-  .option("--limit <n>", "max approved rows to drain (default 10)", (v) => Number.parseInt(v, 10))
-  .option("--dry-run", "preview drain; don't actually send", false)
+  .option("--limit <n>", "max approved prospects to contact (default 10)", (v) =>
+    Number.parseInt(v, 10),
+  )
+  .option("--dry-run", "preview outreach; don't actually send", false)
   .option(
     "--fail-on-empty",
-    "exit 2 (not 0) when no approved rows were drained; 1 if any row errored",
+    "exit 2 (not 0) when no approved prospects were processed; 1 if any prospect failed",
     false,
   )
   .option("--json", "output as JSON")
-  .description("Pull approved rows for a play and run the existing motion play on them")
+  .description("Run outreach for a play on its approved prospects")
   .action(
     runOrFail(
       async (
@@ -717,7 +725,7 @@ find
   .option("--refresh", "re-research prospects that already have a dossier", false)
   .option(
     "--rebuy",
-    "buy research and posts again even when the shared cache holds them (bills each one)",
+    "buy fresh research and posts even when previous results are available (bills each one)",
     false,
   )
   .option("--id <n>", "research one prospect by id, ignoring scope and dossier state", (v) =>
@@ -726,12 +734,12 @@ find
   .option("--max-cost-usd <n>", "stop once this much has been billed this run", (v) =>
     Number.parseFloat(v),
   )
-  .option("--no-rejudge", "keep the stored ICP verdict; skip the person-gate re-judge")
+  .option("--no-rejudge", "keep the stored ICP verdict; skip reassessing the prospect's fit")
   .option("--no-company", "skip the company lookup for the current employer")
   .option("--no-live", "skip the live LinkedIn profile read")
   .option(
     "--cache-only",
-    "re-derive from cached research only: rows with nothing cached are left alone, nothing is billed",
+    "update from previously purchased research only; skip prospects without it, nothing is billed",
     false,
   )
   .option("--no-newsfeed", "skip capturing recent posts after the research")
@@ -741,9 +749,7 @@ find
     false,
   )
   .option("--dry-run", "list candidates and estimated cost; research nothing", false)
-  .description(
-    "Backfill person research onto existing prospects: current role, company facts, ICP re-judge",
-  )
+  .description("Research existing prospects: current role, company facts and fit with your ICP")
   .action(
     runOrFail(
       async (opts: {
@@ -788,7 +794,7 @@ find
   .option("--status <s>", "pending, approved, or live = both (default live)")
   .option(
     "--id <n>",
-    "research one queue row by id, ignoring play, status and research state",
+    "research one prospect in Queue by id, ignoring play, status and research state",
     (v) => Number.parseInt(v, 10),
   )
   .option("--limit <n>", "max rows to research (default: no limit)", (v) => Number.parseInt(v, 10))
@@ -801,15 +807,15 @@ find
   .option("--refresh", "re-research rows that already carry person research", false)
   .option(
     "--rebuy",
-    "buy research and posts again even when the shared cache holds them (bills each one)",
+    "buy fresh research and posts even when previous results are available (bills each one)",
     false,
   )
-  .option("--no-rejudge", "keep the row's ICP verdict; skip the person-gate re-judge")
+  .option("--no-rejudge", "keep the prospect's ICP verdict; skip reassessing their fit")
   .option("--no-company", "skip the company lookup for the current employer")
   .option("--no-live", "skip the live LinkedIn profile read")
   .option(
     "--cache-only",
-    "re-derive from cached research only: rows with nothing cached are left alone, nothing is billed (with --refresh for rows already researched)",
+    "update from previously purchased research only; skip prospects without it, nothing is billed (with --refresh for rows already researched)",
     false,
   )
   .option("--no-newsfeed", "skip capturing recent posts after the research")
@@ -820,7 +826,7 @@ find
   )
   .option("--dry-run", "list candidates and estimated cost; research nothing", false)
   .description(
-    "Backfill person research onto live queue rows: current role from the LinkedIn history, company facts, ICP re-judge",
+    "Research pending and approved prospects in Queue: current role from LinkedIn history, company facts and fit with your ICP",
   )
   .action(
     runOrFail(
@@ -864,11 +870,11 @@ find
 
 find
   .command("rederive")
-  .option("--id <n>", "re-derive one queue row by id", positiveInt("--id"))
+  .option("--id <n>", "update one prospect in Queue by id", positiveInt("--id"))
   .option("--moved", "every open row moved in from another workspace", false)
   .option("--dry-run", "derive and print; write nothing", false)
   .description(
-    "Re-derive this workspace's edge, ICP verdict and fit reason for rows moved in from another workspace (at most two small model calls per row; never changes status)",
+    "Update the outreach angle, ICP verdict and fit explanation for prospects moved from another workspace to match this workspace (paid; never changes status)",
   )
   .action(
     runOrFail(async (opts: { id?: number; moved: boolean; dryRun: boolean }) => {
@@ -883,7 +889,7 @@ find
 find
   .command("rejudge-github")
   .option("--status <s>", "pending, approved, or live = both (default live)")
-  .option("--id <n>", "re-judge one github-stars queue row by id", positiveInt("--id"))
+  .option("--id <n>", "reassess one github-stars prospect in Queue by id", positiveInt("--id"))
   .option(
     "--limit <n>",
     "max rows to judge, oldest first (default: no limit)",
@@ -899,7 +905,7 @@ find
   .option("--verbose", "print every row's verdict", false)
   .option("--dry-run", "judge and print; write nothing", false)
   .description(
-    "Re-judge live github-stars queue rows on their public GitHub evidence (bio, site, own repos, profile README); no paid research",
+    "Reassess pending and approved github-stars prospects using their public GitHub evidence (bio, site, own repos, profile README); no paid research",
   )
   .action(
     runOrFail(
@@ -931,7 +937,7 @@ find
   .command("research-products")
   .option(
     "--limit <n>",
-    "max combined prospects and queue rows",
+    "max combined saved prospects and prospects in Queue",
     (v) => Number.parseInt(v, 10),
     250,
   )
@@ -949,10 +955,10 @@ find
   .option("--no-cost-limit", "run the full backfill without a spend ceiling")
   .option("--first-party-only", "skip external research and retain first-party evidence only")
   .option("--refresh", "refresh rows that already have product research", false)
-  .option("--no-include-pending", "exclude pending queue rows")
+  .option("--no-include-pending", "exclude pending prospects in Queue")
   .option(
     "--include-unsent",
-    "include every unsent queue row (pending and approved), not just pending",
+    "include every unsent prospect in Queue (pending and approved), not just pending",
     false,
   )
   .option("--dry-run", "list candidates and estimated coverage; research nothing", false)
@@ -992,7 +998,11 @@ find
 
 find
   .command("rejudge-offers")
-  .option("--limit <n>", "max queue rows to judge (default all)", positiveInt("--limit"))
+  .option(
+    "--limit <n>",
+    "max prospects in Queue whose offers to assess (default all)",
+    positiveInt("--limit"),
+  )
   .option("--concurrency <n>", "parallel judge calls (default 3)", positiveInt("--concurrency"))
   .option("--dry-run", "judge and print what would change; write nothing", false)
   .option(
@@ -1002,16 +1012,16 @@ find
   )
   .option(
     "--list-excluded",
-    "list active sequences whose offer is of a kind in offerExclusions; one judge call each, changes nothing",
+    "list active sequences whose offers match your excluded offer types; one paid assessment each, changes nothing",
     false,
   )
   .option(
     "--sequences",
-    "bring active sequences' offers written under an older prompt version, brief or offerExclusions up to date: keep or switch to a passing candidate, else write new offers (held with no offer when none passes); never the founder's own, an approved one or one the first email carried (listed). With --dry-run: one judge call per sequence, prints before/after, writes nothing and writes no new offers",
+    "bring outdated offers in active sequences up to date: keep or switch to a suitable offer, otherwise write new offers (hold the sequence without an offer if none qualifies); preserve founder-written, approved and already-sent offers and list them. With --dry-run: one paid assessment per sequence, print before/after without saving or writing new offers",
     false,
   )
   .description(
-    "Re-judge the offers stored on unsent queue rows with the workspace's offerJudge and offerExclusions; writes no new offers unless --rewrite-all-weak or --sequences",
+    "Reassess offers for unsent prospects in Queue against your workspace's offer criteria and excluded offer types; writes no new offers unless --rewrite-all-weak or --sequences",
   )
   .action(
     runOrFail(
@@ -1067,7 +1077,7 @@ find
   .option("--cheap", "use free evidence only; make no paid research calls", false)
   .option(
     "--apply",
-    "write each angle as the active one instead of proposing it for review on /queue",
+    "make each angle active instead of proposing it for review on the Queue page",
     false,
   )
   .option("--max-cost-usd <n>", "stop once this much has been billed this run", (v) =>
@@ -1075,7 +1085,7 @@ find
   )
   .option("--dry-run", "list candidates and estimated cost; synthesize nothing", false)
   .description(
-    "Backfill per-prospect angles (dossier + live GitHub + reply history → evidence-cited synthesis)",
+    "Create outreach angles for prospects using their research, public GitHub activity and reply history, with supporting evidence",
   )
   .action(
     runOrFail(
@@ -1109,20 +1119,16 @@ find
   .command("score-prospects")
   .option("--scope <play|all>", "score only this play's rows (default all)")
   .option("--limit <n>", "max rows to score this run", (v) => Number.parseInt(v, 10))
-  .option("--refresh", "re-score rows that already carry a current-version score", false)
+  .option("--refresh", "recalculate scores even when they are already up to date", false)
   .option("--dry-run", "report score distributions; write nothing", false)
-  .option(
-    "--report",
-    "print the per-finder shadow report (score buckets + human approval rate)",
-    false,
-  )
+  .option("--report", "show score ranges and your approval rate for each finder", false)
   .option(
     "--all-statuses",
     "widen from pending/approved to every row (sent/rejected/expired), for evaluation only",
     false,
   )
   .description(
-    "Backfill shadow-mode priority scores from stored payloads (free, resumable, no network)",
+    "Score prospects for evaluation using saved information (free, resumable, no network)",
   )
   .action(
     runOrFail(
@@ -1164,10 +1170,10 @@ find
       return n;
     },
   )
-  .option("--refresh", "re-derive rows that already carry a fitReason", false)
+  .option("--refresh", "update prospects that already have a fit explanation", false)
   .option("--no-generate", "free sources only")
   .description(
-    "Backfill the row's ICP-fit sentence onto pending/approved queue rows (free sources first; model spend capped)",
+    "Add an ICP-fit explanation to pending and approved prospects in Queue (free sources first; paid generation capped)",
   )
   .action(
     runOrFail(
@@ -1224,7 +1230,7 @@ cadence
     false,
   )
   .description(
-    "Read stored automatic replies again: stop sequences of people who left (queueing a named successor for review), hold out-of-office ones until they are back, and stop policy-blocked ones. Never sends. Unclear replies cost one model call each, dry run included.",
+    "Read stored automatic replies again: stop sequences of people who left (adding a named successor for review), hold out-of-office ones until they are back, and stop policy-blocked ones. Never sends. Unclear replies cost one model call each, dry run included.",
   )
   .action(runOrFail(commandCadenceReclassifyAuto));
 
