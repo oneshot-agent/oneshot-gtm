@@ -21,6 +21,7 @@ export function renderCliReference(program: Command, revision: string): string {
   const lines = [
     "---",
     'title: "CLI reference"',
+    'icon: "terminal"',
     'description: "Commands, arguments, and options generated from the OneShot GTM CLI."',
     "---",
     "",
