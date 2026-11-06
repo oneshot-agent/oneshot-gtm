@@ -22,6 +22,7 @@ describe("CLI documentation", () => {
         invoked = true;
       });
     const text = renderCliReference(root, revision);
+    expect(text.startsWith('---\ntitle: "CLI reference"\nicon: "terminal"\n')).toBe(true);
     expect(text).toContain("## gtm find drain");
     expect(text).toContain("| play | Yes |");
     expect(text).toContain("| files... | No |");
@@ -35,6 +36,20 @@ describe("CLI documentation", () => {
     expect(referenceMatches(text, text.replace(revision, "b".repeat(40)))).toBe(true);
     expect(referenceMatches(text, text.replace("Disable browser", "Changed"))).toBe(false);
   });
+
+  it(
+    "omits dollar amounts from help text while preserving the spending limit default (#997)",
+    async () => {
+      process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
+      const { program } = await import("../src/index.ts");
+      const text = renderCliReference(program, revision);
+      expect(/\$\d/.test(text)).toBe(false);
+      expect(text).toContain(
+        "| --max-cost-usd &#60;n&#62; | stop starting calls after this spend target (one call may cross it) | 5 | No | research-products |",
+      );
+    },
+    LIVE_TREE_TIMEOUT_MS,
+  );
 
   it(
     "renders the live tree without em dashes",

@@ -678,7 +678,7 @@ find
   .option("--concurrency <n>", "parallel lookups (default 4)", (v) => Number.parseInt(v, 10))
   .option("--skip-handles", "skip names that don't look like a real person", false)
   .option("--dry-run", "list candidates and estimated cost; search nothing", false)
-  .description("Backfill missing LinkedIn URLs onto existing prospects (~$0.01 each)")
+  .description("Backfill missing LinkedIn URLs onto existing prospects")
   .action(
     runOrFail(
       async (opts: {
@@ -737,12 +737,12 @@ find
   .option("--no-newsfeed", "skip capturing recent posts after the research")
   .option(
     "--newsfeed-only",
-    "capture recent posts (~$0.07 each) for rows with a LinkedIn or X profile; no person research",
+    "capture recent posts for rows with a LinkedIn or X profile; no person research",
     false,
   )
   .option("--dry-run", "list candidates and estimated cost; research nothing", false)
   .description(
-    "Backfill person research onto existing prospects: current role, company facts, ICP re-judge (~$0.055 each)",
+    "Backfill person research onto existing prospects: current role, company facts, ICP re-judge",
   )
   .action(
     runOrFail(
@@ -815,12 +815,12 @@ find
   .option("--no-newsfeed", "skip capturing recent posts after the research")
   .option(
     "--newsfeed-only",
-    "capture recent posts (~$0.07 each) for rows with a LinkedIn or X profile; no person research",
+    "capture recent posts for rows with a LinkedIn or X profile; no person research",
     false,
   )
   .option("--dry-run", "list candidates and estimated cost; research nothing", false)
   .description(
-    "Backfill person research onto live queue rows: current role from the LinkedIn history, company facts, ICP re-judge (~$0.055 each)",
+    "Backfill person research onto live queue rows: current role from the LinkedIn history, company facts, ICP re-judge",
   )
   .action(
     runOrFail(
@@ -942,7 +942,7 @@ find
   .option("--concurrency <n>", "parallel research calls (default 3)", positiveInt("--concurrency"))
   .option(
     "--max-cost-usd <n>",
-    "stop starting calls after this spend target (default $5; one call may cross it)",
+    "stop starting calls after this spend target (one call may cross it)",
     (v) => Number(v),
     5,
   )
