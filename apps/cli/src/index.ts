@@ -1000,7 +1000,7 @@ find
   .command("rejudge-offers")
   .option(
     "--limit <n>",
-    "max prospects in Queue whose offers to assess (default all)",
+    "max Queue entries by default; outdated sequences with --sequences; active sequences with --list-excluded; Queue entries and sequences combined with --rewrite-all-weak (default all)",
     positiveInt("--limit"),
   )
   .option("--concurrency <n>", "parallel judge calls (default 3)", positiveInt("--concurrency"))

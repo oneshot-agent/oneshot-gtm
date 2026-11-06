@@ -120,6 +120,23 @@ describe("CLI documentation", () => {
   );
 
   it(
+    "explains what the offer limit counts in each mode (#1000)",
+    async () => {
+      process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
+      const { program } = await import("../src/index.ts");
+      const find = program.commands.find((cmd) => cmd.name() === "find")!;
+      const rejudge = find.commands.find((cmd) => cmd.name() === "rejudge-offers")!;
+      const help = rejudge.helpInformation().replace(/\s+/g, " ");
+      expect(help).toContain("max Queue entries by default");
+      expect(help).toContain("outdated sequences with --sequences");
+      expect(help).toContain("active sequences with --list-excluded");
+      expect(help).toContain("Queue entries and sequences combined with --rewrite-all-weak");
+      expect(help).toContain("(default all)");
+    },
+    LIVE_TREE_TIMEOUT_MS,
+  );
+
+  it(
     "covers every command and flag in the live tree",
     async () => {
       process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
