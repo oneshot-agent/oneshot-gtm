@@ -1077,7 +1077,7 @@ find
   .option("--cheap", "use free evidence only; make no paid research calls", false)
   .option(
     "--apply",
-    "make each angle active instead of proposing it for review on the Queue page",
+    "no longer supported; generate proposals without --apply and review them in Queue → Learning",
     false,
   )
   .option("--max-cost-usd <n>", "stop once this much has been billed this run", (v) =>

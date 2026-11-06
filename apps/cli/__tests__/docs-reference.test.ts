@@ -137,6 +137,21 @@ describe("CLI documentation", () => {
   );
 
   it(
+    "directs angle users away from unsupported --apply to proposal review (#1000)",
+    async () => {
+      process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
+      const { program } = await import("../src/index.ts");
+      const find = program.commands.find((cmd) => cmd.name() === "find")!;
+      const angles = find.commands.find((cmd) => cmd.name() === "synthesize-angles")!;
+      const help = angles.helpInformation().replace(/\s+/g, " ");
+      expect(help).toContain("--apply no longer supported");
+      expect(help).toContain("generate proposals without --apply");
+      expect(help).toContain("review them in Queue → Learning");
+    },
+    LIVE_TREE_TIMEOUT_MS,
+  );
+
+  it(
     "covers every command and flag in the live tree",
     async () => {
       process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
