@@ -100,6 +100,58 @@ describe("CLI documentation", () => {
   );
 
   it(
+    "describes user outcomes without queue, prompt or cache internals (#1000)",
+    async () => {
+      process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
+      const { program } = await import("../src/index.ts");
+      const internalWording =
+        /\b(?:queue|queued|queueing|enqueue\w*|cached?|prompt version|current-version|payloads?|shadow(?:-mode)?|offerJudge|offerExclusions|fitReason|person-gate)\b/;
+      function check(cmd: Command) {
+        // Command/flag names stay compatible; "Queue" is the dashboard page.
+        expect(cmd.description(), cmd.name()).not.toMatch(internalWording);
+        for (const option of cmd.options) {
+          expect(option.description, `${cmd.name()} ${option.flags}`).not.toMatch(internalWording);
+        }
+        for (const child of cmd.commands) check(child);
+      }
+      check(program);
+    },
+    LIVE_TREE_TIMEOUT_MS,
+  );
+
+  it(
+    "explains what the offer limit counts in each mode (#1000)",
+    async () => {
+      process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
+      const { program } = await import("../src/index.ts");
+      const find = program.commands.find((cmd) => cmd.name() === "find")!;
+      const rejudge = find.commands.find((cmd) => cmd.name() === "rejudge-offers")!;
+      const help = rejudge.helpInformation().replace(/\s+/g, " ");
+      expect(help).toContain("max Queue entries by default");
+      expect(help).toContain("outdated sequences with --sequences");
+      expect(help).toContain("active sequences with --list-excluded");
+      expect(help).toContain("Queue entries and sequences combined with --rewrite-all-weak");
+      expect(help).toContain("(default all)");
+    },
+    LIVE_TREE_TIMEOUT_MS,
+  );
+
+  it(
+    "directs angle users away from unsupported --apply to proposal review (#1000)",
+    async () => {
+      process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
+      const { program } = await import("../src/index.ts");
+      const find = program.commands.find((cmd) => cmd.name() === "find")!;
+      const angles = find.commands.find((cmd) => cmd.name() === "synthesize-angles")!;
+      const help = angles.helpInformation().replace(/\s+/g, " ");
+      expect(help).toContain("--apply no longer supported");
+      expect(help).toContain("generate proposals without --apply");
+      expect(help).toContain("review them in Queue → Learning");
+    },
+    LIVE_TREE_TIMEOUT_MS,
+  );
+
+  it(
     "covers every command and flag in the live tree",
     async () => {
       process.env["ONESHOT_GTM_CLI_NO_PARSE"] = "1";
