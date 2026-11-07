@@ -49,6 +49,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 const { emailMismatchHold, sendDraftedEmail } = await import("../src/_lib.ts");
+const { getSharedDb } = await import("@oneshot-gtm/core");
 
 function baseOpts(overrides: Partial<Parameters<typeof sendDraftedEmail>[0]> = {}) {
   return {
@@ -215,6 +216,74 @@ describe("sendDraftedEmail cross-workspace override pass-through", () => {
     await sendDraftedEmail(baseOpts({ to: "other@acme.dev" }));
     const [lastInput] = sendEmailMock.mock.calls.at(-1) as [Record<string, unknown>];
     expect(lastInput).not.toHaveProperty("allowContactedElsewhere");
+  });
+});
+
+// No first touch while another workspace's sequence with the person is live.
+// The shared DB is the temp one vitest.setup.ts points ONESHOT_GTM_SHARED at.
+describe("sendDraftedEmail live-elsewhere guard", () => {
+  const live = (
+    workspace: string,
+    row: { email?: string | null; linkedinUrl?: string | null; status?: string },
+  ) =>
+    getSharedDb().syncCadencePresence(
+      workspace,
+      [
+        {
+          prospectId: 5,
+          playName: "their-play",
+          email: row.email ?? null,
+          linkedinUrl: row.linkedinUrl ?? null,
+          status: row.status ?? "active",
+        },
+      ],
+      "all",
+    );
+  afterEach(() => {
+    for (const ws of ["beta", "default"]) getSharedDb().syncCadencePresence(ws, [], "all");
+  });
+
+  it("holds the send while another workspace's cadence is live, never for an ended one", async () => {
+    live("beta", { email: "sam@acme.dev" });
+    const opts = baseOpts();
+    expect(await sendDraftedEmail(opts)).toEqual({ receiptIds: [], sent: false });
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(opts.flags).toEqual(["live-elsewhere"]);
+
+    live("beta", { email: "sam@acme.dev", status: "paused" });
+    expect((await sendDraftedEmail(baseOpts())).sent).toBe(false);
+
+    live("beta", { email: "sam@acme.dev", status: "completed" });
+    expect((await sendDraftedEmail(baseOpts())).sent).toBe(true);
+  });
+
+  it("matches their LinkedIn profile when the address differs", async () => {
+    live("beta", { linkedinUrl: "https://www.linkedin.com/in/sam-acme" });
+    const opts = baseOpts({
+      prospectMeta: {
+        ...baseOpts().prospectMeta,
+        linkedin_url: "https://linkedin.com/in/Sam-Acme/",
+      },
+    });
+    expect((await sendDraftedEmail(opts)).sent).toBe(false);
+    expect(opts.flags).toEqual(["live-elsewhere"]);
+  });
+
+  it("never holds for this workspace's own cadence, and allowRecontact bypasses it", async () => {
+    live("default", { email: "sam@acme.dev" });
+    expect((await sendDraftedEmail(baseOpts())).sent).toBe(true);
+
+    live("beta", { email: "sam@acme.dev" });
+    const opts = baseOpts({ allowRecontact: true });
+    expect((await sendDraftedEmail(opts)).sent).toBe(true);
+    expect(opts.flags).toEqual([]);
+  });
+
+  it("is not lifted by the contacted-elsewhere override", async () => {
+    live("beta", { email: "sam@acme.dev" });
+    const opts = baseOpts({ allowContactedElsewhere: true });
+    expect((await sendDraftedEmail(opts)).sent).toBe(false);
+    expect(opts.flags).toEqual(["live-elsewhere"]);
   });
 });
 

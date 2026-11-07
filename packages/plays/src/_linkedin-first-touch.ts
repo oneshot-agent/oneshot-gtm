@@ -423,6 +423,8 @@ function inviteVerdict(
     icpOverridden: typeof override === "object" && override !== null,
     ...(input.friend ? { friend: true } : {}),
     ...(opts.ownInviteClaim ? { ownInviteClaim: opts.ownInviteClaim } : {}),
+    // Off a queue row it is this workspace's first touch.
+    ...(!input.continuation && !input.friend ? { firstTouch: true } : {}),
   });
 }
 
@@ -820,6 +822,7 @@ export function recordKnownConnection(input: {
     linkedinUrl: str(p, "linkedinUrl"),
     icpVerdict: str(p, "icpVerdict"),
     icpOverridden: typeof override === "object" && override !== null,
+    ...(!input.continuation ? { firstTouch: true } : {}),
   });
   if (!verdict.ok) return { sent: false, flags: [guardFlag(verdict)], guard: verdict.reason };
   if (!target || !profile) {

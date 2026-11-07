@@ -237,6 +237,30 @@ describe("drainQueue per-target dispatch + persistence", () => {
     });
   });
 
+  it("holds a row another workspace's live sequence stopped: back to pending, counted, never sent", async () => {
+    ledgerStub.dequeueApproved.mockReturnValue([row(44)]);
+    runStackConsolidationMock.mockResolvedValueOnce({
+      drafted: [
+        {
+          subject: "hi",
+          body: "clean body",
+          flags: ["live-elsewhere"],
+          sent: false,
+          receiptIds: [],
+        },
+      ],
+    });
+
+    const out = await drainQueue({ playName: "stack-consolidation", dryRun: false });
+
+    expect(out).toMatchObject({ drained: 1, sent: 0, errors: [], held: { "live-elsewhere": 1 } });
+    expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({
+      id: 44,
+      status: "pending",
+      decidedBy: "machine",
+    });
+  });
+
   it("holds a row the send gate stopped on its weak offer: back to pending, counted, never sent", async () => {
     ledgerStub.dequeueApproved.mockReturnValue([row(40)]);
     runStackConsolidationMock.mockResolvedValueOnce({

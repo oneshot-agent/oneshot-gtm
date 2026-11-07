@@ -1316,6 +1316,15 @@ export function blockingFlags(flags: string[]): string[] {
   return flags.filter((f) => !SOFT_REVIEW_FLAGS.includes(f) && !isInviteGuardFlag(f));
 }
 
+/**
+ * The flag a first touch carries when another workspace has a live sequence
+ * (active or paused) with the same person: by email, a known alias, or
+ * LinkedIn profile. No first touch goes out while it lasts; follow-ups are
+ * not affected. Every send checks again, so it never blocks the next one:
+ * the draft goes as written once that sequence has ended.
+ */
+export const LIVE_ELSEWHERE_FLAG = "live-elsewhere";
+
 /** Reason codes of the LinkedIn invite guard (core's `LinkedInGuardReason`). */
 const INVITE_GUARD_REASONS: ReadonlySet<string> = new Set([
   "invalid-profile",
@@ -1329,12 +1338,14 @@ const INVITE_GUARD_REASONS: ReadonlySet<string> = new Set([
   "already-in-conversation",
   "guard-unavailable",
   "linkedin-invite-refused",
+  LIVE_ELSEWHERE_FLAG,
 ]);
 
 /**
- * A `reason: detail` flag the invite guard left on a refused draft. It records
- * why the last send was refused and never blocks the next one: the guard
- * re-checks the row on every send, so fixing the row is enough to resend.
+ * A `reason: detail` flag the invite guard left on a refused draft, or the
+ * bare `live-elsewhere` an email first touch carries. It records why the last
+ * send was refused and never blocks the next one: the guard re-checks the
+ * row on every send, so fixing the row is enough to resend.
  */
 export function isInviteGuardFlag(flag: string): boolean {
   return INVITE_GUARD_REASONS.has(flag.split(":")[0]!.trim());

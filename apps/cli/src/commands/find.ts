@@ -178,6 +178,11 @@ export async function commandFindDrain(opts: {
     note(
       `held with no offer: ${none} row(s) back to pending. Write one or regenerate the draft on /queue.`,
     );
+  const elsewhere = result.held?.["live-elsewhere"] ?? 0;
+  if (elsewhere > 0)
+    note(
+      `held for a live sequence in another workspace: ${elsewhere} row(s) back to pending. Send them once that sequence has ended (workspace overlaps lists them).`,
+    );
 }
 
 export async function commandFindWatch(opts: {

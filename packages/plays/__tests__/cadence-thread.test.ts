@@ -249,6 +249,26 @@ describe("preview and send", () => {
     expect(JSON.parse(step1.metadata_json!).subject).toBe(`Re: ${INTRO_SUBJECT}`);
   });
 
+  it("a follow-up still sends while another workspace's sequence with them is live", async () => {
+    const { getSharedDb } = await import("@oneshot-gtm/core");
+    const id = sentIntro(THREE.playName);
+    const to = ledger.getProspectById(id)!.email!;
+    getSharedDb().syncCadencePresence(
+      "elsewhere",
+      [{ prospectId: 1, playName: "their-play", email: to, linkedinUrl: null, status: "active" }],
+      "all",
+    );
+    try {
+      const preview = await previewCadenceStep({ prospectId: id, playName: THREE.playName });
+      if (!("flags" in preview)) throw new Error("expected a preview");
+      expect(preview.flags).toEqual([]);
+      await sendCadenceStep({ prospectId: id, playName: THREE.playName });
+      expect(sends.map((s) => s.to)).toEqual([to]);
+    } finally {
+      getSharedDb().syncCadencePresence("elsewhere", [], "all");
+    }
+  });
+
   it("the stored preview sends as previewed, even if the first email's row changes", async () => {
     const id = sentIntro(THREE.playName);
     await previewCadenceStep({ prospectId: id, playName: THREE.playName });

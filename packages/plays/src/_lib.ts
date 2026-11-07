@@ -9,6 +9,8 @@ import {
   founderGreetingOf,
   getLedger,
   isCachedPaidFailure,
+  LIVE_ELSEWHERE_FLAG,
+  liveCadenceElsewhere,
   loadConfig,
   logEvent,
   mentionsStaleDemoDay,
@@ -1724,6 +1726,25 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
       // first-touched. breakup-revive opts out.
       if (!opts.allowRecontact && ledger.prospectHasFirstTouch(existing.id)) {
         opts.flags.push("already-contacted");
+        return { receiptIds: [], sent: false };
+      }
+    }
+    // Cross-workspace guard: no first touch while another workspace's
+    // sequence with this person is live (the address, its aliases or their
+    // LinkedIn profile). Checked on every send, so the draft can go once it
+    // ends. breakup-revive opts out, as above.
+    if (!opts.allowRecontact) {
+      const live = liveCadenceElsewhere({
+        email: opts.to,
+        linkedinUrl: opts.prospectMeta.linkedin_url ?? null,
+      });
+      if (live) {
+        opts.flags.push(LIVE_ELSEWHERE_FLAG);
+        logEvent(
+          "play.skipped_live_elsewhere",
+          { play: opts.playName, to: opts.to, workspace: live.workspace },
+          "info",
+        );
         return { receiptIds: [], sent: false };
       }
     }

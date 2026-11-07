@@ -351,4 +351,31 @@ describe("cross-workspace hold on the drafted intro", () => {
       delete process.env["ONESHOT_GTM_WORKSPACE"];
     }
   });
+
+  it("flags the draft live-elsewhere while another workspace's sequence with them is live", async () => {
+    const { getSharedDb } = await import("@oneshot-gtm/core");
+    process.env["ONESHOT_GTM_WORKSPACE"] = "alpha";
+    const presence = (status: string) =>
+      getSharedDb().syncCadencePresence(
+        "beta",
+        [{ prospectId: 3, playName: "show-hn", email: "max@acme.com", linkedinUrl: null, status }],
+        "all",
+      );
+    const draftFlags = async (): Promise<string[]> => {
+      resetRow({ url: "https://x.com/max", platform: "twitter" });
+      state.enrichment = { displayname: "Max Roe", best_work_email: "max@acme.com" };
+      state.extract = { name: "Max Roe", company: "Acme", angle: "x", email: "max@acme.com" };
+      await runProspectResearch(7);
+      return JSON.parse(state.row.last_draft_json!).flags;
+    };
+    try {
+      presence("active");
+      expect(await draftFlags()).toContain("live-elsewhere");
+      presence("replied");
+      expect(await draftFlags()).not.toContain("live-elsewhere");
+    } finally {
+      getSharedDb().syncCadencePresence("beta", [], "all");
+      delete process.env["ONESHOT_GTM_WORKSPACE"];
+    }
+  });
 });

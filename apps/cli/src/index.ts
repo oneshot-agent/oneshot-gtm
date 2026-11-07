@@ -91,6 +91,7 @@ import {
   commandWorkspaceCreate,
   commandWorkspaceCurrent,
   commandWorkspaceList,
+  commandWorkspaceOverlaps,
   commandWorkspacePath,
   commandWorkspaceRemove,
   commandWorkspaceUse,
@@ -295,6 +296,13 @@ workspace
   .command("path <name>")
   .description("Print a workspace's home dir (for ONESHOT_GTM_HOME=$(…) scripting)")
   .action(runOrFail(commandWorkspacePath));
+workspace
+  .command("overlaps")
+  .description(
+    "List people in a live sequence here and in another workspace, by play pair. Changes nothing",
+  )
+  .option("--json", "output as JSON")
+  .action(runOrFail((opts: { json?: boolean }) => commandWorkspaceOverlaps(opts)));
 workspace
   .command("remove <name>")
   .description("Forget a workspace (files are left in place)")

@@ -97,4 +97,16 @@ describe("heldSummary", () => {
       next: "read it once more, then send anyway",
     });
   });
+
+  it("holds a live sequence elsewhere for review: Send checks again, nothing else clears it", () => {
+    expect(heldSummary(["live-elsewhere"], { review: "send" })).toEqual({
+      kind: "review",
+      text: "1 flag: in a live sequence in another workspace",
+      next: "send once their sequence there has ended",
+    });
+    // The invite guard's form names the workspace and play as written.
+    expect(humanizeFlag("live-elsewhere: in a live sequence in workspace 'beta' (show-hn)")).toBe(
+      "in a live sequence in workspace 'beta' (show-hn)",
+    );
+  });
 });

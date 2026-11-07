@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { demoMode } from "./demo.ts";
 import { openStateDatabase } from "./sqlite-open.ts";
-import { SharedPeople } from "./shared-people.ts";
+import { personAliases, SharedPeople } from "./shared-people.ts";
 import { logEvent } from "./events.ts";
 
 /**
@@ -42,6 +42,40 @@ export interface LinkedInTouch {
 
 /** The flag a draft carries when the recipient was emailed by another workspace recently. */
 export const CONTACTED_ELSEWHERE_FLAG = "contacted-elsewhere";
+
+// The flag a first touch carries while another workspace's sequence with the person is live.
+export { LIVE_ELSEWHERE_FLAG } from "@oneshot-gtm/shared-types";
+
+/** Cadence statuses that count as a live sequence: another workspace's first touch waits while one lasts. */
+export const LIVE_CADENCE_STATUSES: readonly string[] = ["active", "paused"];
+
+/** One cadence of one workspace, as `cadence_presence` mirrors it from that workspace's ledger. */
+export interface CadencePresence {
+  workspace: string;
+  play_name: string;
+  /** The prospect's id in that workspace's ledger. */
+  prospect_id: number;
+  email: string | null;
+  /** The LinkedIn profile slug, decoded and lowercased like a person alias. */
+  linkedin_slug: string | null;
+  status: string;
+  updated_at: string;
+}
+
+/** A cadence row as a ledger hands it over (`readCadencePresence`). */
+export interface CadencePresenceInput {
+  prospectId: number;
+  playName: string;
+  email: string | null;
+  linkedinUrl: string | null;
+  status: string;
+}
+
+/** A person with a live sequence in this workspace and in another one. */
+export interface CadenceOverlap {
+  here: CadencePresence;
+  elsewhere: CadencePresence;
+}
 
 export function sharedDir(): string {
   return process.env["ONESHOT_GTM_SHARED"]?.trim() || join(homedir(), ".oneshot-gtm-shared");
@@ -159,6 +193,21 @@ export class SharedDb {
         last_hit_at TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_paid_call_cache_type ON paid_call_cache(call_type, fetched_at);
+      -- Every workspace's cadences, mirrored from its ledger (status included,
+      -- live or not), so a first touch can see the person is in another
+      -- workspace's live sequence. Keyed like the ledger's cadence_state.
+      CREATE TABLE IF NOT EXISTS cadence_presence (
+        workspace     TEXT NOT NULL,
+        play_name     TEXT NOT NULL,
+        prospect_id   INTEGER NOT NULL,
+        email         TEXT,
+        linkedin_slug TEXT,
+        status        TEXT NOT NULL,
+        updated_at    TEXT NOT NULL,
+        PRIMARY KEY (workspace, play_name, prospect_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_cadence_presence_email ON cadence_presence(email);
+      CREATE INDEX IF NOT EXISTS idx_cadence_presence_slug ON cadence_presence(linkedin_slug);
       -- Per UTC day and call type: answers from the cache vs purchases, for doctor.
       CREATE TABLE IF NOT EXISTS paid_cache_daily (
         day        TEXT NOT NULL,
@@ -898,6 +947,172 @@ export class SharedDb {
     return row.n;
   }
 
+  private static readonly LIVE_CADENCE_SQL = `status IN (${LIVE_CADENCE_STATUSES.map((st) => `'${st}'`).join(",")})`;
+
+  /**
+   * Make this workspace's presence rows match `rows`, under one write lock:
+   * upsert each (a row that has not changed keeps its `updated_at`), then
+   * delete the workspace's rows `rows` no longer has, for the prospects in
+   * `scope` or, with `all`, every one of them.
+   */
+  syncCadencePresence(
+    workspace: string,
+    rows: CadencePresenceInput[],
+    scope: { prospectIds: number[] } | "all",
+  ): { changed: number; removed: number } {
+    const now = new Date().toISOString();
+    let changed = 0;
+    let removed = 0;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const upsert = this.db.prepare(
+        `INSERT INTO cadence_presence(workspace, play_name, prospect_id, email, linkedin_slug, status, updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(workspace, play_name, prospect_id) DO UPDATE SET
+           email = excluded.email,
+           linkedin_slug = excluded.linkedin_slug,
+           status = excluded.status,
+           updated_at = excluded.updated_at
+         WHERE cadence_presence.email IS NOT excluded.email
+            OR cadence_presence.linkedin_slug IS NOT excluded.linkedin_slug
+            OR cadence_presence.status IS NOT excluded.status`,
+      );
+      const keep = new Set<string>();
+      for (const r of rows) {
+        keep.add(`${r.prospectId}\u0000${r.playName}`);
+        const res = upsert.run(
+          workspace,
+          r.playName,
+          r.prospectId,
+          r.email?.trim().toLowerCase() || null,
+          linkedInAliasSlug(r.linkedinUrl),
+          r.status,
+          now,
+        );
+        changed += Number(res.changes);
+      }
+      const existing = (
+        scope === "all"
+          ? this.db
+              .query(`SELECT prospect_id, play_name FROM cadence_presence WHERE workspace = ?`)
+              .all(workspace)
+          : scope.prospectIds.flatMap((id) =>
+              this.db
+                .query(
+                  `SELECT prospect_id, play_name FROM cadence_presence WHERE workspace = ? AND prospect_id = ?`,
+                )
+                .all(workspace, id),
+            )
+      ) as Array<{ prospect_id: number; play_name: string }>;
+      const del = this.db.prepare(
+        `DELETE FROM cadence_presence WHERE workspace = ? AND prospect_id = ? AND play_name = ?`,
+      );
+      for (const e of existing) {
+        if (keep.has(`${e.prospect_id}\u0000${e.play_name}`)) continue;
+        removed += Number(del.run(workspace, e.prospect_id, e.play_name).changes);
+      }
+      this.db.exec("COMMIT");
+      return { changed, removed };
+    } catch (err) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // already rolled back
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Every email and LinkedIn slug the shared registry knows for the person
+   * behind these identities (its aliases included), for matching presence rows.
+   */
+  private presenceIdentity(
+    email: string | null,
+    slug: string | null,
+  ): { emails: string[]; slugs: string[] } {
+    const own = [...(email ? [`email:${email}`] : []), ...(slug ? [`linkedin:${slug}`] : [])];
+    if (own.length === 0) return { emails: [], slugs: [] };
+    const rows = this.db
+      .query(
+        `SELECT alias FROM person_aliases WHERE person_id IN (
+           SELECT person_id FROM person_aliases WHERE alias IN (${own.map(() => "?").join(",")}))`,
+      )
+      .all(...own) as Array<{ alias: string }>;
+    const all = new Set([...own, ...rows.map((r) => r.alias)]);
+    const pick = (prefix: string): string[] =>
+      [...all].filter((a) => a.startsWith(prefix)).map((a) => a.slice(prefix.length));
+    return { emails: pick("email:"), slugs: pick("linkedin:") };
+  }
+
+  /** Live presence rows of workspaces other than `workspace` for these identities, newest first. */
+  private livePresenceElsewhere(
+    workspace: string,
+    id: { emails: string[]; slugs: string[] },
+    limit: number,
+  ): CadencePresence[] {
+    const match = [
+      ...(id.emails.length > 0 ? [`email IN (${id.emails.map(() => "?").join(",")})`] : []),
+      ...(id.slugs.length > 0 ? [`linkedin_slug IN (${id.slugs.map(() => "?").join(",")})`] : []),
+    ];
+    if (match.length === 0) return [];
+    return this.db
+      .query(
+        `SELECT workspace, play_name, prospect_id, email, linkedin_slug, status, updated_at
+         FROM cadence_presence
+         WHERE workspace != ? AND ${SharedDb.LIVE_CADENCE_SQL} AND (${match.join(" OR ")})
+         ORDER BY updated_at DESC LIMIT ?`,
+      )
+      .all(workspace, ...id.emails, ...id.slugs, limit) as CadencePresence[];
+  }
+
+  /**
+   * A live cadence (active or paused) another workspace runs with this person,
+   * matched by the email, its known aliases, or the LinkedIn profile; null when
+   * none. `workspace`'s own cadences never count.
+   */
+  liveCadenceElsewhere(input: {
+    email?: string | null;
+    linkedinUrl?: string | null;
+    workspace: string;
+  }): CadencePresence | null {
+    const id = this.presenceIdentity(
+      input.email?.trim().toLowerCase() || null,
+      linkedInAliasSlug(input.linkedinUrl),
+    );
+    return this.livePresenceElsewhere(input.workspace, id, 1)[0] ?? null;
+  }
+
+  /** Every live cadence of `workspace` whose person also has a live cadence in another workspace. */
+  cadenceOverlaps(workspace: string): CadenceOverlap[] {
+    const here = this.db
+      .query(
+        `SELECT workspace, play_name, prospect_id, email, linkedin_slug, status, updated_at
+         FROM cadence_presence WHERE workspace = ? AND ${SharedDb.LIVE_CADENCE_SQL}
+         ORDER BY play_name, COALESCE(email, linkedin_slug), prospect_id`,
+      )
+      .all(workspace) as CadencePresence[];
+    return here.flatMap((row) => {
+      const id = this.presenceIdentity(row.email, row.linkedin_slug);
+      return this.livePresenceElsewhere(workspace, id, 1000)
+        .toSorted(
+          (a, b) =>
+            a.workspace.localeCompare(b.workspace) || a.play_name.localeCompare(b.play_name),
+        )
+        .map((elsewhere) => ({ here: row, elsewhere }));
+    });
+  }
+
+  /** One workspace's presence rows, by prospect and play. */
+  cadencePresenceOf(workspace: string): CadencePresence[] {
+    return this.db
+      .query(
+        `SELECT workspace, play_name, prospect_id, email, linkedin_slug, status, updated_at
+         FROM cadence_presence WHERE workspace = ? ORDER BY prospect_id, play_name`,
+      )
+      .all(workspace) as CadencePresence[];
+  }
+
   /** All live touches of an email across workspaces, newest first (doctor / UI detail). */
   touchesFor(email: string, limit = 20): ContactTouch[] {
     const emails = this.contactEmails(email);
@@ -1077,6 +1292,42 @@ export function recordContactTouch(email: string, playName: string): void {
       "warn",
     );
   }
+}
+
+/**
+ * A personal LinkedIn profile's slug as person aliases key it (decoded,
+ * lowercased), or null for anything else (X and GitHub URLs, company pages).
+ */
+export function linkedInAliasSlug(url: string | null | undefined): string | null {
+  const alias = personAliases({ linkedin_url: url ?? null }).find((a) => a.startsWith("linkedin:"));
+  return alias ? alias.slice("linkedin:".length) : null;
+}
+
+/**
+ * Advisory read for a first touch: another workspace's live cadence with
+ * this person, or null. Fail-open like `recentTouchElsewhere`; null in demo
+ * mode, which never reads real contact history.
+ */
+export function liveCadenceElsewhere(input: {
+  email?: string | null;
+  linkedinUrl?: string | null;
+}): CadencePresence | null {
+  if (demoMode()) return null;
+  try {
+    return getSharedDb().liveCadenceElsewhere({ ...input, workspace: currentWorkspaceName() });
+  } catch (err) {
+    logEvent(
+      "shared_db.read_failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+    return null;
+  }
+}
+
+/** Human phrasing for a hold: "in a live sequence in workspace 'x' (play)". */
+export function describeLiveCadence(p: CadencePresence): string {
+  return `in a live sequence in workspace '${p.workspace}' (${p.play_name})`;
 }
 
 /** Human phrasing for a hold note / tooltip: "emailed by workspace 'x' (play) 3d ago". */
