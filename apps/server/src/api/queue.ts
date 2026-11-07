@@ -22,8 +22,11 @@ import {
 import {
   currentNoOfferPlays,
   currentWorkspaceName,
+  describeLiveCadence,
   getLedger,
   isDraining,
+  LIVE_ELSEWHERE_FLAG,
+  liveCadenceElsewhere,
   loadConfig,
   logEvent,
   isRecentlyContacted,
@@ -2238,6 +2241,51 @@ export function queueDraftVersionsRoute(req: Request, params: Record<string, str
 }
 
 /**
+ * A send the guard refused: keep the reason on the reviewed draft and move
+ * the row back to pending, so /queue shows why on every later read and the
+ * founder can fix the row and resend. Never silently dropped.
+ */
+function holdRefusedDraft(
+  ledger: ReturnType<typeof getLedger>,
+  input: {
+    id: number;
+    parsed: Partial<LastDraft>;
+    subject: string;
+    body: string;
+    flags: string[];
+  },
+): void {
+  const { id, parsed } = input;
+  try {
+    ledger.setQueueDraft({
+      id,
+      draft: {
+        subject: input.subject,
+        body: input.body,
+        flags: input.flags,
+        sent: false,
+        receiptIds: Array.isArray(parsed.receiptIds) ? parsed.receiptIds : [],
+        dryRun: false,
+        ...(parsed.enrichmentFailed ? { enrichmentFailed: true } : {}),
+        ...(parsed.angle ? { angle: parsed.angle } : {}),
+        ...(parsed.voiceKey ? { voiceKey: parsed.voiceKey } : {}),
+        ...(parsed.learningKey ? { learningKey: parsed.learningKey } : {}),
+        ...(parsed.formatKey ? { formatKey: parsed.formatKey } : {}),
+        ...(typeof parsed.evidenceClause === "boolean"
+          ? { evidenceClause: parsed.evidenceClause }
+          : {}),
+        ...(typeof parsed.configKey === "string" ? { configKey: parsed.configKey } : {}),
+      },
+      sentBy: "human",
+    });
+    ledger.setQueueStatus({ id, status: "pending", decidedBy: "human" });
+  } catch {
+    // The refusal itself stands; only its persistence failed.
+    ledger.clearQueueSendingMarker(id);
+  }
+}
+
+/**
  * Send the row's already-reviewed draft VERBATIM (no LLM re-roll) via
  * `sendDraftedEmail`, then enroll the cadence and flip the row to `sent`.
  * Requires a clean (lint-flag-free), not-yet-sent draft. One written under
@@ -2384,35 +2432,7 @@ export async function sendDraftRoute(
       });
       if (!out.sent) {
         if (out.guard) {
-          // The guard refused: keep the reason on the draft and move the row
-          // back to pending, so /queue shows why on every later read and the
-          // founder can fix the row and resend. Never silently dropped.
-          try {
-            ledger.setQueueDraft({
-              id,
-              draft: {
-                subject,
-                body,
-                flags: out.flags,
-                sent: false,
-                receiptIds: Array.isArray(parsed.receiptIds) ? parsed.receiptIds : [],
-                dryRun: false,
-                ...(parsed.enrichmentFailed ? { enrichmentFailed: true } : {}),
-                ...(parsed.angle ? { angle: parsed.angle } : {}),
-                ...(parsed.voiceKey ? { voiceKey: parsed.voiceKey } : {}),
-                ...(parsed.formatKey ? { formatKey: parsed.formatKey } : {}),
-                ...(typeof parsed.evidenceClause === "boolean"
-                  ? { evidenceClause: parsed.evidenceClause }
-                  : {}),
-                ...(typeof parsed.configKey === "string" ? { configKey: parsed.configKey } : {}),
-              },
-              sentBy: "human",
-            });
-            ledger.setQueueStatus({ id, status: "pending", decidedBy: "human" });
-          } catch {
-            // The refusal itself stands; only its persistence failed.
-            ledger.clearQueueSendingMarker(id);
-          }
+          holdRefusedDraft(ledger, { id, parsed, subject, body, flags: out.flags });
         } else {
           ledger.clearQueueSendingMarker(id);
         }
@@ -2561,6 +2581,31 @@ export async function sendDraftRoute(
       return done(
         "ok",
         jsonResponse({ error: `${reason} — not re-sent`, skipped: true, reason: dedup }, 409, req),
+      );
+    }
+    if (sendFlags.includes(LIVE_ELSEWHERE_FLAG)) {
+      // Not a reject: the hold lasts while the other workspace's sequence
+      // does. The flag stays on the draft and the row goes back to pending,
+      // as for an invite the guard refused; a later Send checks again.
+      const live = liveCadenceElsewhere({ email, linkedinUrl: str("linkedinUrl") });
+      holdRefusedDraft(ledger, {
+        id,
+        parsed,
+        subject,
+        body,
+        flags: [...flags.filter((f) => f !== LIVE_ELSEWHERE_FLAG), LIVE_ELSEWHERE_FLAG],
+      });
+      return done(
+        "ok",
+        jsonResponse(
+          {
+            error: `Send held: this person is ${live ? describeLiveCadence(live) : "in a live sequence in another workspace"}. It can go once that sequence has ended.`,
+            held: true,
+            reason: LIVE_ELSEWHERE_FLAG,
+          },
+          409,
+          req,
+        ),
       );
     }
     if (sendFlags.includes("off-icp")) {

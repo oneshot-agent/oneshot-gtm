@@ -199,6 +199,20 @@ if (cache.__oneshotGtmServer) {
     process.stderr.write(`  warn: stale-run sweep failed: ${(err as Error).message}\n`);
   }
 
+  // Mirror every cadence into the shared presence table, so other workspaces
+  // see who is in a live sequence here (`live-elsewhere`), and drop rows for
+  // cadences this ledger no longer has. Idempotent; a shared-DB failure is
+  // logged inside and the dashboard still starts.
+  try {
+    const presence = getLedger().backfillCadencePresence();
+    if (presence && presence.changed + presence.removed > 0) {
+      logEvent("cadence_presence.backfill", { ...presence }, "info");
+    }
+  } catch (err) {
+    process.stderr.write(`  warn: cadence presence sync failed: ${(err as Error).message}
+`);
+  }
+
   const { url, server } = await startServer({ port });
   cache.__oneshotGtmServer = server;
 

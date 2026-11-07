@@ -31,6 +31,7 @@ const NAMED: Record<string, string> = {
   "banned-cta:time-slots": "time-slot ask",
   "stale-event": "the event has passed",
   "contacted-elsewhere": "another workspace emailed them this week",
+  "live-elsewhere": "in a live sequence in another workspace",
   ungrounded: "research found nothing on them; the draft leans on the company name",
   "email-at-former-employer": "their address is at a company they have left",
   "email-mismatch": "the address matches none of their current companies",
@@ -50,6 +51,8 @@ export function humanizeFlag(flag: string): string {
   const detail = colon === -1 ? "" : flag.slice(colon + 1).replace(/-/g, " ");
   if (kind === "banned-opener") return detail ? `banned opener, “${detail}”` : "banned opener";
   if (kind === "hard-ban") return detail ? `hard ban: ${detail}` : "hard ban";
+  // The invite guard's detail names the workspace and play: kept as written.
+  if (kind === "live-elsewhere") return flag.slice(colon + 1).trim();
   const words = kind.replace(/-/g, " ");
   return detail ? `${words}: ${detail}` : words;
 }
@@ -81,6 +84,8 @@ export interface HeldOptions {
 
 /** What to do about one flag, in words that match the buttons the page has. */
 export function flagAdvice(flag: string, opts: HeldOptions = {}): string {
+  // Every send checks again: nothing on this page clears it sooner.
+  if (flag.split(":")[0] === "live-elsewhere") return "send once their sequence there has ended";
   const offer = Object.hasOwn(OFFER_ADVICE, flag) ? OFFER_ADVICE[flag] : undefined;
   if (offer && (flag !== "weak-offer" || opts.offerHeld !== false)) return offer;
   if (blockingFlags([flag]).length > 0) return "regenerate the draft";

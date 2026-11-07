@@ -12,7 +12,7 @@ Your data is on your disk. Nowhere else. Paid calls leave a signed receipt on th
 | `events.jsonl`             | each workspace home     | the local event log                                                                                               |
 | `gmail-tokens.json`        | each workspace home     | Gmail OAuth tokens                                                                                                |
 | `mailbox-connections.json` | each workspace home     | mailbox credentials you entered by hand, mode 600                                                                 |
-| `shared.sqlite`            | `~/.oneshot-gtm-shared` | shared people, paid lookup caches, contact touches, the LinkedIn invite counter and suppression list              |
+| `shared.sqlite`            | `~/.oneshot-gtm-shared` | shared people, paid lookup caches, contact touches, live sequences, LinkedIn invite counter and suppression list  |
 | `reply-review.sqlite`      | `~/.oneshot-gtm-shared` | reply threads, drafts and sends from the Replies page                                                             |
 | `linkedin-inbox.sqlite`    | `~/.oneshot-gtm-shared` | synced LinkedIn conversations and which workspace each belongs to                                                 |
 

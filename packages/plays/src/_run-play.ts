@@ -15,6 +15,8 @@ import {
   rateLimitRetryAfterS,
   throwIfCancelled,
   CONTACTED_ELSEWHERE_FLAG,
+  LIVE_ELSEWHERE_FLAG,
+  liveCadenceElsewhere,
   recentTouchElsewhere,
   angleBlockFromJson,
   overlayOfferAngles,
@@ -494,6 +496,16 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // soft flag (overridable on manual send) that keeps drain from auto-
         // sending to someone another workspace emailed this week.
         if (recentTouchElsewhere(def.toEmail(target))) flags.push(CONTACTED_ELSEWHERE_FLAG);
+        // Not overridable: no first touch while another workspace's sequence
+        // with them is live. The send checks again, so the draft goes once
+        // that sequence has ended.
+        if (
+          liveCadenceElsewhere({
+            email: def.toEmail(target),
+            linkedinUrl: def.prospectMeta(target).linkedin_url ?? null,
+          })
+        )
+          flags.push(LIVE_ELSEWHERE_FLAG);
         // Every message of an offer-making play opens with its offer: with a
         // brief to write one from and none written, the intro is held for the
         // founder to regenerate, as a follow-up is (`no-offer`).

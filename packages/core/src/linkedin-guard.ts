@@ -1,6 +1,13 @@
 import { demoMode } from "./demo.ts";
 import { logEvent } from "./events.ts";
-import { getSharedDb, type LinkedInTouch, type SharedDb } from "./shared-db.ts";
+import {
+  type CadencePresence,
+  currentWorkspaceName,
+  describeLiveCadence,
+  getSharedDb,
+  type LinkedInTouch,
+  type SharedDb,
+} from "./shared-db.ts";
 
 /**
  * The guard every LinkedIn invite passes before it can leave. Email first
@@ -22,6 +29,8 @@ export type LinkedInGuardReason =
   | "already-invited"
   | "already-touched"
   | "already-in-conversation"
+  /** A first touch to someone in another workspace's live sequence (`LIVE_ELSEWHERE_FLAG`). */
+  | "live-elsewhere"
   | "guard-unavailable"
   /** Not the guard's own: LinkedIn refused the invite and nothing went out (the profile is free). */
   | "linkedin-invite-refused";
@@ -56,6 +65,12 @@ export interface LinkedInInviteProspect {
    * invite's own. Only that claim is passed over; every other check holds.
    */
   ownInviteClaim?: string;
+  /**
+   * The invite is this workspace's first touch (a queue row, not a cadence
+   * step or a warm connect): refused while another workspace has a live
+   * sequence with the person.
+   */
+  firstTouch?: boolean;
 }
 
 /** What the guard needs from the ledger. `Ledger` satisfies it. */
@@ -72,6 +87,12 @@ export interface LinkedInGuardLedger {
 /** What the guard needs from the shared DB. `SharedDb` satisfies it. */
 export interface LinkedInGuardShared {
   linkedInTouch(slug: string): LinkedInTouch | null;
+  /** Optional for test doubles: without it, no first touch is held for another workspace's sequence. */
+  liveCadenceElsewhere?(input: {
+    email?: string | null;
+    linkedinUrl?: string | null;
+    workspace: string;
+  }): CadencePresence | null;
 }
 
 /** What the guard needs from the synced LinkedIn inbox. */
@@ -289,6 +310,16 @@ export function canInviteOnLinkedIn(
       held.source === `invite:${prospect.ownInviteClaim}` &&
       held.status === "dispatched";
     if (held && !own) return refuse(...touchedReason(held));
+    // No first touch while another workspace's sequence with them is live.
+    const live =
+      prospect.firstTouch && !demoMode()
+        ? (shared.liveCadenceElsewhere?.({
+            email: prospect.email ?? null,
+            linkedinUrl: profile.url,
+            workspace: currentWorkspaceName(),
+          }) ?? null)
+        : null;
+    if (live) return refuse("live-elsewhere", describeLiveCadence(live));
   } catch (err) {
     logEvent(
       "shared_db.read_failed",
@@ -350,6 +381,7 @@ const GUARD_REASONS: ReadonlySet<string> = new Set([
   "already-invited",
   "already-touched",
   "already-in-conversation",
+  "live-elsewhere",
   "guard-unavailable",
   "linkedin-invite-refused",
 ]);

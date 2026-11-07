@@ -9,7 +9,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { demoMode } from "./demo.ts";
 import { openStateDatabase } from "./sqlite-open.ts";
 import type { OutreachChannel } from "./channels.ts";
-import { workspacesDir } from "./workspaces.ts";
+import { workspaceNameForHome, workspacesDir } from "./workspaces.ts";
 import { configDir } from "./config.ts";
 import {
   applyReadonlyBusyTimeout,
@@ -209,7 +209,9 @@ import {
   sweepStalePendingResolution as sysSweepStalePendingResolution,
   upsertPendingResolution as sysUpsertPendingResolution,
 } from "./ledger-system.ts";
-import { currentWorkspaceName, sharedDbPath, type SharedDb } from "./shared-db.ts";
+import { currentWorkspaceName, getSharedDb, SharedDb, sharedDbPath } from "./shared-db.ts";
+import { readCadencePresence } from "./ledger-cadence-presence.ts";
+import { logEvent } from "./events.ts";
 import { linkedInGuardFacts, linkedInInviteHistory } from "./ledger-linkedin-guard.ts";
 import type { LinkedInGuardFacts } from "./linkedin-guard.ts";
 import { SharedPeople } from "./shared-people.ts";
@@ -246,6 +248,20 @@ import type {
 } from "./types.ts";
 
 const DEFAULT_DB_PATH = join(configDir(), "ledger.sqlite");
+
+/**
+ * The workspace a named workspace's ledger belongs to, for one this process
+ * opened on another's behalf (LinkedIn reply delivery): its registered name,
+ * else its folder's.
+ */
+function ledgerWorkspaceName(path: string): string {
+  const home = dirname(resolve(path));
+  try {
+    return workspaceNameForHome(home) ?? basename(home);
+  } catch {
+    return basename(home);
+  }
+}
 
 // Re-export cache constants for the Ledger public API.
 export {
@@ -321,6 +337,12 @@ export class Ledger {
   private drafts: DraftVersionStore;
   private prospects: ProspectStore;
   private people: SharedPeople | null = null;
+  /**
+   * Where this ledger mirrors its cadences for other workspaces
+   * (`cadence_presence`), and under which workspace name. Null for fixture
+   * and demo databases, as for the person registry.
+   */
+  private presence: { workspace: string; sharedPath: string; own: SharedDb | null } | null = null;
 
   constructor(path: string = DEFAULT_DB_PATH, options: { sharedPeoplePath?: string } = {}) {
     this.path = path;
@@ -365,6 +387,16 @@ export class Ledger {
       // statement (#935); see ProspectStore.attachSharedPeopleReader.
       this.prospects.attachSharedPeopleReader(path, peoplePath, LEDGER_BUSY_TIMEOUT_MS);
       this.refreshSharedPeople();
+      // Demo clicks are not contact history, whatever file the registry is in.
+      if (!demoMode())
+        this.presence = {
+          workspace:
+            path === DEFAULT_DB_PATH || !namedWorkspace
+              ? currentWorkspaceName()
+              : ledgerWorkspaceName(path),
+          sharedPath: peoplePath,
+          own: null,
+        };
     }
     // Build stores after migration so their tables exist.
     this.receipts = new ReceiptStore(this.db);
@@ -506,6 +538,7 @@ export class Ledger {
     queueId?: number | null;
   }): void {
     cadEnrollCadence(this.db, input);
+    this.syncCadencePresence([input.prospectId]);
   }
 
   /** Change an active cadence's offer while no send holds it (ledger-cadence.ts). */
@@ -672,6 +705,7 @@ export class Ledger {
     status: "active" | "replied" | "breakup" | "completed" | "bounced" | "off-icp" | "unsubscribed";
   }): void {
     cadSetCadenceStatus(this.db, this.drafts, input);
+    this.syncCadencePresence([input.prospectId]);
   }
 
   stopCadence(input: {
@@ -682,7 +716,64 @@ export class Ledger {
     /** The caller is the send worker holding this cadence's sending marker; see ledger-cadence.ts. */
     holdingSendingMarker?: boolean;
   }): boolean {
-    return cadStopCadence(this.db, this.drafts, input);
+    const stopped = cadStopCadence(this.db, this.drafts, input);
+    if (stopped) this.syncCadencePresence([input.prospectId]);
+    return stopped;
+  }
+
+  /**
+   * Mirror these prospects' cadences into the shared `cadence_presence`
+   * table, so other workspaces see who is in a live sequence here. Never
+   * fails the ledger write it follows: a shared-DB error is logged, and the
+   * next server start re-syncs every cadence (`backfillCadencePresence`).
+   */
+  private syncCadencePresence(prospectIds: number[]): void {
+    if (!this.presence) return;
+    try {
+      this.presenceDb().syncCadencePresence(
+        this.presence.workspace,
+        readCadencePresence(this.db, prospectIds),
+        { prospectIds },
+      );
+    } catch (err) {
+      logEvent(
+        "shared_db.write_failed",
+        { message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+    }
+  }
+
+  /** The shared DB the presence rows go to: the process-wide handle when it is that file. */
+  private presenceDb(): SharedDb {
+    const presence = this.presence!;
+    if (presence.sharedPath === sharedDbPath()) return getSharedDb();
+    presence.own ??= new SharedDb(presence.sharedPath);
+    return presence.own;
+  }
+
+  /**
+   * Mirror every cadence of this ledger into `cadence_presence` and drop
+   * this workspace's rows for cadences it no longer has: one idempotent pass
+   * at server start. Null for a ledger that mirrors nothing (fixture and demo
+   * databases) or when the shared file can't be used.
+   */
+  backfillCadencePresence(): { changed: number; removed: number } | null {
+    if (!this.presence) return null;
+    try {
+      return this.presenceDb().syncCadencePresence(
+        this.presence.workspace,
+        readCadencePresence(this.db),
+        "all",
+      );
+    } catch (err) {
+      logEvent(
+        "shared_db.write_failed",
+        { message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+      return null;
+    }
   }
 
   setCadenceDraft(input: {
@@ -890,7 +981,9 @@ export class Ledger {
   }
 
   suppressCadencesForReply(prospectId: number, accountKey?: string) {
-    return suppressCadencesForReply(this.db, this.drafts, prospectId, accountKey);
+    const out = suppressCadencesForReply(this.db, this.drafts, prospectId, accountKey);
+    if (out.cadencesStopped > 0) this.syncCadencePresence([prospectId]);
+    return out;
   }
 
   recordLinkedInReply(input: {
@@ -907,7 +1000,9 @@ export class Ledger {
     cadencesStopped: number;
     inFlightSends: number;
   } {
-    return cadRecordLinkedInReply(this.db, this.drafts, input);
+    const out = cadRecordLinkedInReply(this.db, this.drafts, input);
+    if (out.cadencesStopped > 0) this.syncCadencePresence([out.prospectId]);
+    return out;
   }
 
   /**
@@ -1706,7 +1801,9 @@ export class Ledger {
     newlyReplied: boolean;
     eventRecorded: boolean;
   } {
-    return cadRecordCadenceReply(this.db, this.drafts, input);
+    const out = cadRecordCadenceReply(this.db, this.drafts, input);
+    if (out.newlyReplied) this.syncCadencePresence([input.prospectId]);
+    return out;
   }
 
   /** @see ledger-cadence.ts#recordProspectReply */
@@ -1714,7 +1811,9 @@ export class Ledger {
     prospectId: number,
     opts?: { subject?: string | null; repliedAt?: string | null },
   ): Array<{ playName: string; newlyReplied: boolean; eventRecorded: boolean }> {
-    return cadRecordProspectReply(this.db, this.drafts, prospectId, opts);
+    const out = cadRecordProspectReply(this.db, this.drafts, prospectId, opts);
+    if (out.some((r) => r.newlyReplied)) this.syncCadencePresence([prospectId]);
+    return out;
   }
 
   /** @see ledger-cadence.ts#latestSentPlayForProspect */
@@ -2551,6 +2650,7 @@ export class Ledger {
   close(): void {
     this.prospects.closeSharedPeopleReader();
     this.people?.close();
+    this.presence?.own?.close();
     optimizeOnClose(this.db);
     this.db.close();
   }

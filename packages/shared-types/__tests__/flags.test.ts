@@ -31,6 +31,12 @@ describe("blockingFlags", () => {
     expect(blockingFlags(["email-mismatch", "em-dash"])).toEqual(["em-dash"]);
   });
 
+  it("never blocks on live-elsewhere: every send checks again, so it goes once that sequence ends", () => {
+    expect(blockingFlags(["live-elsewhere"])).toEqual([]);
+    expect(blockingFlags(["live-elsewhere: in a live sequence in workspace 'b' (p)"])).toEqual([]);
+    expect(blockingFlags(["live-elsewhere", "em-dash"])).toEqual(["em-dash"]);
+  });
+
   it("keeps lint/dedup flags blocking", () => {
     expect(blockingFlags(["em-dash"])).toEqual(["em-dash"]);
     expect(blockingFlags(["already-contacted", "rule-of-three"])).toEqual([

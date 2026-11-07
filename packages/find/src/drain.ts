@@ -29,6 +29,7 @@ import {
   draftIsStale,
   queueDraftConfigKey,
 } from "@oneshot-gtm/plays";
+import { LIVE_ELSEWHERE_FLAG } from "@oneshot-gtm/shared-types";
 import { resolveQueueTargetWithOffer } from "./queue-offer.ts";
 
 export interface DrainOpts {
@@ -50,8 +51,12 @@ type DrainDraft = DraftedRow & {
   needsReview?: boolean;
   /** The LinkedIn invite guard refused this row: counted per reason in `DrainOutcome.skipped`. */
   guard?: LinkedInGuardReason;
-  /** The send was held for the founder (a weak offer, none, or an address at none of their companies): counted per code in `DrainOutcome.held`. */
-  hold?: typeof WEAK_OFFER_FLAG | typeof NO_OFFER_FLAG | typeof EMAIL_MISMATCH_FLAG;
+  /** The send was held for the founder (a weak offer, none, an address at none of their companies, a live sequence elsewhere): counted per code in `DrainOutcome.held`. */
+  hold?:
+    | typeof WEAK_OFFER_FLAG
+    | typeof NO_OFFER_FLAG
+    | typeof EMAIL_MISMATCH_FLAG
+    | typeof LIVE_ELSEWHERE_FLAG;
 };
 
 export interface DrainOutcome {
@@ -69,7 +74,8 @@ export interface DrainOutcome {
   /**
    * Rows whose send was held for the founder, by hold code (`weak-offer`: the
    * active offer was rated a weak fit and nobody approved it; `no-offer`: no
-   * offer could be written). They go back to pending with their draft: never
+   * offer could be written; `live-elsewhere`: another workspace's sequence
+   * with them is live). They go back to pending with their draft: never
    * sent. Absent when none were held.
    */
   held?: Record<string, number>;
@@ -306,13 +312,14 @@ async function dispatchOneTarget(opts: DrainOpts, row: QueueRow): Promise<DrainD
     ...(row.play_name === "community-reply" ? { spendReserved: true } : {}),
   });
   const drafted = firstDraft(result.drafted);
-  // The send gate held it for its offer (a weak one, or none written) or its
-  // address (at none of their current companies): back to pending for the
-  // founder, or every later drain would redraft and hold it again.
+  // The send gate held it for its offer (a weak one, or none written), its
+  // address (at none of their current companies) or another workspace's live
+  // sequence: back to pending for the founder, or every later drain would
+  // redraft and hold it again.
   if (!drafted.sent) {
-    const hold = ([EMAIL_MISMATCH_FLAG, WEAK_OFFER_FLAG, NO_OFFER_FLAG] as const).find((f) =>
-      drafted.flags.includes(f),
-    );
+    const hold = (
+      [EMAIL_MISMATCH_FLAG, WEAK_OFFER_FLAG, NO_OFFER_FLAG, LIVE_ELSEWHERE_FLAG] as const
+    ).find((f) => drafted.flags.includes(f));
     if (hold) return { ...drafted, needsReview: true, hold };
   }
   return drafted;

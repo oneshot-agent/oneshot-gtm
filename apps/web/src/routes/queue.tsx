@@ -1757,6 +1757,8 @@ export function DraftSection({
             ? "Send held for fit review. Review the saved assessment before sending."
             : err.message,
         );
+      else if (err.message.startsWith("Send held: this person is in a live sequence"))
+        toast.error(err.message);
       else if (err.message.startsWith("Send held: The address"))
         toast.error(
           masked ? "Send held: the address matches none of their current companies." : err.message,
@@ -2049,13 +2051,15 @@ export function DraftSection({
   const softHold = cleanDraft && draft != null && draft.flags.length > 0;
   // Drafted under an older setup: Send ships it as written only when clicked as Send anyway.
   const staleDraft = draft != null && !draft.sent && draft.stale === true;
-  const softHoldDetail = draft?.flags.includes("contacted-elsewhere")
-    ? "Held — another workspace emailed this person in the last 7 days. Send the reviewed draft as-is to override."
-    : draft?.flags.includes("weak-offer")
-      ? "Held — the offer was rated a weak fit when this draft was written. It has been rewritten, replaced or approved since; send the reviewed draft as-is."
-      : draft?.flags.includes("ungrounded")
-        ? "Held — research found nothing on this person, so the draft leans on the company name. Read it once more; send as-is if it still holds up."
-        : "Held for review (event has passed) — send the reviewed draft as-is";
+  const softHoldDetail = draft?.flags.some((f) => f.split(":")[0] === "live-elsewhere")
+    ? "Held — this person is in a live sequence in another workspace. Send checks again and goes only once that sequence has ended."
+    : draft?.flags.includes("contacted-elsewhere")
+      ? "Held — another workspace emailed this person in the last 7 days. Send the reviewed draft as-is to override."
+      : draft?.flags.includes("weak-offer")
+        ? "Held — the offer was rated a weak fit when this draft was written. It has been rewritten, replaced or approved since; send the reviewed draft as-is."
+        : draft?.flags.includes("ungrounded")
+          ? "Held — research found nothing on this person, so the draft leans on the company name. Read it once more; send as-is if it still holds up."
+          : "Held for review (event has passed) — send the reviewed draft as-is";
   const showSend = sender === "api" && status === "approved" && !(draft?.sent ?? false);
   const weakOffer = sendHold?.code === "weak-offer";
   const emailMismatch = sendHold?.code === "email-mismatch";
