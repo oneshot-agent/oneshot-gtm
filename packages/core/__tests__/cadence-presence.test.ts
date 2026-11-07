@@ -179,9 +179,9 @@ describe("liveCadenceElsewhere", () => {
     const person = people.resolve({ email: "jane@old.dev" });
     people.resolve({ email: "jane@new.example" }, person.id);
     seed(db, "beta", { email: "jane@old.dev", status: "active" });
-    expect(db.liveCadenceElsewhere({ email: "jane@new.example", workspace: "alpha" })?.workspace).toBe(
-      "beta",
-    );
+    expect(
+      db.liveCadenceElsewhere({ email: "jane@new.example", workspace: "alpha" })?.workspace,
+    ).toBe("beta");
 
     seed(db, "gamma", {
       email: null,

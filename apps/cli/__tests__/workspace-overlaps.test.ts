@@ -59,7 +59,7 @@ describe("workspace overlaps", () => {
     ]);
     cadence("beta", [
       { id: 10, play: "their-play", email: "jane@acme.dev", status: "paused" },
-      { id: 11, play: "their-play", email: "sam@else.dev", slug: "sam-roe" },
+      { id: 11, play: "their-play", email: "sam@else.example", slug: "sam-roe" },
       { id: 12, play: "their-play", email: "done@acme.dev" },
     ]);
     cadence("gamma", [{ id: 20, play: "ended", email: "solo@acme.dev", status: "replied" }]);
