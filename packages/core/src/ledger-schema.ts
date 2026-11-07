@@ -1132,8 +1132,9 @@ export function migrateLedgerSchema(db: Database): void {
   // restart. CAS-claimed (claimCadenceSendingMarker); cleared on success and
   // failure; sweepStaleCadenceSends treats cold-boot markers as stranded.
   addColumnIfMissing(db, "cadence_state", "sending_started_at", "TEXT");
-  // Manual stops are distinct from natural completion and carry a durable
-  // disposition used by Expandi and breakup-revive.
+  // Stops are distinct from natural completion and carry a durable reason:
+  // breakup-revive reads it (a not-a-fit or do-not-contact stop is never
+  // revived), /cadences labels and counts it.
   addColumnIfMissing(db, "cadence_state", "stop_reason", "TEXT");
   addColumnIfMissing(db, "cadence_state", "stop_note", "TEXT");
   addColumnIfMissing(db, "cadence_state", "stopped_at", "TEXT");
