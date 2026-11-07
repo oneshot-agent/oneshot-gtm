@@ -30,7 +30,7 @@ The invite share is optional: unset, a workspace is held only by the account's d
 
 The 7-day hold follows a person's known email aliases. The draft is flagged `contacted-elsewhere`; you can override it on a single manual send.
 
-Someone in a live sequence (active or paused) in another workspace gets no first touch here, matched by email, a known alias or LinkedIn profile. The draft or invite is flagged `live-elsewhere` and goes back to pending; no override on a manual send lifts it (`breakup-revive`, which re-contacts people on purpose, is not held), but every Send checks again, so it goes once that sequence ends. Follow-ups are not held by it; they keep the 7-day spacing. `workspace overlaps` lists the people in a live sequence here and in another workspace, by play pair (`--json` for scripts). It changes nothing.
+Someone in a live sequence (active or paused) in another workspace gets no email or LinkedIn first touch here (drafts you post by hand, like X, are not checked), matched by email, a known alias or LinkedIn profile. The draft or invite is flagged `live-elsewhere` and goes back to pending; no override on a manual send lifts it (`breakup-revive`, which deliberately re-contacts people, is not held), but every Send checks again, so it goes once that sequence ends. Follow-ups are not held by it; they keep the 7-day spacing. `workspace overlaps` lists the people in a live sequence here and in another workspace, by play pair (`--json` for scripts). It changes nothing.
 
 Everything else stays in the workspace: research conclusions, angles, verdicts, outreach history.
 
