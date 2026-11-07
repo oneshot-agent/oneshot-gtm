@@ -177,9 +177,9 @@ describe("liveCadenceElsewhere", () => {
     const db = new SharedDb(sharedPath);
     const people = new SharedPeople(sharedPath);
     const person = people.resolve({ email: "jane@old.dev" });
-    people.resolve({ email: "jane@new.dev" }, person.id);
+    people.resolve({ email: "jane@new.example" }, person.id);
     seed(db, "beta", { email: "jane@old.dev", status: "active" });
-    expect(db.liveCadenceElsewhere({ email: "jane@new.dev", workspace: "alpha" })?.workspace).toBe(
+    expect(db.liveCadenceElsewhere({ email: "jane@new.example", workspace: "alpha" })?.workspace).toBe(
       "beta",
     );
 
