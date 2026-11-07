@@ -6,6 +6,8 @@ The dashboard server runs the scheduler itself, so an enabled trigger is polled 
 
 The scheduler polls finders and runs the learning jobs. It does not send. A batch goes out when you press **Batch send…** or run `find drain`.
 
+The [LinkedIn invite check](./linkedin.md) runs only in the dashboard server, not in `find watch`. It records accepts and withdraws invites (after the timeout, or when the person opts out): an action on your LinkedIn account, taken while the dashboard is up.
+
 ## The dashboard as a service
 
 `ui --install-service` generates a service file that starts the dashboard at login and restarts it after a crash: a launchd agent on macOS, a systemd user unit on Linux. It prints the file; `--write` puts it in place. The workspace's name, home and port are read from the workspace the command runs in, so run it once per workspace.
