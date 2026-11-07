@@ -42,8 +42,8 @@ describe("playMetadata — lookup by play name", () => {
   });
 
   it("strips missing keys instead of storing JSON nulls", () => {
-    // Downstream readers (expandi-sync buildSignal, the cadence sweep) test
-    // key PRESENCE; a stored null would read as "evidence exists but is null".
+    // A present key reads as evidence that exists; a stored null would say
+    // "evidence exists but is null".
     expect(playMetadata("repo-interest", { name: "Ada" })).toEqual({});
     expect(playMetadata("post-funding", { round: "Seed" })).toEqual({ round: "Seed" });
   });

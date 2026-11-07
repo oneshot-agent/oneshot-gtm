@@ -40,6 +40,7 @@ import {
   configSpendCeiling,
   configLinkedInInvites,
   configLinkedInInviteTimeout,
+  configLinkedInInviteExpiry,
   configTelemetry,
   configXEngine,
   configLinkedInSession,
@@ -365,7 +366,7 @@ config
 config
   .command("linkedin-invites [count]")
   .description(
-    "Show or set this workspace's share of the LinkedIn account's daily invite cap (positive integer per UTC day; 'off' clears it)",
+    "Show or set this workspace's share of the LinkedIn account's daily invite cap (whole number per UTC day; 0 pauses invites; 'off' clears it)",
   )
   .action(runOrFail((count?: string) => configLinkedInInvites(count)));
 config
@@ -374,6 +375,12 @@ config
     "Show or set the days an unaccepted LinkedIn invite waits before it is withdrawn (positive integer; 'off' restores the default of 21)",
   )
   .action(runOrFail((days?: string) => configLinkedInInviteTimeout(days)));
+config
+  .command("linkedin-invite-expiry [days]")
+  .description(
+    "Show or set the days a due LinkedIn connection request may stay unsent before its cadence ends without it (positive integer; 'off', the default, waits)",
+  )
+  .action(runOrFail((days?: string) => configLinkedInInviteExpiry(days)));
 
 const linkedin = program.command("linkedin").description("LinkedIn outreach safety");
 linkedin

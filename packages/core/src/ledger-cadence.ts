@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { LINKEDIN_FRIEND_PLAY } from "@oneshot-gtm/shared-types";
+import { LINKEDIN_SEND_PENDING, type CadenceEndReason } from "@oneshot-gtm/shared-types";
+import { contactAllowedClause } from "./contact-optout.ts";
 import {
   draftVersionAngle,
   type DraftDiscardReason,
@@ -729,7 +730,8 @@ export function stopCadence(
   input: {
     prospectId: number;
     playName: string;
-    reason: "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
+    /** A founder's stop reason, or `invite_timeout` when the connection request went unaccepted. */
+    reason: Exclude<CadenceEndReason, "invite_expired">;
     note?: string;
     /**
      * The caller is the send worker that holds this cadence's sending marker
@@ -767,6 +769,63 @@ export function stopCadence(
     }
   })();
   return changed;
+}
+
+/** The step id of the connection request an email cadence continues with onto LinkedIn. */
+export const CONTINUATION_INVITE_STEP_ID = "linkedin:invite";
+
+/**
+ * Complete every active cadence whose next step is its LinkedIn connection
+ * request (`linkedin:invite` in the saved plan), not yet sent, and due since
+ * before `before`: stop reason `invite_expired`. A request that could not go
+ * out in time (the invite share kept it waiting) is dropped rather than sent
+ * late. One statement; a cadence mid-send, or whose invite's outcome is still
+ * pending, is left alone. Returns the cadences it completed.
+ */
+export function expireUnsentLinkedInInvites(
+  db: Database,
+  drafts: DraftVersionStore,
+  input: { before: Date; note: string },
+): Array<{ prospect_id: number; play_name: string }> {
+  return db.transaction(() => {
+    const rows = db
+      .query(
+        `UPDATE cadence_state
+            SET status = 'completed', stop_reason = 'invite_expired', stop_note = ?,
+                stopped_at = datetime('now'), next_due_at = NULL,
+                next_step_draft_json = NULL, next_step_drafted_at = NULL,
+                last_send_error = NULL, last_send_error_at = NULL
+          WHERE status = 'active' AND sending_started_at IS NULL
+            AND next_due_at IS NOT NULL AND julianday(next_due_at) < julianday(?)
+            AND last_send_error IS NOT ?
+            AND EXISTS (
+              SELECT 1 FROM cadence_plans cp
+               WHERE cp.prospect_id = cadence_state.prospect_id
+                 AND cp.play_name = cadence_state.play_name
+                 AND cp.enrollment = cadence_state.enrolled_at
+                 AND json_valid(cp.steps)
+                 AND json_extract(cp.steps, '$[' || cadence_state.current_step || '].id') = ?
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM sequence_events se
+               WHERE se.prospect_id = cadence_state.prospect_id
+                 AND se.play_name = cadence_state.play_name
+                 AND se.step_index = cadence_state.current_step + 1
+                 AND se.status IN ('sent','delivered','replied')
+            )
+          RETURNING prospect_id, play_name`,
+      )
+      .all(
+        input.note,
+        input.before.toISOString(),
+        LINKEDIN_SEND_PENDING,
+        CONTINUATION_INVITE_STEP_ID,
+      ) as Array<{ prospect_id: number; play_name: string }>;
+    for (const r of rows) {
+      drafts.closeAllForCadence(r.prospect_id, r.play_name, "discarded", "abandoned");
+    }
+    return rows;
+  })();
 }
 
 export function setCadenceDraft(
@@ -1020,11 +1079,19 @@ export function recordLinkedInReply(
         input.body?.trim() || null,
       );
     }
-    return {
-      duplicate: !!existing,
-      prospectId,
-      ...suppressCadencesForReply(db, drafts, prospectId, input.accountKey),
-    };
+    const suppressed = suppressCadencesForReply(db, drafts, prospectId, input.accountKey);
+    // Analytics: the reply is credited to the LinkedIn message it answers, as
+    // an email reply is to the email (markLatestStepReplied).
+    const credited = latestLinkedInMessagePlayForProspect(db, prospectId);
+    if (credited) {
+      markLatestStepReplied(db, {
+        prospectId,
+        playName: credited,
+        repliedAt: input.occurredAt,
+        channel: "linkedin",
+      });
+    }
+    return { duplicate: !!existing, prospectId, ...suppressed };
   })();
 }
 
@@ -1104,6 +1171,11 @@ function markCadenceReplied(
  * backlog page (arriving in this process well after it actually landed in
  * the mailbox) is still credited to the day it was actually sent, not the
  * day this poll happened to run.
+ *
+ * `channel` is where the reply arrived: `email` (the default) credits the
+ * latest sent email; `linkedin` the latest sent LinkedIn message. A LinkedIn
+ * invite is never flipped: it stays `sent`, the record every invite reader
+ * (the sweep, the funnel, the guard) looks for.
  */
 export function markLatestStepReplied(
   db: Database,
@@ -1111,8 +1183,10 @@ export function markLatestStepReplied(
     prospectId: number;
     playName: string;
     repliedAt?: string | null;
+    channel?: "email" | "linkedin";
   },
 ): boolean {
+  const channel = input.channel ?? "email";
   // datetime(?) normalizes any SQLite-recognized input (an ISO 8601 string
   // with 'T'/'Z', or the 'YYYY-MM-DD HH:MM:SS' form) to the latter. The
   // same format datetime('now') already writes everywhere else in this
@@ -1124,8 +1198,9 @@ export function markLatestStepReplied(
       `UPDATE sequence_events SET status = 'replied', replied_at = datetime(COALESCE(?, 'now'))
        WHERE id = (
          SELECT id FROM sequence_events
-         WHERE prospect_id = ? AND play_name = ? AND channel = 'email'
+         WHERE prospect_id = ? AND play_name = ? AND channel = ?
            AND status IN ('sent','delivered')
+           AND NOT (${INVITE_EVENT_SQL})
          ORDER BY created_at DESC, id DESC LIMIT 1
        )
        AND NOT EXISTS (
@@ -1137,10 +1212,32 @@ export function markLatestStepReplied(
       input.repliedAt ?? null,
       input.prospectId,
       input.playName,
+      channel,
+      LINKEDIN_INVITE_KIND,
       input.prospectId,
       input.playName,
     );
   return result.changes > 0;
+}
+
+/**
+ * Which play a LinkedIn reply belongs to: the one whose LinkedIn message
+ * (not an invite) went to the prospect most recently. Null when none did.
+ */
+export function latestLinkedInMessagePlayForProspect(
+  db: Database,
+  prospectId: number,
+): string | null {
+  const row = db
+    .query(
+      `SELECT play_name FROM sequence_events
+       WHERE prospect_id = ? AND channel = 'linkedin'
+         AND status IN ('sent','delivered','replied')
+         AND NOT (${INVITE_EVENT_SQL})
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+    )
+    .get(prospectId, LINKEDIN_INVITE_KIND) as { play_name: string } | null;
+  return row?.play_name ?? null;
 }
 
 /**
@@ -1358,6 +1455,17 @@ export function recordSequenceEvent(
 export const LINKEDIN_INVITE_KIND = "linkedin_invite";
 
 /**
+ * A LinkedIn row that is an invite event (bind LINKEDIN_INVITE_KIND to its
+ * `?`): the marker, or any step-0 LinkedIn row from before it. True only on
+ * LinkedIn rows, so `NOT (…)` keeps every other channel.
+ */
+const INVITE_EVENT_SQL = `channel = 'linkedin' AND (
+           step_index = 0
+           OR COALESCE(CASE WHEN json_valid(metadata_json)
+                            THEN json_extract(metadata_json, '$.kind') END = ?, 0)
+         )`;
+
+/**
  * Every LinkedIn invite event for a prospect and play, oldest first, whatever
  * its status: the invite send and any `withdrawn` event after it. An invite is
  * found by its `kind: "linkedin_invite"` marker at any step_index (a LinkedIn
@@ -1452,33 +1560,72 @@ export function recordLinkedInInviteEvent(
   });
 }
 
+/** One key of an `se` row's metadata, NULL when the JSON is invalid. */
+const inviteMetaSql = (key: string): string =>
+  `CASE WHEN json_valid(se.metadata_json) THEN json_extract(se.metadata_json, '$.${key}') END`;
+
+/** A LinkedIn invite event under this alias, as listLinkedInInviteEvents finds them (one `?`: LINKEDIN_INVITE_KIND). */
+const inviteRowSql = (alias: string): string => `${alias}.channel = 'linkedin'
+            AND (
+              ${alias}.step_index = 0
+              OR CASE WHEN json_valid(${alias}.metadata_json)
+                      THEN json_extract(${alias}.metadata_json, '$.kind') END = ?
+            )`;
+
 /**
  * Prospect and play of every sent LinkedIn invite that is still waiting on an
- * answer to be looked up: those of an active cadence, and every friend invite
- * (#791), which has no cadence. Candidates for the unattended
- * invitation-status sweep; whether an invite is outstanding is read from its events.
+ * answer to be looked up, whatever its cadence's status: a reply or a stop
+ * ends the cadence, not the invite, so an accept is still recorded and a
+ * timed-out invite still withdrawn. Friend invites (#791) have no cadence and
+ * are listed the same way. Only the newest invite of each prospect and play
+ * counts, and one already accepted, already connected, ended or withdrawn is
+ * left out; the sweep checks the events again (liveLinkedInInvite).
+ *
+ * `opted_out` is 1 when the person asked not to be contacted (an unsubscribe
+ * on any channel, or a cadence stopped as do-not-contact): the sweep then
+ * withdraws the invite at once instead of at the timeout.
  */
 export function listLinkedInInviteCadences(
   db: Database,
-): Array<{ prospect_id: number; play_name: string }> {
-  return db
-    .query(
-      `SELECT DISTINCT se.prospect_id, se.play_name
+): Array<{ prospect_id: number; play_name: string; opted_out: number }> {
+  const meta = inviteMetaSql;
+  const invite = inviteRowSql;
+  return (
+    db
+      .query(
+        `SELECT se.prospect_id, se.play_name,
+              CASE WHEN NOT (${contactAllowedClause(db)})
+                     OR EXISTS (
+                       SELECT 1 FROM cadence_state dnc
+                        WHERE dnc.prospect_id = se.prospect_id AND dnc.status = 'stopped'
+                          AND dnc.stop_reason = 'do_not_contact'
+                     )
+                   THEN 1 ELSE 0 END AS opted_out
          FROM sequence_events se
-         LEFT JOIN cadence_state c ON c.prospect_id = se.prospect_id AND c.play_name = se.play_name
-        WHERE (c.status = 'active' OR se.play_name = ?)
-          AND se.channel = 'linkedin' AND se.status = 'sent'
-          AND (
-            se.step_index = 0
-            OR CASE WHEN json_valid(se.metadata_json)
-                    THEN json_extract(se.metadata_json, '$.kind') END = ?
+         JOIN prospects p ON p.id = se.prospect_id
+        WHERE se.status = 'sent' AND ${invite("se")}
+          AND se.id = (
+            SELECT MAX(s2.id) FROM sequence_events s2
+             WHERE s2.prospect_id = se.prospect_id AND s2.play_name = se.play_name
+               AND s2.status = 'sent' AND ${invite("s2")}
+          )
+          AND ${meta("acceptedAt")} IS NULL
+          AND ${meta("endedAt")} IS NULL
+          AND COALESCE(${meta("inviteStatus")}, '') != 'already_connected'
+          AND NOT EXISTS (
+            SELECT 1 FROM sequence_events w
+             WHERE w.prospect_id = se.prospect_id AND w.play_name = se.play_name
+               AND w.id > se.id AND w.status = 'withdrawn' AND ${invite("w")}
           )
         ORDER BY se.prospect_id, se.play_name`,
-    )
-    .all(LINKEDIN_FRIEND_PLAY, LINKEDIN_INVITE_KIND) as Array<{
-    prospect_id: number;
-    play_name: string;
-  }>;
+      )
+      // One `?` per invite() above, in order: se, s2, w.
+      .all(LINKEDIN_INVITE_KIND, LINKEDIN_INVITE_KIND, LINKEDIN_INVITE_KIND) as Array<{
+      prospect_id: number;
+      play_name: string;
+      opted_out: number;
+    }>
+  );
 }
 
 /**

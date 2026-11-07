@@ -23,8 +23,10 @@ One database, `~/.oneshot-gtm-shared/shared.sqlite` (`ONESHOT_GTM_SHARED` moves 
 | People                    | one identity per person, by email or LinkedIn profile; a name alone never merges |
 | Paid lookups              | a person researched for one product is not bought again for another              |
 | Contact touches           | no first touch to someone another workspace emailed in the last 7 days           |
-| The LinkedIn account      | one connection, with a daily invite share per workspace                          |
+| The LinkedIn account      | one connection; an optional daily invite share per workspace                     |
 | LinkedIn suppression list | a profile one workspace invited is never invited by another                      |
+
+The invite share is optional: unset, a workspace is held only by the account's daily cap; `0` pauses that workspace's invites. See [LinkedIn](./linkedin.md#connection-requests-as-a-first-touch).
 
 The 7-day hold follows a person's known email aliases. The draft is flagged `contacted-elsewhere`; you can override it on a single manual send.
 

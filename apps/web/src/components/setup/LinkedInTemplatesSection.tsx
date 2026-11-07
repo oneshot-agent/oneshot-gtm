@@ -74,6 +74,7 @@ export function LinkedInTemplatesSection({ cfg, onDirtyChange }: SectionProps) {
                 </span>{" "}
                 <span className={example.over ? "text-[color:var(--ink-blocked-2)]" : undefined}>
                   · {example.length} / {field.limit} characters
+                  {field.premiumLimit ? ` (${field.premiumLimit} with LinkedIn Premium)` : ""}
                 </span>
               </div>
             ) : (

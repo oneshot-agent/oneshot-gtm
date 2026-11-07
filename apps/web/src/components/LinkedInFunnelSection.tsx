@@ -33,7 +33,7 @@ const ROWS: FunnelRow[] = [
   {
     label: "Withdrawn",
     value: (f) =>
-      `${f.withdrawn.total} · timeout ${f.withdrawn.timeout} · manual ${f.withdrawn.manual} · unrecorded ${f.withdrawn.unknown}`,
+      `${f.withdrawn.total} · timeout ${f.withdrawn.timeout} · manual ${f.withdrawn.manual} · opted out ${f.withdrawn.optOut} · unrecorded ${f.withdrawn.unknown}`,
   },
   {
     label: "Accepted",

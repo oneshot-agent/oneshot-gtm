@@ -1,5 +1,6 @@
 import {
   getLedger,
+  linkedInInviteExpiryDays,
   linkedInInviteTimeoutDays,
   linkedInOutreachAccount,
   logEvent,
@@ -10,6 +11,7 @@ import {
   liveLinkedInInvite,
   parseLinkedInInvitations,
   resolveLinkedInInvite,
+  withdrawInviteForOptOut,
   type LinkedInInvitationInfo,
   type LiveLinkedInInvite,
 } from "./_linkedin-invites.ts";
@@ -28,6 +30,8 @@ export interface LinkedInInviteSweepResult {
   accepted: number;
   withdrawn: number;
   stopped: number;
+  /** Of `withdrawn`, invites withdrawn at once because the person opted out. */
+  optedOut: number;
   /** Messages and invites whose outcome was pending, resolved first. */
   pendingSends: LinkedInPendingSweepResult;
 }
@@ -43,6 +47,11 @@ const watermarkKey = (a: { workspace: string; accountId: string }): string =>
  * as due, like any follow-up, to be reviewed and sent there. First it
  * records the outcome of sends that were still pending (_linkedin-pending.ts),
  * which only reads OneShot's records.
+ *
+ * It watches every pending invite whatever its cadence's status, so one whose
+ * cadence a reply or a stop ended is still recorded when accepted and still
+ * withdrawn at the timeout. The invite of someone who opted out is withdrawn
+ * at once.
  */
 export async function sweepLinkedInInvitations(input: {
   linkedIn: LinkedInCaller;
@@ -55,6 +64,7 @@ export async function sweepLinkedInInvitations(input: {
     accepted: 0,
     withdrawn: 0,
     stopped: 0,
+    optedOut: 0,
     pendingSends: await sweepLinkedInPendingSends({ linkedIn: input.linkedIn }),
   };
   const nowMs = (input.now ?? new Date()).getTime();
@@ -65,7 +75,12 @@ export async function sweepLinkedInInvitations(input: {
     string,
     {
       account: { workspace: string; accountId: string };
-      items: Array<{ prospectId: number; playName: string; invite: LiveLinkedInInvite }>;
+      items: Array<{
+        prospectId: number;
+        playName: string;
+        invite: LiveLinkedInInvite;
+        optedOut: boolean;
+      }>;
     }
   >();
   const fallback = linkedInOutreachAccount();
@@ -77,7 +92,12 @@ export async function sweepLinkedInInvitations(input: {
     if (!account) continue;
     const key = `${account.workspace}\u0000${account.accountId}`;
     const group = byAccount.get(key) ?? { account, items: [] };
-    group.items.push({ prospectId: c.prospect_id, playName: c.play_name, invite });
+    group.items.push({
+      prospectId: c.prospect_id,
+      playName: c.play_name,
+      invite,
+      optedOut: c.opted_out === 1,
+    });
     byAccount.set(key, group);
     out.pending++;
   }
@@ -115,12 +135,32 @@ export async function sweepLinkedInInvitations(input: {
     for (const item of items) {
       const id = item.invite.invitationId!;
       const invitation = changed.get(id);
+      const lastTry = Date.parse(item.invite.lastWithdrawAttemptAt ?? "");
+      // They opted out: withdraw now, unless the list already shows the
+      // invite answered (then it is recorded as usual below). A failed try
+      // waits a day like any other.
+      if (item.optedOut && (!invitation || invitation.status === "pending")) {
+        if (nowMs - lastTry < DAY_MS) continue;
+        out.calls++;
+        const outcome = await withdrawInviteForOptOut({
+          prospectId: item.prospectId,
+          playName: item.playName,
+          invite: item.invite,
+          account,
+          linkedIn: input.linkedIn,
+        });
+        if (outcome !== "failed") out.stopped++;
+        if (outcome === "withdrawn") {
+          out.withdrawn++;
+          out.optedOut++;
+        }
+        continue;
+      }
       const overdue = nowMs - item.invite.invitedAtMs >= timeoutMs;
       if (!invitation && !overdue && !truncated) continue;
       // A withdrawal that failed waits a day before the next try, unless the
       // invitation changed since. The retry reads its status first, so an
       // accept hidden past a full page is still caught then.
-      const lastTry = Date.parse(item.invite.lastWithdrawAttemptAt ?? "");
       if (!invitation && nowMs - lastTry < DAY_MS) continue;
       // Overdue, or the list was a full page: the resolver asks for that one
       // invitation (before withdrawing anything), so neither an accept past
@@ -153,6 +193,26 @@ export async function sweepLinkedInInvitations(input: {
       accepted: out.accepted,
       withdrawn: out.withdrawn,
       stopped: out.stopped,
+      opted_out: out.optedOut,
     });
   return out;
+}
+
+/**
+ * With `linkedin.inviteExpiryDays` set, completes every cadence whose
+ * connection request has been due and unsent for longer than that, with stop
+ * reason `invite_expired`: a request the invite share held back that long is
+ * dropped, not sent late. Local only (one ledger statement, no LinkedIn
+ * call). Unset: does nothing. Returns how many cadences it completed.
+ */
+export function expireUnsentLinkedInInvites(input: { now?: Date } = {}): number {
+  const days = linkedInInviteExpiryDays();
+  if (days === null) return 0;
+  const now = input.now ?? new Date();
+  const expired = getLedger().expireUnsentLinkedInInvites({
+    before: new Date(now.getTime() - days * DAY_MS),
+    note: `connection request still unsent ${days} days after it was due`,
+  });
+  if (expired.length > 0) logEvent("linkedin.invite_expiry", { expired: expired.length, days });
+  return expired.length;
 }

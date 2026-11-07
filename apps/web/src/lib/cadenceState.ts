@@ -8,6 +8,7 @@
 import {
   CADENCE_SEND_UNCONFIRMED,
   LINKEDIN_SEND_PENDING,
+  type CadenceEndReason,
   type CadenceHeldElsewhere,
   type CadenceStopReason,
   type CadenceView,
@@ -28,11 +29,19 @@ export function sendErrorLabel(
   return lastSendError === LINKEDIN_SEND_PENDING ? "outcome pending" : "send failed";
 }
 
+/** The reasons Stop offers, as the dialog names them. */
 export const STOP_REASON_LABELS: Record<CadenceStopReason, string> = {
   bad_timing: "bad timing / revisit later",
   other: "other",
   not_a_fit: "not a fit",
   do_not_contact: "do not contact",
+};
+
+/** Every stored reason a cadence ended early, the founder's and the LinkedIn steps' own. */
+export const END_REASON_LABELS: Record<CadenceEndReason, string> = {
+  ...STOP_REASON_LABELS,
+  invite_timeout: "invite not accepted in time",
+  invite_expired: "invite never sent in time",
 };
 
 export type CadenceStateTone = "muted" | "spend" | "blocked" | "receipt";
@@ -68,7 +77,7 @@ export function cadenceStateLabel(c: CadenceView, now: Date): CadenceState {
       return {
         text: join([
           "stopped",
-          c.stopReason ? STOP_REASON_LABELS[c.stopReason] : "reason unavailable",
+          c.stopReason ? END_REASON_LABELS[c.stopReason] : "reason unavailable",
           c.stoppedAt ? ago(c.stoppedAt) : null,
         ]),
         tone: "blocked",
@@ -81,6 +90,16 @@ export function cadenceStateLabel(c: CadenceView, now: Date): CadenceState {
     case "breakup":
       return { text: join(["breakup sent", lastSent ? ago(lastSent) : null]), tone: "spend" };
     case "completed":
+      // Completed without its connection request: say why instead of "4 of 4".
+      if (c.stopReason === "invite_expired")
+        return {
+          text: join([
+            "completed",
+            END_REASON_LABELS.invite_expired,
+            c.stoppedAt ? ago(c.stoppedAt) : null,
+          ]),
+          tone: "muted",
+        };
       return {
         text: join(["completed", `${total} of ${total}`, lastSent ? ago(lastSent) : null]),
         tone: "muted",
@@ -95,6 +114,9 @@ export function cadenceStateLabel(c: CadenceView, now: Date): CadenceState {
       let tone: CadenceStateTone = "muted";
       if (c.nextDueAt == null) {
         if (c.nextStepLabel == null) parts.push("no steps left");
+      } else if (c.linkedinWaitingSince) {
+        // Nothing to send until the invite is accepted: never "overdue".
+        parts.push("waiting for acceptance");
       } else if (new Date(c.nextDueAt).getTime() <= nowMs) {
         parts.push(`overdue · due ${ago(c.nextDueAt)}`);
         tone = "spend";

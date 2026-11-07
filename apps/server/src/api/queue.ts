@@ -257,7 +257,10 @@ function linkedInInviteState(
     const by = eventMeta(after.findLast((e) => e.status === "withdrawn")?.metadata_json ?? null)[
       "withdrawnBy"
     ];
-    return { state: "withdrawn", withdrawnBy: by === "manual" || by === "timeout" ? by : null };
+    return {
+      state: "withdrawn",
+      withdrawnBy: by === "manual" || by === "timeout" || by === "opt_out" ? by : null,
+    };
   }
   if (invite.acceptedAt || invite.alreadyConnected) return { state: "accepted" };
   if (invite.endedAt) return { state: "ended" };

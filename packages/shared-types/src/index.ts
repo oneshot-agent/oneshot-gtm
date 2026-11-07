@@ -21,7 +21,17 @@ export type CadenceStatus =
   /** Stopped by an explicit do-not-contact reply. The prospect is suppressed from further sends. */
   | "unsubscribed";
 
+/** Why the founder stopped a cadence: the choices Stop offers. */
 export type CadenceStopReason = "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
+
+/**
+ * Why a cadence ended early, as stored: a founder's stop reason, or one the
+ * LinkedIn steps record themselves. `invite_timeout`: the connection request
+ * went unaccepted to the timeout (status `stopped`). `invite_expired`: the
+ * connection request stayed due and unsent past `linkedin.inviteExpiryDays`
+ * (status `completed`).
+ */
+export type CadenceEndReason = CadenceStopReason | "invite_timeout" | "invite_expired";
 
 /**
  * `lastSendError` for a send whose outcome is unknown (the mail server gave
@@ -180,7 +190,7 @@ export interface CadenceView {
   enrolledAt: string;
   nextDueAt: string | null;
   lastPolledAt: string | null;
-  stopReason: CadenceStopReason | null;
+  stopReason: CadenceEndReason | null;
   stopNote: string | null;
   stoppedAt: string | null;
   /** Most recent persisted human reply channel; null for legacy reply rows without an inbound event. */
@@ -272,8 +282,12 @@ export interface CadenceCounts {
   breakup: number;
   completed: number;
   paused: number;
+  /** Stopped by the founder (or for another reason), not by an invite timeout. */
   stopped: number;
+  /** Stopped because the connection request went unaccepted to the timeout (`invite_timeout`). */
+  inviteTimedOut: number;
   bounced: number;
+  /** Active and past due, not counting a step waiting on an invite's acceptance. */
   overdue: number;
 }
 
@@ -877,7 +891,7 @@ export interface QueueRowView {
   /** A sent LinkedIn row's invite as it stands now; absent for a known connection and in older API responses. */
   linkedinInvite?: {
     state: "pending" | "accepted" | "withdrawn" | "ended";
-    withdrawnBy?: "manual" | "timeout" | null;
+    withdrawnBy?: "manual" | "timeout" | "opt_out" | null;
   };
   id: number;
   playName: string;

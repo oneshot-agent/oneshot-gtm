@@ -4,7 +4,13 @@ LinkedIn forgives little, so nothing here sends on a timer. You send each invite
 
 OneShot holds the account connection and carries out the actions through its API. No browser automation, no webhook to set up. oneshot-gtm decides who to write to, fills in the text from your [templates](#templates) and stops the cadence when someone answers.
 
-One thing runs unattended. Every 30 minutes the server records the outcome of sends still pending and checks pending invites: it records accepts, and withdraws an invite still pending after 21 days (`config linkedin-invite-timeout <days>`, `off` for the default). A withdrawal that fails is tried again a day later.
+One thing runs unattended, and only while the dashboard server is up (`find watch` does not run it). Every 30 minutes the server records the outcome of sends still pending and checks pending invites:
+
+- **Accepts.** It records them, whatever happened to the cadence since: an invite stays watched after a reply or a stop.
+- **Timeout.** It withdraws an invite still pending 21 days after it was sent (`config linkedin-invite-timeout <days>`, `off` for the default). The cadence ends with reason `invite_timeout`, counted on Cadences apart from your stops. A declined invite is not withdrawn; its cadence just ends.
+- **Opt-out.** When the person unsubscribes or you stop them as do-not-contact, it withdraws their pending invite on the next check. A plain reply or another stop reason withdraws nothing.
+
+Withdrawing is an action on your LinkedIn account. A withdrawal that fails is tried again a day later. A withdrawn person is never invited again, from any workspace.
 
 ## Connecting
 
@@ -19,21 +25,23 @@ Conversations are matched to prospects. A human reply stops every live cadence f
 A queue row on the LinkedIn channel gets a connection note from the [templates](#templates), filled in from the same signal an email would use. Keep notes under 200 characters, the limit on a free LinkedIn account; Premium allows 300. Review it on Queue, then **Send** it as reviewed, or include the row in a batch.
 
 - **Daily limit.** OneShot enforces the account's invite limit, 25 per UTC day by default, across every tool that uses the account. At the limit the batch stops and the rows stay approved.
-- **Workspace share.** `config linkedin-invites <count>` gives this workspace a share of that limit, so the first workspace to send does not spend the day. `off` removes it. The share never raises the account's limit.
+- **Workspace share.** `config linkedin-invites <count>` gives this workspace a share of that limit, so the first workspace to send does not spend the day. Unset (`off`), only the account's limit applies. `0` pauses this workspace's invites; the quota line says "paused". The share never raises the account's limit.
 - **What is left.** Queue, Cadences and Setup show it: `LinkedIn invites today: 4 of 12 left · account 9 left`.
 - **Withdraw.** **Withdraw invite** on the row, while its invite is pending; otherwise the row says whether it was accepted, withdrawn or ended. Withdrawing ends the person's LinkedIn cadence. It never removes an accepted connection.
 - **Switch channel.** An unsent row can move to another channel the person has an address on. Its draft is dropped; Regenerate writes a new one.
 
 A LinkedIn first touch starts a LinkedIn cadence, never an email one.
 
-| Step          | Due                                     |
-| ------------- | --------------------------------------- |
-| Invite        | when you send it                        |
-| First message | 2 days later, and only once accepted    |
-| Close         | 6 days after the first message          |
-| Withdrawal    | 21 days after the invite, if unanswered |
+| Step             | Due                                       |
+| ---------------- | ----------------------------------------- |
+| Invite           | when you send it                          |
+| First message    | 2 days later, and only once accepted      |
+| LinkedIn breakup | 6 days after the first message            |
+| Withdrawal       | 21 days after the invite, if not accepted |
 
-Each message appears on Cadences as due. You preview it and send it. Until the invite is accepted the preview reads "waiting for acceptance". `not connected` and `rate limited` answers leave the step due; they do not fail it.
+Each message appears on Cadences as due. You preview it and send it. Until the invite is accepted the row reads "waiting for acceptance": it is not counted as overdue and can't be selected for a batch. `not connected` and `rate limited` answers leave the step due; they do not fail it. Sending the LinkedIn breakup ends the cadence with status `breakup`.
+
+A LinkedIn reply stops the cadence and is credited to the last LinkedIn message it answers.
 
 **Sending: outcome pending.** OneShot spaces out sends from one account, so a message or invite can still be queued after three minutes. The step then reads "outcome pending", not failed. The 30-minute check records the outcome, and Send checks the same send again instead of sending twice.
 
@@ -78,13 +86,19 @@ The file is a CSV with a `profile_url`, `linkedin_url` or `url` column, or a JSO
 
 Set `linkedinContinuation: true` for the workspace or on one trigger; the trigger wins. For `multiplier` it is on unless the workspace or the trigger sets it to `false`. An email cadence that ends without a reply then carries on three days later:
 
-- an invite whose note knows the person was already emailed,
+- an invite. Its note knows the person was already emailed only when `linkedin.writer` is `"model"`; the default templates don't say so,
 - a first message once they accept, no sooner than two days after the invite,
-- a close.
+- the LinkedIn breakup, after which the cadence ends with status `breakup`.
 
 Someone a recent profile read shows as a connection gets no request: the invite step's preview reads "Already connected: skipping the connection request", and sending it brings the first message forward to now. The read is checked again at send; if it no longer shows a connection, the next preview is the connection request. Someone LinkedIn reports as already connected when the invite goes out has nothing to accept either: their first message goes two days after the invite step. Both messages are written knowing you were already connected, with no thanks for connecting and no mention of a note they never received.
 
 Each step is a draft you review on Cadences. The invite passes the same guard and quota. If the guard refuses, the preview shows the refusal, the step is skipped and the cadence completes. A cadence already running keeps the steps it started with.
+
+**Batch preview.** When the selection holds more connection requests than this workspace has invites left today, only that many are drafted, the longest due first. The rest are held back with the reason; messages are never held. Without a share, the account's remaining caps it when a recent read of it is known.
+
+**Invite expiry.** Off by default. `config linkedin-invite-expiry <days>` completes a cadence whose connection request has been due and unsent for longer than that, with reason `invite_expired`, instead of sending it late. `off` turns it off. It runs with the 30-minute check and calls nothing.
+
+**Cadences enrolled before the setting.** `oneshot-gtm linkedin continue-cadences [--write]` gives them the same steps. Without `--write` it only counts. It touches only people the invite guard would invite today. A cadence still emailing reaches the invite after its last email; one already ended reopens at the invite, spread over the days at the workspace's invite share (the account's 25 when unset; none at a share of `0`). It sends nothing.
 
 A step on a channel the person has no address for is skipped, in any cadence.
 
@@ -98,8 +112,8 @@ Every note and message is a template with the person's details filled in. No mod
 | Connection request, no evidence         | we don't                                                              | `Hi {first_name}, would be good to connect.`                                                                                                       |
 | First message                           | they accepted                                                         | `Hi {first_name}, thanks for connecting. What are you working on right now?`                                                                       |
 | First message, already connected        | you were connected before the sequence                                | `Hi {first_name}, what are you working on right now?`                                                                                              |
-| Last message                            | the prospect has an offer                                             | `Hi {first_name}, last one from me, no reply needed. One thing I'd like to do for you: {offer}. Want me to run a small version? A no is fine too.` |
-| Last message, no offer                  | they don't                                                            | `Hi {first_name}, last one from me, no reply needed. If it's ever useful to compare notes, I'm around.`                                            |
+| Last message                            | the LinkedIn breakup, when the prospect has an offer                  | `Hi {first_name}, last one from me, no reply needed. One thing I'd like to do for you: {offer}. Want me to run a small version? A no is fine too.` |
+| Last message, no offer                  | the LinkedIn breakup, when they don't                                 | `Hi {first_name}, last one from me, no reply needed. If it's ever useful to compare notes, I'm around.`                                            |
 | Connection request after an email reply | [they replied by email](#connecting-with-people-who-replied-by-email) | `Hi {first_name}, we traded emails, so connecting here so the next hello isn't cold.`                                                              |
 
 - **`{first_name}`.** Taken from their name. When the name is a handle or a company, the greeting is dropped: `Hi {first_name}, saw …` reads `Saw …`.
@@ -114,17 +128,17 @@ In `config.json` the templates are `linkedin.templates` (`note`, `noteFallback`,
 
 - **Evidence, aged.** One short clause for why the person surfaced. Stale claims are dropped: an event or hiring signal after 45 days, a job change after 90, a stack or funding round after 180. A repo star does not age.
 - **Their company.** Named only when the title is a founder's, stored data agrees, and a live read of the profile names it. Otherwise no company is passed.
-- **The close.** It says what the product is, names one goal it could carry out for that reader, and ends with an easy out.
-- **Lint.** No link and no pitch phrase in the note. The first message holds to 400 characters and one question, with no link and no meeting ask. The close holds to 400 characters with no link, price or unsupported number. A draft that fails gets one repair; what it still breaks shows as a flag and holds the send.
+- **The LinkedIn breakup.** It says what the product is, names one goal it could carry out for that reader, and ends with an easy out.
+- **Lint.** No link and no pitch phrase in the note. The first message holds to 400 characters and one question, with no link and no meeting ask. The breakup holds to 400 characters with no link, price or unsupported number. A draft that fails gets one repair; what it still breaks shows as a flag and holds the send.
 
 ## Connecting with people who replied by email
 
-Invite, message, close is built for strangers. Someone mid-conversation with you by email gets something lighter: **Connect on LinkedIn**, a note that mentions the exchange, and nothing after it.
+Invite, message, breakup is built for strangers. Someone mid-conversation with you by email gets something lighter: **Connect on LinkedIn**, a note that mentions the exchange, and nothing after it.
 
 - **Who qualifies.** At least one email reply labelled `interested`, `question`, `partnership` or `meeting`, not flagged for review. Any reply labelled `unsubscribe`, `wrong_person`, `complaint`, `not_interested`, `objection` or `pitch_back` vetoes it. They must still pass the invite guard; only its email-reply and ICP refusals are lifted for them.
 - **Where.** On a qualifying thread in Replies, and on the prospect in Queue and Cadences.
 - **How.** The button fills in the note from its template. You edit it and press **Send connection request**. No pitch, no question, no link, no meeting ask, 300 characters at most.
-- **After.** No cadence, no scheduled message. If they accept, the conversation continues in Replies.
+- **After.** No cadence, no scheduled message. If they accept, the conversation continues in Replies. Not accepted after 21 days, the invite is withdrawn like any other.
 
 ## Replies
 
@@ -140,7 +154,7 @@ What Replies learns from your edits is a proposal you approve; see [learning](./
 
 - **Each person once.** A person counts by their newest invite.
 - **Accepted.** Counted from the recorded acceptance, else from a one-to-one conversation with the person, else from a first message having gone out. An accept nobody has messaged can be missed, so read the acceptance rate as a floor. "Already connected" is shown apart; people a profile read showed as connected got no invite and are not counted as invites sent.
-- **Withdrawn.** `timeout` when oneshot-gtm withdrew it after the wait, `manual` when you did, `unknown` when no cause was recorded.
+- **Withdrawn.** `timeout` when oneshot-gtm withdrew it after the wait, `opt_out` when it withdrew it because they opted out, `manual` when you did, `unknown` when no cause was recorded.
 - **Replies.** Shown two ways: to the first message, and at any point after the invite. The same reply from two sources counts once.
 - **Evidence clause.** The funnel splits by whether the note carried an evidence clause.
 - **Friend invites.** Invites to people who replied by email are their own row, outside the cold funnel.

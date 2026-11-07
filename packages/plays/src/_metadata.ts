@@ -184,9 +184,9 @@ const REGISTRY: Record<string, (t: object) => Record<string, unknown>> = {
  * evidence metadata (profile-intro, breakup-revive, …) return `{}`. The
  * `{subject, body}` base is added by `sendDraftedEmail` regardless.
  *
- * Null-valued keys are stripped: `json_extract(metadata_json, '$.repo')`
- * treats a JSON null and a missing key identically, and downstream readers
- * (expandi-sync's buildSignal) check key presence.
+ * Null-valued keys are stripped, so a stored event carries only the evidence
+ * it has: `json_extract(metadata_json, '$.repo')` can't tell a JSON null from
+ * a missing key, and a key that is present reads as evidence that exists.
  */
 export function playMetadata(
   playName: string,

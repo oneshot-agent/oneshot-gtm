@@ -19,8 +19,13 @@ export type LinkedInTemplateStep =
 
 export type LinkedInTemplatePlaceholder = "first_name" | "evidence" | "offer";
 
-/** LinkedIn's limit on a connection-request note. */
+/** LinkedIn's limit on a connection-request note with Premium. */
 export const LINKEDIN_TEMPLATE_NOTE_MAX = 300;
+/**
+ * The limit on a connection-request note from a free LinkedIn account. The
+ * drafter flags a cold note past it (`note-too-long`), so Setup warns there.
+ */
+export const LINKEDIN_TEMPLATE_NOTE_FREE_MAX = 200;
 /** The limit a LinkedIn message is held to. */
 export const LINKEDIN_TEMPLATE_MESSAGE_MAX = 400;
 /** Longest template text a workspace may save. */
@@ -32,6 +37,8 @@ export interface LinkedInTemplateField {
   hint: string;
   /** Rendered length limit for this step. */
   limit: number;
+  /** A higher limit LinkedIn Premium allows, when there is one. */
+  premiumLimit?: number;
   /** Placeholders this step may use. */
   placeholders: readonly LinkedInTemplatePlaceholder[];
 }
@@ -41,14 +48,16 @@ export const LINKEDIN_TEMPLATE_FIELDS: readonly LinkedInTemplateField[] = [
     step: "note",
     label: "Connection request",
     hint: "Sent when we know why they surfaced. Keep it free of any pitch.",
-    limit: LINKEDIN_TEMPLATE_NOTE_MAX,
+    limit: LINKEDIN_TEMPLATE_NOTE_FREE_MAX,
+    premiumLimit: LINKEDIN_TEMPLATE_NOTE_MAX,
     placeholders: ["first_name", "evidence"],
   },
   {
     step: "noteFallback",
     label: "Connection request, no evidence",
     hint: "Sent when nothing checked says why they surfaced.",
-    limit: LINKEDIN_TEMPLATE_NOTE_MAX,
+    limit: LINKEDIN_TEMPLATE_NOTE_FREE_MAX,
+    premiumLimit: LINKEDIN_TEMPLATE_NOTE_MAX,
     placeholders: ["first_name"],
   },
   {

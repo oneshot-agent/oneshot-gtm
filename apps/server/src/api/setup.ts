@@ -904,7 +904,9 @@ export function linkedinTemplateWarnings(incoming: SetupRequest["linkedin"]): st
     const rendered = renderLinkedInTemplate(text, LONGEST_TEMPLATE_VALUES);
     if (!("text" in rendered) || rendered.text.length <= field.limit) continue;
     warnings.push(
-      `${field.label}: up to ${rendered.text.length} characters with a long name, evidence or offer, over its ${field.limit}-character limit.`,
+      field.premiumLimit
+        ? `${field.label}: up to ${rendered.text.length} characters with a long name, evidence or offer, over the ${field.limit}-character limit of a free LinkedIn account (${field.premiumLimit} with LinkedIn Premium).`
+        : `${field.label}: up to ${rendered.text.length} characters with a long name, evidence or offer, over its ${field.limit}-character limit.`,
     );
   }
   return warnings;

@@ -39,6 +39,16 @@ describe("cadenceSelection", () => {
     expect(result.previewable.map((c) => c.prospectId)).toEqual([1, 3]);
     expect(result.sendable.map((c) => c.prospectId)).toEqual([1]);
   });
+  it("leaves a row waiting on its invite's acceptance out of selection, even if it was selected", () => {
+    const rows = [
+      row(1),
+      row(2, { linkedinWaitingSince: "2026-10-01", nextStepChannel: "linkedin" }),
+    ];
+    const result = cadenceSelection(rows, new Set(rows.map(cadenceKey)));
+    expect(result.selectable.map((c) => c.prospectId)).toEqual([1]);
+    expect(result.chosen.map((c) => c.prospectId)).toEqual([1]);
+    expect(result.previewable.map((c) => c.prospectId)).toEqual([1]);
+  });
   it("does not include hidden or unselected cadences or send flagged drafts", () => {
     const rows = [
       row(1),
