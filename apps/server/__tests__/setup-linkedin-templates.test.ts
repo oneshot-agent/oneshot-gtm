@@ -138,17 +138,25 @@ describe("linkedin.writer on /setup", () => {
 });
 
 describe("linkedin template warnings", () => {
-  it("warns on a note that can run past 300 characters once filled, not on a short one", () => {
+  it("warns on a note that can run past 200 characters once filled, not on a short one", () => {
     const long = `Hi {first_name}, saw {evidence}. ${"a".repeat(200)}`;
     const warnings = linkedinTemplateWarnings({
       templates: { note: long, noteFallback: "Hi {first_name}." },
     });
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/^Connection request: up to \d+ characters/);
-    expect(warnings[0]).toContain("over its 300-character limit");
+    expect(warnings[0]).toContain(
+      "over the 200-character limit of a free LinkedIn account (300 with LinkedIn Premium)",
+    );
     expect(linkedinTemplateWarnings({ templates: { note: "Hi {first_name}." } })).toEqual([]);
     expect(linkedinTemplateWarnings(undefined)).toEqual([]);
     expect(linkedinTemplateWarnings({ templates: null })).toEqual([]);
+  });
+
+  it("warns a cold note between 200 and 300 characters, as the drafter flags it; a friend note holds to 300", () => {
+    const mid = `Hi {first_name}. ${"a".repeat(220)}`;
+    expect(linkedinTemplateWarnings({ templates: { noteFallback: mid } })).toHaveLength(1);
+    expect(linkedinTemplateWarnings({ templates: { friendNote: mid } })).toEqual([]);
   });
 
   it("holds a message step to 400", () => {

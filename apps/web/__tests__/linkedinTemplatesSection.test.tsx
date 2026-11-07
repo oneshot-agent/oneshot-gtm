@@ -40,6 +40,9 @@ describe("LinkedInTemplatesSection", () => {
     expect(html).toContain("Default, e.g.: Hi Dana, saw you starred acme/widgets.");
     expect(html).toContain("e.g.: Hello Dana, good to meet.");
     expect(html).toContain(`· ${"Hello Dana, good to meet.".length} / 300 characters`);
+    // A cold note counts against a free account's 200, naming Premium's 300.
+    const note = "Hi Dana, saw you starred acme/widgets. Would be good to connect.";
+    expect(html).toContain(`· ${note.length} / 200 characters (300 with LinkedIn Premium)`);
   });
 
   it("flags an example over the step's limit and a placeholder it can't fill", () => {
