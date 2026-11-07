@@ -32,6 +32,7 @@ import type {
   CadenceHeldElsewhere,
   CadenceCounts,
   CadenceNextStepDraft,
+  CadenceEndReason,
   CadenceStatus,
   CadenceStopReason,
   CadenceView,
@@ -69,6 +70,24 @@ function safeWaitingSince(row: CadenceRow): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * A LinkedIn message step (not the connection request itself) is waiting
+ * while its invite has not been accepted: the date the invite went out, else
+ * null.
+ */
+function waitingSinceFor(
+  row: CadenceRow,
+  next: ReturnType<typeof nextStepInfo> | undefined,
+): string | null {
+  const step =
+    next === undefined ? nextStepInfo(row.play_name, row.current_step, row.prospect_id) : next;
+  return row.status === "active" &&
+    step?.channel === "linkedin" &&
+    step.stepId !== "linkedin:invite"
+    ? safeWaitingSince(row)
+    : null;
 }
 
 /** A cadence's key in the page's bulk reads: prospect, then play. */
@@ -126,12 +145,7 @@ function toView(row: CadenceRow, page: PageReads): CadenceView {
       }
     : undefined;
   const next = nextStepInfo(row.play_name, row.current_step, row.prospect_id, loaded);
-  // A LinkedIn message step (not the connection request itself) is waiting
-  // while its invite has not been accepted: say so, with the date it went out.
-  const linkedinWaitingSince =
-    row.status === "active" && next?.channel === "linkedin" && next.stepId !== "linkedin:invite"
-      ? safeWaitingSince(row)
-      : null;
+  const linkedinWaitingSince = waitingSinceFor(row, next);
   const followupCount = playFollowupCount(row.play_name, row.prospect_id, loaded);
   let deliveries: Map<string, SendDeliveryView>;
   try {
@@ -175,7 +189,7 @@ function toView(row: CadenceRow, page: PageReads): CadenceView {
     enrolledAt: row.enrolled_at,
     nextDueAt: row.next_due_at,
     lastPolledAt: row.last_polled_at,
-    stopReason: row.stop_reason as CadenceStopReason | null,
+    stopReason: row.stop_reason as CadenceEndReason | null,
     stopNote: row.stop_note,
     stoppedAt: row.stopped_at,
     replyChannel: row.reply_channel,
@@ -343,15 +357,30 @@ export function listCadences(req: Request): Response {
     // Scope the tiles to the run too, so they describe the same filtered view.
     countRows = countRows.filter(inRun);
   }
-  const body: CadencesResult = { cadences: viewsForRows(rows), counts: tallyCounts(countRows) };
+  const cadences = viewsForRows(rows);
+  // A row waiting on its invite's acceptance is not overdue: nothing can be
+  // sent until the person accepts. The listed rows already know; any other
+  // (none unless a filter hid it) is looked up.
+  const listed = new Map(cadences.map((v) => [`${v.prospectId}|${v.playName}`, v]));
+  const waiting = (r: CadenceRow): boolean => {
+    const view = listed.get(cadenceKey(r));
+    return view ? view.linkedinWaitingSince != null : waitingSinceFor(r, undefined) != null;
+  };
+  const body: CadencesResult = { cadences, counts: tallyCounts(countRows, waiting) };
   const capacity = sendsToday();
   if (capacity) body.sendsToday = capacity;
   return jsonResponse(body, 200, req);
 }
 
-/** Status breakdown for the summary tiles: `overdue` = active & past due. */
+/**
+ * Status breakdown for the summary tiles: `overdue` = active & past due, and
+ * not waiting on an invite's acceptance. A cadence that ended because its
+ * invite went unaccepted (`invite_timeout`) is counted apart from `stopped`,
+ * which is the founder's stops.
+ */
 function tallyCounts(
-  rows: ReadonlyArray<{ status: string; next_due_at: string | null }>,
+  rows: ReadonlyArray<CadenceRow>,
+  waitingOnAcceptance: (row: CadenceRow) => boolean = () => false,
 ): CadenceCounts {
   const now = Date.now();
   const counts: CadenceCounts = {
@@ -361,10 +390,15 @@ function tallyCounts(
     completed: 0,
     paused: 0,
     stopped: 0,
+    inviteTimedOut: 0,
     bounced: 0,
     overdue: 0,
   };
   for (const r of rows) {
+    if (r.status === "stopped" && r.stop_reason === "invite_timeout") {
+      counts.inviteTimedOut++;
+      continue;
+    }
     if (
       r.status === "active" ||
       r.status === "replied" ||
@@ -375,7 +409,12 @@ function tallyCounts(
       r.status === "bounced"
     ) {
       counts[r.status]++;
-      if (r.status === "active" && r.next_due_at && new Date(r.next_due_at).getTime() <= now) {
+      if (
+        r.status === "active" &&
+        r.next_due_at &&
+        new Date(r.next_due_at).getTime() <= now &&
+        !waitingOnAcceptance(r)
+      ) {
         counts.overdue++;
       }
     }

@@ -31,6 +31,7 @@ import { StepProgress } from "../components/primitives/StepProgress.tsx";
 import { cn, formatSendsToday, timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
 import {
+  END_REASON_LABELS,
   STOP_REASON_LABELS,
   autoReasonBadge,
   awayLabel,
@@ -66,6 +67,7 @@ const TILE_GRID_COLS: Record<number, string> = {
   5: "md:grid-cols-5",
   6: "md:grid-cols-6",
   7: "md:grid-cols-7",
+  8: "md:grid-cols-8",
 };
 
 export const Route = createFileRoute("/cadences")({
@@ -364,13 +366,19 @@ function CadencesPage() {
     onSuccess: (data) => {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
       const okItems = data.results.filter((r) => r.ok);
-      const errCount = data.results.length - okItems.length;
+      const held = data.results.filter((r) => r.heldBack);
+      const errCount = data.results.length - okItems.length - held.length;
       // Auto-expand every successfully-previewed row.
       setExpandedKeys(
         (prev) => new Set([...prev, ...okItems.map((r) => `${r.prospectId}|${r.playName}`)]),
       );
       const tail = errCount > 0 ? ` · ${errCount} skipped` : "";
-      toast.success(`previewed ${okItems.length}${tail}`);
+      // Connection requests past today's invites: not drafted, and the reason says why.
+      const heldTail =
+        held.length > 0
+          ? ` · ${held.length} connection request${held.length === 1 ? "" : "s"} ${held[0]!.error ?? "held back"}`
+          : "";
+      toast.success(`previewed ${okItems.length}${tail}${heldTail}`);
     },
     onError: (err) => toast.error(`bulk preview failed: ${err.message}`),
   });
@@ -569,11 +577,17 @@ function CadencesPage() {
       )}
 
       {/* The bounced tile appears only once any cadence has bounced. A permanent 0
-          would read as reassurance on installs that never ran bounce detection. */}
+          would read as reassurance on installs that never ran bounce detection.
+          The invite-timeout tile likewise appears once an invite has timed out. */}
       <section
         className={cn(
           "grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule",
-          TILE_GRID_COLS[5 + (counts.bounced > 0 ? 1 : 0) + (cadences.data?.sendsToday ? 1 : 0)],
+          TILE_GRID_COLS[
+            5 +
+              (counts.bounced > 0 ? 1 : 0) +
+              (counts.inviteTimedOut > 0 ? 1 : 0) +
+              (cadences.data?.sendsToday ? 1 : 0)
+          ],
         )}
       >
         <CadenceSummary
@@ -601,6 +615,14 @@ function CadencesPage() {
           caption="manually ended"
           tone="blocked"
         />
+        {counts.inviteTimedOut > 0 && (
+          <CadenceSummary
+            label="Invite timed out"
+            value={counts.inviteTimedOut}
+            caption="not accepted · withdrawn"
+            tone="neutral"
+          />
+        )}
         {cadences.data?.sendsToday && (
           <CadenceSummary
             label="Sends today"
@@ -804,7 +826,10 @@ function CadencesPage() {
                     ? c.prospectCompany
                     : null;
                 const isOverdue =
-                  c.status === "active" && c.nextDueAt !== null && c.nextDueAt <= nowIso;
+                  c.status === "active" &&
+                  c.linkedinWaitingSince == null &&
+                  c.nextDueAt !== null &&
+                  c.nextDueAt <= nowIso;
                 // Keep timing in the row; the sheet adds progress and history.
                 const dotsTone =
                   c.status === "replied"
@@ -914,7 +939,7 @@ function CadencesPage() {
                     ? [
                         {
                           key: "stopped",
-                          value: `${c.stopReason ? STOP_REASON_LABELS[c.stopReason] : "reason unavailable"}${
+                          value: `${c.stopReason ? END_REASON_LABELS[c.stopReason] : "reason unavailable"}${
                             c.stoppedAt ? ` · ${timeAgo(c.stoppedAt)}` : ""
                           }`,
                           tone: "blocked" as const,
@@ -1170,10 +1195,17 @@ function CadencesPage() {
                             c.status === "active"
                               ? c.isSending
                                 ? "wait for the in-flight send to finish"
-                                : "select for batch actions"
+                                : c.linkedinWaitingSince
+                                  ? "waiting for the invite to be accepted: nothing to send yet"
+                                  : "select for batch actions"
                               : `only active cadences can be selected (status: ${c.status})`
                           }
-                          disabled={c.status !== "active" || c.isSending || stop.isPending}
+                          disabled={
+                            c.status !== "active" ||
+                            c.isSending ||
+                            c.linkedinWaitingSince != null ||
+                            stop.isPending
+                          }
                           checked={selected.has(rowKey(c))}
                           onChange={() => toggleSelected(rowKey(c))}
                           className="cursor-pointer disabled:cursor-not-allowed disabled:opacity-30"
@@ -1727,8 +1759,9 @@ function CadencesPage() {
       >
         <div className="flex flex-col gap-2">
           <div className="text-[12px] text-ink-muted">
-            This records a LinkedIn reply and stops every active or paused email cadence for this
-            prospect. An email already in flight cannot be recalled and may still complete.
+            This records a LinkedIn reply and stops every active or paused cadence for this
+            prospect, email and LinkedIn. A send already in flight cannot be recalled and may still
+            complete.
           </div>
           <label className="text-[12px] text-ink-muted" htmlFor="linkedin-reply-body">
             What they said (optional) — stored so a reply can be drafted from it later.
@@ -1987,6 +2020,7 @@ const EMPTY_COUNTS: CadenceCounts = {
   completed: 0,
   paused: 0,
   stopped: 0,
+  inviteTimedOut: 0,
   bounced: 0,
   overdue: 0,
 };

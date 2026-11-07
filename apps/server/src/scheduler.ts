@@ -31,6 +31,7 @@ import {
   pollInboxReplies,
   retryUntriagedReplies,
   sweepLinkedInInvitations,
+  expireUnsentLinkedInInvites,
 } from "@oneshot-gtm/plays";
 import { callLinkedIn } from "./linkedin-client.ts";
 import { reportServerExecution } from "./telemetry.ts";
@@ -301,11 +302,23 @@ export function startScheduler(): SchedulerHandle {
         }
       }
       // LinkedIn invitation statuses: record accepts, withdraw invites past
-      // their timeout. Free reads plus a withdrawal; never drafts, never sends
-      // a message (the first message waits on /cadences for review). Isolated
-      // and stamped before the await like the sweeps around it.
+      // their timeout or of someone who opted out. Free reads plus a
+      // withdrawal; never drafts, never sends a message (the first message
+      // waits on /cadences for review). Isolated and stamped before the await
+      // like the sweeps around it. First, with `linkedin.inviteExpiryDays`
+      // set, a local pass completes cadences whose connection request stayed
+      // due and unsent past it.
       if (Date.now() - lastLinkedInInviteSweepAt >= LINKEDIN_INVITE_SWEEP_INTERVAL_MS) {
         lastLinkedInInviteSweepAt = Date.now();
+        try {
+          expireUnsentLinkedInInvites();
+        } catch (err) {
+          logEvent(
+            "scheduler.linkedin_invite_expiry.failed",
+            { message_120: ((err as Error).message ?? "").slice(0, 120) },
+            "warn",
+          );
+        }
         try {
           await withDeadline(
             sweepLinkedInInvitations({ linkedIn: callLinkedIn }),

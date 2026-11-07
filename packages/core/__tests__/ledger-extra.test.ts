@@ -963,6 +963,70 @@ describe("LinkedIn reply events", () => {
     ).toMatchObject({ duplicate: true, cadencesStopped: 0 });
   });
 
+  it("credits a LinkedIn reply to the latest LinkedIn message, never the invite or an email", () => {
+    const pid = ledger.upsertProspect({ email: "li-credit@example.com", source: "test" });
+    const step = (stepIndex: number, channel: "email" | "linkedin", kind?: string) =>
+      ledger.recordSequenceEvent({
+        prospectId: pid,
+        playName: "show-hn",
+        stepIndex,
+        channel,
+        status: "sent",
+        metadata: kind ? { kind } : { subject: "s", body: "b" },
+      });
+    step(0, "email");
+    step(1, "linkedin", "linkedin_invite");
+    step(2, "linkedin");
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
+    ledger.recordLinkedInReply({
+      prospectId: pid,
+      source: "test",
+      externalEventId: "li-credit-1",
+      occurredAt: "2026-10-02T09:00:00.000Z",
+    });
+    const byStep = () =>
+      ledger
+        .listSequenceEventsForProspectPlay(pid, "show-hn")
+        .map((e) => [e.step_index, e.channel, e.status]);
+    expect(byStep()).toEqual([
+      [0, "email", "sent"],
+      [1, "linkedin", "sent"],
+      [2, "linkedin", "replied"],
+    ]);
+    // Once per prospect and play, like an email reply.
+    ledger.recordLinkedInReply({
+      prospectId: pid,
+      source: "test",
+      externalEventId: "li-credit-2",
+      occurredAt: "2026-10-03T09:00:00.000Z",
+    });
+    expect(byStep().filter(([, , status]) => status === "replied")).toHaveLength(1);
+  });
+
+  it("a LinkedIn reply after only an invite credits no step", () => {
+    const pid = ledger.upsertProspect({ email: "li-invite-only@example.com", source: "test" });
+    ledger.recordLinkedInInviteEvent({
+      prospectId: pid,
+      playName: "show-hn",
+      stepIndex: 0,
+      status: "sent",
+      metadata: { invitationId: "inv-only" },
+    });
+    ledger.recordLinkedInReply({
+      prospectId: pid,
+      source: "test",
+      externalEventId: "li-invite-only",
+      occurredAt: new Date().toISOString(),
+    });
+    expect(ledger.listSequenceEventsForProspectPlay(pid, "show-hn").map((e) => e.status)).toEqual([
+      "sent",
+    ]);
+  });
+
   it("reports an already claimed send and leaves its marker for the worker", () => {
     const pid = ledger.upsertProspect({ email: "race@example.com", source: "test" });
     ledger.enrollCadence({

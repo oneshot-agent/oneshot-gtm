@@ -379,33 +379,40 @@ function endInvite(
   input: ResolveInviteInput,
   invite: LiveLinkedInInvite | null,
   note: string,
+  reason: InviteEndReason = "other",
 ): void {
   endLinkedInInvite({
     prospectId: input.prospectId,
     playName: input.playName,
     invite,
     note,
+    reason,
     holdingSendingMarker: input.mode === "cadence",
   });
 }
 
+/** The stop reason an ended invite leaves on its cadence. */
+type InviteEndReason = "other" | "invite_timeout" | "do_not_contact";
+
 /**
  * Stops the cadence and marks the invite ended. False when the cadence was
  * not stopped: none is active, or a send holds it and the caller does not.
- * The invite is marked ended either way.
+ * The invite is marked ended either way. `reason` defaults to `other`; the
+ * timeout records `invite_timeout`, an opt-out `do_not_contact`.
  */
 export function endLinkedInInvite(input: {
   prospectId: number;
   playName: string;
   invite: LiveLinkedInInvite | null;
   note: string;
+  reason?: InviteEndReason;
   holdingSendingMarker: boolean;
 }): boolean {
   const ledger = getLedger();
   const stopped = ledger.stopCadence({
     prospectId: input.prospectId,
     playName: input.playName,
-    reason: "other",
+    reason: input.reason ?? "other",
     note: input.note,
     holdingSendingMarker: input.holdingSendingMarker,
   });
@@ -464,74 +471,20 @@ async function waitOrTimeOut(
   }
   let withdrawStatus: string | null = null;
   if (withdraw && invite?.invitationId && account && input.linkedIn) {
-    // A failed withdrawal job is replayed under its own key: the next day's
-    // try goes under a new one.
-    const withdrawKey = ledger.linkedInSendAttempts.key(
-      `gtm:${currentWorkspaceName()}:cadence:${input.prospectId}:${input.playName}:withdraw:${invite.invitationId}`,
-    );
-    try {
-      const linkedIn = input.linkedIn;
-      const res = await withdrawLinkedInInvite(
-        (operation) => linkedIn(account.workspace, operation),
-        {
-          kind: "withdraw",
-          accountId: account.accountId,
-          invitationId: invite.invitationId,
-          idempotencyKey: withdrawKey,
-          playName: input.playName,
-        },
-      );
-      withdrawStatus = res.status ?? null;
-      if (withdrawStatus === "not_pending") {
-        // Accepted, or gone some other way: nothing was withdrawn, and the
-        // status read that led here may have missed an acceptance. Re-read it
-        // before ending anything.
-        if (input.mode === "cadence") {
-          ledger.postponeCadence({
-            prospectId: input.prospectId,
-            playName: input.playName,
-            nextDueAt: new Date(Date.now() + DAY_MS).toISOString(),
-          });
-        }
-        return {
-          state: "result",
-          result: {
-            action: "waiting",
-            payload: null,
-            receiptIds: [],
-            note: `${note} — invite no longer pending, re-checking its status`,
-          },
-        };
-      }
-      if (isWithdrawnStatus(withdrawStatus)) {
-        // On the invite's own step: a continuation invite is not step 0.
-        ledger.recordLinkedInInviteEvent({
-          prospectId: input.prospectId,
-          playName: input.playName,
-          stepIndex: invite.event.step_index,
-          status: "withdrawn",
-          metadata: { invitationId: invite.invitationId, withdrawStatus, withdrawnBy: "timeout" },
-        });
-      }
-    } catch (err) {
-      ledger.linkedInSendAttempts.noteFailed(withdrawKey, err);
-      logEvent(
-        "cadence.linkedin_withdraw_failed",
-        { message_120: ((err as Error).message ?? "").slice(0, 120) },
-        "warn",
-      );
-      // Leave the invite's cadence running and try again in a day: stopping
-      // here would strand the invite pending with nothing to retry it. The
-      // attempt is recorded so the sweep waits the day too.
-      const prior = parseMeta(invite.event.metadata_json);
-      const attempts = typeof prior.withdrawAttempts === "number" ? prior.withdrawAttempts : 0;
-      ledger.updateLinkedInInviteEvent({
-        id: invite.event.id,
-        metadata: {
-          lastWithdrawAttemptAt: new Date().toISOString(),
-          withdrawAttempts: attempts + 1,
-        },
-      });
+    const attempt = await attemptWithdraw({
+      prospectId: input.prospectId,
+      playName: input.playName,
+      invite,
+      account,
+      linkedIn: input.linkedIn,
+      withdrawnBy: "timeout",
+    });
+    if (attempt === "failed" || attempt === "not_pending") {
+      // Failed: leave the invite's cadence running and try again in a day;
+      // stopping here would strand the invite pending with nothing to retry
+      // it. Not pending: accepted, or gone some other way. Nothing was
+      // withdrawn, and the status read that led here may have missed an
+      // acceptance: re-read it before ending anything.
       if (input.mode === "cadence") {
         ledger.postponeCadence({
           prospectId: input.prospectId,
@@ -545,12 +498,16 @@ async function waitOrTimeOut(
           action: "waiting",
           payload: null,
           receiptIds: [],
-          note: `${note} — withdraw failed, retrying in a day`,
+          note:
+            attempt === "failed"
+              ? `${note} — withdraw failed, retrying in a day`
+              : `${note} — invite no longer pending, re-checking its status`,
         },
       };
     }
+    withdrawStatus = attempt.status;
   }
-  endInvite(input, invite, note);
+  endInvite(input, invite, note, "invite_timeout");
   return {
     state: "result",
     withdrewNow: isWithdrawnStatus(withdrawStatus),
@@ -567,4 +524,103 @@ async function waitOrTimeOut(
             : `${note} — no invitation id recorded; withdraw it on LinkedIn`,
     },
   };
+}
+
+/**
+ * One withdrawal of a sent invite: records `withdrawn` (with who ended it)
+ * when OneShot withdrew it. `failed`: the call failed; the attempt is noted on
+ * the invite so the sweep waits a day before the next try, which goes under a
+ * new key. `not_pending`: there was nothing to withdraw (accepted, or gone).
+ */
+async function attemptWithdraw(input: {
+  prospectId: number;
+  playName: string;
+  invite: LiveLinkedInInvite;
+  account: { workspace: string; accountId: string };
+  linkedIn: LinkedInCaller;
+  withdrawnBy: "timeout" | "opt_out";
+}): Promise<{ status: string | null } | "failed" | "not_pending"> {
+  const ledger = getLedger();
+  const { invite, account, linkedIn } = input;
+  const invitationId = invite.invitationId!;
+  // A failed withdrawal job is replayed under its own key: the next day's
+  // try goes under a new one.
+  const withdrawKey = ledger.linkedInSendAttempts.key(
+    `gtm:${currentWorkspaceName()}:cadence:${input.prospectId}:${input.playName}:withdraw:${invitationId}`,
+  );
+  try {
+    const res = await withdrawLinkedInInvite(
+      (operation) => linkedIn(account.workspace, operation),
+      {
+        kind: "withdraw",
+        accountId: account.accountId,
+        invitationId,
+        idempotencyKey: withdrawKey,
+        playName: input.playName,
+      },
+    );
+    const status = res.status ?? null;
+    if (status === "not_pending") return "not_pending";
+    if (isWithdrawnStatus(status)) {
+      // On the invite's own step: a continuation invite is not step 0.
+      ledger.recordLinkedInInviteEvent({
+        prospectId: input.prospectId,
+        playName: input.playName,
+        stepIndex: invite.event.step_index,
+        status: "withdrawn",
+        metadata: { invitationId, withdrawStatus: status, withdrawnBy: input.withdrawnBy },
+      });
+    }
+    return { status };
+  } catch (err) {
+    ledger.linkedInSendAttempts.noteFailed(withdrawKey, err);
+    logEvent(
+      "cadence.linkedin_withdraw_failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+    const prior = parseMeta(invite.event.metadata_json);
+    const attempts = typeof prior.withdrawAttempts === "number" ? prior.withdrawAttempts : 0;
+    ledger.updateLinkedInInviteEvent({
+      id: invite.event.id,
+      metadata: {
+        lastWithdrawAttemptAt: new Date().toISOString(),
+        withdrawAttempts: attempts + 1,
+      },
+    });
+    return "failed";
+  }
+}
+
+/**
+ * The invite of someone who opted out, withdrawn now rather than at the
+ * timeout, and closed out: recorded `withdrawnBy: "opt_out"`, and any cadence
+ * still active stopped as do-not-contact. An invite no longer pending
+ * (accepted, or gone) is only closed out: an accepted connection is never
+ * removed. A failed call leaves it for the sweep's next try, a day later.
+ * Run by the unattended sweep only.
+ */
+export async function withdrawInviteForOptOut(input: {
+  prospectId: number;
+  playName: string;
+  invite: LiveLinkedInInvite;
+  account: { workspace: string; accountId: string };
+  linkedIn: LinkedInCaller;
+}): Promise<"withdrawn" | "ended" | "failed"> {
+  const attempt = input.invite.invitationId
+    ? await attemptWithdraw({ ...input, withdrawnBy: "opt_out" })
+    : "not_pending";
+  if (attempt === "failed") return "failed";
+  const withdrawn = attempt !== "not_pending" && isWithdrawnStatus(attempt.status);
+  endLinkedInInvite({
+    prospectId: input.prospectId,
+    playName: input.playName,
+    invite: input.invite,
+    note: withdrawn
+      ? "they opted out — LinkedIn invite withdrawn"
+      : "they opted out — LinkedIn invite no longer pending",
+    reason: "do_not_contact",
+    holdingSendingMarker: false,
+  });
+  return withdrawn ? "withdrawn" : "ended";
 }

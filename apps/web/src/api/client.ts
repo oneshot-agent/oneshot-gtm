@@ -258,6 +258,8 @@ export const api = {
         ok: boolean;
         preview?: { subject: string; body: string; flags: string[]; draftedAt: string };
         error?: string;
+        /** A connection request not drafted: today's invites ran out before it. */
+        heldBack?: boolean;
       }>;
     }>(`/cadences/preview-batch`, { items }),
   sendCadenceBatch: (items: Array<{ prospectId: number; playName: string }>) =>

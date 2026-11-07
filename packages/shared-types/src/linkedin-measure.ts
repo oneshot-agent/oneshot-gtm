@@ -55,8 +55,8 @@ export type LinkedInInviteState = "pending" | "accepted" | "withdrawn" | "alread
 /** `invitation`: the invite event's `acceptedAt`. `conversation`: a synced 1:1 conversation appeared. */
 export type LinkedInAcceptedVia = "invitation" | "conversation";
 
-/** `timeout`: GTM withdrew it after the wait. `manual`: withdrawn by hand (in GTM or on LinkedIn). `unknown`: recorded before the reason was. */
-export type LinkedInWithdrawnBy = "timeout" | "manual" | "unknown";
+/** `timeout`: GTM withdrew it after the wait. `manual`: withdrawn by hand (in GTM or on LinkedIn). `opt_out`: GTM withdrew it when the person opted out. `unknown`: recorded before the reason was. */
+export type LinkedInWithdrawnBy = "timeout" | "manual" | "opt_out" | "unknown";
 
 /** Whether the note's prompt carried an evidence clause, as recorded when it was sent. */
 export type LinkedInEvidenceVariant = "with" | "without" | "unrecorded";
@@ -93,7 +93,7 @@ export interface LinkedInFunnel {
   /** Each person once: their newest sent invite. */
   invitesSent: number;
   pending: number;
-  withdrawn: { total: number; timeout: number; manual: number; unknown: number };
+  withdrawn: { total: number; timeout: number; manual: number; optOut: number; unknown: number };
   accepted: {
     total: number;
     /** By the invite event's `acceptedAt`. */

@@ -680,7 +680,10 @@ describe("unattended status sweep", () => {
     expect(kinds()).toEqual(["invitations", "invitation", "withdraw"]);
     expect(kinds()).not.toContain("message");
     expect(kinds()).not.toContain("reply");
-    expect(ledger.getCadence(prospectId, PLAY)!.status).toBe("stopped");
+    expect(ledger.getCadence(prospectId, PLAY)).toMatchObject({
+      status: "stopped",
+      stop_reason: "invite_timeout",
+    });
     expect(ledger.listLinkedInInviteEvents(prospectId, PLAY).map((e) => e.status)).toEqual([
       "sent",
       "withdrawn",
@@ -854,6 +857,133 @@ describe("unattended status sweep", () => {
     const out = await sweepLinkedInInvitations({ linkedIn: li });
     expect(out.pending).toBe(2);
     expect(kinds()).toEqual(["invitations"]);
+  });
+});
+
+describe("invites whose cadence already ended", () => {
+  const pendingList = (status = "pending") =>
+    caller({
+      invitations: () => ({
+        invitations: [{ invitation_id: `inv-${prospectId}`, status, accepted_at: null }],
+      }),
+      invitation: () => ({ invitation_id: `inv-${prospectId}`, status, accepted_at: null }),
+      withdraw: () => ({ status: "withdrawn" }),
+    });
+  const withdrawals = () =>
+    ledger
+      .listLinkedInInviteEvents(prospectId, PLAY)
+      .filter((e) => e.status === "withdrawn")
+      .map((e) => JSON.parse(e.metadata_json ?? "{}") as Record<string, unknown>);
+
+  it("still records an accept after a reply ended the cadence, and advances nothing", async () => {
+    inviteSent();
+    ledger.recordProspectReply(prospectId);
+    expect(ledger.getCadence(prospectId, PLAY)!.status).toBe("replied");
+    const out = await sweepLinkedInInvitations({ linkedIn: pendingList("accepted") });
+    expect(out).toMatchObject({ pending: 1, accepted: 1 });
+    expect(inviteMeta()).toHaveProperty("acceptedAt");
+    expect(ledger.getCadence(prospectId, PLAY)).toMatchObject({
+      status: "replied",
+      current_step: 0,
+      next_due_at: null,
+    });
+  });
+
+  it("still withdraws at the timeout after a reply, leaving the cadence replied", async () => {
+    inviteSent({ daysAgo: 22 });
+    ledger.recordProspectReply(prospectId);
+    const out = await sweepLinkedInInvitations({ linkedIn: pendingList() });
+    expect(out.withdrawn).toBe(1);
+    expect(withdrawals()).toEqual([expect.objectContaining({ withdrawnBy: "timeout" })]);
+    expect(ledger.getCadence(prospectId, PLAY)!.status).toBe("replied");
+    // Closed out: the next sweep has nothing to look at.
+    calls = [];
+    expect(await sweepLinkedInInvitations({ linkedIn: pendingList() })).toMatchObject({
+      pending: 0,
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it("a plain reply or a founder stop never withdraws early", async () => {
+    inviteSent();
+    ledger.stopCadence({ prospectId, playName: PLAY, reason: "bad_timing" });
+    const second = ledger.upsertProspect({
+      name: "Sam Roe",
+      email: null,
+      linkedin_url: "https://www.linkedin.com/in/sam-roe",
+      source: PLAY,
+    });
+    inviteSent({ prospect: second });
+    ledger.recordProspectReply(second);
+    const li = caller({ invitations: () => ({ invitations: [] }) });
+    const out = await sweepLinkedInInvitations({ linkedIn: li });
+    expect(out).toMatchObject({ pending: 2, withdrawn: 0 });
+    expect(kinds()).toEqual(["invitations"]);
+  });
+
+  it("withdraws at once when the person opted out, recorded withdrawnBy opt_out", async () => {
+    inviteSent();
+    ledger.setCadenceStatus({ prospectId, playName: PLAY, status: "unsubscribed" });
+    const li = caller({
+      invitations: () => ({ invitations: [] }),
+      withdraw: () => ({ status: "withdrawn" }),
+    });
+    const out = await sweepLinkedInInvitations({ linkedIn: li });
+    expect(out).toMatchObject({ pending: 1, withdrawn: 1, optedOut: 1 });
+    expect(kinds()).toEqual(["invitations", "withdraw"]);
+    expect(withdrawals()).toEqual([expect.objectContaining({ withdrawnBy: "opt_out" })]);
+    expect(calls.find((c) => c.kind === "withdraw")).toMatchObject({
+      idempotencyKey: `gtm:alpha:cadence:${prospectId}:${PLAY}:withdraw:inv-${prospectId}`,
+    });
+    expect(ledger.getCadence(prospectId, PLAY)!.status).toBe("unsubscribed");
+    calls = [];
+    expect(await sweepLinkedInInvitations({ linkedIn: li })).toMatchObject({ pending: 0 });
+    expect(calls).toEqual([]);
+  });
+
+  it("a do-not-contact stop withdraws at once too, and stops nothing else", async () => {
+    inviteSent();
+    ledger.stopCadence({ prospectId, playName: PLAY, reason: "do_not_contact" });
+    const li = caller({
+      invitations: () => ({ invitations: [] }),
+      withdraw: () => ({ status: "withdrawn" }),
+    });
+    const out = await sweepLinkedInInvitations({ linkedIn: li });
+    expect(out).toMatchObject({ withdrawn: 1, optedOut: 1 });
+    expect(ledger.getCadence(prospectId, PLAY)).toMatchObject({
+      status: "stopped",
+      stop_reason: "do_not_contact",
+    });
+  });
+
+  it("an opted-out person's invite the list shows accepted is recorded, never withdrawn", async () => {
+    inviteSent();
+    ledger.setCadenceStatus({ prospectId, playName: PLAY, status: "unsubscribed" });
+    const out = await sweepLinkedInInvitations({ linkedIn: pendingList("accepted") });
+    expect(out).toMatchObject({ accepted: 1, withdrawn: 0 });
+    expect(kinds()).not.toContain("withdraw");
+  });
+
+  it("an opt-out withdrawal that fails waits a day; one no longer pending is closed out", async () => {
+    inviteSent();
+    ledger.setCadenceStatus({ prospectId, playName: PLAY, status: "unsubscribed" });
+    let answer: () => unknown = failedWithdrawal;
+    const li = caller({ invitations: () => ({ invitations: [] }), withdraw: () => answer() });
+    expect((await sweepLinkedInInvitations({ linkedIn: li })).withdrawn).toBe(0);
+    expect(inviteMeta()).toMatchObject({ withdrawAttempts: 1 });
+    calls = [];
+    await sweepLinkedInInvitations({ linkedIn: li, now: new Date(Date.now() + 23 * 3600_000) });
+    expect(kinds()).toEqual(["invitations"]);
+    answer = () => ({ status: "not_pending" });
+    calls = [];
+    const later = await sweepLinkedInInvitations({
+      linkedIn: li,
+      now: new Date(Date.now() + 25 * 3600_000),
+    });
+    expect(kinds()).toEqual(["invitations", "withdraw"]);
+    expect(later).toMatchObject({ withdrawn: 0, stopped: 1 });
+    expect(withdrawals()).toEqual([]);
+    expect(inviteMeta()).toHaveProperty("endedAt");
   });
 });
 

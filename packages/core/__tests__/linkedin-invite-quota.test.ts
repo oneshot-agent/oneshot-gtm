@@ -6,7 +6,10 @@ import { saveConfig, loadConfig } from "../src/config.ts";
 import {
   _resetInviteLimitsCacheForTests,
   DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS,
+  configuredInvitesPerDay,
   describeInviteQuota,
+  invitesLeftToday,
+  linkedInInviteExpiryDays,
   linkedInInviteStatus,
   linkedInInviteTimeoutDays,
   reserveLinkedInInvite,
@@ -52,6 +55,14 @@ describe("SharedDb invite slots", () => {
     expect("id" in db.reserveInviteSlot({ accountId: "acct", workspace: "w1", limit: 2 })).toBe(
       true,
     );
+  });
+
+  it("refuses every slot at a limit of 0", () => {
+    const db = freshDb();
+    expect(db.reserveInviteSlot({ accountId: "acct", workspace: "w1", limit: 0 })).toEqual({
+      full: true,
+      used: 0,
+    });
   });
 
   it("never releases a confirmed slot", () => {
@@ -180,6 +191,21 @@ describe("reserveLinkedInInvite", () => {
     expect(status.used).toBe(0);
   });
 
+  it("defers every invite at a share of 0, saying paused, without reading the account", async () => {
+    setShare(0);
+    let reads = 0;
+    const err = await reserveLinkedInInvite({
+      accountId: "acct-paused",
+      fetchAccount: async () => {
+        reads++;
+        return account(9)();
+      },
+    }).catch((e: unknown) => e);
+    expect(isSendDeferred(err)).toBe(true);
+    expect((err as Error).message).toContain("paused for this workspace");
+    expect(reads).toBe(0);
+  });
+
   it("falls back to the account cap alone when the account can't be read", async () => {
     const slot = await reserveLinkedInInvite({
       accountId: "acct-err",
@@ -214,6 +240,15 @@ describe("status line", () => {
     );
   });
 
+  it("says paused at a share of 0", async () => {
+    setShare(0);
+    const status = await linkedInInviteStatus("acct-line-0", account(9));
+    expect(status.perDay).toBe(0);
+    expect(describeInviteQuota(status)).toBe(
+      "LinkedIn invites today: paused for this workspace · account 9 left",
+    );
+  });
+
   it("shows only the account when no share is set", async () => {
     const status = await linkedInInviteStatus("acct-solo", account(9));
     expect(describeInviteQuota(status)).toBe("LinkedIn invites today: account 9 left");
@@ -232,6 +267,50 @@ describe("invite timeout", () => {
     ] as const) {
       saveConfig({ ...loadConfig(), linkedin: { inviteTimeoutDays: value } });
       expect(linkedInInviteTimeoutDays()).toBe(days);
+    }
+  });
+});
+
+describe("workspace share", () => {
+  it("reads 0 as paused and anything negative, fractional or unset as no share", () => {
+    expect(configuredInvitesPerDay()).toBeNull();
+    for (const [value, share] of [
+      [12, 12],
+      [0, 0],
+      [-1, null],
+      [2.5, null],
+    ] as const) {
+      setShare(value);
+      expect(configuredInvitesPerDay()).toBe(share);
+    }
+  });
+
+  it("knows what is left today without a call: the share, lowered to a cached account read", async () => {
+    expect(invitesLeftToday("acct-left")).toBeNull();
+    setShare(3);
+    (await reserveLinkedInInvite({ accountId: "acct-left", fetchAccount: account(9) })).confirm();
+    expect(invitesLeftToday("acct-left")).toBe(2);
+    _resetInviteLimitsCacheForTests();
+    await linkedInInviteStatus("acct-left", account(1));
+    expect(invitesLeftToday("acct-left")).toBe(1);
+    setShare(undefined);
+    expect(invitesLeftToday("acct-left")).toBe(1);
+    setShare(0);
+    expect(invitesLeftToday("acct-left")).toBe(0);
+  });
+});
+
+describe("invite expiry", () => {
+  it("is off unless linkedin.inviteExpiryDays is a positive integer", () => {
+    expect(linkedInInviteExpiryDays()).toBeNull();
+    for (const [value, days] of [
+      [10, 10],
+      [0, null],
+      [-2, null],
+      [2.5, null],
+    ] as const) {
+      saveConfig({ ...loadConfig(), linkedin: { inviteExpiryDays: value } });
+      expect(linkedInInviteExpiryDays()).toBe(days);
     }
   });
 });

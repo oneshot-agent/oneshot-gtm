@@ -41,7 +41,7 @@ function renderFunnel(label: string, f: LinkedInFunnel): void {
   note(`  invites sent                  ${f.invitesSent}`);
   note(`  pending                       ${f.pending}`);
   note(
-    `  withdrawn                     ${f.withdrawn.total} (timeout ${f.withdrawn.timeout}, manual ${f.withdrawn.manual}, unrecorded ${f.withdrawn.unknown})`,
+    `  withdrawn                     ${f.withdrawn.total} (timeout ${f.withdrawn.timeout}, manual ${f.withdrawn.manual}, opted out ${f.withdrawn.optOut}, unrecorded ${f.withdrawn.unknown})`,
   );
   const days =
     f.accepted.medianDaysToAccept === null

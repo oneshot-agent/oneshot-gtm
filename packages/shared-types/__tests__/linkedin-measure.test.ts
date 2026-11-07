@@ -6,7 +6,7 @@ import { type LinkedInFunnel, linkedInFunnelHasActivity } from "../src/index";
 const empty: LinkedInFunnel = {
   invitesSent: 0,
   pending: 0,
-  withdrawn: { total: 0, timeout: 0, manual: 0, unknown: 0 },
+  withdrawn: { total: 0, timeout: 0, manual: 0, optOut: 0, unknown: 0 },
   accepted: {
     total: 0,
     viaInvitation: 0,

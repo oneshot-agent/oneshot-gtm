@@ -1651,7 +1651,9 @@ function inviteStateLabel(invite: NonNullable<QueueRowView["linkedinInvite"]>): 
   if (invite.state === "withdrawn") {
     return invite.withdrawnBy === "timeout"
       ? "invite withdrawn after the wait"
-      : "invite withdrawn";
+      : invite.withdrawnBy === "opt_out"
+        ? "invite withdrawn: they opted out"
+        : "invite withdrawn";
   }
   return invite.state === "accepted" ? "invite accepted" : "invite ended";
 }
@@ -1920,7 +1922,7 @@ export function DraftSection({
         variant="ghost"
         size="sm"
         onClick={() => setLinkedinOpen(true)}
-        title="Record a LinkedIn reply and stop any email cadence for this prospect"
+        title="Record a LinkedIn reply and stop every active or paused cadence for this prospect"
       >
         Record a LinkedIn reply
       </Button>

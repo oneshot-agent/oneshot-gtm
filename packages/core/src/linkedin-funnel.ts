@@ -211,7 +211,11 @@ function buildUnits(input: LinkedInFunnelInput): Unit[] {
 
       const by = str(withdrawMeta["withdrawnBy"]);
       const withdrawnBy: LinkedInWithdrawnBy | null =
-        state !== "withdrawn" ? null : by === "timeout" || by === "manual" ? by : "unknown";
+        state !== "withdrawn"
+          ? null
+          : by === "timeout" || by === "manual" || by === "opt_out"
+            ? by
+            : "unknown";
       const acceptedAtMs = acceptedAt ? Date.parse(acceptedAt) : Number.NaN;
 
       units.push({
@@ -307,6 +311,7 @@ function funnelOf(units: Unit[], replies: PersonReplies): LinkedInFunnel {
       total: withdrawn.length,
       timeout: withdrawn.filter((u) => u.row.withdrawnBy === "timeout").length,
       manual: withdrawn.filter((u) => u.row.withdrawnBy === "manual").length,
+      optOut: withdrawn.filter((u) => u.row.withdrawnBy === "opt_out").length,
       unknown: withdrawn.filter((u) => u.row.withdrawnBy === "unknown").length,
     },
     accepted: {

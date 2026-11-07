@@ -191,7 +191,7 @@ describe("LinkedIn funnel", () => {
     const f = compute().view.funnel;
     expect(f.invitesSent).toBe(7); // A B C D E F H; G never went out
     expect(f.pending).toBe(1); // C
-    expect(f.withdrawn).toEqual({ total: 2, timeout: 1, manual: 1, unknown: 0 });
+    expect(f.withdrawn).toEqual({ total: 2, timeout: 1, manual: 1, optOut: 0, unknown: 0 });
     expect(f.accepted.total).toBe(3); // A, F by invitation; B by conversation
     expect(f.accepted.viaInvitation).toBe(2);
     expect(f.accepted.viaConversation).toBe(1);
@@ -513,6 +513,12 @@ describe("friend invites (#791)", () => {
     invite(f, FRIEND, at(30), {}, 1);
     withdraw(f, FRIEND, at(9), "timeout", 1);
     const view = compute().view;
-    expect(view.friend.withdrawn).toEqual({ total: 1, timeout: 1, manual: 0, unknown: 0 });
+    expect(view.friend.withdrawn).toEqual({
+      total: 1,
+      timeout: 1,
+      manual: 0,
+      optOut: 0,
+      unknown: 0,
+    });
   });
 });

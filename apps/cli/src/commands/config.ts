@@ -231,8 +231,9 @@ export async function configSpendCeiling(amountArg?: string): Promise<void> {
 
 /**
  * Show or set `linkedin.invitesPerDay`: this workspace's share of the LinkedIn
- * account's daily invite cap. `off` clears it (only the account cap applies).
- * Must be a positive integer; anything else is refused rather than saved.
+ * account's daily invite cap. `off` clears it (only the account cap applies);
+ * 0 pauses this workspace's invites. Must be a whole number; anything else is
+ * refused rather than saved.
  */
 export async function configLinkedInInvites(valueArg?: string): Promise<void> {
   header("LinkedIn invites per day");
@@ -243,7 +244,9 @@ export async function configLinkedInInvites(valueArg?: string): Promise<void> {
     note(
       current === undefined
         ? "no workspace share (only the LinkedIn account's daily cap applies)"
-        : `${current} per UTC day for this workspace, within the account's daily cap`,
+        : current === 0
+          ? "paused: this workspace sends no invites"
+          : `${current} per UTC day for this workspace, within the account's daily cap`,
     );
     note(c.dim("set with: oneshot-gtm config linkedin-invites <count|off>"));
     return;
@@ -258,12 +261,16 @@ export async function configLinkedInInvites(valueArg?: string): Promise<void> {
 
   // Number(), not parseInt: "12abc" must not save as 12.
   const count = Number(valueArg);
-  if (!Number.isInteger(count) || count <= 0) {
-    throw new Error(`invalid count '${valueArg}' — pass a positive whole number, or 'off'`);
+  if (valueArg.trim() === "" || !Number.isInteger(count) || count < 0) {
+    throw new Error(
+      `invalid count '${valueArg}' — pass a whole number (0 pauses invites), or 'off'`,
+    );
   }
   saveConfig({ ...cfg, linkedin: { ...cfg.linkedin, invitesPerDay: count } });
   ok(
-    `this workspace may send ${count} LinkedIn invites per UTC day (the account cap still applies)`,
+    count === 0
+      ? "LinkedIn invites paused for this workspace; set a count or 'off' to resume"
+      : `this workspace may send ${count} LinkedIn invites per UTC day (the account cap still applies)`,
   );
 }
 
@@ -303,6 +310,42 @@ export async function configLinkedInInviteTimeout(valueArg?: string): Promise<vo
   }
   saveConfig({ ...cfg, linkedin: { ...cfg.linkedin, inviteTimeoutDays: days } });
   ok(`an invite not accepted after ${days} days is withdrawn and its cadence ends`);
+}
+
+/**
+ * Show or set `linkedin.inviteExpiryDays`: days a continuation invite may stay
+ * due and unsent before its cadence is completed without it. `off` clears it
+ * (the invite waits as long as it takes). Must be a positive integer.
+ */
+export async function configLinkedInInviteExpiry(valueArg?: string): Promise<void> {
+  header("LinkedIn invite expiry");
+  const cfg = loadConfig();
+  const current = cfg.linkedin?.inviteExpiryDays;
+
+  if (valueArg === undefined) {
+    note(
+      current === undefined
+        ? "off: a due connection request waits until it is sent"
+        : `a connection request still unsent ${current} days after it fell due ends its cadence`,
+    );
+    note(c.dim("set with: oneshot-gtm config linkedin-invite-expiry <days|off>"));
+    return;
+  }
+
+  if (valueArg === "off") {
+    const { inviteExpiryDays: _removed, ...rest } = cfg.linkedin ?? {};
+    saveConfig({ ...cfg, linkedin: rest });
+    ok("invite expiry off — a due connection request waits until it is sent");
+    return;
+  }
+
+  // Number(), not parseInt: "14abc" must not save as 14.
+  const days = Number(valueArg);
+  if (!Number.isInteger(days) || days <= 0) {
+    throw new Error(`invalid days '${valueArg}' — pass a positive whole number, or 'off'`);
+  }
+  saveConfig({ ...cfg, linkedin: { ...cfg.linkedin, inviteExpiryDays: days } });
+  ok(`a connection request still unsent ${days} days after it fell due ends its cadence`);
 }
 
 const X_TRIGGER = "x-reposters";

@@ -126,6 +126,30 @@ describe("cadenceStateLabel", () => {
     ).toEqual({ text: "stopped · not a fit · 5d ago", tone: "blocked" });
   });
 
+  it("the LinkedIn steps' own end reasons, in words", () => {
+    expect(
+      cadenceStateLabel(
+        cadence({ status: "stopped", stopReason: "invite_timeout", stoppedAt: daysAgo(1) }),
+        now,
+      ),
+    ).toEqual({ text: "stopped · invite not accepted in time · 1d ago", tone: "blocked" });
+    expect(
+      cadenceStateLabel(
+        cadence({ status: "completed", stopReason: "invite_expired", stoppedAt: daysAgo(2) }),
+        now,
+      ),
+    ).toEqual({ text: "completed · invite never sent in time · 2d ago", tone: "muted" });
+  });
+
+  it("a step waiting on the invite's acceptance is never overdue", () => {
+    expect(
+      cadenceStateLabel(
+        cadence({ nextDueAt: daysAgo(2), linkedinWaitingSince: "2026-09-01" }),
+        now,
+      ),
+    ).toEqual({ text: "step 2 of 4 · sent 3d ago · waiting for acceptance", tone: "muted" });
+  });
+
   it("bounced, breakup, completed, paused", () => {
     expect(cadenceStateLabel(cadence({ status: "bounced" }), now)).toEqual({
       text: "bounced · 3d ago",

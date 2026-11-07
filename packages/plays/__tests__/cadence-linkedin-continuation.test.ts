@@ -72,7 +72,23 @@ const {
   sweepLinkedInInvitations,
   triggerLinkedInContinuation,
   continueCadencesOntoLinkedIn,
+  expireUnsentLinkedInInvites,
 } = await import("../src/index.ts");
+const realCore = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+
+/** Run with these real `linkedin` settings (read by core itself, not the mocked loadConfig). */
+async function withLinkedInConfig<T>(
+  linkedin: Record<string, unknown>,
+  body: () => Promise<T> | T,
+): Promise<T> {
+  const saved = realCore.loadConfig();
+  realCore.saveConfig({ ...saved, linkedin });
+  try {
+    return await body();
+  } finally {
+    realCore.saveConfig(saved);
+  }
+}
 await import("../src/repo-interest.ts"); // registers a one-step email sequence
 
 const PLAY = "repo-interest";
@@ -776,7 +792,7 @@ describe("after the invite", () => {
       [2, "sent"],
       [2, "withdrawn"],
     ]);
-    expect(state().status).toBe("stopped");
+    expect(state()).toMatchObject({ status: "stopped", stop_reason: "invite_timeout" });
   });
 
   it("records who ended the invite: the timeout (#792)", async () => {
@@ -1222,6 +1238,205 @@ describe("continueCadencesOntoLinkedIn: cadences enrolled before the setting", (
     expect(Object.values(result.skipped).reduce((a, b) => a + b, 0)).toBe(3);
     for (const id of [prospectId, noProfile, touched])
       expect(ledger.getCadence(id, PLAY)!.status).toBe("completed");
+  });
+});
+
+describe("continueCadencesOntoLinkedIn: pacing", () => {
+  function ended(id: number): void {
+    continuationOn = false;
+    enrollInCadence({ prospectId: id, playName: PLAY });
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: PLAY,
+      stepIndex: 1,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "hello", body: "hello" },
+    });
+    ledger.setCadenceStatus({ prospectId: id, playName: PLAY, status: "completed" });
+    continuationOn = true;
+  }
+  const now = new Date("2026-10-16T09:00:00Z");
+
+  it("with no share, spreads reopened cadences at the account's default cap, never NaN", async () => {
+    const second = newProspect({
+      name: "Jo Moss",
+      email: "jo@example.com",
+      linkedin_url: "https://www.linkedin.com/in/jo-moss",
+    });
+    ended(prospectId);
+    ended(second);
+    const result = await withLinkedInConfig({}, () =>
+      continueCadencesOntoLinkedIn({ write: false, now }),
+    );
+    expect(result.extended.map((e) => e.dueAt)).toEqual([
+      "2026-10-16T09:00:00.000Z",
+      "2026-10-16T09:00:00.000Z",
+    ]);
+  });
+
+  it("spreads at the workspace's share, read the way the invite quota reads it", async () => {
+    const second = newProspect({
+      name: "Jo Moss",
+      email: "jo@example.com",
+      linkedin_url: "https://www.linkedin.com/in/jo-moss",
+    });
+    ended(prospectId);
+    ended(second);
+    const result = await withLinkedInConfig({ invitesPerDay: 1 }, () =>
+      continueCadencesOntoLinkedIn({ write: false, now }),
+    );
+    expect(result.extended.map((e) => e.dueAt).toSorted()).toEqual([
+      "2026-10-16T09:00:00.000Z",
+      "2026-10-17T09:00:00.000Z",
+    ]);
+  });
+
+  it("at a share of 0 reopens nothing, and still continues a cadence that is running", async () => {
+    ended(prospectId);
+    const running = newProspect({
+      name: "Jo Moss",
+      email: "jo@example.com",
+      linkedin_url: "https://www.linkedin.com/in/jo-moss",
+    });
+    continuationOn = false;
+    enrollInCadence({ prospectId: running, playName: PLAY });
+    continuationOn = true;
+    const result = await withLinkedInConfig({ invitesPerDay: 0 }, () =>
+      continueCadencesOntoLinkedIn({ write: true, now }),
+    );
+    expect(result.skipped["invites-paused"]).toBe(1);
+    expect(result.extended.map((e) => e.prospectId)).toEqual([running]);
+    expect(ledger.getCadence(prospectId, PLAY)!.status).toBe("completed");
+  });
+});
+
+describe("batch preview: only the invites that can go today", () => {
+  function dueAt(id: number, iso: string): void {
+    sql(`UPDATE cadence_state SET next_due_at = '${iso}' WHERE prospect_id = ${id}`);
+  }
+
+  it("drafts the longest-due connection requests up to what is left, holding back the rest", async () => {
+    const newer = newProspect({
+      name: "Jo Moss",
+      email: "jo@example.com",
+      linkedin_url: "https://www.linkedin.com/in/jo-moss",
+    });
+    const older = newProspect({
+      name: "Kim Park",
+      email: "kim@example.com",
+      linkedin_url: "https://www.linkedin.com/in/kim-park",
+    });
+    emailCadenceRunOut(newer);
+    emailCadenceRunOut(older);
+    dueAt(newer, "2026-10-10T00:00:00.000Z");
+    dueAt(older, "2026-10-01T00:00:00.000Z");
+    const out = await withLinkedInConfig({ invitesPerDay: 1, writer: "model" }, () =>
+      previewCadenceStepBatch([
+        { prospectId: newer, playName: PLAY },
+        { prospectId: older, playName: PLAY },
+      ]),
+    );
+    // In the order asked, the oldest due drafted.
+    expect(out.map((r) => [r.prospectId, r.ok, r.heldBack ?? false])).toEqual([
+      [newer, false, true],
+      [older, true, false],
+    ]);
+    expect(out[0]!.error).toBe(
+      "held back: only 1 LinkedIn invite left today, given to the longest due",
+    );
+    // Nothing was drafted or changed for the held one: it stays due.
+    expect(ledger.getCadence(newer, PLAY)).toMatchObject({
+      status: "active",
+      current_step: 1,
+      next_step_draft_json: null,
+    });
+  });
+
+  it("at a share of 0 drafts no connection request; without a share or a known account position it caps nothing", async () => {
+    emailCadenceRunOut();
+    const paused = await withLinkedInConfig({ invitesPerDay: 0 }, () =>
+      previewCadenceStepBatch([{ prospectId, playName: PLAY }]),
+    );
+    expect(paused[0]).toMatchObject({
+      ok: false,
+      heldBack: true,
+      error: "held back: no LinkedIn invites left today; preview it tomorrow",
+    });
+    const open = await withLinkedInConfig({ writer: "model" }, () =>
+      previewCadenceStepBatch([{ prospectId, playName: PLAY }]),
+    );
+    expect(open[0]).toMatchObject({ ok: true });
+  });
+});
+
+describe("invite expiry (linkedin.inviteExpiryDays)", () => {
+  const DAY = 86_400_000;
+  const dueDaysAgo = (id: number, days: number) =>
+    sql(
+      `UPDATE cadence_state SET next_due_at = '${new Date(Date.now() - days * DAY).toISOString()}' WHERE prospect_id = ${id}`,
+    );
+
+  it("is off by default: a long-due connection request stays due", async () => {
+    emailCadenceRunOut();
+    expect(await withLinkedInConfig({}, () => expireUnsentLinkedInInvites())).toBe(0);
+    expect(state()).toMatchObject({ status: "active", current_step: 1 });
+  });
+
+  it("completes a cadence whose connection request stayed unsent past it, and nothing else", async () => {
+    emailCadenceRunOut();
+    dueDaysAgo(prospectId, 11);
+    const fresh = newProspect({
+      name: "Jo Moss",
+      email: "jo@example.com",
+      linkedin_url: "https://www.linkedin.com/in/jo-moss",
+    });
+    emailCadenceRunOut(fresh);
+    dueDaysAgo(fresh, 9);
+    // Past its invite: the first message is next, however long it has waited.
+    const invited = newProspect({
+      name: "Kim Park",
+      email: "kim@example.com",
+      linkedin_url: "https://www.linkedin.com/in/kim-park",
+    });
+    emailCadenceRunOut(invited);
+    ledger.advanceCadence({
+      prospectId: invited,
+      playName: PLAY,
+      newStep: 2,
+      nextDueAt: new Date(Date.now() - 30 * DAY).toISOString(),
+    });
+
+    const expired = await withLinkedInConfig({ inviteExpiryDays: 10 }, () =>
+      expireUnsentLinkedInInvites(),
+    );
+    expect(expired).toBe(1);
+    expect(state()).toMatchObject({
+      status: "completed",
+      stop_reason: "invite_expired",
+      next_due_at: null,
+      next_step_draft_json: null,
+    });
+    expect(state().stop_note).toMatch(/unsent 10 days/);
+    expect(ledger.getCadence(fresh, PLAY)!.status).toBe("active");
+    expect(ledger.getCadence(invited, PLAY)!.status).toBe("active");
+    // No invite was recorded or sent.
+    expect(linkedinEvents()).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("leaves a cadence mid-send alone", async () => {
+    emailCadenceRunOut();
+    dueDaysAgo(prospectId, 30);
+    ledger.claimCadenceSendingMarker({
+      prospectId,
+      playName: PLAY,
+      startedAtIso: new Date().toISOString(),
+    });
+    expect(
+      await withLinkedInConfig({ inviteExpiryDays: 10 }, () => expireUnsentLinkedInInvites()),
+    ).toBe(0);
+    expect(state().status).toBe("active");
   });
 });
 

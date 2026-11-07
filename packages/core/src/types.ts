@@ -685,8 +685,8 @@ export interface OneShotConfig {
   /**
    * LinkedIn outreach settings.
    * - `invitesPerDay`: this workspace's share of the LinkedIn account's daily
-   *   invite cap (positive integer, UTC day). Unset = no share; only
-   *   OneShot's account cap applies.
+   *   invite cap (whole number, UTC day). 0 pauses this workspace's invites.
+   *   Unset = no share; only OneShot's account cap applies.
    * - `writer`: who writes the notes and messages. `"template"` (the default)
    *   fills fixed text per step; `"model"` has the model write each one from
    *   the `linkedin-invite-note` and `linkedin-message` prompts.
@@ -695,10 +695,14 @@ export interface OneShotConfig {
    * - `inviteTimeoutDays`: days an unaccepted invite waits before it is
    *   withdrawn and its cadence ends (positive integer). Unset =
    *   `DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS` (21).
+   * - `inviteExpiryDays`: days a continuation invite may stay due and unsent
+   *   before its cadence is completed without it (positive integer). Unset =
+   *   it waits as long as it takes.
    */
   linkedin?: {
     invitesPerDay?: number;
     inviteTimeoutDays?: number;
+    inviteExpiryDays?: number;
     writer?: LinkedInWriter;
     templates?: LinkedInTemplates;
   };

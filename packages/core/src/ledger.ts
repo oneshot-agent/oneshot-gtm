@@ -1,5 +1,5 @@
 import { recoverLearningApplications } from "./learning-decisions.ts";
-import type { DecisionReason } from "@oneshot-gtm/shared-types";
+import type { CadenceEndReason, DecisionReason } from "@oneshot-gtm/shared-types";
 import { recordManualQueueSend, type ManualQueueSend } from "./ledger-manual.ts";
 import { extractBusinessAddress } from "./mail-address.ts";
 import type { DirectMailDraft, PostalAddress } from "./direct-mail.ts";
@@ -59,6 +59,7 @@ import {
   listLinkedInInviteEvents as cadListLinkedInInviteEvents,
   listLinkedInInviteEventsForProspects as cadListLinkedInInviteEventsForProspects,
   listLinkedInInviteCadences as cadListLinkedInInviteCadences,
+  expireUnsentLinkedInInvites as cadExpireUnsentLinkedInInvites,
   updateLinkedInInviteEvent as cadUpdateLinkedInInviteEvent,
   recordLinkedInInviteEvent as cadRecordLinkedInInviteEvent,
   getCadence as cadGetCadence,
@@ -565,8 +566,20 @@ export class Ledger {
     return cadListLinkedInInviteEventsForProspects(this.db, prospectIds);
   }
 
-  /** Active cadences with a sent LinkedIn invite: see listLinkedInInviteCadences. */
-  listLinkedInInviteCadences(): Array<{ prospect_id: number; play_name: string }> {
+  /** Complete cadences whose connection request stayed due and unsent too long: see expireUnsentLinkedInInvites. */
+  expireUnsentLinkedInInvites(input: {
+    before: Date;
+    note: string;
+  }): Array<{ prospect_id: number; play_name: string }> {
+    return cadExpireUnsentLinkedInInvites(this.db, this.drafts, input);
+  }
+
+  /** Sent LinkedIn invites still waiting on an answer, whatever their cadence: see listLinkedInInviteCadences. */
+  listLinkedInInviteCadences(): Array<{
+    prospect_id: number;
+    play_name: string;
+    opted_out: number;
+  }> {
     return cadListLinkedInInviteCadences(this.db);
   }
 
@@ -664,7 +677,7 @@ export class Ledger {
   stopCadence(input: {
     prospectId: number;
     playName: string;
-    reason: "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
+    reason: Exclude<CadenceEndReason, "invite_expired">;
     note?: string;
     /** The caller is the send worker holding this cadence's sending marker; see ledger-cadence.ts. */
     holdingSendingMarker?: boolean;
@@ -1683,6 +1696,7 @@ export class Ledger {
     prospectId: number;
     playName: string;
     repliedAt?: string | null;
+    channel?: "email" | "linkedin";
   }): boolean {
     return cadMarkLatestStepReplied(this.db, input);
   }

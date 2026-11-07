@@ -9,13 +9,21 @@ export type CadenceStopFailure = { target: CadenceStopTarget; message: string };
 export const cadenceKey = (c: Pick<CadenceView, "prospectId" | "playName">): string =>
   `${c.prospectId}|${c.playName}`;
 
+/** An active row that can take a batch action: not mid-send, not waiting on an invite's acceptance. */
+const selectableRow = (c: CadenceView): boolean =>
+  c.status === "active" && !c.isSending && c.linkedinWaitingSince == null;
+
 export function cadenceSelection(
   rows: readonly CadenceView[],
   selected: ReadonlySet<string>,
   nowMs: number = Date.now(),
 ) {
-  const selectable = rows.filter((c) => c.status === "active" && !c.isSending);
-  const chosen = rows.filter((c) => c.status === "active" && selected.has(cadenceKey(c)));
+  // A row waiting on its invite's acceptance has nothing to send: it stays
+  // listed with its label, out of "select all" and "select next N".
+  const selectable = rows.filter(selectableRow);
+  const chosen = rows.filter(
+    (c) => c.status === "active" && c.linkedinWaitingSince == null && selected.has(cadenceKey(c)),
+  );
   const stoppable = chosen.filter((c) => !c.isSending);
   const previewable = stoppable.filter(
     (c) => c.nextStepChannel !== "direct_mail" && c.nextStepLabel != null,

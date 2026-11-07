@@ -175,7 +175,9 @@ export function listColdProspects(
     FROM (
     SELECT p.id, p.name, p.email, p.company, p.linkedin_url, p.phone,
            MAX(s.created_at) AS last_sequence_at,
-           MAX(CASE WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
+           -- invite_timeout: an unaccepted LinkedIn invite, recorded as
+           -- 'other' before it had its own reason, and revivable as before.
+           MAX(CASE WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other', 'invite_timeout')
                     THEN c.stopped_at END) AS last_revivable_stop_at,
            -- The four sources mix SQLite-form (created_at, stopped_at) and
            -- ISO (received_at, occurred_at) timestamps, so compare them as
@@ -183,7 +185,7 @@ export function listColdProspects(
            -- multi-argument MAX() returns NULL if any argument is NULL.
            NULLIF(MAX(
              COALESCE(MAX(julianday(s.created_at)), 0),
-             COALESCE(MAX(CASE WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
+             COALESCE(MAX(CASE WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other', 'invite_timeout')
                                THEN julianday(c.stopped_at) END), 0),
              COALESCE((SELECT MAX(julianday(ir.received_at)) FROM inbox_replies ir
                        WHERE ir.prospect_id = p.id AND coalesce(ir.kind,'human') = 'human'), 0),

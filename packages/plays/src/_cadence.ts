@@ -53,6 +53,9 @@ import {
   LinkedInSendPendingError,
   startLinkedInSend,
   linkedInOutreachAccount,
+  configuredInvitesPerDay,
+  DEFAULT_LINKEDIN_ACCOUNT_INVITES_PER_DAY,
+  invitesLeftToday,
   triggerConfigForSource,
   canInviteOnLinkedInNow,
   guardFlag,
@@ -2669,6 +2672,8 @@ interface BatchPreviewResult {
   ok: boolean;
   preview?: CadenceStepPreview;
   error?: string;
+  /** A connection request left undrafted: today's invites ran out before it (`error` says so). */
+  heldBack?: boolean;
 }
 
 export interface BatchSendResult {
@@ -2683,9 +2688,49 @@ export interface BatchSendResult {
 }
 
 /**
+ * The connection-request rows of a batch that today's invites can't cover,
+ * keyed `prospect|play`, with the reason. What is left is the workspace's
+ * share minus what it used today, lowered to the account's remaining when a
+ * recent read is cached (`invitesLeftToday`); unknown (no share, no read)
+ * caps nothing. The oldest due keep the invites. A known connection's request
+ * step sends no invite, so it never counts. Messages are never held.
+ */
+function invitesHeldBack(items: BatchItem[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const ledger = getLedger();
+  const invites: Array<{ key: string; dueAt: string | null }> = [];
+  for (const item of items) {
+    const cadence = ledger.getCadence(item.prospectId, item.playName);
+    if (!cadence || cadence.status !== "active") continue;
+    const next = nextStepInfo(item.playName, cadence.current_step, item.prospectId);
+    if (next?.stepId !== CONTINUATION_INVITE_ID) continue;
+    if (knownConnection(cadence.prospect_linkedin_url)) continue;
+    invites.push({ key: `${item.prospectId}|${item.playName}`, dueAt: cadence.next_due_at });
+  }
+  if (invites.length === 0) return out;
+  const account = linkedInOutreachAccount();
+  const left = account ? invitesLeftToday(account.accountId) : null;
+  if (left === null || invites.length <= left) return out;
+  const reason =
+    left === 0
+      ? "held back: no LinkedIn invites left today; preview it tomorrow"
+      : `held back: only ${left} LinkedIn invite${left === 1 ? "" : "s"} left today, given to the longest due`;
+  const byDue = invites.toSorted((a, b) => {
+    if (a.dueAt === b.dueAt) return 0;
+    if (a.dueAt === null) return 1;
+    if (b.dueAt === null) return -1;
+    return Date.parse(a.dueAt) - Date.parse(b.dueAt);
+  });
+  for (const { key } of byDue.slice(left)) out.set(key, reason);
+  return out;
+}
+
+/**
  * Parallel preview of cadence rows (concurrency 3). Per-prospect failures are
  * captured in the result array. The batch never throws. `parallelMap`
- * preserves input order so the result matches `items` 1:1.
+ * preserves input order so the result matches `items` 1:1. Connection
+ * requests past what today's invites cover are not drafted: they come back
+ * `heldBack` with the reason (invitesHeldBack).
  */
 export async function previewCadenceStepBatch(items: BatchItem[]): Promise<BatchPreviewResult[]> {
   // Drafts this batch has already accepted, keyed by play (the step is fixed
@@ -2693,7 +2738,24 @@ export async function previewCadenceStepBatch(items: BatchItem[]): Promise<Batch
   // means the last couple of rows may not see each other; that still closes
   // the batch-wide agreement this exists to catch.
   const accepted = new Map<string, string[]>();
+  let held: Map<string, string>;
+  try {
+    held = invitesHeldBack(items);
+  } catch {
+    // The cap is a courtesy: the send still enforces the share.
+    held = new Map();
+  }
   return parallelMap(items, 3, async (item) => {
+    const heldReason = held.get(`${item.prospectId}|${item.playName}`);
+    if (heldReason) {
+      return {
+        prospectId: item.prospectId,
+        playName: item.playName,
+        ok: false,
+        heldBack: true,
+        error: heldReason,
+      };
+    }
     try {
       const preview = await previewCadenceStep({
         ...item,
@@ -4020,16 +4082,21 @@ const CONTINUABLE_STATUSES = new Set(["active", "breakup", "completed"]);
  * message and the close, appended to the saved plan. A cadence still emailing
  * reaches them after its last email. One whose emails are done (`breakup`,
  * `completed`) becomes active at the connection request; those are spread
- * over the days at the workspace's invite share so the previews on /cadences
- * arrive at the pace invites can go out. Only people the invite guard would
- * invite today are touched, and the guard runs again before each draft.
+ * over the days at the workspace's invite share (the account's default cap
+ * when there is none) so the previews on /cadences arrive at the pace invites
+ * can go out; at a share of 0 none is reopened. Only people the invite guard
+ * would invite today are touched, and the guard runs again before each draft.
  */
 export function continueCadencesOntoLinkedIn(
   opts: { write?: boolean; now?: Date; perDay?: number } = {},
 ): ContinueCadencesResult {
   const ledger = getLedger();
   const now = opts.now ?? new Date();
-  const perDay = Math.max(1, opts.perDay ?? loadConfig().linkedin?.invitesPerDay ?? 10);
+  const share = opts.perDay ?? configuredInvitesPerDay();
+  const perDay =
+    share === null || !Number.isFinite(share)
+      ? DEFAULT_LINKEDIN_ACCOUNT_INVITES_PER_DAY
+      : Math.max(0, Math.floor(share));
   const result: ContinueCadencesResult = { extended: [], skipped: {} };
   const skip = (reason: string) => {
     result.skipped[reason] = (result.skipped[reason] ?? 0) + 1;
@@ -4068,6 +4135,10 @@ export function continueCadencesOntoLinkedIn(
       continue;
     }
     const reopen = c.status !== "active";
+    if (reopen && perDay === 0) {
+      skip("invites-paused");
+      continue;
+    }
     const dueAt = reopen
       ? new Date(now.getTime() + Math.floor(ended++ / perDay) * 86_400_000).toISOString()
       : c.next_due_at;
