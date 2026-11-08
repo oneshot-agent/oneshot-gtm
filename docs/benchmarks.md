@@ -49,13 +49,13 @@ Public reads discard query parameters and URL credentials even on an override.
 For a deterministic preview, run this in a separate terminal from the repo root:
 
 ```bash
-bun -e 'Bun.serve({ hostname: "127.0.0.1", port: 3031, fetch: () => new Response(Bun.file("apps/server/__tests__/fixtures/benchmarks/populated.json"), { headers: { "content-type": "application/json" } }) })'
+bun -e 'Bun.serve({ hostname: "127.0.0.1", port: 4031, fetch: () => new Response(Bun.file("apps/server/__tests__/fixtures/benchmarks/populated.json"), { headers: { "content-type": "application/json" } }) })'
 ```
 
 Then launch the server with the override (no `.env` edit needed):
 
 ```bash
-ONESHOT_GTM_BENCHMARK_URL=http://127.0.0.1:3031/v1/benchmark bun run ui -- --no-browser
+ONESHOT_GTM_BENCHMARK_URL=http://127.0.0.1:4031/v1/benchmark bun run ui -- --no-browser
 ```
 
 Use `empty.json` or `zero-denominator.json` in place of `populated.json` to see those
