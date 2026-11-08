@@ -16,6 +16,7 @@ export * from "./workspaces.ts";
 export * from "./html-text.ts";
 export * from "./events.ts";
 export * from "./telemetry.ts";
+export * from "./benchmark.ts";
 export * from "./version.ts";
 export * from "./json.ts";
 export * from "./priority.ts";

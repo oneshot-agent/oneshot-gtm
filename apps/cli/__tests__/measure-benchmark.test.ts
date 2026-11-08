@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 let telemetryEnabled = true;
 let clientId: string | null = "install-123";
 
-vi.mock("@oneshot-gtm/core", () => ({
+vi.mock("@oneshot-gtm/core", async () => ({
+  ...(await import("../../../packages/core/src/benchmark.ts")),
   loadConfig: () => ({ telemetryEnabled, clientId }),
   shouldSendTelemetry: (cfg: { telemetryEnabled: boolean }, env: NodeJS.ProcessEnv) =>
     cfg.telemetryEnabled && env["ONESHOT_GTM_TELEMETRY"] !== "0",

@@ -1,4 +1,6 @@
 import { getOnboarding, deferOnboarding, verifyOnboardingAI } from "./api/onboarding.ts";
+import { benchmarksRoute } from "./api/benchmarks.ts";
+import { benchmarksPage } from "./benchmarks-page.ts";
 import { resolveQueueContactRoute } from "./api/queue-contact.ts";
 import { queueDossierRoute } from "./api/queue-dossier.ts";
 import { readProfileRoute } from "./api/queue-read-profile.ts";
@@ -176,6 +178,7 @@ function route(method: string, pattern: string, handler: RouteHandler): RouteEnt
 }
 
 const routes: RouteEntry[] = [
+  route("GET", "/api/benchmarks", benchmarksRoute),
   route("GET", "/api/direct-mail", directMailRoute),
   route("POST", "/api/direct-mail/:action", directMailRoute),
   route("GET", "/api/health", health),
@@ -452,6 +455,14 @@ export function buildFetchHandler(): (req: Request) => Promise<Response> | Respo
       } catch (err) {
         return jsonResponse({ error: (err as Error).message ?? "internal error" }, 500, req);
       }
+    }
+
+    // Standalone public aggregate page: no private dashboard queries or build required.
+    if (url.pathname === "/benchmarks" || url.pathname === "/benchmarks/") {
+      if (req.method !== "GET") {
+        return new Response("method not allowed", { status: 405, headers: { allow: "GET" } });
+      }
+      return benchmarksPage();
     }
 
     // Dev: the real UI is served by Vite (with HMR), so redirect non-API

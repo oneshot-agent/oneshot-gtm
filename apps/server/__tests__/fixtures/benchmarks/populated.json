@@ -1,0 +1,12 @@
+{
+  "cohortSize": 42,
+  "local": { "commandsRun": 18, "successRate": 0.75, "medianDurationMs": 980 },
+  "cohort": {
+    "commandsRun": 12,
+    "successRate": 0.625,
+    "medianDurationMs": 1200,
+    "anonymous_machine_id": "private-install"
+  },
+  "events": [{ "command": "private-command", "email": "private@example.test" }],
+  "anonymous_machine_id": "private-install"
+}
