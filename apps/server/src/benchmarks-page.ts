@@ -1,8 +1,9 @@
 import { readPublicBenchmarks, type PublicBenchmarks } from "./api/benchmarks.ts";
 
+const count = (value: number) => value.toLocaleString("en-US");
+
 /** Only validated numbers and fixed copy enter this document; no workspace shell. */
 export function renderBenchmarksPage(data: PublicBenchmarks | null): string {
-  const count = (value: number) => value.toLocaleString("en-US");
   const content = data
     ? `${data.cohortSize === 0 ? "<p>No benchmark samples yet.</p>" : ""}
       <dl>
