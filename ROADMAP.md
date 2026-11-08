@@ -31,7 +31,7 @@ The verify gate has holes an agent can close without touching product behaviour.
 
 ## Measurement
 
-- [ ] **Public benchmarks page** reading aggregates from the telemetry table. The pipeline exists; this is the surface.
+- [x] **Public benchmarks page** reading aggregates from the telemetry table. The pipeline exists; this is the surface.
 
 ## Integrations
 

@@ -53,6 +53,15 @@ bun run cli -- ui                               # http://127.0.0.1:3030
 
 `bunx oneshot-gtm-server` runs the dashboard without a clone. Both paths need Bun; the code uses `bun:sqlite` and fails under plain Node. `bun run cli -- --help` lists every command, and the [CLI reference](https://docs.oneshotagent.com/oneshot-gtm/cli-reference) documents each flag.
 
+## Public benchmarks
+
+Run `bun install --frozen-lockfile`, then `bun run ui -- --no-browser` and open
+[http://127.0.0.1:3030/benchmarks](http://127.0.0.1:3030/benchmarks) (use your workspace’s
+port if different). This read-only page needs no web build or setup credentials.
+It shows the telemetry cohort’s install count, commands run, success percentage and
+median duration in milliseconds. [Benchmark data and local fixtures](./docs/benchmarks.md)
+explain the contract, empty states and local endpoint override. Publishing is a separate step.
+
 ## Where targets come from
 
 A finder is a source with a schedule and a spend cap: Show HN, funding news, accelerator cohorts, job changes, open roles, GitHub stars, event guest lists, business registries, public tenders, any page that lists companies. All of them start off. Turn on the ones your buyers show up in, apply an industry pack, or bring your own list. [Finders](./docs/finders.md) has the table, the gates and the research each row gets.

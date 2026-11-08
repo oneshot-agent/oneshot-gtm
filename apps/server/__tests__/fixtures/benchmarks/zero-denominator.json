@@ -1,0 +1,4 @@
+{
+  "cohortSize": 3,
+  "cohort": { "commandsRun": 0, "successRate": null, "medianDurationMs": null }
+}

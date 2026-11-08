@@ -42,6 +42,8 @@ Sent to a single first-party endpoint owned by OneShot (`telemetry.oneshotagent.
 
 `oneshot-gtm measure benchmark` reads those aggregates only when telemetry sharing is enabled. It sends the existing anonymous install UUID as a query parameter so the service can return that install's command count, success rate, and median duration beside the opt-in cohort. No additional telemetry fields are collected. Set `ONESHOT_GTM_BENCHMARK_URL` to override the aggregate endpoint in development.
 
+The read-only [`/benchmarks` page](./docs/benchmarks.md) reads the same endpoint without an install UUID. It exposes only the cohort’s aggregate metrics and install count, never the `local` comparison or raw events. Viewing it does not enable telemetry sharing or emit an event.
+
 This file is the authoritative spec. If telemetry is ever extended, this file is updated in the same PR — the client (`packages/core/src/telemetry.ts`) and the first-party receiver carry the same field whitelist deliberately, and must move together. (This is a maintainer convention; it is not yet enforced by CI.)
 
 ## Local development log (separate from telemetry)
