@@ -34,7 +34,7 @@ import { ReplyOptionsComposer } from "../components/ReplyOptionsComposer.tsx";
 import { replyCompany, replyPreview } from "../lib/replyPreview.ts";
 import { timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
-import { replyInView, replyNeedsAttention, type ReplyView } from "../lib/replies.ts";
+import { replyInTab, replyNeedsAttention, type ReplyTab } from "../lib/replies.ts";
 import { useReplyScroll } from "../lib/useReplyScroll.ts";
 import { linkedinUrlFor } from "../lib/payloadIdentity.ts";
 
@@ -44,7 +44,7 @@ export const Route = createFileRoute("/inbox")({
 });
 
 function InboxPage() {
-  const [view, setView] = useState<ReplyView>("inbox");
+  const [view, setView] = useState<ReplyTab>("inbox");
   const [channel, setChannel] = useState("all");
   const [match, setMatch] = useState("matched");
   const [search, setSearch] = useState("");
@@ -66,7 +66,7 @@ function InboxPage() {
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
-  const visible = filtered.filter((t) => replyInView(t, view));
+  const visible = filtered.filter((t) => replyInTab(t, view));
   const refresh = useMutation({
     mutationFn: async () => {
       const results = await Promise.allSettled([
@@ -84,7 +84,7 @@ function InboxPage() {
   useEffect(() => {
     setPage(1);
   }, [view, channel, match, search]);
-  const attention = threads.filter(replyNeedsAttention).length;
+  const attention = filtered.filter(replyNeedsAttention).length;
   const selected = visible.find((t) => t.key === expanded);
   const selectedKey = selected?.key;
   const pageCount = Math.max(1, Math.ceil(visible.length / 30));
@@ -225,7 +225,14 @@ function InboxPage() {
           />
         </div>
         <div className="replies-views flex gap-2 border-b border-ink-rule/60 px-6 py-3">
-          {(["inbox", "snoozed", "archived"] as const).map((v) => (
+          {(
+            [
+              ["inbox", "Inbox"],
+              ["needs-reply", "Needs reply"],
+              ["snoozed", "Snoozed"],
+              ["archived", "Archived"],
+            ] as const
+          ).map(([v, label]) => (
             <Button
               key={v}
               size="sm"
@@ -235,9 +242,9 @@ function InboxPage() {
                 setExpanded(null);
               }}
             >
-              <span className="capitalize">{v}</span>
+              <span>{label}</span>
               <span className="ml-1 opacity-60">
-                {filtered.filter((t) => replyInView(t, v)).length}
+                {filtered.filter((t) => replyInTab(t, v)).length}
               </span>
             </Button>
           ))}
@@ -252,7 +259,13 @@ function InboxPage() {
         <aside className="replies-queue" aria-label="Conversations">
           <div className="replies-queue-heading">
             <span>
-              {view === "inbox" ? "Conversations" : view === "snoozed" ? "Snoozed" : "Archived"}
+              {view === "inbox"
+                ? "Conversations"
+                : view === "needs-reply"
+                  ? "Needs reply"
+                  : view === "snoozed"
+                    ? "Snoozed"
+                    : "Archived"}
             </span>
             <span>{visible.length}</span>
           </div>
@@ -271,11 +284,13 @@ function InboxPage() {
               <p className="replies-empty">Loading conversations…</p>
             ) : visible.length === 0 ? (
               <p className="replies-empty">
-                {view === "snoozed"
-                  ? "No snoozed conversations."
-                  : view === "archived"
-                    ? "No archived conversations."
-                    : "No conversations found. Try another filter or refresh your connections."}
+                {view === "needs-reply"
+                  ? "Nothing needs a reply."
+                  : view === "snoozed"
+                    ? "No snoozed conversations."
+                    : view === "archived"
+                      ? "No archived conversations."
+                      : "No conversations found. Try another filter or refresh your connections."}
               </p>
             ) : (
               visible.slice((currentPage - 1) * 30, currentPage * 30).map((t) => {

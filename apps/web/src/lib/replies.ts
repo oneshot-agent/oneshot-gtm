@@ -16,3 +16,7 @@ export function replyNeedsAttention(t: ReplyThread): boolean {
     (t.needsReply || !!t.drafts?.flags[t.drafts.selected]?.includes("commits-terms"))
   );
 }
+export type ReplyTab = ReplyView | "needs-reply";
+export function replyInTab(t: ReplyThread, tab: ReplyTab): boolean {
+  return tab === "needs-reply" ? replyNeedsAttention(t) : replyInView(t, tab);
+}

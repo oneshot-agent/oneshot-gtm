@@ -5,7 +5,7 @@ import {
   type InboxReplyView,
   type ReplyThread,
 } from "@oneshot-gtm/shared-types";
-import { replyInView, replyNeedsAttention } from "../src/lib/replies.ts";
+import { replyInTab, replyInView, replyNeedsAttention } from "../src/lib/replies.ts";
 
 describe("unified reply views", () => {
   it("removes snoozed conversations from attention and restores them when due", () => {
@@ -22,6 +22,16 @@ describe("unified reply views", () => {
     expect(replyNeedsAttention(t)).toBe(true);
     t.archivedAt = new Date().toISOString();
     expect(replyNeedsAttention(t)).toBe(false);
+  });
+  it("the Needs reply tab holds exactly the inbox threads waiting on an answer", () => {
+    const base = { archivedAt: null, snoozedUntil: null, drafts: null } as ReplyThread;
+    const waiting = { ...base, needsReply: true };
+    const answered = { ...base, needsReply: false };
+    const archived = { ...waiting, archivedAt: new Date().toISOString() };
+    expect(replyInTab(waiting, "needs-reply")).toBe(true);
+    expect(replyInTab(answered, "needs-reply")).toBe(false);
+    expect(replyInTab(archived, "needs-reply")).toBe(false);
+    expect(replyInTab(answered, "inbox")).toBe(true);
   });
   it("groups unmatched Gmail replies by identity and thread, retaining sent history", () => {
     const r: InboxReplyView = {
