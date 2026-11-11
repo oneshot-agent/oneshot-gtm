@@ -79,6 +79,16 @@ describe("WaitingLetter", () => {
   });
 });
 
+describe("WaitingLetter without a captured note", () => {
+  it("still shows what follows if no reply", () => {
+    const html = renderToStaticMarkup(
+      <WaitingLetter view={{ ...view, linkedInSent: [] }} waitingSince="2026-10-27" now={NOW} />,
+    );
+    expect(html).toContain("Waiting for acceptance · invite sent 2026-10-27.");
+    expect(html).toContain("step 4 · first LinkedIn message · once they accept");
+  });
+});
+
 describe("LinkedInThread", () => {
   it("says so, with a retry, when the thread can't be read", () => {
     const html = renderToStaticMarkup(

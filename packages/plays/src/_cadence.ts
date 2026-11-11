@@ -4359,18 +4359,21 @@ function linkedInMessageFacts(
   prospect: Pick<ProspectRecord, "id" | "email" | "name">,
   playName: string,
   cfg: CadenceContext["cfg"],
+  /** Also count touches marked delivered or replied in place (the sheet's view); the builder reads sent only. */
+  received = false,
 ) {
   const events = getLedger().listSequenceEventsForProspectPlay(prospect.id, playName);
   // Connected before this sequence: the invite created no request, so its note
   // was never delivered, and nobody "accepted" anything.
   const invite = liveLinkedInInvite(prospect.id, playName);
   const alreadyConnected = invite?.alreadyConnected === true;
-  // A message they answered is marked replied in place: it was still received.
   const sent: CadenceLinkedInTouch[] = events
     .filter(
       (e) =>
         e.channel === "linkedin" &&
-        (e.status === "sent" || e.status === "delivered" || e.status === "replied"),
+        (e.status === "sent" ||
+          // A message they answered is marked replied in place: it was still received.
+          (received && (e.status === "delivered" || e.status === "replied"))),
     )
     // A known connection's record sent nothing, whatever LinkedIn later said.
     .filter((e) => !isKnownConnectionMarker(e.metadata_json))
@@ -4544,7 +4547,7 @@ export function cadenceSequence(prospectId: number, playName: string): CadenceSe
   const prospect = ledger.getProspectById(prospectId);
   if (!cadence || !prospect) return null;
   const cfg = loadConfig();
-  const facts = linkedInMessageFacts(prospect, playName, cfg);
+  const facts = linkedInMessageFacts(prospect, playName, cfg, true);
   const active = cadence.status === "active";
   const live = active ? liveLinkedInInvite(prospectId, playName) : null;
   const waiting =

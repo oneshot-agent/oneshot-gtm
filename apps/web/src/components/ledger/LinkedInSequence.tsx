@@ -136,6 +136,8 @@ export function WaitingLetter({
               ? `Waiting for acceptance · invite sent ${waitingSince}. Couldn't load what was sent.`
               : `Waiting for acceptance · invite sent ${waitingSince}.`
         }
+        // No note was captured for the invite: what follows is still known.
+        below={view ? <UpcomingSteps steps={view.upcoming} /> : undefined}
         actions={
           <>
             {view === null && onRetry ? <RetryButton onRetry={onRetry} /> : null}
