@@ -360,6 +360,27 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     expect(map.get(`${pidB}|stack-consolidation`)?.map((r) => r.step_index)).toEqual([0]);
   });
 
+  it("listSequenceEventsForCadences reads a page of more cadences than SQLite's expression depth", () => {
+    const pid = ledger.upsertProspect({ name: "Late", email: "late@x.com", source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "show-hn",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    // 1,200 OR terms is past the 1000-deep limit: one query for the page threw.
+    const pairs = Array.from({ length: 1199 }, (_, i) => ({
+      prospectId: 900000 + i,
+      playName: "show-hn",
+    }));
+    pairs.push({ prospectId: pid, playName: "show-hn" }, { prospectId: pid, playName: "show-hn" });
+    const map = ledger.listSequenceEventsForCadences(pairs);
+    expect(map.size).toBe(1);
+    // Listed twice, read once.
+    expect(map.get(`${pid}|show-hn`)?.map((r) => r.step_index)).toEqual([0]);
+  });
+
   it("listSequenceEventsForCadences returns empty map on empty input", () => {
     const map = ledger.listSequenceEventsForCadences([]);
     expect(map.size).toBe(0);

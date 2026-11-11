@@ -57,6 +57,10 @@ import { CaseSection, Rule, Sheet } from "../components/ledger/Sheet.tsx";
 import { CaseList, Disclosure, type CaseListRow } from "../components/ledger/CaseList.tsx";
 import { DraftStateLine, LetterCard, LetterEmpty } from "../components/ledger/LetterCard.tsx";
 import { DraftHistory } from "../components/ledger/DraftHistory.tsx";
+import {
+  LinkedInThreadLoader,
+  WaitingLetterLoader,
+} from "../components/ledger/LinkedInSequence.tsx";
 import { SequenceOffer, sequenceOfferActivityId } from "../components/queue/SequenceOffer.tsx";
 import { rowActivityOf, useRowActivityChanges } from "../lib/rowActivity.ts";
 import { heldSummary, type HeldOptions } from "../lib/flagLabels.ts";
@@ -1056,6 +1060,8 @@ function CadencesPage() {
                               : "Send now"}
                     </Button>
                   ) : null;
+                const sequenceKey = ["cadence-sequence", c.prospectId, c.playName, c.currentStep];
+                const loadSequence = () => api.cadenceSequence(c.prospectId, c.playName);
                 const letter =
                   c.status === "active" && c.nextStepChannel === "direct_mail" ? (
                     <LetterEmpty
@@ -1071,7 +1077,15 @@ function CadencesPage() {
                       }
                     />
                   ) : c.status === "active" && c.nextStepLabel != null ? (
-                    draft ? (
+                    c.linkedinWaitingSince ? (
+                      // Nothing to draft until they accept: the note that went, and what follows.
+                      <WaitingLetterLoader
+                        queryKey={sequenceKey}
+                        load={loadSequence}
+                        waitingSince={c.linkedinWaitingSince}
+                        actions={stopButton}
+                      />
+                    ) : draft ? (
                       <LetterCard
                         meta={<span title={`Drafted ${timeAgo(draft.draftedAt)}`}>Draft</span>}
                         subject={draft.subject}
@@ -1109,6 +1123,13 @@ function CadencesPage() {
                               queryKey={["cadence-drafts", c.prospectId, c.playName, c.currentStep]}
                               load={() => api.cadenceDrafts(c.prospectId, c.playName)}
                             />
+                            {c.nextStepChannel === "linkedin" && (
+                              <LinkedInThreadLoader
+                                queryKey={sequenceKey}
+                                load={loadSequence}
+                                nextStep={c.currentStep + 1}
+                              />
+                            )}
                           </>
                         }
                         foot={{
@@ -1317,7 +1338,8 @@ function CadencesPage() {
                                 );
                               return (
                                 <>
-                                  {!open && (
+                                  {/* Waiting on acceptance: nothing to preview or send yet. */}
+                                  {!open && c.linkedinWaitingSince == null && (
                                     <>
                                       <Button
                                         variant="ghost"
@@ -1363,18 +1385,20 @@ function CadencesPage() {
                                       </Button>
                                     </>
                                   )}
-                                  {(draft || c.priorSteps.length > 0) && (
+                                  {(draft || c.priorSteps.length > 0 || c.linkedinWaitingSince) && (
                                     <Button
                                       variant="ghost"
                                       size="sm"
                                       title={
                                         expandedKeys.has(key)
                                           ? "collapse"
-                                          : c.priorSteps.length > 0 && draft
-                                            ? `view ${c.priorSteps.length} sent + next-step preview`
-                                            : c.priorSteps.length > 0
-                                              ? `view ${c.priorSteps.length} sent so far`
-                                              : "view next-step preview"
+                                          : c.linkedinWaitingSince
+                                            ? "view the invite sent and the messages that follow"
+                                            : c.priorSteps.length > 0 && draft
+                                              ? `view ${c.priorSteps.length} sent + next-step preview`
+                                              : c.priorSteps.length > 0
+                                                ? `view ${c.priorSteps.length} sent so far`
+                                                : "view next-step preview"
                                       }
                                       onClick={() => toggleExpanded(key)}
                                     >
