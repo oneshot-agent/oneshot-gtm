@@ -76,6 +76,14 @@ describe("due", () => {
     expect(matchesCadenceDue(later, "soon", NOW)).toBe(false);
   });
 
+  it("reads the due date as a time, not as text", () => {
+    // SQLite's datetime() shape: a string compare would call it earlier than NOW.
+    const sqliteShape = message({ nextDueAt: "2026-11-12 18:00:00Z" });
+    expect(isOverdueCadence(sqliteShape, NOW)).toBe(false);
+    expect(matchesCadenceDue(sqliteShape, "soon", NOW)).toBe(true);
+    expect(isOverdueCadence(message({ nextDueAt: "not a date" }), NOW)).toBe(false);
+  });
+
   it("flags an invite withdrawn within 3 days", () => {
     expect(
       matchesCadenceDue(waiting({ linkedinInviteExpiresOn: "2026-11-15" }), "invite-expiring", NOW),

@@ -57,14 +57,14 @@ export function cadenceStepOf(c: CadenceView): CadenceStep | null {
   return c.nextStepIsBreakup ? "linkedin-breakup" : "linkedin-message";
 }
 
+/** When the next step is due, in ms; NaN when it has no date (or one that doesn't parse). */
+function dueMs(c: CadenceView): number {
+  return c.nextDueAt === null ? Number.NaN : Date.parse(c.nextDueAt);
+}
+
 /** Past due and sendable. A row waiting for acceptance is never overdue: nothing can send. */
 export function isOverdueCadence(c: CadenceView, nowIso: string): boolean {
-  return (
-    c.status === "active" &&
-    c.linkedinWaitingSince == null &&
-    c.nextDueAt !== null &&
-    c.nextDueAt <= nowIso
-  );
+  return c.status === "active" && c.linkedinWaitingSince == null && dueMs(c) <= Date.parse(nowIso);
 }
 
 export function matchesCadenceDue(c: CadenceView, due: CadenceDueFilter, nowIso: string): boolean {
@@ -76,11 +76,8 @@ export function matchesCadenceDue(c: CadenceView, due: CadenceDueFilter, nowIso:
     const horizon = new Date(Date.parse(nowIso) + INVITE_EXPIRING_DAYS * DAY_MS);
     return c.linkedinInviteExpiresOn <= horizon.toISOString().slice(0, 10);
   }
-  const soon =
-    c.linkedinWaitingSince == null &&
-    c.nextDueAt !== null &&
-    c.nextDueAt > nowIso &&
-    Date.parse(c.nextDueAt) <= Date.parse(nowIso) + DAY_MS;
+  const nowMs = Date.parse(nowIso);
+  const soon = c.linkedinWaitingSince == null && dueMs(c) > nowMs && dueMs(c) <= nowMs + DAY_MS;
   if (due === "soon") return soon;
   return !soon && !isOverdueCadence(c, nowIso);
 }
