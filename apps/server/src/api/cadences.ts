@@ -12,6 +12,7 @@ import {
   awayNote,
   cadenceDraftIsStale,
   cadenceHold,
+  cadenceSequence,
   draftConfigKeyer,
   getPriorStepsBulk,
   linkedInWaitingSince,
@@ -536,6 +537,15 @@ export function cadenceDraftVersionsRoute(req: Request, params: Record<string, s
     })
     .map(toDraftVersionView);
   return jsonResponse({ versions }, 200, req);
+}
+
+/** The sheet's LinkedIn thread and what is left to send: `cadenceSequence`. */
+export function cadenceSequenceRoute(req: Request, params: Record<string, string>): Response {
+  const parsed = parseProspectAndPlay(req, params);
+  if (parsed instanceof Response) return parsed;
+  const view = cadenceSequence(parsed.prospectId, parsed.playName);
+  if (!view) return jsonResponse({ error: "no cadence for that prospect+play" }, 404, req);
+  return jsonResponse(view, 200, req);
 }
 
 export async function previewCadenceStepRoute(

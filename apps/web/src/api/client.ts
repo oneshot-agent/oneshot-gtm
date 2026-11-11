@@ -27,6 +27,7 @@ import type {
   QueueDossierView,
   BusinessMailAddress,
   CadenceOfferView,
+  CadenceSequenceView,
   CadencesResult,
   CadenceStopReason,
   CadenceView,
@@ -695,6 +696,9 @@ export const api = {
     getJson<{ versions: DraftVersionView[] }>(
       `/cadences/${id}/drafts?play=${encodeURIComponent(playName)}`,
     ),
+  // A cadence's LinkedIn touches sent, the invite it waits on, and the steps left.
+  cadenceSequence: (id: number, playName: string) =>
+    getJson<CadenceSequenceView>(`/cadences/${id}/sequence?play=${encodeURIComponent(playName)}`),
   triggers: () => getJson<{ triggers: TriggerView[] }>("/triggers"),
   setTriggerEnabled: (name: string, enabled: boolean) =>
     postJson<{ ok: boolean }>(`/triggers/${encodeURIComponent(name)}/enabled`, { enabled }),

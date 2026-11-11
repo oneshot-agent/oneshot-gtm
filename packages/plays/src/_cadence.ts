@@ -1,4 +1,9 @@
-import type { DraftAngleChoice } from "@oneshot-gtm/shared-types";
+import type {
+  CadenceLinkedInTouch,
+  CadenceSequenceView,
+  CadenceUpcomingStep,
+  DraftAngleChoice,
+} from "@oneshot-gtm/shared-types";
 import {
   CADENCE_SEND_UNCONFIRMED,
   LINKEDIN_SEND_PENDING,
@@ -37,6 +42,7 @@ import {
   recentTouchElsewhere,
   notifySlackBounceRecorded,
   notifySlackReplyReceived,
+  linkedInInviteTimeoutDays,
   sqliteToIso,
   type DemoDay,
   demoDayLine,
@@ -4343,46 +4349,79 @@ function closeGuidance(role: ReaderRole): string[] {
       ];
 }
 
+/**
+ * What a LinkedIn message of this cadence is written from: the touches the
+ * person received, the first touch and its evidence, and the facts its
+ * template fills from. Shared by the builder and the /cadences sequence view,
+ * so the message shown ahead is the one that goes.
+ */
+function linkedInMessageFacts(
+  prospect: Pick<ProspectRecord, "id" | "email" | "name">,
+  playName: string,
+  cfg: CadenceContext["cfg"],
+) {
+  const events = getLedger().listSequenceEventsForProspectPlay(prospect.id, playName);
+  // Connected before this sequence: the invite created no request, so its note
+  // was never delivered, and nobody "accepted" anything.
+  const invite = liveLinkedInInvite(prospect.id, playName);
+  const alreadyConnected = invite?.alreadyConnected === true;
+  const sent: CadenceLinkedInTouch[] = events
+    .filter((e) => e.channel === "linkedin" && e.status === "sent")
+    // A known connection's record sent nothing, whatever LinkedIn later said.
+    .filter((e) => !isKnownConnectionMarker(e.metadata_json))
+    .filter((e) => !(alreadyConnected && undeliveredInviteNote(e, invite!.event.id)))
+    .flatMap((e) => {
+      const m = tryParseJsonObject<{ body?: unknown; note?: unknown; label?: unknown }>(
+        e.metadata_json ?? "",
+        {},
+      );
+      const text = typeof m.body === "string" ? m.body : typeof m.note === "string" ? m.note : "";
+      if (!text) return [];
+      return [
+        {
+          stepIndex: e.step_index,
+          label: typeof m.label === "string" && m.label ? m.label : "LinkedIn",
+          text,
+          sentAt: sqliteToIso(e.created_at),
+        },
+      ];
+    });
+  const first = firstTouch(events, playName, prospect.id);
+  const now = new Date();
+  const clause = agedEvidence(first.metadata, { contactedAt: first.contactedAt, now });
+  return {
+    events,
+    alreadyConnected,
+    sent,
+    first,
+    now,
+    clause,
+    template: {
+      name: prospect.name,
+      evidence: clause,
+      offer: playMakesOffer(playName, cfg)
+        ? (sequenceOffer(prospect, playName)?.offer ?? null)
+        : null,
+      alreadyConnected,
+    },
+  };
+}
+
 async function buildLinkedInMessage(
   ctx: CadenceContext,
   playName: string,
   which: "first" | "last",
 ): Promise<StepPayload | null> {
-  const ledger = getLedger();
-  const events = ledger.listSequenceEventsForProspectPlay(ctx.prospect.id, playName);
-  // Connected before this sequence: the invite created no request, so its note
-  // was never delivered, and nobody "accepted" anything.
-  const invite = liveLinkedInInvite(ctx.prospect.id, playName);
-  const alreadyConnected = invite?.alreadyConnected === true;
-  const prior = events
-    .filter((e) => e.channel === "linkedin" && e.status === "sent")
-    // A known connection's record sent nothing, whatever LinkedIn later said.
-    .filter((e) => !isKnownConnectionMarker(e.metadata_json))
-    .filter((e) => !(alreadyConnected && undeliveredInviteNote(e, invite!.event.id)))
-    .map((e) => {
-      try {
-        const m = JSON.parse(e.metadata_json ?? "{}") as { body?: unknown; note?: unknown };
-        const text = typeof m.body === "string" ? m.body : typeof m.note === "string" ? m.note : "";
-        return text ? `STEP ${e.step_index}: ${text}` : null;
-      } catch {
-        return null;
-      }
-    })
-    .filter((line): line is string => line !== null);
+  const { events, alreadyConnected, sent, first, now, clause, template } = linkedInMessageFacts(
+    ctx.prospect,
+    playName,
+    ctx.cfg,
+  );
+  const prior = sent.map((t) => `STEP ${t.stepIndex}: ${t.text}`);
   const emailed = events.some(
     (e) => e.channel === "email" && (e.status === "sent" || e.status === "delivered"),
   );
-  const first = firstTouch(events, playName, ctx.prospect.id);
-  const now = new Date();
-  const clause = agedEvidence(first.metadata, { contactedAt: first.contactedAt, now });
-  const templated = templatedLinkedIn(which, ctx.cfg, {
-    name: ctx.prospect.name,
-    evidence: clause,
-    offer: playMakesOffer(playName, ctx.cfg)
-      ? (sequenceOffer(ctx.prospect, playName)?.offer ?? null)
-      : null,
-    alreadyConnected,
-  });
+  const templated = templatedLinkedIn(which, ctx.cfg, template);
   if (templated) {
     // Carried on the payload, as a drafted message's lint flag is, so an
     // over-long template holds the send outside the preview too.
@@ -4480,6 +4519,69 @@ async function buildLinkedInMessage(
         ...(learned ? { learningKey: learned.key } : {}),
       }
     : null;
+}
+
+/** The LinkedIn message a sequence step sends, by the step's id. */
+const LINKEDIN_MESSAGE_STEPS: Readonly<Record<string, "first" | "last">> = {
+  "linkedin:1": "first",
+  "linkedin:2": "last",
+};
+
+/**
+ * One cadence for the /cadences sheet: the LinkedIn touches the person
+ * received, the invite it waits on, and every step left if they don't reply.
+ * Reads only: a LinkedIn message shows its template's text, and nothing is
+ * drafted. Null when the cadence or prospect is gone.
+ */
+export function cadenceSequence(prospectId: number, playName: string): CadenceSequenceView | null {
+  const ledger = getLedger();
+  const cadence = ledger.getCadence(prospectId, playName);
+  const prospect = ledger.getProspectById(prospectId);
+  if (!cadence || !prospect) return null;
+  const cfg = loadConfig();
+  const facts = linkedInMessageFacts(prospect, playName, cfg);
+  const active = cadence.status === "active";
+  const live = active ? liveLinkedInInvite(prospectId, playName) : null;
+  const waiting =
+    live !== null &&
+    !live.withdrawn &&
+    live.endedAt === null &&
+    linkedInWaitingSince({
+      prospectId,
+      playName,
+      prospectLinkedinUrl: prospect.linkedin_url,
+    }) !== null;
+  const invite =
+    waiting && Number.isFinite(live.invitedAtMs)
+      ? {
+          sentOn: new Date(live.invitedAtMs).toISOString().slice(0, 10),
+          expiresOn: new Date(live.invitedAtMs + linkedInInviteTimeoutDays() * 24 * 3600 * 1000)
+            .toISOString()
+            .slice(0, 10),
+        }
+      : null;
+  const upcoming: CadenceUpcomingStep[] = [];
+  const seq = active ? effectiveSequence(playName, prospectId) : undefined;
+  const steps = seq?.steps ?? [];
+  // The next message after an unaccepted invite goes once it is accepted.
+  let inviteOpen = waiting;
+  for (let i = cadence.current_step; i < steps.length; i++) {
+    const step = steps[i]!;
+    const which = step.channel === "linkedin" ? LINKEDIN_MESSAGE_STEPS[step.id ?? ""] : undefined;
+    const awaitsAcceptance = which !== undefined && inviteOpen && !facts.alreadyConnected;
+    if (step.id === CONTINUATION_INVITE_ID) inviteOpen = true;
+    else if (which !== undefined) inviteOpen = false;
+    upcoming.push({
+      stepIndex: i + 1,
+      label: step.label ?? "follow-up",
+      channel: step.channel,
+      isBreakup: seq ? isBreakupStepAt(seq, i) : false,
+      dayOffset: step.dayOffset,
+      awaitsAcceptance,
+      text: which ? (templatedLinkedIn(which, cfg, facts.template)?.text ?? null) : null,
+    });
+  }
+  return { linkedInSent: facts.sent, invite, upcoming };
 }
 
 /**

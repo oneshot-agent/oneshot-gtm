@@ -1675,10 +1675,13 @@ export function listSequenceEventsForProspectPlay(
     .all(prospectId, playName) as SequenceEventRecord[];
 }
 
+/** Pairs per query in listSequenceEventsForCadences: well under SQLite's expression depth of 1000. */
+const CADENCE_PAIRS_PER_QUERY = 400;
+
 /**
- * Bulk variant of listSequenceEventsForProspectPlay: one round-trip, Map
- * keyed `${prospect_id}|${play_name}`, same (step_index ASC, id ASC)
- * ordering. Index-served by idx_sequence_events_prospect_play.
+ * Bulk variant of listSequenceEventsForProspectPlay: one round-trip per 400
+ * pairs, Map keyed `${prospect_id}|${play_name}`, same (step_index ASC, id
+ * ASC) ordering. Index-served by idx_sequence_events_prospect_play.
  */
 export function listSequenceEventsForCadences(
   db: Database,
@@ -1686,19 +1689,30 @@ export function listSequenceEventsForCadences(
 ): Map<string, SequenceEventRecord[]> {
   const map = new Map<string, SequenceEventRecord[]>();
   if (pairs.length === 0) return map;
-  const conditions = pairs.map(() => "(prospect_id = ? AND play_name = ?)").join(" OR ");
-  const args: unknown[] = [];
-  for (const p of pairs) {
-    args.push(p.prospectId, p.playName);
+  // One OR term per pair: SQLite refuses an expression deeper than 1000, so a
+  // page of more cadences than that is read in chunks. Each pair once, so a
+  // repeated pair can't land in two chunks and double its rows.
+  const unique = [...new Map(pairs.map((p) => [`${p.prospectId}|${p.playName}`, p])).values()];
+  const rows: SequenceEventRecord[] = [];
+  for (let i = 0; i < unique.length; i += CADENCE_PAIRS_PER_QUERY) {
+    const chunk = unique.slice(i, i + CADENCE_PAIRS_PER_QUERY);
+    const conditions = chunk.map(() => "(prospect_id = ? AND play_name = ?)").join(" OR ");
+    const args: unknown[] = [];
+    for (const p of chunk) {
+      args.push(p.prospectId, p.playName);
+    }
+    rows.push(
+      ...(db
+        .query(
+          `SELECT * FROM sequence_events
+           WHERE (${conditions})
+             AND status IN ('sent','delivered','replied','skipped')
+           ORDER BY prospect_id ASC, play_name ASC, step_index ASC, id ASC`,
+        )
+        .all(...(args as never[])) as SequenceEventRecord[]),
+    );
   }
-  const rows = db
-    .query(
-      `SELECT * FROM sequence_events
-       WHERE (${conditions})
-         AND status IN ('sent','delivered','replied','skipped')
-       ORDER BY prospect_id ASC, play_name ASC, step_index ASC, id ASC`,
-    )
-    .all(...(args as never[])) as SequenceEventRecord[];
+  // A pair's rows all come from its one chunk, already in step order.
   for (const r of rows) {
     const key = `${r.prospect_id}|${r.play_name}`;
     let list = map.get(key);

@@ -91,6 +91,46 @@ export type StepChannel =
   | "reddit"
   | "hacker-news";
 
+/** A LinkedIn note or message a cadence sent: what the person received. */
+export interface CadenceLinkedInTouch {
+  stepIndex: number;
+  /** The step's label as the send recorded it ("connection request", "first LinkedIn message"). */
+  label: string;
+  text: string;
+  /** ISO. */
+  sentAt: string;
+}
+
+/** A step the cadence has not sent yet, in order. */
+export interface CadenceUpcomingStep {
+  /** Same numbering as `CadenceSentStep.stepIndex`. */
+  stepIndex: number;
+  label: string;
+  channel: StepChannel;
+  isBreakup: boolean;
+  /** Days after the previous touch. */
+  dayOffset: number;
+  /** A LinkedIn message that goes only once the pending invite is accepted. */
+  awaitsAcceptance: boolean;
+  /**
+   * The text it will send, when that is known now: a LinkedIn message from
+   * the workspace's templates. Null when it is written at send time (email,
+   * a model-written LinkedIn message, a connection note).
+   */
+  text: string | null;
+}
+
+/**
+ * GET /api/cadences/:id/sequence?play=: the LinkedIn touches already sent,
+ * the invite being waited on, and every step still to come if no reply.
+ */
+export interface CadenceSequenceView {
+  linkedInSent: CadenceLinkedInTouch[];
+  /** Set while a sent invite waits on acceptance. Dates are YYYY-MM-DD. */
+  invite: { sentOn: string; expiresOn: string } | null;
+  upcoming: CadenceUpcomingStep[];
+}
+
 export interface BusinessMailAddress {
   name: string;
   address_line1: string;

@@ -41,6 +41,7 @@ import {
   previewCadenceBatchRoute,
   sendCadenceBatchRoute,
   cadenceDraftVersionsRoute,
+  cadenceSequenceRoute,
 } from "./api/cadences.ts";
 import { cadenceOfferRoute } from "./api/cadence-offer.ts";
 import { listReceipts, getReceipt } from "./api/receipts.ts";
@@ -193,6 +194,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/prospects/:id/linkedin-friend/draft", linkedInFriendDraftRoute),
   route("POST", "/api/prospects/:id/linkedin-friend/send", linkedInFriendSendRoute),
   route("GET", "/api/cadences/:id/drafts", cadenceDraftVersionsRoute),
+  route("GET", "/api/cadences/:id/sequence", cadenceSequenceRoute),
   route("POST", "/api/cadences/:id/preview-next", previewCadenceStepRoute),
   route("POST", "/api/cadences/:id/send-next", sendCadenceStepRoute),
   route("POST", "/api/cadences/:id/offer", cadenceOfferRoute),
