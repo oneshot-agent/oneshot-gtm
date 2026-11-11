@@ -88,11 +88,14 @@ export const Route = createFileRoute("/cadences")({
   // listing to cadences whose prospect email is in the run's prospect_emails
   // set. The page shows a clear banner with a [clear filter] CTA.
   // ?step= and ?due= are the step and due chips (lib/cadenceFilter.ts).
+  // The router parses `?sinceRun=5` to a number; a hand-typed link may stay a string.
   validateSearch: (search: Record<string, unknown>) => ({
     sinceRun:
-      typeof search["sinceRun"] === "string" && /^\d+$/.test(search["sinceRun"])
-        ? Number.parseInt(search["sinceRun"], 10)
-        : undefined,
+      typeof search["sinceRun"] === "number" && Number.isInteger(search["sinceRun"])
+        ? search["sinceRun"]
+        : typeof search["sinceRun"] === "string" && /^\d+$/.test(search["sinceRun"])
+          ? Number.parseInt(search["sinceRun"], 10)
+          : undefined,
     ...parseCadenceFilterSearch(search),
   }),
   component: CadencesPage,
@@ -492,20 +495,19 @@ function CadencesPage() {
   const { masked } = usePrivacy();
   const now = new Date();
   const nowIso = now.toISOString();
-  // The chips read the clock to the minute, so the filtered rows stay one
-  // reference between the 15s refreshes and the selection memo holds.
-  const filterNowIso = new Date(Math.floor(now.getTime() / 60_000) * 60_000).toISOString();
+  // The chips read the same clock as each row's "overdue" note, so a row
+  // labelled overdue is always in the Overdue view.
   const visible = useMemo(
-    () => filterCadences(list, { step: filter.step, due: filter.due }, filterNowIso),
-    [list, filter.step, filter.due, filterNowIso],
+    () => filterCadences(list, { step: filter.step, due: filter.due }, nowIso),
+    [list, filter.step, filter.due, nowIso],
   );
   const filterCounts = useMemo(
-    () => cadenceFilterCounts(list, { step: filter.step, due: filter.due }, filterNowIso),
-    [list, filter.step, filter.due, filterNowIso],
+    () => cadenceFilterCounts(list, { step: filter.step, due: filter.due }, nowIso),
+    [list, filter.step, filter.due, nowIso],
   );
   const filterTotals = useMemo(
-    () => cadenceFilterCounts(list, { step: "all", due: "any" }, filterNowIso),
-    [list, filterNowIso],
+    () => cadenceFilterCounts(list, { step: "all", due: "any" }, nowIso),
+    [list, nowIso],
   );
   const filtering = filter.step !== "all" || filter.due !== "any";
 
