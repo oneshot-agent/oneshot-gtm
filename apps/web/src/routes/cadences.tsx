@@ -520,7 +520,8 @@ function CadencesPage() {
     away: awayRows,
     stale: staleRows,
   } = useMemo(() => cadenceSelection(visible, selected), [visible, selected]);
-  const mailWaiting = useMemo(() => mailWaitingRows(list), [list]);
+  // Like the selection, the letter batch skips only the rows the chips show.
+  const mailWaiting = useMemo(() => mailWaitingRows(visible), [visible]);
   const allActiveSelected =
     selectableActive.length > 0 && selectableActive.every((c) => selected.has(rowKey(c)));
   const someActiveSelected =
