@@ -155,8 +155,11 @@ describe("pilotOrBreakup", () => {
     expect(llmCalls[0]!.system).toContain("system:breakup-email");
     expect(llmCalls[0]!.user).not.toContain("OFFER TERMS");
     llmCalls.length = 0;
-    expect(await step("none")(ctx())).toBeNull();
-    expect(llmCalls).toHaveLength(0);
+    // An offer-only step is planned whenever an offer is set, so it closes too.
+    const out = await step("none")(ctx());
+    expect(llmCalls[0]!.system).toContain("system:breakup-email");
+    expect(llmCalls[0]!.user).not.toContain("OFFER TERMS");
+    expect(out).not.toHaveProperty("hardBans");
   });
 
   it("leaves a stored sequence offer out of a listed play's follow-up", async () => {

@@ -133,8 +133,9 @@ export function runRepoInterest(
 }
 
 // One soft day-3 ping. With a pilot offer configured, a final step offers it
-// and closes the thread; without one that step returns nothing and the
-// cadence completes after the ping, as before.
+// and closes the thread, or sends the plain breakup when the workspace lists
+// repo-interest in noOfferPlays; without one that step returns nothing and
+// the cadence completes after the ping, as before.
 registerSequence({
   playName: PLAY_NAME,
   steps: [
