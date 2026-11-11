@@ -1,4 +1,4 @@
-import { logEvent } from "@oneshot-gtm/core";
+import { logEvent, sliceText } from "@oneshot-gtm/core";
 import { githubHeaders } from "./_github-search.ts";
 
 export interface GitHubUserInfo {
@@ -197,7 +197,7 @@ export async function fetchTopRepos(login: string): Promise<TopRepo[] | null> {
             : null;
         return {
           name: r["name"] as string,
-          description: rawDesc && rawDesc.length > 160 ? `${rawDesc.slice(0, 159)}…` : rawDesc,
+          description: rawDesc && rawDesc.length > 160 ? `${sliceText(rawDesc, 159)}…` : rawDesc,
           language: typeof r["language"] === "string" ? (r["language"] as string) : null,
           stars: typeof r["stargazers_count"] === "number" ? (r["stargazers_count"] as number) : 0,
           pushedAt: typeof r["pushed_at"] === "string" ? (r["pushed_at"] as string) : null,

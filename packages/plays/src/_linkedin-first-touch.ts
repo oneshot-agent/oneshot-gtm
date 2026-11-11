@@ -26,6 +26,7 @@ import {
   type LinkedInFailure,
   type LinkedInJobOutcome,
   type LinkedInOperation,
+  sliceText,
 } from "@oneshot-gtm/core";
 import { loadPrompt } from "@oneshot-gtm/intel";
 import { enrollInCadence } from "./_cadence.ts";
@@ -138,7 +139,7 @@ export function signalLines(row: LinkedInFirstTouchRow): string[] {
   const job = str(p, "jobTitle");
   if (job) lines.push(`HIRING_FOR: ${job}`);
   const bio = str(p, "attendeeBio");
-  if (bio) lines.push(`THEIR_BIO: ${bio.slice(0, 300)}`);
+  if (bio) lines.push(`THEIR_BIO: ${sliceText(bio, 300)}`);
   const fit = str(p, "fitReason");
   if (fit) lines.push(`WHY_THEY_FIT: ${fit}`);
   if (row.notes && !row.notes.startsWith("auto:"))

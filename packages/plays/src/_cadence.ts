@@ -74,6 +74,7 @@ import {
   isKnownConnectionMarker,
   productBriefText,
   autoReplyConfigOf,
+  sliceText,
 } from "@oneshot-gtm/core";
 import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { readAutoReply, stopLiveCadences } from "./_auto-reply.ts";
@@ -3348,7 +3349,7 @@ export function prospectDemoDay(
  */
 function oneLine(v: string, max: number): string {
   const flat = v.replace(/\s+/g, " ").trim();
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+  return flat.length > max ? `${sliceText(flat, max - 1)}…` : flat;
 }
 
 /** ROLE and COMPANY FACTS for a follow-up, from the prospect row and its researched dossier. */

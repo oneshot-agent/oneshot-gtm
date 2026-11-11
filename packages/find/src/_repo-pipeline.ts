@@ -1,6 +1,12 @@
 import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
 import { fetchProfileReadmeEmail, type EmailSource } from "./_github-readme.ts";
-import { deepResearchPerson, enrichProfile, getLedger, logEvent } from "@oneshot-gtm/core";
+import {
+  deepResearchPerson,
+  enrichProfile,
+  getLedger,
+  logEvent,
+  sliceText,
+} from "@oneshot-gtm/core";
 import { dossierFromProviderResult, personPayloadPatch } from "./_person-research.ts";
 import type { CompetitorSwitchTarget, StackConsolidationTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
@@ -720,5 +726,5 @@ export function describeForIcp(hit: RepoCandidate): string {
 }
 
 function truncate(s: string, max: number): string {
-  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+  return s.length <= max ? s : `${sliceText(s, max - 1)}…`;
 }

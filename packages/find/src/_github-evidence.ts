@@ -1,3 +1,4 @@
+import { sliceText } from "@oneshot-gtm/core";
 import { fetchProfileReadmeText } from "./_github-readme.ts";
 import { fetchTopRepos, type GitHubUserInfo, type TopRepo } from "./_github-user.ts";
 
@@ -43,7 +44,7 @@ export function readmeExcerpt(markdown: string, max = README_EXCERPT_CHARS): str
     .replace(/[*_`>|~]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  return text.length > max ? `${sliceText(text, max - 1)}…` : text;
 }
 
 function repoLine(r: TopRepo): string {
@@ -113,7 +114,7 @@ export async function buildGitHubEvidence(
   }
   let text = lines.join("\n");
   if (text.length > GITHUB_EVIDENCE_MAX_CHARS) {
-    text = `${text.slice(0, GITHUB_EVIDENCE_MAX_CHARS - 1)}…`;
+    text = `${sliceText(text, GITHUB_EVIDENCE_MAX_CHARS - 1)}…`;
   }
   return { text, repos, readReadme };
 }
