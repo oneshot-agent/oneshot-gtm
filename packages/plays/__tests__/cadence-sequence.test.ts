@@ -137,6 +137,26 @@ describe("cadenceSequence", () => {
     expect(view.upcoming.map((s) => s.awaitsAcceptance)).toEqual([false, false]);
   });
 
+  it("the next message's saved preview is shown over the template: it is what sends", () => {
+    inviteSentDaysAgo(3);
+    enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
+    ledger.setCadenceDraft({
+      prospectId,
+      playName: "luma-events",
+      draft: {
+        subject: "LinkedIn message",
+        body: "Hi Dana, edited by hand.",
+        flags: [],
+        payload: { kind: "linkedin_message", text: "Hi Dana, edited by hand." },
+      },
+    });
+    const view = cadenceSequence(prospectId, "luma-events")!;
+    expect(view.upcoming.map((s) => s.text)).toEqual([
+      "Hi Dana, edited by hand.",
+      "Last one, Dana.",
+    ]);
+  });
+
   it("a model-written workspace shows no text ahead: it is written when due", () => {
     linkedin = { writer: "model" };
     inviteSentDaysAgo(3);

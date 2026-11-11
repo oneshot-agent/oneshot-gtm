@@ -4570,6 +4570,11 @@ export function cadenceSequence(prospectId: number, playName: string): CadenceSe
       : null;
   const upcoming: CadenceUpcomingStep[] = [];
   const seq = active ? effectiveSequence(playName, prospectId) : undefined;
+  // The next step's saved preview is what sends, word for word: it beats the template.
+  const saved = active
+    ? (ledger.getCadenceDraft({ prospectId, playName })?.payload as StepPayload | undefined)
+    : undefined;
+  const savedText = saved?.kind === "linkedin_message" ? saved.text : null;
   const steps = seq?.steps ?? [];
   // The next message after an unaccepted invite goes once it is accepted.
   let inviteOpen = waiting;
@@ -4586,7 +4591,11 @@ export function cadenceSequence(prospectId: number, playName: string): CadenceSe
       isBreakup: seq ? isBreakupStepAt(seq, i) : false,
       dayOffset: step.dayOffset,
       awaitsAcceptance,
-      text: which ? (templatedLinkedIn(which, cfg, facts.template)?.text ?? null) : null,
+      text: !which
+        ? null
+        : i === cadence.current_step && savedText
+          ? savedText
+          : (templatedLinkedIn(which, cfg, facts.template)?.text ?? null),
     });
   }
   return { linkedInSent: facts.sent, invite, upcoming };
