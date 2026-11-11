@@ -62,6 +62,14 @@ import {
   WaitingLetterLoader,
 } from "../components/ledger/LinkedInSequence.tsx";
 import { SequenceOffer, sequenceOfferActivityId } from "../components/queue/SequenceOffer.tsx";
+import { CadenceFilters } from "../components/ledger/CadenceFilters.tsx";
+import {
+  cadenceFilterCounts,
+  filterCadences,
+  isOverdueCadence,
+  parseCadenceFilterSearch,
+  type CadenceFilter,
+} from "../lib/cadenceFilter.ts";
 import { rowActivityOf, useRowActivityChanges } from "../lib/rowActivity.ts";
 import { heldSummary, type HeldOptions } from "../lib/flagLabels.ts";
 
@@ -79,11 +87,13 @@ export const Route = createFileRoute("/cadences")({
   // ?sinceRun=N deep-link from /run/<play>?runId=N done-mode: filters the
   // listing to cadences whose prospect email is in the run's prospect_emails
   // set. The page shows a clear banner with a [clear filter] CTA.
+  // ?step= and ?due= are the step and due chips (lib/cadenceFilter.ts).
   validateSearch: (search: Record<string, unknown>) => ({
     sinceRun:
       typeof search["sinceRun"] === "string" && /^\d+$/.test(search["sinceRun"])
         ? Number.parseInt(search["sinceRun"], 10)
         : undefined,
+    ...parseCadenceFilterSearch(search),
   }),
   component: CadencesPage,
 });
@@ -179,7 +189,8 @@ function CadencesPage() {
 
   // Offer work on a card (rowActivity.ts) locks its letter: re-render on any change.
   useRowActivityChanges();
-  const { sinceRun } = Route.useSearch();
+  const { sinceRun, step: stepSearch, due: dueSearch } = Route.useSearch();
+  const filter: CadenceFilter = { step: stepSearch ?? "all", due: dueSearch ?? "any" };
   const cadences = useQuery({
     queryKey: ["cadences", showAll, sinceRun],
     queryFn: () => api.cadences({ all: showAll, ...(sinceRun != null ? { sinceRun } : {}) }),
@@ -189,7 +200,17 @@ function CadencesPage() {
   const clearSinceRun = (): void => {
     // validateSearch's return type makes `sinceRun` a required (if undefined)
     // key, so `{}` doesn't typecheck: spell the cleared filter out.
-    void cadenceNavigate({ search: { sinceRun: undefined } });
+    void cadenceNavigate({ search: (prev) => ({ ...prev, sinceRun: undefined }) });
+  };
+  const setFilter = (next: CadenceFilter): void => {
+    void cadenceNavigate({
+      search: (prev) => ({
+        ...prev,
+        step: next.step === "all" ? undefined : next.step,
+        due: next.due === "any" ? undefined : next.due,
+      }),
+      replace: true,
+    });
   };
 
   const stop = useMutation({
@@ -471,8 +492,25 @@ function CadencesPage() {
   const { masked } = usePrivacy();
   const now = new Date();
   const nowIso = now.toISOString();
+  // The chips read the clock to the minute, so the filtered rows stay one
+  // reference between the 15s refreshes and the selection memo holds.
+  const filterNowIso = new Date(Math.floor(now.getTime() / 60_000) * 60_000).toISOString();
+  const visible = useMemo(
+    () => filterCadences(list, { step: filter.step, due: filter.due }, filterNowIso),
+    [list, filter.step, filter.due, filterNowIso],
+  );
+  const filterCounts = useMemo(
+    () => cadenceFilterCounts(list, { step: filter.step, due: filter.due }, filterNowIso),
+    [list, filter.step, filter.due, filterNowIso],
+  );
+  const filterTotals = useMemo(
+    () => cadenceFilterCounts(list, { step: "all", due: "any" }, filterNowIso),
+    [list, filterNowIso],
+  );
+  const filtering = filter.step !== "all" || filter.due !== "any";
 
   // Selection includes mail cadences for stopping; email actions use their own subset.
+  // It reads the filtered rows: a batch never acts on a row the chips hide.
   const {
     selectable: selectableActive,
     chosen: selectedRows,
@@ -481,7 +519,7 @@ function CadencesPage() {
     sendable: sendableRows,
     away: awayRows,
     stale: staleRows,
-  } = useMemo(() => cadenceSelection(list, selected), [list, selected]);
+  } = useMemo(() => cadenceSelection(visible, selected), [visible, selected]);
   const mailWaiting = useMemo(() => mailWaitingRows(list), [list]);
   const allActiveSelected =
     selectableActive.length > 0 && selectableActive.every((c) => selected.has(rowKey(c)));
@@ -599,6 +637,12 @@ function CadencesPage() {
           value={counts.active}
           caption={counts.overdue > 0 ? `${counts.overdue} overdue` : "awaiting reply"}
           tone={counts.overdue > 0 ? "spend" : "receipt"}
+          {...(counts.overdue > 0
+            ? {
+                onCaptionClick: () => setFilter({ step: "all", due: "overdue" }),
+                captionTitle: "Show the overdue cadences",
+              }
+            : {})}
         />
         <CadenceSummary
           label="Replied"
@@ -650,10 +694,24 @@ function CadencesPage() {
         )}
       </section>
 
+      {list.length > 0 && (
+        <CadenceFilters
+          filter={filter}
+          counts={filterCounts}
+          totals={filterTotals}
+          onChange={setFilter}
+        />
+      )}
+
       <section className="flex items-baseline justify-between border-b border-ink-rule px-6 py-2.5">
         <div className="ln-eyebrow">
           {cadences.data ? (
             <>
+              {filtering && (
+                <>
+                  {visible.length} <span className="text-ink-faint">of</span>{" "}
+                </>
+              )}
               {list.length} <span className="text-ink-faint">{showAll ? "total" : "active"}</span>
             </>
           ) : (
@@ -822,18 +880,28 @@ function CadencesPage() {
               </tr>
             </thead>
             <tbody>
-              {list.map((c, i) => {
+              {visible.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-8 text-[12px] text-ink-muted">
+                    No cadences match ·{" "}
+                    <button
+                      type="button"
+                      className="underline decoration-ink-rule underline-offset-2 hover:text-ink-cream"
+                      onClick={() => setFilter({ step: "all", due: "any" })}
+                    >
+                      clear filters
+                    </button>
+                  </td>
+                </tr>
+              )}
+              {visible.map((c, i) => {
                 const totalSteps = c.followupCount + 1;
                 const key = rowKey(c);
                 const knownCompany =
                   c.prospectCompany && !/^\(?unknown\)?$/i.test(c.prospectCompany.trim())
                     ? c.prospectCompany
                     : null;
-                const isOverdue =
-                  c.status === "active" &&
-                  c.linkedinWaitingSince == null &&
-                  c.nextDueAt !== null &&
-                  c.nextDueAt <= nowIso;
+                const isOverdue = isOverdueCadence(c, nowIso);
                 // Keep timing in the row; the sheet adds progress and history.
                 const dotsTone =
                   c.status === "replied"
@@ -2003,11 +2071,16 @@ function CadenceSummary({
   value,
   caption,
   tone = "neutral",
+  onCaptionClick,
+  captionTitle,
 }: {
   label: string;
   value: number | string;
   caption?: string;
   tone?: "neutral" | "receipt" | "signal" | "spend" | "blocked";
+  /** Makes the caption a button (the Active tile's "N overdue" opens that filter). */
+  onCaptionClick?: () => void;
+  captionTitle?: string;
 }) {
   const captionColor =
     tone === "spend"
@@ -2028,11 +2101,22 @@ function CadenceSummary({
       >
         {value}
       </div>
-      {caption && (
-        <div className="mt-2 truncate font-mono text-[11px]" style={{ color: captionColor }}>
-          {caption}
-        </div>
-      )}
+      {caption &&
+        (onCaptionClick ? (
+          <button
+            type="button"
+            title={captionTitle}
+            onClick={onCaptionClick}
+            className="mt-2 block max-w-full truncate font-mono text-[11px] underline decoration-dotted underline-offset-2"
+            style={{ color: captionColor }}
+          >
+            {caption}
+          </button>
+        ) : (
+          <div className="mt-2 truncate font-mono text-[11px]" style={{ color: captionColor }}>
+            {caption}
+          </div>
+        ))}
     </div>
   );
 }
