@@ -552,7 +552,10 @@ domains
 domains
   .command("quote <domain>")
   .description("Review the price and terms for a domain or additional addresses")
-  .option("--mode <mode>", "relay or mailbox", "relay")
+  .option(
+    "--mode <mode>",
+    "relay or mailbox; existing domains keep their mode, new domains default to relay",
+  )
   .option("--addresses <localparts>", "1–10 comma-separated local parts", "agent")
   .option("--json", "output as JSON")
   .action(runOrFail(commandDomainsQuote));

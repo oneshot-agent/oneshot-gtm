@@ -91,7 +91,7 @@ For an existing domain, the quote prices additional addresses. An expired quote 
 
 ### Unresolved payments
 
-An ambiguous settlement does not mean a lookup found nothing. The operation did not run, and payment may have landed; A landed payment is credited to the wallet when the call did not run. GTM retains a payment hold across processes and restarts, including when a process dies during a guarded call. It does not retry the held operation automatically. Use `oneshot-gtm payments list --json` to inspect the operation and settlement ID, reconcile the payment with OneShot, then explicitly release it:
+An ambiguous settlement does not mean a lookup found nothing. The operation did not run, and payment may have landed; A landed payment is credited to the wallet when the call did not run. GTM retains a payment hold across processes and restarts, including when a process dies during a guarded call. Accepted jobs that time out while polling also stay held, with their request ID retained; they may already have executed. Request deadlines with unknown acceptance retain the submission key when available. It does not retry the held operation automatically. Use `oneshot-gtm payments list --json` to inspect the operation and settlement ID, reconcile the payment with OneShot, then explicitly release it:
 
 ```sh
 oneshot-gtm payments resolve <hold-key> --note "Verified settlement credited by OneShot"

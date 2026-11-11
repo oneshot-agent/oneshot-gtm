@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { DomainPoolView, DomainQuoteView } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
-import { readOnly } from "../../lib/readOnly.ts";
+import { readOnly, READ_ONLY } from "../../lib/readOnly.ts";
 import { Button } from "../primitives/Button.tsx";
 import { Field, Input, Select } from "../primitives/Field.tsx";
 
@@ -30,6 +30,8 @@ export function DomainSetupForm({ domains }: { domains: DomainPoolView[] }) {
   });
   const buyCall = useMutation({
     mutationFn: () => {
+      if (!quote?.billing)
+        throw new Error("Billing terms are missing. Request a complete quote before purchasing.");
       if (!quote?.quote_id || (quote.expires_at && Date.parse(quote.expires_at) <= Date.now()))
         throw new Error("Quote expired. Request a new quote and review its price.");
       return api.buyDomain({ domain: quote.domain, quoteId: quote.quote_id });
@@ -56,7 +58,17 @@ export function DomainSetupForm({ domains }: { domains: DomainPoolView[] }) {
     setPurchased(false);
   };
   return (
-    <div className="mt-3 flex flex-col gap-3 border-t border-ink-rule pt-3">
+    <div
+      className="mt-3 flex flex-col gap-3 border-t border-ink-rule pt-3"
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" || !(event.target instanceof HTMLInputElement)) return;
+        event.preventDefault();
+        if (!READ_ONLY && !busy && domain.trim()) {
+          setQuote(null);
+          quoteCall.mutate();
+        }
+      }}
+    >
       <span className="ln-eyebrow">Set up a domain or add addresses</span>
       <p className="text-[12px] text-ink-muted">
         Buy a sending domain or add addresses to one you own. Setup is separate from email and from
@@ -146,10 +158,19 @@ export function DomainSetupForm({ domains }: { domains: DomainPoolView[] }) {
               Quote expires {new Date(quote.expires_at).toLocaleString()}
             </p>
           )}
+          {!quote.billing && (
+            <p>Billing terms are missing. Request a complete quote before purchasing.</p>
+          )}
           {!quote.purchasable && <p>{quote.reason ?? "This setup cannot be purchased."}</p>}
           <Button
             type="button"
-            disabled={busy || !quote.purchasable || !quote.quote_id || quote.total_cost == null}
+            disabled={
+              busy ||
+              !quote.purchasable ||
+              !quote.quote_id ||
+              quote.total_cost == null ||
+              !quote.billing
+            }
             onClick={() => buyCall.mutate()}
             {...readOnly}
           >

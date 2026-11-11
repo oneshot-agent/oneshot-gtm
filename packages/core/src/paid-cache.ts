@@ -1,4 +1,4 @@
-import { isSettlementAmbiguous } from "./payment-holds.ts";
+import { isSettlementAmbiguous, withPaymentOperation } from "./payment-holds.ts";
 import { createHash } from "node:crypto";
 import { demoMode } from "./demo.ts";
 import { logEvent } from "./events.ts";
@@ -567,7 +567,7 @@ export async function withPaidCache<T extends { result: unknown; receiptId: numb
 
   const live = (async (): Promise<T> => {
     try {
-      const out = await buy();
+      const out = await withPaymentOperation(`lookup:${key}`, buy);
       const named = (out as { costUsd?: unknown }).costUsd;
       const costUsd = typeof named === "number" ? named : costOf(out.result);
       try {

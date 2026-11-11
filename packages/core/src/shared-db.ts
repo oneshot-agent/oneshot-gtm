@@ -118,6 +118,9 @@ export interface PaymentHold {
   wallet: string;
   method: string;
   claim_token: string;
+  request_id: string | null;
+  idempotency_key: string | null;
+  execution_uncertain: number;
   settlement_id: string | null;
   created_at: string;
 }
@@ -146,12 +149,27 @@ export class SharedDb {
     );
   }
 
-  holdPayment(key: string, claimToken: string, settlementId?: string): void {
-    this.db.run("UPDATE payment_holds SET settlement_id=? WHERE key=? AND claim_token=?", [
-      settlementId ?? null,
-      key,
-      claimToken,
-    ]);
+  holdPayment(
+    key: string,
+    claimToken: string,
+    details: {
+      settlementId?: string;
+      requestId?: string;
+      idempotencyKey?: string;
+      executionUncertain?: boolean;
+    },
+  ): void {
+    this.db.run(
+      "UPDATE payment_holds SET settlement_id=?, request_id=?, idempotency_key=?, execution_uncertain=? WHERE key=? AND claim_token=?",
+      [
+        details.settlementId ?? null,
+        details.requestId ?? null,
+        details.idempotencyKey ?? null,
+        details.executionUncertain ? 1 : 0,
+        key,
+        claimToken,
+      ],
+    );
   }
 
   paymentHolds(): PaymentHold[] {
@@ -170,7 +188,7 @@ export class SharedDb {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS payment_holds (
         key TEXT PRIMARY KEY, wallet TEXT NOT NULL, method TEXT NOT NULL,
-        settlement_id TEXT, claim_token TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        settlement_id TEXT, claim_token TEXT NOT NULL, request_id TEXT, idempotency_key TEXT, execution_uncertain INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE IF NOT EXISTS enrichment_cache (
         email TEXT PRIMARY KEY,
@@ -272,6 +290,14 @@ export class SharedDb {
         .all();
       if (!paymentCols.some((c) => c.name === "claim_token")) {
         this.db.exec("ALTER TABLE payment_holds ADD COLUMN claim_token TEXT NOT NULL DEFAULT ''");
+      }
+      for (const [name, definition] of [
+        ["request_id", "TEXT"],
+        ["idempotency_key", "TEXT"],
+        ["execution_uncertain", "INTEGER NOT NULL DEFAULT 0"],
+      ]) {
+        if (!paymentCols.some((c) => c.name === name))
+          this.db.exec(`ALTER TABLE payment_holds ADD COLUMN ${name} ${definition}`);
       }
       const cols = this.db.query("PRAGMA table_info(contact_touches)").all() as Array<{
         name: string;

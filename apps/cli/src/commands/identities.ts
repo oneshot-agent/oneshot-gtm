@@ -190,7 +190,7 @@ export async function commandIdentitiesAdd(): Promise<void> {
       addresses: [mailbox],
     });
     note(JSON.stringify(quote, null, 2));
-    if (!quote.purchasable || !quote.quote_id || quote.total_cost == null) {
+    if (!quote.purchasable || !quote.quote_id || quote.total_cost == null || !quote.billing) {
       warn(quote.reason ?? "Setup not purchasable");
       return;
     }
@@ -370,7 +370,7 @@ export async function commandDomainsQuote(
     mailbox_mode: opts.mode as "relay" | "mailbox" | undefined,
     addresses: opts.addresses?.split(","),
   });
-  if (opts.json) emitJson({ command: "domains quote", ...result });
+  if (opts.json) await emitJson({ command: "domains quote", ...result });
   else {
     note(JSON.stringify(result, null, 2));
     note("Accept this exact quote with domains buy <domain> --quote-id <id>. No email is sent.");
@@ -382,13 +382,13 @@ export async function commandDomainsBuy(
 ): Promise<void> {
   if (opts.json) setJsonMode(true);
   const result = await buySendingDomain(domain, opts.quoteId);
-  if (opts.json) emitJson({ command: "domains buy", ...result });
+  if (opts.json) await emitJson({ command: "domains buy", ...result });
   else note(JSON.stringify(result, null, 2));
 }
 export async function commandPaymentsList(opts: { json?: boolean }): Promise<void> {
   if (opts.json) setJsonMode(true);
   const holds = listPaymentHolds();
-  if (opts.json) emitJson({ command: "payments list", holds });
+  if (opts.json) await emitJson({ command: "payments list", holds });
   else note(JSON.stringify(holds, null, 2));
 }
 export async function commandPaymentsResolve(key: string, opts: { note: string }): Promise<void> {

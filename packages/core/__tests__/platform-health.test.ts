@@ -25,6 +25,8 @@ const {
 const { isNegativeCacheable } = await import("../src/paid-cache.ts");
 const { isTransientToolError } = await import("../src/send-routing.ts");
 
+const { PaymentHeldError } = await import("../src/payment-holds.ts");
+
 const SETTLEMENT =
   "payment rejected: settlement_pending: transaction did not confirm in time: context deadline exceeded — expected $0.01 (The payment did not settle) [payment attempt pa_123]";
 
@@ -131,6 +133,34 @@ describe("classifyPlatformError", () => {
 });
 
 describe("watchAgent", () => {
+  it("does not count local hold refusals as successes or failures", async () => {
+    const raw = {
+      companyFind: vi
+        .fn()
+        .mockRejectedValue(new PaymentHeldError("held", "st", { localRefusal: true })),
+    };
+    const agent = watchAgent(raw);
+    for (let i = 0; i < 10; i++) await agent.companyFind().catch(() => {});
+    expect(isPlatformPaused()).toBe(false);
+    expect(events).toEqual([]);
+    raw.companyFind.mockRejectedValue(new PaymentHeldError("held", "st"));
+    for (let i = 0; i < 6; i++) await agent.companyFind().catch(() => {});
+    expect(isPlatformPaused()).toBe(true);
+  });
+  it("a locally refused probe frees its slot without ending the pause", async () => {
+    vi.useFakeTimers();
+    const raw = fakeAgent(() => true);
+    const agent = watchAgent(raw);
+    for (let i = 0; i < 6; i++) await agent.companyFind().catch(() => {});
+    vi.setSystemTime(Date.now() + PLATFORM_COOLDOWN_MS + 1);
+    raw.companyFind.mockRejectedValueOnce(
+      new PaymentHeldError("held", "st", { localRefusal: true }),
+    );
+    await expect(agent.companyFind()).rejects.toBeInstanceOf(PaymentHeldError);
+    expect(events.some((e) => e.kind === "oneshot.platform_resumed")).toBe(false);
+    await expect(agent.companyFind()).rejects.toThrow(/settlement_pending/);
+    expect(raw.companyFind).toHaveBeenCalledTimes(8);
+  });
   it("passes results and errors through and logs each failure in full", async () => {
     const agent = watchAgent(fakeAgent(() => true));
     await expect(agent.companyFind()).rejects.toThrow(/settlement_pending/);

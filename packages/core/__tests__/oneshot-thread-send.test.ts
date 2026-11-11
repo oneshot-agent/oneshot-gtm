@@ -260,6 +260,42 @@ describe("oneshot: a follow-up into the first email's thread", () => {
     },
   );
 
+  it("keeps an accepted job timeout uncertain and never dispatches it twice", async () => {
+    const to = recipient();
+    const key = `timeout:${to}`;
+    emailMock.mockRejectedValueOnce(
+      Object.assign(new Error("polling timed out"), { name: "JobTimeoutError", jobId: "job_sent" }),
+    );
+    const input = { to, subject: "hello", body: "body", idempotencyKey: key };
+    await expect(sendEmail(input, { playName: "alpha" })).rejects.toMatchObject({
+      name: "UncertainSendError",
+    });
+    expect(recordReceipt).not.toHaveBeenCalled();
+    expect(scratch.outboundSends.get(key)?.status).toBe("uncertain");
+    await expect(sendEmail(input, { playName: "alpha" })).rejects.toThrow();
+    expect(emailMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["failed", "error"])("explicit %s results remain definite failures", async (status) => {
+    const to = recipient();
+    const key = `failure:${to}`;
+    emailMock.mockResolvedValueOnce({
+      status,
+      request_id: "",
+      cost: 0,
+      email: { id: "", provider_message_id: "", status },
+    });
+    await expect(
+      sendEmail({ to, subject: "hello", body: "body", idempotencyKey: key }, { playName: "alpha" }),
+    ).rejects.toMatchObject({ name: "EmailSendFailedError" });
+    expect(recordReceipt).not.toHaveBeenCalled();
+    expect(scratch.outboundSends.get(key)?.status).toBe("failed");
+    await sendEmail(
+      { to, subject: "hello", body: "corrected", idempotencyKey: key },
+      { playName: "alpha" },
+    );
+    expect(scratch.outboundSends.get(key)?.status).toBe("confirmed");
+  });
   const thread = { identityId: ONESHOT, oneshotEmailId: "em-intro" };
 
   it("passes reply_to_email_id with the Re: subject", async () => {

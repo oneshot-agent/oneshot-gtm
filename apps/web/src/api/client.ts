@@ -466,7 +466,9 @@ export const api = {
    * refines it from this route.
    */
   refreshSetupDomains: () =>
-    getJson<{ provisionedDomains: DomainPoolView[] }>("/setup/domains?refresh=1"),
+    getJson<{ provisionedDomains: DomainPoolView[] }>(
+      IS_DEMO ? "/setup/domains" : "/setup/domains?refresh=1",
+    ),
   setupDomains: () => getJson<{ provisionedDomains: DomainPoolView[] }>("/setup/domains"),
   // `warnings`: saved, but worth a look (a LinkedIn template that can run
   // past its step's limit once filled).

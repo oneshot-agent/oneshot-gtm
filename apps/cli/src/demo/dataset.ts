@@ -2800,6 +2800,7 @@ function buildDomainsFixture(anchor: Date): unknown {
       warmup_state: "not_warmed",
       addresses: [
         { address: "agent@trace-mail.dev", status: "active", warmup_state: "not_warmed" },
+        { address: "mira@trace-mail.dev", status: "active", warmup_state: "not_warmed" },
       ],
       pool_status: "active",
       provisioning_status: "provisioned",

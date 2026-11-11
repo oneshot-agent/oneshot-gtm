@@ -7,7 +7,7 @@ import {
   listPaymentHolds,
   resolvePaymentHold,
 } from "../src/payment-holds.ts";
-import { isNegativeCacheable, paidCacheKey } from "../src/paid-cache.ts";
+import { isNegativeCacheable, paidCacheKey, withPaidCache } from "../src/paid-cache.ts";
 import { isTransientToolError } from "../src/send-routing.ts";
 import { assertEmailSent, EmailSetupRequiredError } from "../src/oneshot.ts";
 import { validateDomainSetup } from "../src/domain-setup.ts";
@@ -81,6 +81,72 @@ describe("payment settlement holds", () => {
       expect(listPaymentHolds()[0]!.settlement_id).toBe("st_new");
     },
   );
+  it.each(["JobTimeoutError", "RequestTimeoutError"])(
+    "retains accepted execution after %s across polling changes",
+    async (name) => {
+      const call = vi.fn().mockRejectedValue(
+        Object.assign(new Error("polling timed out"), {
+          name,
+          jobId: "job_accepted",
+          idempotencyKey: "idem_accepted",
+        }),
+      );
+      const agent = protectPayments({ email: call }, "wallet");
+      await expect(
+        agent.email({ to: "a@example.com", totalTimeoutMs: 10, wait: true }),
+      ).rejects.toMatchObject({
+        name: "PaymentHeldError",
+        requestId: "job_accepted",
+        executionUncertain: true,
+        localPaymentRefusal: false,
+      });
+      const db = new SharedDb(sharedDbPath());
+      expect(db.paymentHolds()[0]).toMatchObject({
+        request_id: "job_accepted",
+        idempotency_key: "idem_accepted",
+        execution_uncertain: 1,
+      });
+      db.close();
+      await expect(
+        agent.email({ to: "a@example.com", totalTimeoutMs: 100, wait: false }),
+      ).rejects.toMatchObject({
+        requestId: "job_accepted",
+        executionUncertain: true,
+        localPaymentRefusal: true,
+      });
+      expect(call).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("equivalent lookup inputs cannot bypass a held payment", async () => {
+    const call = vi.fn().mockRejectedValue(ambiguous());
+    const agent = protectPayments({ personFind: call }, "wallet");
+    for (const keywords of [
+      ["AI", "Cloud"],
+      ["cloud", "ai"],
+    ]) {
+      await expect(
+        withPaidCache("research.people", { keywords }, { fresh: true }, async () => ({
+          result: await agent.personFind({ keywords }),
+          receiptId: 0,
+        })),
+      ).rejects.toBeInstanceOf(PaymentHeldError);
+    }
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+  it("preserves a successful result and its hold when cleanup fails", async () => {
+    const out = { status: "completed" };
+    const agent = protectPayments({ personFind: vi.fn().mockResolvedValue(out) }, "wallet");
+    const release = vi.spyOn(getSharedDb(), "releasePayment").mockImplementationOnce(() => {
+      throw new Error("database locked");
+    });
+    try {
+      await expect(agent.personFind({ limit: 25 })).resolves.toBe(out);
+      expect(release).toHaveBeenCalledTimes(1);
+      expect(listPaymentHolds()).toHaveLength(1);
+    } finally {
+      release.mockRestore();
+    }
+  });
   it("a redrafted email cannot bypass the same operation's hold", async () => {
     const email = vi.fn().mockRejectedValue(ambiguous());
     const agent = protectPayments({ email }, "wallet");
@@ -141,7 +207,7 @@ it("uses the same cache identity for omitted and explicit default limits", () =>
 it("validates and normalizes domain setup choices", () => {
   expect(validateDomainSetup(" Example.COM ")).toEqual({
     domain: "example.com",
-    options: { mailbox_mode: "relay", addresses: ["agent"] },
+    options: { addresses: ["agent"] },
   });
   expect(
     validateDomainSetup("example.com", { mailbox_mode: "mailbox", addresses: ["SALES", "support"] })

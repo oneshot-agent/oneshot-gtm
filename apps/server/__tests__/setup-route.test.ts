@@ -15,12 +15,14 @@ const registerOneShotMock = vi.fn().mockReturnValue({ identityId: "oneshot:x", c
 const validateSendViaMock = vi.fn().mockResolvedValue({ smtpHost: "smtp.example.com" });
 const defaultSendViaMock = vi.fn();
 let current: OneShotConfig;
+const listDomainsMock = vi.fn();
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
     loadConfig: () => current,
+    listSendingDomains: listDomainsMock,
     saveConfig: saveConfigMock,
     saveSecrets: saveSecretsMock,
     deleteGmailToken: deleteGmailTokenMock,
@@ -94,6 +96,13 @@ const BASE: OneShotConfig = {
 };
 
 beforeEach(() => {
+  listDomainsMock.mockResolvedValue([
+    {
+      domain: "acme.email",
+      default_from: "agent@acme.email",
+      addresses: [{ address: "agent@acme.email", status: "active" }],
+    },
+  ]);
   current = structuredClone(BASE);
   saveConfigMock.mockClear();
   saveSecretsMock.mockClear();
@@ -655,4 +664,41 @@ describe("POST /api/setup — LinkedIn templates", () => {
     expect(res.error).toMatch(/^Connection request, no evidence: \{offer\} can't be used/);
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
+});
+
+it.each(["missing", "provisioning", "failed"])(
+  "rejects %s OneShot addresses before writing any setup",
+  async (status) => {
+    listDomainsMock.mockResolvedValue(
+      status === "missing"
+        ? []
+        : [
+            {
+              domain: "acme.email",
+              default_from: "agent@acme.email",
+              addresses: [{ address: "agent@acme.email", status }],
+            },
+          ],
+    );
+    expect(
+      (
+        await post({
+          founderName: "Do not save",
+          addIdentities: [{ provider: "oneshot", sendingDomain: "acme.email" }],
+        })
+      ).status,
+    ).toBe(400);
+    expect(saveConfigMock).not.toHaveBeenCalled();
+    expect(saveSecretsMock).not.toHaveBeenCalled();
+    expect(registerOneShotMock).not.toHaveBeenCalled();
+  },
+);
+it("resolves a new sender's blank mailbox to the active domain main address", async () => {
+  expect(
+    (await post({ addIdentities: [{ provider: "oneshot", sendingDomain: " ACME.email " }] }))
+      .status,
+  ).toBe(200);
+  expect(registerOneShotMock).toHaveBeenCalledWith(
+    expect.objectContaining({ sendingDomain: "acme.email", mailbox: "agent" }),
+  );
 });

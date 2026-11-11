@@ -1,4 +1,9 @@
-import { protectPayments, isSettlementAmbiguous, withPaymentOperation } from "./payment-holds.ts";
+import {
+  protectPayments,
+  isSettlementAmbiguous,
+  withPaymentOperation,
+  isPaymentExecutionUncertain,
+} from "./payment-holds.ts";
 import { captureSdkBusinessAddress } from "./mail-enrichment.ts";
 import {
   OneShot,
@@ -421,7 +426,13 @@ function gmailFailureIsDefinite(err: unknown): boolean {
  * the platform may have sent (the 2026-06 hang-but-sends incident).
  */
 function oneshotFailureIsDefinite(err: unknown): boolean {
-  if (err instanceof EmailSetupRequiredError || isSettlementAmbiguous(err)) return true;
+  if (isPaymentExecutionUncertain(err)) return false;
+  if (
+    err instanceof EmailSetupRequiredError ||
+    err instanceof EmailSendFailedError ||
+    isSettlementAmbiguous(err)
+  )
+    return true;
   if (err instanceof ValidationError) return true;
   if (isReplyTargetNotFound(err)) return true;
   const msg = (err as Error)?.message ?? "";
@@ -2905,6 +2916,12 @@ export class EmailSetupRequiredError extends Error {
     this.name = "EmailSetupRequiredError";
   }
 }
+export class EmailSendFailedError extends Error {
+  constructor(readonly result: EmailResult) {
+    super(result.error ?? "Email send failed");
+    this.name = "EmailSendFailedError";
+  }
+}
 export function assertEmailSent(result: EmailResult): void {
   if (
     ["confirmation_required", "setup_required", "setup_pending"].includes(result.status) ||
@@ -2912,6 +2929,5 @@ export function assertEmailSent(result: EmailResult): void {
   ) {
     throw new EmailSetupRequiredError(result);
   }
-  if (["failed", "error"].includes(result.status))
-    throw new Error(result.error ?? "Email send failed");
+  if (["failed", "error"].includes(result.status)) throw new EmailSendFailedError(result);
 }

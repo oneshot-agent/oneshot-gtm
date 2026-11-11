@@ -1,3 +1,4 @@
+import { logEvent } from "./events.ts";
 import type { DomainSetupChoice, DomainSetupQuote, DomainSetupPurchase } from "@oneshot-agent/sdk";
 import { getAgent, buildAuditOpts } from "./oneshot.ts";
 import { getLedger } from "./ledger.ts";
@@ -21,7 +22,10 @@ export function validateDomainSetup(
     addresses.some((a) => !/^[a-z0-9][a-z0-9._+-]*$/.test(a))
   )
     throw new Error("Supply 1–10 unique address local parts");
-  return { domain, options: { mailbox_mode: options.mailbox_mode ?? "relay", addresses } };
+  return {
+    domain,
+    options: { ...(options.mailbox_mode ? { mailbox_mode: options.mailbox_mode } : {}), addresses },
+  };
 }
 
 export async function quoteSendingDomain(
@@ -45,12 +49,21 @@ export async function buySendingDomain(
   if (demoMode()) throw new Error("Domain purchases are unavailable in demo mode");
   const audit = buildAuditOpts({ playName: "domain-setup" }, "domain.setup");
   const result = await (await getAgent()).buyDomain(domain, quoteId.trim(), audit);
-  getLedger().recordReceipt({
-    playName: "domain-setup",
-    callType: "domain.setup",
-    signedReceipt: result,
-    oneshotRequestId: result.request_id,
-    ...audit,
-  });
+  try {
+    getLedger().recordReceipt({
+      playName: "domain-setup",
+      callType: "domain.setup",
+      signedReceipt: result,
+      oneshotRequestId: result.request_id,
+      ...audit,
+    });
+  } catch {
+    // Provider success is authoritative even if this local ledger is unavailable.
+    logEvent(
+      "domain.setup_receipt_failed",
+      { domain, request_id: result.request_id, receipt_id: result.receipt_id },
+      "error",
+    );
+  }
   return result;
 }
