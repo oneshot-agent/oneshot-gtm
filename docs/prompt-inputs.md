@@ -51,7 +51,7 @@ Config is source material. No field can force a sentence into an email; every pr
 | which anchor to prefer | `offerAnchor`                                        |
 | what members get       | `memberOffer`, quoted whole by `multiplier`          |
 
-`pilotOffer` replaces the plain breakup on the last step of `repo-interest`, `stack-consolidation`, `competitor-switch`, `hiring-signal` and `post-funding`. `accelerator-batch` always ends on the plain breakup.
+`pilotOffer` replaces the plain breakup on the last step of `repo-interest`, `stack-consolidation`, `competitor-switch`, `hiring-signal` and `post-funding`. A play listed in `noOfferPlays` ends on the plain breakup instead, and so does `accelerator-batch`, always.
 
 `memberOffer` is what an organization's members get when it offers your product to them: credits, setup, an extended trial, in your own words, prices and conditions included. Only `multiplier` reads it. The email quotes it whole, the letter proposes it as its offer and its terms, and the model never writes, shortens or extends it: a draft that does not contain the offer verbatim is held (`multiplier:offer-missing`), nothing rewrites the offer into it, and a price or discount the model adds outside the quoted offer is held too. With it empty the play refuses before any paid call. Set it in `config.json` for the workspace or as `memberOffer` on one trigger; the trigger wins. Example, in a founder's words:
 
