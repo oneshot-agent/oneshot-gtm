@@ -88,3 +88,6 @@ export * from "./community.ts";
 
 export * from "./learning-decisions.ts";
 export * from "./draft-learning.ts";
+
+export * from "./payment-holds.ts";
+export * from "./domain-setup.ts";

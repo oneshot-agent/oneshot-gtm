@@ -99,6 +99,10 @@ function identityViews(cfg: OneShotConfig): SenderIdentityView[] {
 function domainViews(entries: DomainPoolEntry[]): DomainPoolView[] {
   return entries.map((d) => ({
     domain: d.domain,
+    defaultFrom: d.default_from,
+    mailboxMode: d.mailbox_mode,
+    warmupState: d.warmup_state,
+    addresses: d.addresses,
     poolStatus: d.pool_status,
     warmupScore: d.warmup_score,
     dailySendLimit: d.daily_send_limit,
@@ -191,7 +195,10 @@ async function cachedDomainViews(): Promise<DomainPoolView[]> {
 
 /** GET /api/setup/domains. The provisioned pool alone, for the sender picker. */
 export async function getSetupDomains(req: Request): Promise<Response> {
-  const fresh = domainCache && Date.now() - domainCache.at <= DOMAIN_CACHE_FRESH_MS;
+  const fresh =
+    new URL(req.url).searchParams.get("refresh") !== "1" &&
+    domainCache &&
+    Date.now() - domainCache.at <= DOMAIN_CACHE_FRESH_MS;
   return jsonResponse(
     {
       provisionedDomains: fresh
@@ -1117,4 +1124,8 @@ function mergeTimeZone(incoming: string | null | undefined, current: string | nu
     );
   }
   return zone;
+}
+
+export function invalidateDomainViews(): void {
+  domainCache = null;
 }

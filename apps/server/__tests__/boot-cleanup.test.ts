@@ -41,7 +41,7 @@ const cache = globalThis as typeof globalThis & {
   __oneshotGtmServer?: unknown;
   __oneshotGtmScheduler?: unknown;
 };
-let signalListeners: Record<"SIGINT" | "SIGTERM", NodeJS.SignalsListener[]>;
+let signalListeners: Record<"SIGINT" | "SIGTERM", unknown[]>;
 
 beforeEach(() => {
   vi.resetModules();

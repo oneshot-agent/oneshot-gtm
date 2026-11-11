@@ -113,6 +113,15 @@ export interface PaidCacheRow {
 /** Outcome of an atomic claim: either someone else holds this address, or we now do. */
 export type TouchClaim = { held: ContactTouch } | { reservationId: number };
 
+export interface PaymentHold {
+  key: string;
+  wallet: string;
+  method: string;
+  claim_token: string;
+  settlement_id: string | null;
+  created_at: string;
+}
+
 export class SharedDb {
   private db: Database;
   private importedFrom = new Set<string>();
@@ -128,9 +137,41 @@ export class SharedDb {
     SharedPeople.ensureSchema(this.db);
   }
 
+  claimPayment(key: string, wallet: string, method: string, claimToken: string): boolean {
+    return (
+      this.db.run(
+        "INSERT OR IGNORE INTO payment_holds(key,wallet,method,claim_token) VALUES(?,?,?,?)",
+        [key, wallet, method, claimToken],
+      ).changes === 1
+    );
+  }
+
+  holdPayment(key: string, claimToken: string, settlementId?: string): void {
+    this.db.run("UPDATE payment_holds SET settlement_id=? WHERE key=? AND claim_token=?", [
+      settlementId ?? null,
+      key,
+      claimToken,
+    ]);
+  }
+
+  paymentHolds(): PaymentHold[] {
+    return this.db.query<PaymentHold, []>("SELECT * FROM payment_holds ORDER BY created_at").all();
+  }
+
+  releasePayment(key: string, claimToken: string): boolean {
+    return (
+      this.db.run("DELETE FROM payment_holds WHERE key=? AND claim_token=?", [key, claimToken])
+        .changes === 1
+    );
+  }
+
   private migrate(): void {
     // Same shapes as the ledger's tables, so importing legacy rows is a copy.
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS payment_holds (
+        key TEXT PRIMARY KEY, wallet TEXT NOT NULL, method TEXT NOT NULL,
+        settlement_id TEXT, claim_token TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
       CREATE TABLE IF NOT EXISTS enrichment_cache (
         email TEXT PRIMARY KEY,
         result_json TEXT NOT NULL,
@@ -226,6 +267,12 @@ export class SharedDb {
     // (SQLite's ALTER is not itself idempotent).
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      const paymentCols = this.db
+        .query<{ name: string }, []>("PRAGMA table_info(payment_holds)")
+        .all();
+      if (!paymentCols.some((c) => c.name === "claim_token")) {
+        this.db.exec("ALTER TABLE payment_holds ADD COLUMN claim_token TEXT NOT NULL DEFAULT ''");
+      }
       const cols = this.db.query("PRAGMA table_info(contact_touches)").all() as Array<{
         name: string;
       }>;

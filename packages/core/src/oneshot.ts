@@ -1,3 +1,4 @@
+import { protectPayments, isSettlementAmbiguous, withPaymentOperation } from "./payment-holds.ts";
 import { captureSdkBusinessAddress } from "./mail-enrichment.ts";
 import {
   OneShot,
@@ -238,7 +239,10 @@ async function initAgent(): Promise<OneShot> {
 
 export async function getAgent(): Promise<OneShot> {
   // Watched: every call reports to the outage breaker (platform-health.ts).
-  if (!agentSingleton) agentSingleton = watchAgent(await initAgent());
+  if (!agentSingleton) {
+    const agent = await initAgent();
+    agentSingleton = watchAgent(protectPayments(agent, agent.address));
+  }
   return agentSingleton;
 }
 
@@ -417,6 +421,7 @@ function gmailFailureIsDefinite(err: unknown): boolean {
  * the platform may have sent (the 2026-06 hang-but-sends incident).
  */
 function oneshotFailureIsDefinite(err: unknown): boolean {
+  if (err instanceof EmailSetupRequiredError || isSettlementAmbiguous(err)) return true;
   if (err instanceof ValidationError) return true;
   if (isReplyTargetNotFound(err)) return true;
   const msg = (err as Error)?.message ?? "";
@@ -1022,12 +1027,8 @@ async function dispatchViaIdentity(
   }
   const agent = await getAgent();
   const cfg = loadConfig();
-  // Pinning from_domain (+ from_mailbox below) opts this send OUT of the
-  // platform's domain rotation: the named domain auto-provisions if unknown and
-  // sends as-is (the worker only requires status='verified'; there's no
-  // domain_not_owned 403). The trade-off is that pinned sends BYPASS the
-  // server's warm-up gating. The per-identity client cap is the only throttle.
-  // An unset domain falls back to the SDK's shared demo domain.
+  // Domains and addresses are provisioned separately. Omitting from_mailbox uses
+  // the domain's main address; an explicit mailbox must already be active.
   const fromDomain = input.fromDomain ?? identity.sendingDomain ?? cfg.sendingDomain ?? null;
 
   const opts: Parameters<OneShot["email"]>[0] = {
@@ -1046,7 +1047,7 @@ async function dispatchViaIdentity(
     // SDK ≥0.16.2: from_name ships as a separate field, so the bare
     // from_address still passes the server's strict email validation.
     opts.from_domain = fromDomain;
-    opts.from_mailbox = identity.mailbox?.trim() || fromLocalpart(cfg.founderName);
+    if (identity.mailbox?.trim()) opts.from_mailbox = identity.mailbox.trim();
     const name = (cfg.founderName ?? "").trim();
     if (name) opts.from_name = name;
   }
@@ -1073,14 +1074,17 @@ async function dispatchViaIdentity(
         // first email, anything else as a new email without "Re:".
         const replyTo = replyToEmailId && /^re:/i.test(content.subject) ? replyToEmailId : null;
         const subject = replyTo ? content.subject : withoutReplyPrefix(content.subject);
-        const result = await agent.email({
-          ...opts,
-          to: content.to,
-          subject,
-          body: toHtmlBody(content.body),
-          idempotencyKey: emailIdempotencyKey([identity.id, content.to, subject, content.body]),
-          ...(replyTo ? { reply_to_email_id: replyTo } : {}),
-        });
+        const result = await withPaymentOperation(key, () =>
+          agent.email({
+            ...opts,
+            to: content.to,
+            subject,
+            body: toHtmlBody(content.body),
+            idempotencyKey: emailIdempotencyKey([identity.id, content.to, subject, content.body]),
+            ...(replyTo ? { reply_to_email_id: replyTo } : {}),
+          }),
+        );
+        assertEmailSent(result);
         const receiptId = recordCallReceipt({
           ctx,
           callType: "email.send",
@@ -1331,11 +1335,17 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
   if (input.replyToEmailId) opts.reply_to_email_id = input.replyToEmailId;
   if (fromDomain) {
     opts.from_domain = fromDomain;
-    opts.from_mailbox = identity.mailbox?.trim() || fromLocalpart(cfg.founderName);
+    if (identity.mailbox?.trim()) opts.from_mailbox = identity.mailbox.trim();
     const name = (cfg.founderName ?? "").trim();
     if (name) opts.from_name = name;
   }
-  const result = await agent.email(opts);
+  const result = await withPaymentOperation(
+    input.sendRequestId
+      ? replySendKey(input.sendRequestId)
+      : `reply:${identity.id}:${input.replyToEmailId ?? input.to}:${input.body}`,
+    () => agent.email(opts),
+  );
+  assertEmailSent(result);
   const receiptId = recordCallReceipt({
     ctx,
     callType: "email.reply",
@@ -1610,26 +1620,22 @@ export interface PeopleSearchInput {
   seniority?: string[];
   industry?: string[];
   companySize?: string;
-  /** SDK default is 100; server caps at 500. */
+  /** Defaults to 25; priced per person in the requested limit. */
   limit?: number;
   /** Row offset into the result set, 0-indexed: `{ limit: 50, offset: 50 }` is the second page of 50. */
   offset?: number;
 }
 
 /**
- * B2B-database-backed person search: $0.01 flat per call, up to 500 results
- * (server cap; SDK default 100). Unlike `findEmail`/`enrichProfile`, this
- * doesn't resolve ONE known candidate: it discovers a whole slate up front,
- * each already carrying `best_work_email`/`phone`/`title`/`company_domain`
- * where the database has them. A finder can qualify against this list
- * directly instead of paying per-candidate through
- * `resolveVerifyEnrichQualify`.
+ * Person discovery priced by the requested limit (25 by default).
+ * Explicit limits and pagination are preserved.
  */
 export async function peopleSearch(
   input: PeopleSearchInput,
   ctx: CallContext,
   cache?: PaidCacheOptions,
 ) {
+  input = { ...input, limit: input.limit ?? 25 };
   return withPaidCache("research.people", input, cache, async () => {
     const agent = await getAgent();
     const opts: Parameters<OneShot["personFind"]>[0] = {
@@ -1644,7 +1650,7 @@ export async function peopleSearch(
     if (input.seniority) opts.seniority = input.seniority;
     if (input.industry) opts.industry = input.industry;
     if (input.companySize) opts.company_size = input.companySize;
-    if (input.limit) opts.limit = input.limit;
+    if (input.limit !== undefined) opts.limit = input.limit;
     // The API takes `offset`; the pinned SDK's types don't declare it yet, but
     // it sends every option through as given (measured 2026-10-11: offset 40
     // returned rows 41 onward).
@@ -1696,7 +1702,7 @@ export async function companySearch(
     if (input.maxEmployeeCount !== undefined) opts.max_employee_count = input.maxEmployeeCount;
     if (input.fundingStage) opts.funding_stage = input.fundingStage;
     if (input.tags) opts.tags = input.tags;
-    if (input.limit) opts.limit = input.limit;
+    if (input.limit !== undefined) opts.limit = input.limit;
 
     const result: CompanySearchResult = await agent.companyFind(opts);
     const receiptId = recordCallReceipt({
@@ -1837,7 +1843,7 @@ export async function govSolicitations(
     if (input.activeOnly !== undefined) opts.active_only = input.activeOnly;
     if (input.hasContact !== undefined) opts.has_contact = input.hasContact;
     if (input.includeDescription !== undefined) opts.include_description = input.includeDescription;
-    if (input.limit) opts.limit = input.limit;
+    if (input.limit !== undefined) opts.limit = input.limit;
 
     const result: RecordSolicitationsFindResult = await agent.recordSolicitationsFind(opts);
     const receiptId = recordCallReceipt({
@@ -1892,7 +1898,7 @@ export async function localSearch(
     if (input.isChain !== undefined) opts.is_chain = input.isChain;
     if (input.operatingStatus) opts.operating_status = input.operatingStatus;
     if (input.hasDomain !== undefined) opts.has_domain = input.hasDomain;
-    if (input.limit) opts.limit = input.limit;
+    if (input.limit !== undefined) opts.limit = input.limit;
 
     const result: BusinessFindResult = await agent.businessFind(opts);
     const receiptId = recordCallReceipt({
@@ -2888,4 +2894,24 @@ export async function tagOutcomeValue(input: {
     );
     return { tagged: false };
   }
+}
+
+/** Setup never counts as a send or a contact touch. */
+export class EmailSetupRequiredError extends Error {
+  constructor(readonly result: EmailResult) {
+    super(
+      `Email not sent: ${result.status}. Complete domain/address setup in Settings or 'oneshot-gtm domains quote'.`,
+    );
+    this.name = "EmailSetupRequiredError";
+  }
+}
+export function assertEmailSent(result: EmailResult): void {
+  if (
+    ["confirmation_required", "setup_required", "setup_pending"].includes(result.status) ||
+    result.setup
+  ) {
+    throw new EmailSetupRequiredError(result);
+  }
+  if (["failed", "error"].includes(result.status))
+    throw new Error(result.error ?? "Email send failed");
 }

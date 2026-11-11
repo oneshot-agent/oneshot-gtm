@@ -6,7 +6,7 @@ Mail leaves through a pool of sender identities: OneShot sending domains, your o
 
 ## Adding identities
 
-- **OneShot domain and mailbox.** Setup, or `identities add`. Pick a provisioned domain or type a new one; it is provisioned on first send. `domains list`, `pause` and `resume` manage them.
+- **OneShot domain and mailbox.** Setup, or `identities add`. Pick an active address on a provisioned domain, or review and buy domain/address setup separately. Setup never sends an email. `domains list`, `pause` and `resume` manage them.
 - **Gmail or Workspace.** `gmail auth`, a one-time OAuth. It needs a Google Cloud Desktop client with the Gmail API on.
 - **Smartlead.** `smartlead connect`, or Setup. Smartlead warms and hosts the mailbox. oneshot-gtm sends through the mailbox's own SMTP when its credentials resolve, and through the Smartlead API otherwise. `doctor` names every mailbox still on the API and the command that switches it: `identities send-via <id> smtp`.
 
@@ -71,3 +71,30 @@ While a workspace's dashboard runs, it syncs each Smartlead mailbox about once a
 
 - **Bounces.** Read from connected Gmail mailboxes every 30 minutes. A hard bounce stops the cadence and suppresses the address. A policy block (`5.7.x`) stops the cadence too, since the next step would be refused the same way, but does not suppress the address: it is a verdict on the message, not the mailbox. `autoReply.stopOnBlock: false` keeps blocked cadences running. `doctor` warns above 2% per identity and fails above 5%, once an identity has 20 sends.
 - **Inbox placement.** `gmail placement` sends one real message between two of your mailboxes and reports where it landed, with the SPF, DKIM and DMARC verdicts. Run it by hand and rarely; repeated canaries train the receiving filter.
+
+### OneShot domain and address setup
+
+In Setup → Email, choose a domain, mode, and 1–10 comma-separated address local parts. Review the quoted total, billing terms and expiry, then explicitly confirm the purchase. A purchase is immediate and separate from saving configuration. Wait for an active address before adding it as a sender; refresh domain status while provisioning is pending.
+
+Relay is the default for new domains: addresses have no hosted inbox and are not warmed. Hosted mailbox addresses warm individually. Existing domains keep their mode. A blank sender mailbox uses the domain's main address; existing explicitly configured mailboxes remain explicit and must be provisioned.
+
+The CLI exposes the same flow:
+
+```sh
+oneshot-gtm domains quote example.com --mode relay --addresses agent,sales --json
+oneshot-gtm domains buy example.com --quote-id <reviewed-quote-id> --json
+oneshot-gtm domains list
+oneshot-gtm identities add
+```
+
+For an existing domain, the quote prices additional addresses. An expired quote must be requested and reviewed again. Setup-required or setup-pending responses do not count as sent emails or advance a cadence.
+
+### Unresolved payments
+
+An ambiguous settlement does not mean a lookup found nothing. The operation did not run, and payment may have landed; A landed payment is credited to the wallet when the call did not run. GTM retains a payment hold across processes and restarts, including when a process dies during a guarded call. It does not retry the held operation automatically. Use `oneshot-gtm payments list --json` to inspect the operation and settlement ID, reconcile the payment with OneShot, then explicitly release it:
+
+```sh
+oneshot-gtm payments resolve <hold-key> --note "Verified settlement credited by OneShot"
+```
+
+Releasing a hold permits a subsequent attempt; it does not itself purchase or send anything.

@@ -87,7 +87,12 @@ import { deriveIcpRoute } from "./api/derive-icp.ts";
 import { strategistRoute } from "./api/strategist.ts";
 import { doctor } from "./api/doctor.ts";
 import { workspaceInfo, workspaceLaunch } from "./api/workspace.ts";
-import { pauseDomainRoute, resumeDomainRoute } from "./api/domains.ts";
+import {
+  pauseDomainRoute,
+  resumeDomainRoute,
+  quoteDomainRoute,
+  buyDomainRoute,
+} from "./api/domains.ts";
 import { cancelRunRoute, runPlay } from "./api/run.ts";
 import { getRunRoute } from "./api/runs.ts";
 import {
@@ -239,6 +244,8 @@ const routes: RouteEntry[] = [
   route("GET", "/api/setup/domains", getSetupDomains),
   route("GET", "/api/setup/calendars", listCalendarsRoute),
   route("POST", "/api/setup", setup),
+  route("POST", "/api/domains/quote", quoteDomainRoute),
+  route("POST", "/api/domains/buy", buyDomainRoute),
   route("POST", "/api/domains/resume", resumeDomainRoute),
   route("POST", "/api/domains/pause", pauseDomainRoute),
   route("GET", "/api/gmail/auth/start", startGmailAuthRoute),

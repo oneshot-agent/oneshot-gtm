@@ -1,3 +1,4 @@
+import { isSettlementAmbiguous } from "./payment-holds.ts";
 import { loadConfig } from "./config.ts";
 import { logEvent } from "./events.ts";
 import { LEGACY_GMAIL_ID, LEGACY_ONESHOT_ID, resolveIdentities } from "./identities.ts";
@@ -99,6 +100,7 @@ export function rateLimitRetryAfterS(err: unknown): number | null {
  * `withDeadline` rejection, and serialized boundaries.
  */
 export function isTransientToolError(err: unknown): boolean {
+  if (isSettlementAmbiguous(err)) return false;
   const msg = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
   if (!msg) return false;
   return (

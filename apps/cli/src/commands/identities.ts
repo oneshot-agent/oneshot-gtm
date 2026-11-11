@@ -1,6 +1,11 @@
 import {
+  quoteSendingDomain,
+  buySendingDomain,
+  listPaymentHolds,
+  resolvePaymentHold,
+} from "@oneshot-gtm/core";
+import {
   capGroupKey,
-  fromLocalpart,
   identityCapacities,
   listSendingDomains,
   loadConfig,
@@ -62,9 +67,14 @@ export async function commandIdentitiesList(opts: { json?: boolean } = {}): Prom
   header("Provisioned domains");
   const { domains, error: domainsError } = await safeListDomains();
   if (domains.length === 0) {
-    note("None found (OneShot auto-provisions warm domains, or the pool couldn't be reached).");
+    note(
+      "None found. Set up a domain with domains quote, or retry if the pool could not be reached.",
+    );
   } else {
     for (const d of domains) {
+      note(
+        `${d.mailbox_mode}: ${d.addresses?.map((a) => `${a.address} (${a.status})`).join(", ") ?? ""} · ${d.warmup_state}`,
+      );
       note(
         `${d.domain}  ${c.dim(d.pool_status)}` +
           (d.warmup_score != null ? `  warmth ${d.warmup_score}` : "") +
@@ -96,6 +106,10 @@ export async function commandIdentitiesList(opts: { json?: boolean } = {}): Prom
       }),
       domains: domains.map((d) => ({
         domain: d.domain,
+        defaultFrom: d.default_from,
+        mailboxMode: d.mailbox_mode,
+        warmupState: d.warmup_state,
+        addresses: d.addresses,
         poolStatus: d.pool_status,
         warmupScore: d.warmup_score ?? null,
         dailySent: d.daily_sent_count,
@@ -109,12 +123,9 @@ export async function commandIdentitiesList(opts: { json?: boolean } = {}): Prom
 /** Add an OneShot sending identity (a domain + mailbox) to the rotation pool. */
 export async function commandIdentitiesAdd(): Promise<void> {
   header("Add OneShot sender");
-  const cfg = loadConfig();
   const { domains } = await safeListDomains();
 
-  // Show the warmed pool as a reference, but accept ANY domain by free text: a
-  // brand-new domain auto-provisions on first send, so restricting to the
-  // current pool would block exactly the "add a new domain" flow.
+  // Existing addresses are selectable; new ones need an explicit setup purchase.
   if (domains.length > 0) {
     note(
       "Provisioned domains: " +
@@ -129,13 +140,13 @@ export async function commandIdentitiesAdd(): Promise<void> {
       {
         type: "text",
         name: "domain",
-        message: "Sending domain (a provisioned one, or a new domain you control)",
+        message: "Sending domain (existing, or a new domain to purchase)",
         validate: (v: string) => (v.trim().length > 0 ? true : "required"),
       },
       {
         type: "text",
         name: "mailbox",
-        message: `Mailbox local-part (blank = ${fromLocalpart(cfg.founderName)})`,
+        message: "Mailbox local-part (blank = domain main address, or agent for a new domain)",
       },
       {
         type: "text",
@@ -151,21 +162,67 @@ export async function commandIdentitiesAdd(): Promise<void> {
     warn("No domain provided.");
     return;
   }
-  // A domain not yet in the pool isn't an error. It auto-provisions on first
-  // send. But pinned sends bypass the server's warm-up gating, so flag the
-  // cold-start so the founder leans on the client cap (the default ramp).
-  if (domains.length > 0 && !domains.some((d) => d.domain.toLowerCase() === domain)) {
-    warn(
-      `'${domain}' isn't provisioned yet — it'll auto-provision on first send and go out cold ` +
-        `(server warm-up is bypassed for pinned sends). The client warm-up ramp is your throttle.`,
-    );
+  const existing = domains.find((d) => d.domain === domain);
+  const mailbox =
+    String(answers["mailbox"] ?? "")
+      .trim()
+      .toLowerCase() ||
+    existing?.default_from?.split("@")[0] ||
+    "agent";
+  if (
+    !existing?.addresses.some((a) => a.address === `${mailbox}@${domain}` && a.status === "active")
+  ) {
+    const choice = existing
+      ? { mode: existing.mailbox_mode }
+      : await prompts({
+          type: "select",
+          name: "mode",
+          message: "Domain mode",
+          choices: [
+            { title: "Relay", value: "relay" },
+            { title: "Hosted mailbox", value: "mailbox" },
+          ],
+          initial: 0,
+        });
+    if (!choice.mode) return;
+    const quote = await quoteSendingDomain(domain, {
+      mailbox_mode: choice.mode,
+      addresses: [mailbox],
+    });
+    note(JSON.stringify(quote, null, 2));
+    if (!quote.purchasable || !quote.quote_id || quote.total_cost == null) {
+      warn(quote.reason ?? "Setup not purchasable");
+      return;
+    }
+    const confirmation = await prompts({
+      type: "confirm",
+      name: "buy",
+      message: `Buy this setup for ${quote.currency ?? "USD"} ${quote.total_cost}? No email will be sent.`,
+      initial: false,
+    });
+    if (!confirmation.buy) return;
+    if (quote.expires_at && Date.parse(quote.expires_at) <= Date.now())
+      throw new Error("Quote expired. Run identities add again to review a fresh quote.");
+    const result = await buySendingDomain(domain, quote.quote_id);
+    note(JSON.stringify(result, null, 2));
+    const fresh = await listSendingDomains();
+    if (
+      !fresh
+        .find((d) => d.domain === domain)
+        ?.addresses.some((a) => a.address === `${mailbox}@${domain}` && a.status === "active")
+    ) {
+      note(
+        "Setup requested; address is not active yet. Check domains list, then run identities add again. No sender was added.",
+      );
+      return;
+    }
   }
 
   const capRaw = ((answers["cap"] as string) ?? "").trim();
   const capNum = Number.parseInt(capRaw, 10);
   const { identityId, created } = registerOneShotIdentity({
     sendingDomain: domain,
-    mailbox: (answers["mailbox"] as string) ?? "",
+    mailbox,
     ...(capRaw && Number.isFinite(capNum) && capNum >= 0 ? { maxPerDay: capNum } : {}),
   });
 
@@ -189,6 +246,9 @@ export async function commandDomainsList(opts: { json?: boolean } = {}): Promise
     note("None found (or the pool couldn't be reached).");
   } else {
     for (const d of domains) {
+      note(
+        `${d.mailbox_mode}: ${d.addresses?.map((a) => `${a.address} (${a.status})`).join(", ") ?? ""} · ${d.warmup_state}`,
+      );
       const tone =
         d.warmup_state === "warming" ? c.cyan : d.pool_status === "active" ? c.green : c.red;
       note(
@@ -208,6 +268,10 @@ export async function commandDomainsList(opts: { json?: boolean } = {}): Promise
       domainsError,
       domains: domains.map((d) => ({
         domain: d.domain,
+        defaultFrom: d.default_from,
+        mailboxMode: d.mailbox_mode,
+        warmupState: d.warmup_state,
+        addresses: d.addresses,
         poolStatus: d.pool_status,
         warmupScore: d.warmup_score ?? null,
         dailySent: d.daily_sent_count,
@@ -293,4 +357,43 @@ export async function commandIdentitiesTestSend(
   if (opts.dryRun) return;
   ok(`submitted · receipt ${receiptId ?? "?"} · ${result?.request_id ?? plan.messageId}`);
   note("`oneshot-gtm sends check` confirms it in Sent after ~3 minutes.");
+}
+
+export async function commandDomainsQuote(
+  domain: string,
+  opts: { mode?: string; addresses?: string; json?: boolean },
+): Promise<void> {
+  if (opts.json) setJsonMode(true);
+  if (opts.mode && opts.mode !== "relay" && opts.mode !== "mailbox")
+    throw new Error("Mode must be relay or mailbox");
+  const result = await quoteSendingDomain(domain, {
+    mailbox_mode: opts.mode as "relay" | "mailbox" | undefined,
+    addresses: opts.addresses?.split(","),
+  });
+  if (opts.json) emitJson({ command: "domains quote", ...result });
+  else {
+    note(JSON.stringify(result, null, 2));
+    note("Accept this exact quote with domains buy <domain> --quote-id <id>. No email is sent.");
+  }
+}
+export async function commandDomainsBuy(
+  domain: string,
+  opts: { quoteId: string; json?: boolean },
+): Promise<void> {
+  if (opts.json) setJsonMode(true);
+  const result = await buySendingDomain(domain, opts.quoteId);
+  if (opts.json) emitJson({ command: "domains buy", ...result });
+  else note(JSON.stringify(result, null, 2));
+}
+export async function commandPaymentsList(opts: { json?: boolean }): Promise<void> {
+  if (opts.json) setJsonMode(true);
+  const holds = listPaymentHolds();
+  if (opts.json) emitJson({ command: "payments list", holds });
+  else note(JSON.stringify(holds, null, 2));
+}
+export async function commandPaymentsResolve(key: string, opts: { note: string }): Promise<void> {
+  resolvePaymentHold(key, opts.note);
+  ok(
+    "Payment hold resolved. The operation may be attempted again; nothing was sent or purchased by this command.",
+  );
 }

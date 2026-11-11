@@ -1,0 +1,158 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SharedDb, getSharedDb, sharedDbPath } from "../src/shared-db.ts";
+import {
+  protectPayments,
+  withPaymentOperation,
+  PaymentHeldError,
+  listPaymentHolds,
+  resolvePaymentHold,
+} from "../src/payment-holds.ts";
+import { isNegativeCacheable, paidCacheKey } from "../src/paid-cache.ts";
+import { isTransientToolError } from "../src/send-routing.ts";
+import { assertEmailSent, EmailSetupRequiredError } from "../src/oneshot.ts";
+import { validateDomainSetup } from "../src/domain-setup.ts";
+
+beforeEach(() => {
+  for (const h of listPaymentHolds()) getSharedDb().releasePayment(h.key, h.claim_token);
+});
+function ambiguous() {
+  return Object.assign(new Error("settlement_ambiguous HTTP 500"), {
+    name: "SettlementAmbiguousError",
+    settlementId: "st_123",
+  });
+}
+
+describe("payment settlement holds", () => {
+  it.each(["email", "personFind", "buyDomain", "voice", "sms", "browser", "build"])(
+    "holds %s across agent recreation and a second database connection",
+    async (method) => {
+      const call = vi.fn().mockRejectedValue(ambiguous());
+      const args =
+        method === "buyDomain" ? ["example.com", "quote_1"] : [{ to: "a@example.com", limit: 25 }];
+      const agent = protectPayments({ [method]: call }, "0xABC");
+      await expect(agent[method]!(...args)).rejects.toMatchObject({
+        name: "PaymentHeldError",
+        settlementId: "st_123",
+      });
+      const secondDb = new SharedDb(sharedDbPath());
+      expect(secondDb.paymentHolds()).toHaveLength(1);
+      secondDb.close();
+      const restarted = protectPayments({ [method]: call }, "0xabc");
+      await expect(restarted[method]!(...args)).rejects.toBeInstanceOf(PaymentHeldError);
+      if (method === "buyDomain")
+        await expect(restarted[method]!("example.com", "quote_2")).rejects.toBeInstanceOf(
+          PaymentHeldError,
+        );
+      expect(call).toHaveBeenCalledTimes(1);
+      const hold = listPaymentHolds()[0]!;
+      expect(() => resolvePaymentHold(hold.key, "")).toThrow();
+      resolvePaymentHold(hold.key, "Confirmed credit received");
+      call.mockResolvedValue({ status: "completed" });
+      await restarted[method]!(...args);
+      expect(call).toHaveBeenCalledTimes(2);
+      expect(listPaymentHolds()).toEqual([]);
+    },
+  );
+  it.each(["success", "ambiguous", "failure"])(
+    "a late %s cannot clear or overwrite a replacement hold",
+    async (outcome) => {
+      let finish!: (value?: unknown) => void;
+      let fail!: (err: unknown) => void;
+      const call = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve, reject) => {
+              finish = resolve;
+              fail = reject;
+            }),
+        )
+        .mockRejectedValueOnce(Object.assign(ambiguous(), { settlementId: "st_new" }));
+      const agent = protectPayments({ personFind: call }, "wallet");
+      const first = agent.personFind({ limit: 25 });
+      const firstOutcome = first.catch(() => undefined);
+      resolvePaymentHold(listPaymentHolds()[0]!.key, "Reconciled first attempt");
+      await expect(agent.personFind({ limit: 25 })).rejects.toBeInstanceOf(PaymentHeldError);
+      const replacement = listPaymentHolds()[0]!;
+      if (outcome === "success") finish({ status: "completed" });
+      else fail(outcome === "ambiguous" ? ambiguous() : new Error("invalid input"));
+      await firstOutcome;
+      expect(listPaymentHolds()).toEqual([replacement]);
+      expect(listPaymentHolds()[0]!.settlement_id).toBe("st_new");
+    },
+  );
+  it("a redrafted email cannot bypass the same operation's hold", async () => {
+    const email = vi.fn().mockRejectedValue(ambiguous());
+    const agent = protectPayments({ email }, "wallet");
+    await expect(
+      withPaymentOperation("cadence:1", () => agent.email({ body: "first" })),
+    ).rejects.toBeInstanceOf(PaymentHeldError);
+    await expect(
+      withPaymentOperation("cadence:1", () => agent.email({ body: "revised" })),
+    ).rejects.toBeInstanceOf(PaymentHeldError);
+    expect(email).toHaveBeenCalledTimes(1);
+  });
+  it("neither retries nor caches ambiguous errors as lookup verdicts", () => {
+    for (const e of [ambiguous(), new PaymentHeldError("key", "st_123")]) {
+      expect(isTransientToolError(e)).toBe(false);
+      expect(isNegativeCacheable(e)).toBe(false);
+    }
+  });
+  it("blocks simultaneous duplicate dispatch, without holding successful or definite failures", async () => {
+    let finish!: (value: unknown) => void;
+    const call = vi.fn(
+      (_opts: unknown) =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const agent = protectPayments({ personFind: call }, "wallet");
+    const first = agent.personFind({ limit: 25 });
+    await expect(agent.personFind({ limit: 25, memo: "another workspace" })).rejects.toBeInstanceOf(
+      PaymentHeldError,
+    );
+    finish({ status: "completed" });
+    await first;
+    expect(listPaymentHolds()).toEqual([]);
+    const bad = protectPayments(
+      { email: vi.fn().mockRejectedValue(new Error("invalid input")) },
+      "wallet",
+    );
+    await expect(bad.email({})).rejects.toThrow("invalid input");
+    expect(listPaymentHolds()).toEqual([]);
+  });
+});
+
+it.each(["confirmation_required", "setup_required", "setup_pending"])(
+  "%s is never a sent email",
+  (status) => {
+    expect(() => assertEmailSent({ status })).toThrow(EmailSetupRequiredError);
+  },
+);
+it("accepts normal sends", () => expect(() => assertEmailSent({ status: "sent" })).not.toThrow());
+it("uses the same cache identity for omitted and explicit default limits", () => {
+  expect(paidCacheKey("research.people", { keywords: ["ai"] })).toBe(
+    paidCacheKey("research.people", { keywords: ["ai"], limit: 25 }),
+  );
+  expect(paidCacheKey("research.people", { limit: 100 })).not.toBe(
+    paidCacheKey("research.people", { limit: 25 }),
+  );
+});
+it("validates and normalizes domain setup choices", () => {
+  expect(validateDomainSetup(" Example.COM ")).toEqual({
+    domain: "example.com",
+    options: { mailbox_mode: "relay", addresses: ["agent"] },
+  });
+  expect(
+    validateDomainSetup("example.com", { mailbox_mode: "mailbox", addresses: ["SALES", "support"] })
+      .options.addresses,
+  ).toEqual(["sales", "support"]);
+  for (const addresses of [
+    [],
+    ["sales", "SALES"],
+    ["a@example.com"],
+    Array.from({ length: 11 }, (_, i) => `a${i}`),
+  ]) {
+    expect(() => validateDomainSetup("example.com", { addresses })).toThrow();
+  }
+});

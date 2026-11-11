@@ -21,6 +21,7 @@ const emailMock = vi.hoisted(() =>
 );
 vi.mock("@oneshot-agent/sdk", () => ({
   OneShot: class {
+    address = "0x-test-wallet";
     email = emailMock;
   },
   ValidationError: class extends Error {},

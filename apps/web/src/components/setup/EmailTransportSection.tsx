@@ -1,3 +1,4 @@
+import { DomainSetupForm } from "./DomainSetupForm.tsx";
 import { Explain } from "../primitives/Explain.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Mail } from "lucide-react";
@@ -32,7 +33,7 @@ import { useReportDirty, type SectionProps, type SetupStatus } from "./types.ts"
  * The sender rotation pool. Cap edits, removals, new OneShot senders and
  * picked Smartlead mailboxes are STAGED and commit together in one POST on
  * this section's Save. Never as a side effect of saving another section.
- * Pause/resume of a provisioned domain is the one immediate action here.
+ * Domain purchases and pause/resume are explicit immediate actions.
  */
 export function EmailTransportSection({
   status,
@@ -64,10 +65,7 @@ export function EmailTransportSection({
   const isLegacyPool = identities[0]?.legacy ?? true;
   const gmailCredsReady = Boolean(sources["GMAIL_CLIENT_ID"] && sources["GMAIL_CLIENT_SECRET"]);
   const smartleadKeyReady = Boolean(sources["SMARTLEAD_API_KEY"]);
-  // Default mailbox shown as a placeholder: founder's first name, normalized.
-  const founderLocalpart = ((cfg.founderName ?? "").trim().split(/\s+/)[0] ?? "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+  // Sender setup uses the provisioned domain's main address by default.
 
   const server = useMemo(() => ({ emailProvider: cfg.emailProvider }), [cfg.emailProvider]);
   const draft = useSectionDraft(server);
@@ -212,24 +210,24 @@ export function EmailTransportSection({
             Removing an identity blocks sends to prospects pinned to it until it's restored.
             <Explain concept="pinnedRouting" />
           </span>
-
-          <ProvisionedDomains
-            domains={provisionedDomains}
-            busyDomain={domainAction.isPending ? domainAction.variables?.domain : undefined}
-            onToggle={(domain, action) => domainAction.mutate({ domain, action })}
-          />
-
-          <AddOneShotSender
-            identities={identities}
-            provisionedDomains={provisionedDomains}
-            founderLocalpart={founderLocalpart}
-            pending={staging.pendingAdds}
-            pendingErrors={addErrors}
-            onStage={staging.stageAdd}
-            onUnstage={staging.unstageAdd}
-          />
         </div>
       )}
+
+      <ProvisionedDomains
+        domains={provisionedDomains}
+        busyDomain={domainAction.isPending ? domainAction.variables?.domain : undefined}
+        onToggle={(domain, action) => domainAction.mutate({ domain, action })}
+      />
+
+      <DomainSetupForm domains={provisionedDomains} />
+      <AddOneShotSender
+        identities={identities}
+        provisionedDomains={provisionedDomains}
+        pending={staging.pendingAdds}
+        pendingErrors={addErrors}
+        onStage={staging.stageAdd}
+        onUnstage={staging.unstageAdd}
+      />
 
       {/* Smartlead lives OUTSIDE the identities guard: connecting it is how an
           empty pool gets rebuilt. */}
@@ -266,7 +264,7 @@ export function EmailTransportSection({
           return (
             <div
               key={a.id}
-              className="flex items-center gap-3 border border-ink-rule rounded-[var(--radius-sm)] px-3 py-2"
+              className="flex flex-wrap items-center gap-3 border border-ink-rule rounded-[var(--radius-sm)] px-3 py-2"
             >
               <div className="flex min-w-0 flex-col">
                 <span className="truncate text-[13px] text-ink-cream">{a.fromEmail}</span>
@@ -458,13 +456,20 @@ function ProvisionedDomains({
         return (
           <div
             key={d.domain}
-            className="flex items-center gap-3 border border-ink-rule rounded-[var(--radius-sm)] px-3 py-2"
+            className="flex flex-wrap items-center gap-3 border border-ink-rule rounded-[var(--radius-sm)] px-3 py-2"
           >
             <Badge tone={tone}>{d.poolStatus}</Badge>
             <span className="truncate text-[13px] text-ink-cream">{d.domain}</span>
             <span className="ln-mono text-[11px] text-ink-muted">
               sent {d.dailySentCount}/{d.dailySendLimit}/day
-              {d.warmupScore != null ? ` · warmth ${d.warmupScore}` : ""}
+              {d.warmupState === "not_warmed"
+                ? " · relay (not warmed)"
+                : d.warmupScore != null
+                  ? ` · warmth ${d.warmupScore}`
+                  : ""}
+            </span>
+            <span className="text-[11px] text-ink-muted">
+              {d.addresses?.map((a) => `${a.address}: ${a.status}`).join(" · ")}
             </span>
             <Button
               type="button"
@@ -487,7 +492,6 @@ function ProvisionedDomains({
 function AddOneShotSender({
   identities,
   provisionedDomains,
-  founderLocalpart,
   pending,
   pendingErrors,
   onStage,
@@ -495,7 +499,6 @@ function AddOneShotSender({
 }: {
   identities: SenderIdentityView[];
   provisionedDomains: DomainPoolView[];
-  founderLocalpart: string;
   pending: PendingOneShotAdd[];
   pendingErrors: Record<string, string>;
   onStage: (a: PendingOneShotAdd) => void;
@@ -508,9 +511,16 @@ function AddOneShotSender({
   const capParsed = parseCap(addCap, { blank: "omit" });
   const capError = addCap.trim() && !capParsed.ok ? capParsed.error : null;
   const domain = addDomain.trim().toLowerCase();
+  const selectedDomain = provisionedDomains.find((d) => d.domain === domain);
+  const mailbox =
+    addMailbox.trim().toLowerCase() || selectedDomain?.defaultFrom?.split("@")[0] || "agent";
+  const ready =
+    selectedDomain?.addresses?.some(
+      (a) => a.address === `${mailbox}@${domain}` && a.status === "active",
+    ) ?? false;
   const stage = (): void => {
-    if (!domain || !capParsed.ok) return;
-    onStage({ sendingDomain: domain, mailbox: addMailbox, maxPerDay: addCap });
+    if (!domain || !capParsed.ok || !ready) return;
+    onStage({ sendingDomain: domain, mailbox, maxPerDay: addCap });
     setAddDomain("");
     setAddMailbox("");
     setAddCap("");
@@ -553,7 +563,7 @@ function AddOneShotSender({
       )}
       <div className="flex flex-wrap items-end gap-2">
         <Field label="Domain" className="min-w-[200px]">
-          {/* Pick a warmed domain or type a new one (auto-provisions on first send). */}
+          {/* Sender addresses must be provisioned before they enter the pool. */}
           <Input
             list="oneshot-domains"
             placeholder="acme.com"
@@ -572,7 +582,7 @@ function AddOneShotSender({
         </Field>
         <Field label="Mailbox" className="w-32">
           <Input
-            placeholder={founderLocalpart || "agent"}
+            placeholder={selectedDomain?.defaultFrom?.split("@")[0] || "agent"}
             value={addMailbox}
             onChange={(e) => setAddMailbox(e.target.value)}
             aria-label="mailbox local-part"
@@ -597,21 +607,17 @@ function AddOneShotSender({
           type="button"
           variant="secondary"
           className="mb-[2px]"
-          disabled={!domain || !capParsed.ok}
+          disabled={!domain || !capParsed.ok || !ready}
           onClick={stage}
         >
           Add
         </Button>
       </div>
-      {/* A domain outside the warmed pool goes out cold: pinned sends bypass warm-up. */}
-      {domain &&
-        provisionedDomains.length > 0 &&
-        !provisionedDomains.some((d) => d.domain.toLowerCase() === domain) && (
-          <span className="text-[12px] text-ink-blocked">
-            {domain} isn't in your warmed pool. It provisions on first send and starts cold; the
-            ramp is its only throttle.
-          </span>
-        )}
+      {domain && !ready && (
+        <span className="text-[12px] text-ink-blocked">
+          Set up this address above and wait until it is active before adding it as a sender.
+        </span>
+      )}
       {/* Reputation + send limits are per-domain, not per-mailbox. */}
       {domain && identities.some((i) => i.sendingDomain?.toLowerCase() === domain) && (
         <span className="text-[12px] text-ink-faint">
@@ -620,7 +626,8 @@ function AddOneShotSender({
         </span>
       )}
       <span className="text-[12px] text-ink-faint">
-        Blank mailbox = your first name. Blank cap = warm-up ramp: 10/day, +10 a week, max 50.
+        Blank mailbox = the domain’s main address. Blank cap = warm-up ramp: 10/day, +10 a week, max
+        50.
       </span>
     </div>
   );

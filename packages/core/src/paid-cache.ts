@@ -1,3 +1,4 @@
+import { isSettlementAmbiguous } from "./payment-holds.ts";
 import { createHash } from "node:crypto";
 import { demoMode } from "./demo.ts";
 import { logEvent } from "./events.ts";
@@ -120,7 +121,11 @@ export const PAID_LOOKUPS = {
   },
   "enrich.company": { ttlMs: 30 * DAY, failureTtlMs: PAID_FAILURE_TTL_MS },
   "research.company": { ttlMs: 30 * DAY, failureTtlMs: PAID_FAILURE_TTL_MS },
-  "research.people": { ttlMs: 7 * DAY, failureTtlMs: PAID_FAILURE_TTL_MS },
+  "research.people": {
+    ttlMs: 7 * DAY,
+    failureTtlMs: PAID_FAILURE_TTL_MS,
+    identity: (i) => ({ ...i, limit: i["limit"] ?? 25 }),
+  },
   "local.resolve": { ttlMs: 30 * DAY, failureTtlMs: PAID_FAILURE_TTL_MS },
   "local.search": { ttlMs: 7 * DAY, failureTtlMs: PAID_FAILURE_TTL_MS },
   "research.deep": { ttlMs: 30 * DAY, failureTtlMs: PAID_FAILURE_TTL_MS },
@@ -408,6 +413,7 @@ function defaultStorable(result: unknown): boolean {
  * cache's own answers.
  */
 export function isNegativeCacheable(err: unknown): boolean {
+  if (isSettlementAmbiguous(err)) return false;
   if (!err || isPaidCacheMiss(err) || isCachedPaidFailure(err)) return false;
   if (isTransientToolError(err) || rateLimitRetryAfterS(err) !== null) return false;
   // OneShot failing, not the input: "temporarily unavailable", a payment that

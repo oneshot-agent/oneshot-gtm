@@ -30,6 +30,7 @@ const h = vi.hoisted(() => ({ ledger: null as unknown as import("../src/ledger.t
 
 vi.mock("@oneshot-agent/sdk", () => ({
   OneShot: class {
+    address = "0x-test-wallet";
     personProfile = personProfileMock;
     personFind = personFindMock;
   },

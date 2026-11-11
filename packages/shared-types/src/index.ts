@@ -734,6 +734,15 @@ export interface SetupRequest {
  */
 export interface DomainPoolView {
   domain: string;
+  defaultFrom?: string;
+  mailboxMode?: "relay" | "mailbox";
+  warmupState?: "warming" | "warmed" | "degraded" | "not_warmed";
+  addresses?: Array<{
+    address: string;
+    status: "active" | "provisioning" | "failed";
+    warmup_state: "warming" | "warmed" | "degraded" | "not_warmed";
+  }>;
+
   poolStatus: "active" | "warming" | "paused" | "removed";
   warmupScore: number | null;
   dailySendLimit: number;
@@ -2461,4 +2470,39 @@ export interface LinkedInTouchedImportView {
   rejectedSample: string[];
   /** The list's size after the import. */
   count: number;
+}
+
+/** Separate domain/address setup; no email is sent by these operations. */
+export interface DomainQuoteRequest {
+  domain: string;
+  mailboxMode?: "relay" | "mailbox";
+  addresses?: string[];
+}
+export interface DomainBuyRequest {
+  domain: string;
+  quoteId: string;
+}
+export interface DomainQuoteView {
+  domain: string;
+  available?: boolean;
+  purchasable: boolean;
+  reason?: string;
+  setup?: "sending_domain" | "domain_addresses";
+  mailbox_mode?: "relay" | "mailbox";
+  addresses?: string[];
+  already_set_up?: string[];
+  quote_id?: string;
+  total_cost?: number;
+  currency?: string;
+  expires_at?: string;
+  billing?: { one_time: boolean; term_years: number; renewal_charged: boolean; summary: string };
+}
+export interface DomainPurchaseView {
+  request_id?: string;
+  receipt_id?: string;
+  status?: string;
+  domain?: string;
+  domain_status?: string | null;
+  addresses?: string[];
+  message?: string;
 }

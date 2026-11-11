@@ -1,3 +1,4 @@
+import { isSettlementAmbiguous } from "./payment-holds.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { logEvent } from "./events.ts";
 
@@ -51,6 +52,7 @@ function str(v: unknown): string | undefined {
 /** The kind of OneShot failure an error is, or null when it is an answer about the input. */
 export function classifyPlatformError(err: unknown): PlatformError | null {
   if (!err) return null;
+  if (isSettlementAmbiguous(err)) return { kind: "payment", reason: "settlement_ambiguous" };
   if (err instanceof PlatformUnavailableError) return { kind: err.kind, reason: err.reason };
   const e = err as {
     name?: unknown;

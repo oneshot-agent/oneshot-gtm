@@ -19,6 +19,7 @@ const emailMock = vi.hoisted(() =>
 );
 vi.mock("@oneshot-agent/sdk", () => ({
   OneShot: class {
+    address = "0x-test-wallet";
     email = emailMock;
   },
   ValidationError: class extends Error {},
@@ -229,6 +230,35 @@ describe("oneshot: a follow-up into the first email's thread", () => {
       ],
     };
   });
+
+  it.each(["confirmation_required", "setup_required", "setup_pending"])(
+    "%s creates no receipt and permits sending after setup",
+    async (status) => {
+      const to = recipient();
+      const key = `setup:${to}`;
+      emailMock.mockResolvedValueOnce({
+        status,
+        request_id: "",
+        cost: 0,
+        email: { id: "", provider_message_id: "", status },
+      });
+      await expect(
+        sendEmail(
+          { to, subject: "hello", body: "body", idempotencyKey: key },
+          { playName: "alpha" },
+        ),
+      ).rejects.toMatchObject({ name: "EmailSetupRequiredError" });
+      expect(recordReceipt).not.toHaveBeenCalled();
+      expect(scratch.outboundSends.get(key)?.status).toBe("failed");
+      await sendEmail(
+        { to, subject: "hello", body: "body", idempotencyKey: key },
+        { playName: "alpha" },
+      );
+      expect(recordReceipt).toHaveBeenCalledTimes(1);
+      expect(scratch.outboundSends.get(key)?.status).toBe("confirmed");
+      expect(emailMock.mock.calls[0]![0]).not.toHaveProperty("from_mailbox");
+    },
+  );
 
   const thread = { identityId: ONESHOT, oneshotEmailId: "em-intro" };
 

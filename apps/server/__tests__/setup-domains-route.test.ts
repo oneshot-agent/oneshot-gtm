@@ -171,6 +171,17 @@ describe("domain pool cache", () => {
   });
 });
 
+it("an explicit provisioning refresh bypasses a fresh cached pool", async () => {
+  let calls = 0;
+  listImpl = async () => [{ ...ENTRY, domain: ++calls === 1 ? "pending.dev" : "ready.dev" }];
+  expect(await domainsOf(await getSetupDomains(req("/api/setup/domains")))).toEqual([
+    "pending.dev",
+  ]);
+  expect(await domainsOf(await getSetupDomains(req("/api/setup/domains?refresh=1")))).toEqual([
+    "ready.dev",
+  ]);
+});
+
 describe("GET /api/setup/domains — the dedicated, patient route", () => {
   it("still waits past the status call's deadline", async () => {
     let resolve!: (v: DomainPoolEntry[]) => void;

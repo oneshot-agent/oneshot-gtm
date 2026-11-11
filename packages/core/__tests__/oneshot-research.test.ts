@@ -11,6 +11,7 @@ vi.mock("@oneshot-agent/sdk", async () => {
   return {
     ...actual,
     OneShot: class {
+      address = "0x-test-wallet";
       research = researchMock;
     },
   };
