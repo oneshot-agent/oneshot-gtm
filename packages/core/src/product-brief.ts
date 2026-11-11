@@ -1,5 +1,6 @@
 import { getLedger, type Ledger } from "./ledger.ts";
 import type { OneShotConfig } from "./types.ts";
+import { sliceText } from "./text-slice.ts";
 
 /**
  * Heading of the approved code answers in the composed brief. It tells the
@@ -60,5 +61,5 @@ export function productBriefText(
 }
 
 function clipText(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
+  return text.length > max ? `${sliceText(text, Math.max(0, max - 1))}…` : text;
 }

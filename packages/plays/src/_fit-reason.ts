@@ -4,7 +4,7 @@
  * rows with no gate reason; enqueue-time precedence lives in
  * `packages/find/src/_fit-reason.ts`.
  */
-import { loadConfig, logEvent } from "@oneshot-gtm/core";
+import { loadConfig, logEvent, sliceText } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { FitReasonSource } from "@oneshot-gtm/shared-types";
 import { describeTargetForAngle } from "./_angles.ts";
@@ -50,7 +50,9 @@ export function normalizeFitReason(raw: unknown): string | null {
   }
   s = s.replace(/^unclear-after-enrich:\s*/i, "");
   if (s.length === 0 || NOT_A_REASON.has(s.toLowerCase()) || DIAGNOSTIC.test(s)) return null;
-  return s.length > FIT_REASON_MAX_CHARS ? `${s.slice(0, FIT_REASON_MAX_CHARS - 1).trimEnd()}…` : s;
+  return s.length > FIT_REASON_MAX_CHARS
+    ? `${sliceText(s, FIT_REASON_MAX_CHARS - 1).trimEnd()}…`
+    : s;
 }
 
 export interface GenerateFitReasonInput {

@@ -25,6 +25,7 @@ import {
   type PersonResearchDossier,
   type PersonResearchOrganization,
   type QueueRow,
+  sliceText,
 } from "@oneshot-gtm/core";
 import type { FitReasonSource } from "@oneshot-gtm/shared-types";
 import { qualifyPerson, resolveIcp, type PersonVerdict } from "./_filter.ts";
@@ -893,7 +894,7 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
         }
       : {}),
     organizations,
-    ...(bio ? { bio: bio.replace(/\s+/g, " ").slice(0, 600) } : {}),
+    ...(bio ? { bio: sliceText(bio.replace(/\s+/g, " "), 600) } : {}),
     ...(location ? { location } : {}),
     ...(workEmail ? { workEmail } : {}),
     ...(linkedinUrl ? { linkedinUrl } : {}),
@@ -955,7 +956,7 @@ export function dossierFromProviderResult(
         }
       : {}),
     organizations,
-    ...(bio ? { bio: bio.replace(/\s+/g, " ").slice(0, 600) } : {}),
+    ...(bio ? { bio: sliceText(bio.replace(/\s+/g, " "), 600) } : {}),
     ...(location ? { location } : {}),
     ...(workEmail ? { workEmail } : {}),
     ...(linkedinUrl ? { linkedinUrl } : {}),
@@ -1157,7 +1158,7 @@ export async function rejudgePerson(input: {
   const roleText = [
     patch.currentRole ?? str(payload, "currentRole"),
     patch.companyFacts ?? str(payload, "companyFacts"),
-    dossier.bio?.slice(0, 300),
+    dossier.bio && sliceText(dossier.bio, 300),
   ]
     .filter((s): s is string => Boolean(s))
     .join(" — ");
