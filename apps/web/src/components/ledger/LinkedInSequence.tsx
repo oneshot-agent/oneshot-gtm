@@ -126,6 +126,11 @@ export function WaitingLetter({
   now?: number;
 }) {
   const last = view?.linkedInSent.at(-1);
+  const sentOn = view?.invite?.sentOn ?? waitingSince;
+  const waited = daysSince(sentOn, now);
+  const wait = `waiting for acceptance · ${waited} day${waited === 1 ? "" : "s"}${
+    view?.invite ? ` · withdrawn ${view.invite.expiresOn} if not accepted` : ""
+  }`;
   if (!view || !last) {
     return (
       <LetterEmpty
@@ -134,7 +139,7 @@ export function WaitingLetter({
             ? "Loading what was sent…"
             : view === null
               ? `Waiting for acceptance · invite sent ${waitingSince}. Couldn't load what was sent.`
-              : `Waiting for acceptance · invite sent ${waitingSince}.`
+              : `Invite sent ${sentOn} · ${wait}.`
         }
         // No note was captured for the invite: what follows is still known.
         below={view ? <UpcomingSteps steps={view.upcoming} /> : undefined}
@@ -147,18 +152,11 @@ export function WaitingLetter({
       />
     );
   }
-  const sentOn = view.invite?.sentOn ?? waitingSince;
-  const waited = daysSince(sentOn, now);
   return (
     <LetterCard
       meta={<span title={last.sentAt}>Sent {sentOn}</span>}
       subject={sentence(last.label)}
-      stateLine={
-        <span className="text-ink-muted">
-          waiting for acceptance · {waited} day{waited === 1 ? "" : "s"}
-          {view.invite ? ` · withdrawn ${view.invite.expiresOn} if not accepted` : ""}
-        </span>
-      }
+      stateLine={<span className="text-ink-muted">{wait}</span>}
       body={last.text}
       afterBody={
         <>

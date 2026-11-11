@@ -84,7 +84,9 @@ describe("WaitingLetter without a captured note", () => {
     const html = renderToStaticMarkup(
       <WaitingLetter view={{ ...view, linkedInSent: [] }} waitingSince="2026-10-27" now={NOW} />,
     );
-    expect(html).toContain("Waiting for acceptance · invite sent 2026-10-27.");
+    expect(html).toContain(
+      "Invite sent 2026-10-27 · waiting for acceptance · 15 days · withdrawn 2026-11-17 if not accepted.",
+    );
     expect(html).toContain("step 4 · first LinkedIn message · once they accept");
   });
 });
