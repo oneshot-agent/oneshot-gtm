@@ -70,12 +70,24 @@ describe("WaitingLetter", () => {
       <WaitingLetter view={undefined} waitingSince="2026-10-27" />,
     );
     expect(loading).toContain("Loading what was sent…");
-    const failed = renderToStaticMarkup(<WaitingLetter view={null} waitingSince="2026-10-27" />);
+    const failed = renderToStaticMarkup(
+      <WaitingLetter view={null} waitingSince="2026-10-27" onRetry={() => {}} />,
+    );
     expect(failed).toContain("Waiting for acceptance · invite sent 2026-10-27.");
+    expect(failed).toContain("Couldn&#x27;t load what was sent.");
+    expect(failed).toContain("Retry");
   });
 });
 
 describe("LinkedInThread", () => {
+  it("says so, with a retry, when the thread can't be read", () => {
+    const html = renderToStaticMarkup(
+      <LinkedInThread view={null} nextStep={4} onRetry={() => {}} />,
+    );
+    expect(html).toContain("Couldn&#x27;t load the LinkedIn thread.");
+    expect(html).toContain("Retry");
+  });
+
   it("under a drafted message: what was sent there, and only the steps after the draft", () => {
     const html = renderToStaticMarkup(<LinkedInThread view={view} nextStep={4} />);
     expect(html).toContain("Sent on LinkedIn");

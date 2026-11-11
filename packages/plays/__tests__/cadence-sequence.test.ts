@@ -155,6 +155,24 @@ describe("cadenceSequence", () => {
     expect(view.upcoming).toEqual([]);
   });
 
+  it("a message they answered still shows as received", () => {
+    inviteSentDaysAgo(9);
+    enrollInCadence({ prospectId, playName: "luma-events", channel: "linkedin" });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "luma-events",
+      stepIndex: 1,
+      channel: "linkedin",
+      status: "replied",
+      metadata: { body: "Hi Dana, first one.", label: "first LinkedIn message" },
+    });
+    const view = cadenceSequence(prospectId, "luma-events")!;
+    expect(view.linkedInSent.map((t) => [t.stepIndex, t.text])).toEqual([
+      [0, "saw you hosted"],
+      [1, "Hi Dana, first one."],
+    ]);
+  });
+
   it("null for a cadence that does not exist", () => {
     expect(cadenceSequence(prospectId, "luma-events")).toBeNull();
   });

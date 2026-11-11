@@ -5,7 +5,9 @@ import type {
   CadenceSequenceView,
   CadenceUpcomingStep,
 } from "@oneshot-gtm/shared-types";
+import { RotateCw } from "lucide-react";
 import { timeAgo } from "../../lib/cn.ts";
+import { Button } from "../primitives/Button.tsx";
 import { LetterCard, LetterEmpty } from "./LetterCard.tsx";
 
 /**
@@ -93,6 +95,14 @@ function useSequence(queryKey: readonly unknown[], load: () => Promise<CadenceSe
   return useQuery({ queryKey, queryFn: load });
 }
 
+function RetryButton({ onRetry }: { onRetry: () => void }) {
+  return (
+    <Button variant="ghost" size="sm" title="load it again" onClick={onRetry}>
+      <RotateCw size={11} /> Retry
+    </Button>
+  );
+}
+
 /**
  * The letter while an invite waits on acceptance: the message that went, how
  * long it has waited and when it is withdrawn, then the messages still to
@@ -103,6 +113,7 @@ export function WaitingLetter({
   view,
   waitingSince,
   actions,
+  onRetry,
   now = Date.now(),
 }: {
   /** Undefined while loading; null when it could not be read. */
@@ -110,6 +121,8 @@ export function WaitingLetter({
   /** The row's `linkedinWaitingSince`, for the line shown before the view loads. */
   waitingSince: string;
   actions?: ReactNode;
+  /** Shown when the view could not be read: loads it again. */
+  onRetry?: () => void;
   now?: number;
 }) {
   const last = view?.linkedInSent.at(-1);
@@ -119,9 +132,16 @@ export function WaitingLetter({
         note={
           view === undefined
             ? "Loading what was sent…"
-            : `Waiting for acceptance · invite sent ${waitingSince}.`
+            : view === null
+              ? `Waiting for acceptance · invite sent ${waitingSince}. Couldn't load what was sent.`
+              : `Waiting for acceptance · invite sent ${waitingSince}.`
         }
-        actions={actions}
+        actions={
+          <>
+            {view === null && onRetry ? <RetryButton onRetry={onRetry} /> : null}
+            {actions}
+          </>
+        }
       />
     );
   }
@@ -167,6 +187,7 @@ export function WaitingLetterLoader({
       view={query.isError ? null : query.data}
       waitingSince={waitingSince}
       actions={actions}
+      onRetry={() => void query.refetch()}
     />
   );
 }
@@ -178,10 +199,21 @@ export function WaitingLetterLoader({
 export function LinkedInThread({
   view,
   nextStep,
+  onRetry,
 }: {
-  view: CadenceSequenceView | undefined;
+  /** Undefined while loading; null when it could not be read. */
+  view: CadenceSequenceView | null | undefined;
   nextStep: number;
+  onRetry?: () => void;
 }) {
+  if (view === null) {
+    return (
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-ink-rule pt-3 text-[12px] text-ink-muted">
+        Couldn't load the LinkedIn thread.
+        {onRetry ? <RetryButton onRetry={onRetry} /> : null}
+      </div>
+    );
+  }
   if (!view) return null;
   return (
     <>
@@ -202,5 +234,11 @@ export function LinkedInThreadLoader({
   nextStep: number;
 }) {
   const query = useSequence(queryKey, load);
-  return <LinkedInThread view={query.data} nextStep={nextStep} />;
+  return (
+    <LinkedInThread
+      view={query.isError ? null : query.data}
+      nextStep={nextStep}
+      onRetry={() => void query.refetch()}
+    />
+  );
 }
