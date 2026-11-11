@@ -34,6 +34,7 @@ import {
   offerWriterOf,
   productBriefText,
   type OfferAnchor,
+  sliceText,
 } from "@oneshot-gtm/core";
 import {
   callDecisions,
@@ -323,7 +324,7 @@ export function playMakesOffer(playName: string, cfg?: { noOfferPlays?: unknown 
 }
 
 function clip(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  return text.length > max ? `${sliceText(text, max - 1)}…` : text;
 }
 
 function compactJson(value: unknown, drop: ReadonlySet<string>): string {

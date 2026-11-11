@@ -1,4 +1,9 @@
-import { getCachedNewsfeed, isPersonResearchDossier, newsfeedSeedUrl } from "@oneshot-gtm/core";
+import {
+  getCachedNewsfeed,
+  isPersonResearchDossier,
+  newsfeedSeedUrl,
+  sliceText,
+} from "@oneshot-gtm/core";
 
 /**
  * RECENT POSTS: the prospect's own newest posts, from the newsfeed capture
@@ -39,7 +44,7 @@ export function recentPosts(target: Record<string, unknown>, now: Date = new Dat
     .slice(0, MAX_POSTS);
   return posts.map((p) => {
     const text =
-      p.text.length > MAX_POST_CHARS ? `${p.text.slice(0, MAX_POST_CHARS - 1)}…` : p.text;
+      p.text.length > MAX_POST_CHARS ? `${sliceText(p.text, MAX_POST_CHARS - 1)}…` : p.text;
     const date = Number.isNaN(p.at) ? "" : `${new Date(p.at).toISOString().slice(0, 10)}: `;
     return `- ${date}${text}`;
   });

@@ -74,6 +74,7 @@ import {
   isKnownConnectionMarker,
   productBriefText,
   autoReplyConfigOf,
+  sliceText,
 } from "@oneshot-gtm/core";
 import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { readAutoReply, stopLiveCadences } from "./_auto-reply.ts";
@@ -3348,7 +3349,7 @@ export function prospectDemoDay(
  */
 function oneLine(v: string, max: number): string {
   const flat = v.replace(/\s+/g, " ").trim();
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+  return flat.length > max ? `${sliceText(flat, max - 1)}…` : flat;
 }
 
 /** ROLE and COMPANY FACTS for a follow-up, from the prospect row and its researched dossier. */
@@ -3556,9 +3557,11 @@ export function hardBanHold(payload: StepPayload): string[] {
  * The last follow-up of a builder play. With `cfg.pilotOffer` set, and the
  * play making offers (`playMakesOffer`), it offers the founder's pilot and
  * closes the thread (`pilot-close-followup`, with the
- * prospect's company facts and the price/link hold); without it, the play's
- * plain breakup (`fallback: "breakup"`), or nothing at all, so a step that
- * exists only for the offer completes the cadence (`fallback: "none"`).
+ * prospect's company facts and the price/link hold). With the offer set but a
+ * play listed in `noOfferPlays`, the plain breakup, since the step is planned
+ * whenever an offer is set. With no offer, the play's plain breakup
+ * (`fallback: "breakup"`), or nothing at all, so a step that exists only for
+ * the offer completes the cadence (`fallback: "none"`).
  * Decided per send from the live config, so cadences already in flight pick
  * up a newly set offer at their last step.
  */
@@ -3574,18 +3577,17 @@ export function pilotOrBreakup(opts: {
     prospectContext: true,
     hardBans: true,
   });
-  const breakup =
-    opts.fallback === "breakup"
-      ? buildFollowUpEmail({
-          playName: opts.playName,
-          promptName: "breakup-email",
-          contextLines: opts.contextLines,
-        })
-      : null;
+  const breakup = buildFollowUpEmail({
+    playName: opts.playName,
+    promptName: "breakup-email",
+    contextLines: opts.contextLines,
+  });
   return async (ctx: CadenceContext) => {
     // The pilot is an offer: a play that makes none closes with the breakup.
-    if (ctx.cfg.pilotOffer?.trim() && playMakesOffer(opts.playName, ctx.cfg)) return pilot(ctx);
-    return breakup ? breakup(ctx) : null;
+    if (ctx.cfg.pilotOffer?.trim()) {
+      return playMakesOffer(opts.playName, ctx.cfg) ? pilot(ctx) : breakup(ctx);
+    }
+    return opts.fallback === "breakup" ? breakup(ctx) : null;
   };
 }
 

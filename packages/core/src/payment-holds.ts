@@ -40,14 +40,19 @@ export function isLocalPaymentRefusal(err: unknown): boolean {
 export function isPaymentExecutionUncertain(err: unknown): boolean {
   return (err as { executionUncertain?: unknown } | null)?.executionUncertain === true;
 }
-function timedOutExecution(err: unknown): HeldExecution | null {
+function uncertainExecution(err: unknown): HeldExecution | null {
   const e = err as {
     name?: string;
+    phase?: string;
     jobId?: string;
     requestId?: string;
     idempotencyKey?: string;
   } | null;
-  if (e?.name !== "JobTimeoutError" && e?.name !== "RequestTimeoutError") return null;
+  // A terminal JobError is a reported failure. Losing the polling channel
+  // (transport failure, cancellation, or deadline) says nothing about execution.
+  const pollingLost = e?.phase === "polling" && e.name !== "JobError";
+  if (e?.name !== "JobTimeoutError" && e?.name !== "RequestTimeoutError" && !pollingLost)
+    return null;
   return {
     requestId: e.requestId ?? e.jobId,
     idempotencyKey: e.idempotencyKey,
@@ -143,7 +148,7 @@ export function protectPayments<T extends object>(agent: T, wallet: string): T {
         try {
           out = await value.apply(target, args);
         } catch (err) {
-          const execution = timedOutExecution(err);
+          const execution = uncertainExecution(err);
           if (isSettlementAmbiguous(err) || execution) {
             const settlementId = (err as { settlementId?: string }).settlementId;
             db.holdPayment(key, claimToken, { settlementId, ...execution });

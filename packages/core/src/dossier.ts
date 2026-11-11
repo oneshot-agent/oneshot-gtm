@@ -14,6 +14,8 @@
  *     MAILBOX, not the person.
  */
 
+import { sliceText } from "./text-slice.ts";
+
 /** Fields that actually say something about a person. */
 const SIGNAL_FIELDS = [
   "title",
@@ -315,7 +317,7 @@ function clip(text: string | undefined, max: number): string | undefined {
   if (!text) return undefined;
   const t = text.replace(/\s+/g, " ").trim();
   if (!t) return undefined;
-  return t.length <= max ? t : `${t.slice(0, max - 1).trimEnd()}…`;
+  return t.length <= max ? t : `${sliceText(t, max - 1).trimEnd()}…`;
 }
 
 /** "Founder & Product Owner at BrightLoom.App since Mar 2026". */

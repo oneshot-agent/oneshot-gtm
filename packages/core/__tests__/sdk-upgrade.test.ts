@@ -117,6 +117,42 @@ describe("payment settlement holds", () => {
       expect(call).toHaveBeenCalledTimes(1);
     },
   );
+  it.each(["OneShotError", "ToolError"])(
+    "retains an accepted job after a polling %s",
+    async (name) => {
+      const call = vi.fn().mockRejectedValue(
+        Object.assign(new Error("Polling failed"), {
+          name,
+          phase: "polling",
+          requestId: "req_accepted",
+          idempotencyKey: "idem_accepted",
+        }),
+      );
+      const agent = protectPayments({ personFind: call }, "wallet");
+      await expect(agent.personFind({ limit: 25 })).rejects.toMatchObject({
+        name: "PaymentHeldError",
+        executionUncertain: true,
+        requestId: "req_accepted",
+      });
+      expect(listPaymentHolds()[0]).toMatchObject({
+        request_id: "req_accepted",
+        idempotency_key: "idem_accepted",
+        execution_uncertain: 1,
+      });
+      await expect(agent.personFind({ limit: 25 })).rejects.toBeInstanceOf(PaymentHeldError);
+      expect(call).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("releases a terminal job failure reported while polling", async () => {
+    const error = Object.assign(new Error("Job failed"), {
+      name: "JobError",
+      phase: "polling",
+      requestId: "req_failed",
+    });
+    const agent = protectPayments({ personFind: vi.fn().mockRejectedValue(error) }, "wallet");
+    await expect(agent.personFind({ limit: 25 })).rejects.toBe(error);
+    expect(listPaymentHolds()).toEqual([]);
+  });
   it("equivalent lookup inputs cannot bypass a held payment", async () => {
     const call = vi.fn().mockRejectedValue(ambiguous());
     const agent = protectPayments({ personFind: call }, "wallet");
