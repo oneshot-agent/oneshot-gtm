@@ -15,7 +15,7 @@ import {
   Send,
   Trophy,
 } from "lucide-react";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import type { CadenceCounts, CadenceStopReason, OutcomeRequest } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
@@ -493,7 +493,13 @@ function CadencesPage() {
   const counts = cadences.data?.counts ?? EMPTY_COUNTS;
   const mask = useMask();
   const { masked } = usePrivacy();
-  const now = new Date();
+  // An unchanged 15s poll keeps the same data and draws nothing, so the clock
+  // ticks on its own: rows turn overdue, and into the Overdue view, on time.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const tick = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(tick);
+  }, []);
   const nowIso = now.toISOString();
   // The chips read the same clock as each row's "overdue" note, so a row
   // labelled overdue is always in the Overdue view.
