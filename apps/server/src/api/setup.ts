@@ -445,9 +445,20 @@ export async function setup(req: Request): Promise<Response> {
 /** Resolve new sender addresses before any configuration is persisted. */
 async function validateNewOneShotSenders(body: SetupRequest): Promise<void> {
   const adds = (body.addIdentities ?? []).filter((add) => add.provider === "oneshot");
-  if (adds.length === 0) return;
+  const current = loadConfig();
+  const nextDomain = mergeString(body.sendingDomain, current.sendingDomain);
+  const nextProvider = body.emailProvider ?? current.emailProvider;
+  const legacy =
+    !current.emailIdentities?.length &&
+    nextProvider === "oneshot" &&
+    nextDomain &&
+    (nextDomain !== current.sendingDomain || nextProvider !== current.emailProvider)
+      ? { sendingDomain: nextDomain, mailbox: undefined as string | undefined }
+      : null;
+  const candidates = legacy ? [...adds, legacy] : adds;
+  if (candidates.length === 0) return;
   const domains = await listSendingDomains();
-  for (const add of adds) {
+  for (const add of candidates) {
     const domain = domains.find((d) => d.domain === add.sendingDomain?.trim().toLowerCase());
     const mailbox = add.mailbox?.trim().toLowerCase() || domain?.default_from?.split("@")[0];
     if (
@@ -464,6 +475,7 @@ async function validateNewOneShotSenders(body: SetupRequest): Promise<void> {
     add.sendingDomain = domain.domain;
     add.mailbox = mailbox;
   }
+  if (legacy) body.sendingDomain = legacy.sendingDomain;
 }
 
 interface SendViaNotice {

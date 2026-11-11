@@ -702,3 +702,23 @@ it("resolves a new sender's blank mailbox to the active domain main address", as
     expect.objectContaining({ sendingDomain: "acme.email", mailbox: "agent" }),
   );
 });
+
+it("rejects an unprovisioned legacy sender change before any writes", async () => {
+  current.emailIdentities = null;
+  const res = await post({ sendingDomain: "unknown.email", secrets: { OPENAI_API_KEY: "test" } });
+  expect(res.status).toBe(400);
+  expect(saveConfigMock).not.toHaveBeenCalled();
+  expect(saveSecretsMock).not.toHaveBeenCalled();
+});
+it("validates the domain main address when changing a legacy sender", async () => {
+  current.emailIdentities = null;
+  expect((await post({ sendingDomain: " ACME.email " })).status).toBe(200);
+  expect(savedCfg().sendingDomain).toBe("acme.email");
+});
+it("checks a legacy domain when switching from Gmail to OneShot", async () => {
+  current.emailIdentities = [];
+  current.emailProvider = "gmail";
+  current.sendingDomain = "unknown.email";
+  expect((await post({ emailProvider: "oneshot" })).status).toBe(400);
+  expect(saveConfigMock).not.toHaveBeenCalled();
+});

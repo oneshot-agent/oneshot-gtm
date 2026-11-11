@@ -91,10 +91,14 @@ For an existing domain, the quote prices additional addresses. An expired quote 
 
 ### Unresolved payments
 
-An ambiguous settlement does not mean a lookup found nothing. The operation did not run, and payment may have landed; A landed payment is credited to the wallet when the call did not run. GTM retains a payment hold across processes and restarts, including when a process dies during a guarded call. Accepted jobs that time out while polling also stay held, with their request ID retained; they may already have executed. Request deadlines with unknown acceptance retain the submission key when available. It does not retry the held operation automatically. Use `oneshot-gtm payments list --json` to inspect the operation and settlement ID, reconcile the payment with OneShot, then explicitly release it:
+An ambiguous settlement does not mean a lookup found nothing. Payment status and execution status must be reconciled separately: only confirmed non-execution establishes that the operation did not run. A landed payment is credited to the wallet when OneShot confirms the call did not run.
+
+GTM retains a payment hold across processes and restarts, including when a process dies during a guarded call. Accepted jobs that time out while polling also stay held, with their request ID retained; they may already have executed. Request deadlines with unknown acceptance retain the submission key when available. The held operation is never retried automatically.
+
+Use `oneshot-gtm payments list --json` to inspect the operation and its identifiers. Confirm the execution outcome with OneShot before releasing the hold: a payment credit alone does not make retrying safe. If the operation completed, reconcile that result locally instead of repeating it. Release for another attempt only after confirming non-execution and reconciling payment:
 
 ```sh
-oneshot-gtm payments resolve <hold-key> --note "Verified settlement credited by OneShot"
+oneshot-gtm payments resolve <hold-key> --note "OneShot confirmed non-execution and payment credited"
 ```
 
 Releasing a hold permits a subsequent attempt; it does not itself purchase or send anything.
