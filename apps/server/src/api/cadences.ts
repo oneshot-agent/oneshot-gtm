@@ -3,6 +3,7 @@ import {
   CONTACT_TOUCH_WINDOW_MS,
   getLedger,
   isDraining,
+  linkedInInviteTimeoutDays,
   loadConfig,
   logEvent,
   recentTouchElsewhere,
@@ -109,6 +110,16 @@ interface PageReads {
   cfg: LoadedCadence["cfg"];
   /** Today's draft config key per surface and play (`draftConfigKey`); null when the config can't be read. */
   keyOf: ReturnType<typeof draftConfigKeyer> | null;
+  /** Days an unaccepted invite stays out before it is withdrawn; null when the config can't be read. */
+  inviteTimeoutDays: number | null;
+}
+
+/** The day an invite sent on `sentOn` (YYYY-MM-DD) is withdrawn if not accepted. */
+function inviteExpiresOn(sentOn: string | null, timeoutDays: number | null): string | null {
+  if (sentOn === null || timeoutDays === null) return null;
+  const sentMs = Date.parse(sentOn);
+  if (!Number.isFinite(sentMs)) return null;
+  return new Date(sentMs + timeoutDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
 function toView(row: CadenceRow, page: PageReads): CadenceView {
@@ -196,9 +207,11 @@ function toView(row: CadenceRow, page: PageReads): CadenceView {
     replyChannel: row.reply_channel,
     replyAt: row.replied_at,
     nextStepDraft,
+    nextStepId: mailDraft ? null : (next?.stepId ?? null),
     nextStepLabel: next?.label ?? null,
     nextStepIsBreakup: next?.isBreakup ?? false,
     linkedinWaitingSince,
+    linkedinInviteExpiresOn: inviteExpiresOn(linkedinWaitingSince, page.inviteTimeoutDays),
     followupCount,
     priorSteps,
     isSending: row.sending_started_at != null,
@@ -324,7 +337,13 @@ export function viewsForRows(rows: ReadonlyArray<CadenceRow>): CadenceView[] {
   } catch {
     keyOf = null;
   }
-  const page: PageReads = { priorByKey, payloadByKey, plans, cfg, keyOf };
+  let inviteTimeoutDays: number | null;
+  try {
+    inviteTimeoutDays = linkedInInviteTimeoutDays();
+  } catch {
+    inviteTimeoutDays = null;
+  }
+  const page: PageReads = { priorByKey, payloadByKey, plans, cfg, keyOf, inviteTimeoutDays };
   return rows.map((r) => toView(r, page));
 }
 

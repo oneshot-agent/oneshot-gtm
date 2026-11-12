@@ -82,6 +82,24 @@ describe("cadence tiles", () => {
     ]);
   });
 
+  it("gives the filter chips the step id and the day a waiting invite is withdrawn", async () => {
+    listAllCadencesMock.mockReturnValue([row(WAITING_ID, "active"), row(2, "active")]);
+    const body = (await listCadences(req("/api/cadences")).json()) as {
+      cadences: Array<{
+        prospectId: number;
+        nextStepId: string | null;
+        linkedinInviteExpiresOn: string | null;
+      }>;
+    };
+    // The default invite timeout is 21 days.
+    expect(
+      body.cadences.map((c) => [c.prospectId, c.nextStepId, c.linkedinInviteExpiresOn]),
+    ).toEqual([
+      [WAITING_ID, "linkedin:1", "2026-10-22"],
+      [2, "linkedin:1", null],
+    ]);
+  });
+
   it("counts an invite timeout apart from the founder's stops", async () => {
     listAllCadencesMock.mockReturnValue([
       row(3, "stopped", { stop_reason: "invite_timeout" }),

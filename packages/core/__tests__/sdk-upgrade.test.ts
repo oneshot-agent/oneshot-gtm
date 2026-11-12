@@ -47,6 +47,11 @@ describe("payment settlement holds", () => {
           PaymentHeldError,
         );
       expect(call).toHaveBeenCalledTimes(1);
+      expect(logEvent).toHaveBeenLastCalledWith(
+        "payment.held",
+        { key: listPaymentHolds()[0]!.key, method },
+        "warn",
+      );
       const hold = listPaymentHolds()[0]!;
       expect(() => resolvePaymentHold(hold.key, "")).toThrow();
       resolvePaymentHold(hold.key, "Confirmed credit received");

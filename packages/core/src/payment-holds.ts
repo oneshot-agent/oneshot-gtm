@@ -169,11 +169,7 @@ export function protectPayments<T extends object>(agent: T, wallet: string): T {
           if (isSettlementAmbiguous(err) || execution) {
             const settlementId = (err as { settlementId?: string }).settlementId;
             db.holdPayment(key, claimToken, { settlementId, ...execution });
-            logEvent(
-              "payment.held",
-              { key, method: prop, settlementId, requestId: execution?.requestId },
-              "warn",
-            );
+            logEvent("payment.held", { key, method: prop }, "warn");
             throw new PaymentHeldError(key, settlementId, execution ?? undefined);
           }
           db.releasePayment(key, claimToken);

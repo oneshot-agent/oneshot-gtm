@@ -78,11 +78,11 @@ In Setup → Email, choose a domain, mode, and 1–10 comma-separated address lo
 
 Relay is the default for new domains: addresses have no hosted inbox and are not warmed. Hosted mailbox addresses warm individually. Existing domains keep their mode. A blank sender mailbox uses the domain's main address; existing explicitly configured mailboxes remain explicit and must be provisioned.
 
-The CLI exposes the same flow:
+The CLI exposes the same flow. Replace `REVIEWED_QUOTE_ID` with the quote ID whose terms you accepted:
 
 ```sh
 oneshot-gtm domains quote example.com --mode relay --addresses agent,sales --json
-oneshot-gtm domains buy example.com --quote-id <reviewed-quote-id> --json
+oneshot-gtm domains buy example.com --quote-id REVIEWED_QUOTE_ID --json
 oneshot-gtm domains list
 oneshot-gtm identities add
 ```
@@ -95,10 +95,10 @@ An ambiguous settlement does not mean a lookup found nothing. Payment status and
 
 GTM retains a payment hold across processes and restarts, including when a process dies during a guarded call. Accepted jobs that time out or lose their polling connection also stay held, with their request ID retained; they may already have executed. Request deadlines with unknown acceptance retain the submission key when available. An unclassified transport or response-parsing failure also retains the hold because the paid submission may have executed. Explicit SDK refusals and terminal job failures can release it. The held operation is never retried automatically.
 
-Use `oneshot-gtm payments list --json` to inspect the operation and its identifiers. Confirm the execution outcome with OneShot before releasing the hold: a payment credit alone does not make retrying safe. If the operation completed, reconcile that result locally instead of repeating it. Reconciliation notes are stored atomically with the hold resolution in the private shared SQLite database; diagnostic logs contain only the hold key. Release for another attempt only after confirming non-execution and reconciling payment:
+Use `oneshot-gtm payments list --json` to inspect the operation and its identifiers. Confirm the execution outcome with OneShot before releasing the hold: a payment credit alone does not make retrying safe. If the operation completed, reconcile that result locally instead of repeating it. Reconciliation notes are stored atomically with the hold resolution in the private shared SQLite database; payment diagnostics contain only the hold key and method. Release for another attempt only after confirming non-execution and reconciling payment. Replace `HOLD_KEY` with the key shown by `payments list`:
 
 ```sh
-oneshot-gtm payments resolve <hold-key> --note "OneShot confirmed non-execution and payment credited"
+oneshot-gtm payments resolve HOLD_KEY --note "OneShot confirmed non-execution and payment credited"
 ```
 
 Releasing a hold permits a subsequent attempt; it does not itself purchase or send anything.
