@@ -32,13 +32,17 @@ import {
   type ProspectRecord,
 } from "@oneshot-gtm/core";
 import { tryParseJsonObject } from "@oneshot-gtm/intel";
+import { nearDuplicateOffer } from "@oneshot-gtm/shared-types";
 import {
+  deriveOffers,
   ensureOfferSet,
   isOfferSkip,
   isOfferSkipped,
   isProspectOffer,
   offerConfigIsCurrent,
+  offerExclusionsCurrent,
   offerHoldsSend,
+  offerProductHash,
   playMakesOffer,
   researchForOffer,
   type OfferResearch,
@@ -69,6 +73,25 @@ export interface SequenceOfferRecord {
   introCarriedOffer: boolean;
   /** The writer's refusal while the sequence has no offer; null otherwise. */
   skip: OfferSkip | null;
+  /** The offer the LinkedIn close makes after an emailed sequence (`ensureCloseOffer`); null when none is stored. */
+  closeOffer?: ProspectOffer | null;
+  /** The writer found no close offer under this product config (`offer_json.closeSkip`). */
+  closeSkip?: CloseOfferSkip | null;
+}
+
+/** The writer found no offer for the close the emails did not already make. */
+export interface CloseOfferSkip {
+  why: string;
+  /** `offerProductHash` it was asked under: a new brief asks again. */
+  productHash: string;
+  at: string;
+}
+
+function isCloseOfferSkip(value: unknown): value is CloseOfferSkip {
+  const v = value as Partial<CloseOfferSkip> | null;
+  return (
+    !!v && typeof v === "object" && typeof v.why === "string" && typeof v.productHash === "string"
+  );
 }
 
 interface SequenceRow {
@@ -106,6 +129,8 @@ export function sequenceOfferOf(
     candidates?: unknown;
     origin?: unknown;
     skip?: unknown;
+    close?: unknown;
+    closeSkip?: unknown;
   }>(cadence.offer_json ?? "", {});
   const offer = stored.offer as SequenceOfferValue | undefined;
   const has =
@@ -119,6 +144,8 @@ export function sequenceOfferOf(
       has && Array.isArray(stored.candidates) ? stored.candidates.filter(isProspectOffer) : [],
     introCarriedOffer: has && stored.origin === "intro",
     skip: !has && isOfferSkip(stored.skip) ? stored.skip : null,
+    closeOffer: has && isProspectOffer(stored.close) ? stored.close : null,
+    closeSkip: has && isCloseOfferSkip(stored.closeSkip) ? stored.closeSkip : null,
   };
 }
 
@@ -333,6 +360,52 @@ export function prospectOfferInput(prospect: ProspectRecord | null): {
   return withPersonResearch(prospectTarget(prospect), prospect);
 }
 
+/**
+ * What an offer for this sequence is written from: the queue row it started
+ * from, its firm's research read first (`researchForOffer`) and the
+ * trigger's current edge laid on, else the prospect; the prospect's dossier
+ * tops either up (`withPersonResearch`). The row's stored offers and skip are
+ * taken off: what is written is fresh.
+ */
+async function sequenceOfferInput(input: {
+  prospectId: number;
+  playName: string;
+  researchWaitMs?: number;
+  onCost?: (usd: number) => void;
+}): Promise<{
+  person: { target: JsonRecord; dossier: string | null };
+  queued: { id: number; source: string } | null;
+}> {
+  const prospect = prospectOf(input.prospectId);
+  const ledger = getLedger();
+  const queued = ledger.cadenceQueueRow(input.prospectId, input.playName);
+  let target: JsonRecord = queued ? { ...queued.payload } : prospectTarget(prospect);
+  // Written fresh: never the stored offer re-used under a new name. The
+  // row's skip is the intro's; the sequence's own stands for it, unless
+  // the founder asked for new offers.
+  delete target["offer"];
+  delete target["offerCandidates"];
+  delete target["offerSkip"];
+  if (queued) {
+    const researched = await researchForOffer({
+      target,
+      playName: input.playName,
+      queueRowId: queued.id,
+      source: queued.source,
+      ...(input.researchWaitMs !== undefined ? { waitMs: input.researchWaitMs } : {}),
+    });
+    if (researched.costUsd > 0) input.onCost?.(researched.costUsd);
+    target = researched.target;
+    // The trigger's current edge, as an intro's offer is written with.
+    try {
+      target = resolveTriggerOverlay(target, queued.source, (name) => ledger.getTrigger(name));
+    } catch {
+      // The stored edge stands.
+    }
+  }
+  return { person: withPersonResearch(target, prospect), queued };
+}
+
 export type DeriveSequenceOfferResult =
   | {
       /** `existing`: the sequence had one. `stored`: written now, on the cadence. */
@@ -420,34 +493,7 @@ export async function deriveSequenceOffer(input: {
   try {
     const cfg = input.cfg ?? loadConfig();
     if (!cfg.productBrief?.trim()) return { status: "none", record, reason: "no-brief" };
-    const prospect = prospectOf(input.prospectId);
-    const ledger = getLedger();
-    const queued = ledger.cadenceQueueRow(input.prospectId, input.playName);
-    let target: JsonRecord = queued ? { ...queued.payload } : prospectTarget(prospect);
-    // Written fresh: never the stored offer re-used under a new name. The
-    // row's skip is the intro's; the sequence's own stands for it, unless
-    // the founder asked for new offers.
-    delete target["offer"];
-    delete target["offerCandidates"];
-    delete target["offerSkip"];
-    if (queued) {
-      const researched = await researchForOffer({
-        target,
-        playName: input.playName,
-        queueRowId: queued.id,
-        source: queued.source,
-        ...(input.researchWaitMs !== undefined ? { waitMs: input.researchWaitMs } : {}),
-      });
-      if (researched.costUsd > 0) input.onCost?.(researched.costUsd);
-      target = researched.target;
-      // The trigger's current edge, as an intro's offer is written with.
-      try {
-        target = resolveTriggerOverlay(target, queued.source, (name) => ledger.getTrigger(name));
-      } catch {
-        // The stored edge stands.
-      }
-    }
-    const person = withPersonResearch(target, prospect);
+    const { person, queued } = await sequenceOfferInput(input);
     const thread = sequenceThread(input.prospectId, input.playName, input.stepIndex);
     const set = await ensureOfferSet({
       target:
@@ -535,5 +581,156 @@ export async function deriveSequenceOffer(input: {
       "warn",
     );
     return { status: "none", record, reason: "error" };
+  }
+}
+
+/**
+ * Whether a stored offer may be the LinkedIn close's: the founder's own, or
+ * one the judge passed (`relevant`) that holds no send, written under
+ * today's `offerExclusions`. Written under an older prompt or brief is fine:
+ * the founder reads the close before it goes.
+ */
+function closeOfferUsable(offer: ProspectOffer, cfg: { offerExclusions?: unknown }): boolean {
+  if (offer.editedBy === "founder") return true;
+  return (
+    offer.relevance === "relevant" && !offerHoldsSend(offer) && offerExclusionsCurrent(offer, cfg)
+  );
+}
+
+/**
+ * The offer the LinkedIn close makes after an emailed sequence: never the
+ * one the emails carried. The stored close first, else the first of the
+ * ranked offers that is usable (`closeOfferUsable`) and not a near repeat of
+ * the active offer (`nearDuplicateOffer`). Reads only; null when the
+ * sequence has no offer or none of its others will do.
+ */
+export function pickCloseOffer(
+  record: Pick<SequenceOfferRecord, "offer" | "offerCandidates" | "closeOffer">,
+  cfg: { offerExclusions?: unknown },
+): ProspectOffer | null {
+  if (!record.offer) return null;
+  const made = [record.offer.offer];
+  for (const offer of [record.closeOffer ?? null, ...record.offerCandidates]) {
+    if (!offer || !closeOfferUsable(offer, cfg)) continue;
+    if (nearDuplicateOffer(offer.offer, made) !== null) continue;
+    return offer;
+  }
+  return null;
+}
+
+function writeClose(
+  record: SequenceOfferRecord,
+  value: { close: ProspectOffer } | { closeSkip: CloseOfferSkip },
+): boolean {
+  try {
+    return getLedger().setCadenceCloseOffer({
+      prospectId: record.prospectId,
+      playName: record.playName,
+      ...("close" in value
+        ? { close: value.close as unknown as Record<string, unknown> }
+        : { closeSkip: { ...value.closeSkip } }),
+    });
+  } catch (err) {
+    logEvent(
+      "error.swallowed",
+      {
+        kind: "sequence-close-offer-write",
+        play: record.playName,
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "warn",
+    );
+    return false;
+  }
+}
+
+export type EnsureCloseOfferResult =
+  | { status: "picked" | "written"; offer: ProspectOffer }
+  | {
+      status: "none";
+      reason: "no-offer" | "no-play-offer" | "no-brief" | "skipped" | "nothing-derived" | "error";
+    };
+
+/**
+ * The offer the LinkedIn close makes after an emailed sequence, kept on the
+ * cadence (`offer_json.close`) so the /cadences view shows what goes. A
+ * usable one already stored is picked (`pickCloseOffer`); else one is
+ * written from the sequence's research (`sequenceOfferInput`), told the
+ * thread sent and every offer already made, and judged as an intro's are
+ * (`deriveOffers`). When none passes, that is kept (`closeSkip`) and not
+ * asked again until the product config changes. The active offer and its
+ * ranked set are never changed. Never throws.
+ */
+export async function ensureCloseOffer(input: {
+  prospectId: number;
+  playName: string;
+  cfg?: AppConfig;
+  researchWaitMs?: number;
+  onCost?: (usd: number) => void;
+}): Promise<EnsureCloseOfferResult> {
+  try {
+    const cfg = input.cfg ?? loadConfig();
+    const record = sequenceOfferRecord(input);
+    if (!record.offer) return { status: "none", reason: "no-offer" };
+    if (!playMakesOffer(input.playName, cfg)) return { status: "none", reason: "no-play-offer" };
+    const picked = pickCloseOffer(record, cfg);
+    if (picked) {
+      if (picked !== record.closeOffer) writeClose(record, { close: picked });
+      return { status: "picked", offer: picked };
+    }
+    if (!cfg.productBrief?.trim()) return { status: "none", reason: "no-brief" };
+    const productHash = offerProductHash(cfg);
+    if (record.closeSkip?.productHash === productHash) return { status: "none", reason: "skipped" };
+    const { person, queued } = await sequenceOfferInput(input);
+    const made = [
+      record.offer.offer,
+      ...record.offerCandidates.map((o) => o.offer),
+      ...(record.closeOffer ? [record.closeOffer.offer] : []),
+    ];
+    const thread = sequenceThread(input.prospectId, input.playName);
+    const { offers, skip } = await deriveOffers({
+      target: person.target,
+      dossier: person.dossier,
+      playName: input.playName,
+      cfg,
+      avoid: made,
+      ...(thread.length > 0 ? { thread } : {}),
+      ...(queued ? { research: { queueRowId: queued.id, source: queued.source } } : {}),
+      ...(input.onCost ? { onCost: input.onCost } : {}),
+    });
+    const close = offers.find((o) => nearDuplicateOffer(o.offer, made) === null) ?? null;
+    if (!close) {
+      // Nothing back and no skip: a writer or judge failed, so it is asked again next time.
+      const answered = skip !== null || offers.length > 0;
+      const why = skip?.why ?? "every offer written repeats one already made";
+      if (answered) {
+        writeClose(record, { closeSkip: { why, productHash, at: new Date().toISOString() } });
+      }
+      logEvent("sequence_offer.close_none", {
+        play: input.playName,
+        prospect_id: input.prospectId,
+        answered,
+        why_200: why.slice(0, 200),
+      });
+      return { status: "none", reason: answered ? "skipped" : "nothing-derived" };
+    }
+    writeClose(record, { close });
+    logEvent("sequence_offer.close_written", {
+      play: input.playName,
+      prospect_id: input.prospectId,
+      offer_120: close.offer.slice(0, 120),
+    });
+    return { status: "written", offer: close };
+  } catch (err) {
+    logEvent(
+      "error.swallowed",
+      {
+        kind: "sequence-close-offer",
+        play: input.playName,
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "warn",
+    );
+    return { status: "none", reason: "error" };
   }
 }

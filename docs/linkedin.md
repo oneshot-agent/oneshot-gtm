@@ -118,7 +118,7 @@ Every note and message is a template with the person's details filled in. No mod
 
 - **`{first_name}`.** Taken from their name. When the name is a handle or a company, the greeting is dropped: `Hi {first_name}, saw …` reads `Saw …`.
 - **`{evidence}`.** Why they surfaced, aged as below, as a clause with its subject: `you starred acme/widgets`, `you're in YC F26`, `Acme Ventures led your seed round`.
-- **`{offer}`.** The [offer](./prompt-inputs.md#the-prospect-offer) the sequence makes them. The connection requests can't use it: a note that pitches gets declined.
+- **`{offer}`.** The [offer](./prompt-inputs.md#the-prospect-offer) the sequence makes them. The connection requests can't use it: a note that pitches gets declined. After the emails, the last message makes a different offer, since they didn't answer the first: the next one in the ranked set that passed the judge, or else a new one written to avoid every offer already made. If none passes, the last message uses the no-offer text. `find close-offers` chooses this offer ahead of time for open sequences, so /cadences shows the text that will go. `--dry-run` only counts, and calls no model.
 - **A template that can't be filled.** A step whose text needs a value this person doesn't have uses the default for that step.
 - **Saving.** Setup refuses an unknown placeholder, or one the step never has, and warns when a template could run past its step's limit.
 

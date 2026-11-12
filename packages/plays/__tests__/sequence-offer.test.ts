@@ -110,8 +110,13 @@ const {
   runCadenceStepForProspect,
   sendCadenceStep,
 } = await import("../src/_cadence.ts");
-const { deriveSequenceOffer, sequenceOfferRecord, writeSequenceOffer } =
-  await import("../src/_sequence-offer.ts");
+const {
+  deriveSequenceOffer,
+  ensureCloseOffer,
+  pickCloseOffer,
+  sequenceOfferRecord,
+  writeSequenceOffer,
+} = await import("../src/_sequence-offer.ts");
 
 const PLAY = "seq-offer-play";
 const step = (label: string) => ({
@@ -700,5 +705,115 @@ describe("sequence offers written under an older setup", () => {
       note: "held: offer-stale — preview it on /cadences",
     });
     expect(llm.inputs.get("prospect-offer")).toBeUndefined();
+  });
+});
+
+// The LinkedIn close after an emailed sequence makes an offer the emails did
+// not: the next one the judge passed, or one written around all of them.
+describe("the close offer", () => {
+  const third = {
+    ...good,
+    offer: "get every leeds quote request answered with a booked slot inside the hour",
+    return: "quote requests that go cold before anyone calls back, counted per week",
+  };
+
+  /** A sequence whose offer (good) was written for it, with `second` ranked behind it. */
+  async function offered(): Promise<number> {
+    const { id } = preOfferSequence();
+    const out = await deriveSequenceOffer({ prospectId: id, playName: PLAY });
+    if (out.status !== "stored") throw new Error("expected an offer written for the sequence");
+    llm.inputs = new Map();
+    return id;
+  }
+  const record = (id: number) => sequenceOfferRecord({ prospectId: id, playName: PLAY });
+
+  it("picks the next relevant offer, stores it as the close, and leaves the active offer", async () => {
+    const id = await offered();
+    const out = await ensureCloseOffer({ prospectId: id, playName: PLAY });
+    expect(out).toMatchObject({ status: "picked", offer: { offer: second.offer } });
+    expect(llm.inputs.get("prospect-offer")).toBeUndefined();
+    const stored = cadenceOffer(id)!;
+    expect(stored["offer"]).toMatchObject({ offer: good.offer });
+    expect(stored["close"]).toMatchObject({ offer: second.offer });
+    expect(record(id).closeOffer).toMatchObject({ offer: second.offer });
+  });
+
+  it("never picks the active offer, a weak one, or one written under older exclusions", async () => {
+    const id = await offered();
+    const r = record(id);
+    const active = r.offerCandidates[0]!;
+    const weak = { ...r.offerCandidates[1]!, relevance: "weak" as const };
+    expect(pickCloseOffer({ ...r, offerCandidates: [active, weak] }, cfg)).toBeNull();
+    expect(pickCloseOffer(r, { offerExclusions: ["a fictional kind of goal"] })).toBeNull();
+    // The founder's own stands whatever its label.
+    const own = { ...weak, editedBy: "founder" as const };
+    expect(pickCloseOffer({ ...r, offerCandidates: [active, own] }, cfg)?.offer).toBe(second.offer);
+  });
+
+  it("with none to pick, writes one around every offer already made and the thread", async () => {
+    const id = await offered();
+    const r = record(id);
+    writeSequenceOffer({
+      record: r,
+      offer: r.offer as never,
+      offerCandidates: [r.offerCandidates[0]!, { ...r.offerCandidates[1]!, relevance: "weak" }],
+    });
+    llm.offers = JSON.stringify({ offers: [third] });
+    const out = await ensureCloseOffer({ prospectId: id, playName: PLAY });
+    expect(out).toMatchObject({ status: "written", offer: { offer: third.offer } });
+    const writer = llm.inputs.get("prospect-offer")![0]!;
+    expect(writer).toContain("ALREADY OFFERED:");
+    expect(writer).toContain(good.offer);
+    expect(writer).toContain(second.offer);
+    expect(writer).toContain(INTRO_BODY);
+    const stored = cadenceOffer(id)!;
+    expect(stored["offer"]).toMatchObject({ offer: good.offer });
+    expect((stored["candidates"] as unknown[]).length).toBe(2);
+    expect(stored["close"]).toMatchObject({ offer: third.offer });
+    // Read back, not written again.
+    llm.inputs = new Map();
+    expect(await ensureCloseOffer({ prospectId: id, playName: PLAY })).toMatchObject({
+      status: "picked",
+      offer: { offer: third.offer },
+    });
+    expect(llm.inputs.get("prospect-offer")).toBeUndefined();
+  });
+
+  it("keeps that none passed, and asks again only once the product brief changes", async () => {
+    const id = await offered();
+    const r = record(id);
+    writeSequenceOffer({ record: r, offer: r.offer as never, offerCandidates: [] });
+    llm.judge = "weak";
+    llm.offers = JSON.stringify({ offers: [third] });
+    expect(await ensureCloseOffer({ prospectId: id, playName: PLAY })).toMatchObject({
+      status: "none",
+      reason: "skipped",
+    });
+    expect(cadenceOffer(id)!["closeSkip"]).toMatchObject({ productHash: expect.any(String) });
+    const asked = llm.inputs.get("prospect-offer")!.length;
+    await ensureCloseOffer({ prospectId: id, playName: PLAY });
+    expect(llm.inputs.get("prospect-offer")!.length).toBe(asked);
+
+    const brief = cfg["productBrief"];
+    cfg["productBrief"] = `${String(brief)} It also answers quote requests.`;
+    try {
+      llm.judge = "relevant";
+      expect(await ensureCloseOffer({ prospectId: id, playName: PLAY })).toMatchObject({
+        status: "written",
+      });
+      expect(cadenceOffer(id)).not.toHaveProperty("closeSkip");
+    } finally {
+      cfg["productBrief"] = brief;
+    }
+  });
+
+  it("a new active offer keeps the close, unless it is the close's own text", async () => {
+    const id = await offered();
+    await ensureCloseOffer({ prospectId: id, playName: PLAY });
+    const r = record(id);
+    writeSequenceOffer({ record: r, offer: { ...r.offer!, offer: third.offer } as never });
+    expect(cadenceOffer(id)!["close"]).toMatchObject({ offer: second.offer });
+    writeSequenceOffer({ record: r, offer: r.closeOffer as never });
+    expect(cadenceOffer(id)).not.toHaveProperty("close");
   });
 });
