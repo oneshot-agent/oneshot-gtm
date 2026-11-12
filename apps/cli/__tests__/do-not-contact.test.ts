@@ -98,6 +98,15 @@ describe("find do-not-contact", () => {
     expect(ledger.getCadence(live, PLAY)!.status).toBe("active");
   });
 
+  it("rejects an email-only row by the company stored for that address", async () => {
+    const id = row("g", { email: "g@gmail.example" });
+    ledger.upsertProspect({ name: "Gil Moe", email: "g@gmail.example", company: "Example Dental" });
+    doNotContact = { companies: ["Example Dental"] };
+    const out = await commandDoNotContact({ dryRun: false });
+    expect(out.rows).toHaveLength(1);
+    expect(ledger.getQueueRow(id)!.status).toBe("rejected");
+  });
+
   it("leaves a row a send has claimed, and stops a cadence by its row's website", async () => {
     const claimed = row("a", { email: "a@dental.example" });
     ledger.setQueueStatus({ id: claimed, status: "approved" });

@@ -58,14 +58,19 @@ export async function commandDoNotContact(opts: DoNotContactOpts): Promise<DoNot
     for (let offset = 0; ; offset += PAGE) {
       const page = ledger.listQueue({ status, limit: PAGE, offset, dir: "asc" });
       for (const row of page) {
+        // The row's own identity, plus what the ledger holds for the prospect
+        // it is linked to or whose address it carries.
         const identity = queuePayloadIdentity(payloadOf(row));
+        const emails = Array.isArray(identity.email) ? identity.email : [identity.email];
         const match = doNotContactMatch(
-          row.prospect_id != null
-            ? mergeContactIdentities(
-                identity,
-                ledger.contactIdentityFor({ prospectId: row.prospect_id }),
-              )
-            : identity,
+          mergeContactIdentities(
+            identity,
+            ...(row.prospect_id != null
+              ? [ledger.contactIdentityFor({ prospectId: row.prospect_id })]
+              : emails
+                  .filter((email): email is string => typeof email === "string")
+                  .map((email) => ledger.contactIdentityFor({ email }))),
+          ),
           list,
         );
         if (match) matches.push({ row, why: describeDoNotContact(match) });

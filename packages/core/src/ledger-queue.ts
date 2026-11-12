@@ -543,15 +543,16 @@ export class QueueStore {
         `SELECT payload_json FROM target_queue
          WHERE ($pid IS NOT NULL AND prospect_id = $pid)
             OR ($email IS NOT NULL AND json_valid(payload_json) AND (
-                 lower(json_extract(payload_json, '$.email')) = $email
-              OR lower(json_extract(payload_json, '$.founderEmail')) = $email))`,
+                 lower(trim(json_extract(payload_json, '$.email'))) = $email
+              OR lower(trim(json_extract(payload_json, '$.founderEmail'))) = $email))`,
       )
       .all({ $pid: input.prospectId ?? null, $email: email }) as Array<{ payload_json: string }>;
     return rows.map((r) => r.payload_json);
   }
 
   /**
-   * Reject a row for the do-not-contact list, only while it is still unsent
+   * Reject a row for the do-not-contact list (the reason leads its notes, the
+   * notes it had follow), only while it is still unsent
    * and no live send or drain claim holds it. False when the row was sent,
    * is being sent, or is gone.
    */
@@ -563,7 +564,8 @@ export class QueueStore {
       .prepare(
         `UPDATE target_queue
          SET status = 'rejected', reviewed_at = $now, decision = 'auto_reject', decided_at = $now,
-             decided_by = 'machine', notes = $notes
+             decided_by = 'machine',
+             notes = CASE WHEN coalesce(notes, '') = '' THEN $notes ELSE $notes || char(10) || notes END
          WHERE id = $id AND status IN ('pending', 'approved') AND sent_at IS NULL
            AND send_started_at IS NULL
            AND (drain_claimed_at IS NULL OR drain_claimed_at < $cutoff)`,

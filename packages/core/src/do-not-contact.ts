@@ -56,7 +56,7 @@ function words(name: string): string[] {
   return name
     .toLowerCase()
     .replace(/&/g, " and ")
-    .split(/[^a-z0-9]+/)
+    .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean);
 }
 

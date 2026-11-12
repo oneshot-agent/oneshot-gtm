@@ -109,6 +109,12 @@ describe("doNotContactMatch", () => {
     expect(doNotContactMatch({ company: "Limited Brands" }, list)).toBeNull();
   });
 
+  it("matches names written in any script", () => {
+    const list = { domains: [], companies: ["北京牙科"] };
+    expect(doNotContactMatch({ company: "北京牙科 有限公司" }, list)?.kind).toBe("company");
+    expect(doNotContactMatch({ company: "上海牙科" }, list)).toBeNull();
+  });
+
   it("checks every value a field holds", () => {
     expect(
       doNotContactMatch({ company: ["Acme", "Example Dental"], email: [null, "a@acme.com"] }, LIST)
@@ -183,7 +189,11 @@ describe("the gates", () => {
     rmSync(configFile(), { force: true });
     ledger.enqueueTarget({
       playName: "design-partner-loi",
-      payload: { name: "Dana Lee", email: "dana@gmail.example", website: "https://dental.example" },
+      payload: {
+        name: "Dana Lee",
+        email: " Dana@gmail.example ",
+        website: "https://dental.example",
+      },
       dedupeKey: "dana",
       source: "test",
     });
@@ -220,7 +230,9 @@ describe("the gates", () => {
       source: "test",
     })!;
     ledger.setQueueStatus({ id: sent, status: "sent" });
+    ledger.setQueueStatus({ id: unsent, status: "pending", notes: "reviewer note" });
     expect(ledger.rejectUnsentForDoNotContact(unsent, "auto: do-not-contact — x")).toBe(true);
+    expect(ledger.getQueueRow(unsent)!.notes).toBe("auto: do-not-contact — x\nreviewer note");
     expect(ledger.rejectUnsentForDoNotContact(sent, "auto: do-not-contact — x")).toBe(false);
     expect(ledger.getQueueRow(sent)!.status).toBe("sent");
   });
