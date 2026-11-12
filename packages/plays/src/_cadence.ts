@@ -101,8 +101,11 @@ import {
 } from "./_prospect-offer.ts";
 import {
   deriveSequenceOffer,
+  ensureCloseOffer,
+  pickCloseOffer,
   sequenceOfferIsStale,
   sequenceOfferRecord,
+  sequenceThread,
   type SequenceOfferValue,
 } from "./_sequence-offer.ts";
 import {
@@ -4399,6 +4402,22 @@ function linkedInMessageFacts(
   const first = firstTouch(events, playName, prospect.id);
   const now = new Date();
   const clause = agedEvidence(first.metadata, { contactedAt: first.contactedAt, now });
+  const emailed = events.some(
+    (e) =>
+      e.channel === "email" &&
+      (e.status === "sent" || e.status === "delivered" || e.status === "replied"),
+  );
+  const record = playMakesOffer(playName, cfg)
+    ? sequenceOfferRecord({ prospectId: prospect.id, playName })
+    : null;
+  // The emails made the active offer and were not answered: the close makes
+  // another (`ensureCloseOffer` stores it), or none.
+  const closeOffer = record
+    ? emailed
+      ? pickCloseOffer(record, cfg, sequenceThread(prospect.id, playName))
+      : record.offer
+    : null;
+  const base = { name: prospect.name, evidence: clause, alreadyConnected };
   return {
     events,
     alreadyConnected,
@@ -4406,14 +4425,12 @@ function linkedInMessageFacts(
     first,
     now,
     clause,
-    template: {
-      name: prospect.name,
-      evidence: clause,
-      offer: playMakesOffer(playName, cfg)
-        ? (sequenceOffer(prospect, playName)?.offer ?? null)
-        : null,
-      alreadyConnected,
-    },
+    emailed,
+    closeOffer,
+    template: { ...base, offer: record?.offer?.offer ?? null },
+    closeTemplate: { ...base, offer: closeOffer?.offer ?? null },
+    /** The sequence makes an offer: after emails with no close offer, the close names none. */
+    makesOffer: !!record?.offer,
   };
 }
 
@@ -4422,16 +4439,19 @@ async function buildLinkedInMessage(
   playName: string,
   which: "first" | "last",
 ): Promise<StepPayload | null> {
-  const { events, alreadyConnected, sent, first, now, clause, template } = linkedInMessageFacts(
-    ctx.prospect,
-    playName,
-    ctx.cfg,
-  );
+  let facts = linkedInMessageFacts(ctx.prospect, playName, ctx.cfg);
+  if (which === "last" && facts.emailed && playMakesOffer(playName, ctx.cfg)) {
+    // Picked or written onto the cadence, so the facts read again carry it.
+    await ensureCloseOffer({ prospectId: ctx.prospect.id, playName, cfg: ctx.cfg });
+    facts = linkedInMessageFacts(ctx.prospect, playName, ctx.cfg);
+  }
+  const { alreadyConnected, sent, first, now, clause, emailed } = facts;
   const prior = sent.map((t) => `STEP ${t.stepIndex}: ${t.text}`);
-  const emailed = events.some(
-    (e) => e.channel === "email" && (e.status === "sent" || e.status === "delivered"),
+  const templated = templatedLinkedIn(
+    which,
+    ctx.cfg,
+    which === "last" ? facts.closeTemplate : facts.template,
   );
-  const templated = templatedLinkedIn(which, ctx.cfg, template);
   if (templated) {
     // Carried on the payload, as a drafted message's lint flag is, so an
     // over-long template holds the send outside the preview too.
@@ -4453,11 +4473,14 @@ async function buildLinkedInMessage(
     now,
   });
   const voice = voiceBlock(which === "first" ? "followup" : "breakup");
-  // The same offer every other touch of this sequence makes; the brief is
-  // already on the last message's input.
-  const offerLines = offerBlock(sequenceOffer(ctx.prospect, playName), ctx.cfg, playName, {
-    brief: false,
-  });
+  // The first message makes the sequence's offer; the close after emails
+  // makes another (`closeOffer`). The brief is already on the last message's input.
+  const offerLines = offerBlock(
+    which === "last" ? facts.closeOffer : sequenceOffer(ctx.prospect, playName),
+    ctx.cfg,
+    playName,
+    { brief: false },
+  );
   const learned = learningBlock({
     channel: "linkedin",
     stage: "follow_up",
@@ -4496,7 +4519,13 @@ async function buildLinkedInMessage(
           : "first message after they accepted the connection request"
         : "last message — a short, graceful close"
     }`,
-    ...(which === "last" ? closeGuidance(role) : []),
+    ...(which === "last"
+      ? emailed && facts.makesOffer && !facts.closeOffer
+        ? [
+            "NO OFFER: the emails' offer went unanswered and no other passed. Close without naming an outcome, an offer or a goal.",
+          ]
+        : closeGuidance(role)
+      : []),
     "PRIOR TOUCHES:",
     ...(prior.length > 0 ? prior.map((l) => `  ${l}`) : ["  (none recorded)"]),
     ...(voice ? [`VOICE:\n${voice.text}`] : []),
@@ -4597,7 +4626,8 @@ export function cadenceSequence(prospectId: number, playName: string): CadenceSe
         ? null
         : i === cadence.current_step && savedText
           ? savedText
-          : (templatedLinkedIn(which, cfg, facts.template)?.text ?? null),
+          : (templatedLinkedIn(which, cfg, which === "last" ? facts.closeTemplate : facts.template)
+              ?.text ?? null),
     });
   }
   return { linkedInSent: facts.sent, invite, upcoming };

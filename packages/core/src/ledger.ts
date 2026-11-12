@@ -84,6 +84,7 @@ import {
   recordSequenceEvent as cadRecordSequenceEvent,
   saveCadencePlan as cadSaveCadencePlan,
   setCadenceDraft as cadSetCadenceDraft,
+  setCadenceCloseOffer as cadSetCadenceCloseOffer,
   setCadenceOffer as cadSetCadenceOffer,
   setCadenceOfferSkip as cadSetCadenceOfferSkip,
   setCadenceStatus as cadSetCadenceStatus,
@@ -562,6 +563,17 @@ export class Ledger {
     replacing?: string;
   }): boolean {
     return cadSetCadenceOfferSkip(this.db, input);
+  }
+
+  /** Keep the offer the LinkedIn close makes, or that there is none, on an active cadence (ledger-cadence.ts). */
+  setCadenceCloseOffer(input: {
+    prospectId: number;
+    playName: string;
+    activeOffer: string;
+    close?: Record<string, unknown>;
+    closeSkip?: Record<string, unknown>;
+  }): boolean {
+    return cadSetCadenceCloseOffer(this.db, input);
   }
 
   /** The queue row a cadence started from, else its address's newest sent row (ledger-cadence.ts). */

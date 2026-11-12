@@ -93,12 +93,20 @@ function normalizeSubject(subject: string | null | undefined): string | null {
  * refusal for the sequence (a plays `OfferSkip`: its why and the hash of the
  * input it read), written by `setCadenceOfferSkip`. Any offer
  * `setCadenceOffer` writes drops it.
+ *
+ * `close`: the offer the LinkedIn close makes after an emailed sequence, one
+ * the emails did not (a plays `ProspectOffer`), written by
+ * `setCadenceCloseOffer`. `closeSkip`: the writer found none to make (its
+ * why and the product hash it read). `setCadenceOffer` keeps both, except a
+ * close the new offer's text matches.
  */
 export interface CadenceOfferJson {
   offer: Record<string, unknown> | null;
   candidates: unknown[];
   origin: "intro" | "derived";
   skip?: Record<string, unknown>;
+  close?: Record<string, unknown>;
+  closeSkip?: Record<string, unknown>;
 }
 
 /**
@@ -162,7 +170,8 @@ export function enrollCadence(
  * stored list, `origin` absent keeps the stored origin (`derived` when there
  * is none). `expect` is compare-and-set on the stored offer's keys (key →
  * scalar, null: absent), e.g. an approval bound to the offer the founder
- * read. False when nothing was written.
+ * read. The stored `close` and `closeSkip` are kept, except a close whose
+ * text the new offer has. False when nothing was written.
  */
 export function setCadenceOffer(
   db: Database,
@@ -183,13 +192,27 @@ export function setCadenceOffer(
   const offerSql = input.merge
     ? "json_patch(json_extract(offer_json, '$.offer'), json(?))"
     : "json(?)";
+  // A merge that leaves the text alone keeps any close: it differs by construction.
+  const newText = typeof input.offer["offer"] === "string" ? input.offer["offer"] : null;
   const r = db
     .prepare(
+      // The rebuilt object carries `close` and `closeSkip` over; json_remove then
+      // drops each one absent (a null json_set wrote) or, for `close`, the one
+      // the new offer now makes. '$.__kept' matches nothing.
       `UPDATE cadence_state
-          SET offer_json = json_object(
-                'offer', ${offerSql},
-                'candidates', COALESCE(json(?), json(json_extract(offer_json, '$.candidates')), json('[]')),
-                'origin', COALESCE(?, json_extract(offer_json, '$.origin'), 'derived'))
+          SET offer_json = json_remove(
+                json_set(
+                  json_object(
+                    'offer', ${offerSql},
+                    'candidates', COALESCE(json(?), json(json_extract(offer_json, '$.candidates')), json('[]')),
+                    'origin', COALESCE(?, json_extract(offer_json, '$.origin'), 'derived')),
+                  '$.close', json(json_extract(offer_json, '$.close')),
+                  '$.closeSkip', json(json_extract(offer_json, '$.closeSkip'))),
+                CASE WHEN json_type(offer_json, '$.close') = 'object'
+                          AND json_extract(offer_json, '$.close.offer') IS NOT ?
+                     THEN '$.__kept' ELSE '$.close' END,
+                CASE WHEN json_type(offer_json, '$.closeSkip') = 'object'
+                     THEN '$.__kept' ELSE '$.closeSkip' END)
         WHERE prospect_id = ? AND play_name = ? AND status = 'active'
           AND sending_started_at IS NULL
           AND (offer_json IS NULL OR json_valid(offer_json))${
@@ -200,10 +223,51 @@ export function setCadenceOffer(
       JSON.stringify(input.offer),
       input.candidates ? JSON.stringify(input.candidates) : null,
       input.origin ?? null,
+      newText,
       input.prospectId,
       input.playName,
       ...guards.flatMap(([key, value]) => [`$.offer.${key}`, value]),
     );
+  return r.changes === 1;
+}
+
+/**
+ * Keep the offer the LinkedIn close makes (`close`), or the writer's finding
+ * that there is none (`closeSkip`), on an active cadence that has an offer.
+ * One of the two stands: writing either drops the other. Bound to
+ * `activeOffer`, the active offer's text it was chosen against: an offer
+ * changed meanwhile refuses it, and so does a close of that same text. Not
+ * guarded on a send in flight: the close is written by the step being sent.
+ * False when nothing was written.
+ */
+export function setCadenceCloseOffer(
+  db: Database,
+  input: {
+    prospectId: number;
+    playName: string;
+    activeOffer: string;
+    close?: Record<string, unknown>;
+    closeSkip?: Record<string, unknown>;
+  },
+): boolean {
+  const [key, drop, value] = input.close
+    ? (["$.close", "$.closeSkip", input.close] as const)
+    : input.closeSkip
+      ? (["$.closeSkip", "$.close", input.closeSkip] as const)
+      : [null, null, null];
+  if (!key) return false;
+  const closeText = typeof input.close?.["offer"] === "string" ? input.close["offer"] : null;
+  if (closeText === input.activeOffer) return false;
+  const r = db
+    .prepare(
+      `UPDATE cadence_state
+          SET offer_json = json_set(json_remove(offer_json, ?), ?, json(?))
+        WHERE prospect_id = ? AND play_name = ? AND status = 'active'
+          AND json_valid(offer_json)
+          AND json_type(offer_json, '$.offer') = 'object'
+          AND json_extract(offer_json, '$.offer.offer') IS ?`,
+    )
+    .run(drop, key, JSON.stringify(value), input.prospectId, input.playName, input.activeOffer);
   return r.changes === 1;
 }
 

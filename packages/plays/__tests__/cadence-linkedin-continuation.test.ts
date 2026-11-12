@@ -73,6 +73,7 @@ const {
   triggerLinkedInContinuation,
   continueCadencesOntoLinkedIn,
   expireUnsentLinkedInInvites,
+  cadenceSequence,
 } = await import("../src/index.ts");
 const realCore = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
 
@@ -1442,9 +1443,10 @@ describe("invite expiry (linkedin.inviteExpiryDays)", () => {
 
 describe("templates: the default writer", () => {
   const OFFER = "get every host's follow-ups sent the same day.";
+  const NEXT = "get every host's no-show rebooked before the week is out";
 
-  /** The email intro went out with this evidence (and offer); the invite step is due. */
-  function started(metadata: Record<string, unknown>, offer?: string): void {
+  /** The email intro went out with this evidence (and offer, ranked first of `ranked`); the invite step is due. */
+  function started(metadata: Record<string, unknown>, offer?: string, ranked: string[] = []): void {
     ledger.recordSequenceEvent({
       prospectId,
       playName: PLAY,
@@ -1457,6 +1459,13 @@ describe("templates: the default writer", () => {
       prospectId,
       playName: PLAY,
       ...(offer ? { offer: { offer, steps: "drafts them" }, offerOrigin: "derived" as const } : {}),
+      ...(ranked.length > 0
+        ? {
+            offerCandidates: [offer ?? "", ...ranked].map(
+              (o) => ({ offer: o, steps: "drafts them", relevance: "relevant" }) as never,
+            ),
+          }
+        : {}),
     });
     ledger.advanceCadence({
       prospectId,
@@ -1504,7 +1513,7 @@ describe("templates: the default writer", () => {
   });
 
   it("with nothing set, every step is the shipped default, filled, with no model call", async () => {
-    started({ repo: "acme/widgets" }, OFFER);
+    started({ repo: "acme/widgets" }, OFFER, [NEXT]);
     const note = await shown();
     expect(note.body).toBe("Hi Dana, saw you starred acme/widgets. Would be good to connect.");
     expect(note.payload).toMatchObject({ kind: "linkedin_invite", evidenceClause: true });
@@ -1513,10 +1522,40 @@ describe("templates: the default writer", () => {
     expect(first.body).toBe("Hi Dana, thanks for connecting. What are you working on right now?");
     await send(first);
     const last = await shown();
+    // The emails made OFFER: the close makes the next one.
     expect(last.body).toBe(
-      "Hi Dana, last one from me, no reply needed. One thing I'd like to do for you: get every host's follow-ups sent the same day. Want me to run a small version? A no is fine too.",
+      "Hi Dana, last one from me, no reply needed. One thing I'd like to do for you: get every host's no-show rebooked before the week is out. Want me to run a small version? A no is fine too.",
     );
     expect(modelInputs).toEqual([]);
+  });
+
+  it("after emails, the close never restates their offer: with no other, it is the fallback", async () => {
+    started({ repo: "acme/widgets" }, OFFER);
+    await invite((await shown()).body, "already_connected");
+    await send(await shown());
+    expect((await shown()).body).toBe(
+      "Hi Dana, last one from me, no reply needed. If it's ever useful to compare notes, I'm around.",
+    );
+    expect(modelInputs).toEqual([]);
+  });
+
+  it("the model writer, after emails with no other offer, is told to name none", async () => {
+    started({ repo: "acme/widgets" }, OFFER);
+    await invite((await shown()).body, "already_connected");
+    await send(await shown());
+    linkedinCfg = { writer: "model" };
+    await shown();
+    expect(modelInputs.at(-1)).toContain("NO OFFER:");
+    expect(modelInputs.at(-1)).not.toContain(OFFER);
+  });
+
+  it("the /cadences view shows the close that is drafted", async () => {
+    started({ repo: "acme/widgets" }, OFFER, [NEXT]);
+    await invite((await shown()).body, "already_connected");
+    await send(await shown());
+    const ahead = cadenceSequence(prospectId, PLAY)!.upcoming.find((s) => s.text !== null)!;
+    expect(ahead.text).toContain(NEXT);
+    expect((await shown()).body).toBe(ahead.text);
   });
 
   it("the workspace's own text wins, and a step without its value uses its fallback", async () => {

@@ -16,8 +16,8 @@ import { Command, InvalidArgumentError, Option } from "commander";
 /** Option parser for counts that must be at least 1; `0` or `abc` is an error, not the default. */
 function positiveInt(flag: string): (v: string) => number {
   return (v) => {
-    const n = Number.parseInt(v, 10);
-    if (!Number.isInteger(n) || n <= 0)
+    const n = /^\d+$/.test(v.trim()) ? Number(v.trim()) : Number.NaN;
+    if (!Number.isSafeInteger(n) || n <= 0)
       throw new InvalidArgumentError(`${flag} must be a positive integer`);
     return n;
   };
@@ -110,6 +110,7 @@ import {
   commandRewriteWeakOffers,
 } from "./commands/rejudge-offers.ts";
 import { commandResearchQueue } from "./commands/research-queue.ts";
+import { commandCloseOffers } from "./commands/close-offers.ts";
 import { commandRejudgeGitHub } from "./commands/rejudge-github.ts";
 import { commandRederive } from "./commands/rederive.ts";
 import { commandSynthesizeAngles } from "./commands/synthesize-angles.ts";
@@ -1103,6 +1104,24 @@ find
         });
       },
     ),
+  );
+
+find
+  .command("close-offers")
+  .option("--limit <n>", "max sequences (default all)", positiveInt("--limit"))
+  .option("--concurrency <n>", "parallel sequences (default 3)", positiveInt("--concurrency"))
+  .option("--dry-run", "count what would be picked or written; write nothing, call no model", false)
+  .description(
+    "Choose the offer each emailed sequence's LinkedIn close makes, one its emails did not: a stored offer that passed, else a new one written around those already made (spends money)",
+  )
+  .action(
+    runOrFail(async (opts: { limit?: number; concurrency?: number; dryRun: boolean }) => {
+      await commandCloseOffers({
+        dryRun: opts.dryRun,
+        ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+        ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
+      });
+    }),
   );
 
 find
