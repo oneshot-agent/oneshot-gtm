@@ -23,6 +23,9 @@ import {
   listInbox,
   loadConfig,
   logEvent,
+  describeDoNotContact,
+  doNotContactMatch,
+  doNotContactOf,
   readPersonHalf,
   parallelMap,
   cadenceGoalId,
@@ -1757,6 +1760,39 @@ export async function runCadenceStepForProspect(
       receiptIds: [],
       note: `cadence is ${cadence.status}`,
     };
+  }
+  // The workspace never contacts this company, on any channel. Stopped as
+  // do-not-contact, which also withdraws a pending LinkedIn invite. A preview
+  // only reports it.
+  {
+    const list = doNotContactOf(cfg);
+    const blocked =
+      list.domains.length > 0 || list.companies.length > 0
+        ? doNotContactMatch(
+            ledger.contactIdentityFor({
+              prospectId: opts.prospectId,
+              email: cadence.prospect_email,
+            }),
+            list,
+          )
+        : null;
+    if (blocked) {
+      if (!opts.dryRun) {
+        ledger.stopCadence({
+          prospectId: opts.prospectId,
+          playName: opts.playName,
+          reason: "do_not_contact",
+          note: describeDoNotContact(blocked),
+          holdingSendingMarker: true,
+        });
+      }
+      return {
+        action: "skipped",
+        payload: null,
+        receiptIds: [],
+        note: `stopped: ${describeDoNotContact(blocked)}`,
+      };
+    }
   }
   // Suppression check ahead of drafting: sendEmail would refuse anyway, but
   // only after paying for a draft, and its throw would misreport a permanent

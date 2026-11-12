@@ -152,6 +152,11 @@ import {
   queueShowIsExact,
 } from "./ledger-queue.ts";
 import {
+  type ContactIdentity,
+  mergeContactIdentities,
+  queuePayloadIdentity,
+} from "./do-not-contact.ts";
+import {
   appendRunEvent as runAppendRunEvent,
   cancelRun as runCancelRun,
   createRun as runCreateRun,
@@ -953,6 +958,43 @@ export class Ledger {
     if (local) return local;
     const person = this.people?.find({ email });
     return person ? this.prospects.findProspectBySharedPersonId(person.id) : null;
+  }
+
+  /**
+   * Everything this workspace knows that names a person's company: the
+   * prospect's address and company, and the identity every queue row for
+   * them carries (stated domain, website, company). What the do-not-contact
+   * gates match.
+   */
+  contactIdentityFor(input: {
+    prospectId?: number | null;
+    email?: string | null;
+  }): ContactIdentity {
+    const prospect =
+      input.prospectId != null
+        ? this.getProspectById(input.prospectId)
+        : input.email
+          ? this.getProspectByEmail(input.email)
+          : null;
+    const payloads = this.queue.contactPayloadsFor({
+      prospectId: prospect?.id ?? input.prospectId ?? null,
+      email: input.email ?? prospect?.email ?? null,
+    });
+    return mergeContactIdentities(
+      { email: [input.email, prospect?.email], company: prospect?.company },
+      ...payloads.map((raw) => {
+        try {
+          return queuePayloadIdentity(JSON.parse(raw));
+        } catch {
+          return {};
+        }
+      }),
+    );
+  }
+
+  /** @see ledger-queue.ts#QueueStore.rejectUnsentForDoNotContact */
+  rejectUnsentForDoNotContact(id: number, notes: string): boolean {
+    return this.queue.rejectUnsentForDoNotContact(id, notes);
   }
 
   /** Full prospect record by any verified email alias of the shared person. */

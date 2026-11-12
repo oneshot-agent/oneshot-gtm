@@ -6,6 +6,7 @@ import { humanDecisionWhereSql } from "./labels.ts";
 import { toSqliteUtc } from "./time.ts";
 import { OUTREACH_CHANNELS, type OutreachChannel } from "./channels.ts";
 import { canonicalLinkedInProfileKey } from "./ledger-prospects.ts";
+import { describeDoNotContact, doNotContactMatch, queuePayloadIdentity } from "./do-not-contact.ts";
 import type {
   IcpDecisionExample,
   ProspectPriority,
@@ -479,7 +480,19 @@ export class QueueStore {
     channel?: OutreachChannel;
   }): number | null {
     try {
-      const status = input.initialStatus ?? "pending";
+      // A company on the workspace's do-not-contact list is recorded as an
+      // auto-drop, never queued for review: the row stays visible and its
+      // dedupe key keeps finders from finding it again.
+      const blocked =
+        (input.initialStatus ?? "pending") === "rejected"
+          ? null
+          : doNotContactMatch(queuePayloadIdentity(input.payload));
+      const status = blocked ? "rejected" : (input.initialStatus ?? "pending");
+      const notes = blocked
+        ? [`auto: do-not-contact — ${describeDoNotContact(blocked)}`, input.notes]
+            .filter(Boolean)
+            .join("\n")
+        : (input.notes ?? null);
       const reviewedAt = status === "pending" ? null : new Date().toISOString();
       const result = this.db
         .prepare(
@@ -502,7 +515,7 @@ export class QueueStore {
           input.source,
           status,
           reviewedAt,
-          input.notes ?? null,
+          notes,
           input.priority ? JSON.stringify(input.priority) : null,
           // An insert-time rejection is a gate's verdict, never a human's:
           // structural provenance replaces the `auto:` notes-sniffing (the
@@ -519,6 +532,46 @@ export class QueueStore {
       if (msg.includes("UNIQUE constraint failed")) return null;
       throw err;
     }
+  }
+
+  /** The payloads of every queue row for this prospect, by link or by address. */
+  contactPayloadsFor(input: { prospectId?: number | null; email?: string | null }): string[] {
+    const email = input.email?.trim().toLowerCase() || null;
+    if (input.prospectId == null && !email) return [];
+    const rows = this.db
+      .query(
+        `SELECT payload_json FROM target_queue
+         WHERE ($pid IS NOT NULL AND prospect_id = $pid)
+            OR ($email IS NOT NULL AND json_valid(payload_json) AND (
+                 lower(trim(json_extract(payload_json, '$.email'))) = $email
+              OR lower(trim(json_extract(payload_json, '$.founderEmail'))) = $email))`,
+      )
+      .all({ $pid: input.prospectId ?? null, $email: email }) as Array<{ payload_json: string }>;
+    return rows.map((r) => r.payload_json);
+  }
+
+  /**
+   * Reject a row for the do-not-contact list (the reason leads its notes, the
+   * notes it had follow), only while it is still unsent
+   * and no live send or drain claim holds it. False when the row was sent,
+   * is being sent, or is gone.
+   */
+  rejectUnsentForDoNotContact(id: number, notes: string): boolean {
+    const now = new Date().toISOString();
+    // A drain claim past its lease no longer holds the row.
+    const cutoff = new Date(Date.now() - DRAIN_LEASE_SECONDS * 1000).toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE target_queue
+         SET status = 'rejected', reviewed_at = $now, decision = 'auto_reject', decided_at = $now,
+             decided_by = 'machine',
+             notes = CASE WHEN coalesce(notes, '') = '' THEN $notes ELSE $notes || char(10) || notes END
+         WHERE id = $id AND status IN ('pending', 'approved') AND sent_at IS NULL
+           AND send_started_at IS NULL
+           AND (drain_claimed_at IS NULL OR drain_claimed_at < $cutoff)`,
+      )
+      .run({ $id: id, $now: now, $notes: notes, $cutoff: cutoff });
+    return result.changes > 0;
   }
 
   isQueueDuplicate(playName: string, dedupeKey: string): boolean {

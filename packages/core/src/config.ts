@@ -170,6 +170,92 @@ export function currentNoOfferPlays(): string[] {
   return plays;
 }
 
+/** The workspace's do-not-contact list as every gate reads it. */
+export interface DoNotContactList {
+  /** Lowercase hosts, no scheme, `www.` or path. */
+  domains: string[];
+  /** Company names as written, trimmed. */
+  companies: string[];
+}
+
+/** A domain, URL or address as a bare lowercase host; null when there is none. */
+export function bareDomain(value: string): string | null {
+  let host = value.trim().toLowerCase();
+  host = host.replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
+  // The path goes first, so an `@` in it is not read as an address; what is
+  // left of an `@` in the authority is an address's local part or userinfo.
+  host = host.split(/[/?#]/)[0]!;
+  const at = host.lastIndexOf("@");
+  if (at >= 0) host = host.slice(at + 1);
+  host = host.split(":")[0]!;
+  while (host.startsWith("www.")) host = host.slice(4);
+  while (host.endsWith(".")) host = host.slice(0, -1);
+  return host.includes(".") ? host : null;
+}
+
+/** A config list's string entries; a lone string counts as one. */
+function stringEntries(value: unknown): string[] {
+  return (typeof value === "string" ? [value] : Array.isArray(value) ? value : []).filter(
+    (entry): entry is string => typeof entry === "string",
+  );
+}
+
+/**
+ * The workspace's `doNotContact` as every gate reads it: domains reduced to
+ * bare hosts, company names trimmed, blanks and repeats dropped. A lone
+ * string counts as one entry; anything else reads as none.
+ */
+export function doNotContactOf(cfg: { doNotContact?: unknown }): DoNotContactList {
+  const raw =
+    cfg.doNotContact && typeof cfg.doNotContact === "object"
+      ? (cfg.doNotContact as Record<string, unknown>)
+      : {};
+  const domains: string[] = [];
+  for (const entry of stringEntries(raw["domains"])) {
+    const host = bareDomain(entry);
+    if (host && !domains.includes(host)) domains.push(host);
+  }
+  const companies: string[] = [];
+  for (const entry of stringEntries(raw["companies"])) {
+    const name = entry.replace(/\s+/g, " ").trim();
+    if (name && !companies.includes(name)) companies.push(name);
+  }
+  return { domains, companies };
+}
+
+let doNotContactMemo: { stamp: string; list: DoNotContactList } | null = null;
+
+/**
+ * `doNotContact` from the config file as it is now, for the queue insert and
+ * the send gates, which have no config in hand. Re-read only when the file
+ * changes, like `currentNoOfferPlays`. A file that does not parse (caught
+ * mid-edit) keeps the last list read, so a blocked company is never let
+ * through while the file is being saved.
+ */
+export function currentDoNotContact(): DoNotContactList {
+  let stamp: string;
+  try {
+    const st = statSync(CONFIG_PATH, { bigint: true });
+    stamp = `${st.ino}:${st.size}:${st.mtimeNs}:${st.ctimeNs}`;
+  } catch {
+    doNotContactMemo = null;
+    return { domains: [], companies: [] };
+  }
+  if (doNotContactMemo?.stamp === stamp) return doNotContactMemo.list;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+  } catch {
+    // Not cached under this stamp: the next call reads the file again.
+    return doNotContactMemo?.list ?? { domains: [], companies: [] };
+  }
+  const list = doNotContactOf(
+    parsed && typeof parsed === "object" ? (parsed as { doNotContact?: unknown }) : {},
+  );
+  doNotContactMemo = { stamp, list };
+  return list;
+}
+
 /** The humanizer's greeting word: what `founderGreeting` reads as when unset. */
 export const DEFAULT_FOUNDER_GREETING = "Hey";
 

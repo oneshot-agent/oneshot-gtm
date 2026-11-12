@@ -69,6 +69,9 @@ let icpVerdict: { verdict: string; reason: string | null } | null = null;
 let meetingOutcome: { outcome: string; note: string | null; summary: string | null } | null = null;
 const stopCalls: Array<{ prospectId: number; playName: string; reason: string; note?: string }> =
   [];
+let doNotContact: { domains?: string[]; companies?: string[] } | undefined;
+/** The website the prospect's queue row names, if any. */
+let queueWebsite: string | null = null;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -91,6 +94,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       partners: null,
       mobileSignature: false,
       clientId: null,
+      doNotContact,
     }),
     sendEmail: async (
       input: { to: string; subject: string; body: string },
@@ -137,6 +141,11 @@ vi.mock("@oneshot-gtm/core", async () => {
       suppressionFor: () => suppression,
       contactSuppressionFor: () => contactSuppression,
       latestMeetingOutcomeFor: () => meetingOutcome,
+      contactIdentityFor: () => ({
+        email: cadenceRows[0]?.prospect_email,
+        company: cadenceRows[0]?.prospect_company,
+        website: queueWebsite,
+      }),
       stopCadence: (input: {
         prospectId: number;
         playName: string;
@@ -312,6 +321,8 @@ beforeEach(() => {
   icpVerdict = null;
   meetingOutcome = null;
   stopCalls.length = 0;
+  doNotContact = undefined;
+  queueWebsite = null;
   seedActiveCadence();
 });
 
@@ -479,6 +490,65 @@ describe("runCadenceStepForProspect — off-ICP gate", () => {
     });
     expect(result.action).toBe("step-sent");
     expect(calls.sendEmail).toBe(1);
+  });
+});
+
+describe("runCadenceStepForProspect — do-not-contact gate", () => {
+  it("stops a LinkedIn-only cadence at a listed company before drafting", async () => {
+    doNotContact = { companies: ["Acme"] };
+    cadenceRows[0]!.prospect_email = null;
+    cadenceRows[0]!.prospect_company = "Acme, Inc.";
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(result.action).toBe("skipped");
+    expect(result.note).toMatch(/do-not-contact/);
+    expect(calls.llm).toBe(0);
+    expect(stopCalls).toEqual([
+      {
+        prospectId: 1,
+        playName: "stack-consolidation",
+        reason: "do_not_contact",
+        note: 'the company "Acme" is on the do-not-contact list',
+        holdingSendingMarker: true,
+      },
+    ]);
+  });
+
+  it("stops by the address's domain, and a preview only reports it", async () => {
+    doNotContact = { domains: ["x.dev"] };
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: true,
+    });
+    expect(result.action).toBe("skipped");
+    expect(result.note).toMatch(/x\.dev is on the do-not-contact list/);
+    expect(stopCalls).toHaveLength(0);
+  });
+
+  it("stops by the website the prospect's queue row names", async () => {
+    doNotContact = { domains: ["dental.example"] };
+    queueWebsite = "https://www.dental.example/team";
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(result.action).toBe("skipped");
+    expect(stopCalls[0]?.reason).toBe("do_not_contact");
+  });
+
+  it("sends to anyone else", async () => {
+    doNotContact = { companies: ["Other Co"], domains: ["other.example"] };
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(result.action).toBe("step-sent");
   });
 });
 
