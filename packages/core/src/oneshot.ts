@@ -1152,7 +1152,7 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
 export interface ReplyEmailInput {
   /** Direct mailbox: persisted inbound ID. */
   inboundEmailId?: string;
-  /** Idempotent client send request for Gmail and direct mailbox replies. */
+  /** Persisted operation ID. Required for OneShot and direct mailbox replies. */
   sendRequestId?: string;
   /** Sender identity that RECEIVED the inbound email; the reply goes out from it. */
   identityId: string;
@@ -1326,18 +1326,16 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
     throw new Error(`unknown email provider '${identity.provider}' for identity '${identity.id}'`);
   }
 
+  if (!input.sendRequestId || !/^[a-zA-Z0-9-]{16,100}$/.test(input.sendRequestId))
+    throw new Error("A valid persisted send request ID is required for OneShot replies.");
+  const operationKey = replySendKey(input.sendRequestId);
   const agent = await getAgent();
   const fromDomain = identity.sendingDomain ?? cfg.sendingDomain ?? null;
   const opts: Parameters<OneShot["email"]>[0] = {
     to: input.to,
     subject,
     body: toHtmlBody(input.body),
-    idempotencyKey: emailIdempotencyKey([
-      identity.id,
-      input.to,
-      input.body,
-      input.replyToEmailId ?? "",
-    ]),
+    idempotencyKey: emailIdempotencyKey([identity.id, operationKey]),
     ...buildAuditOpts(ctx, "email.reply"),
   };
   // Thread server-side when we know the inbound email id. We still pass
@@ -1350,12 +1348,7 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
     const name = (cfg.founderName ?? "").trim();
     if (name) opts.from_name = name;
   }
-  const result = await withPaymentOperation(
-    input.sendRequestId
-      ? replySendKey(input.sendRequestId)
-      : `reply:${identity.id}:${input.replyToEmailId ?? input.to}:${input.body}`,
-    () => agent.email(opts),
-  );
+  const result = await withPaymentOperation(operationKey, () => agent.email(opts));
   assertEmailSent(result);
   const receiptId = recordCallReceipt({
     ctx,

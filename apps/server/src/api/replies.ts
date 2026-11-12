@@ -582,9 +582,7 @@ export async function replySendRoute(req: Request) {
       inReplyTo: r.messageId,
       replyToEmailId: r.sourceProvider === "oneshot" ? r.id : null,
       ...(r.sourceProvider === "smartlead" ? { inboundEmailId: r.id } : {}),
-      ...(r.sourceProvider === "smartlead" || r.sourceProvider === "gmail"
-        ? { sendRequestId: send.id }
-        : {}),
+      sendRequestId: send.id,
     };
     const response = await sendReplyRoute(internalRequest(req, request));
     const result = (await response.json()) as { sent?: boolean; error?: string };

@@ -102,3 +102,7 @@ oneshot-gtm payments resolve HOLD_KEY --note "OneShot confirmed non-execution an
 ```
 
 Releasing a hold permits a subsequent attempt; it does not itself purchase or send anything.
+
+If a purchase is confirmed complete but its hold remains (for example, local cleanup failed), verify the domain/address state with `oneshot-gtm domains list` and retain the completed result/receipt locally. Resolve `HOLD_KEY` with a note identifying the completed result; this atomically records the reconciliation and clears the hold. Do not replay the completed purchase. Domain purchases share a hold key across quotes, so clearing a reconciled completed purchase permits a later, separately reviewed address purchase for the same domain.
+
+OneShot replies require a persisted `sendRequestId` for each intended reply. The reply composer supplies it and retains it across edits and retries; both the payment hold and SDK idempotency key use that ID rather than editable message text.
