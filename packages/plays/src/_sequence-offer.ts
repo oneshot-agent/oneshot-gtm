@@ -597,19 +597,47 @@ function closeOfferUsable(offer: ProspectOffer, cfg: { offerExclusions?: unknown
   );
 }
 
+function folded(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[.\s]+$/, "")
+    .trim();
+}
+
 /**
- * The offer the LinkedIn close makes after an emailed sequence: never the
- * one the emails carried. The stored close first, else the first of the
- * ranked offers that is usable (`closeOfferUsable`) and not a near repeat of
- * the active offer (`nearDuplicateOffer`). Reads only; null when the
- * sequence has no offer or none of its others will do.
+ * The offers the emails already made: the active one, and any stored one
+ * whose text a sent email carries (an intro made before the active offer
+ * was changed). Sent records keep the body, not the offer it made.
+ */
+function offersMade(
+  record: Pick<SequenceOfferRecord, "offer" | "offerCandidates" | "closeOffer">,
+  thread: ReadonlyArray<OfferThreadEmail>,
+): string[] {
+  const made = record.offer ? [record.offer.offer] : [];
+  const bodies = thread.map((e) => folded(`${e.subject} ${e.body}`));
+  for (const o of [record.closeOffer ?? null, ...record.offerCandidates]) {
+    const text = o ? folded(o.offer) : "";
+    if (text && bodies.some((b) => b.includes(text))) made.push(o!.offer);
+  }
+  return made;
+}
+
+/**
+ * The offer the LinkedIn close makes after an emailed sequence: never one the
+ * emails carried (`offersMade`, from the `thread` sent). The stored close
+ * first, else the first of the ranked offers that is usable
+ * (`closeOfferUsable`) and not a near repeat of one made
+ * (`nearDuplicateOffer`). Reads only; null when the sequence has no offer
+ * or none of its others will do.
  */
 export function pickCloseOffer(
   record: Pick<SequenceOfferRecord, "offer" | "offerCandidates" | "closeOffer">,
   cfg: { offerExclusions?: unknown },
+  thread: ReadonlyArray<OfferThreadEmail> = [],
 ): ProspectOffer | null {
   if (!record.offer) return null;
-  const made = [record.offer.offer];
+  const made = offersMade(record, thread);
   for (const offer of [record.closeOffer ?? null, ...record.offerCandidates]) {
     if (!offer || !closeOfferUsable(offer, cfg)) continue;
     if (nearDuplicateOffer(offer.offer, made) !== null) continue;
@@ -618,14 +646,16 @@ export function pickCloseOffer(
   return null;
 }
 
+/** Store the close (or that there is none), bound to the active offer it was chosen against. */
 function writeClose(
-  record: SequenceOfferRecord,
+  record: SequenceOfferRecord & { offer: SequenceOfferValue },
   value: { close: ProspectOffer } | { closeSkip: CloseOfferSkip },
 ): boolean {
   try {
     return getLedger().setCadenceCloseOffer({
       prospectId: record.prospectId,
       playName: record.playName,
+      activeOffer: record.offer.offer,
       ...("close" in value
         ? { close: value.close as unknown as Record<string, unknown> }
         : { closeSkip: { ...value.closeSkip } }),
@@ -648,7 +678,14 @@ export type EnsureCloseOfferResult =
   | { status: "picked" | "written"; offer: ProspectOffer }
   | {
       status: "none";
-      reason: "no-offer" | "no-play-offer" | "no-brief" | "skipped" | "nothing-derived" | "error";
+      reason:
+        | "no-offer"
+        | "no-play-offer"
+        | "no-brief"
+        | "skipped"
+        | "nothing-derived"
+        | "not-stored"
+        | "error";
     };
 
 /**
@@ -658,8 +695,9 @@ export type EnsureCloseOfferResult =
  * written from the sequence's research (`sequenceOfferInput`), told the
  * thread sent and every offer already made, and judged as an intro's are
  * (`deriveOffers`). When none passes, that is kept (`closeSkip`) and not
- * asked again until the product config changes. The active offer and its
- * ranked set are never changed. Never throws.
+ * asked again until the product config changes. Each write is bound to the
+ * active offer read here: one changed meanwhile refuses it (`not-stored`).
+ * The active offer and its ranked set are never changed. Never throws.
  */
 export async function ensureCloseOffer(input: {
   prospectId: number;
@@ -670,12 +708,16 @@ export async function ensureCloseOffer(input: {
 }): Promise<EnsureCloseOfferResult> {
   try {
     const cfg = input.cfg ?? loadConfig();
-    const record = sequenceOfferRecord(input);
-    if (!record.offer) return { status: "none", reason: "no-offer" };
+    const read = sequenceOfferRecord(input);
+    if (!read.offer) return { status: "none", reason: "no-offer" };
+    const record = { ...read, offer: read.offer };
     if (!playMakesOffer(input.playName, cfg)) return { status: "none", reason: "no-play-offer" };
-    const picked = pickCloseOffer(record, cfg);
+    const thread = sequenceThread(input.prospectId, input.playName);
+    const picked = pickCloseOffer(record, cfg, thread);
     if (picked) {
-      if (picked !== record.closeOffer) writeClose(record, { close: picked });
+      if (picked !== record.closeOffer && !writeClose(record, { close: picked })) {
+        return { status: "none", reason: "not-stored" };
+      }
       return { status: "picked", offer: picked };
     }
     if (!cfg.productBrief?.trim()) return { status: "none", reason: "no-brief" };
@@ -687,7 +729,6 @@ export async function ensureCloseOffer(input: {
       ...record.offerCandidates.map((o) => o.offer),
       ...(record.closeOffer ? [record.closeOffer.offer] : []),
     ];
-    const thread = sequenceThread(input.prospectId, input.playName);
     const { offers, skip } = await deriveOffers({
       target: person.target,
       dossier: person.dossier,
@@ -714,13 +755,14 @@ export async function ensureCloseOffer(input: {
       });
       return { status: "none", reason: answered ? "skipped" : "nothing-derived" };
     }
-    writeClose(record, { close });
+    const stored = writeClose(record, { close });
     logEvent("sequence_offer.close_written", {
       play: input.playName,
       prospect_id: input.prospectId,
+      stored,
       offer_120: close.offer.slice(0, 120),
     });
-    return { status: "written", offer: close };
+    return stored ? { status: "written", offer: close } : { status: "none", reason: "not-stored" };
   } catch (err) {
     logEvent(
       "error.swallowed",

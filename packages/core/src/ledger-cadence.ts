@@ -234,15 +234,18 @@ export function setCadenceOffer(
 /**
  * Keep the offer the LinkedIn close makes (`close`), or the writer's finding
  * that there is none (`closeSkip`), on an active cadence that has an offer.
- * One of the two stands: writing either drops the other. A close of the
- * active offer's own text is refused. Not guarded on a send in flight: the
- * close is written by the step being sent. False when nothing was written.
+ * One of the two stands: writing either drops the other. Bound to
+ * `activeOffer`, the active offer's text it was chosen against: an offer
+ * changed meanwhile refuses it, and so does a close of that same text. Not
+ * guarded on a send in flight: the close is written by the step being sent.
+ * False when nothing was written.
  */
 export function setCadenceCloseOffer(
   db: Database,
   input: {
     prospectId: number;
     playName: string;
+    activeOffer: string;
     close?: Record<string, unknown>;
     closeSkip?: Record<string, unknown>;
   },
@@ -254,6 +257,7 @@ export function setCadenceCloseOffer(
       : [null, null, null];
   if (!key) return false;
   const closeText = typeof input.close?.["offer"] === "string" ? input.close["offer"] : null;
+  if (closeText === input.activeOffer) return false;
   const r = db
     .prepare(
       `UPDATE cadence_state
@@ -261,9 +265,9 @@ export function setCadenceCloseOffer(
         WHERE prospect_id = ? AND play_name = ? AND status = 'active'
           AND json_valid(offer_json)
           AND json_type(offer_json, '$.offer') = 'object'
-          AND (? IS NULL OR json_extract(offer_json, '$.offer.offer') IS NOT ?)`,
+          AND json_extract(offer_json, '$.offer.offer') IS ?`,
     )
-    .run(drop, key, JSON.stringify(value), input.prospectId, input.playName, closeText, closeText);
+    .run(drop, key, JSON.stringify(value), input.prospectId, input.playName, input.activeOffer);
   return r.changes === 1;
 }
 

@@ -7,6 +7,8 @@ import {
   pickCloseOffer,
   playMakesOffer,
   sequenceOfferOf,
+  sequenceThread,
+  type OfferThreadEmail,
   type SequenceOfferRecord,
 } from "@oneshot-gtm/plays";
 import { c, header, ok, resolveCap, warn } from "../output.ts";
@@ -17,8 +19,11 @@ import { c, header, ok, resolveCap, warn } from "../output.ts";
  * the /cadences view shows the text that goes. A stored offer the judge
  * passed is picked for free; a sequence with none gets one written around
  * every offer already made (one writer and one judge call). The active offer
- * is never changed. `--dry-run` writes nothing and calls no model: it counts
- * the sequences that would pick and the ones that would get an offer written.
+ * is never changed. A sequence already settled (its stored close still
+ * stands, or the writer's none under today's brief) is counted and left, so
+ * `--limit` runs move on. `--dry-run` writes nothing and calls no model: it
+ * counts the sequences that would pick and the ones that would get an offer
+ * written.
  */
 export interface CloseOffersOpts {
   dryRun: boolean;
@@ -29,6 +34,8 @@ export interface CloseOffersOpts {
 export interface CloseOffersSummary {
   /** Active emailed sequences of offer-making plays with a LinkedIn close ahead. */
   eligible: number;
+  /** Of those, already settled: their stored close stands, or the writer found none. */
+  settled: number;
   /** A stored offer was (or would be) made the close. */
   picked: string[];
   /** A close offer was written (dry run: would be). */
@@ -64,33 +71,45 @@ export async function commandCloseOffers(opts: CloseOffersOpts): Promise<CloseOf
   const cfg = loadConfig();
   const summary: CloseOffersSummary = {
     eligible: 0,
+    settled: 0,
     picked: [],
     written: [],
     none: [],
     errors: 0,
     costUsd: 0,
   };
-  const sequences: Array<{ cad: CadenceWithProspect; record: SequenceOfferRecord }> = getLedger()
+  const hash = offerProductHash(cfg);
+  const hasBrief = !!cfg.productBrief?.trim();
+  const sequences: Array<{
+    cad: CadenceWithProspect;
+    record: SequenceOfferRecord;
+    picked: ReturnType<typeof pickCloseOffer>;
+  }> = getLedger()
     .listActiveCadences()
     .filter((cad) => playMakesOffer(cad.play_name, cfg))
     .map((cad) => ({ cad, record: sequenceOfferOf(cad) }))
-    .filter(({ cad, record }) => isProspectOffer(record.offer) && closeAhead(cad));
+    .filter(({ cad, record }) => isProspectOffer(record.offer) && closeAhead(cad))
+    .map(({ cad, record }) => {
+      const thread: OfferThreadEmail[] = sequenceThread(cad.prospect_id, cad.play_name);
+      return { cad, record, picked: pickCloseOffer(record, cfg, thread) };
+    });
   summary.eligible = sequences.length;
-  const cap = resolveCap(opts.limit);
-  const work = cap === undefined ? sequences : sequences.slice(0, cap);
-  process.stdout.write(
-    `${c.dim("emailed sequences with a LinkedIn close ahead:")} ${summary.eligible}  ${c.dim("to do:")} ${work.length}\n`,
+  // Settled: the stored close is still the one picked, or the writer's none stands.
+  const open = sequences.filter(({ record, picked }) =>
+    picked ? picked !== record.closeOffer : hasBrief && record.closeSkip?.productHash !== hash,
   );
-  const hash = offerProductHash(cfg);
-  await parallelMap(work, opts.concurrency ?? 3, async ({ cad, record }) => {
+  summary.settled = sequences.length - open.length;
+  const cap = resolveCap(opts.limit);
+  const work = cap === undefined ? open : open.slice(0, cap);
+  process.stdout.write(
+    `${c.dim("emailed sequences with a LinkedIn close ahead:")} ${summary.eligible}  ${c.dim("settled:")} ${summary.settled}  ${c.dim("to do:")} ${work.length}\n`,
+  );
+  await parallelMap(work, opts.concurrency ?? 3, async ({ cad, picked }) => {
     const key = `sequence ${cad.prospect_id}/${cad.play_name}`;
     if (opts.dryRun) {
-      const picked = pickCloseOffer(record, cfg);
-      if (picked) summary.picked.push(key);
-      else if (record.closeSkip?.productHash === hash) summary.none.push(key);
-      else summary.written.push(key);
+      (picked ? summary.picked : summary.written).push(key);
       process.stdout.write(
-        `  ${key} ${picked ? short(picked.offer) : c.dim(record.closeSkip?.productHash === hash ? "(none: kept skip)" : "(would write one)")}\n`,
+        `  ${key} ${picked ? short(picked.offer) : c.dim("(would write one)")}\n`,
       );
       return;
     }
@@ -118,7 +137,7 @@ export async function commandCloseOffers(opts: CloseOffersOpts): Promise<CloseOf
   });
   for (const list of [summary.picked, summary.written, summary.none]) list.sort();
   ok(
-    `${opts.dryRun ? "would pick" : "picked"} ${summary.picked.length} · ${opts.dryRun ? "would write" : "written"} ${summary.written.length} · none ${summary.none.length} · errors ${summary.errors}` +
+    `settled ${summary.settled} · ${opts.dryRun ? "would pick" : "picked"} ${summary.picked.length} · ${opts.dryRun ? "would write" : "written"} ${summary.written.length} · none ${summary.none.length} · errors ${summary.errors}` +
       (opts.dryRun ? " · nothing written" : ` · $${summary.costUsd.toFixed(2)}`),
   );
   return summary;

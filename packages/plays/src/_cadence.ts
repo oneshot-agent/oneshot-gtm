@@ -105,6 +105,7 @@ import {
   pickCloseOffer,
   sequenceOfferIsStale,
   sequenceOfferRecord,
+  sequenceThread,
   type SequenceOfferValue,
 } from "./_sequence-offer.ts";
 import {
@@ -4411,7 +4412,11 @@ function linkedInMessageFacts(
     : null;
   // The emails made the active offer and were not answered: the close makes
   // another (`ensureCloseOffer` stores it), or none.
-  const closeOffer = record ? (emailed ? pickCloseOffer(record, cfg) : record.offer) : null;
+  const closeOffer = record
+    ? emailed
+      ? pickCloseOffer(record, cfg, sequenceThread(prospect.id, playName))
+      : record.offer
+    : null;
   const base = { name: prospect.name, evidence: clause, alreadyConnected };
   return {
     events,
@@ -4424,6 +4429,8 @@ function linkedInMessageFacts(
     closeOffer,
     template: { ...base, offer: record?.offer?.offer ?? null },
     closeTemplate: { ...base, offer: closeOffer?.offer ?? null },
+    /** The sequence makes an offer: after emails with no close offer, the close names none. */
+    makesOffer: !!record?.offer,
   };
 }
 
@@ -4512,7 +4519,13 @@ async function buildLinkedInMessage(
           : "first message after they accepted the connection request"
         : "last message — a short, graceful close"
     }`,
-    ...(which === "last" ? closeGuidance(role) : []),
+    ...(which === "last"
+      ? emailed && facts.makesOffer && !facts.closeOffer
+        ? [
+            "NO OFFER: the emails' offer went unanswered and no other passed. Close without naming an outcome, an offer or a goal.",
+          ]
+        : closeGuidance(role)
+      : []),
     "PRIOR TOUCHES:",
     ...(prior.length > 0 ? prior.map((l) => `  ${l}`) : ["  (none recorded)"]),
     ...(voice ? [`VOICE:\n${voice.text}`] : []),

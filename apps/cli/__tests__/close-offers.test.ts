@@ -9,10 +9,15 @@ import type { Ledger } from "@oneshot-gtm/core";
 
 let ledger: Ledger;
 const ensureMock = vi.fn();
+let brief: string | undefined = "Acme closes open claims.";
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
-  return { ...actual, getLedger: () => ledger };
+  return {
+    ...actual,
+    getLedger: () => ledger,
+    loadConfig: () => ({ ...actual.loadConfig(), productBrief: brief }),
+  };
 });
 vi.mock("@oneshot-gtm/plays", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays");
@@ -66,6 +71,7 @@ beforeEach(() => {
   ledger = new RealLedger(dbPath);
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   ensureMock.mockReset();
+  brief = "Acme closes open claims.";
   ensureMock.mockImplementation(async () => ({ status: "written", offer: offer("new") }));
 });
 afterEach(() => {
@@ -147,5 +153,29 @@ describe("find close-offers", () => {
     expect(out.written).toEqual([`sequence ${a}/${PLAY}`]);
     expect(out.none).toEqual([`sequence ${b}/${PLAY}`]);
     expect(out.costUsd).toBeCloseTo(0.04);
+  });
+
+  it("leaves settled sequences out before --limit, so a capped run moves on", async () => {
+    const settled = sequence({ step: 2, others: ["get every supplier contract renewed on time"] });
+    const next = sequence({ step: 2, others: [] });
+    const r = ledger.getCadence(settled, PLAY)!;
+    const stored = JSON.parse(r.offer_json!) as { offer: { offer: string }; candidates: unknown[] };
+    expect(
+      ledger.setCadenceCloseOffer({
+        prospectId: settled,
+        playName: PLAY,
+        activeOffer: stored.offer.offer,
+        close: stored.candidates[1] as Record<string, unknown>,
+      }),
+    ).toBe(true);
+    const out = await commandCloseOffers({ dryRun: true, limit: 1 });
+    expect(out).toMatchObject({ eligible: 2, settled: 1, written: [`sequence ${next}/${PLAY}`] });
+  });
+
+  it("--dry-run counts nothing to write when there is no product brief", async () => {
+    brief = undefined;
+    sequence({ step: 2, others: [] });
+    const out = await commandCloseOffers({ dryRun: true });
+    expect(out).toMatchObject({ eligible: 1, settled: 1, written: [] });
   });
 });

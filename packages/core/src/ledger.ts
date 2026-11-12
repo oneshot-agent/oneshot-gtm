@@ -569,6 +569,7 @@ export class Ledger {
   setCadenceCloseOffer(input: {
     prospectId: number;
     playName: string;
+    activeOffer: string;
     close?: Record<string, unknown>;
     closeSkip?: Record<string, unknown>;
   }): boolean {

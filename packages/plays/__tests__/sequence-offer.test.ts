@@ -816,4 +816,24 @@ describe("the close offer", () => {
     writeSequenceOffer({ record: r, offer: r.closeOffer as never });
     expect(cadenceOffer(id)).not.toHaveProperty("close");
   });
+
+  it("never picks a ranked offer an earlier email already carried", async () => {
+    const id = await offered();
+    const r = record(id);
+    const thread = [{ subject: "leeds", body: `I can ${second.offer}, start to finish.` }];
+    expect(pickCloseOffer(r, cfg, thread)).toBeNull();
+    expect(pickCloseOffer(r, cfg, [])?.offer).toBe(second.offer);
+  });
+
+  it("refuses a close chosen against an active offer that changed meanwhile", async () => {
+    const id = await offered();
+    const r = record(id);
+    const close = r.offerCandidates[1] as unknown as Record<string, unknown>;
+    const write = (activeOffer: string) =>
+      ledger.setCadenceCloseOffer({ prospectId: id, playName: PLAY, activeOffer, close });
+    expect(write("an offer since replaced")).toBe(false);
+    expect(cadenceOffer(id)).not.toHaveProperty("close");
+    expect(write(good.offer)).toBe(true);
+    expect(cadenceOffer(id)!["close"]).toMatchObject({ offer: second.offer });
+  });
 });

@@ -1539,6 +1539,16 @@ describe("templates: the default writer", () => {
     expect(modelInputs).toEqual([]);
   });
 
+  it("the model writer, after emails with no other offer, is told to name none", async () => {
+    started({ repo: "acme/widgets" }, OFFER);
+    await invite((await shown()).body, "already_connected");
+    await send(await shown());
+    linkedinCfg = { writer: "model" };
+    await shown();
+    expect(modelInputs.at(-1)).toContain("NO OFFER:");
+    expect(modelInputs.at(-1)).not.toContain(OFFER);
+  });
+
   it("the /cadences view shows the close that is drafted", async () => {
     started({ repo: "acme/widgets" }, OFFER, [NEXT]);
     await invite((await shown()).body, "already_connected");

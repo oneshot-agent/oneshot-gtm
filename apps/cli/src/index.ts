@@ -16,8 +16,8 @@ import { Command, InvalidArgumentError, Option } from "commander";
 /** Option parser for counts that must be at least 1; `0` or `abc` is an error, not the default. */
 function positiveInt(flag: string): (v: string) => number {
   return (v) => {
-    const n = Number.parseInt(v, 10);
-    if (!Number.isInteger(n) || n <= 0)
+    const n = /^\d+$/.test(v.trim()) ? Number(v.trim()) : Number.NaN;
+    if (!Number.isSafeInteger(n) || n <= 0)
       throw new InvalidArgumentError(`${flag} must be a positive integer`);
     return n;
   };
