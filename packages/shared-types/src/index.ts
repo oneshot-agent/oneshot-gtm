@@ -238,6 +238,9 @@ export interface CadenceView {
   replyAt: string | null;
   /** Persisted next-step preview (set by Preview, cleared on advance). */
   nextStepDraft: CadenceNextStepDraft | null;
+  /** The next step's sequence id (`linkedin:invite`, `linkedin:1`, …): fixed
+   *  where the label is config. Null for a letter or when no next step exists. */
+  nextStepId?: string | null;
   /** Label of the next step ("value follow-up", "breakup", …). Null when
    *  no next step exists (cadence is at or past the last step). */
   nextStepLabel: string | null;
@@ -250,6 +253,8 @@ export interface CadenceView {
    * is waiting for acceptance, not due.
    */
   linkedinWaitingSince?: string | null;
+  /** While waiting: the day (YYYY-MM-DD) the invite is withdrawn if not accepted. */
+  linkedinInviteExpiresOn?: string | null;
   /** Total registered follow-up steps for this play (excludes day-0).
    *  The UI uses `followupCount + 1` for the step-progress dot count. */
   followupCount: number;
