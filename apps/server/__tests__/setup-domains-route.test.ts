@@ -18,7 +18,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
-const { getSetupDomains, getSetupStatus, resetDomainCacheForTests } =
+const { getSetupDomains, getSetupStatus, resetDomainCacheForTests, invalidateDomainViews } =
   await import("../src/api/setup.ts");
 
 const ENTRY: DomainPoolEntry = {
@@ -171,6 +171,17 @@ describe("domain pool cache", () => {
   });
 });
 
+it("an explicit provisioning refresh bypasses a fresh cached pool", async () => {
+  let calls = 0;
+  listImpl = async () => [{ ...ENTRY, domain: ++calls === 1 ? "pending.dev" : "ready.dev" }];
+  expect(await domainsOf(await getSetupDomains(req("/api/setup/domains")))).toEqual([
+    "pending.dev",
+  ]);
+  expect(await domainsOf(await getSetupDomains(req("/api/setup/domains?refresh=1")))).toEqual([
+    "ready.dev",
+  ]);
+});
+
 describe("GET /api/setup/domains — the dedicated, patient route", () => {
   it("still waits past the status call's deadline", async () => {
     let resolve!: (v: DomainPoolEntry[]) => void;
@@ -191,4 +202,25 @@ describe("GET /api/setup/domains — the dedicated, patient route", () => {
     const body = (await (await pending).json()) as { provisionedDomains: unknown[] };
     expect(body.provisionedDomains).toEqual([]);
   });
+});
+
+it("a pre-purchase refresh cannot republish stale addresses after invalidation", async () => {
+  let oldResolve!: (v: DomainPoolEntry[]) => void;
+  let freshResolve!: (v: DomainPoolEntry[]) => void;
+  let calls = 0;
+  listImpl = () =>
+    new Promise((resolve) => {
+      if (++calls === 1) oldResolve = resolve;
+      else freshResolve = resolve;
+    });
+  const oldRequest = getSetupDomains(req("/api/setup/domains"));
+  invalidateDomainViews();
+  const newRequest = getSetupDomains(req("/api/setup/domains?refresh=1"));
+  expect(calls).toBe(2);
+  freshResolve([{ ...ENTRY, domain: "ready.dev" }]);
+  expect(await domainsOf(await newRequest)).toEqual(["ready.dev"]);
+  oldResolve([{ ...ENTRY, domain: "stale.dev" }]);
+  expect(await domainsOf(await oldRequest)).toEqual(["ready.dev"]);
+  expect(await domainsOf(await getSetupDomains(req("/api/setup/domains")))).toEqual(["ready.dev"]);
+  expect(calls).toBe(2);
 });

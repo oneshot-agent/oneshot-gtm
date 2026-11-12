@@ -1,3 +1,10 @@
+import {
+  quoteSendingDomain,
+  buySendingDomain,
+  isSettlementAmbiguous,
+  validateDomainSetup,
+} from "@oneshot-gtm/core";
+import { invalidateDomainViews } from "./setup.ts";
 import { logEvent, pauseSendingDomain, resumeSendingDomain } from "@oneshot-gtm/core";
 import type { DomainActionResult } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
@@ -53,4 +60,67 @@ export function resumeDomainRoute(req: Request): Promise<Response> {
 
 export function pauseDomainRoute(req: Request): Promise<Response> {
   return domainActionRoute(req, "pause");
+}
+
+export async function quoteDomainRoute(req: Request): Promise<Response> {
+  return setupDomainRoute(req, false);
+}
+export async function buyDomainRoute(req: Request): Promise<Response> {
+  return setupDomainRoute(req, true);
+}
+async function setupDomainRoute(req: Request, purchase: boolean): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = (await req.json()) as Record<string, unknown>;
+  } catch {
+    return jsonResponse({ error: "invalid JSON body" }, 400, req);
+  }
+  if (
+    !body ||
+    typeof body.domain !== "string" ||
+    (purchase && typeof body.quoteId !== "string") ||
+    (body.mailboxMode !== undefined &&
+      body.mailboxMode !== "relay" &&
+      body.mailboxMode !== "mailbox") ||
+    (body.addresses !== undefined &&
+      (!Array.isArray(body.addresses) || body.addresses.some((a) => typeof a !== "string")))
+  ) {
+    return jsonResponse({ error: "Invalid domain setup request" }, 400, req);
+  }
+  try {
+    validateDomainSetup(body.domain, {
+      mailbox_mode: body.mailboxMode as "relay" | "mailbox" | undefined,
+      addresses: body.addresses as string[] | undefined,
+    });
+    if (purchase && !(body.quoteId as string).trim()) throw new Error("Quote ID is required");
+  } catch (err) {
+    return jsonResponse({ error: (err as Error).message }, 400, req);
+  }
+  try {
+    const result = purchase
+      ? await buySendingDomain(body.domain, body.quoteId as string)
+      : await quoteSendingDomain(body.domain, {
+          mailbox_mode: body.mailboxMode as "relay" | "mailbox" | undefined,
+          addresses: body.addresses as string[] | undefined,
+        });
+    if (purchase) invalidateDomainViews();
+    return jsonResponse(result, 200, req);
+  } catch (err) {
+    const e = err as Error & { statusCode?: number; settlementId?: string; holdKey?: string };
+    const status = isSettlementAmbiguous(err)
+      ? 409
+      : e.statusCode && e.statusCode >= 400 && e.statusCode < 500
+        ? e.statusCode
+        : 502;
+    return jsonResponse(
+      {
+        error: e.message,
+        ...(isSettlementAmbiguous(err)
+          ? { code: "payment_held", settlementId: e.settlementId, holdKey: e.holdKey }
+          : {}),
+      },
+      status,
+      req,
+    );
+  }
 }

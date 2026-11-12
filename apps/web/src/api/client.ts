@@ -1,3 +1,9 @@
+import type {
+  DomainQuoteRequest,
+  DomainBuyRequest,
+  DomainQuoteView,
+  DomainPurchaseView,
+} from "@oneshot-gtm/shared-types";
 import type { OnboardingStatus } from "@oneshot-gtm/shared-types";
 import type { CodeAnswer, SourceRepoTestResult } from "@oneshot-gtm/shared-types";
 import type { LinkedInMeasureView } from "@oneshot-gtm/shared-types";
@@ -375,6 +381,8 @@ export const api = {
     postJson<{ status: "starting" | "already-running"; port: number }>("/workspace/launch", {
       name,
     }),
+  quoteDomain: (input: DomainQuoteRequest) => postJson<DomainQuoteView>("/domains/quote", input),
+  buyDomain: (input: DomainBuyRequest) => postJson<DomainPurchaseView>("/domains/buy", input),
   resumeDomain: (domain: string) => postJson<DomainActionResult>("/domains/resume", { domain }),
   pauseDomain: (domain: string) => postJson<DomainActionResult>("/domains/pause", { domain }),
   // POST so a just-pasted (not yet saved) key rides the body, never a URL.
@@ -457,6 +465,10 @@ export const api = {
    * call above carries only a ~2.5s best-effort copy and the sender picker
    * refines it from this route.
    */
+  refreshSetupDomains: () =>
+    getJson<{ provisionedDomains: DomainPoolView[] }>(
+      IS_DEMO ? "/setup/domains" : "/setup/domains?refresh=1",
+    ),
   setupDomains: () => getJson<{ provisionedDomains: DomainPoolView[] }>("/setup/domains"),
   // `warnings`: saved, but worth a look (a LinkedIn template that can run
   // past its step's limit once filled).

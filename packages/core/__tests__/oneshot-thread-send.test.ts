@@ -19,6 +19,7 @@ const emailMock = vi.hoisted(() =>
 );
 vi.mock("@oneshot-agent/sdk", () => ({
   OneShot: class {
+    address = "0x-test-wallet";
     email = emailMock;
   },
   ValidationError: class extends Error {},
@@ -61,6 +62,7 @@ vi.mock("../src/ledger.ts", async () => {
 });
 
 const { sendEmail, gmailSentMessageIdFor, withoutReplyPrefix } = await import("../src/oneshot.ts");
+const { listPaymentHolds, resolvePaymentHold } = await import("../src/payment-holds.ts");
 const { _resetGmailCache } = await import("../src/gmail.ts");
 const { Ledger } = await import("../src/ledger.ts");
 let scratch: InstanceType<typeof Ledger>;
@@ -230,6 +232,71 @@ describe("oneshot: a follow-up into the first email's thread", () => {
     };
   });
 
+  it.each(["confirmation_required", "setup_required", "setup_pending"])(
+    "%s creates no receipt and permits sending after setup",
+    async (status) => {
+      const to = recipient();
+      const key = `setup:${to}`;
+      emailMock.mockResolvedValueOnce({
+        status,
+        request_id: "",
+        cost: 0,
+        email: { id: "", provider_message_id: "", status },
+      });
+      await expect(
+        sendEmail(
+          { to, subject: "hello", body: "body", idempotencyKey: key },
+          { playName: "alpha" },
+        ),
+      ).rejects.toMatchObject({ name: "EmailSetupRequiredError" });
+      expect(recordReceipt).not.toHaveBeenCalled();
+      expect(scratch.outboundSends.get(key)?.status).toBe("failed");
+      await sendEmail(
+        { to, subject: "hello", body: "body", idempotencyKey: key },
+        { playName: "alpha" },
+      );
+      expect(recordReceipt).toHaveBeenCalledTimes(1);
+      expect(scratch.outboundSends.get(key)?.status).toBe("confirmed");
+      expect(emailMock.mock.calls[0]![0]).not.toHaveProperty("from_mailbox");
+    },
+  );
+
+  it("keeps an accepted job timeout uncertain and never dispatches it twice", async () => {
+    const to = recipient();
+    const key = `timeout:${to}`;
+    emailMock.mockRejectedValueOnce(
+      Object.assign(new Error("polling timed out"), { name: "JobTimeoutError", jobId: "job_sent" }),
+    );
+    const input = { to, subject: "hello", body: "body", idempotencyKey: key };
+    await expect(sendEmail(input, { playName: "alpha" })).rejects.toMatchObject({
+      name: "UncertainSendError",
+    });
+    expect(recordReceipt).not.toHaveBeenCalled();
+    expect(scratch.outboundSends.get(key)?.status).toBe("uncertain");
+    await expect(sendEmail(input, { playName: "alpha" })).rejects.toThrow();
+    expect(emailMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["failed", "error"])("explicit %s results remain definite failures", async (status) => {
+    const to = recipient();
+    const key = `failure:${to}`;
+    emailMock.mockResolvedValueOnce({
+      status,
+      request_id: "",
+      cost: 0,
+      email: { id: "", provider_message_id: "", status },
+    });
+    await expect(
+      sendEmail({ to, subject: "hello", body: "body", idempotencyKey: key }, { playName: "alpha" }),
+    ).rejects.toMatchObject({ name: "EmailSendFailedError" });
+    expect(recordReceipt).not.toHaveBeenCalled();
+    expect(scratch.outboundSends.get(key)?.status).toBe("failed");
+    await sendEmail(
+      { to, subject: "hello", body: "corrected", idempotencyKey: key },
+      { playName: "alpha" },
+    );
+    expect(scratch.outboundSends.get(key)?.status).toBe("confirmed");
+  });
   const thread = { identityId: ONESHOT, oneshotEmailId: "em-intro" };
 
   it("passes reply_to_email_id with the Re: subject", async () => {
@@ -290,7 +357,8 @@ describe("oneshot: a follow-up into the first email's thread", () => {
     expect(scratch.outboundSends.get(key)?.status).toBe("uncertain");
   });
 
-  it("an exact resend of the fallback goes out as the fallback did", async () => {
+  it("an exact resend of the fallback requires reconciliation and preserves content", async () => {
+    const holdsBefore = new Set(listPaymentHolds().map((h) => h.key));
     const to = recipient();
     const key = `k:${to}`;
     emailMock.mockRejectedValueOnce(
@@ -303,7 +371,17 @@ describe("oneshot: a follow-up into the first email's thread", () => {
         { playName: "alpha" },
       ),
     ).rejects.toThrow(/may have gone out/);
-    // The sweep settles it; the next run resends the stored fallback content.
+    // A sweep alone cannot authorize another paid submission.
+    scratch.outboundSends.mark(key, "failed");
+    await expect(
+      sendEmail(
+        { to, subject: "Re: alpha", body: "b", idempotencyKey: key, thread },
+        { playName: "alpha" },
+      ),
+    ).rejects.toThrow(/may have gone out/);
+    expect(emailMock).toHaveBeenCalledTimes(2);
+    const hold = listPaymentHolds().find((h) => !holdsBefore.has(h.key))!;
+    resolvePaymentHold(hold.key, "Confirmed non-execution and reconciled payment");
     scratch.outboundSends.mark(key, "failed");
     await sendEmail(
       { to, subject: "Re: alpha", body: "b", idempotencyKey: key, thread },

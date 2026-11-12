@@ -6,7 +6,7 @@ Mail leaves through a pool of sender identities: OneShot sending domains, your o
 
 ## Adding identities
 
-- **OneShot domain and mailbox.** Setup, or `identities add`. Pick a provisioned domain or type a new one; it is provisioned on first send. `domains list`, `pause` and `resume` manage them.
+- **OneShot domain and mailbox.** Setup, or `identities add`. Pick an active address on a provisioned domain, or review and buy domain/address setup separately. Setup never sends an email. `domains list`, `pause` and `resume` manage them.
 - **Gmail or Workspace.** `gmail auth`, a one-time OAuth. It needs a Google Cloud Desktop client with the Gmail API on.
 - **Smartlead.** `smartlead connect`, or Setup. Smartlead warms and hosts the mailbox. oneshot-gtm sends through the mailbox's own SMTP when its credentials resolve, and through the Smartlead API otherwise. `doctor` names every mailbox still on the API and the command that switches it: `identities send-via <id> smtp`.
 
@@ -71,3 +71,38 @@ While a workspace's dashboard runs, it syncs each Smartlead mailbox about once a
 
 - **Bounces.** Read from connected Gmail mailboxes every 30 minutes. A hard bounce stops the cadence and suppresses the address. A policy block (`5.7.x`) stops the cadence too, since the next step would be refused the same way, but does not suppress the address: it is a verdict on the message, not the mailbox. `autoReply.stopOnBlock: false` keeps blocked cadences running. `doctor` warns above 2% per identity and fails above 5%, once an identity has 20 sends.
 - **Inbox placement.** `gmail placement` sends one real message between two of your mailboxes and reports where it landed, with the SPF, DKIM and DMARC verdicts. Run it by hand and rarely; repeated canaries train the receiving filter.
+
+### OneShot domain and address setup
+
+In Setup → Email, choose a domain, mode, and 1–10 comma-separated address local parts. Review the quoted total, billing terms and expiry, then explicitly confirm the purchase. A purchase is immediate and separate from saving configuration. Wait for an active address before adding it as a sender; refresh domain status while provisioning is pending.
+
+Relay is the default for new domains: addresses have no hosted inbox and are not warmed. Hosted mailbox addresses warm individually. Existing domains keep their mode. A blank sender mailbox uses the domain's main address; existing explicitly configured mailboxes remain explicit and must be provisioned.
+
+The CLI exposes the same flow. Replace `REVIEWED_QUOTE_ID` with the quote ID whose terms you accepted:
+
+```sh
+oneshot-gtm domains quote example.com --mode relay --addresses agent,sales --json
+oneshot-gtm domains buy example.com --quote-id REVIEWED_QUOTE_ID --json
+oneshot-gtm domains list
+oneshot-gtm identities add
+```
+
+For an existing domain, the quote prices additional addresses. An expired quote must be requested and reviewed again. Setup-required or setup-pending responses do not count as sent emails or advance a cadence.
+
+### Unresolved payments
+
+An ambiguous settlement does not mean a lookup found nothing. Payment status and execution status must be reconciled separately: only confirmed non-execution establishes that the operation did not run. A landed payment is credited to the wallet when OneShot confirms the call did not run.
+
+GTM retains a payment hold across processes and restarts, including when a process dies during a guarded call. Accepted jobs that time out or lose their polling connection also stay held, with their request ID retained; they may already have executed. Request deadlines with unknown acceptance retain the submission key when available. An unclassified transport or response-parsing failure also retains the hold because the paid submission may have executed. Explicit SDK refusals and terminal job failures can release it. The held operation is never retried automatically.
+
+Use `oneshot-gtm payments list --json` to inspect the operation and its identifiers. Confirm the execution outcome with OneShot before releasing the hold: a payment credit alone does not make retrying safe. If the operation completed, reconcile that result locally instead of repeating it. Reconciliation notes are stored atomically with the hold resolution in the private shared SQLite database; payment diagnostics contain only the hold key and method. Release for another attempt only after confirming non-execution and reconciling payment. Replace `HOLD_KEY` with the key shown by `payments list`:
+
+```sh
+oneshot-gtm payments resolve HOLD_KEY --note "OneShot confirmed non-execution and payment credited"
+```
+
+Releasing a hold permits a subsequent attempt; it does not itself purchase or send anything.
+
+If a purchase is confirmed complete but its hold remains (for example, local cleanup failed), verify the domain/address state with `oneshot-gtm domains list` and retain the completed result/receipt locally. Resolve `HOLD_KEY` with a note identifying the completed result; this atomically records the reconciliation and clears the hold. Do not replay the completed purchase. Domain purchases share a hold key across quotes, so clearing a reconciled completed purchase permits a later, separately reviewed address purchase for the same domain.
+
+OneShot replies require a persisted `sendRequestId` for each intended reply. The reply composer supplies it and retains it across edits and retries; both the payment hold and SDK idempotency key use that ID rather than editable message text.

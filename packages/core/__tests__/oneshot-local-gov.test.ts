@@ -74,6 +74,7 @@ const h = vi.hoisted(() => ({ ledger: null as unknown as import("../src/ledger.t
 
 vi.mock("@oneshot-agent/sdk", () => ({
   OneShot: class {
+    address = "0x-test-wallet";
     recordSolicitationsFind = govSolicitationsMock;
     businessFind = localSearchMock;
     businessResolve = localResolveMock;
@@ -155,6 +156,11 @@ describe("govSolicitations", () => {
 });
 
 describe("peopleSearch paging", () => {
+  it("sends an explicit default limit of 25", async () => {
+    await peopleSearch({ keywords: ["default-limit-test"] }, { playName: "local-business" });
+    expect(peopleSearchMock.mock.calls[0]![0]).toMatchObject({ limit: 25 });
+  });
+
   it("forwards `offset` so a finder can ask for the next page", async () => {
     await peopleSearch(
       { jobTitles: ["Head of AI"], limit: 40, offset: 80 },

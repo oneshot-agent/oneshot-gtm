@@ -1,3 +1,4 @@
+import { isSettlementAmbiguous } from "@oneshot-gtm/core";
 import {
   fetchProfileReadmeEmail,
   type GitHubIdentity,
@@ -300,6 +301,7 @@ export async function resolveViaProfileFallback(
       recordResolutionOutcome(false);
       profile = enriched.result.profile ?? null;
     } catch (err) {
+      if (isSettlementAmbiguous(err)) throw err;
       // Only a transient failure is an outage. A verdict ("could not find
       // data"), fresh or remembered by the paid cache, is a miss.
       if (isTransientToolError(err) && !isCachedPaidFailure(err)) {
@@ -350,6 +352,7 @@ export async function resolveViaProfileFallback(
       recordResolutionOutcome(false);
       email = workEmailFrom(dr.result.result?.enrichment);
     } catch (err) {
+      if (isSettlementAmbiguous(err)) throw err;
       // The dossier is the slowest call in the toolbox (2-5 min): running out
       // of time is no answer, not an outage. Neither is a verdict ("could not
       // find data"), fresh or remembered: only a transient failure is.

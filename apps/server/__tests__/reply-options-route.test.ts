@@ -155,6 +155,17 @@ beforeEach(() => {
     .mockResolvedValue(Response.json({ sent: true, id: "email-send", costUsd: 0 }));
 });
 describe("reply options API", () => {
+  it("forwards the persisted send ID for OneShot replies", async () => {
+    const t = seed();
+    t.email!.sourceProvider = "oneshot";
+    t.email!.sourceIdentityId = "oneshot:agent@example.com";
+    review.upsert("test", t);
+    review.saveDrafts(t.key, drafts(), null);
+    const sendId = "oneshot-reply-request-0001";
+    expect((await replySendRoute(req({ key: t.key, sendId, revision: 1 }))).status).toBe(200);
+    const forwarded = await (emailSend.mock.calls[0]![0] as Request).json();
+    expect(forwarded).toMatchObject({ sendRequestId: sendId, replyToEmailId: "in" });
+  });
   it.each([true, false])(
     "Gmail reply deadline reconciles through the status checker (in Sent: %s)",
     async (inSent) => {

@@ -113,6 +113,18 @@ export interface PaidCacheRow {
 /** Outcome of an atomic claim: either someone else holds this address, or we now do. */
 export type TouchClaim = { held: ContactTouch } | { reservationId: number };
 
+export interface PaymentHold {
+  key: string;
+  wallet: string;
+  method: string;
+  claim_token: string;
+  request_id: string | null;
+  idempotency_key: string | null;
+  execution_uncertain: number;
+  settlement_id: string | null;
+  created_at: string;
+}
+
 export class SharedDb {
   private db: Database;
   private importedFrom = new Set<string>();
@@ -128,9 +140,88 @@ export class SharedDb {
     SharedPeople.ensureSchema(this.db);
   }
 
+  claimPayment(key: string, wallet: string, method: string, claimToken: string): boolean {
+    return (
+      this.db.run(
+        "INSERT OR IGNORE INTO payment_holds(key,wallet,method,claim_token) VALUES(?,?,?,?)",
+        [key, wallet, method, claimToken],
+      ).changes === 1
+    );
+  }
+
+  holdPayment(
+    key: string,
+    claimToken: string,
+    details: {
+      settlementId?: string;
+      requestId?: string;
+      idempotencyKey?: string;
+      executionUncertain?: boolean;
+    },
+  ): void {
+    this.db.run(
+      "UPDATE payment_holds SET settlement_id=?, request_id=?, idempotency_key=?, execution_uncertain=? WHERE key=? AND claim_token=?",
+      [
+        details.settlementId ?? null,
+        details.requestId ?? null,
+        details.idempotencyKey ?? null,
+        details.executionUncertain ? 1 : 0,
+        key,
+        claimToken,
+      ],
+    );
+  }
+
+  paymentHolds(): PaymentHold[] {
+    return this.db.query<PaymentHold, []>("SELECT * FROM payment_holds ORDER BY created_at").all();
+  }
+
+  releasePayment(key: string, claimToken: string): boolean {
+    return (
+      this.db.run("DELETE FROM payment_holds WHERE key=? AND claim_token=?", [key, claimToken])
+        .changes === 1
+    );
+  }
+
+  /** The note and claim removal commit together in the private state database. */
+  resolvePayment(key: string, claimToken: string, note: string): boolean {
+    if (!note.trim()) throw new Error("A reconciliation note is required");
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const hold = this.db
+        .query<PaymentHold, [string, string]>(
+          "SELECT * FROM payment_holds WHERE key=? AND claim_token=?",
+        )
+        .get(key, claimToken);
+      if (!hold) {
+        this.db.exec("COMMIT");
+        return false;
+      }
+      this.db.run(
+        "INSERT INTO payment_resolutions(key,claim_token,hold_json,note) VALUES(?,?,?,?)",
+        [key, claimToken, JSON.stringify(hold), note.trim()],
+      );
+      if (!this.releasePayment(key, claimToken))
+        throw new Error("Payment hold changed during reconciliation");
+      this.db.exec("COMMIT");
+      return true;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
   private migrate(): void {
     // Same shapes as the ledger's tables, so importing legacy rows is a copy.
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS payment_holds (
+        key TEXT PRIMARY KEY, wallet TEXT NOT NULL, method TEXT NOT NULL,
+        settlement_id TEXT, claim_token TEXT NOT NULL, request_id TEXT, idempotency_key TEXT, execution_uncertain INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS payment_resolutions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, claim_token TEXT NOT NULL,
+        hold_json TEXT NOT NULL, note TEXT NOT NULL, resolved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
       CREATE TABLE IF NOT EXISTS enrichment_cache (
         email TEXT PRIMARY KEY,
         result_json TEXT NOT NULL,
@@ -226,6 +317,20 @@ export class SharedDb {
     // (SQLite's ALTER is not itself idempotent).
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      const paymentCols = this.db
+        .query<{ name: string }, []>("PRAGMA table_info(payment_holds)")
+        .all();
+      if (!paymentCols.some((c) => c.name === "claim_token")) {
+        this.db.exec("ALTER TABLE payment_holds ADD COLUMN claim_token TEXT NOT NULL DEFAULT ''");
+      }
+      for (const [name, definition] of [
+        ["request_id", "TEXT"],
+        ["idempotency_key", "TEXT"],
+        ["execution_uncertain", "INTEGER NOT NULL DEFAULT 0"],
+      ]) {
+        if (!paymentCols.some((c) => c.name === name))
+          this.db.exec(`ALTER TABLE payment_holds ADD COLUMN ${name} ${definition}`);
+      }
       const cols = this.db.query("PRAGMA table_info(contact_touches)").all() as Array<{
         name: string;
       }>;

@@ -72,6 +72,10 @@ import { commandSmartleadConnect } from "./commands/smartlead.ts";
 import { commandSendsCheck } from "./commands/sends.ts";
 import {
   commandDomainsList,
+  commandDomainsQuote,
+  commandDomainsBuy,
+  commandPaymentsList,
+  commandPaymentsResolve,
   commandDomainsPause,
   commandDomainsResume,
   commandIdentitiesAdd,
@@ -544,6 +548,34 @@ domains
   .command("pause <domain>")
   .description("Pause a sending domain (stop sending from it)")
   .action(runOrFail(commandDomainsPause));
+
+domains
+  .command("quote <domain>")
+  .description("Review the price and terms for a domain or additional addresses")
+  .option(
+    "--mode <mode>",
+    "relay or mailbox; existing domains keep their mode, new domains default to relay",
+  )
+  .option("--addresses <localparts>", "1–10 comma-separated local parts", "agent")
+  .option("--json", "output as JSON")
+  .action(runOrFail(commandDomainsQuote));
+domains
+  .command("buy <domain>")
+  .description("Purchase an explicitly accepted setup quote; never sends email")
+  .requiredOption("--quote-id <id>", "exact quote ID reviewed with domains quote")
+  .option("--json", "output as JSON")
+  .action(runOrFail(commandDomainsBuy));
+const payments = program.command("payments").description("Reconcile unresolved OneShot payments");
+payments
+  .command("list")
+  .description("List unresolved payments that need reconciliation")
+  .option("--json", "output as JSON")
+  .action(runOrFail(commandPaymentsList));
+payments
+  .command("resolve <hold-key>")
+  .description("Release a hold ONLY after checking settlement/credit; permits another attempt")
+  .requiredOption("--note <note>", "how the settlement was reconciled")
+  .action(runOrFail(commandPaymentsResolve));
 
 // Find: scheduled / cron-able only. Ad-hoc finder runs are in the dashboard.
 const find = program

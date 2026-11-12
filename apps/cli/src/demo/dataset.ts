@@ -2777,6 +2777,13 @@ function buildDomainsFixture(anchor: Date): unknown {
   return [
     {
       domain: "tracepoint.email",
+      default_from: "mira@tracepoint.email",
+      mailbox_mode: "mailbox",
+      warmup_state: "warmed",
+      addresses: [
+        { address: "mira@tracepoint.email", status: "active", warmup_state: "warmed" },
+        { address: "hey@tracepoint.email", status: "active", warmup_state: "warmed" },
+      ],
       pool_status: "active",
       provisioning_status: "provisioned",
       warmup_score: 87,
@@ -2788,9 +2795,16 @@ function buildDomainsFixture(anchor: Date): unknown {
     },
     {
       domain: "trace-mail.dev",
-      pool_status: "warming",
+      default_from: "agent@trace-mail.dev",
+      mailbox_mode: "relay",
+      warmup_state: "not_warmed",
+      addresses: [
+        { address: "agent@trace-mail.dev", status: "active", warmup_state: "not_warmed" },
+        { address: "mira@trace-mail.dev", status: "active", warmup_state: "not_warmed" },
+      ],
+      pool_status: "active",
       provisioning_status: "provisioned",
-      warmup_score: 34,
+      warmup_score: null,
       warmup_started_at: isoAt(anchor, 11, 12, 0),
       daily_send_limit: 20,
       daily_sent_count: 2,

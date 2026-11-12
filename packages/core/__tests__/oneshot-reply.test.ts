@@ -21,6 +21,7 @@ const emailMock = vi.hoisted(() =>
 );
 vi.mock("@oneshot-agent/sdk", () => ({
   OneShot: class {
+    address = "0x-test-wallet";
     email = emailMock;
   },
   ValidationError: class extends Error {},
@@ -67,6 +68,7 @@ vi.mock("../src/ledger.ts", async () => {
 
 const { replyEmail, replySubject, sendEmail } = await import("../src/oneshot.ts");
 const { _resetGmailCache } = await import("../src/gmail.ts");
+const { listPaymentHolds, resolvePaymentHold } = await import("../src/payment-holds.ts");
 const { Ledger } = await import("../src/ledger.ts");
 let scratch: InstanceType<typeof Ledger>;
 
@@ -342,6 +344,7 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
     const out = await replyEmail(
       {
         identityId: "legacy-oneshot",
+        sendRequestId: "reply-thread-test-0001",
         to: "pat@acme.com",
         subject: "beacon stack",
         body: "Hey Pat, fair point.",
@@ -376,16 +379,20 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
     );
   });
 
-  it("derives a stable idempotency key (same content → same key; different body → different key)", async () => {
+  it("keys a reply by its persisted request ID across body edits", async () => {
     const base = {
       identityId: "legacy-oneshot",
+      sendRequestId: "reply-stable-test-0001",
       to: "pat@acme.com",
       subject: "re: x",
       replyToEmailId: "inbox-abc",
     };
     await replyEmail({ ...base, body: "same body" }, { playName: "inbox-reply" });
-    await replyEmail({ ...base, body: "same body" }, { playName: "inbox-reply" });
     await replyEmail({ ...base, body: "DIFFERENT body" }, { playName: "inbox-reply" });
+    await replyEmail(
+      { ...base, sendRequestId: "reply-stable-test-0002", body: "same body" },
+      { playName: "inbox-reply" },
+    );
     const keys = emailMock.mock.calls.map(
       (c) => (c[0] as { idempotencyKey: string }).idempotencyKey,
     );
@@ -395,12 +402,53 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
 
   it("degrades to a fresh send (no reply_to_email_id) when the inbound id is absent", async () => {
     await replyEmail(
-      { identityId: "legacy-oneshot", to: "pat@acme.com", subject: "ping", body: "b" },
+      {
+        identityId: "legacy-oneshot",
+        sendRequestId: "reply-fresh-test-0001",
+        to: "pat@acme.com",
+        subject: "ping",
+        body: "b",
+      },
       { playName: "inbox-reply" },
     );
     const opts = emailMock.mock.calls[0]![0] as { reply_to_email_id?: string; subject?: string };
     expect(opts.reply_to_email_id).toBeUndefined();
     expect(opts.subject).toBe("Re: ping");
+  });
+
+  it("requires a persisted ID before dispatching a OneShot reply", async () => {
+    await expect(
+      replyEmail(
+        { identityId: "legacy-oneshot", to: "pat@acme.com", subject: "hello", body: "body" },
+        { playName: "inbox-reply" },
+      ),
+    ).rejects.toThrow(/persisted send request ID/);
+    expect(emailMock).not.toHaveBeenCalled();
+    expect(recordReceipt).not.toHaveBeenCalled();
+  });
+  it("a revised reply cannot bypass the unresolved original operation", async () => {
+    const input = {
+      identityId: "legacy-oneshot",
+      sendRequestId: "reply-held-test-0001",
+      to: "pat@acme.com",
+      subject: "hello",
+      body: "first",
+    };
+    const before = new Set(listPaymentHolds().map((h) => h.key));
+    emailMock.mockRejectedValueOnce(new TypeError("fetch failed"));
+    await expect(replyEmail(input, { playName: "inbox-reply" })).rejects.toMatchObject({
+      name: "PaymentHeldError",
+    });
+    await expect(
+      replyEmail({ ...input, body: "revised" }, { playName: "inbox-reply" }),
+    ).rejects.toMatchObject({ name: "PaymentHeldError" });
+    expect(emailMock).toHaveBeenCalledTimes(1);
+    const hold = listPaymentHolds().find((h) => !before.has(h.key))!;
+    resolvePaymentHold(hold.key, "Confirmed not executed and payment reconciled");
+    await replyEmail({ ...input, body: "revised" }, { playName: "inbox-reply" });
+    expect(emailMock.mock.calls[1]![0].idempotencyKey).toBe(
+      emailMock.mock.calls[0]![0].idempotencyKey,
+    );
   });
 
   it("sendEmail (the main cadence/queue path) also carries an idempotency key", async () => {
@@ -419,6 +467,7 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
 
   it("after an unknown outcome, a re-drafted retry resends the first content under its SDK key", async () => {
     const { UncertainSendError } = await import("../src/oneshot.ts");
+    const holdsBefore = new Set(listPaymentHolds().map((h) => h.key));
     const key = "gtm:test:email:show-hn:pat@acme.com:0";
     emailMock.mockRejectedValueOnce(new Error("Job timed out after 120s"));
     await expect(
@@ -428,7 +477,11 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
       ),
     ).rejects.toBeInstanceOf(UncertainSendError);
     expect(scratch.outboundSends.get(key)?.status).toBe("uncertain");
-    // The sweep settles it once the window has passed.
+    // Explicit reconciliation permits replaying the stored content.
+    resolvePaymentHold(
+      listPaymentHolds().find((h) => !holdsBefore.has(h.key))!.key,
+      "Confirmed non-execution and payment reconciled",
+    );
     scratch.outboundSends.mark(key, "failed");
     await sendEmail(
       { to: "pat@acme.com", subject: "rewritten", body: "new body", idempotencyKey: key },
@@ -443,6 +496,7 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
   });
 
   it("a retry goes to the recipient first claimed, under the first attempt's SDK key (#905)", async () => {
+    const holdsBefore = new Set(listPaymentHolds().map((h) => h.key));
     const key = "gtm:test:email:show-hn:kim@acme.com:0";
     emailMock.mockRejectedValueOnce(new Error("Job timed out after 120s"));
     await expect(
@@ -451,6 +505,10 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
         { playName: "show-hn" },
       ),
     ).rejects.toThrow();
+    resolvePaymentHold(
+      listPaymentHolds().find((h) => !holdsBefore.has(h.key))!.key,
+      "Confirmed non-execution and payment reconciled",
+    );
     scratch.outboundSends.mark(key, "failed");
     await sendEmail(
       { to: "someone-else@other.com", subject: "first", body: "first body", idempotencyKey: key },
@@ -465,7 +523,12 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
 
   it("an explicit platform rejection is definite: the retry may send the new draft", async () => {
     const key = "gtm:test:email:show-hn:sam@acme.com:0";
-    emailMock.mockRejectedValueOnce(new Error("Request failed (422): invalid recipient"));
+    emailMock.mockRejectedValueOnce(
+      Object.assign(new Error("Request failed (422): invalid recipient"), {
+        name: "ToolError",
+        statusCode: 422,
+      }),
+    );
     await expect(
       sendEmail(
         { to: "sam@acme.com", subject: "first", body: "b", idempotencyKey: key },

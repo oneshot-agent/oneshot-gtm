@@ -1,3 +1,8 @@
+import {
+  isSettlementAmbiguous,
+  isLocalPaymentRefusal,
+  isPaymentExecutionUncertain,
+} from "./payment-holds.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { logEvent } from "./events.ts";
 
@@ -50,7 +55,10 @@ function str(v: unknown): string | undefined {
 
 /** The kind of OneShot failure an error is, or null when it is an answer about the input. */
 export function classifyPlatformError(err: unknown): PlatformError | null {
-  if (!err) return null;
+  if (!err || isLocalPaymentRefusal(err)) return null;
+  if (isPaymentExecutionUncertain(err))
+    return { kind: "unavailable", reason: "paid_call_outcome_unresolved" };
+  if (isSettlementAmbiguous(err)) return { kind: "payment", reason: "settlement_ambiguous" };
   if (err instanceof PlatformUnavailableError) return { kind: err.kind, reason: err.reason };
   const e = err as {
     name?: unknown;
@@ -314,6 +322,11 @@ interface Probes {
 function observe(method: string, args: unknown[], err: unknown | null, probes: Probes): void {
   const now = Date.now();
   const key = methodKey(method, args);
+  if (isLocalPaymentRefusal(err)) {
+    releaseProbe("platform", probes.platform);
+    releaseProbe(key, probes.tool);
+    return;
+  }
   if (err === null) {
     record("platform", null, now, probes.platform);
     record(key, null, now, probes.tool);

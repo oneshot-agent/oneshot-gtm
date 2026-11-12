@@ -15,6 +15,13 @@ vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
+    listSendingDomains: async () => [
+      {
+        domain: "acme.email",
+        default_from: "agent@acme.email",
+        addresses: [{ address: "agent@acme.email", status: "active" }],
+      },
+    ],
     listSmartleadAccounts: (key?: string) => listMock(key),
     smartleadApiKey: () => storedKey,
     registerSmartleadIdentity: registerSmartleadMock,

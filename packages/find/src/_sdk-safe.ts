@@ -1,4 +1,5 @@
 import {
+  isSettlementAmbiguous,
   type CompanySearchInput,
   companySearch,
   deepResearchPerson,
@@ -59,6 +60,7 @@ export async function safeFindEmail(
   try {
     return await findEmail(input, ctx, cache);
   } catch (err) {
+    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "find_email", err);
     // cost 0 / receiptId 0 mirror a cache hit: nothing was spent on this row.
     // A ValidationError is the SDK refusing the CALL (nothing was sent, nothing
@@ -90,6 +92,7 @@ export async function safeVerifyEmail(
   try {
     return await verifyEmail(input, ctx, cache);
   } catch (err) {
+    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "verify_email", err);
     return {
       result: {
@@ -132,6 +135,7 @@ export async function safePeopleSearch(
       "peopleSearch",
     );
   } catch (err) {
+    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "people_search", err);
     return { result: { status: "error", results: [], total_found: 0, cost: 0 }, receiptId: 0 };
   }
@@ -173,6 +177,7 @@ export async function safeCompanySearch(
       "companySearch",
     );
   } catch (err) {
+    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "company_search", err);
     const cost = chargedOnDeadline(err, "companySearch", 0.01);
     return { result: { status: "error", results: [], total_found: 0, cost }, receiptId: 0 };
@@ -195,6 +200,7 @@ export async function safeEnrichCompany(
       "enrichCompany",
     );
   } catch (err) {
+    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "enrich_company", err);
     const cost = chargedOnDeadline(err, "enrichCompany", 0.005);
     return { result: { status: "error", company: {}, cost }, receiptId: 0 };
@@ -214,6 +220,7 @@ export async function safeGovSolicitations(
   try {
     return await govSolicitations(input, ctx, cache);
   } catch (err) {
+    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "gov_solicitations", err);
     return {
       result: {
@@ -238,6 +245,7 @@ export async function safeLocalSearch(
   try {
     return await localSearch(input, ctx, cache);
   } catch (err) {
+    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "local_search", err);
     return {
       result: {
@@ -264,6 +272,7 @@ export async function safeLocalResolve(
   try {
     return await localResolve(input, ctx, cache);
   } catch (err) {
+    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "local_resolve", err);
     return {
       result: {
@@ -320,6 +329,7 @@ export async function safeDeepResearchPerson(
     live.catch(() => undefined);
     return await withDeadline(live, RESEARCH_DEADLINE_MS, "deepResearchPerson");
   } catch (err) {
+    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "deep_research_person", err);
     return { result: FAILED_RESEARCH, receiptId: 0 };
   }

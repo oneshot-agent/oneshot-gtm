@@ -99,6 +99,10 @@ function identityViews(cfg: OneShotConfig): SenderIdentityView[] {
 function domainViews(entries: DomainPoolEntry[]): DomainPoolView[] {
   return entries.map((d) => ({
     domain: d.domain,
+    defaultFrom: d.default_from,
+    mailboxMode: d.mailbox_mode,
+    warmupState: d.warmup_state,
+    addresses: d.addresses,
     poolStatus: d.pool_status,
     warmupScore: d.warmup_score,
     dailySendLimit: d.daily_send_limit,
@@ -126,26 +130,28 @@ const DOMAIN_CACHE_FRESH_MS = 60_000;
  */
 let domainCache: { views: DomainPoolView[]; at: number } | null = null;
 let domainInflight: Promise<DomainPoolView[]> | null = null;
+let domainGeneration = 0;
 /** When the platform last answered empty (or failed): "unknown", not cached, but not re-asked on every page load either. */
 let lastEmptyAt = 0;
 
 /** Test seam: forget the cached pool between cases. */
 export function resetDomainCacheForTests(): void {
-  domainCache = null;
-  domainInflight = null;
-  lastEmptyAt = 0;
+  invalidateDomainViews();
 }
 
 function refreshDomainViews(): Promise<DomainPoolView[]> {
   if (domainInflight) return domainInflight;
-  const p = listSendingDomains()
+  const generation = domainGeneration;
+  const p: Promise<DomainPoolView[]> = listSendingDomains()
     .then((entries) => {
+      if (generation !== domainGeneration) return domainCache?.views ?? refreshDomainViews();
       const views = domainViews(entries);
       if (views.length > 0) domainCache = { views, at: Date.now() };
       else lastEmptyAt = Date.now();
       return views;
     })
     .catch((err: unknown) => {
+      if (generation !== domainGeneration) return domainCache?.views ?? refreshDomainViews();
       lastEmptyAt = Date.now();
       throw err;
     })
@@ -191,7 +197,10 @@ async function cachedDomainViews(): Promise<DomainPoolView[]> {
 
 /** GET /api/setup/domains. The provisioned pool alone, for the sender picker. */
 export async function getSetupDomains(req: Request): Promise<Response> {
-  const fresh = domainCache && Date.now() - domainCache.at <= DOMAIN_CACHE_FRESH_MS;
+  const fresh =
+    new URL(req.url).searchParams.get("refresh") !== "1" &&
+    domainCache &&
+    Date.now() - domainCache.at <= DOMAIN_CACHE_FRESH_MS;
   return jsonResponse(
     {
       provisionedDomains: fresh
@@ -411,6 +420,7 @@ export async function setup(req: Request): Promise<Response> {
   const body = (await req.json()) as SetupRequest;
   let sendViaNotices: SendViaNotice[] = [];
   try {
+    await validateNewOneShotSenders(body);
     await validateSendViaUpdates(body);
     sendViaNotices = await resolveNewSmartleadSendVia(body);
     applySetup(body);
@@ -430,6 +440,42 @@ export async function setup(req: Request): Promise<Response> {
     200,
     req,
   );
+}
+
+/** Resolve new sender addresses before any configuration is persisted. */
+async function validateNewOneShotSenders(body: SetupRequest): Promise<void> {
+  const adds = (body.addIdentities ?? []).filter((add) => add.provider === "oneshot");
+  const current = loadConfig();
+  const nextDomain = mergeString(body.sendingDomain, current.sendingDomain);
+  const nextProvider = body.emailProvider ?? current.emailProvider;
+  const legacy =
+    !current.emailIdentities?.length &&
+    nextProvider === "oneshot" &&
+    nextDomain &&
+    (nextDomain !== current.sendingDomain || nextProvider !== current.emailProvider)
+      ? { sendingDomain: nextDomain, mailbox: undefined as string | undefined }
+      : null;
+  const candidates = legacy ? [...adds, legacy] : adds;
+  if (candidates.length === 0) return;
+  const domains = await listSendingDomains();
+  for (const add of candidates) {
+    const domain = domains.find((d) => d.domain === add.sendingDomain?.trim().toLowerCase());
+    const mailbox = add.mailbox?.trim().toLowerCase() || domain?.default_from?.split("@")[0];
+    if (
+      !domain ||
+      !mailbox ||
+      !domain.addresses?.some(
+        (a) => a.address === `${mailbox}@${domain.domain}` && a.status === "active",
+      )
+    ) {
+      throw new SetupValidationError(
+        "Set up the OneShot domain and address first, then wait until the address is active before adding the sender.",
+      );
+    }
+    add.sendingDomain = domain.domain;
+    add.mailbox = mailbox;
+  }
+  if (legacy) body.sendingDomain = legacy.sendingDomain;
 }
 
 interface SendViaNotice {
@@ -518,9 +564,8 @@ function applySetup(body: SetupRequest): void {
   const llmProvider: LlmProvider = body.llmProvider ?? current.llmProvider;
   const walletMode: WalletMode = body.walletMode ?? current.walletMode;
 
-  // New domains are valid: pinned sends auto-provision them on first use.
-  // Pinned sends bypass platform warmup gating, so new identities default to
-  // the client-side warmup ramp for deliverability.
+  // OneShot adds were checked against active addresses before entering this
+  // synchronous apply. Client-side caps remain independent of provisioning.
   const adds = body.addIdentities ?? [];
   for (const add of adds) {
     if ("maxPerDay" in add && add.maxPerDay !== undefined) {
@@ -1117,4 +1162,11 @@ function mergeTimeZone(incoming: string | null | undefined, current: string | nu
     );
   }
   return zone;
+}
+
+export function invalidateDomainViews(): void {
+  domainGeneration += 1;
+  domainInflight = null;
+  lastEmptyAt = 0;
+  domainCache = null;
 }
