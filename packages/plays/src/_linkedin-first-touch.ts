@@ -27,6 +27,7 @@ import {
   type LinkedInJobOutcome,
   type LinkedInOperation,
   sliceText,
+  queuePayloadIdentity,
 } from "@oneshot-gtm/core";
 import { loadPrompt } from "@oneshot-gtm/intel";
 import { enrollInCadence } from "./_cadence.ts";
@@ -419,6 +420,7 @@ function inviteVerdict(
     name: str(p, "name"),
     company: str(p, "company"),
     email: str(p, "email", "founderEmail"),
+    identity: queuePayloadIdentity(p),
     linkedinUrl: str(p, "linkedinUrl"),
     icpVerdict: str(p, "icpVerdict"),
     icpOverridden: typeof override === "object" && override !== null,
@@ -820,6 +822,7 @@ export function recordKnownConnection(input: {
     name: str(p, "name"),
     company: str(p, "company"),
     email: str(p, "email", "founderEmail"),
+    identity: queuePayloadIdentity(p),
     linkedinUrl: str(p, "linkedinUrl"),
     icpVerdict: str(p, "icpVerdict"),
     icpOverridden: typeof override === "object" && override !== null,

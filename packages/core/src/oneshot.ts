@@ -985,12 +985,14 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
       `${input.to} ${why} (${contactStop.kind} reply on ${contactStop.received_at.slice(0, 10)}) — not sending`,
     );
   }
-  // A company on the do-not-contact list, by the address's domain or the
-  // company stored for this prospect (read only when the list names one).
+  // A company on the do-not-contact list: by the address's domain, or by what
+  // the prospect and their queue rows name (company, stated domain, website).
+  // Read only when the list has an entry.
   const dnc = currentDoNotContact();
-  const company =
-    dnc.companies.length > 0 ? (getLedger().getProspectByEmail(input.to)?.company ?? null) : null;
-  const blocked = doNotContactMatch({ email: input.to, company }, dnc);
+  const blocked =
+    dnc.domains.length > 0 || dnc.companies.length > 0
+      ? doNotContactMatch(getLedger().contactIdentityFor({ email: input.to }), dnc)
+      : null;
   if (blocked) {
     throw new SuppressedRecipientError(
       `${input.to}: ${describeDoNotContact(blocked)} — not sending`,

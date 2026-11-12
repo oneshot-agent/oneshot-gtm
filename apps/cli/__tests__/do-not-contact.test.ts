@@ -57,16 +57,16 @@ function cadence(email: string, company: string): number {
 
 describe("find do-not-contact", () => {
   it("does nothing with an empty list", async () => {
-    const id = row("a", { email: "a@example-dental.com", company: "Example Dental" });
+    const id = row("a", { email: "a@dental.example", company: "Example Dental" });
     const out = await commandDoNotContact({ dryRun: false });
-    expect(out).toEqual({ rows: [], cadences: [] });
+    expect(out).toEqual({ rows: [], cadences: [], skipped: [] });
     expect(ledger.getQueueRow(id)!.status).toBe("pending");
   });
 
   it("a dry run lists the matches and changes nothing", async () => {
     const id = row("a", { email: "a@other.com", company: "Example Dental, PLLC" });
-    const prospect = cadence("b@example-dental.com", "Elsewhere");
-    doNotContact = { domains: ["example-dental.com"], companies: ["Example Dental"] };
+    const prospect = cadence("b@dental.example", "Elsewhere");
+    doNotContact = { domains: ["dental.example"], companies: ["Example Dental"] };
     const out = await commandDoNotContact({ dryRun: true });
     expect(out.rows).toHaveLength(1);
     expect(out.cadences).toHaveLength(1);
@@ -76,12 +76,12 @@ describe("find do-not-contact", () => {
 
   it("rejects unsent rows and stops active cadences at a listed company, and leaves the rest", async () => {
     const pending = row("a", { email: "a@other.com", company: "Example Dental" });
-    const approved = row("b", { email: "b@example-dental.com", company: "Elsewhere" });
+    const approved = row("b", { email: "b@dental.example", company: "Elsewhere" });
     ledger.setQueueStatus({ id: approved, status: "approved" });
     const kept = row("c", { email: "c@acme.com", company: "Acme" });
     const stopped = cadence("d@other.com", "Example Dental of Springfield");
     const live = cadence("e@acme.com", "Acme");
-    doNotContact = { domains: ["example-dental.com"], companies: ["Example Dental"] };
+    doNotContact = { domains: ["dental.example"], companies: ["Example Dental"] };
 
     const out = await commandDoNotContact({ dryRun: false });
 
@@ -96,5 +96,22 @@ describe("find do-not-contact", () => {
     expect(cad.status).toBe("stopped");
     expect(cad.stop_reason).toBe("do_not_contact");
     expect(ledger.getCadence(live, PLAY)!.status).toBe("active");
+  });
+
+  it("leaves a row a send has claimed, and stops a cadence by its row's website", async () => {
+    const claimed = row("a", { email: "a@dental.example" });
+    ledger.setQueueStatus({ id: claimed, status: "approved" });
+    expect(
+      ledger.claimQueueSendingMarker({ id: claimed, startedAtIso: new Date().toISOString() }),
+    ).toBe(true);
+    const prospect = cadence("f@gmail.example", "Elsewhere");
+    row("f", { email: "f@gmail.example", website: "https://dental.example" });
+    doNotContact = { domains: ["dental.example"] };
+
+    const out = await commandDoNotContact({ dryRun: false });
+
+    expect(out.skipped).toHaveLength(1);
+    expect(ledger.getQueueRow(claimed)!.status).toBe("approved");
+    expect(ledger.getCadence(prospect, PLAY)!.stop_reason).toBe("do_not_contact");
   });
 });

@@ -534,6 +534,44 @@ export class QueueStore {
     }
   }
 
+  /** The payloads of every queue row for this prospect, by link or by address. */
+  contactPayloadsFor(input: { prospectId?: number | null; email?: string | null }): string[] {
+    const email = input.email?.trim().toLowerCase() || null;
+    if (input.prospectId == null && !email) return [];
+    const rows = this.db
+      .query(
+        `SELECT payload_json FROM target_queue
+         WHERE ($pid IS NOT NULL AND prospect_id = $pid)
+            OR ($email IS NOT NULL AND json_valid(payload_json) AND (
+                 lower(json_extract(payload_json, '$.email')) = $email
+              OR lower(json_extract(payload_json, '$.founderEmail')) = $email))`,
+      )
+      .all({ $pid: input.prospectId ?? null, $email: email }) as Array<{ payload_json: string }>;
+    return rows.map((r) => r.payload_json);
+  }
+
+  /**
+   * Reject a row for the do-not-contact list, only while it is still unsent
+   * and no live send or drain claim holds it. False when the row was sent,
+   * is being sent, or is gone.
+   */
+  rejectUnsentForDoNotContact(id: number, notes: string): boolean {
+    const now = new Date().toISOString();
+    // A drain claim past its lease no longer holds the row.
+    const cutoff = new Date(Date.now() - DRAIN_LEASE_SECONDS * 1000).toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE target_queue
+         SET status = 'rejected', reviewed_at = $now, decision = 'auto_reject', decided_at = $now,
+             decided_by = 'machine', notes = $notes
+         WHERE id = $id AND status IN ('pending', 'approved') AND sent_at IS NULL
+           AND send_started_at IS NULL
+           AND (drain_claimed_at IS NULL OR drain_claimed_at < $cutoff)`,
+      )
+      .run({ $id: id, $now: now, $notes: notes, $cutoff: cutoff });
+    return result.changes > 0;
+  }
+
   isQueueDuplicate(playName: string, dedupeKey: string): boolean {
     const row = this.db
       .query("SELECT 1 FROM target_queue WHERE play_name = ? AND dedupe_key = ?")

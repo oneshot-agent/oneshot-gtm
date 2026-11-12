@@ -14,14 +14,14 @@ function writeList(doNotContact: unknown): void {
   writeFileSync(configFile(), JSON.stringify({ doNotContact }));
 }
 
-const LIST = { domains: ["example-dental.com"], companies: ["Example Dental"] };
+const LIST = { domains: ["dental.example"], companies: ["Example Dental"] };
 
 describe("doNotContactOf", () => {
   it("reduces domains to bare hosts and drops blanks and repeats", () => {
     expect(
       doNotContactOf({
         doNotContact: {
-          domains: ["https://www.Example-Dental.com/about", "example-dental.com", " ", 7],
+          domains: ["https://www.Dental.Example/about", "dental.example", " ", 7],
           companies: ["  Example   Dental ", "Example Dental", ""],
         },
       }),
@@ -41,6 +41,12 @@ describe("doNotContactOf", () => {
     expect(bareDomain("http://www.example.com:8080/x?y")).toBe("example.com");
     expect(bareDomain("localhost")).toBeNull();
   });
+
+  it("bareDomain cuts the path before reading an `@`", () => {
+    expect(bareDomain("https://www.dental.example/@team")).toBe("dental.example");
+    expect(bareDomain("www.dental.example/@team")).toBe("dental.example");
+    expect(bareDomain("https://user@dental.example/x")).toBe("dental.example");
+  });
 });
 
 describe("currentDoNotContact", () => {
@@ -52,19 +58,28 @@ describe("currentDoNotContact", () => {
     writeList({ companies: ["Example Dental"] });
     expect(currentDoNotContact().companies).toEqual(["Example Dental"]);
   });
+
+  it("keeps the last list while the file does not parse", () => {
+    writeList({ companies: ["Example Dental"] });
+    expect(currentDoNotContact().companies).toEqual(["Example Dental"]);
+    writeFileSync(configFile(), '{"doNotContact": {"companies": [');
+    expect(currentDoNotContact().companies).toEqual(["Example Dental"]);
+    writeList({ companies: ["Other Group"] });
+    expect(currentDoNotContact().companies).toEqual(["Other Group"]);
+  });
 });
 
 describe("doNotContactMatch", () => {
   it("matches the email's domain and any subdomain of a listed one", () => {
-    expect(doNotContactMatch({ email: "dana@example-dental.com" }, LIST)).toEqual({
+    expect(doNotContactMatch({ email: "dana@dental.example" }, LIST)).toEqual({
       kind: "domain",
-      entry: "example-dental.com",
+      entry: "dental.example",
     });
-    expect(doNotContactMatch({ email: "dana@mail.example-dental.com" }, LIST)?.kind).toBe("domain");
-    expect(doNotContactMatch({ website: "https://www.example-dental.com/team" }, LIST)?.kind).toBe(
+    expect(doNotContactMatch({ email: "dana@mail.dental.example" }, LIST)?.kind).toBe("domain");
+    expect(doNotContactMatch({ website: "https://www.dental.example/team" }, LIST)?.kind).toBe(
       "domain",
     );
-    expect(doNotContactMatch({ email: "dana@notexample-dental.com" }, LIST)).toBeNull();
+    expect(doNotContactMatch({ email: "dana@notdental.example" }, LIST)).toBeNull();
   });
 
   it("matches the company name with its legal form or a place added", () => {
@@ -88,6 +103,12 @@ describe("doNotContactMatch", () => {
     expect(doNotContactMatch({ company: "Dental Example" }, LIST)).toBeNull();
   });
 
+  it("keeps the form words of an entry made only of them", () => {
+    const list = { domains: [], companies: ["The Limited"] };
+    expect(doNotContactMatch({ company: "The Limited, Inc." }, list)?.kind).toBe("company");
+    expect(doNotContactMatch({ company: "Limited Brands" }, list)).toBeNull();
+  });
+
   it("checks every value a field holds", () => {
     expect(
       doNotContactMatch({ company: ["Acme", "Example Dental"], email: [null, "a@acme.com"] }, LIST)
@@ -98,7 +119,7 @@ describe("doNotContactMatch", () => {
   it("blocks nobody with an empty list", () => {
     const empty = { domains: [], companies: [] };
     expect(
-      doNotContactMatch({ email: "dana@example-dental.com", company: "Example Dental" }, empty),
+      doNotContactMatch({ email: "dana@dental.example", company: "Example Dental" }, empty),
     ).toBeNull();
   });
 
@@ -158,12 +179,72 @@ describe("the gates", () => {
     expect(ledger.getQueueRow(id!)!.status).toBe("pending");
   });
 
+  it("finds a prospect's company through the website their queue row names", () => {
+    rmSync(configFile(), { force: true });
+    ledger.enqueueTarget({
+      playName: "design-partner-loi",
+      payload: { name: "Dana Lee", email: "dana@gmail.example", website: "https://dental.example" },
+      dedupeKey: "dana",
+      source: "test",
+    });
+    const id = ledger.upsertProspect({ name: "Dana Lee", email: "dana@gmail.example" });
+    writeList(LIST);
+    expect(doNotContactMatch(ledger.contactIdentityFor({ prospectId: id }), LIST)?.kind).toBe(
+      "domain",
+    );
+    expect(
+      canInviteOnLinkedIn(
+        {
+          prospectId: id,
+          name: "Dana Lee",
+          email: "dana@gmail.example",
+          linkedinUrl: "https://www.linkedin.com/in/dana-lee",
+        },
+        { ledger, shared, inbox: { hasConversationWith: () => false } },
+      ),
+    ).toMatchObject({ ok: false, reason: "do-not-contact" });
+  });
+
+  it("rejects an unsent row and leaves a sent one", () => {
+    rmSync(configFile(), { force: true });
+    const unsent = ledger.enqueueTarget({
+      playName: "p",
+      payload: { email: "a@dental.example" },
+      dedupeKey: "a",
+      source: "test",
+    })!;
+    const sent = ledger.enqueueTarget({
+      playName: "p",
+      payload: { email: "b@dental.example" },
+      dedupeKey: "b",
+      source: "test",
+    })!;
+    ledger.setQueueStatus({ id: sent, status: "sent" });
+    expect(ledger.rejectUnsentForDoNotContact(unsent, "auto: do-not-contact — x")).toBe(true);
+    expect(ledger.rejectUnsentForDoNotContact(sent, "auto: do-not-contact — x")).toBe(false);
+    expect(ledger.getQueueRow(sent)!.status).toBe("sent");
+  });
+
+  it("refuses an invite by the website the row names", () => {
+    const verdict = canInviteOnLinkedIn(
+      {
+        name: "Dana Lee",
+        company: "Acme",
+        email: "dana@gmail.example",
+        identity: { website: "https://www.dental.example" },
+        linkedinUrl: "https://www.linkedin.com/in/dana-lee",
+      },
+      { ledger, shared, inbox: { hasConversationWith: () => false } },
+    );
+    expect(verdict).toMatchObject({ ok: false, reason: "do-not-contact" });
+  });
+
   it("refuses a LinkedIn invite to someone at a listed company", () => {
     const verdict = canInviteOnLinkedIn(
       {
         name: "Dana Lee",
         company: "Acme",
-        email: "dana@example-dental.com",
+        email: "dana@dental.example",
         linkedinUrl: "https://www.linkedin.com/in/dana-lee",
       },
       { ledger, shared, inbox: { hasConversationWith: () => false } },

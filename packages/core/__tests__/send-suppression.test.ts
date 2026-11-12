@@ -38,7 +38,7 @@ vi.mock("../src/ledger.ts", async () => {
     getLedger: () => ({
       suppressionFor: () => suppression,
       contactSuppressionFor: () => contactSuppression,
-      getProspectByEmail: () => (storedCompany ? { company: storedCompany } : null),
+      contactIdentityFor: ({ email }: { email: string }) => ({ email, company: storedCompany }),
       getSenderAssignment,
       assignSender,
       recordReceipt,

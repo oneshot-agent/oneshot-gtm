@@ -52,12 +52,16 @@ const FORM_WORDS = new Set([
   "md",
 ]);
 
-function companyTokens(name: string): string[] {
+function words(name: string): string[] {
   return name
     .toLowerCase()
     .replace(/&/g, " and ")
     .split(/[^a-z0-9]+/)
-    .filter((token) => token && !FORM_WORDS.has(token));
+    .filter(Boolean);
+}
+
+function companyTokens(name: string): string[] {
+  return words(name).filter((token) => !FORM_WORDS.has(token));
 }
 
 /** `needle`'s tokens appear in `hay` in order, side by side. */
@@ -96,10 +100,15 @@ export function doNotContactMatch(
     }
   }
   if (list.companies.length > 0) {
-    const names = values(identity.company).map(companyTokens);
+    const names = values(identity.company);
     for (const entry of list.companies) {
-      const blocked = companyTokens(entry);
-      if (names.some((tokens) => containsRun(tokens, blocked))) return { kind: "company", entry };
+      // An entry made only of form words ("The Limited") keeps them, and is
+      // then matched against names that keep theirs.
+      const bare = companyTokens(entry);
+      const [blocked, tokensOf] = bare.length > 0 ? [bare, companyTokens] : [words(entry), words];
+      if (names.some((name) => containsRun(tokensOf(name), blocked))) {
+        return { kind: "company", entry };
+      }
     }
   }
   return null;
@@ -120,6 +129,17 @@ export function queuePayloadIdentity(payload: unknown): ContactIdentity {
     company: strings(p, ["company", "companyName", "organization", "guestCompany", "newCompany"]),
     domain: strings(p, ["companyDomain", "domain", "guestCompanyDomain", "newCompanyDomain"]),
     website: strings(p, ["website", "websiteUrl"]),
+  };
+}
+
+/** Every value of several identities, field by field, as one. */
+export function mergeContactIdentities(...identities: ContactIdentity[]): ContactIdentity {
+  const field = (key: keyof ContactIdentity) => identities.flatMap((id) => values(id[key]));
+  return {
+    email: field("email"),
+    company: field("company"),
+    domain: field("domain"),
+    website: field("website"),
   };
 }
 

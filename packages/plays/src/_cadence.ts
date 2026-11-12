@@ -1765,10 +1765,17 @@ export async function runCadenceStepForProspect(
   // do-not-contact, which also withdraws a pending LinkedIn invite. A preview
   // only reports it.
   {
-    const blocked = doNotContactMatch(
-      { email: cadence.prospect_email, company: cadence.prospect_company },
-      doNotContactOf(cfg),
-    );
+    const list = doNotContactOf(cfg);
+    const blocked =
+      list.domains.length > 0 || list.companies.length > 0
+        ? doNotContactMatch(
+            ledger.contactIdentityFor({
+              prospectId: opts.prospectId,
+              email: cadence.prospect_email,
+            }),
+            list,
+          )
+        : null;
     if (blocked) {
       if (!opts.dryRun) {
         ledger.stopCadence({

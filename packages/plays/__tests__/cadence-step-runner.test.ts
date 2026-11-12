@@ -70,6 +70,8 @@ let meetingOutcome: { outcome: string; note: string | null; summary: string | nu
 const stopCalls: Array<{ prospectId: number; playName: string; reason: string; note?: string }> =
   [];
 let doNotContact: { domains?: string[]; companies?: string[] } | undefined;
+/** The website the prospect's queue row names, if any. */
+let queueWebsite: string | null = null;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -139,6 +141,11 @@ vi.mock("@oneshot-gtm/core", async () => {
       suppressionFor: () => suppression,
       contactSuppressionFor: () => contactSuppression,
       latestMeetingOutcomeFor: () => meetingOutcome,
+      contactIdentityFor: () => ({
+        email: cadenceRows[0]?.prospect_email,
+        company: cadenceRows[0]?.prospect_company,
+        website: queueWebsite,
+      }),
       stopCadence: (input: {
         prospectId: number;
         playName: string;
@@ -315,6 +322,7 @@ beforeEach(() => {
   meetingOutcome = null;
   stopCalls.length = 0;
   doNotContact = undefined;
+  queueWebsite = null;
   seedActiveCadence();
 });
 
@@ -519,6 +527,18 @@ describe("runCadenceStepForProspect — do-not-contact gate", () => {
     expect(result.action).toBe("skipped");
     expect(result.note).toMatch(/x\.dev is on the do-not-contact list/);
     expect(stopCalls).toHaveLength(0);
+  });
+
+  it("stops by the website the prospect's queue row names", async () => {
+    doNotContact = { domains: ["dental.example"] };
+    queueWebsite = "https://www.dental.example/team";
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(result.action).toBe("skipped");
+    expect(stopCalls[0]?.reason).toBe("do_not_contact");
   });
 
   it("sends to anyone else", async () => {

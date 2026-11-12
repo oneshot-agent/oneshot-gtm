@@ -4,6 +4,7 @@ import {
   doNotContactOf,
   getLedger,
   loadConfig,
+  mergeContactIdentities,
   queuePayloadIdentity,
   type QueueRow,
   type QueueStatus,
@@ -27,6 +28,8 @@ export interface DoNotContactSummary {
   rows: string[];
   /** Cadences stopped (dry run: would be), as `name (play): why`. */
   cadences: string[];
+  /** Matching rows left alone because a send had claimed or finished them. */
+  skipped: string[];
 }
 
 const UNSENT: readonly QueueStatus[] = ["pending", "approved"];
@@ -43,7 +46,7 @@ function payloadOf(row: QueueRow): unknown {
 export async function commandDoNotContact(opts: DoNotContactOpts): Promise<DoNotContactSummary> {
   header(`do-not-contact${opts.dryRun ? " --dry-run" : ""}`);
   const list = doNotContactOf(loadConfig());
-  const summary: DoNotContactSummary = { rows: [], cadences: [] };
+  const summary: DoNotContactSummary = { rows: [], cadences: [], skipped: [] };
   if (list.domains.length === 0 && list.companies.length === 0) {
     warn("doNotContact is empty in this workspace's config.json: nothing to do");
     return summary;
@@ -56,13 +59,13 @@ export async function commandDoNotContact(opts: DoNotContactOpts): Promise<DoNot
       const page = ledger.listQueue({ status, limit: PAGE, offset, dir: "asc" });
       for (const row of page) {
         const identity = queuePayloadIdentity(payloadOf(row));
-        const prospect = row.prospect_id != null ? ledger.getProspectById(row.prospect_id) : null;
         const match = doNotContactMatch(
-          {
-            ...identity,
-            email: [identity.email, prospect?.email].flat(),
-            company: [identity.company, prospect?.company].flat(),
-          },
+          row.prospect_id != null
+            ? mergeContactIdentities(
+                identity,
+                ledger.contactIdentityFor({ prospectId: row.prospect_id }),
+              )
+            : identity,
           list,
         );
         if (match) matches.push({ row, why: describeDoNotContact(match) });
@@ -70,22 +73,24 @@ export async function commandDoNotContact(opts: DoNotContactOpts): Promise<DoNot
       if (page.length < PAGE) break;
     }
     // Rejected after the scan, so the pages it read did not shift under it.
+    // Only a row still unsent and unclaimed is rejected; the send gate refuses
+    // the rest.
     for (const { row, why } of matches) {
-      summary.rows.push(`#${row.id} ${row.play_name} (${status}): ${why}`);
-      if (!opts.dryRun) {
-        ledger.setQueueStatus({
-          id: row.id,
-          status: "rejected",
-          notes: `auto: do-not-contact — ${why}`,
-          decidedBy: "machine",
-        });
+      const line = `#${row.id} ${row.play_name} (${status}): ${why}`;
+      if (
+        !opts.dryRun &&
+        !ledger.rejectUnsentForDoNotContact(row.id, `auto: do-not-contact — ${why}`)
+      ) {
+        summary.skipped.push(line);
+        continue;
       }
+      summary.rows.push(line);
     }
   }
 
   for (const cad of ledger.listActiveCadences()) {
     const match = doNotContactMatch(
-      { email: cad.prospect_email, company: cad.prospect_company },
+      ledger.contactIdentityFor({ prospectId: cad.prospect_id, email: cad.prospect_email }),
       list,
     );
     if (!match) continue;
@@ -109,6 +114,8 @@ export async function commandDoNotContact(opts: DoNotContactOpts): Promise<DoNot
 
   for (const line of summary.rows) console.log(`  ${c.dim("row")} ${line}`);
   for (const line of summary.cadences) console.log(`  ${c.dim("cadence")} ${line}`);
+  for (const line of summary.skipped)
+    warn(`${line}: a send has it, so it was left; the send gate refuses it`);
   const would = opts.dryRun ? "would be " : "";
   ok(
     `${summary.rows.length} queue row(s) ${would}rejected, ${summary.cadences.length} cadence(s) ${would}stopped`,

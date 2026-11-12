@@ -1,5 +1,11 @@
 import { demoMode } from "./demo.ts";
-import { describeDoNotContact, doNotContactMatch } from "./do-not-contact.ts";
+import { currentDoNotContact } from "./config.ts";
+import {
+  type ContactIdentity,
+  describeDoNotContact,
+  doNotContactMatch,
+  mergeContactIdentities,
+} from "./do-not-contact.ts";
 import { logEvent } from "./events.ts";
 import {
   type CadencePresence,
@@ -49,6 +55,8 @@ export interface LinkedInInviteProspect {
   name?: string | null;
   company?: string | null;
   email?: string | null;
+  /** Everything else the row names about their company (stated domain, website), for the do-not-contact check. */
+  identity?: ContactIdentity;
   linkedinUrl?: string | null;
   /** The ICP verdict the row carries (a human override rewrites it to `pass`). */
   icpVerdict?: string | null;
@@ -85,6 +93,8 @@ export interface LinkedInGuardLedger {
   linkedInGuardFacts(prospectId: number): LinkedInGuardFacts | null;
   /** Copies invites recorded before the guard into the shared table, once. Optional for test doubles. */
   backfillLinkedInTouched?(shared: SharedDb): void;
+  /** What names a known prospect's company (`Ledger.contactIdentityFor`). Optional for test doubles. */
+  contactIdentityFor?(input: { prospectId: number }): ContactIdentity;
 }
 
 /** What the guard needs from the shared DB. `SharedDb` satisfies it. */
@@ -260,10 +270,6 @@ export function canInviteOnLinkedIn(
     );
   }
 
-  // 3. The workspace never contacts this company.
-  const blocked = doNotContactMatch({ email: prospect.email, company: prospect.company });
-  if (blocked) return refuse("do-not-contact", describeDoNotContact(blocked));
-
   // 3-5. Ledger facts, for a prospect we already know.
   let storedReject = false;
   try {
@@ -277,6 +283,22 @@ export function canInviteOnLinkedIn(
         return refuse("guard-unavailable", "this profile matches more than one prospect");
       }
       if (found.status === "matched") prospectId = found.prospectId;
+    }
+    // The workspace never contacts this company: by what the row names and
+    // what the ledger holds for a known prospect.
+    const list = currentDoNotContact();
+    if (list.domains.length > 0 || list.companies.length > 0) {
+      const blocked = doNotContactMatch(
+        mergeContactIdentities(
+          { email: prospect.email, company: prospect.company },
+          prospect.identity ?? {},
+          prospectId != null && ctx.ledger.contactIdentityFor
+            ? ctx.ledger.contactIdentityFor({ prospectId })
+            : {},
+        ),
+        list,
+      );
+      if (blocked) return refuse("do-not-contact", describeDoNotContact(blocked));
     }
     const facts = prospectId != null ? ctx.ledger.linkedInGuardFacts(prospectId) : null;
     if (facts) {
