@@ -513,6 +513,14 @@ export interface OneShotConfig {
    */
   offerExclusions?: string[];
   /**
+   * Companies this workspace never contacts, by email or website domain and
+   * by company name. A match is queued as rejected, refused at every email
+   * send and LinkedIn invite, and its cadence is stopped as do-not-contact
+   * before the next step. Replies you write yourself are not blocked. Read
+   * through `doNotContactOf`. Absent or empty: nobody is blocked.
+   */
+  doNotContact?: { domains?: string[]; companies?: string[] };
+  /**
    * Which anchor an offer should rest on where the research allows a choice.
    * `prefer-product`: the writer leads with a goal of the prospect's own
    * product wherever the research supports one, the judge rates a

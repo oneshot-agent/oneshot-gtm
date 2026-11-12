@@ -58,6 +58,23 @@ Answering from Replies sends from the mailbox that received the message and thre
 
 LinkedIn replies stop email cadences too; see [LinkedIn](./linkedin.md).
 
+## Do-not-contact list
+
+List the companies a workspace must never reach in its `config.json`, by domain, by name, or both:
+
+```json
+"doNotContact": { "domains": ["example.com"], "companies": ["Example Group"] }
+```
+
+- A domain matches addresses and websites on it and on its subdomains.
+- A name matches whether or not the legal form or a place is added: "Example Group" blocks "Example Group, LLC" and "Example Group of Springfield", but not "Example Family Group".
+- Anyone who matches is found but never queued for review. The row is rejected and shows why.
+- Every email send and LinkedIn invite to them is refused.
+- Before a cadence's next step, the cadence stops as do-not-contact on any channel. A pending invite is withdrawn.
+- Replies you write from Replies still go.
+
+An edit applies on the next send without a restart. `find do-not-contact` applies a new entry to people already found: it rejects their unsent prospects and stops their active cadences. `--dry-run` lists the matches and changes nothing.
+
 ## Smartlead inboxes
 
 While a workspace's dashboard runs, it syncs each Smartlead mailbox about once a minute. Smartlead keeps doing warm-up. **Replies** shows connection status, last sync and import progress. The first import covers 30 days.

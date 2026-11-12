@@ -6,6 +6,7 @@ import { humanDecisionWhereSql } from "./labels.ts";
 import { toSqliteUtc } from "./time.ts";
 import { OUTREACH_CHANNELS, type OutreachChannel } from "./channels.ts";
 import { canonicalLinkedInProfileKey } from "./ledger-prospects.ts";
+import { describeDoNotContact, doNotContactMatch, queuePayloadIdentity } from "./do-not-contact.ts";
 import type {
   IcpDecisionExample,
   ProspectPriority,
@@ -479,7 +480,19 @@ export class QueueStore {
     channel?: OutreachChannel;
   }): number | null {
     try {
-      const status = input.initialStatus ?? "pending";
+      // A company on the workspace's do-not-contact list is recorded as an
+      // auto-drop, never queued for review: the row stays visible and its
+      // dedupe key keeps finders from finding it again.
+      const blocked =
+        (input.initialStatus ?? "pending") === "rejected"
+          ? null
+          : doNotContactMatch(queuePayloadIdentity(input.payload));
+      const status = blocked ? "rejected" : (input.initialStatus ?? "pending");
+      const notes = blocked
+        ? [`auto: do-not-contact — ${describeDoNotContact(blocked)}`, input.notes]
+            .filter(Boolean)
+            .join("\n")
+        : (input.notes ?? null);
       const reviewedAt = status === "pending" ? null : new Date().toISOString();
       const result = this.db
         .prepare(
@@ -502,7 +515,7 @@ export class QueueStore {
           input.source,
           status,
           reviewedAt,
-          input.notes ?? null,
+          notes,
           input.priority ? JSON.stringify(input.priority) : null,
           // An insert-time rejection is a gate's verdict, never a human's:
           // structural provenance replaces the `auto:` notes-sniffing (the

@@ -1,4 +1,5 @@
 import { demoMode } from "./demo.ts";
+import { describeDoNotContact, doNotContactMatch } from "./do-not-contact.ts";
 import { logEvent } from "./events.ts";
 import {
   type CadencePresence,
@@ -23,6 +24,8 @@ export type LinkedInGuardReason =
   | "invalid-profile"
   | "not-a-person"
   | "opted-out"
+  /** The company is on the workspace's `doNotContact` list. */
+  | "do-not-contact"
   | "replied"
   | "cadence-stopped"
   | "icp-rejected"
@@ -257,6 +260,10 @@ export function canInviteOnLinkedIn(
     );
   }
 
+  // 3. The workspace never contacts this company.
+  const blocked = doNotContactMatch({ email: prospect.email, company: prospect.company });
+  if (blocked) return refuse("do-not-contact", describeDoNotContact(blocked));
+
   // 3-5. Ledger facts, for a prospect we already know.
   let storedReject = false;
   try {
@@ -375,6 +382,7 @@ const GUARD_REASONS: ReadonlySet<string> = new Set([
   "invalid-profile",
   "not-a-person",
   "opted-out",
+  "do-not-contact",
   "replied",
   "cadence-stopped",
   "icp-rejected",

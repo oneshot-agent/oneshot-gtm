@@ -111,6 +111,7 @@ import {
 } from "./commands/rejudge-offers.ts";
 import { commandResearchQueue } from "./commands/research-queue.ts";
 import { commandCloseOffers } from "./commands/close-offers.ts";
+import { commandDoNotContact } from "./commands/do-not-contact.ts";
 import { commandRejudgeGitHub } from "./commands/rejudge-github.ts";
 import { commandRederive } from "./commands/rederive.ts";
 import { commandSynthesizeAngles } from "./commands/synthesize-angles.ts";
@@ -1121,6 +1122,18 @@ find
         ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
         ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
       });
+    }),
+  );
+
+find
+  .command("do-not-contact")
+  .option("--dry-run", "list the matches; change nothing", false)
+  .description(
+    "Apply this workspace's doNotContact list to people already found: reject unsent prospects and stop active cadences at a listed company",
+  )
+  .action(
+    runOrFail(async (opts: { dryRun: boolean }) => {
+      await commandDoNotContact({ dryRun: opts.dryRun });
     }),
   );
 

@@ -1384,6 +1384,7 @@ const INVITE_GUARD_REASONS: ReadonlySet<string> = new Set([
   "invalid-profile",
   "not-a-person",
   "opted-out",
+  "do-not-contact",
   "replied",
   "cadence-stopped",
   "icp-rejected",

@@ -60,6 +60,7 @@ Before any invite leaves, the row is checked. A refused row is never sent and ne
 | `invalid-profile`         | the URL is not a personal `linkedin.com/in/…` profile       |
 | `not-a-person`            | the name is a repo, a handle or a company                   |
 | `opted-out`               | they unsubscribed                                           |
+| `do-not-contact`          | their company is on the workspace's do-not-contact list     |
 | `replied`                 | a human reply exists on any channel                         |
 | `cadence-stopped`         | you stopped their cadence                                   |
 | `icp-rejected`            | the gate rejected them; an unjudged row passes              |

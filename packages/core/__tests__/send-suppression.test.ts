@@ -12,11 +12,15 @@ const recordReceipt = vi.fn().mockReturnValue(1);
 let suppression: { status_code: string | null; bounced_at: string } | null = null;
 /** Set per test: what contactSuppressionFor returns (unsubscribe / dead mailbox). */
 let contactSuppression: { kind: string; received_at: string } | null = null;
+/** Set per test: the workspace's do-not-contact list, and the recipient's stored company. */
+let doNotContact = { domains: [] as string[], companies: [] as string[] };
+let storedCompany: string | null = null;
 
 vi.mock("../src/config.ts", async () => {
   const actual = await vi.importActual<typeof import("../src/config.ts")>("../src/config.ts");
   return {
     ...actual,
+    currentDoNotContact: () => doNotContact,
     loadConfig: () => ({
       ...actual.loadConfig(),
       emailProvider: "oneshot",
@@ -34,6 +38,7 @@ vi.mock("../src/ledger.ts", async () => {
     getLedger: () => ({
       suppressionFor: () => suppression,
       contactSuppressionFor: () => contactSuppression,
+      getProspectByEmail: () => (storedCompany ? { company: storedCompany } : null),
       getSenderAssignment,
       assignSender,
       recordReceipt,
@@ -53,6 +58,8 @@ const INPUT = { to: "jane@dead.example", subject: "s", body: "b" };
 beforeEach(() => {
   suppression = null;
   contactSuppression = null;
+  doNotContact = { domains: [], companies: [] };
+  storedCompany = null;
   getSenderAssignment.mockClear();
   assignSender.mockClear();
   recordReceipt.mockClear();
@@ -116,5 +123,23 @@ describe("sendEmail suppression backstop", () => {
     // point is that the pre-flight didn't short-circuit it.
     await sendEmail(INPUT, CTX).catch(() => undefined);
     expect(getSenderAssignment).toHaveBeenCalled();
+  });
+});
+
+describe("sendEmail do-not-contact backstop", () => {
+  it("refuses an address at a listed domain before any routing", async () => {
+    doNotContact = { domains: ["dead.example"], companies: [] };
+    const err = (await sendEmail(INPUT, CTX).catch((e: unknown) => e)) as Error;
+    expect(isSuppressedRecipient(err)).toBe(true);
+    expect(err.message).toContain("dead.example is on the do-not-contact list");
+    expect(getSenderAssignment).not.toHaveBeenCalled();
+    expect(recordReceipt).not.toHaveBeenCalled();
+  });
+
+  it("refuses a prospect whose stored company is listed", async () => {
+    doNotContact = { domains: [], companies: ["Example Dental"] };
+    storedCompany = "Example Dental, PLLC";
+    await expect(sendEmail(INPUT, CTX)).rejects.toThrow(/do-not-contact/);
+    expect(assignSender).not.toHaveBeenCalled();
   });
 });
