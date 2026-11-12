@@ -1,3 +1,6 @@
+import { Database } from "bun:sqlite";
+import { logEvent } from "../src/events.ts";
+vi.mock("../src/events.ts", () => ({ logEvent: vi.fn() }));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SharedDb, getSharedDb, sharedDbPath } from "../src/shared-db.ts";
 import {
@@ -75,7 +78,12 @@ describe("payment settlement holds", () => {
       await expect(agent.personFind({ limit: 25 })).rejects.toBeInstanceOf(PaymentHeldError);
       const replacement = listPaymentHolds()[0]!;
       if (outcome === "success") finish({ status: "completed" });
-      else fail(outcome === "ambiguous" ? ambiguous() : new Error("invalid input"));
+      else
+        fail(
+          outcome === "ambiguous"
+            ? ambiguous()
+            : Object.assign(new Error("invalid input"), { name: "ValidationError" }),
+        );
       await firstOutcome;
       expect(listPaymentHolds()).toEqual([replacement]);
       expect(listPaymentHolds()[0]!.settlement_id).toBe("st_new");
@@ -153,6 +161,58 @@ describe("payment settlement holds", () => {
     await expect(agent.personFind({ limit: 25 })).rejects.toBe(error);
     expect(listPaymentHolds()).toEqual([]);
   });
+  it.each(["voice", "sms", "browser", "build"])(
+    "holds %s when a paid response is lost without metadata",
+    async (method) => {
+      const call = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+      const agent = protectPayments({ [method]: call }, "wallet");
+      await expect(agent[method]!({ input: "same" })).rejects.toMatchObject({
+        executionUncertain: true,
+      });
+      await expect(agent[method]!({ input: "same" })).rejects.toBeInstanceOf(PaymentHeldError);
+      expect(call).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("records reconciliation durably without writing the note to diagnostics", async () => {
+    const agent = protectPayments({ sms: vi.fn().mockRejectedValue(ambiguous()) }, "wallet");
+    await agent.sms({}).catch(() => {});
+    const hold = listPaymentHolds()[0]!;
+    resolvePaymentHold(hold.key, "private reconciliation detail");
+    const db = new Database(sharedDbPath(), { readonly: true });
+    try {
+      expect(
+        db
+          .query("SELECT note,hold_json FROM payment_resolutions WHERE claim_token=?")
+          .get(hold.claim_token),
+      ).toEqual({ note: "private reconciliation detail", hold_json: JSON.stringify(hold) });
+    } finally {
+      db.close();
+    }
+    expect(logEvent).toHaveBeenLastCalledWith("payment.hold_resolved", { key: hold.key });
+    expect(listPaymentHolds()).toEqual([]);
+  });
+  it("rolls back the audit record when releasing the hold fails", async () => {
+    const agent = protectPayments({ sms: vi.fn().mockRejectedValue(ambiguous()) }, "wallet");
+    await agent.sms({}).catch(() => {});
+    const hold = listPaymentHolds()[0]!;
+    const release = vi.spyOn(getSharedDb(), "releasePayment").mockImplementationOnce(() => {
+      throw new Error("write failed");
+    });
+    try {
+      expect(() => resolvePaymentHold(hold.key, "reconciled")).toThrow("write failed");
+    } finally {
+      release.mockRestore();
+    }
+    expect(listPaymentHolds()).toEqual([hold]);
+    const db = new Database(sharedDbPath(), { readonly: true });
+    try {
+      expect(
+        db.query("SELECT 1 FROM payment_resolutions WHERE claim_token=?").get(hold.claim_token),
+      ).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
   it("equivalent lookup inputs cannot bypass a held payment", async () => {
     const call = vi.fn().mockRejectedValue(ambiguous());
     const agent = protectPayments({ personFind: call }, "wallet");
@@ -217,7 +277,13 @@ describe("payment settlement holds", () => {
     await first;
     expect(listPaymentHolds()).toEqual([]);
     const bad = protectPayments(
-      { email: vi.fn().mockRejectedValue(new Error("invalid input")) },
+      {
+        email: vi
+          .fn()
+          .mockRejectedValue(
+            Object.assign(new Error("invalid input"), { name: "ValidationError" }),
+          ),
+      },
       "wallet",
     );
     await expect(bad.email({})).rejects.toThrow("invalid input");

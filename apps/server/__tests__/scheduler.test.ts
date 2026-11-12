@@ -141,7 +141,7 @@ it("sweeps LinkedIn invitation statuses on the first tick and then at most every
 });
 
 beforeEach(() => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ now: new Date("2026-08-28T12:00:00.000Z") });
   calls.runDueTriggers = 0;
   calls.nextSleepMs = 0;
   calls.eventKinds = [];

@@ -68,6 +68,7 @@ vi.mock("../src/ledger.ts", async () => {
 
 const { replyEmail, replySubject, sendEmail } = await import("../src/oneshot.ts");
 const { _resetGmailCache } = await import("../src/gmail.ts");
+const { listPaymentHolds, resolvePaymentHold } = await import("../src/payment-holds.ts");
 const { Ledger } = await import("../src/ledger.ts");
 let scratch: InstanceType<typeof Ledger>;
 
@@ -420,6 +421,7 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
 
   it("after an unknown outcome, a re-drafted retry resends the first content under its SDK key", async () => {
     const { UncertainSendError } = await import("../src/oneshot.ts");
+    const holdsBefore = new Set(listPaymentHolds().map((h) => h.key));
     const key = "gtm:test:email:show-hn:pat@acme.com:0";
     emailMock.mockRejectedValueOnce(new Error("Job timed out after 120s"));
     await expect(
@@ -429,7 +431,11 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
       ),
     ).rejects.toBeInstanceOf(UncertainSendError);
     expect(scratch.outboundSends.get(key)?.status).toBe("uncertain");
-    // The sweep settles it once the window has passed.
+    // Explicit reconciliation permits replaying the stored content.
+    resolvePaymentHold(
+      listPaymentHolds().find((h) => !holdsBefore.has(h.key))!.key,
+      "Confirmed non-execution and payment reconciled",
+    );
     scratch.outboundSends.mark(key, "failed");
     await sendEmail(
       { to: "pat@acme.com", subject: "rewritten", body: "new body", idempotencyKey: key },
@@ -444,6 +450,7 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
   });
 
   it("a retry goes to the recipient first claimed, under the first attempt's SDK key (#905)", async () => {
+    const holdsBefore = new Set(listPaymentHolds().map((h) => h.key));
     const key = "gtm:test:email:show-hn:kim@acme.com:0";
     emailMock.mockRejectedValueOnce(new Error("Job timed out after 120s"));
     await expect(
@@ -452,6 +459,10 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
         { playName: "show-hn" },
       ),
     ).rejects.toThrow();
+    resolvePaymentHold(
+      listPaymentHolds().find((h) => !holdsBefore.has(h.key))!.key,
+      "Confirmed non-execution and payment reconciled",
+    );
     scratch.outboundSends.mark(key, "failed");
     await sendEmail(
       { to: "someone-else@other.com", subject: "first", body: "first body", idempotencyKey: key },
@@ -466,7 +477,12 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
 
   it("an explicit platform rejection is definite: the retry may send the new draft", async () => {
     const key = "gtm:test:email:show-hn:sam@acme.com:0";
-    emailMock.mockRejectedValueOnce(new Error("Request failed (422): invalid recipient"));
+    emailMock.mockRejectedValueOnce(
+      Object.assign(new Error("Request failed (422): invalid recipient"), {
+        name: "ToolError",
+        statusCode: 422,
+      }),
+    );
     await expect(
       sendEmail(
         { to: "sam@acme.com", subject: "first", body: "b", idempotencyKey: key },

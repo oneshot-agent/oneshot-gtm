@@ -62,6 +62,7 @@ vi.mock("../src/ledger.ts", async () => {
 });
 
 const { sendEmail, gmailSentMessageIdFor, withoutReplyPrefix } = await import("../src/oneshot.ts");
+const { listPaymentHolds, resolvePaymentHold } = await import("../src/payment-holds.ts");
 const { _resetGmailCache } = await import("../src/gmail.ts");
 const { Ledger } = await import("../src/ledger.ts");
 let scratch: InstanceType<typeof Ledger>;
@@ -356,7 +357,8 @@ describe("oneshot: a follow-up into the first email's thread", () => {
     expect(scratch.outboundSends.get(key)?.status).toBe("uncertain");
   });
 
-  it("an exact resend of the fallback goes out as the fallback did", async () => {
+  it("an exact resend of the fallback requires reconciliation and preserves content", async () => {
+    const holdsBefore = new Set(listPaymentHolds().map((h) => h.key));
     const to = recipient();
     const key = `k:${to}`;
     emailMock.mockRejectedValueOnce(
@@ -369,7 +371,17 @@ describe("oneshot: a follow-up into the first email's thread", () => {
         { playName: "alpha" },
       ),
     ).rejects.toThrow(/may have gone out/);
-    // The sweep settles it; the next run resends the stored fallback content.
+    // A sweep alone cannot authorize another paid submission.
+    scratch.outboundSends.mark(key, "failed");
+    await expect(
+      sendEmail(
+        { to, subject: "Re: alpha", body: "b", idempotencyKey: key, thread },
+        { playName: "alpha" },
+      ),
+    ).rejects.toThrow(/may have gone out/);
+    expect(emailMock).toHaveBeenCalledTimes(2);
+    const hold = listPaymentHolds().find((h) => !holdsBefore.has(h.key))!;
+    resolvePaymentHold(hold.key, "Confirmed non-execution and reconciled payment");
     scratch.outboundSends.mark(key, "failed");
     await sendEmail(
       { to, subject: "Re: alpha", body: "b", idempotencyKey: key, thread },

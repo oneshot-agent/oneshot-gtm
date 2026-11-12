@@ -44,18 +44,35 @@ function uncertainExecution(err: unknown): HeldExecution | null {
   const e = err as {
     name?: string;
     phase?: string;
+    statusCode?: number;
     jobId?: string;
     requestId?: string;
     idempotencyKey?: string;
   } | null;
-  // A terminal JobError is a reported failure. Losing the polling channel
-  // (transport failure, cancellation, or deadline) says nothing about execution.
-  const pollingLost = e?.phase === "polling" && e.name !== "JobError";
-  if (e?.name !== "JobTimeoutError" && e?.name !== "RequestTimeoutError" && !pollingLost)
-    return null;
+  // Explicit SDK refusals and terminal job results are authoritative. Unknown
+  // transport/parse errors may follow a paid submission, even without metadata
+  // (voice/SMS/browser/build use a separate SDK quote-to-pay path).
+  const definite = [
+    "ValidationError",
+    "ContentBlockedError",
+    "EmergencyNumberError",
+    "BudgetExceededError",
+    "BudgetSyncError",
+    "InsufficientCreditsError",
+    "ApprovalRequiredError",
+    "ActionDeniedError",
+    "PaymentError",
+    "JobError",
+  ];
+  if (definite.includes(e?.name ?? "")) return null;
+  if (e?.name === "SettlementAmbiguousError") return null;
+  const rejected =
+    e?.phase !== "polling" &&
+    [400, 401, 403, 404, 405, 410, 413, 415, 422, 429].includes(e?.statusCode ?? 0);
+  if (rejected) return null;
   return {
-    requestId: e.requestId ?? e.jobId,
-    idempotencyKey: e.idempotencyKey,
+    requestId: e?.requestId ?? e?.jobId,
+    idempotencyKey: e?.idempotencyKey,
     executionUncertain: true,
   };
 }
@@ -182,7 +199,7 @@ export function resolvePaymentHold(key: string, note: string): void {
   if (!note.trim()) throw new Error("A reconciliation note is required");
   const hold = listPaymentHolds().find((h) => h.key === key);
   if (!hold) throw new Error("Unknown payment hold");
-  if (!getSharedDb().releasePayment(key, hold.claim_token))
+  if (!getSharedDb().resolvePayment(key, hold.claim_token, note.trim()))
     throw new Error("Payment hold changed; inspect it again before resolving");
-  logEvent("payment.hold_resolved", { key, note });
+  logEvent("payment.hold_resolved", { key });
 }
