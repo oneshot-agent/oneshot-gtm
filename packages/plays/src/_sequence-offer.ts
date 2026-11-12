@@ -597,12 +597,11 @@ function closeOfferUsable(offer: ProspectOffer, cfg: { offerExclusions?: unknown
   );
 }
 
+/** Lowercased, whitespace collapsed, trailing full stops dropped: no end-anchored regex (CodeQL). */
 function folded(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .replace(/[.\s]+$/, "")
-    .trim();
+  let out = value.toLowerCase().split(/\s+/).filter(Boolean).join(" ");
+  while (out.endsWith(".")) out = out.slice(0, -1).trimEnd();
+  return out;
 }
 
 /**
