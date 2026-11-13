@@ -3,7 +3,7 @@ import {
   DEFAULT_LINKEDIN_TEMPLATES,
   LINKEDIN_TEMPLATE_FIELDS,
   chooseLinkedInTemplate,
-  isFounderTitle,
+  isFounderOrCeoTitle,
   linkedInTemplateStep,
   renderLinkedInTemplate,
   templatePlaceholders,
@@ -142,9 +142,9 @@ describe("the founder first message", () => {
 
   it("reads founder, co-founder and CEO titles, and nothing that merely contains them", () => {
     for (const t of ["Founder", "Co-Founder & CTO", "cofounder", "CEO", "Chief Executive Officer"])
-      expect(isFounderTitle(t), t).toBe(true);
+      expect(isFounderOrCeoTitle(t), t).toBe(true);
     for (const t of ["Foundry Engineer", "VP Engineering", "Head of AI", "", null, undefined])
-      expect(isFounderTitle(t), String(t)).toBe(false);
+      expect(isFounderOrCeoTitle(t), String(t)).toBe(false);
   });
 
   it("goes to a founder, connected before or not, when the workspace sets it", () => {
@@ -189,7 +189,7 @@ describe("the founder first message", () => {
     ).toMatchObject({ step: "firstMessage", source: "default" });
   });
 
-  it("names their company as stored, punctuation and all", () => {
+  it("names the company it's given, punctuation and all, in the founder text only", () => {
     expect(
       chooseLinkedInTemplate(
         "first",
@@ -197,9 +197,9 @@ describe("the founder first message", () => {
         { ...dana, title: "Founder", company: " Yahoo! " },
       ).text,
     ).toBe("hey Dana, how's Yahoo! going?");
-    expect(templateProblems("firstMessage", "at {company}?")).toEqual([]);
-    expect(templateProblems("note", "at {company}?")).toEqual([
-      '{company} can\'t be used in "Connection request"',
+    expect(templateProblems("firstMessageFounder", "at {company}?")).toEqual([]);
+    expect(templateProblems("firstMessage", "at {company}?")).toEqual([
+      '{company} can\'t be used in "First message"',
     ]);
   });
 });

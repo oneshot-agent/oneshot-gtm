@@ -1019,8 +1019,8 @@ export type LinkedInTemplateSlot = (typeof LINKEDIN_TEMPLATE_SLOTS)[number];
 /**
  * LinkedIn copy per step, with placeholders `{first_name}`, `{evidence}` (why
  * they surfaced, as a clause with its subject: "you starred acme/widgets"),
- * `{offer}` (the offer made to this prospect) and, in the first messages,
- * `{company}` (where they work).
+ * `{offer}` (the offer made to this prospect) and, in `firstMessageFounder`
+ * only, `{company}` (the company they run, when their live profile shows it).
  * - `note`: connection request when there is evidence; `noteFallback` when not.
  * - `firstMessage`: first message after they accept; `firstMessageConnected`
  *   when you were already connected before the sequence; `firstMessageFounder`

@@ -7,7 +7,9 @@ import type {
 import {
   CADENCE_SEND_UNCONFIRMED,
   LINKEDIN_SEND_PENDING,
+  isFounderOrCeoTitle,
   replyIntentMeta,
+  templatePlaceholders,
 } from "@oneshot-gtm/shared-types";
 import {
   classifyReply,
@@ -78,6 +80,8 @@ import {
   productBriefText,
   autoReplyConfigOf,
   sliceText,
+  linkedinTemplatesOf,
+  linkedinWriterOf,
 } from "@oneshot-gtm/core";
 import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { readAutoReply, stopLiveCadences } from "./_auto-reply.ts";
@@ -4453,13 +4457,10 @@ function linkedInMessageFacts(
       ? pickCloseOffer(record, cfg, sequenceThread(prospect.id, playName))
       : record.offer
     : null;
-  const base = {
-    name: prospect.name,
-    evidence: clause,
-    alreadyConnected,
-    company: prospect.company,
-    title: prospect.title,
-  };
+  // No `company` here: it is named only once a live read confirms it, which
+  // the drafter does (`templateCompany`). Read without a draft, a template
+  // naming it shows the first message instead.
+  const base = { name: prospect.name, evidence: clause, alreadyConnected, title: prospect.title };
   return {
     events,
     alreadyConnected,
@@ -4474,6 +4475,24 @@ function linkedInMessageFacts(
     /** The sequence makes an offer: after emails with no close offer, the close names none. */
     makesOffer: !!record?.offer,
   };
+}
+
+/**
+ * `{company}` for a founder's first message: the company they run, named only
+ * when their live profile shows it (`companyTheyRun`; "Stealth" never counts).
+ * The live read is made only when the founder text names the company.
+ */
+async function templateCompany(
+  ctx: CadenceContext,
+  playName: string,
+  which: "first" | "last",
+  now: Date,
+): Promise<string | null> {
+  if (which !== "first" || linkedinWriterOf(ctx.cfg) === "model") return null;
+  const founderText = linkedinTemplatesOf(ctx.cfg).firstMessageFounder;
+  if (!founderText || !templatePlaceholders(founderText).includes("company")) return null;
+  if (!isFounderOrCeoTitle(ctx.prospect.title)) return null;
+  return companyTheyRun({ playName, prospect: ctx.prospect, reader: ctx.linkedInRead, now });
 }
 
 async function buildLinkedInMessage(
@@ -4492,7 +4511,9 @@ async function buildLinkedInMessage(
   const templated = templatedLinkedIn(
     which,
     ctx.cfg,
-    which === "last" ? facts.closeTemplate : facts.template,
+    which === "last"
+      ? facts.closeTemplate
+      : { ...facts.template, company: await templateCompany(ctx, playName, which, now) },
   );
   if (templated) {
     // Carried on the payload, as a drafted message's lint flag is, so an

@@ -66,19 +66,19 @@ export const LINKEDIN_TEMPLATE_FIELDS: readonly LinkedInTemplateField[] = [
     label: "First message",
     hint: "Sent after they accept.",
     limit: LINKEDIN_TEMPLATE_MESSAGE_MAX,
-    placeholders: ["first_name", "evidence", "offer", "company"],
+    placeholders: ["first_name", "evidence", "offer"],
   },
   {
     step: "firstMessageConnected",
     label: "First message, already connected",
     hint: "Sent when you were connected before the sequence, so no request was accepted.",
     limit: LINKEDIN_TEMPLATE_MESSAGE_MAX,
-    placeholders: ["first_name", "evidence", "offer", "company"],
+    placeholders: ["first_name", "evidence", "offer"],
   },
   {
     step: "firstMessageFounder",
     label: "First message to a founder",
-    hint: "Sent instead of the first message when their title says founder, co-founder or CEO, connected before or not. Leave it blank to send them the first message.",
+    hint: "Sent instead of the first message when their title says founder, co-founder or CEO, connected before or not. {company} is named only when their live LinkedIn profile shows it; otherwise, or when this is blank, they get the first message.",
     limit: LINKEDIN_TEMPLATE_MESSAGE_MAX,
     placeholders: ["first_name", "evidence", "offer", "company"],
   },
@@ -228,7 +228,7 @@ export interface LinkedInTemplateFacts extends LinkedInTemplateValues {
 const FOUNDER_TITLE_RX = /\b(?:co-?founder|founder|ceo|chief executive)\b/i;
 
 /** A title that says founder, co-founder or CEO ("Co-Founder & CTO", "Founder"). */
-export function isFounderTitle(title: string | null | undefined): boolean {
+export function isFounderOrCeoTitle(title: string | null | undefined): boolean {
   return !!title && FOUNDER_TITLE_RX.test(title);
 }
 
@@ -277,7 +277,7 @@ export function chooseLinkedInTemplate(
   // A founder gets the workspace's founder text when it fills; otherwise the
   // first message, as before. It has no default of its own to fall back on.
   const founder = templates.firstMessageFounder?.trim();
-  if (kind === "first" && founder && isFounderTitle(facts.title))
+  if (kind === "first" && founder && isFounderOrCeoTitle(facts.title))
     candidates.push({ template: founder, step: "firstMessageFounder", source: "workspace" });
   const own = templates[step]?.trim();
   if (own) candidates.push({ template: own, step, source: "workspace" });
