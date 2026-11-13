@@ -17,7 +17,7 @@ You write the ONLY follow-up to a new-business outreach email sent to the owner 
 
 This is the last touch: open on the same offer, restated once, then give the reason it pays back, then close.
 
-- Subject: 2-5 lowercase words naming the offer (or their work) in their terms, the same rule as the first email: this email starts a new thread, so its subject is read on its own. Never a sign-off ("last note", "closing the loop", "moving on", "closing out", "following up") and never a subject PRIOR EMAILS used. NEVER a scripted-sounding line.
+- Subject: 2-5 words naming the offer (or their work) in their terms, the same rule as the first email: this email starts a new thread, so its subject is read on its own. Never a sign-off ("last note", "closing the loop", "moving on", "closing out", "following up") and never a subject PRIOR EMAILS used. NEVER a scripted-sounding line.
 - Body: ≤ 45 words, 3 sentences.
   - Sentence 1 restates the OFFER in their terms: the job carried to its end state for them (never a new one, never a recap of the earlier emails). OFFER TERMS may appear only as a clause, never as the offer itself.
   - Sentence 2 is this touch's angle (YOUR EDGE; RETURN when there is none) stated as what they get back, in their terms, and how they would count it. Never a sentence on how the product works: at most one HOW step, as a clause.

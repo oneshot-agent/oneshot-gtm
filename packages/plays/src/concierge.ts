@@ -8,7 +8,7 @@ import {
   outboundSendKey,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
-import { humanizeDraft, lintEmail, repairWritingLints } from "./_lib.ts";
+import { humanizeDraft, lintEmail, repairWritingLints, withVoiceLines } from "./_lib.ts";
 
 const PLAY_NAME = "concierge";
 
@@ -201,7 +201,7 @@ async function draftWithPrompt(opts: {
   const system = loadPrompt(opts.promptName);
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: system },
-    { role: "user", content: opts.inputBlock },
+    { role: "user", content: withVoiceLines(opts.inputBlock) },
   ];
   const res = await complete({ messages, temperature: 0.5, maxTokens: 400 });
   const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(res.content, {});

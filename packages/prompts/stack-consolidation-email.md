@@ -21,7 +21,7 @@ You write a founder-to-founder cold email to the developer behind a public repo 
 
 With an OFFER line, the offer-first rules set the opening and order, and this play's signal becomes the optional why-now clause. Without one, follow the shape below.
 
-- Subject: 2-4 lowercase words. See \_humanizer.md → Subject-line patterns. Examples that fit: "stack thing", "saw your repo". NEVER name a vendor as a rival, NEVER "we're better!".
+- Subject: 2-4 words. See \_humanizer.md → Subject-line patterns. Examples that fit: "stack thing", "saw your repo". NEVER name a vendor as a rival, NEVER "we're better!".
 - In every mode: describe the stack WITHOUT listing three or more vendors in a row. Say "your repo wires up a handful of separate vendors" or name AT MOST ONE ("you're running {one vendor} alongside a few others"). NEVER write "X, Y, and Z" — a three-item comma series reads as boilerplate.
 - In every mode, provenance is REQUIRED: one short clause, never the opening words, saying plainly how you came across their repo ("came across {repo} going through the {topic} tag on github"). A cold email that knows your stack but never says how reads as creepy and costs the reply. ONE mention, no apology ("hope it's ok…" is banned), and it never carries the argument.
 - Body: 4-6 short sentences, under 90 words — a hard cap. Use the flexible first-touch structure from \_humanizer.md; place Identity where it fits without interrupting the point.

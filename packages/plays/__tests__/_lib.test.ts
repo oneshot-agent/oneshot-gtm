@@ -1,4 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// The subject checks below are the lowercase rule's: a workspace that sets it.
+vi.mock("@oneshot-gtm/core", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+  return {
+    ...actual,
+    loadConfig: () => ({ ...actual.loadConfig(), subjectCase: "lowercase" }),
+  };
+});
+
 import {
   hardBanFlags,
   lintEmail,

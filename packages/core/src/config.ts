@@ -21,6 +21,8 @@ import {
   type OfferAnchor,
   type OfferCheck,
   type OneShotConfig,
+  type PlayPriorityPriors,
+  type PriorityPriors,
   type SubjectCase,
 } from "./types.ts";
 
@@ -277,14 +279,59 @@ export function currentDoNotContact(): DoNotContactList {
   return list;
 }
 
-/** The humanizer's greeting word: what `founderGreeting` reads as when unset. */
-export const DEFAULT_FOUNDER_GREETING = "Hey";
+/**
+ * The workspace's `priorityPriors` as the score adapters read them: per play,
+ * only the known keys whose value is a finite number, clamped to 0-100. A
+ * play with none left, and anything that is not an object, reads as unset.
+ */
+export function priorityPriorsOf(cfg: { priorityPriors?: unknown }): PriorityPriors {
+  const raw = cfg.priorityPriors;
+  const out: PriorityPriors = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [play, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const priors: PlayPriorityPriors = {};
+    for (const key of ["execTitle", "host"] as const) {
+      const n = (value as Record<string, unknown>)[key];
+      if (typeof n === "number" && Number.isFinite(n)) priors[key] = Math.min(100, Math.max(0, n));
+    }
+    if (Object.keys(priors).length > 0) out[play] = priors;
+  }
+  return out;
+}
+
+let priorityPriorsMemo: { stamp: string; priors: PriorityPriors } | null = null;
+
+/**
+ * `priorityPriors` from the config file as it is now, for the enqueue-time
+ * scorer, which has no config in hand. Re-read only when the file changes,
+ * like `currentNoOfferPlays`.
+ */
+export function currentPriorityPriors(): PriorityPriors {
+  let stamp: string;
+  try {
+    const st = statSync(CONFIG_PATH, { bigint: true });
+    stamp = `${st.ino}:${st.size}:${st.mtimeNs}:${st.ctimeNs}`;
+  } catch {
+    priorityPriorsMemo = null;
+    return {};
+  }
+  if (priorityPriorsMemo?.stamp === stamp) return priorityPriorsMemo.priors;
+  const priors = priorityPriorsOf(readConfigOrDefault());
+  priorityPriorsMemo = { stamp, priors };
+  return priors;
+}
+
+/** The greeting word drafts use when `founderGreeting` is unset. */
+export const DEFAULT_FOUNDER_GREETING = "Hi";
+
+/** The subject case drafts use when `subjectCase` is unset. */
+export const DEFAULT_SUBJECT_CASE: SubjectCase = "sentence";
 
 /**
  * The workspace's `founderGreeting` as the drafters read it: the greeting
  * word, trimmed, or "none" (any case) for no greeting. Blank or not a string
- * reads as `DEFAULT_FOUNDER_GREETING`, the behaviour from before the setting
- * existed.
+ * reads as `DEFAULT_FOUNDER_GREETING`.
  */
 export function founderGreetingOf(cfg: { founderGreeting?: unknown }): string {
   const raw = cfg.founderGreeting;
@@ -295,15 +342,17 @@ export function founderGreetingOf(cfg: { founderGreeting?: unknown }): string {
 }
 
 /**
- * The workspace's `subjectCase` as the drafters and lint read it. Only the
- * exact strings `sentence` and `as-written` turn the lowercase rule off;
- * absent, misspelled or any other value reads as `lowercase`, the behaviour
- * from before the setting existed.
+ * The workspace's `subjectCase` as the drafters and lint read it: the exact
+ * strings `lowercase`, `sentence` and `as-written`; absent, misspelled or any
+ * other value reads as `DEFAULT_SUBJECT_CASE`. Only `lowercase` turns the
+ * lowercase check (`subject-shouty`) on.
  */
 export function subjectCaseOf(cfg: { subjectCase?: unknown }): SubjectCase {
-  return cfg.subjectCase === "sentence" || cfg.subjectCase === "as-written"
+  return cfg.subjectCase === "lowercase" ||
+    cfg.subjectCase === "sentence" ||
+    cfg.subjectCase === "as-written"
     ? cfg.subjectCase
-    : "lowercase";
+    : DEFAULT_SUBJECT_CASE;
 }
 
 /**

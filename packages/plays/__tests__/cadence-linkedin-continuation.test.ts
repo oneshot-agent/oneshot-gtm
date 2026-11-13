@@ -111,6 +111,13 @@ const kinds = () => calls.map((c) => c.kind);
 // What message 1 and the close of an accepted continuation were told before
 // already-connected people were written for, captured from main as it stood: a
 // stranger's input must not change by a byte.
+// Every draft states its greeting and subject case; unset, Hi and sentence.
+const VOICE_LINES = [
+  "VOICE:",
+  "VOICE (the founder's style settings; they bind):",
+  'GREETING: Hi (when you open with a greeting, it is exactly "Hi," or "Hi <first name>,", never another word)',
+  "SUBJECT CASE: sentence (capitalize the first word and proper nouns only, and keep acronyms and identifiers as written)",
+];
 const ACCEPTED_FIRST_INPUT = [
   "FOUNDER: Founder",
   "PRODUCT: a GTM workspace",
@@ -119,6 +126,7 @@ const ACCEPTED_FIRST_INPUT = [
   "MESSAGE: first message after they accepted the connection request",
   "PRIOR TOUCHES:",
   "  STEP 2: Hi Dana, good to see another person working on review. How is it going?",
+  ...VOICE_LINES,
   "PRODUCT: a GTM workspace",
   "MAX_CHARS: 400",
 ].join("\n");
@@ -134,6 +142,7 @@ const ACCEPTED_LAST_INPUT = [
   "PRIOR TOUCHES:",
   "  STEP 2: Hi Dana, good to see another person working on review. How is it going?",
   "  STEP 3: Dana, what are you building right now?",
+  ...VOICE_LINES,
   "PRODUCT: a GTM workspace",
   "MAX_CHARS: 400",
 ].join("\n");
@@ -1599,7 +1608,7 @@ describe("templates: the default writer", () => {
     await invite((await shown()).body, "already_connected");
     await send(await shown());
     expect((await shown()).body).toBe(
-      "Hi Dana, last one from me, no reply needed. If it's ever useful to compare notes, I'm around.",
+      "Hi Dana, last one from me, no reply needed. If I can ever help with something, I'm around.",
     );
     expect(modelInputs).toEqual([]);
   });

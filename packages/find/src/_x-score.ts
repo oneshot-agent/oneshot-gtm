@@ -102,7 +102,6 @@ export const X_LANES: Record<XLane, XLaneConfig> = {
  */
 export const X_SITE_DENYLIST = [
   "passionfroot.me",
-  "hyperagent.com",
   "linktr.ee",
   "beacons.ai",
   "bio.link",

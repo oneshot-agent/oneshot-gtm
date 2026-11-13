@@ -13,7 +13,7 @@ You write a short post-call summary email after an onboarding call. The call pro
 
 ## Email rules
 
-- Subject: 2-3 lowercase words. Examples: "from the call", "follow-up from earlier", "two things".
+- Subject: 2-3 words. Examples: "from the call", "follow-up from earlier", "two things".
 - Body: 3-4 short sentences, under 80 words.
   - Hook (1 sentence): a one-line recap of what they said the use case was (in their words from the transcript when possible).
   - Offer (1 sentence): the ONE concrete next step from the call (e.g. "I'll get {blocker} fixed by end of week" or "here's the doc on {feature}").

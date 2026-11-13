@@ -369,10 +369,10 @@ export function lintOpenerFrequency(
 }
 
 /**
- * A run of 2+ consecutive uppercase letters normally reads as shouting
- * (the humanizer's own rule: "lowercase the whole subject line ... Acronyms
- * (`api` not `API`)"); a workspace whose `subjectCase` is `sentence` or
- * `as-written` turned that rule off, so lintEmail skips the check. But a token shaped like a SAM.gov solicitation number
+ * A run of 2+ consecutive uppercase letters reads as shouting under
+ * `subjectCase: "lowercase"` (the humanizer's rule for it: "lowercase the
+ * whole subject line ... acronyms (`api` not `API`)"); under any other subject
+ * case lintEmail skips the check. But a token shaped like a SAM.gov solicitation number
  * (hyphen-separated alphanumeric segments such as `W912DY-26-R-0042`) is an
  * identifier the play is REQUIRED to reproduce verbatim
  * (packages/prompts/sources-sought-email.md line 11/20), not a shouted word
@@ -978,56 +978,54 @@ const VOICE_BUDGET: Record<VoiceSurface, string> = {
 };
 
 /**
- * Override lines for the humanizer's two style defaults, from
- * `founderGreeting` and `subjectCase`. Empty when both are unset (or set to
- * the default), so the prompt carries the humanizer's `Hey` and lowercase
- * subject rules as written. Each line states its own rule and that it
- * overrides the default, so it binds wherever a play prompt repeats it.
+ * The GREETING and SUBJECT CASE lines every draft carries, from
+ * `founderGreeting` and `subjectCase` (unset: `Hi` and sentence case). The
+ * prompts take the greeting word and the subject case from these lines, so
+ * each one states its effective value and its rule.
  */
 export function voiceOverrideLines(
   cfg: { founderGreeting?: unknown; subjectCase?: unknown } = loadConfig(),
 ): string[] {
-  const lines: string[] = [];
   const greeting = founderGreetingOf(cfg);
-  if (greeting === "none") {
-    lines.push(
-      `GREETING: none (never open with a greeting; this overrides every "${DEFAULT_FOUNDER_GREETING}" greeting rule in the instructions)`,
-    );
-  } else if (greeting !== DEFAULT_FOUNDER_GREETING) {
-    lines.push(
-      `GREETING: ${greeting} (when you open with a greeting, it is exactly "${greeting}," or "${greeting} <first name>,", never another word; this overrides every "${DEFAULT_FOUNDER_GREETING}" greeting rule in the instructions)`,
-    );
-  }
+  const greetingLine =
+    greeting === "none"
+      ? "GREETING: none (never open with a greeting)"
+      : `GREETING: ${greeting} (when you open with a greeting, it is exactly "${greeting}," or "${greeting} <first name>,", never another word)`;
   const subjectCase = subjectCaseOf(cfg);
-  if (subjectCase === "sentence") {
-    lines.push(
-      "SUBJECT CASE: sentence (capitalize the first word and proper nouns only, and keep acronyms and identifiers as written; this overrides every lowercase-subject rule in the instructions)",
-    );
-  } else if (subjectCase === "as-written") {
-    lines.push(
-      "SUBJECT CASE: as written (no case rule: case the subject the way the founder would type it, brand names and acronyms included; this overrides every lowercase-subject rule in the instructions)",
-    );
-  }
-  return lines;
+  const subjectLine =
+    subjectCase === "lowercase"
+      ? "SUBJECT CASE: lowercase (lowercase the whole subject, brand names and acronyms included)"
+      : subjectCase === "sentence"
+        ? "SUBJECT CASE: sentence (capitalize the first word and proper nouns only, and keep acronyms and identifiers as written)"
+        : "SUBJECT CASE: as written (no case rule: case the subject the way the founder would type it, brand names and acronyms included)";
+  return [greetingLine, subjectLine];
+}
+
+/**
+ * `inputBlock` with the GREETING and SUBJECT CASE lines appended, unless it
+ * already carries them (a VOICE block does), for drafters that add no VOICE
+ * block of their own.
+ */
+export function withVoiceLines(inputBlock: string): string {
+  if (/^GREETING: /m.test(inputBlock)) return inputBlock;
+  return [inputBlock, "", ...voiceOverrideLines()].join("\n");
 }
 
 /**
  * VOICE input block from the founder's card (`founderVoice`) and the
- * greeting and subject-case overrides (`voiceOverrideLines`). Null when the
- * card is blank and no override is set, so an unconfigured install drafts
- * exactly as before. The card controls tone and rhythm; factual, audience,
- * channel and lint constraints still apply. The shared structure is
- * flexible. Platform-generic on purpose: no founder name, no product, no
- * influence named. Keyed on the card alone: an override does not split a
- * card's outcomes, and an override with no card keys null, so its drafts
- * count as voice off.
+ * greeting and subject-case lines (`voiceOverrideLines`). Without a card it
+ * carries those two lines alone. The card controls tone and rhythm; factual,
+ * audience, channel and lint constraints still apply. The shared structure
+ * is flexible. Platform-generic on purpose: no founder name, no product, no
+ * influence named. Keyed on the card alone: the greeting and subject case do
+ * not split a card's outcomes, and a block with no card keys null, so its
+ * drafts count as voice off.
  */
-export function voiceBlock(surface: VoiceSurface): { text: string; key: string | null } | null {
+export function voiceBlock(surface: VoiceSurface): { text: string; key: string | null } {
   const cfg = loadConfig();
   const card = cfg.founderVoice?.trim();
   const overrides = voiceOverrideLines(cfg);
   if (!card) {
-    if (overrides.length === 0) return null;
     return {
       key: null,
       text: ["VOICE (the founder's style settings; they bind):", ...overrides].join("\n"),
@@ -1288,7 +1286,7 @@ export async function draftEmailFromPrompt(opts: {
   const system = loadPrompt(opts.promptName) + signatureDirective();
   const messages: DraftMessages = [
     { role: "system", content: system },
-    { role: "user", content: opts.inputBlock },
+    { role: "user", content: withVoiceLines(opts.inputBlock) },
   ];
   let draft = await draftOnce(messages, opts);
   if (opts.maxBodyWords !== undefined || opts.maxBodySentences !== undefined) {

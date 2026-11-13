@@ -208,14 +208,13 @@ describe("lanesFor", () => {
   test("a sponsorship or link-aggregator page is not a founder signal", () => {
     for (const site of [
       "https://www.passionfroot.me/someone",
-      "https://hyperagent.com/s/cPjeDjvSIzVOtiAnRGXEig",
       "http://t.me/promo",
       "https://linktr.ee/someone",
       "http://www.linkedin.com/in/someone",
     ]) {
       expect(lanesFor({ ...founder, site })).toEqual([]);
     }
-    expect(lanesFor({ ...founder, site: "https://melizeche.com" })).toEqual(["founder"]);
+    expect(lanesFor({ ...founder, site: "https://janedoe.dev" })).toEqual(["founder"]);
   });
 
   test("one claimed word is not a founder", () => {
@@ -293,8 +292,8 @@ describe("scoreCandidate", () => {
   });
 
   test("a founder's site shows up in the why line", () => {
-    const u = user({ description: "founder building an agent", site: "https://melizeche.com" });
-    expect(scoreCandidate(candidate({ user: u }), ["founder"]).why).toContain("melizeche.com");
+    const u = user({ description: "founder building an agent", site: "https://janedoe.dev" });
+    expect(scoreCandidate(candidate({ user: u }), ["founder"]).why).toContain("janedoe.dev");
   });
 
   test("the why line names the seeds and the follower count", () => {

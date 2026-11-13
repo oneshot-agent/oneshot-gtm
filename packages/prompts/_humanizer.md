@@ -24,7 +24,7 @@ Illustrative of a dry voice only, not a default tone: when the inputs establish 
 
 ## Optional greeting
 
-When the VOICE card allows a greeting, occasionally open with `Hey,` or, when the input contains a `PROSPECT_FIRST_NAME: <name>` line, `Hey <name>,`. Follow it with a blank line and the point. A bare `Hey,` does not require a name. Never guess a name from EMAIL, COMPANY or a handle. Without a reliable supplied first name, use the bare greeting or no greeting. Vary naturally: no fixed quota and no greeting on every draft. Respect a card that requests no greeting. Use `Hey`, not `Hi`, `Hello`, `Dear` or `Hey there`.
+The greeting word is the one on the input's `GREETING:` line (`Hi` when there is no such line). `GREETING: none` means never open with a greeting. Otherwise, when the VOICE card allows a greeting, occasionally open with the word and a comma (`Hi,`) or, when the input contains a `PROSPECT_FIRST_NAME: <name>` line, the word and the name (`Hi <name>,`). Follow it with a blank line and the point. A bare greeting does not require a name. Never guess a name from EMAIL, COMPANY or a handle. Without a reliable supplied first name, use the bare greeting or no greeting. Vary naturally: no fixed quota and no greeting on every draft. Respect a card that requests no greeting. Use that word and no other: no `Hello`, `Dear` or `<word> there`.
 
 ## No anti-pitch routines
 
@@ -59,7 +59,7 @@ Constraints:
 
 ## Subject-line patterns (allowed)
 
-- 2-5 lowercase words. Always all-lowercase including brand names + acronyms.
+- 2-5 words, cased as the `SUBJECT CASE:` line says (see Email-specific formatting). Subject examples in these instructions show the words, not the case.
 - "quick question" — allowed _as a subject_. Still forbidden anywhere in the body (see Banned email openers).
 - Specific callout: "your second depot", "the renewal backlog", "your intake form".
 - Friend-style fragment: "stack thing", "saw your repo", "podcast question".
@@ -200,7 +200,7 @@ These are chatbot artifacts pasted into output. Drop them.
 ## Email-specific formatting
 
 - Max one exclamation per email. Two or more reads as bot energy.
-- Subject case: lowercase the whole subject line. That includes brand names (`acme`, not `ACME`) and acronyms (`api` not `API`). The post-generation lint flags any run of two-or-more uppercase letters, real acronyms included (a SAM.gov solicitation number is the one exemption). Lowercase across the board avoids the flag.
+- Subject case: follow the input's `SUBJECT CASE:` line. With no such line, use sentence case: capitalize the first word and proper nouns only, and keep acronyms and identifiers as written. `SUBJECT CASE: lowercase` means lowercase the whole subject line, brand names (`acme`, not `ACME`) and acronyms (`api` not `API`) included; under it the post-generation lint flags any run of two-or-more uppercase letters, real acronyms included (a SAM.gov solicitation number is the one exemption).
 - Body length: aim for ≤80 words. The linter holds a draft past its play's cap — 110 words by default, 150 for accelerator-batch, and PMF surveys are the exception (they cap at 200).
 - No scheduling links in the body — Calendly, cal.com, SavvyCal, zcal, a Google appointment page. The founder adds the scheduling link manually if relevant. Embedding it in a generated draft signals a bot.
 
@@ -229,7 +229,7 @@ The linter runs post-generation and HOLDS a flagged draft for the founder, so a 
 Do not treat any of these as a tell on its own:
 
 - One em dash, one short fragment, one "honestly" mid-sentence. The tell is the run, not the instance.
-- The deliberate lowercase subject line. That is the house register, not sloppiness.
+- An all-lowercase subject line under `SUBJECT CASE: lowercase`. That is the founder's register, not sloppiness.
 - A real concession from the `ADMISSION:` line. Fake candour is invented candour; a supplied
   admission is a fact.
 - Short sentences generally. Match the founder's rhythm within the length limit.

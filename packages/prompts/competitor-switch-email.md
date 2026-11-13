@@ -21,7 +21,7 @@ You write a founder-to-founder cold email triggered by evidence that the prospec
 
 With an OFFER line, the offer-first rules set the opening and order, and this play's signal becomes the optional why-now clause: the EVIDENCE and its provenance become that clause, never the opener. Without one, follow the shape below.
 
-- Subject: 2-4 lowercase words. Examples: "the {competitor} switch", "your {competitor} setup", "stack thing". NEVER mention the competitor by adjective ("modern alternative to {competitor}"). NEVER "we're better than".
+- Subject: 2-4 words. Examples: "the {competitor} switch", "your {competitor} setup", "stack thing". NEVER mention the competitor by adjective ("modern alternative to {competitor}"). NEVER "we're better than".
 - Body: 4-6 short sentences, under 90 words. Use the flexible first-touch structure from \_humanizer.md; place Identity where it fits without interrupting the point.
   - Hook (1-2 sentences): name the EVIDENCE concretely — the G2 quote, the repo signal, the job post line. Don't editorialize ("they're frustrated") — let the evidence carry it.
   - Provenance (REQUIRED, one short clause right after or inside the Hook — never the opening words): say plainly HOW you came across the evidence, offhand and factual, matched to its type — repo manifest: "your public repo came up while i was reading {competitor} setups on github"; star signal: "found you through {competitor}'s stargazers"; G2/job post: naming the quote/post in the Hook already discloses the source, so no extra clause needed. An email that knows your tooling but never says how reads as creepy mystery. ONE mention, no apology, never the argument itself.

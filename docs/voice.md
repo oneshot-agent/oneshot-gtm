@@ -26,10 +26,12 @@ The card sets warmth, bluntness, rhythm and register. Facts, audience, channel l
 
 ## Greeting and subject case
 
-Two config settings change the draft rules' defaults. Unset, drafts are as before. Both reach the drafts that carry the card, with or without a card.
+Every email draft states its greeting word and subject case on a `GREETING` and a `SUBJECT CASE` line, with or without a card. Two config settings set them.
 
-- `founderGreeting`: the word a draft greets with when it greets. Unset: `Hey`. `"Hi"` gives "Hi," or "Hi Sam,"; `"none"` means no greeting.
-- `subjectCase`: unset or `"lowercase"`: the whole subject lowercased, acronyms included, and a subject with two capitals in a row (`API`, `URGENT`) is held and rewritten; a single capital (`Hello Sam`) passes. `"sentence"`: sentence case. `"as-written"`: no case rule. Either of those two turns the hold off.
+- `founderGreeting`: the word a draft greets with when it greets. Unset: `Hi`, which gives "Hi," or "Hi Sam,". `"Hey"` gives "Hey," or "Hey Sam,"; `"none"` means no greeting.
+- `subjectCase`: unset or `"sentence"`: sentence case, acronyms as written. `"lowercase"`: the whole subject lowercased, acronyms included, and a subject with two capitals in a row (`API`, `URGENT`) is held and rewritten; a single capital (`Hello Sam`) passes. `"as-written"`: no case rule. Only `"lowercase"` holds a subject for its case.
+
+Drafts written before these defaults were `Hey` and lowercase subjects. To keep that, set `"founderGreeting": "Hey"` and `"subjectCase": "lowercase"`.
 
 Each draft records which card it was written with. The trigger editor splits sent, regenerated and rotated counts into **voice on** and **voice off**. Judge the card by that split after a week.
 
@@ -51,7 +53,7 @@ It reads plain text files and knows nothing about any notes app. It shows the ca
 
 ## A worked example
 
-One founder's card, derived from their posts and messages and then edited. It shows the shape. Yours should not read like this unless you do.
+An invented card for a made-up founder, written to show the shape a card derived from posts and messages takes after editing. It is not anyone's real card. Yours should not read like this unless you do.
 
 ```
 MOVES

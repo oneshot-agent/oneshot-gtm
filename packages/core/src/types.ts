@@ -387,6 +387,17 @@ export const OFFER_CHECKS = ["awareness", "check-lead", "system-wrapper"] as con
 
 export type OfferCheck = (typeof OFFER_CHECKS)[number];
 
+/** One play's score priors; see `OneShotConfig.priorityPriors`. */
+export interface PlayPriorityPriors {
+  /** Strength of the title signal for a founder, owner or C-level title; other titles score 50. */
+  execTitle?: number;
+  /** Strength of the event signal for an event's host; every other role scores 65. */
+  host?: number;
+}
+
+/** Score priors by play name; see `OneShotConfig.priorityPriors`. */
+export type PriorityPriors = Record<string, PlayPriorityPriors>;
+
 /** How drafted email subjects are cased; see `OneShotConfig.subjectCase`. */
 export type SubjectCase = "lowercase" | "sentence" | "as-written";
 
@@ -450,6 +461,15 @@ export interface OneShotConfig {
    * config files stay valid; readers treat absent as "newest".
    */
   queueReviewOrder?: "ranked" | "newest";
+  /**
+   * Score priors a workspace measured from its own review decisions, by play
+   * name (`luma-events`, `repo-interest`, `free-pilot`): how strongly an
+   * exec title (`execTitle`) or an event host (`host`, luma-events only)
+   * counts toward a row's priority score, 0-100. Read through
+   * `priorityPriorsOf`. Absent: neutral, every title and every event role
+   * scores alike. Scores order the ranked review list only.
+   */
+  priorityPriors?: PriorityPriors;
   /**
    * How inbound human replies get their intent label (see REPLY_INTENTS in
    * shared-types). `llm` is the triage prompt on `llmModel`; `decisions` is a
@@ -611,16 +631,17 @@ export interface OneShotConfig {
   founderVoice?: string | null;
   /**
    * The one word drafts open with when they greet ("Yo" → "Yo," or "Yo
-   * Sam,"). "none" = never open with a greeting. Null/absent = the
-   * humanizer's rule as written (`Hey`).
+   * Sam,"). "none" = never open with a greeting. Null/absent = `Hi`
+   * (`DEFAULT_FOUNDER_GREETING`). Every draft states it on a GREETING line.
    */
   founderGreeting?: string | null;
   /**
-   * Email subject casing. Null/absent or "lowercase" = the humanizer's rule
-   * as written: the whole subject lowercased, brand names and acronyms
-   * included, and a subject with an uppercase run is held and repaired
-   * (`subject-shouty`). "sentence" = sentence case; "as-written" = no case
-   * rule. Either of those two turns the lowercase check off.
+   * Email subject casing, stated on a SUBJECT CASE line in every draft.
+   * Null/absent or "sentence" = sentence case: the first word and proper
+   * nouns capitalized, acronyms and identifiers as written. "lowercase" =
+   * the whole subject lowercased, brand names and acronyms included, and a
+   * subject with an uppercase run is held and repaired (`subject-shouty`).
+   * "as-written" = no case rule. Only "lowercase" turns the check on.
    */
   subjectCase?: SubjectCase | null;
   /**

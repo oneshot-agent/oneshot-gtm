@@ -17,6 +17,13 @@ import { canonicalLinkedInProfileKey } from "./ledger-prospects.ts";
 import { Ledger, openLedgerDatabase } from "./ledger.ts";
 import { classifyReply } from "./reply-classify.ts";
 
+/**
+ * The `channel_events` sources this install writes for a LinkedIn reply: the
+ * inbox's own capture and a reply the founder marked by hand. Any other
+ * source is history imported from another tool.
+ */
+const NATIVE_LINKEDIN_REPLY_SOURCES: ReadonlySet<string> = new Set(["oneshot-linkedin", "manual"]);
+
 export function isHumanLinkedInReply(m: LinkedInMessage): boolean {
   const kind = classifyReply({ subject: "", body: m.text ?? "" });
   return m.direction === "inbound" && !m.deleted && (kind === "human" || kind === "unsubscribe");
@@ -658,7 +665,7 @@ export class LinkedInInboxStore {
       .map((r) => JSON.parse(r.data) as LinkedInMessage)
       .toSorted((a, b) => a.sent_at.localeCompare(b.sent_at) || a.id.localeCompare(b.id));
   }
-  /** One attribution per message; sibling matches only stop outreach. Existing Expandi history remains intact. */
+  /** One attribution per message; sibling matches only stop outreach. Imported history remains intact. */
   deliver(t: LinkedInThreadRecord, matches: LinkedInMatch[]) {
     this.deliverAll([t], matches);
   }
@@ -731,13 +738,15 @@ export class LinkedInInboxStore {
         if (!ledger.getProspectById(match.prospectId)) continue;
         const isOwner =
           match.workspace === t.owner?.workspace && match.prospectId === t.owner?.prospectId;
+        // The same reply already imported from another tool: keep that
+        // record and do not count the message a second time.
         const legacy =
           isOwner &&
           ledger
             .listChannelEventsForProspect(match.prospectId)
             .some(
               (e) =>
-                e.source === "expandi" &&
+                !NATIVE_LINKEDIN_REPLY_SOURCES.has(e.source) &&
                 Date.parse(e.occurred_at) === Date.parse(m.sent_at) &&
                 (e.body ?? "").trim() === (m.text ?? "").trim(),
             );

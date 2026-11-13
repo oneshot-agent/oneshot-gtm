@@ -115,6 +115,17 @@ Person research usually finds nothing for them. The `github-stars` gate judges o
 
 The pending list sorts `newest` or `ranked`. The toggle is on the page; `queueReviewOrder` in config sets the default. Ranking only orders the list. It decides nothing else.
 
+Ranking scores every title and every event role alike. If your own approvals show a pattern, say founders and CEOs at meetups approve less often than engineers, or hosts less often than guests, set `priorityPriors` per play. Each value is 0-100; a title with no prior scores 50 and a guest 65.
+
+```json
+"priorityPriors": {
+  "luma-events": { "execTitle": 35, "host": 45 },
+  "repo-interest": { "execTitle": 35 }
+}
+```
+
+`execTitle` covers founder, owner and C-level titles on `luma-events`, `repo-interest` and the local-business rows of `free-pilot`. `host` is `luma-events` only. Rows already queued keep their score until `find score-prospects --refresh`.
+
 Approved rows go out when you press **Batch send…** or run `find drain <play>`. Both respect the [daily spend ceiling](./background-monitoring.md#spend-ceiling) and the mailbox caps.
 
 ## Finder-specific keys

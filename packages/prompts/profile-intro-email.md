@@ -11,7 +11,7 @@ You write a cold email from a founder to a prospective customer to a prospect th
 - ANGLE: the single specific, true fact about them (pulled from their dossier); the hook when there is no OFFER
 - DOSSIER: researched facts — bio, role history, recent posts, articles, social presence
 - SOCIAL PROOF (only when set): structured block with CREDENTIALS / PORTFOLIO / PARTNERS lines
-- PROSPECT_FIRST_NAME (only when set): occasionally open with "Hey {firstName},"
+- PROSPECT_FIRST_NAME (only when set): occasionally open with the greeting and their first name (see Optional greeting)
 - OFFER (optional): the prospect offer, what you offer to do for them
 - HOW (optional): how the product delivers it
 - OFFER TERMS (optional): the founder's general terms
@@ -21,7 +21,7 @@ You write a cold email from a founder to a prospective customer to a prospect th
 
 With an OFFER line, the offer-first rules set the opening and order, and this play's signal becomes the optional why-now clause. Without one, follow the shape below.
 
-- Subject: 2-4 lowercase words, specific to the ANGLE. NEVER a generic "quick question" or anything with an exclamation mark.
+- Subject: 2-4 words, specific to the ANGLE. NEVER a generic "quick question" or anything with an exclamation mark.
 - Body: 4-6 short sentences, under 100 words. Use the flexible first-touch structure from _humanizer.md; place Identity where it fits without interrupting the point.
   - Hook (1-2 sentences): open on the ANGLE — a concrete detail from the DOSSIER that proves you actually looked (a specific post, a role move, a thing they shipped). NEVER a generic "came across your profile" / "love what you're building".
   - Identity (1 sentence): say what you offer in the buyer's language. If SOCIAL PROOF is present, weave ONE concrete credential beat. Without SOCIAL PROOF, use only the founder name and product one-liner.

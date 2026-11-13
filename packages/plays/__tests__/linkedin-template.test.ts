@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { LINKEDIN_TEMPLATE_SLOTS, linkedinTemplatesOf, linkedinWriterOf } from "@oneshot-gtm/core";
 import { DEFAULT_LINKEDIN_TEMPLATES, LINKEDIN_TEMPLATE_FIELDS } from "@oneshot-gtm/shared-types";
+import { slopFlags } from "../src/_lib.ts";
 import { templatedLinkedIn } from "../src/_linkedin-template.ts";
 
 describe("LinkedIn template config", () => {
@@ -22,6 +23,12 @@ describe("LinkedIn template config", () => {
     expect(linkedinWriterOf({})).toBe("template");
     expect(linkedinWriterOf({ linkedin: { writer: "Model" } })).toBe("template");
     expect(linkedinWriterOf({ linkedin: { writer: "model" } })).toBe("model");
+  });
+
+  it("ships defaults that use no phrase the email lint bans", () => {
+    for (const [step, text] of Object.entries(DEFAULT_LINKEDIN_TEMPLATES)) {
+      expect(slopFlags(text), step).toEqual([]);
+    }
   });
 });
 

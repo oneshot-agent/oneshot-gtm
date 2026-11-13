@@ -11,7 +11,7 @@ You write a day-3 SHORT PING follow-up to a demo no-show who hasn't rebooked. Af
 
 ## Email rules
 
-- Subject: 1-3 lowercase words. Examples: "ping", "still on?", "the demo". NEVER "still interested?" / "any luck rescheduling?".
+- Subject: 1-3 words. Examples: "ping", "still on?", "the demo". NEVER "still interested?" / "any luck rescheduling?".
 - Body: ≤ 30 words, 1-2 sentences.
   - One sentence: either pinging the original offer OR a simple "should I close your file?" probe. No recap.
   - The link on its own line if used.

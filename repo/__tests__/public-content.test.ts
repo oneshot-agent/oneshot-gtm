@@ -58,7 +58,7 @@ describe("public content guard", () => {
       expect(h).toMatch(/^[0-9a-f]{64}$/);
     }
     expect(new Set(hashes.identity).size).toBe(hashes.identity.length);
-    expect(hashes.identity.length).toBeGreaterThanOrEqual(11);
+    expect(hashes.identity.length).toBeGreaterThanOrEqual(55);
   });
 });
 
@@ -105,6 +105,39 @@ describe("the scanner itself", () => {
     expect(rules("packages/x/__tests__/a.test.ts", 'sendingDomain: "oneshotagents.com"')).toEqual([
       "oneshot-host",
     ]);
+  });
+
+  it("flags a planted sending domain of each shape, on any subdomain", () => {
+    // Built from parts, so this file does not carry the shapes it plants.
+    const os = "oneshot";
+    for (const host of [
+      `${os}planted.pro`,
+      `mail.${os}-planted.info`,
+      `${os}-agents.com`,
+      `${os}hq.zq`,
+    ]) {
+      expect(rules("apps/x/src/a.ts", `sendingDomain: "${host}"`), host).toEqual([
+        "sending-domain",
+      ]);
+    }
+    for (const line of [
+      "see https://oneshot-gtm.com/docs",
+      "see https://docs.oneshotagent.com/pricing",
+      `the ${os}.provider field`,
+      `${os}hq is a word here`,
+    ]) {
+      expect(rules("apps/x/src/a.ts", line), line).toEqual([]);
+    }
+  });
+
+  it("flags a planted new name once its hash is on the list", () => {
+    const line = "Zqplanted Newname approved the pilot";
+    expect(rules("docs/a.md", line)).toEqual([]);
+    const o = {
+      ...opts,
+      identityHashes: new Set([...hashes.identity, sha256("zqplanted newname")]),
+    };
+    expect(rules("docs/a.md", line, o)).toEqual(["identity"]);
   });
 
   it("flags pitch phrases and provenance markers in fixtures", () => {

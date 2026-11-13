@@ -161,7 +161,7 @@ export function dedupeKeyFor(record: RegistryRecord): string {
  * clears on a name-weighted threshold, and registry names are the wrong
  * kind of name for that: NPPES carries the LEGAL entity ("A PROFESSIONAL
  * DENTAL ORGANIZATION") or, for an NPI-1, the dentist's own name, while the
- * places index carries the TRADE name on the door ("Smiles at Telfair Family
+ * places index carries the TRADE name on the door ("Brightside Family
  * and Cosmetic Dentistry"). Measured on real rows 2026-09-07: every miss came
  * back at 0.37-0.59 with a `closest_match` at the identical street number
  * and postal code. The address is the registry's own ground truth, so a

@@ -116,7 +116,7 @@ export const DEFAULT_LINKEDIN_TEMPLATES: Readonly<Record<LinkedInTemplateStep, s
   lastMessage:
     "Hi {first_name}, last one from me, no reply needed. One thing I'd like to do for you: {offer}. Want me to run a small version? A no is fine too.",
   lastMessageFallback:
-    "Hi {first_name}, last one from me, no reply needed. If it's ever useful to compare notes, I'm around.",
+    "Hi {first_name}, last one from me, no reply needed. If I can ever help with something, I'm around.",
   friendNote: "Hi {first_name}, we traded emails, so connecting here so the next hello isn't cold.",
 };
 

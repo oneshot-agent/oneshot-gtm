@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The VOICE block: the founder's register card reaches the drafts as one
-// runtime input block, mirrors socialProofBlock's contract (null when blank),
-// controls tone within factual/channel constraints and a per-surface budget, and stays
+// runtime input block (with no card, just the greeting and subject-case
+// lines), controls tone within factual/channel constraints and a per-surface budget, and stays
 // platform-generic: no founder, product or influence named in the directive.
 
 let cfgOverride: Record<string, unknown> = {};
@@ -33,10 +33,16 @@ beforeEach(() => {
 });
 
 describe("voiceBlock", () => {
-  it("is null when no card is set, blank or whitespace", () => {
-    expect(voiceBlock("intro")).toBeNull();
-    cfgOverride = { founderVoice: "   \n " };
-    expect(voiceBlock("intro")).toBeNull();
+  it("carries only the greeting and subject-case lines when no card is set, blank or whitespace", () => {
+    for (const founderVoice of [null, "   \n "]) {
+      cfgOverride = { founderVoice };
+      const out = voiceBlock("intro");
+      expect(out.key).toBeNull();
+      expect(out.text.split("\n").slice(1)).toEqual([
+        expect.stringMatching(/^GREETING: Hi \(/),
+        expect.stringMatching(/^SUBJECT CASE: sentence \(/),
+      ]);
+    }
   });
 
   it("carries the card verbatim with the directive and the surface's budget line", () => {
@@ -69,7 +75,8 @@ describe("voiceBlock", () => {
     cfgOverride = { founderVoice: long };
     const out = voiceBlock("intro")!;
     expect(out.text).not.toContain("x".repeat(1500));
-    expect(out.text.length).toBeLessThan(long.length);
+    expect(out.text).toContain(long.slice(0, 1500).trimEnd());
+    expect(out.text).not.toContain(long);
     expect(out.key).toBe(voiceKey(long));
     expect(out.key).not.toBe(voiceKey(CARD));
   });

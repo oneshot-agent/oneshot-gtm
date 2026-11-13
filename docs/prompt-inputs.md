@@ -2,31 +2,31 @@
 
 The model knows only what you put in config, and each field reaches some drafts and not others. The field names do not tell you which. This table does.
 
-| What you wrote                                       | First touch                 | Follow-up                 | Reply                             |
-| ---------------------------------------------------- | --------------------------- | ------------------------- | --------------------------------- |
-| `founderName`, `productOneLiner`                     | yes                         | yes                       | yes                               |
-| `yourEdge`, `yourClaim` (from the trigger)           | yes                         | no                        | no                                |
-| `founderCredentials`, `productPortfolio`, `partners` | yes                         | yes                       | no                                |
-| `founderAdmission`                                   | about 1 in 3                | no                        | no                                |
-| `pilotOffer`                                         | yes, as the offer's terms   | yes, as the offer's terms | no                                |
-| `offerExclusions`                                    | the offer's writer, judge   | the offer's writer, judge | no                                |
-| `offerRules`, `offerChecks`                          | the offer's writer, judge   | the offer's writer, judge | no                                |
-| `offerAnchor`                                        | the offer's writer, judge   | the offer's writer, judge | no                                |
-| `noOfferPlays`                                       | no offer for those plays    | no offer for those plays  | no                                |
-| `memberOffer`                                        | `multiplier` only, verbatim | `multiplier` letter only  | no                                |
-| `icpOneLiner`                                        | no [^icp]                   | no                        | yes                               |
-| `productBrief`                                       | yes [^offer]                | yes [^offer]              | yes, and the only source of links |
-| `founderVoice`, the [voice card](./voice.md)         | yes                         | yes                       | yes                               |
-| `founderGreeting` [^style]                           | yes                         | yes                       | yes                               |
-| `subjectCase` [^style]                               | yes                         | yes                       | no (a reply has no subject)       |
-| Earlier emails on the thread                         | no                          | yes                       | yes                               |
-| `founderCohort`                                      | `accelerator-batch` only    | no                        | no                                |
-| A meeting outcome and your notes                     | no                          | no                        | yes                               |
-| Approved [learned guidance](./learning.md)           | yes                         | yes                       | yes                               |
+| What you wrote                                       | First touch                 | Follow-up                 | Reply                                |
+| ---------------------------------------------------- | --------------------------- | ------------------------- | ------------------------------------ |
+| `founderName`, `productOneLiner`                     | yes                         | yes                       | yes                                  |
+| `yourEdge`, `yourClaim` (from the trigger)           | yes                         | no                        | no                                   |
+| `founderCredentials`, `productPortfolio`, `partners` | yes                         | yes                       | no                                   |
+| `founderAdmission`                                   | about 1 in 3                | no                        | no                                   |
+| `pilotOffer`                                         | yes, as the offer's terms   | yes, as the offer's terms | no                                   |
+| `offerExclusions`                                    | the offer's writer, judge   | the offer's writer, judge | no                                   |
+| `offerRules`, `offerChecks` | the offer's writer, judge | the offer's writer, judge | no |
+| `offerAnchor`                                        | the offer's writer, judge   | the offer's writer, judge | no                                   |
+| `noOfferPlays`                                       | no offer for those plays    | no offer for those plays  | no                                   |
+| `memberOffer`                                        | `multiplier` only, verbatim | `multiplier` letter only  | no                                   |
+| `icpOneLiner`                                        | no [^icp]                   | no                        | yes                                  |
+| `productBrief`                                       | yes [^offer]                | yes [^offer]              | yes, and the only source of links    |
+| `founderVoice`, the [voice card](./voice.md)         | yes                         | yes                       | yes                                  |
+| `founderGreeting` [^style]                           | yes                         | yes                       | yes                                  |
+| `subjectCase` [^style]                               | yes                         | yes                       | yes, unused (a reply has no subject) |
+| Earlier emails on the thread                         | no                          | yes                       | yes                                  |
+| `founderCohort`                                      | `accelerator-batch` only    | no                        | no                                   |
+| A meeting outcome and your notes                     | no                          | no                        | yes                                  |
+| Approved [learned guidance](./learning.md)           | yes                         | yes                       | yes                                  |
 
 [^icp]: `add-prospect`, `profile-intro` and `x-repost-intro` pass it themselves.
 
-[^style]: Only when set to something other than the default (`Hey`, lowercase subjects). See [Greeting and subject case](./voice.md#greeting-and-subject-case).
+[^style]: Always, as a `GREETING` or `SUBJECT CASE` line; unset reads as `Hi` and sentence case. See [Greeting and subject case](./voice.md#greeting-and-subject-case).
 
 [^offer]: With the prospect offer, below. Plays that make no offer (`discovery-interview`, `pmf-survey`, `demo-no-show`, `x-amplify`, `community-reply`, `multiplier`) do not get it.
 

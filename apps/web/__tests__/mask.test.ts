@@ -13,17 +13,17 @@ import {
 
 describe("maskName", () => {
   it("keeps the first name and reduces the rest to initials", () => {
-    expect(maskName("Asad Hussain")).toBe("Asad H.");
+    expect(maskName("Jane Doe")).toBe("Jane D.");
     expect(maskName("Mary Jane Watson")).toBe("Mary J. W.");
   });
   it("keeps a single-token name as-is", () => {
-    expect(maskName("Asad")).toBe("Asad");
+    expect(maskName("Jane")).toBe("Jane");
   });
   it("collapses surrounding and internal whitespace", () => {
-    expect(maskName("  Asad   Hussain  ")).toBe("Asad H.");
+    expect(maskName("  Jane   Doe  ")).toBe("Jane D.");
   });
   it("uppercases the initial of a lowercase surname", () => {
-    expect(maskName("asad hussain")).toBe("asad H.");
+    expect(maskName("jane doe")).toBe("jane D.");
   });
   it("handles a hyphenated surname as a single token", () => {
     expect(maskName("Mary Smith-Jones")).toBe("Mary S.");
@@ -37,7 +37,7 @@ describe("maskName", () => {
 
 describe("maskEmail", () => {
   it("keeps a 3-char hint of the local part and the full domain", () => {
-    expect(maskEmail("asadhussain2408@gmail.com")).toBe("asa•••@gmail.com");
+    expect(maskEmail("jane.doe.example@gmail.com")).toBe("jan•••@gmail.com");
   });
   it("keeps only the first char when the local part is short", () => {
     expect(maskEmail("jo@x.com")).toBe("j•••@x.com");
@@ -47,10 +47,10 @@ describe("maskEmail", () => {
     expect(maskEmail("ab")).toBe("a•••");
   });
   it("preserves case and keeps the full domain incl. subdomains", () => {
-    expect(maskEmail("Asad@Mail.Acme.CO")).toBe("Asa•••@Mail.Acme.CO");
+    expect(maskEmail("Jane@Mail.Acme.CO")).toBe("Jan•••@Mail.Acme.CO");
   });
   it("masks a plus-tagged local part (tag stays hidden behind the hint)", () => {
-    expect(maskEmail("asad+sales@gmail.com")).toBe("asa•••@gmail.com");
+    expect(maskEmail("jane+sales@gmail.com")).toBe("jan•••@gmail.com");
   });
   it("handles an address with an empty local part", () => {
     expect(maskEmail("@x.com")).toBe("•••@x.com");
@@ -99,14 +99,14 @@ describe("maskFrom", () => {
     expect(maskFrom("<john@example.com>")).toBe("<joh•••@example.com>");
   });
   it("masks a bare display name (no email) as a name, not an email", () => {
-    expect(maskFrom("Asad Hussain")).toBe("Asad H.");
+    expect(maskFrom("Jane Doe")).toBe("Jane D.");
   });
 });
 
 describe("maskAuto", () => {
   it("masks as email when an @ is present, else as name", () => {
     expect(maskAuto("a@b.com")).toBe("a•••@b.com");
-    expect(maskAuto("Asad Hussain")).toBe("Asad H.");
+    expect(maskAuto("Jane Doe")).toBe("Jane D.");
   });
   it("returns empty for null/empty", () => {
     expect(maskAuto(null)).toBe("");
@@ -120,14 +120,14 @@ describe("maskAuto", () => {
 
 describe("applyMask — the privacy gate shared by <Pii> and useMask", () => {
   it("returns the RAW value when privacy is off", () => {
-    expect(applyMask(false, "email", "asadhussain2408@gmail.com")).toBe(
-      "asadhussain2408@gmail.com",
+    expect(applyMask(false, "email", "jane.doe.example@gmail.com")).toBe(
+      "jane.doe.example@gmail.com",
     );
-    expect(applyMask(false, "name", "Asad Hussain")).toBe("Asad Hussain");
+    expect(applyMask(false, "name", "Jane Doe")).toBe("Jane Doe");
   });
   it("masks when privacy is on", () => {
-    expect(applyMask(true, "email", "asadhussain2408@gmail.com")).toBe("asa•••@gmail.com");
-    expect(applyMask(true, "name", "Asad Hussain")).toBe("Asad H.");
+    expect(applyMask(true, "email", "jane.doe.example@gmail.com")).toBe("jan•••@gmail.com");
+    expect(applyMask(true, "name", "Jane Doe")).toBe("Jane D.");
   });
   it("returns empty string for null/empty regardless of the flag", () => {
     expect(applyMask(true, "email", null)).toBe("");
@@ -139,8 +139,8 @@ describe("applyMask — the privacy gate shared by <Pii> and useMask", () => {
 
 describe("maskByKind", () => {
   it("dispatches to the right helper", () => {
-    expect(maskByKind("name", "Asad Hussain")).toBe("Asad H.");
-    expect(maskByKind("email", "asadhussain2408@gmail.com")).toBe("asa•••@gmail.com");
+    expect(maskByKind("name", "Jane Doe")).toBe("Jane D.");
+    expect(maskByKind("email", "jane.doe.example@gmail.com")).toBe("jan•••@gmail.com");
     expect(maskByKind("company", "Acme AI")).toBe("Acme");
     expect(maskByKind("phone", "+1 555 123 4567")).toBe("•••-4567");
     expect(maskByKind("from", "John Smith <john@example.com>")).toBe(

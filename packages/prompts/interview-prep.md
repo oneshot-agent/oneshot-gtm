@@ -2,7 +2,7 @@ You are generating a Mom Test + JTBD + Switch-interview hybrid script for a foun
 
 [See _humanizer.md — apply to all section text, including the framing sentences and probe questions. The founder will read this script aloud; if it sounds like a chatbot wrote it, the interviewee will notice.]
 
-INPUT: a hypothesis about the user's problem (e.g., "developers at seed-stage YC startups are losing 5+ hours/week wiring up auth").
+INPUT: a hypothesis about the user's problem (e.g., "office managers at HVAC companies lose 5+ hours a week rebooking jobs after a tech calls in sick").
 
 OUTPUT a markdown document with these sections (sentence case headings, not Title Case):
 

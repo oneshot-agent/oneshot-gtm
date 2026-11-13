@@ -13,8 +13,8 @@ describe("htmlToText", () => {
   });
 
   it("decodes the entities that actually occur in mail", () => {
-    expect(htmlToText("Tom &amp; Jerry &lt;3 &quot;quotes&quot; &#39;apos&#39;&nbsp;end")).toBe(
-      "Tom & Jerry <3 \"quotes\" 'apos' end",
+    expect(htmlToText("Salt &amp; Pepper &lt;3 &quot;quotes&quot; &#39;apos&#39;&nbsp;end")).toBe(
+      "Salt & Pepper <3 \"quotes\" 'apos' end",
     );
     expect(htmlToText("&#8364;21 and &#x20AC;22")).toBe("€21 and €22");
   });

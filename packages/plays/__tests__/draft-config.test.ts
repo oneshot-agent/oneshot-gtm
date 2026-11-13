@@ -77,6 +77,14 @@ describe("draftConfigKey", () => {
     expect(seen.size).toBe(changes.length + 1);
   });
 
+  it("reads an unset greeting and subject case as Hi and sentence case", () => {
+    const unset = { ...base, founderGreeting: undefined, subjectCase: undefined } as Cfg;
+    expect(key(unset)).toBe(key(base));
+    const hey = { ...base, founderGreeting: "Hey", subjectCase: "lowercase" } as Cfg;
+    expect(key(hey)).not.toBe(key(base));
+    expect(key({ ...hey, founderGreeting: " Hey, " } as Cfg)).toBe(key(hey));
+  });
+
   it("ignores what no draft reads, and whitespace and repeats in the exclusions", () => {
     expect(key({ ...base, llmModel: "another-model" } as Cfg)).toBe(key(base));
     expect(

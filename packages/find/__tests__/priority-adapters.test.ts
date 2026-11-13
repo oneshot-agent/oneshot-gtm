@@ -1,3 +1,5 @@
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Ledger } from "@oneshot-gtm/core";
 import {
@@ -382,44 +384,61 @@ describe("review-hardened evidence edges", () => {
   });
 });
 
-describe("v2 label-mined adapter priors", () => {
-  it("luma: exec titles score DOWN, Host scores below Guest, bios no longer feed seniority", () => {
-    const exec = safeScorePriority(
-      "luma-events",
-      { ...FIXTURES["luma-events"], title: "CEO", attendeeBio: "AI enthusiast" },
-      NOW,
-    )!;
-    expect(exec.components.personFit).toBe(35);
-    const host = safeScorePriority("luma-events", FIXTURES["luma-events"], NOW)!;
-    const guest = safeScorePriority(
-      "luma-events",
-      { ...FIXTURES["luma-events"], role: "Guest" },
-      NOW,
-    )!;
-    expect(host.components.intentStrength).toBe(45);
-    expect(guest.components.intentStrength).toBe(65);
-    // A founder-looking bio alone no longer inflates personFit (measured flat).
-    const bioOnly = safeScorePriority(
-      "luma-events",
-      { ...FIXTURES["luma-events"], title: undefined },
-      NOW,
-    )!;
-    expect(bioOnly.components.personFit).toBe(50);
+describe("adapter priors (priorityPriors)", () => {
+  // The priors that reproduce the scores from before they moved to config.
+  const MEASURED = {
+    "luma-events": { execTitle: 35, host: 45 },
+    "repo-interest": { execTitle: 35 },
+    "free-pilot": { execTitle: 35 },
+  };
+  const luma = (extra: Record<string, unknown>, priors?: Record<string, object>) =>
+    safeScorePriority("luma-events", { ...FIXTURES["luma-events"], ...extra }, NOW, priors)!;
+
+  it("luma: with no priors an exec title, a host and a guest score as any other", () => {
+    expect(luma({ title: "CEO", attendeeBio: "AI enthusiast" }).components.personFit).toBe(50);
+    expect(luma({}).components.intentStrength).toBe(65);
+    expect(luma({ role: "Guest" }).components.intentStrength).toBe(65);
+    // A founder-looking bio alone never inflates personFit.
+    expect(luma({ title: undefined }).components.personFit).toBe(50);
   });
 
-  it("repo-interest: exec-title prior inverted, non-exec titles neutral", () => {
-    const exec = safeScorePriority(
-      "repo-interest",
-      { ...FIXTURES["repo-interest"], title: "CTO" },
-      NOW,
-    )!;
-    expect(exec.components.personFit).toBe(35);
-    const ic = safeScorePriority(
-      "repo-interest",
-      { ...FIXTURES["repo-interest"], title: "ML Engineer" },
-      NOW,
-    )!;
-    expect(ic.components.personFit).toBe(50);
+  it("luma: the workspace's priors score exec titles and hosts as set", () => {
+    expect(luma({ title: "CEO" }, MEASURED).components.personFit).toBe(35);
+    expect(luma({ title: "Engineer" }, MEASURED).components.personFit).toBe(50);
+    expect(luma({}, MEASURED).components.intentStrength).toBe(45);
+    expect(luma({ role: "Guest" }, MEASURED).components.intentStrength).toBe(65);
+  });
+
+  it("repo-interest and local-business free-pilot: exec titles neutral unless set", () => {
+    for (const [play, title] of [
+      ["repo-interest", "CTO"],
+      ["free-pilot", "Owner"],
+    ] as const) {
+      const payload = { ...FIXTURES[play], title };
+      expect(safeScorePriority(play, payload, NOW, {})!.components.personFit, play).toBe(50);
+      expect(safeScorePriority(play, payload, NOW, MEASURED)!.components.personFit, play).toBe(35);
+      const ic = { ...FIXTURES[play], title: "ML Engineer" };
+      expect(safeScorePriority(play, ic, NOW, MEASURED)!.components.personFit, play).toBe(50);
+    }
+  });
+
+  it("reads one play's priors only", () => {
+    const other = { "repo-interest": { execTitle: 10, host: 10 } };
+    expect(luma({ title: "CEO" }, other).components.personFit).toBe(50);
+    expect(luma({}, other).components.intentStrength).toBe(65);
+  });
+
+  it("reads the workspace config when no priors are passed", () => {
+    const home = process.env["ONESHOT_GTM_HOME"]!;
+    mkdirSync(home, { recursive: true });
+    const path = join(home, "config.json");
+    writeFileSync(path, JSON.stringify({ priorityPriors: MEASURED }));
+    try {
+      expect(luma({ title: "CEO" }).components.personFit).toBe(35);
+    } finally {
+      rmSync(path, { force: true });
+    }
+    expect(luma({ title: "CEO" }).components.personFit).toBe(50);
   });
 });
 

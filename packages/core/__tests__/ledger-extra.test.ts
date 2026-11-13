@@ -938,7 +938,7 @@ describe("LinkedIn reply events", () => {
     ).toEqual({ status: "matched", prospectId: pid });
     const first = ledger.recordLinkedInReply({
       prospectId: pid,
-      source: "expandi",
+      source: "imported",
       externalEventId: "reply-1",
       occurredAt: "2026-06-18T10:00:00.000Z",
     });
@@ -956,7 +956,7 @@ describe("LinkedIn reply events", () => {
     expect(
       ledger.recordLinkedInReply({
         prospectId: pid,
-        source: "expandi",
+        source: "imported",
         externalEventId: "reply-1",
         occurredAt: new Date().toISOString(),
       }),

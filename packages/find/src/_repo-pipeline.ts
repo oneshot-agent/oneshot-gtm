@@ -258,7 +258,10 @@ export async function processRepoCandidate(
     person: {
       name: extract.authorFullName ?? contact.fullName,
       company: extract.companyName,
-      evidence: `public repo using ${extract.stackDetected.join(", ") || "an agent stack"}`,
+      evidence:
+        extract.stackDetected.length > 0
+          ? `public repo using ${extract.stackDetected.join(", ")}`
+          : "a public repo",
     },
     enrichedTitle: contact.title,
     enrichedSummary: contact.summary,

@@ -18,8 +18,9 @@ export interface JobChangeFinderOpts extends RunOpts {
   /** The pitch angle, stamped onto every enqueued row so it drafts inline. */
   yourEdge?: string;
   /**
-   * Target personas to search for (e.g. "VP Engineering", "Head of Growth").
-   * Each persona gets one webSearch query combined with sinceDays.
+   * Target personas to search for (e.g. "Operations Manager", "Head of Growth").
+   * Each persona gets one webSearch query combined with sinceDays. Required:
+   * there is no default list, so an empty one searches nothing.
    */
   personas?: string[];
   /**
@@ -50,13 +51,6 @@ export interface JobChangeFinderOpts extends RunOpts {
   buyerType?: string;
 }
 
-const DEFAULT_PERSONAS = [
-  "VP Engineering",
-  "Head of Growth",
-  "Director of Product",
-  "Chief of Staff",
-];
-
 interface SearchHit {
   url: string;
   title: string;
@@ -69,7 +63,10 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
   const system = loadPrompt("job-change-extract");
-  const personas = opts.personas && opts.personas.length > 0 ? opts.personas : DEFAULT_PERSONAS;
+  // No default personas: whose move is a buying moment depends on the product.
+  const personas = (opts.personas ?? []).filter(
+    (p): p is string => typeof p === "string" && p.trim().length > 0,
+  );
   const route = resolvePlayRoute(opts);
   const dedupeScope = dedupePlayNames(PLAY_NAME);
 
@@ -82,6 +79,11 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
     enqueued: 0,
     costUsd: 0,
   };
+
+  if (personas.length === 0) {
+    result.halted = "set `personas` in the job-change config";
+    return result;
+  }
 
   const seenUrls = new Set<string>();
   const hits: SearchHit[] = [];
