@@ -15,6 +15,7 @@
 import {
   founderGreetingOf,
   getLedger,
+  linkedinWriterOf,
   loadConfig,
   offerExclusionsOf,
   productBriefText,
@@ -46,9 +47,14 @@ export const STALE_DRAFT_REASON = "draft written under an older setup; re-previe
 /** The flag a view shows on a stale draft, and the error a single send answers with. */
 export const STALE_DRAFT_FLAG = "stale-config";
 
-/** The approved learned guidance a draft on this surface reads (ids and text), as one string. */
-function guidanceOf(surface: DraftSurface, ledger: Ledger | null): string {
+/**
+ * The approved learned guidance a draft on this surface reads (ids and text),
+ * as one string. A templated LinkedIn note or message reads none (its text is
+ * the workspace's copy), so a guidance change never stales it.
+ */
+function guidanceOf(surface: DraftSurface, cfg: AppConfig, ledger: Ledger | null): string {
   if (surface.channel === "x" || !ledger?.learning) return "";
+  if (surface.channel === "linkedin" && linkedinWriterOf(cfg) === "template") return "";
   try {
     const g = ledger.learning.guidance({ channel: surface.channel, stage: surface.stage });
     return g.instructions.map((i) => `${i.id}\u0001${i.instruction}`).join("\u0002");
@@ -80,7 +86,8 @@ function text(value: unknown): string {
 /**
  * Short hash of the config a draft on `surface` for `playName` is written
  * under: the drafting and offer prompt versions, the voice card and its
- * overrides, the approved guidance for the surface, the founder's
+ * overrides, the approved guidance for the surface (none for templated
+ * LinkedIn copy), the founder's
  * admission, credentials, portfolio, partners and cohort, the product
  * one-liner, brief (with approved code answers) and terms, the offer
  * exclusions, whether the play makes an offer, the member offer for the
@@ -101,7 +108,7 @@ export function draftConfigKey(
     `${surface.channel}:${surface.stage}`,
     card ? voiceKey(card) : "",
     voiceSettingsKey(cfg),
-    guidanceOf(surface, ledger),
+    guidanceOf(surface, cfg, ledger),
     text(cfg.founderAdmission),
     text(cfg.founderCredentials),
     text(cfg.productPortfolio),

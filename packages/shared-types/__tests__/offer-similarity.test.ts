@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { nearDuplicateOffer, offerContentWords, offersNearDuplicate } from "../src/index.ts";
+import {
+  nearDuplicateOffer,
+  nearDuplicateText,
+  offerContentWords,
+  offersNearDuplicate,
+  textsNearDuplicate,
+} from "../src/index.ts";
 
 // One offer reworded must not count as two of the five: the writer drops the
 // second, and the queue's Next offer skips it.
@@ -278,5 +284,96 @@ describe("nearDuplicateOffer", () => {
       ),
     ).toBe(vetting);
     expect(nearDuplicateOffer("cut detention charges at the dock", seen)).toBeNull();
+  });
+});
+
+// A learned writing preference restated in other words is one proposal, not
+// a second one for the founder to dismiss again.
+describe("textsNearDuplicate", () => {
+  it("reads a rewording with mostly the same words, in any order, as the same text", () => {
+    expect(
+      textsNearDuplicate(
+        "Sign off LinkedIn follow-ups with the first name only.",
+        "On LinkedIn follow-ups, sign off with only your first name.",
+      ),
+    ).toBe(true);
+    expect(
+      textsNearDuplicate(
+        "Keep LinkedIn first touches to two or three short sentences.",
+        "Write LinkedIn first touches in two or three short sentences.",
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps texts that share only their area apart", () => {
+    expect(
+      textsNearDuplicate(
+        "Open LinkedIn messages with their recent post, not their title.",
+        "Keep LinkedIn messages to two or three short sentences.",
+      ),
+    ).toBe(false);
+  });
+
+  it("never folds a negation or a different number into a rewording", () => {
+    expect(
+      textsNearDuplicate(
+        "Never open LinkedIn first touches with a question.",
+        "Open LinkedIn first touches with a question.",
+      ),
+    ).toBe(false);
+    expect(
+      textsNearDuplicate("Keep follow-ups under 60 words.", "Keep follow-ups under 90 words."),
+    ).toBe(false);
+    // Spelled out, a changed limit is still a changed number; the same limit
+    // written either way is the same text.
+    expect(
+      textsNearDuplicate(
+        "Keep LinkedIn first touches under two sentences.",
+        "Keep LinkedIn first touches under three sentences.",
+      ),
+    ).toBe(false);
+    expect(
+      textsNearDuplicate(
+        "Keep LinkedIn first touches under two sentences.",
+        "Keep LinkedIn first touches under 2 sentences.",
+      ),
+    ).toBe(true);
+    // A whole phrase is one number: 100 against 101 is a changed limit.
+    expect(
+      textsNearDuplicate(
+        "Keep emails under one hundred words.",
+        "Keep emails under one hundred and one words.",
+      ),
+    ).toBe(false);
+    expect(
+      textsNearDuplicate("Keep emails under twenty-one lines.", "Keep emails under 21 lines."),
+    ).toBe(true);
+    expect(
+      textsNearDuplicate("Keep emails under nineteen lines.", "Keep emails under nine lines."),
+    ).toBe(false);
+    // A range keeps both ends: "two and three" is never one number.
+    expect(
+      textsNearDuplicate(
+        "Keep emails between two and three sentences.",
+        "Keep emails between one and four sentences.",
+      ),
+    ).toBe(false);
+    expect(
+      textsNearDuplicate(
+        "Keep emails between two and three sentences.",
+        "Keep emails between 2 and 3 sentences.",
+      ),
+    ).toBe(true);
+  });
+
+  it("names the first near-duplicate among others", () => {
+    const others = [
+      "Open with their recent post.",
+      "Sign off with only your first name on follow-ups.",
+    ];
+    expect(nearDuplicateText("Sign off follow-ups with the first name only.", others)).toBe(
+      others[1],
+    );
+    expect(nearDuplicateText("Mention the event they spoke at.", others)).toBeNull();
   });
 });

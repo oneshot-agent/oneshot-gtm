@@ -2098,6 +2098,7 @@ async function regenerateDraftInner(
     // The first-touch format arm, so outcomes split by format.
     ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
     ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
+    ...(draft.writer ? { writer: draft.writer } : {}),
     ...(draft.knownConnection ? { knownConnection: draft.knownConnection } : {}),
     // The config it was written under: a later setup change makes it stale.
     configKey,
@@ -2273,6 +2274,9 @@ function holdRefusedDraft(
         ...(parsed.formatKey ? { formatKey: parsed.formatKey } : {}),
         ...(typeof parsed.evidenceClause === "boolean"
           ? { evidenceClause: parsed.evidenceClause }
+          : {}),
+        ...(parsed.writer === "template" || parsed.writer === "model"
+          ? { writer: parsed.writer }
           : {}),
         ...(typeof parsed.configKey === "string" ? { configKey: parsed.configKey } : {}),
       },
@@ -2730,6 +2734,7 @@ async function sendKnownConnectionRow(
           ...(note.voiceKey ? { voiceKey: note.voiceKey } : {}),
           ...(note.learningKey ? { learningKey: note.learningKey } : {}),
           ...(note.evidenceClause !== undefined ? { evidenceClause: note.evidenceClause } : {}),
+          ...(note.writer ? { writer: note.writer } : {}),
           configKey,
         },
         discardReason: "redraft",

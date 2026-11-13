@@ -50,6 +50,8 @@ export interface DraftVersionRow {
   format_key: string | null;
   /** Fingerprint of the approved learned-guidance set in the prompt (#813); NULL when none applied. */
   learning_key: string | null;
+  /** Who wrote the text: a workspace template or the model; NULL when unrecorded (older rows). */
+  writer: DraftWriter | null;
   created_at: string;
   closed_at: string | null;
 }
@@ -106,6 +108,14 @@ export function angleTextKey(text: string): string {
     .trim();
 }
 
+/** Who wrote a draft's text: the workspace's template, or the model. */
+export type DraftWriter = "template" | "model";
+
+/** Shape-check a `writer` value a draft envelope or payload carries. */
+export function draftWriterOf(value: unknown): DraftWriter | null {
+  return value === "template" || value === "model" ? value : null;
+}
+
 /** Shape-check an `angle` value a draft envelope carries (`LastDraft.angle`, a cadence payload's `angle`). */
 export function draftVersionAngle(value: unknown): DraftVersionAngle | null {
   if (!value || typeof value !== "object") return null;
@@ -131,6 +141,7 @@ export function storedDraftEnvelope(raw: unknown): {
   voiceKey: string | null;
   formatKey: string | null;
   learningKey: string | null;
+  writer: DraftWriter | null;
 } | null {
   let value: unknown = raw;
   if (typeof raw === "string") {
@@ -163,6 +174,8 @@ export function storedDraftEnvelope(raw: unknown): {
       ? (payload as { learningKey?: unknown }).learningKey
       : undefined;
   const learning = v["learningKey"] ?? payloadLearning;
+  const payloadWriter =
+    payload && typeof payload === "object" ? (payload as { writer?: unknown }).writer : undefined;
   return {
     subject,
     body: v["body"],
@@ -172,6 +185,7 @@ export function storedDraftEnvelope(raw: unknown): {
     voiceKey: typeof voice === "string" && voice ? voice : null,
     formatKey: typeof v["formatKey"] === "string" && v["formatKey"] ? v["formatKey"] : null,
     learningKey: typeof learning === "string" && learning ? learning : null,
+    writer: draftWriterOf(v["writer"] ?? payloadWriter),
   };
 }
 
@@ -238,6 +252,8 @@ export class DraftVersionStore {
     voiceKey?: string | null;
     formatKey?: string | null;
     learningKey?: string | null;
+    /** Who wrote the text (`DraftWriter`); unrecorded when unset. */
+    writer?: DraftWriter | null;
     /** Outreach channel the draft is for (channels.ts); email when unset. */
     channel?: string;
     discardReason?: DraftDiscardReason;
@@ -288,6 +304,7 @@ export class DraftVersionStore {
       voiceKey: env.voiceKey,
       formatKey: env.formatKey,
       learningKey: env.learningKey,
+      writer: env.writer,
       ...(input.channel ? { channel: input.channel } : {}),
       ...(env.draftedAt ? { createdAt: env.draftedAt } : {}),
     });
@@ -384,6 +401,7 @@ export class DraftVersionStore {
     voiceKey?: string | null;
     formatKey?: string | null;
     learningKey?: string | null;
+    writer?: DraftWriter | null;
     channel?: string;
     outcome: "sent" | "auto_sent";
   }): void {
@@ -403,6 +421,7 @@ export class DraftVersionStore {
     voiceKey?: string | null;
     formatKey?: string | null;
     learningKey?: string | null;
+    writer?: DraftWriter | null;
     channel?: string;
     outcome: DraftVersionOutcome;
     createdAt?: string;
@@ -414,8 +433,8 @@ export class DraftVersionStore {
         `INSERT INTO draft_versions(
            play_name, prospect_key, step_index, queue_id, prospect_id,
            subject, body, flags_json, angle_key, angle_text, angle_origin, angle_assignment,
-           outcome, discard_reason, voice_key, format_key, learning_key, channel, created_at, closed_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)`,
+           outcome, discard_reason, voice_key, format_key, learning_key, writer, channel, created_at, closed_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?,?)`,
       )
       .run(
         input.playName,
@@ -434,6 +453,7 @@ export class DraftVersionStore {
         input.voiceKey ?? null,
         input.formatKey ?? null,
         input.learningKey ?? null,
+        input.writer ?? null,
         input.channel ?? "email",
         input.createdAt ?? now,
         input.outcome === "open" ? null : now,

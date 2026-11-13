@@ -32,6 +32,106 @@ const NEGATIONS = new Set(
   "not no never without non nor none neither nothing nobody cannot t".split(" "),
 );
 
+/**
+ * Numbers spelled out, read as their digits: "two sentences" is "2
+ * sentences", so a changed limit ("two" against "three") reads as a changed
+ * number, and the same limit written either way reads as the same. A whole
+ * phrase is one number: "one hundred and one" is "101", never "1 100 1".
+ */
+const SMALL_NUMBERS = new Map(
+  (
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen " +
+    "fifteen sixteen seventeen eighteen nineteen"
+  )
+    .split(" ")
+    .map((word, n) => [word, n] as const)
+    .concat(
+      "twenty thirty forty fifty sixty seventy eighty ninety"
+        .split(" ")
+        .map((word, i) => [word, (i + 2) * 10] as const),
+    ),
+);
+const SCALES = new Map([
+  ["hundred", 100],
+  ["thousand", 1000],
+  ["million", 1_000_000],
+]);
+/** True when `word` is a spelled-out number or scale word. */
+function isNumberWord(word: string): boolean {
+  return SMALL_NUMBERS.has(word) || SCALES.has(word);
+}
+
+/**
+ * Whether `next` continues the number phrase that ends in `prev`, by number
+ * grammar: "and" only after a scale ("hundred and one"), a tens word takes a
+ * following unit ("twenty one"), a scale follows anything, and anything
+ * follows a scale. "two and three" or "two three" are two numbers.
+ */
+function continuesNumber(prev: string, next: string, viaAnd: boolean): boolean {
+  if (viaAnd) return SCALES.has(prev) && SMALL_NUMBERS.has(next);
+  if (SCALES.has(next) || SCALES.has(prev)) return true;
+  const p = SMALL_NUMBERS.get(prev) ?? 0;
+  const n = SMALL_NUMBERS.get(next) ?? 0;
+  return p >= 20 && p % 10 === 0 && n >= 1 && n <= 9;
+}
+
+/** One spelled-out number phrase as its value: ["one", "hundred", "one"] is 101. */
+function spelledNumber(words: readonly string[]): number {
+  let total = 0;
+  let current = 0;
+  for (const word of words) {
+    const small = SMALL_NUMBERS.get(word);
+    const scale = SCALES.get(word);
+    if (small !== undefined) current += small;
+    else if (scale === 100) current = (current || 1) * 100;
+    else if (scale !== undefined) {
+      total += (current || 1) * scale;
+      current = 0;
+    }
+  }
+  return total + current;
+}
+
+/** `text` with every spelled-out number phrase written as digits. */
+function withNumberDigits(text: string): string {
+  const out: string[] = [];
+  let phrase: string[] = [];
+  /** What sits between the phrase and the next word: spaces, hyphens, one "and". */
+  let between: string[] = [];
+  const flush = () => {
+    if (phrase.length > 0) out.push(String(spelledNumber(phrase)));
+    out.push(...between);
+    phrase = [];
+    between = [];
+  };
+  for (const part of text.match(/[A-Za-z]+|[^A-Za-z]+/g) ?? []) {
+    const word = part.toLowerCase();
+    const viaAnd = between.some((b) => b.toLowerCase() === "and");
+    if (isNumberWord(word)) {
+      if (phrase.length > 0 && continuesNumber(phrase.at(-1)!, word, viaAnd)) {
+        phrase.push(word);
+        between = [];
+        continue;
+      }
+      flush();
+      phrase = [word];
+      continue;
+    }
+    if (phrase.length > 0 && /^[\s-]+$/.test(part)) {
+      between.push(part);
+      continue;
+    }
+    if (phrase.length > 0 && word === "and" && !viaAnd && SCALES.has(phrase.at(-1)!)) {
+      between.push(part);
+      continue;
+    }
+    flush();
+    out.push(part);
+  }
+  flush();
+  return out.join("");
+}
+
 /** Letters and digits, the units a number carries, and the comma (a joiner). */
 const TOKEN = /[\p{L}\p{N}]+|[$%€£,]/gu;
 
@@ -81,7 +181,10 @@ function stem(word: string): string {
 function offerClauses(text: string): { clauses: string[][]; names: Set<string> } {
   const clauses: string[][] = [[]];
   const names = new Set<string>();
-  const tokens = text.replace(/(\d),(?=\d{3}\b)/g, "$1").match(TOKEN) ?? [];
+  const tokens =
+    withNumberDigits(text)
+      .replace(/(\d),(?=\d{3}\b)/g, "$1")
+      .match(TOKEN) ?? [];
   tokens.forEach((raw, i) => {
     const t = raw.toLowerCase();
     if (JOINERS.has(t)) {
@@ -163,5 +266,42 @@ export function offersNearDuplicate(a: string, b: string): boolean {
 /** The first of `others` that is a near-duplicate of `text`, if any. */
 export function nearDuplicateOffer(text: string, others: Iterable<string>): string | null {
   for (const other of others) if (offersNearDuplicate(text, other)) return other;
+  return null;
+}
+
+/**
+ * Two free texts in a share of their content words that reads as one
+ * rewording of the other (Dice: twice the shared words over both counts).
+ * A learned writing preference restated in other words is the case it
+ * catches ("Sign off LinkedIn follow-ups with the first name only" beside
+ * "On LinkedIn follow-ups, sign off with only your first name").
+ */
+export const TEXT_NEAR_DUPLICATE_SIMILARITY = 0.6;
+
+/**
+ * True when two free texts say mostly the same thing: their content words
+ * (`offerContentWords`) overlap by `TEXT_NEAR_DUPLICATE_SIMILARITY` or more,
+ * sharing three or more. Order is ignored, unlike `offersNearDuplicate`. A
+ * number, unit or negation found in one and not the other makes them
+ * different texts ("never open with a question" is not "open with a
+ * question"; "under 60 words" is not "under 90 words").
+ */
+export function textsNearDuplicate(a: string, b: string): boolean {
+  const wa = offerContentWords(a);
+  const wb = offerContentWords(b);
+  if (wa.size === 0 || wb.size === 0) return a.trim().toLowerCase() === b.trim().toLowerCase();
+  const differing = [...wa].filter((w) => !wb.has(w)).concat([...wb].filter((w) => !wa.has(w)));
+  if (differing.some(carriesMeaning)) return false;
+  if (differing.length === 0) return true;
+  const shared = (wa.size + wb.size - differing.length) / 2;
+  return (
+    shared >= NEAR_DUPLICATE_MIN_SHARED &&
+    (2 * shared) / (wa.size + wb.size) >= TEXT_NEAR_DUPLICATE_SIMILARITY
+  );
+}
+
+/** The first of `others` that is a near-duplicate of `text` (`textsNearDuplicate`), if any. */
+export function nearDuplicateText(text: string, others: Iterable<string>): string | null {
+  for (const other of others) if (textsNearDuplicate(text, other)) return other;
   return null;
 }

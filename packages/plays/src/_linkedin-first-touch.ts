@@ -77,6 +77,8 @@ export interface LinkedInNoteDraft {
   learningKey?: string | null;
   /** Whether the prompt carried an evidence clause; recorded on the invite when it is sent (#792). */
   evidenceClause?: boolean;
+  /** Who wrote the note: the workspace's template or the model. */
+  writer?: "template" | "model";
 }
 
 export type LinkedInInviteOutcome =
@@ -180,6 +182,7 @@ export async function draftLinkedInNote(
       learningKey: null,
       // Recorded for the funnel: whether the note sent actually names why.
       evidenceClause: templated.usesEvidence,
+      writer: "template",
     };
   }
   const voice = voiceBlock("intro");
@@ -242,6 +245,7 @@ export async function draftLinkedInNote(
     voiceKey: voice?.key ?? null,
     learningKey: learned?.key ?? null,
     evidenceClause: Boolean(evidence),
+    writer: "model",
   };
 }
 

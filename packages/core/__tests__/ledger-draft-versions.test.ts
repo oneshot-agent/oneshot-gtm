@@ -338,6 +338,44 @@ describe("follow-up drafts (cadence_state)", () => {
     });
   });
 
+  it("a LinkedIn step records who wrote it, and keeps it through the send", () => {
+    const input = (email: string) => ({
+      prospectId: cadence(email),
+      playName: "stack-consolidation",
+    });
+    const templated = input("t@x.dev");
+    const written = input("w@x.dev");
+    for (const [slot, writer] of [
+      [templated, "template"],
+      [written, "model"],
+    ] as const)
+      ledger.setCadenceDraft({
+        ...slot,
+        draft: {
+          subject: "LinkedIn message",
+          body: `text by ${writer}`,
+          flags: [],
+          payload: { kind: "linkedin_message", text: `text by ${writer}`, writer },
+        },
+      });
+    ledger.advanceCadence({ ...templated, newStep: 1, nextDueAt: null });
+    const version = (slot: typeof templated) =>
+      ledger.draftVersionsFor({ ...slot, stepIndex: 1 })[0]!;
+    expect(version(templated)).toMatchObject({
+      channel: "linkedin",
+      writer: "template",
+      outcome: "sent",
+    });
+    expect(version(written)).toMatchObject({ channel: "linkedin", writer: "model" });
+    // An email follow-up says nothing about its writer.
+    const email = input("e@x.dev");
+    ledger.setCadenceDraft({
+      ...email,
+      draft: { subject: "follow", body: "follow body", flags: [], payload: payload() },
+    });
+    expect(version(email).writer).toBeNull();
+  });
+
   it("a second preview discards the first as regenerated; advanceCadence closes the open one as sent", () => {
     const pid = cadence("k@x.dev");
     const input = { prospectId: pid, playName: "stack-consolidation" };

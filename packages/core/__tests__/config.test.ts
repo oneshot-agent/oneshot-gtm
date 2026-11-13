@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   bootstrapClientId,
   configDir,
+  DEFAULT_LEARNING_EXPIRE_AFTER_DAYS,
   DEFAULT_LLM_MODEL,
+  learningExpireAfterDaysOf,
   llmApiKey,
   currentNoOfferPlays,
   loadConfig,
@@ -319,5 +321,16 @@ describe("offerAnchorOf", () => {
     expect(offerAnchorOf({ offerAnchor: "prefer_product" })).toBe("either");
     expect(offerAnchorOf({ offerAnchor: "product" })).toBe("either");
     expect(offerAnchorOf({ offerAnchor: 3 })).toBe("either");
+  });
+});
+
+describe("learningExpireAfterDaysOf", () => {
+  it("reads a positive whole number of days, and the 7-day default otherwise", () => {
+    expect(DEFAULT_LEARNING_EXPIRE_AFTER_DAYS).toBe(7);
+    expect(learningExpireAfterDaysOf({ learning: { expireAfterDays: 3 } })).toBe(3);
+    for (const learning of [undefined, {}, { expireAfterDays: 0 }, { expireAfterDays: -2 }])
+      expect(learningExpireAfterDaysOf({ learning })).toBe(7);
+    expect(learningExpireAfterDaysOf({ learning: { expireAfterDays: 2.5 } })).toBe(7);
+    expect(learningExpireAfterDaysOf({ learning: { expireAfterDays: "3" } })).toBe(7);
   });
 });

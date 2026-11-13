@@ -235,7 +235,10 @@ describe("an email cadence's connection-request step, for a known connection", (
     profileRead("DISTANCE_1");
     await shown();
     await send(caller({}));
-    expect((await shown()).body).toBe("hey Dana, so what are you building right now?");
+    const preview = await shown();
+    expect(preview.body).toBe("hey Dana, so what are you building right now?");
+    // The payload says a template wrote it: its draft version is no style evidence.
+    expect(preview.payload).toMatchObject({ kind: "linkedin_message", writer: "template" });
     expect(modelInputs).toEqual([]);
   });
 

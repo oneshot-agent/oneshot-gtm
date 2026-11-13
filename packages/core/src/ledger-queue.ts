@@ -1,6 +1,11 @@
 import { isDecisionReason, type DecisionReason } from "@oneshot-gtm/shared-types";
 import type { Database } from "bun:sqlite";
-import { DraftVersionStore, draftVersionAngle, type DraftDiscardReason } from "./ledger-drafts.ts";
+import {
+  DraftVersionStore,
+  draftVersionAngle,
+  draftWriterOf,
+  type DraftDiscardReason,
+} from "./ledger-drafts.ts";
 import { extractBusinessAddress } from "./mail-address.ts";
 import { humanDecisionWhereSql } from "./labels.ts";
 import { toSqliteUtc } from "./time.ts";
@@ -1525,6 +1530,8 @@ export class QueueStore {
       /** Fingerprint of the approved learned-guidance set in the prompt (#813); absent when none applied. */
       learningKey?: string | null;
       formatKey?: string | null;
+      /** Who wrote the text (a LinkedIn template or the model); absent when unrecorded. */
+      writer?: unknown;
     },
     discardReason: DraftDiscardReason | undefined,
     sentBy: "human" | "machine",
@@ -1544,6 +1551,7 @@ export class QueueStore {
       learningKey:
         typeof draft.learningKey === "string" && draft.learningKey ? draft.learningKey : null,
       formatKey: typeof draft.formatKey === "string" && draft.formatKey ? draft.formatKey : null,
+      writer: draftWriterOf(draft.writer),
     };
     if (!draft.sent) {
       this.drafts.open({ ...base, ...(discardReason ? { discardReason } : {}) });
