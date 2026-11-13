@@ -33,6 +33,12 @@ const MAX_PAGES_PER_QUERY = 6;
 /** People searches one run may make, across every query and page. */
 const MAX_SEARCHES_PER_RUN = 12;
 /**
+ * Titles one people search may carry. Three or more failed upstream with
+ * "Upstream service temporarily unavailable" in every industry tried
+ * (measured 2026-11-11); one or two work.
+ */
+const MAX_TITLES_PER_SEARCH = 2;
+/**
  * How long a search's progress is kept: a search read to its end is left
  * alone that long, and one stopped at the page cap resumes from where it
  * stopped. After that it is read from the top again, which is where the
@@ -149,7 +155,42 @@ export function peopleQueries(args: {
     ...base,
   };
   if (args.jobTitles.length < 2) return [combined];
-  return [combined, ...args.jobTitles.map((title) => ({ jobTitles: [title], ...base }))];
+  const perTitle = args.jobTitles.map((title) => ({ jobTitles: [title], ...base }));
+  // The platform fails a search that carries more titles than this, and the
+  // run stops on a failed search, so a longer list searches each title alone.
+  if (args.jobTitles.length > MAX_TITLES_PER_SEARCH) return perTitle;
+  return [combined, ...perTitle];
+}
+
+/**
+ * Pages each search may read this run: the run's searches shared across
+ * every query, so with many titles the first one cannot use them all. Never
+ * fewer than two, so a server that ignores `offset` is caught within the run
+ * (the same page twice). Each keeps its place for the next run, and the next
+ * run starts at the first query this one did not get to.
+ */
+export function pagesPerQuery(queryCount: number): number {
+  if (queryCount <= 1) return MAX_PAGES_PER_QUERY;
+  return Math.min(MAX_PAGES_PER_QUERY, Math.max(2, Math.floor(MAX_SEARCHES_PER_RUN / queryCount)));
+}
+
+/** Where the next run starts in a list of searches, so each gets its turn. */
+function searchTurnKey(queries: PeopleSearchInput[]): string {
+  const hash = createHash("sha256").update(JSON.stringify(queries)).digest("hex").slice(0, 16);
+  return `people-search-turn:${hash}`;
+}
+
+export function parseSearchTurn(raw: string | null, queryCount: number): number {
+  if (!raw || queryCount <= 1) return 0;
+  try {
+    const v = JSON.parse(raw) as { start?: unknown };
+    if (typeof v.start === "number" && Number.isInteger(v.start) && v.start > 0) {
+      return v.start % queryCount;
+    }
+  } catch {
+    // unreadable entry: start at the first search
+  }
+  return 0;
 }
 
 function searchProgressKey(query: PeopleSearchInput): string {
@@ -499,14 +540,23 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       ...(employeeRange ? { companySize: employeeRange } : {}),
     },
   });
+  const pageCap = pagesPerQuery(queries.length);
+  const turnKey = searchTurnKey(queries);
+  const turn = parseSearchTurn(
+    ledger.getProductResearchCache(turnKey, SEARCH_PROGRESS_TTL_MS),
+    queries.length,
+  );
+  const ordered = [...queries.slice(turn), ...queries.slice(0, turn)];
   const seenThisRun = new Set<string>();
   let worked = 0;
   let searches = 0;
   let unusable = 0;
   let finishedQueries = 0;
   let stop = false;
+  /** Position in `ordered` of the search the run stopped in, if it stopped early. */
+  let stoppedAt: number | null = null;
 
-  for (const query of queries) {
+  for (const [position, query] of ordered.entries()) {
     if (stop) break;
     const progressKey = searchProgressKey(query);
     const progress = parseSearchProgress(
@@ -526,7 +576,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     let retryOffset: number | null = null;
     let previousFirstKey: string | null = null;
     for (let page = 0; !stop && !ended; page++) {
-      if (page >= MAX_PAGES_PER_QUERY) {
+      if (page >= pageCap) {
         capped = true;
         break;
       }
@@ -609,6 +659,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       if (rows.length < PEOPLE_SEARCH_LIMIT) ended = true;
       offset += rows.length;
     }
+    if (stop) stoppedAt ??= position;
     if (opts.dryRun) continue;
     if (ended && fresh === 0 && (known > 0 || startOffset > 0)) {
       // Read to its end and everyone on it is already in the queue: leave it
@@ -633,6 +684,12 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
         );
       }
     }
+  }
+
+  // The searches this run did not get to go first next run.
+  if (!opts.dryRun && queries.length > 1) {
+    const next = stoppedAt == null ? 0 : (turn + stoppedAt) % queries.length;
+    if (next !== turn) ledger.setProductResearchCache(turnKey, JSON.stringify({ start: next }));
   }
 
   if (!result.halted && result.candidates === 0) {

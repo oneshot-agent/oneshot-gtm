@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 
 // local-business is the only finder built on `peopleSearch`/`companySearch`
 // instead of the per-candidate resolve spine. The crux under test: a
@@ -275,6 +276,14 @@ function people(from: number, n: number): StubPerson[] {
   }));
 }
 const keyOf = (i: number) => `free-pilot:li:https://www.linkedin.com/in/person-${i}`;
+/** Run again with the queue holding everyone earlier runs queued, as the real one does. */
+const runAgain = (opts: Parameters<typeof runLocalBusinessFinder>[0]) => {
+  for (const row of enqueued) knownKeys.add(row.dedupeKey);
+  return runLocalBusinessFinder(opts);
+};
+/** The cache key a search's saved place is kept under. */
+const progressKeyOf = (query: Record<string, unknown>) =>
+  `people-search-progress:${createHash("sha256").update(JSON.stringify(query)).digest("hex").slice(0, 16)}`;
 /** A row the people database returns with a first name and nothing else. */
 const nameOnly = (first: string): StubPerson => ({
   full_name: first,
@@ -573,6 +582,57 @@ describe("runLocalBusinessFinder — several titles", () => {
       yourEdge: "x",
     });
     expect(researchCache.size).toBe(0);
+  });
+
+  it("searches each title alone when there are more than two, with no combined search", () => {
+    expect(
+      peopleQueries({
+        businessShaped: false,
+        companyDomains: [],
+        jobTitles: ["COO", "CFO", "President"],
+        industries: ["Dentists"],
+        shared: {},
+      }),
+    ).toEqual([
+      { jobTitles: ["COO"], industry: ["Dentists"] },
+      { jobTitles: ["CFO"], industry: ["Dentists"] },
+      { jobTitles: ["President"], industry: ["Dentists"] },
+    ]);
+  });
+
+  it("shares the run's searches across the titles, and the next run starts where it stopped", async () => {
+    const titles = Array.from({ length: 8 }, (_, i) => `Title ${i}`);
+    // Every title has more people than one run reads.
+    peopleSearchHandler = (input) => {
+      const t = titles.indexOf((input["jobTitles"] as string[])[0]!);
+      return people(t * 1000 + ((input["offset"] as number | undefined) ?? 0), 40);
+    };
+    const searched = () => peopleSearchCalls.map((c) => (c["jobTitles"] as string[])[0]);
+    const offsetOf = (t: number) =>
+      parseSearchProgress(researchCache.get(progressKeyOf({ jobTitles: [titles[t]!] })) ?? null);
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+    expect(peopleSearchCalls.every((c) => (c["jobTitles"] as string[]).length === 1)).toBe(true);
+    // Two pages each: twelve searches reach the first six titles.
+    expect(searched()).toEqual(titles.slice(0, 6).flatMap((t) => [t, t]));
+    expect(offsetOf(5)).toEqual({ done: false, offset: 80 });
+    expect(offsetOf(6)).toBeNull();
+    peopleSearchCalls.length = 0;
+    await runAgain({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+    // The two left out go first, then the run carries on from the top.
+    expect(searched()).toEqual([6, 7, 0, 1, 2, 3].flatMap((t) => [titles[t]!, titles[t]!]));
+    expect(offsetOf(7)).toEqual({ done: false, offset: 80 });
+    expect(offsetOf(0)).toEqual({ done: false, offset: 160 });
+  });
+
+  it("catches a server ignoring the offset within one run, even with many titles", async () => {
+    const titles = Array.from({ length: 8 }, (_, i) => `Title ${i}`);
+    peopleSearchHandler = (input) =>
+      people(titles.indexOf((input["jobTitles"] as string[])[0]!) * 1000, 40);
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+    // Each title's second page repeats its first: the search ends there and
+    // no place is saved past it.
+    expect(peopleSearchCalls).toHaveLength(12);
+    expect([...researchCache.values()].some((v) => v.includes('"offset"'))).toBe(false);
   });
 
   it("makes at most twelve searches in one run", async () => {
