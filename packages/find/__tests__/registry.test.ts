@@ -495,6 +495,19 @@ describe("checkReadiness", () => {
     expect(spec.configBrief).toContain("`requiresDevSignal`");
   });
 
+  it("job-change ships no personas and is not ready until they are set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "job-change")!;
+    expect(spec.defaultConfig["personas"]).toEqual([]);
+    const edge = { ...spec.defaultConfig, yourEdge: "what the move makes newly relevant" };
+    const out = checkReadiness(spec, edge);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/personas/);
+    expect(checkReadiness(spec, { ...edge, personas: ["  "] }).ready).toBe(false);
+    expect(checkReadiness(spec, { ...edge, personas: ["Service Manager"] })).toEqual({
+      ready: true,
+    });
+  });
+
   it("podcast-guest is not ready until podcasts are set", () => {
     const spec = TRIGGERS.find((t) => t.name === "podcast-guest")!;
     expect(spec.defaultConfig["podcasts"]).toEqual([]);

@@ -138,14 +138,14 @@ const LUMA_EMPTY_PROFILE = {
     version: 1,
     status: "partial",
     researchedAt: "2026-09-01T22:51:05.891Z",
-    subject: { name: "Theo Marsh", company: "Ledgerwise" },
+    subject: { name: "Jane Doe", company: "Ledgerwise" },
     sources: [
       {
-        url: "https://luma.com/user/tmarsh",
+        url: "https://luma.com/user/janedoe",
         kind: "website",
         excerpt:
-          "# Theo Marsh\n\n@tmarsh\n\nJoined March 2026\n\n0Hosted\n\n29Attended\n\n" +
-          "### Nothing Here, Yet\n\nTheo Marsh has no public events at this time.",
+          "# Jane Doe\n\n@janedoe\n\nJoined March 2026\n\n0Hosted\n\n29Attended\n\n" +
+          "### Nothing Here, Yet\n\nJane Doe has no public events at this time.",
       },
     ],
   },

@@ -77,7 +77,7 @@ describe("buildProspectTimeline", () => {
       channelEvents: [
         {
           id: 1,
-          source: "expandi",
+          source: "imported",
           external_event_id: "x",
           prospect_id: 1,
           channel: "linkedin",

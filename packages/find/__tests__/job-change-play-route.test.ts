@@ -106,6 +106,8 @@ vi.mock("../src/_linkedin.ts", () => ({
 
 const { runJobChangeFinder } = await import("../src/job-change.ts");
 
+const PERSONAS = ["VP Engineering"];
+
 beforeEach(() => {
   enqueued.length = 0;
   dedupeChecks.length = 0;
@@ -113,10 +115,27 @@ beforeEach(() => {
 });
 afterEach(() => vi.clearAllMocks());
 
+describe("runJobChangeFinder — personas", () => {
+  it("ships no default personas: with none set it searches nothing and says what to set", async () => {
+    for (const personas of [undefined, [], ["  "]]) {
+      const out = await runJobChangeFinder({
+        dryRun: false,
+        yourEdge: "x",
+        ...(personas ? { personas } : {}),
+      });
+      expect(out.halted).toBe("set `personas` in the job-change config");
+      expect(out.candidates).toBe(0);
+    }
+    expect(enqueued).toHaveLength(0);
+    expect(dedupeChecks).toHaveLength(0);
+  });
+});
+
 describe("runJobChangeFinder — routed to design-partner-loi (#705)", () => {
   it("persists play_name=design-partner-loi with a payload the play's own guard accepts, correctly mapping `company` from the NEW company (not the extracted person fields)", async () => {
     const out = await runJobChangeFinder({
       dryRun: false,
+      personas: PERSONAS,
       yourEdge: "unused-own-play-edge",
       play: "design-partner-loi",
       buyerType: "enterprise",
@@ -151,7 +170,11 @@ describe("runJobChangeFinder — routed to design-partner-loi (#705)", () => {
   });
 
   it("with the routing key absent, persists the unchanged job-change shape under job-change's own play — today's behaviour", async () => {
-    const out = await runJobChangeFinder({ dryRun: false, yourEdge: "the pitch angle" });
+    const out = await runJobChangeFinder({
+      dryRun: false,
+      personas: PERSONAS,
+      yourEdge: "the pitch angle",
+    });
     expect(out.enqueued).toBe(1);
     const row = enqueued[0]!;
     expect(row.playName).toBe("job-change");
@@ -161,7 +184,7 @@ describe("runJobChangeFinder — routed to design-partner-loi (#705)", () => {
   });
 
   it("checks queue dedupe against BOTH job-change and design-partner-loi regardless of routing (F-t_1ec69ea6-2)", async () => {
-    await runJobChangeFinder({ dryRun: false, yourEdge: "x" });
+    await runJobChangeFinder({ dryRun: false, personas: PERSONAS, yourEdge: "x" });
     const checkedPlays = new Set(dedupeChecks.map((c) => c.playName));
     expect(checkedPlays.has("job-change")).toBe(true);
     expect(checkedPlays.has("design-partner-loi")).toBe(true);
@@ -171,7 +194,7 @@ describe("runJobChangeFinder — routed to design-partner-loi (#705)", () => {
     // Candidate already sitting under design-partner-loi; this run's own
     // play is job-change (routing absent): must still be treated as a dup.
     queueDuplicateFor = new Set(["design-partner-loi"]);
-    const out = await runJobChangeFinder({ dryRun: false, yourEdge: "x" });
+    const out = await runJobChangeFinder({ dryRun: false, personas: PERSONAS, yourEdge: "x" });
     expect(out.enqueued).toBe(0);
     expect(out.droppedDuplicate).toBe(1);
     expect(enqueued).toHaveLength(0);
@@ -181,6 +204,7 @@ describe("runJobChangeFinder — routed to design-partner-loi (#705)", () => {
     queueDuplicateFor = new Set(["job-change"]);
     const out = await runJobChangeFinder({
       dryRun: false,
+      personas: PERSONAS,
       yourEdge: "x",
       play: "design-partner-loi",
       buyerType: "enterprise",

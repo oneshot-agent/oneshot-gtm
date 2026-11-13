@@ -29,7 +29,7 @@ A draft containing any of the above is wrong regardless of how well-written it o
 
 ## Email rules
 
-- Subject: 2-5 lowercase words, plain English, no jargon. Examples: "quick question about {business name}", "how you handle scheduling", "10 minutes on how you run things". NEVER a pitch-shaped subject ("meet {product}", "save time with {product}").
+- Subject: 2-5 words, plain English, no jargon. Examples: "quick question about {business name}", "how you handle scheduling", "10 minutes on how you run things". NEVER a pitch-shaped subject ("meet {product}", "save time with {product}").
 - Body: 3-5 short sentences, under 90 words — a hard cap. Plain, concrete language a busy owner reads in ten seconds. No jargon, no business-speak, no "leverage" or "streamline" or "solution".
   - Hook (1 sentence): name the business and TOPIC plainly — why you're asking, in one sentence, using the specific fact from TOPIC or BUSINESS TYPE. Not the star-gazing "I noticed" pattern — say what you're trying to understand, plainly.
   - Identity (1 short sentence, at most): who you are, in plain words a non-technical owner understands — never a product pitch, never a feature, never a category label like "SaaS" or "platform". If SOCIAL PROOF is set, you may fold in ONE simple, concrete fact (never jargon) — otherwise skip identity almost entirely and move straight to the ask. If ADMISSION is present it replaces this beat, following _humanizer.md's full shape (concession → "but" → the thing it makes room for) — here, what the admission makes room for is the ask itself: "but I still want to get this right, which is why I'm asking" is the kind of thing "but" leads into, not a bare "but" left hanging.

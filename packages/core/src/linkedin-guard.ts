@@ -151,7 +151,7 @@ export interface NormalizedLinkedInProfile {
  * GitHub URLs, company/school pages, `/pub/dir/`, other hosts).
  *
  * The slug's percent-encoding is kept as stored: decoding changes the identity
- * of slugs like `iskender-%E2%80%9Calex%E2%80%9D-tale-654849181`.
+ * of slugs like `jane-%E2%80%9Cjj%E2%80%9D-doe-123456789`.
  */
 export function normalizeLinkedInProfile(
   raw: string | null | undefined,

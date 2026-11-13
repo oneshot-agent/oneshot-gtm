@@ -221,6 +221,7 @@ describe("VOICE block in replies", () => {
     expect(block).not.toContain("SOCIAL PROOF");
     voiceCard = null;
     await draftInboxReply(BASE);
-    expect(userBlocks()[0]!).not.toContain("VOICE (");
+    expect(userBlocks()[0]!).toContain("GREETING: Hi (");
+    expect(userBlocks()[0]!).not.toContain("logistics mode");
   });
 });

@@ -13,14 +13,16 @@
  * say. Saving setup needs no hook: the next comparison sees the new key.
  */
 import {
+  founderGreetingOf,
   getLedger,
   loadConfig,
   offerExclusionsOf,
   productBriefText,
+  subjectCaseOf,
   type Ledger,
 } from "@oneshot-gtm/core";
 import { createHash } from "node:crypto";
-import { voiceKey, voiceOverrideLines } from "./_lib.ts";
+import { voiceKey } from "./_lib.ts";
 import { OFFER_PROMPT_VERSION, playMakesOffer } from "./_prospect-offer.ts";
 
 type AppConfig = ReturnType<typeof loadConfig>;
@@ -55,6 +57,22 @@ function guidanceOf(surface: DraftSurface, ledger: Ledger | null): string {
   }
 }
 
+/**
+ * The greeting and subject case as the key carries them: empty for `Hey` and
+ * lowercase, which every draft was written under before the two settings had
+ * neutral defaults, so a workspace that sets them keeps its stored drafts.
+ */
+function voiceSettingsKey(cfg: AppConfig): string {
+  const greeting = founderGreetingOf(cfg);
+  const subjectCase = subjectCaseOf(cfg);
+  return [
+    greeting === "Hey" ? "" : `greeting:${greeting}`,
+    subjectCase === "lowercase" ? "" : `subject:${subjectCase}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -82,7 +100,7 @@ export function draftConfigKey(
     OFFER_PROMPT_VERSION,
     `${surface.channel}:${surface.stage}`,
     card ? voiceKey(card) : "",
-    voiceOverrideLines(cfg).join("\n"),
+    voiceSettingsKey(cfg),
     guidanceOf(surface, ledger),
     text(cfg.founderAdmission),
     text(cfg.founderCredentials),

@@ -304,7 +304,7 @@ export async function pauseSendingDomain(domain: string): Promise<DomainPoolStat
 
 /**
  * Derive the From localpart from the founder's name (first token, lowercased,
- * non-alphanumerics stripped) so sends read e.g. `jerry@yourdomain`. Falls back
+ * non-alphanumerics stripped) so sends read e.g. `jane@yourdomain`. Falls back
  * to `agent` when the name yields nothing usable. ("Jane Doe" → "jane".)
  */
 export function fromLocalpart(name: string | null): string {

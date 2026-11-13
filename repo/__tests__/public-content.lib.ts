@@ -12,6 +12,7 @@ export type Rule =
   | "workspace-name"
   | "port"
   | "oneshot-host"
+  | "sending-domain"
   | "pitch-phrase"
   | "provenance"
   | "identity"
@@ -154,6 +155,13 @@ export const ONESHOT_HOSTS = new Set<string>([
 // Match the whole hostname, so an approved host followed by more labels is judged as itself.
 const ONESHOT_HOST = /(?:[a-z0-9-]+\.)*oneshotagents?\.com(?:\.[a-z0-9-]+)*(?![a-z0-9-])/gi;
 
+// One founder's own sending and reply domains, by shape: oneshot-anything on
+// `.pro` or `.info`, the hyphenated oneshot agents name on `.com`, and
+// oneshothq on any TLD. The project's own hosts (oneshot-gtm.com and the two
+// above) are not this shape.
+const SENDING_DOMAIN =
+  /(?<![a-z0-9.-])(?:[a-z0-9-]+\.)*(?:[a-z0-9-]*oneshot[a-z0-9-]*\.(?:pro|info)|oneshot-agents\.com|oneshothq\.[a-z]{2,})(?![a-z0-9-])/gi;
+
 export const PITCH_PHRASES = [
   /per-call signed receipts/i,
   /signed receipts for every call/i,
@@ -175,6 +183,7 @@ function lineHas(text: string, rx: RegExp): string | null {
 // Cheap substring gates so most lines skip the full patterns.
 const WORKSPACE_HINT = /workspace/i;
 const ONESHOT_HINT = /oneshotagent/i;
+const SENDING_HINT = /oneshot/i;
 
 export function scanText(file: string, body: string, opts: ScanOptions = {}): Finding[] {
   const out: Finding[] = [];
@@ -210,6 +219,9 @@ export function scanText(file: string, body: string, opts: ScanOptions = {}): Fi
       for (const m of text.matchAll(ONESHOT_HOST)) {
         if (!ONESHOT_HOSTS.has(m[0].toLowerCase())) push(i, "oneshot-host", m[0]);
       }
+
+    if (SENDING_HINT.test(text))
+      for (const m of text.matchAll(SENDING_DOMAIN)) push(i, "sending-domain", m[0]);
 
     if (strict) {
       for (const rx of PITCH_PHRASES) {

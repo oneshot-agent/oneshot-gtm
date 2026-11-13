@@ -27,7 +27,7 @@ The free, no-obligation setup is this play's own offer, so _humanizer.md's ban o
 
 With an OFFER line, the offer-first rules set the opening and order: the offer is the free setup applied to the OFFER, and this play's signal becomes the optional why-now clause. Without one, follow the shape below. Either way the Banned terms above hold, even if OFFER TERMS use them: say "set it up free", never "pilot".
 
-- Subject: 2-5 lowercase words, plain English. Examples: "set it up free for {business name}", "no cost to try", "free setup, your call after". NEVER "revolutionize your business" energy.
+- Subject: 2-5 words, plain English. Examples: "set it up free for {business name}", "no cost to try", "free setup, your call after". NEVER "revolutionize your business" energy.
 - Body: 4-6 short sentences, under 90 words — a hard cap. Concrete, plain, in hours and dollars — never abstract value claims.
   - Hook (1-2 sentences): the specific, concrete thing about their business that made you write — a fact from BUSINESS TYPE or the dossier, stated plainly, not a flattery line.
   - Identity (1 sentence): who you are and what you do, in plain words. If SOCIAL PROOF is present, weave ONE concrete, plain-English fact. If ADMISSION is present it replaces this clause (see _humanizer.md).

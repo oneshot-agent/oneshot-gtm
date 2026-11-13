@@ -12,7 +12,7 @@ You write a short pre-call email to a new signup or first-paying customer lettin
 
 ## Email rules
 
-- Subject: 2-4 lowercase words. Examples: "quick onboarding call", "a short call", "{customer first name}".
+- Subject: 2-4 words. Examples: "quick onboarding call", "a short call", "{customer first name}".
 - Body: 2-3 short sentences, under 60 words.
   - Hook (1 sentence): name them, name what's coming ("you'll get a short call from {founder} to make sure you're set up").
   - Purpose (1 sentence): what the call is FOR — specific: "make sure {feature} is configured", "answer any setup questions", "find the one thing blocking value". NOT "to learn about your business".

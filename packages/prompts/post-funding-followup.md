@@ -15,7 +15,7 @@ You write a short follow-up to a post-funding outbound. Sent ~9 days after the f
 
 ## Email rules
 
-- Subject: 1-3 lowercase words. Examples: "ping", "the {round} thing", "still pacing?". NEVER "checking in" / "any update".
+- Subject: 1-3 words. Examples: "ping", "the {round} thing", "still pacing?". NEVER "checking in" / "any update".
 - Body: ≤ 45 words, 2 sentences, at least 20 words.
   - Sentence 1 restates the OFFER in a clause, in their terms (the same job, never a new offer, never a recap of the first email) and leads into this touch's point.
   - Sentence 2 makes this touch's angle (YOUR EDGE; RETURN when there is none) as what they get back, in their terms, and how they would count it, ending on one short question about taking the offer. Never a bare re-ask of the first email's question. A HOW step, a credential or a why-now fact may join it as a clause; never a sentence on how the product works.

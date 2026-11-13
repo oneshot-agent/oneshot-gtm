@@ -158,6 +158,7 @@ describe("companyBatchCursor wiring (#708)", () => {
       enabled: 1,
       config_json: JSON.stringify({
         companies: ["Acme"],
+        personas: ["Head of Operations"],
         yourEdge: "we cut onboarding time in half",
       }),
       last_polled_at: null,
@@ -239,6 +240,7 @@ describe("companyBatchCursor wiring (#708)", () => {
       enabled: 1,
       config_json: JSON.stringify({
         companies: ["Acme"],
+        personas: ["Head of Operations"],
         yourEdge: "we cut onboarding time in half",
       }),
       last_polled_at: priorPollIso,

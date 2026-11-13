@@ -54,7 +54,7 @@ describe("normalizeLinkedInProfile", () => {
   });
 
   it("keeps the slug's percent-encoding exactly as stored", () => {
-    const slug = "iskender-%E2%80%9Calex%E2%80%9D-tale-654849181";
+    const slug = "jane-%E2%80%9Cjj%E2%80%9D-doe-123456789";
     const p = normalizeLinkedInProfile(`https://tr.linkedin.com/in/${slug}/`);
     expect(p?.url).toBe(`https://www.linkedin.com/in/${slug}`);
     expect(p?.slug).toBe(slug);

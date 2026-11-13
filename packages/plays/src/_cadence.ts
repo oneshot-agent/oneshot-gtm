@@ -3447,7 +3447,7 @@ export function buildFollowUpEmail(opts: {
     const system = loadPrompt(opts.promptName, { humanizer: "followup" }) + signatureDirective();
     const priorBlock = buildPriorEmailsBlock(ctx.prospect.id, opts.playName);
     // Optional first-name field: prompt rule lets the LLM occasionally open
-    // with "Hey {firstName},". Absent when name is null / (unknown) / handle.
+    // with the greeting and the name. Absent when name is null / (unknown) / handle.
     const firstName = firstNameFrom(ctx.prospect.name);
     // Steer the draft away from openers this step has already worn out, rather
     // than only rejecting them afterwards: a rejected draft costs another paid

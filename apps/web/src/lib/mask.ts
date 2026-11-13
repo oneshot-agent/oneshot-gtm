@@ -8,7 +8,7 @@
 
 const DOTS = "•••";
 
-/** "Asad Hussain" → "Asad H.": first token kept, rest reduced to initials. */
+/** "Jane Doe" → "Jane D.": first token kept, rest reduced to initials. */
 export function maskName(name: string | null | undefined): string {
   if (!name) return name ?? "";
   const tokens = name.trim().split(/\s+/);
@@ -21,7 +21,7 @@ export function maskName(name: string | null | undefined): string {
   return initials ? `${first} ${initials}` : (first ?? "");
 }
 
-/** "asadhussain2408@gmail.com" → "asa•••@gmail.com". Keep a hint + the domain. */
+/** "jane.doe.example@gmail.com" → "jan•••@gmail.com". Keep a hint + the domain. */
 export function maskEmail(email: string | null | undefined): string {
   if (!email) return email ?? "";
   const at = email.indexOf("@");

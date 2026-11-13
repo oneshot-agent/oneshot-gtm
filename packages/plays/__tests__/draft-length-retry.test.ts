@@ -25,6 +25,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       founderCohort: null,
       mobileSignature: false,
       clientId: "test",
+      subjectCase: "lowercase",
     }),
     logEvent: (kind: string, ctx: Record<string, unknown>) => {
       events.push({ kind, ctx });

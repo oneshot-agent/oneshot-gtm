@@ -1,4 +1,11 @@
-import { type Ledger, type ProspectPriority, logEvent } from "@oneshot-gtm/core";
+import {
+  type Ledger,
+  type PlayPriorityPriors,
+  type PriorityPriors,
+  type ProspectPriority,
+  currentPriorityPriors,
+  logEvent,
+} from "@oneshot-gtm/core";
 import { type FitReasonSource, stampFitReason } from "./_fit-reason.ts";
 import {
   type PriorityEvidence,
@@ -31,16 +38,23 @@ function urlCount(...urls: unknown[]): number {
   return urls.filter((u) => str(u) !== null).length;
 }
 
+/** Strength of the title signal for any title a workspace sets no prior for. */
+const NEUTRAL_TITLE = 50;
+/** Strength of the luma event signal for a guest, and a host by default. */
+const EVENT_ROLE = 65;
+
 /**
- * Label-mined title prior for the indie-builder finders (luma, github-stars):
- * exec-band titles measured at 35-44% approval vs a 55-92% baseline. The
- * classic seniority boost is an ANTI-signal for this ICP. Non-exec titles are
- * plain neutral evidence; a missing title stays unknown (no signal at all).
+ * Title prior for the finders whose audience the classic seniority boost may
+ * not fit (luma-events, repo-interest, local-business rows of free-pilot).
+ * Every title is plain neutral evidence unless the workspace measured exec
+ * titles converting differently and set `priorityPriors.<play>.execTitle`;
+ * a missing title stays unknown (no signal at all).
  */
-function minedTitleSignals(title: string | null): PrioritySignal[] {
+function minedTitleSignals(title: string | null, priors: PlayPriorityPriors): PrioritySignal[] {
   if (!title) return [];
   const exec = SENIORITY_BANDS[0]!.pattern.test(title);
-  return [{ kind: "title-prior", strength: exec ? 35 : 50, reason: `title: ${title}` }];
+  const strength = exec ? (priors.execTitle ?? NEUTRAL_TITLE) : NEUTRAL_TITLE;
+  return [{ kind: "title-prior", strength, reason: `title: ${title}` }];
 }
 
 function fmtUsd(amount: number): string {
@@ -92,7 +106,13 @@ function xEvidence(p: Record<string, unknown>): PriorityEvidence {
   };
 }
 
-export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => PriorityEvidence> = {
+/** A play's adapter; `priors` are the workspace's `priorityPriors` for that play. */
+export type PriorityAdapter = (
+  p: Record<string, unknown>,
+  priors?: PlayPriorityPriors,
+) => PriorityEvidence;
+
+export const PRIORITY_ADAPTERS: Record<string, PriorityAdapter> = {
   "show-hn": (p) => ({
     title: str(p["title"]),
     intentSignals: [
@@ -223,15 +243,15 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
   // Both local-business (#457, `businessType` field) and local-registry
   // (#459, `sourceLabel`+`matchedDateIso`) route through this one play:
   // branch on whichever shape the payload carries.
-  "free-pilot": (p) => {
+  "free-pilot": (p, priors = {}) => {
     const businessType = str(p["businessType"]);
     if (businessType !== null) {
-      // local-business: reuses the exec-title inversion mined for
-      // luma/repo-interest. An owner-operator main-street buyer is the
-      // opposite population of a startup founder, and title data here is
-      // thin/absent for most rows anyway.
+      // local-business: the same title prior as luma/repo-interest, not the
+      // classic seniority boost: an owner-operator main-street buyer is
+      // nearly always "owner", and title data here is thin/absent for most
+      // rows anyway.
       return {
-        personSignals: minedTitleSignals(str(p["title"])),
+        personSignals: minedTitleSignals(str(p["title"]), priors),
         companyKnown: str(p["company"]) !== null,
         intentSignals: [
           { kind: "business-match", strength: 55, reason: `matched ${businessType} search` },
@@ -265,19 +285,18 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     };
   },
 
-  // v2, label-mined (65 approved / 69 rejected individually-judged rows):
-  // exec titles 35% approval vs 55% title-missing → title prior inverted;
-  // bios no longer feed seniority (bioTitleBand measured flat-to-negative);
-  // Host 35% vs Guest 54% → Host now scores BELOW Guest, not above.
-  "luma-events": (p) => {
+  // v2: titles feed the title prior, not seniority, and bios feed neither.
+  // A host and a guest score alike unless the workspace sets
+  // `priorityPriors["luma-events"].host`.
+  "luma-events": (p, priors = {}) => {
     const role = str(p["role"]);
     return {
-      personSignals: minedTitleSignals(str(p["title"])),
+      personSignals: minedTitleSignals(str(p["title"]), priors),
       companyKnown: str(p["company"]) !== null,
       intentSignals: [
         {
           kind: "event",
-          strength: role === "Host" ? 45 : 65,
+          strength: role === "Host" ? (priors.host ?? EVENT_ROLE) : EVENT_ROLE,
           reason: `${role ?? "attendee"} at ${str(p["eventTitle"]) ?? "?"}`,
         },
       ],
@@ -318,11 +337,10 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     ...contact(p),
   }),
 
-  // v2: exec-title prior inverted here too (44% approval at n=9, matching
-  // luma's direction; repo-interest labels are direction-only: bulk-approve
-  // heavy, so only the title change is applied, candidateRepos left alone).
-  "repo-interest": (p) => ({
-    personSignals: minedTitleSignals(str(p["title"])),
+  // v2: the same title prior as luma-events; candidateRepos only marks
+  // evidence text.
+  "repo-interest": (p, priors = {}) => ({
+    personSignals: minedTitleSignals(str(p["title"]), priors),
     companyKnown: str(p["company"]) !== null,
     intentSignals: [
       {
@@ -459,12 +477,17 @@ export function safeScorePriority(
   playName: string,
   payload: unknown,
   now: Date = new Date(),
+  priors: PriorityPriors = currentPriorityPriors(),
 ): ProspectPriority | null {
   try {
     const adapter = PRIORITY_ADAPTERS[playName];
     if (!adapter) return null;
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
-    return computePriority(playName, adapter(payload as Record<string, unknown>), now);
+    return computePriority(
+      playName,
+      adapter(payload as Record<string, unknown>, priors[playName] ?? {}),
+      now,
+    );
   } catch (err) {
     logEvent("priority.score_failed", {
       play: playName,

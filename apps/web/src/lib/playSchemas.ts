@@ -466,14 +466,14 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         key: "attendeeBio",
         label: "Attendee bio / role (optional)",
         type: "text",
-        placeholder: 'e.g. "Practice owner @ Bright Smile Dental"',
+        placeholder: 'e.g. "Owner @ Dubois Heating & Air"',
       },
       {
         key: "eventTitle",
         label: "Event title",
         type: "text",
         required: true,
-        placeholder: "e.g. Austin Practice Owners Mixer",
+        placeholder: "e.g. Home Services Operators Mixer",
       },
       {
         key: "eventDate",
@@ -712,7 +712,7 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         label: "Business type",
         type: "text",
         required: true,
-        placeholder: "e.g. family-owned taqueria · HVAC contractor · two-chair dental practice",
+        placeholder: "e.g. family-owned taqueria · HVAC contractor · two-truck plumbing shop",
       },
       {
         key: "yourEdge",
@@ -744,7 +744,7 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         label: "Business type",
         type: "text",
         required: true,
-        placeholder: "e.g. family-owned taqueria · HVAC contractor · two-chair dental practice",
+        placeholder: "e.g. family-owned taqueria · electrical contractor · independent bookstore",
       },
       {
         key: "licenseType",

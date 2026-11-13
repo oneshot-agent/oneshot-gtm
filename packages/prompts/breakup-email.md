@@ -27,7 +27,7 @@ This is the last touch: open on the same offer, restated once, then give the rea
 
 ## Email rules (without an OFFER line: plays that make no offer)
 
-- Subject: 2-5 lowercase words naming the offer (or their work) in their terms, the same rule as the first email: this email starts a new thread, so its subject is read on its own. Never a sign-off ("last note", "closing the loop", "moving on", "closing out", "following up") and never a subject PRIOR EMAILS used. NEVER "permission to close your file?" — that's the cliché everyone copies.
+- Subject: 2-5 words naming the offer (or their work) in their terms, the same rule as the first email: this email starts a new thread, so its subject is read on its own. Never a sign-off ("last note", "closing the loop", "moving on", "closing out", "following up") and never a subject PRIOR EMAILS used. NEVER "permission to close your file?" — that's the cliché everyone copies.
 - Body: ≤ 50 words, 2 sentences max.
   - Hook (1 sentence): the specific thing for them, their work or the problem the earlier emails named, in their terms. Never an announcement that you are stopping; direct, no apology.
   - Probe-as-CTA (1 sentence): ONE specific yes/no question that makes "not now" an easy answer (a "would love to know if X is the blocker" probe) OR a single offer of value with NO follow-up commitment. Do not repeat any sentence, angle, hook, opener, or close from PRIOR EMAILS below.

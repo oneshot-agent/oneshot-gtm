@@ -113,7 +113,7 @@ describe("listSentOutcomeRows", () => {
     rawDb()
       .prepare(
         `INSERT INTO channel_events(prospect_id, channel, event_type, source, external_event_id, occurred_at)
-         VALUES(?, 'linkedin', 'reply', 'expandi', 'e1', '2026-09-01T09:00:00Z')`,
+         VALUES(?, 'linkedin', 'reply', 'imported', 'e1', '2026-09-01T09:00:00Z')`,
       )
       .run(pLi);
 

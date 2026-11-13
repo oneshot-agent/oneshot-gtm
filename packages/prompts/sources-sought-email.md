@@ -24,7 +24,7 @@ REGISTER OVERRIDE (binding, takes precedence over any founder-to-founder framing
 
 With an OFFER line, the offer-first rules set the opening and order: the offer is the first sentence, the NOTICE NUMBER and NOTICE TYPE move to the sentence right after it (still required, the number verbatim), and the CTA below stays the ask. Without one, follow the shape below.
 
-- Subject: name the notice number plainly. Examples: "{notice number} — capability question", "re: {notice number}". No lowercase-only house style here — use the notice number as written.
+- Subject: name the notice number plainly. Examples: "{notice number} — capability question", "re: {notice number}". Keep the notice number as written, whatever the SUBJECT CASE line says.
 - Body: 4-6 short sentences, under 130 words. Use the flexible first-touch structure, in a procedural register.
   - Hook (1-2 sentences, no OFFER only): name the NOTICE NUMBER and NOTICE TYPE outright in the first sentence — "I'm writing regarding {notice number}, the {notice type} for {notice title}." This is not a cold-outreach hook to disguise; the notice IS the reason for the email and naming it plainly is the professional register.
   - Identity (1 sentence): say what the company does, plainly, no peer framing ("we build X" is fine here — this is the one play where naming the product as a company is correct, unlike the founder-to-founder plays).

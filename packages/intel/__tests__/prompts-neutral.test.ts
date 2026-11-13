@@ -29,6 +29,7 @@ const identityHits = (body: string) => grams(body).filter((g) => IDENTITY.has(sh
 // guard is on rule phrasing, not on the words "agent" or "founder".
 
 const SHARED = [
+  "_humanizer",
   "icp-filter",
   "icp-filter-person",
   "reply-email",
@@ -54,6 +55,18 @@ describe("shared prompts stay product-neutral", () => {
       expect(identityHits(body)).toEqual([]);
     });
   }
+
+  it("the greeting word and subject case come from the input, not the prompt", () => {
+    for (const name of ["_humanizer", "reply-email"]) {
+      const body = loadPrompt(name);
+      // No greeting word stated as the rule; GREETING names it per workspace.
+      expect(body).not.toMatch(/(?:open with|use) [`"']Hey\b/i);
+      expect(body).not.toMatch(/[`"']Hey (?:\{first ?name\}|<name>)/i);
+      expect(body).toContain("GREETING");
+      // No house subject case; SUBJECT CASE names it per workspace.
+      expect(body).not.toMatch(/house register|always all-lowercase/i);
+    }
+  });
 
   it("the person gate shows the same title flipping with the ICP", () => {
     const body = loadPrompt("icp-filter-person");

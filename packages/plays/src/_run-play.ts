@@ -444,7 +444,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         const angleBlock = angleBlockFromJson(existingAngle ?? null);
         if (angleBlock && !opts.draftAngle) inputBlock = `${inputBlock}\n\n${angleBlock}`;
         // Surface a real first name when extractable so the prompt can
-        // occasionally open with "Hey {firstName},". Absent → prompt rule
+        // occasionally open with the greeting and the name. Absent → prompt rule
         // allows a bare greeting or a direct opener, never an invented name.
         const firstName = firstNameFrom(def.prospectMeta(target).name ?? null);
         if (firstName) {

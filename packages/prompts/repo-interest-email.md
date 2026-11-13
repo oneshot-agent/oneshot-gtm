@@ -23,7 +23,7 @@ The configured VOICE card controls tone, greeting preference and rhythm. Do not 
 
 With an OFFER line, the offer-first rules set the opening and order, and this play's signal becomes the optional why-now clause. Without one, follow the shape below.
 
-- Subject: 2-4 lowercase words, specific and factual. No hype or unsubstantiated problem claim.
+- Subject: 2-4 words, specific and factual. No hype or unsubstantiated problem claim.
 - Body: under 100 words. No fixed sentence count or mandatory hook/identity/offer sequence. One clear thought is enough.
 - Open with a supported observation or concrete fact about the sender's work that makes the connection worth explaining. Do not open with the star, canned praise, a product-page recap, or a sweeping claim about what always breaks or where work usually stalls. When recipient context is thin, state the sender capability directly rather than inventing a generic industry bottleneck.
 - Disclose the source once, briefly: found them through the named repo's stargazers. Place it wherever it fits after the opening. Do not invent when the star happened.

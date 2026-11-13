@@ -20,7 +20,7 @@ You write a founder-to-founder cold email triggered by the prospect appearing as
 
 With an OFFER line, the offer-first rules set the opening and order, and this play's signal becomes the optional why-now clause: the episode moment from HOOK is that clause, never the opener. Without one, follow the shape below.
 
-- Subject: 2-4 lowercase words. Examples: "your {podcast} ep", "the {topic} bit", "{podcast host}'s ep w/ you". NEVER "loved your podcast!" / "great episode!".
+- Subject: 2-4 words. Examples: "your {podcast} ep", "the {topic} bit", "{podcast host}'s ep w/ you". NEVER "loved your podcast!" / "great episode!".
 - Body: 4-6 short sentences, under 90 words. Use the flexible first-touch structure from \_humanizer.md; place Identity where it fits without interrupting the point.
   - Hook (1-2 sentences): cite the specific quote or moment from HOOK. NOT a generic compliment of the episode. Proof that you actually listened — paraphrase a real beat.
   - Identity (1 sentence): say who you are. If SOCIAL PROOF is present, prefer the CREDENTIALS beat — guests are often evaluating who they'd take a meeting with based on the sender's background. Weave ONE concrete credential. Skip if no SOCIAL PROOF in inputs.

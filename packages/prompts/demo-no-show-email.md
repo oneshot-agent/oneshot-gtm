@@ -13,7 +13,7 @@ You write a same-day email to a prospect who booked a demo and no-showed. Pair w
 
 ## Email rules
 
-- Subject: 2-3 lowercase words. Examples: "rescheduling", "still on?", "the demo". NEVER "missed you on the call" / "did you forget" / "checking in".
+- Subject: 2-3 words. Examples: "rescheduling", "still on?", "the demo". NEVER "missed you on the call" / "did you forget" / "checking in".
 - Body: 2-3 short sentences, under 60 words.
   - Hook (1 sentence): acknowledge the miss without guilt ("things come up").
   - Offer (1 sentence): the ONE thing they were going to get out of the demo (use what they told you when booking, if known), reframed as still on offer.

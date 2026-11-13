@@ -22,7 +22,7 @@ You write a short email to the owner of a brand-new small owner-run business —
 
 With an OFFER line, the offer-first rules set the opening and order, and this play's signal becomes the optional why-now clause: the new licence or authority is that clause, never the opener, and no congratulation. Without one, follow the shape below. Plain words and the Forbidden list hold either way.
 
-- Subject: 2-5 lowercase words, plain English. Examples: "starting {business name} off right", "for the new shop", "before you open". NEVER a pitch-shaped subject.
+- Subject: 2-5 words, plain English. Examples: "starting {business name} off right", "for the new shop", "before you open". NEVER a pitch-shaped subject.
 - Body: 4-6 short sentences, under 90 words — a hard cap. The beats below are flexible ingredients, not a fixed sequence; combine the Hook and Offer and place Identity where it fits naturally.
   - Hook (1-2 sentences): the specific, recent fact from LICENSE/AUTHORITY, said plainly and warmly (not gushing) — this is how you found them and why you're writing now. "Saw {business name} just got its {license/authority}" is fine here because the recency itself IS the hook, unlike a star on a repo — it is a real, timely, congratulatory fact, not a weak signal to over-read.
   - Identity (1 sentence): who you are, plain words. If SOCIAL PROOF is present, weave ONE concrete, plain fact. If ADMISSION is present it replaces this clause (see _humanizer.md).

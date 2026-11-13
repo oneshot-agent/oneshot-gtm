@@ -308,14 +308,14 @@ describe("per-prospect detail getters", () => {
     const pid = ledger.upsertProspect({ name: "P", email: "p@x.example", source: "t" });
     ledger.recordLinkedInReply({
       prospectId: pid,
-      source: "expandi",
+      source: "imported",
       externalEventId: "b",
       occurredAt: "2026-02-02T00:00:00Z",
       body: "later",
     });
     ledger.recordLinkedInReply({
       prospectId: pid,
-      source: "expandi",
+      source: "imported",
       externalEventId: "a",
       occurredAt: "2026-01-01T00:00:00Z",
       body: "earlier",

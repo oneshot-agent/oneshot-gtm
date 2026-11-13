@@ -14,6 +14,7 @@ import {
   offerExclusionsOf,
   offerRulesOf,
   oneshotEnvReady,
+  priorityPriorsOf,
   SECRET_KEYS,
   withCurrentDefaultModel,
 } from "../src/config.ts";
@@ -260,6 +261,30 @@ describe("noOfferPlaysOf", () => {
     expect(noOfferPlaysOf({ noOfferPlays: "luma-events" })).toEqual(["luma-events"]);
     expect(noOfferPlaysOf({})).toEqual([]);
     expect(noOfferPlaysOf({ noOfferPlays: { a: 1 } })).toEqual([]);
+  });
+});
+
+describe("priorityPriorsOf", () => {
+  it("keeps known numeric priors per play, clamped to 0-100", () => {
+    expect(
+      priorityPriorsOf({
+        priorityPriors: {
+          "luma-events": { execTitle: 35, host: 145, bogus: 1 },
+          "repo-interest": { execTitle: -5, host: "45" },
+          "free-pilot": { host: Number.NaN },
+          "show-hn": 7,
+        },
+      }),
+    ).toEqual({
+      "luma-events": { execTitle: 35, host: 100 },
+      "repo-interest": { execTitle: 0 },
+    });
+  });
+
+  it("reads absent or malformed as no priors", () => {
+    expect(priorityPriorsOf({})).toEqual({});
+    expect(priorityPriorsOf({ priorityPriors: [{ execTitle: 35 }] })).toEqual({});
+    expect(priorityPriorsOf({ priorityPriors: "luma-events" })).toEqual({});
   });
 });
 

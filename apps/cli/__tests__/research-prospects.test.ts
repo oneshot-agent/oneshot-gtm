@@ -31,10 +31,10 @@ describe("researchUrl", () => {
   it("prefers source_profile_url when it is a researchable profile", () => {
     expect(
       researchUrl({
-        source_profile_url: "https://github.com/rishibanota",
+        source_profile_url: "https://github.com/jane-doe-example",
         linkedin_url: "https://linkedin.com/in/x",
       }),
-    ).toBe("https://github.com/rishibanota");
+    ).toBe("https://github.com/jane-doe-example");
   });
 
   it("skips a non-profile source_profile_url in favour of LinkedIn", () => {
@@ -44,26 +44,26 @@ describe("researchUrl", () => {
     // nothing while a perfectly good LinkedIn URL sat in the next column.
     expect(
       researchUrl({
-        source_profile_url: "https://luma.com/user/tmarsh",
-        linkedin_url: "https://www.linkedin.com/in/theomarsh",
+        source_profile_url: "https://luma.com/user/janedoe",
+        linkedin_url: "https://www.linkedin.com/in/jane-doe-example",
       }),
-    ).toBe("https://www.linkedin.com/in/theomarsh");
+    ).toBe("https://www.linkedin.com/in/jane-doe-example");
   });
 
   it("still returns a non-profile URL when there is nothing better", () => {
     // Worse than a social profile, but strictly more than an email alone.
     expect(
-      researchUrl({ source_profile_url: "https://luma.com/user/tmarsh", linkedin_url: null }),
-    ).toBe("https://luma.com/user/tmarsh");
+      researchUrl({ source_profile_url: "https://luma.com/user/janedoe", linkedin_url: null }),
+    ).toBe("https://luma.com/user/janedoe");
   });
 
   it("treats x.com and twitter.com as researchable too", () => {
     expect(
       researchUrl({
-        source_profile_url: "https://x.com/tmarsh",
+        source_profile_url: "https://x.com/janedoe",
         linkedin_url: "https://li.com/in/x",
       }),
-    ).toBe("https://x.com/tmarsh");
+    ).toBe("https://x.com/janedoe");
   });
 
   it("falls back to linkedin_url, else null", () => {

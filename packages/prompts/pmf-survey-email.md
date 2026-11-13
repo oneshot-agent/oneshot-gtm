@@ -11,7 +11,7 @@ You write a short email inviting an active user to take a 5-question PMF survey.
 
 ## Email rules
 
-- Subject: 2-4 lowercase words. Examples: "quick favor", "one minute", "5 questions". NEVER "your feedback is important to us!".
+- Subject: 2-4 words. Examples: "quick favor", "one minute", "5 questions". NEVER "your feedback is important to us!".
 - Body: 3-4 short sentences, under 70 words.
   - Hook (1 sentence): name them, name what you're trying to learn (one specific thing — e.g. "I want to understand how disappointed you'd be if {product} disappeared").
   - Offer (1 sentence): the ask + time estimate ("90 seconds, 5 questions") + the survey link on its own line.

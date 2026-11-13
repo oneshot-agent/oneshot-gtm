@@ -190,26 +190,28 @@ describe("buildFollowUpEmail — VOICE block", () => {
     expect(llmCalls[0]!.user).not.toContain("at most ONE aphoristic");
   });
 
-  it("is absent, with no key on the payload, when no card is set", async () => {
+  it("carries only the greeting and subject-case lines, with no key on the payload, when no card is set", async () => {
     const builder = buildFollowUpEmail({
       playName: "stack-consolidation",
       promptName: "stack-consolidation-followup",
       contextLines: ["PLAY: stack-consolidation."],
     });
     const out = await builder(ctx());
-    expect(llmCalls[0]!.user).not.toContain("VOICE");
+    expect(llmCalls[0]!.user).toContain("GREETING: Hi (");
+    expect(llmCalls[0]!.user).toContain("SUBJECT CASE: sentence (");
+    expect(llmCalls[0]!.user).not.toContain("VOICE BUDGET");
     expect(out).toEqual({ kind: "email", subject: "ok", body: "ok body" });
   });
 
   it("carries a greeting override without a card, and stamps no key: the draft is voice off", async () => {
-    styleOverrides = { founderGreeting: "Hi" };
+    styleOverrides = { founderGreeting: "Yo" };
     const builder = buildFollowUpEmail({
       playName: "stack-consolidation",
       promptName: "stack-consolidation-followup",
       contextLines: ["PLAY: stack-consolidation."],
     });
     const out = await builder(ctx());
-    expect(llmCalls[0]!.user).toContain("GREETING: Hi");
+    expect(llmCalls[0]!.user).toContain("GREETING: Yo");
     expect(out).toEqual({ kind: "email", subject: "ok", body: "ok body" });
   });
 });

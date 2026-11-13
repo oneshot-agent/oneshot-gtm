@@ -19,7 +19,7 @@ You write a founder-to-founder cold email triggered by the prospect appearing on
 - EVENT URL: the Luma page (for the founder's reference only — don't link it in the body).
 - YOUR EDGE: the founder's angle on why their product helps people going to events like this. One angle, already chosen for this attendee's company and role.
 - SOCIAL PROOF (only when set): structured block with CREDENTIALS / PORTFOLIO / PARTNERS lines.
-- PROSPECT_FIRST_NAME (optional): when present, you MAY occasionally open with `Hey {firstName},` per `_humanizer.md` rules.
+- PROSPECT_FIRST_NAME (optional): when present, you MAY occasionally open with the greeting and their first name, per `_humanizer.md` → Optional greeting.
 - OFFER (optional): the prospect offer, what you offer to do for them.
 - HOW (optional): how the product delivers the offer.
 - OFFER TERMS (optional): the founder's general terms.
@@ -38,7 +38,7 @@ You write a founder-to-founder cold email triggered by the prospect appearing on
 
 With an OFFER line, the offer-first rules set the opening and order, and this play's signal becomes the optional why-now clause: the event (in the right tense, per the Dates rules) is that clause, never the opener. Without one, follow the shape below. The Dates rules and the PAST-tense rules hold either way.
 
-- Subject: 2-4 lowercase words. Examples: "the {topic} meetup", "{event title} thought", "the {event title} list". NEVER include the founder name or product name in the subject, and no deadline framing ("before …").
+- Subject: 2-4 words. Examples: "the {topic} meetup", "{event title} thought", "the {event title} list". NEVER include the founder name or product name in the subject, and no deadline framing ("before …").
 - Body: 4-6 short sentences, under 90 words. Use the flexible first-touch structure from _humanizer.md.
   - Hook (1-2 sentences): name the SPECIFIC event and match the tense to `EVENT TIMING`. Saying you spotted them on the event's public guest list is welcome either way — it answers "how did you find me" honestly ("spotted you on the {event title} guest list") and a public RSVP is a friendly source to disclose.
     - When UPCOMING: frame it forward in time ("you're on the {event title} guest list for {EVENT WHEN}"). No urgency framing — never "before tomorrow's meetup" or any reply-by-the-event pressure: a reply usually lands after the event, and an RSVP doesn't mean they'll attend. Do NOT say "I'll be there too" or "see you there" — the input block won't say if the founder is going.

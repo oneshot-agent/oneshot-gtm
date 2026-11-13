@@ -18,7 +18,7 @@ You write a founder-to-founder cold email triggered by the prospect's company ha
 
 With an OFFER line, the offer-first rules set the opening and order, and this play's signal becomes the optional why-now clause. Without one, follow the shape below.
 
-- Subject: 2-4 lowercase words. Examples: "{company} + question", "post-{round}", "{prospect first name}". NEVER "congrats on the {round}!" — that's the day-0 spam everyone sent.
+- Subject: 2-4 words. Examples: "{company} + question", "post-{round}", "{prospect first name}". NEVER "congrats on the {round}!" — that's the day-0 spam everyone sent.
 - Body: 4-6 short sentences, under 100 words. Use the flexible first-touch structure from \_humanizer.md; place Identity where it fits without interrupting the point.
   - Hook (1-2 sentences): a non-generic acknowledgment tied to a SPECIFIC line in the announcement or a SPECIFIC public decision the round implies, taken from the announcement or DOSSIER.
   - Identity (1 sentence): say what you ship. If SOCIAL PROOF is present, prefer the CREDENTIALS beat — a freshly-funded exec is allocating trust. Weave ONE concrete credential. Without SOCIAL PROOF, use only the founder name and product one-liner.

@@ -47,11 +47,10 @@ export interface IndustryPack {
   label: string;
   /**
    * One line of plain buyer language for the picker: who this sells to, no
-   * provenance. `buyerBrief` carries the reasoning and reads like the
-   * engineering note it is ("the #456 coverage spike measured `peopleSearch`
-   * at 80% best_work_email hit rate"), which is the right thing to feed the
-   * strategist and the wrong thing to put in front of a founder choosing a
-   * vertical. Optional: a pack without one falls back to a truncated
+   * provenance. `buyerBrief` carries the channel reasoning, which is the
+   * right thing to feed the strategist and more than a founder choosing a
+   * vertical needs. Measurement notes behind a pack stay in code comments,
+   * never in either string. Optional: a pack without one falls back to a truncated
    * `buyerBrief`, so adding a pack never breaks the picker.
    */
   summary?: string;
@@ -97,8 +96,19 @@ export const PACKS: IndustryPack[] = [
     id: "restaurants-food-service",
     label: "Restaurants & Food Service",
     summary: "Owners and GMs at independent restaurants, franchisees, and ghost kitchens.",
+    // Measurement notes (kept out of the brief, which is about the buyer):
+    // the #456 coverage spike measured `peopleSearch` at 80% best_work_email
+    // for independent restaurants in one metro, the best of the three
+    // verticals it tested; the 2026-09-07 pass that moved the other
+    // main-street packs to `engine: local` found the B2B people database
+    // returning zero matches for these titles × industries, superseding that
+    // 80% (this pack was missed in that pass, #685). The `local-registry`
+    // block that used to sit here pointed at NYC's DCWP licence dataset
+    // (w7w3-xahh), which has no restaurant category (a Socrata group-by on
+    // 2026-09-07 found only 'Third Party Food Delivery Service'), so it could
+    // never enqueue anything.
     buyerBrief:
-      "Owner / GM / franchisee at independent restaurants, multi-unit franchisees, and ghost kitchens. The coverage spike (#456) measured `peopleSearch` at 80% best_work_email hit rate for independent restaurants in Austin, TX — the BEST of the three verticals tested, the opposite of the working hypothesis that single-location restaurants would be the weakest B2B-database population. `local-business` is the only channel here. The `local-registry` block that used to sit beside it pointed at NYC's DCWP licence dataset (w7w3-xahh), which carries no restaurant category at all — measured 2026-09-07 with a Socrata group-by, the only food-adjacent value is 'Third Party Food Delivery Service' — so it could never enqueue anything; restaurant permits are a health-department dataset, not a consumer-affairs licence, and no open feed of them with a contactable business record is wired yet. `local-business` runs on the SDK's places index (`engine: local`) like every other main-street pack: the 2026-09-07 measurement that moved the others found the B2B people database returning zero matches for main-street titles × industries, superseding the spike's 80%; this pack was missed in that pass (#685).",
+      "Owner / GM / franchisee at independent restaurants, multi-unit franchisees, and ghost kitchens. These are owner-run businesses that rarely sit in a B2B people database, so `local-business` on the SDK's places index (`engine: local`) is the only channel: it finds the restaurant by category and names the person who runs it. Restaurant permits are a health-department record with no open, contactable feed, so no public-registry channel applies yet.",
     icpOneLiner: "Owners and GMs of independent restaurants, franchisees, and ghost kitchens",
     triggers: {
       "local-business": {
@@ -120,8 +130,11 @@ export const PACKS: IndustryPack[] = [
     label: "Home Services & Trades",
     summary:
       "Owner-operators and office managers at HVAC, plumbing, electrical, and roofing firms.",
+    // Measured 2026-09-07: the B2B people database returned zero matches for
+    // these trades in one metro with and without a location, while the
+    // places index found dozens per category, so `local` is the engine.
     buyerBrief:
-      "Owner-operator / office manager at HVAC, plumbing, electrical, roofing, landscaping and pest-control businesses. Both channels lean on here: state contractor licence boards (`local-registry`) reach the long tail of one-truck operators who never show up in a B2B people database, while `local-business` on the SDK's places index (`engine: local`) reaches the shops with a website and a phone number. The B2B people database was measured 2026-09-07 returning zero matches for these trades in Austin with and without a location, so `local` is the engine here; the places index found dozens per category.",
+      "Owner-operator / office manager at HVAC, plumbing, electrical, roofing, landscaping and pest-control businesses. Both channels apply: state contractor licence boards (`local-registry`) reach the long tail of one-truck operators who never show up in a B2B people database, while `local-business` on the SDK's places index (`engine: local`) reaches the shops with a website and a phone number.",
     icpOneLiner: "Owner-operators and office managers at home-service and trade businesses",
     triggers: {
       "local-business": {
@@ -154,8 +167,13 @@ export const PACKS: IndustryPack[] = [
     id: "healthcare-practices",
     label: "Healthcare Practices",
     summary: "Practice owners and office managers at dental, optometry, and small medical clinics.",
+    // Measurement notes: the #456 coverage spike measured one practice type
+    // at 64% `peopleSearch` hit rate, the worst of the three verticals it
+    // tested, so the B2B people database is left off; on 2026-09-07 the
+    // places index turned clinics in one metro into verified, named contacts
+    // at a few cents each.
     buyerBrief:
-      "Practice owner / office manager at dental, veterinary, optometry, chiropractic and small primary-care practices. `local-registry`'s NPPES adapter is the most completely covered vertical of the seven — 9M+ providers, free, weekly refresh, filterable by taxonomy — and the coverage spike (#456) measured dental practices at only 64% `peopleSearch` hit rate, the WORST of the three tested verticals, confirming a B2B people database is the wrong primary channel here. `local-business` on the B2B database is deliberately left off; `local-business` on the SDK's places index (`engine: local`) is on — measured 2026-09-07 it turned Austin dental clinics into verified, named contacts at a few cents each, and NPPES rows go through the same `localResolve` + person lookup.",
+      "Practice owner / office manager at dental, veterinary, optometry, chiropractic and small primary-care practices. `local-registry`'s NPPES adapter covers this vertical more completely than any other public registry — 9M+ providers, free, weekly refresh, filterable by taxonomy — so it is the primary channel. A B2B people database under-covers small practices; `local-business` runs on the SDK's places index (`engine: local`) instead, and NPPES rows go through the same `localResolve` + person lookup.",
     icpOneLiner: "Owners and office managers at dental, veterinary, and small medical practices",
     triggers: {
       "local-registry": {
@@ -175,8 +193,12 @@ export const PACKS: IndustryPack[] = [
     label: "Auto Services",
     summary:
       "Owners and service managers at independent repair shops, tyre, and collision centres.",
+    // Not part of the #456 coverage spike. The `local-registry` block that
+    // used to point at NYC's DCWP licence dataset (w7w3-xahh) is gone: its
+    // only automotive category is 'Secondhand Dealer - Auto' (a Socrata
+    // group-by on 2026-09-07), so it could never have enqueued a repair shop.
     buyerBrief:
-      "Shop owner / service manager at independent auto-repair shops, tire shops and body shops. Not part of the #456 coverage spike, so this follows the card's original reasoning unchanged: the SDK's places index (`local-business`, `engine: local`) is the channel: it lists exactly the single-bay shops a B2B people database under-indexes. The `local-registry` block that used to point at NYC's DCWP licence dataset (w7w3-xahh) is gone — that dataset's only automotive category is 'Secondhand Dealer - Auto' (measured 2026-09-07 with a Socrata group-by), so it could never have enqueued a repair shop.",
+      "Shop owner / service manager at independent auto-repair shops, tire shops and body shops. The SDK's places index (`local-business`, `engine: local`) is the channel: it lists exactly the single-bay shops a B2B people database under-indexes.",
     icpOneLiner: "Owners and service managers at independent auto-repair, tire, and body shops",
     triggers: {
       "local-business": {
@@ -191,8 +213,12 @@ export const PACKS: IndustryPack[] = [
     id: "professional-services-smb",
     label: "Professional Services (SMB)",
     summary: "Managing partners at small law, accounting, bookkeeping, and insurance firms.",
+    // Not part of the #456 coverage spike. Measured 2026-09-07: the B2B
+    // people database returned zero matches for these titles × industries in
+    // one metro with and without a location, while the places index found
+    // the firms and the domain-scoped person lookup named their principals.
     buyerBrief:
-      "Managing partner / principal at small law firms, bookkeeping practices, insurance agencies and property managers. Not part of the #456 coverage spike. `local-business` is the primary — and only — channel, on the SDK's places index (`engine: local`): measured 2026-09-07, the B2B people database returned zero matches for these titles × industries in Austin with and without a location, while the places index found the firms and the domain-scoped person lookup named their principals; `local-registry`'s public-registry sources exist for businesses invisible to B2B databases, which does not describe this vertical.",
+      "Managing partner / principal at small law firms, bookkeeping practices, insurance agencies and property managers. `local-business` is the only channel, on the SDK's places index (`engine: local`): it finds the firm and the domain-scoped person lookup names its principals. `local-registry`'s public-registry sources exist for businesses invisible to B2B databases, which does not describe this vertical.",
     icpOneLiner: "Managing partners and principals at small law, accounting, and insurance firms",
     triggers: {
       "local-business": {
@@ -214,7 +240,7 @@ export const PACKS: IndustryPack[] = [
     label: "Trucking & Freight",
     summary: "Owners and dispatch managers at small carriers, brokerages, and 3PLs.",
     buyerBrief:
-      "Owner / VP Ops / dispatch manager at small carriers, brokerages, and 3PLs. Not part of the #456 coverage spike. `local-registry`'s FMCSA adapter carries a published on-file email for every active entity, so there is near-zero cost per candidate — no findEmail/verifyEmail spend at all — and the 10-100 power-unit fleet-size band is the segment that actually buys software (large fleets build in-house, one-truck owner-operators rarely buy).",
+      "Owner / VP Ops / dispatch manager at small carriers, brokerages, and 3PLs. `local-registry`'s FMCSA adapter carries a published on-file email for every active entity, so there is near-zero cost per candidate — no findEmail/verifyEmail spend at all — and the 10-100 power-unit fleet-size band is the segment that actually buys software (large fleets build in-house, one-truck owner-operators rarely buy).",
     icpOneLiner: "Owners and operations leads at small trucking carriers, brokerages, and 3PLs",
     triggers: {
       "local-registry": {
@@ -230,7 +256,7 @@ export const PACKS: IndustryPack[] = [
     label: "Civic & Government",
     summary: "City managers, department heads, and procurement officers at local government.",
     buyerBrief:
-      "City manager, county administrator, department head, or procurement officer at a municipal or county government. Not part of the #456 coverage spike (no B2B people-database channel applies to public-sector buyers at all). `gov-solicitation` catches federal Sources Sought / Presolicitation notices by NAICS while a requirement is still being written — the one window a pre-PMF startup with no past-performance record can shape it — and `civic-agenda` catches city/county council agenda items mentioning relevant technology before any budget commitment is public. Both pitch the notice's or meeting body's own published contact, so neither spends on findEmail/verifyEmail.",
+      "City manager, county administrator, department head, or procurement officer at a municipal or county government. No B2B people-database channel applies to public-sector buyers at all. `gov-solicitation` catches federal Sources Sought / Presolicitation notices by NAICS while a requirement is still being written — the one window a pre-PMF startup with no past-performance record can shape it — and `civic-agenda` catches city/county council agenda items mentioning relevant technology before any budget commitment is public. Both pitch the notice's or meeting body's own published contact, so neither spends on findEmail/verifyEmail.",
     icpOneLiner:
       "City managers, department heads, and procurement officers evaluating new software",
     triggers: {

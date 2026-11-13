@@ -19,7 +19,7 @@ You write a short email from a founder to the partnerships or programme contact 
 
 ## Email rules
 
-- Subject: 2-5 lowercase words naming the organization or its members, e.g. "an offer for {organization} members", "for your cohort".
+- Subject: 2-5 words naming the organization or its members, e.g. "an offer for {organization} members", "for your cohort".
 - Body: at most 150 words, aim under 110. Plain sentences, no bullet list.
   - Opening (1-2 sentences): with INTRODUCED BY, name them and why they pointed you here. Without it, say in one sentence what you ship and why the organization's members (from MEMBERS and WHY FIT) are the people you built it for. No compliment about the organization, no "I came across".
   - The offer (the MEMBER OFFER, verbatim): introduce it with a short clause ("Here is what I would offer your members:") and then quote it whole. This is the email's center and the only place numbers appear.

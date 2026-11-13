@@ -23,7 +23,7 @@ This is the last touch: open on the same offer, restated once, then close.
 
 ## Email rules (without an OFFER line)
 
-- Subject: 2-5 lowercase words naming the offer (or their work) in their terms. Never a sign-off ("last note", "closing the loop", "moving on", "closing out", "following up"). NEVER "checking in!" / "still interested?".
+- Subject: 2-5 words naming the offer (or their work) in their terms. Never a sign-off ("last note", "closing the loop", "moving on", "closing out", "following up"). NEVER "checking in!" / "still interested?".
 - Body: 2-3 sentences, under 60 words.
   - Hook (1 sentence): the specific thing for them now, their work or what the original touch was about, in their terms. Never an announcement that you are stopping; no apology, no "wanted to make sure I didn't miss something".
   - Identity-as-update (optional, 1 sentence): if SOCIAL PROOF has a fresh CREDENTIALS fact that wasn't true at original touch, weave it in. Otherwise skip — they remember you.

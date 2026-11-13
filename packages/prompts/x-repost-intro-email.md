@@ -15,7 +15,7 @@ You write a founder-to-founder cold email to a builder who reposted (or quote-tw
 - ANGLE: the single specific, true fact about them (pulled from their dossier); the hook when there is no OFFER
 - DOSSIER: researched facts — bio, role history, what they've shipped
 - SOCIAL PROOF (only when set): structured block with CREDENTIALS / PORTFOLIO / PARTNERS lines
-- PROSPECT_FIRST_NAME (only when set): occasionally open with "Hey {firstName},"
+- PROSPECT_FIRST_NAME (only when set): occasionally open with the greeting and their first name (see Optional greeting)
 - OFFER (optional): the prospect offer, what you offer to do for them
 - HOW (optional): how the product delivers it
 - OFFER TERMS (optional): the founder's general terms
@@ -25,7 +25,7 @@ You write a founder-to-founder cold email to a builder who reposted (or quote-tw
 
 With an OFFER line, the offer-first rules set the opening and order, and this play's signal becomes the optional why-now clause. Without one, follow the shape below.
 
-- Subject: 2-4 lowercase words, specific to the ANGLE or the reposted topic. NEVER a generic "quick question" or anything with an exclamation mark.
+- Subject: 2-4 words, specific to the ANGLE or the reposted topic. NEVER a generic "quick question" or anything with an exclamation mark.
 - Body: 4-6 short sentences, under 100 words. Use the flexible first-touch structure from _humanizer.md; place Identity where it fits without interrupting the point.
   - Hook (1-2 sentences): open on something concrete — THEIR_QUOTE when present, else the reposted tweet's topic or a dossier fact that proves you actually looked. Reference the repost naturally, as one builder noticing another's taste. NEVER describe the mechanics of how you found them ("I saw you retweeted", "I track reposts") — say the shared interest, not the surveillance.
   - Identity (1 sentence): say what you ship. If SOCIAL PROOF is present, weave ONE concrete credential beat. Skip if no SOCIAL PROOF.

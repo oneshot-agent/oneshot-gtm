@@ -781,14 +781,14 @@ describe("runLocalRegistryFinder — mid-turn max-cost recheck", () => {
 describe("pickResolvedBusiness — address-confirmed matches below the SDK's name threshold", () => {
   const closest = {
     id: "loc_x",
-    name: "Smiles at Telfair Family and Cosmetic Dentistry",
-    domain: "smilesattelfair.com",
-    website: "https://smilesattelfair.com",
+    name: "Brightside Family and Cosmetic Dentistry",
+    domain: "brightsidedental.example",
+    website: "https://brightsidedental.example",
     phone: "+1 832 555 0100",
     operating_status: "open" as const,
     category: "dental practice",
     is_chain: null,
-    address: "1227 Museum Square Dr Ste D, Sugar Land, TX 77479",
+    address: "1227 Harbor View Dr Ste D, Springfield, TX 77479",
     socials: {},
     review_count: null,
     rating: null,
@@ -801,21 +801,21 @@ describe("pickResolvedBusiness — address-confirmed matches below the SDK's nam
       { address: "1 Elsewhere Rd", postalCode: "00000" },
       { found: true, result: closest },
     );
-    expect(out?.domain).toBe("smilesattelfair.com");
+    expect(out?.domain).toBe("brightsidedental.example");
   });
 
   it("accepts closest_match when the street number and 5-digit postal code both agree — the legal-name vs trade-name gap", () => {
     const out = pickResolvedBusiness(
       // NPPES: individual dentist's name, ZIP+4 with no hyphen.
-      { address: "1227 MUSEUM SQUARE DR", postalCode: "774794629" },
+      { address: "1227 HARBOR VIEW DR", postalCode: "774794629" },
       { found: false, result: null, closest_match: closest },
     );
-    expect(out?.domain).toBe("smilesattelfair.com");
+    expect(out?.domain).toBe("brightsidedental.example");
   });
 
   it("rejects closest_match on a different street number — a same-street neighbour is the wrong business to email", () => {
     const out = pickResolvedBusiness(
-      { address: "1229 MUSEUM SQUARE DR", postalCode: "774794629" },
+      { address: "1229 HARBOR VIEW DR", postalCode: "774794629" },
       { found: false, result: null, closest_match: closest },
     );
     expect(out).toBeNull();
@@ -823,7 +823,7 @@ describe("pickResolvedBusiness — address-confirmed matches below the SDK's nam
 
   it("rejects closest_match when the postal code disagrees, even with the same street number", () => {
     const out = pickResolvedBusiness(
-      { address: "1227 MUSEUM SQUARE DR", postalCode: "770010000" },
+      { address: "1227 HARBOR VIEW DR", postalCode: "770010000" },
       { found: false, result: null, closest_match: closest },
     );
     expect(out).toBeNull();
@@ -838,7 +838,7 @@ describe("pickResolvedBusiness — address-confirmed matches below the SDK's nam
     ).toBeNull();
     expect(
       pickResolvedBusiness(
-        { address: "1227 MUSEUM SQUARE DR", postalCode: null },
+        { address: "1227 HARBOR VIEW DR", postalCode: null },
         { found: false, result: null, closest_match: closest },
       ),
     ).toBeNull();
@@ -849,16 +849,16 @@ describe("runLocalRegistryFinder — trade name from an address-confirmed match"
   it("writes to the name on the door and keeps the registry's legal name as provenance", async () => {
     nextResolvedDomain = null; // SDK threshold misses …
     nextClosestMatch = {
-      name: "Smiles at Telfair Family and Cosmetic Dentistry",
-      domain: "smilesattelfair.com",
-      address: "1227 Museum Square Dr Ste D, Sugar Land, TX 77479",
+      name: "Brightside Family and Cosmetic Dentistry",
+      domain: "brightsidedental.example",
+      address: "1227 Harbor View Dr Ste D, Springfield, TX 77479",
     };
     nextSocrataRecords = [
       makeRecord({
         name: "A PROFESSIONAL DENTAL ORGANIZATION",
-        address: "1227 MUSEUM SQUARE DR",
+        address: "1227 HARBOR VIEW DR",
         postalCode: "774794629",
-        city: "Sugar Land",
+        city: "Springfield",
         state: "TX",
       }),
     ];
@@ -868,7 +868,7 @@ describe("runLocalRegistryFinder — trade name from an address-confirmed match"
       portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
     });
     expect(out.enqueued).toBe(1);
-    expect(enqueued[0]?.payload["company"]).toBe("Smiles at Telfair Family and Cosmetic Dentistry");
+    expect(enqueued[0]?.payload["company"]).toBe("Brightside Family and Cosmetic Dentistry");
     expect(enqueued[0]?.payload["registryName"]).toBe("A PROFESSIONAL DENTAL ORGANIZATION");
   });
 });
