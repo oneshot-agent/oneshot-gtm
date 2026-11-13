@@ -115,10 +115,12 @@ const staleUpdate = (reason: LearningStaleReason) =>
   `UPDATE learning_proposals SET status='stale', decided_at=?, decided_json='${JSON.stringify({ reason })}'
     WHERE status='pending'`;
 
-/** The learned-guidance areas a templated LinkedIn workspace never drafts from. */
+/** The learned-guidance areas a templated LinkedIn workspace never drafts from, style and reply-based alike. */
 export const TEMPLATED_LINKEDIN_SCOPE_KEYS = [
   "pref:linkedin:first_touch",
   "pref:linkedin:follow_up",
+  "pref:linkedin:first_touch:replies",
+  "pref:linkedin:follow_up:replies",
 ] as const;
 
 /** Lower-cased, punctuation collapsed: the identity of a learned text. */
@@ -143,7 +145,8 @@ export function learningScopeKey(kind: LearningKind, scope: LearningScope): stri
     case "campaign_angle":
       return scope.playName ? `play:${scope.playName}` : "";
     case "preference":
-      return `pref:${scope.channel ?? "any"}:${scope.stage ?? "any"}`;
+      // A reply-based preference has its own area beside the style one.
+      return `pref:${scope.channel ?? "any"}:${scope.stage ?? "any"}${scope.basis === "replies" ? ":replies" : ""}`;
     case "icp":
       return "";
   }
@@ -688,12 +691,17 @@ export class LearningStore {
    * proposal that rewords one of these is not a new preference.
    */
   preferenceTextsInArea(
-    area: { channel: LearningChannel | null; stage: LearningStage | null },
+    area: {
+      channel: LearningChannel | null;
+      stage: LearningStage | null;
+      basis?: LearningScope["basis"];
+    },
     limit = 50,
   ): string[] {
     const scopeKey = learningScopeKey("preference", {
       ...(area.channel ? { channel: area.channel } : {}),
       ...(area.stage ? { stage: area.stage } : {}),
+      ...(area.basis ? { basis: area.basis } : {}),
     });
     const proposed = this.db
       .query<{ proposed_json: string; decided_json: string | null }, [string, number]>(
@@ -733,18 +741,22 @@ export class LearningStore {
   /**
    * Reviewed sends on a channel and drafting stage, closed after `since`,
    * that count as writing evidence by `draftObservationsSince`'s rule:
-   * `sent`, and not a template's text.
+   * `sent`, and not a template's text. With `unattended`, drain sends
+   * (`auto_sent`) count too: reply-based evidence is about who answered,
+   * not about who reviewed the text.
    */
   draftEvidenceSendsSince(
     channel: string,
     stage: Extract<LearningStage, "first_touch" | "follow_up">,
     since: string,
+    opts: { unattended?: boolean } = {},
   ): number {
     return (
       this.db
         .query<{ n: number }, [string, string]>(
           `SELECT COUNT(*) AS n FROM draft_versions
-            WHERE outcome='sent' AND channel=? AND ${stage === "first_touch" ? "step_index=0" : "step_index>0"}
+            WHERE outcome IN (${opts.unattended ? "'sent','auto_sent'" : "'sent'"}) AND channel=?
+              AND ${stage === "first_touch" ? "step_index=0" : "step_index>0"}
               AND writer IS NOT 'template' AND julianday(closed_at) > julianday(?)`,
         )
         .get(channel, since)?.n ?? 0

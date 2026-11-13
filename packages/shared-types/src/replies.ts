@@ -153,7 +153,8 @@ export interface ReplyLearningEvidence {
 export interface ReplyPreference {
   id: string;
   instruction: string;
-  source: "explicit" | "edits" | "style";
+  /** `outcome`: an approved reply-based suggestion (learned from reply rates, not from writing). */
+  source: "explicit" | "edits" | "style" | "outcome";
   enabled: boolean;
   evidence: ReplyLearningEvidence[];
 }

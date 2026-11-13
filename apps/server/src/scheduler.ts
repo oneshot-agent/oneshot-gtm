@@ -1,4 +1,5 @@
 import { expireLearningProposals } from "./learning-expiry.ts";
+import { refreshOutcomeLearning } from "./outcome-learning.ts";
 import { refreshReplyLearning } from "./reply-learning.ts";
 import { refreshIcpProposal } from "./icp-proposals.ts";
 import { resumeLinkedInBackfills } from "./linkedin-backfill.ts";
@@ -152,6 +153,12 @@ export function startScheduler(): SchedulerHandle {
     void refreshReplyLearning().catch(() =>
       logEvent("scheduler.reply_learning.failed", {}, "warn"),
     );
+    // Reply-backed angle suggestions: no model call, at most once a day.
+    try {
+      refreshOutcomeLearning();
+    } catch {
+      logEvent("scheduler.outcome_learning.failed", {}, "warn");
+    }
     void refreshIcpProposal().catch(() => logEvent("scheduler.icp_proposal.failed", {}, "warn"));
     void Promise.resolve()
       .then(() => refreshLinkedInInbox())

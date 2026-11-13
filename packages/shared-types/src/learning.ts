@@ -24,6 +24,13 @@ export interface LearningScope {
   stage?: LearningStage;
   prospectId?: number;
   playName?: string;
+  /**
+   * What a writing preference was learned from, when not the founder's own
+   * writing: `replies` is a reply-rate result (an angle that out-replied the
+   * play's others). It gets its own area, so content backed by replies and
+   * style learned from your sends never replace each other.
+   */
+  basis?: "replies";
 }
 
 export interface LearningEvidenceRef {
@@ -94,7 +101,8 @@ export type LearningGuidanceStatus = "enabled" | "disabled" | "rolled_back";
 export interface LearningGuidanceView {
   id: string;
   instruction: string;
-  source: "explicit" | "edits" | "style";
+  /** `outcome`: learned from reply rates, not from how you write. */
+  source: "explicit" | "edits" | "style" | "outcome";
   channel: LearningChannel | null;
   stage: LearningStage | null;
   proposalId: string | null;

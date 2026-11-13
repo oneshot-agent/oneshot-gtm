@@ -85,6 +85,32 @@ export interface AngleUsageRow {
   armReplied: number;
 }
 
+/**
+ * One angle's reply result on one play, channel and drafting stage, next to
+ * the play's other angles there. Counts are distinct people; a person sent
+ * this angle is never also counted under `other*`, so the two groups are
+ * disjoint (a 2x2 table). Template-written sends are left out: a template
+ * does not argue the angle.
+ */
+export interface AngleOutcomeRow {
+  playName: string;
+  channel: string;
+  stage: "first_touch" | "follow_up";
+  angleKey: string;
+  angleText: string;
+  /** True when every send on the angle carried a configured (trigger) angle, never a generated one. */
+  configured: boolean;
+  /** Distinct people sent it, reviewed or unattended. */
+  reached: number;
+  /** Distinct people who replied to that send. */
+  replied: number;
+  /** Distinct people sent one of the play's other angles on this channel and stage, and not this one. */
+  otherReached: number;
+  otherReplied: number;
+  /** The draft versions that got the replies, newest first: the proposal's evidence refs. */
+  repliedVersionIds: number[];
+}
+
 export interface DraftUsage {
   open: number;
   regenerated: number;
@@ -528,6 +554,89 @@ export class DraftVersionStore {
         armReached: r.arm_reached ?? 0,
         armReplied: r.arm_replied ?? 0,
       });
+    }
+    return out;
+  }
+
+  /**
+   * Per play, channel, drafting stage (intro = first touch, any later step
+   * = follow-up) and angle: distinct people reached and replied, against the
+   * play's other angles in the same place. The reply-based learning reads
+   * it (`qualifyingAngles`). A reply is credited by `DV_REPLIED`: to the
+   * step that got it and the latest send in that slot.
+   */
+  angleOutcomesByStage(): AngleOutcomeRow[] {
+    const people = this.db
+      .query(
+        `SELECT dv.play_name, dv.channel,
+                CASE WHEN dv.step_index = 0 THEN 'first_touch' ELSE 'follow_up' END AS stage,
+                dv.angle_key, dv.prospect_key,
+                MAX(dv.angle_text) AS angle_text,
+                MIN(CASE WHEN dv.angle_origin = 'configured' THEN 1 ELSE 0 END) AS configured,
+                MAX(CASE WHEN ${DV_REPLIED} THEN dv.id END) AS replied_id
+           FROM draft_versions dv
+          WHERE dv.angle_key IS NOT NULL
+            AND dv.outcome IN ('sent', 'auto_sent')
+            AND dv.writer IS NOT 'template'
+          GROUP BY dv.play_name, dv.channel, stage, dv.angle_key, dv.prospect_key`,
+      )
+      .all() as Array<{
+      play_name: string;
+      channel: string;
+      stage: AngleOutcomeRow["stage"];
+      angle_key: string;
+      prospect_key: string;
+      angle_text: string | null;
+      configured: number;
+      replied_id: number | null;
+    }>;
+    type Angle = {
+      text: string;
+      configured: boolean;
+      reached: Set<string>;
+      replied: Map<string, number>;
+    };
+    const groups = new Map<string, { head: (typeof people)[number]; angles: Map<string, Angle> }>();
+    for (const r of people) {
+      const gk = JSON.stringify([r.play_name, r.channel, r.stage]);
+      const group = groups.get(gk) ?? { head: r, angles: new Map<string, Angle>() };
+      groups.set(gk, group);
+      const angle = group.angles.get(r.angle_key) ?? {
+        text: r.angle_text ?? "",
+        configured: true,
+        reached: new Set<string>(),
+        replied: new Map<string, number>(),
+      };
+      group.angles.set(r.angle_key, angle);
+      if (!angle.text && r.angle_text) angle.text = r.angle_text;
+      angle.configured &&= r.configured === 1;
+      angle.reached.add(r.prospect_key);
+      if (r.replied_id != null) angle.replied.set(r.prospect_key, r.replied_id);
+    }
+    const out: AngleOutcomeRow[] = [];
+    for (const { head, angles } of groups.values()) {
+      for (const [angleKey, angle] of angles) {
+        const otherReached = new Set<string>();
+        const otherReplied = new Set<string>();
+        for (const [key, other] of angles) {
+          if (key === angleKey) continue;
+          for (const p of other.reached) if (!angle.reached.has(p)) otherReached.add(p);
+          for (const p of other.replied.keys()) if (!angle.reached.has(p)) otherReplied.add(p);
+        }
+        out.push({
+          playName: head.play_name,
+          channel: head.channel,
+          stage: head.stage,
+          angleKey,
+          angleText: angle.text,
+          configured: angle.configured,
+          reached: angle.reached.size,
+          replied: angle.replied.size,
+          otherReached: otherReached.size,
+          otherReplied: otherReplied.size,
+          repliedVersionIds: [...angle.replied.values()].toSorted((a, b) => b - a),
+        });
+      }
     }
     return out;
   }
