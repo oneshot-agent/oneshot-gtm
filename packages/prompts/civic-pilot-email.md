@@ -23,7 +23,7 @@ REGISTER OVERRIDE (binding, takes precedence over any founder-to-founder framing
 
 With an OFFER line, the offer-first rules set the opening and order: the offer is the first sentence, the AGENDA ITEM and MEETING DATE move to the why-now sentence right after it (still required, still named outright), and the CTA is one question about taking the offer that names only the route PURCHASING ROUTE supplied (never two routes, never an either/or). Without one, follow the shape below.
 
-- Subject: name the agenda item plainly, keeping its own case whatever the SUBJECT CASE line says. Examples: "{agenda item} — a pilot option", "re: {meeting date} agenda item".
+- Subject: name the agenda item plainly, cased as the SUBJECT CASE line says. Examples: "{agenda item} — a pilot option", "re: {meeting date} agenda item".
 - Body: 4-6 short sentences, under 130 words. Procedural register throughout.
   - Hook (1-2 sentences, no OFFER only): name the AGENDA ITEM and MEETING DATE outright — "{agenda item} is on the {meeting date} agenda." The agenda item is the reason for the email; state it plainly rather than disguising it as an outreach hook.
   - Identity (1 sentence): say what the company does plainly ("we build X" is correct here).

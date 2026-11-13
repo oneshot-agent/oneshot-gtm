@@ -122,6 +122,19 @@ describe("withVoiceLines", () => {
     expect(withVoiceLines(input)).toBe(input);
   });
 
+  it("adds the line a block lacks, and is not fooled by free text that looks like one", () => {
+    cfgOverride = HEY_LOWERCASE;
+    const [greeting, subject] = voiceOverrideLines(HEY_LOWERCASE);
+    expect(withVoiceLines(`PROSPECT: Dana\n${greeting}`).split("\n")).toEqual([
+      "PROSPECT: Dana",
+      greeting,
+      "",
+      subject,
+    ]);
+    const signup = "SIGNUP CONTEXT:\nGREETING: Hi team, thanks for the call";
+    expect(withVoiceLines(signup).split("\n").slice(-2)).toEqual([greeting, subject]);
+  });
+
   it("reaches a draft whose play adds no VOICE block", async () => {
     cfgOverride = HEY_LOWERCASE;
     responses.push(JSON.stringify({ subject: "a short call", body: "Body that is fine. Sam" }));

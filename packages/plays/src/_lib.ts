@@ -1007,8 +1007,13 @@ export function voiceOverrideLines(
  * block of their own.
  */
 export function withVoiceLines(inputBlock: string): string {
-  if (/^GREETING: /m.test(inputBlock)) return inputBlock;
-  return [inputBlock, "", ...voiceOverrideLines()].join("\n");
+  // Each generated line exactly, so a free-form field that happens to start
+  // a line with "GREETING:" does not stand in for one, and a block carrying
+  // one line still gets the other.
+  const lines = inputBlock.split("\n");
+  const missing = voiceOverrideLines().filter((l) => !lines.includes(l));
+  if (missing.length === 0) return inputBlock;
+  return [inputBlock, "", ...missing].join("\n");
 }
 
 /**
