@@ -10,7 +10,8 @@ vi.mock("@oneshot-gtm/core", async () => ({
   ...(await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core")),
   tryReserveDailySpend: (...args: unknown[]) => reserve(...args),
 }));
-const { getLedger, getReplyReviewStore, getLinkedInInboxStore } = await import("@oneshot-gtm/core");
+const { getLedger, getReplyReviewStore, getLinkedInInboxStore, loadConfig, saveConfig } =
+  await import("@oneshot-gtm/core");
 const { refreshReplyLearning, REPLY_LEARNING_PROMPT } = await import("../src/reply-learning.ts");
 const store = getReplyReviewStore();
 const ledger = getLedger();
@@ -442,4 +443,111 @@ it("separates mixed-stage evidence and never grants reply guidance from outbound
   ).toEqual(["first_touch", "follow_up"]);
   expect(pending().every((p) => p.scope.channel === "email")).toBe(true);
   expect(ledger.learning.guidance({ channel: "email", stage: "reply" }).instructions).toEqual([]);
+});
+
+// Fewer proposals (one per area per run, ten new sends between proposals in
+// an area, no rewordings) and none that no draft would read.
+const style = (ids: number[], key: string, instruction: string) => ({
+  key,
+  instruction,
+  source: "style",
+  evidenceIds: ids.map((id) => `draft:${id}`),
+});
+const explicit = (key: string, instruction: string, id: string) => ({
+  key,
+  instruction,
+  source: "explicit",
+  evidenceIds: [id],
+});
+/** Push everything recorded so far into the past, so later sends are new to an area. */
+const ageEverything = () => {
+  ldb.exec("UPDATE draft_versions SET closed_at='2020-01-01T00:00:00.000Z'");
+  ldb.exec(
+    "UPDATE learning_proposals SET created_at='2020-01-02T00:00:00.000Z', decided_at=CASE WHEN decided_at IS NULL THEN NULL ELSE '2020-01-02T00:00:00.000Z' END",
+  );
+};
+const allPreferences = () => ledger.learning.list({ kind: "preference", status: "all" });
+let tick = 0;
+const nextTick = () => vi.mocked(Date.now).mockReturnValue(now + ++tick * 300_000);
+
+it("makes at most one proposal per area per run", async () => {
+  // Enough sends in the area that the ten-new-sends rule alone would let a second through.
+  for (let i = 1; i <= 10; i++) seed(i === 1 ? "send-1" : `email-${i}`, "default", "email");
+  seed("send-2", "default", "linkedin");
+  modelSays([
+    explicit("concise", "Keep replies concise.", "send-1"),
+    explicit("question", "Answer the question in the first line.", "send-1"),
+    explicit("linkedin", "Keep replies concise.", "send-2"),
+  ]);
+  await refreshReplyLearning();
+  // One row per area: the second email one never superseded the first within the run.
+  expect(
+    allPreferences().map((p) => [p.status, p.scope, (p.proposed as { key: string }).key]),
+  ).toEqual(
+    expect.arrayContaining([
+      ["pending", { channel: "email", stage: "reply" }, "concise"],
+      ["pending", { channel: "linkedin", stage: "reply" }, "linkedin"],
+    ]),
+  );
+  expect(allPreferences()).toHaveLength(2);
+});
+
+it("waits for ten new sends in an area before proposing there again, then supersedes", async () => {
+  const first = seedDrafts(5);
+  modelSays([style(first, "no-greeting", "Open with the point, not a greeting.")]);
+  await refreshReplyLearning();
+  const original = pending()[0]!;
+  ageEverything();
+  // Five new sends: the area has not moved on enough.
+  const five = seedDrafts(5);
+  modelSays([style(five, "short", "Keep first touches to two or three short sentences.")]);
+  nextTick();
+  await refreshReplyLearning();
+  expect(pending().map((p) => p.id)).toEqual([original.id]);
+  // Five more makes ten since the last proposal.
+  const ten = [...five, ...seedDrafts(5)];
+  modelSays([style(ten, "short", "Keep first touches to two or three short sentences.")]);
+  nextTick();
+  await refreshReplyLearning();
+  expect(pending().map((p) => p.proposed)).toEqual([expect.objectContaining({ key: "short" })]);
+  expect(ledger.learning.get(original.id)).toMatchObject({
+    status: "stale",
+    decided: { reason: "superseded" },
+  });
+});
+
+it("skips a rewording of a text the area already raised", async () => {
+  const first = seedDrafts(5);
+  modelSays([style(first, "short", "Keep first touches to two or three short sentences.")]);
+  await refreshReplyLearning();
+  const original = pending()[0]!;
+  ageEverything();
+  const later = seedDrafts(10);
+  modelSays([style(later, "brief", "Write first touches in two or three short sentences.")]);
+  nextTick();
+  await refreshReplyLearning();
+  expect(pending().map((p) => p.id)).toEqual([original.id]);
+  expect(allPreferences()).toHaveLength(1);
+});
+
+it("never proposes LinkedIn first-touch guidance while LinkedIn copy is templates", async () => {
+  const ids = seedDrafts(5);
+  for (const id of ids)
+    ledger.learning.db.query("UPDATE draft_versions SET channel='linkedin' WHERE id=?").run(id);
+  const say = () => modelSays([style(ids, "no-greeting", "Open with the point, not a greeting.")]);
+  say();
+  await refreshReplyLearning();
+  expect(pending()).toEqual([]);
+  // The same evidence in a workspace whose model writes LinkedIn copy.
+  const cfg = loadConfig();
+  saveConfig({ ...cfg, linkedin: { ...cfg.linkedin, writer: "model" } });
+  try {
+    ledger.learning.db.query("UPDATE learning_jobs SET watermark=0 WHERE kind='preference'").run();
+    say();
+    nextTick();
+    await refreshReplyLearning();
+    expect(pending().map((p) => p.scope)).toEqual([{ channel: "linkedin", stage: "first_touch" }]);
+  } finally {
+    saveConfig(cfg);
+  }
 });

@@ -45,10 +45,13 @@ function insertIcp(proposed = "B2B fintech CTOs at Series A startups") {
   })!;
 }
 
-function insertPreference(instruction = "Open with the question, not a greeting") {
+function insertPreference(
+  instruction = "Open with the question, not a greeting",
+  stage: "reply" | "first_touch" = "reply",
+) {
   return ledger.learning.insert({
     kind: "preference",
-    scope: { channel: "email", stage: "reply" },
+    scope: { channel: "email", stage },
     current: null,
     proposed: { instruction, source: "edits" },
     evidence: { refs: [{ type: "reply_send", id: "s1" }] },
@@ -204,9 +207,9 @@ describe("approve", () => {
     expect(ledger.learning.get(p.id)?.status).toBe("pending");
   });
 
-  it("preference: becomes enabled guidance scoped like the proposal; siblings stay pending", async () => {
+  it("preference: becomes enabled guidance scoped like the proposal; other areas stay pending", async () => {
     const p = insertPreference();
-    const q = insertPreference("Keep replies under eighty words");
+    const q = insertPreference("Keep first touches under eighty words", "first_touch");
     const res = await approveLearningProposalRoute(post(`proposals/${p.id}/approve`), { id: p.id });
     expect(res.status).toBe(200);
     const guidance = ledger.learning.listGuidance();

@@ -3,6 +3,7 @@ import { LINKEDIN_SEND_PENDING, type CadenceEndReason } from "@oneshot-gtm/share
 import { contactAllowedClause } from "./contact-optout.ts";
 import {
   draftVersionAngle,
+  draftWriterOf,
   type DraftDiscardReason,
   type DraftVersionStore,
 } from "./ledger-drafts.ts";
@@ -927,6 +928,7 @@ export function setCadenceDraft(
       angle?: unknown;
       voiceKey?: unknown;
       learningKey?: unknown;
+      writer?: unknown;
     } | null;
     const voiceKey =
       payload && typeof payload === "object" && typeof payload.voiceKey === "string"
@@ -954,6 +956,8 @@ export function setCadenceDraft(
       angle: draftVersionAngle(payload && typeof payload === "object" ? payload.angle : null),
       voiceKey,
       learningKey,
+      // A templated LinkedIn step says so: its text is the workspace's copy, not founder style.
+      writer: draftWriterOf(payload && typeof payload === "object" ? payload.writer : null),
       ...(channel ? { channel } : {}),
       ...(input.discardReason ? { discardReason: input.discardReason } : {}),
     });

@@ -1305,6 +1305,11 @@ export interface LastDraft {
   /** LinkedIn note only: whether its prompt carried an evidence clause (#792). */
   evidenceClause?: boolean;
   /**
+   * LinkedIn note only: who wrote it, the workspace's template or the model.
+   * A template's text is never read as the founder's writing style.
+   */
+  writer?: "template" | "model";
+  /**
    * LinkedIn only: a recent profile read shows them already connected, so no
    * note was drafted and sending records the connection instead of an invite.
    */

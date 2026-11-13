@@ -15,6 +15,7 @@ import {
   type DraftedRow,
   draftLinkedInNote,
   draftXDm,
+  type LinkedInNoteDraft,
   isSupportedPlay,
   knownConnection,
   knownConnectionDraft,
@@ -226,6 +227,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
             ...(draft.learningKey ? { learningKey: draft.learningKey } : {}),
             ...(draft.formatKey ? { formatKey: draft.formatKey } : {}),
             ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
+            ...(draft.writer ? { writer: draft.writer } : {}),
             ...(draft.knownConnection ? { knownConnection: draft.knownConnection } : {}),
             // An unsent draft carries the config it was written under.
             ...(!draft.sent ? { configKey } : {}),
@@ -444,6 +446,7 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
         flags?: unknown;
         evidenceClause?: unknown;
         knownConnection?: unknown;
+        writer?: unknown;
       })
     : null;
   // A known-connection row whose read no longer says so was never reviewed as
@@ -457,7 +460,7 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
       : null;
   const stale = !!clean && draftIsStale(clean, queueDraftConfigKey(row.play_name, row.channel));
   const reviewed = stale ? null : clean;
-  const note = reviewed
+  const note: LinkedInNoteDraft = reviewed
     ? {
         subject: reviewed.subject ?? "LinkedIn invite",
         body: reviewed.body,
@@ -465,6 +468,9 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
         voiceKey: null,
         ...(typeof reviewed.evidenceClause === "boolean"
           ? { evidenceClause: reviewed.evidenceClause }
+          : {}),
+        ...(reviewed.writer === "template" || reviewed.writer === "model"
+          ? { writer: reviewed.writer }
           : {}),
       }
     : await draftLinkedInNote(linkedInRow);
@@ -477,6 +483,7 @@ async function dispatchLinkedIn(opts: DrainOpts, row: QueueRow): Promise<DrainDr
     ...(note.voiceKey ? { voiceKey: note.voiceKey } : {}),
     ...(note.learningKey ? { learningKey: note.learningKey } : {}),
     ...(note.evidenceClause !== undefined ? { evidenceClause: note.evidenceClause } : {}),
+    ...(note.writer ? { writer: note.writer } : {}),
   };
   if (opts.dryRun) return base;
   if (wasConnection || stale) return { ...base, needsReview: true };

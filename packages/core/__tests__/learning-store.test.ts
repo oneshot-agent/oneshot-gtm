@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { LearningScope } from "@oneshot-gtm/shared-types";
 import { Ledger } from "../src/ledger.ts";
 import {
   MAX_ENABLED_GUIDANCE,
@@ -40,7 +41,7 @@ const T0 = "2026-10-08T00:00:00.000Z";
 const T1 = "2026-10-08T01:00:00.000Z";
 const T2 = "2026-10-08T02:00:00.000Z";
 
-const insertPreference = (instruction: string, scope = { channel: "email" as const }) =>
+const insertPreference = (instruction: string, scope: LearningScope = { channel: "email" }) =>
   ledger.learning.insert({
     kind: "preference",
     scope,
@@ -168,16 +169,50 @@ describe("proposals", () => {
     expect(ledger.learning.get(pref.id)?.status).toBe("pending");
   });
 
-  it("allows one pending angle revision per prospect (and per play), whatever the hook", () => {
+  it("keeps one pending angle revision per prospect: a newer one replaces the one waiting", () => {
     const a = insertAngle(1, "hook A")!;
-    expect(insertAngle(1, "hook B")).toBeNull();
+    // A refresh used to be dropped while an older revision waited.
+    const b = insertAngle(1, "hook B", T1)!;
+    expect(b).not.toBeNull();
+    expect(ledger.learning.get(a.id)).toMatchObject({
+      status: "stale",
+      decidedAt: T1,
+      decided: { reason: "superseded" },
+    });
     expect(insertAngle(2, "hook B")).not.toBeNull();
-    ledger.learning.decide(a.id, "dismissed", T1);
-    expect(insertAngle(1, "hook B")).toBeNull();
-    expect(insertAngle(1, "hook B", T1, "r2")).not.toBeNull();
-    // Preferences are not scoped that way: several may wait at once.
-    expect(insertPreference("One")).not.toBeNull();
-    expect(insertPreference("Two")).not.toBeNull();
+    // The same hook again is a retry, not a newer revision: nothing moves.
+    expect(insertAngle(1, "hook B", T2)).toBeNull();
+    expect(ledger.learning.get(b.id)?.status).toBe("pending");
+    expect(ledger.learning.list({ prospectId: 1, status: "pending" }).map((p) => p.id)).toEqual([
+      b.id,
+    ]);
+    // Dismissed evidence still blocks, superseded or not.
+    ledger.learning.decide(b.id, "dismissed", T2);
+    expect(insertAngle(1, "hook C", T2)).toBeNull();
+    expect(insertAngle(1, "hook C", T2, "r2")).not.toBeNull();
+  });
+
+  it("keeps one pending preference per area (channel and stage); other areas wait alongside", () => {
+    const one = insertPreference("One", { channel: "email", stage: "reply" })!;
+    const two = insertPreference("Two", { channel: "email", stage: "reply" })!;
+    const other = insertPreference("Three", { channel: "email", stage: "first_touch" })!;
+    expect(ledger.learning.get(one.id)).toMatchObject({
+      status: "stale",
+      decided: { reason: "superseded" },
+    });
+    expect(ledger.learning.get(two.id)?.status).toBe("pending");
+    expect(ledger.learning.get(other.id)?.status).toBe("pending");
+    // A superseded text counts as said no to, as any stale one does.
+    expect(ledger.learning.excludedPreferenceTexts()).toContain("one");
+    // The database holds the line too: a second pending row in the area is refused.
+    expect(() =>
+      ledger.learning.db
+        .query(
+          `INSERT INTO learning_proposals(id, kind, scope_json, scope_key, proposed_json, dedupe_key, status, created_at)
+           VALUES ('raw', 'preference', '{}', ?, '{}', 'raw', 'pending', ?)`,
+        )
+        .run("pref:email:reply", T2),
+    ).toThrow(/UNIQUE/);
   });
 
   it("wasJustDismissed is true only while the latest decision in scope was a dismissal of that key", () => {
@@ -375,5 +410,170 @@ describe("draftObservationsSince", () => {
     expect(ledger.learning.draftObservationsSince(obs[0]!.id, 100, 0).map((o) => o.body)).toEqual([
       "l1",
     ]);
+  });
+});
+
+describe("template drafts are not evidence", () => {
+  it("skips a sent template's text in observations and in an area's new-send count", () => {
+    const send = (key: string, body: string, writer?: "template" | "model") => {
+      const id = ledger.enqueueTarget({
+        playName: "luma-events",
+        payload: { title: key },
+        dedupeKey: key,
+        source: "find:luma-events",
+      })!;
+      const env = { ...draft(body), ...(writer ? { writer } : {}) };
+      ledger.setQueueDraft({ id, draft: env });
+      ledger.setQueueDraft({ id, draft: { ...env, sent: true }, sentBy: "human" });
+      return id;
+    };
+    const ids = [
+      send("t", "Hi Ada, saw your talk.", "template"),
+      send("m", "Ada, your talk on routing was sharp.", "model"),
+      send("u", "An older send with no writer recorded."),
+    ];
+    expect(ids.map((queueId) => ledger.draftVersionsFor({ queueId })[0]!.writer)).toEqual([
+      "template",
+      "model",
+      null,
+    ]);
+    expect(ledger.learning.draftObservationsSince(0).map((o) => o.body)).toEqual([
+      "Ada, your talk on routing was sharp.",
+      "An older send with no writer recorded.",
+    ]);
+    expect(ledger.learning.draftEvidenceSendsSince("email", "first_touch", T0)).toBe(2);
+    expect(ledger.learning.draftEvidenceSendsSince("email", "follow_up", T0)).toBe(0);
+  });
+});
+
+describe("expirePending", () => {
+  const NOW = "2026-10-20T00:00:00.000Z";
+  const WEEK_AGO = "2026-10-13T00:00:00.000Z";
+  const RECENT = "2026-10-19T00:00:00.000Z";
+  const sweep = (templatedLinkedIn = false) =>
+    ledger.learning.expirePending({ now: NOW, before: WEEK_AGO, templatedLinkedIn });
+  const prospect = (email: string) => ledger.upsertProspect({ email, name: "Ada" });
+
+  it("retires what waited past the cutoff as expired, once, and leaves newer rows", () => {
+    const old = insertPreference("Open with the question")!;
+    const fresh = ledger.learning.insert({
+      kind: "icp",
+      current: "a",
+      proposed: "b",
+      evidence: { refs: [] },
+      evidenceSummary: "",
+      baselineKey: "a",
+      dedupeKey: "b",
+      createdAt: RECENT,
+    })!;
+    expect(sweep()).toEqual({ expired: 1, "sequence-ended": 0, template: 0 });
+    expect(ledger.learning.get(old.id)).toMatchObject({
+      status: "stale",
+      decidedAt: NOW,
+      decided: { reason: "expired" },
+    });
+    expect(ledger.learning.get(fresh.id)?.status).toBe("pending");
+    expect(sweep()).toEqual({ expired: 0, "sequence-ended": 0, template: 0 });
+    // Retired is said no to: the text is not raised again.
+    expect(ledger.learning.excludedPreferenceTexts()).toContain("open with the question");
+  });
+
+  it("retires a recent angle revision only once its prospect has nothing left to draft", () => {
+    const active = prospect("active@x.dev");
+    ledger.enrollCadence({ prospectId: active, playName: "p", nextDueAt: NOW });
+    const replied = prospect("replied@x.dev");
+    ledger.enrollCadence({ prospectId: replied, playName: "p", nextDueAt: NOW });
+    ledger.setCadenceStatus({ prospectId: replied, playName: "p", status: "replied" });
+    const queued = prospect("queued@x.dev");
+    ledger.enqueueTarget({
+      playName: "p",
+      payload: { email: "Queued@x.dev" },
+      dedupeKey: "queued",
+      source: "find:p",
+    });
+    const ended = prospect("ended@x.dev");
+    ledger.enrollCadence({ prospectId: ended, playName: "p", nextDueAt: NOW });
+    ledger.setCadenceStatus({ prospectId: ended, playName: "p", status: "completed" });
+    const angles = [active, replied, queued, ended].map(
+      (id) => insertAngle(id, `hook ${id}`, RECENT)!,
+    );
+    expect(sweep()["sequence-ended"]).toBe(1);
+    expect(angles.map((p) => ledger.learning.get(p.id)?.status)).toEqual([
+      "pending",
+      "pending",
+      "pending",
+      "stale",
+    ]);
+    expect(ledger.learning.get(angles[3]!.id)?.decided).toEqual({ reason: "sequence-ended" });
+  });
+
+  it("retires LinkedIn first-touch and follow-up preferences while LinkedIn copy is templates", () => {
+    const at = (instruction: string, scope: LearningScope) =>
+      ledger.learning.insert({
+        kind: "preference",
+        scope,
+        current: null,
+        proposed: { instruction, source: "style" },
+        evidence: { refs: [] },
+        evidenceSummary: "",
+        baselineKey: "",
+        dedupeKey: instruction,
+        createdAt: RECENT,
+      })!;
+    const rows = [
+      at("a", { channel: "linkedin", stage: "first_touch" }),
+      at("b", { channel: "linkedin", stage: "follow_up" }),
+      // LinkedIn replies are written by the model whatever the writer.
+      at("c", { channel: "linkedin", stage: "reply" }),
+      at("d", { channel: "email", stage: "first_touch" }),
+    ];
+    expect(sweep(false).template).toBe(0);
+    expect(sweep(true).template).toBe(2);
+    expect(rows.map((p) => ledger.learning.get(p.id)?.status)).toEqual([
+      "stale",
+      "stale",
+      "pending",
+      "pending",
+    ]);
+    expect(ledger.learning.get(rows[0]!.id)?.decided).toEqual({ reason: "template" });
+  });
+});
+
+describe("preferenceTextsInArea", () => {
+  it("collects the area's proposals in every status and its guidance, and nothing from other areas", () => {
+    const scope: LearningScope = { channel: "email", stage: "reply" };
+    const dismissed = insertPreference("Open with the question", scope)!;
+    ledger.learning.decide(dismissed.id, "dismissed", T1);
+    const edited = ledger.learning.insert({
+      kind: "preference",
+      scope,
+      current: null,
+      proposed: { instruction: "Sign off with a first name", source: "edits" },
+      evidence: { refs: [{ type: "reply_send", id: "s2" }] },
+      evidenceSummary: "",
+      baselineKey: "",
+      dedupeKey: "sign off",
+      createdAt: T1,
+    })!;
+    ledger.learning.decide(edited.id, "approved", T2, { instruction: "Sign off with Avery" });
+    ledger.learning.addGuidance({
+      instruction: "Keep replies short",
+      source: "edits",
+      channel: "email",
+      stage: "reply",
+    });
+    insertPreference("Elsewhere", { channel: "email", stage: "first_touch" });
+    expect(
+      ledger.learning.preferenceTextsInArea({ channel: "email", stage: "reply" }).toSorted(),
+    ).toEqual(
+      [
+        "Keep replies short",
+        "Open with the question",
+        "Sign off with Avery",
+        "Sign off with a first name",
+      ].toSorted(),
+    );
+    expect(ledger.learning.preferenceAreaWatermark("pref:email:reply")).toBe(T2);
+    expect(ledger.learning.preferenceAreaWatermark("pref:linkedin:reply")).toBeNull();
   });
 });

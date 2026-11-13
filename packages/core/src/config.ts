@@ -371,6 +371,17 @@ export function linkedinTemplatesOf(cfg: { linkedin?: unknown }): LinkedInTempla
   return out;
 }
 
+/** Days a learning proposal waits for a decision before the sweep retires it. */
+export const DEFAULT_LEARNING_EXPIRE_AFTER_DAYS = 7;
+
+/** `learning.expireAfterDays` when it is a positive integer, else the default. */
+export function learningExpireAfterDaysOf(cfg: { learning?: unknown }): number {
+  const raw = (cfg.learning as { expireAfterDays?: unknown } | undefined)?.expireAfterDays;
+  return typeof raw === "number" && Number.isInteger(raw) && raw > 0
+    ? raw
+    : DEFAULT_LEARNING_EXPIRE_AFTER_DAYS;
+}
+
 /** Who writes LinkedIn copy: only the exact string `model` turns templates off. */
 export function linkedinWriterOf(cfg: { linkedin?: unknown }): LinkedInWriter {
   return (cfg.linkedin as { writer?: unknown } | undefined)?.writer === "model"

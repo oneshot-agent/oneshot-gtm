@@ -20,17 +20,27 @@ A preference is about how you write. An angle is about what to argue. The ICP is
 Each proposal is one row showing only what would change.
 
 - **approve** applies it to drafts from now on.
-- **dismiss** drops it. The same evidence will not raise it again in other words.
+- **dismiss** drops it. The same evidence will not raise it again, and a later writing preference that mostly repeats its words (most content words shared, same numbers and negations) is skipped.
 - Open the row for **was**, **evidence** and **edit**. **edit before approving**, then **approve edited**, applies your wording.
 - The history below lists what is applied. **Roll back** restores what was active before. A writing preference can be disabled and enabled again; twelve can be active at once.
 
 Approval is refused when the value moved since the proposal was made, for instance you edited the ICP by hand. Dismiss it and a fresh one follows. An approval never rewrites or sends an existing draft.
+
+## How many wait
+
+One proposal waits per area: a writing preference's channel and stage (LinkedIn follow-ups, email replies), or one prospect's angle. A newer one replaces the one waiting.
+
+A proposal you have not decided in 7 days is retired. Set `learning.expireAfterDays` to change that. An angle proposal is also retired once its prospect has no live sequence (active, paused or replied) and no pending or approved queue row. A retired proposal counts as dismissed, so it does not come back.
+
+A writing preference needs 10 new sends in its area since the area's last proposal or decision, and each area gets at most one per run.
 
 ## What a draft sees
 
 Only approved guidance: enabled preferences for its channel and stage, the prospect's active angle, the active ICP. Your product facts, the [voice card](./voice.md) and what you type in the moment outrank all of it. A preference is never a source of facts, links or promises.
 
 A preference learned from LinkedIn replies applies to LinkedIn replies. It reaches email only when email evidence supports it too.
+
+LinkedIn notes and messages written from templates (`linkedin.writer` unset or `"template"`) read no learned guidance, and a template's text is never evidence of your style. In such a workspace no LinkedIn first-touch or follow-up preference is proposed, and any waiting is retired. LinkedIn replies still learn.
 
 ## The reject box teaches the ICP, sometimes
 

@@ -37,6 +37,8 @@ export interface DraftedRow {
   receiptIds: number[];
   /** Enrichment SDK failed: draft built from payload only (non-blocking; surfaced on /queue). */
   enrichmentFailed?: boolean;
+  /** LinkedIn note only: who wrote it (`LastDraft.writer`). */
+  writer?: "template" | "model";
   /** Which edge angle the draft was built on, when the runner chose it (see `PlayDraft.angle`). */
   angle?: DraftAngle;
   /** Hash of the founder's voice card the draft was written with (see `PlayDraft.voiceKey`). */

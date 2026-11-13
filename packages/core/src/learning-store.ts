@@ -92,6 +92,35 @@ export interface DraftObservation {
 /** Active guidance per workspace, mirroring v1's twelve-preference ceiling. */
 export const MAX_ENABLED_GUIDANCE = 12;
 
+/**
+ * Why a pending proposal went `stale` without a founder decision, kept in
+ * its `decided_json` as `{ reason }`: a newer proposal in its area replaced
+ * it, it waited past `learning.expireAfterDays`, the prospect an angle was
+ * for has nothing left to draft, or it was a LinkedIn writing preference in
+ * a workspace whose LinkedIn copy is templates (nothing would read it). A
+ * stale row counts as a dismissal (`wasJustDismissed`,
+ * `excludedPreferenceTexts`), so none of these comes back on its own.
+ */
+export type LearningStaleReason = "superseded" | "expired" | "sequence-ended" | "template";
+
+/**
+ * Kinds that keep one pending proposal per area (`learningScopeKey`): a newer
+ * one replaces the one waiting. Campaign angles are asked for by the founder
+ * and the ICP has its own once-a-day job, so neither competes this way.
+ */
+const SUPERSEDING_KINDS: ReadonlySet<LearningKind> = new Set(["preference", "prospect_angle"]);
+
+/** The sweep's UPDATE of pending rows to `stale` for one reason; callers add the WHERE terms. */
+const staleUpdate = (reason: LearningStaleReason) =>
+  `UPDATE learning_proposals SET status='stale', decided_at=?, decided_json='${JSON.stringify({ reason })}'
+    WHERE status='pending'`;
+
+/** The learned-guidance areas a templated LinkedIn workspace never drafts from. */
+export const TEMPLATED_LINKEDIN_SCOPE_KEYS = [
+  "pref:linkedin:first_touch",
+  "pref:linkedin:follow_up",
+] as const;
+
 /** Lower-cased, punctuation collapsed: the identity of a learned text. */
 export function normalizeLearnedText(s: string): string {
   return s
@@ -193,7 +222,10 @@ export class LearningStore {
   /**
    * Record a proposal. Returns null when an identical pending proposal
    * (same kind and dedupe key) already exists: the partial unique index on
-   * pending rows makes a retried generation idempotent.
+   * pending rows makes a retried generation idempotent. For a preference or
+   * a prospect angle, a different proposal waiting in the same area is
+   * marked `stale` (reason `superseded`) in the same transaction: one
+   * pending per area, the newest.
    */
   insert(input: {
     kind: LearningKind;
@@ -229,29 +261,38 @@ export class LearningStore {
       )
         return null;
     }
+    if (this.hasPendingDuplicate(input.kind, input.dedupeKey)) return null;
+    const scopeKey = learningScopeKey(input.kind, scope);
+    const createdAt = input.createdAt ?? new Date().toISOString();
     try {
       this.db
-        .query(
-          `INSERT INTO learning_proposals(
-             id, kind, scope_json, scope_key, current_json, proposed_json, evidence_json,
-             evidence_summary, baseline_key, dedupe_key, status, legacy, source_version, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)`,
-        )
-        .run(
-          id,
-          input.kind,
-          JSON.stringify(scope),
-          learningScopeKey(input.kind, scope),
-          input.current === undefined ? null : JSON.stringify(input.current),
-          JSON.stringify(input.proposed),
-          JSON.stringify(input.evidence),
-          input.evidenceSummary,
-          input.baselineKey,
-          input.dedupeKey,
-          input.legacy ? 1 : 0,
-          input.sourceVersion ?? null,
-          input.createdAt ?? new Date().toISOString(),
-        );
+        .transaction(() => {
+          if (SUPERSEDING_KINDS.has(input.kind) && scopeKey)
+            this.markStale(input.kind, scopeKey, createdAt, undefined, "superseded");
+          this.db
+            .query(
+              `INSERT INTO learning_proposals(
+                 id, kind, scope_json, scope_key, current_json, proposed_json, evidence_json,
+                 evidence_summary, baseline_key, dedupe_key, status, legacy, source_version, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)`,
+            )
+            .run(
+              id,
+              input.kind,
+              JSON.stringify(scope),
+              scopeKey,
+              input.current === undefined ? null : JSON.stringify(input.current),
+              JSON.stringify(input.proposed),
+              JSON.stringify(input.evidence),
+              input.evidenceSummary,
+              input.baselineKey,
+              input.dedupeKey,
+              input.legacy ? 1 : 0,
+              input.sourceVersion ?? null,
+              createdAt,
+            );
+        })
+        .immediate();
     } catch (err) {
       if (/UNIQUE constraint failed/i.test((err as Error).message ?? "")) return null;
       throw err;
@@ -372,15 +413,75 @@ export class LearningStore {
    * pending proposal in that scope was computed against the baseline just
    * replaced and can no longer be approved as-is. Marking them `stale`
    * (rather than deleting) keeps the record and lets `wasJustDismissed`
-   * treat them like a dismissal. Returns the number of rows marked.
+   * treat them like a dismissal. `reason` is recorded when the row went
+   * stale without an approval (`LearningStaleReason`). Returns the number of
+   * rows marked.
    */
-  markStale(kind: LearningKind, scopeKey: string, now: string, exceptId?: string): number {
+  markStale(
+    kind: LearningKind,
+    scopeKey: string,
+    now: string,
+    exceptId?: string,
+    reason?: LearningStaleReason,
+  ): number {
+    const decided = reason ? JSON.stringify({ reason }) : null;
     return this.db
       .query(
-        `UPDATE learning_proposals SET status='stale', decided_at=?
+        `UPDATE learning_proposals SET status='stale', decided_at=?, decided_json=?
           WHERE kind=? AND scope_key=? AND status='pending'${exceptId ? " AND id<>?" : ""}`,
       )
-      .run(...(exceptId ? [now, kind, scopeKey, exceptId] : [now, kind, scopeKey])).changes;
+      .run(
+        ...(exceptId ? [now, decided, kind, scopeKey, exceptId] : [now, decided, kind, scopeKey]),
+      ).changes;
+  }
+
+  /**
+   * The sweep (`expireLearningProposals` on the scheduler tick): every
+   * pending proposal created before `before` goes stale as `expired`; a
+   * pending prospect angle whose prospect has no live sequence (active,
+   * paused, or replied: a reply's drafts read the angle too) and no
+   * pending or approved queue row goes stale as `sequence-ended`; with
+   * `templatedLinkedIn`, a pending LinkedIn first-touch or follow-up
+   * preference goes stale as `template`. Idempotent: only pending rows
+   * move. Returns the count per reason.
+   */
+  expirePending(input: {
+    now: string;
+    before: string;
+    templatedLinkedIn: boolean;
+  }): Record<Exclude<LearningStaleReason, "superseded">, number> {
+    const prospectId = "json_extract(learning_proposals.scope_json, '$.prospectId')";
+    return this.db
+      .transaction(() => {
+        const expired = this.db
+          .query(`${staleUpdate("expired")} AND julianday(created_at) < julianday(?)`)
+          .run(input.now, input.before).changes;
+        const sequenceEnded = this.db
+          .query(
+            `${staleUpdate("sequence-ended")} AND kind='prospect_angle'
+               AND NOT EXISTS(SELECT 1 FROM cadence_state cs
+                               WHERE cs.prospect_id = ${prospectId}
+                                 AND cs.status IN ('active','paused','replied'))
+               AND NOT EXISTS(SELECT 1 FROM target_queue q LEFT JOIN prospects p ON p.id = ${prospectId}
+                               WHERE q.status IN ('pending','approved')
+                                 AND (q.prospect_id = ${prospectId}
+                                      OR (NULLIF(TRIM(p.email), '') IS NOT NULL
+                                          AND lower(json_extract(q.payload_json, '$.email')) = lower(TRIM(p.email)))
+                                      OR (NULLIF(TRIM(p.linkedin_url), '') IS NOT NULL
+                                          AND json_extract(q.payload_json, '$.linkedinUrl') = TRIM(p.linkedin_url))))`,
+          )
+          .run(input.now).changes;
+        const template = input.templatedLinkedIn
+          ? this.db
+              .query(
+                `${staleUpdate("template")} AND kind='preference'
+                   AND scope_key IN (${TEMPLATED_LINKEDIN_SCOPE_KEYS.map(() => "?").join(",")})`,
+              )
+              .run(input.now, ...TEMPLATED_LINKEDIN_SCOPE_KEYS).changes
+          : 0;
+        return { expired, "sequence-ended": sequenceEnded, template };
+      })
+      .immediate();
   }
 
   /** An approved proposal the founder reverted; the caller restores `current`. */
@@ -575,6 +676,76 @@ export class LearningStore {
     return [...new Set(texts.map(normalizeLearnedText))].filter(Boolean);
   }
 
+  /**
+   * Every instruction already raised in one preference area: its proposals
+   * in any status (pending, applied, dismissed, stale, rolled back), newest
+   * first, and the guidance rows on the same channel and stage. A new
+   * proposal that rewords one of these is not a new preference.
+   */
+  preferenceTextsInArea(
+    area: { channel: LearningChannel | null; stage: LearningStage | null },
+    limit = 50,
+  ): string[] {
+    const scopeKey = learningScopeKey("preference", {
+      ...(area.channel ? { channel: area.channel } : {}),
+      ...(area.stage ? { stage: area.stage } : {}),
+    });
+    const proposed = this.db
+      .query<{ proposed_json: string; decided_json: string | null }, [string, number]>(
+        `SELECT proposed_json, decided_json FROM learning_proposals
+          WHERE kind='preference' AND scope_key=? ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+      )
+      .all(scopeKey, limit)
+      .flatMap((r) =>
+        [
+          parse<{ instruction?: unknown }>(r.proposed_json, {}).instruction,
+          // An edit-and-approve applied the founder's wording.
+          parse<{ instruction?: unknown } | null>(r.decided_json, null)?.instruction,
+        ].filter((t): t is string => typeof t === "string" && !!t.trim()),
+      );
+    const guidance = this.guidanceRows(true)
+      .filter((g) => g.channel === area.channel && g.stage === area.stage)
+      .map((g) => g.instruction);
+    return [...new Set([...proposed, ...guidance])];
+  }
+
+  /**
+   * When a preference area last saw a proposal or a decision: the latest
+   * `created_at` or `decided_at` among its proposals, or null when none was
+   * ever made. New evidence for the area is counted from here.
+   */
+  preferenceAreaWatermark(scopeKey: string): string | null {
+    return (
+      this.db
+        .query<{ at: string | null }, [string]>(
+          `SELECT MAX(COALESCE(decided_at, created_at)) AS at FROM learning_proposals
+            WHERE kind='preference' AND scope_key=?`,
+        )
+        .get(scopeKey)?.at ?? null
+    );
+  }
+
+  /**
+   * Reviewed sends on a channel and drafting stage, closed after `since`,
+   * that count as writing evidence by `draftObservationsSince`'s rule:
+   * `sent`, and not a template's text.
+   */
+  draftEvidenceSendsSince(
+    channel: string,
+    stage: Extract<LearningStage, "first_touch" | "follow_up">,
+    since: string,
+  ): number {
+    return (
+      this.db
+        .query<{ n: number }, [string, string]>(
+          `SELECT COUNT(*) AS n FROM draft_versions
+            WHERE outcome='sent' AND channel=? AND ${stage === "first_touch" ? "step_index=0" : "step_index>0"}
+              AND writer IS NOT 'template' AND julianday(closed_at) > julianday(?)`,
+        )
+        .get(channel, since)?.n ?? 0
+    );
+  }
+
   // ---- background job leases -----------------------------------------------
 
   jobState(kind: string): LearningJobState {
@@ -655,7 +826,9 @@ export class LearningStore {
    * later batch; the caller advances its watermark over the new rows only.
    * Only `sent` counts: a drain send (`auto_sent`) was never judged, and a
    * `rotate` sibling rejected the angle rather than the text, so neither is
-   * writing-style evidence. Empty when nothing is new.
+   * writing-style evidence; nor is a template's text (`writer` 'template'):
+   * the founder sent the workspace's own copy, not a style of theirs. Empty
+   * when nothing is new.
    */
   draftObservationsSince(watermark: number, limit = 100, contextLimit = 100): DraftObservation[] {
     type SentRow = {
@@ -673,14 +846,16 @@ export class LearningStore {
     const fresh = this.db
       .query<SentRow, [number, number]>(
         `SELECT id, play_name, prospect_key, prospect_id, step_index, queue_id, channel, subject, body, closed_at
-           FROM draft_versions WHERE outcome='sent' AND id>? ORDER BY id LIMIT ?`,
+           FROM draft_versions WHERE outcome='sent' AND writer IS NOT 'template' AND id>?
+          ORDER BY id LIMIT ?`,
       )
       .all(watermark, Math.max(1, Math.floor(limit)));
     if (fresh.length === 0) return [];
     const context = this.db
       .query<SentRow, [number, number]>(
         `SELECT id, play_name, prospect_key, prospect_id, step_index, queue_id, channel, subject, body, closed_at
-           FROM draft_versions WHERE outcome='sent' AND id<=? ORDER BY id DESC LIMIT ?`,
+           FROM draft_versions WHERE outcome='sent' AND writer IS NOT 'template' AND id<=?
+          ORDER BY id DESC LIMIT ?`,
       )
       .all(watermark, Math.max(0, Math.floor(contextLimit)))
       .toReversed();

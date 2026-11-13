@@ -203,6 +203,46 @@ describe("runLedgerMigrations", () => {
     });
   });
 
+  it("v23 keeps the newest pending preference per area, then builds its unique index and the draft writer column", () => {
+    new Ledger(dbPath).close();
+    withRaw((db) => {
+      db.exec("DROP INDEX idx_learning_proposals_pending_preference");
+      db.exec("ALTER TABLE draft_versions DROP COLUMN writer");
+      const insert = db.prepare(
+        `INSERT INTO learning_proposals(id, kind, scope_json, scope_key, proposed_json, evidence_json, evidence_summary, baseline_key, dedupe_key, status, created_at)
+         VALUES (?, 'preference', '{}', ?, '{}', '{"refs":[]}', '', '', ?, ?, ?)`,
+      );
+      insert.run("a-old", "pref:linkedin:follow_up", "a", "pending", "2026-10-01T00:00:00Z");
+      insert.run("a-new", "pref:linkedin:follow_up", "b", "pending", "2026-10-03T00:00:00Z");
+      insert.run("a-mid", "pref:linkedin:follow_up", "c", "pending", "2026-10-02T00:00:00Z");
+      insert.run("a-done", "pref:linkedin:follow_up", "d", "dismissed", "2026-10-04T00:00:00Z");
+      insert.run("b-only", "pref:email:reply", "e", "pending", "2026-10-01T00:00:00Z");
+      db.exec("PRAGMA user_version = 22");
+    });
+    new Ledger(dbPath).close();
+    withRaw((db) => {
+      expect(userVersion(db)).toBe(LEDGER_SCHEMA_VERSION);
+      const rows = db
+        .query("SELECT id, status, decided_json AS d FROM learning_proposals ORDER BY id")
+        .all();
+      expect(rows).toEqual([
+        { id: "a-done", status: "dismissed", d: null },
+        { id: "a-mid", status: "stale", d: '{"reason":"superseded"}' },
+        { id: "a-new", status: "pending", d: null },
+        { id: "a-old", status: "stale", d: '{"reason":"superseded"}' },
+        { id: "b-only", status: "pending", d: null },
+      ]);
+      expect(
+        db
+          .query(
+            "SELECT name FROM sqlite_master WHERE name='idx_learning_proposals_pending_preference'",
+          )
+          .get(),
+      ).toBeTruthy();
+      expect(columns(db, "draft_versions")).toContain("writer");
+    });
+  });
+
   describe("v16 gives every cadence its offer and its queue row", () => {
     const PLAY = "seq-play";
     const full = {

@@ -138,6 +138,28 @@ describe("draftConfigKey", () => {
     expect(at({ channel: "linkedin", stage: "follow_up" })).toBe(linkedinBefore);
   });
 
+  it("a templated LinkedIn surface ignores LinkedIn guidance; the model writer and email still read it", () => {
+    let instructions = [{ id: "g1", instruction: "lead with the route" }];
+    const ledger = {
+      learning: { guidance: () => ({ instructions }) },
+      codeAnswers: { approved: () => [] },
+    } as unknown as Ledger;
+    const model = { ...base, linkedin: { writer: "model" } } as Cfg;
+    const at = (cfg: Cfg, surface: DraftSurface) =>
+      draftConfigKey(cfg, { surface, playName: "example-play" }, ledger);
+    const surfaces: DraftSurface[] = [
+      { channel: "linkedin", stage: "first_touch" },
+      { channel: "linkedin", stage: "follow_up" },
+    ];
+    const templated = surfaces.map((s) => at(base, s));
+    const written = surfaces.map((s) => at(model, s));
+    const email = at(base, EMAIL_FOLLOW_UP);
+    instructions = [...instructions, { id: "g2", instruction: "name the depot" }];
+    expect(surfaces.map((s) => at(base, s))).toEqual(templated);
+    surfaces.forEach((s, i) => expect(at(model, s)).not.toBe(written[i]));
+    expect(at(base, EMAIL_FOLLOW_UP)).not.toBe(email);
+  });
+
   it("the keyer hashes each surface and play once", () => {
     const keyOf = draftConfigKeyer(base, null);
     expect(keyOf(EMAIL_FOLLOW_UP, "example-play")).toBe(key(base));

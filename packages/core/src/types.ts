@@ -794,6 +794,16 @@ export interface OneShotConfig {
    * only an explicit founder approval on `/queue` does that.
    */
   icpProposalMinDecisions?: number;
+  /**
+   * Learning proposals on /queue.
+   * - `expireAfterDays`: days a proposal waits for a decision before the
+   *   scheduler's sweep retires it as stale (positive integer). Unset =
+   *   `DEFAULT_LEARNING_EXPIRE_AFTER_DAYS` (7). A retired proposal is not
+   *   raised again.
+   */
+  learning?: {
+    expireAfterDays?: number;
+  };
 }
 
 export type QueueStatus = "pending" | "approved" | "rejected" | "sent" | "expired";

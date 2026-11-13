@@ -19,6 +19,8 @@ export interface DraftedView {
   formatKey?: string | null;
   /** LinkedIn note only: whether its prompt carried an evidence clause (#792). */
   evidenceClause?: boolean;
+  /** LinkedIn note only: who wrote it (`LastDraft.writer`). */
+  writer?: "template" | "model";
   /** LinkedIn only: a known connection, so the draft is no note (`DraftedRow.knownConnection`). */
   knownConnection?: { readAt: string };
   /** The offer the draft opens with (see `PlayDraft.offer`). */

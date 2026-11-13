@@ -138,6 +138,7 @@ describe("toDraftVersionView", () => {
     play_name: "luma-events",
     prospect_key: "a@x.dev",
     step_index: 0,
+    writer: null,
     queue_id: 3,
     prospect_id: null,
     subject: "s",

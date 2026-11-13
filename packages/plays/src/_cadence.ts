@@ -233,6 +233,8 @@ export type StepPayload =
       flags?: string[];
       voiceKey?: string | null;
       learningKey?: string | null;
+      /** Who wrote it: the workspace's template or the model (`linkedin.writer`). */
+      writer?: "template" | "model";
     }
   /** A connection request that carries an email cadence onto LinkedIn. */
   | {
@@ -244,6 +246,8 @@ export type StepPayload =
       learningKey?: string | null;
       /** Whether the note was written with an evidence clause (#792). */
       evidenceClause?: boolean;
+      /** Who wrote it: the workspace's template or the model (`linkedin.writer`). */
+      writer?: "template" | "model";
     }
   /**
    * The connection-request step for someone the profile read shows as already
@@ -4346,6 +4350,7 @@ async function buildLinkedInInvite(
     ...(draft.voiceKey ? { voiceKey: draft.voiceKey } : {}),
     ...(draft.learningKey ? { learningKey: draft.learningKey } : {}),
     ...(draft.evidenceClause !== undefined ? { evidenceClause: draft.evidenceClause } : {}),
+    ...(draft.writer ? { writer: draft.writer } : {}),
   };
 }
 
@@ -4532,6 +4537,7 @@ async function buildLinkedInMessage(
     return {
       kind: "linkedin_message",
       text: templated.text,
+      writer: "template",
       ...(over
         ? { flags: [`too-long: ${templated.text.length}/${LINKEDIN_MESSAGE_MAX_CHARS} characters`] }
         : {}),
@@ -4626,6 +4632,7 @@ async function buildLinkedInMessage(
     ? {
         kind: "linkedin_message",
         text,
+        writer: "model",
         ...(drafted.flags.length > 0 ? { flags: drafted.flags } : {}),
         ...(voice?.key ? { voiceKey: voice.key } : {}),
         ...(learned ? { learningKey: learned.key } : {}),

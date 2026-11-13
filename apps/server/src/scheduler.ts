@@ -1,3 +1,4 @@
+import { expireLearningProposals } from "./learning-expiry.ts";
 import { refreshReplyLearning } from "./reply-learning.ts";
 import { refreshIcpProposal } from "./icp-proposals.ts";
 import { resumeLinkedInBackfills } from "./linkedin-backfill.ts";
@@ -142,6 +143,12 @@ export function startScheduler(): SchedulerHandle {
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
+    // Retire proposals nobody will decide before the refresh can add more.
+    try {
+      expireLearningProposals();
+    } catch {
+      logEvent("scheduler.learning_expiry.failed", {}, "warn");
+    }
     void refreshReplyLearning().catch(() =>
       logEvent("scheduler.reply_learning.failed", {}, "warn"),
     );

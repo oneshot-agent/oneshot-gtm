@@ -165,3 +165,40 @@ export function nearDuplicateOffer(text: string, others: Iterable<string>): stri
   for (const other of others) if (offersNearDuplicate(text, other)) return other;
   return null;
 }
+
+/**
+ * Two free texts in a share of their content words that reads as one
+ * rewording of the other (Dice: twice the shared words over both counts).
+ * A learned writing preference restated in other words is the case it
+ * catches ("Sign off LinkedIn follow-ups with the first name only" beside
+ * "On LinkedIn follow-ups, sign off with only your first name").
+ */
+export const TEXT_NEAR_DUPLICATE_SIMILARITY = 0.6;
+
+/**
+ * True when two free texts say mostly the same thing: their content words
+ * (`offerContentWords`) overlap by `TEXT_NEAR_DUPLICATE_SIMILARITY` or more,
+ * sharing three or more. Order is ignored, unlike `offersNearDuplicate`. A
+ * number, unit or negation found in one and not the other makes them
+ * different texts ("never open with a question" is not "open with a
+ * question"; "under 60 words" is not "under 90 words").
+ */
+export function textsNearDuplicate(a: string, b: string): boolean {
+  const wa = offerContentWords(a);
+  const wb = offerContentWords(b);
+  if (wa.size === 0 || wb.size === 0) return a.trim().toLowerCase() === b.trim().toLowerCase();
+  const differing = [...wa].filter((w) => !wb.has(w)).concat([...wb].filter((w) => !wa.has(w)));
+  if (differing.some(carriesMeaning)) return false;
+  if (differing.length === 0) return true;
+  const shared = (wa.size + wb.size - differing.length) / 2;
+  return (
+    shared >= NEAR_DUPLICATE_MIN_SHARED &&
+    (2 * shared) / (wa.size + wb.size) >= TEXT_NEAR_DUPLICATE_SIMILARITY
+  );
+}
+
+/** The first of `others` that is a near-duplicate of `text` (`textsNearDuplicate`), if any. */
+export function nearDuplicateText(text: string, others: Iterable<string>): string | null {
+  for (const other of others) if (textsNearDuplicate(text, other)) return other;
+  return null;
+}

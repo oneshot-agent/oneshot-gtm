@@ -499,6 +499,35 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       addColumnIfMissing(db, "cadence_state", "return_date", "TEXT");
     },
   },
+  {
+    // One pending writing preference per area (channel and stage), as v14
+    // did for angles: a newer proposal supersedes the one waiting
+    // (`LearningStore.insert`). Settle the backlog first, keeping the newest
+    // per area, or the index would refuse to build. Drafts record who wrote
+    // them (`writer`: 'template' | 'model'; NULL when unrecorded, as on every
+    // older row), so a template's own text is never read as founder style.
+    version: 23,
+    name: "learning-one-pending-preference-per-area",
+    up: (db) => {
+      db.exec(`
+        UPDATE learning_proposals
+           SET status = 'stale', decided_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+               decided_json = '{"reason":"superseded"}'
+         WHERE status = 'pending'
+           AND kind = 'preference'
+           AND rowid <> (
+             SELECT p2.rowid FROM learning_proposals p2
+              WHERE p2.kind = learning_proposals.kind
+                AND p2.scope_key = learning_proposals.scope_key
+                AND p2.status = 'pending'
+              ORDER BY p2.created_at DESC, p2.rowid DESC LIMIT 1);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_learning_proposals_pending_preference
+          ON learning_proposals(kind, scope_key)
+          WHERE status = 'pending' AND kind = 'preference';
+      `);
+      addColumnIfMissing(db, "draft_versions", "writer", "TEXT");
+    },
+  },
 ];
 
 /**

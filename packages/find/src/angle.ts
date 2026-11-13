@@ -450,8 +450,9 @@ export async function synthesizePersonAngle(
  * review (#813). The proposal keeps the active angle (and whether it was
  * ever approved) for rollback, the evidence the synthesis stood on, and a
  * baseline fingerprint so an approval against an angle that has since
- * moved is refused. Null when an identical hook is already pending or was
- * just dismissed. Stamps `angle_proposed_at` so the refresh debounce
+ * moved is refused. A different revision already waiting for the prospect
+ * is replaced (`LearningStore.insert`). Null when an identical hook is
+ * already pending or was just dismissed. Stamps `angle_proposed_at` so the refresh debounce
  * treats the proposal as a synthesis.
  */
 export function proposeProspectAngle(input: {

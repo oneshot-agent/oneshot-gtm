@@ -168,6 +168,7 @@ describe("draftLinkedInNote", () => {
     const note = await draftLinkedInNote(row());
     expect(note.body).toBe(modelNote);
     expect(note.flags).toEqual([]);
+    expect(note.writer).toBe("model");
     expect(note.subject).toBe("LinkedIn invite → Dana Lee");
     expect(completeInputs[0]).toContain("EVENT: GTM in git (hosting)");
     expect(completeInputs[0]).toContain("MAX_CHARS: 200");
@@ -205,7 +206,13 @@ describe("draftLinkedInNote", () => {
     linkedinCfg = {};
     const note = await draftLinkedInNote(row({ repo: "acme/widgets" }));
     expect(note.body).toBe("Hi Dana, saw you starred acme/widgets. Would be good to connect.");
-    expect(note).toMatchObject({ flags: [], voiceKey: null, evidenceClause: true });
+    // Stamped as a template's text, so learning never reads it as founder style.
+    expect(note).toMatchObject({
+      flags: [],
+      voiceKey: null,
+      evidenceClause: true,
+      writer: "template",
+    });
     expect(completeInputs).toEqual([]);
   });
 
