@@ -351,6 +351,19 @@ describe("textsNearDuplicate", () => {
     expect(
       textsNearDuplicate("Keep emails under nineteen lines.", "Keep emails under nine lines."),
     ).toBe(false);
+    // A range keeps both ends: "two and three" is never one number.
+    expect(
+      textsNearDuplicate(
+        "Keep emails between two and three sentences.",
+        "Keep emails between one and four sentences.",
+      ),
+    ).toBe(false);
+    expect(
+      textsNearDuplicate(
+        "Keep emails between two and three sentences.",
+        "Keep emails between 2 and 3 sentences.",
+      ),
+    ).toBe(true);
   });
 
   it("names the first near-duplicate among others", () => {

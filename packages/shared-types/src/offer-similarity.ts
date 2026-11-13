@@ -56,17 +56,30 @@ const SCALES = new Map([
   ["thousand", 1000],
   ["million", 1_000_000],
 ]);
-const NUMBER_WORD = `(?:${[...SMALL_NUMBERS.keys(), ...SCALES.keys()].join("|")})`;
-const NUMBER_PHRASE = new RegExp(
-  `\\b${NUMBER_WORD}(?:(?:[\\s-]+and)?[\\s-]+${NUMBER_WORD})*\\b`,
-  "gi",
-);
+/** True when `word` is a spelled-out number or scale word. */
+function isNumberWord(word: string): boolean {
+  return SMALL_NUMBERS.has(word) || SCALES.has(word);
+}
 
-/** One spelled-out number phrase as its value: "one hundred and one" is 101. */
-function spelledNumber(phrase: string): number {
+/**
+ * Whether `next` continues the number phrase that ends in `prev`, by number
+ * grammar: "and" only after a scale ("hundred and one"), a tens word takes a
+ * following unit ("twenty one"), a scale follows anything, and anything
+ * follows a scale. "two and three" or "two three" are two numbers.
+ */
+function continuesNumber(prev: string, next: string, viaAnd: boolean): boolean {
+  if (viaAnd) return SCALES.has(prev) && SMALL_NUMBERS.has(next);
+  if (SCALES.has(next) || SCALES.has(prev)) return true;
+  const p = SMALL_NUMBERS.get(prev) ?? 0;
+  const n = SMALL_NUMBERS.get(next) ?? 0;
+  return p >= 20 && p % 10 === 0 && n >= 1 && n <= 9;
+}
+
+/** One spelled-out number phrase as its value: ["one", "hundred", "one"] is 101. */
+function spelledNumber(words: readonly string[]): number {
   let total = 0;
   let current = 0;
-  for (const word of phrase.toLowerCase().split(/[\s-]+/)) {
+  for (const word of words) {
     const small = SMALL_NUMBERS.get(word);
     const scale = SCALES.get(word);
     if (small !== undefined) current += small;
@@ -81,7 +94,42 @@ function spelledNumber(phrase: string): number {
 
 /** `text` with every spelled-out number phrase written as digits. */
 function withNumberDigits(text: string): string {
-  return text.replace(NUMBER_PHRASE, (phrase) => String(spelledNumber(phrase)));
+  const out: string[] = [];
+  let phrase: string[] = [];
+  /** What sits between the phrase and the next word: spaces, hyphens, one "and". */
+  let between: string[] = [];
+  const flush = () => {
+    if (phrase.length > 0) out.push(String(spelledNumber(phrase)));
+    out.push(...between);
+    phrase = [];
+    between = [];
+  };
+  for (const part of text.match(/[A-Za-z]+|[^A-Za-z]+/g) ?? []) {
+    const word = part.toLowerCase();
+    const viaAnd = between.some((b) => b.toLowerCase() === "and");
+    if (isNumberWord(word)) {
+      if (phrase.length > 0 && continuesNumber(phrase.at(-1)!, word, viaAnd)) {
+        phrase.push(word);
+        between = [];
+        continue;
+      }
+      flush();
+      phrase = [word];
+      continue;
+    }
+    if (phrase.length > 0 && /^[\s-]+$/.test(part)) {
+      between.push(part);
+      continue;
+    }
+    if (phrase.length > 0 && word === "and" && !viaAnd && SCALES.has(phrase.at(-1)!)) {
+      between.push(part);
+      continue;
+    }
+    flush();
+    out.push(part);
+  }
+  flush();
+  return out.join("");
 }
 
 /** Letters and digits, the units a number carries, and the comma (a joiner). */
