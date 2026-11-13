@@ -1658,6 +1658,19 @@ describe("templates: the default writer", () => {
     expect((await shown()).body).toBe("hey Dana, what are you focused on right now?");
   });
 
+  it("a founder title found only in their research picks the founder text too", async () => {
+    linkedinCfg = {
+      templates: {
+        firstMessageConnected: "hey {first_name}, so what are you building right now?",
+        firstMessageFounder: "hey {first_name}, what are you focused on right now?",
+      },
+    };
+    sql(`UPDATE prospects SET title = NULL, dossier_json = '{"person":{"title":"Founder"}}'`);
+    started({});
+    await invite((await shown()).body, "already_connected");
+    expect((await shown()).body).toBe("hey Dana, what are you focused on right now?");
+  });
+
   it("a step the workspace leaves unset uses the shipped default", async () => {
     // Mid-batch, so the cohort reads "in YC F26", not "went through".
     vi.useFakeTimers({ now: new Date("2026-10-15T12:00:00Z"), toFake: ["Date"] });

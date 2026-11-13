@@ -4401,7 +4401,7 @@ function closeGuidance(role: ReaderRole): string[] {
  * so the message shown ahead is the one that goes.
  */
 function linkedInMessageFacts(
-  prospect: Pick<ProspectRecord, "id" | "email" | "name" | "company" | "title">,
+  prospect: Pick<ProspectRecord, "id" | "email" | "name" | "company" | "title" | "dossier_json">,
   playName: string,
   cfg: CadenceContext["cfg"],
   /** Also count touches marked delivered or replied in place (the sheet's view); the builder reads sent only. */
@@ -4460,7 +4460,12 @@ function linkedInMessageFacts(
   // No `company` here: it is named only once a live read confirms it, which
   // the drafter does (`templateCompany`). Read without a draft, a template
   // naming it shows the first message instead.
-  const base = { name: prospect.name, evidence: clause, alreadyConnected, title: prospect.title };
+  const base = {
+    name: prospect.name,
+    evidence: clause,
+    alreadyConnected,
+    title: effectiveTitle(prospect),
+  };
   return {
     events,
     alreadyConnected,
@@ -4477,6 +4482,11 @@ function linkedInMessageFacts(
   };
 }
 
+/** The stored title, else the one their research found (as the model path reads it). */
+function effectiveTitle(prospect: Pick<ProspectRecord, "title" | "dossier_json">): string | null {
+  return prospect.title?.trim() || personTitle(prospect.dossier_json);
+}
+
 /**
  * `{company}` for a founder's first message: the company they run, named only
  * when their live profile shows it (`companyTheyRun`; "Stealth" never counts).
@@ -4491,7 +4501,7 @@ async function templateCompany(
   if (which !== "first" || linkedinWriterOf(ctx.cfg) === "model") return null;
   const founderText = linkedinTemplatesOf(ctx.cfg).firstMessageFounder;
   if (!founderText || !templatePlaceholders(founderText).includes("company")) return null;
-  if (!isFounderOrCeoTitle(ctx.prospect.title)) return null;
+  if (!isFounderOrCeoTitle(effectiveTitle(ctx.prospect))) return null;
   return companyTheyRun({ playName, prospect: ctx.prospect, reader: ctx.linkedInRead, now });
 }
 
@@ -4527,7 +4537,7 @@ async function buildLinkedInMessage(
         : {}),
     };
   }
-  const title = ctx.prospect.title?.trim() || personTitle(ctx.prospect.dossier_json);
+  const title = effectiveTitle(ctx.prospect);
   const role = readerRole(title);
   const company = await companyTheyRun({
     playName,
