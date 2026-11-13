@@ -275,6 +275,11 @@ function people(from: number, n: number): StubPerson[] {
   }));
 }
 const keyOf = (i: number) => `free-pilot:li:https://www.linkedin.com/in/person-${i}`;
+/** Run again with the queue holding everyone earlier runs queued, as the real one does. */
+const runAgain = (opts: Parameters<typeof runLocalBusinessFinder>[0]) => {
+  for (const row of enqueued) knownKeys.add(row.dedupeKey);
+  return runLocalBusinessFinder(opts);
+};
 /** A row the people database returns with a first name and nothing else. */
 const nameOnly = (first: string): StubPerson => ({
   full_name: first,
@@ -614,17 +619,19 @@ describe("runLocalBusinessFinder — several titles", () => {
       people(titles.indexOf((input["jobTitles"] as string[])[0]!) * 1000, 40);
     await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
     const first = enqueued.length;
-    // Settling a repeat takes a second search, so the run's twelve cover six
-    // titles and the next run settles the last two.
-    await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
-    await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+    // Settling a repeat takes a second search. The run keeps one search for
+    // each later title, so four settle at once and the other four are read
+    // as usual, then settle over the next two runs.
+    await runAgain({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+    await runAgain({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+    await runAgain({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
     // Each meets the page it already read, queues no one, and is left alone
     // instead of being paid for one page further every run.
     expect(enqueued.length).toBe(first);
     expect([...researchCache.values()]).toEqual(titles.map(() => JSON.stringify({ done: true })));
   });
 
-  it("carries on when the results moved by a page between runs", async () => {
+  it("carries on when the results moved by a page between runs, and every title moves on", async () => {
     const titles = Array.from({ length: 8 }, (_, i) => `Title ${i}`);
     let shift = 0;
     peopleSearchHandler = (input) => {
@@ -632,22 +639,29 @@ describe("runLocalBusinessFinder — several titles", () => {
       const at = Math.max(0, ((input["offset"] as number | undefined) ?? 0) - shift);
       return people(t * 1000 + at, 40);
     };
+    const offsets = () =>
+      [...researchCache.values()].map((v) => {
+        const p = parseSearchProgress(v);
+        return p && !p.done ? p.offset : -1;
+      });
     await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
     const first = enqueued.length;
-    // Forty people were added ahead of everyone already read.
-    shift = 40;
-    await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
-    // A title reads past the page it already had and queues the next forty.
-    // That takes two searches, so six titles fit in the run; the last two
-    // keep their place for the next one.
-    expect(enqueued.length).toBe(first + 6 * 40);
-    expect([...researchCache.values()].map((v) => parseSearchProgress(v))).toEqual(
-      titles.map((_, t) =>
-        t < 6
-          ? { done: false, offset: 120, lastFirstKey: keyOf(t * 1000 + 40) }
-          : { done: false, offset: 40, lastFirstKey: keyOf(t * 1000) },
-      ),
-    );
+    let before = offsets();
+    // Forty people are added ahead of everyone already read before each run.
+    for (const run of [1, 2, 3]) {
+      shift = 40 * run;
+      const queued = enqueued.length;
+      await runAgain({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+      // The first titles read past the page they had and queue the next
+      // forty; the run keeps a search for each later title, so every one
+      // moves on, none is held back.
+      expect(enqueued.length).toBe(queued + 4 * 40);
+      const after = offsets();
+      after.forEach((o, t) => expect(o).toBeGreaterThan(before[t]!));
+      expect(peopleSearchCalls).toHaveLength(8 + 12 * run);
+      before = after;
+    }
+    expect(enqueued.length).toBe(first + 3 * 4 * 40);
   });
 
   it("makes at most twelve searches in one run", async () => {

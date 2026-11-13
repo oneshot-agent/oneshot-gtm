@@ -537,7 +537,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
   let finishedQueries = 0;
   let stop = false;
 
-  for (const query of queries) {
+  for (const [queryIndex, query] of queries.entries()) {
     if (stop) break;
     const progressKey = searchProgressKey(query);
     const progress = parseSearchProgress(
@@ -559,6 +559,8 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       progress && !progress.done ? (progress.lastFirstKey ?? null) : null;
     /** One more page allowed this run, to settle a repeat seen only across runs. */
     let extraPage = 0;
+    /** A repeat across runs left unsettled: the place moves on without its marker. */
+    let unsettled = false;
     for (let page = 0; !stop && !ended; page++) {
       if (page >= pageCap + extraPage) {
         capped = true;
@@ -601,11 +603,17 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       // The page the last run read, met again where it stopped: either the
       // server ignores `offset`, or the results moved by a page and this one
       // holds people already read. The next page tells them apart (the same
-      // page again ends the search above), so read it instead of this one.
+      // page again ends the search above), so read it instead of this one,
+      // when the run still has a search for every title after this one.
+      // Otherwise this page is read as usual and the place moves on without
+      // its marker, so no title is held back for the ones before it.
       if (page === 0 && previousFirstKey !== null && firstKey === previousFirstKey) {
-        extraPage = 1;
-        offset += rows.length;
-        continue;
+        if (MAX_SEARCHES_PER_RUN - searches > queries.length - queryIndex - 1) {
+          extraPage = 1;
+          offset += rows.length;
+          continue;
+        }
+        unsettled = true;
       }
       previousFirstKey = firstKey;
 
@@ -677,7 +685,9 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
             offset: resumeAt,
             // Only when resuming past the last page: a run held back at an
             // earlier page meets that page's first person again by design.
-            ...(resumeAt === offset && previousFirstKey ? { lastFirstKey: previousFirstKey } : {}),
+            ...(resumeAt === offset && previousFirstKey && !unsettled
+              ? { lastFirstKey: previousFirstKey }
+              : {}),
           }),
         );
       }
