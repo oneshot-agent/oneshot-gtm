@@ -23,6 +23,8 @@ export function templatedLinkedIn(
     evidence?: string | null | undefined;
     offer?: string | null | undefined;
     alreadyConnected?: boolean;
+    company?: string | null | undefined;
+    title?: string | null | undefined;
   },
 ): ChosenLinkedInTemplate | null {
   if (linkedinWriterOf(cfg) === "model") return null;
@@ -30,6 +32,8 @@ export function templatedLinkedIn(
     first_name: firstNameFrom(facts.name),
     evidence: evidenceWithSubject(facts.evidence),
     offer: facts.offer ?? null,
+    company: facts.company ?? null,
+    title: facts.title ?? null,
     ...(facts.alreadyConnected ? { alreadyConnected: true } : {}),
   };
   return chooseLinkedInTemplate(kind, linkedinTemplatesOf(cfg), values);

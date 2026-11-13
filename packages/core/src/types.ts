@@ -1008,6 +1008,7 @@ export const LINKEDIN_TEMPLATE_SLOTS = [
   "noteFallback",
   "firstMessage",
   "firstMessageConnected",
+  "firstMessageFounder",
   "lastMessage",
   "lastMessageFallback",
   "friendNote",
@@ -1017,11 +1018,14 @@ export type LinkedInTemplateSlot = (typeof LINKEDIN_TEMPLATE_SLOTS)[number];
 
 /**
  * LinkedIn copy per step, with placeholders `{first_name}`, `{evidence}` (why
- * they surfaced, as a clause with its subject: "you starred acme/widgets") and
- * `{offer}` (the offer made to this prospect).
+ * they surfaced, as a clause with its subject: "you starred acme/widgets"),
+ * `{offer}` (the offer made to this prospect) and, in `firstMessageFounder`
+ * only, `{company}` (the company they run, when their live profile shows it).
  * - `note`: connection request when there is evidence; `noteFallback` when not.
  * - `firstMessage`: first message after they accept; `firstMessageConnected`
- *   when you were already connected before the sequence.
+ *   when you were already connected before the sequence; `firstMessageFounder`
+ *   instead of either when their title says founder, co-founder or CEO (unset:
+ *   they get the first message).
  * - `lastMessage`: the close when the prospect has an offer;
  *   `lastMessageFallback` when not.
  * - `friendNote`: warm connection request to someone who replied by email.

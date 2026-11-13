@@ -120,10 +120,12 @@ Every note and message is a template with the person's details filled in. No mod
 - **`{first_name}`.** Taken from their name. When the name is a handle or a company, the greeting is dropped: `Hi {first_name}, saw …` reads `Saw …`.
 - **`{evidence}`.** Why they surfaced, aged as below, as a clause with its subject: `you starred acme/widgets`, `you're in YC F26`, `Acme Ventures led your seed round`.
 - **`{offer}`.** The [offer](./prompt-inputs.md#the-prospect-offer) the sequence makes them. The connection requests can't use it: a note that pitches gets declined. After the emails, the last message makes a different offer, since they didn't answer the first: the next one in the ranked set that passed the judge, or else a new one written to avoid every offer already made. If none passes, the last message uses the no-offer text. `find close-offers` chooses this offer ahead of time for open sequences, so /cadences shows the text that will go. `--dry-run` only counts, and calls no model.
+- **Founders.** When their title says founder, co-founder or CEO, the first message is the founder text instead, whether or not you were connected before. Leave it blank and founders get the first message like everyone else.
+- **`{company}`.** Only in the founder text: the company they run, under the same check as the model's (below). Stored data has to back it, and a live read of their profile has to show it, which spends one profile read. A stealth company, self-employment, a university or a fund never counts. When it isn't confirmed, they get the first message.
 - **A template that can't be filled.** A step whose text needs a value this person doesn't have uses the default for that step.
 - **Saving.** Setup refuses an unknown placeholder, or one the step never has, and warns when a template could run past its step's limit.
 
-In `config.json` the templates are `linkedin.templates` (`note`, `noteFallback`, `firstMessage`, `firstMessageConnected`, `lastMessage`, `lastMessageFallback`, `friendNote`). To have the model write each note and message instead, set `linkedin.writer` to `"model"`, or pick **Model** on the Setup card. The rest of this page's rules for drafts apply in that mode.
+In `config.json` the templates are `linkedin.templates` (`note`, `noteFallback`, `firstMessage`, `firstMessageConnected`, `firstMessageFounder`, `lastMessage`, `lastMessageFallback`, `friendNote`). To have the model write each note and message instead, set `linkedin.writer` to `"model"`, or pick **Model** on the Setup card. The rest of this page's rules for drafts apply in that mode.
 
 ### What the model is told (`writer: "model"`)
 

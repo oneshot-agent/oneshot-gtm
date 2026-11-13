@@ -7,7 +7,9 @@ import type {
 import {
   CADENCE_SEND_UNCONFIRMED,
   LINKEDIN_SEND_PENDING,
+  isFounderOrCeoTitle,
   replyIntentMeta,
+  templatePlaceholders,
 } from "@oneshot-gtm/shared-types";
 import {
   classifyReply,
@@ -78,6 +80,8 @@ import {
   productBriefText,
   autoReplyConfigOf,
   sliceText,
+  linkedinTemplatesOf,
+  linkedinWriterOf,
 } from "@oneshot-gtm/core";
 import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { readAutoReply, stopLiveCadences } from "./_auto-reply.ts";
@@ -4397,7 +4401,7 @@ function closeGuidance(role: ReaderRole): string[] {
  * so the message shown ahead is the one that goes.
  */
 function linkedInMessageFacts(
-  prospect: Pick<ProspectRecord, "id" | "email" | "name">,
+  prospect: Pick<ProspectRecord, "id" | "email" | "name" | "company" | "title" | "dossier_json">,
   playName: string,
   cfg: CadenceContext["cfg"],
   /** Also count touches marked delivered or replied in place (the sheet's view); the builder reads sent only. */
@@ -4453,7 +4457,15 @@ function linkedInMessageFacts(
       ? pickCloseOffer(record, cfg, sequenceThread(prospect.id, playName))
       : record.offer
     : null;
-  const base = { name: prospect.name, evidence: clause, alreadyConnected };
+  // No `company` here: it is named only once a live read confirms it, which
+  // the drafter does (`templateCompany`). Read without a draft, a template
+  // naming it shows the first message instead.
+  const base = {
+    name: prospect.name,
+    evidence: clause,
+    alreadyConnected,
+    title: effectiveTitle(prospect),
+  };
   return {
     events,
     alreadyConnected,
@@ -4468,6 +4480,29 @@ function linkedInMessageFacts(
     /** The sequence makes an offer: after emails with no close offer, the close names none. */
     makesOffer: !!record?.offer,
   };
+}
+
+/** The stored title, else the one their research found (as the model path reads it). */
+function effectiveTitle(prospect: Pick<ProspectRecord, "title" | "dossier_json">): string | null {
+  return prospect.title?.trim() || personTitle(prospect.dossier_json);
+}
+
+/**
+ * `{company}` for a founder's first message: the company they run, named only
+ * when their live profile shows it (`companyTheyRun`; "Stealth" never counts).
+ * The live read is made only when the founder text names the company.
+ */
+async function templateCompany(
+  ctx: CadenceContext,
+  playName: string,
+  which: "first" | "last",
+  now: Date,
+): Promise<string | null> {
+  if (which !== "first" || linkedinWriterOf(ctx.cfg) === "model") return null;
+  const founderText = linkedinTemplatesOf(ctx.cfg).firstMessageFounder;
+  if (!founderText || !templatePlaceholders(founderText).includes("company")) return null;
+  if (!isFounderOrCeoTitle(effectiveTitle(ctx.prospect))) return null;
+  return companyTheyRun({ playName, prospect: ctx.prospect, reader: ctx.linkedInRead, now });
 }
 
 async function buildLinkedInMessage(
@@ -4486,7 +4521,9 @@ async function buildLinkedInMessage(
   const templated = templatedLinkedIn(
     which,
     ctx.cfg,
-    which === "last" ? facts.closeTemplate : facts.template,
+    which === "last"
+      ? facts.closeTemplate
+      : { ...facts.template, company: await templateCompany(ctx, playName, which, now) },
   );
   if (templated) {
     // Carried on the payload, as a drafted message's lint flag is, so an
@@ -4500,7 +4537,7 @@ async function buildLinkedInMessage(
         : {}),
     };
   }
-  const title = ctx.prospect.title?.trim() || personTitle(ctx.prospect.dossier_json);
+  const title = effectiveTitle(ctx.prospect);
   const role = readerRole(title);
   const company = await companyTheyRun({
     playName,

@@ -971,6 +971,71 @@ describe("evidence-aware prompts (#790)", () => {
     expect(modelInputs.at(-1)).not.toContain("COMPANY_THEY_RUN");
   });
 
+  describe("the founder text's {company}", () => {
+    beforeEach(() => {
+      linkedinCfg = {
+        templates: {
+          firstMessageConnected: "hey {first_name}, what are you working on?",
+          firstMessageFounder: "hey {first_name}, how's {company} going?",
+        },
+      };
+    });
+
+    it("is the company they run once a live read shows it", async () => {
+      sql(
+        `UPDATE prospects SET title = 'CEO', company = 'Tavora', email = 'dana@usetavora.example'`,
+      );
+      firstTouch({});
+      await sendInvite(inviteOk("already_connected"));
+      const out = await previewPayload(caller({ profile: profileReply("CEO at Tavora") }));
+      expect(out.payload).toMatchObject({ text: "hey Dana, how's Tavora going?" });
+    });
+
+    it("is left out, and the first message sent, when the live read shows another company or none", async () => {
+      sql(
+        `UPDATE prospects SET title = 'CEO', company = 'Tavora', email = 'dana@usetavora.example'`,
+      );
+      firstTouch({});
+      await sendInvite(inviteOk("already_connected"));
+      const other = await previewPayload(caller({ profile: profileReply("Founder at Otherco") }));
+      expect(other.payload).toMatchObject({ text: "hey Dana, what are you working on?" });
+      const { _resetLinkedInLiveReads } = await import("../src/index.ts");
+      _resetLinkedInLiveReads();
+      const none = await previewPayload();
+      expect(none.payload).toMatchObject({ text: "hey Dana, what are you working on?" });
+    });
+
+    it("is never a stealth company, whatever the profile says", async () => {
+      sql(
+        `UPDATE prospects SET title = 'Founder', company = 'Stealth Startup', email = 'dana@stealth.example'`,
+      );
+      firstTouch({});
+      await sendInvite(inviteOk("already_connected"));
+      calls = [];
+      const out = await previewPayload(
+        caller({ profile: profileReply("Founder at Stealth Startup") }),
+      );
+      expect(out.payload).toMatchObject({ text: "hey Dana, what are you working on?" });
+      // Stealth fails the stored check, so no live read is spent on it.
+      expect(calls.filter((c) => c["kind"] === "profile")).toHaveLength(0);
+    });
+
+    it("costs no live read when the founder text doesn't name the company", async () => {
+      linkedinCfg = {
+        templates: { firstMessageFounder: "hey {first_name}, what are you focused on?" },
+      };
+      sql(
+        `UPDATE prospects SET title = 'CEO', company = 'Tavora', email = 'dana@usetavora.example'`,
+      );
+      firstTouch({});
+      await sendInvite(inviteOk("already_connected"));
+      calls = [];
+      const out = await previewPayload(caller({ profile: profileReply("CEO at Tavora") }));
+      expect(out.payload).toMatchObject({ text: "hey Dana, what are you focused on?" });
+      expect(calls.filter((c) => c["kind"] === "profile")).toHaveLength(0);
+    });
+  });
+
   it("the close carries the brief and role; an unknown role names no outcome", async () => {
     sql(`UPDATE prospects SET title = 'Head of Growth'`);
     firstTouch({});
@@ -1578,6 +1643,32 @@ describe("templates: the default writer", () => {
     await send(first);
     expect((await shown()).body).toBe("hey Dana, last one from me.");
     expect(modelInputs).toEqual([]);
+  });
+
+  it("a founder's first message is the founder text", async () => {
+    linkedinCfg = {
+      templates: {
+        firstMessageConnected: "hey {first_name}, so what are you building right now?",
+        firstMessageFounder: "hey {first_name}, what are you focused on right now?",
+      },
+    };
+    sql(`UPDATE prospects SET title = 'Co-Founder & CEO'`);
+    started({});
+    await invite((await shown()).body, "already_connected");
+    expect((await shown()).body).toBe("hey Dana, what are you focused on right now?");
+  });
+
+  it("a founder title found only in their research picks the founder text too", async () => {
+    linkedinCfg = {
+      templates: {
+        firstMessageConnected: "hey {first_name}, so what are you building right now?",
+        firstMessageFounder: "hey {first_name}, what are you focused on right now?",
+      },
+    };
+    sql(`UPDATE prospects SET title = NULL, dossier_json = '{"person":{"title":"Founder"}}'`);
+    started({});
+    await invite((await shown()).body, "already_connected");
+    expect((await shown()).body).toBe("hey Dana, what are you focused on right now?");
   });
 
   it("a step the workspace leaves unset uses the shipped default", async () => {

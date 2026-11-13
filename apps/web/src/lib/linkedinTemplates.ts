@@ -22,6 +22,7 @@ export const LINKEDIN_TEMPLATE_SAMPLE: LinkedInTemplateValues = {
   first_name: "Dana",
   evidence: "you starred acme/widgets",
   offer: "an example offer",
+  company: "Acme",
 };
 
 /** The saved settings, flattened to primitives for the section draft. */
