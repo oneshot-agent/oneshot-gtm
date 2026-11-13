@@ -36,6 +36,7 @@ const SHARED = [
   "voice-derive",
   "profile-intro-email",
   "profile-extract",
+  "learning-style",
 ];
 const PRODUCT_RULES = [
   /self-serve/i,

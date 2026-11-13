@@ -12,7 +12,9 @@ vi.mock("@oneshot-gtm/core", async () => ({
 }));
 const { getLedger, getReplyReviewStore, getLinkedInInboxStore, loadConfig, saveConfig } =
   await import("@oneshot-gtm/core");
-const { refreshReplyLearning, REPLY_LEARNING_PROMPT } = await import("../src/reply-learning.ts");
+const { directsContent, refreshReplyLearning, learningStylePrompt } =
+  await import("../src/reply-learning.ts");
+const { loadPrompt } = await import("@oneshot-gtm/intel");
 const store = getReplyReviewStore();
 const ledger = getLedger();
 const ldb = (ledger as unknown as { db: { exec: (sql: string) => void } }).db;
@@ -138,8 +140,8 @@ it("proposes a pending preference scoped to the cited channel and never applies 
   expect(data.observations).toHaveLength(1);
   expect(data.observations[0]).toMatchObject({ channel: "linkedin", stage: "reply" });
   expect(data).toMatchObject({ approvedGuidance: [], excludedInstructions: [] });
-  expect(REPLY_LEARNING_PROMPT).toContain("NEVER propose equivalent or paraphrased");
-  expect(REPLY_LEARNING_PROMPT).toContain("stays local");
+  expect(learningStylePrompt()).toContain("NEVER propose equivalent or paraphrased");
+  expect(learningStylePrompt()).toContain("stays local");
   expect(release).toHaveBeenCalledTimes(1);
   expect(store.learning.status("default").pending).toBe(false);
 });
@@ -269,6 +271,76 @@ it("proposes style guidance from reviewed first touches next to their regenerate
   vi.mocked(Date.now).mockReturnValue(now + 300_000);
   await refreshReplyLearning();
   expect(complete).toHaveBeenCalledTimes(1);
+});
+
+it("draft evidence proposes style only: an instruction about what to argue is dropped", async () => {
+  const ids = seedDrafts(5);
+  const cited = ids.map((id) => `draft:${id}`);
+  // Listed first, the content one would take the area's one slot this run.
+  modelSays([
+    {
+      key: "supplier-goal",
+      instruction: "Propose an execution goal to review the prospect's supplier contracts.",
+      source: "style",
+      evidenceIds: cited,
+    },
+    {
+      key: "lead-savings",
+      instruction: "Lead with the cost savings.",
+      source: "style",
+      evidenceIds: cited,
+    },
+    {
+      key: "focus-pricing",
+      instruction: "Focus on pricing.",
+      source: "style",
+      evidenceIds: cited,
+    },
+    {
+      key: "no-greeting",
+      instruction: "Open with the point, not a greeting.",
+      source: "style",
+      evidenceIds: cited,
+    },
+  ]);
+  await refreshReplyLearning();
+  expect(pending().map((p) => (p.proposed as { instruction: string }).instruction)).toEqual([
+    "Open with the point, not a greeting.",
+  ]);
+  // The model is told the same: how a message is written, never what it argues.
+  const system = complete.mock.calls[0]![0].messages[0].content as string;
+  expect(system).toBe(loadPrompt("learning-style"));
+  expect(system).toContain("What a preference is never about: WHAT a message argues.");
+});
+
+it("directsContent tells a pitch from a writing habit", () => {
+  for (const pitch of [
+    "Highlight the hours the team saves each week.",
+    "Propose a pilot on their billing flow.",
+    "Pitch the integration in the second line.",
+    "Mention that the tool works with their stack.",
+    "Emphasize the cost savings.",
+    "Position the product as the cheaper option.",
+    "Observe that their hiring page lists three open roles.",
+    "Point out the gap in their onboarding.",
+    "Lead with the cost savings.",
+    "Focus on pricing.",
+    "Focus on the length of the free trial.",
+    "Lead with the tone about their recent launch.",
+  ])
+    expect(directsContent(pitch), pitch).toBe(true);
+  for (const style of [
+    "Open with the point, not a greeting.",
+    "Keep first touches under 90 words, in two short paragraphs.",
+    "End with one open question, never a yes/no ask.",
+    "Sign off with the first name only.",
+    "Use a plain, conversational register; no exclamation marks.",
+    "Mention the prospect's first name once, in the greeting.",
+    "Lead with a question, not a statement.",
+    "Focus on clarity over cleverness.",
+    "Lead with one short sentence.",
+  ])
+    expect(directsContent(style), style).toBe(false);
 });
 
 it("a paused workspace never spends on draft evidence either", async () => {

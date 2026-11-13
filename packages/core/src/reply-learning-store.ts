@@ -32,10 +32,12 @@ export interface LearningObservation extends ReplyLearningEvidence {
   learningVersion: number;
   context?: Array<{ direction: "inbound" | "outbound"; body: string }>;
 }
+/** The sources a model-extracted preference can carry; `outcome` is never the model's to claim. */
+type ModelPreferenceSource = Exclude<ReplyPreference["source"], "outcome">;
 export interface PreferenceCandidate {
   key: string;
   instruction: string;
-  source: ReplyPreference["source"];
+  source: ModelPreferenceSource;
   evidenceIds: string[];
 }
 /** A candidate that passed citation and threshold checks, with the evidence it stands on. */
@@ -48,7 +50,7 @@ export interface AcceptedCandidate extends PreferenceCandidate {
 export interface LegacyPreference {
   id: string;
   instruction: string;
-  source: ReplyPreference["source"];
+  source: ModelPreferenceSource;
   enabled: boolean;
   evidence: LearningObservation[];
 }
@@ -66,7 +68,7 @@ interface State {
 interface PreferenceRow {
   id: string;
   instruction: string;
-  source: ReplyPreference["source"];
+  source: ModelPreferenceSource;
   enabled: number;
   evidence_ids: string;
 }

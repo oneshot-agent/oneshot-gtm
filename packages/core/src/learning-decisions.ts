@@ -129,7 +129,8 @@ const HANDLERS: Record<LearningKind, KindHandler> = {
       const source = v["source"];
       ledger.learning.addGuidance({
         instruction: asText(v["instruction"]) ?? "",
-        source: source === "explicit" || source === "edits" ? source : "style",
+        source:
+          source === "explicit" || source === "edits" || source === "outcome" ? source : "style",
         channel: p.scope.channel ?? null,
         stage: p.scope.stage ?? null,
         proposalId: p.id,

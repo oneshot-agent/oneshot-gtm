@@ -132,3 +132,20 @@ it("retires LinkedIn first-touch and follow-up preferences only while LinkedIn c
     { reason: "template" },
   ]);
 });
+
+it("retires a reply-based LinkedIn suggestion too while LinkedIn copy is templates", () => {
+  const row = ledger.learning.insert({
+    kind: "preference",
+    scope: { channel: "linkedin", stage: "first_touch", basis: "replies" },
+    current: null,
+    proposed: { instruction: "When the research supports it, lead with: x", source: "outcome" },
+    evidence: { refs: [] },
+    evidenceSummary: "",
+    baselineKey: "",
+    dedupeKey: "linkedin:first_touch:replies:x",
+    createdAt: daysAgo(1),
+  })!;
+  saveConfig({ ...original, linkedin: {} });
+  expect(expireLearningProposals(NOW)).toBe(1);
+  expect(ledger.learning.get(row.id)?.decided).toEqual({ reason: "template" });
+});

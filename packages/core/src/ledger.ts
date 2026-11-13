@@ -95,6 +95,7 @@ import { LedgerCache } from "./ledger-cache.ts";
 import { readLinkedInFunnelSource, type LinkedInFunnelSource } from "./ledger-linkedin-funnel.ts";
 import {
   DraftVersionStore,
+  type AngleOutcomeRow,
   type AngleUsageRow,
   type DraftDiscardReason,
   type DraftSlot,
@@ -842,6 +843,11 @@ export class Ledger {
   /** Per play, per angle: offered / rotated away / redrafted / sent / auto-sent, counting distinct prospects. */
   angleUsageByPlay(): Record<string, AngleUsageRow[]> {
     return this.drafts.angleUsageByPlay();
+  }
+
+  /** Per play, channel, stage and angle: people reached and replied, against the play's other angles (ledger-drafts.ts). */
+  angleOutcomesByStage(): AngleOutcomeRow[] {
+    return this.drafts.angleOutcomesByStage();
   }
 
   /** Per play: draft-version counts by outcome, intro and follow-up apart. */
