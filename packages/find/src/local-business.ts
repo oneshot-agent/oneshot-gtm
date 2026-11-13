@@ -164,12 +164,33 @@ export function peopleQueries(args: {
 
 /**
  * Pages each search may read this run: the run's searches shared across
- * every query, so with many titles the first one cannot use them all and
- * leave the rest unread. Each keeps its place for the next run.
+ * every query, so with many titles the first one cannot use them all. Never
+ * fewer than two, so a server that ignores `offset` is caught within the run
+ * (the same page twice). Each keeps its place for the next run, and the next
+ * run starts at the first query this one did not get to.
  */
 export function pagesPerQuery(queryCount: number): number {
   if (queryCount <= 1) return MAX_PAGES_PER_QUERY;
-  return Math.min(MAX_PAGES_PER_QUERY, Math.max(1, Math.floor(MAX_SEARCHES_PER_RUN / queryCount)));
+  return Math.min(MAX_PAGES_PER_QUERY, Math.max(2, Math.floor(MAX_SEARCHES_PER_RUN / queryCount)));
+}
+
+/** Where the next run starts in a list of searches, so each gets its turn. */
+function searchTurnKey(queries: PeopleSearchInput[]): string {
+  const hash = createHash("sha256").update(JSON.stringify(queries)).digest("hex").slice(0, 16);
+  return `people-search-turn:${hash}`;
+}
+
+export function parseSearchTurn(raw: string | null, queryCount: number): number {
+  if (!raw || queryCount <= 1) return 0;
+  try {
+    const v = JSON.parse(raw) as { start?: unknown };
+    if (typeof v.start === "number" && Number.isInteger(v.start) && v.start > 0) {
+      return v.start % queryCount;
+    }
+  } catch {
+    // unreadable entry: start at the first search
+  }
+  return 0;
 }
 
 function searchProgressKey(query: PeopleSearchInput): string {
@@ -177,26 +198,16 @@ function searchProgressKey(query: PeopleSearchInput): string {
   return `people-search-progress:${hash}`;
 }
 
-/**
- * Where an earlier run left a search: read to its end, or stopped at an
- * offset. `lastFirstKey` is the first person on the last page that run read,
- * so a run that reads one page can still tell a server ignoring `offset`.
- */
-export type SearchProgress =
-  | { done: true }
-  | { done: false; offset: number; lastFirstKey?: string };
+/** Where an earlier run left a search: read to its end, or stopped at an offset. */
+export type SearchProgress = { done: true } | { done: false; offset: number };
 
 export function parseSearchProgress(raw: string | null): SearchProgress | null {
   if (!raw) return null;
   try {
-    const v = JSON.parse(raw) as { done?: unknown; offset?: unknown; lastFirstKey?: unknown };
+    const v = JSON.parse(raw) as { done?: unknown; offset?: unknown };
     if (v.done === true) return { done: true };
     if (typeof v.offset === "number" && Number.isInteger(v.offset) && v.offset > 0) {
-      return {
-        done: false,
-        offset: v.offset,
-        ...(typeof v.lastFirstKey === "string" ? { lastFirstKey: v.lastFirstKey } : {}),
-      };
+      return { done: false, offset: v.offset };
     }
   } catch {
     // unreadable entry: start from the top
@@ -530,14 +541,22 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     },
   });
   const pageCap = pagesPerQuery(queries.length);
+  const turnKey = searchTurnKey(queries);
+  const turn = parseSearchTurn(
+    ledger.getProductResearchCache(turnKey, SEARCH_PROGRESS_TTL_MS),
+    queries.length,
+  );
+  const ordered = [...queries.slice(turn), ...queries.slice(0, turn)];
   const seenThisRun = new Set<string>();
   let worked = 0;
   let searches = 0;
   let unusable = 0;
   let finishedQueries = 0;
   let stop = false;
+  /** Position in `ordered` of the search the run stopped in, if it stopped early. */
+  let stoppedAt: number | null = null;
 
-  for (const [queryIndex, query] of queries.entries()) {
+  for (const [position, query] of ordered.entries()) {
     if (stop) break;
     const progressKey = searchProgressKey(query);
     const progress = parseSearchProgress(
@@ -555,14 +574,9 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     let capped = false;
     /** Offset of the first page holding someone left undecided by a passing failure. */
     let retryOffset: number | null = null;
-    let previousFirstKey: string | null =
-      progress && !progress.done ? (progress.lastFirstKey ?? null) : null;
-    /** One more page allowed this run, to settle a repeat seen only across runs. */
-    let extraPage = 0;
-    /** A repeat across runs left unsettled: the place moves on without its marker. */
-    let unsettled = false;
+    let previousFirstKey: string | null = null;
     for (let page = 0; !stop && !ended; page++) {
-      if (page >= pageCap + extraPage) {
+      if (page >= pageCap) {
         capped = true;
         break;
       }
@@ -594,26 +608,11 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       const rows = peopleRes.result.results as PersonResult[];
       result.candidates += rows.length;
       const firstKey = rows[0] ? candidateDedupeKey(rows[0]) : null;
-      // An empty page is the end. So is the same page twice in one run: a
-      // server that ignores `offset` would otherwise be walked to the page cap.
+      // An empty page is the end. So is the same page twice: a server that
+      // ignores `offset` would otherwise be walked to the page cap.
       if (rows.length === 0 || (page > 0 && firstKey === previousFirstKey)) {
         ended = true;
         break;
-      }
-      // The page the last run read, met again where it stopped: either the
-      // server ignores `offset`, or the results moved by a page and this one
-      // holds people already read. The next page tells them apart (the same
-      // page again ends the search above), so read it instead of this one,
-      // when the run still has a search for every title after this one.
-      // Otherwise this page is read as usual and the place moves on without
-      // its marker, so no title is held back for the ones before it.
-      if (page === 0 && previousFirstKey !== null && firstKey === previousFirstKey) {
-        if (MAX_SEARCHES_PER_RUN - searches > queries.length - queryIndex - 1) {
-          extraPage = 1;
-          offset += rows.length;
-          continue;
-        }
-        unsettled = true;
       }
       previousFirstKey = firstKey;
 
@@ -660,6 +659,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       if (rows.length < PEOPLE_SEARCH_LIMIT) ended = true;
       offset += rows.length;
     }
+    if (stop) stoppedAt ??= position;
     if (opts.dryRun) continue;
     if (ended && fresh === 0 && (known > 0 || startOffset > 0)) {
       // Read to its end and everyone on it is already in the queue: leave it
@@ -680,18 +680,16 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       if (resumeAt > 0) {
         ledger.setProductResearchCache(
           progressKey,
-          JSON.stringify({
-            done: false,
-            offset: resumeAt,
-            // Only when resuming past the last page: a run held back at an
-            // earlier page meets that page's first person again by design.
-            ...(resumeAt === offset && previousFirstKey && !unsettled
-              ? { lastFirstKey: previousFirstKey }
-              : {}),
-          }),
+          JSON.stringify({ done: false, offset: resumeAt }),
         );
       }
     }
+  }
+
+  // The searches this run did not get to go first next run.
+  if (!opts.dryRun && queries.length > 1) {
+    const next = stoppedAt == null ? 0 : (turn + stoppedAt) % queries.length;
+    if (next !== turn) ledger.setProductResearchCache(turnKey, JSON.stringify({ start: next }));
   }
 
   if (!result.halted && result.candidates === 0) {

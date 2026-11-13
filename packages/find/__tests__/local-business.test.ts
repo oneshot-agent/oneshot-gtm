@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 
 // local-business is the only finder built on `peopleSearch`/`companySearch`
 // instead of the per-candidate resolve spine. The crux under test: a
@@ -280,6 +281,9 @@ const runAgain = (opts: Parameters<typeof runLocalBusinessFinder>[0]) => {
   for (const row of enqueued) knownKeys.add(row.dedupeKey);
   return runLocalBusinessFinder(opts);
 };
+/** The cache key a search's saved place is kept under. */
+const progressKeyOf = (query: Record<string, unknown>) =>
+  `people-search-progress:${createHash("sha256").update(JSON.stringify(query)).digest("hex").slice(0, 16)}`;
 /** A row the people database returns with a first name and nothing else. */
 const nameOnly = (first: string): StubPerson => ({
   full_name: first,
@@ -596,72 +600,39 @@ describe("runLocalBusinessFinder — several titles", () => {
     ]);
   });
 
-  it("shares the run's searches across every title, so each is read and keeps its place", async () => {
+  it("shares the run's searches across the titles, and the next run starts where it stopped", async () => {
     const titles = Array.from({ length: 8 }, (_, i) => `Title ${i}`);
     // Every title has more people than one run reads.
     peopleSearchHandler = (input) => {
       const t = titles.indexOf((input["jobTitles"] as string[])[0]!);
       return people(t * 1000 + ((input["offset"] as number | undefined) ?? 0), 40);
     };
+    const searched = () => peopleSearchCalls.map((c) => (c["jobTitles"] as string[])[0]);
+    const offsetOf = (t: number) =>
+      parseSearchProgress(researchCache.get(progressKeyOf({ jobTitles: [titles[t]!] })) ?? null);
     await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
     expect(peopleSearchCalls.every((c) => (c["jobTitles"] as string[]).length === 1)).toBe(true);
-    expect(peopleSearchCalls.map((c) => (c["jobTitles"] as string[])[0])).toEqual(titles);
-    // Each stopped at its share and carries on from there next run.
-    expect([...researchCache.values()].map((v) => parseSearchProgress(v))).toEqual(
-      titles.map((_, t) => ({ done: false, offset: 40, lastFirstKey: keyOf(t * 1000) })),
-    );
+    // Two pages each: twelve searches reach the first six titles.
+    expect(searched()).toEqual(titles.slice(0, 6).flatMap((t) => [t, t]));
+    expect(offsetOf(5)).toEqual({ done: false, offset: 80 });
+    expect(offsetOf(6)).toBeNull();
+    peopleSearchCalls.length = 0;
+    await runAgain({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+    // The two left out go first, then the run carries on from the top.
+    expect(searched()).toEqual([6, 7, 0, 1, 2, 3].flatMap((t) => [titles[t]!, titles[t]!]));
+    expect(offsetOf(7)).toEqual({ done: false, offset: 80 });
+    expect(offsetOf(0)).toEqual({ done: false, offset: 160 });
   });
 
-  it("tells a server ignoring the offset across runs that read one page each", async () => {
+  it("catches a server ignoring the offset within one run, even with many titles", async () => {
     const titles = Array.from({ length: 8 }, (_, i) => `Title ${i}`);
-    // Each title returns the same full page whatever the offset.
     peopleSearchHandler = (input) =>
       people(titles.indexOf((input["jobTitles"] as string[])[0]!) * 1000, 40);
     await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
-    const first = enqueued.length;
-    // Settling a repeat takes a second search. The run keeps one search for
-    // each later title, so four settle at once and the other four are read
-    // as usual, then settle over the next two runs.
-    await runAgain({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
-    await runAgain({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
-    await runAgain({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
-    // Each meets the page it already read, queues no one, and is left alone
-    // instead of being paid for one page further every run.
-    expect(enqueued.length).toBe(first);
-    expect([...researchCache.values()]).toEqual(titles.map(() => JSON.stringify({ done: true })));
-  });
-
-  it("carries on when the results moved by a page between runs, and every title moves on", async () => {
-    const titles = Array.from({ length: 8 }, (_, i) => `Title ${i}`);
-    let shift = 0;
-    peopleSearchHandler = (input) => {
-      const t = titles.indexOf((input["jobTitles"] as string[])[0]!);
-      const at = Math.max(0, ((input["offset"] as number | undefined) ?? 0) - shift);
-      return people(t * 1000 + at, 40);
-    };
-    const offsets = () =>
-      [...researchCache.values()].map((v) => {
-        const p = parseSearchProgress(v);
-        return p && !p.done ? p.offset : -1;
-      });
-    await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
-    const first = enqueued.length;
-    let before = offsets();
-    // Forty people are added ahead of everyone already read before each run.
-    for (const run of [1, 2, 3]) {
-      shift = 40 * run;
-      const queued = enqueued.length;
-      await runAgain({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
-      // The first titles read past the page they had and queue the next
-      // forty; the run keeps a search for each later title, so every one
-      // moves on, none is held back.
-      expect(enqueued.length).toBe(queued + 4 * 40);
-      const after = offsets();
-      after.forEach((o, t) => expect(o).toBeGreaterThan(before[t]!));
-      expect(peopleSearchCalls).toHaveLength(8 + 12 * run);
-      before = after;
-    }
-    expect(enqueued.length).toBe(first + 3 * 4 * 40);
+    // Each title's second page repeats its first: the search ends there and
+    // no place is saved past it.
+    expect(peopleSearchCalls).toHaveLength(12);
+    expect([...researchCache.values()].some((v) => v.includes('"offset"'))).toBe(false);
   });
 
   it("makes at most twelve searches in one run", async () => {
