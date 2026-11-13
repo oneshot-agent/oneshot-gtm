@@ -338,6 +338,19 @@ describe("textsNearDuplicate", () => {
         "Keep LinkedIn first touches under 2 sentences.",
       ),
     ).toBe(true);
+    // A whole phrase is one number: 100 against 101 is a changed limit.
+    expect(
+      textsNearDuplicate(
+        "Keep emails under one hundred words.",
+        "Keep emails under one hundred and one words.",
+      ),
+    ).toBe(false);
+    expect(
+      textsNearDuplicate("Keep emails under twenty-one lines.", "Keep emails under 21 lines."),
+    ).toBe(true);
+    expect(
+      textsNearDuplicate("Keep emails under nineteen lines.", "Keep emails under nine lines."),
+    ).toBe(false);
   });
 
   it("names the first near-duplicate among others", () => {

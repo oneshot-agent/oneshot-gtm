@@ -35,23 +35,54 @@ const NEGATIONS = new Set(
 /**
  * Numbers spelled out, read as their digits: "two sentences" is "2
  * sentences", so a changed limit ("two" against "three") reads as a changed
- * number, and the same limit written either way reads as the same.
+ * number, and the same limit written either way reads as the same. A whole
+ * phrase is one number: "one hundred and one" is "101", never "1 100 1".
  */
-const NUMBER_WORDS = new Map(
+const SMALL_NUMBERS = new Map(
   (
     "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen " +
-    "fifteen sixteen seventeen eighteen nineteen twenty"
+    "fifteen sixteen seventeen eighteen nineteen"
   )
     .split(" ")
-    .map((word, n) => [word, String(n)] as const)
-    .concat([
-      ["thirty", "30"],
-      ["forty", "40"],
-      ["fifty", "50"],
-      ["hundred", "100"],
-      ["thousand", "1000"],
-    ]),
+    .map((word, n) => [word, n] as const)
+    .concat(
+      "twenty thirty forty fifty sixty seventy eighty ninety"
+        .split(" ")
+        .map((word, i) => [word, (i + 2) * 10] as const),
+    ),
 );
+const SCALES = new Map([
+  ["hundred", 100],
+  ["thousand", 1000],
+  ["million", 1_000_000],
+]);
+const NUMBER_WORD = `(?:${[...SMALL_NUMBERS.keys(), ...SCALES.keys()].join("|")})`;
+const NUMBER_PHRASE = new RegExp(
+  `\\b${NUMBER_WORD}(?:(?:[\\s-]+and)?[\\s-]+${NUMBER_WORD})*\\b`,
+  "gi",
+);
+
+/** One spelled-out number phrase as its value: "one hundred and one" is 101. */
+function spelledNumber(phrase: string): number {
+  let total = 0;
+  let current = 0;
+  for (const word of phrase.toLowerCase().split(/[\s-]+/)) {
+    const small = SMALL_NUMBERS.get(word);
+    const scale = SCALES.get(word);
+    if (small !== undefined) current += small;
+    else if (scale === 100) current = (current || 1) * 100;
+    else if (scale !== undefined) {
+      total += (current || 1) * scale;
+      current = 0;
+    }
+  }
+  return total + current;
+}
+
+/** `text` with every spelled-out number phrase written as digits. */
+function withNumberDigits(text: string): string {
+  return text.replace(NUMBER_PHRASE, (phrase) => String(spelledNumber(phrase)));
+}
 
 /** Letters and digits, the units a number carries, and the comma (a joiner). */
 const TOKEN = /[\p{L}\p{N}]+|[$%€£,]/gu;
@@ -102,9 +133,12 @@ function stem(word: string): string {
 function offerClauses(text: string): { clauses: string[][]; names: Set<string> } {
   const clauses: string[][] = [[]];
   const names = new Set<string>();
-  const tokens = text.replace(/(\d),(?=\d{3}\b)/g, "$1").match(TOKEN) ?? [];
+  const tokens =
+    withNumberDigits(text)
+      .replace(/(\d),(?=\d{3}\b)/g, "$1")
+      .match(TOKEN) ?? [];
   tokens.forEach((raw, i) => {
-    const t = NUMBER_WORDS.get(raw.toLowerCase()) ?? raw.toLowerCase();
+    const t = raw.toLowerCase();
     if (JOINERS.has(t)) {
       if (clauses.at(-1)!.length > 0) clauses.push([]);
       return;
