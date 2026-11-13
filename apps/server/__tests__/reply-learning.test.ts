@@ -285,6 +285,18 @@ it("draft evidence proposes style only: an instruction about what to argue is dr
       evidenceIds: cited,
     },
     {
+      key: "lead-savings",
+      instruction: "Lead with the cost savings.",
+      source: "style",
+      evidenceIds: cited,
+    },
+    {
+      key: "focus-pricing",
+      instruction: "Focus on pricing.",
+      source: "style",
+      evidenceIds: cited,
+    },
+    {
       key: "no-greeting",
       instruction: "Open with the point, not a greeting.",
       source: "style",
@@ -311,6 +323,8 @@ it("directsContent tells a pitch from a writing habit", () => {
     "Position the product as the cheaper option.",
     "Observe that their hiring page lists three open roles.",
     "Point out the gap in their onboarding.",
+    "Lead with the cost savings.",
+    "Focus on pricing.",
   ])
     expect(directsContent(pitch), pitch).toBe(true);
   for (const style of [
@@ -320,6 +334,9 @@ it("directsContent tells a pitch from a writing habit", () => {
     "Sign off with the first name only.",
     "Use a plain, conversational register; no exclamation marks.",
     "Mention the prospect's first name once, in the greeting.",
+    "Lead with a question, not a statement.",
+    "Focus on clarity over cleverness.",
+    "Lead with one short sentence.",
   ])
     expect(directsContent(style), style).toBe(false);
 });

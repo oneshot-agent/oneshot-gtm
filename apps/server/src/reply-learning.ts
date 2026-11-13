@@ -90,6 +90,14 @@ const CONTENT_DIRECTIVES: readonly RegExp[] = [
   /\b(?:observ|not)(?:e|es|ed|ing)\s+that\b/i,
   /\bpoint(?:s|ed|ing)?\s+out\b/i,
   /\bposition(?:s|ed|ing)?\s+(?:\S+\s+){1,5}?as\b/i,
+  // "Lead with the cost savings", "focus on pricing": content, unless what
+  // follows is a way of writing ("lead with a question", "focus on clarity").
+  new RegExp(
+    String.raw`\b(?:lead(?:s|ing)?\s+with|focus(?:es|ed|ing)?\s+on)\s+(?!` +
+      String.raw`(?:a|an|one|the|their|your)?\s*(?:short|single|plain|direct|brief|open|clear)?\s*` +
+      String.raw`(?:clarity|brevity|question|sentence|line|greeting|name|point|ask|tone|register|wording|structure|length)\b)`,
+    "i",
+  ),
 ];
 
 /** True when an instruction directs content (what to argue) instead of style. */
