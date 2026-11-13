@@ -602,9 +602,23 @@ describe("runLocalBusinessFinder — several titles", () => {
     expect(peopleSearchCalls.every((c) => (c["jobTitles"] as string[]).length === 1)).toBe(true);
     expect(peopleSearchCalls.map((c) => (c["jobTitles"] as string[])[0])).toEqual(titles);
     // Each stopped at its share and carries on from there next run.
-    expect([...researchCache.values()]).toEqual(
-      titles.map(() => JSON.stringify({ done: false, offset: 40 })),
+    expect([...researchCache.values()].map((v) => parseSearchProgress(v))).toEqual(
+      titles.map((_, t) => ({ done: false, offset: 40, lastFirstKey: keyOf(t * 1000) })),
     );
+  });
+
+  it("tells a server ignoring the offset across runs that read one page each", async () => {
+    const titles = Array.from({ length: 8 }, (_, i) => `Title ${i}`);
+    // Each title returns the same full page whatever the offset.
+    peopleSearchHandler = (input) =>
+      people(titles.indexOf((input["jobTitles"] as string[])[0]!) * 1000, 40);
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+    const first = enqueued.length;
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+    // The second run meets the page it already read, queues no one, and
+    // leaves each search alone instead of paying for it one page further.
+    expect(enqueued.length).toBe(first);
+    expect([...researchCache.values()]).toEqual(titles.map(() => JSON.stringify({ done: true })));
   });
 
   it("makes at most twelve searches in one run", async () => {

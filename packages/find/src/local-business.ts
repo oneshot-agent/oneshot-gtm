@@ -177,16 +177,26 @@ function searchProgressKey(query: PeopleSearchInput): string {
   return `people-search-progress:${hash}`;
 }
 
-/** Where an earlier run left a search: read to its end, or stopped at an offset. */
-export type SearchProgress = { done: true } | { done: false; offset: number };
+/**
+ * Where an earlier run left a search: read to its end, or stopped at an
+ * offset. `lastFirstKey` is the first person on the last page that run read,
+ * so a run that reads one page can still tell a server ignoring `offset`.
+ */
+export type SearchProgress =
+  | { done: true }
+  | { done: false; offset: number; lastFirstKey?: string };
 
 export function parseSearchProgress(raw: string | null): SearchProgress | null {
   if (!raw) return null;
   try {
-    const v = JSON.parse(raw) as { done?: unknown; offset?: unknown };
+    const v = JSON.parse(raw) as { done?: unknown; offset?: unknown; lastFirstKey?: unknown };
     if (v.done === true) return { done: true };
     if (typeof v.offset === "number" && Number.isInteger(v.offset) && v.offset > 0) {
-      return { done: false, offset: v.offset };
+      return {
+        done: false,
+        offset: v.offset,
+        ...(typeof v.lastFirstKey === "string" ? { lastFirstKey: v.lastFirstKey } : {}),
+      };
     }
   } catch {
     // unreadable entry: start from the top
@@ -545,7 +555,8 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     let capped = false;
     /** Offset of the first page holding someone left undecided by a passing failure. */
     let retryOffset: number | null = null;
-    let previousFirstKey: string | null = null;
+    let previousFirstKey: string | null =
+      progress && !progress.done ? (progress.lastFirstKey ?? null) : null;
     for (let page = 0; !stop && !ended; page++) {
       if (page >= pageCap) {
         capped = true;
@@ -579,9 +590,10 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       const rows = peopleRes.result.results as PersonResult[];
       result.candidates += rows.length;
       const firstKey = rows[0] ? candidateDedupeKey(rows[0]) : null;
-      // An empty page is the end. So is the same page twice: a server that
-      // ignores `offset` would otherwise be walked to the page cap.
-      if (rows.length === 0 || (page > 0 && firstKey === previousFirstKey)) {
+      // An empty page is the end. So is the same page twice, in this run or
+      // across the last one: a server that ignores `offset` would otherwise
+      // be walked to the page cap, or one page further every run.
+      if (rows.length === 0 || (previousFirstKey !== null && firstKey === previousFirstKey)) {
         ended = true;
         break;
       }
@@ -650,7 +662,13 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       if (resumeAt > 0) {
         ledger.setProductResearchCache(
           progressKey,
-          JSON.stringify({ done: false, offset: resumeAt }),
+          JSON.stringify({
+            done: false,
+            offset: resumeAt,
+            // Only when resuming past the last page: a run held back at an
+            // earlier page meets that page's first person again by design.
+            ...(resumeAt === offset && previousFirstKey ? { lastFirstKey: previousFirstKey } : {}),
+          }),
         );
       }
     }
