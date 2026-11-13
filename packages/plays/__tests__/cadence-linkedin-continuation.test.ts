@@ -1580,6 +1580,24 @@ describe("templates: the default writer", () => {
     expect(modelInputs).toEqual([]);
   });
 
+  it("a founder's first message is the founder text, naming the company on file", async () => {
+    linkedinCfg = {
+      templates: {
+        firstMessageConnected: "hey {first_name}, so what are you building right now?",
+        firstMessageFounder: "hey {first_name}, how's {company} going? what are you focused on?",
+      },
+    };
+    prospectId = newProspect({
+      email: "dana@acme.example",
+      linkedin_url: "https://www.linkedin.com/in/dana-acme",
+      title: "Co-Founder & CEO",
+      company: "Acme",
+    });
+    started({});
+    await invite((await shown()).body, "already_connected");
+    expect((await shown()).body).toBe("hey Dana, how's Acme going? what are you focused on?");
+  });
+
   it("a step the workspace leaves unset uses the shipped default", async () => {
     // Mid-batch, so the cohort reads "in YC F26", not "went through".
     vi.useFakeTimers({ now: new Date("2026-10-15T12:00:00Z"), toFake: ["Date"] });

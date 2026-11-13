@@ -4397,7 +4397,7 @@ function closeGuidance(role: ReaderRole): string[] {
  * so the message shown ahead is the one that goes.
  */
 function linkedInMessageFacts(
-  prospect: Pick<ProspectRecord, "id" | "email" | "name">,
+  prospect: Pick<ProspectRecord, "id" | "email" | "name" | "company" | "title">,
   playName: string,
   cfg: CadenceContext["cfg"],
   /** Also count touches marked delivered or replied in place (the sheet's view); the builder reads sent only. */
@@ -4453,7 +4453,13 @@ function linkedInMessageFacts(
       ? pickCloseOffer(record, cfg, sequenceThread(prospect.id, playName))
       : record.offer
     : null;
-  const base = { name: prospect.name, evidence: clause, alreadyConnected };
+  const base = {
+    name: prospect.name,
+    evidence: clause,
+    alreadyConnected,
+    company: prospect.company,
+    title: prospect.title,
+  };
   return {
     events,
     alreadyConnected,

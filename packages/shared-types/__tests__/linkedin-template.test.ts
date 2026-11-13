@@ -3,6 +3,7 @@ import {
   DEFAULT_LINKEDIN_TEMPLATES,
   LINKEDIN_TEMPLATE_FIELDS,
   chooseLinkedInTemplate,
+  isFounderTitle,
   linkedInTemplateStep,
   renderLinkedInTemplate,
   templatePlaceholders,
@@ -134,11 +135,81 @@ describe("chooseLinkedInTemplate", () => {
   });
 });
 
+describe("the founder first message", () => {
+  const founderText = {
+    firstMessageFounder: "hey {first_name}, what are you focused on right now?",
+  };
+
+  it("reads founder, co-founder and CEO titles, and nothing that merely contains them", () => {
+    for (const t of ["Founder", "Co-Founder & CTO", "cofounder", "CEO", "Chief Executive Officer"])
+      expect(isFounderTitle(t), t).toBe(true);
+    for (const t of ["Foundry Engineer", "VP Engineering", "Head of AI", "", null, undefined])
+      expect(isFounderTitle(t), String(t)).toBe(false);
+  });
+
+  it("goes to a founder, connected before or not, when the workspace sets it", () => {
+    for (const alreadyConnected of [false, true]) {
+      expect(
+        chooseLinkedInTemplate("first", founderText, {
+          ...dana,
+          title: "Co-Founder",
+          alreadyConnected,
+        }),
+      ).toEqual({
+        text: "hey Dana, what are you focused on right now?",
+        step: "firstMessageFounder",
+        source: "workspace",
+        usesEvidence: false,
+      });
+    }
+  });
+
+  it("leaves everyone else, and every other touch, on their usual text", () => {
+    const own = { ...founderText, firstMessage: "yo {first_name}" };
+    expect(chooseLinkedInTemplate("first", own, { ...dana, title: "VP Sales" })).toMatchObject({
+      text: "yo Dana",
+      step: "firstMessage",
+    });
+    expect(chooseLinkedInTemplate("last", own, { ...dana, title: "Founder" })).toMatchObject({
+      step: "lastMessage",
+    });
+  });
+
+  it("is the first message when blank or when it can't be filled", () => {
+    expect(chooseLinkedInTemplate("first", {}, { ...dana, title: "Founder" })).toMatchObject({
+      step: "firstMessage",
+      source: "default",
+    });
+    expect(
+      chooseLinkedInTemplate(
+        "first",
+        { firstMessageFounder: "how's {company} going?" },
+        { ...dana, title: "Founder" },
+      ),
+    ).toMatchObject({ step: "firstMessage", source: "default" });
+  });
+
+  it("names their company as stored, punctuation and all", () => {
+    expect(
+      chooseLinkedInTemplate(
+        "first",
+        { firstMessageFounder: "hey {first_name}, how's {company} going?" },
+        { ...dana, title: "Founder", company: " Yahoo! " },
+      ).text,
+    ).toBe("hey Dana, how's Yahoo! going?");
+    expect(templateProblems("firstMessage", "at {company}?")).toEqual([]);
+    expect(templateProblems("note", "at {company}?")).toEqual([
+      '{company} can\'t be used in "Connection request"',
+    ]);
+  });
+});
+
 describe("shipped defaults", () => {
   const longest = {
     first_name: "x".repeat(20),
     evidence: `you ${"x".repeat(80)}`,
     offer: "x".repeat(140),
+    company: "x".repeat(60),
   };
 
   it("fit their step's limit at the longest values", () => {

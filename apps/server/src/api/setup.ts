@@ -932,6 +932,7 @@ const LONGEST_TEMPLATE_VALUES = {
   // An aged clause is at most 80 characters; "you're " is its subject.
   evidence: `you're ${"x".repeat(80)}`,
   offer: "x".repeat(140),
+  company: "x".repeat(60),
 } as const;
 
 /**

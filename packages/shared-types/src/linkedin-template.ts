@@ -13,11 +13,12 @@ export type LinkedInTemplateStep =
   | "noteFallback"
   | "firstMessage"
   | "firstMessageConnected"
+  | "firstMessageFounder"
   | "lastMessage"
   | "lastMessageFallback"
   | "friendNote";
 
-export type LinkedInTemplatePlaceholder = "first_name" | "evidence" | "offer";
+export type LinkedInTemplatePlaceholder = "first_name" | "evidence" | "offer" | "company";
 
 /** LinkedIn's limit on a connection-request note with Premium. */
 export const LINKEDIN_TEMPLATE_NOTE_MAX = 300;
@@ -65,14 +66,21 @@ export const LINKEDIN_TEMPLATE_FIELDS: readonly LinkedInTemplateField[] = [
     label: "First message",
     hint: "Sent after they accept.",
     limit: LINKEDIN_TEMPLATE_MESSAGE_MAX,
-    placeholders: ["first_name", "evidence", "offer"],
+    placeholders: ["first_name", "evidence", "offer", "company"],
   },
   {
     step: "firstMessageConnected",
     label: "First message, already connected",
     hint: "Sent when you were connected before the sequence, so no request was accepted.",
     limit: LINKEDIN_TEMPLATE_MESSAGE_MAX,
-    placeholders: ["first_name", "evidence", "offer"],
+    placeholders: ["first_name", "evidence", "offer", "company"],
+  },
+  {
+    step: "firstMessageFounder",
+    label: "First message to a founder",
+    hint: "Sent instead of the first message when their title says founder, co-founder or CEO, connected before or not. Leave it blank to send them the first message.",
+    limit: LINKEDIN_TEMPLATE_MESSAGE_MAX,
+    placeholders: ["first_name", "evidence", "offer", "company"],
   },
   {
     step: "lastMessage",
@@ -103,6 +111,8 @@ export const DEFAULT_LINKEDIN_TEMPLATES: Readonly<Record<LinkedInTemplateStep, s
   noteFallback: "Hi {first_name}, would be good to connect.",
   firstMessage: "Hi {first_name}, thanks for connecting. What are you working on right now?",
   firstMessageConnected: "Hi {first_name}, what are you working on right now?",
+  // Blank sends a founder the first message, so the default is that text.
+  firstMessageFounder: "Hi {first_name}, thanks for connecting. What are you working on right now?",
   lastMessage:
     "Hi {first_name}, last one from me, no reply needed. One thing I'd like to do for you: {offer}. Want me to run a small version? A no is fine too.",
   lastMessageFallback:
@@ -117,6 +127,7 @@ const KNOWN: ReadonlySet<string> = new Set<LinkedInTemplatePlaceholder>([
   "first_name",
   "evidence",
   "offer",
+  "company",
 ]);
 
 /** The placeholder names a template uses, in order of first appearance. */
@@ -160,7 +171,8 @@ const TRAILING_STOPS: ReadonlySet<string> = new Set([" ", ".", "!", "?", ";", ":
 function clean(name: string, value: string | null | undefined): string | null {
   const v = value?.replace(/\s+/g, " ").trim();
   if (!v) return null;
-  if (name === "first_name") return v;
+  // A name keeps its own punctuation ("Yahoo!"); a clause or an offer does not.
+  if (name === "first_name" || name === "company") return v;
   // A clause or an offer drops into a sentence that brings its own full stop.
   // A loop, not a regex: an anchored character class backtracks on long runs.
   let end = v.length;
@@ -209,6 +221,15 @@ export type LinkedInTemplateKind = "note" | "first" | "last" | "friend";
 export interface LinkedInTemplateFacts extends LinkedInTemplateValues {
   /** Connected before the sequence: no request was sent or accepted. */
   alreadyConnected?: boolean;
+  /** Their job title, which picks the founder first message. */
+  title?: string | null;
+}
+
+const FOUNDER_TITLE_RX = /\b(?:co-?founder|founder|ceo|chief executive)\b/i;
+
+/** A title that says founder, co-founder or CEO ("Co-Founder & CTO", "Founder"). */
+export function isFounderTitle(title: string | null | undefined): boolean {
+  return !!title && FOUNDER_TITLE_RX.test(title);
 }
 
 export interface ChosenLinkedInTemplate {
@@ -248,15 +269,24 @@ export function chooseLinkedInTemplate(
   facts: LinkedInTemplateFacts,
 ): ChosenLinkedInTemplate {
   const step = linkedInTemplateStep(kind, facts);
-  const candidates: Array<{ template: string; source: "workspace" | "default" }> = [];
+  const candidates: Array<{
+    template: string;
+    step: LinkedInTemplateStep;
+    source: "workspace" | "default";
+  }> = [];
+  // A founder gets the workspace's founder text when it fills; otherwise the
+  // first message, as before. It has no default of its own to fall back on.
+  const founder = templates.firstMessageFounder?.trim();
+  if (kind === "first" && founder && isFounderTitle(facts.title))
+    candidates.push({ template: founder, step: "firstMessageFounder", source: "workspace" });
   const own = templates[step]?.trim();
-  if (own) candidates.push({ template: own, source: "workspace" });
-  candidates.push({ template: DEFAULT_LINKEDIN_TEMPLATES[step], source: "default" });
-  for (const { template, source } of candidates) {
-    const rendered = renderLinkedInTemplate(template, facts);
+  if (own) candidates.push({ template: own, step, source: "workspace" });
+  candidates.push({ template: DEFAULT_LINKEDIN_TEMPLATES[step], step, source: "default" });
+  for (const candidate of candidates) {
+    const rendered = renderLinkedInTemplate(candidate.template, facts);
     if ("text" in rendered) {
-      const usesEvidence = templatePlaceholders(template).includes("evidence");
-      return { text: rendered.text, step, source, usesEvidence };
+      const usesEvidence = templatePlaceholders(candidate.template).includes("evidence");
+      return { text: rendered.text, step: candidate.step, source: candidate.source, usesEvidence };
     }
   }
   // Unreachable with the shipped defaults; kept so a bad default can't send braces.

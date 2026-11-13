@@ -42,6 +42,19 @@ describe("templatedLinkedIn", () => {
     );
   });
 
+  it("passes their title and company, so a founder gets the founder text", () => {
+    const cfg = {
+      linkedin: { templates: { firstMessageFounder: "hey {first_name}, how's {company} going?" } },
+    };
+    expect(
+      templatedLinkedIn("first", cfg, { name: "Dana Lee", title: "Founder", company: "Acme" })
+        ?.text,
+    ).toBe("hey Dana, how's Acme going?");
+    expect(
+      templatedLinkedIn("first", cfg, { name: "Dana Lee", title: "VP Sales", company: "Acme" }),
+    ).toMatchObject({ step: "firstMessage" });
+  });
+
   it("is null when the workspace has the model write", () => {
     expect(
       templatedLinkedIn("note", { linkedin: { writer: "model" } }, { name: "Dana" }),
