@@ -557,8 +557,10 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     let retryOffset: number | null = null;
     let previousFirstKey: string | null =
       progress && !progress.done ? (progress.lastFirstKey ?? null) : null;
+    /** One more page allowed this run, to settle a repeat seen only across runs. */
+    let extraPage = 0;
     for (let page = 0; !stop && !ended; page++) {
-      if (page >= pageCap) {
+      if (page >= pageCap + extraPage) {
         capped = true;
         break;
       }
@@ -590,12 +592,20 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       const rows = peopleRes.result.results as PersonResult[];
       result.candidates += rows.length;
       const firstKey = rows[0] ? candidateDedupeKey(rows[0]) : null;
-      // An empty page is the end. So is the same page twice, in this run or
-      // across the last one: a server that ignores `offset` would otherwise
-      // be walked to the page cap, or one page further every run.
-      if (rows.length === 0 || (previousFirstKey !== null && firstKey === previousFirstKey)) {
+      // An empty page is the end. So is the same page twice in one run: a
+      // server that ignores `offset` would otherwise be walked to the page cap.
+      if (rows.length === 0 || (page > 0 && firstKey === previousFirstKey)) {
         ended = true;
         break;
+      }
+      // The page the last run read, met again where it stopped: either the
+      // server ignores `offset`, or the results moved by a page and this one
+      // holds people already read. The next page tells them apart (the same
+      // page again ends the search above), so read it instead of this one.
+      if (page === 0 && previousFirstKey !== null && firstKey === previousFirstKey) {
+        extraPage = 1;
+        offset += rows.length;
+        continue;
       }
       previousFirstKey = firstKey;
 

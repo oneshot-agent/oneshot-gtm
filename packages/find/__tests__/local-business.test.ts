@@ -614,11 +614,40 @@ describe("runLocalBusinessFinder — several titles", () => {
       people(titles.indexOf((input["jobTitles"] as string[])[0]!) * 1000, 40);
     await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
     const first = enqueued.length;
+    // Settling a repeat takes a second search, so the run's twelve cover six
+    // titles and the next run settles the last two.
     await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
-    // The second run meets the page it already read, queues no one, and
-    // leaves each search alone instead of paying for it one page further.
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+    // Each meets the page it already read, queues no one, and is left alone
+    // instead of being paid for one page further every run.
     expect(enqueued.length).toBe(first);
     expect([...researchCache.values()]).toEqual(titles.map(() => JSON.stringify({ done: true })));
+  });
+
+  it("carries on when the results moved by a page between runs", async () => {
+    const titles = Array.from({ length: 8 }, (_, i) => `Title ${i}`);
+    let shift = 0;
+    peopleSearchHandler = (input) => {
+      const t = titles.indexOf((input["jobTitles"] as string[])[0]!);
+      const at = Math.max(0, ((input["offset"] as number | undefined) ?? 0) - shift);
+      return people(t * 1000 + at, 40);
+    };
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+    const first = enqueued.length;
+    // Forty people were added ahead of everyone already read.
+    shift = 40;
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+    // A title reads past the page it already had and queues the next forty.
+    // That takes two searches, so six titles fit in the run; the last two
+    // keep their place for the next one.
+    expect(enqueued.length).toBe(first + 6 * 40);
+    expect([...researchCache.values()].map((v) => parseSearchProgress(v))).toEqual(
+      titles.map((_, t) =>
+        t < 6
+          ? { done: false, offset: 120, lastFirstKey: keyOf(t * 1000 + 40) }
+          : { done: false, offset: 40, lastFirstKey: keyOf(t * 1000) },
+      ),
+    );
   });
 
   it("makes at most twelve searches in one run", async () => {
