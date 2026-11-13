@@ -382,6 +382,11 @@ export interface OfferWriterConfig {
 /** Which anchor an offer rests on where the research allows a choice. */
 export type OfferAnchor = "prefer-product" | "either";
 
+/** The pattern checks a workspace can run on every written offer; see `OneShotConfig.offerChecks`. */
+export const OFFER_CHECKS = ["awareness", "check-lead", "system-wrapper"] as const;
+
+export type OfferCheck = (typeof OFFER_CHECKS)[number];
+
 /** How drafted email subjects are cased; see `OneShotConfig.subjectCase`. */
 export type SubjectCase = "lowercase" | "sentence" | "as-written";
 
@@ -512,6 +517,26 @@ export interface OneShotConfig {
    * empty: no exclusions.
    */
   offerExclusions?: string[];
+  /**
+   * The founder's own rules for what counts as an offer, one plain-language
+   * entry each ("an offer names a result the firm could count within a
+   * result"). The writer follows every one, and the judge rates an offer
+   * that breaks one `weak`. Read through `offerRulesOf` (trimmed, blanks
+   * dropped). Offers and skips carry a `rulesHash`, so one written under
+   * other rules is written again; one from before the field is kept. Absent
+   * or empty: the shipped bar alone.
+   */
+  offerRules?: string[];
+  /**
+   * Pattern checks run on every written offer, by name: `awareness` (it
+   * leads with track, monitor, report and the like, or promises visibility,
+   * insights, dashboards or alerts), `check-lead` (it leads with vet,
+   * verify, audit and the like) and `system-wrapper` ("put into
+   * production", "the system that", "deploy a system"). A flagged offer gets
+   * one repair round, then is dropped. Read through `offerChecksOf`. Absent
+   * or empty: none run.
+   */
+  offerChecks?: OfferCheck[];
   /**
    * Companies this workspace never contacts, by email or website domain and
    * by company name. A match is queued as rejected, refused at every email

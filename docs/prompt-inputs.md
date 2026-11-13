@@ -10,6 +10,7 @@ The model knows only what you put in config, and each field reaches some drafts 
 | `founderAdmission`                                   | about 1 in 3                | no                        | no                                |
 | `pilotOffer`                                         | yes, as the offer's terms   | yes, as the offer's terms | no                                |
 | `offerExclusions`                                    | the offer's writer, judge   | the offer's writer, judge | no                                |
+| `offerRules`, `offerChecks`                          | the offer's writer, judge   | the offer's writer, judge | no                                |
 | `offerAnchor`                                        | the offer's writer, judge   | the offer's writer, judge | no                                |
 | `noOfferPlays`                                       | no offer for those plays    | no offer for those plays  | no                                |
 | `memberOffer`                                        | `multiplier` only, verbatim | `multiplier` letter only  | no                                |
@@ -39,17 +40,18 @@ Each play adds its own signal on top: the repo they starred, the event they join
 
 Config is source material. No field can force a sentence into an email; every prompt paraphrases what it is given. Put each thing where it has a slot:
 
-| To say                 | Use                                                  |
-| ---------------------- | ---------------------------------------------------- |
-| proof                  | `founderCredentials`, `productPortfolio`, `partners` |
-| one true concession    | `founderAdmission`                                   |
-| the argument           | `yourEdge`                                           |
-| facts and links        | `productBrief`                                       |
-| who it is for          | `icpOneLiner`                                        |
-| the offer's terms      | `pilotOffer`, never a price                          |
-| never offered          | `offerExclusions`                                    |
-| which anchor to prefer | `offerAnchor`                                        |
-| what members get       | `memberOffer`, quoted whole by `multiplier`          |
+| To say                  | Use                                                  |
+| ----------------------- | ---------------------------------------------------- |
+| proof                   | `founderCredentials`, `productPortfolio`, `partners` |
+| one true concession     | `founderAdmission`                                   |
+| the argument            | `yourEdge`                                           |
+| facts and links         | `productBrief`                                       |
+| who it is for           | `icpOneLiner`                                        |
+| the offer's terms       | `pilotOffer`, never a price                          |
+| never offered           | `offerExclusions`                                    |
+| what counts as an offer | `offerRules`, `offerChecks`                          |
+| which anchor to prefer  | `offerAnchor`                                        |
+| what members get        | `memberOffer`, quoted whole by `multiplier`          |
 
 `pilotOffer` replaces the plain breakup on the last step of `repo-interest`, `stack-consolidation`, `competitor-switch`, `hiring-signal` and `post-funding`. A play listed in `noOfferPlays` ends on the plain breakup instead, and so does `accelerator-batch`, always.
 
@@ -70,9 +72,22 @@ The active offer also gets five angles: reasons it pays back for this firm. The 
 - Every follow-up restates the offer the first email made. The sequence keeps that offer from the first send, with a link to the queue row it started from; changing it on the `/cadences` card changes the sequence, never the row. A sequence with no offer gets one written at its next preview, from that row's research or, with no row, the person's. An email sent from a typed `/run` list or the CLI keeps a sent row on `/queue` for it, linked to the person.
 - `pilotOffer` is the general terms every offer carries: a pilot, a trial, a partnership, a service.
 - `offerExclusions` lists kinds of goal you never offer, one plain-language entry each: `["legal work: drafting or reviewing the prospect's own contracts"]`. The writer is told never to write one and the judge rates one `irrelevant`, so it is never used. Every offer records the exclusions it was written under. Change the list and an unsent row's offer is written again before its next draft, and a sequence's own offer before its next follow-up. Your own text, an offer you approved and the offer the first email carried are kept. `find rejudge-offers` re-judges unsent rows and moves an excluded active offer to the next one that passes; your approval does not keep it, only your own edited text does. With nothing left that passes it is held, and `--rewrite-all-weak` writes the set again. `--sequences` brings active sequences up to date ahead of their next follow-up, and `--list-excluded` lists the ones whose offer is now excluded.
+- `offerRules` are your own rules for what counts as an offer, one plain-language entry each. The shipped bar is a goal this firm would plan for, which this person owns, reached with what your brief says the product does, ending in a result they could count. Add what is true of your product on top: how long the work runs, who it involves, what is never the offer. The writer follows every rule and the judge rates an offer that breaks one `weak`, or `irrelevant` where the rule says so. Every offer records the rules it was written under, so changing them writes it again like `offerExclusions`; offers from before the field are kept.
+- `offerChecks` turns on pattern checks the writer's output must pass: `awareness` (it leads with track, monitor, report and the like, or promises visibility, insights, dashboards or alerts), `check-lead` (it leads with vet, verify, validate, screen, scan, audit or check) and `system-wrapper` ("put into production", "the system that", "deploy a system"). None run by default. A product that monitors, verifies or audits for a living can leave them off.
+- An example for a product that carries long jobs to completion, such as an agent platform:
+
+  ```json
+  "offerRules": [
+    "An offer is a goal carried over weeks of work to a counted result, done by machine, through outside parties, or both.",
+    "A single pass of checking, screening, verifying or auditing is a step, never the offer: the offer is what that work wins.",
+    "Never a standing service: no offer to track, monitor, alert or give visibility; the offer is the action taken on what is noticed."
+  ],
+  "offerChecks": ["awareness", "check-lead", "system-wrapper"]
+  ```
+
 - `offerAnchor` says which anchor to prefer where the research allows a choice. `prefer-product`: the writer leads with a goal of the prospect's own product wherever the research says what that product does, the judge rates a firm-anchored offer `weak` where it plainly did, and the product-anchored offers that pass lead the ranked set. Where the research says nothing about their product, a firm-anchored offer is right and loses nothing. `either` (the default) has no preference. Each offer records which anchor it rests on, the same thing `fit` says in prose. Changing it rewrites no stored offer: `find rejudge-offers` sweeps them, and `--rewrite-all-weak` writes the sets again.
 - `noOfferPlays` lists plays that make no offer in this workspace: `["repo-interest", "luma-events"]`. Their intros, follow-ups and letters carry no OFFER block, no offer is written or judged for their rows, and neither the `no-offer` nor the `weak-offer` hold applies. Use it for an audience that answers a message about their own work rather than an offer. An offer already stored on a row stays on it, unused, and a running sequence drops its offer from the next follow-up. Edit `config.json` by hand, and the dashboard picks it up on its next read.
-- It is checked before use. Any number must be in the research, any quote must be copied from it, and it cannot borrow your product's own wording, carry a price or a link, open on an observation about them, lead with watching (track, monitor, keep, ground…), or lead with a check (vet, verify, validate, screen, scan, audit, check). A researched offer needs a return.
+- It is checked before use. Any number must be in the research, any quote must be copied from it, and it cannot borrow your product's own wording, carry a price or a link, or open on an observation about them. `offerChecks` adds the pattern checks you turn on. A researched offer needs a return.
 - It shows at the top of the case on `/queue`, with its return and its angles under **How and why**. **Other offers** lists the rest; **Use this offer** makes one active and writes its angles. **Edit offer** saves your text and return, which are never rewritten after that. **Approve offer** sends one rated a weak fit as it stands; a prompt update never rewrites it. **New offers** writes five fresh ones, each a different job from the ones it replaces. Each way the draft is rewritten around it.
 - Each offer is judged before it is kept. One the judge does not pass is replaced once; a weak one only makes up the five, and holds the send until you rewrite it, pick another or approve it. When none of the five passes, the firm's research is read first if the row has none complete, and the writer tries once more: it is shown the rejected offers and what the judge means by weak, and builds each offer on the most specific fact the research holds. The offers that pass then lead. When none does, the set stays held as before.
 - **Regenerate draft** reads the firm's research first when the row has none complete (a homepage read alone is not), then writes the offers again from it. A click waits two minutes at most; research that takes longer lands on the row for the next regenerate.

@@ -16,7 +16,10 @@ import {
   loadConfig,
   loadGmailTokens,
   MAX_OFFER_WRITER_ROUNDS,
+  offerChecksOf,
   offerExclusionsOf,
+  offerRulesOf,
+  OFFER_CHECKS,
   parseSendVia,
   registerOneShotIdentity,
   registerSmartleadIdentity,
@@ -670,12 +673,16 @@ export function mergeSetupConfig(
     sourceRepo: _sourceRepo,
     codeAnswerDisclosure: _disclosure,
     offerExclusions: _exclusions,
+    offerRules: _rules,
+    offerChecks: _checks,
     offerAnchor: _anchor,
     linkedin: _linkedin,
     ...kept
   } = current;
   const linkedin = mergeLinkedIn(body.linkedin, current.linkedin);
   const offerExclusions = mergeOfferExclusions(body.offerExclusions, current.offerExclusions);
+  const offerRules = mergeOfferRules(body.offerRules, current.offerRules);
+  const offerChecks = mergeOfferChecks(body.offerChecks, current.offerChecks);
   const offerAnchor = mergeOfferAnchor(body.offerAnchor, current.offerAnchor);
   const sourceRepo = mergeSourceRepo(body.sourceRepo, current.sourceRepo);
   const codeAnswerDisclosure = mergeDisclosure(
@@ -687,6 +694,8 @@ export function mergeSetupConfig(
     ...(sourceRepo ? { sourceRepo } : {}),
     ...(codeAnswerDisclosure ? { codeAnswerDisclosure } : {}),
     ...(offerExclusions ? { offerExclusions } : {}),
+    ...(offerRules ? { offerRules } : {}),
+    ...(offerChecks ? { offerChecks } : {}),
     ...(offerAnchor ? { offerAnchor } : {}),
     ...(linkedin ? { linkedin } : {}),
     walletMode,
@@ -998,20 +1007,65 @@ export function mergeOfferExclusions(
   incoming: SetupRequest["offerExclusions"],
   current: OneShotConfig["offerExclusions"],
 ): OneShotConfig["offerExclusions"] {
+  return mergeOfferEntries("offerExclusions", incoming, current, (list) =>
+    offerExclusionsOf({ offerExclusions: list }),
+  );
+}
+
+/** `offerRules` merge: the same handling and limits as `offerExclusions`. */
+export function mergeOfferRules(
+  incoming: SetupRequest["offerRules"],
+  current: OneShotConfig["offerRules"],
+): OneShotConfig["offerRules"] {
+  return mergeOfferEntries("offerRules", incoming, current, (list) =>
+    offerRulesOf({ offerRules: list }),
+  );
+}
+
+function mergeOfferEntries(
+  name: string,
+  incoming: string[] | null | undefined,
+  current: string[] | undefined,
+  read: (list: string[]) => string[],
+): string[] | undefined {
   if (incoming === undefined) return current;
   if (incoming === null) return undefined;
   if (!Array.isArray(incoming) || incoming.some((e) => typeof e !== "string")) {
-    throw new SetupValidationError("offerExclusions must be a list of strings");
+    throw new SetupValidationError(`${name} must be a list of strings`);
   }
-  const list = offerExclusionsOf({ offerExclusions: incoming });
+  const list = read(incoming);
   if (list.length > MAX_OFFER_EXCLUSIONS) {
-    throw new SetupValidationError(`offerExclusions holds at most ${MAX_OFFER_EXCLUSIONS} entries`);
+    throw new SetupValidationError(`${name} holds at most ${MAX_OFFER_EXCLUSIONS} entries`);
   }
   if (list.some((e) => e.length > MAX_OFFER_EXCLUSION_CHARS)) {
     throw new SetupValidationError(
-      `each offerExclusions entry is at most ${MAX_OFFER_EXCLUSION_CHARS} characters`,
+      `each ${name} entry is at most ${MAX_OFFER_EXCLUSION_CHARS} characters`,
     );
   }
+  return list.length > 0 ? list : undefined;
+}
+
+/**
+ * `offerChecks` merge: `undefined` keeps the stored list, `null` or `[]`
+ * clears it. A name outside `OFFER_CHECKS` is a 400, so a misspelling is
+ * caught at the save instead of quietly running no check.
+ */
+export function mergeOfferChecks(
+  incoming: SetupRequest["offerChecks"],
+  current: OneShotConfig["offerChecks"],
+): OneShotConfig["offerChecks"] {
+  if (incoming === undefined) return current;
+  if (incoming === null) return undefined;
+  if (!Array.isArray(incoming) || incoming.some((e) => typeof e !== "string")) {
+    throw new SetupValidationError("offerChecks must be a list of check names");
+  }
+  const unknown = incoming.filter((c) => !(OFFER_CHECKS as readonly string[]).includes(c));
+  if (unknown.length > 0) {
+    throw new SetupValidationError(
+      `offerChecks: unknown check ${unknown.join(", ")} (known: ${OFFER_CHECKS.join(", ")})`,
+    );
+  }
+  const list = offerChecksOf({ offerChecks: incoming });
   return list.length > 0 ? list : undefined;
 }
 

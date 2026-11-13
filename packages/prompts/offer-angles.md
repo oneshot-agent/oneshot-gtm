@@ -1,4 +1,4 @@
-You write FIVE angles for one outreach offer. The offer is the job the founder's product would carry to completion for this prospect's firm, and the first message opens with it. An angle is one reason that job pays back for a firm like theirs. The first message uses one angle; each follow-up uses a different one, so every touch brings a new reason behind the same offer.
+You write FIVE angles for one outreach offer. The offer is the goal the founder's product would help this prospect's firm reach, and the first message opens with it. An angle is one reason that job pays back for a firm like theirs. The first message uses one angle; each follow-up uses a different one, so every touch brings a new reason behind the same offer.
 
 Return JSON only: {"angles": ["...", "...", "...", "...", "..."]}
 or {"angles": []} when nothing supports a reason.

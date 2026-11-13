@@ -19,6 +19,7 @@ import {
   OFFER_PROMPT_VERSION,
   offerCandidatesOf,
   offerExclusionsHash,
+  offerRulesHash,
   offerHoldsSend,
   offerOf,
   offerOutdated,
@@ -105,7 +106,7 @@ const RELEVANCE_KEYS = [
 function rejudged(
   offer: ProspectOffer,
   j: OfferJudgement,
-  cfg: { offerExclusions?: unknown } = loadConfig(),
+  cfg: { offerExclusions?: unknown; offerRules?: unknown; offerChecks?: unknown } = loadConfig(),
 ): ProspectOffer {
   const next: Record<string, unknown> = { ...offer };
   for (const key of RELEVANCE_KEYS) delete next[key];
@@ -113,6 +114,7 @@ function rejudged(
     ...(next as unknown as ProspectOffer),
     ...judgementFields(j),
     exclusionsHash: offerExclusionsHash(cfg),
+    rulesHash: offerRulesHash(cfg),
   };
 }
 

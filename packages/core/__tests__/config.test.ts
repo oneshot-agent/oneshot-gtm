@@ -10,7 +10,9 @@ import {
   loadConfig,
   noOfferPlaysOf,
   offerAnchorOf,
+  offerChecksOf,
   offerExclusionsOf,
+  offerRulesOf,
   oneshotEnvReady,
   SECRET_KEYS,
   withCurrentDefaultModel,
@@ -232,6 +234,18 @@ describe("offerExclusionsOf", () => {
     expect(offerExclusionsOf({ offerExclusions: " legal advice " })).toEqual(["legal advice"]);
     expect(offerExclusionsOf({})).toEqual([]);
     expect(offerExclusionsOf({ offerExclusions: { a: 1 } })).toEqual([]);
+  });
+});
+
+describe("offerRulesOf and offerChecksOf", () => {
+  it("read rules like exclusions, and only the known checks, in their own order", () => {
+    expect(offerRulesOf({ offerRules: [" a  rule ", "", "a rule", 3] })).toEqual(["a rule"]);
+    expect(offerRulesOf({})).toEqual([]);
+    expect(
+      offerChecksOf({ offerChecks: ["system-wrapper", "nope", "awareness", "awareness"] }),
+    ).toEqual(["awareness", "system-wrapper"]);
+    expect(offerChecksOf({ offerChecks: "awareness" })).toEqual([]);
+    expect(offerChecksOf({})).toEqual([]);
   });
 });
 
