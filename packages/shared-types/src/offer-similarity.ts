@@ -32,6 +32,27 @@ const NEGATIONS = new Set(
   "not no never without non nor none neither nothing nobody cannot t".split(" "),
 );
 
+/**
+ * Numbers spelled out, read as their digits: "two sentences" is "2
+ * sentences", so a changed limit ("two" against "three") reads as a changed
+ * number, and the same limit written either way reads as the same.
+ */
+const NUMBER_WORDS = new Map(
+  (
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen " +
+    "fifteen sixteen seventeen eighteen nineteen twenty"
+  )
+    .split(" ")
+    .map((word, n) => [word, String(n)] as const)
+    .concat([
+      ["thirty", "30"],
+      ["forty", "40"],
+      ["fifty", "50"],
+      ["hundred", "100"],
+      ["thousand", "1000"],
+    ]),
+);
+
 /** Letters and digits, the units a number carries, and the comma (a joiner). */
 const TOKEN = /[\p{L}\p{N}]+|[$%€£,]/gu;
 
@@ -83,7 +104,7 @@ function offerClauses(text: string): { clauses: string[][]; names: Set<string> }
   const names = new Set<string>();
   const tokens = text.replace(/(\d),(?=\d{3}\b)/g, "$1").match(TOKEN) ?? [];
   tokens.forEach((raw, i) => {
-    const t = raw.toLowerCase();
+    const t = NUMBER_WORDS.get(raw.toLowerCase()) ?? raw.toLowerCase();
     if (JOINERS.has(t)) {
       if (clauses.at(-1)!.length > 0) clauses.push([]);
       return;

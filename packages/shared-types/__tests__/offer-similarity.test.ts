@@ -324,6 +324,20 @@ describe("textsNearDuplicate", () => {
     expect(
       textsNearDuplicate("Keep follow-ups under 60 words.", "Keep follow-ups under 90 words."),
     ).toBe(false);
+    // Spelled out, a changed limit is still a changed number; the same limit
+    // written either way is the same text.
+    expect(
+      textsNearDuplicate(
+        "Keep LinkedIn first touches under two sentences.",
+        "Keep LinkedIn first touches under three sentences.",
+      ),
+    ).toBe(false);
+    expect(
+      textsNearDuplicate(
+        "Keep LinkedIn first touches under two sentences.",
+        "Keep LinkedIn first touches under 2 sentences.",
+      ),
+    ).toBe(true);
   });
 
   it("names the first near-duplicate among others", () => {

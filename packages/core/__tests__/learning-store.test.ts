@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -167,6 +167,16 @@ describe("proposals", () => {
     expect(ledger.learning.get(a.id)).toMatchObject({ status: "stale", decidedAt: T1 });
     expect(ledger.learning.get(other.id)?.status).toBe("pending");
     expect(ledger.learning.get(pref.id)?.status).toBe("pending");
+  });
+
+  it("a retry that raced past the first duplicate check is still a no-op", () => {
+    const a = insertAngle(1, "hook A")!;
+    // A second connection checked before the first committed: its own check
+    // under the write lock must find the first and leave it alone.
+    const spy = vi.spyOn(ledger.learning, "hasPendingDuplicate").mockReturnValueOnce(false);
+    expect(insertAngle(1, "hook A", T1)).toBeNull();
+    spy.mockRestore();
+    expect(ledger.learning.get(a.id)?.status).toBe("pending");
   });
 
   it("keeps one pending angle revision per prospect: a newer one replaces the one waiting", () => {

@@ -265,8 +265,11 @@ export class LearningStore {
     const scopeKey = learningScopeKey(input.kind, scope);
     const createdAt = input.createdAt ?? new Date().toISOString();
     try {
-      this.db
+      const inserted = this.db
         .transaction(() => {
+          // Again under the write lock: a concurrent insert of the same
+          // proposal is a no-op, never a replacement of the one it raced.
+          if (this.hasPendingDuplicate(input.kind, input.dedupeKey)) return false;
           if (SUPERSEDING_KINDS.has(input.kind) && scopeKey)
             this.markStale(input.kind, scopeKey, createdAt, undefined, "superseded");
           this.db
@@ -291,8 +294,10 @@ export class LearningStore {
               input.sourceVersion ?? null,
               createdAt,
             );
+          return true;
         })
         .immediate();
+      if (!inserted) return null;
     } catch (err) {
       if (/UNIQUE constraint failed/i.test((err as Error).message ?? "")) return null;
       throw err;
