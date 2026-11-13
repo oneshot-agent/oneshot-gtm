@@ -602,6 +602,17 @@ export interface SetupRequest {
    */
   offerExclusions?: string[] | null;
   /**
+   * The founder's own rules for what counts as an offer, one plain-language
+   * entry each. Same handling as `offerExclusions`.
+   */
+  offerRules?: string[] | null;
+  /**
+   * Pattern checks run on every written offer: `awareness`, `check-lead`,
+   * `system-wrapper`. `undefined` = leave unchanged; `null` or `[]` = none;
+   * an unknown name is a 400.
+   */
+  offerChecks?: string[] | null;
+  /**
    * Which anchor an offer should rest on where the research allows a choice:
    * `prefer-product` leads with a goal of the prospect's own product,
    * `either` has no preference. `undefined` = leave unchanged; `null` =

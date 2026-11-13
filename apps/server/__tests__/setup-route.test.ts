@@ -545,6 +545,37 @@ describe("POST /api/setup — offerJudge", () => {
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
 
+  it("offerRules and offerChecks: saved, absent keeps, null clears, bad values refused", async () => {
+    expect(
+      await post({
+        offerRules: ["  a  rule ", "", "a rule"],
+        offerChecks: ["check-lead", "awareness"],
+      }),
+    ).toEqual({ status: 200 });
+    expect(savedCfg().offerRules).toEqual(["a rule"]);
+    expect(savedCfg().offerChecks).toEqual(["awareness", "check-lead"]);
+    current = { ...current, offerRules: ["a rule"], offerChecks: ["awareness"] };
+    saveConfigMock.mockClear();
+    expect(await post({ founderName: "Janet" })).toEqual({ status: 200 });
+    expect(savedCfg().offerRules).toEqual(["a rule"]);
+    expect(savedCfg().offerChecks).toEqual(["awareness"]);
+    saveConfigMock.mockClear();
+    expect(await post({ offerRules: null, offerChecks: [] })).toEqual({ status: 200 });
+    expect(savedCfg().offerRules).toBeUndefined();
+    expect(savedCfg().offerChecks).toBeUndefined();
+    for (const body of [
+      { offerChecks: ["awarness"] },
+      { offerRules: ["x".repeat(501)] },
+      { offerRules: ["ok", 3] },
+    ]) {
+      saveConfigMock.mockClear();
+      const res = await post(body as never);
+      expect(res.status).toBe(400);
+      expect(res.error).toMatch(/offer(Rules|Checks)/);
+      expect(saveConfigMock).not.toHaveBeenCalled();
+    }
+  });
+
   it("offerAnchor: saved as given, absent keeps, null clears, an unknown value refused", async () => {
     expect(await post({ offerAnchor: "prefer-product" })).toEqual({ status: 200 });
     expect(savedCfg().offerAnchor).toBe("prefer-product");

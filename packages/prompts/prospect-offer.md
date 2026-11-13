@@ -1,4 +1,4 @@
-You write FIVE offers a founder could make to this prospect, ranked by what each returns to the prospect's firm. Each offer is a goal of that firm the founder's product would carry to completion over weeks (see The bar). The first one is used: every outreach message opens with it, so it is the whole reason they reply. The other four are alternatives the founder can switch to.
+You write FIVE offers a founder could make to this prospect, ranked by what each returns to the prospect's firm. Each offer is a goal of that firm the founder's product would help it reach (see The bar). The first one is used: every outreach message opens with it, so it is the whole reason they reply. The other four are alternatives the founder can switch to.
 
 Return JSON only:
 {"offers": [{"offer": "...", "return": "...", "fit": "...", "anchor": "product" | "firm", "steps": "...", "evidence": ["...", "..."], "stage": "...", "level": "researched" | "role"}, ... five, best return first]}
@@ -9,6 +9,7 @@ or {"skip": true, "why": "..."}
 - PRODUCT, PRODUCT BRIEF: what the founder's product does. The ONLY source of what it can deliver.
 - OFFER TERMS (optional): the founder's general terms (a pilot, a trial, a partnership, a service). They set the size and shape of the offer; never repeat them inside it.
 - NEVER OFFER (optional): kinds of goal the founder never takes on for a prospect.
+- OFFER RULES (optional): the founder's own rules for what counts as an offer. Every offer follows each one.
 - ANCHOR (optional): which of the two anchors below to prefer when RESEARCH allows a choice.
 - PLAY: how this prospect was found.
 - PROSPECT, TITLE, COMPANY: who they are.
@@ -30,25 +31,22 @@ The thread is context, not evidence. It is our own writing, not a fact about the
 2. What stage is it at? Pre-product, early startup, scaling startup, established company, enterprise, public body, or a local business. The same title means different work at each.
 3. What does this person's own leadership review them on this quarter, at this firm? Name it from their title and RESEARCH, and make every offer move that result. A technology or AI leader is measured on systems shipped and running that pay back; a sales leader on signed revenue; an operations leader on cost and throughput; a finance leader on cash and close; a founder on the firm's own top goal.
 4. What are the firm's two or three most valuable outcomes this quarter, in its own numbers when RESEARCH has them: revenue to bring in, customers to win or keep, a launch to ship, a contract cycle to close, a cost line to cut, a program to finish? Look in two places (the anchors below): a piece their own product is missing to finish its job for its customers, and a goal their own firm has outside its core product.
-5. Which of those take weeks of work to reach? The work can be done by machine (long multi-step work: processing thousands of documents or records, optimizing routes, allocations or schedules, forecasting or simulating to change a plan, building or migrating software, working through a browser), with outside parties (customers, suppliers, partners, agencies, regulators, candidates), or both.
-6. Which of those can the product carry to the end, using only what PRODUCT BRIEF says it does? The product's own kind of work is how it gets there, never the goal itself.
-7. Rank them by direct return to THIS firm: money brought in, money not spent, something signed, closed, launched or shipped, a risk closed out, hours given back. The return must be something they could count when the goal is reached. Rank across both anchors together and keep the five with the highest return, best first.
+5. Which of those can the product carry to the end, using only what PRODUCT BRIEF says it does? The product's own kind of work is how it gets there, never the goal itself.
+6. Rank them by direct return to THIS firm: money brought in, money not spent, something signed, closed, launched or shipped, a risk closed out, hours given back. The return must be something they could count when the goal is reached. Rank across both anchors together and keep the five with the highest return, best first.
 
 ## The bar
 
-- An offer is a goal this firm's leadership would put on its plan for the quarter, carried over weeks of work (by machine, with outside parties, or both) to a counted result: money brought in or no longer spent, or something signed, closed, launched or shipped. Size it from their own numbers when RESEARCH has them: their customers, their sites, their contracts, their open roles, their launch.
-- The weeks of work can be done by machine: long multi-step work such as processing thousands of documents or records, optimizing routes, allocations or schedules, forecasting or simulating to change a plan, building or migrating software, or working through a browser. They can run through outside parties: customers, suppliers, partners, agencies, regulators, candidates. Or both. Neither is required; what makes it an offer is a long piece of work that ends in a counted result: "re-plan every delivery route before peak season", "migrate the codebase off a deprecated platform before its cutoff", "sign three new distributors this quarter".
-- A single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching is a STEP, never the offer. The offer is what that work, however long or machine-heavy, wins: a contract renegotiated, money recovered, a deal signed, a launch shipped, every new supplier onboarded in time for next quarter's contracts. "recover overbilled charges from three years of carrier invoices" is an offer; "audit carrier invoices" is a step. The whole path to that result is still work PRODUCT BRIEF says the product does: when the brief gives a check no path to a counted result for this firm, choose another goal rather than claim work the brief does not name. This holds when checking is all the product does: the offer names what the checking wins, and the check goes in STEPS. An offer never opens with vet, verify, validate, screen, scan, audit or check.
-- Paperwork is a step, never the offer: a goal that ends in a document, credit, policy, certificate, booked test, signed compliance agreement, recertification or passed outside review is administration the firm files, not a result it counts. The offer is the business result that paperwork wins: money recovered, cases closed, contracts renewed on better terms, invoices collected, deliveries made, a named deal the review was holding up. With no such result for this firm, choose another goal.
-- A forecast, a model or an analysis on its own is insight, never the offer. The offer is the plan changed on it and what that wins: stock reordered before the peak, crews rescheduled, a budget moved.
+- An offer is a goal this firm's leadership would put on its plan for the quarter, reached with what PRODUCT BRIEF says the product does, ending in a counted result: money brought in or no longer spent, or something signed, closed, launched or shipped. Size it from their own numbers when RESEARCH has them: their customers, their sites, their contracts, their open roles, their launch. For example: "re-plan every delivery route before peak season", "sign three new distributors this quarter".
+- The whole path to that result is work PRODUCT BRIEF says the product does: when the brief gives no path to a counted result for this firm, choose another goal rather than claim work the brief does not name.
 - The person owns the goal: it moves the result their own leadership reviews them on (step 3). When the biggest goal in the firm belongs to another leader, write the biggest one this person owns.
 - No offer, in any wording, is a goal of a kind listed in NEVER OFFER, however much RESEARCH says the firm needs it. Pick another goal.
+- Every offer follows each rule under OFFER RULES, as written.
 
 ## Each offer rests on an anchor
 
 Every offer rests on at least one of these two:
 
-- **Their product:** a piece their product is missing to finish its job for its own customers, named as a piece: a step it cannot do itself today (work outside their software, with outside parties, or long compute work), which the founder's product supplies inside theirs. For a collections portal, "collect overdue accounts" is their own job; "printed letters and calls for the cases your portal can't close" is a piece. Never the job their product already does or sells (see the homepage test below). It needs to know what their product does (their own pages, the row, firm research).
+- **Their product:** a piece their product is missing to finish its job for its own customers, named as a piece: a step it cannot do itself today, which the founder's product supplies inside theirs. For a collections portal, "collect overdue accounts" is their own job; "printed letters and calls for the cases your portal can't close" is a piece. Never the job their product already does or sells (see the homepage test below). It needs to know what their product does (their own pages, the row, firm research).
 - **Their firm:** a goal of their own firm outside its core product, at this stage and size, that this person is measured on. It needs to know the firm's stage and the person's role.
 
 An offer that rests on neither is not an offer for this prospect, however well it reads. `anchor` names the one it rests on, `product` or `firm`: the same thing `fit` says in prose, so the two always agree.
@@ -66,18 +64,15 @@ With `ANCHOR: prefer their product`, read RESEARCH for what their own product do
 - A goal already reached is no offer. Before writing a goal, read RESEARCH for its end state: a partner or marketplace page that already lists them, a certification they already hold, an integration or launch already live, an agreement already signed. When it is there, the goal is done: write what that result now wins for them, counted, or another goal. An offer whose own evidence shows its goal reached is never kept.
 - An offer whose goal is the product's own capability (what PRODUCT BRIEF says the product does, restated as something to ship or run) is a restatement of the brief, not a goal of theirs. The goal is their product's or their firm's; the product's work belongs in STEPS.
 
-## Each offer is an execution with a return
+## Each offer is a goal with a return
 
 - A job carried to an end state: something is collected, closed, signed, renewed, filed, cleared, bought, booked, migrated or resolved, and the firm is better off by an amount it could count. The end state is the goal (see The bar), not one pass of the work that reaches it.
-- Never a standing service or an awareness of something: no offer to track, monitor, watch, alert, stay on top of, keep anything up to date or in check, maintain, ground, or give visibility or insight into anything. An offer never opens with track, monitor, watch, alert, stay, keep, maintain or ground. When the product's work starts by noticing something (a change, a record, a deadline), the offer is the action taken on what it notices and its result, and the noticing belongs in STEPS.
 - The five are five different jobs, not five wordings of one.
 
 ## The offer (each of the five)
 
 - An outcome for their firm, in their own business's terms: what is true for their business when it is done. Not a feature, not a task list, not a meeting.
 - The outcome only, never how the product works: no wording from PRODUCT or PRODUCT BRIEF in the offer, and no mechanism words (checks, policies, verification, guardrails, runtimes). Name what is true for their business when it is done; how it gets done belongs in STEPS. The offer ends at the outcome: never a tail of "with…", "through…", "via…" or "using…" saying how. Check: would this firm want the sentence on its own roadmap if it had never heard of the product? If not, it is a pitch, not an offer.
-- When the person leads technology, engineering, data or AI, every offer is a result their software carries one workflow of their own firm or their own product to, never the operations job handed to them bare. Name that workflow as specifically as RESEARCH allows: its product or programme name, its customers, its sites, its numbers ("work every failed delivery in their dispatch app to a rebooked slot"). Collecting, recovering, reconciling or re-planning offered bare to them is another leader's goal.
-- Name the result, never the system that gets it: no "put into production", no "the system that", no "deploy a system".
 - Specific in the sentence itself, not only in `evidence`: every offer names a fact from RESEARCH: their product by name, a customer, a site, a market they operate in themselves, their regulator, a number. If it would fit another firm in their industry unchanged, it is not specific enough.
 - Imperative, lowercase, no trailing period, at most 140 characters.
 - Numbers only when the same number appears in RESEARCH. Otherwise write counts as words or leave them out.

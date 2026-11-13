@@ -30,10 +30,13 @@ import {
   noOfferPlaysOf,
   logEvent,
   offerAnchorOf,
+  offerChecksOf,
   offerExclusionsOf,
+  offerRulesOf,
   offerWriterOf,
   productBriefText,
   type OfferAnchor,
+  type OfferCheck,
   sliceText,
 } from "@oneshot-gtm/core";
 import {
@@ -138,6 +141,12 @@ export interface ProspectOffer {
    */
   exclusionsHash?: string;
   /**
+   * Hash of the workspace's `offerRules` and `offerChecks` it was written or
+   * last judged under (`offerRulesHash`). Absent on offers from before the
+   * fields, which are kept whatever the rules say now.
+   */
+  rulesHash?: string;
+  /**
    * The prompt version a re-judge passed it under (`find rejudge-offers
    * --sequences`), when that is newer than the version it was written by. A
    * sequence keeps such an offer as current (`offerConfigIsCurrent`).
@@ -178,6 +187,8 @@ export interface OfferSkip {
   productHash: string;
   /** Hash of the `offerExclusions` the writer read (`offerExclusionsHash`); absent reads as none. */
   exclusionsHash?: string;
+  /** Hash of the `offerRules` and `offerChecks` it ran under (`offerRulesHash`); absent is kept. */
+  rulesHash?: string;
   /**
    * On a skip because no offer passed (`noStrongOfferWhy`): the writer
    * settings its rounds ran under (`offerWriterHash`). New rounds or a
@@ -268,17 +279,31 @@ export function offerExclusionsHash(cfg: { offerExclusions?: unknown }): string 
 }
 
 /**
+ * Hash of the workspace's `offerRules` and `offerChecks` as the writer, the
+ * judge and the checks read them (`offerRulesOf`, `offerChecksOf`).
+ */
+export function offerRulesHash(cfg: { offerRules?: unknown; offerChecks?: unknown }): string {
+  return createHash("sha256")
+    .update([...offerRulesOf(cfg), "\u0001", ...offerChecksOf(cfg)].join("\u0000"))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+/**
  * True when an offer or skip was written (or judged) under today's
- * `offerExclusions`. One from before the stamp existed reads as written
- * under none, so a workspace with no exclusions keeps every stored offer.
+ * `offerExclusions`, and today's `offerRules` and `offerChecks`. One from
+ * before the exclusions stamp existed reads as written under none, so a
+ * workspace with no exclusions keeps every stored offer. One from before the
+ * rules stamp is kept: the rules were part of the shipped prompt then.
  */
 export function offerExclusionsCurrent(
-  stored: { exclusionsHash?: unknown },
-  cfg: { offerExclusions?: unknown },
+  stored: { exclusionsHash?: unknown; rulesHash?: unknown },
+  cfg: { offerExclusions?: unknown; offerRules?: unknown; offerChecks?: unknown },
 ): boolean {
   const made =
     typeof stored.exclusionsHash === "string" ? stored.exclusionsHash : offerExclusionsHash({});
-  return made === offerExclusionsHash(cfg);
+  if (made !== offerExclusionsHash(cfg)) return false;
+  return typeof stored.rulesHash !== "string" || stored.rulesHash === offerRulesHash(cfg);
 }
 
 /** The writer's skip a queue payload carries, when it has one. */
@@ -726,6 +751,8 @@ export function lintOffer(
   product = "",
   /** The one-liner alone: positioning, never an outcome. */
   oneLiner = "",
+  /** The pattern checks the workspace runs (`offerChecksOf`); none by default. */
+  checks: readonly OfferCheck[] = [],
 ): string[] {
   const flags: string[] = [];
   const offer = parts.offer.trim();
@@ -737,9 +764,10 @@ export function lintOffer(
   if (ret.length > OFFER_MAX.return) flags.push("return-too-long");
   const fit = (parts.fit ?? "").trim();
   if (fit.length > OFFER_MAX.fit) flags.push("fit-too-long");
-  if (isAwarenessOffer(offer)) flags.push("offer-not-execution");
-  if (isCheckOffer(offer)) flags.push("offer-is-a-check");
-  if (isSystemWrapperOffer(offer)) flags.push("offer-names-the-system");
+  if (checks.includes("awareness") && isAwarenessOffer(offer)) flags.push("offer-not-execution");
+  if (checks.includes("check-lead") && isCheckOffer(offer)) flags.push("offer-is-a-check");
+  if (checks.includes("system-wrapper") && isSystemWrapperOffer(offer))
+    flags.push("offer-names-the-system");
   if (isAlreadyMetOffer(offer, parts.evidence)) flags.push("offer-already-met");
   if (parts.level === "researched" && !ret) flags.push("no-return");
   const both = `${offer} ${steps} ${ret}`;
@@ -959,6 +987,7 @@ function offerUserMessage(input: DeriveOfferInput, cfg: AppConfig, research: str
     `PRODUCT BRIEF:\n${productBriefText(cfg, undefined, { max: BRIEF_MAX }) ?? ""}`,
     ...(cfg.pilotOffer?.trim() ? [`OFFER TERMS: ${cfg.pilotOffer.trim()}`] : []),
     ...neverOfferBlock(offerExclusionsOf(cfg)),
+    ...offerRulesBlock(offerRulesOf(cfg)),
     ...anchorBlock(offerAnchorOf(cfg)),
     `PLAY: ${input.playName}`,
     `PROSPECT: ${firstString(t, ["name", "founderName", "guestName", "hostName"])}`,
@@ -970,6 +999,11 @@ function offerUserMessage(input: DeriveOfferInput, cfg: AppConfig, research: str
       ? [`ALREADY OFFERED:\n${avoid.map((o) => `- ${clip(o, OFFER_MAX.offer)}`).join("\n")}`]
       : []),
   ].join("\n\n");
+}
+
+/** The OFFER RULES section the writer and the judge read; none without rules. */
+function offerRulesBlock(rules: readonly string[]): string[] {
+  return rules.length > 0 ? [`OFFER RULES:\n${rules.map((r) => `- ${r}`).join("\n")}`] : [];
 }
 
 /** The NEVER OFFER section the writer and the judge read; none without exclusions. */
@@ -1034,11 +1068,14 @@ const JUDGE_WHY_MAX = 140;
 /**
  * The decisions-engine criteria for one offer's relevance. With `exclusions`
  * (the workspace's `offerExclusions`), an offer of one of those kinds is
- * `irrelevant`; without, the criteria are the same as ever.
+ * `irrelevant`; with `rules` (its `offerRules`), one that breaks a rule is
+ * `weak`, or `irrelevant` where the rule says so. Without either, the
+ * criteria are the shipped bar alone.
  */
 export function offerRelevanceCriteria(
   exclusions: readonly string[] = [],
   anchor: OfferAnchor = "either",
+  rules: readonly string[] = [],
 ): Record<OfferRelevance, string> {
   const excluded =
     exclusions.length > 0
@@ -1051,11 +1088,15 @@ export function offerRelevanceCriteria(
     anchor === "prefer-product"
       ? " Also weak: an offer resting on their firm where RESEARCH plainly says what their own product does and a missing piece of that product was available instead."
       : "";
+  const broken =
+    rules.length > 0
+      ? ` Also weak: an offer that breaks one of the founder's OFFER RULES, or irrelevant where that rule says so (${rules.join("; ")}).`
+      : "";
   return {
     relevant:
-      "A goal this firm at its stage would put on its plan and this person is measured on, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), resting on a specific fact about them: a piece their own product is missing to finish its job for its customers (never the job it already does), or a goal their own firm visibly has outside its core product.",
-    weak: `Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on (a collecting, recovering, reconciling or re-planning job offered bare to a technology, engineering, data or AI leader, whose goal is one named workflow of theirs that their own software carries to its end state), a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project. Their own product's job includes more of what it already sells: more records, sources or fields in the data or pages it sells.${preferProduct}`,
-    irrelevant: `A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role. Also a goal already reached: RESEARCH, or the offer's own evidence, shows the listing, certification, approval, launch, integration, signature or result it would win already exists. Also a goal that ends in paperwork (a document, credit, policy, certificate, booked test, signed compliance agreement, recertification or passed outside review the firm would file rather than count) rather than a business result. The goal is the business result the paperwork wins, such as money recovered, cases closed, contracts renewed on better terms, invoices collected or deliveries made; a review, audit or screening inside such a goal is a step.${excluded}`,
+      "A goal this firm at its stage would put on its plan and this person is measured on, carried to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), resting on a specific fact about them: a piece their own product is missing to finish its job for its customers (never the job it already does), or a goal their own firm visibly has outside its core product.",
+    weak: `Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project. Their own product's job includes more of what it already sells: more records, sources or fields in the data or pages it sells.${preferProduct}${broken}`,
+    irrelevant: `A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role. Also a goal already reached: RESEARCH, or the offer's own evidence, shows the listing, certification, approval, launch, integration, signature or result it would win already exists.${excluded}`,
   };
 }
 
@@ -1103,11 +1144,13 @@ function judgeState(
   who: { company: string; title: string },
   exclusions: readonly string[],
   anchor: OfferAnchor,
+  rules: readonly string[],
 ): string {
   return [
     `COMPANY: ${who.company}`,
     `TITLE: ${who.title}`,
     ...neverOfferBlock(exclusions),
+    ...offerRulesBlock(rules),
     ...anchorBlock(anchor),
     `RESEARCH:\n${clip(research, JUDGE_RESEARCH_MAX) || "(none)"}`,
     `OFFERS:\n${offers.map((o, i) => `${i + 1}.\n${describeOffer(o)}`).join("\n\n")}`,
@@ -1122,25 +1165,25 @@ async function judgeWithDecisions(
   min: number,
   exclusions: readonly string[],
   anchor: OfferAnchor,
+  rules: readonly string[],
   fetchImpl: typeof fetch | undefined,
   onCost: ((usd: number) => void) | undefined,
 ): Promise<OfferJudgement[]> {
-  const criteria = offerRelevanceCriteria(exclusions, anchor);
+  const criteria = offerRelevanceCriteria(exclusions, anchor, rules);
   const exclusionCriteria = exclusions.length > 0 ? offerExclusionCriteria(exclusions) : null;
   const questions: Record<string, DecisionsChoiceQuestion> = {};
   offers.forEach((o, i) => {
     questions[`offer_${i + 1}`] = {
       type: "choice",
       instructions:
-        `A founder wants to offer this prospect's firm a goal their product would carry to completion ` +
-        `over weeks of work, by machine, with outside parties, or both. ` +
+        `A founder wants to offer this prospect's firm a goal their product would help it reach. ` +
         `Judge offer ${i + 1} in the state on its own: is it a real goal for this firm and this person? ` +
-        `A market the firm sells into is not a need of the firm. A check is a step, not a goal: ` +
-        `the offer should be what the check wins. How they were found is not what they own: an offer ` +
+        `A market the firm sells into is not a need of the firm. How they were found is not what they own: an offer ` +
         `about a third party's project they only follow, or one restating what the product does, is weak. ` +
-        `A goal RESEARCH or the offer's own evidence shows already reached is irrelevant. A goal that ends in ` +
-        `paperwork (a document, credit, policy, certificate or sign-off) rather than a business result is irrelevant; ` +
-        `a review, audit or screening inside a goal with a business result is a step.` +
+        `A goal RESEARCH or the offer's own evidence shows already reached is irrelevant.` +
+        (rules.length > 0
+          ? ` An offer that breaks one of the founder's OFFER RULES is weak, or irrelevant where that rule says so.`
+          : "") +
         (exclusionCriteria
           ? ` A goal of a kind listed under NEVER OFFER, in any wording, is irrelevant.`
           : "") +
@@ -1284,12 +1327,14 @@ export async function judgeOffers(
   const t = row as JsonRecord;
   const exclusions = offerExclusionsOf(cfg);
   const anchor = offerAnchorOf(cfg);
+  const rules = offerRulesOf(cfg);
   const state = judgeState(
     offers,
     research,
     { company: firstString(t, COMPANY_KEYS), title: firstString(t, TITLE_KEYS) },
     exclusions,
     anchor,
+    rules,
   );
   if (cfg.offerJudge?.engine === "decisions") {
     const model = cfg.offerJudge.model?.trim();
@@ -1304,6 +1349,7 @@ export async function judgeOffers(
           judgeMinConfidence(cfg),
           exclusions,
           anchor,
+          rules,
           opts.fetchImpl,
           opts.onCost,
         );
@@ -1384,7 +1430,7 @@ const OFFER_FLAG_HINTS: ReadonlyArray<[flag: string, hint: string]> = [
   ],
   [
     "offer-is-a-check",
-    "the offer is one pass of checking; name the multi-week goal that checking wins, with a counted return, and put the check in steps",
+    "the offer is one pass of checking; name the goal that checking wins, with a counted return, and put the check in steps",
   ],
   [
     "offer-names-the-system",
@@ -1420,6 +1466,7 @@ function lintReply(
   seen: Set<string>,
   /** The model that wrote the reply, stamped on each offer kept. */
   writtenBy: string,
+  checks: readonly OfferCheck[],
 ): { kept: DraftOffer[]; failed: string[]; skip: string | null } {
   const raws = readRawList(content);
   if (!Array.isArray(raws)) return { kept: [], failed: [], skip: raws.skip };
@@ -1428,7 +1475,7 @@ function lintReply(
   raws.forEach((raw, i) => {
     const parsed = readRaw(raw);
     if (!parsed) return;
-    const flags = lintOffer(parsed, research, product, oneLiner);
+    const flags = lintOffer(parsed, research, product, oneLiner, checks);
     if (flags.length > 0) {
       failed.push(`offer ${i + 1}: ${flags.join(", ")}`);
       return;
@@ -1506,6 +1553,7 @@ export async function deriveOffers(
         oneLiner,
         seen,
         res.model || cfg.llmModel,
+        offerChecksOf(cfg),
       );
       if (out.skip !== null) {
         skipWhy = out.skip;
@@ -1598,12 +1646,14 @@ export async function deriveOffers(
   const derivedAt = new Date().toISOString();
   const productHash = offerProductHash(cfg);
   const exclusionsHash = offerExclusionsHash(cfg);
+  const rulesHash = offerRulesHash(cfg);
   const offers: ProspectOffer[] = kept.slice(0, OFFER_COUNT).map((o) =>
     Object.assign(o, {
       version: OFFER_PROMPT_VERSION,
       inputHash,
       productHash,
       exclusionsHash,
+      rulesHash,
       derivedAt,
     }),
   );
@@ -1625,6 +1675,7 @@ export async function deriveOffers(
           inputHash,
           productHash,
           exclusionsHash,
+          rulesHash,
           // Rounds ran: the skip rests on the settings they ran under.
           ...(skipWhy === null ? { writerHash: offerWriterHash(cfg) } : {}),
           skippedAt: derivedAt,
@@ -1655,10 +1706,7 @@ export const OFFER_ROLE_RESCUE =
   "Every offer so far was rated weak. Start from what this person's title is measured on " +
   "at this firm, not from what the firm does: name the result their own leadership reviews " +
   "them on this quarter, and write each offer as a goal that moves that result, resting on " +
-  "a fact in RESEARCH. A technology, engineering, data or AI leader is measured on " +
-  "what their software carries to an end state: name one workflow of their own firm or " +
-  "product and that end state, never the operations job bare, and never as " +
-  '"put into production", "the system that" or "deploy a system".';
+  "a fact in RESEARCH.";
 
 /** What the judge and replacement rounds share with the writer's first round. */
 interface OfferRoundContext {
@@ -1787,8 +1835,8 @@ async function judgeAndReplace(
           `Write exactly ${missing} new ${missing === 1 ? "offer" : "offers"}, best return first, ` +
           `each a different job from ${keptList ? `the ones kept:\n${keptList}\n` : "the dropped ones, "}` +
           `each resting on an anchor (their product or their firm) and a fact in RESEARCH, ` +
-          `never on an industry word alone, each a multi-week goal with a counted return this ` +
-          `person owns (never one pass of checking), and within every rule. ` +
+          `never on an industry word alone, each a goal with a counted return this ` +
+          `person owns, and within every rule, OFFER RULES included. ` +
           `Return {"offers": [...]} with the same fields. JSON only.`,
       },
     );
@@ -1803,6 +1851,7 @@ async function judgeAndReplace(
         ctx.oneLiner,
         ctx.seen,
         res.model || model,
+        offerChecksOf(ctx.cfg),
       );
       const fresh = out.kept.slice(0, missing);
       if (out.failed.length > 0) {
@@ -1887,7 +1936,7 @@ async function rescueWeakSet(
     }
   }
   const research = ctx.research;
-  const criteria = offerRelevanceCriteria();
+  const criteria = offerRelevanceCriteria([], "either", offerRulesOf(cfg));
   const content = loadPrompt("prospect-offer-rescue")
     .replace("{{rejected}}", () =>
       rejected
@@ -1920,6 +1969,7 @@ async function rescueWeakSet(
       ctx.oneLiner,
       ctx.seen,
       res.model || model,
+      offerChecksOf(ctx.cfg),
     );
     if (out.failed.length > 0) {
       logEvent("prospect_offer.lint_failed", {
@@ -1970,13 +2020,19 @@ async function rescueWeakSet(
 }
 
 /** Flags for one written angle, keyed on its text alone. */
-export function lintOfferAngle(angle: string, research: string, product: string): string[] {
+export function lintOfferAngle(
+  angle: string,
+  research: string,
+  product: string,
+  /** The pattern checks the workspace runs (`offerChecksOf`); none by default. */
+  checks: readonly OfferCheck[] = [],
+): string[] {
   const flags: string[] = [];
   const text = angle.trim();
   if (!text) return ["empty"];
   if (text.length > OFFER_MAX.angle) flags.push("too-long");
   if (text.includes(ANGLE_SEPARATOR)) flags.push("separator");
-  if (AWARENESS_LEAD.test(text)) flags.push("awareness-lead");
+  if (checks.includes("awareness") && AWARENESS_LEAD.test(text)) flags.push("awareness-lead");
   for (const [flag, pattern] of BANNED)
     if (flag !== "punctuation" && pattern.test(text)) flags.push(flag);
   if (slopFlags(text).includes("negative-parallelism")) flags.push("negation-contrast");
@@ -2038,7 +2094,7 @@ export async function deriveOfferAngles(
       const dropped: string[] = [];
       for (const value of raw) {
         const text = typeof value === "string" ? value.trim() : "";
-        const flags = lintOfferAngle(text, research, product);
+        const flags = lintOfferAngle(text, research, product, offerChecksOf(cfg));
         const key = angleTextKey(text);
         if (flags.length > 0 || seen.has(key)) {
           dropped.push(flags.join(",") || "duplicate");
@@ -2351,6 +2407,7 @@ function offerIsStrong(
   offer: unknown,
   productHash: string,
   exclusionsHash: string,
+  rulesHash: string,
 ): offer is ProspectOffer {
   return (
     isProspectOffer(offer) &&
@@ -2358,7 +2415,8 @@ function offerIsStrong(
       (offer.version === OFFER_PROMPT_VERSION &&
         offer.relevance === "relevant" &&
         offer.productHash === productHash &&
-        (offer.exclusionsHash ?? offerExclusionsHash({})) === exclusionsHash))
+        (offer.exclusionsHash ?? offerExclusionsHash({})) === exclusionsHash &&
+        (offer.rulesHash === undefined || offer.rulesHash === rulesHash)))
   );
 }
 
@@ -2386,6 +2444,8 @@ export function mergeKeptOffers(
   productHash: string,
   /** Today's `offerExclusionsHash`; an offer written under other exclusions is not kept. */
   exclusionsHash: string = offerExclusionsHash(loadConfig()),
+  /** Today's `offerRulesHash`; an offer written under other rules is not kept. */
+  rulesHash: string = offerRulesHash(loadConfig()),
 ): ProspectOffer[] {
   const seen = new Set<string>();
   const unseen = (o: ProspectOffer): boolean => {
@@ -2395,7 +2455,7 @@ export function mergeKeptOffers(
     return true;
   };
   const previous = [previousActive, ...previousCandidates].filter((o): o is ProspectOffer =>
-    offerIsStrong(o, productHash, exclusionsHash),
+    offerIsStrong(o, productHash, exclusionsHash, rulesHash),
   );
   const newOnes = fresh.filter(unseen);
   const founders = previous.filter((o) => o.editedBy === "founder").filter(unseen);
@@ -2415,7 +2475,7 @@ export function mergeKeptOffers(
 export function offerSkipPatch(
   previous: unknown,
   skip: OfferSkip,
-  cfg: { offerExclusions?: unknown } = loadConfig(),
+  cfg: { offerExclusions?: unknown; offerRules?: unknown; offerChecks?: unknown } = loadConfig(),
 ): { offerSkip: OfferSkip; offer?: null; offerCandidates?: null } {
   const stands =
     isProspectOffer(previous) &&

@@ -33,6 +33,8 @@ const cfg: {
   llmModel?: string;
   offerJudge?: { engine: "llm" | "decisions"; model?: string; minConfidence?: number };
   offerExclusions?: string[];
+  offerRules?: string[];
+  offerChecks?: string[];
   offerAnchor?: "prefer-product" | "either";
   noOfferPlays?: string[];
   offerWriter?: { rounds?: number; fallbackModel?: string; fallbackOnWeak?: boolean };
@@ -43,6 +45,8 @@ const cfg: {
     "Acme plans crew routes, books jobs into open slots and texts customers the arrival time.",
   pilotOffer: "a free month on one depot",
 };
+/** Every pattern check, as a workspace that runs them all lists them. */
+const ALL = ["awareness", "check-lead", "system-wrapper"] as const;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -99,6 +103,7 @@ const {
   offerForDraft,
   offerInputHash,
   offerProductHash,
+  offerRulesHash,
   offerResearchText,
   offerSetForDraft,
   activeOfferPatch,
@@ -136,6 +141,8 @@ beforeEach(() => {
   delete cfg.offerJudge;
   delete cfg.offerWriter;
   delete cfg.offerExclusions;
+  delete cfg.offerRules;
+  delete cfg.offerChecks;
   delete cfg.offerAnchor;
   // Judge paths must not depend on a key in the developer's or CI's environment.
   delete process.env["OPENROUTER_API_KEY"];
@@ -274,6 +281,18 @@ describe("lintOffer", () => {
   it("lets a role-level offer go without evidence", () => {
     expect(lintOffer({ ...good, level: "role", evidence: [] }, research)).toEqual([]);
   });
+  it("runs no pattern check unless the workspace lists it", () => {
+    for (const offer of [
+      "track leeds depot bookings across every crew",
+      "audit leeds depot invoices",
+      "deploy a system that books every leeds job into an open slot",
+    ]) {
+      const flags = lintOffer({ ...good, level: "researched", offer }, research);
+      expect(flags).not.toContain("offer-not-execution");
+      expect(flags).not.toContain("offer-is-a-check");
+      expect(flags).not.toContain("offer-names-the-system");
+    }
+  });
   it("flags an offer that watches instead of doing", () => {
     for (const offer of [
       "track leeds depot bookings across every crew",
@@ -281,7 +300,7 @@ describe("lintOffer", () => {
       "keep the leeds depot's crew rota aligned with demand",
       "give the leeds depot visibility into missed jobs",
     ]) {
-      expect(lintOffer({ ...good, level: "researched", offer }, research)).toContain(
+      expect(lintOffer({ ...good, level: "researched", offer }, research, "", "", ALL)).toContain(
         "offer-not-execution",
       );
     }
@@ -297,7 +316,7 @@ describe("lintOffer", () => {
       "check every leeds booking for a double slot",
       "Verify the leeds depot's insurance documents",
     ]) {
-      expect(lintOffer({ ...good, level: "researched", offer }, research)).toContain(
+      expect(lintOffer({ ...good, level: "researched", offer }, research, "", "", ALL)).toContain(
         "offer-is-a-check",
       );
     }
@@ -311,7 +330,7 @@ describe("lintOffer", () => {
       "put the leeds depot's booking system into production before peak season",
       "deploy a system that books every leeds job into an open slot",
     ]) {
-      expect(lintOffer({ ...good, level: "researched", offer }, research)).toContain(
+      expect(lintOffer({ ...good, level: "researched", offer }, research, "", "", ALL)).toContain(
         "offer-names-the-system",
       );
     }
@@ -358,7 +377,10 @@ describe("lintOfferAngle", () => {
     ).toEqual([]);
   });
   it("flags an angle that leads with watching, a number from nowhere, or a joined pair", () => {
-    expect(lintOfferAngle("Track every open slot in Leeds.", research, "")).toContain(
+    expect(lintOfferAngle("Track every open slot in Leeds.", research, "", ALL)).toContain(
+      "awareness-lead",
+    );
+    expect(lintOfferAngle("Track every open slot in Leeds.", research, "")).not.toContain(
       "awareness-lead",
     );
     expect(lintOfferAngle("Saves 12 hours a week.", research, "")).toContain("number:12");
@@ -385,6 +407,7 @@ describe("deriveOffers", () => {
   });
 
   it("asks again for the ones that fail, keeping those that passed", async () => {
+    cfg.offerChecks = [...ALL];
     const watching = { ...second, offer: "monitor cancellations at the leeds depot" };
     llm.replies = [
       JSON.stringify({ offers: [good, watching] }),
@@ -396,6 +419,7 @@ describe("deriveOffers", () => {
   });
 
   it("asks again for a check, telling the writer what the flag means", async () => {
+    cfg.offerChecks = [...ALL];
     const check = { ...good, offer: "vet every new leeds subcontractor before they start" };
     llm.replies = [
       JSON.stringify({ offers: [check, second] }),
@@ -405,7 +429,7 @@ describe("deriveOffers", () => {
     expect(llm.inputs).toHaveLength(2);
     expect(llm.inputs[1]).toContain("offer 1: offer-is-a-check");
     expect(llm.inputs[1]).toContain(
-      "offer-is-a-check: the offer is one pass of checking; name the multi-week goal that checking wins",
+      "offer-is-a-check: the offer is one pass of checking; name the goal that checking wins",
     );
     expect(offers.map((o) => o.offer)).toEqual([second.offer, good.offer]);
   });
@@ -468,6 +492,7 @@ describe("the writer's skip", () => {
   });
 
   it("is no skip when an earlier round kept offers", async () => {
+    cfg.offerChecks = [...ALL];
     const watching = { ...second, offer: "monitor cancellations at the leeds depot" };
     llm.replies = [
       JSON.stringify({ offers: [good, watching] }),
@@ -560,6 +585,7 @@ describe("the writer's skip", () => {
 
 describe("deriveOfferSet", () => {
   it("makes the best offer active and writes its angles", async () => {
+    cfg.offerChecks = [...ALL];
     llm.replies = [
       JSON.stringify({ offers: [good, second] }),
       JSON.stringify({ angles: [...angles, "Monitor every slot."] }),
@@ -2259,46 +2285,71 @@ describe("new research re-derives the offers", () => {
   });
 });
 
-// The bar: an offer is a multi-week goal with a counted return, never one
-// pass of checking. The writer prompt, the judge prompt and the decisions
-// criteria carry the same rule; the lint backs the writer's lead list.
+// The bar every founder gets: a goal of the firm with a counted return, resting
+// on a fact about them. Anything particular to one product (how long the work
+// runs, whether a check or paperwork can be the offer) is that workspace's
+// `offerRules` and `offerChecks`, never the shipped prompt.
 
 describe("the offer bar", () => {
   const prompts = join(import.meta.dirname, "..", "..", "prompts");
   const writer = readFileSync(join(prompts, "prospect-offer.md"), "utf8");
   const judge = readFileSync(join(prompts, "prospect-offer-judge.md"), "utf8");
-  const checkPass =
-    "a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching";
   const leads = ["vet", "verify", "validate", "screen", "scan", "audit", "check"];
+  // One product's shape of offer, which the shipped bar must not carry.
+  const oneProduct = [
+    "over weeks",
+    "by machine",
+    "outside parties",
+    "into production",
+    "paperwork",
+    "is a step, never the offer",
+    "on its own is insight",
+    "agent execution",
+    "monitor",
+  ];
 
-  it("the writer starts from the firm's goals and states the bar", () => {
+  it("the writer starts from the firm's goals and states a bar any product can meet", () => {
     expect(writer).toContain("## The bar");
     expect(writer).toContain("most valuable outcomes this quarter");
-    expect(writer.toLowerCase()).toContain(`${checkPass} is a step, never the offer`);
-    expect(writer).toContain(
-      "An offer never opens with vet, verify, validate, screen, scan, audit or check.",
-    );
     expect(writer).toContain("only when nothing bigger is honest");
-    // The weeks of work may be the machine's, outside parties', or both.
-    expect(writer).toContain("by machine, with outside parties, or both");
-    expect(writer).toContain("on its own is insight, never the offer");
+    expect(writer).toContain("- OFFER RULES (optional)");
+    for (const text of [writer, judge]) {
+      for (const phrase of oneProduct) expect(text.toLowerCase(), phrase).not.toContain(phrase);
+    }
   });
 
-  it("the judge holds machine work and plans changed on a forecast to the same bar", () => {
-    expect(judge).toContain("by machine, with outside parties, or both");
-    expect(judge).toContain("a forecast or analysis offered without the plan it changes");
-  });
-
-  it("the lint flags every lead the writer prompt names, and no other", () => {
+  it("a workspace's rules reach the writer and the judge, and a check runs only when listed", async () => {
+    cfg.offerRules = ["an offer is a goal carried over weeks of work"];
+    llm.replies = [JSON.stringify({ offers: [good] })];
+    llm.judge = [JSON.stringify({ judgements: [{ offer: 1, label: "relevant", why: "ok" }] })];
+    const out = await deriveOffers({ target, playName: "new-business" });
+    for (const input of [llm.inputs[0], llm.judgeInputs[0]])
+      expect(input).toContain("OFFER RULES:\n- an offer is a goal carried over weeks of work");
+    // Stamped with the rules it ran under, so a later change writes it again.
+    expect(out.offers[0]?.rulesHash).toBe(offerRulesHash(cfg));
+    const { offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
+    expect(offerRelevanceCriteria([], "either", cfg.offerRules).weak).toContain(
+      "breaks one of the founder's OFFER RULES, or irrelevant where that rule says so (an offer is a goal carried over weeks of work)",
+    );
     const research = offerResearchText(target);
     for (const lead of leads) {
+      const offer = `${lead} the leeds bookings`;
+      expect(lintOffer({ ...good, level: "researched", offer }, research)).not.toContain(
+        "offer-is-a-check",
+      );
       expect(
-        lintOffer({ ...good, level: "researched", offer: `${lead} the leeds bookings` }, research),
+        lintOffer({ ...good, level: "researched", offer }, research, "", "", ["check-lead"]),
       ).toContain("offer-is-a-check");
     }
     for (const lead of ["review", "inspect", "assess"]) {
       expect(
-        lintOffer({ ...good, level: "researched", offer: `${lead} the leeds bookings` }, research),
+        lintOffer(
+          { ...good, level: "researched", offer: `${lead} the leeds bookings` },
+          research,
+          "",
+          "",
+          ALL,
+        ),
       ).not.toContain("offer-is-a-check");
     }
   });
@@ -2308,31 +2359,45 @@ describe("the offer bar", () => {
     const criteria = offerRelevanceCriteria();
     expect(criteria).toMatchInlineSnapshot(`
       {
-        "irrelevant": "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role. Also a goal already reached: RESEARCH, or the offer's own evidence, shows the listing, certification, approval, launch, integration, signature or result it would win already exists. Also a goal that ends in paperwork (a document, credit, policy, certificate, booked test, signed compliance agreement, recertification or passed outside review the firm would file rather than count) rather than a business result. The goal is the business result the paperwork wins, such as money recovered, cases closed, contracts renewed on better terms, invoices collected or deliveries made; a review, audit or screening inside such a goal is a step.",
-        "relevant": "A goal this firm at its stage would put on its plan and this person is measured on, carried over weeks of work (by machine, with outside parties, or both) to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), resting on a specific fact about them: a piece their own product is missing to finish its job for its customers (never the job it already does), or a goal their own firm visibly has outside its core product.",
-        "weak": "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on (a collecting, recovering, reconciling or re-planning job offered bare to a technology, engineering, data or AI leader, whose goal is one named workflow of theirs that their own software carries to its end state), a single pass of checking, screening, vetting, verifying, scanning, auditing, validating or patching offered as the job itself, a forecast or analysis offered without the plan it changes, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project. Their own product's job includes more of what it already sells: more records, sources or fields in the data or pages it sells.",
+        "irrelevant": "A job this firm does not have: work for a department a firm of its size and stage does not have, a process in a market it only sells into, or work far from this person's role. Also a goal already reached: RESEARCH, or the offer's own evidence, shows the listing, certification, approval, launch, integration, signature or result it would win already exists.",
+        "relevant": "A goal this firm at its stage would put on its plan and this person is measured on, carried to a counted return (money in or no longer spent, or something signed, closed, launched or shipped), resting on a specific fact about them: a piece their own product is missing to finish its job for its customers (never the job it already does), or a goal their own firm visibly has outside its core product.",
+        "weak": "Plausible, but generic (it would fit most firms of this kind unchanged) or resting on an industry, sector or customer word rather than a fact about this firm. Also weak: an offer that does the job their own product already does or sells for its customers (it could be their own homepage headline), a goal another leader owns rather than one this person is measured on, a return that is not a counted outcome, an offer about a third party's project the person only follows, starred, forked or attended an event about, or one that restates the product's own capability rather than a goal of the prospect's firm or own project. Their own product's job includes more of what it already sells: more records, sources or fields in the data or pages it sells.",
       }
     `);
     // The llm judge's labels say the same as the decisions criteria.
     const label = (name: string): string =>
       judge.match(new RegExp(`^- \`${name}\`: (.+)$`, "m"))?.[1] ?? "";
     expect(label("relevant").toLowerCase()).toBe(criteria.relevant.toLowerCase());
-    expect(label("weak").toLowerCase()).toBe(criteria.weak.toLowerCase());
-    // The judge prompt's irrelevant adds only the NEVER OFFER rule, which the
-    // decisions engine asks as its own question.
+    // The judge prompt's weak adds the OFFER RULES rule, which the criteria
+    // carry only when a workspace has rules; its irrelevant adds NEVER OFFER,
+    // which the decisions engine asks as its own question.
+    expect(label("weak").toLowerCase().startsWith(criteria.weak.toLowerCase())).toBe(true);
+    expect(label("weak").slice(criteria.weak.length)).toMatch(
+      /^ Also weak: an offer that breaks one of the founder's OFFER RULES/,
+    );
     expect(label("irrelevant").toLowerCase().startsWith(criteria.irrelevant.toLowerCase())).toBe(
       true,
     );
     expect(label("irrelevant").slice(criteria.irrelevant.length)).toMatch(
       /^ Also an offer whose goal, in any wording, is of a kind listed in NEVER OFFER/,
     );
-    expect(criteria.weak).toContain(checkPass);
   });
 
-  // A goal its own evidence shows already reached is no goal, and a goal that
-  // ends in paperwork is not a business result: both are irrelevant, so never
-  // sent unreviewed. Writer, judge prompt and the decisions criteria carry both.
-  it("an already-reached goal and a paperwork goal are irrelevant, everywhere", async () => {
+  // A goal its own evidence shows already reached is no goal: irrelevant, so
+  // never sent unreviewed. Writer, judge prompt and the decisions criteria
+  // carry it.
+  it("an offer from before the rules stamp is kept; a stamped one answers to today's rules", async () => {
+    const { offerExclusionsCurrent } = await import("../src/_prospect-offer.ts");
+    const ruled = { offerRules: ["rule one"], offerChecks: ["awareness"] };
+    expect(offerExclusionsCurrent({}, ruled)).toBe(true);
+    expect(offerExclusionsCurrent({ rulesHash: offerRulesHash(ruled) }, ruled)).toBe(true);
+    expect(offerExclusionsCurrent({ rulesHash: offerRulesHash({}) }, ruled)).toBe(false);
+    expect(
+      offerExclusionsCurrent({ rulesHash: offerRulesHash(ruled) }, { ...ruled, offerChecks: [] }),
+    ).toBe(false);
+  });
+
+  it("an already-reached goal is irrelevant, everywhere", async () => {
     const { offerRelevanceCriteria } = await import("../src/_prospect-offer.ts");
     const criteria = offerRelevanceCriteria();
     expect(criteria.irrelevant).toContain(
@@ -2341,21 +2406,6 @@ describe("the offer bar", () => {
     expect(judge).toContain("A goal already reached is no goal.");
     expect(writer).toContain("A goal already reached is no offer.");
     expect(writer).toContain("An offer whose own evidence shows its goal reached is never kept.");
-    const paperwork =
-      "a document, credit, policy, certificate, booked test, signed compliance agreement, recertification or passed outside review";
-    for (const text of [writer, judge, criteria.irrelevant]) {
-      expect(text).toContain(paperwork);
-      expect(text).toContain("contracts renewed on better terms");
-    }
-    expect(criteria.irrelevant).toContain(
-      "Also a goal that ends in paperwork (a document, credit, policy, certificate, booked test, signed compliance agreement, recertification or passed outside review the firm would file rather than count) rather than a business result.",
-    );
-    expect(criteria.weak).not.toContain("paperwork");
-    expect(judge).toContain("not a result it counts: `irrelevant`, however well it reads.");
-    // A review, audit or screening inside a goal with a business result stays a step.
-    expect(criteria.irrelevant).toContain(
-      "a review, audit or screening inside such a goal is a step",
-    );
     // More of what their product sells is their product's own job.
     for (const text of [writer, judge, criteria.weak]) {
       expect(text).toContain("more records, sources or fields in the data or pages it sells");
@@ -2548,9 +2598,7 @@ describe("judge reads the offer's own evidence", () => {
     expect(body.questions.offer_1.instructions).toContain(
       "A goal RESEARCH or the offer's own evidence shows already reached is irrelevant.",
     );
-    expect(body.questions.offer_2.instructions).toContain(
-      "A goal that ends in paperwork (a document, credit, policy, certificate or sign-off) rather than a business result is irrelevant",
-    );
+    expect(body.questions.offer_2.instructions).not.toContain("OFFER RULES");
     expect(out?.map((j) => [j?.label, j?.pass])).toEqual([
       ["irrelevant", false],
       ["irrelevant", false],

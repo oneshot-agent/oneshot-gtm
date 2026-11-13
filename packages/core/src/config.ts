@@ -15,9 +15,11 @@ import { CALENDAR_READONLY_SCOPE } from "./gmail.ts";
 import { safeParseJsonRecord } from "./json.ts";
 import {
   LINKEDIN_TEMPLATE_SLOTS,
+  OFFER_CHECKS,
   type LinkedInTemplates,
   type LinkedInWriter,
   type OfferAnchor,
+  type OfferCheck,
   type OneShotConfig,
   type SubjectCase,
 } from "./types.ts";
@@ -77,7 +79,26 @@ export function withCurrentDefaultModel(cfg: OneShotConfig): OneShotConfig {
  * as one entry; anything else reads as none.
  */
 export function offerExclusionsOf(cfg: { offerExclusions?: unknown }): string[] {
-  const raw = cfg.offerExclusions;
+  return plainEntries(cfg.offerExclusions);
+}
+
+/** The workspace's `offerRules`, read the same way as `offerExclusionsOf`. */
+export function offerRulesOf(cfg: { offerRules?: unknown }): string[] {
+  return plainEntries(cfg.offerRules);
+}
+
+/**
+ * The workspace's `offerChecks`: the known check names it lists, in the
+ * order `OFFER_CHECKS` gives them. Anything else reads as none.
+ */
+export function offerChecksOf(cfg: { offerChecks?: unknown }): OfferCheck[] {
+  const raw = cfg.offerChecks;
+  const list = Array.isArray(raw) ? raw : [];
+  return OFFER_CHECKS.filter((c) => list.includes(c));
+}
+
+/** Plain-language entries: each trimmed, blanks and repeats dropped, a lone string one entry. */
+function plainEntries(raw: unknown): string[] {
   const list = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : [];
   const out: string[] = [];
   for (const entry of list) {
