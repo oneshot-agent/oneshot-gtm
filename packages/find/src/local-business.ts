@@ -33,6 +33,12 @@ const MAX_PAGES_PER_QUERY = 6;
 /** People searches one run may make, across every query and page. */
 const MAX_SEARCHES_PER_RUN = 12;
 /**
+ * Titles one people search may carry. Three or more failed upstream with
+ * "Upstream service temporarily unavailable" in every industry tried
+ * (measured 2026-11-11); one or two work.
+ */
+const MAX_TITLES_PER_SEARCH = 2;
+/**
  * How long a search's progress is kept: a search read to its end is left
  * alone that long, and one stopped at the page cap resumes from where it
  * stopped. After that it is read from the top again, which is where the
@@ -149,7 +155,21 @@ export function peopleQueries(args: {
     ...base,
   };
   if (args.jobTitles.length < 2) return [combined];
-  return [combined, ...args.jobTitles.map((title) => ({ jobTitles: [title], ...base }))];
+  const perTitle = args.jobTitles.map((title) => ({ jobTitles: [title], ...base }));
+  // The platform fails a search that carries more titles than this, and the
+  // run stops on a failed search, so a longer list searches each title alone.
+  if (args.jobTitles.length > MAX_TITLES_PER_SEARCH) return perTitle;
+  return [combined, ...perTitle];
+}
+
+/**
+ * Pages each search may read this run: the run's searches shared across
+ * every query, so with many titles the first one cannot use them all and
+ * leave the rest unread. Each keeps its place for the next run.
+ */
+export function pagesPerQuery(queryCount: number): number {
+  if (queryCount <= 1) return MAX_PAGES_PER_QUERY;
+  return Math.min(MAX_PAGES_PER_QUERY, Math.max(1, Math.floor(MAX_SEARCHES_PER_RUN / queryCount)));
 }
 
 function searchProgressKey(query: PeopleSearchInput): string {
@@ -499,6 +519,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       ...(employeeRange ? { companySize: employeeRange } : {}),
     },
   });
+  const pageCap = pagesPerQuery(queries.length);
   const seenThisRun = new Set<string>();
   let worked = 0;
   let searches = 0;
@@ -526,7 +547,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     let retryOffset: number | null = null;
     let previousFirstKey: string | null = null;
     for (let page = 0; !stop && !ended; page++) {
-      if (page >= MAX_PAGES_PER_QUERY) {
+      if (page >= pageCap) {
         capped = true;
         break;
       }

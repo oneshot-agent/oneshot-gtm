@@ -575,6 +575,38 @@ describe("runLocalBusinessFinder — several titles", () => {
     expect(researchCache.size).toBe(0);
   });
 
+  it("searches each title alone when there are more than two, with no combined search", () => {
+    expect(
+      peopleQueries({
+        businessShaped: false,
+        companyDomains: [],
+        jobTitles: ["COO", "CFO", "President"],
+        industries: ["Dentists"],
+        shared: {},
+      }),
+    ).toEqual([
+      { jobTitles: ["COO"], industry: ["Dentists"] },
+      { jobTitles: ["CFO"], industry: ["Dentists"] },
+      { jobTitles: ["President"], industry: ["Dentists"] },
+    ]);
+  });
+
+  it("shares the run's searches across every title, so each is read and keeps its place", async () => {
+    const titles = Array.from({ length: 8 }, (_, i) => `Title ${i}`);
+    // Every title has more people than one run reads.
+    peopleSearchHandler = (input) => {
+      const t = titles.indexOf((input["jobTitles"] as string[])[0]!);
+      return people(t * 1000 + ((input["offset"] as number | undefined) ?? 0), 40);
+    };
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+    expect(peopleSearchCalls.every((c) => (c["jobTitles"] as string[]).length === 1)).toBe(true);
+    expect(peopleSearchCalls.map((c) => (c["jobTitles"] as string[])[0])).toEqual(titles);
+    // Each stopped at its share and carries on from there next run.
+    expect([...researchCache.values()]).toEqual(
+      titles.map(() => JSON.stringify({ done: false, offset: 40 })),
+    );
+  });
+
   it("makes at most twelve searches in one run", async () => {
     const titles = Array.from({ length: 20 }, (_, i) => `Title ${i}`);
     peopleSearchHandler = () => [];
