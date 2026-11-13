@@ -2386,6 +2386,29 @@ describe("the offer bar", () => {
   // A goal its own evidence shows already reached is no goal: irrelevant, so
   // never sent unreviewed. Writer, judge prompt and the decisions criteria
   // carry it.
+  it("the judge never passes an offer that breaks a check the workspace runs", async () => {
+    const { judgeOffers } = await import("../src/_prospect-offer.ts");
+    const watching = { ...good, offer: "monitor cancellations at the leeds depot" };
+    const relevant = JSON.stringify({
+      judgements: [
+        { offer: 1, label: "relevant", why: "ok" },
+        { offer: 2, label: "relevant", why: "ok" },
+      ],
+    });
+    const research = offerResearchText(target);
+    llm.judge = [relevant];
+    const off = await judgeOffers([watching, good], research, target, cfg as never);
+    expect(off?.map((j) => j?.pass)).toEqual([true, true]);
+    cfg.offerChecks = ["awareness"];
+    llm.judge = [relevant];
+    const on = await judgeOffers([watching, good], research, target, cfg as never);
+    expect(on?.map((j) => [j?.label, j?.pass])).toEqual([
+      ["weak", false],
+      ["relevant", true],
+    ]);
+    expect(on?.[0]?.why).toBe("breaks the workspace's offer checks: offer-not-execution");
+  });
+
   it("an offer from before the rules stamp is kept; a stamped one answers to today's rules", async () => {
     const { offerExclusionsCurrent } = await import("../src/_prospect-offer.ts");
     const ruled = { offerRules: ["rule one"], offerChecks: ["awareness"] };

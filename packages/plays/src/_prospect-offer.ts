@@ -764,10 +764,7 @@ export function lintOffer(
   if (ret.length > OFFER_MAX.return) flags.push("return-too-long");
   const fit = (parts.fit ?? "").trim();
   if (fit.length > OFFER_MAX.fit) flags.push("fit-too-long");
-  if (checks.includes("awareness") && isAwarenessOffer(offer)) flags.push("offer-not-execution");
-  if (checks.includes("check-lead") && isCheckOffer(offer)) flags.push("offer-is-a-check");
-  if (checks.includes("system-wrapper") && isSystemWrapperOffer(offer))
-    flags.push("offer-names-the-system");
+  flags.push(...offerCheckFlags(offer, checks));
   if (isAlreadyMetOffer(offer, parts.evidence)) flags.push("offer-already-met");
   if (parts.level === "researched" && !ret) flags.push("no-return");
   const both = `${offer} ${steps} ${ret}`;
@@ -1315,6 +1312,9 @@ async function judgeWithLlm(
  * key or model or any failure, like the reply classifier. One entry per offer;
  * null where no engine gave that offer a verdict. Null overall when no engine
  * ran at all: the caller keeps the offers unjudged rather than lose them.
+ * An offer that breaks one of the workspace's `offerChecks` never passes,
+ * whatever the engine said: a stored offer re-judged under checks turned on
+ * since it was written is held like any weak one.
  */
 export async function judgeOffers(
   offers: ReadonlyArray<JudgedOffer>,
@@ -1322,6 +1322,39 @@ export async function judgeOffers(
   row: object,
   cfg: AppConfig,
   opts: { fetchImpl?: typeof fetch; onCost?: (usd: number) => void } = {},
+): Promise<Array<OfferJudgement | null> | null> {
+  const verdicts = await judgeOffersByEngine(offers, research, row, cfg, opts);
+  const checks = offerChecksOf(cfg);
+  if (!verdicts || checks.length === 0) return verdicts;
+  return verdicts.map((v, i) => {
+    const flags = offerCheckFlags(offers[i]?.offer ?? "", checks);
+    if (!v || flags.length === 0) return v;
+    // The engine's own fresh verdict, so it is updated in place.
+    return Object.assign(v, {
+      label: v.label === "irrelevant" ? "irrelevant" : ("weak" as const),
+      pass: false,
+      why: clip(`breaks the workspace's offer checks: ${flags.join(", ")}`, JUDGE_WHY_MAX),
+    });
+  });
+}
+
+/** The `offerChecks` flags an offer's text trips, as `lintOffer` names them. */
+export function offerCheckFlags(offer: string, checks: readonly OfferCheck[]): string[] {
+  const text = offer.trim();
+  const flags: string[] = [];
+  if (checks.includes("awareness") && isAwarenessOffer(text)) flags.push("offer-not-execution");
+  if (checks.includes("check-lead") && isCheckOffer(text)) flags.push("offer-is-a-check");
+  if (checks.includes("system-wrapper") && isSystemWrapperOffer(text))
+    flags.push("offer-names-the-system");
+  return flags;
+}
+
+async function judgeOffersByEngine(
+  offers: ReadonlyArray<JudgedOffer>,
+  research: string,
+  row: object,
+  cfg: AppConfig,
+  opts: { fetchImpl?: typeof fetch; onCost?: (usd: number) => void },
 ): Promise<Array<OfferJudgement | null> | null> {
   if (offers.length === 0) return [];
   const t = row as JsonRecord;
