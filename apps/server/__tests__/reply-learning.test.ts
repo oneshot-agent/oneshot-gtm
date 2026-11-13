@@ -325,6 +325,8 @@ it("directsContent tells a pitch from a writing habit", () => {
     "Point out the gap in their onboarding.",
     "Lead with the cost savings.",
     "Focus on pricing.",
+    "Focus on the length of the free trial.",
+    "Lead with the tone about their recent launch.",
   ])
     expect(directsContent(pitch), pitch).toBe(true);
   for (const style of [
