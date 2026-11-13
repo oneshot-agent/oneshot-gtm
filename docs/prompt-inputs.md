@@ -10,7 +10,7 @@ The model knows only what you put in config, and each field reaches some drafts 
 | `founderAdmission`                                   | about 1 in 3                | no                        | no                                   |
 | `pilotOffer`                                         | yes, as the offer's terms   | yes, as the offer's terms | no                                   |
 | `offerExclusions`                                    | the offer's writer, judge   | the offer's writer, judge | no                                   |
-| `offerRules`, `offerChecks` | the offer's writer, judge | the offer's writer, judge | no |
+| `offerRules`, `offerChecks`                          | the offer's writer, judge   | the offer's writer, judge | no                                   |
 | `offerAnchor`                                        | the offer's writer, judge   | the offer's writer, judge | no                                   |
 | `noOfferPlays`                                       | no offer for those plays    | no offer for those plays  | no                                   |
 | `memberOffer`                                        | `multiplier` only, verbatim | `multiplier` letter only  | no                                   |
