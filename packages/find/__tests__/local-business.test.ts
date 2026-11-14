@@ -746,6 +746,16 @@ describe("runLocalBusinessFinder — industry names", () => {
     expect(peopleSearchCalls[0]?.["industry"]).toEqual(["Dentists", "dental groups"]);
     expect(out.halted).toMatch(/not LinkedIn industry names.*dental groups/);
   });
+
+  it("names them when an industry-only search finds no companies", async () => {
+    nextCompanySearchResults = [];
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      industries: ["dental groups"],
+      yourEdge: "x",
+    });
+    expect(out.halted).toMatch(/companySearch returned no companies.*dental groups/);
+  });
 });
 
 describe("runLocalBusinessFinder — channel order", () => {

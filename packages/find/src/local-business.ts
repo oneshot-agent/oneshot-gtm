@@ -338,7 +338,9 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
 
     if (companyDomains.length === 0) {
       result.halted =
-        "companySearch returned no companies for the given industries — widen locations/employeeRange or set jobTitles";
+        unknownIndustries.length > 0
+          ? `companySearch returned no companies — ${unknownIndustriesNote(unknownIndustries)}`
+          : "companySearch returned no companies for the given industries — widen locations/employeeRange or set jobTitles";
       logEvent("finder.done", { name: PLAY_NAME, candidates: 0, halted: result.halted });
       return result;
     }
@@ -733,10 +735,10 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     result.halted =
       finishedQueries === queries.length
         ? "every search was walked to its end in the last 7 days: no one new to look at"
-        : businessShaped
-          ? "peopleSearch returned no matches for the resolved company domains"
-          : unknownIndustries.length > 0
-            ? `peopleSearch returned no matches — ${unknownIndustriesNote(unknownIndustries)}`
+        : unknownIndustries.length > 0
+          ? `peopleSearch returned no matches — ${unknownIndustriesNote(unknownIndustries)}`
+          : businessShaped
+            ? "peopleSearch returned no matches for the resolved company domains"
             : "peopleSearch returned no matches — widen jobTitles/industries/locations";
   } else if (!result.halted && result.enqueued === 0 && unusable > 0) {
     result.halted = `${unusable} of ${result.candidates} search results had no last name or no company domain, profile or email, so there was no one to contact`;

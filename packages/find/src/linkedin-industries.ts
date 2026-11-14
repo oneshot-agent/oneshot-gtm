@@ -444,12 +444,13 @@ export const LINKEDIN_INDUSTRIES: readonly string[] = [
 ];
 
 /** Case, spacing and "&"/"and" differences do not make a different industry. */
-function industryKey(name: string): string {
+export function industryKey(name: string): string {
   return name
     .toLowerCase()
-    .replace(/\s*&\s*/g, " and ")
-    .replace(/[\s,]+/g, " ")
-    .trim();
+    .replaceAll("&", " and ")
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .join(" ");
 }
 
 const BY_KEY = new Map(LINKEDIN_INDUSTRIES.map((name) => [industryKey(name), name]));

@@ -322,8 +322,15 @@ export function paidCacheKey(callType: PaidLookupType, input: unknown): string {
   const spec: PaidLookupSpec = PAID_LOOKUPS[callType];
   const raw = isRecord(input) ? input : {};
   const identity = spec.identity ? spec.identity(raw) : raw;
-  const canonical = stableStringify(normalise(identity, "", spec.caseSensitive === true) ?? {});
-  return `${callType}:${createHash("sha256").update(canonical).digest("hex")}`;
+  const caseSensitive = spec.caseSensitive === true;
+  const canonical = stableStringify(normalise(identity, "", caseSensitive) ?? {});
+  // Keys from before a lookup kept case folded it: an old "Manufacturing"
+  // result sits under the key "manufacturing" now names. A versioned key
+  // leaves those behind.
+  const version = caseSensitive ? "case:v2\n" : "";
+  return `${callType}:${createHash("sha256")
+    .update(version + canonical)
+    .digest("hex")}`;
 }
 
 // --- reads and writes -------------------------------------------------------
