@@ -122,6 +122,30 @@ describe("setTriggerConfigRoute — edge warnings (issue #585)", () => {
   });
 });
 
+describe("setTriggerConfigRoute — industries the people database does not have", () => {
+  it("names them for local-business on the b2b engine, and still saves", async () => {
+    const res = await setTriggerConfigRoute(
+      req({ config: { industries: ["manufacturing", "freight", "Truck Transportation"] } }),
+      { name: "local-business" },
+    );
+    expect(res.status).toBe(200);
+    const { warnings } = (await res.json()) as { warnings: string[] };
+    // A case slip is corrected at search time, so only "freight" is named.
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("freight");
+    expect(warnings[0]).not.toContain("manufacturing");
+    expect(upserts).toHaveLength(1);
+  });
+
+  it("says nothing on the local engine, where any place category works", async () => {
+    const res = await setTriggerConfigRoute(
+      req({ config: { engine: "local", industries: ["auto repair shop"] } }),
+      { name: "local-business" },
+    );
+    expect(((await res.json()) as { warnings: string[] }).warnings).toEqual([]);
+  });
+});
+
 describe("setTriggerConfigRoute — design-partner-loi routing warnings (issue #705)", () => {
   it("warns when play routes to design-partner-loi but buyerType is missing", async () => {
     const res = await setTriggerConfigRoute(

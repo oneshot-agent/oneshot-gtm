@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -133,6 +134,30 @@ describe("a hit", () => {
 });
 
 describe("the key", () => {
+  it("keeps the case of a people search's filters, which the API matches exactly", () => {
+    // "manufacturing" found no one where "Manufacturing" found nine
+    // (2026-11-14): one must not answer for the other.
+    expect(paidCacheKey("research.people", { industry: ["manufacturing"] })).not.toBe(
+      paidCacheKey("research.people", { industry: ["Manufacturing"] }),
+    );
+    // A key built the old way (case folded) is not the new one.
+    expect(paidCacheKey("research.people", { industry: ["manufacturing"] })).not.toBe(
+      `research.people:${createHash("sha256").update('{"industry":["manufacturing"],"limit":25}').digest("hex")}`,
+    );
+    // Spacing, order and domains still name the same search.
+    expect(
+      paidCacheKey("research.people", {
+        industry: [" Truck  Transportation", "Insurance"],
+        companyDomains: ["A.com"],
+      }),
+    ).toBe(
+      paidCacheKey("research.people", {
+        industry: ["Insurance", "Truck Transportation"],
+        companyDomains: ["a.com"],
+      }),
+    );
+  });
+
   it("ignores case, a canonical LinkedIn URL's spelling, array order, empties and timeouts", () => {
     expect(paidCacheKey("enrich.profile", { email: " Pat@Acme.COM " })).toBe(
       paidCacheKey("enrich.profile", { email: "pat@acme.com" }),

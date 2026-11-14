@@ -32,7 +32,11 @@ Lists that depend on who you sell to ship empty: `podcasts` on `podcast-guest`, 
 
 `x-reposters` sorts reposters into a founder lane (a real site in the bio) and an amplifier lane (1,000+ followers). `founderKeywords` and `amplifierKeywords` add a bio-word gate to each lane, and `requiresDevSignal: true` lets a GitHub link count as proof. All three are off by default: the person gate judges founders, and your choice of seeds decides who amplifies.
 
-`local-business` searches each title on its own when `jobTitles` lists more than two, and splits a run's 12 people searches across them, at least 2 pages each. Each search carries on from where it stopped, and the next run starts with the titles this one didn't reach.
+`local-business` searches each title on its own when `jobTitles` lists more than two, and splits a run's 12 full-page people searches across them, at least 2 pages each. Each search carries on from where it stopped, and the next run starts with the titles this one didn't reach.
+
+People search is paid per row asked, found or not. Each search a run reads starts with a 10-row page, and buys 40-row pages only when that page finds someone.
+
+On the default `b2b` engine, `industries` must be LinkedIn's industry names, such as `Dentists`, `Truck Transportation` or `Hospitals and Health Care`. The people database matches them exactly: `manufacturing` finds no one where `Manufacturing` does. The finder corrects the case. A name LinkedIn doesn't have still matches no one; the trigger editor warns when you save one, and a run that finds no one names it. On `engine: local`, `industries` are place categories and any wording works.
 
 A finder you keep rejecting pauses itself. When fewer than 10% of its reviewed rows were approved over 30 days, with at least 100 reviewed, scheduled runs skip it. `find watch --ignore-approval-rate` runs it anyway.
 

@@ -221,9 +221,11 @@ describe("payment settlement holds", () => {
   it("equivalent lookup inputs cannot bypass a held payment", async () => {
     const call = vi.fn().mockRejectedValue(ambiguous());
     const agent = protectPayments({ personFind: call }, "wallet");
+    // People search matches case exactly, so case names a different search;
+    // order and spacing do not.
     for (const keywords of [
       ["AI", "Cloud"],
-      ["cloud", "ai"],
+      [" Cloud", "AI "],
     ]) {
       await expect(
         withPaidCache("research.people", { keywords }, { fresh: true }, async () => ({
