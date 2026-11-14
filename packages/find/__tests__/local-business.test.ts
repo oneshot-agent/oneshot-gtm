@@ -351,6 +351,20 @@ describe("runLocalBusinessFinder — paging past people it already has", () => {
     expect(peopleSearchCalls).toHaveLength(2);
   });
 
+  it("works the rest of a full page that repeats its probe, then stops", async () => {
+    // A server that ignores `offset` answers the full page from the top: its
+    // first 10 are the probe's, the other 30 are new.
+    peopleSearchHandler = () => people(0, 40);
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["Head of AI"],
+      limit: 100,
+      yourEdge: "x",
+    });
+    expect(peopleSearchCalls).toHaveLength(2);
+    expect(out.enqueued).toBe(40);
+  });
+
   it("stops at the page cap, and the next run carries on from there", async () => {
     // 300 people, the first 280 known: six pages a run never reaches the new
     // ones unless the second run starts where the first stopped.

@@ -626,12 +626,16 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       const rows = peopleRes.result.results as PersonResult[];
       result.candidates += rows.length;
       const firstKey = rows[0] ? candidateDedupeKey(rows[0]) : null;
-      // An empty page is the end. So is the same page twice: a server that
-      // ignores `offset` would otherwise be walked to the page cap.
-      if (rows.length === 0 || (page > 0 && firstKey === previousFirstKey)) {
+      // An empty page is the end.
+      if (rows.length === 0) {
         ended = true;
         break;
       }
+      // The same first person as the last page: a server that ignores
+      // `offset` would otherwise be walked to the page cap. This page can
+      // still hold people the last, smaller one did not (a probe repeated by
+      // a full page), so its unseen rows are worked before the search ends.
+      const repeated = page > 0 && firstKey === previousFirstKey;
       previousFirstKey = firstKey;
 
       const contactable = rows.filter(isContactable);
@@ -673,6 +677,10 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       }
       // Stopped part-way through the page: the search is not walked.
       if (stop) break;
+      if (repeated) {
+        ended = true;
+        break;
+      }
       // A short page is the last one.
       if (rows.length < pageLimit) ended = true;
       offset += rows.length;
