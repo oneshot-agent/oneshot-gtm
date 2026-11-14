@@ -734,6 +734,20 @@ describe("runLocalBusinessFinder — a search with no one new", () => {
   });
 });
 
+describe("runLocalBusinessFinder — industry names", () => {
+  it("searches in LinkedIn's spelling, and names the industries LinkedIn does not have", async () => {
+    nextPeopleSearchResults = [];
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["Chief Operating Officer"],
+      industries: ["dentists", "dental groups"],
+      yourEdge: "x",
+    });
+    expect(peopleSearchCalls[0]?.["industry"]).toEqual(["Dentists", "dental groups"]);
+    expect(out.halted).toMatch(/not LinkedIn industry names.*dental groups/);
+  });
+});
+
 describe("runLocalBusinessFinder — channel order", () => {
   it("a LinkedIn-first run queues on LinkedIn even when the search carries an email", async () => {
     nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.example" }];

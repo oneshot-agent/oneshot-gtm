@@ -14,6 +14,7 @@ import { isDuplicate } from "./_dedupe.ts";
 import { finderChannels } from "./_channels-context.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { safeCompanySearch, safeLocalSearch, safePeopleSearch } from "./_sdk-safe.ts";
+import { canonicalIndustries } from "./linkedin-industries.ts";
 import { buildDesignPartnerLoiPayload, dedupePlayNames, resolvePlayRoute } from "./_play-route.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
 
@@ -141,6 +142,11 @@ export function isContactable(person: PersonResult): boolean {
   );
 }
 
+/** Why named industries find no one, for the run summary and the trigger editor. */
+export function unknownIndustriesNote(unknown: readonly string[]): string {
+  return `not LinkedIn industry names, so they match no one: ${unknown.join(", ")} (use LinkedIn's names, e.g. "Truck Transportation", "Hospitals and Health Care")`;
+}
+
 /**
  * The searches one run walks, in order. Business-shaped targeting has one
  * (the resolved company domains). Title-shaped targeting has the combined
@@ -260,7 +266,11 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
   const ledger = getLedger();
 
   const jobTitles = nonEmptyStrings(opts.jobTitles);
-  const industries = nonEmptyStrings(opts.industries);
+  // The people database matches LinkedIn's industry names exactly, so they
+  // are sent in its spelling. Names it does not have are kept and reported.
+  const { industries, unknown: unknownIndustries } = canonicalIndustries(
+    nonEmptyStrings(opts.industries),
+  );
   const locations = nonEmptyStrings(opts.locations);
   const keywords = nonEmptyStrings(opts.keywords);
   const employeeRange = opts.employeeRange?.trim() || undefined;
@@ -290,6 +300,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     business_shaped: businessShaped,
     job_titles: jobTitles.length,
     industries: industries.length,
+    ...(unknownIndustries.length > 0 ? { unknown_industries: unknownIndustries } : {}),
     limit,
   });
 
@@ -724,7 +735,9 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
         ? "every search was walked to its end in the last 7 days: no one new to look at"
         : businessShaped
           ? "peopleSearch returned no matches for the resolved company domains"
-          : "peopleSearch returned no matches — widen jobTitles/industries/locations";
+          : unknownIndustries.length > 0
+            ? `peopleSearch returned no matches — ${unknownIndustriesNote(unknownIndustries)}`
+            : "peopleSearch returned no matches — widen jobTitles/industries/locations";
   } else if (!result.halted && result.enqueued === 0 && unusable > 0) {
     result.halted = `${unusable} of ${result.candidates} search results had no last name or no company domain, profile or email, so there was no one to contact`;
   }

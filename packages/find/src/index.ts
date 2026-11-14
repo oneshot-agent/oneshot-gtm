@@ -23,6 +23,7 @@ export * from "./_live-profile-sweep.ts";
 export * from "./github-stars.ts";
 export * from "./_stargazers.ts";
 export * from "./local-business.ts";
+export * from "./linkedin-industries.ts";
 export * from "./_repo-utils.ts";
 export * from "./_repo-pipeline.ts";
 export * from "./local-registry.ts";

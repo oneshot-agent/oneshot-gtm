@@ -43,6 +43,11 @@ export interface PaidLookupSpec {
   aliases?: (result: unknown) => unknown[];
   /** Whether a result is worth keeping. Defaults to: an object whose status is not failed/error. */
   storable?: (result: unknown) => boolean;
+  /**
+   * Whether the API matches text inputs exactly. Their case then names a
+   * different lookup; spacing, order and repeats still do not.
+   */
+  caseSensitive?: boolean;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -125,6 +130,10 @@ export const PAID_LOOKUPS = {
     ttlMs: 7 * DAY,
     failureTtlMs: PAID_FAILURE_TTL_MS,
     identity: (i) => ({ ...i, limit: i["limit"] ?? 25 }),
+    // "manufacturing" finds no one where "Manufacturing" finds people
+    // (measured 2026-11-14), so a lowercase search's empty result must not
+    // answer the capitalised one.
+    caseSensitive: true,
   },
   "local.resolve": { ttlMs: 30 * DAY, failureTtlMs: PAID_FAILURE_TTL_MS },
   "local.search": { ttlMs: 7 * DAY, failureTtlMs: PAID_FAILURE_TTL_MS },
@@ -266,19 +275,20 @@ function canonicalDomain(raw: string): string {
   return host.slice(0, end);
 }
 
-function normalise(value: unknown, field = ""): unknown {
+function normalise(value: unknown, field = "", keepCase = false): unknown {
   if (value === null || value === undefined) return undefined;
   if (typeof value === "string") {
     const s = value.trim();
     if (!s) return undefined;
     if (/url$/i.test(field)) return canonicalUrl(s);
     if (/domains?$/i.test(field)) return canonicalDomain(s);
-    return s.replace(/\s+/g, " ").toLowerCase();
+    const spaced = s.replace(/\s+/g, " ");
+    return keepCase ? spaced : spaced.toLowerCase();
   }
   if (typeof value === "number" || typeof value === "boolean") return value;
   if (Array.isArray(value)) {
     const items = value
-      .map((v) => normalise(v, field))
+      .map((v) => normalise(v, field, keepCase))
       .filter((v) => v !== undefined)
       .map((v) => stableStringify(v));
     const unique = [...new Set(items)].toSorted();
@@ -288,7 +298,7 @@ function normalise(value: unknown, field = ""): unknown {
     const out: JsonRecord = {};
     for (const [k, v] of Object.entries(value)) {
       if (EXCLUDED_FIELDS.has(k)) continue;
-      const n = normalise(v, k);
+      const n = normalise(v, k, keepCase);
       if (n !== undefined) out[k] = n;
     }
     return Object.keys(out).length ? out : undefined;
@@ -312,7 +322,7 @@ export function paidCacheKey(callType: PaidLookupType, input: unknown): string {
   const spec: PaidLookupSpec = PAID_LOOKUPS[callType];
   const raw = isRecord(input) ? input : {};
   const identity = spec.identity ? spec.identity(raw) : raw;
-  const canonical = stableStringify(normalise(identity) ?? {});
+  const canonical = stableStringify(normalise(identity, "", spec.caseSensitive === true) ?? {});
   return `${callType}:${createHash("sha256").update(canonical).digest("hex")}`;
 }
 

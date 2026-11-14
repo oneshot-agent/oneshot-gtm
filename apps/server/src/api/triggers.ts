@@ -11,6 +11,7 @@ import {
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import {
+  canonicalIndustries,
   checkReadiness,
   DEFAULT_APPROVAL_RATE_MIN_SAMPLES,
   DEFAULT_APPROVAL_RATE_THRESHOLD,
@@ -22,6 +23,7 @@ import {
   listPageSourceErrors,
   storedTriggerConfig,
   TRIGGERS,
+  unknownIndustriesNote,
   type Readiness,
   type TriggerSpec,
 } from "@oneshot-gtm/find";
@@ -272,6 +274,15 @@ export async function setTriggerConfigRoute(
     warnings.push(
       "angleAssignment 'arm' splits prospects across the edge's angles — add at least two `//`-separated angles, or nothing is compared",
     );
+  }
+  // The people database matches LinkedIn's industry names exactly: a name it
+  // does not have finds no one, and each empty search is still paid for.
+  // The local engine searches the places index, where any category works.
+  if (name === "local-business" && cfg["engine"] !== "local" && Array.isArray(cfg["industries"])) {
+    const { unknown } = canonicalIndustries(
+      cfg["industries"].filter((v): v is string => typeof v === "string"),
+    );
+    if (unknown.length > 0) warnings.push(`industries ${unknownIndustriesNote(unknown)}`);
   }
   // Warn-tier `play`/`buyerType` validation never refuses the request:
   // the save above already happened, but a founder routing rows to
