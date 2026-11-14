@@ -21,17 +21,26 @@ const PLAY_NAME = "free-pilot";
 const SOURCE = "find:local-business";
 
 /**
- * Rows asked of `research/people` per page. The price is flat ($0.01) but the
- * platform ends the job at 120s and its time per row swings: ~2.2s per row on
- * 2026-09-27 (50 → 107s, 100 and 500 → "timed out after 120s", an empty run),
- * 0.1 to 1s per row on 2026-10-11. A page of 40 finishes at the slow end too;
- * more people come from the next page (`offset`), not a bigger one.
+ * Rows asked of `research/people` per page. Each row asked is paid for, found
+ * or not, and the platform ends the job at 120s with a time per row that
+ * swings: ~2.2s per row on 2026-09-27 (50 → 107s, 100 and 500 → "timed out
+ * after 120s", an empty run), 0.1 to 1s per row on 2026-10-11. A page of 40
+ * finishes at the slow end too; more people come from the next page
+ * (`offset`), not a bigger one.
  */
 const PEOPLE_SEARCH_LIMIT = 40;
-/** Pages of one search read in one run; a later run carries on from there. */
+/**
+ * Rows asked on the first page a run reads of each search. An empty search
+ * costs the rows asked, so it is found out on a small page before a full one
+ * is bought: 12 empty searches cost $7.20 at 40 rows on 2026-11-14.
+ */
+const PROBE_LIMIT = 10;
+/** Full pages of one search read in one run, after its probe; a later run carries on from there. */
 const MAX_PAGES_PER_QUERY = 6;
-/** People searches one run may make, across every query and page. */
+/** Full-page people searches one run may make, across every query; probes are not counted. */
 const MAX_SEARCHES_PER_RUN = 12;
+/** Probes one run may make: a list of empty searches costs at most this many small pages. */
+const MAX_PROBES_PER_RUN = 12;
 /**
  * Titles one people search may carry. Three or more failed upstream with
  * "Upstream service temporarily unavailable" in every industry tried
@@ -550,6 +559,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
   const seenThisRun = new Set<string>();
   let worked = 0;
   let searches = 0;
+  let probes = 0;
   let unusable = 0;
   let finishedQueries = 0;
   let stop = false;
@@ -576,11 +586,18 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     let retryOffset: number | null = null;
     let previousFirstKey: string | null = null;
     for (let page = 0; !stop && !ended; page++) {
-      if (page >= pageCap) {
+      // Page 0 is the probe; `pageCap` full pages follow it.
+      const probe = page === 0;
+      const pageLimit = probe ? PROBE_LIMIT : PEOPLE_SEARCH_LIMIT;
+      if (page > pageCap) {
         capped = true;
         break;
       }
-      if (worked >= limit || searches >= MAX_SEARCHES_PER_RUN) {
+      if (
+        worked >= limit ||
+        searches >= MAX_SEARCHES_PER_RUN ||
+        (probe && probes >= MAX_PROBES_PER_RUN)
+      ) {
         stop = true;
         break;
       }
@@ -590,10 +607,11 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
         break;
       }
       const peopleRes = await safePeopleSearch(
-        { ...query, limit: PEOPLE_SEARCH_LIMIT, ...(offset > 0 ? { offset } : {}) },
+        { ...query, limit: pageLimit, ...(offset > 0 ? { offset } : {}) },
         { playName: PLAY_NAME },
       );
-      searches++;
+      if (probe) probes++;
+      else searches++;
       result.costUsd += peopleRes.result.cost ?? 0;
       if (peopleRes.result.status === "error") {
         // Same distinction as companySearch above: an empty `results` from a
@@ -656,7 +674,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       // Stopped part-way through the page: the search is not walked.
       if (stop) break;
       // A short page is the last one.
-      if (rows.length < PEOPLE_SEARCH_LIMIT) ended = true;
+      if (rows.length < pageLimit) ended = true;
       offset += rows.length;
     }
     if (stop) stoppedAt ??= position;

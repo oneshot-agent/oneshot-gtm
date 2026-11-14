@@ -70,7 +70,12 @@ const verifyEmailCalls: string[] = [];
 vi.mock("../src/_sdk-safe.ts", () => ({
   safePeopleSearch: async (input: Record<string, unknown>) => {
     peopleSearchCalls.push(input);
-    const results = peopleSearchHandler ? peopleSearchHandler(input) : nextPeopleSearchResults;
+    // The platform returns at most the rows asked for, from the offset asked.
+    const limit = (input["limit"] as number | undefined) ?? 25;
+    const offset = (input["offset"] as number | undefined) ?? 0;
+    const results = peopleSearchHandler
+      ? peopleSearchHandler(input).slice(0, limit)
+      : nextPeopleSearchResults.slice(offset, offset + limit);
     return {
       result: { status: "ok", results, total_found: results.length, cost: 0.01 },
       receiptId: 1,
@@ -310,10 +315,7 @@ describe("runLocalBusinessFinder — paging past people it already has", () => {
   });
 
   it("asks for the next page by offset when a full page leaves room under the limit", async () => {
-    peopleSearchHandler = (input) => {
-      const offset = (input["offset"] as number | undefined) ?? 0;
-      return offset === 0 ? people(0, 40) : offset === 40 ? people(40, 12) : [];
-    };
+    nextPeopleSearchResults = people(0, 52);
     for (let i = 0; i < 40; i++) knownKeys.add(keyOf(i));
     const out = await runLocalBusinessFinder({
       dryRun: false,
@@ -321,11 +323,13 @@ describe("runLocalBusinessFinder — paging past people it already has", () => {
       limit: 25,
       yourEdge: "x",
     });
-    // Page 2 is short, so it is the last: no third call.
-    expect(peopleSearchCalls.map((c) => c["offset"] ?? 0)).toEqual([0, 40]);
+    // A probe of 10, then full pages of 40. The third page is short, so it is
+    // the last: no fourth call.
+    expect(peopleSearchCalls.map((c) => c["offset"] ?? 0)).toEqual([0, 10, 50]);
+    expect(peopleSearchCalls.map((c) => c["limit"])).toEqual([10, 40, 40]);
     expect(out.candidates).toBe(52);
     expect(out.enqueued).toBe(12);
-    expect(out.costUsd).toBeCloseTo(0.02, 5);
+    expect(out.costUsd).toBeCloseTo(0.03, 5);
   });
 
   it("stops asking once the limit is reached", async () => {
@@ -341,7 +345,7 @@ describe("runLocalBusinessFinder — paging past people it already has", () => {
   });
 
   it("stops when the server ignores the offset and returns the same page again", async () => {
-    nextPeopleSearchResults = people(0, 40);
+    peopleSearchHandler = () => people(0, 40);
     for (let i = 0; i < 40; i++) knownKeys.add(keyOf(i));
     await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
     expect(peopleSearchCalls).toHaveLength(2);
@@ -359,12 +363,13 @@ describe("runLocalBusinessFinder — paging past people it already has", () => {
       runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
 
     const first = await run();
-    expect(peopleSearchCalls.map((c) => c["offset"] ?? 0)).toEqual([0, 40, 80, 120, 160, 200]);
+    // The probe, then six full pages.
+    expect(peopleSearchCalls.map((c) => c["offset"] ?? 0)).toEqual([0, 10, 50, 90, 130, 170, 210]);
     expect(first.enqueued).toBe(0);
 
     peopleSearchCalls.length = 0;
     const second = await run();
-    expect(peopleSearchCalls.map((c) => c["offset"] ?? 0)).toEqual([240, 280]);
+    expect(peopleSearchCalls.map((c) => c["offset"] ?? 0)).toEqual([250, 260, 300]);
     expect(second.enqueued).toBe(20);
   });
 
@@ -381,7 +386,7 @@ describe("runLocalBusinessFinder — paging past people it already has", () => {
 
     icpMatch = null;
     const first = await run();
-    expect(peopleSearchCalls).toHaveLength(6);
+    expect(peopleSearchCalls).toHaveLength(7);
     expect(first.enqueued).toBe(0);
     expect(enqueued).toHaveLength(0);
 
@@ -389,7 +394,7 @@ describe("runLocalBusinessFinder — paging past people it already has", () => {
     icpMatch = true;
     peopleSearchCalls.length = 0;
     const second = await run();
-    expect(peopleSearchCalls[0]?.["offset"]).toBe(80);
+    expect(peopleSearchCalls[0]?.["offset"]).toBe(90);
     expect(second.enqueued).toBe(1);
     expect(enqueued[0]?.payload["name"]).toBe("Person 100");
   });
@@ -404,7 +409,7 @@ describe("runLocalBusinessFinder — paging past people it already has", () => {
     await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
     expect(parseSearchProgress([...researchCache.values()][0] ?? null)).toEqual({
       done: false,
-      offset: 40,
+      offset: 10,
     });
   });
 
@@ -434,15 +439,15 @@ describe("runLocalBusinessFinder — paging past people it already has", () => {
   it("a search resumed past its last person is then left alone", async () => {
     peopleSearchHandler = (input) => {
       const offset = (input["offset"] as number | undefined) ?? 0;
-      return people(offset, Math.max(0, Math.min(40, 240 - offset)));
+      return people(offset, Math.max(0, Math.min(40, 250 - offset)));
     };
-    for (let i = 0; i < 240; i++) knownKeys.add(keyOf(i));
+    for (let i = 0; i < 250; i++) knownKeys.add(keyOf(i));
     const run = () =>
       runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
-    await run(); // six full pages, stopped at the cap
+    await run(); // the probe and six full pages, stopped at the cap
     peopleSearchCalls.length = 0;
-    const second = await run(); // resumes at 240: empty, so the search is finished
-    expect(peopleSearchCalls.map((c) => c["offset"])).toEqual([240]);
+    const second = await run(); // resumes at 250: empty, so the search is finished
+    expect(peopleSearchCalls.map((c) => c["offset"])).toEqual([250]);
     // Not "no matches, widen your targeting": the search has people, all known.
     expect(second.halted).toMatch(/walked to its end/);
     peopleSearchCalls.length = 0;
@@ -612,16 +617,18 @@ describe("runLocalBusinessFinder — several titles", () => {
       parseSearchProgress(researchCache.get(progressKeyOf({ jobTitles: [titles[t]!] })) ?? null);
     await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
     expect(peopleSearchCalls.every((c) => (c["jobTitles"] as string[]).length === 1)).toBe(true);
-    // Two pages each: twelve searches reach the first six titles.
-    expect(searched()).toEqual(titles.slice(0, 6).flatMap((t) => [t, t]));
-    expect(offsetOf(5)).toEqual({ done: false, offset: 80 });
+    // A probe and two full pages each: twelve full pages reach the first six titles.
+    expect(searched()).toEqual(titles.slice(0, 6).flatMap((t) => [t, t, t]));
+    expect(offsetOf(5)).toEqual({ done: false, offset: 90 });
     expect(offsetOf(6)).toBeNull();
     peopleSearchCalls.length = 0;
     await runAgain({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
     // The two left out go first, then the run carries on from the top.
-    expect(searched()).toEqual([6, 7, 0, 1, 2, 3].flatMap((t) => [titles[t]!, titles[t]!]));
-    expect(offsetOf(7)).toEqual({ done: false, offset: 80 });
-    expect(offsetOf(0)).toEqual({ done: false, offset: 160 });
+    expect(searched()).toEqual(
+      [6, 7, 0, 1, 2, 3].flatMap((t) => [titles[t]!, titles[t]!, titles[t]!]),
+    );
+    expect(offsetOf(7)).toEqual({ done: false, offset: 90 });
+    expect(offsetOf(0)).toEqual({ done: false, offset: 180 });
   });
 
   it("catches a server ignoring the offset within one run, even with many titles", async () => {
@@ -629,31 +636,42 @@ describe("runLocalBusinessFinder — several titles", () => {
     peopleSearchHandler = (input) =>
       people(titles.indexOf((input["jobTitles"] as string[])[0]!) * 1000, 40);
     await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
-    // Each title's second page repeats its first: the search ends there and
-    // no place is saved past it.
-    expect(peopleSearchCalls).toHaveLength(12);
+    // Each title's first full page repeats its probe: the search ends there
+    // and no place is saved past it. Eight probes and eight full pages.
+    expect(peopleSearchCalls).toHaveLength(16);
     expect([...researchCache.values()].some((v) => v.includes('"offset"'))).toBe(false);
   });
 
-  it("makes at most twelve searches in one run", async () => {
+  it("makes at most twelve probes in one run", async () => {
     const titles = Array.from({ length: 20 }, (_, i) => `Title ${i}`);
     peopleSearchHandler = () => [];
     await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, yourEdge: "x" });
     expect(peopleSearchCalls).toHaveLength(12);
+    expect(peopleSearchCalls.every((c) => c["limit"] === 10)).toBe(true);
+  });
+
+  it("makes at most twelve full-page searches in one run", async () => {
+    const titles = Array.from({ length: 20 }, (_, i) => `Title ${i}`);
+    peopleSearchHandler = (input) => {
+      const t = titles.indexOf((input["jobTitles"] as string[])[0]!);
+      return people(t * 1000 + ((input["offset"] as number | undefined) ?? 0), 40);
+    };
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: titles, limit: 1000, yourEdge: "x" });
+    expect(peopleSearchCalls.filter((c) => c["limit"] === 40)).toHaveLength(12);
   });
 });
 
 describe("runLocalBusinessFinder — a search with no one new", () => {
   it("is left alone on the next run instead of being paid for again", async () => {
-    nextPeopleSearchResults = people(0, 10);
-    for (let i = 0; i < 10; i++) knownKeys.add(keyOf(i));
+    nextPeopleSearchResults = people(0, 5);
+    for (let i = 0; i < 5; i++) knownKeys.add(keyOf(i));
     const first = await runLocalBusinessFinder({
       dryRun: false,
       jobTitles: ["Head of AI"],
       yourEdge: "x",
     });
     expect(peopleSearchCalls).toHaveLength(1);
-    expect(first.droppedDuplicate).toBe(10);
+    expect(first.droppedDuplicate).toBe(5);
 
     const second = await runLocalBusinessFinder({
       dryRun: false,
@@ -666,7 +684,7 @@ describe("runLocalBusinessFinder — a search with no one new", () => {
   });
 
   it("is searched again while it still returns someone new", async () => {
-    nextPeopleSearchResults = people(0, 10);
+    nextPeopleSearchResults = people(0, 5);
     await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
     await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
     expect(peopleSearchCalls).toHaveLength(2);
@@ -685,6 +703,8 @@ describe("runLocalBusinessFinder — a search with no one new", () => {
     const run = () =>
       runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
     expect((await run()).halted).toMatch(/returned no matches/);
+    // Found out on the probe: 10 rows paid for, not a full page of 40.
+    expect(peopleSearchCalls[0]?.["limit"]).toBe(10);
     expect((await run()).halted).toMatch(/returned no matches/);
     expect(peopleSearchCalls).toHaveLength(2);
     expect(researchCache.size).toBe(0);
