@@ -112,6 +112,8 @@ const SEEDS = [
   // so all-time and 30d both resolve to 30 and only two URLs exist.
   "/measure/spend-series?sinceDays=30",
   "/measure/spend-series?sinceDays=7",
+  // Prospects per day: always the last seven days, whatever the range.
+  "/measure/funnel?days=7",
 
   // Queue: one document per status, pending split and order, at
   // DEMO_QUEUE_LIMIT. Every /queue read in the demo (the table's pages, its

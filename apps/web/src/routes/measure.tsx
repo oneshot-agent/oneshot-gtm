@@ -1,5 +1,6 @@
 import { Explain } from "../components/primitives/Explain.tsx";
 import { LinkedInFunnelSection } from "../components/LinkedInFunnelSection.tsx";
+import { ProspectsPerDaySection } from "../components/ProspectsPerDaySection.tsx";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -143,6 +144,8 @@ function MeasurePage() {
           tone="receipt"
         />
       </section>
+
+      <ProspectsPerDaySection />
 
       <section className="border-b border-ink-rule">
         <div className="flex items-baseline justify-between px-6 pb-2 pt-5">

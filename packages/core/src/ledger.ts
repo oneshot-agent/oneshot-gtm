@@ -94,6 +94,15 @@ import {
 import { LedgerCache } from "./ledger-cache.ts";
 import { readLinkedInFunnelSource, type LinkedInFunnelSource } from "./ledger-linkedin-funnel.ts";
 import {
+  approvedByDecisionDaySince,
+  insertFinderRun,
+  listFinderRunsSince,
+  queueFunnelSince,
+  type FinderRunInput,
+  type FinderRunRow,
+  type QueueFunnelRow,
+} from "./ledger-finder-funnel.ts";
+import {
   DraftVersionStore,
   type AngleOutcomeRow,
   type AngleUsageRow,
@@ -286,6 +295,9 @@ export { queueShowIsExact };
 
 // Re-export cadence types for the Ledger public API.
 export type { CadenceOfferJson, CadenceWithProspect, QueueRowCadence } from "./ledger-cadence.ts";
+
+// Re-export the daily funnel's row types for the Ledger public API.
+export type { FinderRunInput, FinderRunRow, QueueFunnelRow };
 
 // Re-export the busy-timeout constant and truncateWal for the Ledger
 // public API (ledger-admin.ts); several call sites import these directly
@@ -2228,6 +2240,26 @@ export class Ledger {
   /** Read-only snapshot for the LinkedIn funnel and invite listing (#792). */
   readLinkedInFunnelSource(): LinkedInFunnelSource {
     return readLinkedInFunnelSource(this.db);
+  }
+
+  /** @see ledger-finder-funnel.ts#insertFinderRun */
+  insertFinderRun(run: FinderRunInput): number {
+    return insertFinderRun(this.db, run);
+  }
+
+  /** @see ledger-finder-funnel.ts#listFinderRunsSince */
+  listFinderRunsSince(sinceIso: string): FinderRunRow[] {
+    return listFinderRunsSince(this.db, sinceIso);
+  }
+
+  /** @see ledger-finder-funnel.ts#queueFunnelSince */
+  queueFunnelSince(sinceIso: string): QueueFunnelRow[] {
+    return queueFunnelSince(this.db, sinceIso);
+  }
+
+  /** @see ledger-finder-funnel.ts#approvedByDecisionDaySince */
+  approvedByDecisionDaySince(sinceIso: string): Array<{ day: string; approved: number }> {
+    return approvedByDecisionDaySince(this.db, sinceIso);
   }
 
   /** @see ledger-outcomes.ts#listDealOutcomesForProspect */

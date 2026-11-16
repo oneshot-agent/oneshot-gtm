@@ -1,13 +1,18 @@
 import {
   cadenceRocs,
   getLedger,
+  loadConfig,
   logEvent,
   outcomeToValueTag,
   readLinkedInMeasure,
   tagOutcomeValue,
+  volumeGoalPerDayOf,
 } from "@oneshot-gtm/core";
 import type {
   EventsByPlay,
+  FunnelDay,
+  FunnelFinderDay,
+  FunnelView,
   OutcomeByPlay,
   OutcomeRequest,
   RocsGoalView,
@@ -142,6 +147,123 @@ export function measureSpendSeries(req: Request): Response {
     days,
     series: Array.from(byPlay.entries()).map(([playName, spend]) => ({ playName, spend })),
   };
+  return jsonResponse(payload, 200, req);
+}
+
+const pad2 = (n: number): string => String(n).padStart(2, "0");
+
+/** A local date as YYYY-MM-DD, the form SQLite's `date(x, 'localtime')` gives. */
+function localDay(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+const perUnit = (usd: number, n: number): number | null => (n > 0 ? usd / n : null);
+
+/**
+ * The finder a source belongs to: `find:<finder>`. A run reports its
+ * finder's source while its rows can carry more (`find:list-page:runs-backstage`
+ * per list, `find:github-stars:<repo>` per repo), and a mode can sit on the
+ * run's side only (`find:post-funding:auto`). Other sources stay as written.
+ */
+export function finderSource(source: string): string {
+  if (!source.startsWith("find:")) return source;
+  return source.split(":").slice(0, 2).join(":");
+}
+
+/**
+ * Prospects per day, per finder: what its runs found and spent, what reached
+ * the queue from it, and what a human approved and sent, with
+ * `volumeGoalPerDay` as the goal. Queue rows count on the local day they were
+ * found and join runs on the finder their `source` names (`finderSource`); `approvedOnDay` counts approvals on the day
+ * they were made. `days` defaults to 14, clamped to 1-90; newest day first.
+ */
+export function measureFunnel(req: Request): Response {
+  const n = Number.parseInt(new URL(req.url).searchParams.get("days") ?? "", 10);
+  const days = Math.min(90, Math.max(1, Number.isFinite(n) ? n : 14));
+  const now = new Date();
+  // Local midnight of the oldest day. Built from calendar fields, not by
+  // subtracting 24-hour steps, so a DST change in the window moves nothing.
+  const since = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1));
+  const sinceIso = since.toISOString();
+  const ledger = getLedger();
+
+  const byDay = new Map<string, Map<string, FunnelFinderDay>>();
+  const dayKeys: string[] = [];
+  for (let i = 0; i < days; i++) {
+    const day = localDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - i));
+    dayKeys.push(day);
+    byDay.set(day, new Map());
+  }
+  const entry = (day: string, source: string): FunnelFinderDay | null => {
+    const finders = byDay.get(day);
+    if (!finders) return null;
+    let f = finders.get(source);
+    if (!f) {
+      f = {
+        name: source,
+        source,
+        runs: 0,
+        candidates: 0,
+        enqueued: 0,
+        queued: 0,
+        autoRejected: 0,
+        approved: 0,
+        rejected: 0,
+        sent: 0,
+        pending: 0,
+        costUsd: 0,
+        costPerQueued: null,
+        costPerApproved: null,
+      };
+      finders.set(source, f);
+    }
+    return f;
+  };
+
+  // Two triggers can share a source; the queue cannot tell their rows apart,
+  // so they share one entry and its name lists both.
+  const names = new Map<FunnelFinderDay, Set<string>>();
+  for (const run of ledger.listFinderRunsSince(sinceIso)) {
+    const f = entry(run.day, finderSource(run.source));
+    if (!f) continue;
+    f.runs += 1;
+    f.candidates += run.candidates;
+    f.enqueued += run.enqueued;
+    f.costUsd += run.cost_usd;
+    let set = names.get(f);
+    if (!set) names.set(f, (set = new Set()));
+    set.add(run.name);
+  }
+  for (const [f, set] of names) f.name = [...set].toSorted().join(", ");
+
+  for (const row of ledger.queueFunnelSince(sinceIso)) {
+    const f = entry(row.day, finderSource(row.source));
+    if (!f) continue;
+    f.queued += row.queued;
+    f.autoRejected += row.autoRejected;
+    f.approved += row.approved;
+    f.rejected += row.rejected;
+    f.sent += row.sent;
+    f.pending += row.pending;
+  }
+
+  const approvedOnDay = new Map(
+    ledger.approvedByDecisionDaySince(sinceIso).map((r) => [r.day, r.approved]),
+  );
+  for (const finders of byDay.values()) {
+    for (const f of finders.values()) {
+      f.costPerQueued = perUnit(f.costUsd, f.queued);
+      f.costPerApproved = perUnit(f.costUsd, f.approved);
+    }
+  }
+  const out: FunnelDay[] = dayKeys.map((day) => ({
+    day,
+    approvedOnDay: approvedOnDay.get(day) ?? 0,
+    finders: [...(byDay.get(day)?.values() ?? [])].toSorted(
+      (a, b) => b.queued - a.queued || a.name.localeCompare(b.name),
+    ),
+  }));
+  const payload: FunnelView = { days: out, goalPerDay: volumeGoalPerDayOf(loadConfig()) };
   return jsonResponse(payload, 200, req);
 }
 

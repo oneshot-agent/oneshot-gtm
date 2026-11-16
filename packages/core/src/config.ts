@@ -371,6 +371,12 @@ export function linkedinTemplatesOf(cfg: { linkedin?: unknown }): LinkedInTempla
   return out;
 }
 
+/** `volumeGoalPerDay` when it is a positive number, else null (no goal). */
+export function volumeGoalPerDayOf(cfg: { volumeGoalPerDay?: unknown }): number | null {
+  const raw = cfg.volumeGoalPerDay;
+  return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : null;
+}
+
 /** Days a learning proposal waits for a decision before the sweep retires it. */
 export const DEFAULT_LEARNING_EXPIRE_AFTER_DAYS = 7;
 
@@ -416,6 +422,7 @@ const DEFAULTS: OneShotConfig = {
   timezone: null,
   clientId: null,
   dailySpendCeilingUsd: null,
+  volumeGoalPerDay: null,
   calendarIdentityId: null,
   calendarId: "primary",
   linkedinBrowserProfileId: null,

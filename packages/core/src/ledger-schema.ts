@@ -528,6 +528,35 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       addColumnIfMissing(db, "draft_versions", "writer", "TEXT");
     },
   },
+  {
+    // One row per finished finder run (ledger-finder-funnel.ts), so the
+    // daily funnel can read what each finder found and spent. `source` is
+    // the run's `FinderResult.source`, the key queue rows carry too.
+    // Timestamps are ISO (JS-written); `halted` is the reason a run stopped
+    // early, NULL when it ran to the end.
+    version: 24,
+    name: "finder-runs",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS finder_runs (
+          id             INTEGER PRIMARY KEY AUTOINCREMENT,
+          name           TEXT NOT NULL,
+          source         TEXT NOT NULL,
+          started_at     TEXT NOT NULL,
+          finished_at    TEXT NOT NULL,
+          candidates     INTEGER NOT NULL DEFAULT 0,
+          enqueued       INTEGER NOT NULL DEFAULT 0,
+          dropped_dup    INTEGER NOT NULL DEFAULT 0,
+          dropped_enrich INTEGER NOT NULL DEFAULT 0,
+          dropped_role   INTEGER NOT NULL DEFAULT 0,
+          dropped_icp    INTEGER NOT NULL DEFAULT 0,
+          cost_usd       REAL NOT NULL DEFAULT 0,
+          halted         TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_finder_runs_finished ON finder_runs(finished_at);
+      `);
+    },
+  },
 ];
 
 /**
