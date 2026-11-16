@@ -160,10 +160,21 @@ function localDay(d: Date): string {
 const perUnit = (usd: number, n: number): number | null => (n > 0 ? usd / n : null);
 
 /**
+ * The finder a source belongs to: `find:<finder>`. A run reports its
+ * finder's source while its rows can carry more (`find:list-page:runs-backstage`
+ * per list, `find:github-stars:<repo>` per repo), and a mode can sit on the
+ * run's side only (`find:post-funding:auto`). Other sources stay as written.
+ */
+export function finderSource(source: string): string {
+  if (!source.startsWith("find:")) return source;
+  return source.split(":").slice(0, 2).join(":");
+}
+
+/**
  * Prospects per day, per finder: what its runs found and spent, what reached
  * the queue from it, and what a human approved and sent, with
  * `volumeGoalPerDay` as the goal. Queue rows count on the local day they were
- * found and join runs on `source`; `approvedOnDay` counts approvals on the day
+ * found and join runs on the finder their `source` names (`finderSource`); `approvedOnDay` counts approvals on the day
  * they were made. `days` defaults to 14, clamped to 1-90; newest day first.
  */
 export function measureFunnel(req: Request): Response {
@@ -213,7 +224,7 @@ export function measureFunnel(req: Request): Response {
   // so they share one entry and its name lists both.
   const names = new Map<FunnelFinderDay, Set<string>>();
   for (const run of ledger.listFinderRunsSince(sinceIso)) {
-    const f = entry(run.day, run.source);
+    const f = entry(run.day, finderSource(run.source));
     if (!f) continue;
     f.runs += 1;
     f.candidates += run.candidates;
@@ -226,7 +237,7 @@ export function measureFunnel(req: Request): Response {
   for (const [f, set] of names) f.name = [...set].toSorted().join(", ");
 
   for (const row of ledger.queueFunnelSince(sinceIso)) {
-    const f = entry(row.day, row.source);
+    const f = entry(row.day, finderSource(row.source));
     if (!f) continue;
     f.queued += row.queued;
     f.autoRejected += row.autoRejected;

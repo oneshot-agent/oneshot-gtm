@@ -158,6 +158,27 @@ describe("measureFunnel", () => {
     expect(body.days[1]!.finders).toEqual([]);
   });
 
+  it("joins a finder's runs to rows that carry a list, a repo or no mode in their source", async () => {
+    finderRun("list-page", "find:list-page", 0, 3);
+    queue("find:list-page:runs-backstage", 0, "sent", "human");
+    queue("find:list-page:runs-argo-cd", 0, "pending");
+    finderRun("post-funding-auto", "find:post-funding:auto", 0, 1);
+    queue("find:post-funding", 0, "approved", "human");
+    queue("import:accelerator-batch", 0, "pending");
+    const finders = (await view("?days=1")).days[0]!.finders;
+    const by = (source: string) => finders.find((f) => f.source === source);
+    expect(by("find:list-page")).toMatchObject({
+      name: "list-page",
+      runs: 1,
+      queued: 2,
+      approved: 1,
+    });
+    expect(by("find:list-page")?.costPerQueued).toBeCloseTo(1.5, 5);
+    expect(by("find:post-funding")).toMatchObject({ name: "post-funding-auto", approved: 1 });
+    expect(by("import:accelerator-batch")?.queued).toBe(1);
+    expect(finders).toHaveLength(3);
+  });
+
   it("lists every trigger that shares a source under one entry", async () => {
     finderRun("list-page-b", "find:list-page", 0, 0.1);
     finderRun("list-page-a", "find:list-page", 0, 0.1);

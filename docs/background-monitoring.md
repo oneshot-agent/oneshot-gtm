@@ -144,7 +144,7 @@ Every finished finder run is recorded. **Measure** shows the last seven days: fo
 `GET /api/measure/funnel?days=14` has the same numbers per finder and day (default 14, at most 90, newest day first):
 
 - `runs`, `candidates`, `enqueued` and `costUsd` come from the runs that finished that day.
-- `queued`, `autoRejected`, `approved`, `rejected`, `sent` and `pending` count the queue rows found that day from the finder's source. `queued` leaves out rows a gate rejected on sight. `approved` means a person approved it, and it may have been sent since.
+- `queued`, `autoRejected`, `approved`, `rejected`, `sent` and `pending` count the queue rows the finder found that day, whatever list, repo or mode its rows name in their source (`find:list-page:runs-backstage` counts under `find:list-page`). `queued` leaves out rows a gate rejected on sight. `approved` means a person approved it, and it may have been sent since.
 - `costPerQueued` and `costPerApproved` are null when nothing was queued or approved.
 - A source with queue rows and no runs, such as an import, is listed under its source.
 - `approvedOnDay` counts what was approved that day, whenever it was found.
