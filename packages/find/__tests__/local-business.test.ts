@@ -62,6 +62,8 @@ let nextCompanySearchResults: StubCompany[] = [];
 let nextLocalSearchResults: StubLocal[] = [];
 let localSearchStatus: "ok" | "error" = "ok";
 const peopleSearchCalls: Array<Record<string, unknown>> = [];
+/** Which people searches fail on the platform; null: none. */
+let peopleSearchFails: ((input: Record<string, unknown>) => boolean) | null = null;
 const companySearchCalls: Array<Record<string, unknown>> = [];
 const localSearchCalls: Array<Record<string, unknown>> = [];
 const findEmailCalls: string[] = [];
@@ -70,6 +72,9 @@ const verifyEmailCalls: string[] = [];
 vi.mock("../src/_sdk-safe.ts", () => ({
   safePeopleSearch: async (input: Record<string, unknown>) => {
     peopleSearchCalls.push(input);
+    if (peopleSearchFails?.(input)) {
+      return { result: { status: "error", results: [], total_found: 0, cost: 0 }, receiptId: 1 };
+    }
     // The platform returns at most the rows asked for, from the offset asked.
     const limit = (input["limit"] as number | undefined) ?? 25;
     const offset = (input["offset"] as number | undefined) ?? 0;
@@ -181,6 +186,7 @@ beforeEach(() => {
   personVerdict = "pass";
   nextPeopleSearchResults = [];
   peopleSearchHandler = null;
+  peopleSearchFails = null;
   knownKeys.clear();
   researchCache.clear();
   icpCalls = 0;
@@ -1026,5 +1032,121 @@ describe("runLocalBusinessFinder — `local` engine (SDK localSearch)", () => {
     expect(out.enqueued).toBe(2);
     expect(enqueued).toHaveLength(0);
     expect(findEmailCalls).toHaveLength(0);
+  });
+});
+
+describe("runLocalBusinessFinder — many searches", () => {
+  const industries = ["A", "B", "C", "D", "E", "F", "G"];
+
+  it("searches a long industry list in groups, each title across every group", () => {
+    expect(
+      peopleQueries({
+        businessShaped: false,
+        companyDomains: [],
+        jobTitles: ["CTO", "CIO", "VP of IT"],
+        industries,
+        shared: {},
+      }).map((q) => [q.jobTitles?.[0], q.industry]),
+    ).toEqual([
+      ["CTO", ["A", "B", "C"]],
+      ["CTO", ["D", "E", "F"]],
+      ["CTO", ["G"]],
+      ["CIO", ["A", "B", "C"]],
+      ["CIO", ["D", "E", "F"]],
+      ["CIO", ["G"]],
+      ["VP of IT", ["A", "B", "C"]],
+      ["VP of IT", ["D", "E", "F"]],
+      ["VP of IT", ["G"]],
+    ]);
+    // Two titles: the combined search in each group, then each title alone.
+    expect(
+      peopleQueries({
+        businessShaped: false,
+        companyDomains: [],
+        jobTitles: ["CTO", "CIO"],
+        industries: ["A", "B"],
+        shared: {},
+        industriesPerSearch: 1,
+      }),
+    ).toEqual([
+      { jobTitles: ["CTO", "CIO"], industry: ["A"] },
+      { jobTitles: ["CTO", "CIO"], industry: ["B"] },
+      { jobTitles: ["CTO"], industry: ["A"] },
+      { jobTitles: ["CTO"], industry: ["B"] },
+      { jobTitles: ["CIO"], industry: ["A"] },
+      { jobTitles: ["CIO"], industry: ["B"] },
+    ]);
+  });
+
+  it("skips a failed search, works the next, and reads the failed one again next run", async () => {
+    peopleSearchFails = (input) => (input["industry"] as string[])[0] === "A";
+    nextPeopleSearchResults = people(0, 2);
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["CTO"],
+      industries,
+      limit: 10,
+      yourEdge: "x",
+    });
+    expect(peopleSearchCalls.map((c) => (c["industry"] as string[])[0])).toEqual(["A", "D", "G"]);
+    expect(out.enqueued).toBe(2);
+    expect(out.halted).toBeUndefined();
+    expect(out.peopleSearches).toEqual({ queries: 3, read: 2, failed: 1 });
+    // Nothing remembered for the failed search: it is not done and has no offset.
+    const failedKey = [...researchCache.keys()].filter((k) =>
+      k.startsWith("people-search-progress:"),
+    );
+    expect(failedKey.every((k) => !researchCache.get(k)?.includes('"offset"'))).toBe(true);
+  });
+
+  it("ends the run after three failed searches in a row, as an outage", async () => {
+    peopleSearchFails = () => true;
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["CTO", "CIO"],
+      industries,
+      industriesPerSearch: 1,
+      yourEdge: "x",
+    });
+    expect(peopleSearchCalls).toHaveLength(3);
+    expect(out.halted).toMatch(/platform error/);
+    // No search is marked read; only where the next run starts is kept.
+    expect([...researchCache.keys()].some((k) => k.startsWith("people-search-progress:"))).toBe(
+      false,
+    );
+  });
+
+  it("calls a run whose only search failed a platform error, not an empty search", async () => {
+    peopleSearchFails = () => true;
+    const out = await runLocalBusinessFinder({ dryRun: false, jobTitles: ["CTO"], yourEdge: "x" });
+    expect(out.halted).toMatch(/platform error/);
+  });
+
+  it("reads as many pages a run as the config allows", async () => {
+    nextPeopleSearchResults = people(0, 400);
+    await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["CTO"],
+      limit: 1000,
+      maxSearchesPerRun: 3,
+      yourEdge: "x",
+    });
+    // The probe, then three full pages.
+    expect(peopleSearchCalls.map((c) => c["limit"])).toEqual([10, 40, 40, 40]);
+
+    peopleSearchCalls.length = 0;
+    researchCache.clear();
+    knownKeys.clear();
+    enqueued.length = 0;
+    nextPeopleSearchResults = [];
+    await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["CTO"],
+      industries,
+      industriesPerSearch: 1,
+      maxProbesPerRun: 4,
+      yourEdge: "x",
+    });
+    expect(peopleSearchCalls).toHaveLength(4);
   });
 });

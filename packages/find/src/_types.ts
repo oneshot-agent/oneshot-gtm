@@ -45,6 +45,12 @@ export interface FinderResult {
     error?: string;
     status?: "skipped";
   }>;
+  /**
+   * The people searches a `local-business` run had (one per title and
+   * industry group), how many it read, and how many failed and were skipped
+   * for the next run. Only set by `local-business` on the b2b engine.
+   */
+  peopleSearches?: { queries: number; read: number; failed: number };
 }
 
 export interface ShowHnHit {
