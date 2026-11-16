@@ -45,6 +45,15 @@ export function ProspectsPerDaySection() {
               ? `today ${formatCount(today.approvedOnDay)} / ${formatCount(goal)} approved`
               : `today ${formatCount(today.approvedOnDay)} approved`
             : `last ${DAYS}d`}
+          {q.isError && q.data && (
+            // A failed refresh keeps the last numbers; say they may be old.
+            <span className="ml-2 text-[color:var(--ink-blocked-2)]" role="alert">
+              · refresh failed{" "}
+              <button className="underline" onClick={() => void q.refetch()}>
+                Retry
+              </button>
+            </span>
+          )}
         </div>
       </div>
       {q.isLoading ? (
