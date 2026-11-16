@@ -608,7 +608,7 @@ describe("jobTitles targeting", () => {
         person("Vic VP", "VP Platform Engineering"),
         person("Ada AI", "Head of AI Platform"),
         { title: "Head of AI Platform" },
-      ] as never,
+      ],
       titles,
     );
     expect(ranked.map((p) => p.full_name)).toEqual([
@@ -763,6 +763,42 @@ describe("jobTitles targeting", () => {
     peopleSearchCalls = [];
     await runListPageFinder({ ...base, jobTitles: [...titles, "Head of AI"], limit: 1 });
     expect(peopleSearchCalls.map((c) => c["companyDomains"])).toEqual([["acme.example"]]);
+  });
+
+  it("asks the search for 10 rows unless the config sets another count", async () => {
+    await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(peopleSearchCalls[0]?.["limit"]).toBe(10);
+
+    peopleSearchCalls = [];
+    cache.clear();
+    await runListPageFinder({ ...base, jobTitles: titles, limit: 1, peopleSearchLimit: 5 });
+    expect(peopleSearchCalls[0]?.["limit"]).toBe(5);
+
+    peopleSearchCalls = [];
+    cache.clear();
+    await runListPageFinder({ ...base, jobTitles: titles, limit: 1, peopleSearchLimit: 40 });
+    expect(peopleSearchCalls[0]?.["limit"]).toBe(10);
+  });
+
+  it("leaves a company alone when its match has no email, without rejecting it", async () => {
+    peopleSearchResult = { results: [person("Ada AI", "Head of AI Platform")] };
+    contactResult = { ok: false, reason: "not-found", costUsd: 0.01 };
+    const first = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(first.droppedEnrichment).toBe(1);
+    expect(roleRejections).toHaveLength(0);
+
+    // The next run skips Acme free instead of buying the same search again.
+    peopleSearchCalls = [];
+    const next = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(next.droppedDuplicate).toBe(1);
+    expect(peopleSearchCalls.map((c) => c["companyDomains"])).toEqual([["beta.example"]]);
+  });
+
+  it("searches a company again after a platform error in the contact step", async () => {
+    peopleSearchResult = { results: [person("Ada AI", "Head of AI Platform")] };
+    contactResult = { ok: false, reason: "platform-error", costUsd: 0 };
+    await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect([...cache.keys()].filter((k) => k.startsWith("list-page-miss:"))).toEqual([]);
   });
 
   it("a dry run and a failed search remember nothing", async () => {

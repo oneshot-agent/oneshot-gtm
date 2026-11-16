@@ -151,6 +151,8 @@ Set `play: "design-partner-loi"` and `buyerType` (`enterprise`, `government` or 
 - A GitHub file, a raw link or a data file is fetched free. Any other page costs one web read. An unchanged list costs nothing to read again.
 - Companies are worked `limit` per run, one from each list in turn.
 - Set `jobTitles`, most wanted first, to pick the owner by title. A title matches only when it carries every word of a wanted title: `VP of AI` matches `Vice President, Artificial Intelligence`; `CTO` does not match `Director`. A company with no match is left for 30 days, then tried again.
+- The people search at each company is priced per row asked, found or not. It asks for `peopleSearchLimit` rows (1 to 25, default 10). Across 1,520 company searches in November, the first matching person was always within the first 10 rows, and in 941 of 943 within the first 5.
+- A company whose match has no email that can be found or delivered to, or is someone already being worked, is also left for 30 days. A platform error is not remembered.
 - Without `jobTitles` the pick is any senior title, which at a large company can be PR or recruiting.
 - People the page names are kept as context and never emailed.
 
