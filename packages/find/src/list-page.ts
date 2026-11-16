@@ -62,6 +62,21 @@ const READ_RETRY_WAITS_MS = [2_000, 8_000];
  * be added to the database, or the search may have been degraded.
  */
 const TITLE_MISS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Rows the per-company people search asks for. It is priced per row asked,
+ * found or not, and the title match comes early: across 1,520 company searches
+ * (2026-11-09 to 11-16) the first matching person was in the first 5 rows in
+ * 941 of 943 and in the first 10 in all of them, while 36% of searches came
+ * back empty and paid for all 25 rows anyway.
+ */
+const DEFAULT_PEOPLE_SEARCH_LIMIT = 10;
+const MAX_PEOPLE_SEARCH_LIMIT = 25;
+/**
+ * Contact outcomes that are a fact about the company's people today, so
+ * searching it again tomorrow would buy the same answer: no address found,
+ * one that bounces, or a person someone is already working.
+ */
+const DEAD_END_REASONS = new Set(["not-found", "prescreen", "undeliverable", "duplicate"]);
 const CONTEXT_CHARS = 240;
 
 /** A company written into the trigger config: no page, no extraction. */
@@ -134,6 +149,8 @@ export interface ListPageOpts extends RunOpts {
    * on PR or recruiting).
    */
   jobTitles?: string[];
+  /** Rows the per-company people search asks for (1 to 25, default 10). */
+  peopleSearchLimit?: number;
   /** Must be `design-partner-loi` in this version. */
   play?: string;
   buyerType?: string;
@@ -501,7 +518,7 @@ export function rankByTitles(people: PersonResult[], jobTitles: string[]): Perso
 
 /**
  * The company's decision owner. With `jobTitles`, one title-scoped people
- * search ($0.01) and up to three candidates through the contact spine until
+ * search (priced per row asked, `peopleSearchLimit` rows) and up to three candidates through the contact spine until
  * one passes the person gate; without, the spine's own domain-only pick.
  *
  * Only people whose title matches a wanted one are tried. The search's own
@@ -537,7 +554,7 @@ async function findOwner(args: {
     return { contact, costUsd: contact.costUsd, noMatch: false };
   }
   const search = await safePeopleSearch(
-    { companyDomains: [domain], jobTitles, limit: 25 },
+    { companyDomains: [domain], jobTitles, limit: peopleSearchLimit(opts.peopleSearchLimit) },
     { playName: PLAY_NAME },
   );
   let costUsd = search.result.cost ?? 0;
@@ -573,6 +590,16 @@ async function findOwner(args: {
   return { contact: last, costUsd, noMatch: false };
 }
 
+/** The configured row count, or the default when it is missing or out of range. */
+export function peopleSearchLimit(value: unknown): number {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= MAX_PEOPLE_SEARCH_LIMIT
+    ? value
+    : DEFAULT_PEOPLE_SEARCH_LIMIT;
+}
+
 export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResult> {
   const limit = opts.limit ?? 25;
   const route = resolvePlayRoute(opts);
@@ -599,7 +626,7 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
   const titlesHash = createHash("sha256")
     .update(JSON.stringify(jobTitles.map((t) => t.toLowerCase()).toSorted()))
     .digest("hex");
-  /** Where a company with no one matching these titles is remembered for a while. */
+  /** Where a company that came to nothing for these titles is remembered for a while. */
   const missKey = (dedupeKey: string): string =>
     `list-page-miss:${dedupeKey}:${titlesHash.slice(0, 12)}`;
 
@@ -761,6 +788,14 @@ export async function runListPageFinder(opts: ListPageOpts): Promise<FinderResul
     const contact = found.contact;
     if (!contact || !contact.ok) {
       const reason = contact ? contact.reason : found.noMatch ? "no-match" : "platform-error";
+      if (jobTitles.length > 0 && DEAD_END_REASONS.has(reason)) {
+        // Not a verdict on the company, so no rejected row, but the same
+        // search would buy the same dead end: left alone like a title miss.
+        ledger.setProductResearchCache(
+          missKey(dedupeKey),
+          JSON.stringify({ domain, reason, at: new Date().toISOString() }),
+        );
+      }
       if (reason === "duplicate") result.droppedDuplicate++;
       else if (reason === "no-match") {
         // No one with a wanted title at this company today. Remembered for a
